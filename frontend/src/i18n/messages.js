@@ -130,7 +130,7 @@ export const messages = {
     intercompanyReconciliation: {
       title: "Intercompany Mutabakat",
       subtitle:
-        "Hukuki birim ciftleri arasindaki intercompany hareketlerini karsilastirir ve uyumsuzluklari gosterir.",
+        "Istirak / bagli ortak ciftleri arasindaki intercompany hareketlerini karsilastirir ve uyumsuzluklari gosterir.",
       loadingLookups: "Lookup secenekleri yukleniyor...",
       missingPermission: "Eksik yetki: intercompany.reconcile.run",
       fiscalPeriodRequired: "fiscalPeriodId zorunludur.",
@@ -143,12 +143,12 @@ export const messages = {
       periodLabel: "Mali donem",
       periodPlaceholder: "Mali donem secin",
       periodIdPlaceholder: "Mali donem ID",
-      fromEntityLabel: "Kaynak hukuki birim",
-      fromEntityPlaceholder: "Tum kaynak hukuki birimler",
-      fromEntityIdPlaceholder: "Kaynak hukuki birim ID (opsiyonel)",
-      toEntityLabel: "Karsi taraf hukuki birim",
-      toEntityPlaceholder: "Tum karsi taraf hukuki birimler",
-      toEntityIdPlaceholder: "Karsi taraf hukuki birim ID (opsiyonel)",
+      fromEntityLabel: "Kaynak istirak / bagli ortak",
+      fromEntityPlaceholder: "Tum kaynak istirakler / bagli ortaklar",
+      fromEntityIdPlaceholder: "Kaynak istirak / bagli ortak ID (opsiyonel)",
+      toEntityLabel: "Karsi taraf istirak / bagli ortak",
+      toEntityPlaceholder: "Tum karsi taraf istirakler / bagli ortaklar",
+      toEntityIdPlaceholder: "Karsi taraf istirak / bagli ortak ID (opsiyonel)",
       toleranceLabel: "Esik degeri",
       includeMatched: "Eslesen ciftleri dahil et",
       includeAccountBreakdown: "Hesap kirilimini dahil et",
@@ -797,3 +797,4 @@ export const messages = {
     },
   },
 };
+

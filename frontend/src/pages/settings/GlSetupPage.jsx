@@ -363,7 +363,7 @@ export default function GlSetupPage() {
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
               required
             >
-              <option value="">{l("Select legal entity", "Hukuki birim secin")}</option>
+              <option value="">{l("Select legal entity", "Istirak / bagli ortak secin")}</option>
               {legalEntities.map((entity) => (
                 <option key={entity.id} value={entity.id}>
                   {entity.code} - {entity.name}
@@ -497,7 +497,7 @@ export default function GlSetupPage() {
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
               disabled={coaForm.scope !== "LEGAL_ENTITY"}
             >
-              <option value="">{l("Select legal entity", "Hukuki birim secin")}</option>
+              <option value="">{l("Select legal entity", "Istirak / bagli ortak secin")}</option>
               {legalEntities.map((entity) => (
                 <option key={entity.id} value={entity.id}>
                   {entity.code} - {entity.name}
@@ -773,3 +773,4 @@ export default function GlSetupPage() {
     </div>
   );
 }
+

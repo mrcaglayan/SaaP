@@ -949,7 +949,7 @@ export default function JournalWorkbenchPage() {
           <div className="grid gap-2 md:grid-cols-4">
             {entities.length > 0 ? (
               <select value={journal.legalEntityId} onChange={(event) => setJournal((prev) => ({ ...prev, legalEntityId: event.target.value }))} className="rounded border border-slate-300 px-3 py-2 text-sm" required>
-                <option value="">{l("Select legal entity", "Hukuki birim secin")}</option>
+                <option value="">{l("Select legal entity", "Istirak / bagli ortak secin")}</option>
                 {entities.map((entity) => (
                   <option key={entity.id} value={entity.id}>
                     {entity.code} - {entity.name}
@@ -957,7 +957,7 @@ export default function JournalWorkbenchPage() {
                 ))}
               </select>
             ) : (
-              <input type="number" min={1} value={journal.legalEntityId} onChange={(event) => setJournal((prev) => ({ ...prev, legalEntityId: event.target.value }))} className="rounded border border-slate-300 px-3 py-2 text-sm" placeholder={l("Legal entity ID", "Hukuki birim ID")} required />
+              <input type="number" min={1} value={journal.legalEntityId} onChange={(event) => setJournal((prev) => ({ ...prev, legalEntityId: event.target.value }))} className="rounded border border-slate-300 px-3 py-2 text-sm" placeholder={l("Legal entity ID", "Istirak / bagli ortak ID")} required />
             )}
             {books.length > 0 ? (
               <select value={journal.bookId} onChange={(event) => setJournal((prev) => ({ ...prev, bookId: event.target.value }))} className="rounded border border-slate-300 px-3 py-2 text-sm" required>
@@ -1261,7 +1261,7 @@ export default function JournalWorkbenchPage() {
             }
             className="rounded border border-slate-300 px-3 py-2 text-sm"
           >
-            <option value="">{l("All legal entities", "Tum hukuki birimler")}</option>
+            <option value="">{l("All legal entities", "Tum istirakler / bagli ortaklar")}</option>
             {entities.map((entity) => (
               <option key={entity.id} value={entity.id}>
                 {entity.code} - {entity.name}
@@ -1428,3 +1428,4 @@ export default function JournalWorkbenchPage() {
     </div>
   );
 }
+

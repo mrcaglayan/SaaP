@@ -7,7 +7,7 @@ const dbHost = process.env.DB_HOST || "localhost";
 const dbPort = Number(process.env.DB_PORT || 3306);
 const dbUser = process.env.DB_USER || "root";
 const dbPassword = process.env.DB_PASSWORD || "1212";
-const dbName = process.env.DB_NAME || "student";
+const dbName = process.env.DB_NAME || "SaaP";
 
 function escapeIdentifier(name) {
   return String(name).replace(/`/g, "``");

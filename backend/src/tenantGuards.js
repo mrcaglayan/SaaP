@@ -150,6 +150,24 @@ export async function assertCountryExists(countryId, label = "countryId") {
   );
 }
 
+export async function assertCurrencyExists(currencyCode, label = "currencyCode") {
+  const normalized = String(currencyCode || "")
+    .trim()
+    .toUpperCase();
+  if (!normalized || normalized.length !== 3) {
+    throw badRequest(`${label} must be a 3-letter currency code`);
+  }
+
+  return requireRow(
+    `SELECT code, name, minor_units
+     FROM currencies
+     WHERE code = ?
+     LIMIT 1`,
+    [normalized],
+    `${label} not found`
+  );
+}
+
 export async function assertFiscalCalendarBelongsToTenant(
   tenantId,
   calendarId,

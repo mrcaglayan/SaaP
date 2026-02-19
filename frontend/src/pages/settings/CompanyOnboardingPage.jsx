@@ -120,25 +120,25 @@ function validateForm(form, l) {
   }
 
   if (!Array.isArray(form.legalEntities) || form.legalEntities.length === 0) {
-    return l("At least one legal entity is required.", "En az bir hukuki birim zorunludur.");
+    return l("At least one legal entity is required.", "En az bir istirak / bagli ortak zorunludur.");
   }
 
   for (let index = 0; index < form.legalEntities.length; index += 1) {
     const entity = form.legalEntities[index];
     const prefix = `Legal entity ${index + 1}`;
     if (!entity.code.trim() || !entity.name.trim()) {
-      return l(`${prefix}: code and name are required.`, `Hukuki birim ${index + 1}: kod ve ad zorunludur.`);
+      return l(`${prefix}: code and name are required.`, `Istirak / bagli ortak ${index + 1}: kod ve ad zorunludur.`);
     }
     if (!entity.countryIso2.trim()) {
       return l(
         `${prefix}: country ISO2 is required (e.g. US, TR, DE).`,
-        `Hukuki birim ${index + 1}: ulke ISO2 zorunludur (orn. US, TR, DE).`
+        `Istirak / bagli ortak ${index + 1}: ulke ISO2 zorunludur (orn. US, TR, DE).`
       );
     }
     if (!entity.functionalCurrencyCode.trim()) {
       return l(
         `${prefix}: functional currency is required.`,
-        `Hukuki birim ${index + 1}: fonksiyonel para birimi zorunludur.`
+        `Istirak / bagli ortak ${index + 1}: fonksiyonel para birimi zorunludur.`
       );
     }
   }
@@ -373,7 +373,7 @@ export default function CompanyOnboardingPage() {
             <p className="mt-1 text-sm text-slate-600">
               {l(
                 "Creates group company, fiscal calendar/periods, legal entities, branches, default CoA, accounts, and books in one flow.",
-                "Tek akisla grup sirketi, mali takvim/donemler, hukuki birimler, subeler, varsayilan hesap plani, hesaplar ve defterleri olusturur."
+                "Tek akisla grup sirketi, mali takvim/donemler, istirakler / bagli ortaklar, subeler, varsayilan hesap plani, hesaplar ve defterleri olusturur."
               )}
             </p>
           </div>
@@ -493,14 +493,14 @@ export default function CompanyOnboardingPage() {
         <section className="rounded-2xl border border-slate-200 bg-white p-4">
           <div className="mb-3 flex items-center justify-between gap-2">
             <h2 className="text-sm font-semibold text-slate-700">
-              {l("Legal Entities", "Hukuki Birimler")} ({entityCount})
+              {l("Legal Entities", "Istirakler / Bagli Ortaklar")} ({entityCount})
             </h2>
             <button
               type="button"
               onClick={addEntity}
               className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
             >
-              {l("Add Legal Entity", "Hukuki Birim Ekle")}
+              {l("Add Legal Entity", "Istirak / Bagli Ortak Ekle")}
             </button>
           </div>
 
@@ -771,7 +771,7 @@ export default function CompanyOnboardingPage() {
               <thead className="bg-emerald-100/70 text-left text-emerald-900">
                 <tr>
                   <th className="px-3 py-2">{l("Entity Code", "Birim Kodu")}</th>
-                  <th className="px-3 py-2">{l("Legal Entity ID", "Hukuki Birim ID")}</th>
+                  <th className="px-3 py-2">{l("Legal Entity ID", "Istirak / Bagli Ortak ID")}</th>
                   <th className="px-3 py-2">{l("CoA Code", "Hesap Plani Kodu")}</th>
                   <th className="px-3 py-2">{l("CoA ID", "Hesap Plani ID")}</th>
                   <th className="px-3 py-2">{l("Branch Count", "Sube Sayisi")}</th>
@@ -795,3 +795,4 @@ export default function CompanyOnboardingPage() {
     </div>
   );
 }
+

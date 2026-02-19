@@ -605,7 +605,8 @@ const statements = [
     ('USD', 'US Dollar', 2),
     ('EUR', 'Euro', 2),
     ('TRY', 'Turkish Lira', 2),
-    ('GBP', 'Pound Sterling', 2)
+    ('GBP', 'Pound Sterling', 2),
+    ('AFN', 'Afghan Afghani', 2)
   ON DUPLICATE KEY UPDATE
     name = VALUES(name),
     minor_units = VALUES(minor_units)
@@ -616,7 +617,8 @@ const statements = [
     ('US', 'USA', 'United States', 'USD'),
     ('TR', 'TUR', 'Turkey', 'TRY'),
     ('GB', 'GBR', 'United Kingdom', 'GBP'),
-    ('DE', 'DEU', 'Germany', 'EUR')
+    ('DE', 'DEU', 'Germany', 'EUR'),
+    ('AF', 'AFG', 'Afghanistan', 'AFN')
   ON DUPLICATE KEY UPDATE
     name = VALUES(name),
     default_currency_code = VALUES(default_currency_code)

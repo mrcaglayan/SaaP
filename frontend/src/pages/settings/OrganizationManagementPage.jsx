@@ -2,21 +2,26 @@ import { useEffect, useMemo, useState } from "react";
 import {
   generateFiscalPeriods,
   listCountries,
+  listCurrencies,
   listFiscalCalendars,
   listFiscalPeriods,
   listGroupCompanies,
   listLegalEntities,
   listOperatingUnits,
+  listShareholders,
   upsertFiscalCalendar,
   upsertGroupCompany,
   upsertLegalEntity,
   upsertOperatingUnit,
+  upsertShareholder,
 } from "../../api/orgAdmin.js";
 import { useAuth } from "../../auth/useAuth.js";
 import { useI18n } from "../../i18n/useI18n.js";
 import TenantReadinessChecklist from "../../readiness/TenantReadinessChecklist.jsx";
 
 const UNIT_TYPES = ["BRANCH", "PLANT", "STORE", "DEPARTMENT", "OTHER"];
+const SHAREHOLDER_TYPES = ["INDIVIDUAL", "CORPORATE"];
+const SHAREHOLDER_STATUSES = ["ACTIVE", "INACTIVE"];
 
 function toNumber(value) {
   const parsed = Number(value);
@@ -34,6 +39,8 @@ export default function OrganizationManagementPage() {
   const canUpsertGroupCompany = hasPermission("org.group_company.upsert");
   const canUpsertLegalEntity = hasPermission("org.legal_entity.upsert");
   const canUpsertOperatingUnit = hasPermission("org.operating_unit.upsert");
+  const canReadShareholders = hasPermission("org.tree.read");
+  const canUpsertShareholder = hasPermission("org.legal_entity.upsert");
   const canUpsertFiscalCalendar = hasPermission("org.fiscal_calendar.upsert");
   const canGenerateFiscalPeriods = hasPermission("org.fiscal_period.generate");
 
@@ -44,8 +51,10 @@ export default function OrganizationManagementPage() {
 
   const [groups, setGroups] = useState([]);
   const [countries, setCountries] = useState([]);
+  const [currencies, setCurrencies] = useState([]);
   const [legalEntities, setLegalEntities] = useState([]);
   const [operatingUnits, setOperatingUnits] = useState([]);
+  const [shareholders, setShareholders] = useState([]);
   const [calendars, setCalendars] = useState([]);
   const [periods, setPeriods] = useState([]);
 
@@ -56,10 +65,10 @@ export default function OrganizationManagementPage() {
     name: "",
     taxId: "",
     countryId: "",
-    countryIdManual: "",
     functionalCurrencyCode: "USD",
     isIntercompanyEnabled: true,
     intercompanyPartnerRequired: false,
+    autoProvisionDefaults: true,
   });
   const [unitForm, setUnitForm] = useState({
     legalEntityId: "",
@@ -67,6 +76,19 @@ export default function OrganizationManagementPage() {
     name: "",
     unitType: "BRANCH",
     hasSubledger: false,
+  });
+  const [shareholderForm, setShareholderForm] = useState({
+    legalEntityId: "",
+    code: "",
+    name: "",
+    shareholderType: "INDIVIDUAL",
+    taxId: "",
+    ownershipPct: "",
+    committedCapital: "0",
+    paidCapital: "0",
+    currencyCode: "USD",
+    status: "ACTIVE",
+    notes: "",
   });
   const [calendarForm, setCalendarForm] = useState({
     code: "",
@@ -89,34 +111,77 @@ export default function OrganizationManagementPage() {
     setError("");
     try {
       if (canReadOrgTree) {
-        const [groupsRes, countriesRes, entitiesRes, unitsRes] =
+        const [
+          groupsRes,
+          countriesRes,
+          currenciesRes,
+          entitiesRes,
+          unitsRes,
+          shareholdersRes,
+        ] =
           await Promise.all([
             listGroupCompanies(),
             listCountries(),
+            listCurrencies(),
             listLegalEntities(),
             listOperatingUnits(),
+            canReadShareholders
+              ? listShareholders()
+              : Promise.resolve({ rows: [] }),
           ]);
 
         const groupRows = groupsRes?.rows || [];
         const countryRows = countriesRes?.rows || [];
+        const currencyRows = currenciesRes?.rows || [];
         const entityRows = entitiesRes?.rows || [];
         const unitRows = unitsRes?.rows || [];
+        const shareholderRows = shareholdersRes?.rows || [];
 
         setGroups(groupRows);
         setCountries(countryRows);
+        setCurrencies(currencyRows);
         setLegalEntities(entityRows);
         setOperatingUnits(unitRows);
+        setShareholders(shareholderRows);
 
-        setEntityForm((prev) => ({
-          ...prev,
-          groupCompanyId:
-            prev.groupCompanyId || String(groupRows[0]?.id || ""),
-          countryId: prev.countryId || String(countryRows[0]?.id || ""),
-        }));
+        setEntityForm((prev) => {
+          const nextCountryId =
+            prev.countryId || String(countryRows[0]?.id || "");
+          const selectedCountry = countryRows.find(
+            (row) => String(row.id) === String(nextCountryId)
+          );
+          const countryDefaultCurrency = String(
+            selectedCountry?.default_currency_code || ""
+          ).toUpperCase();
+
+          return {
+            ...prev,
+            groupCompanyId:
+              prev.groupCompanyId || String(groupRows[0]?.id || ""),
+            countryId: nextCountryId,
+            functionalCurrencyCode:
+              prev.functionalCurrencyCode || countryDefaultCurrency || "USD",
+          };
+        });
         setUnitForm((prev) => ({
           ...prev,
           legalEntityId: prev.legalEntityId || String(entityRows[0]?.id || ""),
         }));
+        setShareholderForm((prev) => {
+          const nextLegalEntityId =
+            prev.legalEntityId || String(entityRows[0]?.id || "");
+          const selectedEntity = entityRows.find(
+            (row) => String(row.id) === String(nextLegalEntityId)
+          );
+          const legalEntityCurrency = String(
+            selectedEntity?.functional_currency_code || ""
+          ).toUpperCase();
+          return {
+            ...prev,
+            legalEntityId: nextLegalEntityId,
+            currencyCode: prev.currencyCode || legalEntityCurrency || "USD",
+          };
+        });
       }
 
       if (canReadFiscalCalendars) {
@@ -154,7 +219,7 @@ export default function OrganizationManagementPage() {
   useEffect(() => {
     loadCoreData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canReadOrgTree, canReadFiscalCalendars]);
+  }, [canReadOrgTree, canReadFiscalCalendars, canReadShareholders]);
 
   useEffect(() => {
     loadPeriods(periodForm.calendarId, periodForm.fiscalYear);
@@ -162,9 +227,36 @@ export default function OrganizationManagementPage() {
   }, [periodForm.calendarId, periodForm.fiscalYear, canReadFiscalPeriods]);
 
   const countrySelectOptions = useMemo(
-    () => countries.map((row) => ({ id: row.id, label: `${row.iso2} - ${row.name}` })),
+    () =>
+      countries.map((row) => ({
+        id: row.id,
+        label: `${row.iso2} - ${row.name}`,
+        defaultCurrencyCode: String(row.default_currency_code || "").toUpperCase(),
+      })),
     [countries]
   );
+
+  const currencySelectOptions = useMemo(
+    () =>
+      currencies.map((row) => ({
+        code: String(row.code || "").toUpperCase(),
+        label: `${String(row.code || "").toUpperCase()} - ${row.name}`,
+      })),
+    [currencies]
+  );
+
+  const selectedShareholderLegalEntityId = toNumber(
+    shareholderForm.legalEntityId
+  );
+  const visibleShareholders = useMemo(() => {
+    if (!selectedShareholderLegalEntityId) {
+      return shareholders;
+    }
+    return shareholders.filter(
+      (row) =>
+        Number(row.legal_entity_id) === Number(selectedShareholderLegalEntityId)
+    );
+  }, [shareholders, selectedShareholderLegalEntityId]);
 
   async function handleGroupSubmit(event) {
     event.preventDefault();
@@ -199,8 +291,7 @@ export default function OrganizationManagementPage() {
     }
 
     const groupCompanyId = toNumber(entityForm.groupCompanyId);
-    const countryId =
-      toNumber(entityForm.countryId) || toNumber(entityForm.countryIdManual);
+    const countryId = toNumber(entityForm.countryId);
     if (!groupCompanyId || !countryId) {
       setError(l("groupCompanyId and countryId are required.", "groupCompanyId ve countryId zorunludur."));
       return;
@@ -210,7 +301,7 @@ export default function OrganizationManagementPage() {
     setError("");
     setMessage("");
     try {
-      await upsertLegalEntity({
+      const response = await upsertLegalEntity({
         groupCompanyId,
         code: entityForm.code.trim(),
         name: entityForm.name.trim(),
@@ -221,6 +312,7 @@ export default function OrganizationManagementPage() {
           .toUpperCase(),
         isIntercompanyEnabled: Boolean(entityForm.isIntercompanyEnabled),
         intercompanyPartnerRequired: Boolean(entityForm.intercompanyPartnerRequired),
+        autoProvisionDefaults: Boolean(entityForm.autoProvisionDefaults),
       });
 
       setEntityForm((prev) => ({
@@ -230,10 +322,20 @@ export default function OrganizationManagementPage() {
         taxId: "",
         functionalCurrencyCode: prev.functionalCurrencyCode || "USD",
       }));
-      setMessage(l("Legal entity saved.", "Hukuki birim kaydedildi."));
+      if (response?.provisioning?.created) {
+        const created = response.provisioning.created;
+        setMessage(
+          l(
+            `Legal entity saved. Defaults created: calendar ${created.fiscalCalendars}, periods ${created.fiscalPeriods}, CoA ${created.chartsOfAccounts}, accounts ${created.accounts}, books ${created.books}.`,
+            `Istirak / bagli ortak kaydedildi. Varsayilanlar olusturuldu: takvim ${created.fiscalCalendars}, donem ${created.fiscalPeriods}, hesap plani ${created.chartsOfAccounts}, hesap ${created.accounts}, defter ${created.books}.`
+          )
+        );
+      } else {
+        setMessage(l("Legal entity saved.", "Istirak / bagli ortak kaydedildi."));
+      }
       await loadCoreData();
     } catch (err) {
-      setError(err?.response?.data?.message || l("Failed to save legal entity.", "Hukuki birim kaydedilemedi."));
+      setError(err?.response?.data?.message || l("Failed to save legal entity.", "Istirak / bagli ortak kaydedilemedi."));
     } finally {
       setSaving("");
     }
@@ -272,6 +374,67 @@ export default function OrganizationManagementPage() {
       await loadCoreData();
     } catch (err) {
       setError(err?.response?.data?.message || l("Failed to save operating unit.", "Operasyon birimi kaydedilemedi."));
+    } finally {
+      setSaving("");
+    }
+  }
+
+  async function handleShareholderSubmit(event) {
+    event.preventDefault();
+    if (!canUpsertShareholder) {
+      setError(
+        l(
+          "Missing permission: org.legal_entity.upsert",
+          "Eksik yetki: org.legal_entity.upsert"
+        )
+      );
+      return;
+    }
+
+    const legalEntityId = toNumber(shareholderForm.legalEntityId);
+    if (!legalEntityId) {
+      setError(l("legalEntityId is required.", "legalEntityId zorunludur."));
+      return;
+    }
+
+    setSaving("shareholder");
+    setError("");
+    setMessage("");
+    try {
+      await upsertShareholder({
+        legalEntityId,
+        code: shareholderForm.code.trim(),
+        name: shareholderForm.name.trim(),
+        shareholderType: shareholderForm.shareholderType,
+        taxId: shareholderForm.taxId.trim() || undefined,
+        ownershipPct:
+          shareholderForm.ownershipPct === ""
+            ? undefined
+            : Number(shareholderForm.ownershipPct),
+        committedCapital: Number(shareholderForm.committedCapital || 0),
+        paidCapital: Number(shareholderForm.paidCapital || 0),
+        currencyCode: shareholderForm.currencyCode.trim().toUpperCase(),
+        status: shareholderForm.status,
+        notes: shareholderForm.notes.trim() || undefined,
+      });
+
+      setShareholderForm((prev) => ({
+        ...prev,
+        code: "",
+        name: "",
+        taxId: "",
+        ownershipPct: "",
+        committedCapital: "0",
+        paidCapital: "0",
+        notes: "",
+      }));
+      setMessage(l("Shareholder saved.", "Ortak kaydedildi."));
+      await loadCoreData();
+    } catch (err) {
+      setError(
+        err?.response?.data?.message ||
+          l("Failed to save shareholder.", "Ortak kaydedilemedi.")
+      );
     } finally {
       setSaving("");
     }
@@ -439,7 +602,7 @@ export default function OrganizationManagementPage() {
 
         <section className="rounded-xl border border-slate-200 bg-white p-4">
           <h2 className="mb-3 text-sm font-semibold text-slate-700">
-            {l("Legal Entities", "Hukuki Birimler")}
+            {l("Legal Entities", "Istirakler / Bagli Ortaklar")}
           </h2>
           <form onSubmit={handleLegalEntitySubmit} className="grid gap-2 md:grid-cols-3">
             <select
@@ -481,35 +644,29 @@ export default function OrganizationManagementPage() {
 
             <select
               value={entityForm.countryId}
-              onChange={(event) =>
+              onChange={(event) => {
+                const nextCountryId = event.target.value;
+                const selectedCountry = countrySelectOptions.find(
+                  (option) => String(option.id) === String(nextCountryId)
+                );
                 setEntityForm((prev) => ({
                   ...prev,
-                  countryId: event.target.value,
-                }))
-              }
+                  countryId: nextCountryId,
+                  functionalCurrencyCode:
+                    selectedCountry?.defaultCurrencyCode || prev.functionalCurrencyCode,
+                }));
+              }}
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              required
             >
-              <option value="">{l("Select country (if available)", "Ulke secin (varsa)")}</option>
+              <option value="">{l("Select country", "Ulke secin")}</option>
               {countrySelectOptions.map((option) => (
                 <option key={option.id} value={option.id}>
                   {option.label}
                 </option>
               ))}
             </select>
-            <input
-              type="number"
-              min={1}
-              value={entityForm.countryIdManual}
-              onChange={(event) =>
-                setEntityForm((prev) => ({
-                  ...prev,
-                  countryIdManual: event.target.value,
-                }))
-              }
-              className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              placeholder={l("Country ID (manual)", "Ulke ID (manuel)")}
-            />
-            <input
+            <select
               value={entityForm.functionalCurrencyCode}
               onChange={(event) =>
                 setEntityForm((prev) => ({
@@ -518,10 +675,15 @@ export default function OrganizationManagementPage() {
                 }))
               }
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              placeholder={l("Currency (e.g. USD)", "Para birimi (orn. USD)")}
-              maxLength={3}
               required
-            />
+            >
+              <option value="">{l("Select currency", "Para birimi secin")}</option>
+              {currencySelectOptions.map((option) => (
+                <option key={option.code} value={option.code}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
 
             <input
               value={entityForm.taxId}
@@ -556,6 +718,22 @@ export default function OrganizationManagementPage() {
                 }
               />
               {l("Partner required", "Karsi taraf zorunlu")}
+            </label>
+            <label className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 md:col-span-2">
+              <input
+                type="checkbox"
+                checked={entityForm.autoProvisionDefaults}
+                onChange={(event) =>
+                  setEntityForm((prev) => ({
+                    ...prev,
+                    autoProvisionDefaults: event.target.checked,
+                  }))
+                }
+              />
+              {l(
+                "Auto-create defaults (calendar, periods, CoA, accounts, book)",
+                "Varsayilanlari otomatik olustur (takvim, donemler, hesap plani, hesaplar, defter)"
+              )}
             </label>
             <button
               type="submit"
@@ -592,7 +770,7 @@ export default function OrganizationManagementPage() {
                 {legalEntities.length === 0 && !loading && (
                   <tr>
                     <td colSpan={6} className="px-3 py-3 text-slate-500">
-                      {l("No legal entities found.", "Hukuki birim bulunamadi.")}
+                      {l("No legal entities found.", "Istirak / bagli ortak bulunamadi.")}
                     </td>
                   </tr>
                 )}
@@ -617,7 +795,7 @@ export default function OrganizationManagementPage() {
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm md:col-span-2"
               required
             >
-              <option value="">{l("Select legal entity", "Hukuki birim secin")}</option>
+              <option value="">{l("Select legal entity", "Istirak / bagli ortak secin")}</option>
               {legalEntities.map((row) => (
                 <option key={row.id} value={row.id}>
                   {row.code} - {row.name}
@@ -704,6 +882,233 @@ export default function OrganizationManagementPage() {
                   <tr>
                     <td colSpan={6} className="px-3 py-3 text-slate-500">
                       {l("No operating units found.", "Operasyon birimi bulunamadi.")}
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section className="rounded-xl border border-slate-200 bg-white p-4">
+          <h2 className="mb-3 text-sm font-semibold text-slate-700">
+            {l("Shareholders", "Ortaklar")}
+          </h2>
+          <form onSubmit={handleShareholderSubmit} className="grid gap-2 md:grid-cols-4">
+            <select
+              value={shareholderForm.legalEntityId}
+              onChange={(event) => {
+                const nextLegalEntityId = event.target.value;
+                const selectedEntity = legalEntities.find(
+                  (row) => String(row.id) === String(nextLegalEntityId)
+                );
+                const defaultCurrency = String(
+                  selectedEntity?.functional_currency_code || ""
+                ).toUpperCase();
+                setShareholderForm((prev) => ({
+                  ...prev,
+                  legalEntityId: nextLegalEntityId,
+                  currencyCode: defaultCurrency || prev.currencyCode,
+                }));
+              }}
+              className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              required
+            >
+              <option value="">{l("Select legal entity", "Istirak / bagli ortak secin")}</option>
+              {legalEntities.map((row) => (
+                <option key={row.id} value={row.id}>
+                  {row.code} - {row.name}
+                </option>
+              ))}
+            </select>
+            <input
+              value={shareholderForm.code}
+              onChange={(event) =>
+                setShareholderForm((prev) => ({ ...prev, code: event.target.value }))
+              }
+              className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              placeholder={l("Shareholder code", "Ortak kodu")}
+              required
+            />
+            <input
+              value={shareholderForm.name}
+              onChange={(event) =>
+                setShareholderForm((prev) => ({ ...prev, name: event.target.value }))
+              }
+              className="rounded-lg border border-slate-300 px-3 py-2 text-sm md:col-span-2"
+              placeholder={l("Shareholder name", "Ortak adi")}
+              required
+            />
+
+            <select
+              value={shareholderForm.shareholderType}
+              onChange={(event) =>
+                setShareholderForm((prev) => ({
+                  ...prev,
+                  shareholderType: event.target.value,
+                }))
+              }
+              className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+            >
+              {SHAREHOLDER_TYPES.map((type) => (
+                <option key={type} value={type}>
+                  {type}
+                </option>
+              ))}
+            </select>
+            <input
+              value={shareholderForm.taxId}
+              onChange={(event) =>
+                setShareholderForm((prev) => ({ ...prev, taxId: event.target.value }))
+              }
+              className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              placeholder={l("Tax ID (optional)", "Vergi No (opsiyonel)")}
+            />
+            <input
+              type="number"
+              min={0}
+              max={100}
+              step="0.000001"
+              value={shareholderForm.ownershipPct}
+              onChange={(event) =>
+                setShareholderForm((prev) => ({
+                  ...prev,
+                  ownershipPct: event.target.value,
+                }))
+              }
+              className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              placeholder={l("Ownership %", "Sahiplik %")}
+            />
+            <select
+              value={shareholderForm.currencyCode}
+              onChange={(event) =>
+                setShareholderForm((prev) => ({
+                  ...prev,
+                  currencyCode: event.target.value,
+                }))
+              }
+              className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              required
+            >
+              <option value="">{l("Select currency", "Para birimi secin")}</option>
+              {currencySelectOptions.map((option) => (
+                <option key={option.code} value={option.code}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+            <input
+              type="number"
+              min={0}
+              step="0.01"
+              value={shareholderForm.committedCapital}
+              onChange={(event) =>
+                setShareholderForm((prev) => ({
+                  ...prev,
+                  committedCapital: event.target.value,
+                }))
+              }
+              className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              placeholder={l("Committed capital", "Taahhut edilen sermaye")}
+            />
+            <input
+              type="number"
+              min={0}
+              step="0.01"
+              value={shareholderForm.paidCapital}
+              onChange={(event) =>
+                setShareholderForm((prev) => ({
+                  ...prev,
+                  paidCapital: event.target.value,
+                }))
+              }
+              className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              placeholder={l("Paid capital", "Odenen sermaye")}
+            />
+            <select
+              value={shareholderForm.status}
+              onChange={(event) =>
+                setShareholderForm((prev) => ({
+                  ...prev,
+                  status: event.target.value,
+                }))
+              }
+              className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+            >
+              {SHAREHOLDER_STATUSES.map((status) => (
+                <option key={status} value={status}>
+                  {status}
+                </option>
+              ))}
+            </select>
+            <input
+              value={shareholderForm.notes}
+              onChange={(event) =>
+                setShareholderForm((prev) => ({ ...prev, notes: event.target.value }))
+              }
+              className="rounded-lg border border-slate-300 px-3 py-2 text-sm md:col-span-2"
+              placeholder={l("Notes (optional)", "Notlar (opsiyonel)")}
+            />
+            <button
+              type="submit"
+              disabled={saving === "shareholder" || !canUpsertShareholder}
+              className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60"
+            >
+              {saving === "shareholder"
+                ? l("Saving...", "Kaydediliyor...")
+                : l("Save Shareholder", "Ortagi Kaydet")}
+            </button>
+          </form>
+
+          <div className="mt-3 overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead className="bg-slate-50 text-left text-slate-600">
+                <tr>
+                  <th className="px-3 py-2">ID</th>
+                  <th className="px-3 py-2">{l("Entity", "Birim")}</th>
+                  <th className="px-3 py-2">{l("Code", "Kod")}</th>
+                  <th className="px-3 py-2">{l("Name", "Ad")}</th>
+                  <th className="px-3 py-2">{l("Type", "Tur")}</th>
+                  <th className="px-3 py-2">{l("Ownership %", "Sahiplik %")}</th>
+                  <th className="px-3 py-2">{l("Committed", "Taahhut")}</th>
+                  <th className="px-3 py-2">{l("Paid", "Odenen")}</th>
+                  <th className="px-3 py-2">{l("Currency", "Para birimi")}</th>
+                  <th className="px-3 py-2">{l("Status", "Durum")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {visibleShareholders.map((row) => (
+                  <tr key={row.id} className="border-t border-slate-100">
+                    <td className="px-3 py-2">{row.id}</td>
+                    <td className="px-3 py-2">{row.legal_entity_id}</td>
+                    <td className="px-3 py-2">{row.code}</td>
+                    <td className="px-3 py-2">{row.name}</td>
+                    <td className="px-3 py-2">{row.shareholder_type}</td>
+                    <td className="px-3 py-2">
+                      {row.ownership_pct === null || row.ownership_pct === undefined
+                        ? "-"
+                        : Number(row.ownership_pct).toFixed(4)}
+                    </td>
+                    <td className="px-3 py-2">
+                      {Number(row.committed_capital || 0).toLocaleString(undefined, {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}
+                    </td>
+                    <td className="px-3 py-2">
+                      {Number(row.paid_capital || 0).toLocaleString(undefined, {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}
+                    </td>
+                    <td className="px-3 py-2">{row.currency_code}</td>
+                    <td className="px-3 py-2">{row.status}</td>
+                  </tr>
+                ))}
+                {visibleShareholders.length === 0 && !loading && (
+                  <tr>
+                    <td colSpan={10} className="px-3 py-3 text-slate-500">
+                      {l("No shareholders found.", "Ortak bulunamadi.")}
                     </td>
                   </tr>
                 )}
@@ -856,3 +1261,4 @@ export default function OrganizationManagementPage() {
     </div>
   );
 }
+

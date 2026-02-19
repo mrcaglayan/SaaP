@@ -29,6 +29,13 @@ export async function listCountries(params = {}) {
   return response.data;
 }
 
+export async function listCurrencies(params = {}) {
+  const response = await api.get(
+    `/api/v1/org/currencies${toQueryString(params)}`
+  );
+  return response.data;
+}
+
 export async function listLegalEntities(params = {}) {
   const response = await api.get(
     `/api/v1/org/legal-entities${toQueryString(params)}`
@@ -38,6 +45,18 @@ export async function listLegalEntities(params = {}) {
 
 export async function upsertLegalEntity(payload) {
   const response = await api.post("/api/v1/org/legal-entities", payload);
+  return response.data;
+}
+
+export async function listShareholders(params = {}) {
+  const response = await api.get(
+    `/api/v1/org/shareholders${toQueryString(params)}`
+  );
+  return response.data;
+}
+
+export async function upsertShareholder(payload) {
+  const response = await api.post("/api/v1/org/shareholders", payload);
   return response.data;
 }
 

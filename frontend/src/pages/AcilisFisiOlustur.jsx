@@ -295,7 +295,7 @@ export default function AcilisFisiOlustur() {
     const bookId = toPositiveInt(form.bookId);
     const fiscalPeriodId = toPositiveInt(form.fiscalPeriodId);
     if (!legalEntityId || !bookId || !fiscalPeriodId) {
-      setError(l("Legal entity, book, and fiscal period are required.", "Hukuki birim, defter ve mali donem zorunludur."));
+      setError(l("Legal entity, book, and fiscal period are required.", "Istirak / bagli ortak, defter ve mali donem zorunludur."));
       return;
     }
     if (lines.length < 2) {
@@ -471,7 +471,7 @@ export default function AcilisFisiOlustur() {
               required
               disabled={!canReadOrgTree || loadingRefs}
             >
-              <option value="">{l("Select legal entity", "Hukuki birim secin")}</option>
+              <option value="">{l("Select legal entity", "Istirak / bagli ortak secin")}</option>
               {legalEntities.map((row) => (
                 <option key={row.id} value={row.id}>
                   {row.code} - {row.name}
@@ -763,3 +763,4 @@ export default function AcilisFisiOlustur() {
     </div>
   );
 }
+

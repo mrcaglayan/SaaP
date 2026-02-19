@@ -670,7 +670,7 @@ export default function ConsolidationSetupPage() {
                 onChange={(event) => setMemberForm((prev) => ({ ...prev, legalEntityId: event.target.value }))}
                 className="rounded-lg border border-slate-300 px-3 py-2 text-sm md:col-span-2"
                 list="legal-entity-options"
-                placeholder={l("Legal entity ID", "Hukuki birim ID")}
+                placeholder={l("Legal entity ID", "Istirak / bagli ortak ID")}
                 required
               />
               <datalist id="legal-entity-options">
@@ -737,7 +737,7 @@ export default function ConsolidationSetupPage() {
                 onChange={(event) => setMappingForm((prev) => ({ ...prev, legalEntityId: event.target.value, localCoaId: "" }))}
                 className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
                 list="legal-entity-options"
-                placeholder={l("Legal entity ID", "Hukuki birim ID")}
+                placeholder={l("Legal entity ID", "Istirak / bagli ortak ID")}
                 required
               />
               <input
@@ -943,3 +943,4 @@ export default function ConsolidationSetupPage() {
     </div>
   );
 }
+

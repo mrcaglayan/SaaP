@@ -21,10 +21,12 @@ import RbacAuditLogsPage from "./pages/security/RbacAuditLogsPage";
 import IntercompanyReconciliationPage from "./pages/IntercompanyReconciliationPage";
 import ConsolidationReportsPage from "./pages/ConsolidationReportsPage";
 import ProviderBootstrapPage from "./pages/ProviderBootstrapPage";
+import ProviderLoginPage from "./pages/provider/ProviderLoginPage.jsx";
 import ModulePlaceholderPage from "./pages/ModulePlaceholderPage";
 import { collectSidebarLinks, sidebarItems } from "./layouts/sidebarConfig.js";
 import TenantReadinessProvider from "./readiness/TenantReadinessProvider.jsx";
 import RequireTenantReadiness from "./readiness/RequireTenantReadiness.jsx";
+import RequireProviderAuth from "./provider/RequireProviderAuth.jsx";
 
 const sidebarLinks = collectSidebarLinks(sidebarItems);
 const sidebarLinkByPath = new Map(sidebarLinks.map((link) => [link.to, link]));
@@ -135,6 +137,14 @@ export default function App() {
   const canViewUnimplementedModules = hasAllPermissions(
     MODULE_PREVIEW_ADMIN_PERMISSIONS
   );
+  const providerPanelEnabled =
+    import.meta.env.DEV ||
+    String(import.meta.env.VITE_PROVIDER_PANEL_ENABLED || "")
+      .trim()
+      .toLowerCase() === "true" ||
+    String(import.meta.env.VITE_PROVIDER_BOOTSTRAP_ENABLED || "")
+      .trim()
+      .toLowerCase() === "true";
   const placeholderRoutes = canViewUnimplementedModules
     ? allPlaceholderRoutes
     : [];
@@ -143,7 +153,24 @@ export default function App() {
     <Routes>
       <Route path="/" element={<Navigate to="/app" replace />} />
       <Route path="/login" element={<LoginPage />} />
-      <Route path="/provider/bootstrap" element={<ProviderBootstrapPage />} />
+      {providerPanelEnabled ? (
+        <>
+          <Route path="/provider" element={<Navigate to="/provider/login" replace />} />
+          <Route path="/provider/login" element={<ProviderLoginPage />} />
+          <Route
+            path="/provider/bootstrap"
+            element={
+              <RequireProviderAuth>
+                <ProviderBootstrapPage />
+              </RequireProviderAuth>
+            }
+          />
+          <Route
+            path="/provider/admin/tenants"
+            element={<Navigate to="/provider/bootstrap" replace />}
+          />
+        </>
+      ) : null}
 
       <Route
         path="/app"
