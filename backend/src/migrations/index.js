@@ -5,6 +5,7 @@ import migration004TenantSafeConstraints from "./m004_tenant_safe_constraints.js
 import migration005PeriodCloseRuns from "./m005_period_close_runs.js";
 import migration006ProviderControlPlane from "./m006_provider_control_plane.js";
 import migration007ShareholdersMaster from "./m007_shareholders_master.js";
+import migration008ShareholderCapitalSubAccount from "./m008_shareholder_capital_sub_account.js";
 
 const migrations = [
   migration001GlobalMultiEntity,
@@ -14,6 +15,7 @@ const migrations = [
   migration005PeriodCloseRuns,
   migration006ProviderControlPlane,
   migration007ShareholdersMaster,
+  migration008ShareholderCapitalSubAccount,
 ];
 
 export default migrations;

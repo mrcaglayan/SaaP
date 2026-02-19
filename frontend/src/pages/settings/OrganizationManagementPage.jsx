@@ -15,6 +15,7 @@ import {
   upsertOperatingUnit,
   upsertShareholder,
 } from "../../api/orgAdmin.js";
+import { listAccounts } from "../../api/glAdmin.js";
 import { useAuth } from "../../auth/useAuth.js";
 import { useI18n } from "../../i18n/useI18n.js";
 import TenantReadinessChecklist from "../../readiness/TenantReadinessChecklist.jsx";
@@ -28,6 +29,43 @@ function toNumber(value) {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
+function getCommitmentJournalSkipReason(reason, l) {
+  switch (String(reason || "")) {
+    case "CAPITAL_SUB_ACCOUNT_REQUIRED":
+      return l(
+        "No commitment journal created: choose a capital sub-account for the shareholder.",
+        "Taahhut fisi olusturulmadi: ortak icin bir sermaye alt hesap secin."
+      );
+    case "AUTH_USER_REQUIRED":
+      return l(
+        "No commitment journal created: authenticated user is required.",
+        "Taahhut fisi olusturulmadi: dogrulanmis kullanici gerekli."
+      );
+    case "NO_OPEN_BOOK_PERIOD":
+      return l(
+        "No commitment journal created: no open book/period found for the legal entity.",
+        "Taahhut fisi olusturulmadi: secili istirak / bagli ortak icin acik defter/donem bulunamadi."
+      );
+    case "UNPAID_CAPITAL_ACCOUNT_NOT_FOUND":
+      return l(
+        "No commitment journal created: add an active postable debit-side 501* equity account.",
+        "Taahhut fisi olusturulmadi: aktif, post edilebilir borc karakterli 501* ozkaynak hesabi ekleyin."
+      );
+    case "COMMITTED_CAPITAL_DECREASE_REQUIRES_MANUAL_REVERSAL":
+      return l(
+        "Committed capital decreased. Please create a manual reversal/adjustment journal.",
+        "Taahhut edilen sermaye azaltildi. Lutfen manuel ters/duzeltme yevmiyesi olusturun."
+      );
+    case "DISABLED":
+      return l(
+        "Auto commitment journal is disabled.",
+        "Otomatik taahhut fisi olusturma kapali."
+      );
+    default:
+      return "";
+  }
+}
+
 export default function OrganizationManagementPage() {
   const { hasPermission } = useAuth();
   const { language } = useI18n();
@@ -36,6 +74,7 @@ export default function OrganizationManagementPage() {
   const canReadOrgTree = hasPermission("org.tree.read");
   const canReadFiscalCalendars = hasPermission("org.fiscal_calendar.read");
   const canReadFiscalPeriods = hasPermission("org.fiscal_period.read");
+  const canReadAccounts = hasPermission("gl.account.read");
   const canUpsertGroupCompany = hasPermission("org.group_company.upsert");
   const canUpsertLegalEntity = hasPermission("org.legal_entity.upsert");
   const canUpsertOperatingUnit = hasPermission("org.operating_unit.upsert");
@@ -48,10 +87,12 @@ export default function OrganizationManagementPage() {
   const [saving, setSaving] = useState("");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const [shareholderJournalModal, setShareholderJournalModal] = useState(null);
 
   const [groups, setGroups] = useState([]);
   const [countries, setCountries] = useState([]);
   const [currencies, setCurrencies] = useState([]);
+  const [accounts, setAccounts] = useState([]);
   const [legalEntities, setLegalEntities] = useState([]);
   const [operatingUnits, setOperatingUnits] = useState([]);
   const [shareholders, setShareholders] = useState([]);
@@ -85,7 +126,7 @@ export default function OrganizationManagementPage() {
     taxId: "",
     ownershipPct: "",
     committedCapital: "0",
-    paidCapital: "0",
+    capitalSubAccountId: "",
     currencyCode: "USD",
     status: "ACTIVE",
     notes: "",
@@ -115,6 +156,7 @@ export default function OrganizationManagementPage() {
           groupsRes,
           countriesRes,
           currenciesRes,
+          accountsRes,
           entitiesRes,
           unitsRes,
           shareholdersRes,
@@ -123,6 +165,9 @@ export default function OrganizationManagementPage() {
             listGroupCompanies(),
             listCountries(),
             listCurrencies(),
+            canReadAccounts
+              ? listAccounts({ includeInactive: true })
+              : Promise.resolve({ rows: [] }),
             listLegalEntities(),
             listOperatingUnits(),
             canReadShareholders
@@ -133,6 +178,7 @@ export default function OrganizationManagementPage() {
         const groupRows = groupsRes?.rows || [];
         const countryRows = countriesRes?.rows || [];
         const currencyRows = currenciesRes?.rows || [];
+        const accountRows = accountsRes?.rows || [];
         const entityRows = entitiesRes?.rows || [];
         const unitRows = unitsRes?.rows || [];
         const shareholderRows = shareholdersRes?.rows || [];
@@ -140,6 +186,7 @@ export default function OrganizationManagementPage() {
         setGroups(groupRows);
         setCountries(countryRows);
         setCurrencies(currencyRows);
+        setAccounts(accountRows);
         setLegalEntities(entityRows);
         setOperatingUnits(unitRows);
         setShareholders(shareholderRows);
@@ -219,7 +266,12 @@ export default function OrganizationManagementPage() {
   useEffect(() => {
     loadCoreData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canReadOrgTree, canReadFiscalCalendars, canReadShareholders]);
+  }, [
+    canReadOrgTree,
+    canReadFiscalCalendars,
+    canReadShareholders,
+    canReadAccounts,
+  ]);
 
   useEffect(() => {
     loadPeriods(periodForm.calendarId, periodForm.fiscalYear);
@@ -248,6 +300,19 @@ export default function OrganizationManagementPage() {
   const selectedShareholderLegalEntityId = toNumber(
     shareholderForm.legalEntityId
   );
+  const equityShareholderAccounts = useMemo(() => {
+    if (!selectedShareholderLegalEntityId) {
+      return [];
+    }
+    return accounts.filter((row) => {
+      const sameEntity =
+        Number(row.legal_entity_id) === Number(selectedShareholderLegalEntityId);
+      const isEquity = String(row.account_type || "").toUpperCase() === "EQUITY";
+      const isActive = Boolean(row.is_active);
+      return sameEntity && isEquity && isActive;
+    });
+  }, [accounts, selectedShareholderLegalEntityId]);
+
   const visibleShareholders = useMemo(() => {
     if (!selectedShareholderLegalEntityId) {
       return shareholders;
@@ -396,12 +461,23 @@ export default function OrganizationManagementPage() {
       setError(l("legalEntityId is required.", "legalEntityId zorunludur."));
       return;
     }
+    const committedCapital = Number(shareholderForm.committedCapital || 0);
+    const capitalSubAccountId = toNumber(shareholderForm.capitalSubAccountId);
+    if (committedCapital > 0 && !capitalSubAccountId) {
+      setError(
+        l(
+          "Capital sub-account is required when committed capital is greater than 0.",
+          "Taahhut edilen sermaye 0'dan buyukse sermaye alt hesap zorunludur."
+        )
+      );
+      return;
+    }
 
     setSaving("shareholder");
     setError("");
     setMessage("");
     try {
-      await upsertShareholder({
+      const response = await upsertShareholder({
         legalEntityId,
         code: shareholderForm.code.trim(),
         name: shareholderForm.name.trim(),
@@ -411,8 +487,9 @@ export default function OrganizationManagementPage() {
           shareholderForm.ownershipPct === ""
             ? undefined
             : Number(shareholderForm.ownershipPct),
-        committedCapital: Number(shareholderForm.committedCapital || 0),
-        paidCapital: Number(shareholderForm.paidCapital || 0),
+        committedCapital,
+        capitalSubAccountId: capitalSubAccountId || undefined,
+        autoCommitmentJournal: true,
         currencyCode: shareholderForm.currencyCode.trim().toUpperCase(),
         status: shareholderForm.status,
         notes: shareholderForm.notes.trim() || undefined,
@@ -425,10 +502,50 @@ export default function OrganizationManagementPage() {
         taxId: "",
         ownershipPct: "",
         committedCapital: "0",
-        paidCapital: "0",
+        capitalSubAccountId: "",
         notes: "",
       }));
-      setMessage(l("Shareholder saved.", "Ortak kaydedildi."));
+
+      const commitmentJournal = response?.commitmentJournal || null;
+      if (commitmentJournal?.created) {
+        const amountLabel = Number(commitmentJournal.amount || 0).toLocaleString(
+          undefined,
+          {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+          }
+        );
+        setMessage(
+          l(
+            "Shareholder saved. Commitment draft journal created.",
+            "Ortak kaydedildi. Taahhut taslak yevmiye kaydi olusturuldu."
+          )
+        );
+        setShareholderJournalModal({
+          title: l(
+            "Commitment Journal Created",
+            "Taahhut Yevmiye Kaydi Olusturuldu"
+          ),
+          message: l(
+            `Draft journal ${commitmentJournal.journalNo || "-"} created for commitment amount ${amountLabel}.`,
+            `Taahhut tutari ${amountLabel} icin ${commitmentJournal.journalNo || "-"} numarali taslak fis olusturuldu.`
+          ),
+          journalNo: commitmentJournal.journalNo || "-",
+          journalEntryId: commitmentJournal.journalEntryId || "-",
+          bookCode: commitmentJournal.bookCode || "-",
+          fiscalPeriodId: commitmentJournal.fiscalPeriodId || "-",
+        });
+      } else {
+        const reasonText = getCommitmentJournalSkipReason(
+          commitmentJournal?.reason,
+          l
+        );
+        setMessage(
+          reasonText
+            ? `${l("Shareholder saved.", "Ortak kaydedildi.")} ${reasonText}`
+            : l("Shareholder saved.", "Ortak kaydedildi.")
+        );
+      }
       await loadCoreData();
     } catch (err) {
       setError(
@@ -908,6 +1025,7 @@ export default function OrganizationManagementPage() {
                 setShareholderForm((prev) => ({
                   ...prev,
                   legalEntityId: nextLegalEntityId,
+                  capitalSubAccountId: "",
                   currencyCode: defaultCurrency || prev.currencyCode,
                 }));
               }}
@@ -980,6 +1098,34 @@ export default function OrganizationManagementPage() {
               placeholder={l("Ownership %", "Sahiplik %")}
             />
             <select
+              value={shareholderForm.capitalSubAccountId}
+              onChange={(event) =>
+                setShareholderForm((prev) => ({
+                  ...prev,
+                  capitalSubAccountId: event.target.value,
+                }))
+              }
+              className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              disabled={!canReadAccounts}
+            >
+              <option value="">
+                {canReadAccounts
+                  ? l(
+                      "Capital sub-account (optional)",
+                      "Sermaye alt hesap (opsiyonel)"
+                    )
+                  : l(
+                      "Need gl.account.read",
+                      "gl.account.read yetkisi gerekli"
+                    )}
+              </option>
+              {equityShareholderAccounts.map((account) => (
+                <option key={account.id} value={account.id}>
+                  {account.code} - {account.name}
+                </option>
+              ))}
+            </select>
+            <select
               value={shareholderForm.currencyCode}
               onChange={(event) =>
                 setShareholderForm((prev) => ({
@@ -1011,20 +1157,12 @@ export default function OrganizationManagementPage() {
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
               placeholder={l("Committed capital", "Taahhut edilen sermaye")}
             />
-            <input
-              type="number"
-              min={0}
-              step="0.01"
-              value={shareholderForm.paidCapital}
-              onChange={(event) =>
-                setShareholderForm((prev) => ({
-                  ...prev,
-                  paidCapital: event.target.value,
-                }))
-              }
-              className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              placeholder={l("Paid capital", "Odenen sermaye")}
-            />
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+              {l(
+                "Paid capital is auto-calculated from posted journals on the mapped capital sub-account.",
+                "Odenen sermaye, eslenen sermaye alt hesabi uzerinden post edilmis yevmiye kayitlarindan otomatik hesaplanir."
+              )}
+            </div>
             <select
               value={shareholderForm.status}
               onChange={(event) =>
@@ -1070,6 +1208,9 @@ export default function OrganizationManagementPage() {
                   <th className="px-3 py-2">{l("Name", "Ad")}</th>
                   <th className="px-3 py-2">{l("Type", "Tur")}</th>
                   <th className="px-3 py-2">{l("Ownership %", "Sahiplik %")}</th>
+                  <th className="px-3 py-2">
+                    {l("Capital Sub-Account", "Sermaye Alt Hesap")}
+                  </th>
                   <th className="px-3 py-2">{l("Committed", "Taahhut")}</th>
                   <th className="px-3 py-2">{l("Paid", "Odenen")}</th>
                   <th className="px-3 py-2">{l("Currency", "Para birimi")}</th>
@@ -1090,6 +1231,13 @@ export default function OrganizationManagementPage() {
                         : Number(row.ownership_pct).toFixed(4)}
                     </td>
                     <td className="px-3 py-2">
+                      {row.capital_sub_account_code
+                        ? row.capital_sub_account_name
+                          ? `${row.capital_sub_account_code} - ${row.capital_sub_account_name}`
+                          : row.capital_sub_account_code
+                        : "-"}
+                    </td>
+                    <td className="px-3 py-2">
                       {Number(row.committed_capital || 0).toLocaleString(undefined, {
                         minimumFractionDigits: 2,
                         maximumFractionDigits: 2,
@@ -1107,7 +1255,7 @@ export default function OrganizationManagementPage() {
                 ))}
                 {visibleShareholders.length === 0 && !loading && (
                   <tr>
-                    <td colSpan={10} className="px-3 py-3 text-slate-500">
+                    <td colSpan={11} className="px-3 py-3 text-slate-500">
                       {l("No shareholders found.", "Ortak bulunamadi.")}
                     </td>
                   </tr>
@@ -1258,6 +1406,50 @@ export default function OrganizationManagementPage() {
           </div>
         </section>
       </div>
+
+      {shareholderJournalModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 px-4">
+          <div className="w-full max-w-lg rounded-xl border border-slate-200 bg-white p-4 shadow-xl">
+            <h3 className="text-base font-semibold text-slate-900">
+              {shareholderJournalModal.title}
+            </h3>
+            <p className="mt-2 text-sm text-slate-700">
+              {shareholderJournalModal.message}
+            </p>
+            <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700">
+              <div>
+                {l("Journal No", "Fis No")}:{" "}
+                <span className="font-mono">{shareholderJournalModal.journalNo}</span>
+              </div>
+              <div>
+                {l("Journal ID", "Fis ID")}:{" "}
+                <span className="font-mono">
+                  {shareholderJournalModal.journalEntryId}
+                </span>
+              </div>
+              <div>
+                {l("Book", "Defter")}:{" "}
+                <span className="font-mono">{shareholderJournalModal.bookCode}</span>
+              </div>
+              <div>
+                {l("Fiscal Period ID", "Mali Donem ID")}:{" "}
+                <span className="font-mono">
+                  {shareholderJournalModal.fiscalPeriodId}
+                </span>
+              </div>
+            </div>
+            <div className="mt-4 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setShareholderJournalModal(null)}
+                className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white"
+              >
+                OK
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

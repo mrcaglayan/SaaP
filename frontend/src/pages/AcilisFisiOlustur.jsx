@@ -87,6 +87,25 @@ export default function AcilisFisiOlustur() {
 
   const selectedLegalEntityId = toPositiveInt(form.legalEntityId);
   const selectedBookId = toPositiveInt(form.bookId);
+  const postableAccounts = useMemo(() => {
+    const parentIds = new Set(
+      accounts
+        .map((row) => toPositiveInt(row.parent_account_id))
+        .filter(Boolean)
+    );
+    return accounts.filter((row) => {
+      const accountId = toPositiveInt(row.id);
+      if (!accountId) {
+        return false;
+      }
+      const allowPosting = !(
+        row.allow_posting === false ||
+        row.allow_posting === 0 ||
+        row.allow_posting === "0"
+      );
+      return allowPosting && !parentIds.has(accountId);
+    });
+  }, [accounts]);
 
   useEffect(() => {
     let cancelled = false;
@@ -606,7 +625,7 @@ export default function AcilisFisiOlustur() {
                         disabled={!canReadAccounts}
                       >
                         <option value="">{l("Select account", "Hesap secin")}</option>
-                        {accounts.map((account) => (
+                        {postableAccounts.map((account) => (
                           <option key={account.id} value={account.id}>
                             {account.code} - {account.name}
                           </option>

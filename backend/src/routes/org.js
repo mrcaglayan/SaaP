@@ -116,6 +116,363 @@ function parseOptionalNonNegativeNumber(rawValue, label, defaultValue = null) {
   return parsed;
 }
 
+function generateAutoJournalNo(prefix = "TAA") {
+  const stamp = Date.now().toString(36).toUpperCase();
+  const rand = Math.floor(Math.random() * 1_679_616)
+    .toString(36)
+    .toUpperCase()
+    .padStart(4, "0");
+  return `${String(prefix).slice(0, 8).toUpperCase()}-${stamp}-${rand}`.slice(0, 40);
+}
+
+function normalizeMoney(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return 0;
+  }
+  return Math.round(parsed * 1_000_000) / 1_000_000;
+}
+
+function toCommitmentJournalFailureMessage(reason) {
+  switch (String(reason || "")) {
+    case "CAPITAL_SUB_ACCOUNT_REQUIRED":
+      return "capitalSubAccountId is required to create commitment journal";
+    case "AUTH_USER_REQUIRED":
+      return "Authenticated user is required to create commitment journal";
+    case "NO_OPEN_BOOK_PERIOD":
+      return "No OPEN book/fiscal period found for legalEntityId";
+    case "UNPAID_CAPITAL_ACCOUNT_NOT_FOUND":
+      return "Missing active postable debit-side 501* equity account for commitment journal";
+    default:
+      return "Commitment journal could not be created";
+  }
+}
+
+function toJournalContextRow(row) {
+  if (!row) {
+    return null;
+  }
+  return {
+    bookId: parsePositiveInt(row.book_id),
+    bookCode: String(row.book_code || ""),
+    fiscalPeriodId: parsePositiveInt(row.fiscal_period_id),
+    startDate: String(row.start_date || ""),
+    endDate: String(row.end_date || ""),
+    baseCurrencyCode: String(row.base_currency_code || "USD").toUpperCase(),
+  };
+}
+
+async function resolveOpenBookPeriodForLegalEntity(
+  tx,
+  tenantId,
+  legalEntityId,
+  asOfDate
+) {
+  const currentResult = await tx.query(
+    `SELECT
+       b.id AS book_id,
+       b.code AS book_code,
+       b.base_currency_code,
+       fp.id AS fiscal_period_id,
+       fp.start_date,
+       fp.end_date
+     FROM books b
+     JOIN fiscal_periods fp
+       ON fp.calendar_id = b.calendar_id
+      AND fp.is_adjustment = FALSE
+     LEFT JOIN period_statuses ps
+       ON ps.book_id = b.id
+      AND ps.fiscal_period_id = fp.id
+     WHERE b.tenant_id = ?
+       AND b.legal_entity_id = ?
+       AND ? BETWEEN fp.start_date AND fp.end_date
+       AND COALESCE(ps.status, 'OPEN') = 'OPEN'
+     ORDER BY b.id, fp.start_date DESC
+     LIMIT 1`,
+    [tenantId, legalEntityId, asOfDate]
+  );
+  const current = toJournalContextRow(currentResult.rows[0]);
+  if (current) {
+    return current;
+  }
+
+  const pastResult = await tx.query(
+    `SELECT
+       b.id AS book_id,
+       b.code AS book_code,
+       b.base_currency_code,
+       fp.id AS fiscal_period_id,
+       fp.start_date,
+       fp.end_date
+     FROM books b
+     JOIN fiscal_periods fp
+       ON fp.calendar_id = b.calendar_id
+      AND fp.is_adjustment = FALSE
+     LEFT JOIN period_statuses ps
+       ON ps.book_id = b.id
+      AND ps.fiscal_period_id = fp.id
+     WHERE b.tenant_id = ?
+       AND b.legal_entity_id = ?
+       AND fp.start_date <= ?
+       AND COALESCE(ps.status, 'OPEN') = 'OPEN'
+     ORDER BY fp.start_date DESC
+     LIMIT 1`,
+    [tenantId, legalEntityId, asOfDate]
+  );
+  const past = toJournalContextRow(pastResult.rows[0]);
+  if (past) {
+    return past;
+  }
+
+  const futureResult = await tx.query(
+    `SELECT
+       b.id AS book_id,
+       b.code AS book_code,
+       b.base_currency_code,
+       fp.id AS fiscal_period_id,
+       fp.start_date,
+       fp.end_date
+     FROM books b
+     JOIN fiscal_periods fp
+       ON fp.calendar_id = b.calendar_id
+      AND fp.is_adjustment = FALSE
+     LEFT JOIN period_statuses ps
+       ON ps.book_id = b.id
+      AND ps.fiscal_period_id = fp.id
+     WHERE b.tenant_id = ?
+       AND b.legal_entity_id = ?
+       AND fp.start_date > ?
+       AND COALESCE(ps.status, 'OPEN') = 'OPEN'
+     ORDER BY fp.start_date ASC
+     LIMIT 1`,
+    [tenantId, legalEntityId, asOfDate]
+  );
+  return toJournalContextRow(futureResult.rows[0]);
+}
+
+async function resolveUnpaidCapitalDebitAccount(
+  tx,
+  tenantId,
+  legalEntityId
+) {
+  const result = await tx.query(
+    `SELECT
+       a.id,
+       a.code,
+       a.name
+     FROM accounts a
+     JOIN charts_of_accounts c ON c.id = a.coa_id
+     WHERE c.tenant_id = ?
+       AND c.legal_entity_id = ?
+       AND a.is_active = TRUE
+       AND a.allow_posting = TRUE
+       AND a.account_type = 'EQUITY'
+       AND a.normal_side = 'DEBIT'
+       AND a.code LIKE '501%'
+       AND NOT EXISTS (
+         SELECT 1
+         FROM accounts child
+         WHERE child.parent_account_id = a.id
+           AND child.is_active = TRUE
+       )
+     ORDER BY CASE WHEN a.code = '501' THEN 0 ELSE 1 END, LENGTH(a.code), a.code
+     LIMIT 1`,
+    [tenantId, legalEntityId]
+  );
+  const row = result.rows[0];
+  if (!row) {
+    return null;
+  }
+  return {
+    id: parsePositiveInt(row.id),
+    code: String(row.code || ""),
+    name: String(row.name || ""),
+  };
+}
+
+async function createShareholderCommitmentDraftJournal(tx, payload) {
+  const amount = normalizeMoney(payload.amount);
+  if (amount <= 0) {
+    return {
+      attempted: false,
+      created: false,
+      reason: "NO_COMMITTED_CAPITAL_INCREASE",
+      amount: 0,
+    };
+  }
+
+  if (!payload.capitalSubAccountId) {
+    return {
+      attempted: true,
+      created: false,
+      reason: "CAPITAL_SUB_ACCOUNT_REQUIRED",
+      amount,
+    };
+  }
+
+  if (!payload.userId) {
+    return {
+      attempted: true,
+      created: false,
+      reason: "AUTH_USER_REQUIRED",
+      amount,
+    };
+  }
+
+  const today = toIsoDate(new Date());
+  const journalContext = await resolveOpenBookPeriodForLegalEntity(
+    tx,
+    payload.tenantId,
+    payload.legalEntityId,
+    today
+  );
+  if (!journalContext?.bookId || !journalContext?.fiscalPeriodId) {
+    return {
+      attempted: true,
+      created: false,
+      reason: "NO_OPEN_BOOK_PERIOD",
+      amount,
+    };
+  }
+
+  const unpaidCapitalAccount = await resolveUnpaidCapitalDebitAccount(
+    tx,
+    payload.tenantId,
+    payload.legalEntityId
+  );
+  if (!unpaidCapitalAccount?.id) {
+    return {
+      attempted: true,
+      created: false,
+      reason: "UNPAID_CAPITAL_ACCOUNT_NOT_FOUND",
+      amount,
+      bookId: journalContext.bookId,
+      fiscalPeriodId: journalContext.fiscalPeriodId,
+    };
+  }
+
+  const entryDate =
+    today >= journalContext.startDate && today <= journalContext.endDate
+      ? today
+      : journalContext.startDate;
+  const documentDate = entryDate;
+  const journalNo = generateAutoJournalNo("TAAHHUT");
+  const description = `Shareholder commitment (${payload.shareholderCode})`;
+  const referenceNo = `SHAREHOLDER_COMMITMENT:${payload.shareholderId}:${Date.now()}`.slice(
+    0,
+    100
+  );
+  const currencyCode = String(
+    journalContext.baseCurrencyCode || payload.currencyCode || "USD"
+  ).toUpperCase();
+
+  const entryResult = await tx.query(
+    `INSERT INTO journal_entries (
+        tenant_id,
+        legal_entity_id,
+        book_id,
+        fiscal_period_id,
+        journal_no,
+        source_type,
+        status,
+        entry_date,
+        document_date,
+        currency_code,
+        description,
+        reference_no,
+        total_debit_base,
+        total_credit_base,
+        created_by_user_id
+      )
+      VALUES (?, ?, ?, ?, ?, 'SYSTEM', 'DRAFT', ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      payload.tenantId,
+      payload.legalEntityId,
+      journalContext.bookId,
+      journalContext.fiscalPeriodId,
+      journalNo,
+      entryDate,
+      documentDate,
+      currencyCode,
+      description,
+      referenceNo,
+      amount,
+      amount,
+      payload.userId,
+    ]
+  );
+  const journalEntryId = parsePositiveInt(entryResult.rows.insertId);
+  if (!journalEntryId) {
+    throw badRequest("Failed to create shareholder commitment journal");
+  }
+
+  await tx.query(
+    `INSERT INTO journal_lines (
+        journal_entry_id,
+        line_no,
+        account_id,
+        operating_unit_id,
+        counterparty_legal_entity_id,
+        description,
+        currency_code,
+        amount_txn,
+        debit_base,
+        credit_base,
+        tax_code
+      )
+      VALUES (?, 1, ?, NULL, NULL, ?, ?, ?, ?, 0, NULL)`,
+    [
+      journalEntryId,
+      unpaidCapitalAccount.id,
+      `Shareholder commitment receivable (${payload.shareholderCode})`,
+      currencyCode,
+      amount,
+      amount,
+    ]
+  );
+
+  await tx.query(
+    `INSERT INTO journal_lines (
+        journal_entry_id,
+        line_no,
+        account_id,
+        operating_unit_id,
+        counterparty_legal_entity_id,
+        description,
+        currency_code,
+        amount_txn,
+        debit_base,
+        credit_base,
+        tax_code
+      )
+      VALUES (?, 2, ?, NULL, NULL, ?, ?, ?, 0, ?, NULL)`,
+    [
+      journalEntryId,
+      payload.capitalSubAccountId,
+      `Committed capital (${payload.shareholderCode})`,
+      currencyCode,
+      amount * -1,
+      amount,
+    ]
+  );
+
+  return {
+    attempted: true,
+    created: true,
+    reason: null,
+    journalEntryId,
+    journalNo,
+    bookId: journalContext.bookId,
+    bookCode: journalContext.bookCode,
+    fiscalPeriodId: journalContext.fiscalPeriodId,
+    entryDate,
+    amount,
+    debitAccountId: unpaidCapitalAccount.id,
+    debitAccountCode: unpaidCapitalAccount.code,
+    creditAccountId: payload.capitalSubAccountId,
+  };
+}
+
 async function resolveLegalEntityByCode(tx, tenantId, code) {
   const result = await tx.query(
     `SELECT id, code, name, functional_currency_code
@@ -959,38 +1316,63 @@ router.get(
     }
 
     const params = [tenantId];
-    const conditions = ["tenant_id = ?"];
-    conditions.push(buildScopeFilter(req, "legal_entity", "legal_entity_id", params));
+    const conditions = ["s.tenant_id = ?"];
+    conditions.push(buildScopeFilter(req, "legal_entity", "s.legal_entity_id", params));
 
     if (legalEntityId) {
-      conditions.push("legal_entity_id = ?");
+      conditions.push("s.legal_entity_id = ?");
       params.push(legalEntityId);
     }
     if (status) {
-      conditions.push("status = ?");
+      conditions.push("s.status = ?");
       params.push(status);
     }
 
     const result = await query(
       `SELECT
-         id,
-         tenant_id,
-         legal_entity_id,
-         code,
-         name,
-         shareholder_type,
-         tax_id,
-         ownership_pct,
-         committed_capital,
-         paid_capital,
-         currency_code,
-         status,
-         notes,
-         created_at,
-         updated_at
-       FROM shareholders
+         s.id,
+         s.tenant_id,
+         s.legal_entity_id,
+         s.code,
+         s.name,
+         s.shareholder_type,
+         s.tax_id,
+         s.ownership_pct,
+         s.committed_capital,
+         CASE
+           WHEN c.id IS NULL THEN 0
+           ELSE COALESCE(pc.paid_capital_calculated, 0)
+         END AS paid_capital,
+         CASE WHEN c.id IS NULL THEN NULL ELSE s.capital_sub_account_id END AS capital_sub_account_id,
+         s.currency_code,
+         s.status,
+         s.notes,
+         s.created_at,
+         s.updated_at,
+         CASE WHEN c.id IS NULL THEN NULL ELSE a.code END AS capital_sub_account_code,
+         CASE WHEN c.id IS NULL THEN NULL ELSE a.name END AS capital_sub_account_name,
+         CASE WHEN c.id IS NULL THEN NULL ELSE a.account_type END AS capital_sub_account_type
+       FROM shareholders s
+       LEFT JOIN accounts a ON a.id = s.capital_sub_account_id
+       LEFT JOIN charts_of_accounts c
+         ON c.id = a.coa_id
+        AND c.tenant_id = s.tenant_id
+       LEFT JOIN (
+         SELECT
+           je.tenant_id,
+           je.legal_entity_id,
+           jl.account_id,
+           SUM(jl.credit_base) AS paid_capital_calculated
+         FROM journal_entries je
+         JOIN journal_lines jl ON jl.journal_entry_id = je.id
+         WHERE je.status = 'POSTED'
+         GROUP BY je.tenant_id, je.legal_entity_id, jl.account_id
+       ) pc
+         ON pc.tenant_id = s.tenant_id
+        AND pc.legal_entity_id = s.legal_entity_id
+        AND pc.account_id = s.capital_sub_account_id
        WHERE ${conditions.join(" AND ")}
-       ORDER BY legal_entity_id, code`,
+       ORDER BY s.legal_entity_id, s.code`,
       params
     );
 
@@ -1063,14 +1445,6 @@ router.post(
       "committedCapital",
       0
     );
-    const paidCapital = parseOptionalNonNegativeNumber(
-      req.body.paidCapital,
-      "paidCapital",
-      0
-    );
-    if (paidCapital > committedCapital) {
-      throw badRequest("paidCapital cannot exceed committedCapital");
-    }
 
     const currencyCode = String(
       req.body.currencyCode || legalEntity.functional_currency_code || "USD"
@@ -1081,62 +1455,212 @@ router.post(
 
     const taxId = req.body.taxId ? String(req.body.taxId).trim() : null;
     const notes = req.body.notes ? String(req.body.notes).trim() : null;
+    const capitalSubAccountId = req.body.capitalSubAccountId
+      ? parsePositiveInt(req.body.capitalSubAccountId)
+      : null;
+    const autoCommitmentJournal = parseBooleanValue(
+      req.body.autoCommitmentJournal,
+      true
+    );
+    const userId = parsePositiveInt(req.user?.userId);
+    if (req.body.capitalSubAccountId && !capitalSubAccountId) {
+      throw badRequest("capitalSubAccountId must be a positive integer");
+    }
+    if (autoCommitmentJournal && committedCapital > 0 && !capitalSubAccountId) {
+      throw badRequest(
+        "capitalSubAccountId is required when committedCapital is greater than 0"
+      );
+    }
 
-    await query(
-      `INSERT INTO shareholders (
-          tenant_id,
-          legal_entity_id,
+    const operation = await withTransaction(async (tx) => {
+      const existingResult = await tx.query(
+        `SELECT id, committed_capital, capital_sub_account_id
+         FROM shareholders
+         WHERE tenant_id = ?
+           AND legal_entity_id = ?
+           AND code = ?
+         LIMIT 1
+         FOR UPDATE`,
+        [tenantId, legalEntityId, code]
+      );
+      const existing = existingResult.rows[0] || null;
+
+      if (capitalSubAccountId) {
+        const accountResult = await tx.query(
+          `SELECT
+             a.id,
+             a.code,
+             a.account_type,
+             a.allow_posting,
+             a.is_active,
+             EXISTS(
+               SELECT 1
+               FROM accounts child
+               WHERE child.parent_account_id = a.id
+                 AND child.is_active = TRUE
+             ) AS has_active_children,
+             c.legal_entity_id
+           FROM accounts a
+           JOIN charts_of_accounts c ON c.id = a.coa_id
+           WHERE a.id = ?
+             AND c.tenant_id = ?
+           LIMIT 1`,
+          [capitalSubAccountId, tenantId]
+        );
+        const account = accountResult.rows[0];
+        if (!account) {
+          throw badRequest("capitalSubAccountId not found for tenant");
+        }
+        if (parsePositiveInt(account.legal_entity_id) !== legalEntityId) {
+          throw badRequest(
+            "capitalSubAccountId must belong to the selected legalEntityId"
+          );
+        }
+        if (String(account.account_type || "").toUpperCase() !== "EQUITY") {
+          throw badRequest("capitalSubAccountId must reference an EQUITY account");
+        }
+        if (!Boolean(account.is_active)) {
+          throw badRequest("capitalSubAccountId must reference an active account");
+        }
+        if (!Boolean(account.allow_posting)) {
+          throw badRequest("capitalSubAccountId must reference a postable account");
+        }
+        if (Boolean(account.has_active_children)) {
+          throw badRequest("capitalSubAccountId must reference a leaf sub-account");
+        }
+
+        const mappingConflict = await tx.query(
+          `SELECT id
+           FROM shareholders
+           WHERE tenant_id = ?
+             AND legal_entity_id = ?
+             AND capital_sub_account_id = ?
+             AND id <> ?
+           LIMIT 1`,
+          [tenantId, legalEntityId, capitalSubAccountId, parsePositiveInt(existing?.id) || 0]
+        );
+        if (mappingConflict.rows[0]) {
+          throw badRequest(
+            "capitalSubAccountId is already assigned to another shareholder"
+          );
+        }
+      }
+
+      await tx.query(
+        `INSERT INTO shareholders (
+            tenant_id,
+            legal_entity_id,
+            code,
+            name,
+            shareholder_type,
+            tax_id,
+            ownership_pct,
+            committed_capital,
+            capital_sub_account_id,
+            currency_code,
+            status,
+            notes
+         )
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE
+           name = VALUES(name),
+           shareholder_type = VALUES(shareholder_type),
+           tax_id = VALUES(tax_id),
+           ownership_pct = VALUES(ownership_pct),
+           committed_capital = VALUES(committed_capital),
+           capital_sub_account_id = VALUES(capital_sub_account_id),
+           currency_code = VALUES(currency_code),
+           status = VALUES(status),
+           notes = VALUES(notes)`,
+        [
+          tenantId,
+          legalEntityId,
           code,
           name,
-          shareholder_type,
-          tax_id,
-          ownership_pct,
-          committed_capital,
-          paid_capital,
-          currency_code,
+          shareholderType,
+          taxId,
+          ownershipPct,
+          committedCapital,
+          capitalSubAccountId,
+          currencyCode,
           status,
-          notes
-       )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON DUPLICATE KEY UPDATE
-         name = VALUES(name),
-         shareholder_type = VALUES(shareholder_type),
-         tax_id = VALUES(tax_id),
-         ownership_pct = VALUES(ownership_pct),
-         committed_capital = VALUES(committed_capital),
-         paid_capital = VALUES(paid_capital),
-         currency_code = VALUES(currency_code),
-         status = VALUES(status),
-         notes = VALUES(notes)`,
-      [
-        tenantId,
-        legalEntityId,
-        code,
-        name,
-        shareholderType,
-        taxId,
-        ownershipPct,
-        committedCapital,
-        paidCapital,
-        currencyCode,
-        status,
-        notes,
-      ]
-    );
+          notes,
+        ]
+      );
 
-    const result = await query(
-      `SELECT id
-       FROM shareholders
-       WHERE tenant_id = ?
-         AND legal_entity_id = ?
-         AND code = ?
-       LIMIT 1`,
-      [tenantId, legalEntityId, code]
-    );
+      const savedResult = await tx.query(
+        `SELECT id, committed_capital, capital_sub_account_id
+         FROM shareholders
+         WHERE tenant_id = ?
+           AND legal_entity_id = ?
+           AND code = ?
+         LIMIT 1`,
+        [tenantId, legalEntityId, code]
+      );
+      const saved = savedResult.rows[0] || null;
+      const shareholderId = parsePositiveInt(saved?.id);
+      const previousCommittedCapital = normalizeMoney(existing?.committed_capital || 0);
+      const currentCommittedCapital = normalizeMoney(saved?.committed_capital || 0);
+      const committedCapitalDelta = normalizeMoney(
+        currentCommittedCapital - previousCommittedCapital
+      );
+
+      let commitmentJournal = {
+        attempted: false,
+        created: false,
+        reason: autoCommitmentJournal ? null : "DISABLED",
+        amount: committedCapitalDelta > 0 ? committedCapitalDelta : 0,
+      };
+
+      if (autoCommitmentJournal) {
+        if (committedCapitalDelta > 0) {
+          commitmentJournal = await createShareholderCommitmentDraftJournal(tx, {
+            tenantId,
+            legalEntityId,
+            userId,
+            shareholderId,
+            shareholderCode: code,
+            shareholderName: name,
+            amount: committedCapitalDelta,
+            currencyCode,
+            capitalSubAccountId:
+              parsePositiveInt(saved?.capital_sub_account_id) || capitalSubAccountId,
+          });
+          if (!commitmentJournal.created) {
+            throw badRequest(
+              toCommitmentJournalFailureMessage(commitmentJournal.reason)
+            );
+          }
+        } else if (committedCapitalDelta < 0) {
+          commitmentJournal = {
+            attempted: true,
+            created: false,
+            reason: "COMMITTED_CAPITAL_DECREASE_REQUIRES_MANUAL_REVERSAL",
+            amount: Math.abs(committedCapitalDelta),
+          };
+        } else {
+          commitmentJournal = {
+            attempted: true,
+            created: false,
+            reason: "NO_COMMITTED_CAPITAL_INCREASE",
+            amount: 0,
+          };
+        }
+      }
+
+      return {
+        shareholderId: shareholderId || null,
+        committedCapitalDelta,
+        commitmentJournal,
+      };
+    });
 
     return res.status(201).json({
       ok: true,
-      id: parsePositiveInt(result.rows[0]?.id) || null,
+      id: operation.shareholderId,
+      committedCapitalDelta: operation.committedCapitalDelta,
+      commitmentJournal: operation.commitmentJournal,
+      autoCommitmentJournal,
     });
   })
 );

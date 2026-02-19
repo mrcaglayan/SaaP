@@ -706,6 +706,14 @@ async function getRetainedEarningsAccountForBook(
        a.code,
        a.name,
        a.account_type,
+       a.allow_posting,
+       a.is_active,
+       EXISTS(
+         SELECT 1
+         FROM accounts child
+         WHERE child.parent_account_id = a.id
+           AND child.is_active = TRUE
+       ) AS has_active_children,
        c.legal_entity_id
      FROM accounts a
      JOIN charts_of_accounts c ON c.id = a.coa_id
@@ -722,6 +730,15 @@ async function getRetainedEarningsAccountForBook(
   const accountType = String(row.account_type || "").toUpperCase();
   if (accountType !== "EQUITY") {
     throw badRequest("retainedEarningsAccountId must reference an EQUITY account");
+  }
+  if (!Boolean(row.is_active)) {
+    throw badRequest("retainedEarningsAccountId must reference an active account");
+  }
+  if (!Boolean(row.allow_posting)) {
+    throw badRequest("retainedEarningsAccountId must reference a postable leaf account");
+  }
+  if (Boolean(row.has_active_children)) {
+    throw badRequest("retainedEarningsAccountId must reference a leaf account");
   }
 
   const accountLegalEntityId = parsePositiveInt(row.legal_entity_id);
@@ -758,7 +775,17 @@ async function validateJournalLineScope(req, tenantId, legalEntityId, line, inde
   }
 
   const accountResult = await query(
-    `SELECT a.id, c.legal_entity_id
+    `SELECT
+       a.id,
+       a.is_active,
+       a.allow_posting,
+       EXISTS(
+         SELECT 1
+         FROM accounts child
+         WHERE child.parent_account_id = a.id
+           AND child.is_active = TRUE
+       ) AS has_active_children,
+       c.legal_entity_id
      FROM accounts a
      JOIN charts_of_accounts c ON c.id = a.coa_id
      WHERE a.id = ?
@@ -769,6 +796,19 @@ async function validateJournalLineScope(req, tenantId, legalEntityId, line, inde
   const account = accountResult.rows[0];
   if (!account) {
     throw badRequest(`${lineLabel}.accountId not found for tenant`);
+  }
+  if (!Boolean(account.is_active)) {
+    throw badRequest(`${lineLabel}.accountId is inactive`);
+  }
+  if (!Boolean(account.allow_posting)) {
+    throw badRequest(
+      `${lineLabel}.accountId is not postable. Select a postable sub-account.`
+    );
+  }
+  if (Boolean(account.has_active_children)) {
+    throw badRequest(
+      `${lineLabel}.accountId is a parent account. Select a leaf sub-account.`
+    );
   }
 
   const accountLegalEntityId = parsePositiveInt(account.legal_entity_id);
@@ -1834,6 +1874,11 @@ router.get(
 
     const bookId = parsePositiveInt(req.query.bookId);
     const fiscalPeriodId = parsePositiveInt(req.query.fiscalPeriodId);
+    const includeRollupRaw = req.query.includeRollup;
+    const includeRollup =
+      includeRollupRaw === undefined || includeRollupRaw === null || includeRollupRaw === ""
+        ? true
+        : String(includeRollupRaw).toLowerCase() === "true";
     if (!bookId || !fiscalPeriodId) {
       throw badRequest("bookId and fiscalPeriodId query params are required");
     }
@@ -1865,10 +1910,172 @@ router.get(
       [tenantId, bookId, fiscalPeriodId]
     );
 
+    const postedRows = (result.rows || []).map((row) => ({
+      account_id: parsePositiveInt(row.account_id),
+      account_code: row.account_code,
+      account_name: row.account_name,
+      debit_total: Number(row.debit_total || 0),
+      credit_total: Number(row.credit_total || 0),
+      balance: Number(row.balance || 0),
+      is_rollup: false,
+      direct_debit_total: Number(row.debit_total || 0),
+      direct_credit_total: Number(row.credit_total || 0),
+      direct_balance: Number(row.balance || 0),
+    }));
+
+    const summary = postedRows.reduce(
+      (acc, row) => {
+        acc.debitTotal += Number(row.debit_total || 0);
+        acc.creditTotal += Number(row.credit_total || 0);
+        acc.balanceTotal += Number(row.balance || 0);
+        return acc;
+      },
+      { debitTotal: 0, creditTotal: 0, balanceTotal: 0 }
+    );
+
+    if (!includeRollup) {
+      return res.json({
+        bookId,
+        fiscalPeriodId,
+        includeRollup,
+        summary,
+        rows: postedRows,
+      });
+    }
+
+    const bookLegalEntityId = parsePositiveInt(book.legal_entity_id);
+    const hierarchyParams = [tenantId];
+    const hierarchyConditions = ["c.tenant_id = ?"];
+    if (bookLegalEntityId) {
+      hierarchyConditions.push("(c.legal_entity_id IS NULL OR c.legal_entity_id = ?)");
+      hierarchyParams.push(bookLegalEntityId);
+    }
+
+    const hierarchyResult = await query(
+      `SELECT
+         a.id,
+         a.parent_account_id,
+         a.code,
+         a.name
+       FROM accounts a
+       JOIN charts_of_accounts c ON c.id = a.coa_id
+       WHERE ${hierarchyConditions.join(" AND ")}`,
+      hierarchyParams
+    );
+
+    const accountById = new Map();
+    for (const row of hierarchyResult.rows || []) {
+      const accountId = parsePositiveInt(row.id);
+      if (!accountId) {
+        continue;
+      }
+      accountById.set(accountId, {
+        id: accountId,
+        parentAccountId: parsePositiveInt(row.parent_account_id),
+        code: String(row.code || `ACC-${accountId}`),
+        name: String(row.name || `Account ${accountId}`),
+      });
+    }
+
+    const aggregateByAccountId = new Map();
+    for (const row of postedRows) {
+      const accountId = parsePositiveInt(row.account_id);
+      if (!accountId) {
+        continue;
+      }
+
+      if (!accountById.has(accountId)) {
+        accountById.set(accountId, {
+          id: accountId,
+          parentAccountId: null,
+          code: String(row.account_code || `ACC-${accountId}`),
+          name: String(row.account_name || `Account ${accountId}`),
+        });
+      }
+
+      const current = aggregateByAccountId.get(accountId) || {
+        debitTotal: 0,
+        creditTotal: 0,
+        balance: 0,
+        directDebitTotal: 0,
+        directCreditTotal: 0,
+        directBalance: 0,
+      };
+      current.debitTotal += Number(row.debit_total || 0);
+      current.creditTotal += Number(row.credit_total || 0);
+      current.balance += Number(row.balance || 0);
+      current.directDebitTotal += Number(row.debit_total || 0);
+      current.directCreditTotal += Number(row.credit_total || 0);
+      current.directBalance += Number(row.balance || 0);
+      aggregateByAccountId.set(accountId, current);
+
+      let parentAccountId = parsePositiveInt(accountById.get(accountId)?.parentAccountId);
+      const visited = new Set([accountId]);
+      while (parentAccountId && !visited.has(parentAccountId)) {
+        visited.add(parentAccountId);
+        const parentCurrent = aggregateByAccountId.get(parentAccountId) || {
+          debitTotal: 0,
+          creditTotal: 0,
+          balance: 0,
+          directDebitTotal: 0,
+          directCreditTotal: 0,
+          directBalance: 0,
+        };
+        parentCurrent.debitTotal += Number(row.debit_total || 0);
+        parentCurrent.creditTotal += Number(row.credit_total || 0);
+        parentCurrent.balance += Number(row.balance || 0);
+        aggregateByAccountId.set(parentAccountId, parentCurrent);
+
+        const parentAccount = accountById.get(parentAccountId);
+        if (!parentAccount) {
+          break;
+        }
+        parentAccountId = parsePositiveInt(parentAccount.parentAccountId);
+      }
+    }
+
+    const rows = [];
+    for (const [accountId, totals] of aggregateByAccountId.entries()) {
+      const debitTotal = Number(totals.debitTotal || 0);
+      const creditTotal = Number(totals.creditTotal || 0);
+      const balance = Number(totals.balance || 0);
+      if (isNearlyZero(debitTotal) && isNearlyZero(creditTotal) && isNearlyZero(balance)) {
+        continue;
+      }
+
+      const account = accountById.get(accountId);
+      rows.push({
+        account_id: accountId,
+        account_code: account?.code || `ACC-${accountId}`,
+        account_name: account?.name || `Account ${accountId}`,
+        debit_total: debitTotal,
+        credit_total: creditTotal,
+        balance,
+        is_rollup:
+          isNearlyZero(Number(totals.directDebitTotal || 0)) &&
+          isNearlyZero(Number(totals.directCreditTotal || 0)),
+        direct_debit_total: Number(totals.directDebitTotal || 0),
+        direct_credit_total: Number(totals.directCreditTotal || 0),
+        direct_balance: Number(totals.directBalance || 0),
+      });
+    }
+
+    rows.sort((a, b) => {
+      const codeCompare = String(a.account_code || "").localeCompare(
+        String(b.account_code || "")
+      );
+      if (codeCompare !== 0) {
+        return codeCompare;
+      }
+      return Number(a.account_id) - Number(b.account_id);
+    });
+
     return res.json({
       bookId,
       fiscalPeriodId,
-      rows: result.rows,
+      includeRollup,
+      summary,
+      rows,
     });
   })
 );

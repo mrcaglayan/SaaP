@@ -127,6 +127,11 @@ export default function JournalWorkbenchPage() {
 
   const [tbForm, setTbForm] = useState({ bookId: "", fiscalPeriodId: "" });
   const [tbRows, setTbRows] = useState([]);
+  const [tbSummary, setTbSummary] = useState({
+    debitTotal: 0,
+    creditTotal: 0,
+    balanceTotal: 0,
+  });
 
   const [periodForm, setPeriodForm] = useState({
     bookId: "",
@@ -165,6 +170,32 @@ export default function JournalWorkbenchPage() {
     periods.length > 0 && trialBalanceBookId && trialBalanceBookId === selectedBookId;
   const canUsePeriodActionLookup =
     periods.length > 0 && periodActionBookId && periodActionBookId === selectedBookId;
+  const postableAccounts = useMemo(() => {
+    const parentIds = new Set(
+      accounts
+        .map((row) => toInt(row.parent_account_id))
+        .filter(Boolean)
+    );
+    return accounts.filter((row) => {
+      const accountId = toInt(row.id);
+      if (!accountId) {
+        return false;
+      }
+      const allowPosting = !(
+        row.allow_posting === false ||
+        row.allow_posting === 0 ||
+        row.allow_posting === "0"
+      );
+      return allowPosting && !parentIds.has(accountId);
+    });
+  }, [accounts]);
+  const retainedEarningsAccounts = useMemo(
+    () =>
+      postableAccounts.filter(
+        (account) => String(account.account_type || "").toUpperCase() === "EQUITY"
+      ),
+    [postableAccounts]
+  );
 
   const lineTotals = useMemo(() => {
     const totals = lines.reduce(
@@ -179,16 +210,12 @@ export default function JournalWorkbenchPage() {
   }, [lines]);
 
   const tbTotals = useMemo(() => {
-    return tbRows.reduce(
-      (acc, row) => {
-        acc.debit += toAmount(row.debit_total);
-        acc.credit += toAmount(row.credit_total);
-        acc.balance += toAmount(row.balance);
-        return acc;
-      },
-      { debit: 0, credit: 0, balance: 0 }
-    );
-  }, [tbRows]);
+    return {
+      debit: toAmount(tbSummary.debitTotal),
+      credit: toAmount(tbSummary.creditTotal),
+      balance: toAmount(tbSummary.balanceTotal),
+    };
+  }, [tbSummary]);
 
   const historyLimit = toInt(historyFilters.limit) || 50;
   const historyOffset =
@@ -333,13 +360,14 @@ export default function JournalWorkbenchPage() {
       prev.map((line, index) => ({
         ...line,
         accountId:
-          line.accountId || String(accounts[index]?.id || accounts[0]?.id || ""),
+          line.accountId ||
+          String(postableAccounts[index]?.id || postableAccounts[0]?.id || ""),
         operatingUnitId: line.operatingUnitId || String(units[0]?.id || ""),
         currencyCode: line.currencyCode || journal.currencyCode || "USD",
       }))
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [entities, books, accounts, units]);
+  }, [entities, books, postableAccounts, units]);
 
   useEffect(() => {
     setJournal((prev) => {
@@ -494,7 +522,7 @@ export default function JournalWorkbenchPage() {
       ...prev,
       createLine(
         journal.currencyCode || "USD",
-        String(accounts[0]?.id || ""),
+        String(postableAccounts[0]?.id || ""),
         String(units[0]?.id || "")
       ),
     ]);
@@ -741,8 +769,15 @@ export default function JournalWorkbenchPage() {
     setError("");
     setMessage("");
     try {
-      const res = await getTrialBalance({ bookId, fiscalPeriodId });
-      setTbRows(res?.rows || []);
+      const res = await getTrialBalance({ bookId, fiscalPeriodId, includeRollup: true });
+      const rows = Array.isArray(res?.rows) ? res.rows : [];
+      const summary = res?.summary || {};
+      setTbRows(rows);
+      setTbSummary({
+        debitTotal: Number(summary.debitTotal || 0),
+        creditTotal: Number(summary.creditTotal || 0),
+        balanceTotal: Number(summary.balanceTotal || 0),
+      });
       setMessage(l("Trial balance loaded.", "Mizan yuklendi."));
     } catch (err) {
       setError(err?.response?.data?.message || l("Failed to load trial balance.", "Mizan yuklenemedi."));
@@ -1015,10 +1050,10 @@ export default function JournalWorkbenchPage() {
                   <tr key={line.id} className="border-t border-slate-100">
                     <td className="px-2 py-2 text-slate-500">{index + 1}</td>
                     <td className="px-2 py-2">
-                      {accounts.length > 0 ? (
+                      {postableAccounts.length > 0 ? (
                         <select value={line.accountId} onChange={(event) => updateLine(line.id, "accountId", event.target.value)} className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs" required>
                           <option value="">{l("Account", "Hesap")}</option>
-                          {accounts.map((account) => <option key={account.id} value={account.id}>{account.code} - {account.name}</option>)}
+                          {postableAccounts.map((account) => <option key={account.id} value={account.id}>{account.code} - {account.name}</option>)}
                         </select>
                       ) : (
                         <input type="number" min={1} value={line.accountId} onChange={(event) => updateLine(line.id, "accountId", event.target.value)} className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs" placeholder={l("Account ID", "Hesap ID")} required />
@@ -1129,7 +1164,7 @@ export default function JournalWorkbenchPage() {
             <table className="min-w-full text-xs">
               <thead className="bg-slate-50 text-left text-slate-600"><tr><th className="px-2 py-2">{l("Account", "Hesap")}</th><th className="px-2 py-2">{l("Debit", "Borc")}</th><th className="px-2 py-2">{l("Credit", "Alacak")}</th><th className="px-2 py-2">{l("Balance", "Bakiye")}</th></tr></thead>
               <tbody>
-                {tbRows.map((row) => <tr key={row.account_id} className="border-t border-slate-100"><td className="px-2 py-2">{row.account_code} - {row.account_name}</td><td className="px-2 py-2">{formatAmount(row.debit_total)}</td><td className="px-2 py-2">{formatAmount(row.credit_total)}</td><td className="px-2 py-2">{formatAmount(row.balance)}</td></tr>)}
+                {tbRows.map((row) => <tr key={row.account_id} className={`border-t border-slate-100 ${row.is_rollup ? "bg-slate-50/60" : ""}`}><td className="px-2 py-2">{row.account_code} - {row.account_name}{row.is_rollup ? ` (${l("Roll-up", "Toplam")})` : ""}</td><td className="px-2 py-2">{formatAmount(row.debit_total)}</td><td className="px-2 py-2">{formatAmount(row.credit_total)}</td><td className="px-2 py-2">{formatAmount(row.balance)}</td></tr>)}
                 {tbRows.length === 0 && <tr><td colSpan={4} className="px-2 py-3 text-slate-500">{l("No trial balance rows.", "Mizan satiri yok.")}</td></tr>}
               </tbody>
               {tbRows.length > 0 && <tfoot><tr className="border-t bg-slate-50 font-semibold text-slate-700"><td className="px-2 py-2">{l("Totals", "Toplamlar")}</td><td className="px-2 py-2">{formatAmount(tbTotals.debit)}</td><td className="px-2 py-2">{formatAmount(tbTotals.credit)}</td><td className="px-2 py-2">{formatAmount(tbTotals.balance)}</td></tr></tfoot>}
@@ -1178,10 +1213,10 @@ export default function JournalWorkbenchPage() {
                 </option>
               ))}
             </select>
-            {accounts.length > 0 ? (
+            {retainedEarningsAccounts.length > 0 ? (
               <select value={periodCloseForm.retainedEarningsAccountId} onChange={(event) => setPeriodCloseForm((prev) => ({ ...prev, retainedEarningsAccountId: event.target.value }))} className="w-full rounded border border-slate-300 px-3 py-2 text-sm">
                 <option value="">{l("Retained earnings account (year-end optional)", "Gecmis yil kar/zarar hesabi (yil sonu opsiyonel)")}</option>
-                {accounts.map((account) => (
+                {retainedEarningsAccounts.map((account) => (
                   <option key={account.id} value={account.id}>
                     {account.code} - {account.name}
                   </option>
