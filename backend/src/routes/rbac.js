@@ -178,9 +178,9 @@ router.get(
        LEFT JOIN users target ON target.id = l.target_user_id
        WHERE ${whereClause}
        ORDER BY l.created_at DESC, l.id DESC
-       LIMIT ?
-       OFFSET ?`,
-      [...params, pageSize, offset]
+       LIMIT ${pageSize}
+       OFFSET ${offset}`,
+      params
     );
 
     return res.json({

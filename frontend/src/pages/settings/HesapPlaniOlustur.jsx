@@ -1,9 +1,9 @@
-import React from 'react'
+import { useI18n } from "../../i18n/useI18n.js";
 
 function HesapPlaniOlustur() {
-    return (
-        <div>HesapPlaniOlustur</div>
-    )
+  const { t } = useI18n();
+
+  return <div>{t("chartOfAccountsCreate.title")}</div>;
 }
 
-export default HesapPlaniOlustur
+export default HesapPlaniOlustur;

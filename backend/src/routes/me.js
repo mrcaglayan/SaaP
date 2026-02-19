@@ -11,13 +11,24 @@ async function loadPermissionCodes(userId, tenantId) {
 
   try {
     const permissionResult = await query(
-      `SELECT DISTINCT p.code
+      `SELECT
+         p.code,
+         SUM(CASE WHEN urs.effect = 'ALLOW' THEN 1 ELSE 0 END) AS allow_count,
+         SUM(
+           CASE
+             WHEN urs.effect = 'DENY' AND urs.scope_type = 'TENANT' THEN 1
+             ELSE 0
+           END
+         ) AS tenant_deny_count
        FROM user_role_scopes urs
        JOIN roles r ON r.id = urs.role_id
        JOIN role_permissions rp ON rp.role_id = r.id
        JOIN permissions p ON p.id = rp.permission_id
        WHERE urs.user_id = ?
          AND urs.tenant_id = ?
+       GROUP BY p.code
+       HAVING allow_count > 0
+          AND tenant_deny_count = 0
        ORDER BY p.code`,
       [userId, tenantId]
     );

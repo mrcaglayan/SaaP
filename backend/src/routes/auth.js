@@ -15,7 +15,9 @@ router.post("/login", async (req, res, next) => {
     }
 
     const { rows } = await query(
-      "SELECT id, email, password_hash, name, tenant_id FROM users WHERE email = ?",
+      `SELECT id, email, password_hash, name, tenant_id, status
+       FROM users
+       WHERE email = ?`,
       [email]
     );
 
@@ -23,7 +25,9 @@ router.post("/login", async (req, res, next) => {
     if (!user) return res.status(401).json({ message: "Invalid credentials" });
 
     const ok = await bcrypt.compare(password, user.password_hash);
-    if (!ok) return res.status(401).json({ message: "Invalid credentials" });
+    if (!ok || String(user.status || "").toUpperCase() !== "ACTIVE") {
+      return res.status(401).json({ message: "Invalid credentials" });
+    }
 
     if (!process.env.JWT_SECRET) {
       return res.status(500).json({ message: "JWT secret is not configured" });

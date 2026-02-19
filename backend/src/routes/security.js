@@ -868,6 +868,7 @@ router.put(
     }
 
     const normalizedScopes = [];
+    const seenScopeKeys = new Set();
     for (const scope of scopes) {
       const scopeType = normalizeScopeType(scope?.scopeType);
       const scopeId = parsePositiveInt(scope?.scopeId);
@@ -875,6 +876,11 @@ router.put(
       if (!scopeId) {
         throw badRequest("Each scope item requires a positive scopeId");
       }
+      const scopeKey = `${scopeType}:${scopeId}`;
+      if (seenScopeKeys.has(scopeKey)) {
+        throw badRequest(`Duplicate scope is not allowed: ${scopeKey}`);
+      }
+      seenScopeKeys.add(scopeKey);
       // Enforce scope target ownership/existence before replacing all scopes.
       // This prevents deleting valid rows when payload contains invalid scope references.
       // Validation runs outside transaction to fail fast.

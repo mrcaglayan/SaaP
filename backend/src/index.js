@@ -11,6 +11,7 @@ import intercompanyRoutes from "./routes/intercompany.js";
 import consolidationRoutes from "./routes/consolidation.js";
 import onboardingRoutes from "./routes/onboarding.js";
 import rbacRoutes from "./routes/rbac.js";
+import providerRoutes from "./routes/provider.js";
 import { requireAuth } from "./middleware/auth.js";
 
 dotenv.config();
@@ -32,7 +33,7 @@ const corsOptions = {
     return callback(new Error(`CORS blocked for origin: ${origin}`));
   },
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-Provider-Key"],
   credentials: false,
   optionsSuccessStatus: 200,
 };
@@ -45,6 +46,7 @@ app.get("/health", (req, res) => res.json({ ok: true }));
 
 app.use("/auth", authRoutes);
 app.use("/me", meRoutes);
+app.use("/api/v1/provider", providerRoutes);
 app.use("/api/v1/org", requireAuth, orgRoutes);
 app.use("/api/v1/security", requireAuth, securityRoutes);
 app.use("/api/v1/gl", requireAuth, glRoutes);

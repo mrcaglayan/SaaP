@@ -2043,6 +2043,214 @@
         }
       }
     },
+    "/api/v1/gl/period-closing/runs": {
+      "get": {
+        "tags": [
+          "GL"
+        ],
+        "operationId": "listPeriodCloseRuns",
+        "summary": "List period close runs",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "bookId",
+            "required": false,
+            "description": "Book identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "fiscalPeriodId",
+            "required": false,
+            "description": "Fiscal period identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "IN_PROGRESS",
+                "COMPLETED",
+                "FAILED",
+                "REOPENED"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "includeLines",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Period close runs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
+    "/api/v1/gl/period-closing/{bookId}/{periodId}/close-run": {
+      "post": {
+        "tags": [
+          "GL"
+        ],
+        "operationId": "runPeriodClose",
+        "summary": "Execute period close run",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bookId",
+            "required": true,
+            "description": "Book identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "path",
+            "name": "periodId",
+            "required": true,
+            "description": "Fiscal period identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Idempotent close run hit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Period close run executed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
+    "/api/v1/gl/period-closing/{bookId}/{periodId}/reopen": {
+      "post": {
+        "tags": [
+          "GL"
+        ],
+        "operationId": "reopenPeriodClose",
+        "summary": "Reopen latest completed period close run",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bookId",
+            "required": true,
+            "description": "Book identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "path",
+            "name": "periodId",
+            "required": true,
+            "description": "Fiscal period identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Period close run reopened",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
     "/api/v1/gl/period-statuses/{bookId}/{periodId}/close": {
       "post": {
         "tags": [
@@ -2955,6 +3163,67 @@
       }
     },
     "/api/v1/consolidation/runs/{runId}/eliminations": {
+      "get": {
+        "tags": [
+          "Consolidation"
+        ],
+        "operationId": "listConsolidationEliminations",
+        "summary": "List consolidation eliminations",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runId",
+            "required": true,
+            "description": "Consolidation run identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "ALL",
+                "DRAFT",
+                "POSTED"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "includeLines",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Elimination list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      },
       "post": {
         "tags": [
           "Consolidation"
@@ -3006,7 +3275,112 @@
         }
       }
     },
+    "/api/v1/consolidation/runs/{runId}/eliminations/{eliminationEntryId}/post": {
+      "post": {
+        "tags": [
+          "Consolidation"
+        ],
+        "operationId": "postEliminationEntry",
+        "summary": "Post elimination entry",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runId",
+            "required": true,
+            "description": "Consolidation run identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "path",
+            "name": "eliminationEntryId",
+            "required": true,
+            "description": "Elimination entry identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Elimination entry posted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
     "/api/v1/consolidation/runs/{runId}/adjustments": {
+      "get": {
+        "tags": [
+          "Consolidation"
+        ],
+        "operationId": "listConsolidationAdjustments",
+        "summary": "List consolidation adjustments",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runId",
+            "required": true,
+            "description": "Consolidation run identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "ALL",
+                "DRAFT",
+                "POSTED"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Adjustment list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      },
       "post": {
         "tags": [
           "Consolidation"
@@ -3042,6 +3416,58 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/AdjustmentCreateResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
+    "/api/v1/consolidation/runs/{runId}/adjustments/{adjustmentId}/post": {
+      "post": {
+        "tags": [
+          "Consolidation"
+        ],
+        "operationId": "postConsolidationAdjustment",
+        "summary": "Post consolidation adjustment",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runId",
+            "required": true,
+            "description": "Consolidation run identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "path",
+            "name": "adjustmentId",
+            "required": true,
+            "description": "Adjustment identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Consolidation adjustment posted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
                 }
               }
             }

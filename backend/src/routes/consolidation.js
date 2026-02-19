@@ -15,7 +15,6 @@ import {
   asyncHandler,
   assertRequiredFields,
   badRequest,
-  notImplemented,
   parsePositiveInt,
   resolveTenantId,
 } from "./_utils.js";
@@ -23,6 +22,7 @@ import {
 const router = express.Router();
 
 const VALID_FX_RATE_TYPES = new Set(["SPOT", "AVERAGE", "CLOSING"]);
+const BALANCE_EPSILON = 0.0001;
 
 function normalizeRateType(value) {
   const rateType = String(value || "CLOSING").toUpperCase();
@@ -30,6 +30,84 @@ function normalizeRateType(value) {
     throw badRequest("rateType must be one of SPOT, AVERAGE, CLOSING");
   }
   return rateType;
+}
+
+function parseBooleanLike(value, fallback = false, fieldLabel = "flag") {
+  if (value === undefined || value === null || value === "") {
+    return fallback;
+  }
+
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  const normalized = String(value).trim().toLowerCase();
+  if (["1", "true", "yes", "y", "on"].includes(normalized)) {
+    return true;
+  }
+  if (["0", "false", "no", "n", "off"].includes(normalized)) {
+    return false;
+  }
+
+  throw badRequest(`${fieldLabel} must be true or false`);
+}
+
+function toIsoDate(value, fieldLabel = "date") {
+  const toLocalYyyyMmDd = (date) =>
+    `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(
+      date.getDate()
+    ).padStart(2, "0")}`;
+
+  if (value === undefined || value === null || value === "") {
+    throw badRequest(`${fieldLabel} is required`);
+  }
+
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) {
+      throw badRequest(`${fieldLabel} must be a valid date`);
+    }
+    return toLocalYyyyMmDd(value);
+  }
+
+  const asString = String(value).trim();
+  if (!asString) {
+    throw badRequest(`${fieldLabel} must be a valid date`);
+  }
+
+  const yyyyMmDdMatch = asString.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (yyyyMmDdMatch?.[1]) {
+    return yyyyMmDdMatch[1];
+  }
+
+  const parsed = new Date(asString);
+  if (Number.isNaN(parsed.getTime())) {
+    throw badRequest(`${fieldLabel} must be a valid date`);
+  }
+  return toLocalYyyyMmDd(parsed);
+}
+
+function normalizeBalanceByAccountType(accountType, balance) {
+  const type = String(accountType || "").toUpperCase();
+  const amount = Number(balance || 0);
+  if (["LIABILITY", "EQUITY", "REVENUE"].includes(type)) {
+    return amount * -1;
+  }
+  return amount;
+}
+
+function normalizeDraftPostingStatus(value) {
+  const status = String(value || "ALL").toUpperCase();
+  if (!["ALL", "DRAFT", "POSTED"].includes(status)) {
+    throw badRequest("status must be one of ALL, DRAFT, POSTED");
+  }
+  return status;
+}
+
+function assertRunNotLocked(run) {
+  const status = String(run?.status || "").toUpperCase();
+  if (status === "LOCKED") {
+    throw badRequest("Consolidation run is LOCKED; no further posting is allowed");
+  }
 }
 
 function ownershipFactor(consolidationMethod, ownershipPct) {
@@ -214,8 +292,8 @@ async function executeConsolidationRun({
   const presentationCurrencyCode = String(
     run.presentation_currency_code || ""
   ).toUpperCase();
-  const periodStartDate = String(run.period_start_date);
-  const periodEndDate = String(run.period_end_date);
+  const periodStartDate = toIsoDate(run.period_start_date, "periodStartDate");
+  const periodEndDate = toIsoDate(run.period_end_date, "periodEndDate");
 
   const { insertedRowCount, totals } = await withTransaction(async (tx) => {
     await tx.query(
@@ -392,6 +470,208 @@ async function executeConsolidationRun({
   };
 }
 
+async function loadRunReportAccountBalances({
+  tenantId,
+  run,
+  includeDraft = false,
+  preferredRateType = "CLOSING",
+  runQuery = query,
+}) {
+  const runId = parsePositiveInt(run?.id);
+  if (!runId) {
+    throw badRequest("Consolidation run not found");
+  }
+
+  const presentationCurrencyCode = String(
+    run.presentation_currency_code || ""
+  ).toUpperCase();
+  const rateDate = toIsoDate(run.period_end_date, "periodEndDate");
+  const statusFilter = includeDraft ? ["DRAFT", "POSTED"] : ["POSTED"];
+  const statusPlaceholders = statusFilter.map(() => "?").join(", ");
+
+  const accountMap = new Map();
+  const fxRateCache = new Map();
+
+  function ensureAccount(accountId, accountCode, accountName, accountType) {
+    if (!accountMap.has(accountId)) {
+      accountMap.set(accountId, {
+        accountId,
+        accountCode: String(accountCode || `ACC-${accountId}`),
+        accountName: accountName ? String(accountName) : null,
+        accountType: String(accountType || "").toUpperCase(),
+        baseDebit: 0,
+        baseCredit: 0,
+        baseBalance: 0,
+        adjustmentDebit: 0,
+        adjustmentCredit: 0,
+        adjustmentBalance: 0,
+        eliminationDebit: 0,
+        eliminationCredit: 0,
+        eliminationBalance: 0,
+        finalDebit: 0,
+        finalCredit: 0,
+        finalBalance: 0,
+      });
+    }
+    return accountMap.get(accountId);
+  }
+
+  function addAmounts(row, component, debit, credit, balance) {
+    row[`${component}Debit`] += debit;
+    row[`${component}Credit`] += credit;
+    row[`${component}Balance`] += balance;
+    row.finalDebit += debit;
+    row.finalCredit += credit;
+    row.finalBalance += balance;
+  }
+
+  async function resolveCachedRate(fromCurrencyCode) {
+    const source = String(fromCurrencyCode || "").toUpperCase();
+    const key = `${source}->${presentationCurrencyCode}:${preferredRateType}:${rateDate}`;
+    if (fxRateCache.has(key)) {
+      return fxRateCache.get(key);
+    }
+
+    const fx = await resolveFxRate({
+      tenantId,
+      rateDate,
+      fromCurrencyCode: source,
+      toCurrencyCode: presentationCurrencyCode,
+      preferredRateType,
+      runQuery,
+    });
+    const numericRate = Number(fx.rate || 0);
+    fxRateCache.set(key, numericRate);
+    return numericRate;
+  }
+
+  const baseResult = await runQuery(
+    `SELECT
+       cre.group_account_id AS account_id,
+       a.code AS account_code,
+       a.name AS account_name,
+       a.account_type,
+       SUM(cre.translated_debit) AS debit_total,
+       SUM(cre.translated_credit) AS credit_total,
+       SUM(cre.translated_balance) AS balance_total
+     FROM consolidation_run_entries cre
+     JOIN accounts a ON a.id = cre.group_account_id
+     WHERE cre.consolidation_run_id = ?
+     GROUP BY cre.group_account_id, a.code, a.name, a.account_type`,
+    [runId]
+  );
+
+  for (const row of baseResult.rows || []) {
+    const accountId = parsePositiveInt(row.account_id);
+    if (!accountId) {
+      continue;
+    }
+    const target = ensureAccount(
+      accountId,
+      row.account_code,
+      row.account_name,
+      row.account_type
+    );
+    addAmounts(
+      target,
+      "base",
+      Number(row.debit_total || 0),
+      Number(row.credit_total || 0),
+      Number(row.balance_total || 0)
+    );
+  }
+
+  const adjustmentResult = await runQuery(
+    `SELECT
+       ca.account_id,
+       a.code AS account_code,
+       a.name AS account_name,
+       a.account_type,
+       ca.currency_code,
+       SUM(ca.debit_amount) AS debit_total,
+       SUM(ca.credit_amount) AS credit_total
+     FROM consolidation_adjustments ca
+     JOIN accounts a ON a.id = ca.account_id
+     WHERE ca.consolidation_run_id = ?
+       AND ca.status IN (${statusPlaceholders})
+     GROUP BY
+       ca.account_id,
+       a.code,
+       a.name,
+       a.account_type,
+       ca.currency_code`,
+    [runId, ...statusFilter]
+  );
+
+  for (const row of adjustmentResult.rows || []) {
+    const accountId = parsePositiveInt(row.account_id);
+    if (!accountId) {
+      continue;
+    }
+
+    const rate = await resolveCachedRate(row.currency_code);
+    const debit = Number(row.debit_total || 0) * rate;
+    const credit = Number(row.credit_total || 0) * rate;
+    const balance = (Number(row.debit_total || 0) - Number(row.credit_total || 0)) * rate;
+
+    const target = ensureAccount(
+      accountId,
+      row.account_code,
+      row.account_name,
+      row.account_type
+    );
+    addAmounts(target, "adjustment", debit, credit, balance);
+  }
+
+  const eliminationResult = await runQuery(
+    `SELECT
+       el.account_id,
+       a.code AS account_code,
+       a.name AS account_name,
+       a.account_type,
+       el.currency_code,
+       SUM(el.debit_amount) AS debit_total,
+       SUM(el.credit_amount) AS credit_total
+     FROM elimination_entries ee
+     JOIN elimination_lines el ON el.elimination_entry_id = ee.id
+     JOIN accounts a ON a.id = el.account_id
+     WHERE ee.consolidation_run_id = ?
+       AND ee.status IN (${statusPlaceholders})
+     GROUP BY
+       el.account_id,
+       a.code,
+       a.name,
+       a.account_type,
+       el.currency_code`,
+    [runId, ...statusFilter]
+  );
+
+  for (const row of eliminationResult.rows || []) {
+    const accountId = parsePositiveInt(row.account_id);
+    if (!accountId) {
+      continue;
+    }
+
+    const rate = await resolveCachedRate(row.currency_code);
+    const debit = Number(row.debit_total || 0) * rate;
+    const credit = Number(row.credit_total || 0) * rate;
+    const balance = (Number(row.debit_total || 0) - Number(row.credit_total || 0)) * rate;
+
+    const target = ensureAccount(
+      accountId,
+      row.account_code,
+      row.account_name,
+      row.account_type
+    );
+    addAmounts(target, "elimination", debit, credit, balance);
+  }
+
+  return {
+    statusFilter,
+    rows: Array.from(accountMap.values()),
+  };
+}
+
 router.get(
   "/groups",
   requirePermission("consolidation.group.read"),
@@ -538,6 +818,66 @@ router.post(
     );
 
     return res.status(201).json({ ok: true, id: result.rows.insertId || null });
+  })
+);
+
+router.get(
+  "/groups/:groupId/members",
+  requirePermission("consolidation.group.read"),
+  asyncHandler(async (req, res) => {
+    const tenantId = resolveTenantId(req);
+    if (!tenantId) {
+      throw badRequest("tenantId is required");
+    }
+
+    const groupId = parsePositiveInt(req.params.groupId);
+    if (!groupId) {
+      throw badRequest("groupId must be a positive integer");
+    }
+
+    const group = await assertConsolidationGroupBelongsToTenant(
+      tenantId,
+      groupId,
+      "groupId"
+    );
+    assertScopeAccess(req, "group", group.group_company_id, "groupCompanyId");
+
+    const legalEntityId = parsePositiveInt(req.query.legalEntityId);
+    if (legalEntityId) {
+      await assertLegalEntityBelongsToTenant(tenantId, legalEntityId, "legalEntityId");
+      assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
+    }
+
+    const conditions = ["cgm.consolidation_group_id = ?"];
+    const params = [groupId];
+    if (legalEntityId) {
+      conditions.push("cgm.legal_entity_id = ?");
+      params.push(legalEntityId);
+    }
+
+    const result = await query(
+      `SELECT
+         cgm.id,
+         cgm.consolidation_group_id,
+         cgm.legal_entity_id,
+         le.code AS legal_entity_code,
+         le.name AS legal_entity_name,
+         cgm.consolidation_method,
+         cgm.ownership_pct,
+         cgm.effective_from,
+         cgm.effective_to
+       FROM consolidation_group_members cgm
+       JOIN legal_entities le ON le.id = cgm.legal_entity_id
+       WHERE ${conditions.join(" AND ")}
+       ORDER BY cgm.effective_from DESC, cgm.id DESC`,
+      params
+    );
+
+    return res.json({
+      tenantId,
+      groupId,
+      rows: result.rows,
+    });
   })
 );
 
@@ -1012,6 +1352,157 @@ router.post(
   })
 );
 
+router.get(
+  "/runs/:runId/eliminations",
+  requirePermission("consolidation.run.read", {
+    resolveScope: async (req, tenantId) => {
+      return resolveRunScope(req.params?.runId, tenantId);
+    },
+  }),
+  asyncHandler(async (req, res) => {
+    const tenantId = resolveTenantId(req);
+    if (!tenantId) {
+      throw badRequest("tenantId is required");
+    }
+
+    const runId = parsePositiveInt(req.params.runId);
+    if (!runId) {
+      throw badRequest("runId must be a positive integer");
+    }
+    await requireRun(tenantId, runId);
+
+    const status = normalizeDraftPostingStatus(req.query.status);
+    const includeLines = parseBooleanLike(req.query.includeLines, false, "includeLines");
+
+    const params = [runId];
+    const conditions = ["ee.consolidation_run_id = ?"];
+    if (status !== "ALL") {
+      conditions.push("ee.status = ?");
+      params.push(status);
+    }
+
+    const result = await query(
+      `SELECT
+         ee.id,
+         ee.status,
+         ee.description,
+         ee.reference_no,
+         ee.created_by_user_id,
+         creator.name AS created_by_user_name,
+         ee.posted_by_user_id,
+         poster.name AS posted_by_user_name,
+         ee.created_at,
+         ee.posted_at,
+         COALESCE(SUM(el.debit_amount), 0) AS debit_total,
+         COALESCE(SUM(el.credit_amount), 0) AS credit_total,
+         COUNT(el.id) AS line_count
+       FROM elimination_entries ee
+       LEFT JOIN elimination_lines el ON el.elimination_entry_id = ee.id
+       LEFT JOIN users creator ON creator.id = ee.created_by_user_id
+       LEFT JOIN users poster ON poster.id = ee.posted_by_user_id
+       WHERE ${conditions.join(" AND ")}
+       GROUP BY
+         ee.id,
+         ee.status,
+         ee.description,
+         ee.reference_no,
+         ee.created_by_user_id,
+         creator.name,
+         ee.posted_by_user_id,
+         poster.name,
+         ee.created_at,
+         ee.posted_at
+       ORDER BY ee.id DESC`,
+      params
+    );
+
+    const rows = (result.rows || []).map((row) => ({
+      id: parsePositiveInt(row.id),
+      status: String(row.status || "").toUpperCase(),
+      description: row.description || null,
+      referenceNo: row.reference_no || null,
+      createdByUserId: parsePositiveInt(row.created_by_user_id),
+      createdByUserName: row.created_by_user_name || null,
+      postedByUserId: parsePositiveInt(row.posted_by_user_id),
+      postedByUserName: row.posted_by_user_name || null,
+      createdAt: row.created_at || null,
+      postedAt: row.posted_at || null,
+      debitTotal: Number(row.debit_total || 0),
+      creditTotal: Number(row.credit_total || 0),
+      lineCount: Number(row.line_count || 0),
+    }));
+
+    if (includeLines && rows.length > 0) {
+      const entryIds = rows.map((row) => row.id).filter(Boolean);
+      if (entryIds.length > 0) {
+        const placeholders = entryIds.map(() => "?").join(", ");
+        const lineResult = await query(
+          `SELECT
+             el.elimination_entry_id,
+             el.line_no,
+             el.account_id,
+             a.code AS account_code,
+             a.name AS account_name,
+             el.legal_entity_id,
+             le.code AS legal_entity_code,
+             le.name AS legal_entity_name,
+             el.counterparty_legal_entity_id,
+             cle.code AS counterparty_legal_entity_code,
+             cle.name AS counterparty_legal_entity_name,
+             el.debit_amount,
+             el.credit_amount,
+             el.currency_code,
+             el.description
+           FROM elimination_lines el
+           JOIN accounts a ON a.id = el.account_id
+           LEFT JOIN legal_entities le ON le.id = el.legal_entity_id
+           LEFT JOIN legal_entities cle ON cle.id = el.counterparty_legal_entity_id
+           WHERE el.elimination_entry_id IN (${placeholders})
+           ORDER BY el.elimination_entry_id, el.line_no`,
+          entryIds
+        );
+
+        const linesByEntryId = new Map();
+        for (const line of lineResult.rows || []) {
+          const entryId = parsePositiveInt(line.elimination_entry_id);
+          if (!entryId) {
+            continue;
+          }
+          if (!linesByEntryId.has(entryId)) {
+            linesByEntryId.set(entryId, []);
+          }
+          linesByEntryId.get(entryId).push({
+            lineNo: Number(line.line_no || 0),
+            accountId: parsePositiveInt(line.account_id),
+            accountCode: line.account_code || null,
+            accountName: line.account_name || null,
+            legalEntityId: parsePositiveInt(line.legal_entity_id),
+            legalEntityCode: line.legal_entity_code || null,
+            legalEntityName: line.legal_entity_name || null,
+            counterpartyLegalEntityId: parsePositiveInt(line.counterparty_legal_entity_id),
+            counterpartyLegalEntityCode: line.counterparty_legal_entity_code || null,
+            counterpartyLegalEntityName: line.counterparty_legal_entity_name || null,
+            debitAmount: Number(line.debit_amount || 0),
+            creditAmount: Number(line.credit_amount || 0),
+            currencyCode: String(line.currency_code || "").toUpperCase(),
+            description: line.description || null,
+          });
+        }
+
+        for (const row of rows) {
+          row.lines = linesByEntryId.get(row.id) || [];
+        }
+      }
+    }
+
+    return res.json({
+      runId,
+      status,
+      rows,
+    });
+  })
+);
+
 router.post(
   "/runs/:runId/eliminations",
   requirePermission("consolidation.elimination.create", {
@@ -1133,6 +1624,208 @@ router.post(
 );
 
 router.post(
+  "/runs/:runId/eliminations/:eliminationEntryId/post",
+  requirePermission("consolidation.elimination.post", {
+    resolveScope: async (req, tenantId) => {
+      return resolveRunScope(req.params?.runId, tenantId);
+    },
+  }),
+  asyncHandler(async (req, res) => {
+    const tenantId = resolveTenantId(req);
+    if (!tenantId) {
+      throw badRequest("tenantId is required");
+    }
+
+    const runId = parsePositiveInt(req.params.runId);
+    const eliminationEntryId = parsePositiveInt(req.params.eliminationEntryId);
+    const userId = parsePositiveInt(req.user?.userId);
+    if (!runId || !eliminationEntryId || !userId) {
+      throw badRequest("runId, eliminationEntryId and authenticated user are required");
+    }
+    await assertUserBelongsToTenant(tenantId, userId, "userId");
+    await requireRun(tenantId, runId);
+
+    const postResult = await withTransaction(async (tx) => {
+      const entryResult = await tx.query(
+        `SELECT
+           ee.id,
+           ee.status,
+           ee.consolidation_run_id,
+           cr.status AS run_status,
+           ee.posted_by_user_id,
+           ee.posted_at
+         FROM elimination_entries ee
+         JOIN consolidation_runs cr ON cr.id = ee.consolidation_run_id
+         JOIN consolidation_groups cg ON cg.id = cr.consolidation_group_id
+         WHERE ee.id = ?
+           AND ee.consolidation_run_id = ?
+           AND cg.tenant_id = ?
+         LIMIT 1
+         FOR UPDATE`,
+        [eliminationEntryId, runId, tenantId]
+      );
+      const entry = entryResult.rows[0];
+      if (!entry) {
+        throw badRequest("eliminationEntryId not found for runId and tenant");
+      }
+
+      assertRunNotLocked({ status: entry.run_status });
+
+      if (String(entry.status || "").toUpperCase() === "POSTED") {
+        return {
+          idempotent: true,
+          eliminationEntryId,
+          status: "POSTED",
+          postedByUserId: parsePositiveInt(entry.posted_by_user_id),
+          postedAt: entry.posted_at || null,
+        };
+      }
+
+      const lineResult = await tx.query(
+        `SELECT id, debit_amount, credit_amount
+         FROM elimination_lines
+         WHERE elimination_entry_id = ?
+         FOR UPDATE`,
+        [eliminationEntryId]
+      );
+      const lines = lineResult.rows || [];
+      if (lines.length === 0) {
+        throw badRequest("Cannot post elimination entry with no lines");
+      }
+
+      let debitTotal = 0;
+      let creditTotal = 0;
+      for (const line of lines) {
+        debitTotal += Number(line.debit_amount || 0);
+        creditTotal += Number(line.credit_amount || 0);
+      }
+      if (Math.abs(debitTotal - creditTotal) > BALANCE_EPSILON) {
+        throw badRequest("Elimination entry is not balanced and cannot be posted");
+      }
+
+      await tx.query(
+        `UPDATE elimination_entries
+         SET status = 'POSTED',
+             posted_by_user_id = ?,
+             posted_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+        [userId, eliminationEntryId]
+      );
+
+      const postedResult = await tx.query(
+        `SELECT posted_by_user_id, posted_at
+         FROM elimination_entries
+         WHERE id = ?
+         LIMIT 1`,
+        [eliminationEntryId]
+      );
+      const postedRow = postedResult.rows[0] || {};
+
+      return {
+        idempotent: false,
+        eliminationEntryId,
+        status: "POSTED",
+        postedByUserId: parsePositiveInt(postedRow.posted_by_user_id),
+        postedAt: postedRow.posted_at || null,
+      };
+    });
+
+    return res.json({
+      ok: true,
+      ...postResult,
+    });
+  })
+);
+
+router.get(
+  "/runs/:runId/adjustments",
+  requirePermission("consolidation.run.read", {
+    resolveScope: async (req, tenantId) => {
+      return resolveRunScope(req.params?.runId, tenantId);
+    },
+  }),
+  asyncHandler(async (req, res) => {
+    const tenantId = resolveTenantId(req);
+    if (!tenantId) {
+      throw badRequest("tenantId is required");
+    }
+
+    const runId = parsePositiveInt(req.params.runId);
+    if (!runId) {
+      throw badRequest("runId must be a positive integer");
+    }
+    await requireRun(tenantId, runId);
+
+    const status = normalizeDraftPostingStatus(req.query.status);
+    const params = [runId];
+    const conditions = ["ca.consolidation_run_id = ?"];
+    if (status !== "ALL") {
+      conditions.push("ca.status = ?");
+      params.push(status);
+    }
+
+    const result = await query(
+      `SELECT
+         ca.id,
+         ca.adjustment_type,
+         ca.status,
+         ca.legal_entity_id,
+         le.code AS legal_entity_code,
+         le.name AS legal_entity_name,
+         ca.account_id,
+         a.code AS account_code,
+         a.name AS account_name,
+         a.account_type,
+         ca.debit_amount,
+         ca.credit_amount,
+         ca.currency_code,
+         ca.description,
+         ca.created_by_user_id,
+         creator.name AS created_by_user_name,
+         ca.posted_by_user_id,
+         poster.name AS posted_by_user_name,
+         ca.created_at,
+         ca.posted_at
+       FROM consolidation_adjustments ca
+       JOIN accounts a ON a.id = ca.account_id
+       LEFT JOIN legal_entities le ON le.id = ca.legal_entity_id
+       LEFT JOIN users creator ON creator.id = ca.created_by_user_id
+       LEFT JOIN users poster ON poster.id = ca.posted_by_user_id
+       WHERE ${conditions.join(" AND ")}
+       ORDER BY ca.id DESC`,
+      params
+    );
+
+    return res.json({
+      runId,
+      status,
+      rows: (result.rows || []).map((row) => ({
+        id: parsePositiveInt(row.id),
+        adjustmentType: String(row.adjustment_type || "").toUpperCase(),
+        status: String(row.status || "").toUpperCase(),
+        legalEntityId: parsePositiveInt(row.legal_entity_id),
+        legalEntityCode: row.legal_entity_code || null,
+        legalEntityName: row.legal_entity_name || null,
+        accountId: parsePositiveInt(row.account_id),
+        accountCode: row.account_code || null,
+        accountName: row.account_name || null,
+        accountType: String(row.account_type || "").toUpperCase(),
+        debitAmount: Number(row.debit_amount || 0),
+        creditAmount: Number(row.credit_amount || 0),
+        currencyCode: String(row.currency_code || "").toUpperCase(),
+        description: row.description || null,
+        createdByUserId: parsePositiveInt(row.created_by_user_id),
+        createdByUserName: row.created_by_user_name || null,
+        postedByUserId: parsePositiveInt(row.posted_by_user_id),
+        postedByUserName: row.posted_by_user_name || null,
+        createdAt: row.created_at || null,
+        postedAt: row.posted_at || null,
+      })),
+    });
+  })
+);
+
+router.post(
   "/runs/:runId/adjustments",
   requirePermission("consolidation.adjustment.create", {
     resolveScope: async (req, tenantId) => {
@@ -1194,6 +1887,108 @@ router.post(
     return res.status(201).json({
       ok: true,
       adjustmentId: result.rows.insertId || null,
+    });
+  })
+);
+
+router.post(
+  "/runs/:runId/adjustments/:adjustmentId/post",
+  requirePermission("consolidation.adjustment.post", {
+    resolveScope: async (req, tenantId) => {
+      return resolveRunScope(req.params?.runId, tenantId);
+    },
+  }),
+  asyncHandler(async (req, res) => {
+    const tenantId = resolveTenantId(req);
+    if (!tenantId) {
+      throw badRequest("tenantId is required");
+    }
+
+    const runId = parsePositiveInt(req.params.runId);
+    const adjustmentId = parsePositiveInt(req.params.adjustmentId);
+    const userId = parsePositiveInt(req.user?.userId);
+    if (!runId || !adjustmentId || !userId) {
+      throw badRequest("runId, adjustmentId and authenticated user are required");
+    }
+    await assertUserBelongsToTenant(tenantId, userId, "userId");
+    await requireRun(tenantId, runId);
+
+    const postResult = await withTransaction(async (tx) => {
+      const adjustmentResult = await tx.query(
+        `SELECT
+           ca.id,
+           ca.status,
+           ca.debit_amount,
+           ca.credit_amount,
+           ca.posted_by_user_id,
+           ca.posted_at,
+           cr.status AS run_status
+         FROM consolidation_adjustments ca
+         JOIN consolidation_runs cr ON cr.id = ca.consolidation_run_id
+         JOIN consolidation_groups cg ON cg.id = cr.consolidation_group_id
+         WHERE ca.id = ?
+           AND ca.consolidation_run_id = ?
+           AND cg.tenant_id = ?
+         LIMIT 1
+         FOR UPDATE`,
+        [adjustmentId, runId, tenantId]
+      );
+      const adjustment = adjustmentResult.rows[0];
+      if (!adjustment) {
+        throw badRequest("adjustmentId not found for runId and tenant");
+      }
+
+      assertRunNotLocked({ status: adjustment.run_status });
+
+      if (String(adjustment.status || "").toUpperCase() === "POSTED") {
+        return {
+          idempotent: true,
+          adjustmentId,
+          status: "POSTED",
+          postedByUserId: parsePositiveInt(adjustment.posted_by_user_id),
+          postedAt: adjustment.posted_at || null,
+        };
+      }
+
+      const debitAmount = Number(adjustment.debit_amount || 0);
+      const creditAmount = Number(adjustment.credit_amount || 0);
+      const validOneSided =
+        (debitAmount > 0 && Math.abs(creditAmount) < BALANCE_EPSILON) ||
+        (creditAmount > 0 && Math.abs(debitAmount) < BALANCE_EPSILON);
+      if (!validOneSided) {
+        throw badRequest("Adjustment must be one-sided and cannot be posted");
+      }
+
+      await tx.query(
+        `UPDATE consolidation_adjustments
+         SET status = 'POSTED',
+             posted_by_user_id = ?,
+             posted_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+        [userId, adjustmentId]
+      );
+
+      const postedResult = await tx.query(
+        `SELECT posted_by_user_id, posted_at
+         FROM consolidation_adjustments
+         WHERE id = ?
+         LIMIT 1`,
+        [adjustmentId]
+      );
+      const postedRow = postedResult.rows[0] || {};
+
+      return {
+        idempotent: false,
+        adjustmentId,
+        status: "POSTED",
+        postedByUserId: parsePositiveInt(postedRow.posted_by_user_id),
+        postedAt: postedRow.posted_at || null,
+      };
+    });
+
+    return res.json({
+      ok: true,
+      ...postResult,
     });
   })
 );
@@ -1410,7 +2205,131 @@ router.get(
     },
   }),
   asyncHandler(async (req, res) => {
-    return notImplemented(res, "Consolidated balance sheet");
+    const tenantId = resolveTenantId(req);
+    if (!tenantId) {
+      throw badRequest("tenantId is required");
+    }
+
+    const runId = parsePositiveInt(req.params.runId);
+    if (!runId) {
+      throw badRequest("runId must be a positive integer");
+    }
+
+    const run = await requireRun(tenantId, runId);
+    const includeDraft = parseBooleanLike(
+      req.query.includeDraft,
+      false,
+      "includeDraft"
+    );
+    const includeZero = parseBooleanLike(req.query.includeZero, false, "includeZero");
+    const preferredRateType = normalizeRateType(req.query.rateType);
+
+    const reportData = await loadRunReportAccountBalances({
+      tenantId,
+      run,
+      includeDraft,
+      preferredRateType,
+    });
+
+    const mappedRows = reportData.rows
+      .filter((row) => ["ASSET", "LIABILITY", "EQUITY"].includes(row.accountType))
+      .map((row) => {
+        const normalizedBaseBalance = normalizeBalanceByAccountType(
+          row.accountType,
+          row.baseBalance
+        );
+        const normalizedAdjustmentBalance = normalizeBalanceByAccountType(
+          row.accountType,
+          row.adjustmentBalance
+        );
+        const normalizedEliminationBalance = normalizeBalanceByAccountType(
+          row.accountType,
+          row.eliminationBalance
+        );
+        const normalizedFinalBalance = normalizeBalanceByAccountType(
+          row.accountType,
+          row.finalBalance
+        );
+
+        return {
+          accountId: row.accountId,
+          accountCode: row.accountCode,
+          accountName: row.accountName,
+          accountType: row.accountType,
+          baseBalance: row.baseBalance,
+          adjustmentBalance: row.adjustmentBalance,
+          eliminationBalance: row.eliminationBalance,
+          finalBalance: row.finalBalance,
+          normalizedBaseBalance,
+          normalizedAdjustmentBalance,
+          normalizedEliminationBalance,
+          normalizedFinalBalance,
+        };
+      })
+      .filter(
+        (row) => includeZero || Math.abs(Number(row.normalizedFinalBalance || 0)) >= BALANCE_EPSILON
+      )
+      .sort((a, b) => String(a.accountCode).localeCompare(String(b.accountCode)));
+
+    const assetsTotal = mappedRows
+      .filter((row) => row.accountType === "ASSET")
+      .reduce((sum, row) => sum + Number(row.normalizedFinalBalance || 0), 0);
+    const liabilitiesTotal = mappedRows
+      .filter((row) => row.accountType === "LIABILITY")
+      .reduce((sum, row) => sum + Number(row.normalizedFinalBalance || 0), 0);
+    const equityTotal = mappedRows
+      .filter((row) => row.accountType === "EQUITY")
+      .reduce((sum, row) => sum + Number(row.normalizedFinalBalance || 0), 0);
+
+    const incomeStatementRows = reportData.rows.filter((row) =>
+      ["REVENUE", "EXPENSE"].includes(row.accountType)
+    );
+    const revenueTotal = incomeStatementRows
+      .filter((row) => row.accountType === "REVENUE")
+      .reduce(
+        (sum, row) =>
+          sum + normalizeBalanceByAccountType(row.accountType, row.finalBalance),
+        0
+      );
+    const expenseTotal = incomeStatementRows
+      .filter((row) => row.accountType === "EXPENSE")
+      .reduce(
+        (sum, row) =>
+          sum + normalizeBalanceByAccountType(row.accountType, row.finalBalance),
+        0
+      );
+    const currentPeriodEarnings = revenueTotal - expenseTotal;
+    const equationDelta =
+      assetsTotal - (liabilitiesTotal + equityTotal + currentPeriodEarnings);
+
+    return res.json({
+      runId,
+      run: {
+        id: parsePositiveInt(run.id),
+        consolidationGroupId: parsePositiveInt(run.consolidation_group_id),
+        consolidationGroupCode: run.consolidation_group_code || null,
+        consolidationGroupName: run.consolidation_group_name || null,
+        fiscalPeriodId: parsePositiveInt(run.fiscal_period_id),
+        periodStartDate: run.period_start_date || null,
+        periodEndDate: run.period_end_date || null,
+        status: String(run.status || "").toUpperCase(),
+        presentationCurrencyCode: String(run.presentation_currency_code || "").toUpperCase(),
+      },
+      options: {
+        includeDraft,
+        includeZero,
+        rateType: preferredRateType,
+        includedStatuses: reportData.statusFilter,
+      },
+      totals: {
+        assetsTotal,
+        liabilitiesTotal,
+        equityTotal,
+        currentPeriodEarnings,
+        equationDelta,
+      },
+      rows: mappedRows,
+    });
   })
 );
 
@@ -1422,7 +2341,106 @@ router.get(
     },
   }),
   asyncHandler(async (req, res) => {
-    return notImplemented(res, "Consolidated income statement");
+    const tenantId = resolveTenantId(req);
+    if (!tenantId) {
+      throw badRequest("tenantId is required");
+    }
+
+    const runId = parsePositiveInt(req.params.runId);
+    if (!runId) {
+      throw badRequest("runId must be a positive integer");
+    }
+
+    const run = await requireRun(tenantId, runId);
+    const includeDraft = parseBooleanLike(
+      req.query.includeDraft,
+      false,
+      "includeDraft"
+    );
+    const includeZero = parseBooleanLike(req.query.includeZero, false, "includeZero");
+    const preferredRateType = normalizeRateType(req.query.rateType);
+
+    const reportData = await loadRunReportAccountBalances({
+      tenantId,
+      run,
+      includeDraft,
+      preferredRateType,
+    });
+
+    const mappedRows = reportData.rows
+      .filter((row) => ["REVENUE", "EXPENSE"].includes(row.accountType))
+      .map((row) => {
+        const normalizedBaseBalance = normalizeBalanceByAccountType(
+          row.accountType,
+          row.baseBalance
+        );
+        const normalizedAdjustmentBalance = normalizeBalanceByAccountType(
+          row.accountType,
+          row.adjustmentBalance
+        );
+        const normalizedEliminationBalance = normalizeBalanceByAccountType(
+          row.accountType,
+          row.eliminationBalance
+        );
+        const normalizedFinalBalance = normalizeBalanceByAccountType(
+          row.accountType,
+          row.finalBalance
+        );
+
+        return {
+          accountId: row.accountId,
+          accountCode: row.accountCode,
+          accountName: row.accountName,
+          accountType: row.accountType,
+          baseBalance: row.baseBalance,
+          adjustmentBalance: row.adjustmentBalance,
+          eliminationBalance: row.eliminationBalance,
+          finalBalance: row.finalBalance,
+          normalizedBaseBalance,
+          normalizedAdjustmentBalance,
+          normalizedEliminationBalance,
+          normalizedFinalBalance,
+        };
+      })
+      .filter(
+        (row) => includeZero || Math.abs(Number(row.normalizedFinalBalance || 0)) >= BALANCE_EPSILON
+      )
+      .sort((a, b) => String(a.accountCode).localeCompare(String(b.accountCode)));
+
+    const revenueTotal = mappedRows
+      .filter((row) => row.accountType === "REVENUE")
+      .reduce((sum, row) => sum + Number(row.normalizedFinalBalance || 0), 0);
+    const expenseTotal = mappedRows
+      .filter((row) => row.accountType === "EXPENSE")
+      .reduce((sum, row) => sum + Number(row.normalizedFinalBalance || 0), 0);
+    const netIncome = revenueTotal - expenseTotal;
+
+    return res.json({
+      runId,
+      run: {
+        id: parsePositiveInt(run.id),
+        consolidationGroupId: parsePositiveInt(run.consolidation_group_id),
+        consolidationGroupCode: run.consolidation_group_code || null,
+        consolidationGroupName: run.consolidation_group_name || null,
+        fiscalPeriodId: parsePositiveInt(run.fiscal_period_id),
+        periodStartDate: run.period_start_date || null,
+        periodEndDate: run.period_end_date || null,
+        status: String(run.status || "").toUpperCase(),
+        presentationCurrencyCode: String(run.presentation_currency_code || "").toUpperCase(),
+      },
+      options: {
+        includeDraft,
+        includeZero,
+        rateType: preferredRateType,
+        includedStatuses: reportData.statusFilter,
+      },
+      totals: {
+        revenueTotal,
+        expenseTotal,
+        netIncome,
+      },
+      rows: mappedRows,
+    });
   })
 );
 

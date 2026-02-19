@@ -523,7 +523,7 @@ async function runRollbackAssertions({
         },
       ],
     },
-    expectedStatus: 500,
+    expectedStatus: 400,
   });
 
   const afterReplace = await apiRequest({

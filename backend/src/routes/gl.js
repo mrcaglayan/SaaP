@@ -1,4 +1,5 @@
 import express from "express";
+import crypto from "node:crypto";
 import { query, withTransaction } from "../db.js";
 import {
   assertScopeAccess,
@@ -23,10 +24,47 @@ import {
 
 const router = express.Router();
 const PERIOD_STATUSES = new Set(["OPEN", "SOFT_CLOSED", "HARD_CLOSED"]);
+const CLOSE_RUN_STATUSES = new Set(["IN_PROGRESS", "COMPLETED", "FAILED", "REOPENED"]);
+const CLOSE_TARGET_STATUSES = new Set(["SOFT_CLOSED", "HARD_CLOSED"]);
+const BALANCE_EPSILON = 0.0001;
 
 function toAmount(value) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function toIsoDate(value, fieldLabel = "date") {
+  const toLocalYyyyMmDd = (date) =>
+    `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(
+      date.getDate()
+    ).padStart(2, "0")}`;
+
+  if (value === undefined || value === null || value === "") {
+    throw badRequest(`${fieldLabel} is required`);
+  }
+
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) {
+      throw badRequest(`${fieldLabel} must be a valid date`);
+    }
+    return toLocalYyyyMmDd(value);
+  }
+
+  const asString = String(value).trim();
+  if (!asString) {
+    throw badRequest(`${fieldLabel} must be a valid date`);
+  }
+
+  const yyyyMmDdMatch = asString.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (yyyyMmDdMatch?.[1]) {
+    return yyyyMmDdMatch[1];
+  }
+
+  const parsed = new Date(asString);
+  if (Number.isNaN(parsed.getTime())) {
+    throw badRequest(`${fieldLabel} must be a valid date`);
+  }
+  return toLocalYyyyMmDd(parsed);
 }
 
 function generateJournalNo() {
@@ -81,8 +119,8 @@ async function resolveScopeFromJournalId(journalId, tenantId) {
   return { scopeType: "TENANT", scopeId: tenantId };
 }
 
-async function getEffectivePeriodStatus(bookId, fiscalPeriodId) {
-  const result = await query(
+async function getEffectivePeriodStatus(bookId, fiscalPeriodId, runQuery = query) {
+  const result = await runQuery(
     `SELECT status
      FROM period_statuses
      WHERE book_id = ?
@@ -115,6 +153,589 @@ async function loadJournal(tenantId, journalId) {
     [journalId, tenantId]
   );
   return result.rows[0] || null;
+}
+
+function isNearlyZero(value) {
+  return Math.abs(Number(value || 0)) < BALANCE_EPSILON;
+}
+
+function normalizeCloseTargetStatus(value) {
+  const status = String(value || "SOFT_CLOSED").toUpperCase();
+  if (!CLOSE_TARGET_STATUSES.has(status)) {
+    throw badRequest("closeStatus must be SOFT_CLOSED or HARD_CLOSED");
+  }
+  return status;
+}
+
+function parseJsonColumn(value) {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+  if (typeof value === "object") {
+    return value;
+  }
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+function mapPeriodCloseRunRow(row) {
+  if (!row) {
+    return null;
+  }
+
+  return {
+    id: parsePositiveInt(row.id),
+    tenantId: parsePositiveInt(row.tenant_id),
+    bookId: parsePositiveInt(row.book_id),
+    bookCode: row.book_code || null,
+    bookName: row.book_name || null,
+    fiscalPeriodId: parsePositiveInt(row.fiscal_period_id),
+    nextFiscalPeriodId: parsePositiveInt(row.next_fiscal_period_id),
+    fiscalYear: row.fiscal_year === null ? null : Number(row.fiscal_year),
+    periodNo: row.period_no === null ? null : Number(row.period_no),
+    periodName: row.period_name || null,
+    closeStatus: String(row.close_status || "").toUpperCase(),
+    status: String(row.status || "").toUpperCase(),
+    runHash: String(row.run_hash || ""),
+    yearEndClosed: Boolean(row.year_end_closed),
+    retainedEarningsAccountId: parsePositiveInt(row.retained_earnings_account_id),
+    carryForwardJournalEntryId: parsePositiveInt(row.carry_forward_journal_entry_id),
+    yearEndJournalEntryId: parsePositiveInt(row.year_end_journal_entry_id),
+    sourceJournalCount: Number(row.source_journal_count || 0),
+    sourceDebitTotal: Number(row.source_debit_total || 0),
+    sourceCreditTotal: Number(row.source_credit_total || 0),
+    startedByUserId: parsePositiveInt(row.started_by_user_id),
+    completedByUserId: parsePositiveInt(row.completed_by_user_id),
+    reopenedByUserId: parsePositiveInt(row.reopened_by_user_id),
+    startedAt: row.started_at || null,
+    completedAt: row.completed_at || null,
+    reopenedAt: row.reopened_at || null,
+    note: row.note || null,
+    metadata: parseJsonColumn(row.metadata_json),
+  };
+}
+
+function buildSystemJournalNo(prefix, scopeId) {
+  const rand = Math.floor(Math.random() * 1_679_616)
+    .toString(36)
+    .padStart(4, "0")
+    .toUpperCase();
+  const stamp = Date.now().toString(36).toUpperCase();
+  return `${String(prefix).toUpperCase()}-${String(scopeId).toUpperCase()}-${stamp}-${rand}`.slice(
+    0,
+    40
+  );
+}
+
+function computeCloseRunHash(payload) {
+  return crypto
+    .createHash("sha256")
+    .update(JSON.stringify(payload))
+    .digest("hex");
+}
+
+async function writeAuditLog(runQuery, req, event) {
+  const tenantId = parsePositiveInt(event.tenantId);
+  if (!tenantId) {
+    return;
+  }
+
+  const userId = parsePositiveInt(event.userId);
+  const scopeType = event.scopeType ? String(event.scopeType).toUpperCase() : null;
+  const scopeId = parsePositiveInt(event.scopeId);
+
+  const forwardedFor = req.headers["x-forwarded-for"];
+  const forwardedIp = Array.isArray(forwardedFor)
+    ? forwardedFor[0]
+    : String(forwardedFor || "")
+        .split(",")
+        .map((value) => value.trim())
+        .filter(Boolean)[0];
+
+  const ipAddress = forwardedIp || req.ip || req.socket?.remoteAddress || null;
+  const userAgent = req.headers["user-agent"] || null;
+
+  await runQuery(
+    `INSERT INTO audit_logs (
+        tenant_id,
+        user_id,
+        action,
+        resource_type,
+        resource_id,
+        scope_type,
+        scope_id,
+        request_id,
+        ip_address,
+        user_agent,
+        payload_json
+     )
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      tenantId,
+      userId || null,
+      String(event.action || "gl.period_close"),
+      String(event.resourceType || "period_close_run"),
+      event.resourceId ? String(event.resourceId) : null,
+      scopeType,
+      scopeId || null,
+      req.headers["x-request-id"] ? String(req.headers["x-request-id"]) : null,
+      ipAddress,
+      userAgent ? String(userAgent).slice(0, 255) : null,
+      event.payload ? JSON.stringify(event.payload) : null,
+    ]
+  );
+}
+
+async function getFiscalPeriodDetails(periodId, runQuery = query) {
+  const result = await runQuery(
+    `SELECT
+       id,
+       calendar_id,
+       fiscal_year,
+       period_no,
+       period_name,
+       start_date,
+       end_date,
+       is_adjustment
+     FROM fiscal_periods
+     WHERE id = ?
+     LIMIT 1`,
+    [periodId]
+  );
+  return result.rows[0] || null;
+}
+
+async function findNextFiscalPeriod(calendarId, periodEndDate, runQuery = query) {
+  const result = await runQuery(
+    `SELECT
+       id,
+       calendar_id,
+       fiscal_year,
+       period_no,
+       period_name,
+       start_date,
+       end_date,
+       is_adjustment
+     FROM fiscal_periods
+     WHERE calendar_id = ?
+       AND is_adjustment = FALSE
+       AND start_date > ?
+     ORDER BY start_date ASC, id ASC
+     LIMIT 1`,
+    [calendarId, periodEndDate]
+  );
+  return result.rows[0] || null;
+}
+
+async function getPeriodSourceFingerprint(
+  tenantId,
+  bookId,
+  fiscalPeriodId,
+  runQuery = query
+) {
+  const result = await runQuery(
+    `SELECT
+       COUNT(*) AS source_journal_count,
+       COALESCE(SUM(total_debit_base), 0) AS source_debit_total,
+       COALESCE(SUM(total_credit_base), 0) AS source_credit_total,
+       COALESCE(MAX(updated_at), '1970-01-01 00:00:00') AS source_last_updated_at
+     FROM journal_entries
+     WHERE tenant_id = ?
+       AND book_id = ?
+       AND fiscal_period_id = ?
+       AND status = 'POSTED'
+       AND (reference_no IS NULL OR reference_no NOT LIKE 'PERIOD_CLOSE_RUN:%')`,
+    [tenantId, bookId, fiscalPeriodId]
+  );
+
+  const row = result.rows[0] || {};
+  return {
+    sourceJournalCount: Number(row.source_journal_count || 0),
+    sourceDebitTotal: Number(row.source_debit_total || 0),
+    sourceCreditTotal: Number(row.source_credit_total || 0),
+    sourceLastUpdatedAt: row.source_last_updated_at || null,
+  };
+}
+
+async function getPostedPeriodAccountBalances(
+  tenantId,
+  bookId,
+  fiscalPeriodId,
+  runQuery = query
+) {
+  const result = await runQuery(
+    `SELECT
+       jl.account_id,
+       a.code AS account_code,
+       a.name AS account_name,
+       a.account_type,
+       c.legal_entity_id,
+       SUM(jl.debit_base) AS debit_total,
+       SUM(jl.credit_base) AS credit_total,
+       SUM(jl.debit_base - jl.credit_base) AS closing_balance
+     FROM journal_entries je
+     JOIN journal_lines jl ON jl.journal_entry_id = je.id
+     JOIN accounts a ON a.id = jl.account_id
+     JOIN charts_of_accounts c ON c.id = a.coa_id
+     WHERE je.tenant_id = ?
+       AND je.book_id = ?
+       AND je.fiscal_period_id = ?
+       AND je.status = 'POSTED'
+       AND (je.reference_no IS NULL OR je.reference_no NOT LIKE 'PERIOD_CLOSE_RUN:%')
+       AND c.tenant_id = ?
+     GROUP BY jl.account_id, a.code, a.name, a.account_type, c.legal_entity_id
+     HAVING ABS(SUM(jl.debit_base - jl.credit_base)) >= ?
+     ORDER BY a.code, jl.account_id`,
+    [tenantId, bookId, fiscalPeriodId, tenantId, BALANCE_EPSILON]
+  );
+
+  return result.rows || [];
+}
+
+function buildYearEndCloseLine(balanceRow) {
+  const closingBalance = Number(balanceRow.closing_balance || 0);
+  if (isNearlyZero(closingBalance)) {
+    return null;
+  }
+
+  if (closingBalance > 0) {
+    return {
+      accountId: parsePositiveInt(balanceRow.account_id),
+      closingBalance,
+      debitBase: 0,
+      creditBase: closingBalance,
+      description: `Year-end close (${String(balanceRow.account_code || "").trim()})`,
+    };
+  }
+
+  return {
+    accountId: parsePositiveInt(balanceRow.account_id),
+    closingBalance,
+    debitBase: Math.abs(closingBalance),
+    creditBase: 0,
+    description: `Year-end close (${String(balanceRow.account_code || "").trim()})`,
+  };
+}
+
+async function createSystemJournalWithLines(tx, payload) {
+  const lines = Array.isArray(payload.lines) ? payload.lines : [];
+  if (lines.length === 0) {
+    return null;
+  }
+
+  const entryDate = toIsoDate(payload.entryDate, "entryDate");
+  const documentDate = toIsoDate(payload.documentDate, "documentDate");
+
+  let totalDebitBase = 0;
+  let totalCreditBase = 0;
+  for (const line of lines) {
+    totalDebitBase += Number(line.debitBase || 0);
+    totalCreditBase += Number(line.creditBase || 0);
+  }
+  if (Math.abs(totalDebitBase - totalCreditBase) > BALANCE_EPSILON) {
+    throw badRequest("System-generated journal is not balanced");
+  }
+
+  const entryResult = await tx.query(
+    `INSERT INTO journal_entries (
+        tenant_id,
+        legal_entity_id,
+        book_id,
+        fiscal_period_id,
+        journal_no,
+        source_type,
+        status,
+        entry_date,
+        document_date,
+        currency_code,
+        description,
+        reference_no,
+        total_debit_base,
+        total_credit_base,
+        created_by_user_id,
+        posted_by_user_id,
+        posted_at
+     )
+     VALUES (?, ?, ?, ?, ?, 'SYSTEM', 'POSTED', ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+    [
+      payload.tenantId,
+      payload.legalEntityId,
+      payload.bookId,
+      payload.fiscalPeriodId,
+      payload.journalNo,
+      entryDate,
+      documentDate,
+      payload.currencyCode,
+      payload.description || null,
+      payload.referenceNo || null,
+      totalDebitBase,
+      totalCreditBase,
+      payload.userId,
+      payload.userId,
+    ]
+  );
+
+  const journalEntryId = parsePositiveInt(entryResult.rows.insertId);
+  if (!journalEntryId) {
+    throw badRequest("Failed to create system journal entry");
+  }
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    const debitBase = Number(line.debitBase || 0);
+    const creditBase = Number(line.creditBase || 0);
+    // eslint-disable-next-line no-await-in-loop
+    await tx.query(
+      `INSERT INTO journal_lines (
+          journal_entry_id,
+          line_no,
+          account_id,
+          operating_unit_id,
+          counterparty_legal_entity_id,
+          description,
+          currency_code,
+          amount_txn,
+          debit_base,
+          credit_base,
+          tax_code
+       )
+       VALUES (?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, NULL)`,
+      [
+        journalEntryId,
+        i + 1,
+        parsePositiveInt(line.accountId),
+        line.description ? String(line.description) : null,
+        payload.currencyCode,
+        debitBase - creditBase,
+        debitBase,
+        creditBase,
+      ]
+    );
+  }
+
+  return {
+    journalEntryId,
+    totalDebitBase,
+    totalCreditBase,
+    lineCount: lines.length,
+  };
+}
+
+async function reversePostedJournalWithinTransaction(tx, params) {
+  const journalId = parsePositiveInt(params.journalId);
+  if (!journalId) {
+    return null;
+  }
+
+  const originalResult = await tx.query(
+    `SELECT
+       id,
+       tenant_id,
+       legal_entity_id,
+       book_id,
+       fiscal_period_id,
+       journal_no,
+       source_type,
+       status,
+       entry_date,
+       document_date,
+       currency_code,
+       description,
+       reference_no,
+       total_debit_base,
+       total_credit_base,
+       reversal_journal_entry_id
+     FROM journal_entries
+     WHERE id = ?
+       AND tenant_id = ?
+     LIMIT 1
+     FOR UPDATE`,
+    [journalId, params.tenantId]
+  );
+  const original = originalResult.rows[0];
+  if (!original) {
+    return null;
+  }
+
+  const existingReversalId = parsePositiveInt(original.reversal_journal_entry_id);
+  if (String(original.status || "").toUpperCase() === "REVERSED" && existingReversalId) {
+    return existingReversalId;
+  }
+
+  if (String(original.status || "").toUpperCase() !== "POSTED") {
+    throw badRequest(`Journal ${journalId} is not POSTED and cannot be auto-reversed`);
+  }
+
+  const lineResult = await tx.query(
+    `SELECT
+       account_id,
+       operating_unit_id,
+       counterparty_legal_entity_id,
+       description,
+       currency_code,
+       amount_txn,
+       debit_base,
+       credit_base,
+       tax_code
+     FROM journal_lines
+     WHERE journal_entry_id = ?
+     ORDER BY line_no`,
+    [journalId]
+  );
+  const lines = lineResult.rows || [];
+  if (lines.length === 0) {
+    throw badRequest(`Journal ${journalId} has no lines to auto-reverse`);
+  }
+
+  const reversalNo = buildSystemJournalNo("REV", journalId);
+  const reason = params.reason || "Period close reopen";
+
+  const reversalResult = await tx.query(
+    `INSERT INTO journal_entries (
+        tenant_id,
+        legal_entity_id,
+        book_id,
+        fiscal_period_id,
+        journal_no,
+        source_type,
+        status,
+        entry_date,
+        document_date,
+        currency_code,
+        description,
+        reference_no,
+        total_debit_base,
+        total_credit_base,
+        created_by_user_id,
+        posted_by_user_id,
+        posted_at,
+        reverse_reason
+     )
+     VALUES (?, ?, ?, ?, ?, ?, 'POSTED', ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)`,
+    [
+      params.tenantId,
+      parsePositiveInt(original.legal_entity_id),
+      parsePositiveInt(original.book_id),
+      parsePositiveInt(original.fiscal_period_id),
+      reversalNo,
+      String(original.source_type || "SYSTEM").toUpperCase(),
+      toIsoDate(original.entry_date, "entry_date"),
+      toIsoDate(original.document_date, "document_date"),
+      String(original.currency_code || params.currencyCode || "USD").toUpperCase(),
+      `Auto-reversal of ${original.journal_no}`,
+      original.reference_no ? String(original.reference_no) : null,
+      Number(original.total_credit_base || 0),
+      Number(original.total_debit_base || 0),
+      params.userId,
+      params.userId,
+      reason,
+    ]
+  );
+
+  const reversalJournalId = parsePositiveInt(reversalResult.rows.insertId);
+  if (!reversalJournalId) {
+    throw badRequest(`Failed to create reversal for journal ${journalId}`);
+  }
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    // eslint-disable-next-line no-await-in-loop
+    await tx.query(
+      `INSERT INTO journal_lines (
+          journal_entry_id,
+          line_no,
+          account_id,
+          operating_unit_id,
+          counterparty_legal_entity_id,
+          description,
+          currency_code,
+          amount_txn,
+          debit_base,
+          credit_base,
+          tax_code
+       )
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        reversalJournalId,
+        i + 1,
+        parsePositiveInt(line.account_id),
+        parsePositiveInt(line.operating_unit_id),
+        parsePositiveInt(line.counterparty_legal_entity_id),
+        line.description ? String(line.description) : null,
+        String(line.currency_code || original.currency_code).toUpperCase(),
+        Number(line.amount_txn || 0) * -1,
+        Number(line.credit_base || 0),
+        Number(line.debit_base || 0),
+        line.tax_code ? String(line.tax_code) : null,
+      ]
+    );
+  }
+
+  await tx.query(
+    `UPDATE journal_entries
+     SET status = 'REVERSED',
+         reversed_by_user_id = ?,
+         reversed_at = CURRENT_TIMESTAMP,
+         reversal_journal_entry_id = ?,
+         reverse_reason = ?
+     WHERE id = ?
+       AND tenant_id = ?`,
+    [params.userId, reversalJournalId, reason, journalId, params.tenantId]
+  );
+
+  return reversalJournalId;
+}
+
+async function getRetainedEarningsAccountForBook(
+  tenantId,
+  bookLegalEntityId,
+  accountId,
+  runQuery = query
+) {
+  const parsedAccountId = parsePositiveInt(accountId);
+  if (!parsedAccountId) {
+    return null;
+  }
+
+  const result = await runQuery(
+    `SELECT
+       a.id,
+       a.code,
+       a.name,
+       a.account_type,
+       c.legal_entity_id
+     FROM accounts a
+     JOIN charts_of_accounts c ON c.id = a.coa_id
+     WHERE a.id = ?
+       AND c.tenant_id = ?
+     LIMIT 1`,
+    [parsedAccountId, tenantId]
+  );
+  const row = result.rows[0];
+  if (!row) {
+    throw badRequest("retainedEarningsAccountId not found for tenant");
+  }
+
+  const accountType = String(row.account_type || "").toUpperCase();
+  if (accountType !== "EQUITY") {
+    throw badRequest("retainedEarningsAccountId must reference an EQUITY account");
+  }
+
+  const accountLegalEntityId = parsePositiveInt(row.legal_entity_id);
+  if (accountLegalEntityId && accountLegalEntityId !== bookLegalEntityId) {
+    throw badRequest("retainedEarningsAccountId must belong to the same legal entity as bookId");
+  }
+
+  return {
+    id: parsedAccountId,
+    code: String(row.code || ""),
+    name: String(row.name || ""),
+    accountType,
+    legalEntityId: accountLegalEntityId,
+  };
 }
 
 function parseOptionalPositiveInt(value, fieldLabel) {
@@ -719,9 +1340,9 @@ router.get(
        JOIN fiscal_periods fp ON fp.id = je.fiscal_period_id
        WHERE ${whereSql}
        ORDER BY je.id DESC
-       LIMIT ?
-       OFFSET ?`,
-      [...params, limit, offset]
+       LIMIT ${limit}
+       OFFSET ${offset}`,
+      params
     );
 
     const rows = rowsResult.rows || [];
@@ -1248,6 +1869,886 @@ router.get(
       bookId,
       fiscalPeriodId,
       rows: result.rows,
+    });
+  })
+);
+
+router.get(
+  "/period-closing/runs",
+  requirePermission("gl.period.close", {
+    resolveScope: async (req, tenantId) => {
+      return resolveScopeFromBookId(req.query?.bookId, tenantId);
+    },
+  }),
+  asyncHandler(async (req, res) => {
+    const tenantId = resolveTenantId(req);
+    if (!tenantId) {
+      throw badRequest("tenantId is required");
+    }
+
+    const bookId = parsePositiveInt(req.query.bookId);
+    const fiscalPeriodId = parsePositiveInt(req.query.fiscalPeriodId);
+    const status = req.query.status ? String(req.query.status).toUpperCase() : null;
+    const includeLines = String(req.query.includeLines || "").toLowerCase() === "true";
+
+    if (status && !CLOSE_RUN_STATUSES.has(status)) {
+      throw badRequest("status must be one of IN_PROGRESS, COMPLETED, FAILED, REOPENED");
+    }
+
+    if (bookId) {
+      const book = await assertBookBelongsToTenant(tenantId, bookId, "bookId");
+      assertScopeAccess(req, "legal_entity", parsePositiveInt(book.legal_entity_id), "bookId");
+    }
+
+    const params = [tenantId];
+    const conditions = ["r.tenant_id = ?"];
+    conditions.push(buildScopeFilter(req, "legal_entity", "b.legal_entity_id", params));
+
+    if (bookId) {
+      conditions.push("r.book_id = ?");
+      params.push(bookId);
+    }
+    if (fiscalPeriodId) {
+      conditions.push("r.fiscal_period_id = ?");
+      params.push(fiscalPeriodId);
+    }
+    if (status) {
+      conditions.push("r.status = ?");
+      params.push(status);
+    }
+
+    const result = await query(
+      `SELECT
+         r.*,
+         b.code AS book_code,
+         b.name AS book_name,
+         fp.fiscal_year,
+         fp.period_no,
+         fp.period_name
+       FROM period_close_runs r
+       JOIN books b ON b.id = r.book_id
+       JOIN fiscal_periods fp ON fp.id = r.fiscal_period_id
+       WHERE ${conditions.join(" AND ")}
+       ORDER BY r.id DESC
+       LIMIT 250`,
+      params
+    );
+
+    const rows = (result.rows || []).map((row) => mapPeriodCloseRunRow(row));
+
+    if (includeLines && rows.length > 0) {
+      const runIds = rows.map((row) => row.id).filter(Boolean);
+      if (runIds.length > 0) {
+        const placeholders = runIds.map(() => "?").join(", ");
+        const lineResult = await query(
+          `SELECT
+             l.period_close_run_id,
+             l.line_type,
+             l.account_id,
+             l.closing_balance,
+             l.debit_base,
+             l.credit_base,
+             a.code AS account_code,
+             a.name AS account_name
+           FROM period_close_run_lines l
+           JOIN accounts a ON a.id = l.account_id
+           WHERE l.period_close_run_id IN (${placeholders})
+           ORDER BY l.period_close_run_id, l.line_type, a.code`,
+          runIds
+        );
+
+        const linesByRunId = new Map();
+        for (const line of lineResult.rows || []) {
+          const runId = parsePositiveInt(line.period_close_run_id);
+          if (!runId) {
+            continue;
+          }
+          if (!linesByRunId.has(runId)) {
+            linesByRunId.set(runId, []);
+          }
+          linesByRunId.get(runId).push({
+            lineType: String(line.line_type || ""),
+            accountId: parsePositiveInt(line.account_id),
+            accountCode: line.account_code || null,
+            accountName: line.account_name || null,
+            closingBalance: Number(line.closing_balance || 0),
+            debitBase: Number(line.debit_base || 0),
+            creditBase: Number(line.credit_base || 0),
+          });
+        }
+
+        for (const row of rows) {
+          row.lines = linesByRunId.get(row.id) || [];
+        }
+      }
+    }
+
+    return res.json({
+      tenantId,
+      rows,
+    });
+  })
+);
+
+router.post(
+  "/period-closing/:bookId/:periodId/close-run",
+  requirePermission("gl.period.close", {
+    resolveScope: async (req, tenantId) => {
+      return resolveScopeFromBookId(req.params?.bookId, tenantId);
+    },
+  }),
+  asyncHandler(async (req, res) => {
+    const tenantId = resolveTenantId(req);
+    if (!tenantId) {
+      throw badRequest("tenantId is required");
+    }
+
+    const userId = parsePositiveInt(req.user?.userId);
+    if (!userId) {
+      throw badRequest("Authenticated user is required");
+    }
+
+    const bookId = parsePositiveInt(req.params.bookId);
+    const fiscalPeriodId = parsePositiveInt(req.params.periodId);
+    if (!bookId || !fiscalPeriodId) {
+      throw badRequest("bookId and periodId must be positive integers");
+    }
+
+    const book = await assertBookBelongsToTenant(tenantId, bookId, "bookId");
+    const legalEntityId = parsePositiveInt(book.legal_entity_id);
+    if (legalEntityId) {
+      assertScopeAccess(req, "legal_entity", legalEntityId, "bookId");
+    }
+
+    await assertFiscalPeriodBelongsToCalendar(
+      parsePositiveInt(book.calendar_id),
+      fiscalPeriodId,
+      "periodId"
+    );
+    const currentPeriod = await getFiscalPeriodDetails(fiscalPeriodId);
+    if (!currentPeriod) {
+      throw badRequest("periodId not found");
+    }
+
+    const nextPeriod = await findNextFiscalPeriod(
+      parsePositiveInt(book.calendar_id),
+      currentPeriod.end_date
+    );
+    if (!nextPeriod) {
+      throw badRequest(
+        "No next fiscal period found for carry-forward. Generate next periods first."
+      );
+    }
+
+    const isYearEnd =
+      Number(nextPeriod.fiscal_year || 0) !== Number(currentPeriod.fiscal_year || 0);
+
+    const closeStatus = normalizeCloseTargetStatus(req.body?.closeStatus);
+    const note = req.body?.note ? String(req.body.note) : null;
+
+    const retainedEarningsAccountIdRaw =
+      req.body?.retainedEarningsAccountId === undefined ||
+      req.body?.retainedEarningsAccountId === null ||
+      req.body?.retainedEarningsAccountId === ""
+        ? null
+        : parsePositiveInt(req.body?.retainedEarningsAccountId);
+
+    if (
+      req.body?.retainedEarningsAccountId !== undefined &&
+      req.body?.retainedEarningsAccountId !== null &&
+      req.body?.retainedEarningsAccountId !== "" &&
+      !retainedEarningsAccountIdRaw
+    ) {
+      throw badRequest("retainedEarningsAccountId must be a positive integer");
+    }
+
+    if (isYearEnd && !retainedEarningsAccountIdRaw) {
+      throw badRequest("retainedEarningsAccountId is required for year-end P&L closing");
+    }
+
+    let retainedAccount = null;
+    if (retainedEarningsAccountIdRaw) {
+      retainedAccount = await getRetainedEarningsAccountForBook(
+        tenantId,
+        legalEntityId,
+        retainedEarningsAccountIdRaw
+      );
+    }
+
+    const sourceFingerprint = await getPeriodSourceFingerprint(
+      tenantId,
+      bookId,
+      fiscalPeriodId
+    );
+
+    const runHash = computeCloseRunHash({
+      tenantId,
+      bookId,
+      fiscalPeriodId,
+      nextFiscalPeriodId: parsePositiveInt(nextPeriod.id),
+      closeStatus,
+      isYearEnd,
+      retainedEarningsAccountId: retainedAccount?.id || null,
+      sourceFingerprint,
+    });
+
+    const closeResult = await withTransaction(async (tx) => {
+      const existingResult = await tx.query(
+        `SELECT *
+         FROM period_close_runs
+         WHERE tenant_id = ?
+           AND book_id = ?
+           AND fiscal_period_id = ?
+           AND run_hash = ?
+         LIMIT 1
+         FOR UPDATE`,
+        [tenantId, bookId, fiscalPeriodId, runHash]
+      );
+      const existingRun = existingResult.rows[0] || null;
+
+      const currentStatus = await getEffectivePeriodStatus(
+        bookId,
+        fiscalPeriodId,
+        tx.query
+      );
+
+      if (
+        existingRun &&
+        String(existingRun.status || "").toUpperCase() === "COMPLETED" &&
+        !existingRun.reopened_at
+      ) {
+        const existingCloseStatus = String(existingRun.close_status || "").toUpperCase();
+        if (existingCloseStatus && existingCloseStatus !== currentStatus) {
+          await tx.query(
+            `INSERT INTO period_statuses (
+                book_id, fiscal_period_id, status, closed_by_user_id, closed_at, note
+             )
+             VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
+             ON DUPLICATE KEY UPDATE
+               status = VALUES(status),
+               closed_by_user_id = VALUES(closed_by_user_id),
+               closed_at = VALUES(closed_at),
+               note = VALUES(note)`,
+            [
+              bookId,
+              fiscalPeriodId,
+              existingCloseStatus,
+              userId,
+              `Idempotent close run #${existingRun.id} reapplied`,
+            ]
+          );
+        }
+
+        const rowResult = await tx.query(
+          `SELECT
+             r.*,
+             b.code AS book_code,
+             b.name AS book_name,
+             fp.fiscal_year,
+             fp.period_no,
+             fp.period_name
+           FROM period_close_runs r
+           JOIN books b ON b.id = r.book_id
+           JOIN fiscal_periods fp ON fp.id = r.fiscal_period_id
+           WHERE r.id = ?
+           LIMIT 1`,
+          [existingRun.id]
+        );
+
+        return {
+          idempotent: true,
+          previousStatus: currentStatus,
+          run: mapPeriodCloseRunRow(rowResult.rows[0] || existingRun),
+          carryForwardLineCount: Number(
+            parseJsonColumn(existingRun.metadata_json)?.carryForwardLineCount || 0
+          ),
+          yearEndLineCount: Number(
+            parseJsonColumn(existingRun.metadata_json)?.yearEndLineCount || 0
+          ),
+        };
+      }
+
+      if (currentStatus === "HARD_CLOSED") {
+        throw badRequest("Period is HARD_CLOSED. Reopen the period before running close again.");
+      }
+
+      let runId = parsePositiveInt(existingRun?.id);
+      const existingStatus = String(existingRun?.status || "").toUpperCase();
+      if (existingRun && existingStatus === "IN_PROGRESS") {
+        throw badRequest("A close run is already in progress for this period hash");
+      }
+
+      if (runId) {
+        await tx.query(
+          `UPDATE period_close_runs
+           SET status = 'IN_PROGRESS',
+               close_status = ?,
+               next_fiscal_period_id = ?,
+               year_end_closed = FALSE,
+               retained_earnings_account_id = ?,
+               carry_forward_journal_entry_id = NULL,
+               year_end_journal_entry_id = NULL,
+               source_journal_count = ?,
+               source_debit_total = ?,
+               source_credit_total = ?,
+               started_by_user_id = ?,
+               completed_by_user_id = NULL,
+               reopened_by_user_id = NULL,
+               started_at = CURRENT_TIMESTAMP,
+               completed_at = NULL,
+               reopened_at = NULL,
+               note = ?,
+               metadata_json = NULL
+           WHERE id = ?`,
+          [
+            closeStatus,
+            parsePositiveInt(nextPeriod.id),
+            retainedAccount?.id || null,
+            sourceFingerprint.sourceJournalCount,
+            sourceFingerprint.sourceDebitTotal,
+            sourceFingerprint.sourceCreditTotal,
+            userId,
+            note,
+            runId,
+          ]
+        );
+
+        await tx.query(
+          `DELETE FROM period_close_run_lines
+           WHERE period_close_run_id = ?`,
+          [runId]
+        );
+      } else {
+        const insertResult = await tx.query(
+          `INSERT INTO period_close_runs (
+              tenant_id,
+              book_id,
+              fiscal_period_id,
+              next_fiscal_period_id,
+              run_hash,
+              close_status,
+              status,
+              year_end_closed,
+              retained_earnings_account_id,
+              source_journal_count,
+              source_debit_total,
+              source_credit_total,
+              started_by_user_id,
+              note
+           )
+           VALUES (?, ?, ?, ?, ?, ?, 'IN_PROGRESS', FALSE, ?, ?, ?, ?, ?, ?)`,
+          [
+            tenantId,
+            bookId,
+            fiscalPeriodId,
+            parsePositiveInt(nextPeriod.id),
+            runHash,
+            closeStatus,
+            retainedAccount?.id || null,
+            sourceFingerprint.sourceJournalCount,
+            sourceFingerprint.sourceDebitTotal,
+            sourceFingerprint.sourceCreditTotal,
+            userId,
+            note,
+          ]
+        );
+        runId = parsePositiveInt(insertResult.rows.insertId);
+      }
+
+      if (!runId) {
+        throw badRequest("Failed to initialize period close run");
+      }
+
+      const balances = await getPostedPeriodAccountBalances(
+        tenantId,
+        bookId,
+        fiscalPeriodId,
+        tx.query
+      );
+
+      const carryForwardBalanceByAccountId = new Map();
+      const accountCodeById = new Map();
+      for (const row of balances) {
+        const accountId = parsePositiveInt(row.account_id);
+        if (!accountId) {
+          continue;
+        }
+
+        accountCodeById.set(accountId, String(row.account_code || `ACC-${accountId}`));
+
+        const accountType = String(row.account_type || "").toUpperCase();
+        if (!["REVENUE", "EXPENSE"].includes(accountType)) {
+          carryForwardBalanceByAccountId.set(accountId, Number(row.closing_balance || 0));
+        }
+      }
+
+      const pnlCloseLines = balances
+        .filter((row) => ["REVENUE", "EXPENSE"].includes(String(row.account_type || "").toUpperCase()))
+        .map((row) => buildYearEndCloseLine(row))
+        .filter(Boolean);
+
+      const yearEndLines = [];
+      if (isYearEnd) {
+        if (!retainedAccount?.id) {
+          throw badRequest("retainedEarningsAccountId is required for year-end P&L closing");
+        }
+
+        yearEndLines.push(...pnlCloseLines);
+
+        const pnlDebitTotal = pnlCloseLines.reduce(
+          (sum, line) => sum + Number(line.debitBase || 0),
+          0
+        );
+        const pnlCreditTotal = pnlCloseLines.reduce(
+          (sum, line) => sum + Number(line.creditBase || 0),
+          0
+        );
+        const retainedDifference = pnlDebitTotal - pnlCreditTotal;
+        if (!isNearlyZero(retainedDifference)) {
+          let retainedLine = null;
+          if (retainedDifference > 0) {
+            retainedLine = {
+              accountId: retainedAccount.id,
+              closingBalance: retainedDifference * -1,
+              debitBase: 0,
+              creditBase: retainedDifference,
+              description: "Year-end transfer to retained earnings",
+            };
+          } else {
+            retainedLine = {
+              accountId: retainedAccount.id,
+              closingBalance: Math.abs(retainedDifference),
+              debitBase: Math.abs(retainedDifference),
+              creditBase: 0,
+              description: "Year-end transfer to retained earnings",
+            };
+          }
+
+          if (retainedLine) {
+            yearEndLines.push(retainedLine);
+            accountCodeById.set(
+              retainedAccount.id,
+              String(retainedAccount.code || `ACC-${retainedAccount.id}`)
+            );
+            const currentRetainedBalance = Number(
+              carryForwardBalanceByAccountId.get(retainedAccount.id) || 0
+            );
+            carryForwardBalanceByAccountId.set(
+              retainedAccount.id,
+              currentRetainedBalance +
+                (Number(retainedLine.debitBase || 0) - Number(retainedLine.creditBase || 0))
+            );
+          }
+        }
+      }
+
+      const carryForwardLines = [];
+      for (const [accountId, closingBalanceRaw] of carryForwardBalanceByAccountId.entries()) {
+        const closingBalance = Number(closingBalanceRaw || 0);
+        if (isNearlyZero(closingBalance)) {
+          continue;
+        }
+
+        const accountCode = accountCodeById.get(accountId) || `ACC-${accountId}`;
+        if (closingBalance > 0) {
+          carryForwardLines.push({
+            accountId,
+            closingBalance,
+            debitBase: closingBalance,
+            creditBase: 0,
+            description: `Opening from previous period (${accountCode})`,
+          });
+        } else {
+          carryForwardLines.push({
+            accountId,
+            closingBalance,
+            debitBase: 0,
+            creditBase: Math.abs(closingBalance),
+            description: `Opening from previous period (${accountCode})`,
+          });
+        }
+      }
+
+      let carryForwardJournalEntryId = null;
+      if (carryForwardLines.length > 0) {
+        const nextPeriodStatus = await getEffectivePeriodStatus(
+          bookId,
+          parsePositiveInt(nextPeriod.id),
+          tx.query
+        );
+        if (nextPeriodStatus === "HARD_CLOSED") {
+          throw badRequest(
+            "Next period is HARD_CLOSED; cannot post opening carry-forward entry"
+          );
+        }
+
+        const carryJournal = await createSystemJournalWithLines(tx, {
+          tenantId,
+          legalEntityId,
+          bookId,
+          fiscalPeriodId: parsePositiveInt(nextPeriod.id),
+          journalNo: buildSystemJournalNo("CARRY", runId),
+          entryDate: String(nextPeriod.start_date),
+          documentDate: String(nextPeriod.start_date),
+          currencyCode: String(book.base_currency_code || "USD").toUpperCase(),
+          description: `Auto carry-forward opening balances from FY${currentPeriod.fiscal_year} P${currentPeriod.period_no}`,
+          referenceNo: `PERIOD_CLOSE_RUN:${runId}`,
+          userId,
+          lines: carryForwardLines,
+        });
+        carryForwardJournalEntryId = parsePositiveInt(carryJournal?.journalEntryId);
+      }
+
+      let yearEndJournalEntryId = null;
+      if (isYearEnd && yearEndLines.length > 0) {
+        const yearEndJournal = await createSystemJournalWithLines(tx, {
+          tenantId,
+          legalEntityId,
+          bookId,
+          fiscalPeriodId,
+          journalNo: buildSystemJournalNo("YECLOSE", runId),
+          entryDate: String(currentPeriod.end_date),
+          documentDate: String(currentPeriod.end_date),
+          currencyCode: String(book.base_currency_code || "USD").toUpperCase(),
+          description: `Auto year-end P&L close FY${currentPeriod.fiscal_year} P${currentPeriod.period_no}`,
+          referenceNo: `PERIOD_CLOSE_RUN:${runId}`,
+          userId,
+          lines: yearEndLines,
+        });
+        yearEndJournalEntryId = parsePositiveInt(yearEndJournal?.journalEntryId);
+      }
+
+      for (const line of carryForwardLines) {
+        // eslint-disable-next-line no-await-in-loop
+        await tx.query(
+          `INSERT INTO period_close_run_lines (
+              period_close_run_id,
+              tenant_id,
+              line_type,
+              account_id,
+              closing_balance,
+              debit_base,
+              credit_base
+           )
+           VALUES (?, ?, 'CARRY_FORWARD', ?, ?, ?, ?)`,
+          [
+            runId,
+            tenantId,
+            parsePositiveInt(line.accountId),
+            Number(line.closingBalance || 0),
+            Number(line.debitBase || 0),
+            Number(line.creditBase || 0),
+          ]
+        );
+      }
+
+      for (const line of yearEndLines) {
+        // eslint-disable-next-line no-await-in-loop
+        await tx.query(
+          `INSERT INTO period_close_run_lines (
+              period_close_run_id,
+              tenant_id,
+              line_type,
+              account_id,
+              closing_balance,
+              debit_base,
+              credit_base
+           )
+           VALUES (?, ?, 'YEAR_END', ?, ?, ?, ?)`,
+          [
+            runId,
+            tenantId,
+            parsePositiveInt(line.accountId),
+            Number(line.closingBalance || 0),
+            Number(line.debitBase || 0),
+            Number(line.creditBase || 0),
+          ]
+        );
+      }
+
+      await tx.query(
+        `INSERT INTO period_statuses (
+            book_id, fiscal_period_id, status, closed_by_user_id, closed_at, note
+         )
+         VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
+         ON DUPLICATE KEY UPDATE
+           status = VALUES(status),
+           closed_by_user_id = VALUES(closed_by_user_id),
+           closed_at = VALUES(closed_at),
+           note = VALUES(note)`,
+        [
+          bookId,
+          fiscalPeriodId,
+          closeStatus,
+          userId,
+          `Period close run #${runId}${note ? `: ${note}` : ""}`,
+        ]
+      );
+
+      const metadata = {
+        nextFiscalPeriodId: parsePositiveInt(nextPeriod.id),
+        isYearEnd,
+        carryForwardLineCount: carryForwardLines.length,
+        yearEndLineCount: yearEndLines.length,
+        sourceFingerprint,
+      };
+
+      await tx.query(
+        `UPDATE period_close_runs
+         SET status = 'COMPLETED',
+             year_end_closed = ?,
+             retained_earnings_account_id = ?,
+             carry_forward_journal_entry_id = ?,
+             year_end_journal_entry_id = ?,
+             completed_by_user_id = ?,
+             completed_at = CURRENT_TIMESTAMP,
+             metadata_json = ?
+         WHERE id = ?`,
+        [
+          isYearEnd,
+          retainedAccount?.id || null,
+          carryForwardJournalEntryId,
+          yearEndJournalEntryId,
+          userId,
+          JSON.stringify(metadata),
+          runId,
+        ]
+      );
+
+      await writeAuditLog(tx.query, req, {
+        tenantId,
+        userId,
+        action: "gl.period_close.execute",
+        resourceType: "period_close_run",
+        resourceId: String(runId),
+        scopeType: "LEGAL_ENTITY",
+        scopeId: legalEntityId,
+        payload: {
+          bookId,
+          fiscalPeriodId,
+          closeStatus,
+          runHash,
+          isYearEnd,
+          retainedEarningsAccountId: retainedAccount?.id || null,
+          carryForwardJournalEntryId,
+          yearEndJournalEntryId,
+          carryForwardLineCount: carryForwardLines.length,
+          yearEndLineCount: yearEndLines.length,
+          sourceFingerprint,
+        },
+      });
+
+      const runResult = await tx.query(
+        `SELECT
+           r.*,
+           b.code AS book_code,
+           b.name AS book_name,
+           fp.fiscal_year,
+           fp.period_no,
+           fp.period_name
+         FROM period_close_runs r
+         JOIN books b ON b.id = r.book_id
+         JOIN fiscal_periods fp ON fp.id = r.fiscal_period_id
+         WHERE r.id = ?
+         LIMIT 1`,
+        [runId]
+      );
+
+      return {
+        idempotent: false,
+        previousStatus: currentStatus,
+        run: mapPeriodCloseRunRow(runResult.rows[0]),
+        carryForwardLineCount: carryForwardLines.length,
+        yearEndLineCount: yearEndLines.length,
+      };
+    });
+
+    return res.status(closeResult.idempotent ? 200 : 201).json({
+      ok: true,
+      tenantId,
+      idempotent: closeResult.idempotent,
+      previousStatus: closeResult.previousStatus,
+      run: closeResult.run,
+      carryForwardLineCount: closeResult.carryForwardLineCount,
+      yearEndLineCount: closeResult.yearEndLineCount,
+    });
+  })
+);
+
+router.post(
+  "/period-closing/:bookId/:periodId/reopen",
+  requirePermission("gl.period.close", {
+    resolveScope: async (req, tenantId) => {
+      return resolveScopeFromBookId(req.params?.bookId, tenantId);
+    },
+  }),
+  asyncHandler(async (req, res) => {
+    const tenantId = resolveTenantId(req);
+    if (!tenantId) {
+      throw badRequest("tenantId is required");
+    }
+
+    const userId = parsePositiveInt(req.user?.userId);
+    if (!userId) {
+      throw badRequest("Authenticated user is required");
+    }
+
+    const bookId = parsePositiveInt(req.params.bookId);
+    const fiscalPeriodId = parsePositiveInt(req.params.periodId);
+    if (!bookId || !fiscalPeriodId) {
+      throw badRequest("bookId and periodId must be positive integers");
+    }
+
+    const reason = req.body?.reason ? String(req.body.reason).trim() : null;
+    if (!reason) {
+      throw badRequest("reason is required to reopen a closed period");
+    }
+
+    const book = await assertBookBelongsToTenant(tenantId, bookId, "bookId");
+    const legalEntityId = parsePositiveInt(book.legal_entity_id);
+    if (legalEntityId) {
+      assertScopeAccess(req, "legal_entity", legalEntityId, "bookId");
+    }
+
+    await assertFiscalPeriodBelongsToCalendar(
+      parsePositiveInt(book.calendar_id),
+      fiscalPeriodId,
+      "periodId"
+    );
+
+    const reopenResult = await withTransaction(async (tx) => {
+      const currentStatus = await getEffectivePeriodStatus(
+        bookId,
+        fiscalPeriodId,
+        tx.query
+      );
+
+      const runResult = await tx.query(
+        `SELECT *
+         FROM period_close_runs
+         WHERE tenant_id = ?
+           AND book_id = ?
+           AND fiscal_period_id = ?
+           AND status = 'COMPLETED'
+         ORDER BY id DESC
+         LIMIT 1
+         FOR UPDATE`,
+        [tenantId, bookId, fiscalPeriodId]
+      );
+      const run = runResult.rows[0] || null;
+
+      const reversalJournalEntryIds = [];
+      if (run) {
+        const carryReversalId = await reversePostedJournalWithinTransaction(tx, {
+          tenantId,
+          journalId: parsePositiveInt(run.carry_forward_journal_entry_id),
+          userId,
+          reason: `Reopen period close run #${run.id}: ${reason}`,
+        });
+        if (carryReversalId) {
+          reversalJournalEntryIds.push(carryReversalId);
+        }
+
+        const yearEndReversalId = await reversePostedJournalWithinTransaction(tx, {
+          tenantId,
+          journalId: parsePositiveInt(run.year_end_journal_entry_id),
+          userId,
+          reason: `Reopen period close run #${run.id}: ${reason}`,
+        });
+        if (yearEndReversalId) {
+          reversalJournalEntryIds.push(yearEndReversalId);
+        }
+
+        const mergedMetadata = {
+          ...(parseJsonColumn(run.metadata_json) || {}),
+          reopen: {
+            reopenedByUserId: userId,
+            reopenedAt: new Date().toISOString(),
+            reason,
+            reversalJournalEntryIds,
+          },
+        };
+
+        await tx.query(
+          `UPDATE period_close_runs
+           SET status = 'REOPENED',
+               reopened_by_user_id = ?,
+               reopened_at = CURRENT_TIMESTAMP,
+               note = ?,
+               metadata_json = ?
+           WHERE id = ?`,
+          [userId, reason, JSON.stringify(mergedMetadata), run.id]
+        );
+      }
+
+      await tx.query(
+        `INSERT INTO period_statuses (
+            book_id, fiscal_period_id, status, closed_by_user_id, closed_at, note
+         )
+         VALUES (?, ?, 'OPEN', ?, CURRENT_TIMESTAMP, ?)
+         ON DUPLICATE KEY UPDATE
+           status = 'OPEN',
+           closed_by_user_id = VALUES(closed_by_user_id),
+           closed_at = VALUES(closed_at),
+           note = VALUES(note)`,
+        [bookId, fiscalPeriodId, userId, `Reopened: ${reason}`]
+      );
+
+      await writeAuditLog(tx.query, req, {
+        tenantId,
+        userId,
+        action: "gl.period_close.reopen",
+        resourceType: "period_close_run",
+        resourceId: run ? String(run.id) : null,
+        scopeType: "LEGAL_ENTITY",
+        scopeId: legalEntityId,
+        payload: {
+          bookId,
+          fiscalPeriodId,
+          previousStatus: currentStatus,
+          reason,
+          reversalJournalEntryIds,
+          runId: run ? parsePositiveInt(run.id) : null,
+        },
+      });
+
+      let runPayload = null;
+      if (run) {
+        const latestRunResult = await tx.query(
+          `SELECT
+             r.*,
+             b.code AS book_code,
+             b.name AS book_name,
+             fp.fiscal_year,
+             fp.period_no,
+             fp.period_name
+           FROM period_close_runs r
+           JOIN books b ON b.id = r.book_id
+           JOIN fiscal_periods fp ON fp.id = r.fiscal_period_id
+           WHERE r.id = ?
+           LIMIT 1`,
+          [run.id]
+        );
+        runPayload = mapPeriodCloseRunRow(latestRunResult.rows[0] || run);
+      }
+
+      return {
+        previousStatus: currentStatus,
+        status: "OPEN",
+        run: runPayload,
+        reversalJournalEntryIds,
+      };
+    });
+
+    return res.status(201).json({
+      ok: true,
+      tenantId,
+      bookId,
+      fiscalPeriodId,
+      previousStatus: reopenResult.previousStatus,
+      status: reopenResult.status,
+      run: reopenResult.run,
+      reversalJournalEntryIds: reopenResult.reversalJournalEntryIds,
     });
   })
 );

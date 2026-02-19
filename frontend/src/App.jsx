@@ -12,10 +12,15 @@ import CompanyOnboardingPage from "./pages/settings/CompanyOnboardingPage";
 import GlSetupPage from "./pages/settings/GlSetupPage";
 import HesapPlaniOlustur from "./pages/settings/HesapPlaniOlustur";
 import OrganizationManagementPage from "./pages/settings/OrganizationManagementPage";
+import FxRatesPage from "./pages/settings/FxRatesPage";
+import ConsolidationSetupPage from "./pages/settings/ConsolidationSetupPage";
 import RolesPermissionsPage from "./pages/security/RolesPermissionsPage";
 import UserAssignmentsPage from "./pages/security/UserAssignmentsPage";
 import ScopeAssignmentsPage from "./pages/security/ScopeAssignmentsPage";
 import RbacAuditLogsPage from "./pages/security/RbacAuditLogsPage";
+import IntercompanyReconciliationPage from "./pages/IntercompanyReconciliationPage";
+import ConsolidationReportsPage from "./pages/ConsolidationReportsPage";
+import ProviderBootstrapPage from "./pages/ProviderBootstrapPage";
 import ModulePlaceholderPage from "./pages/ModulePlaceholderPage";
 import { collectSidebarLinks, sidebarItems } from "./layouts/sidebarConfig.js";
 import TenantReadinessProvider from "./readiness/TenantReadinessProvider.jsx";
@@ -60,6 +65,16 @@ const implementedRoutes = [
     element: <OrganizationManagementPage />,
   },
   {
+    appPath: "/app/ayarlar/kur-yonetimi",
+    childPath: "ayarlar/kur-yonetimi",
+    element: <FxRatesPage />,
+  },
+  {
+    appPath: "/app/ayarlar/konsolidasyon-kurulumu",
+    childPath: "ayarlar/konsolidasyon-kurulumu",
+    element: <ConsolidationSetupPage />,
+  },
+  {
     appPath: "/app/ayarlar/rbac/roles-permissions",
     childPath: "ayarlar/rbac/roles-permissions",
     element: <RolesPermissionsPage />,
@@ -78,6 +93,16 @@ const implementedRoutes = [
     appPath: "/app/ayarlar/rbac/audit-logs",
     childPath: "ayarlar/rbac/audit-logs",
     element: <RbacAuditLogsPage />,
+  },
+  {
+    appPath: "/app/donem-sonu-islemler/aylik/intercompany-mutabakat",
+    childPath: "donem-sonu-islemler/aylik/intercompany-mutabakat",
+    element: <IntercompanyReconciliationPage />,
+  },
+  {
+    appPath: "/app/donem-sonu-islemler/yillik/konsolidasyon-raporlari",
+    childPath: "donem-sonu-islemler/yillik/konsolidasyon-raporlari",
+    element: <ConsolidationReportsPage />,
   },
 ];
 
@@ -118,6 +143,7 @@ export default function App() {
     <Routes>
       <Route path="/" element={<Navigate to="/app" replace />} />
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/provider/bootstrap" element={<ProviderBootstrapPage />} />
 
       <Route
         path="/app"

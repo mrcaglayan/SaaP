@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { bootstrapCompany } from "../../api/onboarding.js";
 import { useAuth } from "../../auth/useAuth.js";
+import { useI18n } from "../../i18n/useI18n.js";
 import TenantReadinessChecklist from "../../readiness/TenantReadinessChecklist.jsx";
 
 const UNIT_TYPES = ["BRANCH", "PLANT", "STORE", "DEPARTMENT", "OTHER"];
@@ -83,44 +84,62 @@ function compactEntityPayload(entity) {
   };
 }
 
-function validateForm(form) {
+function validateForm(form, l) {
   if (!form.groupCompany.code.trim() || !form.groupCompany.name.trim()) {
-    return "Group company code and name are required.";
+    return l(
+      "Group company code and name are required.",
+      "Grup sirketi kodu ve adi zorunludur."
+    );
   }
 
   if (!form.fiscalCalendar.code.trim() || !form.fiscalCalendar.name.trim()) {
-    return "Fiscal calendar code and name are required.";
+    return l(
+      "Fiscal calendar code and name are required.",
+      "Mali takvim kodu ve adi zorunludur."
+    );
   }
 
   const yearStartMonth = Number(form.fiscalCalendar.yearStartMonth);
   const yearStartDay = Number(form.fiscalCalendar.yearStartDay);
   if (yearStartMonth < 1 || yearStartMonth > 12) {
-    return "Fiscal calendar start month must be between 1 and 12.";
+    return l(
+      "Fiscal calendar start month must be between 1 and 12.",
+      "Mali takvim baslangic ayi 1 ile 12 arasinda olmali."
+    );
   }
   if (yearStartDay < 1 || yearStartDay > 31) {
-    return "Fiscal calendar start day must be between 1 and 31.";
+    return l(
+      "Fiscal calendar start day must be between 1 and 31.",
+      "Mali takvim baslangic gunu 1 ile 31 arasinda olmali."
+    );
   }
 
   const fiscalYear = Number(form.fiscalYear);
   if (!Number.isInteger(fiscalYear) || fiscalYear <= 0) {
-    return "Fiscal year must be a positive integer.";
+    return l("Fiscal year must be a positive integer.", "Mali yil pozitif bir tam sayi olmali.");
   }
 
   if (!Array.isArray(form.legalEntities) || form.legalEntities.length === 0) {
-    return "At least one legal entity is required.";
+    return l("At least one legal entity is required.", "En az bir hukuki birim zorunludur.");
   }
 
   for (let index = 0; index < form.legalEntities.length; index += 1) {
     const entity = form.legalEntities[index];
     const prefix = `Legal entity ${index + 1}`;
     if (!entity.code.trim() || !entity.name.trim()) {
-      return `${prefix}: code and name are required.`;
+      return l(`${prefix}: code and name are required.`, `Hukuki birim ${index + 1}: kod ve ad zorunludur.`);
     }
     if (!entity.countryIso2.trim()) {
-      return `${prefix}: country ISO2 is required (e.g. US, TR, DE).`;
+      return l(
+        `${prefix}: country ISO2 is required (e.g. US, TR, DE).`,
+        `Hukuki birim ${index + 1}: ulke ISO2 zorunludur (orn. US, TR, DE).`
+      );
     }
     if (!entity.functionalCurrencyCode.trim()) {
-      return `${prefix}: functional currency is required.`;
+      return l(
+        `${prefix}: functional currency is required.`,
+        `Hukuki birim ${index + 1}: fonksiyonel para birimi zorunludur.`
+      );
     }
   }
 
@@ -129,6 +148,9 @@ function validateForm(form) {
 
 export default function CompanyOnboardingPage() {
   const { hasPermission } = useAuth();
+  const { language } = useI18n();
+  const isTr = language === "tr";
+  const l = (en, tr) => (isTr ? tr : en);
   const canSetupCompany = hasPermission("onboarding.company.setup");
   const [form, setForm] = useState(createInitialForm());
   const [submitting, setSubmitting] = useState(false);
@@ -284,7 +306,7 @@ export default function CompanyOnboardingPage() {
       ],
     });
     setError("");
-    setMessage("Sample template loaded.");
+    setMessage(l("Sample template loaded.", "Ornek sablon yuklendi."));
   }
 
   function resetForm() {
@@ -301,11 +323,11 @@ export default function CompanyOnboardingPage() {
     setResult(null);
 
     if (!canSetupCompany) {
-      setError("Missing permission: onboarding.company.setup");
+      setError(l("Missing permission: onboarding.company.setup", "Eksik yetki: onboarding.company.setup"));
       return;
     }
 
-    const validationError = validateForm(form);
+    const validationError = validateForm(form, l);
     if (validationError) {
       setError(validationError);
       return;
@@ -330,9 +352,9 @@ export default function CompanyOnboardingPage() {
     try {
       const response = await bootstrapCompany(payload);
       setResult(response);
-      setMessage("Company bootstrap completed successfully.");
+      setMessage(l("Company bootstrap completed successfully.", "Sirket temel kurulumu basariyla tamamlandi."));
     } catch (err) {
-      setError(err?.response?.data?.message || "Failed to bootstrap company.");
+      setError(err?.response?.data?.message || l("Failed to bootstrap company.", "Sirket kurulumu tamamlanamadi."));
     } finally {
       setSubmitting(false);
     }
@@ -346,11 +368,13 @@ export default function CompanyOnboardingPage() {
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <h1 className="text-xl font-semibold text-slate-900">
-              Company Onboarding Wizard
+              {l("Company Onboarding Wizard", "Sirket Kurulum Sihirbazi")}
             </h1>
             <p className="mt-1 text-sm text-slate-600">
-              Creates group company, fiscal calendar/periods, legal entities,
-              branches, default CoA, accounts, and books in one flow.
+              {l(
+                "Creates group company, fiscal calendar/periods, legal entities, branches, default CoA, accounts, and books in one flow.",
+                "Tek akisla grup sirketi, mali takvim/donemler, hukuki birimler, subeler, varsayilan hesap plani, hesaplar ve defterleri olusturur."
+              )}
             </p>
           </div>
           <div className="flex gap-2">
@@ -359,14 +383,14 @@ export default function CompanyOnboardingPage() {
               onClick={loadSample}
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
             >
-              Load Sample
+              {l("Load Sample", "Ornek Yukle")}
             </button>
             <button
               type="button"
               onClick={resetForm}
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
             >
-              Reset
+              {l("Reset", "Sifirla")}
             </button>
           </div>
         </div>
@@ -387,21 +411,21 @@ export default function CompanyOnboardingPage() {
       <form onSubmit={handleSubmit} className="space-y-4">
         <section className="rounded-2xl border border-slate-200 bg-white p-4">
           <h2 className="mb-3 text-sm font-semibold text-slate-700">
-            Group Company
+            {l("Group Company", "Grup Sirketi")}
           </h2>
           <div className="grid gap-3 md:grid-cols-2">
             <input
               value={form.groupCompany.code}
               onChange={(event) => setGroupCompanyField("code", event.target.value)}
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              placeholder="Code (e.g. GLOBAL)"
+              placeholder={l("Code (e.g. GLOBAL)", "Kod (orn. GLOBAL)")}
               required
             />
             <input
               value={form.groupCompany.name}
               onChange={(event) => setGroupCompanyField("name", event.target.value)}
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              placeholder="Name"
+              placeholder={l("Name", "Ad")}
               required
             />
           </div>
@@ -409,21 +433,21 @@ export default function CompanyOnboardingPage() {
 
         <section className="rounded-2xl border border-slate-200 bg-white p-4">
           <h2 className="mb-3 text-sm font-semibold text-slate-700">
-            Fiscal Calendar
+            {l("Fiscal Calendar", "Mali Takvim")}
           </h2>
           <div className="grid gap-3 md:grid-cols-5">
             <input
               value={form.fiscalCalendar.code}
               onChange={(event) => setFiscalCalendarField("code", event.target.value)}
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              placeholder="Calendar code"
+              placeholder={l("Calendar code", "Takvim kodu")}
               required
             />
             <input
               value={form.fiscalCalendar.name}
               onChange={(event) => setFiscalCalendarField("name", event.target.value)}
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm md:col-span-2"
-              placeholder="Calendar name"
+              placeholder={l("Calendar name", "Takvim adi")}
               required
             />
             <input
@@ -435,7 +459,7 @@ export default function CompanyOnboardingPage() {
                 setFiscalCalendarField("yearStartMonth", event.target.value)
               }
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              placeholder="Start month"
+              placeholder={l("Start month", "Baslangic ayi")}
               required
             />
             <input
@@ -447,7 +471,7 @@ export default function CompanyOnboardingPage() {
                 setFiscalCalendarField("yearStartDay", event.target.value)
               }
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              placeholder="Start day"
+              placeholder={l("Start day", "Baslangic gunu")}
               required
             />
           </div>
@@ -460,7 +484,7 @@ export default function CompanyOnboardingPage() {
                 setForm((prev) => ({ ...prev, fiscalYear: event.target.value }))
               }
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              placeholder="Fiscal year"
+              placeholder={l("Fiscal year", "Mali yil")}
               required
             />
           </div>
@@ -469,14 +493,14 @@ export default function CompanyOnboardingPage() {
         <section className="rounded-2xl border border-slate-200 bg-white p-4">
           <div className="mb-3 flex items-center justify-between gap-2">
             <h2 className="text-sm font-semibold text-slate-700">
-              Legal Entities ({entityCount})
+              {l("Legal Entities", "Hukuki Birimler")} ({entityCount})
             </h2>
             <button
               type="button"
               onClick={addEntity}
               className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
             >
-              Add Legal Entity
+              {l("Add Legal Entity", "Hukuki Birim Ekle")}
             </button>
           </div>
 
@@ -488,7 +512,7 @@ export default function CompanyOnboardingPage() {
               >
                 <div className="mb-3 flex items-center justify-between gap-2">
                   <h3 className="text-sm font-semibold text-slate-700">
-                    Entity {entityIndex + 1}
+                    {l("Entity", "Birim")} {entityIndex + 1}
                   </h3>
                   <button
                     type="button"
@@ -496,7 +520,7 @@ export default function CompanyOnboardingPage() {
                     disabled={form.legalEntities.length <= 1}
                     className="rounded-lg border border-rose-200 px-2 py-1 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-50"
                   >
-                    Remove
+                    {l("Remove", "Kaldir")}
                   </button>
                 </div>
 
@@ -507,7 +531,7 @@ export default function CompanyOnboardingPage() {
                       setEntityField(entity.id, "code", event.target.value)
                     }
                     className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                    placeholder="Entity code"
+                    placeholder={l("Entity code", "Birim kodu")}
                     required
                   />
                   <input
@@ -516,7 +540,7 @@ export default function CompanyOnboardingPage() {
                       setEntityField(entity.id, "name", event.target.value)
                     }
                     className="rounded-lg border border-slate-300 px-3 py-2 text-sm md:col-span-2"
-                    placeholder="Entity name"
+                    placeholder={l("Entity name", "Birim adi")}
                     required
                   />
                   <input
@@ -525,7 +549,7 @@ export default function CompanyOnboardingPage() {
                       setEntityField(entity.id, "taxId", event.target.value)
                     }
                     className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                    placeholder="Tax ID (optional)"
+                    placeholder={l("Tax ID (optional)", "Vergi No (opsiyonel)")}
                   />
                   <input
                     value={entity.countryIso2}
@@ -533,7 +557,7 @@ export default function CompanyOnboardingPage() {
                       setEntityField(entity.id, "countryIso2", event.target.value)
                     }
                     className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                    placeholder="Country ISO2 (e.g. US)"
+                    placeholder={l("Country ISO2 (e.g. US)", "Ulke ISO2 (orn. US)")}
                     maxLength={2}
                     required
                   />
@@ -547,7 +571,7 @@ export default function CompanyOnboardingPage() {
                       )
                     }
                     className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                    placeholder="Functional currency (e.g. USD)"
+                    placeholder={l("Functional currency (e.g. USD)", "Fonksiyonel para birimi (orn. USD)")}
                     maxLength={3}
                     required
                   />
@@ -557,7 +581,7 @@ export default function CompanyOnboardingPage() {
                       setEntityField(entity.id, "coaCode", event.target.value)
                     }
                     className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                    placeholder="CoA code (optional)"
+                    placeholder={l("CoA code (optional)", "Hesap plani kodu (opsiyonel)")}
                   />
                   <input
                     value={entity.coaName}
@@ -565,7 +589,7 @@ export default function CompanyOnboardingPage() {
                       setEntityField(entity.id, "coaName", event.target.value)
                     }
                     className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                    placeholder="CoA name (optional)"
+                    placeholder={l("CoA name (optional)", "Hesap plani adi (opsiyonel)")}
                   />
                   <input
                     value={entity.bookCode}
@@ -573,7 +597,7 @@ export default function CompanyOnboardingPage() {
                       setEntityField(entity.id, "bookCode", event.target.value)
                     }
                     className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                    placeholder="Book code (optional)"
+                    placeholder={l("Book code (optional)", "Defter kodu (opsiyonel)")}
                   />
                   <input
                     value={entity.bookName}
@@ -581,7 +605,7 @@ export default function CompanyOnboardingPage() {
                       setEntityField(entity.id, "bookName", event.target.value)
                     }
                     className="rounded-lg border border-slate-300 px-3 py-2 text-sm md:col-span-2"
-                    placeholder="Book name (optional)"
+                    placeholder={l("Book name (optional)", "Defter adi (opsiyonel)")}
                   />
                 </div>
 
@@ -598,7 +622,7 @@ export default function CompanyOnboardingPage() {
                         )
                       }
                     />
-                    Intercompany enabled
+                    {l("Intercompany enabled", "Intercompany aktif")}
                   </label>
                   <label className="inline-flex items-center gap-2 text-xs text-slate-700">
                     <input
@@ -612,21 +636,21 @@ export default function CompanyOnboardingPage() {
                         )
                       }
                     />
-                    Intercompany partner required
+                    {l("Intercompany partner required", "Intercompany karsi taraf zorunlu")}
                   </label>
                 </div>
 
                 <div className="mt-4 rounded-lg border border-slate-200 bg-white p-3">
                   <div className="mb-2 flex items-center justify-between">
                     <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                      Branches
+                      {l("Branches", "Subeler")}
                     </h4>
                     <button
                       type="button"
                       onClick={() => addBranch(entity.id)}
                       className="rounded-lg border border-slate-300 px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
                     >
-                      Add Branch
+                      {l("Add Branch", "Sube Ekle")}
                     </button>
                   </div>
 
@@ -647,7 +671,7 @@ export default function CompanyOnboardingPage() {
                             )
                           }
                           className="rounded-lg border border-slate-300 px-2 py-1.5 text-xs md:col-span-2"
-                          placeholder="Branch code"
+                          placeholder={l("Branch code", "Sube kodu")}
                         />
                         <input
                           value={branch.name}
@@ -660,7 +684,7 @@ export default function CompanyOnboardingPage() {
                             )
                           }
                           className="rounded-lg border border-slate-300 px-2 py-1.5 text-xs md:col-span-4"
-                          placeholder="Branch name"
+                          placeholder={l("Branch name", "Sube adi")}
                         />
                         <select
                           value={branch.unitType}
@@ -693,7 +717,7 @@ export default function CompanyOnboardingPage() {
                               )
                             }
                           />
-                          Subledger
+                          {l("Subledger", "Alt defter")}
                         </label>
                         <button
                           type="button"
@@ -701,7 +725,7 @@ export default function CompanyOnboardingPage() {
                           disabled={entity.branches.length <= 1}
                           className="rounded-lg border border-rose-200 px-2 py-1 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-50 md:col-span-2"
                         >
-                          Remove
+                          {l("Remove", "Kaldir")}
                         </button>
                       </div>
                     ))}
@@ -718,7 +742,7 @@ export default function CompanyOnboardingPage() {
             disabled={submitting || !canSetupCompany}
             className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
           >
-            {submitting ? "Bootstrapping..." : "Run Company Bootstrap"}
+            {submitting ? l("Bootstrapping...", "Kurulum calisiyor...") : l("Run Company Bootstrap", "Sirket Kurulumunu Calistir")}
           </button>
         </div>
       </form>
@@ -726,31 +750,31 @@ export default function CompanyOnboardingPage() {
       {result && (
         <section className="rounded-2xl border border-emerald-200 bg-emerald-50/40 p-4">
           <h2 className="text-sm font-semibold text-emerald-900">
-            Bootstrap Result
+            {l("Bootstrap Result", "Kurulum Sonucu")}
           </h2>
           <div className="mt-2 grid gap-2 text-sm text-emerald-900 md:grid-cols-4">
             <div>
-              <span className="font-semibold">Tenant:</span> {result.tenantId}
+              <span className="font-semibold">{l("Tenant:", "Kiraci:")}</span> {result.tenantId}
             </div>
             <div>
-              <span className="font-semibold">Group ID:</span> {result.groupCompanyId}
+              <span className="font-semibold">{l("Group ID:", "Grup ID:")}</span> {result.groupCompanyId}
             </div>
             <div>
-              <span className="font-semibold">Calendar ID:</span> {result.calendarId}
+              <span className="font-semibold">{l("Calendar ID:", "Takvim ID:")}</span> {result.calendarId}
             </div>
             <div>
-              <span className="font-semibold">Periods:</span> {result.periodsGenerated}
+              <span className="font-semibold">{l("Periods:", "Donemler:")}</span> {result.periodsGenerated}
             </div>
           </div>
           <div className="mt-3 overflow-x-auto rounded-lg border border-emerald-200 bg-white">
             <table className="min-w-full text-sm">
               <thead className="bg-emerald-100/70 text-left text-emerald-900">
                 <tr>
-                  <th className="px-3 py-2">Entity Code</th>
-                  <th className="px-3 py-2">Legal Entity ID</th>
-                  <th className="px-3 py-2">CoA Code</th>
-                  <th className="px-3 py-2">CoA ID</th>
-                  <th className="px-3 py-2">Branch Count</th>
+                  <th className="px-3 py-2">{l("Entity Code", "Birim Kodu")}</th>
+                  <th className="px-3 py-2">{l("Legal Entity ID", "Hukuki Birim ID")}</th>
+                  <th className="px-3 py-2">{l("CoA Code", "Hesap Plani Kodu")}</th>
+                  <th className="px-3 py-2">{l("CoA ID", "Hesap Plani ID")}</th>
+                  <th className="px-3 py-2">{l("Branch Count", "Sube Sayisi")}</th>
                 </tr>
               </thead>
               <tbody>

@@ -36,6 +36,28 @@ const JOURNAL_PAGE_PERMISSIONS = [
   "gl.trial_balance.read",
   "gl.period.close",
 ];
+const INTERCOMPANY_RECONCILIATION_PAGE_PERMISSIONS = [
+  "intercompany.reconcile.run",
+];
+const CONSOLIDATION_REPORT_PAGE_PERMISSIONS = [
+  "consolidation.run.read",
+  "consolidation.report.balance_sheet.read",
+  "consolidation.report.income_statement.read",
+];
+const FX_RATE_PAGE_PERMISSIONS = ["fx.rate.read", "fx.rate.bulk_upsert"];
+const CONSOLIDATION_SETUP_PAGE_PERMISSIONS = [
+  "consolidation.group.read",
+  "consolidation.group.upsert",
+  "consolidation.group_member.upsert",
+  "consolidation.coa_mapping.read",
+  "consolidation.coa_mapping.upsert",
+  "consolidation.elimination_placeholder.read",
+  "consolidation.elimination_placeholder.upsert",
+  "consolidation.run.read",
+  "consolidation.run.create",
+  "consolidation.run.execute",
+  "consolidation.run.finalize",
+];
 
 export const sidebarItems = [
   {
@@ -189,6 +211,12 @@ export const sidebarItems = [
             label: "Beyanname Islemleri",
             to: "/app/donem-sonu-islemler/aylik/beyanname-islemleri",
           },
+          {
+            label: "Intercompany Mutabakat",
+            to: "/app/donem-sonu-islemler/aylik/intercompany-mutabakat",
+            requiredPermissions: INTERCOMPANY_RECONCILIATION_PAGE_PERMISSIONS,
+            implemented: true,
+          },
         ],
       },
       {
@@ -208,6 +236,12 @@ export const sidebarItems = [
           {
             label: "Yansitma Islemleri",
             to: "/app/donem-sonu-islemler/yillik/yansitma-islemleri",
+          },
+          {
+            label: "Konsolidasyon Raporlari",
+            to: "/app/donem-sonu-islemler/yillik/konsolidasyon-raporlari",
+            requiredPermissions: CONSOLIDATION_REPORT_PAGE_PERMISSIONS,
+            implemented: true,
           },
         ],
       },
@@ -300,6 +334,18 @@ export const sidebarItems = [
         label: "Hesap Plani Ayarlari",
         to: "/app/ayarlar/hesap-plani-ayarlari",
         requiredPermissions: GL_SETUP_PAGE_PERMISSIONS,
+        implemented: true,
+      },
+      {
+        label: "Kur Yonetimi",
+        to: "/app/ayarlar/kur-yonetimi",
+        requiredPermissions: FX_RATE_PAGE_PERMISSIONS,
+        implemented: true,
+      },
+      {
+        label: "Konsolidasyon Kurulumu",
+        to: "/app/ayarlar/konsolidasyon-kurulumu",
+        requiredPermissions: CONSOLIDATION_SETUP_PAGE_PERMISSIONS,
         implemented: true,
       },
       {

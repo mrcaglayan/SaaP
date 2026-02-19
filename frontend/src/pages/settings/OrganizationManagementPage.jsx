@@ -13,6 +13,7 @@ import {
   upsertOperatingUnit,
 } from "../../api/orgAdmin.js";
 import { useAuth } from "../../auth/useAuth.js";
+import { useI18n } from "../../i18n/useI18n.js";
 import TenantReadinessChecklist from "../../readiness/TenantReadinessChecklist.jsx";
 
 const UNIT_TYPES = ["BRANCH", "PLANT", "STORE", "DEPARTMENT", "OTHER"];
@@ -24,6 +25,9 @@ function toNumber(value) {
 
 export default function OrganizationManagementPage() {
   const { hasPermission } = useAuth();
+  const { language } = useI18n();
+  const isTr = language === "tr";
+  const l = (en, tr) => (isTr ? tr : en);
   const canReadOrgTree = hasPermission("org.tree.read");
   const canReadFiscalCalendars = hasPermission("org.fiscal_calendar.read");
   const canReadFiscalPeriods = hasPermission("org.fiscal_period.read");
@@ -125,7 +129,7 @@ export default function OrganizationManagementPage() {
         }));
       }
     } catch (err) {
-      setError(err?.response?.data?.message || "Failed to load organization data.");
+      setError(err?.response?.data?.message || l("Failed to load organization data.", "Organizasyon verileri yuklenemedi."));
     } finally {
       setLoading(false);
     }
@@ -143,7 +147,7 @@ export default function OrganizationManagementPage() {
       });
       setPeriods(response?.rows || []);
     } catch (err) {
-      setError(err?.response?.data?.message || "Failed to load fiscal periods.");
+      setError(err?.response?.data?.message || l("Failed to load fiscal periods.", "Mali donemler yuklenemedi."));
     }
   }
 
@@ -165,7 +169,7 @@ export default function OrganizationManagementPage() {
   async function handleGroupSubmit(event) {
     event.preventDefault();
     if (!canUpsertGroupCompany) {
-      setError("Missing permission: org.group_company.upsert");
+      setError(l("Missing permission: org.group_company.upsert", "Eksik yetki: org.group_company.upsert"));
       return;
     }
 
@@ -178,10 +182,10 @@ export default function OrganizationManagementPage() {
         name: groupForm.name.trim(),
       });
       setGroupForm({ code: "", name: "" });
-      setMessage("Group company saved.");
+      setMessage(l("Group company saved.", "Grup sirketi kaydedildi."));
       await loadCoreData();
     } catch (err) {
-      setError(err?.response?.data?.message || "Failed to save group company.");
+      setError(err?.response?.data?.message || l("Failed to save group company.", "Grup sirketi kaydedilemedi."));
     } finally {
       setSaving("");
     }
@@ -190,7 +194,7 @@ export default function OrganizationManagementPage() {
   async function handleLegalEntitySubmit(event) {
     event.preventDefault();
     if (!canUpsertLegalEntity) {
-      setError("Missing permission: org.legal_entity.upsert");
+      setError(l("Missing permission: org.legal_entity.upsert", "Eksik yetki: org.legal_entity.upsert"));
       return;
     }
 
@@ -198,7 +202,7 @@ export default function OrganizationManagementPage() {
     const countryId =
       toNumber(entityForm.countryId) || toNumber(entityForm.countryIdManual);
     if (!groupCompanyId || !countryId) {
-      setError("groupCompanyId and countryId are required.");
+      setError(l("groupCompanyId and countryId are required.", "groupCompanyId ve countryId zorunludur."));
       return;
     }
 
@@ -226,10 +230,10 @@ export default function OrganizationManagementPage() {
         taxId: "",
         functionalCurrencyCode: prev.functionalCurrencyCode || "USD",
       }));
-      setMessage("Legal entity saved.");
+      setMessage(l("Legal entity saved.", "Hukuki birim kaydedildi."));
       await loadCoreData();
     } catch (err) {
-      setError(err?.response?.data?.message || "Failed to save legal entity.");
+      setError(err?.response?.data?.message || l("Failed to save legal entity.", "Hukuki birim kaydedilemedi."));
     } finally {
       setSaving("");
     }
@@ -238,13 +242,13 @@ export default function OrganizationManagementPage() {
   async function handleOperatingUnitSubmit(event) {
     event.preventDefault();
     if (!canUpsertOperatingUnit) {
-      setError("Missing permission: org.operating_unit.upsert");
+      setError(l("Missing permission: org.operating_unit.upsert", "Eksik yetki: org.operating_unit.upsert"));
       return;
     }
 
     const legalEntityId = toNumber(unitForm.legalEntityId);
     if (!legalEntityId) {
-      setError("legalEntityId is required.");
+      setError(l("legalEntityId is required.", "legalEntityId zorunludur."));
       return;
     }
 
@@ -264,10 +268,10 @@ export default function OrganizationManagementPage() {
         code: "",
         name: "",
       }));
-      setMessage("Operating unit saved.");
+      setMessage(l("Operating unit saved.", "Operasyon birimi kaydedildi."));
       await loadCoreData();
     } catch (err) {
-      setError(err?.response?.data?.message || "Failed to save operating unit.");
+      setError(err?.response?.data?.message || l("Failed to save operating unit.", "Operasyon birimi kaydedilemedi."));
     } finally {
       setSaving("");
     }
@@ -276,7 +280,7 @@ export default function OrganizationManagementPage() {
   async function handleFiscalCalendarSubmit(event) {
     event.preventDefault();
     if (!canUpsertFiscalCalendar) {
-      setError("Missing permission: org.fiscal_calendar.upsert");
+      setError(l("Missing permission: org.fiscal_calendar.upsert", "Eksik yetki: org.fiscal_calendar.upsert"));
       return;
     }
 
@@ -296,10 +300,10 @@ export default function OrganizationManagementPage() {
         yearStartMonth: 1,
         yearStartDay: 1,
       });
-      setMessage("Fiscal calendar saved.");
+      setMessage(l("Fiscal calendar saved.", "Mali takvim kaydedildi."));
       await loadCoreData();
     } catch (err) {
-      setError(err?.response?.data?.message || "Failed to save fiscal calendar.");
+      setError(err?.response?.data?.message || l("Failed to save fiscal calendar.", "Mali takvim kaydedilemedi."));
     } finally {
       setSaving("");
     }
@@ -308,14 +312,14 @@ export default function OrganizationManagementPage() {
   async function handleGeneratePeriods(event) {
     event.preventDefault();
     if (!canGenerateFiscalPeriods) {
-      setError("Missing permission: org.fiscal_period.generate");
+      setError(l("Missing permission: org.fiscal_period.generate", "Eksik yetki: org.fiscal_period.generate"));
       return;
     }
 
     const calendarId = toNumber(periodForm.calendarId);
     const fiscalYear = toNumber(periodForm.fiscalYear);
     if (!calendarId || !fiscalYear) {
-      setError("calendarId and fiscalYear are required.");
+      setError(l("calendarId and fiscalYear are required.", "calendarId ve fiscalYear zorunludur."));
       return;
     }
 
@@ -324,10 +328,10 @@ export default function OrganizationManagementPage() {
     setMessage("");
     try {
       await generateFiscalPeriods({ calendarId, fiscalYear });
-      setMessage("Fiscal periods generated.");
+      setMessage(l("Fiscal periods generated.", "Mali donemler olusturuldu."));
       await loadPeriods(calendarId, fiscalYear);
     } catch (err) {
-      setError(err?.response?.data?.message || "Failed to generate fiscal periods.");
+      setError(err?.response?.data?.message || l("Failed to generate fiscal periods.", "Mali donemler olusturulamadi."));
     } finally {
       setSaving("");
     }
@@ -336,7 +340,10 @@ export default function OrganizationManagementPage() {
   if (!canReadOrgTree && !canReadFiscalCalendars) {
     return (
       <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-        You need `org.tree.read` and/or `org.fiscal_calendar.read` to use this page.
+        {l(
+          "You need `org.tree.read` and/or `org.fiscal_calendar.read` to use this page.",
+          "Bu sayfayi kullanmak icin `org.tree.read` ve/veya `org.fiscal_calendar.read` yetkisi gerekir."
+        )}
       </div>
     );
   }
@@ -347,10 +354,13 @@ export default function OrganizationManagementPage() {
 
       <div>
         <h1 className="text-xl font-semibold text-slate-900">
-          Organization Management
+          {l("Organization Management", "Organizasyon Yonetimi")}
         </h1>
         <p className="mt-1 text-sm text-slate-600">
-          Maintain company structure, branches, and fiscal structure after onboarding.
+          {l(
+            "Maintain company structure, branches, and fiscal structure after onboarding.",
+            "Kurulumdan sonra sirket yapisini, subeleri ve mali yapilari yonetin."
+          )}
         </p>
       </div>
 
@@ -368,7 +378,7 @@ export default function OrganizationManagementPage() {
       <div className="grid gap-4 xl:grid-cols-2">
         <section className="rounded-xl border border-slate-200 bg-white p-4">
           <h2 className="mb-3 text-sm font-semibold text-slate-700">
-            Group Companies
+            {l("Group Companies", "Grup Sirketleri")}
           </h2>
           <form onSubmit={handleGroupSubmit} className="grid gap-2 md:grid-cols-3">
             <input
@@ -377,7 +387,7 @@ export default function OrganizationManagementPage() {
                 setGroupForm((prev) => ({ ...prev, code: event.target.value }))
               }
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              placeholder="Code"
+              placeholder={l("Code", "Kod")}
               required
             />
             <input
@@ -386,7 +396,7 @@ export default function OrganizationManagementPage() {
                 setGroupForm((prev) => ({ ...prev, name: event.target.value }))
               }
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              placeholder="Name"
+              placeholder={l("Name", "Ad")}
               required
             />
             <button
@@ -394,7 +404,7 @@ export default function OrganizationManagementPage() {
               disabled={saving === "group" || !canUpsertGroupCompany}
               className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60"
             >
-              {saving === "group" ? "Saving..." : "Save"}
+              {saving === "group" ? l("Saving...", "Kaydediliyor...") : l("Save", "Kaydet")}
             </button>
           </form>
 
@@ -403,8 +413,8 @@ export default function OrganizationManagementPage() {
               <thead className="bg-slate-50 text-left text-slate-600">
                 <tr>
                   <th className="px-3 py-2">ID</th>
-                  <th className="px-3 py-2">Code</th>
-                  <th className="px-3 py-2">Name</th>
+                  <th className="px-3 py-2">{l("Code", "Kod")}</th>
+                  <th className="px-3 py-2">{l("Name", "Ad")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -418,7 +428,7 @@ export default function OrganizationManagementPage() {
                 {groups.length === 0 && !loading && (
                   <tr>
                     <td colSpan={3} className="px-3 py-3 text-slate-500">
-                      No group companies found.
+                      {l("No group companies found.", "Grup sirketi bulunamadi.")}
                     </td>
                   </tr>
                 )}
@@ -429,7 +439,7 @@ export default function OrganizationManagementPage() {
 
         <section className="rounded-xl border border-slate-200 bg-white p-4">
           <h2 className="mb-3 text-sm font-semibold text-slate-700">
-            Legal Entities
+            {l("Legal Entities", "Hukuki Birimler")}
           </h2>
           <form onSubmit={handleLegalEntitySubmit} className="grid gap-2 md:grid-cols-3">
             <select
@@ -443,7 +453,7 @@ export default function OrganizationManagementPage() {
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
               required
             >
-              <option value="">Select group company</option>
+              <option value="">{l("Select group company", "Grup sirketi secin")}</option>
               {groups.map((row) => (
                 <option key={row.id} value={row.id}>
                   {row.code} - {row.name}
@@ -456,7 +466,7 @@ export default function OrganizationManagementPage() {
                 setEntityForm((prev) => ({ ...prev, code: event.target.value }))
               }
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              placeholder="Entity code"
+              placeholder={l("Entity code", "Birim kodu")}
               required
             />
             <input
@@ -465,7 +475,7 @@ export default function OrganizationManagementPage() {
                 setEntityForm((prev) => ({ ...prev, name: event.target.value }))
               }
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              placeholder="Entity name"
+              placeholder={l("Entity name", "Birim adi")}
               required
             />
 
@@ -479,7 +489,7 @@ export default function OrganizationManagementPage() {
               }
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
             >
-              <option value="">Select country (if available)</option>
+              <option value="">{l("Select country (if available)", "Ulke secin (varsa)")}</option>
               {countrySelectOptions.map((option) => (
                 <option key={option.id} value={option.id}>
                   {option.label}
@@ -497,7 +507,7 @@ export default function OrganizationManagementPage() {
                 }))
               }
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              placeholder="Country ID (manual)"
+              placeholder={l("Country ID (manual)", "Ulke ID (manuel)")}
             />
             <input
               value={entityForm.functionalCurrencyCode}
@@ -508,7 +518,7 @@ export default function OrganizationManagementPage() {
                 }))
               }
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              placeholder="Currency (e.g. USD)"
+              placeholder={l("Currency (e.g. USD)", "Para birimi (orn. USD)")}
               maxLength={3}
               required
             />
@@ -519,7 +529,7 @@ export default function OrganizationManagementPage() {
                 setEntityForm((prev) => ({ ...prev, taxId: event.target.value }))
               }
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm md:col-span-2"
-              placeholder="Tax ID (optional)"
+              placeholder={l("Tax ID (optional)", "Vergi No (opsiyonel)")}
             />
             <label className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700">
               <input
@@ -532,7 +542,7 @@ export default function OrganizationManagementPage() {
                   }))
                 }
               />
-              Intercompany enabled
+              {l("Intercompany enabled", "Intercompany aktif")}
             </label>
             <label className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700">
               <input
@@ -545,14 +555,14 @@ export default function OrganizationManagementPage() {
                   }))
                 }
               />
-              Partner required
+              {l("Partner required", "Karsi taraf zorunlu")}
             </label>
             <button
               type="submit"
               disabled={saving === "entity" || !canUpsertLegalEntity}
               className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60"
             >
-              {saving === "entity" ? "Saving..." : "Save"}
+              {saving === "entity" ? l("Saving...", "Kaydediliyor...") : l("Save", "Kaydet")}
             </button>
           </form>
 
@@ -561,11 +571,11 @@ export default function OrganizationManagementPage() {
               <thead className="bg-slate-50 text-left text-slate-600">
                 <tr>
                   <th className="px-3 py-2">ID</th>
-                  <th className="px-3 py-2">Code</th>
-                  <th className="px-3 py-2">Name</th>
-                  <th className="px-3 py-2">Group</th>
-                  <th className="px-3 py-2">Country</th>
-                  <th className="px-3 py-2">Currency</th>
+                  <th className="px-3 py-2">{l("Code", "Kod")}</th>
+                  <th className="px-3 py-2">{l("Name", "Ad")}</th>
+                  <th className="px-3 py-2">{l("Group", "Grup")}</th>
+                  <th className="px-3 py-2">{l("Country", "Ulke")}</th>
+                  <th className="px-3 py-2">{l("Currency", "Para birimi")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -582,7 +592,7 @@ export default function OrganizationManagementPage() {
                 {legalEntities.length === 0 && !loading && (
                   <tr>
                     <td colSpan={6} className="px-3 py-3 text-slate-500">
-                      No legal entities found.
+                      {l("No legal entities found.", "Hukuki birim bulunamadi.")}
                     </td>
                   </tr>
                 )}
@@ -593,7 +603,7 @@ export default function OrganizationManagementPage() {
 
         <section className="rounded-xl border border-slate-200 bg-white p-4">
           <h2 className="mb-3 text-sm font-semibold text-slate-700">
-            Operating Units / Branches
+            {l("Operating Units / Branches", "Operasyon Birimleri / Subeler")}
           </h2>
           <form onSubmit={handleOperatingUnitSubmit} className="grid gap-2 md:grid-cols-5">
             <select
@@ -607,7 +617,7 @@ export default function OrganizationManagementPage() {
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm md:col-span-2"
               required
             >
-              <option value="">Select legal entity</option>
+              <option value="">{l("Select legal entity", "Hukuki birim secin")}</option>
               {legalEntities.map((row) => (
                 <option key={row.id} value={row.id}>
                   {row.code} - {row.name}
@@ -620,7 +630,7 @@ export default function OrganizationManagementPage() {
                 setUnitForm((prev) => ({ ...prev, code: event.target.value }))
               }
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              placeholder="Unit code"
+              placeholder={l("Unit code", "Birim kodu")}
               required
             />
             <input
@@ -629,7 +639,7 @@ export default function OrganizationManagementPage() {
                 setUnitForm((prev) => ({ ...prev, name: event.target.value }))
               }
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              placeholder="Unit name"
+              placeholder={l("Unit name", "Birim adi")}
               required
             />
             <select
@@ -656,14 +666,14 @@ export default function OrganizationManagementPage() {
                   }))
                 }
               />
-              Has subledger
+              {l("Has subledger", "Alt defter var")}
             </label>
             <button
               type="submit"
               disabled={saving === "unit" || !canUpsertOperatingUnit}
               className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60"
             >
-              {saving === "unit" ? "Saving..." : "Save"}
+              {saving === "unit" ? l("Saving...", "Kaydediliyor...") : l("Save", "Kaydet")}
             </button>
           </form>
 
@@ -672,11 +682,11 @@ export default function OrganizationManagementPage() {
               <thead className="bg-slate-50 text-left text-slate-600">
                 <tr>
                   <th className="px-3 py-2">ID</th>
-                  <th className="px-3 py-2">Entity ID</th>
-                  <th className="px-3 py-2">Code</th>
-                  <th className="px-3 py-2">Name</th>
-                  <th className="px-3 py-2">Type</th>
-                  <th className="px-3 py-2">Subledger</th>
+                  <th className="px-3 py-2">{l("Entity ID", "Birim ID")}</th>
+                  <th className="px-3 py-2">{l("Code", "Kod")}</th>
+                  <th className="px-3 py-2">{l("Name", "Ad")}</th>
+                  <th className="px-3 py-2">{l("Type", "Tur")}</th>
+                  <th className="px-3 py-2">{l("Subledger", "Alt Defter")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -687,13 +697,13 @@ export default function OrganizationManagementPage() {
                     <td className="px-3 py-2">{row.code}</td>
                     <td className="px-3 py-2">{row.name}</td>
                     <td className="px-3 py-2">{row.unit_type}</td>
-                    <td className="px-3 py-2">{row.has_subledger ? "Yes" : "No"}</td>
+                    <td className="px-3 py-2">{row.has_subledger ? l("Yes", "Evet") : l("No", "Hayir")}</td>
                   </tr>
                 ))}
                 {operatingUnits.length === 0 && !loading && (
                   <tr>
                     <td colSpan={6} className="px-3 py-3 text-slate-500">
-                      No operating units found.
+                      {l("No operating units found.", "Operasyon birimi bulunamadi.")}
                     </td>
                   </tr>
                 )}
@@ -704,7 +714,7 @@ export default function OrganizationManagementPage() {
 
         <section className="rounded-xl border border-slate-200 bg-white p-4">
           <h2 className="mb-3 text-sm font-semibold text-slate-700">
-            Fiscal Calendars and Periods
+            {l("Fiscal Calendars and Periods", "Mali Takvimler ve Donemler")}
           </h2>
 
           <form onSubmit={handleFiscalCalendarSubmit} className="grid gap-2 md:grid-cols-5">
@@ -714,7 +724,7 @@ export default function OrganizationManagementPage() {
                 setCalendarForm((prev) => ({ ...prev, code: event.target.value }))
               }
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              placeholder="Calendar code"
+              placeholder={l("Calendar code", "Takvim kodu")}
               required
             />
             <input
@@ -723,7 +733,7 @@ export default function OrganizationManagementPage() {
                 setCalendarForm((prev) => ({ ...prev, name: event.target.value }))
               }
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm md:col-span-2"
-              placeholder="Calendar name"
+              placeholder={l("Calendar name", "Takvim adi")}
               required
             />
             <input
@@ -738,7 +748,7 @@ export default function OrganizationManagementPage() {
                 }))
               }
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              placeholder="Start month"
+              placeholder={l("Start month", "Baslangic ayi")}
               required
             />
             <input
@@ -753,7 +763,7 @@ export default function OrganizationManagementPage() {
                 }))
               }
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              placeholder="Start day"
+              placeholder={l("Start day", "Baslangic gunu")}
               required
             />
             <button
@@ -761,7 +771,7 @@ export default function OrganizationManagementPage() {
               disabled={saving === "calendar" || !canUpsertFiscalCalendar}
               className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60 md:col-span-5"
             >
-              {saving === "calendar" ? "Saving..." : "Save Calendar"}
+              {saving === "calendar" ? l("Saving...", "Kaydediliyor...") : l("Save Calendar", "Takvimi Kaydet")}
             </button>
           </form>
 
@@ -774,7 +784,7 @@ export default function OrganizationManagementPage() {
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
               required
             >
-              <option value="">Select calendar</option>
+              <option value="">{l("Select calendar", "Takvim secin")}</option>
               {calendars.map((row) => (
                 <option key={row.id} value={row.id}>
                   {row.code} - {row.name}
@@ -789,7 +799,7 @@ export default function OrganizationManagementPage() {
                 setPeriodForm((prev) => ({ ...prev, fiscalYear: event.target.value }))
               }
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              placeholder="Fiscal year"
+              placeholder={l("Fiscal year", "Mali yil")}
             />
             <button
               type="button"
@@ -797,14 +807,14 @@ export default function OrganizationManagementPage() {
               disabled={!canReadFiscalPeriods}
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 disabled:opacity-60"
             >
-              Reload Periods
+              {l("Reload Periods", "Donemleri Yeniden Yukle")}
             </button>
             <button
               type="submit"
               disabled={saving === "periods" || !canGenerateFiscalPeriods}
               className="rounded-lg bg-cyan-700 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60"
             >
-              {saving === "periods" ? "Generating..." : "Generate 12 Periods"}
+              {saving === "periods" ? l("Generating...", "Olusturuluyor...") : l("Generate 12 Periods", "12 Donem Olustur")}
             </button>
           </form>
 
@@ -813,11 +823,11 @@ export default function OrganizationManagementPage() {
               <thead className="bg-slate-50 text-left text-slate-600">
                 <tr>
                   <th className="px-3 py-2">ID</th>
-                  <th className="px-3 py-2">Year</th>
-                  <th className="px-3 py-2">Period</th>
-                  <th className="px-3 py-2">Name</th>
-                  <th className="px-3 py-2">Start</th>
-                  <th className="px-3 py-2">End</th>
+                  <th className="px-3 py-2">{l("Year", "Yil")}</th>
+                  <th className="px-3 py-2">{l("Period", "Donem")}</th>
+                  <th className="px-3 py-2">{l("Name", "Ad")}</th>
+                  <th className="px-3 py-2">{l("Start", "Baslangic")}</th>
+                  <th className="px-3 py-2">{l("End", "Bitis")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -834,7 +844,7 @@ export default function OrganizationManagementPage() {
                 {periods.length === 0 && !loading && (
                   <tr>
                     <td colSpan={6} className="px-3 py-3 text-slate-500">
-                      No periods found for selected filters.
+                      {l("No periods found for selected filters.", "Secilen filtreler icin donem bulunamadi.")}
                     </td>
                   </tr>
                 )}

@@ -639,6 +639,79 @@ const spec = {
         responses: withStandardResponses("200", "Trial balance", "#/components/schemas/TrialBalanceResponse"),
       },
     },
+    "/api/v1/gl/period-closing/runs": {
+      get: {
+        tags: ["GL"],
+        operationId: "listPeriodCloseRuns",
+        summary: "List period close runs",
+        parameters: [
+          queryParamInt("bookId", false, "Book identifier"),
+          queryParamInt("fiscalPeriodId", false, "Fiscal period identifier"),
+          {
+            in: "query",
+            name: "status",
+            required: false,
+            schema: {
+              type: "string",
+              enum: ["IN_PROGRESS", "COMPLETED", "FAILED", "REOPENED"],
+            },
+          },
+          {
+            in: "query",
+            name: "includeLines",
+            required: false,
+            schema: { type: "boolean" },
+          },
+        ],
+        responses: withStandardResponses(
+          "200",
+          "Period close runs",
+          "#/components/schemas/AnyObject"
+        ),
+      },
+    },
+    "/api/v1/gl/period-closing/{bookId}/{periodId}/close-run": {
+      post: {
+        tags: ["GL"],
+        operationId: "runPeriodClose",
+        summary: "Execute period close run",
+        parameters: [
+          pathParam("bookId", "Book identifier"),
+          pathParam("periodId", "Fiscal period identifier"),
+        ],
+        requestBody: bodyFromRef("#/components/schemas/AnyObject", false),
+        responses: {
+          "200": jsonResponse(
+            "#/components/schemas/AnyObject",
+            "Idempotent close run hit"
+          ),
+          "201": jsonResponse(
+            "#/components/schemas/AnyObject",
+            "Period close run executed"
+          ),
+          "400": errorResponseRef,
+          "401": errorResponseRef,
+          "403": errorResponseRef,
+        },
+      },
+    },
+    "/api/v1/gl/period-closing/{bookId}/{periodId}/reopen": {
+      post: {
+        tags: ["GL"],
+        operationId: "reopenPeriodClose",
+        summary: "Reopen latest completed period close run",
+        parameters: [
+          pathParam("bookId", "Book identifier"),
+          pathParam("periodId", "Fiscal period identifier"),
+        ],
+        requestBody: bodyFromRef("#/components/schemas/AnyObject"),
+        responses: withStandardResponses(
+          "201",
+          "Period close run reopened",
+          "#/components/schemas/AnyObject"
+        ),
+      },
+    },
     "/api/v1/gl/period-statuses/{bookId}/{periodId}/close": {
       post: {
         tags: ["GL"],
@@ -865,6 +938,31 @@ const spec = {
       },
     },
     "/api/v1/consolidation/runs/{runId}/eliminations": {
+      get: {
+        tags: ["Consolidation"],
+        operationId: "listConsolidationEliminations",
+        summary: "List consolidation eliminations",
+        parameters: [
+          pathParam("runId", "Consolidation run identifier"),
+          {
+            in: "query",
+            name: "status",
+            required: false,
+            schema: { type: "string", enum: ["ALL", "DRAFT", "POSTED"] },
+          },
+          {
+            in: "query",
+            name: "includeLines",
+            required: false,
+            schema: { type: "boolean" },
+          },
+        ],
+        responses: withStandardResponses(
+          "200",
+          "Elimination list",
+          "#/components/schemas/AnyObject"
+        ),
+      },
       post: {
         tags: ["Consolidation"],
         operationId: "createEliminationEntry",
@@ -878,7 +976,42 @@ const spec = {
         ),
       },
     },
+    "/api/v1/consolidation/runs/{runId}/eliminations/{eliminationEntryId}/post": {
+      post: {
+        tags: ["Consolidation"],
+        operationId: "postEliminationEntry",
+        summary: "Post elimination entry",
+        parameters: [
+          pathParam("runId", "Consolidation run identifier"),
+          pathParam("eliminationEntryId", "Elimination entry identifier"),
+        ],
+        responses: withStandardResponses(
+          "200",
+          "Elimination entry posted",
+          "#/components/schemas/AnyObject"
+        ),
+      },
+    },
     "/api/v1/consolidation/runs/{runId}/adjustments": {
+      get: {
+        tags: ["Consolidation"],
+        operationId: "listConsolidationAdjustments",
+        summary: "List consolidation adjustments",
+        parameters: [
+          pathParam("runId", "Consolidation run identifier"),
+          {
+            in: "query",
+            name: "status",
+            required: false,
+            schema: { type: "string", enum: ["ALL", "DRAFT", "POSTED"] },
+          },
+        ],
+        responses: withStandardResponses(
+          "200",
+          "Adjustment list",
+          "#/components/schemas/AnyObject"
+        ),
+      },
       post: {
         tags: ["Consolidation"],
         operationId: "createConsolidationAdjustment",
@@ -889,6 +1022,22 @@ const spec = {
           "201",
           "Adjustment created",
           "#/components/schemas/AdjustmentCreateResponse"
+        ),
+      },
+    },
+    "/api/v1/consolidation/runs/{runId}/adjustments/{adjustmentId}/post": {
+      post: {
+        tags: ["Consolidation"],
+        operationId: "postConsolidationAdjustment",
+        summary: "Post consolidation adjustment",
+        parameters: [
+          pathParam("runId", "Consolidation run identifier"),
+          pathParam("adjustmentId", "Adjustment identifier"),
+        ],
+        responses: withStandardResponses(
+          "200",
+          "Consolidation adjustment posted",
+          "#/components/schemas/AnyObject"
         ),
       },
     },

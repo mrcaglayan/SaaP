@@ -89,3 +89,80 @@ export async function closePeriod(bookId, periodId, payload) {
   );
   return response.data;
 }
+
+export async function runPeriodClose(bookId, periodId, payload = {}) {
+  const response = await api.post(
+    `/api/v1/gl/period-closing/${bookId}/${periodId}/close-run`,
+    payload
+  );
+  return response.data;
+}
+
+export async function reopenPeriodClose(bookId, periodId, payload = {}) {
+  const response = await api.post(
+    `/api/v1/gl/period-closing/${bookId}/${periodId}/reopen`,
+    payload
+  );
+  return response.data;
+}
+
+export async function listPeriodCloseRuns(params = {}) {
+  const response = await api.get(
+    `/api/v1/gl/period-closing/runs${toQueryString(params)}`
+  );
+  return response.data;
+}
+
+export async function runIntercompanyReconciliation(payload = {}) {
+  const response = await api.post("/api/v1/intercompany/reconcile", payload);
+  return response.data;
+}
+
+export async function listConsolidationRuns(params = {}) {
+  const response = await api.get(
+    `/api/v1/consolidation/runs${toQueryString(params)}`
+  );
+  return response.data;
+}
+
+export async function getConsolidatedBalanceSheet(runId, params = {}) {
+  const response = await api.get(
+    `/api/v1/consolidation/runs/${runId}/reports/balance-sheet${toQueryString(params)}`
+  );
+  return response.data;
+}
+
+export async function getConsolidatedIncomeStatement(runId, params = {}) {
+  const response = await api.get(
+    `/api/v1/consolidation/runs/${runId}/reports/income-statement${toQueryString(params)}`
+  );
+  return response.data;
+}
+
+export async function listConsolidationEliminations(runId, params = {}) {
+  const response = await api.get(
+    `/api/v1/consolidation/runs/${runId}/eliminations${toQueryString(params)}`
+  );
+  return response.data;
+}
+
+export async function postConsolidationElimination(runId, eliminationEntryId) {
+  const response = await api.post(
+    `/api/v1/consolidation/runs/${runId}/eliminations/${eliminationEntryId}/post`
+  );
+  return response.data;
+}
+
+export async function listConsolidationAdjustments(runId, params = {}) {
+  const response = await api.get(
+    `/api/v1/consolidation/runs/${runId}/adjustments${toQueryString(params)}`
+  );
+  return response.data;
+}
+
+export async function postConsolidationAdjustment(runId, adjustmentId) {
+  const response = await api.post(
+    `/api/v1/consolidation/runs/${runId}/adjustments/${adjustmentId}/post`
+  );
+  return response.data;
+}

@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
 import { listAuditLogs } from "../../api/rbacAdmin.js";
+import { useI18n } from "../../i18n/useI18n.js";
 
 const SCOPE_TYPES = ["", "TENANT", "GROUP", "COUNTRY", "LEGAL_ENTITY", "OPERATING_UNIT"];
 
 export default function RbacAuditLogsPage() {
+  const { t } = useI18n();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [rows, setRows] = useState([]);
@@ -38,7 +40,7 @@ export default function RbacAuditLogsPage() {
         ...(result?.pagination || {}),
       }));
     } catch (err) {
-      setError(err?.response?.data?.message || "Failed to load RBAC audit logs");
+      setError(err?.response?.data?.message || t("rbacAuditLogs.errors.loadFailed"));
     } finally {
       setLoading(false);
     }
@@ -60,9 +62,9 @@ export default function RbacAuditLogsPage() {
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-xl font-semibold text-slate-900">RBAC Audit Logs</h1>
+        <h1 className="text-xl font-semibold text-slate-900">{t("rbacAuditLogs.title")}</h1>
         <p className="mt-1 text-sm text-slate-600">
-          Review role/permission/scope administration audit trail.
+          {t("rbacAuditLogs.subtitle")}
         </p>
       </div>
 
@@ -82,7 +84,7 @@ export default function RbacAuditLogsPage() {
         >
           {SCOPE_TYPES.map((scopeType) => (
             <option key={scopeType || "ALL"} value={scopeType}>
-              {scopeType || "All scope types"}
+              {scopeType || t("rbacAuditLogs.filters.allScopeTypes")}
             </option>
           ))}
         </select>
@@ -94,7 +96,7 @@ export default function RbacAuditLogsPage() {
             setFilters((prev) => ({ ...prev, scopeId: event.target.value }))
           }
           className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-          placeholder="Scope ID"
+          placeholder={t("rbacAuditLogs.filters.scopeId")}
         />
         <input
           value={filters.action}
@@ -102,7 +104,7 @@ export default function RbacAuditLogsPage() {
             setFilters((prev) => ({ ...prev, action: event.target.value }))
           }
           className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-          placeholder="Action (e.g. role.create)"
+          placeholder={t("rbacAuditLogs.filters.action")}
         />
         <input
           value={filters.resourceType}
@@ -110,37 +112,37 @@ export default function RbacAuditLogsPage() {
             setFilters((prev) => ({ ...prev, resourceType: event.target.value }))
           }
           className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-          placeholder="Resource type"
+          placeholder={t("rbacAuditLogs.filters.resourceType")}
         />
         <button
           type="button"
           onClick={() => loadLogs(1)}
           className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white"
         >
-          Apply Filters
+          {t("rbacAuditLogs.filters.apply")}
         </button>
       </div>
 
       <section className="overflow-hidden rounded-xl border border-slate-200 bg-white">
         <div className="border-b border-slate-200 px-4 py-3 text-sm font-semibold text-slate-700">
-          Audit Log Records
+          {t("rbacAuditLogs.recordsTitle")}
         </div>
         {loading ? (
-          <p className="px-4 py-3 text-sm text-slate-500">Loading logs...</p>
+          <p className="px-4 py-3 text-sm text-slate-500">{t("rbacAuditLogs.loading")}</p>
         ) : rows.length === 0 ? (
-          <p className="px-4 py-3 text-sm text-slate-500">No logs found.</p>
+          <p className="px-4 py-3 text-sm text-slate-500">{t("rbacAuditLogs.empty")}</p>
         ) : (
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
               <thead className="bg-slate-50 text-left text-slate-600">
                 <tr>
-                  <th className="px-4 py-2">Time</th>
-                  <th className="px-4 py-2">Action</th>
-                  <th className="px-4 py-2">Resource</th>
-                  <th className="px-4 py-2">Actor</th>
-                  <th className="px-4 py-2">Target</th>
-                  <th className="px-4 py-2">Scope</th>
-                  <th className="px-4 py-2">Payload</th>
+                  <th className="px-4 py-2">{t("rbacAuditLogs.columns.time")}</th>
+                  <th className="px-4 py-2">{t("rbacAuditLogs.columns.action")}</th>
+                  <th className="px-4 py-2">{t("rbacAuditLogs.columns.resource")}</th>
+                  <th className="px-4 py-2">{t("rbacAuditLogs.columns.actor")}</th>
+                  <th className="px-4 py-2">{t("rbacAuditLogs.columns.target")}</th>
+                  <th className="px-4 py-2">{t("rbacAuditLogs.columns.scope")}</th>
+                  <th className="px-4 py-2">{t("rbacAuditLogs.columns.payload")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -182,8 +184,11 @@ export default function RbacAuditLogsPage() {
 
       <div className="flex items-center justify-between text-sm text-slate-600">
         <div>
-          Page {pagination.page} of {pagination.totalPages || 1} | Total records:{" "}
-          {pagination.total}
+          {t("rbacAuditLogs.pagination.summary", {
+            page: pagination.page,
+            totalPages: pagination.totalPages || 1,
+            total: pagination.total,
+          })}
         </div>
         <div className="flex gap-2">
           <button
@@ -192,7 +197,7 @@ export default function RbacAuditLogsPage() {
             disabled={pagination.page <= 1 || loading}
             className="rounded-lg border border-slate-300 px-3 py-1.5 disabled:opacity-50"
           >
-            Previous
+            {t("rbacAuditLogs.pagination.previous")}
           </button>
           <button
             type="button"
@@ -203,7 +208,7 @@ export default function RbacAuditLogsPage() {
             }
             className="rounded-lg border border-slate-300 px-3 py-1.5 disabled:opacity-50"
           >
-            Next
+            {t("rbacAuditLogs.pagination.next")}
           </button>
         </div>
       </div>

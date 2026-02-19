@@ -6,9 +6,11 @@ import {
   replaceRolePermissions,
 } from "../../api/rbacAdmin.js";
 import { useAuth } from "../../auth/useAuth.js";
+import { useI18n } from "../../i18n/useI18n.js";
 
 export default function RolesPermissionsPage() {
   const { hasPermission } = useAuth();
+  const { t } = useI18n();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -43,7 +45,7 @@ export default function RolesPermissionsPage() {
         setSelectedPermissionCodes([]);
       }
     } catch (err) {
-      setError(err?.response?.data?.message || "Failed to load roles and permissions");
+      setError(err?.response?.data?.message || t("rolesPermissions.errors.loadFailed"));
     } finally {
       setLoading(false);
     }
@@ -75,7 +77,7 @@ export default function RolesPermissionsPage() {
   async function handleCreateRole(event) {
     event.preventDefault();
     if (!canUpsertRole) {
-      setError("Missing permission: security.role.upsert");
+      setError(t("rolesPermissions.errors.missingUpsertPermission"));
       return;
     }
     setSaving(true);
@@ -87,10 +89,10 @@ export default function RolesPermissionsPage() {
         name: roleForm.name.trim(),
       });
       setRoleForm({ code: "", name: "" });
-      setMessage("Role created or updated.");
+      setMessage(t("rolesPermissions.messages.roleSaved"));
       await loadData();
     } catch (err) {
-      setError(err?.response?.data?.message || "Failed to save role");
+      setError(err?.response?.data?.message || t("rolesPermissions.errors.saveRoleFailed"));
     } finally {
       setSaving(false);
     }
@@ -101,7 +103,7 @@ export default function RolesPermissionsPage() {
       return;
     }
     if (!canReplaceRolePermissions) {
-      setError("Missing permission: security.role_permissions.assign");
+      setError(t("rolesPermissions.errors.missingAssignPermission"));
       return;
     }
     setSaving(true);
@@ -109,10 +111,12 @@ export default function RolesPermissionsPage() {
     setMessage("");
     try {
       await replaceRolePermissions(selectedRoleId, selectedPermissionCodes);
-      setMessage("Role permissions replaced.");
+      setMessage(t("rolesPermissions.messages.permissionsReplaced"));
       await loadData();
     } catch (err) {
-      setError(err?.response?.data?.message || "Failed to replace permissions");
+      setError(
+        err?.response?.data?.message || t("rolesPermissions.errors.replacePermissionsFailed")
+      );
     } finally {
       setSaving(false);
     }
@@ -122,10 +126,10 @@ export default function RolesPermissionsPage() {
     <div className="space-y-4">
       <div>
         <h1 className="text-xl font-semibold text-slate-900">
-          Roles & Permissions Management
+          {t("rolesPermissions.title")}
         </h1>
         <p className="mt-1 text-sm text-slate-600">
-          Create roles and replace permission matrix per role.
+          {t("rolesPermissions.subtitle")}
         </p>
       </div>
 
@@ -150,7 +154,7 @@ export default function RolesPermissionsPage() {
             setRoleForm((prev) => ({ ...prev, code: event.target.value }))
           }
           className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-          placeholder="Role code (e.g. CountryController)"
+          placeholder={t("rolesPermissions.placeholders.roleCode")}
           required
         />
         <input
@@ -159,7 +163,7 @@ export default function RolesPermissionsPage() {
             setRoleForm((prev) => ({ ...prev, name: event.target.value }))
           }
           className="rounded-lg border border-slate-300 px-3 py-2 text-sm md:col-span-2"
-          placeholder="Role name"
+          placeholder={t("rolesPermissions.placeholders.roleName")}
           required
         />
         <button
@@ -167,15 +171,17 @@ export default function RolesPermissionsPage() {
           disabled={saving || !canUpsertRole}
           className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
         >
-          {saving ? "Saving..." : "Save Role"}
+          {saving ? t("rolesPermissions.actions.saving") : t("rolesPermissions.actions.saveRole")}
         </button>
       </form>
 
       <div className="grid gap-4 md:grid-cols-[300px_1fr]">
         <section className="rounded-xl border border-slate-200 bg-white p-3">
-          <h2 className="mb-2 text-sm font-semibold text-slate-700">Roles</h2>
+          <h2 className="mb-2 text-sm font-semibold text-slate-700">
+            {t("rolesPermissions.sections.roles")}
+          </h2>
           {loading ? (
-            <p className="text-sm text-slate-500">Loading roles...</p>
+            <p className="text-sm text-slate-500">{t("rolesPermissions.sections.loadingRoles")}</p>
           ) : (
             <div className="space-y-1">
               {roles.map((role) => (
@@ -203,7 +209,11 @@ export default function RolesPermissionsPage() {
         <section className="rounded-xl border border-slate-200 bg-white p-3">
           <div className="mb-3 flex items-center justify-between gap-2">
             <h2 className="text-sm font-semibold text-slate-700">
-              Permissions{selectedRole ? ` for ${selectedRole.code}` : ""}
+              {selectedRole
+                ? t("rolesPermissions.sections.permissionsFor", {
+                    code: selectedRole.code,
+                  })
+                : t("rolesPermissions.sections.permissions")}
             </h2>
             <button
               type="button"
@@ -211,11 +221,15 @@ export default function RolesPermissionsPage() {
               onClick={handleReplacePermissions}
               className="rounded-lg bg-cyan-700 px-3 py-2 text-xs font-semibold text-white disabled:opacity-60"
             >
-              {saving ? "Saving..." : "Replace Permissions"}
+              {saving
+                ? t("rolesPermissions.actions.saving")
+                : t("rolesPermissions.actions.replacePermissions")}
             </button>
           </div>
           {loading ? (
-            <p className="text-sm text-slate-500">Loading permissions...</p>
+            <p className="text-sm text-slate-500">
+              {t("rolesPermissions.sections.loadingPermissions")}
+            </p>
           ) : (
             <div className="grid gap-2 md:grid-cols-2">
               {permissions.map((permission) => {

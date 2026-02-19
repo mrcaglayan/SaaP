@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   createJournal,
   listAccounts,
@@ -11,6 +11,7 @@ import {
   listOperatingUnits,
 } from "../api/orgAdmin.js";
 import { useAuth } from "../auth/useAuth.js";
+import { useI18n } from "../i18n/useI18n.js";
 
 function toPositiveInt(value) {
   const parsed = Number(value);
@@ -47,6 +48,9 @@ function createLine() {
 
 export default function AcilisFisiOlustur() {
   const { hasPermission } = useAuth();
+  const { language } = useI18n();
+  const isTr = language === "tr";
+  const l = useCallback((en, tr) => (isTr ? tr : en), [isTr]);
   const canReadOrgTree = hasPermission("org.tree.read");
   const canReadBooks = hasPermission("gl.book.read");
   const canReadAccounts = hasPermission("gl.account.read");
@@ -76,7 +80,7 @@ export default function AcilisFisiOlustur() {
     documentDate: today,
     currencyCode: "USD",
     referenceNo: "",
-    description: "Opening entry",
+    description: l("Opening entry", "Acilis fisi"),
     autoPost: true,
   });
   const [lines, setLines] = useState([createLine(), createLine()]);
@@ -164,7 +168,7 @@ export default function AcilisFisiOlustur() {
         });
       } catch (err) {
         if (!cancelled) {
-          setError(err?.response?.data?.message || "Failed to load references.");
+          setError(err?.response?.data?.message || l("Failed to load references.", "Referanslar yuklenemedi."));
         }
       } finally {
         if (!cancelled) {
@@ -177,7 +181,7 @@ export default function AcilisFisiOlustur() {
     return () => {
       cancelled = true;
     };
-  }, [canReadOrgTree, canReadBooks, canReadAccounts, selectedLegalEntityId]);
+  }, [canReadOrgTree, canReadBooks, canReadAccounts, selectedLegalEntityId, l]);
 
   useEffect(() => {
     let cancelled = false;
@@ -205,7 +209,9 @@ export default function AcilisFisiOlustur() {
         setPeriods(res?.rows || []);
       } catch (err) {
         if (!cancelled) {
-          setError(err?.response?.data?.message || "Failed to load fiscal periods.");
+          setError(
+            err?.response?.data?.message || l("Failed to load fiscal periods.", "Mali donemler yuklenemedi.")
+          );
         }
       } finally {
         if (!cancelled) {
@@ -218,7 +224,7 @@ export default function AcilisFisiOlustur() {
     return () => {
       cancelled = true;
     };
-  }, [canReadPeriods, books, selectedBookId]);
+  }, [canReadPeriods, books, selectedBookId, l]);
 
   useEffect(() => {
     setForm((prev) => {
@@ -281,7 +287,7 @@ export default function AcilisFisiOlustur() {
     event.preventDefault();
 
     if (!canCreateJournal) {
-      setError("Missing permission: gl.journal.create");
+      setError(l("Missing permission: gl.journal.create", "Eksik yetki: gl.journal.create"));
       return;
     }
 
@@ -289,11 +295,11 @@ export default function AcilisFisiOlustur() {
     const bookId = toPositiveInt(form.bookId);
     const fiscalPeriodId = toPositiveInt(form.fiscalPeriodId);
     if (!legalEntityId || !bookId || !fiscalPeriodId) {
-      setError("Legal entity, book, and fiscal period are required.");
+      setError(l("Legal entity, book, and fiscal period are required.", "Hukuki birim, defter ve mali donem zorunludur."));
       return;
     }
     if (lines.length < 2) {
-      setError("At least two lines are required.");
+      setError(l("At least two lines are required.", "En az iki satir gereklidir."));
       return;
     }
 
@@ -303,18 +309,33 @@ export default function AcilisFisiOlustur() {
       const lineLabel = `Line ${i + 1}`;
       const accountId = toPositiveInt(line.accountId);
       if (!accountId) {
-        setError(`${lineLabel}: account is required.`);
+        setError(
+          l(
+            `${lineLabel}: account is required.`,
+            `Satir ${i + 1}: hesap zorunludur.`
+          )
+        );
         return;
       }
 
       const debitBase = toAmount(line.debitBase);
       const creditBase = toAmount(line.creditBase);
       if (debitBase < 0 || creditBase < 0) {
-        setError(`${lineLabel}: debit/credit cannot be negative.`);
+        setError(
+          l(
+            `${lineLabel}: debit/credit cannot be negative.`,
+            `Satir ${i + 1}: borc/alacak negatif olamaz.`
+          )
+        );
         return;
       }
       if ((debitBase === 0 && creditBase === 0) || (debitBase > 0 && creditBase > 0)) {
-        setError(`${lineLabel}: enter either debit or credit.`);
+        setError(
+          l(
+            `${lineLabel}: enter either debit or credit.`,
+            `Satir ${i + 1}: yalnizca borc veya alacak girin.`
+          )
+        );
         return;
       }
 
@@ -334,7 +355,7 @@ export default function AcilisFisiOlustur() {
     const totalDebit = normalizedLines.reduce((sum, line) => sum + line.debitBase, 0);
     const totalCredit = normalizedLines.reduce((sum, line) => sum + line.creditBase, 0);
     if (Math.abs(totalDebit - totalCredit) >= 0.0001) {
-      setError("Entry is not balanced.");
+      setError(l("Entry is not balanced.", "Fis dengede degil."));
       return;
     }
 
@@ -375,23 +396,31 @@ export default function AcilisFisiOlustur() {
       if (form.autoPost && canPostJournal) {
         setMessage(
           posted
-            ? "Opening entry created and posted."
-            : "Opening entry created; posting did not complete."
+            ? l("Opening entry created and posted.", "Acilis fisi olusturuldu ve post edildi.")
+            : l(
+                "Opening entry created; posting did not complete.",
+                "Acilis fisi olusturuldu; post islemi tamamlanamadi."
+              )
         );
       } else if (form.autoPost && !canPostJournal) {
-        setMessage("Opening entry created as draft (missing gl.journal.post permission).");
+        setMessage(
+          l(
+            "Opening entry created as draft (missing gl.journal.post permission).",
+            "Acilis fisi taslak olarak olusturuldu (gl.journal.post yetkisi eksik)."
+          )
+        );
       } else {
-        setMessage("Opening entry created as draft.");
+        setMessage(l("Opening entry created as draft.", "Acilis fisi taslak olarak olusturuldu."));
       }
 
       setLines([createLine(), createLine()]);
       setForm((prev) => ({
         ...prev,
         referenceNo: "",
-        description: "Opening entry",
+        description: l("Opening entry", "Acilis fisi"),
       }));
     } catch (err) {
-      setError(err?.response?.data?.message || "Failed to create opening entry.");
+      setError(err?.response?.data?.message || l("Failed to create opening entry.", "Acilis fisi olusturulamadi."));
     } finally {
       setSubmitting(false);
     }
@@ -400,15 +429,18 @@ export default function AcilisFisiOlustur() {
   return (
     <div className="space-y-4">
       <header>
-        <h1 className="text-xl font-semibold text-slate-900">Acilis Fisi Olustur</h1>
+        <h1 className="text-xl font-semibold text-slate-900">{l("Create Opening Voucher", "Acilis Fisi Olustur")}</h1>
         <p className="mt-1 text-sm text-slate-600">
-          Open a balanced opening entry with optional immediate posting.
+          {l(
+            "Create a balanced opening entry with optional immediate posting.",
+            "Opsiyonel aninda post secenegi ile dengeli bir acilis fisi olusturun."
+          )}
         </p>
       </header>
 
       {!canCreateJournal && (
         <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-          Missing permission: <span className="font-mono">gl.journal.create</span>
+          {l("Missing permission:", "Eksik yetki:")} <span className="font-mono">gl.journal.create</span>
         </div>
       )}
       {error && (
@@ -425,9 +457,9 @@ export default function AcilisFisiOlustur() {
       <form onSubmit={handleSubmit} className="space-y-4">
         <section className="rounded-xl border border-slate-200 bg-white p-4">
           <div className="mb-3 flex items-center justify-between gap-3">
-            <h2 className="text-sm font-semibold text-slate-700">Document Header</h2>
+            <h2 className="text-sm font-semibold text-slate-700">{l("Document Header", "Belge Basligi")}</h2>
             <span className="text-xs text-slate-500">
-              {loadingRefs ? "Loading references..." : "Ready"}
+              {loadingRefs ? l("Loading references...", "Referanslar yukleniyor...") : l("Ready", "Hazir")}
             </span>
           </div>
 
@@ -439,7 +471,7 @@ export default function AcilisFisiOlustur() {
               required
               disabled={!canReadOrgTree || loadingRefs}
             >
-              <option value="">Select legal entity</option>
+              <option value="">{l("Select legal entity", "Hukuki birim secin")}</option>
               {legalEntities.map((row) => (
                 <option key={row.id} value={row.id}>
                   {row.code} - {row.name}
@@ -454,7 +486,7 @@ export default function AcilisFisiOlustur() {
               required
               disabled={!canReadBooks || loadingRefs}
             >
-              <option value="">Select book</option>
+              <option value="">{l("Select book", "Defter secin")}</option>
               {books.map((row) => (
                 <option key={row.id} value={row.id}>
                   {row.code} - {row.name}
@@ -469,7 +501,11 @@ export default function AcilisFisiOlustur() {
               required
               disabled={!canReadPeriods || loadingPeriods}
             >
-              <option value="">{loadingPeriods ? "Loading periods..." : "Select period"}</option>
+              <option value="">
+                {loadingPeriods
+                  ? l("Loading periods...", "Donemler yukleniyor...")
+                  : l("Select period", "Donem secin")}
+              </option>
               {periods.map((row) => (
                 <option key={row.id} value={row.id}>
                   FY{row.fiscal_year} P{String(row.period_no).padStart(2, "0")} -{" "}
@@ -485,7 +521,7 @@ export default function AcilisFisiOlustur() {
               }
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
               maxLength={3}
-              placeholder="Currency"
+              placeholder={l("Currency", "Para birimi")}
               required
             />
 
@@ -509,7 +545,7 @@ export default function AcilisFisiOlustur() {
               value={form.referenceNo}
               onChange={(event) => setFormField("referenceNo", event.target.value)}
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              placeholder="Reference no"
+              placeholder={l("Reference no", "Referans no")}
             />
 
             <label className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700">
@@ -519,27 +555,27 @@ export default function AcilisFisiOlustur() {
                 onChange={(event) => setFormField("autoPost", event.target.checked)}
                 disabled={!canPostJournal}
               />
-              Auto-post
+              {l("Auto-post", "Otomatik post et")}
             </label>
 
             <input
               value={form.description}
               onChange={(event) => setFormField("description", event.target.value)}
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm md:col-span-4"
-              placeholder="Description"
+              placeholder={l("Description", "Aciklama")}
             />
           </div>
         </section>
 
         <section className="rounded-xl border border-slate-200 bg-white">
           <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
-            <h2 className="text-sm font-semibold text-slate-700">Lines</h2>
+            <h2 className="text-sm font-semibold text-slate-700">{l("Lines", "Satirlar")}</h2>
             <button
               type="button"
               onClick={addLine}
               className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
             >
-              Add line
+              {l("Add line", "Satir ekle")}
             </button>
           </div>
 
@@ -547,13 +583,13 @@ export default function AcilisFisiOlustur() {
             <table className="min-w-full text-sm">
               <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
                 <tr>
-                  <th className="px-3 py-2">Account</th>
-                  <th className="px-3 py-2">Unit</th>
-                  <th className="px-3 py-2">Counterparty</th>
-                  <th className="px-3 py-2">Description</th>
-                  <th className="px-3 py-2">Debit</th>
-                  <th className="px-3 py-2">Credit</th>
-                  <th className="px-3 py-2">Action</th>
+                  <th className="px-3 py-2">{l("Account", "Hesap")}</th>
+                  <th className="px-3 py-2">{l("Unit", "Birim")}</th>
+                  <th className="px-3 py-2">{l("Counterparty", "Karsi taraf")}</th>
+                  <th className="px-3 py-2">{l("Description", "Aciklama")}</th>
+                  <th className="px-3 py-2">{l("Debit", "Borc")}</th>
+                  <th className="px-3 py-2">{l("Credit", "Alacak")}</th>
+                  <th className="px-3 py-2">{l("Action", "Islem")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -569,7 +605,7 @@ export default function AcilisFisiOlustur() {
                         required
                         disabled={!canReadAccounts}
                       >
-                        <option value="">Select account</option>
+                        <option value="">{l("Select account", "Hesap secin")}</option>
                         {accounts.map((account) => (
                           <option key={account.id} value={account.id}>
                             {account.code} - {account.name}
@@ -586,7 +622,7 @@ export default function AcilisFisiOlustur() {
                         className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs"
                         disabled={!canReadOrgTree}
                       >
-                        <option value="">Optional</option>
+                        <option value="">{l("Optional", "Opsiyonel")}</option>
                         {operatingUnits.map((unit) => (
                           <option key={unit.id} value={unit.id}>
                             {unit.code} - {unit.name}
@@ -607,7 +643,7 @@ export default function AcilisFisiOlustur() {
                         className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs"
                         disabled={!canReadOrgTree}
                       >
-                        <option value="">Optional</option>
+                        <option value="">{l("Optional", "Opsiyonel")}</option>
                         {legalEntities.map((entity) => (
                           <option key={entity.id} value={entity.id}>
                             {entity.code} - {entity.name}
@@ -622,7 +658,10 @@ export default function AcilisFisiOlustur() {
                           updateLine(line.id, "description", event.target.value)
                         }
                         className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs"
-                        placeholder={`Line ${index + 1} description`}
+                        placeholder={l(
+                          `Line ${index + 1} description`,
+                          `Satir ${index + 1} aciklamasi`
+                        )}
                       />
                     </td>
                     <td className="px-3 py-2">
@@ -658,7 +697,7 @@ export default function AcilisFisiOlustur() {
                         disabled={lines.length <= 2}
                         className="rounded border border-rose-200 px-2 py-1 text-xs font-semibold text-rose-700 disabled:opacity-50"
                       >
-                        Remove
+                        {l("Remove", "Kaldir")}
                       </button>
                     </td>
                   </tr>
@@ -667,18 +706,18 @@ export default function AcilisFisiOlustur() {
               <tfoot>
                 <tr className="border-t border-slate-200 bg-slate-50 text-sm font-semibold text-slate-700">
                   <td className="px-3 py-2" colSpan={4}>
-                    Totals
+                    {l("Totals", "Toplamlar")}
                   </td>
                   <td className="px-3 py-2 text-right">{formatAmount(totals.debit)}</td>
                   <td className="px-3 py-2 text-right">{formatAmount(totals.credit)}</td>
                   <td className="px-3 py-2 text-xs">
                     {isBalanced ? (
                       <span className="rounded bg-emerald-100 px-2 py-0.5 text-emerald-700">
-                        Balanced
+                        {l("Balanced", "Dengeli")}
                       </span>
                     ) : (
                       <span className="rounded bg-amber-100 px-2 py-0.5 text-amber-700">
-                        Not balanced
+                        {l("Not balanced", "Dengede degil")}
                       </span>
                     )}
                   </td>
@@ -690,7 +729,8 @@ export default function AcilisFisiOlustur() {
 
         <div className="flex items-center justify-between gap-3">
           <p className="text-xs text-slate-500">
-            Posting requires <span className="font-mono">gl.journal.post</span>.
+            {l("Posting requires", "Post islemi icin")}{" "}
+            <span className="font-mono">gl.journal.post</span> {l("permission.", "yetkisi gerekir.")}
           </p>
           <button
             type="submit"
@@ -698,25 +738,25 @@ export default function AcilisFisiOlustur() {
             className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
           >
             {submitting
-              ? "Saving..."
+              ? l("Saving...", "Kaydediliyor...")
               : form.autoPost && canPostJournal
-              ? "Create and Post"
-              : "Create Draft"}
+              ? l("Create and Post", "Olustur ve Post Et")
+              : l("Create Draft", "Taslak Olustur")}
           </button>
         </div>
       </form>
 
       {result && (
         <section className="rounded-xl border border-slate-200 bg-white p-4 text-sm">
-          <h2 className="mb-2 font-semibold text-slate-800">Last Created Entry</h2>
+          <h2 className="mb-2 font-semibold text-slate-800">{l("Last Created Entry", "Son Olusturulan Fis")}</h2>
           <div className="grid gap-1 text-slate-700">
             <div>
-              Journal ID: <span className="font-mono">{result.journalEntryId || "-"}</span>
+              {l("Journal ID:", "Fis ID:")} <span className="font-mono">{result.journalEntryId || "-"}</span>
             </div>
             <div>
-              Journal No: <span className="font-mono">{result.journalNo || "-"}</span>
+              {l("Journal No:", "Fis No:")} <span className="font-mono">{result.journalNo || "-"}</span>
             </div>
-            <div>Status: {result.posted ? "POSTED" : "DRAFT"}</div>
+            <div>{l("Status:", "Durum:")} {result.posted ? "POSTED" : "DRAFT"}</div>
           </div>
         </section>
       )}

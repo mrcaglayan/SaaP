@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { I18nContext } from "./i18nContext.js";
 import {
   DEFAULT_LANGUAGE,
+  FALLBACK_LANGUAGE,
   LANGUAGE_STORAGE_KEY,
   messages,
   SUPPORTED_LANGUAGES,
@@ -34,6 +35,17 @@ function resolvePath(obj, pathParts) {
   }, obj);
 }
 
+function interpolateMessage(template, vars = {}) {
+  if (typeof template !== "string") {
+    return template;
+  }
+
+  return template.replace(/\{\{(\w+)\}\}/g, (_, key) => {
+    const value = vars?.[key];
+    return value === undefined || value === null ? "" : String(value);
+  });
+}
+
 export function I18nProvider({ children }) {
   const [language, setLanguageState] = useState(getInitialLanguage);
 
@@ -50,21 +62,41 @@ export function I18nProvider({ children }) {
   }, []);
 
   const t = useCallback(
-    (key, fallback) => {
+    (key, fallbackOrVars, maybeVars) => {
+      let fallback = fallbackOrVars;
+      let vars = maybeVars;
+      if (
+        fallbackOrVars &&
+        typeof fallbackOrVars === "object" &&
+        !Array.isArray(fallbackOrVars)
+      ) {
+        fallback = undefined;
+        vars = fallbackOrVars;
+      }
+
       const pathParts = Array.isArray(key) ? key : String(key).split(".");
       const activeMessages = messages[language] || messages[DEFAULT_LANGUAGE];
       const activeValue = resolvePath(activeMessages, pathParts);
       if (typeof activeValue === "string") {
-        return activeValue;
-      }
-
-      const defaultValue = resolvePath(messages[DEFAULT_LANGUAGE], pathParts);
-      if (typeof defaultValue === "string") {
-        return defaultValue;
+        return interpolateMessage(activeValue, vars);
       }
 
       if (fallback !== undefined) {
-        return fallback;
+        return interpolateMessage(fallback, vars);
+      }
+
+      if (language !== FALLBACK_LANGUAGE) {
+        const fallbackLanguageValue = resolvePath(messages[FALLBACK_LANGUAGE], pathParts);
+        if (typeof fallbackLanguageValue === "string") {
+          return interpolateMessage(fallbackLanguageValue, vars);
+        }
+      }
+
+      if (language !== DEFAULT_LANGUAGE) {
+        const defaultValue = resolvePath(messages[DEFAULT_LANGUAGE], pathParts);
+        if (typeof defaultValue === "string") {
+          return interpolateMessage(defaultValue, vars);
+        }
       }
 
       return Array.isArray(key) ? key.join(".") : String(key);

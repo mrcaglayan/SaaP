@@ -231,6 +231,14 @@ function formatSegmentLabel(segment) {
     .join(" ");
 }
 
+function toSidebarTitleKey(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
 function isSectionItem(item) {
   return item?.type === "section" || Array.isArray(item?.items);
 }
@@ -317,16 +325,20 @@ export default function AppLayout() {
   const location = useLocation();
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [readinessMenuOpen, setReadinessMenuOpen] = useState(false);
+  const [readinessMenuPathname, setReadinessMenuPathname] = useState(null);
   const readinessMenuRef = useRef(null);
   const canViewUnimplementedModules = hasAllPermissions(
     MODULE_PREVIEW_ADMIN_PERMISSIONS
   );
+  const readinessMenuOpen = readinessMenuPathname === location.pathname;
 
   function getItemDisplayText(item, type) {
     const fallback = type === "title" ? item?.title : item?.label;
     const pathKey = item?.to || item?.matchPrefix;
-    if (!pathKey) return fallback;
+    if (!pathKey) {
+      const titleKey = toSidebarTitleKey(fallback);
+      return t(["sidebar", "titles", titleKey], fallback);
+    }
     return t(["sidebar", "byPath", pathKey], fallback);
   }
 
@@ -361,11 +373,7 @@ export default function AppLayout() {
   );
 
   const closeMobileSidebar = () => setMobileOpen(false);
-  const closeReadinessMenu = () => setReadinessMenuOpen(false);
-
-  useEffect(() => {
-    closeReadinessMenu();
-  }, [location.pathname]);
+  const closeReadinessMenu = () => setReadinessMenuPathname(null);
 
   useEffect(() => {
     if (!readinessMenuOpen) return undefined;
@@ -600,7 +608,11 @@ export default function AppLayout() {
             <div className="relative" ref={readinessMenuRef}>
               <button
                 type="button"
-                onClick={() => setReadinessMenuOpen((value) => !value)}
+                onClick={() =>
+                  setReadinessMenuPathname((currentPathname) =>
+                    currentPathname === location.pathname ? null : location.pathname
+                  )
+                }
                 className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[11px] font-semibold tracking-wide transition-colors ${readinessChip.classes}`}
                 aria-haspopup="menu"
                 aria-expanded={readinessMenuOpen}

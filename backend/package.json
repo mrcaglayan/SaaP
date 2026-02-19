@@ -13,7 +13,9 @@
     "db:seed": "node src/seed.js",
     "test:permission-matrix": "node scripts/test-permission-matrix.js",
     "test:tenant-safety": "node scripts/test-tenant-safety-and-transactions.js",
-    "test:release-gate": "npm run test:permission-matrix && npm run test:tenant-safety"
+    "test:period-close": "node scripts/test-period-close-process.js",
+    "test:intercompany-consolidation": "node scripts/test-intercompany-and-consolidation-reports.js",
+    "test:release-gate": "npm run test:permission-matrix && npm run test:tenant-safety && npm run test:period-close && npm run test:intercompany-consolidation"
   },
   "keywords": [],
   "author": "",

@@ -10,6 +10,7 @@ import {
 } from "../../api/glAdmin.js";
 import { listFiscalCalendars, listLegalEntities } from "../../api/orgAdmin.js";
 import { useAuth } from "../../auth/useAuth.js";
+import { useI18n } from "../../i18n/useI18n.js";
 import TenantReadinessChecklist from "../../readiness/TenantReadinessChecklist.jsx";
 
 const BOOK_TYPES = ["LOCAL", "GROUP"];
@@ -24,6 +25,9 @@ function toPositiveInt(value) {
 
 export default function GlSetupPage() {
   const { hasPermission } = useAuth();
+  const { language } = useI18n();
+  const isTr = language === "tr";
+  const l = (en, tr) => (isTr ? tr : en);
   const canReadLegalEntities = hasPermission("org.tree.read");
   const canReadCalendars = hasPermission("org.fiscal_calendar.read");
   const canReadBooks = hasPermission("gl.book.read");
@@ -158,7 +162,7 @@ export default function GlSetupPage() {
           prev.targetAccountId || String(updates.accounts[1]?.id || updates.accounts[0]?.id || ""),
       }));
     } catch (err) {
-      setError(err?.response?.data?.message || "Failed to load GL setup data.");
+      setError(err?.response?.data?.message || l("Failed to load GL setup data.", "GL kurulum verileri yuklenemedi."));
     } finally {
       setLoading(false);
     }
@@ -178,14 +182,14 @@ export default function GlSetupPage() {
   async function handleBookSubmit(event) {
     event.preventDefault();
     if (!canUpsertBooks) {
-      setError("Missing permission: gl.book.upsert");
+      setError(l("Missing permission: gl.book.upsert", "Eksik yetki: gl.book.upsert"));
       return;
     }
 
     const legalEntityId = toPositiveInt(bookForm.legalEntityId);
     const calendarId = toPositiveInt(bookForm.calendarId);
     if (!legalEntityId || !calendarId) {
-      setError("legalEntityId and calendarId are required.");
+      setError(l("legalEntityId and calendarId are required.", "legalEntityId ve calendarId zorunludur."));
       return;
     }
 
@@ -202,10 +206,10 @@ export default function GlSetupPage() {
         baseCurrencyCode: bookForm.baseCurrencyCode.trim().toUpperCase(),
       });
       setBookForm((prev) => ({ ...prev, code: "", name: "" }));
-      setMessage("Book saved.");
+      setMessage(l("Book saved.", "Defter kaydedildi."));
       await loadData();
     } catch (err) {
-      setError(err?.response?.data?.message || "Failed to save book.");
+      setError(err?.response?.data?.message || l("Failed to save book.", "Defter kaydedilemedi."));
     } finally {
       setSaving("");
     }
@@ -214,13 +218,13 @@ export default function GlSetupPage() {
   async function handleCoaSubmit(event) {
     event.preventDefault();
     if (!canUpsertCoas) {
-      setError("Missing permission: gl.coa.upsert");
+      setError(l("Missing permission: gl.coa.upsert", "Eksik yetki: gl.coa.upsert"));
       return;
     }
 
     const legalEntityId = toPositiveInt(coaForm.legalEntityId);
     if (coaForm.scope === "LEGAL_ENTITY" && !legalEntityId) {
-      setError("legalEntityId is required when scope is LEGAL_ENTITY.");
+      setError(l("legalEntityId is required when scope is LEGAL_ENTITY.", "scope LEGAL_ENTITY iken legalEntityId zorunludur."));
       return;
     }
 
@@ -235,10 +239,10 @@ export default function GlSetupPage() {
         name: coaForm.name.trim(),
       });
       setCoaForm((prev) => ({ ...prev, code: "", name: "" }));
-      setMessage("Chart of accounts saved.");
+      setMessage(l("Chart of accounts saved.", "Hesap plani kaydedildi."));
       await loadData();
     } catch (err) {
-      setError(err?.response?.data?.message || "Failed to save CoA.");
+      setError(err?.response?.data?.message || l("Failed to save CoA.", "Hesap plani kaydedilemedi."));
     } finally {
       setSaving("");
     }
@@ -247,13 +251,13 @@ export default function GlSetupPage() {
   async function handleAccountSubmit(event) {
     event.preventDefault();
     if (!canUpsertAccounts) {
-      setError("Missing permission: gl.account.upsert");
+      setError(l("Missing permission: gl.account.upsert", "Eksik yetki: gl.account.upsert"));
       return;
     }
 
     const coaId = toPositiveInt(accountForm.coaId);
     if (!coaId) {
-      setError("coaId is required.");
+      setError(l("coaId is required.", "coaId zorunludur."));
       return;
     }
 
@@ -271,10 +275,10 @@ export default function GlSetupPage() {
         parentAccountId: toPositiveInt(accountForm.parentAccountId) || undefined,
       });
       setAccountForm((prev) => ({ ...prev, code: "", name: "", parentAccountId: "" }));
-      setMessage("Account saved.");
+      setMessage(l("Account saved.", "Hesap kaydedildi."));
       await loadData();
     } catch (err) {
-      setError(err?.response?.data?.message || "Failed to save account.");
+      setError(err?.response?.data?.message || l("Failed to save account.", "Hesap kaydedilemedi."));
     } finally {
       setSaving("");
     }
@@ -283,14 +287,14 @@ export default function GlSetupPage() {
   async function handleMappingSubmit(event) {
     event.preventDefault();
     if (!canUpsertMappings) {
-      setError("Missing permission: gl.account_mapping.upsert");
+      setError(l("Missing permission: gl.account_mapping.upsert", "Eksik yetki: gl.account_mapping.upsert"));
       return;
     }
 
     const sourceAccountId = toPositiveInt(mappingForm.sourceAccountId);
     const targetAccountId = toPositiveInt(mappingForm.targetAccountId);
     if (!sourceAccountId || !targetAccountId) {
-      setError("sourceAccountId and targetAccountId are required.");
+      setError(l("sourceAccountId and targetAccountId are required.", "sourceAccountId ve targetAccountId zorunludur."));
       return;
     }
 
@@ -303,9 +307,9 @@ export default function GlSetupPage() {
         targetAccountId,
         mappingType: mappingForm.mappingType,
       });
-      setMessage("Account mapping saved.");
+      setMessage(l("Account mapping saved.", "Hesap eslemesi kaydedildi."));
     } catch (err) {
-      setError(err?.response?.data?.message || "Failed to save mapping.");
+      setError(err?.response?.data?.message || l("Failed to save mapping.", "Hesap eslemesi kaydedilemedi."));
     } finally {
       setSaving("");
     }
@@ -314,8 +318,10 @@ export default function GlSetupPage() {
   if (!canReadBooks && !canReadCoas && !canReadAccounts) {
     return (
       <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-        You need GL read permissions (`gl.book.read`, `gl.coa.read`, `gl.account.read`)
-        to use this page.
+        {l(
+          "You need GL read permissions (`gl.book.read`, `gl.coa.read`, `gl.account.read`) to use this page.",
+          "Bu sayfayi kullanmak icin GL okuma yetkileri (`gl.book.read`, `gl.coa.read`, `gl.account.read`) gerekir."
+        )}
       </div>
     );
   }
@@ -325,9 +331,12 @@ export default function GlSetupPage() {
       <TenantReadinessChecklist />
 
       <div>
-        <h1 className="text-xl font-semibold text-slate-900">GL Setup</h1>
+        <h1 className="text-xl font-semibold text-slate-900">{l("GL Setup", "GL Ayarlari")}</h1>
         <p className="mt-1 text-sm text-slate-600">
-          Manage books, charts of accounts, accounts, and account mappings.
+          {l(
+            "Manage books, charts of accounts, accounts, and account mappings.",
+            "Defterleri, hesap planlarini, hesaplari ve hesap eslemelerini yonetin."
+          )}
         </p>
       </div>
 
@@ -344,7 +353,7 @@ export default function GlSetupPage() {
 
       <div className="grid gap-4 xl:grid-cols-2">
         <section className="rounded-xl border border-slate-200 bg-white p-4">
-          <h2 className="mb-3 text-sm font-semibold text-slate-700">Books</h2>
+          <h2 className="mb-3 text-sm font-semibold text-slate-700">{l("Books", "Defterler")}</h2>
           <form onSubmit={handleBookSubmit} className="grid gap-2 md:grid-cols-3">
             <select
               value={bookForm.legalEntityId}
@@ -354,7 +363,7 @@ export default function GlSetupPage() {
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
               required
             >
-              <option value="">Select legal entity</option>
+              <option value="">{l("Select legal entity", "Hukuki birim secin")}</option>
               {legalEntities.map((entity) => (
                 <option key={entity.id} value={entity.id}>
                   {entity.code} - {entity.name}
@@ -369,7 +378,7 @@ export default function GlSetupPage() {
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
               required
             >
-              <option value="">Select calendar</option>
+              <option value="">{l("Select calendar", "Takvim secin")}</option>
               {calendars.map((calendar) => (
                 <option key={calendar.id} value={calendar.id}>
                   {calendar.code} - {calendar.name}
@@ -395,7 +404,7 @@ export default function GlSetupPage() {
                 setBookForm((prev) => ({ ...prev, code: event.target.value }))
               }
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              placeholder="Book code"
+              placeholder={l("Book code", "Defter kodu")}
               required
             />
             <input
@@ -404,7 +413,7 @@ export default function GlSetupPage() {
                 setBookForm((prev) => ({ ...prev, name: event.target.value }))
               }
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              placeholder="Book name"
+              placeholder={l("Book name", "Defter adi")}
               required
             />
             <input
@@ -416,7 +425,7 @@ export default function GlSetupPage() {
                 }))
               }
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              placeholder="Base currency (e.g. USD)"
+              placeholder={l("Base currency (e.g. USD)", "Ana para birimi (orn. USD)")}
               maxLength={3}
               required
             />
@@ -425,7 +434,7 @@ export default function GlSetupPage() {
               disabled={saving === "book" || !canUpsertBooks}
               className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60 md:col-span-3"
             >
-              {saving === "book" ? "Saving..." : "Save Book"}
+              {saving === "book" ? l("Saving...", "Kaydediliyor...") : l("Save Book", "Defteri Kaydet")}
             </button>
           </form>
 
@@ -434,10 +443,10 @@ export default function GlSetupPage() {
               <thead className="bg-slate-50 text-left text-slate-600">
                 <tr>
                   <th className="px-3 py-2">ID</th>
-                  <th className="px-3 py-2">Code</th>
-                  <th className="px-3 py-2">Name</th>
-                  <th className="px-3 py-2">Entity</th>
-                  <th className="px-3 py-2">Calendar</th>
+                  <th className="px-3 py-2">{l("Code", "Kod")}</th>
+                  <th className="px-3 py-2">{l("Name", "Ad")}</th>
+                  <th className="px-3 py-2">{l("Entity", "Birim")}</th>
+                  <th className="px-3 py-2">{l("Calendar", "Takvim")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -453,7 +462,7 @@ export default function GlSetupPage() {
                 {books.length === 0 && !loading && (
                   <tr>
                     <td colSpan={5} className="px-3 py-3 text-slate-500">
-                      No books found.
+                      {l("No books found.", "Defter bulunamadi.")}
                     </td>
                   </tr>
                 )}
@@ -464,7 +473,7 @@ export default function GlSetupPage() {
 
         <section className="rounded-xl border border-slate-200 bg-white p-4">
           <h2 className="mb-3 text-sm font-semibold text-slate-700">
-            Charts of Accounts
+            {l("Charts of Accounts", "Hesap Planlari")}
           </h2>
           <form onSubmit={handleCoaSubmit} className="grid gap-2 md:grid-cols-3">
             <select
@@ -488,7 +497,7 @@ export default function GlSetupPage() {
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
               disabled={coaForm.scope !== "LEGAL_ENTITY"}
             >
-              <option value="">Select legal entity</option>
+              <option value="">{l("Select legal entity", "Hukuki birim secin")}</option>
               {legalEntities.map((entity) => (
                 <option key={entity.id} value={entity.id}>
                   {entity.code} - {entity.name}
@@ -501,7 +510,7 @@ export default function GlSetupPage() {
                 setCoaForm((prev) => ({ ...prev, code: event.target.value }))
               }
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              placeholder="CoA code"
+              placeholder={l("CoA code", "Hesap plani kodu")}
               required
             />
             <input
@@ -510,7 +519,7 @@ export default function GlSetupPage() {
                 setCoaForm((prev) => ({ ...prev, name: event.target.value }))
               }
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm md:col-span-2"
-              placeholder="CoA name"
+              placeholder={l("CoA name", "Hesap plani adi")}
               required
             />
             <button
@@ -518,7 +527,7 @@ export default function GlSetupPage() {
               disabled={saving === "coa" || !canUpsertCoas}
               className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60"
             >
-              {saving === "coa" ? "Saving..." : "Save CoA"}
+              {saving === "coa" ? l("Saving...", "Kaydediliyor...") : l("Save CoA", "Hesap Planini Kaydet")}
             </button>
           </form>
 
@@ -527,10 +536,10 @@ export default function GlSetupPage() {
               <thead className="bg-slate-50 text-left text-slate-600">
                 <tr>
                   <th className="px-3 py-2">ID</th>
-                  <th className="px-3 py-2">Code</th>
-                  <th className="px-3 py-2">Name</th>
-                  <th className="px-3 py-2">Scope</th>
-                  <th className="px-3 py-2">Entity</th>
+                  <th className="px-3 py-2">{l("Code", "Kod")}</th>
+                  <th className="px-3 py-2">{l("Name", "Ad")}</th>
+                  <th className="px-3 py-2">{l("Scope", "Kapsam")}</th>
+                  <th className="px-3 py-2">{l("Entity", "Birim")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -546,7 +555,7 @@ export default function GlSetupPage() {
                 {coas.length === 0 && !loading && (
                   <tr>
                     <td colSpan={5} className="px-3 py-3 text-slate-500">
-                      No CoA rows found.
+                      {l("No CoA rows found.", "Hesap plani satiri bulunamadi.")}
                     </td>
                   </tr>
                 )}
@@ -556,7 +565,7 @@ export default function GlSetupPage() {
         </section>
 
         <section className="rounded-xl border border-slate-200 bg-white p-4">
-          <h2 className="mb-3 text-sm font-semibold text-slate-700">Accounts</h2>
+          <h2 className="mb-3 text-sm font-semibold text-slate-700">{l("Accounts", "Hesaplar")}</h2>
           <form onSubmit={handleAccountSubmit} className="grid gap-2 md:grid-cols-4">
             <select
               value={accountForm.coaId}
@@ -566,7 +575,7 @@ export default function GlSetupPage() {
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
               required
             >
-              <option value="">Select CoA</option>
+              <option value="">{l("Select CoA", "Hesap plani secin")}</option>
               {coas.map((coa) => (
                 <option key={coa.id} value={coa.id}>
                   {coa.code} - {coa.name}
@@ -579,7 +588,7 @@ export default function GlSetupPage() {
                 setAccountForm((prev) => ({ ...prev, code: event.target.value }))
               }
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              placeholder="Account code"
+              placeholder={l("Account code", "Hesap kodu")}
               required
             />
             <input
@@ -588,7 +597,7 @@ export default function GlSetupPage() {
                 setAccountForm((prev) => ({ ...prev, name: event.target.value }))
               }
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              placeholder="Account name"
+              placeholder={l("Account name", "Hesap adi")}
               required
             />
             <select
@@ -634,7 +643,7 @@ export default function GlSetupPage() {
                 }))
               }
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              placeholder="Parent account ID (optional)"
+              placeholder={l("Parent account ID (optional)", "Ust hesap ID (opsiyonel)")}
             />
             <label className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700">
               <input
@@ -647,14 +656,14 @@ export default function GlSetupPage() {
                   }))
                 }
               />
-              Allow posting
+              {l("Allow posting", "Post edilmeye izin ver")}
             </label>
             <button
               type="submit"
               disabled={saving === "account" || !canUpsertAccounts}
               className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60"
             >
-              {saving === "account" ? "Saving..." : "Save Account"}
+              {saving === "account" ? l("Saving...", "Kaydediliyor...") : l("Save Account", "Hesabi Kaydet")}
             </button>
           </form>
 
@@ -664,10 +673,10 @@ export default function GlSetupPage() {
                 <tr>
                   <th className="px-3 py-2">ID</th>
                   <th className="px-3 py-2">CoA</th>
-                  <th className="px-3 py-2">Code</th>
-                  <th className="px-3 py-2">Name</th>
-                  <th className="px-3 py-2">Type</th>
-                  <th className="px-3 py-2">Side</th>
+                  <th className="px-3 py-2">{l("Code", "Kod")}</th>
+                  <th className="px-3 py-2">{l("Name", "Ad")}</th>
+                  <th className="px-3 py-2">{l("Type", "Tur")}</th>
+                  <th className="px-3 py-2">{l("Side", "Yon")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -684,7 +693,7 @@ export default function GlSetupPage() {
                 {accounts.length === 0 && !loading && (
                   <tr>
                     <td colSpan={6} className="px-3 py-3 text-slate-500">
-                      No accounts found.
+                      {l("No accounts found.", "Hesap bulunamadi.")}
                     </td>
                   </tr>
                 )}
@@ -695,7 +704,7 @@ export default function GlSetupPage() {
 
         <section className="rounded-xl border border-slate-200 bg-white p-4">
           <h2 className="mb-3 text-sm font-semibold text-slate-700">
-            Account Mapping
+            {l("Account Mapping", "Hesap Esleme")}
           </h2>
           <form onSubmit={handleMappingSubmit} className="grid gap-2 md:grid-cols-4">
             <select
@@ -709,7 +718,7 @@ export default function GlSetupPage() {
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm md:col-span-2"
               required
             >
-              <option value="">Select source account</option>
+              <option value="">{l("Select source account", "Kaynak hesap secin")}</option>
               {accounts.map((account) => (
                 <option key={account.id} value={account.id}>
                   {account.code} - {account.name}
@@ -727,7 +736,7 @@ export default function GlSetupPage() {
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm md:col-span-2"
               required
             >
-              <option value="">Select target account</option>
+              <option value="">{l("Select target account", "Hedef hesap secin")}</option>
               {accounts.map((account) => (
                 <option key={account.id} value={account.id}>
                   {account.code} - {account.name}
@@ -743,19 +752,21 @@ export default function GlSetupPage() {
                 }))
               }
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              placeholder="Mapping type"
+              placeholder={l("Mapping type", "Esleme tipi")}
             />
             <button
               type="submit"
               disabled={saving === "mapping" || !canUpsertMappings}
               className="rounded-lg bg-cyan-700 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60"
             >
-              {saving === "mapping" ? "Saving..." : "Save Mapping"}
+              {saving === "mapping" ? l("Saving...", "Kaydediliyor...") : l("Save Mapping", "Eslemeyi Kaydet")}
             </button>
           </form>
           <p className="mt-3 text-xs text-slate-500">
-            Backend currently provides upsert for mappings. Listing mappings is not
-            exposed yet.
+            {l(
+              "Backend currently provides upsert for mappings. Listing mappings is not exposed yet.",
+              "Backend su an yalnizca esleme upsert islemini saglar. Esleme listeleme henuz acik degildir."
+            )}
           </p>
         </section>
       </div>
