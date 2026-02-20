@@ -60,6 +60,21 @@ export async function upsertShareholder(payload) {
   return response.data;
 }
 
+export async function listShareholderJournalConfigs(params = {}) {
+  const response = await api.get(
+    `/api/v1/org/shareholder-journal-config${toQueryString(params)}`
+  );
+  return response.data;
+}
+
+export async function upsertShareholderJournalConfig(payload) {
+  const response = await api.post(
+    "/api/v1/org/shareholder-journal-config",
+    payload
+  );
+  return response.data;
+}
+
 export async function listOperatingUnits(params = {}) {
   const response = await api.get(
     `/api/v1/org/operating-units${toQueryString(params)}`

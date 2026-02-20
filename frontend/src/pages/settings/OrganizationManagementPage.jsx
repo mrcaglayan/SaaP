@@ -8,11 +8,13 @@ import {
   listGroupCompanies,
   listLegalEntities,
   listOperatingUnits,
+  listShareholderJournalConfigs,
   listShareholders,
   upsertFiscalCalendar,
   upsertGroupCompany,
   upsertLegalEntity,
   upsertOperatingUnit,
+  upsertShareholderJournalConfig,
   upsertShareholder,
 } from "../../api/orgAdmin.js";
 import { listAccounts } from "../../api/glAdmin.js";
@@ -46,10 +48,20 @@ function getCommitmentJournalSkipReason(reason, l) {
         "No commitment journal created: no open book/period found for the legal entity.",
         "Taahhut fisi olusturulmadi: secili istirak / bagli ortak icin acik defter/donem bulunamadi."
       );
-    case "UNPAID_CAPITAL_ACCOUNT_NOT_FOUND":
+    case "COMMITMENT_DATE_OUTSIDE_OPEN_PERIOD":
       return l(
-        "No commitment journal created: add an active postable debit-side 501* equity account.",
-        "Taahhut fisi olusturulmadi: aktif, post edilebilir borc karakterli 501* ozkaynak hesabi ekleyin."
+        "No commitment journal created: commitment date is outside an open fiscal period.",
+        "Taahhut fisi olusturulmadi: taahhut tarihi acik bir mali donem disinda."
+      );
+    case "COMMITMENT_DEBIT_ACCOUNT_MAPPING_REQUIRED":
+      return l(
+        "No commitment journal created: configure commitment debit account for this legal entity.",
+        "Taahhut fisi olusturulmadi: bu istirak / bagli ortak icin taahhut borc hesabi eslemesini yapin."
+      );
+    case "COMMITMENT_DEBIT_ACCOUNT_MAPPING_INVALID":
+      return l(
+        "No commitment journal created: mapped commitment debit account is invalid.",
+        "Taahhut fisi olusturulmadi: eslenen taahhut borc hesabi gecersiz."
       );
     case "COMMITTED_CAPITAL_DECREASE_REQUIRES_MANUAL_REVERSAL":
       return l(
@@ -96,6 +108,7 @@ export default function OrganizationManagementPage() {
   const [legalEntities, setLegalEntities] = useState([]);
   const [operatingUnits, setOperatingUnits] = useState([]);
   const [shareholders, setShareholders] = useState([]);
+  const [shareholderJournalConfigs, setShareholderJournalConfigs] = useState([]);
   const [calendars, setCalendars] = useState([]);
   const [periods, setPeriods] = useState([]);
 
@@ -125,11 +138,16 @@ export default function OrganizationManagementPage() {
     shareholderType: "INDIVIDUAL",
     taxId: "",
     ownershipPct: "",
+    commitmentDate: new Date().toISOString().slice(0, 10),
     committedCapital: "0",
     capitalSubAccountId: "",
     currencyCode: "USD",
     status: "ACTIVE",
     notes: "",
+  });
+  const [shareholderJournalConfigForm, setShareholderJournalConfigForm] = useState({
+    legalEntityId: "",
+    commitmentDebitAccountId: "",
   });
   const [calendarForm, setCalendarForm] = useState({
     code: "",
@@ -160,6 +178,7 @@ export default function OrganizationManagementPage() {
           entitiesRes,
           unitsRes,
           shareholdersRes,
+          shareholderJournalConfigsRes,
         ] =
           await Promise.all([
             listGroupCompanies(),
@@ -173,6 +192,9 @@ export default function OrganizationManagementPage() {
             canReadShareholders
               ? listShareholders()
               : Promise.resolve({ rows: [] }),
+            canReadShareholders
+              ? listShareholderJournalConfigs()
+              : Promise.resolve({ rows: [] }),
           ]);
 
         const groupRows = groupsRes?.rows || [];
@@ -182,6 +204,7 @@ export default function OrganizationManagementPage() {
         const entityRows = entitiesRes?.rows || [];
         const unitRows = unitsRes?.rows || [];
         const shareholderRows = shareholdersRes?.rows || [];
+        const shareholderJournalConfigRows = shareholderJournalConfigsRes?.rows || [];
 
         setGroups(groupRows);
         setCountries(countryRows);
@@ -190,6 +213,7 @@ export default function OrganizationManagementPage() {
         setLegalEntities(entityRows);
         setOperatingUnits(unitRows);
         setShareholders(shareholderRows);
+        setShareholderJournalConfigs(shareholderJournalConfigRows);
 
         setEntityForm((prev) => {
           const nextCountryId =
@@ -227,6 +251,19 @@ export default function OrganizationManagementPage() {
             ...prev,
             legalEntityId: nextLegalEntityId,
             currencyCode: prev.currencyCode || legalEntityCurrency || "USD",
+          };
+        });
+        setShareholderJournalConfigForm((prev) => {
+          const nextLegalEntityId =
+            prev.legalEntityId || String(entityRows[0]?.id || "");
+          const existingConfig = shareholderJournalConfigRows.find(
+            (row) => String(row.legal_entity_id) === String(nextLegalEntityId)
+          );
+          return {
+            legalEntityId: nextLegalEntityId,
+            commitmentDebitAccountId:
+              prev.commitmentDebitAccountId ||
+              String(existingConfig?.account_id || ""),
           };
         });
       }
@@ -300,6 +337,19 @@ export default function OrganizationManagementPage() {
   const selectedShareholderLegalEntityId = toNumber(
     shareholderForm.legalEntityId
   );
+  const selectedConfigLegalEntityId = toNumber(
+    shareholderJournalConfigForm.legalEntityId
+  );
+  const shareholderJournalConfigByEntity = useMemo(() => {
+    const map = new Map();
+    for (const row of shareholderJournalConfigs) {
+      const key = Number(row.legal_entity_id);
+      if (Number.isInteger(key) && key > 0) {
+        map.set(key, row);
+      }
+    }
+    return map;
+  }, [shareholderJournalConfigs]);
   const equityShareholderAccounts = useMemo(() => {
     if (!selectedShareholderLegalEntityId) {
       return [];
@@ -312,6 +362,36 @@ export default function OrganizationManagementPage() {
       return sameEntity && isEquity && isActive;
     });
   }, [accounts, selectedShareholderLegalEntityId]);
+  const eligibleCommitmentDebitAccounts = useMemo(() => {
+    if (!selectedConfigLegalEntityId) {
+      return [];
+    }
+    const parentIds = new Set(
+      accounts
+        .filter(
+          (row) =>
+            Number(row.legal_entity_id) === Number(selectedConfigLegalEntityId) &&
+            Boolean(row.is_active)
+        )
+        .map((row) => toNumber(row.parent_account_id))
+        .filter(Boolean)
+    );
+    return accounts.filter((row) => {
+      const sameEntity =
+        Number(row.legal_entity_id) === Number(selectedConfigLegalEntityId);
+      const isActive = Boolean(row.is_active);
+      const allowPosting = !(
+        row.allow_posting === false ||
+        row.allow_posting === 0 ||
+        row.allow_posting === "0"
+      );
+      const accountId = toNumber(row.id);
+      if (!accountId) {
+        return false;
+      }
+      return sameEntity && isActive && allowPosting && !parentIds.has(accountId);
+    });
+  }, [accounts, selectedConfigLegalEntityId]);
 
   const visibleShareholders = useMemo(() => {
     if (!selectedShareholderLegalEntityId) {
@@ -444,6 +524,60 @@ export default function OrganizationManagementPage() {
     }
   }
 
+  async function handleShareholderJournalConfigSubmit(event) {
+    event.preventDefault();
+    if (!canUpsertLegalEntity) {
+      setError(
+        l(
+          "Missing permission: org.legal_entity.upsert",
+          "Eksik yetki: org.legal_entity.upsert"
+        )
+      );
+      return;
+    }
+
+    const legalEntityId = toNumber(shareholderJournalConfigForm.legalEntityId);
+    const commitmentDebitAccountId = toNumber(
+      shareholderJournalConfigForm.commitmentDebitAccountId
+    );
+    if (!legalEntityId || !commitmentDebitAccountId) {
+      setError(
+        l(
+          "legalEntityId and commitment debit account are required.",
+          "legalEntityId ve taahhut borc hesabi zorunludur."
+        )
+      );
+      return;
+    }
+
+    setSaving("shareholderJournalConfig");
+    setError("");
+    setMessage("");
+    try {
+      await upsertShareholderJournalConfig({
+        legalEntityId,
+        commitmentDebitAccountId,
+      });
+      setMessage(
+        l(
+          "Shareholder commitment debit account mapping saved.",
+          "Ortak taahhut borc hesabi eslemesi kaydedildi."
+        )
+      );
+      await loadCoreData();
+    } catch (err) {
+      setError(
+        err?.response?.data?.message ||
+          l(
+            "Failed to save shareholder journal config.",
+            "Ortak yevmiye konfigurasyonu kaydedilemedi."
+          )
+      );
+    } finally {
+      setSaving("");
+    }
+  }
+
   async function handleShareholderSubmit(event) {
     event.preventDefault();
     if (!canUpsertShareholder) {
@@ -463,11 +597,23 @@ export default function OrganizationManagementPage() {
     }
     const committedCapital = Number(shareholderForm.committedCapital || 0);
     const capitalSubAccountId = toNumber(shareholderForm.capitalSubAccountId);
+    const commitmentDebitAccountId = toNumber(
+      shareholderJournalConfigByEntity.get(legalEntityId)?.account_id
+    );
     if (committedCapital > 0 && !capitalSubAccountId) {
       setError(
         l(
           "Capital sub-account is required when committed capital is greater than 0.",
           "Taahhut edilen sermaye 0'dan buyukse sermaye alt hesap zorunludur."
+        )
+      );
+      return;
+    }
+    if (committedCapital > 0 && !commitmentDebitAccountId) {
+      setError(
+        l(
+          "Configure commitment debit account for this legal entity before saving.",
+          "Kaydetmeden once bu istirak / bagli ortak icin taahhut borc hesabini tanimlayin."
         )
       );
       return;
@@ -487,6 +633,7 @@ export default function OrganizationManagementPage() {
           shareholderForm.ownershipPct === ""
             ? undefined
             : Number(shareholderForm.ownershipPct),
+        commitmentDate: shareholderForm.commitmentDate || undefined,
         committedCapital,
         capitalSubAccountId: capitalSubAccountId || undefined,
         autoCommitmentJournal: true,
@@ -1011,6 +1158,98 @@ export default function OrganizationManagementPage() {
           <h2 className="mb-3 text-sm font-semibold text-slate-700">
             {l("Shareholders", "Ortaklar")}
           </h2>
+          <form
+            onSubmit={handleShareholderJournalConfigSubmit}
+            className="mb-3 grid gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3 md:grid-cols-4"
+          >
+            <div className="text-xs font-semibold text-slate-700 md:col-span-4">
+              {l(
+                "Commitment Debit Account Mapping (per legal entity)",
+                "Taahhut Borc Hesap Eslemesi (istirak / bagli ortak bazinda)"
+              )}
+            </div>
+            <select
+              value={shareholderJournalConfigForm.legalEntityId}
+              onChange={(event) => {
+                const nextLegalEntityId = event.target.value;
+                const existingConfig = shareholderJournalConfigs.find(
+                  (row) =>
+                    String(row.legal_entity_id) === String(nextLegalEntityId)
+                );
+                setShareholderJournalConfigForm((prev) => ({
+                  ...prev,
+                  legalEntityId: nextLegalEntityId,
+                  commitmentDebitAccountId: String(
+                    existingConfig?.account_id || ""
+                  ),
+                }));
+              }}
+              className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              required
+            >
+              <option value="">{l("Select legal entity", "Istirak / bagli ortak secin")}</option>
+              {legalEntities.map((row) => (
+                <option key={row.id} value={row.id}>
+                  {row.code} - {row.name}
+                </option>
+              ))}
+            </select>
+            <select
+              value={shareholderJournalConfigForm.commitmentDebitAccountId}
+              onChange={(event) =>
+                setShareholderJournalConfigForm((prev) => ({
+                  ...prev,
+                  commitmentDebitAccountId: event.target.value,
+                }))
+              }
+              className="rounded-lg border border-slate-300 px-3 py-2 text-sm md:col-span-2"
+              disabled={!canReadAccounts}
+              required
+            >
+              <option value="">
+                {canReadAccounts
+                  ? l(
+                      "Select commitment debit account",
+                      "Taahhut borc hesabini secin"
+                    )
+                  : l("Need gl.account.read", "gl.account.read yetkisi gerekli")}
+              </option>
+              {eligibleCommitmentDebitAccounts.map((account) => (
+                <option key={account.id} value={account.id}>
+                  {account.code} - {account.name}
+                </option>
+              ))}
+            </select>
+            <button
+              type="submit"
+              disabled={
+                saving === "shareholderJournalConfig" || !canUpsertLegalEntity
+              }
+              className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60"
+            >
+              {saving === "shareholderJournalConfig"
+                ? l("Saving...", "Kaydediliyor...")
+                : l("Save Mapping", "Eslemeyi Kaydet")}
+            </button>
+            <div className="text-xs text-slate-600 md:col-span-4">
+              {(() => {
+                const row = shareholderJournalConfigByEntity.get(
+                  Number(selectedConfigLegalEntityId)
+                );
+                if (!row) {
+                  return l(
+                    "No mapping configured for selected legal entity.",
+                    "Secili istirak / bagli ortak icin esleme tanimli degil."
+                  );
+                }
+                return l(
+                  `Current: ${row.account_code || "-"} - ${row.account_name || "-"}`,
+                  `Mevcut: ${row.account_code || "-"} - ${row.account_name || "-"}`
+                );
+              })()}
+            </div>
+          </form>
+
           <form onSubmit={handleShareholderSubmit} className="grid gap-2 md:grid-cols-4">
             <select
               value={shareholderForm.legalEntityId}
@@ -1143,6 +1382,19 @@ export default function OrganizationManagementPage() {
                 </option>
               ))}
             </select>
+            <input
+              type="date"
+              value={shareholderForm.commitmentDate}
+              onChange={(event) =>
+                setShareholderForm((prev) => ({
+                  ...prev,
+                  commitmentDate: event.target.value,
+                }))
+              }
+              className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              title={l("Commitment date", "Taahhut tarihi")}
+              required
+            />
             <input
               type="number"
               min={0}

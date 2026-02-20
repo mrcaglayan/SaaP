@@ -14,6 +14,7 @@ import {
   resolveTenantId,
 } from "./_utils.js";
 import {
+  assertAccountBelongsToTenant,
   assertCurrencyExists,
   assertCountryExists,
   assertFiscalCalendarBelongsToTenant,
@@ -22,6 +23,7 @@ import {
 } from "../tenantGuards.js";
 
 const router = express.Router();
+const SHAREHOLDER_COMMITMENT_DEBIT_PURPOSE = "SHAREHOLDER_COMMITMENT_DEBIT";
 const DEFAULT_GL_ACCOUNTS = [
   {
     code: "1000",
@@ -61,8 +63,39 @@ const DEFAULT_GL_ACCOUNTS = [
   },
 ];
 
-function toIsoDate(date) {
-  return date.toISOString().slice(0, 10);
+function toLocalYyyyMmDd(date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(
+    date.getDate()
+  ).padStart(2, "0")}`;
+}
+
+function toIsoDate(value, fieldLabel = "date") {
+  if (value === undefined || value === null || value === "") {
+    throw badRequest(`${fieldLabel} is required`);
+  }
+
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) {
+      throw badRequest(`${fieldLabel} must be a valid date`);
+    }
+    return toLocalYyyyMmDd(value);
+  }
+
+  const asString = String(value).trim();
+  if (!asString) {
+    throw badRequest(`${fieldLabel} must be a valid date`);
+  }
+
+  const yyyyMmDdMatch = asString.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (yyyyMmDdMatch?.[1]) {
+    return yyyyMmDdMatch[1];
+  }
+
+  const parsed = new Date(asString);
+  if (Number.isNaN(parsed.getTime())) {
+    throw badRequest(`${fieldLabel} must be a valid date`);
+  }
+  return toLocalYyyyMmDd(parsed);
 }
 
 function normalizeCode(rawValue, fallback = "DEFAULT", maxLength = 50) {
@@ -141,8 +174,12 @@ function toCommitmentJournalFailureMessage(reason) {
       return "Authenticated user is required to create commitment journal";
     case "NO_OPEN_BOOK_PERIOD":
       return "No OPEN book/fiscal period found for legalEntityId";
-    case "UNPAID_CAPITAL_ACCOUNT_NOT_FOUND":
-      return "Missing active postable debit-side 501* equity account for commitment journal";
+    case "COMMITMENT_DATE_OUTSIDE_OPEN_PERIOD":
+      return "commitmentDate must be within an OPEN fiscal period for legalEntityId";
+    case "COMMITMENT_DEBIT_ACCOUNT_MAPPING_REQUIRED":
+      return "Commitment debit account mapping is missing for legalEntityId";
+    case "COMMITMENT_DEBIT_ACCOUNT_MAPPING_INVALID":
+      return "Mapped commitment debit account must be active, postable, leaf, and in the same legal entity";
     default:
       return "Commitment journal could not be created";
   }
@@ -156,8 +193,8 @@ function toJournalContextRow(row) {
     bookId: parsePositiveInt(row.book_id),
     bookCode: String(row.book_code || ""),
     fiscalPeriodId: parsePositiveInt(row.fiscal_period_id),
-    startDate: String(row.start_date || ""),
-    endDate: String(row.end_date || ""),
+    startDate: toIsoDate(row.start_date, "fiscal_period.start_date"),
+    endDate: toIsoDate(row.end_date, "fiscal_period.end_date"),
     baseCurrencyCode: String(row.base_currency_code || "USD").toUpperCase(),
   };
 }
@@ -250,43 +287,59 @@ async function resolveOpenBookPeriodForLegalEntity(
   return toJournalContextRow(futureResult.rows[0]);
 }
 
-async function resolveUnpaidCapitalDebitAccount(
-  tx,
-  tenantId,
-  legalEntityId
-) {
+async function resolveCommitmentDebitAccountFromMapping(tx, tenantId, legalEntityId) {
   const result = await tx.query(
     `SELECT
-       a.id,
+       m.account_id,
        a.code,
-       a.name
-     FROM accounts a
-     JOIN charts_of_accounts c ON c.id = a.coa_id
-     WHERE c.tenant_id = ?
-       AND c.legal_entity_id = ?
-       AND a.is_active = TRUE
-       AND a.allow_posting = TRUE
-       AND a.account_type = 'EQUITY'
-       AND a.normal_side = 'DEBIT'
-       AND a.code LIKE '501%'
-       AND NOT EXISTS (
+       a.name,
+       a.is_active,
+       a.allow_posting,
+       EXISTS(
          SELECT 1
          FROM accounts child
          WHERE child.parent_account_id = a.id
            AND child.is_active = TRUE
-       )
-     ORDER BY CASE WHEN a.code = '501' THEN 0 ELSE 1 END, LENGTH(a.code), a.code
+       ) AS has_active_children,
+       c.tenant_id AS account_tenant_id,
+       c.legal_entity_id AS account_legal_entity_id
+     FROM journal_purpose_accounts m
+     LEFT JOIN accounts a ON a.id = m.account_id
+     LEFT JOIN charts_of_accounts c ON c.id = a.coa_id
+     WHERE m.tenant_id = ?
+       AND m.legal_entity_id = ?
+       AND m.purpose_code = ?
      LIMIT 1`,
-    [tenantId, legalEntityId]
+    [tenantId, legalEntityId, SHAREHOLDER_COMMITMENT_DEBIT_PURPOSE]
   );
+
   const row = result.rows[0];
   if (!row) {
-    return null;
+    return { status: "MISSING", account: null };
   }
+
+  const accountId = parsePositiveInt(row.account_id);
+  const accountTenantId = parsePositiveInt(row.account_tenant_id);
+  const accountLegalEntityId = parsePositiveInt(row.account_legal_entity_id);
+  const validRow =
+    accountId &&
+    accountTenantId === tenantId &&
+    accountLegalEntityId === legalEntityId &&
+    Boolean(row.is_active) &&
+    Boolean(row.allow_posting) &&
+    !Boolean(row.has_active_children);
+
+  if (!validRow) {
+    return { status: "INVALID", account: null };
+  }
+
   return {
-    id: parsePositiveInt(row.id),
-    code: String(row.code || ""),
-    name: String(row.name || ""),
+    status: "OK",
+    account: {
+      id: accountId,
+      code: String(row.code || ""),
+      name: String(row.name || ""),
+    },
   };
 }
 
@@ -319,12 +372,14 @@ async function createShareholderCommitmentDraftJournal(tx, payload) {
     };
   }
 
-  const today = toIsoDate(new Date());
+  const commitmentDate = payload.commitmentDate
+    ? toIsoDate(payload.commitmentDate, "commitmentDate")
+    : toIsoDate(new Date(), "commitmentDate");
   const journalContext = await resolveOpenBookPeriodForLegalEntity(
     tx,
     payload.tenantId,
     payload.legalEntityId,
-    today
+    commitmentDate
   );
   if (!journalContext?.bookId || !journalContext?.fiscalPeriodId) {
     return {
@@ -335,27 +390,49 @@ async function createShareholderCommitmentDraftJournal(tx, payload) {
     };
   }
 
-  const unpaidCapitalAccount = await resolveUnpaidCapitalDebitAccount(
+  const debitAccountMapping = await resolveCommitmentDebitAccountFromMapping(
     tx,
     payload.tenantId,
     payload.legalEntityId
   );
-  if (!unpaidCapitalAccount?.id) {
+  if (debitAccountMapping.status === "MISSING") {
     return {
       attempted: true,
       created: false,
-      reason: "UNPAID_CAPITAL_ACCOUNT_NOT_FOUND",
+      reason: "COMMITMENT_DEBIT_ACCOUNT_MAPPING_REQUIRED",
       amount,
       bookId: journalContext.bookId,
       fiscalPeriodId: journalContext.fiscalPeriodId,
     };
   }
 
-  const entryDate =
-    today >= journalContext.startDate && today <= journalContext.endDate
-      ? today
-      : journalContext.startDate;
-  const documentDate = entryDate;
+  if (
+    commitmentDate < journalContext.startDate ||
+    commitmentDate > journalContext.endDate
+  ) {
+    return {
+      attempted: true,
+      created: false,
+      reason: "COMMITMENT_DATE_OUTSIDE_OPEN_PERIOD",
+      amount,
+      bookId: journalContext.bookId,
+      fiscalPeriodId: journalContext.fiscalPeriodId,
+    };
+  }
+  if (debitAccountMapping.status !== "OK" || !debitAccountMapping.account?.id) {
+    return {
+      attempted: true,
+      created: false,
+      reason: "COMMITMENT_DEBIT_ACCOUNT_MAPPING_INVALID",
+      amount,
+      bookId: journalContext.bookId,
+      fiscalPeriodId: journalContext.fiscalPeriodId,
+    };
+  }
+  const debitAccount = debitAccountMapping.account;
+
+  const entryDate = commitmentDate;
+  const documentDate = commitmentDate;
   const journalNo = generateAutoJournalNo("TAAHHUT");
   const description = `Shareholder commitment (${payload.shareholderCode})`;
   const referenceNo = `SHAREHOLDER_COMMITMENT:${payload.shareholderId}:${Date.now()}`.slice(
@@ -423,7 +500,7 @@ async function createShareholderCommitmentDraftJournal(tx, payload) {
       VALUES (?, 1, ?, NULL, NULL, ?, ?, ?, ?, 0, NULL)`,
     [
       journalEntryId,
-      unpaidCapitalAccount.id,
+      debitAccount.id,
       `Shareholder commitment receivable (${payload.shareholderCode})`,
       currencyCode,
       amount,
@@ -467,8 +544,8 @@ async function createShareholderCommitmentDraftJournal(tx, payload) {
     fiscalPeriodId: journalContext.fiscalPeriodId,
     entryDate,
     amount,
-    debitAccountId: unpaidCapitalAccount.id,
-    debitAccountCode: unpaidCapitalAccount.code,
+    debitAccountId: debitAccount.id,
+    debitAccountCode: debitAccount.code,
     creditAccountId: payload.capitalSubAccountId,
   };
 }
@@ -1288,6 +1365,202 @@ router.post(
 );
 
 router.get(
+  "/shareholder-journal-config",
+  requirePermission("org.tree.read", {
+    resolveScope: (req) => {
+      const legalEntityId = parsePositiveInt(req.query?.legalEntityId);
+      if (legalEntityId) {
+        return { scopeType: "LEGAL_ENTITY", scopeId: legalEntityId };
+      }
+      return null;
+    },
+  }),
+  asyncHandler(async (req, res) => {
+    const tenantId = resolveTenantId(req);
+    if (!tenantId) {
+      throw badRequest("tenantId is required");
+    }
+
+    const legalEntityId = parsePositiveInt(req.query.legalEntityId);
+    if (legalEntityId) {
+      await assertLegalEntityBelongsToTenant(tenantId, legalEntityId, "legalEntityId");
+      assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
+    }
+
+    const params = [tenantId];
+    const conditions = ["m.tenant_id = ?"];
+    conditions.push(buildScopeFilter(req, "legal_entity", "m.legal_entity_id", params));
+    conditions.push("m.purpose_code = ?");
+    params.push(SHAREHOLDER_COMMITMENT_DEBIT_PURPOSE);
+    if (legalEntityId) {
+      conditions.push("m.legal_entity_id = ?");
+      params.push(legalEntityId);
+    }
+
+    const result = await query(
+      `SELECT
+         m.id,
+         m.tenant_id,
+         m.legal_entity_id,
+         m.purpose_code,
+         m.account_id,
+         m.created_at,
+         m.updated_at,
+         le.code AS legal_entity_code,
+         le.name AS legal_entity_name,
+         a.code AS account_code,
+         a.name AS account_name
+       FROM journal_purpose_accounts m
+       JOIN legal_entities le
+         ON le.id = m.legal_entity_id
+        AND le.tenant_id = m.tenant_id
+       JOIN accounts a ON a.id = m.account_id
+       JOIN charts_of_accounts c
+         ON c.id = a.coa_id
+        AND c.tenant_id = m.tenant_id
+       WHERE ${conditions.join(" AND ")}
+       ORDER BY m.legal_entity_id, m.purpose_code`,
+      params
+    );
+
+    return res.json({
+      tenantId,
+      rows: result.rows,
+    });
+  })
+);
+
+router.post(
+  "/shareholder-journal-config",
+  requirePermission("org.legal_entity.upsert", {
+    resolveScope: (req, tenantId) => {
+      const legalEntityId = parsePositiveInt(req.body?.legalEntityId);
+      if (legalEntityId) {
+        return { scopeType: "LEGAL_ENTITY", scopeId: legalEntityId };
+      }
+      return { scopeType: "TENANT", scopeId: tenantId };
+    },
+  }),
+  asyncHandler(async (req, res) => {
+    const tenantId = resolveTenantId(req);
+    if (!tenantId) {
+      throw badRequest("tenantId is required");
+    }
+
+    assertRequiredFields(req.body, ["legalEntityId", "commitmentDebitAccountId"]);
+    const legalEntityId = parsePositiveInt(req.body.legalEntityId);
+    const commitmentDebitAccountId = parsePositiveInt(req.body.commitmentDebitAccountId);
+    if (!legalEntityId || !commitmentDebitAccountId) {
+      throw badRequest("legalEntityId and commitmentDebitAccountId must be positive integers");
+    }
+
+    await assertLegalEntityBelongsToTenant(tenantId, legalEntityId, "legalEntityId");
+    assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
+
+    const accountTenantRow = await assertAccountBelongsToTenant(
+      tenantId,
+      commitmentDebitAccountId,
+      "commitmentDebitAccountId"
+    );
+    if (parsePositiveInt(accountTenantRow.legal_entity_id) !== legalEntityId) {
+      throw badRequest(
+        "commitmentDebitAccountId must belong to selected legalEntityId"
+      );
+    }
+
+    const accountResult = await query(
+      `SELECT
+         a.id,
+         a.is_active,
+         a.allow_posting,
+         EXISTS(
+           SELECT 1
+           FROM accounts child
+           WHERE child.parent_account_id = a.id
+             AND child.is_active = TRUE
+         ) AS has_active_children,
+         c.legal_entity_id
+       FROM accounts a
+       JOIN charts_of_accounts c ON c.id = a.coa_id
+       WHERE a.id = ?
+         AND c.tenant_id = ?
+       LIMIT 1`,
+      [commitmentDebitAccountId, tenantId]
+    );
+    const account = accountResult.rows[0];
+    if (!account) {
+      throw badRequest("commitmentDebitAccountId not found for tenant");
+    }
+    if (parsePositiveInt(account.legal_entity_id) !== legalEntityId) {
+      throw badRequest(
+        "commitmentDebitAccountId must belong to selected legalEntityId"
+      );
+    }
+    if (!Boolean(account.is_active)) {
+      throw badRequest("commitmentDebitAccountId must reference an active account");
+    }
+    if (!Boolean(account.allow_posting)) {
+      throw badRequest("commitmentDebitAccountId must reference a postable account");
+    }
+    if (Boolean(account.has_active_children)) {
+      throw badRequest("commitmentDebitAccountId must reference a leaf account");
+    }
+
+    await query(
+      `INSERT INTO journal_purpose_accounts (
+          tenant_id,
+          legal_entity_id,
+          purpose_code,
+          account_id
+       )
+       VALUES (?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         account_id = VALUES(account_id),
+         updated_at = CURRENT_TIMESTAMP`,
+      [
+        tenantId,
+        legalEntityId,
+        SHAREHOLDER_COMMITMENT_DEBIT_PURPOSE,
+        commitmentDebitAccountId,
+      ]
+    );
+
+    const result = await query(
+      `SELECT
+         m.id,
+         m.tenant_id,
+         m.legal_entity_id,
+         m.purpose_code,
+         m.account_id,
+         m.created_at,
+         m.updated_at,
+         le.code AS legal_entity_code,
+         le.name AS legal_entity_name,
+         a.code AS account_code,
+         a.name AS account_name
+       FROM journal_purpose_accounts m
+       JOIN legal_entities le
+         ON le.id = m.legal_entity_id
+        AND le.tenant_id = m.tenant_id
+       JOIN accounts a ON a.id = m.account_id
+       JOIN charts_of_accounts c
+         ON c.id = a.coa_id
+        AND c.tenant_id = m.tenant_id
+       WHERE m.tenant_id = ?
+         AND m.legal_entity_id = ?
+         AND m.purpose_code = ?
+       LIMIT 1`,
+      [tenantId, legalEntityId, SHAREHOLDER_COMMITMENT_DEBIT_PURPOSE]
+    );
+
+    return res.status(201).json({
+      ok: true,
+      row: result.rows[0] || null,
+    });
+  })
+);
+
+router.get(
   "/shareholders",
   requirePermission("org.tree.read", {
     resolveScope: (req) => {
@@ -1455,6 +1728,12 @@ router.post(
 
     const taxId = req.body.taxId ? String(req.body.taxId).trim() : null;
     const notes = req.body.notes ? String(req.body.notes).trim() : null;
+    const commitmentDate =
+      req.body.commitmentDate === undefined ||
+      req.body.commitmentDate === null ||
+      req.body.commitmentDate === ""
+        ? null
+        : toIsoDate(req.body.commitmentDate, "commitmentDate");
     const capitalSubAccountId = req.body.capitalSubAccountId
       ? parsePositiveInt(req.body.capitalSubAccountId)
       : null;
@@ -1623,6 +1902,7 @@ router.post(
             shareholderName: name,
             amount: committedCapitalDelta,
             currencyCode,
+            commitmentDate,
             capitalSubAccountId:
               parsePositiveInt(saved?.capital_sub_account_id) || capitalSubAccountId,
           });

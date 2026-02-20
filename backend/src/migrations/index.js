@@ -6,6 +6,7 @@ import migration005PeriodCloseRuns from "./m005_period_close_runs.js";
 import migration006ProviderControlPlane from "./m006_provider_control_plane.js";
 import migration007ShareholdersMaster from "./m007_shareholders_master.js";
 import migration008ShareholderCapitalSubAccount from "./m008_shareholder_capital_sub_account.js";
+import migration009JournalPurposeAccounts from "./m009_journal_purpose_accounts.js";
 
 const migrations = [
   migration001GlobalMultiEntity,
@@ -16,6 +17,7 @@ const migrations = [
   migration006ProviderControlPlane,
   migration007ShareholdersMaster,
   migration008ShareholderCapitalSubAccount,
+  migration009JournalPurposeAccounts,
 ];
 
 export default migrations;
