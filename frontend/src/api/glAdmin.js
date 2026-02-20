@@ -62,8 +62,8 @@ export async function getJournal(journalId) {
   return response.data;
 }
 
-export async function postJournal(journalId) {
-  const response = await api.post(`/api/v1/gl/journals/${journalId}/post`);
+export async function postJournal(journalId, payload = {}) {
+  const response = await api.post(`/api/v1/gl/journals/${journalId}/post`, payload);
   return response.data;
 }
 
@@ -115,6 +115,33 @@ export async function listPeriodCloseRuns(params = {}) {
 
 export async function runIntercompanyReconciliation(payload = {}) {
   const response = await api.post("/api/v1/intercompany/reconcile", payload);
+  return response.data;
+}
+
+export async function listIntercompanyEntityFlags(params = {}) {
+  const response = await api.get(
+    `/api/v1/intercompany/entity-flags${toQueryString(params)}`
+  );
+  return response.data;
+}
+
+export async function updateIntercompanyEntityFlags(legalEntityId, payload) {
+  const response = await api.patch(
+    `/api/v1/intercompany/entity-flags/${legalEntityId}`,
+    payload
+  );
+  return response.data;
+}
+
+export async function upsertIntercompanyPair(payload) {
+  const response = await api.post("/api/v1/intercompany/pairs", payload);
+  return response.data;
+}
+
+export async function listIntercompanyComplianceIssues(params = {}) {
+  const response = await api.get(
+    `/api/v1/intercompany/compliance-issues${toQueryString(params)}`
+  );
   return response.data;
 }
 

@@ -17,6 +17,362 @@ const BOOK_TYPES = ["LOCAL", "GROUP"];
 const COA_SCOPES = ["LEGAL_ENTITY", "GROUP"];
 const ACCOUNT_TYPES = ["ASSET", "LIABILITY", "EQUITY", "REVENUE", "EXPENSE"];
 const NORMAL_SIDES = ["DEBIT", "CREDIT"];
+const TURKISH_DEFAULT_COA_ACCOUNTS = [
+  { code: "100", name: "Kasa", accountType: "ASSET", normalSide: "DEBIT" },
+  { code: "101", name: "Alinan Cekler", accountType: "ASSET", normalSide: "DEBIT" },
+  { code: "102", name: "Bankalar", accountType: "ASSET", normalSide: "DEBIT" },
+  {
+    code: "103",
+    name: "Verilen Cekler ve Odeme Emirleri (-)",
+    accountType: "ASSET",
+    normalSide: "CREDIT",
+  },
+  { code: "108", name: "Diger Hazir Degerler", accountType: "ASSET", normalSide: "DEBIT" },
+  { code: "110", name: "Hisse Senetleri", accountType: "ASSET", normalSide: "DEBIT" },
+  {
+    code: "111",
+    name: "Ozel Kesim Tahvil Senet ve Bonolari",
+    accountType: "ASSET",
+    normalSide: "DEBIT",
+  },
+  {
+    code: "112",
+    name: "Kamu Kesimi Tahvil Senet ve Bonolari",
+    accountType: "ASSET",
+    normalSide: "DEBIT",
+  },
+  { code: "118", name: "Diger Menkul Kiymetler", accountType: "ASSET", normalSide: "DEBIT" },
+  {
+    code: "119",
+    name: "Menkul Kiymetler Deger Dusuklugu Karsiligi (-)",
+    accountType: "ASSET",
+    normalSide: "CREDIT",
+  },
+  { code: "120", name: "Alicilar", accountType: "ASSET", normalSide: "DEBIT" },
+  { code: "121", name: "Alacak Senetleri", accountType: "ASSET", normalSide: "DEBIT" },
+  {
+    code: "122",
+    name: "Alacak Senetleri Reeskontu (-)",
+    accountType: "ASSET",
+    normalSide: "CREDIT",
+  },
+  {
+    code: "126",
+    name: "Verilen Depozito ve Teminatlar",
+    accountType: "ASSET",
+    normalSide: "DEBIT",
+  },
+  { code: "127", name: "Diger Ticari Alacaklar", accountType: "ASSET", normalSide: "DEBIT" },
+  { code: "128", name: "Supheli Ticari Alacaklar", accountType: "ASSET", normalSide: "DEBIT" },
+  {
+    code: "129",
+    name: "Supheli Ticari Alacaklar Karsiligi (-)",
+    accountType: "ASSET",
+    normalSide: "CREDIT",
+  },
+  { code: "131", name: "Ortaklardan Alacaklar", accountType: "ASSET", normalSide: "DEBIT" },
+  { code: "136", name: "Diger Cesitli Alacaklar", accountType: "ASSET", normalSide: "DEBIT" },
+  { code: "153", name: "Ticari Mallar", accountType: "ASSET", normalSide: "DEBIT" },
+  { code: "157", name: "Diger Stoklar", accountType: "ASSET", normalSide: "DEBIT" },
+  { code: "159", name: "Verilen Siparis Avanslari", accountType: "ASSET", normalSide: "DEBIT" },
+  {
+    code: "180",
+    name: "Gelecek Aylara Ait Giderler",
+    accountType: "ASSET",
+    normalSide: "DEBIT",
+  },
+  { code: "191", name: "Indirilecek KDV", accountType: "ASSET", normalSide: "DEBIT" },
+  {
+    code: "193",
+    name: "Pesin Odenen Vergi ve Fonlar",
+    accountType: "ASSET",
+    normalSide: "DEBIT",
+  },
+  { code: "240", name: "Bagli Menkul Kiymetler", accountType: "ASSET", normalSide: "DEBIT" },
+  { code: "242", name: "Istirakler", accountType: "ASSET", normalSide: "DEBIT" },
+  { code: "245", name: "Bagli Ortakliklar", accountType: "ASSET", normalSide: "DEBIT" },
+  { code: "250", name: "Arazi ve Arsalar", accountType: "ASSET", normalSide: "DEBIT" },
+  { code: "252", name: "Binalar", accountType: "ASSET", normalSide: "DEBIT" },
+  {
+    code: "253",
+    name: "Tesis Makine ve Cihazlar",
+    accountType: "ASSET",
+    normalSide: "DEBIT",
+  },
+  { code: "254", name: "Tasitlar", accountType: "ASSET", normalSide: "DEBIT" },
+  { code: "255", name: "Demirbaslar", accountType: "ASSET", normalSide: "DEBIT" },
+  {
+    code: "257",
+    name: "Birikmis Amortismanlar (-)",
+    accountType: "ASSET",
+    normalSide: "CREDIT",
+  },
+  {
+    code: "258",
+    name: "Yapilmakta Olan Yatirimlar",
+    accountType: "ASSET",
+    normalSide: "DEBIT",
+  },
+  { code: "260", name: "Haklar", accountType: "ASSET", normalSide: "DEBIT" },
+  {
+    code: "262",
+    name: "Kurulus ve Orgutlenme Giderleri",
+    accountType: "ASSET",
+    normalSide: "DEBIT",
+  },
+  {
+    code: "263",
+    name: "Arastirma ve Gelistirme Giderleri",
+    accountType: "ASSET",
+    normalSide: "DEBIT",
+  },
+  {
+    code: "267",
+    name: "Diger Maddi Olmayan Duran Varliklar",
+    accountType: "ASSET",
+    normalSide: "DEBIT",
+  },
+  {
+    code: "268",
+    name: "Birikmis Amortismanlar (-)",
+    accountType: "ASSET",
+    normalSide: "CREDIT",
+  },
+  {
+    code: "280",
+    name: "Gelecek Yillara Ait Giderler",
+    accountType: "ASSET",
+    normalSide: "DEBIT",
+  },
+  { code: "300", name: "Banka Kredileri", accountType: "LIABILITY", normalSide: "CREDIT" },
+  { code: "320", name: "Saticilar", accountType: "LIABILITY", normalSide: "CREDIT" },
+  { code: "321", name: "Borc Senetleri", accountType: "LIABILITY", normalSide: "CREDIT" },
+  {
+    code: "326",
+    name: "Alinan Depozito ve Teminatlar",
+    accountType: "LIABILITY",
+    normalSide: "CREDIT",
+  },
+  { code: "329", name: "Diger Ticari Borclar", accountType: "LIABILITY", normalSide: "CREDIT" },
+  { code: "331", name: "Ortaklara Borclar", accountType: "LIABILITY", normalSide: "CREDIT" },
+  { code: "335", name: "Personele Borclar", accountType: "LIABILITY", normalSide: "CREDIT" },
+  {
+    code: "360",
+    name: "Odenecek Vergi ve Fonlar",
+    accountType: "LIABILITY",
+    normalSide: "CREDIT",
+  },
+  {
+    code: "361",
+    name: "Odenecek Sosyal Guvenlik Kesintileri",
+    accountType: "LIABILITY",
+    normalSide: "CREDIT",
+  },
+  {
+    code: "368",
+    name: "Vadesi Gecmis Vergi ve Diger Yukumlulukler",
+    accountType: "LIABILITY",
+    normalSide: "CREDIT",
+  },
+  {
+    code: "370",
+    name: "Donem Kari Vergi ve Diger Yasal Yukumluluk Karsiliklari",
+    accountType: "LIABILITY",
+    normalSide: "CREDIT",
+  },
+  { code: "381", name: "Gider Tahakkuklari", accountType: "LIABILITY", normalSide: "CREDIT" },
+  {
+    code: "391",
+    name: "Hesaplanan KDV",
+    accountType: "LIABILITY",
+    normalSide: "CREDIT",
+  },
+  {
+    code: "400",
+    name: "Banka Kredileri",
+    accountType: "LIABILITY",
+    normalSide: "CREDIT",
+  },
+  { code: "420", name: "Saticilar", accountType: "LIABILITY", normalSide: "CREDIT" },
+  { code: "421", name: "Borc Senetleri", accountType: "LIABILITY", normalSide: "CREDIT" },
+  { code: "431", name: "Ortaklara Borclar", accountType: "LIABILITY", normalSide: "CREDIT" },
+  {
+    code: "472",
+    name: "Kidem Tazminati Karsiligi",
+    accountType: "LIABILITY",
+    normalSide: "CREDIT",
+  },
+  {
+    code: "480",
+    name: "Gelecek Yillara Ait Gelirler",
+    accountType: "LIABILITY",
+    normalSide: "CREDIT",
+  },
+  { code: "500", name: "Sermaye", accountType: "EQUITY", normalSide: "CREDIT" },
+  {
+    code: "520",
+    name: "Hisse Senedi Ihrac Primleri",
+    accountType: "EQUITY",
+    normalSide: "CREDIT",
+  },
+  {
+    code: "529",
+    name: "Diger Sermaye Yedekleri",
+    accountType: "EQUITY",
+    normalSide: "CREDIT",
+  },
+  { code: "540", name: "Yasal Yedekler", accountType: "EQUITY", normalSide: "CREDIT" },
+  {
+    code: "542",
+    name: "Olaganustu Yedekler",
+    accountType: "EQUITY",
+    normalSide: "CREDIT",
+  },
+  {
+    code: "570",
+    name: "Gecmis Yillar Karlari",
+    accountType: "EQUITY",
+    normalSide: "CREDIT",
+  },
+  {
+    code: "580",
+    name: "Gecmis Yillar Zararlari (-)",
+    accountType: "EQUITY",
+    normalSide: "DEBIT",
+  },
+  { code: "590", name: "Donem Net Kari", accountType: "EQUITY", normalSide: "CREDIT" },
+  {
+    code: "591",
+    name: "Donem Net Zarari (-)",
+    accountType: "EQUITY",
+    normalSide: "DEBIT",
+  },
+  { code: "600", name: "Yurtici Satislar", accountType: "REVENUE", normalSide: "CREDIT" },
+  { code: "601", name: "Yurtdisi Satislar", accountType: "REVENUE", normalSide: "CREDIT" },
+  { code: "602", name: "Diger Gelirler", accountType: "REVENUE", normalSide: "CREDIT" },
+  {
+    code: "610",
+    name: "Satislardan Iadeler (-)",
+    accountType: "REVENUE",
+    normalSide: "DEBIT",
+  },
+  {
+    code: "611",
+    name: "Satis Iskontolari (-)",
+    accountType: "REVENUE",
+    normalSide: "DEBIT",
+  },
+  {
+    code: "612",
+    name: "Diger Indirimler (-)",
+    accountType: "REVENUE",
+    normalSide: "DEBIT",
+  },
+  {
+    code: "620",
+    name: "Satilan Mallar Maliyeti (-)",
+    accountType: "EXPENSE",
+    normalSide: "DEBIT",
+  },
+  {
+    code: "621",
+    name: "Satilan Ticari Mallar Maliyeti (-)",
+    accountType: "EXPENSE",
+    normalSide: "DEBIT",
+  },
+  {
+    code: "622",
+    name: "Satilan Hizmet Maliyeti (-)",
+    accountType: "EXPENSE",
+    normalSide: "DEBIT",
+  },
+  {
+    code: "630",
+    name: "Arastirma ve Gelistirme Giderleri",
+    accountType: "EXPENSE",
+    normalSide: "DEBIT",
+  },
+  {
+    code: "631",
+    name: "Pazarlama Satis ve Dagitim Giderleri",
+    accountType: "EXPENSE",
+    normalSide: "DEBIT",
+  },
+  {
+    code: "632",
+    name: "Genel Yonetim Giderleri",
+    accountType: "EXPENSE",
+    normalSide: "DEBIT",
+  },
+  {
+    code: "640",
+    name: "Istiraklerden Temettu Gelirleri",
+    accountType: "REVENUE",
+    normalSide: "CREDIT",
+  },
+  { code: "642", name: "Faiz Gelirleri", accountType: "REVENUE", normalSide: "CREDIT" },
+  { code: "646", name: "Kambiyo Karlari", accountType: "REVENUE", normalSide: "CREDIT" },
+  {
+    code: "649",
+    name: "Diger Olagan Gelir ve Karlar",
+    accountType: "REVENUE",
+    normalSide: "CREDIT",
+  },
+  {
+    code: "654",
+    name: "Karsilik Giderleri",
+    accountType: "EXPENSE",
+    normalSide: "DEBIT",
+  },
+  { code: "656", name: "Kambiyo Zararlari", accountType: "EXPENSE", normalSide: "DEBIT" },
+  {
+    code: "659",
+    name: "Diger Olagan Gider ve Zararlar",
+    accountType: "EXPENSE",
+    normalSide: "DEBIT",
+  },
+  {
+    code: "660",
+    name: "Kisa Vadeli Borclanma Giderleri",
+    accountType: "EXPENSE",
+    normalSide: "DEBIT",
+  },
+  {
+    code: "671",
+    name: "Onceki Donem Gider ve Zararlari",
+    accountType: "EXPENSE",
+    normalSide: "DEBIT",
+  },
+  {
+    code: "679",
+    name: "Diger Olagandisi Gelir ve Karlar",
+    accountType: "REVENUE",
+    normalSide: "CREDIT",
+  },
+  {
+    code: "689",
+    name: "Diger Olagandisi Gider ve Zararlar",
+    accountType: "EXPENSE",
+    normalSide: "DEBIT",
+  },
+  {
+    code: "700",
+    name: "Direkt Ilk Madde ve Malzeme Giderleri",
+    accountType: "EXPENSE",
+    normalSide: "DEBIT",
+  },
+  { code: "710", name: "Direkt Iscilik Giderleri", accountType: "EXPENSE", normalSide: "DEBIT" },
+  { code: "720", name: "Genel Uretim Giderleri", accountType: "EXPENSE", normalSide: "DEBIT" },
+  { code: "740", name: "Hizmet Uretim Maliyeti", accountType: "EXPENSE", normalSide: "DEBIT" },
+  {
+    code: "760",
+    name: "Pazarlama Satis ve Dagitim Giderleri",
+    accountType: "EXPENSE",
+    normalSide: "DEBIT",
+  },
+  { code: "770", name: "Genel Yonetim Giderleri", accountType: "EXPENSE", normalSide: "DEBIT" },
+  { code: "780", name: "Finansman Giderleri", accountType: "EXPENSE", normalSide: "DEBIT" },
+];
 
 function toPositiveInt(value) {
   const parsed = Number(value);
@@ -279,6 +635,71 @@ export default function GlSetupPage() {
       await loadData();
     } catch (err) {
       setError(err?.response?.data?.message || l("Failed to save account.", "Hesap kaydedilemedi."));
+    } finally {
+      setSaving("");
+    }
+  }
+
+  async function handleLoadTurkishDefaultAccounts() {
+    if (!canUpsertAccounts) {
+      setError(l("Missing permission: gl.account.upsert", "Eksik yetki: gl.account.upsert"));
+      return;
+    }
+
+    const coaId = toPositiveInt(accountForm.coaId);
+    if (!coaId) {
+      setError(
+        l(
+          "Select a CoA first, then click Load Turkish Default CoA.",
+          "Once bir hesap plani secin, sonra Varsayilan Turk Hesap Planini Yukle butonuna basin."
+        )
+      );
+      return;
+    }
+
+    const confirmed = window.confirm(
+      l(
+        `Load ${TURKISH_DEFAULT_COA_ACCOUNTS.length} Turkish default accounts into selected CoA?`,
+        `Secili hesap planina ${TURKISH_DEFAULT_COA_ACCOUNTS.length} adet varsayilan Turk hesap plani hesabi yuklensin mi?`
+      )
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setSaving("turkish-default-accounts");
+    setError("");
+    setMessage("");
+
+    try {
+      let processed = 0;
+      for (const account of TURKISH_DEFAULT_COA_ACCOUNTS) {
+        await upsertAccount({
+          coaId,
+          code: account.code,
+          name: account.name,
+          accountType: account.accountType,
+          normalSide: account.normalSide,
+          allowPosting: true,
+        });
+        processed += 1;
+      }
+
+      setMessage(
+        l(
+          `Turkish default CoA loaded. Processed ${processed} accounts.`,
+          `Varsayilan Turk hesap plani yuklendi. ${processed} hesap isleme alindi.`
+        )
+      );
+      await loadData();
+    } catch (err) {
+      setError(
+        err?.response?.data?.message ||
+          l(
+            "Failed to load Turkish default CoA accounts.",
+            "Varsayilan Turk hesap plani hesaplari yuklenemedi."
+          )
+      );
     } finally {
       setSaving("");
     }
@@ -565,7 +986,19 @@ export default function GlSetupPage() {
         </section>
 
         <section className="rounded-xl border border-slate-200 bg-white p-4">
-          <h2 className="mb-3 text-sm font-semibold text-slate-700">{l("Accounts", "Hesaplar")}</h2>
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-sm font-semibold text-slate-700">{l("Accounts", "Hesaplar")}</h2>
+            <button
+              type="button"
+              onClick={handleLoadTurkishDefaultAccounts}
+              disabled={saving === "turkish-default-accounts" || !canUpsertAccounts}
+              className="rounded-lg border border-cyan-300 bg-cyan-50 px-3 py-1.5 text-xs font-semibold text-cyan-800 disabled:opacity-60"
+            >
+              {saving === "turkish-default-accounts"
+                ? l("Loading Turkish CoA...", "Turk hesap plani yukleniyor...")
+                : l("Load Turkish Default CoA", "Varsayilan Turk Hesap Planini Yukle")}
+            </button>
+          </div>
           <form onSubmit={handleAccountSubmit} className="grid gap-2 md:grid-cols-4">
             <select
               value={accountForm.coaId}

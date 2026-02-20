@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import {
   generateFiscalPeriods,
   listCountries,
@@ -29,6 +30,28 @@ const SHAREHOLDER_STATUSES = ["ACTIVE", "INACTIVE"];
 function toNumber(value) {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function getShareholderTypeLabel(value, l) {
+  switch (String(value || "").toUpperCase()) {
+    case "INDIVIDUAL":
+      return l("Individual", "Bireysel");
+    case "CORPORATE":
+      return l("Corporate", "Kurumsal");
+    default:
+      return value || "-";
+  }
+}
+
+function getShareholderStatusLabel(value, l) {
+  switch (String(value || "").toUpperCase()) {
+    case "ACTIVE":
+      return l("Active", "Aktif");
+    case "INACTIVE":
+      return l("Inactive", "Pasif");
+    default:
+      return value || "-";
+  }
 }
 
 function getCommitmentJournalSkipReason(reason, l) {
@@ -82,7 +105,7 @@ export default function OrganizationManagementPage() {
   const { hasPermission } = useAuth();
   const { language } = useI18n();
   const isTr = language === "tr";
-  const l = (en, tr) => (isTr ? tr : en);
+  const l = useCallback((en, tr) => (isTr ? tr : en), [isTr]);
   const canReadOrgTree = hasPermission("org.tree.read");
   const canReadFiscalCalendars = hasPermission("org.fiscal_calendar.read");
   const canReadFiscalPeriods = hasPermission("org.fiscal_period.read");
@@ -402,6 +425,62 @@ export default function OrganizationManagementPage() {
         Number(row.legal_entity_id) === Number(selectedShareholderLegalEntityId)
     );
   }, [shareholders, selectedShareholderLegalEntityId]);
+  const selectedShareholderCommitmentConfig = useMemo(() => {
+    if (!selectedShareholderLegalEntityId) {
+      return null;
+    }
+    return (
+      shareholderJournalConfigByEntity.get(Number(selectedShareholderLegalEntityId)) ||
+      null
+    );
+  }, [shareholderJournalConfigByEntity, selectedShareholderLegalEntityId]);
+  const selectedShareholderSetupChecks = useMemo(() => {
+    if (!selectedShareholderLegalEntityId) {
+      return [];
+    }
+    return [
+      {
+        key: "shareholderMaster",
+        label: l("At least one shareholder exists", "En az bir ortak tanimli"),
+        ready: visibleShareholders.length > 0,
+      },
+      {
+        key: "commitmentMapping",
+        label: l(
+          "Commitment debit account mapping exists",
+          "Taahhut borc hesap eslemesi tanimli"
+        ),
+        ready: Boolean(selectedShareholderCommitmentConfig),
+      },
+      {
+        key: "equitySubAccount",
+        label: l(
+          "Equity sub-account is available",
+          "Sermaye icin kullanilacak equity alt hesap mevcut"
+        ),
+        ready: equityShareholderAccounts.length > 0,
+      },
+      {
+        key: "fiscalPeriods",
+        label: l(
+          "Fiscal periods are generated",
+          "Mali donemler olusturulmus"
+        ),
+        ready: periods.length > 0,
+      },
+    ];
+  }, [
+    equityShareholderAccounts.length,
+    l,
+    periods.length,
+    selectedShareholderCommitmentConfig,
+    selectedShareholderLegalEntityId,
+    visibleShareholders.length,
+  ]);
+  const selectedShareholderMissingChecks = useMemo(
+    () => selectedShareholderSetupChecks.filter((row) => !row.ready),
+    [selectedShareholderSetupChecks]
+  );
 
   async function handleGroupSubmit(event) {
     event.preventDefault();
@@ -1158,7 +1237,73 @@ export default function OrganizationManagementPage() {
           <h2 className="mb-3 text-sm font-semibold text-slate-700">
             {l("Shareholders", "Ortaklar")}
           </h2>
+          {selectedShareholderLegalEntityId ? (
+            <div className="mb-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+              <div className="text-xs font-semibold text-slate-700">
+                {l(
+                  "Setup Required List for Capital Commitment Journal",
+                  "Sermaye Taahhut Yevmiyesi Icin Gerekli Kurulum Listesi"
+                )}
+              </div>
+              <div className="mt-2 grid gap-1 md:grid-cols-2">
+                {selectedShareholderSetupChecks.map((check) => (
+                  <div
+                    key={check.key}
+                    className="flex items-center justify-between rounded border border-slate-200 bg-white px-2 py-1 text-xs"
+                  >
+                    <span className="text-slate-700">{check.label}</span>
+                    <span
+                      className={`rounded px-2 py-0.5 font-semibold ${
+                        check.ready
+                          ? "bg-emerald-100 text-emerald-700"
+                          : "bg-amber-100 text-amber-800"
+                      }`}
+                    >
+                      {check.ready ? l("OK", "Tamam") : l("Missing", "Eksik")}
+                    </span>
+                  </div>
+                ))}
+              </div>
+              {selectedShareholderMissingChecks.length > 0 ? (
+                <div className="mt-2 rounded border border-amber-200 bg-amber-50 px-2 py-2 text-xs text-amber-900">
+                  <div className="font-semibold">
+                    {l(
+                      "System notice: complete missing setup before relying on automatic commitment journals.",
+                      "Sistem uyarisi: otomatik taahhut yevmiyesine gecmeden once eksik kurulumlari tamamlayin."
+                    )}
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        document
+                          .getElementById("shareholder-journal-config-block")
+                          ?.scrollIntoView({ behavior: "smooth", block: "start" })
+                      }
+                      className="rounded border border-amber-300 bg-white px-2.5 py-1 font-semibold text-amber-900"
+                    >
+                      {l("Go to mapping form", "Esleme formuna git")}
+                    </button>
+                    <Link
+                      to="/app/ayarlar/hesap-plani-ayarlari"
+                      className="rounded border border-amber-300 bg-white px-2.5 py-1 font-semibold text-amber-900"
+                    >
+                      {l("Open GL setup", "GL ayarlarini ac")}
+                    </Link>
+                  </div>
+                </div>
+              ) : (
+                <div className="mt-2 rounded border border-emerald-200 bg-emerald-50 px-2 py-2 text-xs text-emerald-800">
+                  {l(
+                    "System notice: setup is complete for automatic capital commitment draft journals.",
+                    "Sistem bildirimi: otomatik sermaye taahhut taslak yevmiyesi icin kurulum tamamlandi."
+                  )}
+                </div>
+              )}
+            </div>
+          ) : null}
           <form
+            id="shareholder-journal-config-block"
             onSubmit={handleShareholderJournalConfigSubmit}
             className="mb-3 grid gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3 md:grid-cols-4"
           >
@@ -1309,7 +1454,7 @@ export default function OrganizationManagementPage() {
             >
               {SHAREHOLDER_TYPES.map((type) => (
                 <option key={type} value={type}>
-                  {type}
+                  {getShareholderTypeLabel(type, l)}
                 </option>
               ))}
             </select>
@@ -1427,7 +1572,7 @@ export default function OrganizationManagementPage() {
             >
               {SHAREHOLDER_STATUSES.map((status) => (
                 <option key={status} value={status}>
-                  {status}
+                  {getShareholderStatusLabel(status, l)}
                 </option>
               ))}
             </select>
@@ -1476,7 +1621,9 @@ export default function OrganizationManagementPage() {
                     <td className="px-3 py-2">{row.legal_entity_id}</td>
                     <td className="px-3 py-2">{row.code}</td>
                     <td className="px-3 py-2">{row.name}</td>
-                    <td className="px-3 py-2">{row.shareholder_type}</td>
+                    <td className="px-3 py-2">
+                      {getShareholderTypeLabel(row.shareholder_type, l)}
+                    </td>
                     <td className="px-3 py-2">
                       {row.ownership_pct === null || row.ownership_pct === undefined
                         ? "-"
@@ -1502,7 +1649,9 @@ export default function OrganizationManagementPage() {
                       })}
                     </td>
                     <td className="px-3 py-2">{row.currency_code}</td>
-                    <td className="px-3 py-2">{row.status}</td>
+                    <td className="px-3 py-2">
+                      {getShareholderStatusLabel(row.status, l)}
+                    </td>
                   </tr>
                 ))}
                 {visibleShareholders.length === 0 && !loading && (

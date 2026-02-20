@@ -26,6 +26,13 @@ const router = express.Router();
 const PERIOD_STATUSES = new Set(["OPEN", "SOFT_CLOSED", "HARD_CLOSED"]);
 const CLOSE_RUN_STATUSES = new Set(["IN_PROGRESS", "COMPLETED", "FAILED", "REOPENED"]);
 const CLOSE_TARGET_STATUSES = new Set(["SOFT_CLOSED", "HARD_CLOSED"]);
+const JOURNAL_SOURCE_TYPES = new Set([
+  "MANUAL",
+  "SYSTEM",
+  "INTERCOMPANY",
+  "ELIMINATION",
+  "ADJUSTMENT",
+]);
 const BALANCE_EPSILON = 0.0001;
 
 function toAmount(value) {
@@ -132,8 +139,8 @@ async function getEffectivePeriodStatus(bookId, fiscalPeriodId, runQuery = query
   return String(result.rows[0]?.status || "OPEN").toUpperCase();
 }
 
-async function ensurePeriodOpen(bookId, fiscalPeriodId, actionLabel) {
-  const status = await getEffectivePeriodStatus(bookId, fiscalPeriodId);
+async function ensurePeriodOpen(bookId, fiscalPeriodId, actionLabel, runQuery = query) {
+  const status = await getEffectivePeriodStatus(bookId, fiscalPeriodId, runQuery);
   if (status !== "OPEN") {
     throw badRequest(`Period is ${status}; cannot ${actionLabel}`);
   }
@@ -145,7 +152,7 @@ async function loadJournal(tenantId, journalId) {
             entry_date, document_date, currency_code, description, reference_no,
             total_debit_base, total_credit_base, created_by_user_id, posted_by_user_id,
             posted_at, reversed_by_user_id, reversed_at, reverse_reason,
-            reversal_journal_entry_id, created_at, updated_at
+            reversal_journal_entry_id, intercompany_source_journal_entry_id, created_at, updated_at
      FROM journal_entries
      WHERE id = ?
        AND tenant_id = ?
@@ -496,13 +503,14 @@ async function createSystemJournalWithLines(tx, payload) {
           operating_unit_id,
           counterparty_legal_entity_id,
           description,
+          subledger_reference_no,
           currency_code,
           amount_txn,
           debit_base,
           credit_base,
           tax_code
        )
-       VALUES (?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, NULL)`,
+       VALUES (?, ?, ?, NULL, NULL, ?, NULL, ?, ?, ?, ?, NULL)`,
       [
         journalEntryId,
         i + 1,
@@ -575,6 +583,7 @@ async function reversePostedJournalWithinTransaction(tx, params) {
        operating_unit_id,
        counterparty_legal_entity_id,
        description,
+       subledger_reference_no,
        currency_code,
        amount_txn,
        debit_base,
@@ -651,13 +660,14 @@ async function reversePostedJournalWithinTransaction(tx, params) {
           operating_unit_id,
           counterparty_legal_entity_id,
           description,
+          subledger_reference_no,
           currency_code,
           amount_txn,
           debit_base,
           credit_base,
           tax_code
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         reversalJournalId,
         i + 1,
@@ -665,6 +675,7 @@ async function reversePostedJournalWithinTransaction(tx, params) {
         parsePositiveInt(line.operating_unit_id),
         parsePositiveInt(line.counterparty_legal_entity_id),
         line.description ? String(line.description) : null,
+        normalizeOptionalShortText(line.subledger_reference_no, "subledger_reference_no", 100),
         String(line.currency_code || original.currency_code).toUpperCase(),
         Number(line.amount_txn || 0) * -1,
         Number(line.credit_base || 0),
@@ -767,6 +778,824 @@ function parseOptionalPositiveInt(value, fieldLabel) {
   return parsed;
 }
 
+function normalizeOptionalShortText(value, fieldLabel, maxLength = 100) {
+  if (value === undefined || value === null) {
+    return null;
+  }
+
+  const normalized = String(value).trim();
+  if (!normalized) {
+    return null;
+  }
+  if (normalized.length > maxLength) {
+    throw badRequest(`${fieldLabel} must be at most ${maxLength} characters`);
+  }
+  return normalized;
+}
+
+function parseBooleanFlag(value, defaultValue, fieldLabel) {
+  if (value === undefined || value === null || value === "") {
+    return Boolean(defaultValue);
+  }
+
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  if (typeof value === "number") {
+    return value !== 0;
+  }
+
+  const normalized = String(value).trim().toLowerCase();
+  if (["true", "1", "yes", "y", "on"].includes(normalized)) {
+    return true;
+  }
+  if (["false", "0", "no", "n", "off"].includes(normalized)) {
+    return false;
+  }
+
+  throw badRequest(`${fieldLabel} must be a boolean`);
+}
+
+function normalizeJournalSourceType(value) {
+  const sourceType = String(value || "MANUAL").toUpperCase();
+  if (!JOURNAL_SOURCE_TYPES.has(sourceType)) {
+    throw badRequest("sourceType must be one of MANUAL, SYSTEM, INTERCOMPANY, ELIMINATION, ADJUSTMENT");
+  }
+  return sourceType;
+}
+
+async function getLegalEntityIntercompanySettings(tenantId, legalEntityId) {
+  const result = await query(
+    `SELECT is_intercompany_enabled, intercompany_partner_required
+     FROM legal_entities
+     WHERE tenant_id = ?
+       AND id = ?
+     LIMIT 1`,
+    [tenantId, legalEntityId]
+  );
+
+  const row = result.rows[0];
+  if (!row) {
+    throw badRequest("legalEntityId not found for tenant");
+  }
+
+  return {
+    isIntercompanyEnabled: Boolean(row.is_intercompany_enabled),
+    intercompanyPartnerRequired: Boolean(row.intercompany_partner_required),
+  };
+}
+
+async function getLegalEntityCodeMap(tenantId, legalEntityIds) {
+  if (!Array.isArray(legalEntityIds) || legalEntityIds.length === 0) {
+    return new Map();
+  }
+
+  const ids = Array.from(new Set(legalEntityIds.map((id) => parsePositiveInt(id)).filter(Boolean)));
+  if (ids.length === 0) {
+    return new Map();
+  }
+
+  const placeholders = ids.map(() => "?").join(", ");
+  const result = await query(
+    `SELECT id, code
+     FROM legal_entities
+     WHERE tenant_id = ?
+       AND id IN (${placeholders})`,
+    [tenantId, ...ids]
+  );
+
+  const map = new Map();
+  for (const row of result.rows || []) {
+    const id = parsePositiveInt(row.id);
+    if (!id) {
+      continue;
+    }
+    map.set(id, String(row.code || `LE-${id}`));
+  }
+
+  return map;
+}
+
+async function assertActiveIntercompanyPairs(
+  tenantId,
+  fromLegalEntityId,
+  counterpartyLegalEntityIds
+) {
+  const ids = Array.from(
+    new Set((counterpartyLegalEntityIds || []).map((id) => parsePositiveInt(id)).filter(Boolean))
+  );
+  if (ids.length === 0) {
+    return;
+  }
+
+  const placeholders = ids.map(() => "?").join(", ");
+  const result = await query(
+    `SELECT to_legal_entity_id
+     FROM intercompany_pairs
+     WHERE tenant_id = ?
+       AND from_legal_entity_id = ?
+       AND status = 'ACTIVE'
+       AND to_legal_entity_id IN (${placeholders})`,
+    [tenantId, fromLegalEntityId, ...ids]
+  );
+
+  const activeToIds = new Set(
+    (result.rows || []).map((row) => parsePositiveInt(row.to_legal_entity_id)).filter(Boolean)
+  );
+  const missingToIds = ids.filter((id) => !activeToIds.has(id));
+
+  if (missingToIds.length === 0) {
+    return;
+  }
+
+  const codeMap = await getLegalEntityCodeMap(tenantId, missingToIds);
+  const display = missingToIds
+    .map((id) => codeMap.get(id) || `LE-${id}`)
+    .join(", ");
+
+  throw badRequest(
+    `Active intercompany pair mapping is required from legalEntityId=${fromLegalEntityId} to: ${display}`
+  );
+}
+
+async function validateIntercompanyJournalPolicy(
+  tenantId,
+  legalEntityId,
+  sourceType,
+  lines
+) {
+  const settings = await getLegalEntityIntercompanySettings(tenantId, legalEntityId);
+  const counterpartyIds = [];
+  const missingCounterpartyLineNumbers = [];
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    const counterpartyLegalEntityId = parsePositiveInt(line?.counterpartyLegalEntityId);
+    if (counterpartyLegalEntityId) {
+      counterpartyIds.push(counterpartyLegalEntityId);
+    } else {
+      missingCounterpartyLineNumbers.push(i + 1);
+    }
+  }
+
+  const hasCounterpartyLines = counterpartyIds.length > 0;
+
+  if (!settings.isIntercompanyEnabled) {
+    if (sourceType === "INTERCOMPANY") {
+      throw badRequest(
+        "Selected legal entity has intercompany disabled; INTERCOMPANY source journals are not allowed"
+      );
+    }
+    if (hasCounterpartyLines) {
+      throw badRequest(
+        "Selected legal entity has intercompany disabled; counterpartyLegalEntityId is not allowed on journal lines"
+      );
+    }
+    return;
+  }
+
+  if (sourceType === "INTERCOMPANY" && !hasCounterpartyLines) {
+    throw badRequest(
+      "INTERCOMPANY source journals require at least one line with counterpartyLegalEntityId"
+    );
+  }
+
+  if (settings.intercompanyPartnerRequired && sourceType === "INTERCOMPANY") {
+    if (missingCounterpartyLineNumbers.length > 0) {
+      throw badRequest(
+        `Selected legal entity requires intercompany partner on INTERCOMPANY journals. Missing counterparty on line(s): ${missingCounterpartyLineNumbers.join(", ")}`
+      );
+    }
+  }
+
+  if (hasCounterpartyLines) {
+    await assertActiveIntercompanyPairs(tenantId, legalEntityId, counterpartyIds);
+  }
+}
+
+async function getLegalEntityIntercompanySettingsMap(
+  tenantId,
+  legalEntityIds,
+  runQuery = query
+) {
+  const ids = Array.from(
+    new Set((legalEntityIds || []).map((id) => parsePositiveInt(id)).filter(Boolean))
+  );
+  if (ids.length === 0) {
+    return new Map();
+  }
+
+  const placeholders = ids.map(() => "?").join(", ");
+  const result = await runQuery(
+    `SELECT id, is_intercompany_enabled, intercompany_partner_required
+     FROM legal_entities
+     WHERE tenant_id = ?
+       AND id IN (${placeholders})`,
+    [tenantId, ...ids]
+  );
+
+  const map = new Map();
+  for (const row of result.rows || []) {
+    const id = parsePositiveInt(row.id);
+    if (!id) {
+      continue;
+    }
+    map.set(id, {
+      isIntercompanyEnabled: Boolean(row.is_intercompany_enabled),
+      intercompanyPartnerRequired: Boolean(row.intercompany_partner_required),
+    });
+  }
+
+  return map;
+}
+
+async function loadActiveIntercompanyPair(
+  tenantId,
+  fromLegalEntityId,
+  toLegalEntityId,
+  runQuery = query
+) {
+  const result = await runQuery(
+    `SELECT id, receivable_account_id, payable_account_id
+     FROM intercompany_pairs
+     WHERE tenant_id = ?
+       AND from_legal_entity_id = ?
+       AND to_legal_entity_id = ?
+       AND status = 'ACTIVE'
+     LIMIT 1`,
+    [tenantId, fromLegalEntityId, toLegalEntityId]
+  );
+  return result.rows[0] || null;
+}
+
+async function getAccountCodeMapById(
+  tenantId,
+  legalEntityId,
+  accountIds,
+  runQuery = query
+) {
+  const ids = Array.from(new Set((accountIds || []).map((id) => parsePositiveInt(id)).filter(Boolean)));
+  if (ids.length === 0) {
+    return new Map();
+  }
+
+  const placeholders = ids.map(() => "?").join(", ");
+  const result = await runQuery(
+    `SELECT a.id, a.code
+     FROM accounts a
+     JOIN charts_of_accounts c ON c.id = a.coa_id
+     WHERE c.tenant_id = ?
+       AND c.legal_entity_id = ?
+       AND a.id IN (${placeholders})`,
+    [tenantId, legalEntityId, ...ids]
+  );
+
+  const map = new Map();
+  for (const row of result.rows || []) {
+    const id = parsePositiveInt(row.id);
+    if (!id) continue;
+    map.set(id, String(row.code || ""));
+  }
+  return map;
+}
+
+async function assertPostableLeafAccountForLegalEntity(
+  tenantId,
+  legalEntityId,
+  accountId,
+  fieldLabel,
+  runQuery = query
+) {
+  const parsedAccountId = parsePositiveInt(accountId);
+  if (!parsedAccountId) {
+    throw badRequest(`${fieldLabel} must be a positive integer`);
+  }
+
+  const result = await runQuery(
+    `SELECT
+       a.id,
+       a.is_active,
+       a.allow_posting,
+       EXISTS(
+         SELECT 1
+         FROM accounts child
+         WHERE child.parent_account_id = a.id
+           AND child.is_active = TRUE
+       ) AS has_active_children,
+       c.legal_entity_id
+     FROM accounts a
+     JOIN charts_of_accounts c ON c.id = a.coa_id
+     WHERE a.id = ?
+       AND c.tenant_id = ?
+     LIMIT 1`,
+    [parsedAccountId, tenantId]
+  );
+
+  const row = result.rows[0];
+  if (!row) {
+    throw badRequest(`${fieldLabel} not found for tenant`);
+  }
+  if (parsePositiveInt(row.legal_entity_id) !== legalEntityId) {
+    throw badRequest(`${fieldLabel} must belong to legalEntityId=${legalEntityId}`);
+  }
+  if (!Boolean(row.is_active)) {
+    throw badRequest(`${fieldLabel} must be active`);
+  }
+  if (!Boolean(row.allow_posting)) {
+    throw badRequest(`${fieldLabel} must be a postable account`);
+  }
+  if (Boolean(row.has_active_children)) {
+    throw badRequest(`${fieldLabel} must be a leaf account`);
+  }
+}
+
+async function getPostableAccountMapByCode(
+  tenantId,
+  legalEntityId,
+  accountCodes,
+  runQuery = query
+) {
+  const codes = Array.from(
+    new Set(
+      (accountCodes || [])
+        .map((code) => String(code || "").trim())
+        .filter((code) => code.length > 0)
+    )
+  );
+  if (codes.length === 0) {
+    return new Map();
+  }
+
+  const placeholders = codes.map(() => "?").join(", ");
+  const result = await runQuery(
+    `SELECT a.id, a.code
+     FROM accounts a
+     JOIN charts_of_accounts c ON c.id = a.coa_id
+     WHERE c.tenant_id = ?
+       AND c.legal_entity_id = ?
+       AND a.code IN (${placeholders})
+       AND a.is_active = TRUE
+       AND a.allow_posting = TRUE
+       AND NOT EXISTS (
+         SELECT 1
+         FROM accounts child
+         WHERE child.parent_account_id = a.id
+           AND child.is_active = TRUE
+       )
+     ORDER BY a.id`,
+    [tenantId, legalEntityId, ...codes]
+  );
+
+  const map = new Map();
+  for (const row of result.rows || []) {
+    const code = String(row.code || "").trim();
+    const id = parsePositiveInt(row.id);
+    if (!code || !id || map.has(code)) {
+      continue;
+    }
+    map.set(code, id);
+  }
+
+  return map;
+}
+
+async function resolvePreferredBookForLegalEntity(
+  tenantId,
+  legalEntityId,
+  runQuery = query
+) {
+  const result = await runQuery(
+    `SELECT id, calendar_id, code, name, book_type
+     FROM books
+     WHERE tenant_id = ?
+       AND legal_entity_id = ?
+     ORDER BY CASE WHEN book_type = 'LOCAL' THEN 0 ELSE 1 END, id
+     LIMIT 1`,
+    [tenantId, legalEntityId]
+  );
+
+  const row = result.rows[0];
+  if (!row) {
+    throw badRequest(`No book found for legalEntityId=${legalEntityId}`);
+  }
+  return row;
+}
+
+async function loadFiscalPeriodTemplate(fiscalPeriodId, runQuery = query) {
+  const parsedPeriodId = parsePositiveInt(fiscalPeriodId);
+  if (!parsedPeriodId) {
+    throw badRequest("fiscalPeriodId must be a positive integer");
+  }
+
+  const result = await runQuery(
+    `SELECT id, fiscal_year, period_no, is_adjustment
+     FROM fiscal_periods
+     WHERE id = ?
+     LIMIT 1`,
+    [parsedPeriodId]
+  );
+  const row = result.rows[0];
+  if (!row) {
+    throw badRequest("fiscalPeriodId not found");
+  }
+  return row;
+}
+
+async function resolveFiscalPeriodForCalendar(calendarId, periodTemplate, runQuery = query) {
+  const parsedCalendarId = parsePositiveInt(calendarId);
+  if (!parsedCalendarId) {
+    throw badRequest("calendarId must be a positive integer");
+  }
+
+  const result = await runQuery(
+    `SELECT id
+     FROM fiscal_periods
+     WHERE calendar_id = ?
+       AND fiscal_year = ?
+       AND period_no = ?
+       AND is_adjustment = ?
+     LIMIT 1`,
+    [
+      parsedCalendarId,
+      Number(periodTemplate?.fiscal_year),
+      Number(periodTemplate?.period_no),
+      Boolean(periodTemplate?.is_adjustment),
+    ]
+  );
+
+  const periodId = parsePositiveInt(result.rows[0]?.id);
+  if (!periodId) {
+    throw badRequest(
+      `No matching fiscal period found in calendarId=${parsedCalendarId} for ${periodTemplate?.fiscal_year}-P${String(
+        periodTemplate?.period_no || ""
+      ).padStart(2, "0")}`
+    );
+  }
+
+  return periodId;
+}
+
+function groupLinesByCounterparty(lines) {
+  const linesByCounterparty = new Map();
+  const missingCounterpartyLineNumbers = [];
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    const lineNo = i + 1;
+    const counterpartyLegalEntityId = parsePositiveInt(line?.counterpartyLegalEntityId);
+    if (!counterpartyLegalEntityId) {
+      missingCounterpartyLineNumbers.push(lineNo);
+      continue;
+    }
+
+    if (!linesByCounterparty.has(counterpartyLegalEntityId)) {
+      linesByCounterparty.set(counterpartyLegalEntityId, []);
+    }
+    linesByCounterparty.get(counterpartyLegalEntityId).push({
+      ...line,
+      _sourceLineNo: lineNo,
+    });
+  }
+
+  return {
+    linesByCounterparty,
+    missingCounterpartyLineNumbers,
+  };
+}
+
+function buildMirrorLineDescription(sourceJournalNo, sourceLineNo, originalDescription) {
+  const original = String(originalDescription || "").trim();
+  if (original) {
+    return `Auto mirror of ${sourceJournalNo} L${sourceLineNo}: ${original}`.slice(0, 500);
+  }
+  return `Auto mirror of ${sourceJournalNo} line ${sourceLineNo}`.slice(0, 500);
+}
+
+function buildMirrorReferenceNo(sourceReferenceNo, sourceJournalNo, targetLegalEntityId) {
+  const base = String(sourceReferenceNo || sourceJournalNo || "INTERCOMPANY").trim();
+  const suffix = `-MIRROR-LE${targetLegalEntityId}`;
+  return `${base}${suffix}`.slice(0, 100);
+}
+
+async function buildIntercompanyAutoMirrorDraftSpecs({
+  req,
+  tenantId,
+  sourceLegalEntityId,
+  sourceFiscalPeriodId,
+  sourceJournalNo,
+  sourceEntryDate,
+  sourceDocumentDate,
+  sourceCurrencyCode,
+  sourceReferenceNo,
+  sourceDescription,
+  sourceLines,
+}) {
+  const {
+    linesByCounterparty,
+    missingCounterpartyLineNumbers,
+  } = groupLinesByCounterparty(sourceLines);
+
+  if (missingCounterpartyLineNumbers.length > 0) {
+    throw badRequest(
+      `autoMirror requires counterpartyLegalEntityId on all lines. Missing on line(s): ${missingCounterpartyLineNumbers.join(", ")}`
+    );
+  }
+
+  const targetLegalEntityIds = Array.from(linesByCounterparty.keys()).filter(Boolean);
+  if (targetLegalEntityIds.length === 0) {
+    return [];
+  }
+
+  const codeMap = await getLegalEntityCodeMap(tenantId, [
+    sourceLegalEntityId,
+    ...targetLegalEntityIds,
+  ]);
+  const settingsMap = await getLegalEntityIntercompanySettingsMap(tenantId, targetLegalEntityIds);
+  const periodTemplate = await loadFiscalPeriodTemplate(sourceFiscalPeriodId);
+
+  const sourceAccountIdSet = new Set();
+  for (const groupedLines of linesByCounterparty.values()) {
+    for (const line of groupedLines) {
+      const accountId = parsePositiveInt(line?.accountId);
+      if (accountId) {
+        sourceAccountIdSet.add(accountId);
+      }
+    }
+  }
+  const sourceAccountCodeMap = await getAccountCodeMapById(
+    tenantId,
+    sourceLegalEntityId,
+    Array.from(sourceAccountIdSet)
+  );
+
+  const specs = [];
+  for (const targetLegalEntityId of targetLegalEntityIds) {
+    if (targetLegalEntityId === sourceLegalEntityId) {
+      throw badRequest("autoMirror does not allow same legal entity as source/counterparty");
+    }
+    assertScopeAccess(
+      req,
+      "legal_entity",
+      targetLegalEntityId,
+      `autoMirror.targetLegalEntityId=${targetLegalEntityId}`
+    );
+
+    const targetSettings = settingsMap.get(targetLegalEntityId);
+    if (!targetSettings?.isIntercompanyEnabled) {
+      const targetCode = codeMap.get(targetLegalEntityId) || `LE-${targetLegalEntityId}`;
+      throw badRequest(
+        `autoMirror requires target legal entity intercompany enabled: ${targetCode}`
+      );
+    }
+
+    const reversePair = await loadActiveIntercompanyPair(
+      tenantId,
+      targetLegalEntityId,
+      sourceLegalEntityId
+    );
+    if (!reversePair) {
+      const sourceCode = codeMap.get(sourceLegalEntityId) || `LE-${sourceLegalEntityId}`;
+      const targetCode = codeMap.get(targetLegalEntityId) || `LE-${targetLegalEntityId}`;
+      throw badRequest(
+        `autoMirror requires ACTIVE intercompany pair mapping from ${targetCode} to ${sourceCode}`
+      );
+    }
+
+    const reverseReceivableAccountId = parsePositiveInt(reversePair.receivable_account_id);
+    const reversePayableAccountId = parsePositiveInt(reversePair.payable_account_id);
+
+    if (reverseReceivableAccountId) {
+      await assertPostableLeafAccountForLegalEntity(
+        tenantId,
+        targetLegalEntityId,
+        reverseReceivableAccountId,
+        "reverse pair receivableAccountId"
+      );
+    }
+    if (reversePayableAccountId) {
+      await assertPostableLeafAccountForLegalEntity(
+        tenantId,
+        targetLegalEntityId,
+        reversePayableAccountId,
+        "reverse pair payableAccountId"
+      );
+    }
+
+    const targetBook = await resolvePreferredBookForLegalEntity(tenantId, targetLegalEntityId);
+    const targetBookId = parsePositiveInt(targetBook.id);
+    const targetCalendarId = parsePositiveInt(targetBook.calendar_id);
+    const targetFiscalPeriodId = await resolveFiscalPeriodForCalendar(
+      targetCalendarId,
+      periodTemplate
+    );
+
+    await ensurePeriodOpen(
+      targetBookId,
+      targetFiscalPeriodId,
+      `auto-create mirror draft journal for legalEntityId=${targetLegalEntityId}`
+    );
+
+    const groupedLines = linesByCounterparty.get(targetLegalEntityId) || [];
+    const sourceAccountCodes = groupedLines
+      .map((line) => {
+        const sourceAccountId = parsePositiveInt(line?.accountId);
+        return sourceAccountCodeMap.get(sourceAccountId) || "";
+      })
+      .filter(Boolean);
+
+    const targetAccountByCode = await getPostableAccountMapByCode(
+      tenantId,
+      targetLegalEntityId,
+      sourceAccountCodes
+    );
+
+    const mirrorLines = [];
+    let sourceDebitTotal = 0;
+    let sourceCreditTotal = 0;
+    let mirrorDebitTotal = 0;
+    let mirrorCreditTotal = 0;
+
+    for (const sourceLine of groupedLines) {
+      const sourceLineNo = Number(sourceLine?._sourceLineNo || 0);
+      const sourceAccountId = parsePositiveInt(sourceLine?.accountId);
+      const sourceAccountCode = sourceAccountCodeMap.get(sourceAccountId);
+      if (!sourceAccountCode) {
+        throw badRequest(
+          `autoMirror could not resolve source account code for line ${sourceLineNo}`
+        );
+      }
+
+      const sourceDebit = toAmount(sourceLine?.debitBase);
+      const sourceCredit = toAmount(sourceLine?.creditBase);
+      sourceDebitTotal += sourceDebit;
+      sourceCreditTotal += sourceCredit;
+
+      const mirrorDebit = sourceCredit;
+      const mirrorCredit = sourceDebit;
+      mirrorDebitTotal += mirrorDebit;
+      mirrorCreditTotal += mirrorCredit;
+
+      let targetAccountId = parsePositiveInt(targetAccountByCode.get(sourceAccountCode));
+      if (!targetAccountId) {
+        targetAccountId =
+          mirrorDebit > 0 ? reverseReceivableAccountId : reversePayableAccountId;
+      }
+      if (!targetAccountId) {
+        const sideLabel = mirrorDebit > 0 ? "DEBIT" : "CREDIT";
+        throw badRequest(
+          `autoMirror mapping missing for target legalEntityId=${targetLegalEntityId}, source account ${sourceAccountCode}, line ${sourceLineNo}, side ${sideLabel}`
+        );
+      }
+
+      mirrorLines.push({
+        accountId: targetAccountId,
+        operatingUnitId: null,
+        counterpartyLegalEntityId: sourceLegalEntityId,
+        description: buildMirrorLineDescription(
+          sourceJournalNo,
+          sourceLineNo,
+          sourceLine?.description
+        ),
+        currencyCode: String(sourceLine?.currencyCode || sourceCurrencyCode || "USD").toUpperCase(),
+        amountTxn: -toAmount(sourceLine?.amountTxn),
+        debitBase: mirrorDebit,
+        creditBase: mirrorCredit,
+        taxCode: sourceLine?.taxCode ? String(sourceLine.taxCode) : null,
+      });
+    }
+
+    if (Math.abs(sourceDebitTotal - sourceCreditTotal) > BALANCE_EPSILON) {
+      const targetCode = codeMap.get(targetLegalEntityId) || `LE-${targetLegalEntityId}`;
+      throw badRequest(
+        `autoMirror requires counterparty-specific balance per target legal entity. Unbalanced source block for ${targetCode}`
+      );
+    }
+    if (Math.abs(mirrorDebitTotal - mirrorCreditTotal) > BALANCE_EPSILON) {
+      throw badRequest(
+        `autoMirror produced an unbalanced mirror block for legalEntityId=${targetLegalEntityId}`
+      );
+    }
+
+    specs.push({
+      legalEntityId: targetLegalEntityId,
+      bookId: targetBookId,
+      fiscalPeriodId: targetFiscalPeriodId,
+      journalNo: buildSystemJournalNo("ICM", `${sourceLegalEntityId}-${targetLegalEntityId}`),
+      sourceType: "INTERCOMPANY",
+      entryDate: sourceEntryDate,
+      documentDate: sourceDocumentDate,
+      currencyCode: String(sourceCurrencyCode || "USD").toUpperCase(),
+      description: `Auto mirror of ${sourceJournalNo}${sourceDescription ? ` | ${sourceDescription}` : ""}`.slice(
+        0,
+        500
+      ),
+      referenceNo: buildMirrorReferenceNo(
+        sourceReferenceNo,
+        sourceJournalNo,
+        targetLegalEntityId
+      ),
+      totalDebit: mirrorDebitTotal,
+      totalCredit: mirrorCreditTotal,
+      lines: mirrorLines,
+    });
+  }
+
+  return specs;
+}
+
+async function insertDraftJournalEntry(tx, payload) {
+  const entryResult = await tx.query(
+    `INSERT INTO journal_entries (
+        tenant_id, legal_entity_id, book_id, fiscal_period_id, journal_no,
+        source_type, status, entry_date, document_date, currency_code,
+        description, reference_no, total_debit_base, total_credit_base, created_by_user_id,
+        intercompany_source_journal_entry_id
+      )
+     VALUES (?, ?, ?, ?, ?, ?, 'DRAFT', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      payload.tenantId,
+      payload.legalEntityId,
+      payload.bookId,
+      payload.fiscalPeriodId,
+      payload.journalNo,
+      payload.sourceType,
+      payload.entryDate,
+      payload.documentDate,
+      payload.currencyCode,
+      payload.description || null,
+      payload.referenceNo || null,
+      payload.totalDebit,
+      payload.totalCredit,
+      payload.userId,
+      parsePositiveInt(payload.intercompanySourceJournalEntryId) || null,
+    ]
+  );
+
+  const createdJournalEntryId = parsePositiveInt(entryResult.rows.insertId);
+  if (!createdJournalEntryId) {
+    throw badRequest("Failed to create journal entry");
+  }
+
+  const journalLines = Array.isArray(payload.lines) ? payload.lines : [];
+  for (let i = 0; i < journalLines.length; i += 1) {
+    const line = journalLines[i];
+    // eslint-disable-next-line no-await-in-loop
+    await tx.query(
+      `INSERT INTO journal_lines (
+          journal_entry_id, line_no, account_id, operating_unit_id,
+          counterparty_legal_entity_id, description, subledger_reference_no, currency_code,
+          amount_txn, debit_base, credit_base, tax_code
+        )
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        createdJournalEntryId,
+        i + 1,
+        parsePositiveInt(line.accountId),
+        parsePositiveInt(line.operatingUnitId),
+        parsePositiveInt(line.counterpartyLegalEntityId),
+        line.description ? String(line.description) : null,
+        normalizeOptionalShortText(
+          line.subledgerReferenceNo,
+          `lines[${i}].subledgerReferenceNo`,
+          100
+        ),
+        String(line.currencyCode || payload.currencyCode || "USD").toUpperCase(),
+        toAmount(line.amountTxn),
+        toAmount(line.debitBase),
+        toAmount(line.creditBase),
+        line.taxCode ? String(line.taxCode) : null,
+      ]
+    );
+  }
+
+  return createdJournalEntryId;
+}
+
+async function loadIntercompanyJournalCluster(tenantId, anchorJournal) {
+  const anchorJournalId = parsePositiveInt(anchorJournal?.id);
+  if (!anchorJournalId) {
+    return { sourceJournalId: null, rows: [] };
+  }
+
+  const sourceJournalId =
+    parsePositiveInt(anchorJournal?.intercompany_source_journal_entry_id) || anchorJournalId;
+
+  const result = await query(
+    `SELECT id, legal_entity_id, book_id, fiscal_period_id, status
+     FROM journal_entries
+     WHERE tenant_id = ?
+       AND (id = ? OR intercompany_source_journal_entry_id = ?)
+     ORDER BY id`,
+    [tenantId, sourceJournalId, sourceJournalId]
+  );
+
+  return {
+    sourceJournalId,
+    rows: result.rows || [],
+  };
+}
+
 async function validateJournalLineScope(req, tenantId, legalEntityId, line, index) {
   const lineLabel = `lines[${index}]`;
   const accountId = parsePositiveInt(line?.accountId);
@@ -823,9 +1652,15 @@ async function validateJournalLineScope(req, tenantId, legalEntityId, line, inde
     line?.operatingUnitId,
     `${lineLabel}.operatingUnitId`
   );
+  const subledgerReferenceNo = normalizeOptionalShortText(
+    line?.subledgerReferenceNo,
+    `${lineLabel}.subledgerReferenceNo`,
+    100
+  );
+  let selectedUnitHasSubledger = false;
   if (operatingUnitId) {
     const unitResult = await query(
-      `SELECT id, legal_entity_id
+      `SELECT id, legal_entity_id, has_subledger
        FROM operating_units
        WHERE id = ?
          AND tenant_id = ?
@@ -839,7 +1674,16 @@ async function validateJournalLineScope(req, tenantId, legalEntityId, line, inde
     if (parsePositiveInt(unit.legal_entity_id) !== legalEntityId) {
       throw badRequest(`${lineLabel}.operatingUnitId does not belong to legalEntityId`);
     }
+    selectedUnitHasSubledger = Boolean(unit.has_subledger);
     assertScopeAccess(req, "operating_unit", operatingUnitId, `${lineLabel}.operatingUnitId`);
+  }
+  if (subledgerReferenceNo && !operatingUnitId) {
+    throw badRequest(`${lineLabel}.subledgerReferenceNo requires operatingUnitId`);
+  }
+  if (selectedUnitHasSubledger && !subledgerReferenceNo) {
+    throw badRequest(
+      `${lineLabel}.subledgerReferenceNo is required because operatingUnitId has has_subledger enabled`
+    );
   }
 
   const counterpartyLegalEntityId = parseOptionalPositiveInt(
@@ -847,6 +1691,10 @@ async function validateJournalLineScope(req, tenantId, legalEntityId, line, inde
     `${lineLabel}.counterpartyLegalEntityId`
   );
   if (counterpartyLegalEntityId) {
+    if (counterpartyLegalEntityId === legalEntityId) {
+      throw badRequest(`${lineLabel}.counterpartyLegalEntityId cannot be the same as legalEntityId`);
+    }
+
     const counterpartyResult = await query(
       `SELECT id
        FROM legal_entities
@@ -1365,7 +2213,7 @@ router.get(
          je.total_debit_base, je.total_credit_base,
          je.created_by_user_id, je.posted_by_user_id, je.posted_at,
          je.reversed_by_user_id, je.reversed_at, je.reverse_reason,
-         je.reversal_journal_entry_id, je.created_at, je.updated_at,
+         je.reversal_journal_entry_id, je.intercompany_source_journal_entry_id, je.created_at, je.updated_at,
          le.code AS legal_entity_code, le.name AS legal_entity_name,
          b.code AS book_code, b.name AS book_name,
          fp.fiscal_year, fp.period_no, fp.period_name,
@@ -1398,7 +2246,7 @@ router.get(
           `SELECT
              jl.id, jl.journal_entry_id, jl.line_no, jl.account_id,
              jl.operating_unit_id, jl.counterparty_legal_entity_id,
-             jl.description, jl.currency_code, jl.amount_txn, jl.debit_base,
+             jl.description, jl.subledger_reference_no, jl.currency_code, jl.amount_txn, jl.debit_base,
              jl.credit_base, jl.tax_code, jl.created_at,
              a.code AS account_code, a.name AS account_name,
              ou.code AS operating_unit_code, ou.name AS operating_unit_name,
@@ -1463,7 +2311,7 @@ router.get(
          je.total_debit_base, je.total_credit_base,
          je.created_by_user_id, je.posted_by_user_id, je.posted_at,
          je.reversed_by_user_id, je.reversed_at, je.reverse_reason,
-         je.reversal_journal_entry_id, je.created_at, je.updated_at,
+         je.reversal_journal_entry_id, je.intercompany_source_journal_entry_id, je.created_at, je.updated_at,
          le.code AS legal_entity_code, le.name AS legal_entity_name,
          b.code AS book_code, b.name AS book_name,
          fp.fiscal_year, fp.period_no, fp.period_name
@@ -1487,7 +2335,7 @@ router.get(
       `SELECT
          jl.id, jl.journal_entry_id, jl.line_no, jl.account_id,
          jl.operating_unit_id, jl.counterparty_legal_entity_id,
-         jl.description, jl.currency_code, jl.amount_txn, jl.debit_base,
+         jl.description, jl.subledger_reference_no, jl.currency_code, jl.amount_txn, jl.debit_base,
          jl.credit_base, jl.tax_code, jl.created_at,
          a.code AS account_code, a.name AS account_name,
          ou.code AS operating_unit_code, ou.name AS operating_unit_name,
@@ -1539,12 +2387,17 @@ router.post(
     const legalEntityId = parsePositiveInt(req.body.legalEntityId);
     const bookId = parsePositiveInt(req.body.bookId);
     const fiscalPeriodId = parsePositiveInt(req.body.fiscalPeriodId);
+    const sourceType = normalizeJournalSourceType(req.body.sourceType);
+    const autoMirror = parseBooleanFlag(req.body?.autoMirror, false, "autoMirror");
     const lines = Array.isArray(req.body.lines) ? req.body.lines : [];
     if (!legalEntityId || !bookId || !fiscalPeriodId) {
       throw badRequest("legalEntityId, bookId and fiscalPeriodId must be positive integers");
     }
     if (lines.length < 2) {
       throw badRequest("At least 2 journal lines are required");
+    }
+    if (autoMirror && sourceType !== "INTERCOMPANY") {
+      throw badRequest("autoMirror is only supported for INTERCOMPANY source journals");
     }
 
     await assertLegalEntityBelongsToTenant(tenantId, legalEntityId, "legalEntityId");
@@ -1572,6 +2425,8 @@ router.post(
       await validateJournalLineScope(req, tenantId, legalEntityId, line, i);
     }
 
+    await validateIntercompanyJournalPolicy(tenantId, legalEntityId, sourceType, lines);
+
     if (Math.abs(totalDebit - totalCredit) > 0.0001) {
       throw badRequest("Journal is not balanced");
     }
@@ -1580,69 +2435,86 @@ router.post(
     if (!userId) throw badRequest("Authenticated user is required");
 
     const journalNo = req.body.journalNo || generateJournalNo();
-    const sourceType = String(req.body.sourceType || "MANUAL").toUpperCase();
+    const entryDate = toIsoDate(req.body.entryDate, "entryDate");
+    const documentDate = toIsoDate(req.body.documentDate, "documentDate");
     const description = req.body.description ? String(req.body.description) : null;
     const referenceNo = req.body.referenceNo ? String(req.body.referenceNo) : null;
     const currencyCode = String(req.body.currencyCode).toUpperCase();
 
-    const journalEntryId = await withTransaction(async (tx) => {
-      const entryResult = await tx.query(
-        `INSERT INTO journal_entries (
-            tenant_id, legal_entity_id, book_id, fiscal_period_id, journal_no,
-            source_type, status, entry_date, document_date, currency_code,
-            description, reference_no, total_debit_base, total_credit_base, created_by_user_id
-          )
-         VALUES (?, ?, ?, ?, ?, ?, 'DRAFT', ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
+    const mirrorDraftSpecs = autoMirror
+      ? await buildIntercompanyAutoMirrorDraftSpecs({
+          req,
           tenantId,
-          legalEntityId,
-          bookId,
-          fiscalPeriodId,
-          journalNo,
-          sourceType,
-          req.body.entryDate,
-          req.body.documentDate,
-          currencyCode,
-          description,
-          referenceNo,
-          totalDebit,
-          totalCredit,
-          userId,
-        ]
-      );
+          sourceLegalEntityId: legalEntityId,
+          sourceFiscalPeriodId: fiscalPeriodId,
+          sourceJournalNo: journalNo,
+          sourceEntryDate: entryDate,
+          sourceDocumentDate: documentDate,
+          sourceCurrencyCode: currencyCode,
+          sourceReferenceNo: referenceNo,
+          sourceDescription: description,
+          sourceLines: lines,
+        })
+      : [];
 
-      const createdJournalEntryId = parsePositiveInt(entryResult.rows.insertId);
-      if (!createdJournalEntryId) {
-        throw badRequest("Failed to create journal entry");
-      }
+    const { journalEntryId, mirrorJournalEntryIds } = await withTransaction(async (tx) => {
+      await ensurePeriodOpen(bookId, fiscalPeriodId, "create draft journal", tx.query.bind(tx));
 
-      for (let i = 0; i < lines.length; i += 1) {
-        const line = lines[i];
+      const createdJournalEntryId = await insertDraftJournalEntry(tx, {
+        tenantId,
+        legalEntityId,
+        bookId,
+        fiscalPeriodId,
+        journalNo,
+        sourceType,
+        entryDate,
+        documentDate,
+        currencyCode,
+        description,
+        referenceNo,
+        totalDebit,
+        totalCredit,
+        userId,
+        lines,
+      });
+
+      const createdMirrorIds = [];
+      for (const mirrorSpec of mirrorDraftSpecs) {
         // eslint-disable-next-line no-await-in-loop
-        await tx.query(
-          `INSERT INTO journal_lines (
-              journal_entry_id, line_no, account_id, operating_unit_id,
-              counterparty_legal_entity_id, description, currency_code,
-              amount_txn, debit_base, credit_base, tax_code
-            )
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            createdJournalEntryId,
-            i + 1,
-            parsePositiveInt(line.accountId),
-            parsePositiveInt(line.operatingUnitId),
-            parsePositiveInt(line.counterpartyLegalEntityId),
-            line.description ? String(line.description) : null,
-            String(line.currencyCode || currencyCode).toUpperCase(),
-            toAmount(line.amountTxn),
-            toAmount(line.debitBase),
-            toAmount(line.creditBase),
-            line.taxCode ? String(line.taxCode) : null,
-          ]
+        await ensurePeriodOpen(
+          parsePositiveInt(mirrorSpec.bookId),
+          parsePositiveInt(mirrorSpec.fiscalPeriodId),
+          `auto-create mirror draft journal for legalEntityId=${mirrorSpec.legalEntityId}`,
+          tx.query.bind(tx)
         );
+
+        // eslint-disable-next-line no-await-in-loop
+        const mirrorJournalEntryId = await insertDraftJournalEntry(tx, {
+          tenantId,
+          legalEntityId: mirrorSpec.legalEntityId,
+          bookId: mirrorSpec.bookId,
+          fiscalPeriodId: mirrorSpec.fiscalPeriodId,
+          journalNo: mirrorSpec.journalNo,
+          sourceType: mirrorSpec.sourceType,
+          entryDate: mirrorSpec.entryDate,
+          documentDate: mirrorSpec.documentDate,
+          currencyCode: mirrorSpec.currencyCode,
+          description: mirrorSpec.description,
+          referenceNo: mirrorSpec.referenceNo,
+          totalDebit: mirrorSpec.totalDebit,
+          totalCredit: mirrorSpec.totalCredit,
+          userId,
+          lines: mirrorSpec.lines,
+          intercompanySourceJournalEntryId: createdJournalEntryId,
+        });
+
+        createdMirrorIds.push(mirrorJournalEntryId);
       }
 
-      return createdJournalEntryId;
+      return {
+        journalEntryId: createdJournalEntryId,
+        mirrorJournalEntryIds: createdMirrorIds,
+      };
     });
 
     return res.status(201).json({
@@ -1652,6 +2524,8 @@ router.post(
       status: "DRAFT",
       totalDebit,
       totalCredit,
+      autoMirrorApplied: autoMirror,
+      mirrorJournalEntryIds,
     });
   })
 );
@@ -1674,6 +2548,11 @@ router.post(
 
     const userId = parsePositiveInt(req.user?.userId);
     if (!userId) throw badRequest("Authenticated user is required");
+    const postLinkedMirrors = parseBooleanFlag(
+      req.body?.postLinkedMirrors ?? req.body?.postLinkedMirror,
+      false,
+      "postLinkedMirrors"
+    );
 
     const journal = await loadJournal(tenantId, journalId);
     if (!journal) throw badRequest("Journal not found");
@@ -1681,27 +2560,102 @@ router.post(
       throw badRequest("Only DRAFT journals can be posted");
     }
 
-    await ensurePeriodOpen(
-      parsePositiveInt(journal.book_id),
-      parsePositiveInt(journal.fiscal_period_id),
-      "post journal"
-    );
+    let postedJournalIds = [journalId];
+    let linkedSourceJournalId = null;
+    let result = null;
 
-    const result = await query(
-      `UPDATE journal_entries
-       SET status = 'POSTED',
-           posted_by_user_id = ?,
-           posted_at = CURRENT_TIMESTAMP
-       WHERE id = ?
-         AND tenant_id = ?
-         AND status = 'DRAFT'`,
-      [userId, journalId, tenantId]
-    );
+    if (!postLinkedMirrors) {
+      await ensurePeriodOpen(
+        parsePositiveInt(journal.book_id),
+        parsePositiveInt(journal.fiscal_period_id),
+        "post journal"
+      );
+
+      result = await query(
+        `UPDATE journal_entries
+         SET status = 'POSTED',
+             posted_by_user_id = ?,
+             posted_at = CURRENT_TIMESTAMP
+         WHERE id = ?
+           AND tenant_id = ?
+           AND status = 'DRAFT'`,
+        [userId, journalId, tenantId]
+      );
+    } else {
+      const cluster = await loadIntercompanyJournalCluster(tenantId, journal);
+      linkedSourceJournalId = parsePositiveInt(cluster.sourceJournalId);
+      const clusterRows = Array.isArray(cluster.rows) ? cluster.rows : [];
+      if (clusterRows.length === 0) {
+        throw badRequest("Linked intercompany journals not found");
+      }
+
+      for (const row of clusterRows) {
+        const scopedLegalEntityId = parsePositiveInt(row.legal_entity_id);
+        assertScopeAccess(
+          req,
+          "legal_entity",
+          scopedLegalEntityId,
+          `linkedJournal.legalEntityId=${scopedLegalEntityId}`
+        );
+      }
+
+      const draftRows = clusterRows.filter(
+        (row) => String(row.status || "").toUpperCase() === "DRAFT"
+      );
+      const draftJournalIds = draftRows
+        .map((row) => parsePositiveInt(row.id))
+        .filter(Boolean);
+
+      if (draftJournalIds.length === 0) {
+        return res.json({
+          ok: true,
+          journalId,
+          posted: false,
+          postedJournalIds: [],
+          linkedMirrorPosting: true,
+          sourceJournalId: linkedSourceJournalId || journalId,
+        });
+      }
+
+      result = await withTransaction(async (tx) => {
+        for (const row of draftRows) {
+          // eslint-disable-next-line no-await-in-loop
+          await ensurePeriodOpen(
+            parsePositiveInt(row.book_id),
+            parsePositiveInt(row.fiscal_period_id),
+            "post linked intercompany journals",
+            tx.query.bind(tx)
+          );
+        }
+
+        const placeholders = draftJournalIds.map(() => "?").join(", ");
+        return tx.query(
+          `UPDATE journal_entries
+           SET status = 'POSTED',
+               posted_by_user_id = ?,
+               posted_at = CURRENT_TIMESTAMP
+           WHERE tenant_id = ?
+             AND status = 'DRAFT'
+             AND id IN (${placeholders})`,
+          [userId, tenantId, ...draftJournalIds]
+        );
+      });
+
+      postedJournalIds = draftJournalIds;
+    }
+
+    const posted = Number(result?.rows?.affectedRows || 0) > 0;
+    if (!posted) {
+      postedJournalIds = [];
+    }
 
     return res.json({
       ok: true,
       journalId,
-      posted: Number(result.rows.affectedRows || 0) > 0,
+      posted,
+      postedJournalIds,
+      linkedMirrorPosting: postLinkedMirrors,
+      sourceJournalId: linkedSourceJournalId || null,
     });
   })
 );
@@ -1753,7 +2707,7 @@ router.post(
     const lineResult = await query(
       `SELECT
          account_id, operating_unit_id, counterparty_legal_entity_id, description,
-         currency_code, amount_txn, debit_base, credit_base, tax_code
+         subledger_reference_no, currency_code, amount_txn, debit_base, credit_base, tax_code
        FROM journal_lines
        WHERE journal_entry_id = ?
        ORDER BY line_no`,
@@ -1808,10 +2762,10 @@ router.post(
         await tx.query(
           `INSERT INTO journal_lines (
               journal_entry_id, line_no, account_id, operating_unit_id,
-              counterparty_legal_entity_id, description, currency_code,
+              counterparty_legal_entity_id, description, subledger_reference_no, currency_code,
               amount_txn, debit_base, credit_base, tax_code
            )
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             createdReversalJournalId,
             i + 1,
@@ -1819,6 +2773,7 @@ router.post(
             parsePositiveInt(line.operating_unit_id),
             parsePositiveInt(line.counterparty_legal_entity_id),
             line.description ? String(line.description) : null,
+            normalizeOptionalShortText(line.subledger_reference_no, "subledger_reference_no", 100),
             String(line.currency_code || original.currency_code).toUpperCase(),
             Number(line.amount_txn || 0) * -1,
             Number(line.credit_base || 0),

@@ -55,6 +55,13 @@ function resolveReadinessChip(loading, error, ready, t) {
   };
 }
 
+function getReadinessCheckLabel(t, check) {
+  return t(
+    ["readinessChecklist", "checkLabels", check?.key],
+    check?.label || check?.key || ""
+  );
+}
+
 function Icon({ name, className = "h-4 w-4" }) {
   switch (name) {
     case "dashboard":
@@ -680,7 +687,7 @@ export default function AppLayout() {
                             className="flex items-center justify-between rounded-md border border-rose-200 bg-rose-50 px-2 py-1.5"
                           >
                             <span className="text-xs text-rose-900">
-                              {check.label || check.key}
+                              {getReadinessCheckLabel(t, check)}
                             </span>
                             <span className="text-[11px] font-semibold text-rose-700">
                               {check.count}/{check.minimum}

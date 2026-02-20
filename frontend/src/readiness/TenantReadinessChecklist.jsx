@@ -3,6 +3,13 @@ import { useAuth } from "../auth/useAuth.js";
 import { useI18n } from "../i18n/useI18n.js";
 import { useTenantReadiness } from "./useTenantReadiness.js";
 
+function getReadinessCheckLabel(t, check) {
+  return t(
+    ["readinessChecklist", "checkLabels", check?.key],
+    check?.label || check?.key || ""
+  );
+}
+
 export default function TenantReadinessChecklist() {
   const { hasPermission } = useAuth();
   const { t } = useI18n();
@@ -19,6 +26,34 @@ export default function TenantReadinessChecklist() {
   } = useTenantReadiness();
 
   const canBootstrap = hasPermission("onboarding.company.setup");
+  const setupRouteByCheckKey = {
+    groupCompanies: "/app/ayarlar/organizasyon-yonetimi",
+    legalEntities: "/app/ayarlar/organizasyon-yonetimi",
+    fiscalCalendars: "/app/ayarlar/organizasyon-yonetimi",
+    fiscalPeriods: "/app/ayarlar/organizasyon-yonetimi",
+    books: "/app/ayarlar/hesap-plani-ayarlari",
+    openBookPeriods: "/app/ayarlar/organizasyon-yonetimi",
+    chartsOfAccounts: "/app/ayarlar/hesap-plani-ayarlari",
+    accounts: "/app/ayarlar/hesap-plani-ayarlari",
+    shareholders: "/app/ayarlar/organizasyon-yonetimi",
+    shareholderCommitmentConfigs: "/app/ayarlar/organizasyon-yonetimi",
+  };
+  const missingStepLinks = Array.from(
+    new Map(
+      missingChecks
+        .map((check) => {
+          const to = setupRouteByCheckKey[check.key];
+          if (!to) {
+            return null;
+          }
+          return [
+            check.key,
+            { key: check.key, to, label: getReadinessCheckLabel(t, check) },
+          ];
+        })
+        .filter(Boolean)
+    ).values()
+  );
 
   if (loading) {
     return (
@@ -95,7 +130,9 @@ export default function TenantReadinessChecklist() {
             className="rounded-lg border border-white/60 bg-white/70 px-3 py-2 text-sm"
           >
             <div className="flex items-center justify-between gap-2">
-              <span className="font-medium text-slate-800">{check.label}</span>
+              <span className="font-medium text-slate-800">
+                {getReadinessCheckLabel(t, check)}
+              </span>
               <span
                 className={`rounded px-2 py-0.5 text-xs font-semibold ${
                   check.ready
@@ -122,8 +159,26 @@ export default function TenantReadinessChecklist() {
         <div className="mt-3 text-xs text-amber-900">
           {t("readinessChecklist.missing")}{" "}
           <span className="font-semibold">
-            {missingChecks.map((check) => check.label).join(", ")}
+            {missingChecks.map((check) => getReadinessCheckLabel(t, check)).join(", ")}
           </span>
+        </div>
+      )}
+      {!readiness.ready && missingStepLinks.length > 0 && (
+        <div className="mt-3 rounded-lg border border-white/60 bg-white/70 p-3">
+          <p className="text-xs font-semibold text-slate-700">
+            {t("readinessChecklist.setupStepsTitle")}
+          </p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {missingStepLinks.map((item) => (
+              <Link
+                key={item.key}
+                to={item.to}
+                className="rounded border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700"
+              >
+                {item.label}
+              </Link>
+            ))}
+          </div>
         </div>
       )}
 

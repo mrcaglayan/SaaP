@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import {
   createJournal,
   listAccounts,
@@ -9,6 +10,8 @@ import {
   listFiscalPeriods,
   listLegalEntities,
   listOperatingUnits,
+  listShareholderJournalConfigs,
+  listShareholders,
 } from "../api/orgAdmin.js";
 import { useAuth } from "../auth/useAuth.js";
 import { useI18n } from "../i18n/useI18n.js";
@@ -39,6 +42,7 @@ function createLine() {
     id: `line-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     accountId: "",
     operatingUnitId: "",
+    subledgerReferenceNo: "",
     counterpartyLegalEntityId: "",
     description: "",
     debitBase: "0",
@@ -70,6 +74,8 @@ export default function AcilisFisiOlustur() {
   const [books, setBooks] = useState([]);
   const [accounts, setAccounts] = useState([]);
   const [operatingUnits, setOperatingUnits] = useState([]);
+  const [shareholders, setShareholders] = useState([]);
+  const [shareholderJournalConfigs, setShareholderJournalConfigs] = useState([]);
   const [periods, setPeriods] = useState([]);
 
   const [form, setForm] = useState({
@@ -87,6 +93,17 @@ export default function AcilisFisiOlustur() {
 
   const selectedLegalEntityId = toPositiveInt(form.legalEntityId);
   const selectedBookId = toPositiveInt(form.bookId);
+  const unitsById = useMemo(() => {
+    const map = new Map();
+    for (const unit of operatingUnits) {
+      const unitId = toPositiveInt(unit.id);
+      if (!unitId) {
+        continue;
+      }
+      map.set(unitId, unit);
+    }
+    return map;
+  }, [operatingUnits]);
   const postableAccounts = useMemo(() => {
     const parentIds = new Set(
       accounts
@@ -116,6 +133,8 @@ export default function AcilisFisiOlustur() {
         setBooks([]);
         setAccounts([]);
         setOperatingUnits([]);
+        setShareholders([]);
+        setShareholderJournalConfigs([]);
         return;
       }
 
@@ -123,7 +142,7 @@ export default function AcilisFisiOlustur() {
       setError("");
 
       try {
-        const [entityRes, bookRes, accountRes, unitRes] = await Promise.all([
+        const [entityRes, bookRes, accountRes, unitRes, shareholdersRes, shareholderConfigsRes] = await Promise.all([
           canReadOrgTree ? listLegalEntities() : Promise.resolve({ rows: [] }),
           canReadBooks
             ? listBooks(
@@ -146,6 +165,20 @@ export default function AcilisFisiOlustur() {
                   : {}
               )
             : Promise.resolve({ rows: [] }),
+          canReadOrgTree
+            ? listShareholders(
+                selectedLegalEntityId
+                  ? { legalEntityId: selectedLegalEntityId }
+                  : {}
+              )
+            : Promise.resolve({ rows: [] }),
+          canReadOrgTree
+            ? listShareholderJournalConfigs(
+                selectedLegalEntityId
+                  ? { legalEntityId: selectedLegalEntityId }
+                  : {}
+              )
+            : Promise.resolve({ rows: [] }),
         ]);
 
         if (cancelled) {
@@ -156,11 +189,15 @@ export default function AcilisFisiOlustur() {
         const bookRows = bookRes?.rows || [];
         const accountRows = accountRes?.rows || [];
         const unitRows = unitRes?.rows || [];
+        const shareholderRows = shareholdersRes?.rows || [];
+        const shareholderConfigRows = shareholderConfigsRes?.rows || [];
 
         setLegalEntities(entityRows);
         setBooks(bookRows);
         setAccounts(accountRows);
         setOperatingUnits(unitRows);
+        setShareholders(shareholderRows);
+        setShareholderJournalConfigs(shareholderConfigRows);
 
         setForm((prev) => {
           const next = { ...prev };
@@ -270,6 +307,83 @@ export default function AcilisFisiOlustur() {
       { debit: 0, credit: 0 }
     );
   }, [lines]);
+  const selectedEntityShareholders = useMemo(
+    () =>
+      shareholders.filter(
+        (row) => Number(row.legal_entity_id) === Number(selectedLegalEntityId)
+      ),
+    [selectedLegalEntityId, shareholders]
+  );
+  const selectedEntityCommitmentMapping = useMemo(
+    () =>
+      shareholderJournalConfigs.find(
+        (row) => Number(row.legal_entity_id) === Number(selectedLegalEntityId)
+      ) || null,
+    [selectedLegalEntityId, shareholderJournalConfigs]
+  );
+  const selectedEntityEquityAccounts = useMemo(
+    () =>
+      accounts.filter((row) => {
+        const sameEntity =
+          Number(row.legal_entity_id) === Number(selectedLegalEntityId);
+        const isActive = Boolean(row.is_active);
+        const isEquity = String(row.account_type || "").toUpperCase() === "EQUITY";
+        const allowPosting = !(
+          row.allow_posting === false ||
+          row.allow_posting === 0 ||
+          row.allow_posting === "0"
+        );
+        return sameEntity && isActive && isEquity && allowPosting;
+      }),
+    [accounts, selectedLegalEntityId]
+  );
+  const commitmentSetupChecks = useMemo(() => {
+    if (!selectedLegalEntityId) {
+      return [];
+    }
+    return [
+      {
+        key: "shareholderMaster",
+        label: l("Shareholder master exists", "Ortak ana verisi mevcut"),
+        ready: selectedEntityShareholders.length > 0,
+      },
+      {
+        key: "commitmentMapping",
+        label: l(
+          "Commitment debit account mapping exists",
+          "Taahhut borc hesap eslemesi mevcut"
+        ),
+        ready: Boolean(selectedEntityCommitmentMapping),
+      },
+      {
+        key: "equitySubAccount",
+        label: l(
+          "Capital equity sub-account exists",
+          "Sermaye icin equity alt hesap mevcut"
+        ),
+        ready: selectedEntityEquityAccounts.length > 0,
+      },
+      {
+        key: "periods",
+        label: l(
+          "Fiscal periods are generated",
+          "Mali donemler olusturulmus"
+        ),
+        ready: periods.length > 0,
+      },
+    ];
+  }, [
+    l,
+    periods.length,
+    selectedEntityCommitmentMapping,
+    selectedEntityEquityAccounts.length,
+    selectedEntityShareholders.length,
+    selectedLegalEntityId,
+  ]);
+  const missingCommitmentSetupChecks = useMemo(
+    () => commitmentSetupChecks.filter((check) => !check.ready),
+    [commitmentSetupChecks]
+  );
 
   const isBalanced =
     Math.abs(totals.debit - totals.credit) < 0.0001 && totals.debit > 0;
@@ -336,6 +450,46 @@ export default function AcilisFisiOlustur() {
         );
         return;
       }
+      const operatingUnitId = toPositiveInt(line.operatingUnitId);
+      if (line.operatingUnitId && !operatingUnitId) {
+        setError(
+          l(
+            `${lineLabel}: operating unit must be a positive integer.`,
+            `Satir ${i + 1}: birim pozitif bir tam sayi olmali.`
+          )
+        );
+        return;
+      }
+      const selectedUnit = operatingUnitId ? unitsById.get(operatingUnitId) || null : null;
+      const requiresSubledgerReference = Boolean(selectedUnit?.has_subledger);
+      const subledgerReferenceNo = String(line.subledgerReferenceNo || "").trim();
+      if (subledgerReferenceNo && !operatingUnitId) {
+        setError(
+          l(
+            `${lineLabel}: subledger reference requires operating unit.`,
+            `Satir ${i + 1}: alt defter referansi icin birim secilmelidir.`
+          )
+        );
+        return;
+      }
+      if (requiresSubledgerReference && !subledgerReferenceNo) {
+        setError(
+          l(
+            `${lineLabel}: subledger reference is required for selected unit.`,
+            `Satir ${i + 1}: secilen birim icin alt defter referansi zorunludur.`
+          )
+        );
+        return;
+      }
+      if (subledgerReferenceNo.length > 100) {
+        setError(
+          l(
+            `${lineLabel}: subledger reference must be at most 100 characters.`,
+            `Satir ${i + 1}: alt defter referansi en fazla 100 karakter olabilir.`
+          )
+        );
+        return;
+      }
 
       const debitBase = toAmount(line.debitBase);
       const creditBase = toAmount(line.creditBase);
@@ -360,7 +514,8 @@ export default function AcilisFisiOlustur() {
 
       normalizedLines.push({
         accountId,
-        operatingUnitId: toPositiveInt(line.operatingUnitId) || undefined,
+        operatingUnitId: operatingUnitId || undefined,
+        subledgerReferenceNo: subledgerReferenceNo || undefined,
         counterpartyLegalEntityId:
           toPositiveInt(line.counterpartyLegalEntityId) || undefined,
         description: line.description.trim() || undefined,
@@ -456,6 +611,72 @@ export default function AcilisFisiOlustur() {
           )}
         </p>
       </header>
+      {selectedLegalEntityId ? (
+        <section className="rounded-xl border border-slate-200 bg-white p-4">
+          <h2 className="text-sm font-semibold text-slate-700">
+            {l(
+              "Capital Commitment Setup Required List",
+              "Sermaye Taahhut Kurulum Gereklilik Listesi"
+            )}
+          </h2>
+          <p className="mt-1 text-xs text-slate-600">
+            {l(
+              "Used when this opening entry is for shareholder capital commitment (sermaye taahhut kaydi).",
+              "Bu liste, acilis fisini hissedar sermaye taahhut kaydi icin kullandiginizda gecerlidir."
+            )}
+          </p>
+          <div className="mt-2 grid gap-2 md:grid-cols-2">
+            {commitmentSetupChecks.map((check) => (
+              <div
+                key={check.key}
+                className="flex items-center justify-between rounded border border-slate-200 bg-slate-50 px-3 py-2 text-xs"
+              >
+                <span className="text-slate-700">{check.label}</span>
+                <span
+                  className={`rounded px-2 py-0.5 font-semibold ${
+                    check.ready
+                      ? "bg-emerald-100 text-emerald-700"
+                      : "bg-amber-100 text-amber-800"
+                  }`}
+                >
+                  {check.ready ? l("OK", "Tamam") : l("Missing", "Eksik")}
+                </span>
+              </div>
+            ))}
+          </div>
+          {missingCommitmentSetupChecks.length > 0 ? (
+            <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+              <div className="font-semibold">
+                {l(
+                  "System notice: setup is incomplete for automatic capital commitment journal flow.",
+                  "Sistem uyarisi: otomatik sermaye taahhut yevmiye akisi icin kurulum eksik."
+                )}
+              </div>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <Link
+                  to="/app/ayarlar/organizasyon-yonetimi"
+                  className="rounded border border-amber-300 bg-white px-2.5 py-1 font-semibold text-amber-900"
+                >
+                  {l("Open Organization Management", "Organizasyon Yonetimini Ac")}
+                </Link>
+                <Link
+                  to="/app/ayarlar/hesap-plani-ayarlari"
+                  className="rounded border border-amber-300 bg-white px-2.5 py-1 font-semibold text-amber-900"
+                >
+                  {l("Open GL Setup", "GL Ayarlarini Ac")}
+                </Link>
+              </div>
+            </div>
+          ) : (
+            <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+              {l(
+                "System notice: setup is complete for capital commitment journal entries.",
+                "Sistem bildirimi: sermaye taahhut yevmiye kaydi icin kurulum tamamlandi."
+              )}
+            </div>
+          )}
+        </section>
+      ) : null}
 
       {!canCreateJournal && (
         <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
@@ -604,6 +825,7 @@ export default function AcilisFisiOlustur() {
                 <tr>
                   <th className="px-3 py-2">{l("Account", "Hesap")}</th>
                   <th className="px-3 py-2">{l("Unit", "Birim")}</th>
+                  <th className="px-3 py-2">{l("Subledger Ref", "Alt Defter Ref")}</th>
                   <th className="px-3 py-2">{l("Counterparty", "Karsi taraf")}</th>
                   <th className="px-3 py-2">{l("Description", "Aciklama")}</th>
                   <th className="px-3 py-2">{l("Debit", "Borc")}</th>
@@ -648,6 +870,21 @@ export default function AcilisFisiOlustur() {
                           </option>
                         ))}
                       </select>
+                    </td>
+                    <td className="px-3 py-2">
+                      <input
+                        value={line.subledgerReferenceNo || ""}
+                        onChange={(event) =>
+                          updateLine(line.id, "subledgerReferenceNo", event.target.value)
+                        }
+                        className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs"
+                        placeholder={
+                          (unitsById.get(toPositiveInt(line.operatingUnitId))?.has_subledger ?? false)
+                            ? l("Required", "Zorunlu")
+                            : l("Optional", "Opsiyonel")
+                        }
+                        required={unitsById.get(toPositiveInt(line.operatingUnitId))?.has_subledger ?? false}
+                      />
                     </td>
                     <td className="px-3 py-2">
                       <select
@@ -724,7 +961,7 @@ export default function AcilisFisiOlustur() {
               </tbody>
               <tfoot>
                 <tr className="border-t border-slate-200 bg-slate-50 text-sm font-semibold text-slate-700">
-                  <td className="px-3 py-2" colSpan={4}>
+                  <td className="px-3 py-2" colSpan={5}>
                     {l("Totals", "Toplamlar")}
                   </td>
                   <td className="px-3 py-2 text-right">{formatAmount(totals.debit)}</td>

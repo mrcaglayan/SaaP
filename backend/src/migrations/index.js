@@ -7,6 +7,8 @@ import migration006ProviderControlPlane from "./m006_provider_control_plane.js";
 import migration007ShareholdersMaster from "./m007_shareholders_master.js";
 import migration008ShareholderCapitalSubAccount from "./m008_shareholder_capital_sub_account.js";
 import migration009JournalPurposeAccounts from "./m009_journal_purpose_accounts.js";
+import migration010IntercompanyJournalLinks from "./m010_intercompany_journal_links.js";
+import migration011JournalLineSubledgerReference from "./m011_journal_line_subledger_reference.js";
 
 const migrations = [
   migration001GlobalMultiEntity,
@@ -18,6 +20,8 @@ const migrations = [
   migration007ShareholdersMaster,
   migration008ShareholderCapitalSubAccount,
   migration009JournalPurposeAccounts,
+  migration010IntercompanyJournalLinks,
+  migration011JournalLineSubledgerReference,
 ];
 
 export default migrations;

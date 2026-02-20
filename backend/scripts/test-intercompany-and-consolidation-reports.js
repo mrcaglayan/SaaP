@@ -238,6 +238,38 @@ async function createAndPostJournal({
   return journalEntryId;
 }
 
+async function createDraftJournal({
+  token,
+  legalEntityId,
+  bookId,
+  fiscalPeriodId,
+  entryDate,
+  currencyCode,
+  sourceType = "MANUAL",
+  lines,
+  extraPayload = {},
+  expectedStatus = 201,
+}) {
+  return apiRequest({
+    token,
+    method: "POST",
+    path: "/api/v1/gl/journals",
+    body: {
+      legalEntityId,
+      bookId,
+      fiscalPeriodId,
+      entryDate,
+      documentDate: entryDate,
+      currencyCode,
+      sourceType,
+      description: "Intercompany policy check journal",
+      lines,
+      ...extraPayload,
+    },
+    expectedStatus,
+  });
+}
+
 async function bootstrapScenario(token) {
   const countryResult = await query(
     `SELECT id, default_currency_code
@@ -334,6 +366,22 @@ async function bootstrapScenario(token) {
   });
   const legalEntityBId = toNumber(entityBResult.json?.id);
   assert(legalEntityBId > 0, "legalEntityBId not created");
+
+  const entityCResult = await apiRequest({
+    token,
+    method: "POST",
+    path: "/api/v1/org/legal-entities",
+    body: {
+      groupCompanyId,
+      code: `ICC_${suffix}`,
+      name: `Interco C ${suffix}`,
+      countryId,
+      functionalCurrencyCode: currencyCode,
+    },
+    expectedStatus: 201,
+  });
+  const legalEntityCId = toNumber(entityCResult.json?.id);
+  assert(legalEntityCId > 0, "legalEntityCId not created");
 
   const bookAResult = await apiRequest({
     token,
@@ -706,14 +754,192 @@ async function bootstrapScenario(token) {
 
   return {
     fiscalPeriodId,
+    entryDate,
+    currencyCode,
+    bookAId,
+    bookBId,
+    accountARAId,
+    accountRevAId,
+    accountAPBId,
+    accountExpBId,
     legalEntityAId,
     legalEntityBId,
+    legalEntityCId,
+    localCoaBId,
     runId,
     groupARCode: "1100",
     groupAPCode: "2100",
     groupRevenueCode: "4000",
     groupExpenseCode: "5000",
   };
+}
+
+async function verifyIntercompanyPolicyEnforcement(token, scenario) {
+  await apiRequest({
+    token,
+    method: "PATCH",
+    path: `/api/v1/intercompany/entity-flags/${scenario.legalEntityAId}`,
+    body: { isIntercompanyEnabled: false },
+    expectedStatus: 200,
+  });
+
+  const disabledEntityAttempt = await createDraftJournal({
+    token,
+    legalEntityId: scenario.legalEntityAId,
+    bookId: scenario.bookAId,
+    fiscalPeriodId: scenario.fiscalPeriodId,
+    entryDate: scenario.entryDate,
+    currencyCode: scenario.currencyCode,
+    sourceType: "MANUAL",
+    lines: [
+      {
+        accountId: scenario.accountARAId,
+        counterpartyLegalEntityId: scenario.legalEntityBId,
+        currencyCode: scenario.currencyCode,
+        amountTxn: 10,
+        debitBase: 10,
+        creditBase: 0,
+      },
+      {
+        accountId: scenario.accountRevAId,
+        counterpartyLegalEntityId: scenario.legalEntityBId,
+        currencyCode: scenario.currencyCode,
+        amountTxn: -10,
+        debitBase: 0,
+        creditBase: 10,
+      },
+    ],
+    expectedStatus: 400,
+  });
+  assert(
+    String(disabledEntityAttempt.json?.message || "")
+      .toLowerCase()
+      .includes("intercompany disabled"),
+    "Expected disabled-entity intercompany policy rejection"
+  );
+
+  await apiRequest({
+    token,
+    method: "PATCH",
+    path: `/api/v1/intercompany/entity-flags/${scenario.legalEntityAId}`,
+    body: { isIntercompanyEnabled: true },
+    expectedStatus: 200,
+  });
+
+  await apiRequest({
+    token,
+    method: "PATCH",
+    path: `/api/v1/intercompany/entity-flags/${scenario.legalEntityAId}`,
+    body: { intercompanyPartnerRequired: true },
+    expectedStatus: 200,
+  });
+
+  const missingPartnerAttempt = await createDraftJournal({
+    token,
+    legalEntityId: scenario.legalEntityAId,
+    bookId: scenario.bookAId,
+    fiscalPeriodId: scenario.fiscalPeriodId,
+    entryDate: scenario.entryDate,
+    currencyCode: scenario.currencyCode,
+    sourceType: "INTERCOMPANY",
+    lines: [
+      {
+        accountId: scenario.accountARAId,
+        counterpartyLegalEntityId: scenario.legalEntityBId,
+        currencyCode: scenario.currencyCode,
+        amountTxn: 15,
+        debitBase: 15,
+        creditBase: 0,
+      },
+      {
+        accountId: scenario.accountRevAId,
+        currencyCode: scenario.currencyCode,
+        amountTxn: -15,
+        debitBase: 0,
+        creditBase: 15,
+      },
+    ],
+    expectedStatus: 400,
+  });
+  assert(
+    String(missingPartnerAttempt.json?.message || "")
+      .toLowerCase()
+      .includes("requires intercompany partner"),
+    "Expected partner-required policy rejection"
+  );
+
+  await apiRequest({
+    token,
+    method: "PATCH",
+    path: `/api/v1/intercompany/entity-flags/${scenario.legalEntityAId}`,
+    body: { intercompanyPartnerRequired: false },
+    expectedStatus: 200,
+  });
+
+  const missingPairAttempt = await createDraftJournal({
+    token,
+    legalEntityId: scenario.legalEntityAId,
+    bookId: scenario.bookAId,
+    fiscalPeriodId: scenario.fiscalPeriodId,
+    entryDate: scenario.entryDate,
+    currencyCode: scenario.currencyCode,
+    sourceType: "MANUAL",
+    lines: [
+      {
+        accountId: scenario.accountARAId,
+        counterpartyLegalEntityId: scenario.legalEntityCId,
+        currencyCode: scenario.currencyCode,
+        amountTxn: 12,
+        debitBase: 12,
+        creditBase: 0,
+      },
+      {
+        accountId: scenario.accountRevAId,
+        counterpartyLegalEntityId: scenario.legalEntityCId,
+        currencyCode: scenario.currencyCode,
+        amountTxn: -12,
+        debitBase: 0,
+        creditBase: 12,
+      },
+    ],
+    expectedStatus: 400,
+  });
+  assert(
+    String(missingPairAttempt.json?.message || "")
+      .toLowerCase()
+      .includes("pair mapping"),
+    "Expected missing active pair mapping rejection"
+  );
+
+  await apiRequest({
+    token,
+    method: "PATCH",
+    path: `/api/v1/intercompany/entity-flags/${scenario.legalEntityBId}`,
+    body: { isIntercompanyEnabled: false },
+    expectedStatus: 200,
+  });
+
+  const complianceResult = await apiRequest({
+    token,
+    method: "GET",
+    path: `/api/v1/intercompany/compliance-issues?fiscalPeriodId=${scenario.fiscalPeriodId}&includeDraft=false&limit=200`,
+    expectedStatus: 200,
+  });
+  const complianceRows = complianceResult.json?.rows || [];
+  const disabledIssue = complianceRows.find(
+    (row) =>
+      String(row.issueCode || "") === "ENTITY_INTERCOMPANY_DISABLED" &&
+      toNumber(row.fromLegalEntityId) === scenario.legalEntityBId
+  );
+  assert(disabledIssue, "Expected compliance issue row for disabled source legal entity");
+
+  await apiRequest({
+    token,
+    method: "PATCH",
+    path: `/api/v1/intercompany/entity-flags/${scenario.legalEntityBId}`,
+    body: { isIntercompanyEnabled: true },
+    expectedStatus: 200,
+  });
 }
 
 async function verifyIntercompanyReconciliation(token, scenario) {
@@ -935,6 +1161,113 @@ async function verifyConsolidationReports(token, scenario) {
   assert(expenseRow, "Posted income statement expense row missing");
 }
 
+async function verifyIntercompanyAutoMirrorLinkedPosting(token, scenario) {
+  await createAccount({
+    token,
+    coaId: scenario.localCoaBId,
+    code: "1100",
+    name: "Mirror IC Receivable",
+    accountType: "ASSET",
+    normalSide: "DEBIT",
+  });
+  await createAccount({
+    token,
+    coaId: scenario.localCoaBId,
+    code: "4000",
+    name: "Mirror Intercompany Revenue",
+    accountType: "REVENUE",
+    normalSide: "CREDIT",
+  });
+
+  const createResult = await createDraftJournal({
+    token,
+    legalEntityId: scenario.legalEntityAId,
+    bookId: scenario.bookAId,
+    fiscalPeriodId: scenario.fiscalPeriodId,
+    entryDate: scenario.entryDate,
+    currencyCode: scenario.currencyCode,
+    sourceType: "INTERCOMPANY",
+    lines: [
+      {
+        accountId: scenario.accountARAId,
+        counterpartyLegalEntityId: scenario.legalEntityBId,
+        currencyCode: scenario.currencyCode,
+        amountTxn: 21,
+        debitBase: 21,
+        creditBase: 0,
+      },
+      {
+        accountId: scenario.accountRevAId,
+        counterpartyLegalEntityId: scenario.legalEntityBId,
+        currencyCode: scenario.currencyCode,
+        amountTxn: -21,
+        debitBase: 0,
+        creditBase: 21,
+      },
+    ],
+    extraPayload: {
+      autoMirror: true,
+      description: "Auto mirror integration check",
+    },
+    expectedStatus: 201,
+  });
+
+  const sourceJournalId = toNumber(createResult.json?.journalEntryId);
+  assert(sourceJournalId > 0, "Expected source draft journal id for auto-mirror flow");
+  const mirrorJournalIds = Array.isArray(createResult.json?.mirrorJournalEntryIds)
+    ? createResult.json.mirrorJournalEntryIds.map((id) => toNumber(id)).filter((id) => id > 0)
+    : [];
+  assert(mirrorJournalIds.length === 1, "Expected one mirror draft journal id");
+  const mirrorJournalId = mirrorJournalIds[0];
+
+  const mirrorDetailBeforePost = await apiRequest({
+    token,
+    method: "GET",
+    path: `/api/v1/gl/journals/${mirrorJournalId}`,
+    expectedStatus: 200,
+  });
+  assert(
+    toNumber(mirrorDetailBeforePost.json?.row?.intercompany_source_journal_entry_id) ===
+      sourceJournalId,
+    "Mirror journal must link to source journal"
+  );
+  assert(
+    String(mirrorDetailBeforePost.json?.row?.status || "").toUpperCase() === "DRAFT",
+    "Mirror journal must be created as DRAFT"
+  );
+
+  const postResult = await apiRequest({
+    token,
+    method: "POST",
+    path: `/api/v1/gl/journals/${sourceJournalId}/post`,
+    body: { postLinkedMirrors: true },
+    expectedStatus: 200,
+  });
+
+  const postedIds = Array.isArray(postResult.json?.postedJournalIds)
+    ? postResult.json.postedJournalIds.map((id) => toNumber(id))
+    : [];
+  assert(
+    postedIds.includes(sourceJournalId),
+    "Linked post must include source journal id"
+  );
+  assert(
+    postedIds.includes(mirrorJournalId),
+    "Linked post must include mirror journal id"
+  );
+
+  const mirrorDetailAfterPost = await apiRequest({
+    token,
+    method: "GET",
+    path: `/api/v1/gl/journals/${mirrorJournalId}`,
+    expectedStatus: 200,
+  });
+  assert(
+    String(mirrorDetailAfterPost.json?.row?.status || "").toUpperCase() === "POSTED",
+    "Mirror journal should be POSTED by linked posting"
+  );
+}
+
 async function main() {
   const identity = await createTenantAndAdmin();
   const server = startServerProcess();
@@ -945,8 +1278,10 @@ async function main() {
     const token = await login(identity.adminEmail, identity.password);
 
     const scenario = await bootstrapScenario(token);
+    await verifyIntercompanyPolicyEnforcement(token, scenario);
     await verifyIntercompanyReconciliation(token, scenario);
     await verifyConsolidationReports(token, scenario);
+    await verifyIntercompanyAutoMirrorLinkedPosting(token, scenario);
 
     console.log("");
     console.log("Intercompany reconciliation + consolidation reports test passed.");

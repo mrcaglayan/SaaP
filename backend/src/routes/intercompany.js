@@ -36,6 +36,66 @@ function parseBooleanLike(value, fallback = false) {
   throw badRequest("Boolean flag values must be true/false");
 }
 
+function buildComplianceBaseConditions(req, tenantId, options, params) {
+  params.push(tenantId);
+
+  const conditions = ["je.tenant_id = ?"];
+  if (options.includeDraft) {
+    conditions.push("je.status IN ('DRAFT', 'POSTED')");
+  } else {
+    conditions.push("je.status = 'POSTED'");
+  }
+
+  conditions.push(buildScopeFilter(req, "legal_entity", "je.legal_entity_id", params));
+
+  if (options.legalEntityId) {
+    conditions.push("je.legal_entity_id = ?");
+    params.push(options.legalEntityId);
+  }
+  if (options.fiscalPeriodId) {
+    conditions.push("je.fiscal_period_id = ?");
+    params.push(options.fiscalPeriodId);
+  }
+
+  return conditions;
+}
+
+function normalizeComplianceIssueRows(rows = [], issueCode, suggestedActions = []) {
+  return rows.map((row) => ({
+    issueCode,
+    issueMessage: row.issue_message || "",
+    suggestedActions,
+    journalId: parsePositiveInt(row.journal_id),
+    journalNo: row.journal_no || null,
+    journalStatus: String(row.journal_status || "").toUpperCase(),
+    sourceType: String(row.source_type || "").toUpperCase(),
+    fiscalPeriodId: parsePositiveInt(row.fiscal_period_id),
+    entryDate: row.entry_date || null,
+    fromLegalEntityId: parsePositiveInt(row.from_legal_entity_id),
+    fromLegalEntityCode: row.from_legal_entity_code || null,
+    toLegalEntityId: parsePositiveInt(row.to_legal_entity_id),
+    toLegalEntityCode: row.to_legal_entity_code || null,
+    lineNo: Number(row.line_no || 0),
+    accountId: parsePositiveInt(row.account_id),
+    accountCode: row.account_code || null,
+    accountName: row.account_name || null,
+  }));
+}
+
+function summarizeComplianceIssues(rows = []) {
+  const summary = {
+    totalIssues: rows.length,
+    byIssueCode: {},
+  };
+
+  for (const row of rows) {
+    const issueCode = String(row.issueCode || "UNKNOWN");
+    summary.byIssueCode[issueCode] = (summary.byIssueCode[issueCode] || 0) + 1;
+  }
+
+  return summary;
+}
+
 router.get(
   "/entity-flags",
   requirePermission("intercompany.flag.read", {
@@ -154,6 +214,212 @@ router.patch(
     return res.json({
       ok: true,
       row: result.rows[0] || null,
+    });
+  })
+);
+
+router.get(
+  "/compliance-issues",
+  requirePermission("intercompany.flag.read", {
+    resolveScope: (req) => {
+      const legalEntityId = parsePositiveInt(req.query?.legalEntityId);
+      if (legalEntityId) {
+        return { scopeType: "LEGAL_ENTITY", scopeId: legalEntityId };
+      }
+      return null;
+    },
+  }),
+  asyncHandler(async (req, res) => {
+    const tenantId = resolveTenantId(req);
+    if (!tenantId) {
+      throw badRequest("tenantId is required");
+    }
+
+    const legalEntityId = parsePositiveInt(req.query.legalEntityId);
+    const fiscalPeriodId = parsePositiveInt(req.query.fiscalPeriodId);
+    const includeDraft = parseBooleanLike(req.query.includeDraft, true);
+    const limitRaw = Number(req.query.limit);
+    const limit = Number.isInteger(limitRaw) && limitRaw > 0 ? Math.min(limitRaw, 500) : 200;
+    const perIssueLimit = Math.max(50, Math.min(limit * 2, 1000));
+
+    if (legalEntityId) {
+      await assertLegalEntityBelongsToTenant(tenantId, legalEntityId, "legalEntityId");
+      assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
+    }
+
+    const queryOptions = {
+      legalEntityId,
+      fiscalPeriodId,
+      includeDraft,
+    };
+
+    const disabledParams = [];
+    const disabledConditions = buildComplianceBaseConditions(
+      req,
+      tenantId,
+      queryOptions,
+      disabledParams
+    );
+    disabledConditions.push("jl.counterparty_legal_entity_id IS NOT NULL");
+    disabledConditions.push(
+      buildScopeFilter(req, "legal_entity", "jl.counterparty_legal_entity_id", disabledParams)
+    );
+    disabledConditions.push("le.is_intercompany_enabled = FALSE");
+
+    const missingPartnerParams = [];
+    const missingPartnerConditions = buildComplianceBaseConditions(
+      req,
+      tenantId,
+      queryOptions,
+      missingPartnerParams
+    );
+    missingPartnerConditions.push("je.source_type = 'INTERCOMPANY'");
+    missingPartnerConditions.push("le.intercompany_partner_required = TRUE");
+    missingPartnerConditions.push("jl.counterparty_legal_entity_id IS NULL");
+
+    const missingPairParams = [];
+    const missingPairConditions = buildComplianceBaseConditions(
+      req,
+      tenantId,
+      queryOptions,
+      missingPairParams
+    );
+    missingPairConditions.push("jl.counterparty_legal_entity_id IS NOT NULL");
+    missingPairConditions.push(
+      buildScopeFilter(req, "legal_entity", "jl.counterparty_legal_entity_id", missingPairParams)
+    );
+    missingPairConditions.push("le.is_intercompany_enabled = TRUE");
+    missingPairConditions.push("icp.id IS NULL");
+
+    const [disabledRows, missingPartnerRows, missingPairRows] = await Promise.all([
+      query(
+        `SELECT
+           'Selected legal entity has intercompany disabled but line has counterparty.' AS issue_message,
+           je.id AS journal_id,
+           je.journal_no,
+           je.status AS journal_status,
+           je.source_type,
+           je.fiscal_period_id,
+           je.entry_date,
+           je.legal_entity_id AS from_legal_entity_id,
+           le.code AS from_legal_entity_code,
+           jl.counterparty_legal_entity_id AS to_legal_entity_id,
+           cle.code AS to_legal_entity_code,
+           jl.line_no,
+           jl.account_id,
+           a.code AS account_code,
+           a.name AS account_name
+         FROM journal_entries je
+         JOIN legal_entities le ON le.id = je.legal_entity_id
+         JOIN journal_lines jl ON jl.journal_entry_id = je.id
+         JOIN accounts a ON a.id = jl.account_id
+         LEFT JOIN legal_entities cle ON cle.id = jl.counterparty_legal_entity_id
+         WHERE ${disabledConditions.join(" AND ")}
+         ORDER BY je.entry_date DESC, je.id DESC, jl.line_no ASC
+         LIMIT ${perIssueLimit}`,
+        disabledParams
+      ),
+      query(
+        `SELECT
+           'Entity requires intercompany partner on INTERCOMPANY journals, but line has no counterparty.' AS issue_message,
+           je.id AS journal_id,
+           je.journal_no,
+           je.status AS journal_status,
+           je.source_type,
+           je.fiscal_period_id,
+           je.entry_date,
+           je.legal_entity_id AS from_legal_entity_id,
+           le.code AS from_legal_entity_code,
+           NULL AS to_legal_entity_id,
+           NULL AS to_legal_entity_code,
+           jl.line_no,
+           jl.account_id,
+           a.code AS account_code,
+           a.name AS account_name
+         FROM journal_entries je
+         JOIN legal_entities le ON le.id = je.legal_entity_id
+         JOIN journal_lines jl ON jl.journal_entry_id = je.id
+         JOIN accounts a ON a.id = jl.account_id
+         WHERE ${missingPartnerConditions.join(" AND ")}
+         ORDER BY je.entry_date DESC, je.id DESC, jl.line_no ASC
+         LIMIT ${perIssueLimit}`,
+        missingPartnerParams
+      ),
+      query(
+        `SELECT
+           'No active intercompany pair mapping found for source/counterparty.' AS issue_message,
+           je.id AS journal_id,
+           je.journal_no,
+           je.status AS journal_status,
+           je.source_type,
+           je.fiscal_period_id,
+           je.entry_date,
+           je.legal_entity_id AS from_legal_entity_id,
+           le.code AS from_legal_entity_code,
+           jl.counterparty_legal_entity_id AS to_legal_entity_id,
+           cle.code AS to_legal_entity_code,
+           jl.line_no,
+           jl.account_id,
+           a.code AS account_code,
+           a.name AS account_name
+         FROM journal_entries je
+         JOIN legal_entities le ON le.id = je.legal_entity_id
+         JOIN journal_lines jl ON jl.journal_entry_id = je.id
+         JOIN accounts a ON a.id = jl.account_id
+         LEFT JOIN legal_entities cle ON cle.id = jl.counterparty_legal_entity_id
+         LEFT JOIN intercompany_pairs icp ON icp.tenant_id = je.tenant_id
+           AND icp.from_legal_entity_id = je.legal_entity_id
+           AND icp.to_legal_entity_id = jl.counterparty_legal_entity_id
+           AND icp.status = 'ACTIVE'
+         WHERE ${missingPairConditions.join(" AND ")}
+         ORDER BY je.entry_date DESC, je.id DESC, jl.line_no ASC
+         LIMIT ${perIssueLimit}`,
+        missingPairParams
+      ),
+    ]);
+
+    const rows = [
+      ...normalizeComplianceIssueRows(
+        disabledRows.rows,
+        "ENTITY_INTERCOMPANY_DISABLED",
+        ["ENABLE_ENTITY_INTERCOMPANY"]
+      ),
+      ...normalizeComplianceIssueRows(
+        missingPartnerRows.rows,
+        "PARTNER_REQUIRED_MISSING_COUNTERPARTY",
+        ["SET_COUNTERPARTY_ON_LINES", "DISABLE_PARTNER_REQUIRED"]
+      ),
+      ...normalizeComplianceIssueRows(
+        missingPairRows.rows,
+        "MISSING_ACTIVE_PAIR",
+        ["CREATE_ACTIVE_PAIR"]
+      ),
+    ]
+      .sort((a, b) => {
+        const dateA = String(a.entryDate || "");
+        const dateB = String(b.entryDate || "");
+        if (dateA !== dateB) {
+          return dateA < dateB ? 1 : -1;
+        }
+
+        const journalA = Number(a.journalId || 0);
+        const journalB = Number(b.journalId || 0);
+        if (journalA !== journalB) {
+          return journalB - journalA;
+        }
+
+        return Number(a.lineNo || 0) - Number(b.lineNo || 0);
+      })
+      .slice(0, limit);
+
+    return res.json({
+      tenantId,
+      includeDraft,
+      legalEntityId: legalEntityId || null,
+      fiscalPeriodId: fiscalPeriodId || null,
+      limit,
+      summary: summarizeComplianceIssues(rows),
+      rows,
     });
   })
 );

@@ -1,4 +1,5 @@
 import { Navigate, useLocation } from "react-router-dom";
+import { useI18n } from "../i18n/useI18n.js";
 import { useTenantReadiness } from "./useTenantReadiness.js";
 
 const SETUP_ALLOWLIST = new Set([
@@ -9,12 +10,13 @@ const SETUP_ALLOWLIST = new Set([
 
 export default function RequireTenantReadiness({ children }) {
   const location = useLocation();
+  const { t } = useI18n();
   const { loading, error, readiness, refresh } = useTenantReadiness();
 
   if (loading) {
     return (
       <div className="grid min-h-[40vh] place-items-center">
-        <div className="text-slate-600">Checking tenant readiness...</div>
+        <div className="text-slate-600">{t("readinessGuard.checking")}</div>
       </div>
     );
   }
@@ -23,7 +25,7 @@ export default function RequireTenantReadiness({ children }) {
     return (
       <div className="mx-auto max-w-2xl rounded-xl border border-amber-200 bg-amber-50 p-5">
         <h2 className="text-lg font-semibold text-amber-900">
-          Tenant readiness check failed
+          {t("readinessGuard.failedTitle")}
         </h2>
         <p className="mt-1 text-sm text-amber-800">{error}</p>
         <button
@@ -31,7 +33,7 @@ export default function RequireTenantReadiness({ children }) {
           onClick={() => refresh()}
           className="mt-3 rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-sm font-semibold text-amber-900"
         >
-          Retry
+          {t("readinessGuard.retry")}
         </button>
       </div>
     );

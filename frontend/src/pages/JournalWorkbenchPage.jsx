@@ -3,15 +3,19 @@ import {
   closePeriod,
   createJournal,
   getJournal,
+  listIntercompanyComplianceIssues,
   listPeriodCloseRuns,
+  listIntercompanyEntityFlags,
   getTrialBalance,
   listAccounts,
   listBooks,
   listJournals,
   postJournal,
+  upsertIntercompanyPair,
   reopenPeriodClose,
   reverseJournal,
   runPeriodClose,
+  updateIntercompanyEntityFlags,
 } from "../api/glAdmin.js";
 import {
   listFiscalPeriods,
@@ -62,6 +66,7 @@ function createLine(defaultCurrencyCode = "USD", defaultAccountId = "", defaultU
     id: `line-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     accountId: defaultAccountId,
     operatingUnitId: defaultUnitId,
+    subledgerReferenceNo: "",
     counterpartyLegalEntityId: "",
     description: "",
     currencyCode: defaultCurrencyCode,
@@ -88,6 +93,9 @@ export default function JournalWorkbenchPage() {
   const canReverse = hasPermission("gl.journal.reverse");
   const canReadTrialBalance = hasPermission("gl.trial_balance.read");
   const canClosePeriod = hasPermission("gl.period.close");
+  const canReadIntercompanyFlags = hasPermission("intercompany.flag.read");
+  const canUpsertIntercompanyFlags = hasPermission("intercompany.flag.upsert");
+  const canUpsertIntercompanyPairs = hasPermission("intercompany.pair.upsert");
 
   const today = new Date().toISOString().slice(0, 10);
 
@@ -115,9 +123,11 @@ export default function JournalWorkbenchPage() {
     description: "",
     referenceNo: "",
   });
+  const [createAutoMirror, setCreateAutoMirror] = useState(true);
   const [lines, setLines] = useState([createLine(), createLine()]);
 
   const [postId, setPostId] = useState("");
+  const [postLinkedMirrors, setPostLinkedMirrors] = useState(false);
   const [reverseForm, setReverseForm] = useState({
     journalId: "",
     reversalPeriodId: "",
@@ -161,9 +171,28 @@ export default function JournalWorkbenchPage() {
   const [historyTotal, setHistoryTotal] = useState(0);
   const [selectedJournalId, setSelectedJournalId] = useState("");
   const [selectedJournal, setSelectedJournal] = useState(null);
+  const [complianceRows, setComplianceRows] = useState([]);
+  const [complianceSummary, setComplianceSummary] = useState(null);
+  const [complianceFilters, setComplianceFilters] = useState({
+    legalEntityId: "",
+    fiscalPeriodId: "",
+    includeDraft: true,
+    limit: "200",
+  });
 
   const selectedLegalEntityId = toInt(journal.legalEntityId);
   const selectedBookId = toInt(journal.bookId);
+  const unitsById = useMemo(() => {
+    const map = new Map();
+    for (const unit of units) {
+      const unitId = toInt(unit.id);
+      if (!unitId) {
+        continue;
+      }
+      map.set(unitId, unit);
+    }
+    return map;
+  }, [units]);
   const trialBalanceBookId = toInt(tbForm.bookId);
   const periodActionBookId = toInt(periodForm.bookId);
   const canUseTbPeriodLookup =
@@ -225,6 +254,21 @@ export default function JournalWorkbenchPage() {
   const historyPage = Math.floor(historyOffset / historyLimit) + 1;
   const historyHasPrev = historyOffset > 0;
   const historyHasNext = historyOffset + historyRows.length < historyTotal;
+
+  const selectedLegalEntity = useMemo(
+    () => entities.find((entity) => Number(entity.id) === Number(selectedLegalEntityId)) || null,
+    [entities, selectedLegalEntityId]
+  );
+  const selectedEntityIntercompanyEnabled = Boolean(
+    selectedLegalEntity?.is_intercompany_enabled ?? true
+  );
+  const selectedEntityPartnerRequired = Boolean(
+    selectedLegalEntity?.intercompany_partner_required ?? false
+  );
+  const requiresCounterpartyByPolicy =
+    selectedEntityIntercompanyEnabled &&
+    selectedEntityPartnerRequired &&
+    String(journal.sourceType || "").toUpperCase() === "INTERCOMPANY";
 
   useEffect(() => {
     let cancelled = false;
@@ -356,6 +400,17 @@ export default function JournalWorkbenchPage() {
       };
     });
 
+    setComplianceFilters((prev) => {
+      const currentEntityId = toInt(prev.legalEntityId);
+      return {
+        ...prev,
+        legalEntityId:
+          currentEntityId && (entities.length === 0 || hasId(entities, currentEntityId))
+            ? String(currentEntityId)
+            : String(entities[0]?.id || prev.legalEntityId || ""),
+      };
+    });
+
     setLines((prev) =>
       prev.map((line, index) => ({
         ...line,
@@ -363,6 +418,7 @@ export default function JournalWorkbenchPage() {
           line.accountId ||
           String(postableAccounts[index]?.id || postableAccounts[0]?.id || ""),
         operatingUnitId: line.operatingUnitId || String(units[0]?.id || ""),
+        subledgerReferenceNo: line.subledgerReferenceNo || "",
         currencyCode: line.currencyCode || journal.currencyCode || "USD",
       }))
     );
@@ -485,6 +541,11 @@ export default function JournalWorkbenchPage() {
     await fetchJournalHistory(nextFilters);
   }
 
+  async function onApplyComplianceFilters(event) {
+    event.preventDefault();
+    await loadComplianceIssues(complianceFilters);
+  }
+
   async function onChangeHistoryPage(direction) {
     const nextOffset = Math.max(0, historyOffset + direction * historyLimit);
     const nextFilters = {
@@ -506,6 +567,161 @@ export default function JournalWorkbenchPage() {
       setSelectedJournal(res?.row || null);
     } catch (err) {
       setError(err?.response?.data?.message || l("Failed to load journal detail.", "Fis detayi yuklenemedi."));
+    } finally {
+      setSaving("");
+    }
+  }
+
+  function applyEntityFlagSnapshot(snapshot) {
+    const entityId = toInt(snapshot?.legal_entity_id);
+    if (!entityId) {
+      return;
+    }
+
+    setEntities((prev) =>
+      prev.map((entity) =>
+        Number(entity.id) === Number(entityId)
+          ? {
+              ...entity,
+              is_intercompany_enabled: snapshot.is_intercompany_enabled,
+              intercompany_partner_required: snapshot.intercompany_partner_required,
+            }
+          : entity
+      )
+    );
+  }
+
+  async function refreshIntercompanyFlagSnapshot(legalEntityId) {
+    const parsedId = toInt(legalEntityId);
+    if (!parsedId || !canReadIntercompanyFlags) {
+      return;
+    }
+
+    const response = await listIntercompanyEntityFlags({ legalEntityId: parsedId });
+    const row = response?.rows?.[0];
+    if (row) {
+      applyEntityFlagSnapshot(row);
+    }
+  }
+
+  async function loadComplianceIssues(filters = complianceFilters) {
+    if (!canReadIntercompanyFlags) {
+      return;
+    }
+
+    setSaving("complianceAudit");
+    setError("");
+    try {
+      const response = await listIntercompanyComplianceIssues({
+        legalEntityId: toInt(filters.legalEntityId) || undefined,
+        fiscalPeriodId: toInt(filters.fiscalPeriodId) || undefined,
+        includeDraft: Boolean(filters.includeDraft),
+        limit: toInt(filters.limit) || 200,
+      });
+
+      setComplianceRows(response?.rows || []);
+      setComplianceSummary(response?.summary || null);
+    } catch (err) {
+      setError(
+        err?.response?.data?.message ||
+          l(
+            "Failed to load intercompany compliance issues.",
+            "Intercompany uyumluluk sorunlari yuklenemedi."
+          )
+      );
+    } finally {
+      setSaving("");
+    }
+  }
+
+  async function resolveComplianceIssue(issue, actionCode) {
+    if (!issue || !actionCode) {
+      return;
+    }
+
+    setSaving(`compliance:${actionCode}`);
+    setError("");
+    setMessage("");
+    try {
+      if (actionCode === "ENABLE_ENTITY_INTERCOMPANY") {
+        const legalEntityId = toInt(issue.fromLegalEntityId);
+        if (!legalEntityId) {
+          throw new Error("fromLegalEntityId is required");
+        }
+        if (!canUpsertIntercompanyFlags) {
+          throw new Error(l("Missing permission: intercompany.flag.upsert", "Eksik yetki: intercompany.flag.upsert"));
+        }
+
+        const response = await updateIntercompanyEntityFlags(legalEntityId, {
+          isIntercompanyEnabled: true,
+        });
+        if (response?.row) {
+          applyEntityFlagSnapshot(response.row);
+        } else {
+          await refreshIntercompanyFlagSnapshot(legalEntityId);
+        }
+
+        setMessage(
+          l(
+            `Enabled intercompany for legal entity ${issue.fromLegalEntityCode || legalEntityId}.`,
+            `Istirak / bagli ortak ${issue.fromLegalEntityCode || legalEntityId} icin intercompany aktif edildi.`
+          )
+        );
+      } else if (actionCode === "DISABLE_PARTNER_REQUIRED") {
+        const legalEntityId = toInt(issue.fromLegalEntityId);
+        if (!legalEntityId) {
+          throw new Error("fromLegalEntityId is required");
+        }
+        if (!canUpsertIntercompanyFlags) {
+          throw new Error(l("Missing permission: intercompany.flag.upsert", "Eksik yetki: intercompany.flag.upsert"));
+        }
+
+        const response = await updateIntercompanyEntityFlags(legalEntityId, {
+          intercompanyPartnerRequired: false,
+        });
+        if (response?.row) {
+          applyEntityFlagSnapshot(response.row);
+        } else {
+          await refreshIntercompanyFlagSnapshot(legalEntityId);
+        }
+
+        setMessage(
+          l(
+            `Disabled partner-required policy for legal entity ${issue.fromLegalEntityCode || legalEntityId}.`,
+            `Istirak / bagli ortak ${issue.fromLegalEntityCode || legalEntityId} icin partner-zorunlu politikasi kapatildi.`
+          )
+        );
+      } else if (actionCode === "CREATE_ACTIVE_PAIR") {
+        const fromLegalEntityId = toInt(issue.fromLegalEntityId);
+        const toLegalEntityId = toInt(issue.toLegalEntityId);
+        if (!fromLegalEntityId || !toLegalEntityId) {
+          throw new Error("fromLegalEntityId and toLegalEntityId are required");
+        }
+        if (!canUpsertIntercompanyPairs) {
+          throw new Error(l("Missing permission: intercompany.pair.upsert", "Eksik yetki: intercompany.pair.upsert"));
+        }
+
+        await upsertIntercompanyPair({
+          fromLegalEntityId,
+          toLegalEntityId,
+          status: "ACTIVE",
+        });
+
+        setMessage(
+          l(
+            `Created/updated active pair ${issue.fromLegalEntityCode || fromLegalEntityId} -> ${issue.toLegalEntityCode || toLegalEntityId}.`,
+            `Aktif pair ${issue.fromLegalEntityCode || fromLegalEntityId} -> ${issue.toLegalEntityCode || toLegalEntityId} olusturuldu/guncellendi.`
+          )
+        );
+      }
+
+      await loadComplianceIssues();
+    } catch (err) {
+      setError(
+        err?.response?.data?.message ||
+          err?.message ||
+          l("Failed to remediate compliance issue.", "Uyumluluk sorunu duzeltilemedi.")
+      );
     } finally {
       setSaving("");
     }
@@ -578,6 +794,36 @@ export default function JournalWorkbenchPage() {
         );
         return;
       }
+      const selectedUnit = operatingUnitId ? unitsById.get(operatingUnitId) || null : null;
+      const requiresSubledgerReference = Boolean(selectedUnit?.has_subledger);
+      const subledgerReferenceNo = String(row.subledgerReferenceNo || "").trim();
+      if (subledgerReferenceNo && !operatingUnitId) {
+        setError(
+          l(
+            `Line ${index + 1}: subledger reference requires operating unit.`,
+            `Satir ${index + 1}: alt defter referansi icin birim secilmelidir.`
+          )
+        );
+        return;
+      }
+      if (requiresSubledgerReference && !subledgerReferenceNo) {
+        setError(
+          l(
+            `Line ${index + 1}: subledger reference is required for selected unit.`,
+            `Satir ${index + 1}: secilen birim icin alt defter referansi zorunludur.`
+          )
+        );
+        return;
+      }
+      if (subledgerReferenceNo.length > 100) {
+        setError(
+          l(
+            `Line ${index + 1}: subledger reference must be at most 100 characters.`,
+            `Satir ${index + 1}: alt defter referansi en fazla 100 karakter olabilir.`
+          )
+        );
+        return;
+      }
 
       const counterpartyLegalEntityId = toOptionalInt(row.counterpartyLegalEntityId);
       if (row.counterpartyLegalEntityId && !counterpartyLegalEntityId) {
@@ -585,6 +831,15 @@ export default function JournalWorkbenchPage() {
           l(
             `Line ${index + 1}: counterpartyLegalEntityId must be a positive integer.`,
             `Satir ${index + 1}: counterpartyLegalEntityId pozitif bir tam sayi olmali.`
+          )
+        );
+        return;
+      }
+      if (counterpartyLegalEntityId && counterpartyLegalEntityId === legalEntityId) {
+        setError(
+          l(
+            `Line ${index + 1}: counterparty legal entity cannot be the same as legal entity.`,
+            `Satir ${index + 1}: karsi taraf istirak / bagli ortak, secili istirak / bagli ortak ile ayni olamaz.`
           )
         );
         return;
@@ -614,6 +869,7 @@ export default function JournalWorkbenchPage() {
       payloadLines.push({
         accountId,
         operatingUnitId: operatingUnitId || undefined,
+        subledgerReferenceNo: subledgerReferenceNo || undefined,
         counterpartyLegalEntityId: counterpartyLegalEntityId || undefined,
         description: row.description.trim() || undefined,
         currencyCode: String(row.currencyCode || journal.currencyCode || "USD")
@@ -633,10 +889,62 @@ export default function JournalWorkbenchPage() {
       return;
     }
 
+    const sourceType = String(journal.sourceType || "MANUAL").toUpperCase();
+    const counterpartyLineNumbers = payloadLines
+      .map((line, index) => (line.counterpartyLegalEntityId ? index + 1 : null))
+      .filter(Boolean);
+    const missingCounterpartyLineNumbers = payloadLines
+      .map((line, index) => (!line.counterpartyLegalEntityId ? index + 1 : null))
+      .filter(Boolean);
+
+    if (!selectedEntityIntercompanyEnabled) {
+      if (sourceType === "INTERCOMPANY") {
+        setError(
+          l(
+            "Selected legal entity has intercompany disabled; INTERCOMPANY source is blocked.",
+            "Secili istirak / bagli ortakta intercompany kapali; INTERCOMPANY kaynak tipi engellendi."
+          )
+        );
+        return;
+      }
+      if (counterpartyLineNumbers.length > 0) {
+        setError(
+          l(
+            `Selected legal entity has intercompany disabled; remove counterparty on line(s): ${counterpartyLineNumbers.join(", ")}.`,
+            `Secili istirak / bagli ortakta intercompany kapali; su satirlarda karsi taraf kaldirilmalidir: ${counterpartyLineNumbers.join(", ")}.`
+          )
+        );
+        return;
+      }
+    }
+
+    if (sourceType === "INTERCOMPANY" && counterpartyLineNumbers.length === 0) {
+      setError(
+        l(
+          "INTERCOMPANY source requires at least one line with counterparty legal entity.",
+          "INTERCOMPANY kaynak tipi en az bir satirda karsi taraf istirak / bagli ortak gerektirir."
+        )
+      );
+      return;
+    }
+
+    if (selectedEntityPartnerRequired && sourceType === "INTERCOMPANY") {
+      if (missingCounterpartyLineNumbers.length > 0) {
+        setError(
+          l(
+            `This legal entity requires partner on INTERCOMPANY journals. Missing on line(s): ${missingCounterpartyLineNumbers.join(", ")}.`,
+            `Bu istirak / bagli ortak INTERCOMPANY fislerde partner zorunlu tutar. Eksik satir(lar): ${missingCounterpartyLineNumbers.join(", ")}.`
+          )
+        );
+        return;
+      }
+    }
+
     setSaving("createJournal");
     setError("");
     setMessage("");
     try {
+      const shouldAutoMirror = sourceType === "INTERCOMPANY" ? Boolean(createAutoMirror) : false;
       const res = await createJournal({
         legalEntityId,
         bookId,
@@ -647,16 +955,27 @@ export default function JournalWorkbenchPage() {
         sourceType: journal.sourceType,
         description: journal.description.trim() || undefined,
         referenceNo: journal.referenceNo.trim() || undefined,
+        autoMirror: shouldAutoMirror,
         lines: payloadLines,
       });
 
       const createdId = String(res?.journalEntryId || "");
       setPostId(createdId);
       setReverseForm((prev) => ({ ...prev, journalId: createdId }));
+      const mirrorIds = Array.isArray(res?.mirrorJournalEntryIds)
+        ? res.mirrorJournalEntryIds.filter((id) => toInt(id))
+        : [];
+      const mirrorSuffix =
+        mirrorIds.length > 0
+          ? l(
+              `, Mirror drafts: ${mirrorIds.join(", ")}`,
+              `, Mirror taslaklari: ${mirrorIds.join(", ")}`
+            )
+          : "";
       setMessage(
         l(
-          `Draft journal created. ID: ${res?.journalEntryId || "-"}, No: ${res?.journalNo || "-"}`,
-          `Taslak fis olusturuldu. ID: ${res?.journalEntryId || "-"}, No: ${res?.journalNo || "-"}`
+          `Draft journal created. ID: ${res?.journalEntryId || "-"}, No: ${res?.journalNo || "-"}${mirrorSuffix}`,
+          `Taslak fis olusturuldu. ID: ${res?.journalEntryId || "-"}, No: ${res?.journalNo || "-"}${mirrorSuffix}`
         )
       );
 
@@ -687,9 +1006,23 @@ export default function JournalWorkbenchPage() {
     setError("");
     setMessage("");
     try {
-      const res = await postJournal(journalId);
+      const res = await postJournal(journalId, {
+        postLinkedMirrors: Boolean(postLinkedMirrors),
+      });
+      const postedIds = Array.isArray(res?.postedJournalIds)
+        ? res.postedJournalIds.filter((id) => toInt(id))
+        : [];
       setMessage(
-        res?.posted ? l("Journal posted.", "Fis post edildi.") : l("Journal not posted.", "Fis post edilmedi.")
+        res?.posted
+          ? l(
+              postedIds.length > 1
+                ? `Journals posted: ${postedIds.join(", ")}.`
+                : "Journal posted.",
+              postedIds.length > 1
+                ? `Fisler post edildi: ${postedIds.join(", ")}.`
+                : "Fis post edildi."
+            )
+          : l("Journal not posted.", "Fis post edilmedi.")
       );
       if (canReadJournals) {
         await fetchJournalHistory();
@@ -1028,13 +1361,69 @@ export default function JournalWorkbenchPage() {
             <input value={journal.description} onChange={(event) => setJournal((prev) => ({ ...prev, description: event.target.value }))} className="rounded border border-slate-300 px-3 py-2 text-sm md:col-span-4" placeholder={l("Description", "Aciklama")} />
           </div>
 
+          {selectedLegalEntity ? (
+            <div
+              className={`rounded border px-3 py-2 text-xs ${
+                selectedEntityIntercompanyEnabled
+                  ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                  : "border-amber-200 bg-amber-50 text-amber-900"
+              }`}
+            >
+              <div>
+                {l("Intercompany policy", "Intercompany politikasi")}:{" "}
+                <span className="font-semibold">
+                  {selectedEntityIntercompanyEnabled
+                    ? l("Enabled", "Aktif")
+                    : l("Disabled", "Kapali")}
+                </span>
+                {" | "}
+                {l("Partner required", "Partner zorunlu")}:{" "}
+                <span className="font-semibold">
+                  {selectedEntityPartnerRequired ? l("Yes", "Evet") : l("No", "Hayir")}
+                </span>
+              </div>
+              {!selectedEntityIntercompanyEnabled ? (
+                <div className="mt-1">
+                  {l(
+                    "Counterparty lines and INTERCOMPANY source journals are blocked for this legal entity.",
+                    "Bu istirak / bagli ortak icin karsi taraf satirlari ve INTERCOMPANY kaynakli fisler engellenir."
+                  )}
+                </div>
+              ) : null}
+              {requiresCounterpartyByPolicy ? (
+                <div className="mt-1">
+                  {l(
+                    "Because source type is INTERCOMPANY and partner-required is enabled, every line must include counterparty legal entity.",
+                    "Kaynak tipi INTERCOMPANY ve partner-zorunlu acik oldugu icin her satirda karsi taraf istirak / bagli ortak secilmelidir."
+                  )}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
+          {String(journal.sourceType || "").toUpperCase() === "INTERCOMPANY" ? (
+            <label className="inline-flex items-center gap-2 text-xs text-slate-700">
+              <input
+                type="checkbox"
+                checked={createAutoMirror}
+                onChange={(event) => setCreateAutoMirror(event.target.checked)}
+                disabled={!selectedEntityIntercompanyEnabled}
+              />
+              {l(
+                "Auto-create partner mirror draft journal(s)",
+                "Partner mirror taslak fis(lerini) otomatik olustur"
+              )}
+            </label>
+          ) : null}
+
           <div className="overflow-x-auto rounded-lg border border-slate-200">
-            <table className="min-w-[1100px] text-sm">
+            <table className="min-w-[1260px] text-sm">
               <thead className="bg-slate-50 text-left text-slate-600">
                 <tr>
                   <th className="px-2 py-2">#</th>
                   <th className="px-2 py-2">{l("Account", "Hesap")}</th>
                   <th className="px-2 py-2">{l("Unit", "Birim")}</th>
+                  <th className="px-2 py-2">{l("Subledger Ref", "Alt Defter Ref")}</th>
                   <th className="px-2 py-2">{l("Counterparty LE", "Karsi taraf HU")}</th>
                   <th className="px-2 py-2">{l("Description", "Aciklama")}</th>
                   <th className="px-2 py-2">{l("Currency", "Para birimi")}</th>
@@ -1070,8 +1459,30 @@ export default function JournalWorkbenchPage() {
                       )}
                     </td>
                     <td className="px-2 py-2">
+                      <input
+                        value={line.subledgerReferenceNo || ""}
+                        onChange={(event) =>
+                          updateLine(line.id, "subledgerReferenceNo", event.target.value)
+                        }
+                        className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs"
+                        placeholder={
+                          (unitsById.get(toOptionalInt(line.operatingUnitId))?.has_subledger ?? false)
+                            ? l("Required", "Zorunlu")
+                            : l("Optional", "Opsiyonel")
+                        }
+                        required={unitsById.get(toOptionalInt(line.operatingUnitId))?.has_subledger ?? false}
+                      />
+                    </td>
+                    <td className="px-2 py-2">
                       {entities.length > 0 ? (
-                        <select value={line.counterpartyLegalEntityId} onChange={(event) => updateLine(line.id, "counterpartyLegalEntityId", event.target.value)} className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs">
+                        <select
+                          value={line.counterpartyLegalEntityId}
+                          onChange={(event) =>
+                            updateLine(line.id, "counterpartyLegalEntityId", event.target.value)
+                          }
+                          className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs"
+                          required={requiresCounterpartyByPolicy}
+                        >
                           <option value="">{l("Optional", "Opsiyonel")}</option>
                           {entities.map((entity) => (
                             <option key={entity.id} value={entity.id}>
@@ -1080,7 +1491,21 @@ export default function JournalWorkbenchPage() {
                           ))}
                         </select>
                       ) : (
-                        <input type="number" min={1} value={line.counterpartyLegalEntityId} onChange={(event) => updateLine(line.id, "counterpartyLegalEntityId", event.target.value)} className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs" placeholder={l("Optional", "Opsiyonel")} />
+                        <input
+                          type="number"
+                          min={1}
+                          value={line.counterpartyLegalEntityId}
+                          onChange={(event) =>
+                            updateLine(line.id, "counterpartyLegalEntityId", event.target.value)
+                          }
+                          className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs"
+                          placeholder={
+                            requiresCounterpartyByPolicy
+                              ? l("Required", "Zorunlu")
+                              : l("Optional", "Opsiyonel")
+                          }
+                          required={requiresCounterpartyByPolicy}
+                        />
                       )}
                     </td>
                     <td className="px-2 py-2"><input value={line.description} onChange={(event) => updateLine(line.id, "description", event.target.value)} className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs" /></td>
@@ -1108,6 +1533,14 @@ export default function JournalWorkbenchPage() {
         <form onSubmit={onPostJournal} className="space-y-2 rounded-xl border border-slate-200 bg-white p-4">
           <h2 className="text-sm font-semibold text-slate-700">{l("Post Journal", "Fisi Post Et")}</h2>
           <input type="number" min={1} value={postId} onChange={(event) => setPostId(event.target.value)} className="w-full rounded border border-slate-300 px-3 py-2 text-sm" placeholder={l("Journal ID", "Fis ID")} required />
+          <label className="inline-flex items-center gap-2 text-sm text-slate-700">
+            <input
+              type="checkbox"
+              checked={postLinkedMirrors}
+              onChange={(event) => setPostLinkedMirrors(event.target.checked)}
+            />
+            {l("Post linked intercompany mirrors", "Bagli intercompany mirror fisleri de post et")}
+          </label>
           <button type="submit" disabled={saving === "postJournal" || !canPost} className="rounded bg-cyan-700 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60">{saving === "postJournal" ? l("Posting...", "Post ediliyor...") : l("Post", "Post Et")}</button>
         </form>
 
@@ -1442,12 +1875,13 @@ export default function JournalWorkbenchPage() {
                 <div>{l("Lines", "Satirlar")}: {(selectedJournal.lines || []).length}</div>
                 <div className="max-h-52 overflow-auto rounded border border-slate-200">
                   <table className="min-w-full text-[11px]">
-                    <thead className="bg-slate-50 text-left text-slate-600"><tr><th className="px-2 py-1.5">#</th><th className="px-2 py-1.5">{l("Account", "Hesap")}</th><th className="px-2 py-1.5">{l("Debit", "Borc")}</th><th className="px-2 py-1.5">{l("Credit", "Alacak")}</th></tr></thead>
+                    <thead className="bg-slate-50 text-left text-slate-600"><tr><th className="px-2 py-1.5">#</th><th className="px-2 py-1.5">{l("Account", "Hesap")}</th><th className="px-2 py-1.5">{l("Subledger Ref", "Alt Defter Ref")}</th><th className="px-2 py-1.5">{l("Debit", "Borc")}</th><th className="px-2 py-1.5">{l("Credit", "Alacak")}</th></tr></thead>
                     <tbody>
                       {(selectedJournal.lines || []).map((line) => (
                         <tr key={line.id} className="border-t border-slate-100">
                           <td className="px-2 py-1.5">{line.line_no}</td>
                           <td className="px-2 py-1.5">{line.account_code} - {line.account_name}</td>
+                          <td className="px-2 py-1.5">{line.subledger_reference_no || "-"}</td>
                           <td className="px-2 py-1.5">{formatAmount(line.debit_base)}</td>
                           <td className="px-2 py-1.5">{formatAmount(line.credit_base)}</td>
                         </tr>
@@ -1459,6 +1893,218 @@ export default function JournalWorkbenchPage() {
             )}
           </div>
         </div>
+      </section>
+
+      <section className="rounded-xl border border-slate-200 bg-white p-4">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-sm font-semibold text-slate-700">
+            {l("Intercompany Compliance Audit", "Intercompany Uyumluluk Denetimi")}
+          </h2>
+          <button
+            type="button"
+            onClick={() => loadComplianceIssues()}
+            disabled={saving === "complianceAudit" || !canReadIntercompanyFlags}
+            className="rounded border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 disabled:opacity-60"
+          >
+            {saving === "complianceAudit"
+              ? l("Loading...", "Yukleniyor...")
+              : l("Load Issues", "Sorunlari Yukle")}
+          </button>
+        </div>
+
+        {!canReadIntercompanyFlags ? (
+          <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+            {l(
+              "Missing permission: intercompany.flag.read",
+              "Eksik yetki: intercompany.flag.read"
+            )}
+          </div>
+        ) : (
+          <>
+            <form onSubmit={onApplyComplianceFilters} className="grid gap-2 md:grid-cols-5">
+              <select
+                value={complianceFilters.legalEntityId}
+                onChange={(event) =>
+                  setComplianceFilters((prev) => ({
+                    ...prev,
+                    legalEntityId: event.target.value,
+                  }))
+                }
+                className="rounded border border-slate-300 px-3 py-2 text-sm"
+              >
+                <option value="">{l("All legal entities", "Tum istirakler / bagli ortaklar")}</option>
+                {entities.map((entity) => (
+                  <option key={entity.id} value={entity.id}>
+                    {entity.code} - {entity.name}
+                  </option>
+                ))}
+              </select>
+              <input
+                type="number"
+                min={1}
+                value={complianceFilters.fiscalPeriodId}
+                onChange={(event) =>
+                  setComplianceFilters((prev) => ({
+                    ...prev,
+                    fiscalPeriodId: event.target.value,
+                  }))
+                }
+                className="rounded border border-slate-300 px-3 py-2 text-sm"
+                placeholder={l("Fiscal period ID (optional)", "Mali donem ID (opsiyonel)")}
+              />
+              <select
+                value={complianceFilters.limit}
+                onChange={(event) =>
+                  setComplianceFilters((prev) => ({
+                    ...prev,
+                    limit: event.target.value,
+                  }))
+                }
+                className="rounded border border-slate-300 px-3 py-2 text-sm"
+              >
+                <option value="100">100</option>
+                <option value="200">200</option>
+                <option value="300">300</option>
+                <option value="500">500</option>
+              </select>
+              <label className="inline-flex items-center gap-2 rounded border border-slate-300 px-3 py-2 text-sm text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={Boolean(complianceFilters.includeDraft)}
+                  onChange={(event) =>
+                    setComplianceFilters((prev) => ({
+                      ...prev,
+                      includeDraft: event.target.checked,
+                    }))
+                  }
+                />
+                {l("Include drafts", "Taslaklari dahil et")}
+              </label>
+              <button
+                type="submit"
+                disabled={saving === "complianceAudit"}
+                className="rounded bg-slate-900 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60"
+              >
+                {l("Apply", "Uygula")}
+              </button>
+            </form>
+
+            <div className="mt-2 text-xs text-slate-600">
+              {l("Total issues", "Toplam sorun")}: {Number(complianceSummary?.totalIssues || 0)}{" "}
+              | {l("Disabled entity", "Kapali entity")}:{" "}
+              {Number(complianceSummary?.byIssueCode?.ENTITY_INTERCOMPANY_DISABLED || 0)}{" "}
+              | {l("Missing partner", "Eksik partner")}:{" "}
+              {Number(
+                complianceSummary?.byIssueCode?.PARTNER_REQUIRED_MISSING_COUNTERPARTY || 0
+              )}{" "}
+              | {l("Missing pair", "Eksik pair")}:{" "}
+              {Number(complianceSummary?.byIssueCode?.MISSING_ACTIVE_PAIR || 0)}
+            </div>
+
+            <div className="mt-3 overflow-x-auto rounded border border-slate-200">
+              <table className="min-w-full text-xs">
+                <thead className="bg-slate-50 text-left text-slate-600">
+                  <tr>
+                    <th className="px-2 py-2">{l("Issue", "Sorun")}</th>
+                    <th className="px-2 py-2">{l("Journal", "Fis")}</th>
+                    <th className="px-2 py-2">{l("Line", "Satir")}</th>
+                    <th className="px-2 py-2">{l("From", "Kaynak")}</th>
+                    <th className="px-2 py-2">{l("To", "Hedef")}</th>
+                    <th className="px-2 py-2">{l("Account", "Hesap")}</th>
+                    <th className="px-2 py-2">{l("Actions", "Aksiyonlar")}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {complianceRows.map((row) => (
+                    <tr
+                      key={`${row.issueCode}-${row.journalId}-${row.lineNo}-${row.accountId}-${row.toLegalEntityId || 0}`}
+                      className="border-t border-slate-100"
+                    >
+                      <td className="px-2 py-2">
+                        <div className="font-semibold text-slate-800">{row.issueCode}</div>
+                        <div className="text-slate-500">{row.issueMessage}</div>
+                      </td>
+                      <td className="px-2 py-2">
+                        {row.journalNo || "-"}{" "}
+                        <span className="text-slate-500">
+                          (#{row.journalId || "-"}, {row.journalStatus || "-"})
+                        </span>
+                      </td>
+                      <td className="px-2 py-2">{row.lineNo || "-"}</td>
+                      <td className="px-2 py-2">
+                        {row.fromLegalEntityCode || row.fromLegalEntityId || "-"}
+                      </td>
+                      <td className="px-2 py-2">
+                        {row.toLegalEntityCode || row.toLegalEntityId || "-"}
+                      </td>
+                      <td className="px-2 py-2">
+                        {row.accountCode || row.accountId || "-"}
+                        {row.accountName ? ` - ${row.accountName}` : ""}
+                      </td>
+                      <td className="px-2 py-2">
+                        <div className="flex flex-wrap gap-1">
+                          {row.suggestedActions?.includes("ENABLE_ENTITY_INTERCOMPANY") ? (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                resolveComplianceIssue(row, "ENABLE_ENTITY_INTERCOMPANY")
+                              }
+                              disabled={
+                                !canUpsertIntercompanyFlags ||
+                                saving === "compliance:ENABLE_ENTITY_INTERCOMPANY"
+                              }
+                              className="rounded border border-emerald-300 bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-800 disabled:opacity-60"
+                            >
+                              {l("Enable Entity", "Entity Ac")}
+                            </button>
+                          ) : null}
+                          {row.suggestedActions?.includes("DISABLE_PARTNER_REQUIRED") ? (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                resolveComplianceIssue(row, "DISABLE_PARTNER_REQUIRED")
+                              }
+                              disabled={
+                                !canUpsertIntercompanyFlags ||
+                                saving === "compliance:DISABLE_PARTNER_REQUIRED"
+                              }
+                              className="rounded border border-amber-300 bg-amber-50 px-2 py-1 text-[11px] font-semibold text-amber-800 disabled:opacity-60"
+                            >
+                              {l("Disable Partner Required", "Partner Zorunluyu Kapat")}
+                            </button>
+                          ) : null}
+                          {row.suggestedActions?.includes("CREATE_ACTIVE_PAIR") ? (
+                            <button
+                              type="button"
+                              onClick={() => resolveComplianceIssue(row, "CREATE_ACTIVE_PAIR")}
+                              disabled={
+                                !canUpsertIntercompanyPairs ||
+                                saving === "compliance:CREATE_ACTIVE_PAIR"
+                              }
+                              className="rounded border border-cyan-300 bg-cyan-50 px-2 py-1 text-[11px] font-semibold text-cyan-800 disabled:opacity-60"
+                            >
+                              {l("Create Pair", "Pair Olustur")}
+                            </button>
+                          ) : null}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                  {complianceRows.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="px-2 py-3 text-slate-500">
+                        {l(
+                          "No intercompany compliance issues loaded.",
+                          "Intercompany uyumluluk sorunu yuklenmedi."
+                        )}
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
       </section>
     </div>
   );

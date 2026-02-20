@@ -56,8 +56,19 @@ const READINESS_DEFINITIONS = [
   { key: "fiscalCalendars", label: "Fiscal calendars", minimum: 1 },
   { key: "fiscalPeriods", label: "Fiscal periods", minimum: 1 },
   { key: "books", label: "Books", minimum: 1 },
+  { key: "openBookPeriods", label: "Open book periods", minimum: 1 },
   { key: "chartsOfAccounts", label: "Charts of accounts", minimum: 1 },
   { key: "accounts", label: "Accounts", minimum: 1 },
+  {
+    key: "shareholders",
+    label: "Shareholders",
+    minimum: 1,
+  },
+  {
+    key: "shareholderCommitmentConfigs",
+    label: "Shareholder commitment debit mappings",
+    minimum: 1,
+  },
 ];
 
 function toIsoDate(date) {
@@ -94,8 +105,11 @@ async function buildTenantReadinessSnapshot(tenantId) {
     fiscalCalendars,
     fiscalPeriods,
     books,
+    openBookPeriods,
     chartsOfAccounts,
     accounts,
+    shareholders,
+    shareholderCommitmentConfigs,
   ] = await Promise.all([
     scalarCount(
       `SELECT COUNT(*) AS count
@@ -130,6 +144,19 @@ async function buildTenantReadinessSnapshot(tenantId) {
     ),
     scalarCount(
       `SELECT COUNT(*) AS count
+       FROM books b
+       JOIN fiscal_periods fp
+         ON fp.calendar_id = b.calendar_id
+        AND fp.is_adjustment = FALSE
+       LEFT JOIN period_statuses ps
+         ON ps.book_id = b.id
+        AND ps.fiscal_period_id = fp.id
+       WHERE b.tenant_id = ?
+         AND COALESCE(ps.status, 'OPEN') = 'OPEN'`,
+      [tenantId]
+    ),
+    scalarCount(
+      `SELECT COUNT(*) AS count
        FROM charts_of_accounts
        WHERE tenant_id = ?`,
       [tenantId]
@@ -141,6 +168,19 @@ async function buildTenantReadinessSnapshot(tenantId) {
        WHERE c.tenant_id = ?`,
       [tenantId]
     ),
+    scalarCount(
+      `SELECT COUNT(*) AS count
+       FROM shareholders
+       WHERE tenant_id = ?`,
+      [tenantId]
+    ),
+    scalarCount(
+      `SELECT COUNT(*) AS count
+       FROM journal_purpose_accounts
+       WHERE tenant_id = ?
+         AND purpose_code = 'SHAREHOLDER_COMMITMENT_DEBIT'`,
+      [tenantId]
+    ),
   ]);
 
   const counts = {
@@ -149,8 +189,11 @@ async function buildTenantReadinessSnapshot(tenantId) {
     fiscalCalendars,
     fiscalPeriods,
     books,
+    openBookPeriods,
     chartsOfAccounts,
     accounts,
+    shareholders,
+    shareholderCommitmentConfigs,
   };
 
   const checks = READINESS_DEFINITIONS.map((definition) => {

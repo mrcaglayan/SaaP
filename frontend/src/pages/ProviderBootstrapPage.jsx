@@ -4,6 +4,7 @@ import {
   listProviderTenants,
   updateProviderTenantStatus,
 } from "../api/providerControl.js";
+import { useI18n } from "../i18n/useI18n.js";
 import { useProviderAuth } from "../provider/useProviderAuth.js";
 
 function createInitialForm() {
@@ -16,8 +17,16 @@ function createInitialForm() {
   };
 }
 
+function toTenantStatusLabel(t, status) {
+  return t(
+    ["providerBootstrap", "statuses", String(status || "").toUpperCase()],
+    status || "-"
+  );
+}
+
 export default function ProviderBootstrapPage() {
   const { token, providerAdmin, logout, clearSession } = useProviderAuth();
+  const { t } = useI18n();
   const [form, setForm] = useState(createInitialForm());
   const [query, setQuery] = useState("");
   const [loadingTenants, setLoadingTenants] = useState(false);
@@ -50,7 +59,7 @@ export default function ProviderBootstrapPage() {
       if (err?.response?.status === 401) {
         clearSession();
       }
-      setError(err?.response?.data?.message || "Failed to load tenants.");
+      setError(err?.response?.data?.message || t("providerBootstrap.errors.loadTenants"));
     } finally {
       setLoadingTenants(false);
     }
@@ -80,14 +89,14 @@ export default function ProviderBootstrapPage() {
         adminPassword: form.adminPassword,
       });
       setResult(response || null);
-      setMessage("Tenant and first admin were created successfully.");
+      setMessage(t("providerBootstrap.messages.created"));
       setForm(createInitialForm());
       await loadTenants();
     } catch (err) {
       if (err?.response?.status === 401) {
         clearSession();
       }
-      setError(err?.response?.data?.message || "Tenant provisioning failed.");
+      setError(err?.response?.data?.message || t("providerBootstrap.errors.provisionFailed"));
     } finally {
       setSaving(false);
     }
@@ -103,13 +112,20 @@ export default function ProviderBootstrapPage() {
     setMessage("");
     try {
       await updateProviderTenantStatus(token, tenantId, status);
-      setMessage(`Tenant #${tenantId} status updated to ${status}.`);
+      setMessage(
+        t("providerBootstrap.messages.statusUpdated", {
+          id: tenantId,
+          status: toTenantStatusLabel(t, status),
+        })
+      );
       await loadTenants();
     } catch (err) {
       if (err?.response?.status === 401) {
         clearSession();
       }
-      setError(err?.response?.data?.message || "Failed to update tenant status.");
+      setError(
+        err?.response?.data?.message || t("providerBootstrap.errors.updateStatus")
+      );
     } finally {
       setUpdatingTenantId(null);
     }
@@ -122,15 +138,15 @@ export default function ProviderBootstrapPage() {
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <h1 className="text-xl font-semibold text-slate-900">
-                Provider Tenant Admin Panel
+                {t("providerBootstrap.title")}
               </h1>
               <p className="mt-1 text-sm text-slate-600">
-                Create and manage tenant subscriptions from the control plane.
+                {t("providerBootstrap.subtitle")}
               </p>
               <p className="mt-2 text-xs text-slate-500">
-                Signed in as{" "}
+                {t("providerBootstrap.signedInAs")}{" "}
                 <span className="font-semibold text-slate-700">
-                  {providerAdmin?.name || providerAdmin?.email || "Provider Admin"}
+                  {providerAdmin?.name || providerAdmin?.email || t("providerBootstrap.providerAdminFallback")}
                 </span>
               </p>
             </div>
@@ -139,7 +155,7 @@ export default function ProviderBootstrapPage() {
               onClick={logout}
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
             >
-              Log out
+              {t("providerBootstrap.logout")}
             </button>
           </div>
         </section>
@@ -157,27 +173,29 @@ export default function ProviderBootstrapPage() {
 
         <div className="grid gap-4 xl:grid-cols-[1fr_1.4fr]">
           <section className="rounded-xl border border-slate-200 bg-white p-5">
-            <h2 className="text-sm font-semibold text-slate-700">Create Tenant</h2>
+            <h2 className="text-sm font-semibold text-slate-700">
+              {t("providerBootstrap.createTenant.title")}
+            </h2>
             <form onSubmit={handleCreateTenant} className="mt-3 grid gap-3">
               <input
                 value={form.tenantCode}
                 onChange={(event) => setField("tenantCode", event.target.value)}
                 className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                placeholder="Tenant code (e.g. ACME)"
+                placeholder={t("providerBootstrap.createTenant.placeholders.tenantCode")}
                 required
               />
               <input
                 value={form.tenantName}
                 onChange={(event) => setField("tenantName", event.target.value)}
                 className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                placeholder="Tenant name"
+                placeholder={t("providerBootstrap.createTenant.placeholders.tenantName")}
                 required
               />
               <input
                 value={form.adminName}
                 onChange={(event) => setField("adminName", event.target.value)}
                 className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                placeholder="Admin full name"
+                placeholder={t("providerBootstrap.createTenant.placeholders.adminName")}
                 required
               />
               <input
@@ -185,7 +203,7 @@ export default function ProviderBootstrapPage() {
                 value={form.adminEmail}
                 onChange={(event) => setField("adminEmail", event.target.value)}
                 className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                placeholder="Admin email"
+                placeholder={t("providerBootstrap.createTenant.placeholders.adminEmail")}
                 required
               />
               <input
@@ -193,7 +211,9 @@ export default function ProviderBootstrapPage() {
                 value={form.adminPassword}
                 onChange={(event) => setField("adminPassword", event.target.value)}
                 className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                placeholder="Admin password (min 8 chars)"
+                placeholder={t(
+                  "providerBootstrap.createTenant.placeholders.adminPassword"
+                )}
                 required
                 minLength={8}
               />
@@ -202,21 +222,35 @@ export default function ProviderBootstrapPage() {
                 disabled={saving}
                 className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
               >
-                {saving ? "Provisioning..." : "Create tenant"}
+                {saving
+                  ? t("providerBootstrap.createTenant.actions.provisioning")
+                  : t("providerBootstrap.createTenant.actions.create")}
               </button>
             </form>
 
             {result ? (
               <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50/40 p-3 text-sm text-emerald-900">
-                <h3 className="font-semibold">Provision Result</h3>
+                <h3 className="font-semibold">
+                  {t("providerBootstrap.createTenant.result.title")}
+                </h3>
                 <div className="mt-2 grid gap-1 text-xs">
                   <div>
-                    Tenant: #{result.tenantId} ({result.tenantCode})
+                    {t("providerBootstrap.createTenant.result.tenant", {
+                      id: result.tenantId,
+                      code: result.tenantCode,
+                    })}
                   </div>
                   <div>
-                    Admin: #{result.adminUserId} ({result.adminEmail})
+                    {t("providerBootstrap.createTenant.result.admin", {
+                      id: result.adminUserId,
+                      email: result.adminEmail,
+                    })}
                   </div>
-                  <div>Role ID: {result.adminRoleId}</div>
+                  <div>
+                    {t("providerBootstrap.createTenant.result.roleId", {
+                      id: result.adminRoleId,
+                    })}
+                  </div>
                 </div>
               </div>
             ) : null}
@@ -224,14 +258,18 @@ export default function ProviderBootstrapPage() {
 
           <section className="rounded-xl border border-slate-200 bg-white p-5">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <h2 className="text-sm font-semibold text-slate-700">Tenant Directory</h2>
+              <h2 className="text-sm font-semibold text-slate-700">
+                {t("providerBootstrap.directory.title")}
+              </h2>
               <button
                 type="button"
                 onClick={() => loadTenants()}
                 disabled={loadingTenants}
                 className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 disabled:opacity-60"
               >
-                {loadingTenants ? "Loading..." : "Refresh"}
+                {loadingTenants
+                  ? t("providerBootstrap.directory.loading")
+                  : t("providerBootstrap.directory.refresh")}
               </button>
             </div>
 
@@ -246,14 +284,14 @@ export default function ProviderBootstrapPage() {
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                placeholder="Search by tenant code or name"
+                placeholder={t("providerBootstrap.directory.searchPlaceholder")}
               />
               <button
                 type="submit"
                 disabled={loadingTenants}
                 className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60"
               >
-                Search
+                {t("providerBootstrap.directory.search")}
               </button>
             </form>
 
@@ -262,11 +300,11 @@ export default function ProviderBootstrapPage() {
                 <thead className="bg-slate-50 text-left text-slate-600">
                   <tr>
                     <th className="px-3 py-2">ID</th>
-                    <th className="px-3 py-2">Code</th>
-                    <th className="px-3 py-2">Name</th>
-                    <th className="px-3 py-2">Status</th>
-                    <th className="px-3 py-2">Users</th>
-                    <th className="px-3 py-2">Actions</th>
+                    <th className="px-3 py-2">{t("providerBootstrap.directory.columns.code")}</th>
+                    <th className="px-3 py-2">{t("providerBootstrap.directory.columns.name")}</th>
+                    <th className="px-3 py-2">{t("providerBootstrap.directory.columns.status")}</th>
+                    <th className="px-3 py-2">{t("providerBootstrap.directory.columns.users")}</th>
+                    <th className="px-3 py-2">{t("providerBootstrap.directory.columns.actions")}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -275,7 +313,9 @@ export default function ProviderBootstrapPage() {
                       <td className="px-3 py-2">{tenant.id}</td>
                       <td className="px-3 py-2">{tenant.code}</td>
                       <td className="px-3 py-2">{tenant.name}</td>
-                      <td className="px-3 py-2">{tenant.status}</td>
+                      <td className="px-3 py-2">
+                        {toTenantStatusLabel(t, tenant.status)}
+                      </td>
                       <td className="px-3 py-2">
                         {tenant.activeUserCount}/{tenant.userCount}
                       </td>
@@ -289,7 +329,7 @@ export default function ProviderBootstrapPage() {
                             }
                             className="rounded border border-emerald-300 px-2 py-1 text-xs font-semibold text-emerald-700 disabled:opacity-60"
                           >
-                            Activate
+                            {t("providerBootstrap.directory.actions.activate")}
                           </button>
                           <button
                             type="button"
@@ -300,7 +340,7 @@ export default function ProviderBootstrapPage() {
                             }
                             className="rounded border border-amber-300 px-2 py-1 text-xs font-semibold text-amber-700 disabled:opacity-60"
                           >
-                            Suspend
+                            {t("providerBootstrap.directory.actions.suspend")}
                           </button>
                         </div>
                       </td>
@@ -309,7 +349,7 @@ export default function ProviderBootstrapPage() {
                   {tenants.length === 0 && !loadingTenants ? (
                     <tr>
                       <td colSpan={6} className="px-3 py-3 text-slate-500">
-                        No tenant records found.
+                        {t("providerBootstrap.directory.empty")}
                       </td>
                     </tr>
                   ) : null}
