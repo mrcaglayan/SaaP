@@ -12,6 +12,14 @@ export default function LoginPage() {
   const location = useLocation();
 
   const from = location.state?.from?.pathname || "/app";
+  const providerPanelEnabled =
+    import.meta.env.DEV ||
+    String(import.meta.env.VITE_PROVIDER_PANEL_ENABLED || "")
+      .trim()
+      .toLowerCase() === "true" ||
+    String(import.meta.env.VITE_PROVIDER_BOOTSTRAP_ENABLED || "")
+      .trim()
+      .toLowerCase() === "true";
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -75,6 +83,16 @@ export default function LoginPage() {
         >
           {busy ? t("login.signingIn") : t("login.signIn")}
         </button>
+
+        {providerPanelEnabled ? (
+          <button
+            type="button"
+            onClick={() => navigate("/provider/login")}
+            className="rounded-md border border-slate-300 px-4 py-2 font-semibold text-slate-700 hover:bg-slate-50"
+          >
+            {t("login.providerAdminSignIn")}
+          </button>
+        ) : null}
       </form>
     </AuthLayout>
   );

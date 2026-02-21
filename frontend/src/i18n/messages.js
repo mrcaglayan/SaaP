@@ -40,6 +40,7 @@ export const messages = {
       signIn: "Giris Yap",
       signingIn: "Giris yapiliyor...",
       failed: "Giris basarisiz",
+      providerAdminSignIn: "Provider Yonetici Girisi",
     },
     authGuards: {
       loading: "Yukleniyor...",
@@ -58,6 +59,7 @@ export const messages = {
       signIn: "Giris Yap",
       signingIn: "Giris yapiliyor...",
       failed: "Provider girisi basarisiz",
+      backToUserLogin: "Kullanici Girisine Don",
     },
     providerBootstrap: {
       title: "Provider Tenant Yonetim Paneli",
@@ -550,6 +552,7 @@ export const messages = {
       signIn: "Sign in",
       signingIn: "Signing in...",
       failed: "Login failed",
+      providerAdminSignIn: "Provider Admin Sign In",
     },
     authGuards: {
       loading: "Loading...",
@@ -568,6 +571,7 @@ export const messages = {
       signIn: "Sign in",
       signingIn: "Signing in...",
       failed: "Provider login failed",
+      backToUserLogin: "Back to User Login",
     },
     providerBootstrap: {
       title: "Provider Tenant Admin Panel",

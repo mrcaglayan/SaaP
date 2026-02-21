@@ -2399,7 +2399,7 @@ router.get(
          s.ownership_pct,
          s.committed_capital,
          CASE
-           WHEN c.id IS NULL THEN 0
+           WHEN dc.id IS NULL THEN 0
            ELSE COALESCE(pc.paid_capital_calculated, 0)
          END AS paid_capital,
          CASE WHEN c.id IS NULL THEN NULL ELSE s.capital_sub_account_id END AS capital_sub_account_id,
@@ -2440,7 +2440,7 @@ router.get(
        ) pc
          ON pc.tenant_id = s.tenant_id
         AND pc.legal_entity_id = s.legal_entity_id
-        AND pc.account_id = s.capital_sub_account_id
+        AND pc.account_id = s.commitment_debit_sub_account_id
        WHERE ${conditions.join(" AND ")}
        ORDER BY s.legal_entity_id, s.code`,
       params

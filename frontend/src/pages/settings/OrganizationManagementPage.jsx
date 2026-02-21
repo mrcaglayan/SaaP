@@ -170,6 +170,7 @@ export default function OrganizationManagementPage() {
   const [periods, setPeriods] = useState([]);
 
   const [groupForm, setGroupForm] = useState({ code: "", name: "" });
+  const [groupEditingCode, setGroupEditingCode] = useState("");
   const [entityForm, setEntityForm] = useState({
     groupCompanyId: "",
     code: "",
@@ -1211,10 +1212,35 @@ export default function OrganizationManagementPage() {
     [l, pendingBatchQueueCurrencyGroups, updateQueueForSelectedEntity]
   );
 
+  function resetGroupForm() {
+    setGroupForm({ code: "", name: "" });
+    setGroupEditingCode("");
+  }
+
+  function handleGroupEdit(row) {
+    const code = String(row?.code || "").trim();
+    const name = String(row?.name || "").trim();
+    if (!code) {
+      return;
+    }
+    setGroupEditingCode(code);
+    setGroupForm({ code, name });
+    setError("");
+    setMessage("");
+  }
+
   async function handleGroupSubmit(event) {
     event.preventDefault();
     if (!canUpsertGroupCompany) {
       setError(l("Missing permission: org.group_company.upsert", "Eksik yetki: org.group_company.upsert"));
+      return;
+    }
+
+    const normalizedCode = String(groupForm.code || "").trim();
+    const normalizedName = String(groupForm.name || "").trim();
+    const isEditMode = Boolean(groupEditingCode);
+    if (!normalizedCode || !normalizedName) {
+      setError(l("Code and name are required.", "Kod ve ad zorunludur."));
       return;
     }
 
@@ -1223,11 +1249,15 @@ export default function OrganizationManagementPage() {
     setMessage("");
     try {
       await upsertGroupCompany({
-        code: groupForm.code.trim(),
-        name: groupForm.name.trim(),
+        code: normalizedCode,
+        name: normalizedName,
       });
-      setGroupForm({ code: "", name: "" });
-      setMessage(l("Group company saved.", "Grup sirketi kaydedildi."));
+      resetGroupForm();
+      setMessage(
+        isEditMode
+          ? l("Group company updated.", "Grup sirketi guncellendi.")
+          : l("Group company saved.", "Grup sirketi kaydedildi.")
+      );
       await loadCoreData();
     } catch (err) {
       setError(err?.response?.data?.message || l("Failed to save group company.", "Grup sirketi kaydedilemedi."));
@@ -2089,12 +2119,21 @@ export default function OrganizationManagementPage() {
           <h2 className="mb-3 text-sm font-semibold text-slate-700">
             {l("Group Companies", "Grup Sirketleri")}
           </h2>
-          <form onSubmit={handleGroupSubmit} className="grid gap-2 md:grid-cols-3">
+          {groupEditingCode ? (
+            <p className="mb-2 text-xs text-slate-600">
+              {l(
+                `Editing group ${groupEditingCode}. Group code is locked.`,
+                `${groupEditingCode} grubu duzenleniyor. Grup kodu kilitli.`
+              )}
+            </p>
+          ) : null}
+          <form onSubmit={handleGroupSubmit} className="grid gap-2 md:grid-cols-4">
             <input
               value={groupForm.code}
               onChange={(event) =>
                 setGroupForm((prev) => ({ ...prev, code: event.target.value }))
               }
+              disabled={Boolean(groupEditingCode)}
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
               placeholder={l("Code", "Kod")}
               required
@@ -2104,7 +2143,7 @@ export default function OrganizationManagementPage() {
               onChange={(event) =>
                 setGroupForm((prev) => ({ ...prev, name: event.target.value }))
               }
-              className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              className="rounded-lg border border-slate-300 px-3 py-2 text-sm md:col-span-2"
               placeholder={l("Name", "Ad")}
               required
             />
@@ -2113,8 +2152,22 @@ export default function OrganizationManagementPage() {
               disabled={saving === "group" || !canUpsertGroupCompany}
               className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60"
             >
-              {saving === "group" ? l("Saving...", "Kaydediliyor...") : l("Save", "Kaydet")}
+              {saving === "group"
+                ? l("Saving...", "Kaydediliyor...")
+                : groupEditingCode
+                  ? l("Update", "Guncelle")
+                  : l("Save", "Kaydet")}
             </button>
+            {groupEditingCode ? (
+              <button
+                type="button"
+                onClick={resetGroupForm}
+                disabled={saving === "group"}
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 disabled:opacity-60 md:col-start-4"
+              >
+                {l("Cancel Edit", "Duzenlemeyi Iptal Et")}
+              </button>
+            ) : null}
           </form>
 
           <div className="mt-3 overflow-x-auto">
@@ -2124,6 +2177,7 @@ export default function OrganizationManagementPage() {
                   <th className="px-3 py-2">ID</th>
                   <th className="px-3 py-2">{l("Code", "Kod")}</th>
                   <th className="px-3 py-2">{l("Name", "Ad")}</th>
+                  <th className="px-3 py-2">{l("Action", "Islem")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -2132,11 +2186,21 @@ export default function OrganizationManagementPage() {
                     <td className="px-3 py-2">{row.id}</td>
                     <td className="px-3 py-2">{row.code}</td>
                     <td className="px-3 py-2">{row.name}</td>
+                    <td className="px-3 py-2">
+                      <button
+                        type="button"
+                        onClick={() => handleGroupEdit(row)}
+                        disabled={saving === "group" || !canUpsertGroupCompany}
+                        className="rounded border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                      >
+                        {l("Edit", "Duzenle")}
+                      </button>
+                    </td>
                   </tr>
                 ))}
                 {groups.length === 0 && !loading && (
                   <tr>
-                    <td colSpan={3} className="px-3 py-3 text-slate-500">
+                    <td colSpan={4} className="px-3 py-3 text-slate-500">
                       {l("No group companies found.", "Grup sirketi bulunamadi.")}
                     </td>
                   </tr>
@@ -3105,8 +3169,8 @@ export default function OrganizationManagementPage() {
             </div>
             <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
               {l(
-                "Paid capital is auto-calculated from posted journals on the mapped capital sub-account.",
-                "Odenen sermaye, eslenen sermaye alt hesabi uzerinden post edilmis yevmiye kayitlarindan otomatik hesaplanir."
+                "Paid capital is auto-calculated from posted journals that credit the mapped commitment debit sub-account (e.g. 501.xx).",
+                "Odenen sermaye, eslenen taahhut borc alt hesabini (orn. 501.xx) alacaklandiran post edilmis yevmiye kayitlarindan otomatik hesaplanir."
               )}
             </div>
             <select
