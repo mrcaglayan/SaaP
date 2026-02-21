@@ -14,16 +14,19 @@ import {
   resolveTenantId,
 } from "./_utils.js";
 import {
-  assertAccountBelongsToTenant,
   assertCurrencyExists,
   assertCountryExists,
   assertFiscalCalendarBelongsToTenant,
   assertGroupCompanyBelongsToTenant,
   assertLegalEntityBelongsToTenant,
 } from "../tenantGuards.js";
+import { recalculateShareholderOwnershipPctTx } from "../services/shareholderOwnership.js";
 
 const router = express.Router();
-const SHAREHOLDER_COMMITMENT_DEBIT_PURPOSE = "SHAREHOLDER_COMMITMENT_DEBIT";
+const SHAREHOLDER_CAPITAL_CREDIT_PARENT_PURPOSE =
+  "SHAREHOLDER_CAPITAL_CREDIT_PARENT";
+const SHAREHOLDER_COMMITMENT_DEBIT_PARENT_PURPOSE =
+  "SHAREHOLDER_COMMITMENT_DEBIT_PARENT";
 const DEFAULT_GL_ACCOUNTS = [
   {
     code: "1000",
@@ -166,20 +169,781 @@ function normalizeMoney(value) {
   return Math.round(parsed * 1_000_000) / 1_000_000;
 }
 
+function normalizeAccountNormalSide(value) {
+  return String(value || "").trim().toUpperCase();
+}
+
+async function resolveShareholderParentMappings(tx, tenantId, legalEntityId) {
+  const result = await tx.query(
+    `SELECT purpose_code, account_id
+     FROM journal_purpose_accounts
+     WHERE tenant_id = ?
+       AND legal_entity_id = ?
+       AND purpose_code IN (?, ?)`,
+    [
+      tenantId,
+      legalEntityId,
+      SHAREHOLDER_CAPITAL_CREDIT_PARENT_PURPOSE,
+      SHAREHOLDER_COMMITMENT_DEBIT_PARENT_PURPOSE,
+    ]
+  );
+
+  const byPurpose = new Map(
+    (result.rows || []).map((row) => [String(row.purpose_code || ""), parsePositiveInt(row.account_id)])
+  );
+  const capitalCreditParentAccountId = parsePositiveInt(
+    byPurpose.get(SHAREHOLDER_CAPITAL_CREDIT_PARENT_PURPOSE)
+  );
+  const commitmentDebitParentAccountId = parsePositiveInt(
+    byPurpose.get(SHAREHOLDER_COMMITMENT_DEBIT_PARENT_PURPOSE)
+  );
+
+  return {
+    capitalCreditParentAccountId,
+    commitmentDebitParentAccountId,
+  };
+}
+
+async function assertShareholderParentAccount(
+  tx,
+  tenantId,
+  legalEntityId,
+  accountId,
+  fieldLabel,
+  expectedNormalSide
+) {
+  const normalizedAccountId = parsePositiveInt(accountId);
+  if (!normalizedAccountId) {
+    throw badRequest(`${fieldLabel} must be a positive integer`);
+  }
+
+  const result = await tx.query(
+    `SELECT
+       a.id,
+       a.code,
+       a.name,
+       a.coa_id,
+       a.account_type,
+       a.normal_side,
+       a.is_active,
+       a.allow_posting,
+       c.legal_entity_id
+      FROM accounts a
+      JOIN charts_of_accounts c ON c.id = a.coa_id
+      WHERE a.id = ?
+       AND c.tenant_id = ?
+     LIMIT 1`,
+    [normalizedAccountId, tenantId]
+  );
+  const account = result.rows[0];
+  if (!account) {
+    throw badRequest(`${fieldLabel} not found for tenant`);
+  }
+  if (parsePositiveInt(account.legal_entity_id) !== legalEntityId) {
+    throw badRequest(`${fieldLabel} must belong to selected legalEntityId`);
+  }
+  if (!Boolean(account.is_active)) {
+    throw badRequest(`${fieldLabel} must reference an active account`);
+  }
+  if (String(account.account_type || "").toUpperCase() !== "EQUITY") {
+    throw badRequest(`${fieldLabel} must reference an EQUITY account`);
+  }
+  if (
+    expectedNormalSide &&
+    normalizeAccountNormalSide(account.normal_side) !== expectedNormalSide
+  ) {
+    throw badRequest(
+      `${fieldLabel} must reference a ${expectedNormalSide} normal-side account`
+    );
+  }
+  if (Boolean(account.allow_posting)) {
+    throw badRequest(
+      `${fieldLabel} must reference a non-postable/header account (allow_posting=false)`
+    );
+  }
+
+  return {
+    id: normalizedAccountId,
+    code: String(account.code || ""),
+    name: String(account.name || ""),
+    coaId: parsePositiveInt(account.coa_id),
+    normalSide: normalizeAccountNormalSide(account.normal_side),
+  };
+}
+
+function pushValidationIssue(collection, issue) {
+  const normalizedCode = String(issue?.code || "").trim().toUpperCase();
+  const normalizedMessage = String(issue?.message || "").trim();
+  if (!normalizedCode || !normalizedMessage) {
+    return;
+  }
+  const existing = collection.find(
+    (row) => row.code === normalizedCode && row.message === normalizedMessage
+  );
+  if (!existing) {
+    collection.push({
+      code: normalizedCode,
+      message: normalizedMessage,
+      details: issue?.details ? [issue.details] : [],
+    });
+    return;
+  }
+  if (issue?.details) {
+    existing.details = Array.isArray(existing.details) ? existing.details : [];
+    existing.details.push(issue.details);
+  }
+}
+
+function createBatchRowIssue(code, message) {
+  return {
+    code: String(code || "").trim().toUpperCase(),
+    message: String(message || "").trim(),
+  };
+}
+
+function normalizeCurrencyCode(value, fallback = "USD") {
+  const normalized = String(value || "")
+    .trim()
+    .toUpperCase();
+  return normalized || fallback;
+}
+
+async function loadShareholderCommitmentJournalizedAmountByShareholder(
+  tx,
+  tenantId,
+  legalEntityId,
+  shareholderIds
+) {
+  if (!Array.isArray(shareholderIds) || shareholderIds.length === 0) {
+    return new Map();
+  }
+
+  const placeholders = shareholderIds.map(() => "?").join(",");
+  try {
+    const result = await tx.query(
+      `SELECT
+         shareholder_id,
+         SUM(amount) AS total_amount
+       FROM shareholder_commitment_journal_entries
+       WHERE tenant_id = ?
+         AND legal_entity_id = ?
+         AND shareholder_id IN (${placeholders})
+       GROUP BY shareholder_id`,
+      [tenantId, legalEntityId, ...shareholderIds]
+    );
+
+    return new Map(
+      (result.rows || []).map((row) => [
+        parsePositiveInt(row.shareholder_id),
+        normalizeMoney(row.total_amount || 0),
+      ])
+    );
+  } catch (err) {
+    if (Number(err?.errno) === 1146) {
+      throw badRequest(
+        "Setup required: shareholder commitment audit table is missing (run latest migrations)"
+      );
+    }
+    throw err;
+  }
+}
+
+async function loadLegalEntityAccountHierarchy(tx, tenantId, legalEntityId) {
+  const result = await tx.query(
+    `SELECT
+       a.id,
+       a.parent_account_id
+     FROM accounts a
+     JOIN charts_of_accounts c ON c.id = a.coa_id
+     WHERE c.tenant_id = ?
+       AND c.legal_entity_id = ?`,
+    [tenantId, legalEntityId]
+  );
+
+  return new Map(
+    (result.rows || []).map((row) => [
+      parsePositiveInt(row.id),
+      parsePositiveInt(row.parent_account_id),
+    ])
+  );
+}
+
+function isDescendantOfParentAccount(parentById, accountId, parentAccountId) {
+  const normalizedAccountId = parsePositiveInt(accountId);
+  const normalizedParentAccountId = parsePositiveInt(parentAccountId);
+  if (!normalizedAccountId || !normalizedParentAccountId) {
+    return false;
+  }
+
+  const visited = new Set();
+  let currentParentId = parsePositiveInt(parentById.get(normalizedAccountId));
+  while (currentParentId) {
+    if (currentParentId === normalizedParentAccountId) {
+      return true;
+    }
+    if (visited.has(currentParentId)) {
+      break;
+    }
+    visited.add(currentParentId);
+    currentParentId = parsePositiveInt(parentById.get(currentParentId));
+  }
+
+  return false;
+}
+
+function validateShareholderMappedLeafAccount({
+  account,
+  tenantId,
+  legalEntityId,
+  expectedNormalSide,
+  expectedParentAccountId,
+  parentById,
+  fieldLabel,
+}) {
+  if (!account) {
+    return createBatchRowIssue(
+      "MISSING_ACCOUNTS",
+      `${fieldLabel} is missing for selected shareholder`
+    );
+  }
+  if (
+    parsePositiveInt(account.account_tenant_id) !== tenantId ||
+    parsePositiveInt(account.account_legal_entity_id) !== legalEntityId
+  ) {
+    return createBatchRowIssue(
+      "INVALID_PARENT_MAPPING",
+      `${fieldLabel} must belong to selected legalEntityId`
+    );
+  }
+  if (String(account.account_type || "").toUpperCase() !== "EQUITY") {
+    return createBatchRowIssue(
+      "INVALID_PARENT_MAPPING",
+      `${fieldLabel} must reference an EQUITY account`
+    );
+  }
+  if (normalizeAccountNormalSide(account.normal_side) !== expectedNormalSide) {
+    return createBatchRowIssue(
+      "INVALID_PARENT_MAPPING",
+      `${fieldLabel} must reference a ${expectedNormalSide} normal-side account`
+    );
+  }
+  if (!Boolean(account.is_active)) {
+    return createBatchRowIssue(
+      "INACTIVE_ACCOUNTS",
+      `${fieldLabel} must reference an active account`
+    );
+  }
+  if (!Boolean(account.allow_posting)) {
+    return createBatchRowIssue(
+      "NON_POSTABLE_MAPPED_CHILD_ACCOUNT",
+      `${fieldLabel} must reference a postable account`
+    );
+  }
+  if (Boolean(account.has_active_children)) {
+    return createBatchRowIssue(
+      "NON_POSTABLE_MAPPED_CHILD_ACCOUNT",
+      `${fieldLabel} must reference a leaf/postable account`
+    );
+  }
+  if (
+    !isDescendantOfParentAccount(
+      parentById,
+      parsePositiveInt(account.id),
+      expectedParentAccountId
+    )
+  ) {
+    return createBatchRowIssue(
+      "INVALID_PARENT_MAPPING",
+      `${fieldLabel} must be a child/descendant of configured parent account`
+    );
+  }
+  return null;
+}
+
+function parseBatchShareholderIds(rawShareholderIds) {
+  const shareholderIds = Array.from(
+    new Set(
+      (Array.isArray(rawShareholderIds) ? rawShareholderIds : [])
+        .map((value) => parsePositiveInt(value))
+        .filter(Boolean)
+    )
+  );
+  if (shareholderIds.length === 0) {
+    throw badRequest("shareholderIds must include at least one valid id");
+  }
+  if (shareholderIds.length > 200) {
+    throw badRequest("shareholderIds cannot exceed 200 entries");
+  }
+  return shareholderIds;
+}
+
+async function buildShareholderCommitmentBatchPreviewTx(tx, payload) {
+  const tenantId = parsePositiveInt(payload?.tenantId);
+  const legalEntityId = parsePositiveInt(payload?.legalEntityId);
+  const shareholderIds = parseBatchShareholderIds(payload?.shareholderIds);
+  const commitmentDate = toIsoDate(payload?.commitmentDate, "commitmentDate");
+  const lockShareholders = Boolean(payload?.lockShareholders);
+
+  if (!tenantId || !legalEntityId) {
+    throw badRequest("tenantId and legalEntityId are required");
+  }
+
+  const blockingErrors = [];
+  const warnings = [];
+  const lockClause = lockShareholders ? "FOR UPDATE" : "";
+  const placeholders = shareholderIds.map(() => "?").join(",");
+  const shareholdersResult = await tx.query(
+    `SELECT
+       s.id,
+       s.code,
+       s.name,
+       s.committed_capital,
+       s.currency_code,
+       s.capital_sub_account_id,
+       s.commitment_debit_sub_account_id
+     FROM shareholders s
+     WHERE s.tenant_id = ?
+       AND s.legal_entity_id = ?
+       AND s.id IN (${placeholders})
+     ORDER BY s.id
+     ${lockClause}`,
+    [tenantId, legalEntityId, ...shareholderIds]
+  );
+  const shareholdersById = new Map(
+    (shareholdersResult.rows || []).map((row) => [parsePositiveInt(row.id), row])
+  );
+  const missingIds = shareholderIds.filter((id) => !shareholdersById.has(id));
+  if (missingIds.length > 0) {
+    throw badRequest(
+      `Some shareholders were not found in legalEntityId=${legalEntityId}: ${missingIds.join(",")}`
+    );
+  }
+
+  const selectedShareholders = shareholderIds
+    .map((id) => shareholdersById.get(id))
+    .filter(Boolean);
+
+  const currencyGroups = new Map();
+  for (const row of selectedShareholders) {
+    const currencyCode = normalizeCurrencyCode(row.currency_code || "");
+    if (!currencyGroups.has(currencyCode)) {
+      currencyGroups.set(currencyCode, []);
+    }
+    currencyGroups
+      .get(currencyCode)
+      .push({
+        shareholder_id: parsePositiveInt(row.id),
+        code: String(row.code || ""),
+        name: String(row.name || ""),
+      });
+  }
+  if (currencyGroups.size > 1) {
+    const mixedCurrencyDetails = Array.from(currencyGroups.entries()).map(
+      ([currency_code, shareholders]) => ({
+        currency_code,
+        shareholders,
+      })
+    );
+    pushValidationIssue(blockingErrors, {
+      code: "MIXED_CURRENCY",
+      message:
+        "Queued shareholders contain mixed currencies. Create separate batches per currency.",
+      details: mixedCurrencyDetails,
+    });
+  }
+
+  const shareholderParentMappings = await resolveShareholderParentMappings(
+    tx,
+    tenantId,
+    legalEntityId
+  );
+  const capitalCreditParentAccountId = parsePositiveInt(
+    shareholderParentMappings.capitalCreditParentAccountId
+  );
+  const commitmentDebitParentAccountId = parsePositiveInt(
+    shareholderParentMappings.commitmentDebitParentAccountId
+  );
+
+  let capitalParentAccount = null;
+  let commitmentParentAccount = null;
+  if (!capitalCreditParentAccountId || !commitmentDebitParentAccountId) {
+    pushValidationIssue(blockingErrors, {
+      code: "INVALID_PARENT_MAPPING",
+      message:
+        "Setup required: configure shareholder parent account mapping for selected legalEntityId",
+      details: {
+        capital_credit_parent_account_id: capitalCreditParentAccountId || null,
+        commitment_debit_parent_account_id: commitmentDebitParentAccountId || null,
+      },
+    });
+  } else {
+    try {
+      capitalParentAccount = await assertShareholderParentAccount(
+        tx,
+        tenantId,
+        legalEntityId,
+        capitalCreditParentAccountId,
+        "capitalCreditParentAccountId",
+        "CREDIT"
+      );
+    } catch (err) {
+      pushValidationIssue(blockingErrors, {
+        code: "INVALID_PARENT_MAPPING",
+        message: err?.message || "capitalCreditParentAccountId is invalid",
+      });
+    }
+    try {
+      commitmentParentAccount = await assertShareholderParentAccount(
+        tx,
+        tenantId,
+        legalEntityId,
+        commitmentDebitParentAccountId,
+        "commitmentDebitParentAccountId",
+        "DEBIT"
+      );
+    } catch (err) {
+      pushValidationIssue(blockingErrors, {
+        code: "INVALID_PARENT_MAPPING",
+        message: err?.message || "commitmentDebitParentAccountId is invalid",
+      });
+    }
+  }
+
+  const journalContext = await resolveOpenBookPeriodForLegalEntity(
+    tx,
+    tenantId,
+    legalEntityId,
+    commitmentDate
+  );
+  if (!journalContext?.bookId || !journalContext?.fiscalPeriodId) {
+    pushValidationIssue(blockingErrors, {
+      code: "NO_OPEN_BOOK_PERIOD",
+      message: "No OPEN book/fiscal period found for legalEntityId",
+    });
+  } else if (
+    commitmentDate < journalContext.startDate ||
+    commitmentDate > journalContext.endDate
+  ) {
+    pushValidationIssue(blockingErrors, {
+      code: "COMMITMENT_DATE_OUTSIDE_OPEN_PERIOD",
+      message: "commitmentDate must be within an OPEN fiscal period for legalEntityId",
+      details: {
+        fiscal_period_id: journalContext.fiscalPeriodId,
+        period_start_date: journalContext.startDate,
+        period_end_date: journalContext.endDate,
+      },
+    });
+  }
+
+  const accountIds = Array.from(
+    new Set(
+      selectedShareholders.flatMap((row) => [
+        parsePositiveInt(row.capital_sub_account_id),
+        parsePositiveInt(row.commitment_debit_sub_account_id),
+      ])
+    )
+  ).filter(Boolean);
+  const accountById = new Map();
+  if (accountIds.length > 0) {
+    const accountPlaceholders = accountIds.map(() => "?").join(",");
+    const accountsResult = await tx.query(
+      `SELECT
+         a.id,
+         a.code,
+         a.name,
+         a.account_type,
+         a.normal_side,
+         a.allow_posting,
+         a.is_active,
+         a.parent_account_id,
+         EXISTS(
+           SELECT 1
+           FROM accounts child
+           WHERE child.parent_account_id = a.id
+             AND child.is_active = TRUE
+         ) AS has_active_children,
+         c.tenant_id AS account_tenant_id,
+         c.legal_entity_id AS account_legal_entity_id
+       FROM accounts a
+       JOIN charts_of_accounts c ON c.id = a.coa_id
+       WHERE a.id IN (${accountPlaceholders})`,
+      accountIds
+    );
+    for (const row of accountsResult.rows || []) {
+      accountById.set(parsePositiveInt(row.id), row);
+    }
+  }
+
+  const accountParentById = await loadLegalEntityAccountHierarchy(
+    tx,
+    tenantId,
+    legalEntityId
+  );
+  const alreadyJournaledByShareholderId =
+    await loadShareholderCommitmentJournalizedAmountByShareholder(
+      tx,
+      tenantId,
+      legalEntityId,
+      shareholderIds
+    );
+
+  const rows = [];
+  const includedShareholders = [];
+  const skippedShareholders = [];
+  let totalDebit = 0;
+  let totalCredit = 0;
+  let totalsCurrencyCode = normalizeCurrencyCode(selectedShareholders[0]?.currency_code || "");
+  let zeroDeltaSkippedCount = 0;
+
+  for (const shareholder of selectedShareholders) {
+    const shareholderId = parsePositiveInt(shareholder.id);
+    const code = String(shareholder.code || "");
+    const name = String(shareholder.name || "");
+    const currencyCode = normalizeCurrencyCode(shareholder.currency_code || "");
+    const committedCapital = normalizeMoney(shareholder.committed_capital || 0);
+    const alreadyJournaledAmount = normalizeMoney(
+      alreadyJournaledByShareholderId.get(shareholderId) || 0
+    );
+    const deltaAmount = normalizeMoney(committedCapital - alreadyJournaledAmount);
+
+    const debitAccountId = parsePositiveInt(
+      shareholder.commitment_debit_sub_account_id
+    );
+    const creditAccountId = parsePositiveInt(shareholder.capital_sub_account_id);
+    const debitAccount = accountById.get(debitAccountId) || null;
+    const creditAccount = accountById.get(creditAccountId) || null;
+
+    const rowIssues = [];
+    if (!creditAccountId) {
+      rowIssues.push(
+        createBatchRowIssue(
+          "MISSING_ACCOUNTS",
+          "capital_sub_account_id is missing for selected shareholder"
+        )
+      );
+    }
+    if (!debitAccountId) {
+      rowIssues.push(
+        createBatchRowIssue(
+          "MISSING_ACCOUNTS",
+          "commitment_debit_sub_account_id is missing for selected shareholder"
+        )
+      );
+    }
+
+    if (creditAccountId) {
+      const capitalIssue = validateShareholderMappedLeafAccount({
+        account: creditAccount,
+        tenantId,
+        legalEntityId,
+        expectedNormalSide: "CREDIT",
+        expectedParentAccountId: capitalParentAccount?.id || capitalCreditParentAccountId,
+        parentById: accountParentById,
+        fieldLabel: "capital_sub_account_id",
+      });
+      if (capitalIssue) {
+        rowIssues.push(capitalIssue);
+      }
+    }
+    if (debitAccountId) {
+      const debitIssue = validateShareholderMappedLeafAccount({
+        account: debitAccount,
+        tenantId,
+        legalEntityId,
+        expectedNormalSide: "DEBIT",
+        expectedParentAccountId:
+          commitmentParentAccount?.id || commitmentDebitParentAccountId,
+        parentById: accountParentById,
+        fieldLabel: "commitment_debit_sub_account_id",
+      });
+      if (debitIssue) {
+        rowIssues.push(debitIssue);
+      }
+    }
+
+    for (const issue of rowIssues) {
+      pushValidationIssue(blockingErrors, {
+        code: issue.code,
+        message: issue.message,
+        details: {
+          shareholder_id: shareholderId,
+          code,
+          name,
+        },
+      });
+    }
+
+    const rowPreview = {
+      shareholder_id: shareholderId,
+      code,
+      name,
+      currency_code: currencyCode,
+      committed_capital: committedCapital,
+      already_journaled_amount: alreadyJournaledAmount,
+      delta_amount: deltaAmount,
+      debit_account_id: debitAccountId || null,
+      debit_account_code: debitAccount ? String(debitAccount.code || "") : null,
+      debit_account_name: debitAccount ? String(debitAccount.name || "") : null,
+      credit_account_id: creditAccountId || null,
+      credit_account_code: creditAccount ? String(creditAccount.code || "") : null,
+      credit_account_name: creditAccount ? String(creditAccount.name || "") : null,
+      validation_issues: rowIssues,
+    };
+
+    let skippedReason = null;
+    if (deltaAmount <= 0) {
+      skippedReason =
+        committedCapital <= 0
+          ? "committed capital is zero"
+          : "already fully journaled";
+      zeroDeltaSkippedCount += 1;
+    } else if (rowIssues.length > 0) {
+      skippedReason = rowIssues.map((issue) => issue.message).join("; ");
+    }
+
+    if (skippedReason) {
+      rowPreview.status = "SKIPPED";
+      rowPreview.skipped_reason = skippedReason;
+      skippedShareholders.push(rowPreview);
+    } else {
+      rowPreview.status = "INCLUDED";
+      rowPreview.skipped_reason = null;
+      includedShareholders.push(rowPreview);
+      totalDebit = normalizeMoney(totalDebit + deltaAmount);
+      totalCredit = normalizeMoney(totalCredit + deltaAmount);
+    }
+
+    rows.push(rowPreview);
+  }
+
+  if (zeroDeltaSkippedCount > 0) {
+    warnings.push({
+      code: "ALREADY_FULLY_JOURNALED",
+      message:
+        "Some queued shareholders were skipped because they are already fully journaled",
+      count: zeroDeltaSkippedCount,
+    });
+  }
+
+  if (includedShareholders.length === 0) {
+    pushValidationIssue(blockingErrors, {
+      code: "NO_JOURNALIZABLE_ROWS",
+      message: "No shareholder has a positive journalizable commitment delta",
+    });
+  }
+
+  if (currencyGroups.size === 1) {
+    totalsCurrencyCode = Array.from(currencyGroups.keys())[0];
+  } else if (includedShareholders[0]?.currency_code) {
+    totalsCurrencyCode = includedShareholders[0].currency_code;
+  }
+
+  return {
+    legal_entity_id: legalEntityId,
+    commitment_date: commitmentDate,
+    parent_mapping: {
+      capital_credit_parent_account_id: capitalCreditParentAccountId || null,
+      commitment_debit_parent_account_id: commitmentDebitParentAccountId || null,
+      capital_credit_parent_account_code: capitalParentAccount?.code || null,
+      capital_credit_parent_account_name: capitalParentAccount?.name || null,
+      commitment_debit_parent_account_code: commitmentParentAccount?.code || null,
+      commitment_debit_parent_account_name: commitmentParentAccount?.name || null,
+    },
+    rows,
+    included_shareholders: includedShareholders,
+    skipped_shareholders: skippedShareholders,
+    totals: {
+      total_debit: totalDebit,
+      total_credit: totalCredit,
+      currency_code: totalsCurrencyCode || null,
+    },
+    journal_context: journalContext
+      ? {
+          book_id: journalContext.bookId,
+          book_code: journalContext.bookCode,
+          fiscal_period_id: journalContext.fiscalPeriodId,
+          period_start_date: journalContext.startDate,
+          period_end_date: journalContext.endDate,
+          base_currency_code: journalContext.baseCurrencyCode,
+        }
+      : null,
+    validation: {
+      has_blocking_errors: blockingErrors.length > 0,
+      blocking_errors: blockingErrors,
+      warnings,
+      mixed_currency:
+        currencyGroups.size > 1
+          ? Array.from(currencyGroups.entries()).map(([currency_code, members]) => ({
+              currency_code,
+              shareholders: members,
+            }))
+          : [],
+    },
+  };
+}
+
+function normalizeShareholderChildSequenceFromCode(parentCode, childCode) {
+  const normalizedParentCode = String(parentCode || "").trim();
+  const normalizedChildCode = String(childCode || "").trim();
+  if (!normalizedParentCode || !normalizedChildCode) {
+    return null;
+  }
+  const prefix = `${normalizedParentCode}.`;
+  if (!normalizedChildCode.startsWith(prefix)) {
+    return null;
+  }
+  const suffix = normalizedChildCode.slice(prefix.length);
+  if (!/^\d+$/.test(suffix)) {
+    return null;
+  }
+  const parsed = Number(suffix);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function buildShareholderChildCode(parentCode, sequence) {
+  const normalizedParentCode = String(parentCode || "").trim();
+  if (!normalizedParentCode) {
+    throw badRequest("Parent account code is required to generate child account code");
+  }
+  const prefix = `${normalizedParentCode}.`;
+  const maxSuffixLength = 50 - prefix.length;
+  if (maxSuffixLength < 1) {
+    throw badRequest(
+      `Parent account code ${normalizedParentCode} is too long to generate child account code`
+    );
+  }
+
+  const numericSequence = Number(sequence);
+  if (!Number.isInteger(numericSequence) || numericSequence <= 0) {
+    throw badRequest("sequence must be a positive integer");
+  }
+
+  let suffix = String(numericSequence);
+  if (maxSuffixLength >= 2) {
+    suffix = suffix.padStart(2, "0");
+  }
+  if (suffix.length > maxSuffixLength) {
+    throw badRequest(
+      `No available child account code capacity under parent ${normalizedParentCode}`
+    );
+  }
+  return `${prefix}${suffix}`;
+}
+
 function toCommitmentJournalFailureMessage(reason) {
   switch (String(reason || "")) {
     case "CAPITAL_SUB_ACCOUNT_REQUIRED":
       return "capitalSubAccountId is required to create commitment journal";
+    case "COMMITMENT_DEBIT_SUB_ACCOUNT_REQUIRED":
+      return "commitmentDebitSubAccountId is required to create commitment journal";
     case "AUTH_USER_REQUIRED":
       return "Authenticated user is required to create commitment journal";
     case "NO_OPEN_BOOK_PERIOD":
       return "No OPEN book/fiscal period found for legalEntityId";
     case "COMMITMENT_DATE_OUTSIDE_OPEN_PERIOD":
       return "commitmentDate must be within an OPEN fiscal period for legalEntityId";
-    case "COMMITMENT_DEBIT_ACCOUNT_MAPPING_REQUIRED":
-      return "Commitment debit account mapping is missing for legalEntityId";
-    case "COMMITMENT_DEBIT_ACCOUNT_MAPPING_INVALID":
-      return "Mapped commitment debit account must be active, postable, leaf, and in the same legal entity";
+    case "COMMITMENT_DEBIT_SUB_ACCOUNT_INVALID":
+      return "commitmentDebitSubAccountId must reference an active, postable, leaf EQUITY account in the same legal entity";
     default:
       return "Commitment journal could not be created";
   }
@@ -287,62 +1051,6 @@ async function resolveOpenBookPeriodForLegalEntity(
   return toJournalContextRow(futureResult.rows[0]);
 }
 
-async function resolveCommitmentDebitAccountFromMapping(tx, tenantId, legalEntityId) {
-  const result = await tx.query(
-    `SELECT
-       m.account_id,
-       a.code,
-       a.name,
-       a.is_active,
-       a.allow_posting,
-       EXISTS(
-         SELECT 1
-         FROM accounts child
-         WHERE child.parent_account_id = a.id
-           AND child.is_active = TRUE
-       ) AS has_active_children,
-       c.tenant_id AS account_tenant_id,
-       c.legal_entity_id AS account_legal_entity_id
-     FROM journal_purpose_accounts m
-     LEFT JOIN accounts a ON a.id = m.account_id
-     LEFT JOIN charts_of_accounts c ON c.id = a.coa_id
-     WHERE m.tenant_id = ?
-       AND m.legal_entity_id = ?
-       AND m.purpose_code = ?
-     LIMIT 1`,
-    [tenantId, legalEntityId, SHAREHOLDER_COMMITMENT_DEBIT_PURPOSE]
-  );
-
-  const row = result.rows[0];
-  if (!row) {
-    return { status: "MISSING", account: null };
-  }
-
-  const accountId = parsePositiveInt(row.account_id);
-  const accountTenantId = parsePositiveInt(row.account_tenant_id);
-  const accountLegalEntityId = parsePositiveInt(row.account_legal_entity_id);
-  const validRow =
-    accountId &&
-    accountTenantId === tenantId &&
-    accountLegalEntityId === legalEntityId &&
-    Boolean(row.is_active) &&
-    Boolean(row.allow_posting) &&
-    !Boolean(row.has_active_children);
-
-  if (!validRow) {
-    return { status: "INVALID", account: null };
-  }
-
-  return {
-    status: "OK",
-    account: {
-      id: accountId,
-      code: String(row.code || ""),
-      name: String(row.name || ""),
-    },
-  };
-}
-
 async function createShareholderCommitmentDraftJournal(tx, payload) {
   const amount = normalizeMoney(payload.amount);
   if (amount <= 0) {
@@ -359,6 +1067,18 @@ async function createShareholderCommitmentDraftJournal(tx, payload) {
       attempted: true,
       created: false,
       reason: "CAPITAL_SUB_ACCOUNT_REQUIRED",
+      amount,
+    };
+  }
+
+  const commitmentDebitSubAccountId = parsePositiveInt(
+    payload.commitmentDebitSubAccountId
+  );
+  if (!commitmentDebitSubAccountId) {
+    return {
+      attempted: true,
+      created: false,
+      reason: "COMMITMENT_DEBIT_SUB_ACCOUNT_REQUIRED",
       amount,
     };
   }
@@ -390,22 +1110,6 @@ async function createShareholderCommitmentDraftJournal(tx, payload) {
     };
   }
 
-  const debitAccountMapping = await resolveCommitmentDebitAccountFromMapping(
-    tx,
-    payload.tenantId,
-    payload.legalEntityId
-  );
-  if (debitAccountMapping.status === "MISSING") {
-    return {
-      attempted: true,
-      created: false,
-      reason: "COMMITMENT_DEBIT_ACCOUNT_MAPPING_REQUIRED",
-      amount,
-      bookId: journalContext.bookId,
-      fiscalPeriodId: journalContext.fiscalPeriodId,
-    };
-  }
-
   if (
     commitmentDate < journalContext.startDate ||
     commitmentDate > journalContext.endDate
@@ -419,17 +1123,60 @@ async function createShareholderCommitmentDraftJournal(tx, payload) {
       fiscalPeriodId: journalContext.fiscalPeriodId,
     };
   }
-  if (debitAccountMapping.status !== "OK" || !debitAccountMapping.account?.id) {
+
+  const debitAccountResult = await tx.query(
+    `SELECT
+       a.id,
+       a.code,
+       a.name,
+       a.account_type,
+       a.is_active,
+       a.allow_posting,
+       EXISTS(
+         SELECT 1
+         FROM accounts child
+         WHERE child.parent_account_id = a.id
+           AND child.is_active = TRUE
+       ) AS has_active_children,
+       c.tenant_id AS account_tenant_id,
+       c.legal_entity_id AS account_legal_entity_id
+     FROM accounts a
+     JOIN charts_of_accounts c ON c.id = a.coa_id
+     WHERE a.id = ?
+       AND c.tenant_id = ?
+     LIMIT 1`,
+    [commitmentDebitSubAccountId, payload.tenantId]
+  );
+  const debitAccountRow = debitAccountResult.rows[0];
+  const debitAccountId = parsePositiveInt(debitAccountRow?.id);
+  const debitAccountTenantId = parsePositiveInt(debitAccountRow?.account_tenant_id);
+  const debitAccountLegalEntityId = parsePositiveInt(
+    debitAccountRow?.account_legal_entity_id
+  );
+  const debitAccountValid =
+    debitAccountId &&
+    debitAccountTenantId === payload.tenantId &&
+    debitAccountLegalEntityId === payload.legalEntityId &&
+    String(debitAccountRow?.account_type || "").toUpperCase() === "EQUITY" &&
+    Boolean(debitAccountRow?.is_active) &&
+    Boolean(debitAccountRow?.allow_posting) &&
+    !Boolean(debitAccountRow?.has_active_children);
+
+  if (!debitAccountValid) {
     return {
       attempted: true,
       created: false,
-      reason: "COMMITMENT_DEBIT_ACCOUNT_MAPPING_INVALID",
+      reason: "COMMITMENT_DEBIT_SUB_ACCOUNT_INVALID",
       amount,
       bookId: journalContext.bookId,
       fiscalPeriodId: journalContext.fiscalPeriodId,
     };
   }
-  const debitAccount = debitAccountMapping.account;
+  const debitAccount = {
+    id: debitAccountId,
+    code: String(debitAccountRow?.code || ""),
+    name: String(debitAccountRow?.name || ""),
+  };
 
   const entryDate = commitmentDate;
   const documentDate = commitmentDate;
@@ -532,6 +1279,32 @@ async function createShareholderCommitmentDraftJournal(tx, payload) {
       amount,
     ]
   );
+
+  if (parsePositiveInt(payload.shareholderId)) {
+    await tx.query(
+      `INSERT INTO shareholder_commitment_journal_entries (
+          tenant_id,
+          shareholder_id,
+          legal_entity_id,
+          journal_entry_id,
+          line_group_key,
+          amount,
+          currency_code,
+          created_by_user_id
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        payload.tenantId,
+        payload.shareholderId,
+        payload.legalEntityId,
+        journalEntryId,
+        "SINGLE",
+        amount,
+        currencyCode,
+        payload.userId,
+      ]
+    );
+  }
 
   return {
     attempted: true,
@@ -1387,39 +2160,42 @@ router.get(
       assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
     }
 
-    const params = [tenantId];
-    const conditions = ["m.tenant_id = ?"];
-    conditions.push(buildScopeFilter(req, "legal_entity", "m.legal_entity_id", params));
-    conditions.push("m.purpose_code = ?");
-    params.push(SHAREHOLDER_COMMITMENT_DEBIT_PURPOSE);
+    const params = [
+      SHAREHOLDER_CAPITAL_CREDIT_PARENT_PURPOSE,
+      SHAREHOLDER_COMMITMENT_DEBIT_PARENT_PURPOSE,
+      tenantId,
+    ];
+    const conditions = ["le.tenant_id = ?"];
+    conditions.push(buildScopeFilter(req, "legal_entity", "le.id", params));
     if (legalEntityId) {
-      conditions.push("m.legal_entity_id = ?");
+      conditions.push("le.id = ?");
       params.push(legalEntityId);
     }
 
     const result = await query(
       `SELECT
-         m.id,
-         m.tenant_id,
-         m.legal_entity_id,
-         m.purpose_code,
-         m.account_id,
-         m.created_at,
-         m.updated_at,
+         le.id AS legal_entity_id,
          le.code AS legal_entity_code,
          le.name AS legal_entity_name,
-         a.code AS account_code,
-         a.name AS account_name
-       FROM journal_purpose_accounts m
-       JOIN legal_entities le
-         ON le.id = m.legal_entity_id
-        AND le.tenant_id = m.tenant_id
-       JOIN accounts a ON a.id = m.account_id
-       JOIN charts_of_accounts c
-         ON c.id = a.coa_id
-        AND c.tenant_id = m.tenant_id
+         cap.account_id AS capital_credit_parent_account_id,
+         capa.code AS capital_credit_parent_account_code,
+         capa.name AS capital_credit_parent_account_name,
+         deb.account_id AS commitment_debit_parent_account_id,
+         deba.code AS commitment_debit_parent_account_code,
+         deba.name AS commitment_debit_parent_account_name
+       FROM legal_entities le
+       LEFT JOIN journal_purpose_accounts cap
+         ON cap.tenant_id = le.tenant_id
+        AND cap.legal_entity_id = le.id
+        AND cap.purpose_code = ?
+       LEFT JOIN accounts capa ON capa.id = cap.account_id
+       LEFT JOIN journal_purpose_accounts deb
+         ON deb.tenant_id = le.tenant_id
+        AND deb.legal_entity_id = le.id
+        AND deb.purpose_code = ?
+       LEFT JOIN accounts deba ON deba.id = deb.account_id
        WHERE ${conditions.join(" AND ")}
-       ORDER BY m.legal_entity_id, m.purpose_code`,
+       ORDER BY le.code, le.id`,
       params
     );
 
@@ -1447,115 +2223,125 @@ router.post(
       throw badRequest("tenantId is required");
     }
 
-    assertRequiredFields(req.body, ["legalEntityId", "commitmentDebitAccountId"]);
     const legalEntityId = parsePositiveInt(req.body.legalEntityId);
-    const commitmentDebitAccountId = parsePositiveInt(req.body.commitmentDebitAccountId);
-    if (!legalEntityId || !commitmentDebitAccountId) {
-      throw badRequest("legalEntityId and commitmentDebitAccountId must be positive integers");
+    const capitalCreditParentAccountId = parsePositiveInt(
+      req.body.capitalCreditParentAccountId
+    );
+    const commitmentDebitParentAccountId = parsePositiveInt(
+      req.body.commitmentDebitParentAccountId
+    );
+    if (
+      !legalEntityId ||
+      !capitalCreditParentAccountId ||
+      !commitmentDebitParentAccountId
+    ) {
+      throw badRequest(
+        "legalEntityId, capitalCreditParentAccountId, and commitmentDebitParentAccountId must be positive integers"
+      );
+    }
+    if (capitalCreditParentAccountId === commitmentDebitParentAccountId) {
+      throw badRequest(
+        "commitmentDebitParentAccountId must be different from capitalCreditParentAccountId"
+      );
     }
 
     await assertLegalEntityBelongsToTenant(tenantId, legalEntityId, "legalEntityId");
     assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
 
-    const accountTenantRow = await assertAccountBelongsToTenant(
-      tenantId,
-      commitmentDebitAccountId,
-      "commitmentDebitAccountId"
-    );
-    if (parsePositiveInt(accountTenantRow.legal_entity_id) !== legalEntityId) {
-      throw badRequest(
-        "commitmentDebitAccountId must belong to selected legalEntityId"
-      );
-    }
-
-    const accountResult = await query(
-      `SELECT
-         a.id,
-         a.is_active,
-         a.allow_posting,
-         EXISTS(
-           SELECT 1
-           FROM accounts child
-           WHERE child.parent_account_id = a.id
-             AND child.is_active = TRUE
-         ) AS has_active_children,
-         c.legal_entity_id
-       FROM accounts a
-       JOIN charts_of_accounts c ON c.id = a.coa_id
-       WHERE a.id = ?
-         AND c.tenant_id = ?
-       LIMIT 1`,
-      [commitmentDebitAccountId, tenantId]
-    );
-    const account = accountResult.rows[0];
-    if (!account) {
-      throw badRequest("commitmentDebitAccountId not found for tenant");
-    }
-    if (parsePositiveInt(account.legal_entity_id) !== legalEntityId) {
-      throw badRequest(
-        "commitmentDebitAccountId must belong to selected legalEntityId"
-      );
-    }
-    if (!Boolean(account.is_active)) {
-      throw badRequest("commitmentDebitAccountId must reference an active account");
-    }
-    if (!Boolean(account.allow_posting)) {
-      throw badRequest("commitmentDebitAccountId must reference a postable account");
-    }
-    if (Boolean(account.has_active_children)) {
-      throw badRequest("commitmentDebitAccountId must reference a leaf account");
-    }
-
-    await query(
-      `INSERT INTO journal_purpose_accounts (
-          tenant_id,
-          legal_entity_id,
-          purpose_code,
-          account_id
-       )
-       VALUES (?, ?, ?, ?)
-       ON DUPLICATE KEY UPDATE
-         account_id = VALUES(account_id),
-         updated_at = CURRENT_TIMESTAMP`,
-      [
+    const row = await withTransaction(async (tx) => {
+      await assertShareholderParentAccount(
+        tx,
         tenantId,
         legalEntityId,
-        SHAREHOLDER_COMMITMENT_DEBIT_PURPOSE,
-        commitmentDebitAccountId,
-      ]
-    );
+        capitalCreditParentAccountId,
+        "capitalCreditParentAccountId",
+        "CREDIT"
+      );
+      await assertShareholderParentAccount(
+        tx,
+        tenantId,
+        legalEntityId,
+        commitmentDebitParentAccountId,
+        "commitmentDebitParentAccountId",
+        "DEBIT"
+      );
 
-    const result = await query(
-      `SELECT
-         m.id,
-         m.tenant_id,
-         m.legal_entity_id,
-         m.purpose_code,
-         m.account_id,
-         m.created_at,
-         m.updated_at,
-         le.code AS legal_entity_code,
-         le.name AS legal_entity_name,
-         a.code AS account_code,
-         a.name AS account_name
-       FROM journal_purpose_accounts m
-       JOIN legal_entities le
-         ON le.id = m.legal_entity_id
-        AND le.tenant_id = m.tenant_id
-       JOIN accounts a ON a.id = m.account_id
-       JOIN charts_of_accounts c
-         ON c.id = a.coa_id
-        AND c.tenant_id = m.tenant_id
-       WHERE m.tenant_id = ?
-         AND m.legal_entity_id = ?
-         AND m.purpose_code = ?
-       LIMIT 1`,
-      [tenantId, legalEntityId, SHAREHOLDER_COMMITMENT_DEBIT_PURPOSE]
-    );
+      await tx.query(
+        `INSERT INTO journal_purpose_accounts (
+            tenant_id,
+            legal_entity_id,
+            purpose_code,
+            account_id
+         )
+         VALUES (?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE
+           account_id = VALUES(account_id),
+           updated_at = CURRENT_TIMESTAMP`,
+        [
+          tenantId,
+          legalEntityId,
+          SHAREHOLDER_CAPITAL_CREDIT_PARENT_PURPOSE,
+          capitalCreditParentAccountId,
+        ]
+      );
+
+      await tx.query(
+        `INSERT INTO journal_purpose_accounts (
+            tenant_id,
+            legal_entity_id,
+            purpose_code,
+            account_id
+         )
+         VALUES (?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE
+           account_id = VALUES(account_id),
+           updated_at = CURRENT_TIMESTAMP`,
+        [
+          tenantId,
+          legalEntityId,
+          SHAREHOLDER_COMMITMENT_DEBIT_PARENT_PURPOSE,
+          commitmentDebitParentAccountId,
+        ]
+      );
+
+      const configResult = await tx.query(
+        `SELECT
+           le.id AS legal_entity_id,
+           le.code AS legal_entity_code,
+           le.name AS legal_entity_name,
+           cap.account_id AS capital_credit_parent_account_id,
+           capa.code AS capital_credit_parent_account_code,
+           capa.name AS capital_credit_parent_account_name,
+           deb.account_id AS commitment_debit_parent_account_id,
+           deba.code AS commitment_debit_parent_account_code,
+           deba.name AS commitment_debit_parent_account_name
+         FROM legal_entities le
+         LEFT JOIN journal_purpose_accounts cap
+           ON cap.tenant_id = le.tenant_id
+          AND cap.legal_entity_id = le.id
+          AND cap.purpose_code = ?
+         LEFT JOIN accounts capa ON capa.id = cap.account_id
+         LEFT JOIN journal_purpose_accounts deb
+           ON deb.tenant_id = le.tenant_id
+          AND deb.legal_entity_id = le.id
+          AND deb.purpose_code = ?
+         LEFT JOIN accounts deba ON deba.id = deb.account_id
+         WHERE le.tenant_id = ?
+           AND le.id = ?
+         LIMIT 1`,
+        [
+          SHAREHOLDER_CAPITAL_CREDIT_PARENT_PURPOSE,
+          SHAREHOLDER_COMMITMENT_DEBIT_PARENT_PURPOSE,
+          tenantId,
+          legalEntityId,
+        ]
+      );
+      return configResult.rows[0] || null;
+    });
 
     return res.status(201).json({
       ok: true,
-      row: result.rows[0] || null,
+      row,
     });
   })
 );
@@ -1617,6 +2403,10 @@ router.get(
            ELSE COALESCE(pc.paid_capital_calculated, 0)
          END AS paid_capital,
          CASE WHEN c.id IS NULL THEN NULL ELSE s.capital_sub_account_id END AS capital_sub_account_id,
+         CASE
+           WHEN dc.id IS NULL THEN NULL
+           ELSE s.commitment_debit_sub_account_id
+         END AS commitment_debit_sub_account_id,
          s.currency_code,
          s.status,
          s.notes,
@@ -1624,12 +2414,19 @@ router.get(
          s.updated_at,
          CASE WHEN c.id IS NULL THEN NULL ELSE a.code END AS capital_sub_account_code,
          CASE WHEN c.id IS NULL THEN NULL ELSE a.name END AS capital_sub_account_name,
-         CASE WHEN c.id IS NULL THEN NULL ELSE a.account_type END AS capital_sub_account_type
+         CASE WHEN c.id IS NULL THEN NULL ELSE a.account_type END AS capital_sub_account_type,
+         CASE WHEN dc.id IS NULL THEN NULL ELSE da.code END AS commitment_debit_sub_account_code,
+         CASE WHEN dc.id IS NULL THEN NULL ELSE da.name END AS commitment_debit_sub_account_name,
+         CASE WHEN dc.id IS NULL THEN NULL ELSE da.account_type END AS commitment_debit_sub_account_type
        FROM shareholders s
        LEFT JOIN accounts a ON a.id = s.capital_sub_account_id
        LEFT JOIN charts_of_accounts c
          ON c.id = a.coa_id
         AND c.tenant_id = s.tenant_id
+       LEFT JOIN accounts da ON da.id = s.commitment_debit_sub_account_id
+       LEFT JOIN charts_of_accounts dc
+         ON dc.id = da.coa_id
+        AND dc.tenant_id = s.tenant_id
        LEFT JOIN (
          SELECT
            je.tenant_id,
@@ -1704,15 +2501,6 @@ router.post(
       throw badRequest("status must be ACTIVE or INACTIVE");
     }
 
-    const ownershipPct = parseOptionalNonNegativeNumber(
-      req.body.ownershipPct,
-      "ownershipPct",
-      null
-    );
-    if (ownershipPct !== null && ownershipPct > 100) {
-      throw badRequest("ownershipPct cannot exceed 100");
-    }
-
     const committedCapital = parseOptionalNonNegativeNumber(
       req.body.committedCapital,
       "committedCapital",
@@ -1737,6 +2525,9 @@ router.post(
     const capitalSubAccountId = req.body.capitalSubAccountId
       ? parsePositiveInt(req.body.capitalSubAccountId)
       : null;
+    const commitmentDebitSubAccountId = req.body.commitmentDebitSubAccountId
+      ? parsePositiveInt(req.body.commitmentDebitSubAccountId)
+      : null;
     const autoCommitmentJournal = parseBooleanValue(
       req.body.autoCommitmentJournal,
       true
@@ -1745,15 +2536,41 @@ router.post(
     if (req.body.capitalSubAccountId && !capitalSubAccountId) {
       throw badRequest("capitalSubAccountId must be a positive integer");
     }
-    if (autoCommitmentJournal && committedCapital > 0 && !capitalSubAccountId) {
+    if (
+      req.body.commitmentDebitSubAccountId &&
+      !commitmentDebitSubAccountId
+    ) {
+      throw badRequest(
+        "commitmentDebitSubAccountId must be a positive integer"
+      );
+    }
+    if (committedCapital > 0 && !capitalSubAccountId) {
       throw badRequest(
         "capitalSubAccountId is required when committedCapital is greater than 0"
+      );
+    }
+    if (committedCapital > 0 && !commitmentDebitSubAccountId) {
+      throw badRequest(
+        "commitmentDebitSubAccountId is required when committedCapital is greater than 0"
+      );
+    }
+    if (
+      capitalSubAccountId &&
+      commitmentDebitSubAccountId &&
+      capitalSubAccountId === commitmentDebitSubAccountId
+    ) {
+      throw badRequest(
+        "commitmentDebitSubAccountId must be different from capitalSubAccountId"
       );
     }
 
     const operation = await withTransaction(async (tx) => {
       const existingResult = await tx.query(
-        `SELECT id, committed_capital, capital_sub_account_id
+        `SELECT
+           id,
+           committed_capital,
+           capital_sub_account_id,
+           commitment_debit_sub_account_id
          FROM shareholders
          WHERE tenant_id = ?
            AND legal_entity_id = ?
@@ -1763,6 +2580,53 @@ router.post(
         [tenantId, legalEntityId, code]
       );
       const existing = existingResult.rows[0] || null;
+      const shareholderParentMappings = await resolveShareholderParentMappings(
+        tx,
+        tenantId,
+        legalEntityId
+      );
+      const capitalCreditParentAccountId = parsePositiveInt(
+        shareholderParentMappings.capitalCreditParentAccountId
+      );
+      const commitmentDebitParentAccountId = parsePositiveInt(
+        shareholderParentMappings.commitmentDebitParentAccountId
+      );
+      const shouldValidateMappedShareholderSubAccounts =
+        committedCapital > 0 || capitalSubAccountId || commitmentDebitSubAccountId;
+      const shouldValidateMappedLeafHierarchy =
+        Boolean(capitalSubAccountId) || Boolean(commitmentDebitSubAccountId);
+
+      if (
+        shouldValidateMappedShareholderSubAccounts &&
+        (!capitalCreditParentAccountId || !commitmentDebitParentAccountId)
+      ) {
+        throw badRequest(
+          "Setup required: configure shareholder parent account mapping for selected legalEntityId"
+        );
+      }
+      if (capitalCreditParentAccountId) {
+        await assertShareholderParentAccount(
+          tx,
+          tenantId,
+          legalEntityId,
+          capitalCreditParentAccountId,
+          "capitalCreditParentAccountId",
+          "CREDIT"
+        );
+      }
+      if (commitmentDebitParentAccountId) {
+        await assertShareholderParentAccount(
+          tx,
+          tenantId,
+          legalEntityId,
+          commitmentDebitParentAccountId,
+          "commitmentDebitParentAccountId",
+          "DEBIT"
+        );
+      }
+      const accountParentById = shouldValidateMappedLeafHierarchy
+        ? await loadLegalEntityAccountHierarchy(tx, tenantId, legalEntityId)
+        : new Map();
 
       if (capitalSubAccountId) {
         const accountResult = await tx.query(
@@ -1770,8 +2634,10 @@ router.post(
              a.id,
              a.code,
              a.account_type,
+             a.normal_side,
              a.allow_posting,
              a.is_active,
+             a.parent_account_id,
              EXISTS(
                SELECT 1
                FROM accounts child
@@ -1798,6 +2664,11 @@ router.post(
         if (String(account.account_type || "").toUpperCase() !== "EQUITY") {
           throw badRequest("capitalSubAccountId must reference an EQUITY account");
         }
+        if (normalizeAccountNormalSide(account.normal_side) !== "CREDIT") {
+          throw badRequest(
+            "capitalSubAccountId must reference a CREDIT normal-side account"
+          );
+        }
         if (!Boolean(account.is_active)) {
           throw badRequest("capitalSubAccountId must reference an active account");
         }
@@ -1806,6 +2677,18 @@ router.post(
         }
         if (Boolean(account.has_active_children)) {
           throw badRequest("capitalSubAccountId must reference a leaf sub-account");
+        }
+        if (
+          capitalCreditParentAccountId &&
+          !isDescendantOfParentAccount(
+            accountParentById,
+            parsePositiveInt(account.id),
+            capitalCreditParentAccountId
+          )
+        ) {
+          throw badRequest(
+            "capitalSubAccountId must be a child/descendant of configured capitalCreditParentAccountId"
+          );
         }
 
         const mappingConflict = await tx.query(
@@ -1825,6 +2708,99 @@ router.post(
         }
       }
 
+      if (commitmentDebitSubAccountId) {
+        const accountResult = await tx.query(
+          `SELECT
+             a.id,
+             a.code,
+             a.account_type,
+             a.normal_side,
+             a.allow_posting,
+             a.is_active,
+             a.parent_account_id,
+             EXISTS(
+               SELECT 1
+               FROM accounts child
+               WHERE child.parent_account_id = a.id
+                 AND child.is_active = TRUE
+             ) AS has_active_children,
+             c.legal_entity_id
+           FROM accounts a
+           JOIN charts_of_accounts c ON c.id = a.coa_id
+           WHERE a.id = ?
+             AND c.tenant_id = ?
+           LIMIT 1`,
+          [commitmentDebitSubAccountId, tenantId]
+        );
+        const account = accountResult.rows[0];
+        if (!account) {
+          throw badRequest("commitmentDebitSubAccountId not found for tenant");
+        }
+        if (parsePositiveInt(account.legal_entity_id) !== legalEntityId) {
+          throw badRequest(
+            "commitmentDebitSubAccountId must belong to the selected legalEntityId"
+          );
+        }
+        if (String(account.account_type || "").toUpperCase() !== "EQUITY") {
+          throw badRequest(
+            "commitmentDebitSubAccountId must reference an EQUITY account"
+          );
+        }
+        if (normalizeAccountNormalSide(account.normal_side) !== "DEBIT") {
+          throw badRequest(
+            "commitmentDebitSubAccountId must reference a DEBIT normal-side account"
+          );
+        }
+        if (!Boolean(account.is_active)) {
+          throw badRequest(
+            "commitmentDebitSubAccountId must reference an active account"
+          );
+        }
+        if (!Boolean(account.allow_posting)) {
+          throw badRequest(
+            "commitmentDebitSubAccountId must reference a postable account"
+          );
+        }
+        if (Boolean(account.has_active_children)) {
+          throw badRequest(
+            "commitmentDebitSubAccountId must reference a leaf sub-account"
+          );
+        }
+        if (
+          commitmentDebitParentAccountId &&
+          !isDescendantOfParentAccount(
+            accountParentById,
+            parsePositiveInt(account.id),
+            commitmentDebitParentAccountId
+          )
+        ) {
+          throw badRequest(
+            "commitmentDebitSubAccountId must be a child/descendant of configured commitmentDebitParentAccountId"
+          );
+        }
+
+        const mappingConflict = await tx.query(
+          `SELECT id
+           FROM shareholders
+           WHERE tenant_id = ?
+             AND legal_entity_id = ?
+             AND commitment_debit_sub_account_id = ?
+             AND id <> ?
+           LIMIT 1`,
+          [
+            tenantId,
+            legalEntityId,
+            commitmentDebitSubAccountId,
+            parsePositiveInt(existing?.id) || 0,
+          ]
+        );
+        if (mappingConflict.rows[0]) {
+          throw badRequest(
+            "commitmentDebitSubAccountId is already assigned to another shareholder"
+          );
+        }
+      }
+
       await tx.query(
         `INSERT INTO shareholders (
             tenant_id,
@@ -1833,9 +2809,9 @@ router.post(
             name,
             shareholder_type,
             tax_id,
-            ownership_pct,
             committed_capital,
             capital_sub_account_id,
+            commitment_debit_sub_account_id,
             currency_code,
             status,
             notes
@@ -1845,9 +2821,9 @@ router.post(
            name = VALUES(name),
            shareholder_type = VALUES(shareholder_type),
            tax_id = VALUES(tax_id),
-           ownership_pct = VALUES(ownership_pct),
            committed_capital = VALUES(committed_capital),
            capital_sub_account_id = VALUES(capital_sub_account_id),
+           commitment_debit_sub_account_id = VALUES(commitment_debit_sub_account_id),
            currency_code = VALUES(currency_code),
            status = VALUES(status),
            notes = VALUES(notes)`,
@@ -1858,9 +2834,9 @@ router.post(
           name,
           shareholderType,
           taxId,
-          ownershipPct,
           committedCapital,
           capitalSubAccountId,
+          commitmentDebitSubAccountId,
           currencyCode,
           status,
           notes,
@@ -1868,7 +2844,11 @@ router.post(
       );
 
       const savedResult = await tx.query(
-        `SELECT id, committed_capital, capital_sub_account_id
+        `SELECT
+           id,
+           committed_capital,
+           capital_sub_account_id,
+           commitment_debit_sub_account_id
          FROM shareholders
          WHERE tenant_id = ?
            AND legal_entity_id = ?
@@ -1905,6 +2885,9 @@ router.post(
             commitmentDate,
             capitalSubAccountId:
               parsePositiveInt(saved?.capital_sub_account_id) || capitalSubAccountId,
+            commitmentDebitSubAccountId:
+              parsePositiveInt(saved?.commitment_debit_sub_account_id) ||
+              commitmentDebitSubAccountId,
           });
           if (!commitmentJournal.created) {
             throw badRequest(
@@ -1928,6 +2911,8 @@ router.post(
         }
       }
 
+      await recalculateShareholderOwnershipPctTx(tx, tenantId, legalEntityId);
+
       return {
         shareholderId: shareholderId || null,
         committedCapitalDelta,
@@ -1941,6 +2926,717 @@ router.post(
       committedCapitalDelta: operation.committedCapitalDelta,
       commitmentJournal: operation.commitmentJournal,
       autoCommitmentJournal,
+    });
+  })
+);
+
+router.post(
+  "/shareholders/commitment-journal-batch/preview",
+  requirePermission("org.legal_entity.upsert", {
+    resolveScope: (req, tenantId) => {
+      const legalEntityId = parsePositiveInt(req.body?.legalEntityId);
+      if (legalEntityId) {
+        return { scopeType: "LEGAL_ENTITY", scopeId: legalEntityId };
+      }
+      return { scopeType: "TENANT", scopeId: tenantId };
+    },
+  }),
+  asyncHandler(async (req, res) => {
+    const tenantId = resolveTenantId(req);
+    if (!tenantId) {
+      throw badRequest("tenantId is required");
+    }
+
+    const legalEntityId = parsePositiveInt(req.body?.legalEntityId);
+    if (!legalEntityId) {
+      throw badRequest("legalEntityId must be a positive integer");
+    }
+    await assertLegalEntityBelongsToTenant(tenantId, legalEntityId, "legalEntityId");
+    assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
+
+    const shareholderIds = parseBatchShareholderIds(req.body?.shareholderIds);
+    const commitmentDate =
+      req.body.commitmentDate === undefined ||
+      req.body.commitmentDate === null ||
+      req.body.commitmentDate === ""
+        ? toIsoDate(new Date(), "commitmentDate")
+        : toIsoDate(req.body.commitmentDate, "commitmentDate");
+
+    const preview = await withTransaction(async (tx) =>
+      buildShareholderCommitmentBatchPreviewTx(tx, {
+        tenantId,
+        legalEntityId,
+        shareholderIds,
+        commitmentDate,
+        lockShareholders: false,
+      })
+    );
+
+    return res.json({
+      ok: true,
+      ...preview,
+    });
+  })
+);
+
+router.post(
+  "/shareholders/commitment-journal-batch",
+  requirePermission("org.legal_entity.upsert", {
+    resolveScope: (req, tenantId) => {
+      const legalEntityId = parsePositiveInt(req.body?.legalEntityId);
+      if (legalEntityId) {
+        return { scopeType: "LEGAL_ENTITY", scopeId: legalEntityId };
+      }
+      return { scopeType: "TENANT", scopeId: tenantId };
+    },
+  }),
+  asyncHandler(async (req, res) => {
+    const tenantId = resolveTenantId(req);
+    if (!tenantId) {
+      throw badRequest("tenantId is required");
+    }
+
+    const legalEntityId = parsePositiveInt(req.body?.legalEntityId);
+    if (!legalEntityId) {
+      throw badRequest("legalEntityId must be a positive integer");
+    }
+    await assertLegalEntityBelongsToTenant(tenantId, legalEntityId, "legalEntityId");
+    assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
+
+    const shareholderIds = parseBatchShareholderIds(req.body?.shareholderIds);
+
+    const commitmentDate =
+      req.body.commitmentDate === undefined ||
+      req.body.commitmentDate === null ||
+      req.body.commitmentDate === ""
+        ? toIsoDate(new Date(), "commitmentDate")
+        : toIsoDate(req.body.commitmentDate, "commitmentDate");
+    const userId = parsePositiveInt(req.user?.userId);
+    if (!userId) {
+      throw badRequest("Authenticated user is required");
+    }
+
+    try {
+      const operation = await withTransaction(async (tx) => {
+        const preview = await buildShareholderCommitmentBatchPreviewTx(tx, {
+          tenantId,
+          legalEntityId,
+          shareholderIds,
+          commitmentDate,
+          lockShareholders: true,
+        });
+
+        if (preview.validation?.has_blocking_errors) {
+          const err = badRequest("Batch commitment journal validation failed");
+          err.code = "BATCH_VALIDATION_FAILED";
+          err.payload = {
+            validation: preview.validation,
+            skipped_shareholders: preview.skipped_shareholders,
+            rows: preview.rows,
+          };
+          throw err;
+        }
+
+        const includedShareholders = Array.isArray(preview.included_shareholders)
+          ? preview.included_shareholders
+          : [];
+        if (includedShareholders.length === 0) {
+          const err = badRequest(
+            "No shareholder has a positive journalizable commitment delta"
+          );
+          err.code = "BATCH_VALIDATION_FAILED";
+          err.payload = {
+            validation: preview.validation,
+            skipped_shareholders: preview.skipped_shareholders,
+            rows: preview.rows,
+          };
+          throw err;
+        }
+
+        const journalContext = preview.journal_context || null;
+        const bookId = parsePositiveInt(journalContext?.book_id);
+        const fiscalPeriodId = parsePositiveInt(journalContext?.fiscal_period_id);
+        if (!bookId || !fiscalPeriodId) {
+          throw badRequest("No OPEN book/fiscal period found for legalEntityId");
+        }
+
+        const totalAmount = normalizeMoney(preview.totals?.total_debit || 0);
+        if (totalAmount <= 0) {
+          throw badRequest("Total commitment amount must be greater than zero");
+        }
+
+        const journalNo = generateAutoJournalNo("TAAHHUT");
+        const referenceNo = `SHAREHOLDER_COMMITMENT_BATCH:${legalEntityId}:${Date.now()}`.slice(
+          0,
+          100
+        );
+        const currencyCode = normalizeCurrencyCode(
+          preview.totals?.currency_code || journalContext?.base_currency_code || "USD"
+        );
+        const entryDate = commitmentDate;
+        const documentDate = commitmentDate;
+        const description = `Shareholder commitment batch (${includedShareholders.length} shareholders)`;
+
+        const entryResult = await tx.query(
+          `INSERT INTO journal_entries (
+              tenant_id,
+              legal_entity_id,
+              book_id,
+              fiscal_period_id,
+              journal_no,
+              source_type,
+              status,
+              entry_date,
+              document_date,
+              currency_code,
+              description,
+              reference_no,
+              total_debit_base,
+              total_credit_base,
+              created_by_user_id
+            )
+            VALUES (?, ?, ?, ?, ?, 'SYSTEM', 'DRAFT', ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            tenantId,
+            legalEntityId,
+            bookId,
+            fiscalPeriodId,
+            journalNo,
+            entryDate,
+            documentDate,
+            currencyCode,
+            description,
+            referenceNo,
+            totalAmount,
+            totalAmount,
+            userId,
+          ]
+        );
+        const journalEntryId = parsePositiveInt(entryResult.rows.insertId);
+        if (!journalEntryId) {
+          throw badRequest("Failed to create shareholder batch commitment journal");
+        }
+
+        let lineNo = 1;
+        for (const shareholder of includedShareholders) {
+          const amount = normalizeMoney(shareholder.delta_amount || 0);
+          const shareholderId = parsePositiveInt(shareholder.shareholder_id);
+          const shareholderCode = String(shareholder.code || shareholderId || "");
+          const shareholderName = String(shareholder.name || "").trim();
+          const debitAccountId = parsePositiveInt(shareholder.debit_account_id);
+          const creditAccountId = parsePositiveInt(shareholder.credit_account_id);
+
+          // eslint-disable-next-line no-await-in-loop
+          await tx.query(
+            `INSERT INTO journal_lines (
+                journal_entry_id,
+                line_no,
+                account_id,
+                operating_unit_id,
+                counterparty_legal_entity_id,
+                description,
+                currency_code,
+                amount_txn,
+                debit_base,
+                credit_base,
+                tax_code
+              )
+              VALUES (?, ?, ?, NULL, NULL, ?, ?, ?, ?, 0, NULL)`,
+            [
+              journalEntryId,
+              lineNo,
+              debitAccountId,
+              `Shareholder commitment receivable (${shareholderCode}${shareholderName ? ` - ${shareholderName}` : ""})`,
+              currencyCode,
+              amount,
+              amount,
+            ]
+          );
+          lineNo += 1;
+
+          // eslint-disable-next-line no-await-in-loop
+          await tx.query(
+            `INSERT INTO journal_lines (
+                journal_entry_id,
+                line_no,
+                account_id,
+                operating_unit_id,
+                counterparty_legal_entity_id,
+                description,
+                currency_code,
+                amount_txn,
+                debit_base,
+                credit_base,
+                tax_code
+              )
+              VALUES (?, ?, ?, NULL, NULL, ?, ?, ?, 0, ?, NULL)`,
+            [
+              journalEntryId,
+              lineNo,
+              creditAccountId,
+              `Committed capital (${shareholderCode}${shareholderName ? ` - ${shareholderName}` : ""})`,
+              currencyCode,
+              amount * -1,
+              amount,
+            ]
+          );
+          lineNo += 1;
+
+          // eslint-disable-next-line no-await-in-loop
+          await tx.query(
+            `INSERT INTO shareholder_commitment_journal_entries (
+                tenant_id,
+                shareholder_id,
+                legal_entity_id,
+                journal_entry_id,
+                line_group_key,
+                amount,
+                currency_code,
+                created_by_user_id
+              )
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              tenantId,
+              shareholderId,
+              legalEntityId,
+              journalEntryId,
+              `BATCH:${shareholderId}`,
+              amount,
+              currencyCode,
+              userId,
+            ]
+          );
+        }
+
+        return {
+          journalEntryId,
+          journalNo,
+          shareholderCount: includedShareholders.length,
+          skippedCount: Array.isArray(preview.skipped_shareholders)
+            ? preview.skipped_shareholders.length
+            : 0,
+          totalAmount,
+          bookId,
+          bookCode: journalContext?.book_code || "-",
+          fiscalPeriodId,
+          entryDate,
+          processedShareholderIds: includedShareholders.map((row) =>
+            parsePositiveInt(row.shareholder_id)
+          ),
+          skippedShareholders: preview.skipped_shareholders || [],
+          validationWarnings: preview.validation?.warnings || [],
+        };
+      });
+
+      return res.status(201).json({
+        ok: true,
+        ...operation,
+      });
+    } catch (err) {
+      if (err?.code === "BATCH_VALIDATION_FAILED") {
+        return res.status(400).json({
+          message: err.message,
+          ...(err.payload || {}),
+        });
+      }
+      throw err;
+    }
+  })
+);
+
+router.post(
+  "/shareholders/auto-provision-sub-accounts",
+  requirePermission("gl.account.upsert", {
+    resolveScope: (req, tenantId) => {
+      const legalEntityId = parsePositiveInt(req.body?.legalEntityId);
+      if (legalEntityId) {
+        return { scopeType: "LEGAL_ENTITY", scopeId: legalEntityId };
+      }
+      return { scopeType: "TENANT", scopeId: tenantId };
+    },
+  }),
+  asyncHandler(async (req, res) => {
+    const tenantId = resolveTenantId(req);
+    if (!tenantId) {
+      throw badRequest("tenantId is required");
+    }
+
+    const legalEntityId = parsePositiveInt(req.body?.legalEntityId);
+    if (!legalEntityId) {
+      throw badRequest("legalEntityId must be a positive integer");
+    }
+    await assertLegalEntityBelongsToTenant(tenantId, legalEntityId, "legalEntityId");
+    assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
+
+    const shareholderId = parsePositiveInt(req.body?.shareholderId);
+    const shareholderCode = String(req.body?.shareholderCode || "")
+      .trim()
+      .toUpperCase();
+    const shareholderName = String(req.body?.shareholderName || "").trim();
+    if (!shareholderCode || !shareholderName) {
+      throw badRequest("shareholderCode and shareholderName are required");
+    }
+
+    const operation = await withTransaction(async (tx) => {
+      const parentMappings = await resolveShareholderParentMappings(
+        tx,
+        tenantId,
+        legalEntityId
+      );
+      const capitalParentAccountId = parsePositiveInt(
+        parentMappings.capitalCreditParentAccountId
+      );
+      const commitmentParentAccountId = parsePositiveInt(
+        parentMappings.commitmentDebitParentAccountId
+      );
+      if (!capitalParentAccountId || !commitmentParentAccountId) {
+        throw badRequest(
+          "Setup required: configure shareholder parent account mapping for selected legalEntityId"
+        );
+      }
+      const capitalParentAccount = await assertShareholderParentAccount(
+        tx,
+        tenantId,
+        legalEntityId,
+        capitalParentAccountId,
+        "capitalCreditParentAccountId",
+        "CREDIT"
+      );
+      const commitmentParentAccount = await assertShareholderParentAccount(
+        tx,
+        tenantId,
+        legalEntityId,
+        commitmentParentAccountId,
+        "commitmentDebitParentAccountId",
+        "DEBIT"
+      );
+
+      const parentRowsResult = await tx.query(
+        `SELECT
+           a.id,
+           a.code,
+           a.name,
+           a.coa_id,
+           a.normal_side,
+           a.account_type,
+           a.allow_posting,
+           a.is_active,
+           c.legal_entity_id
+         FROM accounts a
+         JOIN charts_of_accounts c ON c.id = a.coa_id
+         WHERE c.tenant_id = ?
+           AND a.id IN (?, ?)
+         FOR UPDATE`,
+        [tenantId, capitalParentAccount.id, commitmentParentAccount.id]
+      );
+      const parentById = new Map(
+        (parentRowsResult.rows || []).map((row) => [parsePositiveInt(row.id), row])
+      );
+      const capitalParentRow = parentById.get(capitalParentAccount.id);
+      const commitmentParentRow = parentById.get(commitmentParentAccount.id);
+      if (!capitalParentRow || !commitmentParentRow) {
+        throw badRequest("Configured parent mapping accounts could not be loaded");
+      }
+
+      let shareholderRow = null;
+      if (shareholderId) {
+        const shareholderResult = await tx.query(
+          `SELECT
+             id,
+             code,
+             name,
+             capital_sub_account_id,
+             commitment_debit_sub_account_id
+           FROM shareholders
+           WHERE tenant_id = ?
+             AND legal_entity_id = ?
+             AND id = ?
+           LIMIT 1
+           FOR UPDATE`,
+          [tenantId, legalEntityId, shareholderId]
+        );
+        shareholderRow = shareholderResult.rows[0] || null;
+        if (!shareholderRow) {
+          throw badRequest("shareholderId not found for selected legalEntityId");
+        }
+      }
+
+      const existingAccountIds = Array.from(
+        new Set(
+          [
+            parsePositiveInt(shareholderRow?.capital_sub_account_id),
+            parsePositiveInt(shareholderRow?.commitment_debit_sub_account_id),
+          ].filter(Boolean)
+        )
+      );
+      const existingAccountById = new Map();
+      if (existingAccountIds.length > 0) {
+        const placeholders = existingAccountIds.map(() => "?").join(",");
+        const existingAccountsResult = await tx.query(
+          `SELECT
+             a.id,
+             a.code,
+             a.name,
+             a.account_type,
+             a.normal_side,
+             a.allow_posting,
+             a.is_active,
+             a.parent_account_id,
+             EXISTS(
+               SELECT 1
+               FROM accounts child
+               WHERE child.parent_account_id = a.id
+                 AND child.is_active = TRUE
+             ) AS has_active_children,
+             c.tenant_id AS account_tenant_id,
+             c.legal_entity_id AS account_legal_entity_id
+           FROM accounts a
+           JOIN charts_of_accounts c ON c.id = a.coa_id
+           WHERE a.id IN (${placeholders})`,
+          existingAccountIds
+        );
+        for (const row of existingAccountsResult.rows || []) {
+          existingAccountById.set(parsePositiveInt(row.id), row);
+        }
+      }
+
+      const accountParentById = await loadLegalEntityAccountHierarchy(
+        tx,
+        tenantId,
+        legalEntityId
+      );
+
+      const resolveExistingMappedAccount = ({
+        accountId,
+        fieldLabel,
+        expectedNormalSide,
+        expectedParentAccountId,
+      }) => {
+        const normalizedAccountId = parsePositiveInt(accountId);
+        if (!normalizedAccountId) {
+          return null;
+        }
+        const account = existingAccountById.get(normalizedAccountId) || null;
+        const issue = validateShareholderMappedLeafAccount({
+          account,
+          tenantId,
+          legalEntityId,
+          expectedNormalSide,
+          expectedParentAccountId,
+          parentById: accountParentById,
+          fieldLabel,
+        });
+        if (issue) {
+          throw badRequest(
+            `${fieldLabel} on shareholder is invalid: ${issue.message}`
+          );
+        }
+        return {
+          id: normalizedAccountId,
+          code: String(account.code || ""),
+          name: String(account.name || ""),
+          created: false,
+        };
+      };
+
+      let capitalSubAccount = resolveExistingMappedAccount({
+        accountId: shareholderRow?.capital_sub_account_id,
+        fieldLabel: "capital_sub_account_id",
+        expectedNormalSide: "CREDIT",
+        expectedParentAccountId: capitalParentAccount.id,
+      });
+      let commitmentSubAccount = resolveExistingMappedAccount({
+        accountId: shareholderRow?.commitment_debit_sub_account_id,
+        fieldLabel: "commitment_debit_sub_account_id",
+        expectedNormalSide: "DEBIT",
+        expectedParentAccountId: commitmentParentAccount.id,
+      });
+
+      const childRowsResult = await tx.query(
+        `SELECT id, code, parent_account_id
+         FROM accounts
+         WHERE parent_account_id IN (?, ?)
+         FOR UPDATE`,
+        [capitalParentAccount.id, commitmentParentAccount.id]
+      );
+      const capitalUsedSequences = new Set();
+      const debitUsedSequences = new Set();
+      for (const row of childRowsResult.rows || []) {
+        const parentAccountId = parsePositiveInt(row.parent_account_id);
+        const sequence =
+          parentAccountId === capitalParentAccount.id
+            ? normalizeShareholderChildSequenceFromCode(
+                capitalParentRow.code,
+                row.code
+              )
+            : normalizeShareholderChildSequenceFromCode(
+                commitmentParentRow.code,
+                row.code
+              );
+        if (!sequence) {
+          continue;
+        }
+        if (parentAccountId === capitalParentAccount.id) {
+          capitalUsedSequences.add(sequence);
+        }
+        if (parentAccountId === commitmentParentAccount.id) {
+          debitUsedSequences.add(sequence);
+        }
+      }
+
+      const needsCapitalCreate = !capitalSubAccount;
+      const needsDebitCreate = !commitmentSubAccount;
+
+      if (needsCapitalCreate || needsDebitCreate) {
+        const preferredSequenceFromCapital =
+          !needsCapitalCreate && capitalSubAccount
+            ? normalizeShareholderChildSequenceFromCode(
+                capitalParentRow.code,
+                capitalSubAccount.code
+              )
+            : null;
+        const preferredSequenceFromDebit =
+          !needsDebitCreate && commitmentSubAccount
+            ? normalizeShareholderChildSequenceFromCode(
+                commitmentParentRow.code,
+                commitmentSubAccount.code
+              )
+            : null;
+        const preferredSequence = parsePositiveInt(
+          preferredSequenceFromCapital || preferredSequenceFromDebit
+        );
+        const sequenceFits = (sequence) => {
+          if (!sequence) {
+            return false;
+          }
+          if (needsCapitalCreate && capitalUsedSequences.has(sequence)) {
+            return false;
+          }
+          if (needsDebitCreate && debitUsedSequences.has(sequence)) {
+            return false;
+          }
+          return true;
+        };
+
+        let selectedSequence = preferredSequence && sequenceFits(preferredSequence)
+          ? preferredSequence
+          : null;
+        if (!selectedSequence) {
+          selectedSequence = 1;
+          while (!sequenceFits(selectedSequence) && selectedSequence < 999999) {
+            selectedSequence += 1;
+          }
+        }
+        if (!sequenceFits(selectedSequence)) {
+          throw badRequest(
+            "Unable to allocate next available shareholder sub-account codes under configured parents"
+          );
+        }
+
+        if (needsCapitalCreate) {
+          const capitalCode = buildShareholderChildCode(
+            capitalParentRow.code,
+            selectedSequence
+          );
+          const capitalInsert = await tx.query(
+            `INSERT INTO accounts (
+                coa_id,
+                code,
+                name,
+                account_type,
+                normal_side,
+                allow_posting,
+                parent_account_id,
+                is_active
+              )
+              VALUES (?, ?, ?, 'EQUITY', 'CREDIT', TRUE, ?, TRUE)`,
+            [
+              parsePositiveInt(capitalParentRow.coa_id),
+              capitalCode,
+              shareholderName,
+              capitalParentAccount.id,
+            ]
+          );
+          capitalSubAccount = {
+            id: parsePositiveInt(capitalInsert.rows.insertId),
+            code: capitalCode,
+            name: shareholderName,
+            created: true,
+          };
+          capitalUsedSequences.add(selectedSequence);
+        }
+
+        if (needsDebitCreate) {
+          const debitCode = buildShareholderChildCode(
+            commitmentParentRow.code,
+            selectedSequence
+          );
+          const debitInsert = await tx.query(
+            `INSERT INTO accounts (
+                coa_id,
+                code,
+                name,
+                account_type,
+                normal_side,
+                allow_posting,
+                parent_account_id,
+                is_active
+              )
+              VALUES (?, ?, ?, 'EQUITY', 'DEBIT', TRUE, ?, TRUE)`,
+            [
+              parsePositiveInt(commitmentParentRow.coa_id),
+              debitCode,
+              shareholderName,
+              commitmentParentAccount.id,
+            ]
+          );
+          commitmentSubAccount = {
+            id: parsePositiveInt(debitInsert.rows.insertId),
+            code: debitCode,
+            name: shareholderName,
+            created: true,
+          };
+          debitUsedSequences.add(selectedSequence);
+        }
+      }
+
+      if (!capitalSubAccount?.id || !commitmentSubAccount?.id) {
+        throw badRequest("Failed to resolve both shareholder sub-accounts");
+      }
+
+      if (shareholderRow?.id) {
+        await tx.query(
+          `UPDATE shareholders
+           SET capital_sub_account_id = ?,
+               commitment_debit_sub_account_id = ?,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE tenant_id = ?
+             AND legal_entity_id = ?
+             AND id = ?`,
+          [
+            capitalSubAccount.id,
+            commitmentSubAccount.id,
+            tenantId,
+            legalEntityId,
+            parsePositiveInt(shareholderRow.id),
+          ]
+        );
+      }
+
+      return {
+        legalEntityId,
+        shareholderId: parsePositiveInt(shareholderRow?.id) || null,
+        shareholderCode,
+        shareholderName,
+        capitalSubAccount,
+        commitmentDebitSubAccount: commitmentSubAccount,
+      };
+    });
+
+    return res.status(201).json({
+      ok: true,
+      message: "Shareholder sub-accounts are ready",
+      ...operation,
     });
   })
 );

@@ -17,6 +17,7 @@ import { requireAuth } from "./middleware/auth.js";
 dotenv.config();
 
 const app = express();
+app.set("trust proxy", 1);
 const allowedOrigins = (
   process.env.CORS_ORIGIN ||
   "http://localhost:5173,http://127.0.0.1:5173"
@@ -34,7 +35,7 @@ const corsOptions = {
   },
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization", "X-Provider-Key"],
-  credentials: false,
+  credentials: true,
   optionsSuccessStatus: 200,
 };
 

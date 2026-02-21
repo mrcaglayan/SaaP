@@ -10,6 +10,10 @@ import {
 } from "./_utils.js";
 
 const router = express.Router();
+const SHAREHOLDER_CAPITAL_CREDIT_PARENT_PURPOSE =
+  "SHAREHOLDER_CAPITAL_CREDIT_PARENT";
+const SHAREHOLDER_COMMITMENT_DEBIT_PARENT_PURPOSE =
+  "SHAREHOLDER_COMMITMENT_DEBIT_PARENT";
 
 const DEFAULT_ACCOUNTS = [
   {
@@ -66,7 +70,7 @@ const READINESS_DEFINITIONS = [
   },
   {
     key: "shareholderCommitmentConfigs",
-    label: "Shareholder commitment debit mappings",
+    label: "Shareholder parent account mappings",
     minimum: 1,
   },
 ];
@@ -176,10 +180,27 @@ async function buildTenantReadinessSnapshot(tenantId) {
     ),
     scalarCount(
       `SELECT COUNT(*) AS count
-       FROM journal_purpose_accounts
-       WHERE tenant_id = ?
-         AND purpose_code = 'SHAREHOLDER_COMMITMENT_DEBIT'`,
-      [tenantId]
+       FROM legal_entities le
+       WHERE le.tenant_id = ?
+         AND EXISTS (
+           SELECT 1
+           FROM journal_purpose_accounts cap
+           WHERE cap.tenant_id = le.tenant_id
+             AND cap.legal_entity_id = le.id
+             AND cap.purpose_code = ?
+         )
+         AND EXISTS (
+           SELECT 1
+           FROM journal_purpose_accounts deb
+           WHERE deb.tenant_id = le.tenant_id
+             AND deb.legal_entity_id = le.id
+             AND deb.purpose_code = ?
+         )`,
+      [
+        tenantId,
+        SHAREHOLDER_CAPITAL_CREDIT_PARENT_PURPOSE,
+        SHAREHOLDER_COMMITMENT_DEBIT_PARENT_PURPOSE,
+      ]
     ),
   ]);
 
