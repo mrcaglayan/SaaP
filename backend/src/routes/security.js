@@ -1,4 +1,5 @@
 import express from "express";
+import bcrypt from "bcrypt";
 import { query, withTransaction } from "../db.js";
 import { assertScopeAccess, requirePermission } from "../middleware/rbac.js";
 import { logRbacAuditEvent } from "../audit/rbacAuditLogger.js";
@@ -7,7 +8,6 @@ import {
   assertGroupCompanyBelongsToTenant,
   assertLegalEntityBelongsToTenant,
   assertOperatingUnitBelongsToTenant,
-  assertRoleBelongsToTenant,
   assertUserBelongsToTenant,
 } from "../tenantGuards.js";
 import {
@@ -20,6 +20,12 @@ import {
 
 const router = express.Router();
 
+function forbidden(message) {
+  const err = new Error(message);
+  err.status = 403;
+  return err;
+}
+
 function parseBoolean(value) {
   if (typeof value === "boolean") {
     return value;
@@ -29,6 +35,56 @@ function parseBoolean(value) {
   }
   const normalized = value.trim().toLowerCase();
   return normalized === "true" || normalized === "1" || normalized === "yes";
+}
+
+const VALID_USER_STATUSES = new Set(["ACTIVE", "DISABLED"]);
+
+function normalizeUserEmail(value) {
+  const email = String(value || "")
+    .trim()
+    .toLowerCase();
+  if (!email) {
+    throw badRequest("email is required");
+  }
+  if (email.length > 255) {
+    throw badRequest("email cannot exceed 255 characters");
+  }
+  if (!email.includes("@") || !email.includes(".")) {
+    throw badRequest("email is invalid");
+  }
+  return email;
+}
+
+function normalizeUserName(value) {
+  const name = String(value || "").trim();
+  if (!name) {
+    throw badRequest("name is required");
+  }
+  if (name.length > 255) {
+    throw badRequest("name cannot exceed 255 characters");
+  }
+  return name;
+}
+
+function normalizeUserStatus(value) {
+  const normalized = String(value || "ACTIVE")
+    .trim()
+    .toUpperCase();
+  if (!VALID_USER_STATUSES.has(normalized)) {
+    throw badRequest("status must be ACTIVE or DISABLED");
+  }
+  return normalized;
+}
+
+function validateUserPassword(value) {
+  const password = String(value || "");
+  if (password.length < 8) {
+    throw badRequest("password must be at least 8 characters");
+  }
+  if (password.length > 128) {
+    throw badRequest("password cannot exceed 128 characters");
+  }
+  return password;
 }
 
 const VALID_SCOPE_TYPES = new Set([
@@ -69,6 +125,46 @@ async function getRoleForTenant(roleId, tenantId) {
     [roleId, tenantId]
   );
   return roleResult.rows[0] || null;
+}
+
+async function isTenantAdminUser(userId, tenantId) {
+  const normalizedUserId = parsePositiveInt(userId);
+  const normalizedTenantId = parsePositiveInt(tenantId);
+  if (!normalizedUserId || !normalizedTenantId) {
+    return false;
+  }
+
+  const result = await query(
+    `SELECT
+       SUM(CASE WHEN urs.effect = 'ALLOW' THEN 1 ELSE 0 END) AS allow_count,
+       SUM(CASE WHEN urs.effect = 'DENY' THEN 1 ELSE 0 END) AS deny_count
+     FROM user_role_scopes urs
+     JOIN roles r ON r.id = urs.role_id
+     WHERE urs.user_id = ?
+       AND urs.tenant_id = ?
+       AND urs.scope_type = 'TENANT'
+       AND urs.scope_id = ?
+       AND r.tenant_id = ?
+       AND r.code = 'TenantAdmin'
+     LIMIT 1`,
+    [normalizedUserId, normalizedTenantId, normalizedTenantId, normalizedTenantId]
+  );
+
+  const allowCount = Number(result.rows[0]?.allow_count || 0);
+  const denyCount = Number(result.rows[0]?.deny_count || 0);
+  return allowCount > 0 && denyCount === 0;
+}
+
+async function assertSystemRoleManageAllowed(req, tenantId, role) {
+  if (!Boolean(role?.is_system)) {
+    return;
+  }
+
+  const actorUserId = parsePositiveInt(req.user?.userId);
+  const canManageSystemRoles = await isTenantAdminUser(actorUserId, tenantId);
+  if (!canManageSystemRoles) {
+    throw forbidden("Only TenantAdmin can manage system role assignments");
+  }
 }
 
 async function upsertPermissionAndGetId(permissionCode, runQuery = query) {
@@ -186,6 +282,79 @@ router.get(
     return res.json({
       tenantId,
       rows: result.rows,
+    });
+  })
+);
+
+router.post(
+  "/users",
+  requirePermission("security.role_assignment.upsert"),
+  asyncHandler(async (req, res) => {
+    const tenantId = resolveTenantId(req);
+    if (!tenantId) {
+      throw badRequest("tenantId is required");
+    }
+
+    assertRequiredFields(req.body, ["email", "name", "password"]);
+    const email = normalizeUserEmail(req.body.email);
+    const name = normalizeUserName(req.body.name);
+    const password = validateUserPassword(req.body.password);
+    const status = normalizeUserStatus(req.body.status);
+
+    const existingUserResult = await query(
+      `SELECT id, tenant_id
+       FROM users
+       WHERE email = ?
+       LIMIT 1`,
+      [email]
+    );
+    if (existingUserResult.rows[0]) {
+      throw badRequest("email already exists");
+    }
+
+    const passwordHash = await bcrypt.hash(password, 10);
+
+    let createdUserId = null;
+    try {
+      const result = await query(
+        `INSERT INTO users (
+           tenant_id,
+           email,
+           password_hash,
+           name,
+           status
+         )
+         VALUES (?, ?, ?, ?, ?)`,
+        [tenantId, email, passwordHash, name, status]
+      );
+      createdUserId = parsePositiveInt(result.rows.insertId);
+    } catch (err) {
+      if (err?.errno === 1062) {
+        throw badRequest("email already exists");
+      }
+      throw err;
+    }
+
+    await logRbacAuditEvent(req, {
+      tenantId,
+      targetUserId: createdUserId,
+      action: "user.create",
+      resourceType: "user",
+      resourceId: createdUserId,
+      scopeType: "TENANT",
+      scopeId: tenantId,
+      payload: {
+        userId: createdUserId,
+        email,
+        name,
+        status,
+      },
+    });
+
+    return res.status(201).json({
+      ok: true,
+      id: createdUserId,
+      tenantId,
     });
   })
 );
@@ -557,7 +726,11 @@ router.post(
     }
 
     await assertUserBelongsToTenant(tenantId, userId, "userId");
-    await assertRoleBelongsToTenant(tenantId, roleId, "roleId");
+    const role = await getRoleForTenant(roleId, tenantId);
+    if (!role) {
+      throw badRequest("Role not found");
+    }
+    await assertSystemRoleManageAllowed(req, tenantId, role);
     await assertScopeTargetExists(tenantId, scopeType, scopeId);
 
     const existingResult = await query(
@@ -667,6 +840,11 @@ router.put(
     if (!assignment) {
       throw badRequest("Role assignment not found");
     }
+    const role = await getRoleForTenant(assignment.role_id, tenantId);
+    if (!role) {
+      throw badRequest("Role not found");
+    }
+    await assertSystemRoleManageAllowed(req, tenantId, role);
 
     const oldScopeType = String(assignment.scope_type || "").toLowerCase();
     const oldScopeId = parsePositiveInt(assignment.scope_id);
@@ -731,6 +909,26 @@ router.delete(
     const assignmentId = parsePositiveInt(req.params.assignmentId);
     if (!assignmentId) {
       throw badRequest("assignmentId must be a positive integer");
+    }
+
+    const assignmentResult = await query(
+      `SELECT
+         urs.id,
+         urs.role_id,
+         r.code AS role_code,
+         r.is_system
+       FROM user_role_scopes urs
+       LEFT JOIN roles r
+         ON r.id = urs.role_id
+        AND r.tenant_id = urs.tenant_id
+       WHERE urs.id = ?
+         AND urs.tenant_id = ?
+       LIMIT 1`,
+      [assignmentId, tenantId]
+    );
+    const assignment = assignmentResult.rows[0] || null;
+    if (assignment) {
+      await assertSystemRoleManageAllowed(req, tenantId, assignment);
     }
 
     await query(

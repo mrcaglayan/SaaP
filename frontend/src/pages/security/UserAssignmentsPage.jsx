@@ -4,6 +4,7 @@ import {
   listGroupCompanies,
   listLegalEntities,
   listOperatingUnits,
+  createSecurityUser,
   createRoleAssignment,
   deleteRoleAssignment,
   listRoleAssignments,
@@ -30,6 +31,12 @@ export default function UserAssignmentsPage() {
   const [legalEntities, setLegalEntities] = useState([]);
   const [operatingUnits, setOperatingUnits] = useState([]);
   const [assignments, setAssignments] = useState([]);
+  const [userForm, setUserForm] = useState({
+    name: "",
+    email: "",
+    password: "",
+    status: "ACTIVE",
+  });
   const [form, setForm] = useState({
     userId: "",
     roleId: "",
@@ -138,6 +145,43 @@ export default function UserAssignmentsPage() {
     });
   }, [scopeOptions]);
 
+  async function handleCreateUser(event) {
+    event.preventDefault();
+    if (!canUpsertAssignments) {
+      setError(t("userAssignments.missingPermission"));
+      return;
+    }
+
+    setSaving(true);
+    setError("");
+    setMessage("");
+    try {
+      const response = await createSecurityUser({
+        name: userForm.name.trim(),
+        email: userForm.email.trim(),
+        password: userForm.password,
+        status: userForm.status,
+      });
+
+      const createdUserId = Number(response?.id || 0);
+      if (createdUserId > 0) {
+        setForm((prev) => ({ ...prev, userId: String(createdUserId) }));
+      }
+      setUserForm({
+        name: "",
+        email: "",
+        password: "",
+        status: "ACTIVE",
+      });
+      setMessage(t("userAssignments.userCreateSuccess"));
+      await loadData();
+    } catch (err) {
+      setError(err?.response?.data?.message || t("userAssignments.userCreateFailed"));
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function handleCreate(event) {
     event.preventDefault();
     if (!canUpsertAssignments) {
@@ -212,6 +256,66 @@ export default function UserAssignmentsPage() {
           {message}
         </div>
       )}
+
+      <section className="rounded-xl border border-slate-200 bg-white p-4">
+        <h2 className="mb-3 text-sm font-semibold text-slate-700">
+          {t("userAssignments.createUser.title")}
+        </h2>
+        <form onSubmit={handleCreateUser} className="grid gap-3 md:grid-cols-5">
+          <input
+            type="text"
+            value={userForm.name}
+            onChange={(event) =>
+              setUserForm((prev) => ({ ...prev, name: event.target.value }))
+            }
+            className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+            placeholder={t("userAssignments.createUser.name")}
+            required
+          />
+          <input
+            type="email"
+            value={userForm.email}
+            onChange={(event) =>
+              setUserForm((prev) => ({ ...prev, email: event.target.value }))
+            }
+            className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+            placeholder={t("userAssignments.createUser.email")}
+            required
+          />
+          <input
+            type="password"
+            minLength={8}
+            value={userForm.password}
+            onChange={(event) =>
+              setUserForm((prev) => ({ ...prev, password: event.target.value }))
+            }
+            className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+            placeholder={t("userAssignments.createUser.password")}
+            required
+          />
+          <select
+            value={userForm.status}
+            onChange={(event) =>
+              setUserForm((prev) => ({ ...prev, status: event.target.value }))
+            }
+            className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+          >
+            <option value="ACTIVE">{t("userAssignments.createUser.statusActive")}</option>
+            <option value="DISABLED">
+              {t("userAssignments.createUser.statusDisabled")}
+            </option>
+          </select>
+          <button
+            type="submit"
+            disabled={saving || !canUpsertAssignments}
+            className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60"
+          >
+            {saving
+              ? t("userAssignments.createUser.submitting")
+              : t("userAssignments.createUser.submit")}
+          </button>
+        </form>
+      </section>
 
       <form
         onSubmit={handleCreate}
