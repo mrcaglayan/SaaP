@@ -216,16 +216,16 @@ function Icon({ name, className = "h-4 w-4" }) {
 }
 
 function mainLinkClass({ isActive }, collapsed) {
-  return `group flex w-full items-center gap-3 rounded-lg border-l-2 text-sm font-medium transition-colors ${collapsed ? "justify-center px-0 py-2.5" : "px-3 py-2.5"
+  return `group flex w-full items-center gap-3 rounded-md border-l-2 text-sm font-medium transition-colors ${collapsed ? "justify-center px-0 py-2.5" : "px-3 py-2.5"
     } ${isActive
-      ? "border-cyan-400 bg-white/12 text-white"
-      : "border-transparent text-slate-300 hover:bg-white/6 hover:text-white"
+      ? "border-cyan-400 bg-cyan-400/10 text-cyan-100"
+      : "border-transparent text-slate-300 hover:bg-white/5 hover:text-white"
     }`;
 }
 
-function subLinkClass({ isActive }) {
+function subLinkClass(isActive) {
   return `block rounded-md border-l px-3 py-1.5 text-sm transition-colors ${isActive
-    ? "border-cyan-300 text-cyan-100"
+    ? "border-cyan-300 bg-cyan-400/10 text-cyan-100"
     : "border-slate-700 text-slate-400 hover:text-slate-100"
     }`;
 }
@@ -250,7 +250,41 @@ function isSectionItem(item) {
   return item?.type === "section" || Array.isArray(item?.items);
 }
 
-function hasActiveChildPath(items, pathname) {
+function getPathWithoutQueryOrHash(target) {
+  return String(target || "").replace(/[?#].*$/, "");
+}
+
+function getHashFragment(target) {
+  const value = String(target || "");
+  const hashIndex = value.indexOf("#");
+  if (hashIndex < 0) {
+    return "";
+  }
+  return value.slice(hashIndex + 1);
+}
+
+function isSidebarEntryActive(entry, pathname, hash) {
+  const targetPath = getPathWithoutQueryOrHash(entry?.to);
+  if (!targetPath) {
+    return false;
+  }
+
+  const pathMatches = entry?.end
+    ? pathname === targetPath
+    : pathname.startsWith(targetPath);
+  if (!pathMatches) {
+    return false;
+  }
+
+  const targetHash = getHashFragment(entry.to);
+  if (!targetHash) {
+    return true;
+  }
+
+  return hash === `#${targetHash}`;
+}
+
+function hasActiveChildPath(items, pathname, hash) {
   if (!Array.isArray(items)) return false;
 
   return items.some((entry) => {
@@ -258,11 +292,32 @@ function hasActiveChildPath(items, pathname) {
       if (entry.matchPrefix && pathname.startsWith(entry.matchPrefix)) {
         return true;
       }
-      return hasActiveChildPath(entry.items, pathname);
+      return hasActiveChildPath(entry.items, pathname, hash);
     }
 
-    return Boolean(entry?.to && pathname.startsWith(entry.to));
+    return isSidebarEntryActive(entry, pathname, hash);
   });
+}
+
+function findActiveTopSectionKey(items, pathname, hash) {
+  if (!Array.isArray(items)) {
+    return null;
+  }
+
+  for (const item of items) {
+    if (!isSectionItem(item)) {
+      continue;
+    }
+
+    const isActive =
+      (item.matchPrefix && pathname.startsWith(item.matchPrefix)) ||
+      hasActiveChildPath(item.items, pathname, hash);
+    if (isActive) {
+      return item.matchPrefix || item.title || null;
+    }
+  }
+
+  return null;
 }
 
 function hasRequiredPermissions(item, hasAnyPermission) {
@@ -333,6 +388,9 @@ export default function AppLayout() {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [readinessMenuPathname, setReadinessMenuPathname] = useState(null);
+  const [openTopSectionKey, setOpenTopSectionKey] = useState(() =>
+    findActiveTopSectionKey(sidebarItems, location.pathname, location.hash)
+  );
   const readinessMenuRef = useRef(null);
   const canViewUnimplementedModules = hasAllPermissions(
     MODULE_PREVIEW_ADMIN_PERMISSIONS
@@ -413,7 +471,11 @@ export default function AppLayout() {
         const nestedItems = Array.isArray(subItem.items) ? subItem.items : [];
         const nestedSectionActive =
           (subItem.matchPrefix && location.pathname.startsWith(subItem.matchPrefix)) ||
-          hasActiveChildPath(nestedItems, location.pathname);
+          hasActiveChildPath(
+            nestedItems,
+            location.pathname,
+            location.hash
+          );
 
         return (
           <SidebarSection
@@ -422,7 +484,8 @@ export default function AppLayout() {
             icon={<Icon name={subItem.icon || "spark"} className="h-4 w-4" />}
             badge={subItem.badge}
             collapsed={false}
-            forceOpen={nestedSectionActive}
+            defaultOpen={nestedSectionActive}
+            active={nestedSectionActive}
           >
             {renderSectionChildren(nestedItems, depth + 1)}
           </SidebarSection>
@@ -434,7 +497,11 @@ export default function AppLayout() {
           key={subItem.to || `${subItem.label}-${depth}-${index}`}
           to={subItem.to}
           end={subItem.end}
-          className={subLinkClass}
+          className={() =>
+            subLinkClass(
+              isSidebarEntryActive(subItem, location.pathname, location.hash)
+            )
+          }
           onClick={closeMobileSidebar}
         >
           <span className="flex items-center justify-between gap-2">
@@ -490,7 +557,7 @@ export default function AppLayout() {
         </div>
 
         <nav
-          className={`flex-1 space-y-1 px-3 py-4 ${collapsed ? "overflow-visible" : "overflow-y-auto"
+          className={`flex-1 space-y-0.5 px-3 py-4 ${collapsed ? "overflow-visible" : "overflow-y-auto"
             }`}
         >
           {visibleSidebarItems.map((item) => {
@@ -504,21 +571,27 @@ export default function AppLayout() {
                   className={(state) => mainLinkClass(state, collapsed)}
                   onClick={closeMobileSidebar}
                 >
-                  <span
-                    className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition-colors ${collapsed
-                      ? "bg-white/10 text-slate-100"
-                      : "bg-white/10 text-slate-200 group-hover:bg-white/20"
-                      }`}
-                  >
-                    <Icon name={item.icon} className="h-4 w-4" />
-                  </span>
-                  {!collapsed && (
-                    <span className="truncate">{getItemDisplayText(item, "label")}</span>
-                  )}
-                  {!collapsed && item.badge && (
-                    <span className="ml-auto rounded-full bg-rose-400/20 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-rose-100">
-                      {item.badge}
-                    </span>
+                  {({ isActive }) => (
+                    <>
+                      <span
+                        className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md transition-colors ${isActive
+                          ? "text-cyan-200"
+                          : collapsed
+                            ? "text-slate-200"
+                            : "text-slate-300 group-hover:text-slate-100"
+                          }`}
+                      >
+                        <Icon name={item.icon} className="h-4 w-4" />
+                      </span>
+                      {!collapsed && (
+                        <span className="truncate">{getItemDisplayText(item, "label")}</span>
+                      )}
+                      {!collapsed && item.badge && (
+                        <span className="ml-auto rounded-full bg-rose-400/20 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-rose-100">
+                          {item.badge}
+                        </span>
+                      )}
+                    </>
                   )}
                 </NavLink>
               );
@@ -526,7 +599,13 @@ export default function AppLayout() {
 
             const isSectionActive =
               (item.matchPrefix && location.pathname.startsWith(item.matchPrefix)) ||
-              hasActiveChildPath(item.items, location.pathname);
+              hasActiveChildPath(
+                item.items,
+                location.pathname,
+                location.hash
+              );
+            const sectionKey = item.matchPrefix || item.title;
+            const isSectionOpen = openTopSectionKey === sectionKey;
 
             return (
               <SidebarSection
@@ -535,7 +614,13 @@ export default function AppLayout() {
                 icon={<Icon name={item.icon} className="h-4 w-4" />}
                 badge={item.badge}
                 collapsed={collapsed}
-                forceOpen={isSectionActive}
+                open={isSectionOpen}
+                active={isSectionActive}
+                onToggle={() =>
+                  setOpenTopSectionKey((current) =>
+                    current === sectionKey ? null : sectionKey
+                  )
+                }
               >
                 {renderSectionChildren(item.items)}
               </SidebarSection>

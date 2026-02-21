@@ -10,6 +10,7 @@ import AcilisFisiOlustur from "./pages/AcilisFisiOlustur";
 import JournalWorkbenchPage from "./pages/JournalWorkbenchPage";
 import CompanyOnboardingPage from "./pages/settings/CompanyOnboardingPage";
 import GlSetupPage from "./pages/settings/GlSetupPage";
+import GlReclassificationPage from "./pages/settings/GlReclassificationPage.jsx";
 import HesapPlaniOlustur from "./pages/settings/HesapPlaniOlustur";
 import OrganizationManagementPage from "./pages/settings/OrganizationManagementPage";
 import FxRatesPage from "./pages/settings/FxRatesPage";
@@ -28,8 +29,39 @@ import TenantReadinessProvider from "./readiness/TenantReadinessProvider.jsx";
 import RequireTenantReadiness from "./readiness/RequireTenantReadiness.jsx";
 import RequireProviderAuth from "./provider/RequireProviderAuth.jsx";
 
-const sidebarLinks = collectSidebarLinks(sidebarItems);
-const sidebarLinkByPath = new Map(sidebarLinks.map((link) => [link.to, link]));
+function toRoutePath(value) {
+  return String(value || "").replace(/[?#].*$/, "");
+}
+
+const rawSidebarLinks = collectSidebarLinks(sidebarItems);
+const sidebarRouteLinks = [];
+const sidebarLinkByPath = new Map();
+for (const link of rawSidebarLinks) {
+  const routePath = toRoutePath(link?.to);
+  if (!routePath) {
+    continue;
+  }
+
+  const existing = sidebarLinkByPath.get(routePath);
+  if (!existing) {
+    const normalizedLink = { ...link, routePath };
+    sidebarLinkByPath.set(routePath, normalizedLink);
+    sidebarRouteLinks.push(normalizedLink);
+    continue;
+  }
+
+  const existingPermissions = Array.isArray(existing.requiredPermissions)
+    ? existing.requiredPermissions
+    : [];
+  const nextPermissions = Array.isArray(link.requiredPermissions)
+    ? link.requiredPermissions
+    : [];
+  if (nextPermissions.length > 0) {
+    existing.requiredPermissions = Array.from(
+      new Set([...existingPermissions, ...nextPermissions])
+    );
+  }
+}
 const MODULE_PREVIEW_ADMIN_PERMISSIONS = [
   "security.role.upsert",
   "security.role_permissions.assign",
@@ -55,6 +87,11 @@ const implementedRoutes = [
     appPath: "/app/ayarlar/hesap-plani-ayarlari",
     childPath: "ayarlar/hesap-plani-ayarlari",
     element: <GlSetupPage />,
+  },
+  {
+    appPath: "/app/ayarlar/hesap-yeniden-siniflandirma",
+    childPath: "ayarlar/hesap-yeniden-siniflandirma",
+    element: <GlReclassificationPage />,
   },
   {
     appPath: "/app/ayarlar/sirket-ayarlari",
@@ -113,8 +150,9 @@ const implementedPaths = new Set([
   ...implementedRoutes.map((route) => route.appPath),
 ]);
 
-const allPlaceholderRoutes = sidebarLinks.filter(
-  (link) => link.to.startsWith("/app/") && !implementedPaths.has(link.to)
+const allPlaceholderRoutes = sidebarRouteLinks.filter(
+  (link) =>
+    link.routePath.startsWith("/app/") && !implementedPaths.has(link.routePath)
 );
 
 function withPermissionGuard(appPath, element) {
@@ -129,7 +167,7 @@ function withPermissionGuard(appPath, element) {
 }
 
 function toChildPath(appPath) {
-  return appPath.replace(/^\/app\//, "");
+  return toRoutePath(appPath).replace(/^\/app\//, "");
 }
 
 export default function App() {
@@ -196,11 +234,14 @@ export default function App() {
 
         {placeholderRoutes.map((link) => (
           <Route
-            key={link.to}
-            path={toChildPath(link.to)}
+            key={link.routePath}
+            path={toChildPath(link.routePath)}
             element={withPermissionGuard(
-              link.to,
-              <ModulePlaceholderPage title={link.label || "Module"} path={link.to} />
+              link.routePath,
+              <ModulePlaceholderPage
+                title={link.label || "Module"}
+                path={link.routePath}
+              />
             )}
           />
         ))}

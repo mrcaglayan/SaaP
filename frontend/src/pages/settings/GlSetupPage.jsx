@@ -210,6 +210,12 @@ const TURKISH_DEFAULT_COA_ACCOUNTS = [
   },
   { code: "500", name: "Sermaye", accountType: "EQUITY", normalSide: "CREDIT" },
   {
+    code: "501",
+    name: "Odenmemis Sermaye (-)",
+    accountType: "EQUITY",
+    normalSide: "DEBIT",
+  },
+  {
     code: "520",
     name: "Hisse Senedi Ihrac Primleri",
     accountType: "EQUITY",
@@ -379,6 +385,20 @@ function toPositiveInt(value) {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
+function toBoolean(value) {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "number") {
+    return value === 1;
+  }
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    return normalized === "1" || normalized === "true";
+  }
+  return false;
+}
+
 export default function GlSetupPage() {
   const { hasPermission } = useAuth();
   const { language } = useI18n();
@@ -398,6 +418,7 @@ export default function GlSetupPage() {
   const [saving, setSaving] = useState("");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const [updatingAccountId, setUpdatingAccountId] = useState(null);
 
   const [legalEntities, setLegalEntities] = useState([]);
   const [calendars, setCalendars] = useState([]);
@@ -433,6 +454,9 @@ export default function GlSetupPage() {
     targetAccountId: "",
     mappingType: "LOCAL_TO_GROUP",
   });
+  const parentAccountIds = new Set(
+    accounts.map((row) => toPositiveInt(row.parent_account_id)).filter(Boolean)
+  );
 
   async function loadData() {
     setLoading(true);
@@ -637,6 +661,73 @@ export default function GlSetupPage() {
       setError(err?.response?.data?.message || l("Failed to save account.", "Hesap kaydedilemedi."));
     } finally {
       setSaving("");
+    }
+  }
+
+  async function handleAccountPostingChange(account, nextAllowPosting) {
+    if (!canUpsertAccounts) {
+      setError(l("Missing permission: gl.account.upsert", "Eksik yetki: gl.account.upsert"));
+      return;
+    }
+
+    const accountId = toPositiveInt(account?.id);
+    const coaId = toPositiveInt(account?.coa_id);
+    if (!accountId || !coaId) {
+      setError(l("Invalid account row.", "Gecersiz hesap satiri."));
+      return;
+    }
+
+    const hasChildren = parentAccountIds.has(accountId);
+    if (hasChildren && nextAllowPosting) {
+      setError(
+        l(
+          "Header account with children cannot be set to posting.",
+          "Alt hesabi olan ust hesap post edilebilir yapilamaz."
+        )
+      );
+      return;
+    }
+
+    setUpdatingAccountId(accountId);
+    setError("");
+    setMessage("");
+    try {
+      const response = await upsertAccount({
+        coaId,
+        code: String(account.code || "").trim(),
+        name: String(account.name || "").trim(),
+        accountType: String(account.account_type || "").toUpperCase(),
+        normalSide: String(account.normal_side || "").toUpperCase(),
+        allowPosting: Boolean(nextAllowPosting),
+        parentAccountId: toPositiveInt(account.parent_account_id) || undefined,
+      });
+
+      if (response?.enforcedNonPosting) {
+        setMessage(
+          l(
+            "Account has child rows; posting was kept OFF by rule.",
+            "Hesabin alt satirlari oldugu icin post secenegi kural geregi kapali tutuldu."
+          )
+        );
+      } else {
+        setMessage(
+          l(
+            `Posting option updated for account ${account.code || accountId}.`,
+            `${account.code || accountId} hesap icin post secenegi guncellendi.`
+          )
+        );
+      }
+      await loadData();
+    } catch (err) {
+      setError(
+        err?.response?.data?.message ||
+          l(
+            "Failed to update account posting option.",
+            "Hesap post secenegi guncellenemedi."
+          )
+      );
+    } finally {
+      setUpdatingAccountId(null);
     }
   }
 
@@ -999,6 +1090,12 @@ export default function GlSetupPage() {
                 : l("Load Turkish Default CoA", "Varsayilan Turk Hesap Planini Yukle")}
             </button>
           </div>
+          <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+            {l(
+              "Hint: For shareholder commitment parent mappings (e.g. 500/501), save those parent equity accounts with Allow posting turned off.",
+              "Ipucu: Ortak sermaye taahhut parent eslemesinde (ornegin 500/501), parent ozkaynak hesaplarini Post edilmeye izin ver kapali olarak kaydedin."
+            )}
+          </div>
           <form onSubmit={handleAccountSubmit} className="grid gap-2 md:grid-cols-4">
             <select
               value={accountForm.coaId}
@@ -1110,22 +1207,69 @@ export default function GlSetupPage() {
                   <th className="px-3 py-2">{l("Name", "Ad")}</th>
                   <th className="px-3 py-2">{l("Type", "Tur")}</th>
                   <th className="px-3 py-2">{l("Side", "Yon")}</th>
+                  <th className="px-3 py-2">{l("Posting", "Post")}</th>
+                  <th className="px-3 py-2">{l("Action", "Islem")}</th>
                 </tr>
               </thead>
               <tbody>
-                {accounts.map((account) => (
-                  <tr key={account.id} className="border-t border-slate-100">
-                    <td className="px-3 py-2">{account.id}</td>
-                    <td className="px-3 py-2">{account.coa_id}</td>
-                    <td className="px-3 py-2">{account.code}</td>
-                    <td className="px-3 py-2">{account.name}</td>
-                    <td className="px-3 py-2">{account.account_type}</td>
-                    <td className="px-3 py-2">{account.normal_side}</td>
-                  </tr>
-                ))}
+                {accounts.map((account) => {
+                  const accountId = toPositiveInt(account.id);
+                  const hasChildren = parentAccountIds.has(accountId);
+                  const rowUpdating = updatingAccountId === accountId;
+                  const postingAllowed = toBoolean(account.allow_posting);
+                  return (
+                    <tr key={account.id} className="border-t border-slate-100">
+                      <td className="px-3 py-2">{account.id}</td>
+                      <td className="px-3 py-2">{account.coa_id}</td>
+                      <td className="px-3 py-2">{account.code}</td>
+                      <td className="px-3 py-2">{account.name}</td>
+                      <td className="px-3 py-2">{account.account_type}</td>
+                      <td className="px-3 py-2">{account.normal_side}</td>
+                      <td className="px-3 py-2">
+                        <div className="flex flex-col gap-1">
+                          <span
+                            className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${
+                              postingAllowed
+                                ? "bg-emerald-100 text-emerald-700"
+                                : "bg-amber-100 text-amber-700"
+                            }`}
+                          >
+                            {postingAllowed
+                              ? l("Leaf (Post)", "Alt hesap (Post)")
+                              : l("Header (No Post)", "Ust hesap (Post yok)")}
+                          </span>
+                          {hasChildren ? (
+                            <span className="text-[11px] text-slate-500">
+                              {l("Has child accounts", "Alt hesabi var")}
+                            </span>
+                          ) : null}
+                        </div>
+                      </td>
+                      <td className="px-3 py-2">
+                        <label className="inline-flex items-center gap-2 text-xs text-slate-700">
+                          <input
+                            type="checkbox"
+                            checked={postingAllowed}
+                            disabled={
+                              !canUpsertAccounts ||
+                              rowUpdating ||
+                              (hasChildren && !postingAllowed)
+                            }
+                            onChange={(event) =>
+                              handleAccountPostingChange(account, event.target.checked)
+                            }
+                          />
+                          {rowUpdating
+                            ? l("Saving...", "Kaydediliyor...")
+                            : l("Allow posting", "Post etmeye izin ver")}
+                        </label>
+                      </td>
+                    </tr>
+                  );
+                })}
                 {accounts.length === 0 && !loading && (
                   <tr>
-                    <td colSpan={6} className="px-3 py-3 text-slate-500">
+                    <td colSpan={8} className="px-3 py-3 text-slate-500">
                       {l("No accounts found.", "Hesap bulunamadi.")}
                     </td>
                   </tr>

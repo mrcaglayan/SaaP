@@ -198,6 +198,8 @@ export const messages = {
         "/app/ayarlar/organizasyon-yonetimi": "Organizasyon Yonetimi",
         "/app/ayarlar/hesap-plani-olustur": "Hesap Plani Olustur",
         "/app/ayarlar/hesap-plani-ayarlari": "Hesap Plani Ayarlari",
+        "/app/ayarlar/hesap-yeniden-siniflandirma":
+          "Hesap Yeniden Siniflandirma",
         "/app/ayarlar/kur-yonetimi": "Kur Yonetimi",
         "/app/ayarlar/konsolidasyon-kurulumu": "Konsolidasyon Kurulumu",
         "/app/ayarlar/stok-ayarlari": "Stok Ayarlari",
@@ -450,6 +452,10 @@ export const messages = {
       title: "Kiraci Hazirlik Kontrol Listesi",
       loading: "Hazirlik bilgisi yukleniyor...",
       retry: "Tekrar Dene",
+      refresh: "Yenile",
+      showDetails: "Detaylari Goster",
+      hideDetails: "Detaylari Gizle",
+      summary: "{{ready}} / {{total}} tamam",
       description:
         "Operasyonel modulleri kullanmadan once sirket, organizasyon ve GL kurulumunu tamamlayin.",
       minimum: "{{count}} / minimum {{minimum}}",
@@ -465,7 +471,8 @@ export const messages = {
         chartsOfAccounts: "Hesap planlari",
         accounts: "Hesaplar",
         shareholders: "Ortaklar",
-        shareholderCommitmentConfigs: "Ortaklik taahhut borc hesap eslesmeleri",
+        shareholderCommitmentConfigs:
+          "Ortaklik parent hesap eslesmeleri (sermaye/taahhut)",
       },
       badges: {
         ready: "Hazir",
@@ -689,6 +696,8 @@ export const messages = {
         "/app/ayarlar/organizasyon-yonetimi": "Organization Management",
         "/app/ayarlar/hesap-plani-olustur": "Create Chart of Accounts",
         "/app/ayarlar/hesap-plani-ayarlari": "Chart of Accounts Settings",
+        "/app/ayarlar/hesap-yeniden-siniflandirma":
+          "GL Reclassification Workbench",
         "/app/ayarlar/kur-yonetimi": "FX Rate Management",
         "/app/ayarlar/konsolidasyon-kurulumu": "Consolidation Setup",
         "/app/ayarlar/stok-ayarlari": "Stock Settings",
@@ -941,6 +950,10 @@ export const messages = {
       title: "Tenant Readiness Checklist",
       loading: "Loading readiness...",
       retry: "Retry",
+      refresh: "Refresh",
+      showDetails: "Show details",
+      hideDetails: "Hide details",
+      summary: "{{ready}} / {{total}} complete",
       description:
         "Complete company, organization, and GL setup before using operational modules.",
       minimum: "{{count}} / minimum {{minimum}}",
@@ -956,7 +969,7 @@ export const messages = {
         chartsOfAccounts: "Charts of accounts",
         accounts: "Accounts",
         shareholders: "Shareholders",
-        shareholderCommitmentConfigs: "Shareholder commitment debit mappings",
+        shareholderCommitmentConfigs: "Shareholder parent account mappings",
       },
       badges: {
         ready: "Ready",

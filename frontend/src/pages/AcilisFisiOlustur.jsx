@@ -10,7 +10,6 @@ import {
   listFiscalPeriods,
   listLegalEntities,
   listOperatingUnits,
-  listShareholderJournalConfigs,
   listShareholders,
 } from "../api/orgAdmin.js";
 import { useAuth } from "../auth/useAuth.js";
@@ -75,7 +74,6 @@ export default function AcilisFisiOlustur() {
   const [accounts, setAccounts] = useState([]);
   const [operatingUnits, setOperatingUnits] = useState([]);
   const [shareholders, setShareholders] = useState([]);
-  const [shareholderJournalConfigs, setShareholderJournalConfigs] = useState([]);
   const [periods, setPeriods] = useState([]);
 
   const [form, setForm] = useState({
@@ -134,7 +132,6 @@ export default function AcilisFisiOlustur() {
         setAccounts([]);
         setOperatingUnits([]);
         setShareholders([]);
-        setShareholderJournalConfigs([]);
         return;
       }
 
@@ -142,7 +139,7 @@ export default function AcilisFisiOlustur() {
       setError("");
 
       try {
-        const [entityRes, bookRes, accountRes, unitRes, shareholdersRes, shareholderConfigsRes] = await Promise.all([
+        const [entityRes, bookRes, accountRes, unitRes, shareholdersRes] = await Promise.all([
           canReadOrgTree ? listLegalEntities() : Promise.resolve({ rows: [] }),
           canReadBooks
             ? listBooks(
@@ -172,13 +169,6 @@ export default function AcilisFisiOlustur() {
                   : {}
               )
             : Promise.resolve({ rows: [] }),
-          canReadOrgTree
-            ? listShareholderJournalConfigs(
-                selectedLegalEntityId
-                  ? { legalEntityId: selectedLegalEntityId }
-                  : {}
-              )
-            : Promise.resolve({ rows: [] }),
         ]);
 
         if (cancelled) {
@@ -190,14 +180,12 @@ export default function AcilisFisiOlustur() {
         const accountRows = accountRes?.rows || [];
         const unitRows = unitRes?.rows || [];
         const shareholderRows = shareholdersRes?.rows || [];
-        const shareholderConfigRows = shareholderConfigsRes?.rows || [];
 
         setLegalEntities(entityRows);
         setBooks(bookRows);
         setAccounts(accountRows);
         setOperatingUnits(unitRows);
         setShareholders(shareholderRows);
-        setShareholderJournalConfigs(shareholderConfigRows);
 
         setForm((prev) => {
           const next = { ...prev };
@@ -314,12 +302,12 @@ export default function AcilisFisiOlustur() {
       ),
     [selectedLegalEntityId, shareholders]
   );
-  const selectedEntityCommitmentMapping = useMemo(
+  const selectedEntityShareholdersWithCommittedCapital = useMemo(
     () =>
-      shareholderJournalConfigs.find(
-        (row) => Number(row.legal_entity_id) === Number(selectedLegalEntityId)
-      ) || null,
-    [selectedLegalEntityId, shareholderJournalConfigs]
+      selectedEntityShareholders.filter(
+        (row) => Number(row.committed_capital || 0) > 0
+      ),
+    [selectedEntityShareholders]
   );
   const selectedEntityEquityAccounts = useMemo(
     () =>
@@ -348,12 +336,16 @@ export default function AcilisFisiOlustur() {
         ready: selectedEntityShareholders.length > 0,
       },
       {
-        key: "commitmentMapping",
+        key: "commitmentSubAccounts",
         label: l(
-          "Commitment debit account mapping exists",
-          "Taahhut borc hesap eslemesi mevcut"
+          "Each committed shareholder has debit and capital sub-accounts",
+          "Taahhutu olan her ortak icin borc ve sermaye alt hesabi tanimli"
         ),
-        ready: Boolean(selectedEntityCommitmentMapping),
+        ready: selectedEntityShareholdersWithCommittedCapital.every(
+          (row) =>
+            Boolean(toPositiveInt(row.commitment_debit_sub_account_id)) &&
+            Boolean(toPositiveInt(row.capital_sub_account_id))
+        ),
       },
       {
         key: "equitySubAccount",
@@ -375,8 +367,8 @@ export default function AcilisFisiOlustur() {
   }, [
     l,
     periods.length,
-    selectedEntityCommitmentMapping,
     selectedEntityEquityAccounts.length,
+    selectedEntityShareholdersWithCommittedCapital,
     selectedEntityShareholders.length,
     selectedLegalEntityId,
   ]);

@@ -82,6 +82,36 @@ export async function getTrialBalance(params = {}) {
   return response.data;
 }
 
+export async function createBalanceSplitReclassification(payload) {
+  const response = await api.post(
+    "/api/v1/gl/reclassifications/balance-split",
+    payload
+  );
+  return response.data;
+}
+
+export async function listReclassificationSourceLines(params = {}) {
+  const response = await api.get(
+    `/api/v1/gl/reclassifications/source-lines${toQueryString(params)}`
+  );
+  return response.data;
+}
+
+export async function createTransactionLineReclassification(payload) {
+  const response = await api.post(
+    "/api/v1/gl/reclassifications/transaction-lines",
+    payload
+  );
+  return response.data;
+}
+
+export async function listReclassificationRuns(params = {}) {
+  const response = await api.get(
+    `/api/v1/gl/reclassifications/runs${toQueryString(params)}`
+  );
+  return response.data;
+}
+
 export async function closePeriod(bookId, periodId, payload) {
   const response = await api.post(
     `/api/v1/gl/period-statuses/${bookId}/${periodId}/close`,

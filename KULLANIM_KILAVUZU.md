@@ -324,48 +324,73 @@ Yapilmazsa:
 Ekran:
 - `Ayarlar > Organizasyon Yonetimi > Shareholders`
 
-Bu adimda 2 farkli kurulum birlikte tamamlanir:
-1. `Shareholder` (ortak) ana verisi
-2. `Commitment Debit Account Mapping` (sermaye taahhut borc hesap eslemesi)
+Bu adim 3 parcadan olusur:
+1. `Parent mapping` (legal entity bazli ust hesap eslesmesi)
+2. `Shareholder` (ortak) + ortak bazli alt hesap baglantisi
+3. Kuyruktan `tek bir toplu taahhut taslak yevmiyesi` olusturma
 
 ### Sermaye taahhut yevmiyesi icin "Setup Required List" (zorunlu kontrol listesi)
 
 Sistem, secili `Legal Entity (Bagli Ortak)` icin su 4 kalemi kontrol eder:
 1. En az 1 ortak tanimli mi?
-2. Taahhut borc hesap eslemesi tanimli mi?
+2. Taahhutu olan ortaklar icin borc ve sermaye alt hesaplari tanimli mi?
 3. Kullanilabilir equity (sermaye) alt hesap var mi?
 4. Mali donemler olusturulmus mu?
 
 Sistem nasil bildirir?
 1. `Organizasyon Yonetimi > Shareholders` bolumunde "Setup Required List" kutusunda kalemleri `OK / Eksik` olarak gosterir.
 2. Eksik varsa kullaniciyi dogrudan yonlendirir:
-   - `Go to mapping form`
+   - `Go to shareholder form`
    - `Open GL setup`
 3. `Acilis Fisi Olustur` ekraninda da ayni kontrol listesi gosterilir (sermaye taahhut fisine yonelik uyarili panel).
 
-Ne doldurulur?
-1. Once `Commitment Debit Account Mapping` formunda legal entity ve borc hesabi secilip kaydedilir.
-2. Sonra ortak karti acilir:
-   - code, name
-   - shareholder type
-   - commitment date
-   - committed capital
-   - capital sub-account (committed capital > 0 ise zorunlu)
-3. `Save Shareholder`
+### Sermaye taahhudu nasil calisir?
 
-Sistem ne yapar?
-1. Ortak kaydini olusturur/gunceller.
-2. `committed capital` artisi varsa otomatik `taahhut taslak yevmiye` olusturur.
-3. Basarili olursa modal pencerede su bilgiler gosterilir:
-   - journal no
-   - journal id
-   - book
-   - fiscal period id
+Sistem mantigi:
+1. Ortak bazli iki alt hesap birlikte calisir:
+   - `Commitment debit sub-account` (tipik `501.xx`, DEBIT/EQUITY)
+   - `Capital sub-account` (tipik `500.xx`, CREDIT/EQUITY)
+2. Kayitta girilen taahhut mantigi `artis` uzerindendir:
+   - formdaki artis tutari mevcut toplam taahhude eklenir
+3. Toplu fis onizlemesinde sistem her ortak icin `delta` hesaplar:
+   - `delta = committed_capital - already_journaled_amount`
+4. Sadece `delta > 0` olan ortaklar toplu taahhut fisine dahil edilir.
+5. Olusan taslak yevmiyede her ortak icin 2 satir vardir:
+   - Borc: `commitment debit sub-account`
+   - Alacak: `capital sub-account`
+6. Fisleme kaydi audit tablosuna yazilir; ayni tutarin tekrar fislenmesi engellenir.
+7. Journal post edilirken sistem, uygun satir kombinasyonlarini tespit ederse ortak taahhut toplamini ve sahiplik yuzdesini (ownership %) tekrar senkronize eder.
+
+### Uctan uca adimlar (onerilen is akis)
+
+1. `Shareholder parent account mapping` formunda:
+   - `Capital credit parent` (tipik `500`)
+   - `Commitment debit parent` (tipik `501`)
+   secilip `Save Parent Mapping` yapilir.
+2. Ortak formunda su alanlar doldurulur:
+   - code, name, shareholder type, commitment date
+   - commitment debit sub-account
+   - capital sub-account
+   - taahhut artisi (bu kayit)
+3. `Save Shareholder` ile kayit alin.
+4. Artis > 0 ise ortak otomatik olarak `Toplu taahhut yevmiye kuyrugu`na eklenir.
+5. Gerekirse `Sermaye taahhut arttirimi` modali ile mevcut ortak icin ek artis girip `Kaydet ve kuyruga ekle` yapin.
+6. Kuyruktan `Tek bir toplu taahhut yevmiyesi olustur` aksiyonunu acin.
+7. Onizlemede kontrol edin:
+   - Blocking validation errors
+   - Included rows / Skipped rows
+   - Toplam borc / toplam alacak / para birimi
+8. `Create batch journal` ile tek bir taslak yevmiye olusturun.
+9. Journal Workbench uzerinden taslagi gozden gecirip post edin.
+10. Post sonrasi kontrol:
+   - ilgili ortagin committed capital/ownership degerleri
+   - olusan journal no, book ve fiscal period bilgileri
 
 Yapilmazsa:
-1. Sermaye taahhut akisinda manuel yevmiye zorunlulugu artar.
-2. Kaydetme aninda sistem su tip hata/uyariyi verir:
-   - "Configure commitment debit account..."
+1. Taahhut akisinda manuel is yukunuz artar.
+2. Delta takibi zorlasir ve ayni tutarin tekrar fislenme riski artar.
+3. Kaydetme aninda sistem su tip hata/uyariyi verir:
+   - "commitmentDebitSubAccountId is required..."
    - "capitalSubAccountId is required..."
 
 ---
@@ -522,6 +547,65 @@ Yapilmazsa:
 
 ---
 
+## Adim 17 - Hesap Yeniden Siniflandirma (Bakiye Dagitimi / Islem Bazli)
+
+Ekran:
+- `Ayarlar > Hesap Yeniden Siniflandirma`
+- URL: `/app/ayarlar/hesap-yeniden-siniflandirma`
+
+Bu ekran 2 akis sunar:
+1. `Bakiye Dagitimi Olustur` (hesap bakiyesini alt hesaplara dagitma)
+2. `Islem Bazli Yeniden Siniflandirma` (tek tek fis satiri esleme)
+
+### A) Bakiye Dagitimi Olustur
+
+Ne doldurulur?
+1. `Legal Entity (Bagli Ortak)` secin.
+2. `Book` secin.
+3. `Fiscal period` secin.
+4. `Source account (direct != 0)` secin.
+5. Dagitim tipini secin:
+   - `Yuzdeye gore (PERCENT)`
+   - `Tutara gore (AMOUNT)`
+6. En az 1 `Hedef hesap` satiri ekleyin.
+7. Dagitim degerlerini girin:
+   - PERCENT modunda toplam yuzde = `100` olmali.
+   - AMOUNT modunda toplam tutar = `Dagitilacak tutar` olmali.
+8. `Entry date`, `Document date`, `Currency` alanlarini kontrol edin.
+9. Gerekirse `Aciklama`, `Referans no`, `Run notu` girin.
+10. `Yeniden siniflandirma taslagi olustur` butonuna basin.
+
+Sistem ne yapar?
+1. Kaynak bakiyeyi tersleyip hedef hesaplara dagitan tek bir taslak yevmiye olusturur.
+2. Islemi `Son Yeniden Siniflandirma Runlari` listesine kaydeder.
+3. Olusan `Journal No / Journal Id` bilgisini listede gosterir.
+
+### B) Islem Bazli Yeniden Siniflandirma
+
+Ne doldurulur?
+1. Ust kisimda yine `Legal Entity`, `Book`, `Fiscal period`, `Source account` secili olmali.
+2. Gerekirse `dateFrom`, `dateTo`, `limit` filtrelerini girin.
+3. `Kaynak satirlari yukle` butonuna basin.
+4. Yeniden siniflandirilacak satirlari secin.
+5. Her secili satir icin bir `Hedef hesap` secin.
+6. `Secili satir` ve `Eslenen` sayisi esit oldugunda
+   `Islem bazli yeniden siniflandirma taslagi olustur` butonuna basin.
+
+Sistem ne yapar?
+1. Secilen her kaynak satiri tersleyip secilen hedef hesapta yeni satirlar olusturur.
+2. Taslak yevmiye olusturur ve run kaydina ekler.
+
+Kontrol listesi:
+1. `Son Yeniden Siniflandirma Runlari` alaninda yeni kayit gorunuyor mu?
+2. `Journal Workbench` ekraninda ilgili taslak fis aciliyor mu?
+3. Gerekli inceleme sonrasi fis post edildi mi?
+
+Yapilmazsa:
+1. Hesaplar arasi bakiye dagitimi manuel fisle yapilir.
+2. Manuel dagitimda hata ve atlanan satir riski artar.
+
+---
+
 ## 5) En Cok Karsilasilan Durumlar ve Cozumler
 
 Durum:
@@ -553,13 +637,12 @@ Cozum:
 2. `Subledger Ref` girip birim secmediyseniz once birim secin.
 
 Durum:
-- `Configure commitment debit account for this legal entity before saving` hatasi
+- `commitmentDebitSubAccountId is required when committedCapital is greater than 0` hatasi
 
 Cozum:
-1. `Organizasyon Yonetimi > Shareholders` bolumunde
-   `Commitment Debit Account Mapping` formunu doldurun.
-2. Legal entity secip borc hesabini kaydedin.
-3. Sonra ortak kaydini tekrar kaydedin.
+1. `Organizasyon Yonetimi > Shareholders` ekraninda ortak kartinda `Commitment debit sub-account` secin.
+2. Bu hesap equity tipinde, aktif ve post edilebilir bir alt hesap olmali (tipik TR: `501.xx`).
+3. Ortak kaydini tekrar kaydedin.
 
 Durum:
 - `capitalSubAccountId is required when committedCapital is greater than 0` hatasi
@@ -572,8 +655,29 @@ Durum:
 - Sermaye taahhut akisi icin ekranda "Setup Required List" eksik gorunuyor
 
 Cozum:
-1. Ortak tanimi, taahhut borc hesap eslemesi, equity alt hesap ve mali donem kalemlerini tamamlayin.
+1. Ortak tanimi, ortak bazli borc/sermaye alt hesaplari, equity alt hesap ve mali donem kalemlerini tamamlayin.
 2. Ekrandaki yonlendirme butonlariyla ilgili setup ekranina gecin.
+
+Durum:
+- `Queued shareholders contain mixed currencies` (toplu taahhut onizlemede)
+
+Cozum:
+1. Toplu taahhut fisini para birimine gore ayri ayri olusturun.
+2. Ayni batch icine farkli currency kodlu ortaklari birlikte koymayin.
+
+Durum:
+- `No OPEN book/fiscal period found for legalEntityId` veya `commitmentDate must be within an OPEN fiscal period`
+
+Cozum:
+1. Secili legal entity icin acik donem oldugunu kontrol edin.
+2. `Taahhut tarihi`ni acik mali donem araligina alin.
+
+Durum:
+- `No shareholder has a positive journalizable commitment delta` (toplu taahhut onizlemede)
+
+Cozum:
+1. Delta mantigini kontrol edin: `committed_capital - already_journaled_amount`.
+2. Delta 0 veya negatifse ortak batchte atlanir; yeni artis tutari girin veya ilgili ortaklari kuyruktan cikarip tekrar deneyin.
 
 Durum:
 - `Active pair mapping required` hatasi
@@ -594,6 +698,14 @@ Durum:
 
 Cozum:
 1. Post ekraninda `Post linked intercompany mirrors` kutusunu isaretleyerek post et.
+
+Durum:
+- `Incorrect arguments to mysqld_stmt_execute` hatasi (Hesap Yeniden Siniflandirma sayfasinda run listesi/satir yukleme asamasinda)
+
+Cozum:
+1. Backend guncel kodla calisiyor mu kontrol edin (reclassification sorgularinda `LIMIT ?` yerine dogrudan sayisal limit kullanilmali).
+2. Backend servisini yeniden baslatin.
+3. Sayfayi yenileyip islemi tekrar deneyin.
 
 ---
 

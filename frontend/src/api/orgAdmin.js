@@ -60,6 +60,30 @@ export async function upsertShareholder(payload) {
   return response.data;
 }
 
+export async function createShareholderCommitmentBatchJournal(payload) {
+  const response = await api.post(
+    "/api/v1/org/shareholders/commitment-journal-batch",
+    payload
+  );
+  return response.data;
+}
+
+export async function previewShareholderCommitmentBatchJournal(payload) {
+  const response = await api.post(
+    "/api/v1/org/shareholders/commitment-journal-batch/preview",
+    payload
+  );
+  return response.data;
+}
+
+export async function autoProvisionShareholderSubAccounts(payload) {
+  const response = await api.post(
+    "/api/v1/org/shareholders/auto-provision-sub-accounts",
+    payload
+  );
+  return response.data;
+}
+
 export async function listShareholderJournalConfigs(params = {}) {
   const response = await api.get(
     `/api/v1/org/shareholder-journal-config${toQueryString(params)}`

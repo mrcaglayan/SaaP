@@ -7,9 +7,12 @@ export default function SidebarSection({
   children,
   collapsed = false,
   defaultOpen = false,
-  forceOpen = false,
+  open,
+  active = false,
+  onToggle,
 }) {
-  const [open, setOpen] = useState(defaultOpen || forceOpen);
+  const isControlled = typeof open === "boolean";
+  const [internalOpen, setInternalOpen] = useState(defaultOpen);
   const [flyoutOpen, setFlyoutOpen] = useState(false);
   const closeTimerRef = useRef(null);
   const panelId = useId();
@@ -45,7 +48,8 @@ export default function SidebarSection({
     }, 120);
   }
 
-  const sectionOpen = forceOpen || open;
+  const sectionOpen = isControlled ? open : internalOpen;
+  const sectionHighlighted = active || sectionOpen;
   const showChildren = !collapsed && sectionOpen;
   const showFlyout = collapsed && flyoutOpen;
 
@@ -68,23 +72,27 @@ export default function SidebarSection({
         aria-haspopup={collapsed ? "menu" : undefined}
         title={collapsed ? title : undefined}
         onClick={() => {
-          if (!collapsed && !forceOpen) {
-            setOpen((value) => !value);
+          if (!collapsed) {
+            if (onToggle) {
+              onToggle();
+              return;
+            }
+            setInternalOpen((value) => !value);
           }
         }}
-        className={`group flex w-full items-center gap-3 rounded-lg border-l-2 text-left text-sm font-medium transition-colors ${
+        className={`group flex w-full items-center gap-3 rounded-md border-l-2 text-left text-sm font-medium transition-colors ${
           collapsed ? "justify-center px-0 py-2.5" : "px-3 py-2.5"
         } ${
-          sectionOpen
-            ? "border-cyan-400 text-white"
-            : "border-transparent text-slate-300 hover:text-white"
+          sectionHighlighted
+            ? "border-cyan-400 bg-cyan-400/10 text-cyan-100"
+            : "border-transparent text-slate-300 hover:bg-white/5 hover:text-white"
         }`}
       >
         <span
-          className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition-colors ${
-            sectionOpen
-              ? "bg-cyan-400/15 text-cyan-200"
-              : "bg-white/10 text-slate-200 group-hover:bg-white/20"
+          className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md transition-colors ${
+            sectionHighlighted
+              ? "text-cyan-200"
+              : "text-slate-300 group-hover:text-slate-100"
           }`}
         >
           {icon}
@@ -117,7 +125,7 @@ export default function SidebarSection({
           showChildren ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
         }`}
       >
-        <div className="min-h-0 pl-11">
+        <div className="min-h-0 pl-11 pr-1">
           <div className="grid gap-1 pt-0.5">{children}</div>
         </div>
       </div>

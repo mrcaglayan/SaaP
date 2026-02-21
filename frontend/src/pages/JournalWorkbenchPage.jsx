@@ -1012,15 +1012,40 @@ export default function JournalWorkbenchPage() {
       const postedIds = Array.isArray(res?.postedJournalIds)
         ? res.postedJournalIds.filter((id) => toInt(id))
         : [];
+      const commitmentSyncRows = Array.isArray(res?.shareholderCommitmentSync)
+        ? res.shareholderCommitmentSync
+        : [];
+      const appliedCommitmentSyncRows = commitmentSyncRows.filter(
+        (row) => Boolean(row?.applied) && Number(row?.shareholderCount || 0) > 0
+      );
+      const syncedShareholderCount = appliedCommitmentSyncRows.reduce(
+        (sum, row) => sum + Number(row?.shareholderCount || 0),
+        0
+      );
+      const syncedCommitmentAmount = appliedCommitmentSyncRows.reduce(
+        (sum, row) => sum + Number(row?.totalAmount || 0),
+        0
+      );
+      const commitmentSyncSuffix =
+        syncedShareholderCount > 0
+          ? l(
+              ` Shareholder commitment sync applied: ${syncedShareholderCount} shareholder(s), ${formatAmount(
+                syncedCommitmentAmount
+              )}.`,
+              ` Ortak taahhut senkronu uygulandi: ${syncedShareholderCount} ortak, ${formatAmount(
+                syncedCommitmentAmount
+              )}.`
+            )
+          : "";
       setMessage(
         res?.posted
           ? l(
               postedIds.length > 1
-                ? `Journals posted: ${postedIds.join(", ")}.`
-                : "Journal posted.",
+                ? `Journals posted: ${postedIds.join(", ")}.${commitmentSyncSuffix}`
+                : `Journal posted.${commitmentSyncSuffix}`,
               postedIds.length > 1
-                ? `Fisler post edildi: ${postedIds.join(", ")}.`
-                : "Fis post edildi."
+                ? `Fisler post edildi: ${postedIds.join(", ")}.${commitmentSyncSuffix}`
+                : `Fis post edildi.${commitmentSyncSuffix}`
             )
           : l("Journal not posted.", "Fis post edilmedi.")
       );

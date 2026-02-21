@@ -8,7 +8,7 @@ export function AuthProvider({ children }) {
   const [permissions, setPermissions] = useState([]);
   const [booting, setBooting] = useState(true);
 
-  const isAuthed = !!token;
+  const isAuthed = Boolean(user);
 
   const clearAuthState = useCallback(() => {
     localStorage.removeItem("token");
@@ -26,18 +26,11 @@ export function AuthProvider({ children }) {
   }, []);
 
   useEffect(() => {
-    const stored = localStorage.getItem("token");
-    if (!stored) {
-      setBooting(false);
-      return;
-    }
-
-    setToken(stored);
-
     (async () => {
       try {
-        const res = await api.get("/me");
+        const res = await api.get("/me", { skipAuthRedirect: true });
         applyMePayload(res.data);
+        setToken("cookie-session");
       } catch {
         clearAuthState();
       } finally {
@@ -54,25 +47,22 @@ export function AuthProvider({ children }) {
   }, [clearAuthState]);
 
   const login = useCallback(async (email, password) => {
-    const res = await api.post("/auth/login", { email, password });
-    const newToken = res.data?.token;
-
-    if (!newToken) {
-      throw new Error("Login response did not include token");
-    }
-
-    localStorage.setItem("token", newToken);
-    setToken(newToken);
-
-    try {
-      const me = await api.get("/me");
-      applyMePayload(me.data);
-    } catch {
-      // /me lookup failed, but login itself succeeded.
-    }
+    await api.post(
+      "/auth/login",
+      { email, password },
+      { skipAuthRedirect: true }
+    );
+    const me = await api.get("/me", { skipAuthRedirect: true });
+    applyMePayload(me.data);
+    setToken("cookie-session");
   }, [applyMePayload]);
 
-  const logout = useCallback(() => {
+  const logout = useCallback(async () => {
+    try {
+      await api.post("/auth/logout", null, { skipAuthRedirect: true });
+    } catch {
+      // Ignore logout API failures and clear local auth state anyway.
+    }
     clearAuthState();
   }, [clearAuthState]);
 

@@ -28,6 +28,15 @@ const GL_SETUP_PAGE_PERMISSIONS = [
   "gl.account.upsert",
   "gl.account_mapping.upsert",
 ];
+const RECLASS_PAGE_PERMISSIONS = [
+  "org.tree.read",
+  "gl.book.read",
+  "gl.account.read",
+  "org.fiscal_period.read",
+  "gl.trial_balance.read",
+  "gl.journal.create",
+  "gl.journal.read",
+];
 const JOURNAL_PAGE_PERMISSIONS = [
   "gl.journal.read",
   "gl.journal.create",
@@ -334,6 +343,12 @@ export const sidebarItems = [
         label: "Hesap Plani Ayarlari",
         to: "/app/ayarlar/hesap-plani-ayarlari",
         requiredPermissions: GL_SETUP_PAGE_PERMISSIONS,
+        implemented: true,
+      },
+      {
+        label: "Hesap Yeniden Siniflandirma",
+        to: "/app/ayarlar/hesap-yeniden-siniflandirma",
+        requiredPermissions: RECLASS_PAGE_PERMISSIONS,
         implemented: true,
       },
       {
