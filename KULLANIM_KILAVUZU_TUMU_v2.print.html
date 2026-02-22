@@ -1,0 +1,2480 @@
+<!doctype html>
+<html lang="tr"><head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SaaP Tum Kullanim Kilavuzu v2</title>
+<style>
+@page { size: A4; margin: 16mm 12mm; }
+body { font-family: "Segoe UI", Arial, sans-serif; color:#111; line-height:1.42; font-size:11.2px; }
+h1,h2,h3,h4,h5,h6 { line-height:1.22; margin-top:1em; margin-bottom:.45em; }
+h1 { font-size:23px; }
+h2 { font-size:18px; border-bottom:1px solid #ddd; padding-bottom:3px; }
+h3 { font-size:15px; }
+h4 { font-size:13px; }
+p,ul,ol,table,blockquote { margin-top:.42em; margin-bottom:.64em; }
+table { border-collapse:collapse; width:100%; font-size:10.6px; }
+th,td { border:1px solid #d6d6d6; padding:5px 6px; text-align:left; vertical-align:top; }
+th { background:#f5f5f5; }
+code { background:#f4f4f4; padding:1px 3px; border-radius:3px; }
+a { color:#0b57d0; text-decoration:none; }
+a:hover { text-decoration:underline; }
+blockquote { border-left:3px solid #d9d9d9; padding-left:10px; color:#333; }
+hr { border:none; border-top:1px solid #ddd; margin:14px 0; }
+.cover { page-break-after: always; }
+.cover h1 { margin-top: 30mm; font-size:30px; border:none; }
+.cover p { font-size:13px; color:#333; }
+.toc-section { page-break-after: always; }
+.toc-title-main { font-size:26px; margin:0 0 8px 0; border:none; }
+.toc-sub { color:#444; margin:0 0 12px 0; }
+.toc-row { display:flex; align-items:baseline; gap:8px; margin:2px 0; break-inside:avoid; page-break-inside:avoid; }
+.toc-kind { width:95px; font-size:10px; text-transform:uppercase; letter-spacing:.35px; color:#555; flex:0 0 95px; }
+.toc-title { color:#111; text-decoration:none; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.toc-title:hover { text-decoration:underline; }
+.toc-dots { flex:1 1 auto; border-bottom:1px dotted #888; transform:translateY(-2px); }
+.toc-page-no { width:36px; text-align:right; font-variant-numeric: tabular-nums; }
+.lvl-0 .toc-title { font-weight:700; }
+.lvl-1 .toc-title { padding-left:10px; font-weight:600; }
+.lvl-2 .toc-title { padding-left:22px; }
+.lvl-3 .toc-title { padding-left:34px; color:#333; }
+.toc-marker { color:#fff; font-size:1px; line-height:1; margin-left:4px; }
+</style></head><body>
+<section class="cover">
+  <h1>SaaP Tum Kullanim Kilavuzu</h1>
+  <p><strong>Surum:</strong> v2</p>
+  <p><strong>Tarih:</strong> 2026-02-22</p>
+  <p>Bu PDF, bolum/baslik/ana baslik/alt baslik kirilimli ve noktal? liderli icindekiler ile uretilmistir.</p>
+</section>
+<section class="toc-section">
+  <h1 class="toc-title-main">Icindekiler</h1>
+  <p class="toc-sub">Tiklanabilir girisler, noktal? lider ve gercek sayfa numarasi formatinda listelenmistir.</p>
+  <div class="toc-row lvl-0">
+  <div class="toc-kind">Bolum</div>
+  <a class="toc-title" href="#bolum1-baslangic">Bolum 1 - Ana Is Akisi ve Kurulum</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">5</span>
+</div>
+<div class="toc-row lvl-1">
+  <div class="toc-kind">Baslik</div>
+  <a class="toc-title" href="#bolum1-saap-kullanim-kilavuzu-is-birimi-odakli">SaaP Kullanim Kilavuzu (Is Birimi Odakli)</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">5</span>
+</div>
+<div class="toc-row lvl-2">
+  <div class="toc-kind">Ana Baslik</div>
+  <a class="toc-title" href="#bolum1-1-kisa-ozet-bu-sistemde-ana-mantik-nedir">1) Kisa Ozet: Bu Sistemde Ana Mantik Nedir?</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">5</span>
+</div>
+<div class="toc-row lvl-2">
+  <div class="toc-kind">Ana Baslik</div>
+  <a class="toc-title" href="#bolum1-2-sifirdan-baslangic-senaryosu-schema-silindikten-sonra">2) Sifirdan Baslangic Senaryosu (Schema Silindikten Sonra)</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">5</span>
+</div>
+<div class="toc-row lvl-3">
+  <div class="toc-kind">Alt Baslik</div>
+  <a class="toc-title" href="#bolum1-21-teknik-hazirlik-it-ekibi">2.1 Teknik Hazirlik (IT Ekibi)</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">5</span>
+</div>
+<div class="toc-row lvl-3">
+  <div class="toc-kind">Alt Baslik</div>
+  <a class="toc-title" href="#bolum1-22-kullanici-kontrolu">2.2 Kullanici Kontrolu</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">5</span>
+</div>
+<div class="toc-row lvl-2">
+  <div class="toc-kind">Ana Baslik</div>
+  <a class="toc-title" href="#bolum1-3-kurulum-yolu-hangi-sirayi-izlemeliyim">3) Kurulum Yolu: Hangi Sirayi Izlemeliyim?</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">5</span>
+</div>
+<div class="toc-row lvl-2">
+  <div class="toc-kind">Ana Baslik</div>
+  <a class="toc-title" href="#bolum1-4-adim-adim-manuel-kurulum">4) Adim Adim Manuel Kurulum</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">5</span>
+</div>
+<div class="toc-row lvl-2">
+  <div class="toc-kind">Ana Baslik</div>
+  <a class="toc-title" href="#bolum1-adim-1-grup-sirketini-olustur">Adim 1 - Grup Sirketini Olustur</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">5</span>
+</div>
+<div class="toc-row lvl-2">
+  <div class="toc-kind">Ana Baslik</div>
+  <a class="toc-title" href="#bolum1-adim-2-legal-entity-bagli-ortak-olustur">Adim 2 - Legal Entity (Bagli Ortak) Olustur</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">6</span>
+</div>
+<div class="toc-row lvl-3">
+  <div class="toc-kind">Alt Baslik</div>
+  <a class="toc-title" href="#bolum1-auto-create-defaults-ne-yapar">`Auto-create defaults` ne yapar?</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">6</span>
+</div>
+<div class="toc-row lvl-3">
+  <div class="toc-kind">Alt Baslik</div>
+  <a class="toc-title" href="#bolum1-auto-create-defaults-ne-yapmaz">`Auto-create defaults` ne yapmaz?</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">6</span>
+</div>
+<div class="toc-row lvl-3">
+  <div class="toc-kind">Alt Baslik</div>
+  <a class="toc-title" href="#bolum1-intercompany-kutularinin-anlami-bugun-itibariyla">Intercompany Kutularinin Anlami (Bugun Itibariyla)</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">6</span>
+</div>
+<div class="toc-row lvl-2">
+  <div class="toc-kind">Ana Baslik</div>
+  <a class="toc-title" href="#bolum1-adim-3-sube-operasyon-birimi-tanimla">Adim 3 - Sube / Operasyon Birimi Tanimla</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">6</span>
+</div>
+<div class="toc-row lvl-3">
+  <div class="toc-kind">Alt Baslik</div>
+  <a class="toc-title" href="#bolum1-has-subledger-alt-defter-var-kutusu-ne-anlama-gelir">`Has subledger` (Alt defter var) kutusu ne anlama gelir?</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">6</span>
+</div>
+<div class="toc-row lvl-2">
+  <div class="toc-kind">Ana Baslik</div>
+  <a class="toc-title" href="#bolum1-adim-4-mali-takvim-kaydet">Adim 4 - Mali Takvim Kaydet</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">7</span>
+</div>
+<div class="toc-row lvl-2">
+  <div class="toc-kind">Ana Baslik</div>
+  <a class="toc-title" href="#bolum1-adim-5-donemleri-uret-ve-dogru-filtreyle-listele">Adim 5 - Donemleri Uret ve Dogru Filtreyle Listele</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">7</span>
+</div>
+<div class="toc-row lvl-2">
+  <div class="toc-kind">Ana Baslik</div>
+  <a class="toc-title" href="#bolum1-adim-6-defter-book-olustur">Adim 6 - Defter (Book) Olustur</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">7</span>
+</div>
+<div class="toc-row lvl-2">
+  <div class="toc-kind">Ana Baslik</div>
+  <a class="toc-title" href="#bolum1-adim-7-hesap-plani-coa-olustur">Adim 7 - Hesap Plani (CoA) Olustur</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">7</span>
+</div>
+<div class="toc-row lvl-2">
+  <div class="toc-kind">Ana Baslik</div>
+  <a class="toc-title" href="#bolum1-adim-8-hesaplari-yukle-turkish-default-coa">Adim 8 - Hesaplari Yukle (Turkish Default CoA)</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">7</span>
+</div>
+<div class="toc-row lvl-2">
+  <div class="toc-kind">Ana Baslik</div>
+  <a class="toc-title" href="#bolum1-adim-9-ortaklar-ve-sermaye-taahhut-kurulumu">Adim 9 - Ortaklar ve Sermaye Taahhut Kurulumu</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">7</span>
+</div>
+<div class="toc-row lvl-3">
+  <div class="toc-kind">Alt Baslik</div>
+  <a class="toc-title" href="#bolum1-sermaye-taahhut-yevmiyesi-icin-setup-required-list-zorunlu-kontrol-listesi">Sermaye taahhut yevmiyesi icin &quot;Setup Required List&quot; (zorunlu kontrol listesi)</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">7</span>
+</div>
+<div class="toc-row lvl-3">
+  <div class="toc-kind">Alt Baslik</div>
+  <a class="toc-title" href="#bolum1-sermaye-taahhudu-nasil-calisir">Sermaye taahhudu nasil calisir?</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">7</span>
+</div>
+<div class="toc-row lvl-3">
+  <div class="toc-kind">Alt Baslik</div>
+  <a class="toc-title" href="#bolum1-uctan-uca-adimlar-onerilen-is-akis">Uctan uca adimlar (onerilen is akis)</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">8</span>
+</div>
+<div class="toc-row lvl-2">
+  <div class="toc-kind">Ana Baslik</div>
+  <a class="toc-title" href="#bolum1-adim-10-ilk-test-fisini-olustur">Adim 10 - Ilk Test Fisini Olustur</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">8</span>
+</div>
+<div class="toc-row lvl-2">
+  <div class="toc-kind">Ana Baslik</div>
+  <a class="toc-title" href="#bolum1-adim-11-intercompany-ciftlerini-pair-dogru-hazirla">Adim 11 - Intercompany Ciftlerini (Pair) Dogru Hazirla</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">8</span>
+</div>
+<div class="toc-row lvl-2">
+  <div class="toc-kind">Ana Baslik</div>
+  <a class="toc-title" href="#bolum1-adim-12-intercompany-fisini-otomatik-partner-mirror-ile-calistir">Adim 12 - Intercompany Fisini Otomatik Partner Mirror Ile Calistir</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">8</span>
+</div>
+<div class="toc-row lvl-2">
+  <div class="toc-kind">Ana Baslik</div>
+  <a class="toc-title" href="#bolum1-adim-13-post-asamasinda-bagli-mirrorlari-birlikte-post-et">Adim 13 - Post Asamasinda Bagli Mirrorlari Birlikte Post Et</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">8</span>
+</div>
+<div class="toc-row lvl-2">
+  <div class="toc-kind">Ana Baslik</div>
+  <a class="toc-title" href="#bolum1-adim-14-intercompany-uyumluluk-kontrolu-compliance">Adim 14 - Intercompany Uyumluluk Kontrolu (Compliance)</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">9</span>
+</div>
+<div class="toc-row lvl-2">
+  <div class="toc-kind">Ana Baslik</div>
+  <a class="toc-title" href="#bolum1-adim-15-intercompany-mutabakat-raporunu-calistir">Adim 15 - Intercompany Mutabakat Raporunu Calistir</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">9</span>
+</div>
+<div class="toc-row lvl-2">
+  <div class="toc-kind">Ana Baslik</div>
+  <a class="toc-title" href="#bolum1-adim-16-konsolidasyon-kurulumu-ve-raporlari">Adim 16 - Konsolidasyon Kurulumu ve Raporlari</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">9</span>
+</div>
+<div class="toc-row lvl-2">
+  <div class="toc-kind">Ana Baslik</div>
+  <a class="toc-title" href="#bolum1-adim-17-hesap-yeniden-siniflandirma-bakiye-dagitimi-islem-bazli">Adim 17 - Hesap Yeniden Siniflandirma (Bakiye Dagitimi / Islem Bazli)</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">9</span>
+</div>
+<div class="toc-row lvl-3">
+  <div class="toc-kind">Alt Baslik</div>
+  <a class="toc-title" href="#bolum1-a-bakiye-dagitimi-olustur">A) Bakiye Dagitimi Olustur</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">9</span>
+</div>
+<div class="toc-row lvl-3">
+  <div class="toc-kind">Alt Baslik</div>
+  <a class="toc-title" href="#bolum1-b-islem-bazli-yeniden-siniflandirma">B) Islem Bazli Yeniden Siniflandirma</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">9</span>
+</div>
+<div class="toc-row lvl-2">
+  <div class="toc-kind">Ana Baslik</div>
+  <a class="toc-title" href="#bolum1-5-en-cok-karsilasilan-durumlar-ve-cozumler">5) En Cok Karsilasilan Durumlar ve Cozumler</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">10</span>
+</div>
+<div class="toc-row lvl-2">
+  <div class="toc-kind">Ana Baslik</div>
+  <a class="toc-title" href="#bolum1-6-gunluk-pratik-is-akisi-muhasebe-ekibi-icin">6) Gunluk Pratik Is Akisi (Muhasebe Ekibi Icin)</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">10</span>
+</div>
+<div class="toc-row lvl-2">
+  <div class="toc-kind">Ana Baslik</div>
+  <a class="toc-title" href="#bolum1-7-roller-ve-yetki-neden-bazen-buton-gorunmuyor">7) Roller ve Yetki (Neden Bazen Buton Gorunmuyor?)</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">11</span>
+</div>
+<div class="toc-row lvl-2">
+  <div class="toc-kind">Ana Baslik</div>
+  <a class="toc-title" href="#bolum1-8-kisa-karar-rehberi">8) Kisa Karar Rehberi</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">11</span>
+</div>
+<div class="toc-row lvl-2">
+  <div class="toc-kind">Ana Baslik</div>
+  <a class="toc-title" href="#bolum1-9-ozet">9) Ozet</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">11</span>
+</div>
+<div class="toc-row lvl-0">
+  <div class="toc-kind">Bolum</div>
+  <a class="toc-title" href="#bolum2-baslangic">Bolum 2 - RBAC ve Kullanici Yetkilendirme</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">11</span>
+</div>
+<div class="toc-row lvl-1">
+  <div class="toc-kind">Baslik</div>
+  <a class="toc-title" href="#bolum2-saap-kullanim-kilavuzu-bolum-2-rbac-ve-kullanici-yetkilendirme">SaaP Kullanim Kilavuzu - Bolum 2 (RBAC ve Kullanici Yetkilendirme)</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">11</span>
+</div>
+<div class="toc-row lvl-2">
+  <div class="toc-kind">Ana Baslik</div>
+  <a class="toc-title" href="#bolum2-1-temel-kavramlar-karisan-noktalar">1) Temel Kavramlar (Karisan Noktalar)</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">11</span>
+</div>
+<div class="toc-row lvl-2">
+  <div class="toc-kind">Ana Baslik</div>
+  <a class="toc-title" href="#bolum2-2-rbac-ekranlari-ve-ne-ise-yarar">2) RBAC Ekranlari ve Ne Ise Yarar</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">11</span>
+</div>
+<div class="toc-row lvl-2">
+  <div class="toc-kind">Ana Baslik</div>
+  <a class="toc-title" href="#bolum2-3-on-kosullar">3) On Kosullar</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">11</span>
+</div>
+<div class="toc-row lvl-2">
+  <div class="toc-kind">Ana Baslik</div>
+  <a class="toc-title" href="#bolum2-4-sifirdan-rbac-kurulum-akisi">4) Sifirdan RBAC Kurulum Akisi</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">12</span>
+</div>
+<div class="toc-row lvl-2">
+  <div class="toc-kind">Ana Baslik</div>
+  <a class="toc-title" href="#bolum2-adim-1-rol-tasarimini-belirle">Adim 1 - Rol Tasarimini Belirle</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">12</span>
+</div>
+<div class="toc-row lvl-2">
+  <div class="toc-kind">Ana Baslik</div>
+  <a class="toc-title" href="#bolum2-adim-2-rol-olustur">Adim 2 - Rol Olustur</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">12</span>
+</div>
+<div class="toc-row lvl-2">
+  <div class="toc-kind">Ana Baslik</div>
+  <a class="toc-title" href="#bolum2-adim-3-role-permission-bagla">Adim 3 - Role Permission Bagla</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">12</span>
+</div>
+<div class="toc-row lvl-2">
+  <div class="toc-kind">Ana Baslik</div>
+  <a class="toc-title" href="#bolum2-adim-4-kullanici-olustur">Adim 4 - Kullanici Olustur</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">12</span>
+</div>
+<div class="toc-row lvl-2">
+  <div class="toc-kind">Ana Baslik</div>
+  <a class="toc-title" href="#bolum2-adim-5-kullaniciya-rol-scope-ata">Adim 5 - Kullaniciya Rol + Scope Ata</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">12</span>
+</div>
+<div class="toc-row lvl-2">
+  <div class="toc-kind">Ana Baslik</div>
+  <a class="toc-title" href="#bolum2-adim-6-gerekirse-data-scope-ile-daralt">Adim 6 - Gerekirse Data Scope Ile Daralt</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">12</span>
+</div>
+<div class="toc-row lvl-2">
+  <div class="toc-kind">Ana Baslik</div>
+  <a class="toc-title" href="#bolum2-adim-7-denetim-ve-dogrulama">Adim 7 - Denetim ve Dogrulama</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">12</span>
+</div>
+<div class="toc-row lvl-2">
+  <div class="toc-kind">Ana Baslik</div>
+  <a class="toc-title" href="#bolum2-5-sistem-rol-kurali-kritik">5) Sistem Rol Kurali (Kritik)</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">12</span>
+</div>
+<div class="toc-row lvl-2">
+  <div class="toc-kind">Ana Baslik</div>
+  <a class="toc-title" href="#bolum2-6-ornek-senaryolar">6) Ornek Senaryolar</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">13</span>
+</div>
+<div class="toc-row lvl-2">
+  <div class="toc-kind">Ana Baslik</div>
+  <a class="toc-title" href="#bolum2-senaryo-a-group-bazli-kullanici">Senaryo A - Group bazli kullanici</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">13</span>
+</div>
+<div class="toc-row lvl-2">
+  <div class="toc-kind">Ana Baslik</div>
+  <a class="toc-title" href="#bolum2-senaryo-b-entity-bazli-muhasebeci">Senaryo B - Entity bazli muhasebeci</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">13</span>
+</div>
+<div class="toc-row lvl-2">
+  <div class="toc-kind">Ana Baslik</div>
+  <a class="toc-title" href="#bolum2-senaryo-c-subede-operator">Senaryo C - Subede operator</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">13</span>
+</div>
+<div class="toc-row lvl-2">
+  <div class="toc-kind">Ana Baslik</div>
+  <a class="toc-title" href="#bolum2-7-10-dakikalik-smoke-test-listesi">7) 10 Dakikalik Smoke Test Listesi</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">13</span>
+</div>
+<div class="toc-row lvl-2">
+  <div class="toc-kind">Ana Baslik</div>
+  <a class="toc-title" href="#bolum2-8-sik-sorulan-sorular">8) Sik Sorulan Sorular</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">13</span>
+</div>
+<div class="toc-row lvl-2">
+  <div class="toc-kind">Ana Baslik</div>
+  <a class="toc-title" href="#bolum2-9-operasyonel-tavsiyeler">9) Operasyonel Tavsiyeler</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">13</span>
+</div>
+<div class="toc-row lvl-0">
+  <div class="toc-kind">Bolum</div>
+  <a class="toc-title" href="#bolum3-baslangic">Bolum 3 - Kasa Modulu Operasyon Rehberi</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">13</span>
+</div>
+<div class="toc-row lvl-2">
+  <div class="toc-kind">Ana Baslik</div>
+  <a class="toc-title" href="#bolum3-saap-kasa-modulu-kullanm-kilavuzu-teknik-olmayan-kullanicilar-icin">SAAP Kasa Modulu Kullanım Kilavuzu (Teknik Olmayan Kullanicilar Icin)</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">13</span>
+</div>
+<div class="toc-row lvl-2">
+  <div class="toc-kind">Ana Baslik</div>
+  <a class="toc-title" href="#bolum3-1-bu-modul-neyi-cozer">1. Bu modul neyi cozer?</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">14</span>
+</div>
+<div class="toc-row lvl-2">
+  <div class="toc-kind">Ana Baslik</div>
+  <a class="toc-title" href="#bolum3-2-temel-kavramlar-teknik-olmayan-dille">2. Temel kavramlar (teknik olmayan dille)</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">14</span>
+</div>
+<div class="toc-row lvl-3">
+  <div class="toc-kind">Alt Baslik</div>
+  <a class="toc-title" href="#bolum3-21-kasayi-acmakkapatmak-tam-olarak-ne-demek">2.1 &quot;Kasayi acmak/kapatmak&quot; tam olarak ne demek?</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">14</span>
+</div>
+<div class="toc-row lvl-2">
+  <div class="toc-kind">Ana Baslik</div>
+  <a class="toc-title" href="#bolum3-3-menude-nereye-girilir">3. Menude nereye girilir?</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">14</span>
+</div>
+<div class="toc-row lvl-2">
+  <div class="toc-kind">Ana Baslik</div>
+  <a class="toc-title" href="#bolum3-4-yetki-modeli-kim-ne-yapabilir">4. Yetki modeli (kim ne yapabilir?)</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">14</span>
+</div>
+<div class="toc-row lvl-2">
+  <div class="toc-kind">Ana Baslik</div>
+  <a class="toc-title" href="#bolum3-5-kasa-kontrol-modu-banneri-off-warn-enforce">5. Kasa kontrol modu banner&#x27;i (OFF / WARN / ENFORCE)</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">14</span>
+</div>
+<div class="toc-row lvl-2">
+  <div class="toc-kind">Ana Baslik</div>
+  <a class="toc-title" href="#bolum3-6-isletmeye-almadan-once-kontrol-listesi">6. Isletmeye almadan once kontrol listesi</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">15</span>
+</div>
+<div class="toc-row lvl-2">
+  <div class="toc-kind">Ana Baslik</div>
+  <a class="toc-title" href="#bolum3-7-kasa-tanimlari-ekrani-adim-adim">7. Kasa Tanimlari ekrani (adim adim)</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">15</span>
+</div>
+<div class="toc-row lvl-3">
+  <div class="toc-kind">Alt Baslik</div>
+  <a class="toc-title" href="#bolum3-71-ne-yaparsiniz">7.1 Ne yaparsiniz?</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">15</span>
+</div>
+<div class="toc-row lvl-3">
+  <div class="toc-kind">Alt Baslik</div>
+  <a class="toc-title" href="#bolum3-72-alanlar-ve-secim-etkileri">7.2 Alanlar ve secim etkileri</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">15</span>
+</div>
+<div class="toc-row lvl-3">
+  <div class="toc-kind">Alt Baslik</div>
+  <a class="toc-title" href="#bolum3-73-secersen-secmezsen-ne-olur">7.3 Secersen / secmezsen ne olur?</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">16</span>
+</div>
+<div class="toc-row lvl-2">
+  <div class="toc-kind">Ana Baslik</div>
+  <a class="toc-title" href="#bolum3-8-kasa-oturumlari-ekrani">8. Kasa Oturumlari ekrani</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">16</span>
+</div>
+<div class="toc-row lvl-3">
+  <div class="toc-kind">Alt Baslik</div>
+  <a class="toc-title" href="#bolum3-81-oturum-acma">8.1 Oturum acma</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">17</span>
+</div>
+<div class="toc-row lvl-3">
+  <div class="toc-kind">Alt Baslik</div>
+  <a class="toc-title" href="#bolum3-82-oturum-kapama">8.2 Oturum kapama</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">17</span>
+</div>
+<div class="toc-row lvl-3">
+  <div class="toc-kind">Alt Baslik</div>
+  <a class="toc-title" href="#bolum3-83-beklenen-sayilan-fark">8.3 Beklenen / Sayilan / Fark</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">17</span>
+</div>
+<div class="toc-row lvl-3">
+  <div class="toc-kind">Alt Baslik</div>
+  <a class="toc-title" href="#bolum3-84-varyans-olursa-ne-olur">8.4 Varyans olursa ne olur?</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">17</span>
+</div>
+<div class="toc-row lvl-2">
+  <div class="toc-kind">Ana Baslik</div>
+  <a class="toc-title" href="#bolum3-9-kasa-islemleri-tahsilat-tediye">9. Kasa Islemleri / Tahsilat / Tediye</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">17</span>
+</div>
+<div class="toc-row lvl-3">
+  <div class="toc-kind">Alt Baslik</div>
+  <a class="toc-title" href="#bolum3-91-islem-olusturma-create">9.1 Islem olusturma (Create)</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">17</span>
+</div>
+<div class="toc-row lvl-3">
+  <div class="toc-kind">Alt Baslik</div>
+  <a class="toc-title" href="#bolum3-92-islem-tipi-bazli-zorunluluklar">9.2 Islem tipi bazli zorunluluklar</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">18</span>
+</div>
+<div class="toc-row lvl-3">
+  <div class="toc-kind">Alt Baslik</div>
+  <a class="toc-title" href="#bolum3-93-durum-akisi-state-machine">9.3 Durum akisi (state machine)</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">18</span>
+</div>
+<div class="toc-row lvl-3">
+  <div class="toc-kind">Alt Baslik</div>
+  <a class="toc-title" href="#bolum3-94-post-ederken-override">9.4 Post ederken override</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">18</span>
+</div>
+<div class="toc-row lvl-2">
+  <div class="toc-kind">Ana Baslik</div>
+  <a class="toc-title" href="#bolum3-10-kasa-istisnalari-ekrani-denetim-paneli">10. Kasa Istisnalari ekrani (denetim paneli)</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">18</span>
+</div>
+<div class="toc-row lvl-2">
+  <div class="toc-kind">Ana Baslik</div>
+  <a class="toc-title" href="#bolum3-11-secim-rehberi-hizli-karar-tablosu">11. &quot;Secim&quot; rehberi (hizli karar tablosu)</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">18</span>
+</div>
+<div class="toc-row lvl-3">
+  <div class="toc-kind">Alt Baslik</div>
+  <a class="toc-title" href="#bolum3-111-session-mode-secimi">11.1 Session mode secimi</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">18</span>
+</div>
+<div class="toc-row lvl-3">
+  <div class="toc-kind">Alt Baslik</div>
+  <a class="toc-title" href="#bolum3-112-kapanis-nedeni-secimi">11.2 Kapanis nedeni secimi</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">19</span>
+</div>
+<div class="toc-row lvl-3">
+  <div class="toc-kind">Alt Baslik</div>
+  <a class="toc-title" href="#bolum3-113-approvevariance-secimi">11.3 approveVariance secimi</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">19</span>
+</div>
+<div class="toc-row lvl-3">
+  <div class="toc-kind">Alt Baslik</div>
+  <a class="toc-title" href="#bolum3-114-allownegative-secimi">11.4 allowNegative secimi</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">19</span>
+</div>
+<div class="toc-row lvl-2">
+  <div class="toc-kind">Ana Baslik</div>
+  <a class="toc-title" href="#bolum3-12-gercek-hayat-senaryolari">12. Gercek hayat senaryolari</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">19</span>
+</div>
+<div class="toc-row lvl-3">
+  <div class="toc-kind">Alt Baslik</div>
+  <a class="toc-title" href="#bolum3-senaryo-a-magaza-gunluk-akisi-ideal">Senaryo A - Magaza gunluk akisi (ideal)</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">19</span>
+</div>
+<div class="toc-row lvl-3">
+  <div class="toc-kind">Alt Baslik</div>
+  <a class="toc-title" href="#bolum3-senaryo-b-varyansli-kapanis">Senaryo B - Varyansli kapanis</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">19</span>
+</div>
+<div class="toc-row lvl-3">
+  <div class="toc-kind">Alt Baslik</div>
+  <a class="toc-title" href="#bolum3-senaryo-c-cift-tiklama-internet-kopmasi">Senaryo C - Cift tiklama / internet kopmasi</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">19</span>
+</div>
+<div class="toc-row lvl-3">
+  <div class="toc-kind">Alt Baslik</div>
+  <a class="toc-title" href="#bolum3-senaryo-d-yanlis-post-edildi">Senaryo D - Yanlis post edildi</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">19</span>
+</div>
+<div class="toc-row lvl-3">
+  <div class="toc-kind">Alt Baslik</div>
+  <a class="toc-title" href="#bolum3-senaryo-e-acil-override">Senaryo E - Acil override</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">19</span>
+</div>
+<div class="toc-row lvl-2">
+  <div class="toc-kind">Ana Baslik</div>
+  <a class="toc-title" href="#bolum3-13-sik-gorulen-hata-mesajlari-ve-cozum">13. Sik gorulen hata mesajlari ve cozum</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">20</span>
+</div>
+<div class="toc-row lvl-2">
+  <div class="toc-kind">Ana Baslik</div>
+  <a class="toc-title" href="#bolum3-14-gun-sonu-operasyon-proseduru-onerilen">14. Gun sonu operasyon proseduru (onerilen)</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">20</span>
+</div>
+<div class="toc-row lvl-2">
+  <div class="toc-kind">Ana Baslik</div>
+  <a class="toc-title" href="#bolum3-15-haftalikaylik-kontrol-proseduru-finanssupervisor">15. Haftalik/aylik kontrol proseduru (finans/supervisor)</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">20</span>
+</div>
+<div class="toc-row lvl-2">
+  <div class="toc-kind">Ana Baslik</div>
+  <a class="toc-title" href="#bolum3-16-neden-bu-kadar-kisit-var-isletme-mantigi">16. &quot;Neden bu kadar kisit var?&quot; (isletme mantigi)</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">20</span>
+</div>
+<div class="toc-row lvl-2">
+  <div class="toc-kind">Ana Baslik</div>
+  <a class="toc-title" href="#bolum3-17-hangi-durumda-neyi-secmeliyim-tek-sayfada">17. Hangi durumda neyi secmeliyim? (tek sayfada)</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">21</span>
+</div>
+<div class="toc-row lvl-2">
+  <div class="toc-kind">Ana Baslik</div>
+  <a class="toc-title" href="#bolum3-18-son-notlar">18. Son notlar</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">21</span>
+</div>
+<div class="toc-row lvl-2">
+  <div class="toc-kind">Ana Baslik</div>
+  <a class="toc-title" href="#bolum3-19-ekip-ici-hizli-egitim-plani-onerilir">19. Ekip ici hizli egitim plani (onerilir)</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">21</span>
+</div>
+<div class="toc-row lvl-2">
+  <div class="toc-kind">Ana Baslik</div>
+  <a class="toc-title" href="#bolum3-20-destek-isterken-ne-gondermeliyim">20. Destek isterken ne gondermeliyim?</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">21</span>
+</div>
+<div class="toc-row lvl-2">
+  <div class="toc-kind">Ana Baslik</div>
+  <a class="toc-title" href="#bolum3-21-ek-a-kasa-modulu-teknik-karar-ozeti-adrden-isletmeye-cevrilmis">21. Ek A - Kasa Modulu Teknik Karar Ozeti (ADR&#x27;den Isletmeye Cevrilmis)</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">21</span>
+</div>
+<div class="toc-row lvl-2">
+  <div class="toc-kind">Ana Baslik</div>
+  <a class="toc-title" href="#bolum3-22-ek-b-islem-tipine-gore-muhasebe-kaydi-matrisi-uygulamadaki-guncel-davranis">22. Ek B - Islem Tipine Gore Muhasebe Kaydi Matrisi (Uygulamadaki Guncel Davranis)</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">21</span>
+</div>
+<div class="toc-row lvl-2">
+  <div class="toc-kind">Ana Baslik</div>
+  <a class="toc-title" href="#bolum3-23-ek-c-yetki-ve-gorev-ayrimi-sod-mevcut-sistem">23. Ek C - Yetki ve Gorev Ayrimi (SoD) - Mevcut Sistem</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">22</span>
+</div>
+<div class="toc-row lvl-3">
+  <div class="toc-kind">Alt Baslik</div>
+  <a class="toc-title" href="#bolum3-231-mevcut-aktif-kasa-yetkileri">23.1 Mevcut aktif kasa yetkileri</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">22</span>
+</div>
+<div class="toc-row lvl-3">
+  <div class="toc-kind">Alt Baslik</div>
+  <a class="toc-title" href="#bolum3-232-sistemde-fiilen-zorunlu-olan-sod-kontrolleri">23.2 Sistemde fiilen zorunlu olan SoD kontrolleri</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">22</span>
+</div>
+<div class="toc-row lvl-3">
+  <div class="toc-kind">Alt Baslik</div>
+  <a class="toc-title" href="#bolum3-233-henuz-zorunlu-olmayan-gelecek-iyilestirme-adayi">23.3 Henuz zorunlu olmayan (gelecek iyilestirme adayi)</a>
+  <span class="toc-dots" aria-hidden="true"></span>
+  <span class="toc-page-no">22</span>
+</div>
+</section>
+<main><p><a id="bolum1-baslangic"></a></p>
+<h2>Bolum 1 - Ana Is Akisi ve Kurulum</h2>
+<blockquote>
+<p>Kaynak dosya: <code>KULLANIM_KILAVUZU.md</code></p>
+</blockquote>
+<hr>
+<p><a id="bolum1-saap-kullanim-kilavuzu-is-birimi-odakli"></a></p>
+<h2>SaaP Kullanim Kilavuzu (Is Birimi Odakli)</h2>
+<p>Bu dokuman teknik olmayan kullanicilar icin yazildi.
+Amac: sistemi sifirdan dogru kurmak, gunluk muhasebe akislarini hatasiz ilerletmek ve intercompany islemlerini otomatik hale getirmek.</p>
+<p>Bu kilavuzda her adim icin su 3 soruya cevap verilir:
+1. Bu adim ne ise yarar?
+2. Ne doldurmaliyim?
+3. Bu adimi yapmazsam ne olur?</p>
+<hr>
+<p><a id="bolum1-1-kisa-ozet-bu-sistemde-ana-mantik-nedir"></a></p>
+<h3>1) Kisa Ozet: Bu Sistemde Ana Mantik Nedir?</h3>
+<p>Sistem 4 temel blokta calisir:
+1. Organizasyon yapisi kurulur.
+2. Defter ve hesap plani kurulumu yapilir.
+3. Fisler olusturulur, post edilir, donem kontrolu yapilir.
+4. Intercompany mutabakat ve konsolidasyon raporlari alinır.</p>
+<p>Gercek hayat benzetmesi:
+- Organizasyon yapisi = Sirketin iskeleti.
+- Hesap plani = Finans dili.
+- Fis = Her islemin resmi kaydi.
+- Mutabakat = Iki sirketin birbirine ayni tutari gormesi.
+- Konsolidasyon = Tum sirketlerin tek tablo gibi gosterilmesi.</p>
+<p>Terminoloji notu:
+- Bu kilavuzda standart ifade <code>Legal Entity (Bagli Ortak)</code> olarak kullanilir.</p>
+<hr>
+<p><a id="bolum1-2-sifirdan-baslangic-senaryosu-schema-silindikten-sonra"></a></p>
+<h3>2) Sifirdan Baslangic Senaryosu (Schema Silindikten Sonra)</h3>
+<p>Schema silindiyse once teknik hazirlik gerekir. Bu bolumu genelde IT/teknik ekip yapar.</p>
+<p><a id="bolum1-21-teknik-hazirlik-it-ekibi"></a></p>
+<h4>2.1 Teknik Hazirlik (IT Ekibi)</h4>
+<p>Yapilacaklar:
+1. Veritabani tablolarini yeniden olusturmak (migration).
+2. Temel sistem verilerini yuklemek (seed).
+3. Ilk admin kullanicisini hazirlamak.</p>
+<p>Yapilmazsa ne olur:
+1. Login ekranina girseniz bile kullanici dogrulanamaz.
+2. Sayfalar bos gelir veya "not found" tipinde hatalar gorursunuz.
+3. Kaydetme butonlari calissa bile alt tarafta listeler dolmaz.</p>
+<p><a id="bolum1-22-kullanici-kontrolu"></a></p>
+<h4>2.2 Kullanici Kontrolu</h4>
+<p>Kullanici olarak kontrol edin:
+1. Login olabiliyor muyum?
+2. Sol menude "Ayarlar" altinda sayfalar gorunuyor mu?
+3. "Organizasyon Yonetimi" aciliyor mu?</p>
+<p>Bunlardan biri calismiyorsa teknik kurulum bitmemistir.</p>
+<hr>
+<p><a id="bolum1-3-kurulum-yolu-hangi-sirayi-izlemeliyim"></a></p>
+<h3>3) Kurulum Yolu: Hangi Sirayi Izlemeliyim?</h3>
+<p>Iki yol var:
+1. Hizli kurulum: <code>Sirket Ayarlari</code> (Company bootstrap)
+2. Manuel kurulum: <code>Organizasyon Yonetimi</code> + <code>Hesap Plani Ayarlari</code></p>
+<p>Bu kilavuz manuel yola odaklidir (sizin seciminiz).</p>
+<p>Neden manuel yol?
+1. Her adimi kontrol ederek ilerlersiniz.
+2. Yanlis kurgu riskini erken gorursunuz.
+3. Buyuk organizasyonlarda daha guvenli olur.</p>
+<p>Not (guncel sistem davranisi):
+1. Readiness kontrol listesi artik su ek kalemleri de denetler:
+   - <code>Open book periods</code>
+   - <code>Shareholders</code>
+   - <code>Shareholder commitment debit mappings</code>
+2. Bu kalemler eksikse sistem kurulum adimlarina yonlendirir.</p>
+<hr>
+<p><a id="bolum1-4-adim-adim-manuel-kurulum"></a></p>
+<h3>4) Adim Adim Manuel Kurulum</h3>
+<p><a id="bolum1-adim-1-grup-sirketini-olustur"></a></p>
+<h3>Adim 1 - Grup Sirketini Olustur</h3>
+<p>Ekran:
+- <code>Ayarlar &gt; Organizasyon Yonetimi &gt; Group Companies</code></p>
+<p>Ne doldurulur:
+1. <code>Code</code> (ornek: <code>TMV</code>)
+2. <code>Name</code> (ornek: <code>Turkish Maarif Foundation</code>)
+3. <code>Save</code></p>
+<p>Amac:
+- Tum <code>Legal Entity (Bagli Ortak)</code> kayitlarini tek bir cati grup altinda toplamak.</p>
+<p>Yapilmazsa:
+- <code>Legal Entity (Bagli Ortak)</code> olustururken baglanacak grup olmaz.
+- Sonraki konsolidasyon kurulumunda problem yasarsiniz.</p>
+<hr>
+<p><a id="bolum1-adim-2-legal-entity-bagli-ortak-olustur"></a></p>
+<h3>Adim 2 - Legal Entity (Bagli Ortak) Olustur</h3>
+<p>Ekran:
+- <code>Ayarlar &gt; Organizasyon Yonetimi &gt; Legal Entities</code></p>
+<p>Ne doldurulur:
+1. Group company secimi
+2. Entity code, entity name
+3. Country, currency
+4. Opsiyonel: tax id
+5. Isaret kutulari:
+   - <code>Intercompany enabled</code>
+   - <code>Partner required</code>
+   - <code>Auto-create defaults</code> (isterseniz)</p>
+<p><a id="bolum1-auto-create-defaults-ne-yapar"></a></p>
+<h4><code>Auto-create defaults</code> ne yapar?</h4>
+<p>Bu kutu aciksa, <code>Save</code> aninda sistem otomatik olarak sunlari olusturmayi dener:
+1. Fiscal calendar: yoksa <code>MAIN</code>
+2. Fiscal periods: secilen yil icin 12 donem (Ocak-Aralik akisi)
+3. CoA: <code>Legal Entity (Bagli Ortak)</code> icin <code>COA-&lt;EntityCode&gt;</code> tipinde hesap plani
+4. Book: <code>Legal Entity (Bagli Ortak)</code> icin <code>BOOK-&lt;EntityCode&gt;</code> tipinde LOCAL defter
+5. Temel hesaplar: CoA tamamen bossa su 6 hesap:
+   - <code>1000</code> Cash and Cash Equivalents
+   - <code>1100</code> Accounts Receivable
+   - <code>2000</code> Accounts Payable
+   - <code>3000</code> Retained Earnings
+   - <code>4000</code> Revenue
+   - <code>5000</code> Operating Expense</p>
+<p><a id="bolum1-auto-create-defaults-ne-yapmaz"></a></p>
+<h4><code>Auto-create defaults</code> ne yapmaz?</h4>
+<ol>
+<li>Turk detay hesap planini (genis hesap listesi) yuklemez.</li>
+<li>Var olan hesaplari topluca silip sifirdan kurmaz.</li>
+<li>CoA icinde zaten hesap varsa, yukaridaki 6 temel hesabi yeniden eklemez.</li>
+</ol>
+<p>Not:
+- Turk hesap plani istiyorsaniz ayrica
+  <code>Ayarlar &gt; Hesap Plani Ayarlari &gt; Load Turkish Default CoA</code>
+  adimini kullanin.</p>
+<p>Amac:
+- Sirket bazli muhasebe kayit alanini acmak.</p>
+<p>Yapilmazsa:
+- Defter, hesap plani, fis gibi hicbir finans adimi baslamaz.</p>
+<p>Gercek hayat ornegi:
+- <code>AMF</code> (Afghanistan <code>Legal Entity (Bagli Ortak)</code>) tek basina bir muhasebe defteri tutar.
+- <code>TMV</code> grubuna bagli oldugu icin sonra toplu rapora girebilir.</p>
+<p><a id="bolum1-intercompany-kutularinin-anlami-bugun-itibariyla"></a></p>
+<h4>Intercompany Kutularinin Anlami (Bugun Itibariyla)</h4>
+<p><code>Intercompany enabled</code>:
+- Aciksa: bu <code>Legal Entity (Bagli Ortak)</code> intercompany karsi tarafli satir kullanabilir.
+- Kapaliysa: karsi tarafli satir ve INTERCOMPANY kaynakli fis engellenir.</p>
+<p><code>Partner required</code>:
+- Aciksa ve kaynak tipi <code>INTERCOMPANY</code> secilmisse:
+  tum satirlarda karsi taraf entity secimi zorunlu olur.</p>
+<p>Yapilmazsa veya yanlis secilirse:
+1. Fis kaydi sirasinda policy hatalari alirsiniz.
+2. Karsi tarafi eksik birakir, mutabakatta sapma olusturursunuz.</p>
+<hr>
+<p><a id="bolum1-adim-3-sube-operasyon-birimi-tanimla"></a></p>
+<h3>Adim 3 - Sube / Operasyon Birimi Tanimla</h3>
+<p>Ekran:
+- <code>Ayarlar &gt; Organizasyon Yonetimi &gt; Operating Units / Branches</code></p>
+<p>Ne doldurulur:
+1. <code>Legal Entity (Bagli Ortak)</code> sec
+2. Sube kodu ve adi
+3. <code>Save</code></p>
+<p><a id="bolum1-has-subledger-alt-defter-var-kutusu-ne-anlama-gelir"></a></p>
+<h4><code>Has subledger</code> (Alt defter var) kutusu ne anlama gelir?</h4>
+<p>Bu kutu, subenin satir bazli alt referans zorunlulugu olup olmadigini belirler.</p>
+<p>Ne zaman isaretlenmeli?
+1. Sube bazinda detay takip istiyorsaniz (ornek: sube bazli alici/satici, stok, ogrenci/veli gibi alt detaylar).
+2. "Bu sube kendi operasyon detayini ayri izlemeli" diyorsaniz.</p>
+<p>Ne zaman isaretlenmemeli?
+1. Sube sadece genel gider merkezi gibi kullaniliyorsa.
+2. Tum detay takip merkezde yapiliyorsa, subede ayri alt detay acilmayacaksa.</p>
+<p>Isaretlersem ne olur?
+1. Sube kaydinda <code>Subledger = Yes</code> olur.
+2. Journal satirinda bu sube secildiginde <code>Subledger Ref</code> alani zorunlu olur.
+3. <code>Subledger Ref</code> girilmeden fis kaydi alinmaz (validasyon hatasi verir).
+4. Tek basina ekstra hesap, defter veya otomatik fis olusturmaz.</p>
+<p>Isaretlemezsem ne olur?
+1. Sube kaydinda <code>Subledger = No</code> olur.
+2. Bu sube secildiginde <code>Subledger Ref</code> alani opsiyonel kalir.
+3. Kayit acisindan engel olmaz; sube normal calismaya devam eder.</p>
+<p>Pratik ornekler:
+1. Buyuk kampus subesi: kendi ogrenci/veli alacak takibi var -&gt; <code>Has subledger = Evet</code>, satira <code>Subledger Ref</code> olarak ogrenci/veli referansi girilir.
+2. Sadece idari temsilcilik: sadece merkezden butce aliyor -&gt; <code>Has subledger = Hayir</code>, <code>Subledger Ref</code> bos birakilabilir.
+3. Tum muhasebe merkezde tutuluyor, subeler sadece operasyon noktasi -&gt; genelde <code>Hayir</code>.</p>
+<p>Amac:
+- Ayni <code>Legal Entity (Bagli Ortak)</code> icinde sube bazli takip yapmak.</p>
+<p>Onemli not:
+- Sube kendi basina ayri hesap plani kullanmaz.
+- Sube, bagli oldugu <code>Legal Entity (Bagli Ortak)</code> defter ve hesap planini kullanir.</p>
+<p>Yapilmazsa:
+- Sube bazli rapor kirilimlari zayif kalir.</p>
+<hr>
+<p><a id="bolum1-adim-4-mali-takvim-kaydet"></a></p>
+<h3>Adim 4 - Mali Takvim Kaydet</h3>
+<p>Ekran:
+- <code>Ayarlar &gt; Organizasyon Yonetimi &gt; Fiscal Calendars and Periods</code></p>
+<p>Ne doldurulur:
+1. Calendar code
+2. Calendar name
+3. Start month/day
+4. <code>Save Calendar</code></p>
+<p>Amac:
+- Hangi gunlerde hangi mali donemin gececegini belirlemek.</p>
+<p>Yapilmazsa:
+- Donem olusmaz.
+- Fis post etme ve donem kapama islemleri calismaz.</p>
+<hr>
+<p><a id="bolum1-adim-5-donemleri-uret-ve-dogru-filtreyle-listele"></a></p>
+<h3>Adim 5 - Donemleri Uret ve Dogru Filtreyle Listele</h3>
+<p>Ekran:
+- Ayni bolumde <code>Generate 12 Periods</code></p>
+<p>Ne yapilir:
+1. Takvimi sec.
+2. Mali yili gir (ornek: <code>2026</code>).
+3. <code>Generate 12 Periods</code>.
+4. Sonra <code>Reload Periods</code> bas.</p>
+<p>Neden bazen "No periods found" gorunur?
+1. Yanlis takvim secili olabilir.
+2. Yanlis mali yil filtresi olabilir.
+3. Liste yenilenmemis olabilir.</p>
+<p>Yapilmazsa:
+- Fis kaydinda period secemezsiniz.
+- Donem acik/kapali kontrolu dogru calismaz.</p>
+<hr>
+<p><a id="bolum1-adim-6-defter-book-olustur"></a></p>
+<h3>Adim 6 - Defter (Book) Olustur</h3>
+<p>Ekran:
+- <code>Ayarlar &gt; Hesap Plani Ayarlari &gt; Books</code></p>
+<p>Ne doldurulur:
+1. <code>Legal Entity (Bagli Ortak)</code>
+2. Calendar
+3. Book type (<code>LOCAL</code> genelde)
+4. Book code, book name
+5. Base currency</p>
+<p>Book ne ise yarar?
+- Ayni <code>Legal Entity (Bagli Ortak)</code> icinde farkli kayit amaclari icin ayri defter acabilirsiniz.
+- En temel kullanim: yerel resmi kayit defteri.</p>
+<p>Yapilmazsa:
+- Fis acamazsiniz (fis book ister).</p>
+<hr>
+<p><a id="bolum1-adim-7-hesap-plani-coa-olustur"></a></p>
+<h3>Adim 7 - Hesap Plani (CoA) Olustur</h3>
+<p>Ekran:
+- <code>Ayarlar &gt; Hesap Plani Ayarlari &gt; Charts of Accounts</code></p>
+<p>Ne doldurulur:
+1. Scope (<code>LEGAL_ENTITY</code> veya <code>GROUP</code>)
+2. Code, name
+3. <code>Legal Entity (Bagli Ortak)</code> secimi (LEGAL_ENTITY ise)</p>
+<p>Amac:
+- Hangi hesap kodlariyla calisacaginizi belirlemek.</p>
+<p>Yapilmazsa:
+- Hesap olusturamazsiniz.
+- Fis satiri hesap secimi bos kalir.</p>
+<hr>
+<p><a id="bolum1-adim-8-hesaplari-yukle-turkish-default-coa"></a></p>
+<h3>Adim 8 - Hesaplari Yukle (Turkish Default CoA)</h3>
+<p>Ekran:
+- <code>Ayarlar &gt; Hesap Plani Ayarlari &gt; Accounts</code>
+- Buton: <code>Load Turkish Default CoA</code></p>
+<p>Amac:
+- Turk hesap plani iskeletini hizli yuklemek.</p>
+<p>Tekrar basarsam ne olur?
+1. Ayni kodlu hesaplar guncellenir/korunur.
+2. Tum tabloyu sifirlayip bastan silmez.
+3. Ozel eklediginiz farkli kodlu hesaplar genelde kalir.</p>
+<p>Yapilmazsa:
+- Tum hesaplari tek tek acmaniz gerekir.
+- Kurulum suresi uzar.</p>
+<hr>
+<p><a id="bolum1-adim-9-ortaklar-ve-sermaye-taahhut-kurulumu"></a></p>
+<h3>Adim 9 - Ortaklar ve Sermaye Taahhut Kurulumu</h3>
+<p>Ekran:
+- <code>Ayarlar &gt; Organizasyon Yonetimi &gt; Shareholders</code></p>
+<p>Bu adim 3 parcadan olusur:
+1. <code>Parent mapping</code> (legal entity bazli ust hesap eslesmesi)
+2. <code>Shareholder</code> (ortak) + ortak bazli alt hesap baglantisi
+3. Kuyruktan <code>tek bir toplu taahhut taslak yevmiyesi</code> olusturma</p>
+<p><a id="bolum1-sermaye-taahhut-yevmiyesi-icin-setup-required-list-zorunlu-kontrol-listesi"></a></p>
+<h4>Sermaye taahhut yevmiyesi icin "Setup Required List" (zorunlu kontrol listesi)</h4>
+<p>Sistem, secili <code>Legal Entity (Bagli Ortak)</code> icin su 4 kalemi kontrol eder:
+1. En az 1 ortak tanimli mi?
+2. Taahhutu olan ortaklar icin borc ve sermaye alt hesaplari tanimli mi?
+3. Kullanilabilir equity (sermaye) alt hesap var mi?
+4. Mali donemler olusturulmus mu?</p>
+<p>Sistem nasil bildirir?
+1. <code>Organizasyon Yonetimi &gt; Shareholders</code> bolumunde "Setup Required List" kutusunda kalemleri <code>OK / Eksik</code> olarak gosterir.
+2. Eksik varsa kullaniciyi dogrudan yonlendirir:
+   - <code>Go to shareholder form</code>
+   - <code>Open GL setup</code>
+3. <code>Acilis Fisi Olustur</code> ekraninda da ayni kontrol listesi gosterilir (sermaye taahhut fisine yonelik uyarili panel).</p>
+<p><a id="bolum1-sermaye-taahhudu-nasil-calisir"></a></p>
+<h4>Sermaye taahhudu nasil calisir?</h4>
+<p>Sistem mantigi:
+1. Ortak bazli iki alt hesap birlikte calisir:
+   - <code>Commitment debit sub-account</code> (tipik <code>501.xx</code>, DEBIT/EQUITY)
+   - <code>Capital sub-account</code> (tipik <code>500.xx</code>, CREDIT/EQUITY)
+2. Kayitta girilen taahhut mantigi <code>artis</code> uzerindendir:
+   - formdaki artis tutari mevcut toplam taahhude eklenir
+3. Toplu fis onizlemesinde sistem her ortak icin <code>delta</code> hesaplar:
+   - <code>delta = committed_capital - already_journaled_amount</code>
+4. Sadece <code>delta &gt; 0</code> olan ortaklar toplu taahhut fisine dahil edilir.
+5. Olusan taslak yevmiyede her ortak icin 2 satir vardir:
+   - Borc: <code>commitment debit sub-account</code>
+   - Alacak: <code>capital sub-account</code>
+6. Fisleme kaydi audit tablosuna yazilir; ayni tutarin tekrar fislenmesi engellenir.
+7. Journal post edilirken sistem, uygun satir kombinasyonlarini tespit ederse ortak taahhut toplamini ve sahiplik yuzdesini (ownership %) tekrar senkronize eder.</p>
+<p><a id="bolum1-uctan-uca-adimlar-onerilen-is-akis"></a></p>
+<h4>Uctan uca adimlar (onerilen is akis)</h4>
+<ol>
+<li><code>Shareholder parent account mapping</code> formunda:
+   - <code>Capital credit parent</code> (tipik <code>500</code>)
+   - <code>Commitment debit parent</code> (tipik <code>501</code>)
+   secilip <code>Save Parent Mapping</code> yapilir.</li>
+<li>Ortak formunda su alanlar doldurulur:
+   - code, name, shareholder type, commitment date
+   - commitment debit sub-account
+   - capital sub-account
+   - taahhut artisi (bu kayit)</li>
+<li><code>Save Shareholder</code> ile kayit alin.</li>
+<li>Artis &gt; 0 ise ortak otomatik olarak <code>Toplu taahhut yevmiye kuyrugu</code>na eklenir.</li>
+<li>Gerekirse <code>Sermaye taahhut arttirimi</code> modali ile mevcut ortak icin ek artis girip <code>Kaydet ve kuyruga ekle</code> yapin.</li>
+<li>Kuyruktan <code>Tek bir toplu taahhut yevmiyesi olustur</code> aksiyonunu acin.</li>
+<li>Onizlemede kontrol edin:
+   - Blocking validation errors
+   - Included rows / Skipped rows
+   - Toplam borc / toplam alacak / para birimi</li>
+<li><code>Create batch journal</code> ile tek bir taslak yevmiye olusturun.</li>
+<li>Journal Workbench uzerinden taslagi gozden gecirip post edin.</li>
+<li>Post sonrasi kontrol:
+   - ilgili ortagin committed capital/ownership degerleri
+   - olusan journal no, book ve fiscal period bilgileri</li>
+</ol>
+<p>Yapilmazsa:
+1. Taahhut akisinda manuel is yukunuz artar.
+2. Delta takibi zorlasir ve ayni tutarin tekrar fislenme riski artar.
+3. Kaydetme aninda sistem su tip hata/uyariyi verir:
+   - "commitmentDebitSubAccountId is required..."
+   - "capitalSubAccountId is required..."</p>
+<hr>
+<p><a id="bolum1-adim-10-ilk-test-fisini-olustur"></a></p>
+<h3>Adim 10 - Ilk Test Fisini Olustur</h3>
+<p>Ekran:
+- <code>Yevmiye Kayitlari &gt; Mahsup Islemleri</code> (Journal Workbench)</p>
+<p>Asgari gerekli alanlar:
+1. <code>Legal Entity (Bagli Ortak)</code>
+2. Book
+3. Fiscal period
+4. Currency
+5. En az 2 satir
+6. Borc ve alacak esitligi
+7. Eger satirdaki birimde <code>Has subledger = Evet</code> ise <code>Subledger Ref</code> alani</p>
+<p>Amac:
+- Sistemin temel muhasebe omurgasini dogrulamak.</p>
+<p>Yapilmazsa:
+- Sonraki intercompany veya konsolidasyon adiminda kok neden bulmak zorlasir.</p>
+<hr>
+<p><a id="bolum1-adim-11-intercompany-ciftlerini-pair-dogru-hazirla"></a></p>
+<h3>Adim 11 - Intercompany Ciftlerini (Pair) Dogru Hazirla</h3>
+<p>Intercompany duzende cift yon gerekir:
+1. Kaynak -&gt; Partner aktif pair
+2. Partner -&gt; Kaynak aktif pair</p>
+<p>Neden iki yon?
+- Kaynaktan partnera kayit var.
+- Otomatik mirror olustururken partner tarafin da kurallari gerekir.</p>
+<p>Yapilmazsa:
+- INTERCOMPANY fis kaydinda "pair mapping" hatasi alirsiniz.
+- Otomatik mirror akisi calismaz.</p>
+<p>Not:
+- Journal Workbench icindeki compliance alani, eksik pair icin hizli duzeltme aksiyonu sunar.</p>
+<hr>
+<p><a id="bolum1-adim-12-intercompany-fisini-otomatik-partner-mirror-ile-calistir"></a></p>
+<h3>Adim 12 - Intercompany Fisini Otomatik Partner Mirror Ile Calistir</h3>
+<p>Ekran:
+- Journal Workbench &gt; Create Draft Journal</p>
+<p>Ne secilir:
+1. <code>SourceType = INTERCOMPANY</code>
+2. <code>Auto-create partner mirror draft journal(s)</code> kutusunu acik birak
+3. Satirlarda <code>Counterparty LE</code> doldur</p>
+<p>Onemli kural:
+- Otomatik mirror modunda tum satirlarda karsi taraf secimi olmali.</p>
+<p>Sistem ne yapar?
+1. Kaynak <code>Legal Entity (Bagli Ortak)</code> uzerinde taslak fis olusturur.
+2. Partner <code>Legal Entity (Bagli Ortak)</code> uzerinde bagli mirror taslak fis(ler) olusturur.
+3. Ekranda mirror fis IDlerini gosterir.</p>
+<p>Yapilmazsa:
+- Partner kaydi elle acmak zorunda kalirsiniz.
+- Zaman kaybi ve hata riski artar.</p>
+<p>Gercek hayat ornegi:
+- A sirketi B sirketine 100 birim hizmet faturaladi.
+- A'da alacak ve gelir fis satirlari girilir.
+- Sistem B'de buna karsi gider + borc mirror taslagi acabilir.</p>
+<hr>
+<p><a id="bolum1-adim-13-post-asamasinda-bagli-mirrorlari-birlikte-post-et"></a></p>
+<h3>Adim 13 - Post Asamasinda Bagli Mirrorlari Birlikte Post Et</h3>
+<p>Ekran:
+- Journal Workbench &gt; Post Journal</p>
+<p>Ne yapilir:
+1. Source fis ID gir.
+2. <code>Post linked intercompany mirrors</code> kutusunu isaretle.
+3. <code>Post</code> bas.</p>
+<p>Sistem ne yapar?
+1. Kaynak fis + bagli mirror taslaklari birlikte post etmeyi dener.
+2. Her fisin donemi acik mi kontrol eder.
+3. Birlikte post sonucu mesajda listelenir.</p>
+<p>Yapilmazsa:
+- Kaynak post olur, partner mirror taslakta kalabilir.
+- Mutabakatta gecici fark gorebilirsiniz.</p>
+<hr>
+<p><a id="bolum1-adim-14-intercompany-uyumluluk-kontrolu-compliance"></a></p>
+<h3>Adim 14 - Intercompany Uyumluluk Kontrolu (Compliance)</h3>
+<p>Ekran:
+- Journal Workbench icindeki <code>Intercompany Compliance</code> bolumu</p>
+<p>Ne ise yarar?
+- Politika ihlallerini toplu gosterir:
+1. Intercompany kapali entityde karsi tarafli satir
+2. Partner zorunlu oldugu halde eksik karsi taraf
+3. Eksik aktif pair</p>
+<p>Ekrandaki duzeltme aksiyonlari:
+1. Entity icin intercompany ac
+2. Partner required kuralini kapat
+3. Eksik active pair olustur</p>
+<p>Yapilmazsa:
+- Ay sonu mutabakatta cok sayida elle duzeltme gerekir.</p>
+<hr>
+<p><a id="bolum1-adim-15-intercompany-mutabakat-raporunu-calistir"></a></p>
+<h3>Adim 15 - Intercompany Mutabakat Raporunu Calistir</h3>
+<p>Ekran:
+- <code>Donem Sonu Islemler &gt; Aylik &gt; Intercompany Mutabakat</code></p>
+<p>Ne secilir:
+1. Calendar
+2. Fiscal period
+3. Gerekirse from/to <code>Legal Entity (Bagli Ortak)</code> filtreleri
+4. Tolerance</p>
+<p>Amac:
+- Iki <code>Legal Entity (Bagli Ortak)</code> kaydinin birbirini ayni tutarda gorup gormedigini kontrol etmek.</p>
+<p>Yapilmazsa:
+- Konsolidasyon oncesi farklar yakalanmaz.
+- Raporlara yanlis bakiye tasinir.</p>
+<hr>
+<p><a id="bolum1-adim-16-konsolidasyon-kurulumu-ve-raporlari"></a></p>
+<h3>Adim 16 - Konsolidasyon Kurulumu ve Raporlari</h3>
+<p>Kurulum ekrani:
+- <code>Ayarlar &gt; Konsolidasyon Kurulumu</code></p>
+<p>Rapor ekrani:
+- <code>Donem Sonu Islemler &gt; Yillik &gt; Konsolidasyon Raporlari</code></p>
+<p>Asgari gerekli kurulum:
+1. Consolidation group
+2. Group memberlar (<code>Legal Entity (Bagli Ortak)</code> ekleme)
+3. Gerekirse CoA mapping
+4. Run olusturma ve calistirma</p>
+<p>Yapilmazsa:
+- Bilanco ve gelir tablosu konsolide alinmaz.
+- Grup resmi raporlama eksik kalir.</p>
+<hr>
+<p><a id="bolum1-adim-17-hesap-yeniden-siniflandirma-bakiye-dagitimi-islem-bazli"></a></p>
+<h3>Adim 17 - Hesap Yeniden Siniflandirma (Bakiye Dagitimi / Islem Bazli)</h3>
+<p>Ekran:
+- <code>Ayarlar &gt; Hesap Yeniden Siniflandirma</code>
+- URL: <code>/app/ayarlar/hesap-yeniden-siniflandirma</code></p>
+<p>Bu ekran 2 akis sunar:
+1. <code>Bakiye Dagitimi Olustur</code> (hesap bakiyesini alt hesaplara dagitma)
+2. <code>Islem Bazli Yeniden Siniflandirma</code> (tek tek fis satiri esleme)</p>
+<p><a id="bolum1-a-bakiye-dagitimi-olustur"></a></p>
+<h4>A) Bakiye Dagitimi Olustur</h4>
+<p>Ne doldurulur?
+1. <code>Legal Entity (Bagli Ortak)</code> secin.
+2. <code>Book</code> secin.
+3. <code>Fiscal period</code> secin.
+4. <code>Source account (direct != 0)</code> secin.
+5. Dagitim tipini secin:
+   - <code>Yuzdeye gore (PERCENT)</code>
+   - <code>Tutara gore (AMOUNT)</code>
+6. En az 1 <code>Hedef hesap</code> satiri ekleyin.
+7. Dagitim degerlerini girin:
+   - PERCENT modunda toplam yuzde = <code>100</code> olmali.
+   - AMOUNT modunda toplam tutar = <code>Dagitilacak tutar</code> olmali.
+8. <code>Entry date</code>, <code>Document date</code>, <code>Currency</code> alanlarini kontrol edin.
+9. Gerekirse <code>Aciklama</code>, <code>Referans no</code>, <code>Run notu</code> girin.
+10. <code>Yeniden siniflandirma taslagi olustur</code> butonuna basin.</p>
+<p>Sistem ne yapar?
+1. Kaynak bakiyeyi tersleyip hedef hesaplara dagitan tek bir taslak yevmiye olusturur.
+2. Islemi <code>Son Yeniden Siniflandirma Runlari</code> listesine kaydeder.
+3. Olusan <code>Journal No / Journal Id</code> bilgisini listede gosterir.</p>
+<p><a id="bolum1-b-islem-bazli-yeniden-siniflandirma"></a></p>
+<h4>B) Islem Bazli Yeniden Siniflandirma</h4>
+<p>Ne doldurulur?
+1. Ust kisimda yine <code>Legal Entity</code>, <code>Book</code>, <code>Fiscal period</code>, <code>Source account</code> secili olmali.
+2. Gerekirse <code>dateFrom</code>, <code>dateTo</code>, <code>limit</code> filtrelerini girin.
+3. <code>Kaynak satirlari yukle</code> butonuna basin.
+4. Yeniden siniflandirilacak satirlari secin.
+5. Her secili satir icin bir <code>Hedef hesap</code> secin.
+6. <code>Secili satir</code> ve <code>Eslenen</code> sayisi esit oldugunda
+   <code>Islem bazli yeniden siniflandirma taslagi olustur</code> butonuna basin.</p>
+<p>Sistem ne yapar?
+1. Secilen her kaynak satiri tersleyip secilen hedef hesapta yeni satirlar olusturur.
+2. Taslak yevmiye olusturur ve run kaydina ekler.</p>
+<p>Kontrol listesi:
+1. <code>Son Yeniden Siniflandirma Runlari</code> alaninda yeni kayit gorunuyor mu?
+2. <code>Journal Workbench</code> ekraninda ilgili taslak fis aciliyor mu?
+3. Gerekli inceleme sonrasi fis post edildi mi?</p>
+<p>Yapilmazsa:
+1. Hesaplar arasi bakiye dagitimi manuel fisle yapilir.
+2. Manuel dagitimda hata ve atlanan satir riski artar.</p>
+<hr>
+<p><a id="bolum1-5-en-cok-karsilasilan-durumlar-ve-cozumler"></a></p>
+<h3>5) En Cok Karsilasilan Durumlar ve Cozumler</h3>
+<p>Durum:
+- <code>No periods found for selected filters</code></p>
+<p>Cozum:
+1. Takvim dogru mu kontrol et.
+2. Mali yil dogru mu kontrol et.
+3. <code>Reload Periods</code> bas.</p>
+<p>Durum:
+- <code>Intercompany disabled</code> hatasi</p>
+<p>Cozum:
+1. <code>Legal Entity (Bagli Ortak)</code> kaydinda <code>Intercompany enabled</code> acik olmali.
+2. Kapaliysa policy geregi engellenir.</p>
+<p>Durum:
+- <code>Partner required</code> hatasi</p>
+<p>Cozum:
+1. SourceType <code>INTERCOMPANY</code> ise tum satirlarda Counterparty LE doldur.</p>
+<p>Durum:
+- <code>subledgerReferenceNo is required</code> hatasi</p>
+<p>Cozum:
+1. Satirda secilen birim <code>Has subledger = Evet</code> ise <code>Subledger Ref</code> girin.
+2. <code>Subledger Ref</code> girip birim secmediyseniz once birim secin.</p>
+<p>Durum:
+- <code>commitmentDebitSubAccountId is required when committedCapital is greater than 0</code> hatasi</p>
+<p>Cozum:
+1. <code>Organizasyon Yonetimi &gt; Shareholders</code> ekraninda ortak kartinda <code>Commitment debit sub-account</code> secin.
+2. Bu hesap equity tipinde, aktif ve post edilebilir bir alt hesap olmali (tipik TR: <code>501.xx</code>).
+3. Ortak kaydini tekrar kaydedin.</p>
+<p>Durum:
+- <code>capitalSubAccountId is required when committedCapital is greater than 0</code> hatasi</p>
+<p>Cozum:
+1. Ortak kartinda <code>Committed capital</code> 0'dan buyukse <code>Capital sub-account</code> secin.
+2. Bu hesap equity tipinde, aktif ve post edilebilir bir alt hesap olmali.</p>
+<p>Durum:
+- Sermaye taahhut akisi icin ekranda "Setup Required List" eksik gorunuyor</p>
+<p>Cozum:
+1. Ortak tanimi, ortak bazli borc/sermaye alt hesaplari, equity alt hesap ve mali donem kalemlerini tamamlayin.
+2. Ekrandaki yonlendirme butonlariyla ilgili setup ekranina gecin.</p>
+<p>Durum:
+- <code>Queued shareholders contain mixed currencies</code> (toplu taahhut onizlemede)</p>
+<p>Cozum:
+1. Toplu taahhut fisini para birimine gore ayri ayri olusturun.
+2. Ayni batch icine farkli currency kodlu ortaklari birlikte koymayin.</p>
+<p>Durum:
+- <code>No OPEN book/fiscal period found for legalEntityId</code> veya <code>commitmentDate must be within an OPEN fiscal period</code></p>
+<p>Cozum:
+1. Secili legal entity icin acik donem oldugunu kontrol edin.
+2. <code>Taahhut tarihi</code>ni acik mali donem araligina alin.</p>
+<p>Durum:
+- <code>No shareholder has a positive journalizable commitment delta</code> (toplu taahhut onizlemede)</p>
+<p>Cozum:
+1. Delta mantigini kontrol edin: <code>committed_capital - already_journaled_amount</code>.
+2. Delta 0 veya negatifse ortak batchte atlanir; yeni artis tutari girin veya ilgili ortaklari kuyruktan cikarip tekrar deneyin.</p>
+<p>Durum:
+- <code>Active pair mapping required</code> hatasi</p>
+<p>Cozum:
+1. Kaynak -&gt; partner active pair olustur.
+2. Otomatik mirror istiyorsan partner -&gt; kaynak yonunu de active yap.</p>
+<p>Durum:
+- <code>Journal is not balanced</code></p>
+<p>Cozum:
+1. Toplam borc = toplam alacak olmali.
+2. Satirlari tekrar kontrol et.</p>
+<p>Durum:
+- Intercompany fis olustu ama partnerda post olmadi</p>
+<p>Cozum:
+1. Post ekraninda <code>Post linked intercompany mirrors</code> kutusunu isaretleyerek post et.</p>
+<p>Durum:
+- <code>Incorrect arguments to mysqld_stmt_execute</code> hatasi (Hesap Yeniden Siniflandirma sayfasinda run listesi/satir yukleme asamasinda)</p>
+<p>Cozum:
+1. Backend guncel kodla calisiyor mu kontrol edin (reclassification sorgularinda <code>LIMIT ?</code> yerine dogrudan sayisal limit kullanilmali).
+2. Backend servisini yeniden baslatin.
+3. Sayfayi yenileyip islemi tekrar deneyin.</p>
+<hr>
+<p><a id="bolum1-6-gunluk-pratik-is-akisi-muhasebe-ekibi-icin"></a></p>
+<h3>6) Gunluk Pratik Is Akisi (Muhasebe Ekibi Icin)</h3>
+<p>Her gun:
+1. Yeni fisleri taslak olustur.
+2. Intercompany olanlarda counterparty alanini mutlaka doldur.
+3. Gerekli kontrollerden sonra post et.</p>
+<p>Haftalik:
+1. Intercompany compliance bolumunu ac.
+2. Cikan sorunlari aninda duzelt.</p>
+<p>Aylik kapanis oncesi:
+1. Intercompany mutabakat raporunu calistir.
+2. Fark varsa once kaynagini duzelt.
+3. Sonra konsolidasyon raporlarini al.</p>
+<hr>
+<p><a id="bolum1-7-roller-ve-yetki-neden-bazen-buton-gorunmuyor"></a></p>
+<h3>7) Roller ve Yetki (Neden Bazen Buton Gorunmuyor?)</h3>
+<p>Bazi ekranlar yetkiye baglidir.</p>
+<p>Ornek:
+1. Sayfayi gorebiliyorsunuz ama <code>Save</code> calismiyor.
+2. Sol menude ilgili modulu hic goremiyorsunuz.</p>
+<p>Bu durumda sorun genelde veri degil, yetkidir.
+Sistem yoneticisinden rol/yetki atamasi isteyin.</p>
+<hr>
+<p><a id="bolum1-8-kisa-karar-rehberi"></a></p>
+<h3>8) Kisa Karar Rehberi</h3>
+<p>Soru:
+- "Hizli kurulum mu manuel kurulum mu?"</p>
+<p>Cevap:
+1. Hedef hizli baslangic ise: Sirket Ayarlari (bootstrap)
+2. Hedef kontrollu ve denetlenebilir kurulum ise: Manuel yol (bu kilavuz)</p>
+<p>Soru:
+- "Intercompanyde otomatik partner fis acmali miyim?"</p>
+<p>Cevap:
+1. Evet, operasyonel olarak daha saglikli.
+2. Ama post asamasinda birlikte post etmeyi unutma.</p>
+<hr>
+<p><a id="bolum1-9-ozet"></a></p>
+<h3>9) Ozet</h3>
+<p>Bu kilavuza gore kurulum yapildiginda:
+1. Organizasyon yapiniz temiz kurulur.
+2. Defter ve hesap plani stabil calisir.
+3. Intercompany kontrolleri ve otomatik mirror akisiniz devreye girer.
+4. Mutabakat ve konsolidasyon raporlarinda hata riski ciddi azalir.</p>
+<p>Isterseniz bir sonraki adimda bu dokumani:
+1. Ekran goruntulu PDF formatina
+2. "Yeni baslayan personel egitim notu" formatina
+donusturebilirim.</p>
+<hr>
+<p><a id="bolum2-baslangic"></a></p>
+<h2>Bolum 2 - RBAC ve Kullanici Yetkilendirme</h2>
+<blockquote>
+<p>Kaynak dosya: <code>KULLANIM_KILAVUZU_BOLUM2_RBAC.md</code></p>
+</blockquote>
+<hr>
+<p><a id="bolum2-saap-kullanim-kilavuzu-bolum-2-rbac-ve-kullanici-yetkilendirme"></a></p>
+<h2>SaaP Kullanim Kilavuzu - Bolum 2 (RBAC ve Kullanici Yetkilendirme)</h2>
+<p>Bu dokuman, uygulamada "kim neyi yapabilir" konusunu netlestirmek icin hazirlandi.
+Odak: kullanici olusturma, rol atama, scope yonetimi, test ve dogrulama.</p>
+<hr>
+<p><a id="bolum2-1-temel-kavramlar-karisan-noktalar"></a></p>
+<h3>1) Temel Kavramlar (Karisan Noktalar)</h3>
+<ol>
+<li>
+<p><code>Tenant</code>:
+   - Bir veri siniri / sirket alani.
+   - Rol degildir.</p>
+</li>
+<li>
+<p><code>TenantAdmin</code>:
+   - Tenant icindeki bir roldur.
+   - "Yeni tenant olusturma" yetkisi degildir.</p>
+</li>
+<li>
+<p><code>Provider Admin</code>:
+   - <code>/provider/login</code> uzerinden platform seviyesinde calisir.
+   - Yeni tenant olusturabilen tek taraftir.</p>
+</li>
+<li>
+<p><code>Role</code>:
+   - Yetki paketi (permission seti).</p>
+</li>
+<li>
+<p><code>Permission</code>:
+   - Tekil islem izni (ornek: <code>gl.journal.post</code>).</p>
+</li>
+<li>
+<p><code>Scope</code>:
+   - Yetkinin hangi sinirda gecerli oldugu:
+   - <code>TENANT</code>, <code>GROUP</code>, <code>COUNTRY</code>, <code>LEGAL_ENTITY</code>, <code>OPERATING_UNIT</code></p>
+</li>
+<li>
+<p><code>Data Scope</code>:
+   - Kullanici veri gorunurlugunu ayrica kisitlar.
+   - Varsa, pratikte permission scope uzerine ekstra sinir koyar.</p>
+</li>
+</ol>
+<hr>
+<p><a id="bolum2-2-rbac-ekranlari-ve-ne-ise-yarar"></a></p>
+<h3>2) RBAC Ekranlari ve Ne Ise Yarar</h3>
+<ol>
+<li>
+<p><code>Ayarlar &gt; Roller ve Yetkiler</code>
+   - Rol olusturur.
+   - Role permission matrisi baglar.</p>
+</li>
+<li>
+<p><code>Ayarlar &gt; Kullanici Rol Atamalari</code>
+   - Yeni kullanici olusturur.
+   - Kullaniciya rol + scope + effect (<code>ALLOW</code>/<code>DENY</code>) atar.</p>
+</li>
+<li>
+<p><code>Ayarlar &gt; Scope Atamalari</code>
+   - Kullanici <code>data scope</code> kayitlarini yonetir.
+   - Mevcut rol atamasinin scope'unu degistirir.</p>
+</li>
+<li>
+<p><code>Ayarlar &gt; RBAC Denetim Loglari</code>
+   - Rol/atama/scope degisikliklerini geriye donuk izler.</p>
+</li>
+</ol>
+<hr>
+<p><a id="bolum2-3-on-kosullar"></a></p>
+<h3>3) On Kosullar</h3>
+<ol>
+<li>Tenant kurulumunun tamam olmasi gerekir (readiness).</li>
+<li>Sistemde en az bir <code>TenantAdmin</code> kullanici olmasi gerekir.</li>
+<li>RBAC ekranlarina girecek kullanicida ilgili security permissionlari olmali.</li>
+</ol>
+<hr>
+<p><a id="bolum2-4-sifirdan-rbac-kurulum-akisi"></a></p>
+<h3>4) Sifirdan RBAC Kurulum Akisi</h3>
+<p><a id="bolum2-adim-1-rol-tasarimini-belirle"></a></p>
+<h3>Adim 1 - Rol Tasarimini Belirle</h3>
+<p>Ornek is rolleri:
+1. Grup kontroloru
+2. Entity muhasebecisi
+3. Sube operatoru
+4. Sadece okuma (auditor)</p>
+<p>Her rol icin suyu yazin:
+1. Hangi modulleri acabilir?
+2. Hangi islemleri yapabilir? (create/post/upsert vb.)
+3. Hangi scope seviyesinde calisacak?</p>
+<hr>
+<p><a id="bolum2-adim-2-rol-olustur"></a></p>
+<h3>Adim 2 - Rol Olustur</h3>
+<p>Ekran:
+1. <code>Ayarlar &gt; Roller ve Yetkiler</code></p>
+<p>Islem:
+1. <code>Role code</code> gir (ornek: <code>EntityMuhasebeTR</code>)
+2. <code>Role name</code> gir
+3. <code>Rolu Kaydet</code></p>
+<p>Not:
+1. Seed ile gelen sistem rolleri vardir (<code>TenantAdmin</code>, <code>GroupController</code>, vb.).
+2. Operasyonel kullanim icin yeni custom rol olusturmak genelde daha guvenlidir.</p>
+<hr>
+<p><a id="bolum2-adim-3-role-permission-bagla"></a></p>
+<h3>Adim 3 - Role Permission Bagla</h3>
+<p>Ayni ekranda:
+1. Sol listeden rolu sec.
+2. Permission checkbox'larini sec.
+3. <code>Yetkileri Degistir</code> ile kaydet.</p>
+<p>Ornek (entity muhasebe):
+1. <code>org.tree.read</code>
+2. <code>org.fiscal_period.read</code>
+3. <code>gl.book.read</code>
+4. <code>gl.account.read</code>
+5. <code>gl.journal.read</code>
+6. <code>gl.journal.create</code>
+7. <code>gl.journal.post</code></p>
+<hr>
+<p><a id="bolum2-adim-4-kullanici-olustur"></a></p>
+<h3>Adim 4 - Kullanici Olustur</h3>
+<p>Ekran:
+1. <code>Ayarlar &gt; Kullanici Rol Atamalari</code></p>
+<p><code>Yeni Kullanici</code> bolumunde:
+1. Ad Soyad
+2. E-posta
+3. Sifre (min 8)
+4. Durum (<code>ACTIVE</code>/<code>DISABLED</code>)
+5. <code>Kullaniciyi Olustur</code></p>
+<p>Beklenen sonuc:
+1. Kullanici olusur.
+2. Kullanici dropdown listesine gelir.</p>
+<hr>
+<p><a id="bolum2-adim-5-kullaniciya-rol-scope-ata"></a></p>
+<h3>Adim 5 - Kullaniciya Rol + Scope Ata</h3>
+<p>Ayni sayfada:
+1. Kullanici sec
+2. Rol sec
+3. <code>ScopeType</code> sec (<code>GROUP</code>, <code>LEGAL_ENTITY</code>, vb.)
+4. <code>Scope</code> sec (<code>id</code> bazli)
+5. <code>Effect</code> sec (<code>ALLOW</code> veya <code>DENY</code>)
+6. <code>Ata</code></p>
+<p>Ornek:
+1. Kullanici: <code>ayse.entity@example.com</code>
+2. Rol: <code>EntityMuhasebeTR</code>
+3. ScopeType: <code>LEGAL_ENTITY</code>
+4. Scope: <code>LE-TR-001</code>
+5. Effect: <code>ALLOW</code></p>
+<p>Sonuc:
+1. Kullanici bu entity icinde calisir.
+2. Diger entitylerde yetkili olmaz.</p>
+<hr>
+<p><a id="bolum2-adim-6-gerekirse-data-scope-ile-daralt"></a></p>
+<h3>Adim 6 - Gerekirse Data Scope Ile Daralt</h3>
+<p>Ekran:
+1. <code>Ayarlar &gt; Scope Atamalari</code></p>
+<p>Islem:
+1. Kullanici sec
+2. <code>Veri Scope'lari</code>na yeni satir ekle
+3. <code>Kullanici Veri Scope'larini Guncelle</code></p>
+<p>Ne zaman gerekli?
+1. Kullanici rolu genis ama veri gorunurlugunu daha dar tutmak istiyorsaniz.
+2. Ozel denetim / segmentasyon ihtiyaci varsa.</p>
+<hr>
+<p><a id="bolum2-adim-7-denetim-ve-dogrulama"></a></p>
+<h3>Adim 7 - Denetim ve Dogrulama</h3>
+<p>Ekran:
+1. <code>Ayarlar &gt; RBAC Denetim Loglari</code></p>
+<p>Kontrol edin:
+1. <code>role.permission.replace</code>
+2. <code>assignment.create</code>
+3. <code>assignment.scope_replace</code>
+4. <code>user.create</code></p>
+<hr>
+<p><a id="bolum2-5-sistem-rol-kurali-kritik"></a></p>
+<h3>5) Sistem Rol Kurali (Kritik)</h3>
+<p><code>TenantAdmin</code> gibi sistem rolleri icin:
+1. Atama/degistirme/silme islemlerini sadece tenant-level <code>TenantAdmin</code> yapabilir.
+2. Sistem rolu olmayan custom rollerde normal atama akisiniz devam eder.</p>
+<p>Bu, "yanlislikla herkes TenantAdmin olmasin" diye uygulanir.</p>
+<hr>
+<p><a id="bolum2-6-ornek-senaryolar"></a></p>
+<h3>6) Ornek Senaryolar</h3>
+<p><a id="bolum2-senaryo-a-group-bazli-kullanici"></a></p>
+<h3>Senaryo A - Group bazli kullanici</h3>
+<ol>
+<li>Rol: <code>GroupController</code> veya custom grup rolu</li>
+<li>Scope: <code>GROUP = G1</code></li>
+<li>Beklenen:
+   - G1 altindaki entity/sube verisini gorur.
+   - G2 altinda islem yapamaz.</li>
+</ol>
+<p><a id="bolum2-senaryo-b-entity-bazli-muhasebeci"></a></p>
+<h3>Senaryo B - Entity bazli muhasebeci</h3>
+<ol>
+<li>Rol: <code>EntityAccountant</code> veya custom</li>
+<li>Scope: <code>LEGAL_ENTITY = LE1</code></li>
+<li>Beklenen:
+   - LE1 icin fis olusturur/post eder.
+   - LE2 icin 403 veya bos liste alir.</li>
+</ol>
+<p><a id="bolum2-senaryo-c-subede-operator"></a></p>
+<h3>Senaryo C - Subede operator</h3>
+<ol>
+<li>Rol: <code>BranchOperator</code></li>
+<li>Scope: <code>OPERATING_UNIT = OU1</code></li>
+<li>Beklenen:
+   - OU1 odakli islemleri yapar.
+   - Diger sube/entity tarafinda yetki yoktur.</li>
+</ol>
+<hr>
+<p><a id="bolum2-7-10-dakikalik-smoke-test-listesi"></a></p>
+<h3>7) 10 Dakikalik Smoke Test Listesi</h3>
+<ol>
+<li>TenantAdmin ile giris yap.</li>
+<li>Yeni rol olustur (<code>SmokeRole</code>).</li>
+<li>Role 2-3 permission ekle.</li>
+<li>Yeni kullanici olustur.</li>
+<li>Kullaniciya rol + <code>LEGAL_ENTITY</code> scope ata.</li>
+<li>Yeni kullanici ile giris yap.</li>
+<li>Scope disi bir kayit acmayi dene (beklenen: engel/403).</li>
+<li>Scope ici bir kayit acmayi dene (beklenen: basarili).</li>
+<li>RBAC loglarda degisiklik kayitlarini dogrula.</li>
+</ol>
+<hr>
+<p><a id="bolum2-8-sik-sorulan-sorular"></a></p>
+<h3>8) Sik Sorulan Sorular</h3>
+<ol>
+<li>
+<p><code>TenantAdmin</code> yeni tenant olusturabilir mi?
+   - Hayir. Yeni tenant sadece Provider tarafindan olusturulur.</p>
+</li>
+<li>
+<p>Tenant kullanicisi baska tenantin kullanicisini yonetebilir mi?
+   - Hayir. Tum islemler kendi tenant sinirinda calisir.</p>
+</li>
+<li>
+<p>Kullanici sayfayi goruyor ama kaydetme yapamiyor, neden?
+   - Sayfaya giris permissioni var, islem permissioni eksik olabilir.
+   - Scope disinda kaliyor olabilir.</p>
+</li>
+<li>
+<p><code>ALLOW</code> ve <code>DENY</code> birlikte kullanilir mi?
+   - Evet, ama operasyonel olarak sade politika tavsiye edilir.
+   - Once minimum <code>ALLOW</code> ile baslayin, gerekli yerde <code>DENY</code> ekleyin.</p>
+</li>
+</ol>
+<hr>
+<p><a id="bolum2-9-operasyonel-tavsiyeler"></a></p>
+<h3>9) Operasyonel Tavsiyeler</h3>
+<ol>
+<li>Her tenantta en fazla 1-2 kisi <code>TenantAdmin</code> olsun.</li>
+<li>Gunluk kullanicilar icin custom roller acin.</li>
+<li>Atamalari her zaman scope ile sinirlayin.</li>
+<li>Periyodik olarak RBAC denetim loglarini kontrol edin.</li>
+<li>"Tam yetki ver sonra kisitlariz" yerine "minimum yetkiyle basla" modelini kullanin.</li>
+</ol>
+<hr>
+<p><a id="bolum3-baslangic"></a></p>
+<h2>Bolum 3 - Kasa Modulu Operasyon Rehberi</h2>
+<blockquote>
+<p>Kaynak dosya: <code>KULLANIM_KILAVUZU_KASA_MODULU.md</code></p>
+</blockquote>
+<hr>
+<p>﻿# KULLANIM_KILAVUZU_KASA_MODULU.md</p>
+<p><a id="bolum3-saap-kasa-modulu-kullanm-kilavuzu-teknik-olmayan-kullanicilar-icin"></a></p>
+<h3>SAAP Kasa Modulu Kullanım Kilavuzu (Teknik Olmayan Kullanicilar Icin)</h3>
+<p>Surum: v1<br>
+Tarih: 2026-02-22<br>
+Kapsam: <code>/app/kasa-tanimlari</code>, <code>/app/kasa-oturumlari</code>, <code>/app/tediye-islemleri</code>, <code>/app/tahsilat-islemleri</code>, <code>/app/kasa-islemleri</code>, <code>/app/kasa-istisnalari</code></p>
+<p>Bu kilavuz, kod bilmeyen operasyon, muhasebe, finans ve denetim ekipleri icin yazildi.<br>
+Amac: "Hangi ekranda ne yapmaliyim, secersem/secmesem ne olur, hatada ne yapmaliyim" sorularina net cevap vermek.</p>
+<hr>
+<p><a id="bolum3-1-bu-modul-neyi-cozer"></a></p>
+<h3>1. Bu modul neyi cozer?</h3>
+<p>Kasa modulu, nakit islemlerini kontrol altina alir.<br>
+Yani:
+- Kasayi kim acmis/kapatmis, ne kadar para girmis/cikmis gorulur.
+  (Buradaki "acma/kapama", fiziksel kasanin kilidini acma degil; sistemde oturum baslatma/bitirme kaydidir.)
+- Islemler belli adimlardan gecer (olustur, post et, gerekirse ters kayit).
+- Yetkisiz veya kurala aykiri hareketler engellenir.
+- Istisnalar (zorunlu kapama, yuksek fark, override vb.) tek ekranda izlenir.</p>
+<p>Kisa mantik:
+- <strong>GL (Defteri Kebir / Genel Ledger)</strong> kayit dogru kaynak olarak kalir.
+- <strong>Kasa operasyonu</strong>, GL (Defteri Kebir)'e gitmeden once kontrollu bir is akisindan gecer.</p>
+<hr>
+<p><a id="bolum3-2-temel-kavramlar-teknik-olmayan-dille"></a></p>
+<h3>2. Temel kavramlar (teknik olmayan dille)</h3>
+<ul>
+<li><strong>Kasa Register</strong>: Fiziksel/operasyonel para noktasi. (Ornek: Magaza kasa cekmecesi, sube kasasi, merkez kasa)</li>
+<li><strong>Oturum (Session)</strong>: Kasa acilis-kapanis periyodu. (Ornek: 08:00 acildi, 18:00 kapandi)</li>
+<li><strong>Islem (Transaction)</strong>: Tek bir para hareketi. (Tahsilat, odeme, bankaya yatirma vb.)</li>
+<li><strong>Post etmek</strong>: Islemi resmi muhasebe kaydina cevirme.</li>
+<li><strong>Iptal (Cancel)</strong>: Henuz post edilmemis islemi gecersiz kilma.</li>
+<li><strong>Ters kayit (Reverse)</strong>: Post edilmis islemi geri alan yeni ve bagli bir kayit uretme.</li>
+<li><strong>Varyans (Fark)</strong>: Kasada beklenen para ile sayilan para arasindaki fark.</li>
+<li><strong>Override</strong>: Normalde engellenen bir post islemini, ozel yetki + zorunlu gerekce ile yapma.</li>
+<li><strong>Istisna</strong>: Riskli/inceleme gerektiren olay. (Yuksek fark, forced close, unposted islem vb.)</li>
+</ul>
+<p><a id="bolum3-21-kasayi-acmakkapatmak-tam-olarak-ne-demek"></a></p>
+<h4>2.1 "Kasayi acmak/kapatmak" tam olarak ne demek?</h4>
+<ul>
+<li><strong>Kasayi acmak (oturum acmak)</strong>:</li>
+<li>Sistem kaydi olarak "bu register su anda su kisi sorumlulugunda kullanima basladi" demektir.</li>
+<li>Genelde fiziksel teslim/tesellum (kasa devri) sonrasi yapilir.</li>
+<li><strong>Kasayi kapatmak (oturum kapatmak)</strong>:</li>
+<li>Sistem kaydi olarak "bu register icin operasyon bitti, sayim yapildi, fark hesaplandi" demektir.</li>
+<li>Fiziksel kilit kapatma operasyonu sirket prosedurudur; sistem bunun muhasebe/denetim kaydini tutar.</li>
+</ul>
+<p>Ozet:
+- Bu moduldaki acma/kapama, <strong>fiziksel anahtar hareketinden cok operasyonel sorumluluk kaydi</strong>dir.</p>
+<hr>
+<p><a id="bolum3-3-menude-nereye-girilir"></a></p>
+<h3>3. Menude nereye girilir?</h3>
+<p>Sol menu &gt; <strong>Yevmiye Kayitlari</strong>:
+- <strong>Kasa Tanimlari</strong>: Register acma/guncelleme
+- <strong>Kasa Oturumlari</strong>: Oturum acma/kapama
+- <strong>Tahsilat</strong>: Sadece RECEIPT tipi islemler
+- <strong>Tediye</strong>: Sadece PAYOUT tipi islemler
+- <strong>Kasa Islemleri</strong>: Tum islem tipleri
+- <strong>Kasa Istisnalari</strong>: Risk/denetim paneli</p>
+<p>Not:
+- Tahsilat ve Tediye ekranlari, Kasa Islemleri ekraninin hazir filtreli versiyonudur.</p>
+<hr>
+<p><a id="bolum3-4-yetki-modeli-kim-ne-yapabilir"></a></p>
+<h3>4. Yetki modeli (kim ne yapabilir?)</h3>
+<p>Bu yetkiler yoksa butonlar gorunmez veya ekran erisimi engellenir.</p>
+<p>Temel yetkiler:
+- <code>cash.register.read</code>: Kasa tanimlarini gorur
+- <code>cash.register.upsert</code>: Kasa tanimi olusturur/gunceller, aktif-pasif yapar
+- <code>cash.session.open</code>: Oturum acar
+- <code>cash.session.close</code>: Oturum kapatir
+- <code>cash.variance.approve</code>: Esik ustu varyansi onaylayarak kapatir
+- <code>cash.txn.read</code>: Islem listelerini gorur
+- <code>cash.txn.create</code>: Yeni islem olusturur
+- <code>cash.txn.post</code>: Islem post eder
+- <code>cash.txn.cancel</code>: Post edilmemis islemi iptal eder
+- <code>cash.txn.reverse</code>: Post edilmis islemi ters kayit eder
+- <code>cash.override.post</code>: Override ile post yapar
+- <code>cash.report.read</code>: Istisna ekranini gorur</p>
+<p>Gercek hayat ornek:
+- Kasiyer: create + session open/close
+- Supervisor: session close + variance approve + istisna izleme
+- Finans: post + reverse
+- Finans admin: register setup + override</p>
+<hr>
+<p><a id="bolum3-5-kasa-kontrol-modu-banneri-off-warn-enforce"></a></p>
+<h3>5. Kasa kontrol modu banner'i (OFF / WARN / ENFORCE)</h3>
+<p>Ekran ustunde "Kasa kontrol modu" gorursunuz.</p>
+<ul>
+<li><strong>OFF</strong>:</li>
+<li>Direkt GL (Defteri Kebir) kasa kontrolu kapali.</li>
+<li>Risk daha yuksek; pilot/discovery asamasi icin.</li>
+<li><strong>WARN</strong>:</li>
+<li>Direkt GL (Defteri Kebir) kaydi durmaz, ama uyari/denetim izi olusur.</li>
+<li>Gecis donemi icin ideal.</li>
+<li><strong>ENFORCE</strong>:</li>
+<li>Kural disi direkt GL (Defteri Kebir) girisi engellenir.</li>
+<li>Uretim ve denetim icin onerilen mod.</li>
+<li>Pratikte:<ul>
+<li><code>is_cash_controlled=true</code> hesaplara, normal manuel GL fisinden dogrudan satir yazmak bloke olur.</li>
+<li>Ayni hareket, kasa modulu akisiyla (<code>source_type=CASH</code>) yapiliyorsa izinli olur.</li>
+<li>Acil istisna durumunda sadece yetkili kullanici <code>override</code> + zorunlu gerekce ile ilerleyebilir.</li>
+</ul>
+</li>
+<li>Sonuc:<ul>
+<li>Yanlis kanaldan kasa hesabi oynanmasi zorlasir.</li>
+<li>Denetimde "neden bu hesapta bu hareket var" sorusunun cevabi netlesir.</li>
+</ul>
+</li>
+</ul>
+<p>Secim etkisi:
+- ENFORCE secmezseniz operasyon rahatlar ama kontrol riski artar.
+- ENFORCE secerseniz disiplin artar, kisa vadede kullanici hata mesaji daha cok gorebilir.</p>
+<hr>
+<p><a id="bolum3-6-isletmeye-almadan-once-kontrol-listesi"></a></p>
+<h3>6. Isletmeye almadan once kontrol listesi</h3>
+<ol>
+<li>Kasa registerlari tanimli mi?</li>
+<li>Her register uygun GL (Defteri Kebir) hesaba bagli mi?</li>
+<li>Register para birimi dogru mu?</li>
+<li>Session mode dogru mu? (<code>REQUIRED/OPTIONAL/NONE</code>)</li>
+<li>Varyans kazanc/kayip hesaplari tanimli mi?</li>
+<li>Ekipte yetki dagilimi net mi?</li>
+<li>Kasa kontrol modu beklendigi gibi mi? (WARN ya da ENFORCE)</li>
+</ol>
+<hr>
+<p><a id="bolum3-7-kasa-tanimlari-ekrani-adim-adim"></a></p>
+<h3>7. Kasa Tanimlari ekrani (adim adim)</h3>
+<p>Ekran: <code>/app/kasa-tanimlari</code></p>
+<p><a id="bolum3-71-ne-yaparsiniz"></a></p>
+<h4>7.1 Ne yaparsiniz?</h4>
+<ul>
+<li>Yeni kasa tanimi acarsiniz</li>
+<li>Var olani guncellersiniz</li>
+<li>Aktif/Pasif durumunu degistirirsiniz</li>
+</ul>
+<p><a id="bolum3-72-alanlar-ve-secim-etkileri"></a></p>
+<h4>7.2 Alanlar ve secim etkileri</h4>
+<ul>
+<li><strong>code / name</strong></li>
+<li>Bos birakilamaz.</li>
+<li>
+<p>Gercek hayat: <code>TILL-01</code>, <code>Sube Cekmece-1</code></p>
+</li>
+<li>
+<p><strong>registerType</strong> (<code>VAULT</code>, <code>DRAWER</code>, <code>TILL</code>)</p>
+</li>
+<li>Operasyon tipi secimidir.</li>
+<li>
+<p>Oneri:</p>
+<ul>
+<li>TILL: POS kasasi</li>
+<li>DRAWER: sube petty cash</li>
+<li>VAULT: merkez kasa</li>
+</ul>
+</li>
+<li>
+<p><strong>sessionMode</strong> (<code>REQUIRED</code>, <code>OPTIONAL</code>, <code>NONE</code>)</p>
+</li>
+<li><code>REQUIRED</code>: Oturum olmadan islem akisi bloke olabilir (ozellikle create/post)</li>
+<li><code>OPTIONAL</code>: Oturum var/yok esnek</li>
+<li><code>NONE</code>: Oturum acma kapali</li>
+<li>
+<p>Detayli isletme yorumu:</p>
+<ul>
+<li><code>REQUIRED</code>: Kisiden kisiye devir ve vardiya disiplini isteyen noktalarda</li>
+<li><code>OPTIONAL</code>: Bazi gunler vardiya acilip bazi gunler acilmayan ara yapilarda</li>
+<li><code>NONE</code>: Session takip ihtiyaci olmayan, daha cok merkez kasa/ozel nokta akislari</li>
+</ul>
+</li>
+<li>
+<p><strong>legalEntity / operatingUnit / account</strong></p>
+</li>
+<li>Kasa muhasebe baglamini belirler.</li>
+<li>
+<p>Yanlis baglanti olursa kayit reddedilir.</p>
+</li>
+<li>
+<p><strong>currencyCode</strong></p>
+</li>
+<li>3 harfli olmalidir (USD, TRY vb.)</li>
+<li>
+<p>Islem para birimi register para birimiyle ayni olmalidir.</p>
+</li>
+<li>
+<p><strong>allowNegative</strong></p>
+</li>
+<li><code>Hayir</code> (onerilen): Eksi kasaya izin verilmez</li>
+<li><code>Evet</code>: Eksi bakiye operasyonel olarak mumkun olur ama risk artar</li>
+<li>
+<p>Gercek hayat etkisi:</p>
+<ul>
+<li>"Evet" oldugunda kasa bakiyesi 0 iken de odeme fisleri gecici olarak gecebilir.</li>
+<li>Bu, "kasada olmayan parayi sistemde cikis gostermek" riskini dogurur.</li>
+</ul>
+</li>
+<li>
+<p><strong>maxTxnAmount</strong></p>
+</li>
+<li>Tek islem ust limitidir</li>
+<li>
+<p>Asilinca backend islemi reddeder</p>
+</li>
+<li>
+<p><strong>requiresApprovalOverAmount</strong></p>
+</li>
+<li>Bu deger ustu hareketlerde ek onay disiplini uygulanir</li>
+<li>
+<p><code>maxTxnAmount</code>'i gecemez</p>
+</li>
+<li>
+<p><strong>varianceGainAccountId / varianceLossAccountId</strong></p>
+</li>
+<li>Kasa sayim farklarinin hangi hesaplara post edilecegini belirler</li>
+<li>
+<p>Eksikse session close sirasinda varyans olursa islem durur</p>
+</li>
+<li>
+<p><strong>status</strong> (<code>ACTIVE</code>, <code>INACTIVE</code>)</p>
+</li>
+<li>INACTIVE register ile operasyon yapilamaz</li>
+<li>Acik oturum varken pasife alma engellenir</li>
+</ul>
+<p><a id="bolum3-73-secersen-secmezsen-ne-olur"></a></p>
+<h4>7.3 Secersen / secmezsen ne olur?</h4>
+<ul>
+<li>SessionMode = <code>REQUIRED</code> secerseniz:</li>
+<li>Avantaj: Denetim izi guclenir</li>
+<li>Dezavantaj: Oturum unutulursa islem bloke olur</li>
+<li>
+<p>Ornek: Magaza kasasi icin dogru secim</p>
+</li>
+<li>
+<p>SessionMode = <code>NONE</code> secerseniz:</p>
+</li>
+<li>Avantaj: Hizli is akis</li>
+<li>Dezavantaj: Gun sonu kasa-kisi izlenebilirligi zayiflar</li>
+<li>
+<p>Ornek: Merkez kasa, shift takibi gerekmeyen yerde tercih edilebilir</p>
+</li>
+<li>
+<p>allowNegative = <code>Evet</code> secerseniz:</p>
+</li>
+<li>Avantaj: Acil odemede operasyon durmaz</li>
+<li>Dezavantaj: Kasa disiplini ve suistimal riski artar</li>
+<li>Gercek hayat ornek:<ul>
+<li>Kasa bakiyesi 300 TL iken 1.200 TL acil kargo odemesi cikar.</li>
+<li><code>allowNegative=true</code> ise islem gecebilir ve kasa -900'e duser.</li>
+<li>Ayni gun icinde tahsilatla kapatilmazsa, gun sonu sayim/fark ve denetim riski buyur.</li>
+</ul>
+</li>
+<li>Yonetim onerisi:<ul>
+<li><code>allowNegative=true</code> sadece istisnai registerlarda kullanin.</li>
+<li>Bu registerlar icin dusuk <code>maxTxnAmount</code> ve istisna paneli takibi zorunlu olsun.</li>
+</ul>
+</li>
+</ul>
+<hr>
+<p><a id="bolum3-8-kasa-oturumlari-ekrani"></a></p>
+<h3>8. Kasa Oturumlari ekrani</h3>
+<p>Ekran: <code>/app/kasa-oturumlari</code></p>
+<p><a id="bolum3-81-oturum-acma"></a></p>
+<h4>8.1 Oturum acma</h4>
+<p>Gerekli alanlar:
+- registerId (zorunlu)
+- openingAmount (opsiyonel, bos ise 0)</p>
+<p>Kurallar:
+- Ayni register icin ayni anda tek OPEN oturum olur
+- Register <code>ACTIVE</code> olmali
+- Register <code>session_mode=NONE</code> ise oturum acilamaz</p>
+<p>Gercek hayat:
+- Sabah kasiyer kasayi teslim alip 500 TL acilisla oturum acar.</p>
+<p>500 TL nereden gelir?
+- Bu tutar normalde <strong>fiziksel devir sayimindan</strong> gelir (eldeki para gercekten sayilir).
+- Sistem bu tutari otomatik "uretmez"; kullanici/prosedur girer.
+- Bazi firmalarda onceki gunun kapanis tutari referans alinir, ama yine fiziki sayimla teyit edilmesi gerekir.</p>
+<p>Acilista kayitli tutar ile fiziksel tutar uyusmazsa ne yapilir?
+- Ornek:
+  - Onceki kapanis kaydi 5.000 TL gorunuyor, fiziksel sayim 4.800 TL cikti.
+- Mevcut backend davranisi:
+  - Sistem, acilista "onceki kapanisla birebir eslesme" kontrolu ile oturum acmayi zorunlu kilmaz.
+  - Yani 4.800 TL ile oturum acabilirsiniz.
+- Onerilen dogru operasyon:
+  - Acilisi <strong>fiziksel sayilan gercek tutarla</strong> acin (rakam gizlemeyin).
+  - Farki ayni anda supervisor/finans ekibine bildirin.
+  - Sirket prosedurune gore devir-fark tutanagi acin.
+  - Gerekirse ilk islemde referans/aciklama ile olay numarasini baglayin.
+- Neden boyle?
+  - Yanlis rakamla (5.000) acmak, sorunu sadece gecici olarak saklar.
+  - Gercek tutarla acmak, gun sonu fark analizini ve denetim izini dogru tutar.</p>
+<p>Real-world SaaS uygulamalari bu problemi nasil yonetir?
+- Cogu sistem acilista iki ayri deger tutar:
+  - <code>expected_opening</code> (kayitli devir)
+  - <code>counted_opening</code> (fiziksel sayim)
+- Sistem farki otomatik hesaplar:
+  - <code>opening_variance = counted_opening - expected_opening</code>
+- Esik politikalari uygulanir:
+  - kucuk fark -&gt; izin + uyari
+  - orta fark -&gt; supervisor onayi
+  - buyuk fark -&gt; acilisi gecici bloke et / yeniden sayim iste
+- Neden kodu ve aciklama zorunlu tutulur.
+- Olay denetim izine ve istisna paneline duser.
+- Tekrarlayan farklar icin register/kullanici bazli izleme yapilir.</p>
+<p>SAAP icin ileride uygulanabilecek cozum adayi (backlog):
+- <code>openMismatchMode</code>: <code>OFF</code> | <code>WARN</code> | <code>ENFORCE</code>
+- <code>openMismatchTolerance</code>: otomatik izin esigi
+- <code>openMismatchApprovalThreshold</code>: onay gerektiren esik
+- Session alanlari:
+  - <code>opening_expected_amount</code>
+  - <code>opening_counted_amount</code>
+  - <code>opening_variance_amount</code>
+  - <code>opening_variance_reason</code>
+- Kurgu:
+  - <code>WARN</code>: acilis izinli + istisna kaydi
+  - <code>ENFORCE</code>: esik ustu farkta onay olmadan acilis yok</p>
+<p>Oturum acmak her yerde zorunlu mu?
+- Hayir, register ayarina baglidir:
+  - <code>REQUIRED</code>: Pratikte zorunlu kabul edilir (acmadan ilerlemek engellenebilir)
+  - <code>OPTIONAL</code>: Tercihe bagli
+  - <code>NONE</code>: Oturum acma zaten kapali</p>
+<p><a id="bolum3-82-oturum-kapama"></a></p>
+<h4>8.2 Oturum kapama</h4>
+<p>Gerekli alanlar:
+- sessionId (acik oturum)
+- countedClosingAmount (zorunlu)</p>
+<p>Opsiyonel/kurala bagli alanlar:
+- closedReason: <code>END_SHIFT</code>, <code>FORCED_CLOSE</code>, <code>COUNT_CORRECTION</code>
+- closeNote: bazi durumlarda zorunlu
+- approveVariance: esik ustu fark onayi icin</p>
+<p>Kritik kurallar:
+- Sadece OPEN session kapanir
+- Sessionda post edilmemis islem varsa kapama bloklanir
+- <code>FORCED_CLOSE</code> secildi ise closeNote zorunlu
+- Varyans esigi asildiysa:
+  - closeNote zorunlu
+  - <code>approveVariance=true</code> ve yetki gerekir (<code>cash.variance.approve</code>)</p>
+<p><a id="bolum3-83-beklenen-sayilan-fark"></a></p>
+<h4>8.3 Beklenen / Sayilan / Fark</h4>
+<ul>
+<li><strong>Opening</strong>: Oturum acilis tutari</li>
+<li><strong>Expected</strong>: Beklenen kapanis (genelde kapanista kesinlesir)</li>
+<li><strong>Counted</strong>: Fiziki sayilan tutar</li>
+<li><strong>Variance</strong>: Counted - Expected</li>
+</ul>
+<p>Not:
+- Sistemde <code>expected_closing_amount</code> kapanista session satirina guvenilir sekilde yazilir.
+- Acik oturumda canli expected her zaman ayrica endpoint ile gelmeyebilir.</p>
+<p><a id="bolum3-84-varyans-olursa-ne-olur"></a></p>
+<h4>8.4 Varyans olursa ne olur?</h4>
+<ul>
+<li>Sayilan &lt; Beklenen: "short" (eksik)</li>
+<li>Sayilan &gt; Beklenen: "over" (fazla)</li>
+<li>Sistem, uygun hesaplara varyans kaydi uretebilir/post eder</li>
+</ul>
+<p>Ornek:
+- Beklenen 10.000, sayilan 9.940 -&gt; -60 fark
+- Esik 50 ise bu fark esik ustu olabilir -&gt; onay + not istenir</p>
+<hr>
+<p><a id="bolum3-9-kasa-islemleri-tahsilat-tediye"></a></p>
+<h3>9. Kasa Islemleri / Tahsilat / Tediye</h3>
+<p>Ekranlar:
+- <code>/app/tahsilat-islemleri</code> -&gt; RECEIPT sabit
+- <code>/app/tediye-islemleri</code> -&gt; PAYOUT sabit
+- <code>/app/kasa-islemleri</code> -&gt; tum tipler</p>
+<p><a id="bolum3-91-islem-olusturma-create"></a></p>
+<h4>9.1 Islem olusturma (Create)</h4>
+<p>Temel alanlar:
+- registerId
+- txnType
+- txnDatetime
+- bookDate
+- amount (&gt;0)
+- currencyCode (register ile ayni olmali)</p>
+<p>Ek alanlar (duruma gore):
+- counterAccountId (banka yonlu tiplerde zorunlu)
+- counterCashRegisterId (transfer tiplerinde zorunlu)
+- cashSessionId (register politikasi gerektirirse)
+- referenceNo, description vb.</p>
+<p>Sistem tarafi kritik:
+- Her create isteginde idempotency key zorunlu
+- Cift tiklama/yeniden denemede ayni islem ikinci kez uretilmez
+- <code>idempotentReplay=true</code> donerse bu hata degil, "zaten islenmisti" bilgisidir</p>
+<p><a id="bolum3-92-islem-tipi-bazli-zorunluluklar"></a></p>
+<h4>9.2 Islem tipi bazli zorunluluklar</h4>
+<ul>
+<li><code>TRANSFER_IN</code> / <code>TRANSFER_OUT</code>:</li>
+<li>
+<p><code>counterCashRegisterId</code> zorunlu</p>
+</li>
+<li>
+<p><code>DEPOSIT_TO_BANK</code> / <code>WITHDRAWAL_FROM_BANK</code>:</p>
+</li>
+<li>
+<p><code>counterAccountId</code> zorunlu</p>
+</li>
+<li>
+<p><code>VARIANCE</code>:</p>
+</li>
+<li>Manuel olusturulamaz (sistem olusturur)</li>
+</ul>
+<p><a id="bolum3-93-durum-akisi-state-machine"></a></p>
+<h4>9.3 Durum akisi (state machine)</h4>
+<p>Durumlar:
+- <code>DRAFT</code>
+- <code>SUBMITTED</code>
+- <code>APPROVED</code>
+- <code>POSTED</code>
+- <code>REVERSED</code>
+- <code>CANCELLED</code></p>
+<p>Kurallar:
+- Cancel: sadece <code>DRAFT</code>/<code>SUBMITTED</code>
+- Post: <code>DRAFT</code>/<code>SUBMITTED</code>/<code>APPROVED</code>
+- Reverse: sadece <code>POSTED</code> orijinal kayit
+- Reversal satiri tekrar reverse edilemez
+- POSTED kayit edit/cancel edilemez (immutability)</p>
+<p><a id="bolum3-94-post-ederken-override"></a></p>
+<h4>9.4 Post ederken override</h4>
+<p>Normalde sistem kurala aykiri postu engeller.<br>
+Override icin:
+- <code>overrideCashControl=true</code>
+- <code>overrideReason</code> dolu
+- kullanicida <code>cash.override.post</code> yetkisi</p>
+<p>Secersen/secmesen:
+- Override secmezseniz: guvenli ama bazen acil durumda bloke olabilirsiniz
+- Override secerseniz: is devam eder ama denetimde sorumluluk artar</p>
+<p>Gercek hayat:
+- Aylik kapanisa 10 dk kala kritik bir duzeltme lazim.
+- Finans admin override reason yazarak post eder.
+- Sonra denetimde bu olay "istisna" olarak gorunur.</p>
+<hr>
+<p><a id="bolum3-10-kasa-istisnalari-ekrani-denetim-paneli"></a></p>
+<h3>10. Kasa Istisnalari ekrani (denetim paneli)</h3>
+<p>Ekran: <code>/app/kasa-istisnalari</code></p>
+<p>Bu ekranda 5 ana bolum vardir:
+1. Yuksek farkli oturumlar
+2. Forced close oturumlari
+3. Override kullanilan islemler
+4. Post edilmemis islemler
+5. Direkt GL cash-control olaylari (warn/override)</p>
+<p>Filtreler:
+- Legal entity
+- Operating unit
+- Register
+- Tarih araligi
+- Minimum mutlak fark</p>
+<p>Ne zaman bakilmali?
+- Gun sonu kapanista (operasyon)
+- Hafta sonu risk taramasinda (supervisor)
+- Ay sonu denetimde (finans/denetim)</p>
+<hr>
+<p><a id="bolum3-11-secim-rehberi-hizli-karar-tablosu"></a></p>
+<h3>11. "Secim" rehberi (hizli karar tablosu)</h3>
+<p><a id="bolum3-111-session-mode-secimi"></a></p>
+<h4>11.1 Session mode secimi</h4>
+<ul>
+<li><code>REQUIRED</code> sec:</li>
+<li>POS/TILL gibi vardiyali yerde</li>
+<li>Kisi bazli sorumluluk istiyorsan</li>
+<li>
+<p>Ornek:</p>
+<ul>
+<li>AVM magazasi, sabah kasiyer A aciyor, aksam kasiyer B kapatiyor</li>
+<li>"kimde kac saat acik kaldi, kapanista fark var mi" net izlenir</li>
+</ul>
+</li>
+<li>
+<p><code>OPTIONAL</code> sec:</p>
+</li>
+<li>Sube kasasi ama vardiya disiplini kismi ise</li>
+<li>
+<p>Ornek:</p>
+<ul>
+<li>Muhasebe ofisi haftada 2 gun kasa kullaniyor</li>
+<li>Kullanilan gunlerde oturum aciliyor, diger gunlerde islem yok</li>
+</ul>
+</li>
+<li>
+<p><code>NONE</code> sec:</p>
+</li>
+<li>Oturum takip ihtiyaci yoksa (nadir)</li>
+<li>Ornek:<ul>
+<li>Sadece yonetici kontrollu, gun ici kisiler arasi devir olmayan merkez kasa noktasi</li>
+</ul>
+</li>
+<li>Dikkat:<ul>
+<li>Denetimde "hangi kullanici hangi vardiyada kapatti" izi session seviyesinde olmaz</li>
+</ul>
+</li>
+</ul>
+<p><a id="bolum3-112-kapanis-nedeni-secimi"></a></p>
+<h4>11.2 Kapanis nedeni secimi</h4>
+<ul>
+<li><code>END_SHIFT</code>: normal vardiya kapanisi</li>
+<li><code>FORCED_CLOSE</code>: elektrik kesintisi, sistem arizasi, acil durum</li>
+<li>closeNote zorunlu</li>
+<li><code>COUNT_CORRECTION</code>: sayim tekrar duzeltmesi</li>
+</ul>
+<p><a id="bolum3-113-approvevariance-secimi"></a></p>
+<h4>11.3 approveVariance secimi</h4>
+<ul>
+<li>Isaretlemezsen:</li>
+<li>Esik ustu farkta kapama reddedilebilir</li>
+<li>Isaretlersen:</li>
+<li>Yetkin varsa kapama ilerler</li>
+<li>Denetimde "onayli varyans" izi kalir</li>
+</ul>
+<p><a id="bolum3-114-allownegative-secimi"></a></p>
+<h4>11.4 allowNegative secimi</h4>
+<ul>
+<li><code>false</code> (onerilen):</li>
+<li>Kasa disiplini yuksek</li>
+<li>Islem daha erken bloke olabilir</li>
+<li>
+<p>Ornek:</p>
+<ul>
+<li>Kasada 400 TL var, 700 TL odeme girilmek isteniyor -&gt; sistem durdurur</li>
+</ul>
+</li>
+<li>
+<p><code>true</code>:</p>
+</li>
+<li>Operasyon durmaz</li>
+<li>Yanlis kullanim riski artar</li>
+<li>Ornek:<ul>
+<li>Kasada 400 TL var, 700 TL odeme geciyor -&gt; kasa -300 olur</li>
+<li>Sonradan kapatilacak denirse de, gecikirse uyumsuzluk ve aciklama ihtiyaci artar</li>
+</ul>
+</li>
+</ul>
+<hr>
+<p><a id="bolum3-12-gercek-hayat-senaryolari"></a></p>
+<h3>12. Gercek hayat senaryolari</h3>
+<p><a id="bolum3-senaryo-a-magaza-gunluk-akisi-ideal"></a></p>
+<h4>Senaryo A - Magaza gunluk akisi (ideal)</h4>
+<ol>
+<li>Kasiyer sabah oturum acar (opening 1.000)</li>
+<li>Gun boyu tahsilat/tediye girer</li>
+<li>Supervisor gun sonu sayim alir</li>
+<li>Sayilan ve beklenen uyusur</li>
+<li>Oturum <code>END_SHIFT</code> ile kapanir</li>
+<li>Istisna ekraninda sorun gorulmez</li>
+</ol>
+<p><a id="bolum3-senaryo-b-varyansli-kapanis"></a></p>
+<h4>Senaryo B - Varyansli kapanis</h4>
+<ol>
+<li>Beklenen 20.000, sayilan 19.930</li>
+<li>Esik 50 ise fark 70 -&gt; esik ustu</li>
+<li>closeNote yazilir</li>
+<li>approveVariance + yetkili kullanici ile kapanir</li>
+<li>Sistem varyans kaydini olusturur ve kayit izi birakir</li>
+</ol>
+<p><a id="bolum3-senaryo-c-cift-tiklama-internet-kopmasi"></a></p>
+<h4>Senaryo C - Cift tiklama / internet kopmasi</h4>
+<ol>
+<li>Kullanici "Olustur" butonuna iki kere basar</li>
+<li>Sistem ayni idempotency anahtariyla ikinciyi tekrar kaydetmez</li>
+<li>Ekranda "Bu istek daha once islenmis" bilgisi gorunur</li>
+<li>Muhasebede duplicate olusmaz</li>
+</ol>
+<p><a id="bolum3-senaryo-d-yanlis-post-edildi"></a></p>
+<h4>Senaryo D - Yanlis post edildi</h4>
+<ol>
+<li>Islem POSTED oldugu icin duzenlenemez/silinemez</li>
+<li>Reverse yapilir (gerekce zorunlu)</li>
+<li>Gerekirse dogru islem yeni kayit olarak girilir</li>
+<li>Denetimde zincir net gorulur</li>
+</ol>
+<p><a id="bolum3-senaryo-e-acil-override"></a></p>
+<h4>Senaryo E - Acil override</h4>
+<ol>
+<li>Normal post kuraldan dolayi bloklanir</li>
+<li>Finans admin override secip gerekce girer</li>
+<li>Post tamamlanir</li>
+<li>Olay istisna paneline duser, denetimde izlenir</li>
+</ol>
+<hr>
+<p><a id="bolum3-13-sik-gorulen-hata-mesajlari-ve-cozum"></a></p>
+<h3>13. Sik gorulen hata mesajlari ve cozum</h3>
+<ul>
+<li>"registerId is required"</li>
+<li>
+<p>Register secmeden devam edilmis</p>
+</li>
+<li>
+<p>"Cash register is not ACTIVE"</p>
+</li>
+<li>
+<p>Register pasif; once aktiflestirin</p>
+</li>
+<li>
+<p>"An OPEN session already exists for this register"</p>
+</li>
+<li>
+<p>Ayni kasada ikinci oturum acilmaya calisildi</p>
+</li>
+<li>
+<p>"countedClosingAmount is required"</p>
+</li>
+<li>
+<p>Kapanista sayilan tutar girilmedi</p>
+</li>
+<li>
+<p>"closeNote is required when closedReason is FORCED_CLOSE"</p>
+</li>
+<li>
+<p>Forced close secip not yazilmadi</p>
+</li>
+<li>
+<p>"Variance exceeds configured threshold"</p>
+</li>
+<li>
+<p>Esik ustu fark var; approveVariance + yetki gerekir</p>
+</li>
+<li>
+<p>"amount exceeds register max_txn_amount"</p>
+</li>
+<li>
+<p>Islem tutari register limitini asti</p>
+</li>
+<li>
+<p>"Transaction currency must match register currency"</p>
+</li>
+<li>
+<p>Islem para birimi register para birimiyle ayni degil</p>
+</li>
+<li>
+<p>"Only POSTED transactions can be reversed"</p>
+</li>
+<li>
+<p>Reverse icin once islem POSTED olmali</p>
+</li>
+<li>
+<p>"overrideReason is required when overrideCashControl=true"</p>
+</li>
+<li>Override secili ama gerekce bos</li>
+</ul>
+<p>Not:
+- Hata kutusunda "Talep ID" gorurseniz, destek ekibine bu ID'yi iletin.</p>
+<hr>
+<p><a id="bolum3-14-gun-sonu-operasyon-proseduru-onerilen"></a></p>
+<h3>14. Gun sonu operasyon proseduru (onerilen)</h3>
+<ol>
+<li>Acik oturum listesi kontrol et</li>
+<li>Tum bekleyen islemleri gozden gecir</li>
+<li>Gerekliyse post/cancel islemlerini tamamla</li>
+<li>Fiziki sayim yap</li>
+<li>Oturumu uygun kapanis nedeni ile kapat</li>
+<li>Istisna panelini kontrol et:
+   - yuksek fark
+   - forced close
+   - override
+   - unposted</li>
+<li>Gerekli aciklamalari ayni gun gir</li>
+</ol>
+<hr>
+<p><a id="bolum3-15-haftalikaylik-kontrol-proseduru-finanssupervisor"></a></p>
+<h3>15. Haftalik/aylik kontrol proseduru (finans/supervisor)</h3>
+<p>Haftalik:
+- En cok varyans olusan registerlari incele
+- Tekrar eden forced close nedenlerini takip et
+- Override kullanimi artis trendini kontrol et</p>
+<p>Aylik:
+- Unposted islemleri sifirla
+- Varyans gain/loss hesap etkisini raporla
+- Denetim icin orneklem sec (requestId + aciklama + onay izi)</p>
+<hr>
+<p><a id="bolum3-16-neden-bu-kadar-kisit-var-isletme-mantigi"></a></p>
+<h3>16. "Neden bu kadar kisit var?" (isletme mantigi)</h3>
+<p>Bu kisitlarin amaci operasyonu zorlastirmak degil, su riskleri azaltmaktir:
+- Cift kayit
+- Yetkisiz post
+- Kapanis sonrasi sessiz veri degisikligi
+- Kasa-fiziki para uyumsuzlugu
+- Denetimde aciklanamayan hareketler</p>
+<p>Kisa cevap:
+- Hız + kontrol dengesini korumak icin.</p>
+<hr>
+<p><a id="bolum3-17-hangi-durumda-neyi-secmeliyim-tek-sayfada"></a></p>
+<h3>17. Hangi durumda neyi secmeliyim? (tek sayfada)</h3>
+<ul>
+<li>Magaza kasasi -&gt; <code>TILL + REQUIRED + allowNegative=false</code></li>
+<li>Subede esnek petty cash -&gt; <code>DRAWER + OPTIONAL</code></li>
+<li>Merkez kasa -&gt; <code>VAULT + OPTIONAL/NONE</code> (politika ile)</li>
+<li>Riskli gecis donemi -&gt; cash control mode <code>WARN</code></li>
+<li>Stabil uretim -&gt; cash control mode <code>ENFORCE</code></li>
+</ul>
+<hr>
+<p><a id="bolum3-18-son-notlar"></a></p>
+<h3>18. Son notlar</h3>
+<ul>
+<li>Post edilmis kayitlar bilerek degistirilemez. Bu denetim guvencesidir.</li>
+<li>Silmek yerine ters kayit tercih edilir.</li>
+<li>Yetkiniz yoksa sistem bunu gizler/engeller; bu hata degil kontrol mekanizmasidir.</li>
+<li>Istisna ekrani sadece "problem listesi" degil, iyilestirme rehberidir.</li>
+</ul>
+<hr>
+<p><a id="bolum3-19-ekip-ici-hizli-egitim-plani-onerilir"></a></p>
+<h3>19. Ekip ici hizli egitim plani (onerilir)</h3>
+<ol>
+<li>30 dk: Kasa Tanimlari + Session mode egitimi</li>
+<li>30 dk: Kasa Oturumu ac/kapat canli deneme</li>
+<li>45 dk: Islem olustur-post-cancel-reverse senaryolari</li>
+<li>15 dk: Istisna paneli ve gun sonu checklist</li>
+<li>15 dk: Soru-cevap + yetki matrisi teyidi</li>
+</ol>
+<p>Toplam: yaklasik 2 saat</p>
+<hr>
+<p><a id="bolum3-20-destek-isterken-ne-gondermeliyim"></a></p>
+<h3>20. Destek isterken ne gondermeliyim?</h3>
+<p>Sorun bildirirken su bilgileri ekleyin:
+- Hangi ekran/rota
+- Hangi adimda hata alindi
+- Hata metni
+- Talep ID (requestId)
+- Islem ID / Session ID / Register ID (varsa)
+- Kisa is aciklamasi (ornek: "Gun sonu kapama, forced close")</p>
+<p>Bu bilgiler, teknik ekibin sorunu cok daha hizli cozmesini saglar.</p>
+<hr>
+<p><a id="bolum3-21-ek-a-kasa-modulu-teknik-karar-ozeti-adrden-isletmeye-cevrilmis"></a></p>
+<h3>21. Ek A - Kasa Modulu Teknik Karar Ozeti (ADR'den Isletmeye Cevrilmis)</h3>
+<p>Bu bolum, sistemde gercekten calisan kurallarin is diline cevrilmis ozetidir.</p>
+<ol>
+<li>
+<p>Register modeli
+- Her kasa register tek bir GL (Defteri Kebir) hesabina baglidir.
+- Register hesabi: aktif, postable, leaf ve ayni legal entity olmalidir.</p>
+</li>
+<li>
+<p>Register tipleri ve oturum modu
+- Tipler: <code>VAULT</code>, <code>DRAWER</code>, <code>TILL</code>
+- Oturum modlari: <code>REQUIRED</code>, <code>OPTIONAL</code>, <code>NONE</code>
+- Sistem defaultlari:
+  - <code>registerType</code>: <code>DRAWER</code>
+  - <code>sessionMode</code>: <code>REQUIRED</code>
+- Not:
+  - Tipe gore otomatik mode atamasi (ornegin TILL-&gt;REQUIRED) politika olarak onerilir, kodda otomatik bagli degildir.</p>
+</li>
+<li>
+<p>Para birimi kurali
+- Register tek para birimiyle calisir.
+- Islem para birimi register para birimiyle ayni olmadan kayit gecmez.</p>
+</li>
+<li>
+<p>Kasa kontrollu hesap kurali
+- Kasa akisiyla baglanan hesaplar <code>is_cash_controlled</code> olur.
+- Direkt GL (Defteri Kebir) kaydinda cash-control modu <code>ENFORCE</code> ise kural disi giris bloklanir.</p>
+</li>
+<li>
+<p>Islem degistirilemezligi
+- <code>POSTED</code> islem sonradan duzenlenmez/silinmez.
+- Duzeltme yolu: <code>REVERSE</code> + gerekirse yeni dogru kayit.</p>
+</li>
+<li>
+<p>Oturum kurallari
+- Ayni register icin ayni anda tek acik oturum.
+- <code>REQUIRED</code> modda open session olmadan create/post akisi bloklanabilir.
+- Session kapamada expected/counted/variance hesaplanir.</p>
+</li>
+<li>
+<p>Guvenilirlik kurallari
+- Create icin idempotency key zorunlu.
+- Cift tiklama/yeniden denemede replay korumasi vardir.
+- <code>txn_no</code> legal entity + yil bazli deterministik gider.</p>
+</li>
+<li>
+<p>Transfer kapsam siniri (v1)
+- Registerlar arasi direkt transfer ayni legal entity + ayni operating unit icin desteklenir.
+- Cross-OU transfer icin cash-in-transit akisi v2 backlog'dadir.</p>
+</li>
+</ol>
+<hr>
+<p><a id="bolum3-22-ek-b-islem-tipine-gore-muhasebe-kaydi-matrisi-uygulamadaki-guncel-davranis"></a></p>
+<h3>22. Ek B - Islem Tipine Gore Muhasebe Kaydi Matrisi (Uygulamadaki Guncel Davranis)</h3>
+<table>
+<thead>
+<tr>
+<th>Islem Tipi</th>
+<th>Borc</th>
+<th>Alacak</th>
+<th>Pratik Not</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>RECEIPT</code></td>
+<td>Register Kasa</td>
+<td>Karsi Hesap</td>
+<td>Tahsilat</td>
+</tr>
+<tr>
+<td><code>PAYOUT</code></td>
+<td>Karsi Hesap</td>
+<td>Register Kasa</td>
+<td>Odeme</td>
+</tr>
+<tr>
+<td><code>DEPOSIT_TO_BANK</code></td>
+<td>Karsi Hesap (banka vb.)</td>
+<td>Register Kasa</td>
+<td>Kasadan bankaya cikis</td>
+</tr>
+<tr>
+<td><code>WITHDRAWAL_FROM_BANK</code></td>
+<td>Register Kasa</td>
+<td>Karsi Hesap (banka vb.)</td>
+<td>Bankadan kasaya giris</td>
+</tr>
+<tr>
+<td><code>TRANSFER_OUT</code></td>
+<td>Hedef Register Kasa (<code>counterCashRegisterId</code>)</td>
+<td>Kaynak Register Kasa (<code>registerId</code>)</td>
+<td>Ayni LE + ayni OU zorunlu</td>
+</tr>
+<tr>
+<td><code>TRANSFER_IN</code></td>
+<td>Hedef Register Kasa (<code>registerId</code>)</td>
+<td>Kaynak Register Kasa (<code>counterCashRegisterId</code>)</td>
+<td>Ayni LE + ayni OU zorunlu</td>
+</tr>
+<tr>
+<td><code>VARIANCE</code> (eksik)</td>
+<td>Varyans Zarar Hesabi</td>
+<td>Register Kasa</td>
+<td>Counted &lt; Expected</td>
+</tr>
+<tr>
+<td><code>VARIANCE</code> (fazla)</td>
+<td>Register Kasa</td>
+<td>Varyans Kazanc Hesabi</td>
+<td>Counted &gt; Expected</td>
+</tr>
+<tr>
+<td><code>OPENING_FLOAT</code></td>
+<td>Register Kasa</td>
+<td>Karsi Hesap</td>
+<td>Opsiyonel acilis hareketi</td>
+</tr>
+<tr>
+<td><code>CLOSING_ADJUSTMENT</code></td>
+<td>Karsi Hesap</td>
+<td>Register Kasa</td>
+<td>Kontrollu ve aciklamali kullanim</td>
+</tr>
+</tbody>
+</table>
+<p>Ek teknik kontroller:
+- Fis dengesi zorunlu (borc = alacak).
+- Period OPEN degilse post olmaz.
+- Satir scope kontrolunden gecmeyen kayit post olmaz.
+- Sistem kaynagi <code>source_type = CASH</code> olarak yazilir.</p>
+<hr>
+<p><a id="bolum3-23-ek-c-yetki-ve-gorev-ayrimi-sod-mevcut-sistem"></a></p>
+<h3>23. Ek C - Yetki ve Gorev Ayrimi (SoD) - Mevcut Sistem</h3>
+<p><a id="bolum3-231-mevcut-aktif-kasa-yetkileri"></a></p>
+<h4>23.1 Mevcut aktif kasa yetkileri</h4>
+<ul>
+<li><code>cash.register.read</code></li>
+<li><code>cash.register.upsert</code></li>
+<li><code>cash.session.open</code></li>
+<li><code>cash.session.close</code></li>
+<li><code>cash.txn.read</code></li>
+<li><code>cash.txn.create</code></li>
+<li><code>cash.txn.cancel</code></li>
+<li><code>cash.txn.post</code></li>
+<li><code>cash.txn.reverse</code></li>
+<li><code>cash.override.post</code></li>
+<li><code>cash.variance.approve</code></li>
+<li><code>cash.report.read</code></li>
+</ul>
+<p>Not:
+- <code>cash.txn.submit</code> ve <code>cash.txn.approve</code> su an aktif API akisinin parcasi degildir.</p>
+<p><a id="bolum3-232-sistemde-fiilen-zorunlu-olan-sod-kontrolleri"></a></p>
+<h4>23.2 Sistemde fiilen zorunlu olan SoD kontrolleri</h4>
+<ul>
+<li>Override ile post:</li>
+<li><code>overrideCashControl=true</code></li>
+<li><code>overrideReason</code> dolu</li>
+<li><code>cash.override.post</code> yetkisi</li>
+<li>Esik ustu varyans kapama:</li>
+<li><code>approveVariance=true</code></li>
+<li><code>cash.variance.approve</code> yetkisi</li>
+<li><code>closeNote</code> zorunlu</li>
+<li>Durum gecis kurallari:</li>
+<li>cancel: <code>DRAFT</code>/<code>SUBMITTED</code></li>
+<li>post: <code>DRAFT</code>/<code>SUBMITTED</code>/<code>APPROVED</code></li>
+<li>reverse: sadece <code>POSTED</code></li>
+<li>reversal satiri tekrar reverse edilemez</li>
+</ul>
+<p><a id="bolum3-233-henuz-zorunlu-olmayan-gelecek-iyilestirme-adayi"></a></p>
+<h4>23.3 Henuz zorunlu olmayan (gelecek iyilestirme adayi)</h4>
+<ul>
+<li>\"Olusturan kisi post edemez\" gibi kisi-bazli ayrim</li>
+<li>Ayrik submit/approve endpointleri</li>
+</ul>
+<p>Bu nedenle organizasyonel SoD (rol ayrimi) halen onemlidir:
+- Operator agirlikli rollerde <code>post/reverse/override</code> verilmemelidir.</p>
+<hr></main>
+</body></html>

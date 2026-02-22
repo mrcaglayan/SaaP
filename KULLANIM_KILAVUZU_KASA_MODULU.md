@@ -654,3 +654,114 @@ Sorun bildirirken su bilgileri ekleyin:
 - Kisa is aciklamasi (ornek: "Gun sonu kapama, forced close")
 
 Bu bilgiler, teknik ekibin sorunu cok daha hizli cozmesini saglar.
+
+---
+
+## 21. Ek A - Kasa Modulu Teknik Karar Ozeti (ADR'den Isletmeye Cevrilmis)
+
+Bu bolum, sistemde gercekten calisan kurallarin is diline cevrilmis ozetidir.
+
+1. Register modeli
+- Her kasa register tek bir GL (Defteri Kebir) hesabina baglidir.
+- Register hesabi: aktif, postable, leaf ve ayni legal entity olmalidir.
+
+2. Register tipleri ve oturum modu
+- Tipler: `VAULT`, `DRAWER`, `TILL`
+- Oturum modlari: `REQUIRED`, `OPTIONAL`, `NONE`
+- Sistem defaultlari:
+  - `registerType`: `DRAWER`
+  - `sessionMode`: `REQUIRED`
+- Not:
+  - Tipe gore otomatik mode atamasi (ornegin TILL->REQUIRED) politika olarak onerilir, kodda otomatik bagli degildir.
+
+3. Para birimi kurali
+- Register tek para birimiyle calisir.
+- Islem para birimi register para birimiyle ayni olmadan kayit gecmez.
+
+4. Kasa kontrollu hesap kurali
+- Kasa akisiyla baglanan hesaplar `is_cash_controlled` olur.
+- Direkt GL (Defteri Kebir) kaydinda cash-control modu `ENFORCE` ise kural disi giris bloklanir.
+
+5. Islem degistirilemezligi
+- `POSTED` islem sonradan duzenlenmez/silinmez.
+- Duzeltme yolu: `REVERSE` + gerekirse yeni dogru kayit.
+
+6. Oturum kurallari
+- Ayni register icin ayni anda tek acik oturum.
+- `REQUIRED` modda open session olmadan create/post akisi bloklanabilir.
+- Session kapamada expected/counted/variance hesaplanir.
+
+7. Guvenilirlik kurallari
+- Create icin idempotency key zorunlu.
+- Cift tiklama/yeniden denemede replay korumasi vardir.
+- `txn_no` legal entity + yil bazli deterministik gider.
+
+8. Transfer kapsam siniri (v1)
+- Registerlar arasi direkt transfer ayni legal entity + ayni operating unit icin desteklenir.
+- Cross-OU transfer icin cash-in-transit akisi v2 backlog'dadir.
+
+---
+
+## 22. Ek B - Islem Tipine Gore Muhasebe Kaydi Matrisi (Uygulamadaki Guncel Davranis)
+
+| Islem Tipi | Borc | Alacak | Pratik Not |
+|---|---|---|---|
+| `RECEIPT` | Register Kasa | Karsi Hesap | Tahsilat |
+| `PAYOUT` | Karsi Hesap | Register Kasa | Odeme |
+| `DEPOSIT_TO_BANK` | Karsi Hesap (banka vb.) | Register Kasa | Kasadan bankaya cikis |
+| `WITHDRAWAL_FROM_BANK` | Register Kasa | Karsi Hesap (banka vb.) | Bankadan kasaya giris |
+| `TRANSFER_OUT` | Hedef Register Kasa (`counterCashRegisterId`) | Kaynak Register Kasa (`registerId`) | Ayni LE + ayni OU zorunlu |
+| `TRANSFER_IN` | Hedef Register Kasa (`registerId`) | Kaynak Register Kasa (`counterCashRegisterId`) | Ayni LE + ayni OU zorunlu |
+| `VARIANCE` (eksik) | Varyans Zarar Hesabi | Register Kasa | Counted < Expected |
+| `VARIANCE` (fazla) | Register Kasa | Varyans Kazanc Hesabi | Counted > Expected |
+| `OPENING_FLOAT` | Register Kasa | Karsi Hesap | Opsiyonel acilis hareketi |
+| `CLOSING_ADJUSTMENT` | Karsi Hesap | Register Kasa | Kontrollu ve aciklamali kullanim |
+
+Ek teknik kontroller:
+- Fis dengesi zorunlu (borc = alacak).
+- Period OPEN degilse post olmaz.
+- Satir scope kontrolunden gecmeyen kayit post olmaz.
+- Sistem kaynagi `source_type = CASH` olarak yazilir.
+
+---
+
+## 23. Ek C - Yetki ve Gorev Ayrimi (SoD) - Mevcut Sistem
+
+### 23.1 Mevcut aktif kasa yetkileri
+- `cash.register.read`
+- `cash.register.upsert`
+- `cash.session.open`
+- `cash.session.close`
+- `cash.txn.read`
+- `cash.txn.create`
+- `cash.txn.cancel`
+- `cash.txn.post`
+- `cash.txn.reverse`
+- `cash.override.post`
+- `cash.variance.approve`
+- `cash.report.read`
+
+Not:
+- `cash.txn.submit` ve `cash.txn.approve` su an aktif API akisinin parcasi degildir.
+
+### 23.2 Sistemde fiilen zorunlu olan SoD kontrolleri
+- Override ile post:
+  - `overrideCashControl=true`
+  - `overrideReason` dolu
+  - `cash.override.post` yetkisi
+- Esik ustu varyans kapama:
+  - `approveVariance=true`
+  - `cash.variance.approve` yetkisi
+  - `closeNote` zorunlu
+- Durum gecis kurallari:
+  - cancel: `DRAFT`/`SUBMITTED`
+  - post: `DRAFT`/`SUBMITTED`/`APPROVED`
+  - reverse: sadece `POSTED`
+  - reversal satiri tekrar reverse edilemez
+
+### 23.3 Henuz zorunlu olmayan (gelecek iyilestirme adayi)
+- \"Olusturan kisi post edemez\" gibi kisi-bazli ayrim
+- Ayrik submit/approve endpointleri
+
+Bu nedenle organizasyonel SoD (rol ayrimi) halen onemlidir:
+- Operator agirlikli rollerde `post/reverse/override` verilmemelidir.
