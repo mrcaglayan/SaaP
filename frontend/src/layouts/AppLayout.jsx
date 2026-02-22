@@ -215,18 +215,99 @@ function Icon({ name, className = "h-4 w-4" }) {
   }
 }
 
+const BUILTIN_ICON_NAMES = new Set([
+  "dashboard",
+  "spark",
+  "journal",
+  "bank",
+  "company",
+  "box",
+  "inventory",
+  "calendar",
+  "report",
+  "settings",
+  "logout",
+  "menu",
+  "chevron-left",
+  "chevron-right",
+]);
+
+const BUILTIN_ICON_EMOJI = {
+  dashboard: "🏠",
+  spark: "✨",
+  journal: "📘",
+  bank: "🏦",
+  company: "🏢",
+  box: "📦",
+  inventory: "🗂️",
+  calendar: "🗓️",
+  report: "📊",
+  settings: "⚙️",
+  logout: "🚪",
+};
+
+const SIDEBAR_ICON_RULES = [
+  { pattern: /(dashboard|anasayfa)/, icon: "🏠" },
+  { pattern: /(employee|kullanici|user|personel)/, icon: "👥" },
+  { pattern: /(permission|yetki|rbac|scope|audit|rol)/, icon: "🛡️" },
+  { pattern: /(bank)/, icon: "🏦" },
+  { pattern: /(stok|inventory|item)/, icon: "📦" },
+  { pattern: /(demirbas|asset|amortisman)/, icon: "🧰" },
+  { pattern: /(donem|calendar|month|year|kapanis|acilis)/, icon: "🗓️" },
+  { pattern: /(report|rapor|mizan|bilanco|gelir)/, icon: "📊" },
+  { pattern: /(ayar|setup|settings|kurulumu)/, icon: "⚙️" },
+  { pattern: /(kur|fx|rate)/, icon: "💱" },
+  { pattern: /(konsolidasyon|consolidation)/, icon: "🧩" },
+  { pattern: /(tediye|tahsilat|mahsup|yevmiye|journal)/, icon: "📒" },
+  { pattern: /(organizasyon|organization|sirket|company)/, icon: "🏢" },
+  { pattern: /(discount|indirim)/, icon: "🏷️" },
+  { pattern: /(request|talep)/, icon: "📝" },
+  { pattern: /(approve|onay)/, icon: "✅" },
+];
+
+function deriveSidebarEmoji(item) {
+  const rawIcon = typeof item?.icon === "string" ? item.icon.trim() : "";
+  if (rawIcon) {
+    if (BUILTIN_ICON_EMOJI[rawIcon]) return BUILTIN_ICON_EMOJI[rawIcon];
+    return rawIcon;
+  }
+
+  const haystack = `${item?.label || ""} ${item?.title || ""} ${item?.to || ""} ${item?.matchPrefix || ""}`.toLowerCase();
+  for (const rule of SIDEBAR_ICON_RULES) {
+    if (rule.pattern.test(haystack)) return rule.icon;
+  }
+
+  return isSectionItem(item) ? "📁" : "📄";
+}
+
+function renderSidebarIcon(item, options = {}) {
+  const { svgClass = "h-4 w-4", emojiClass = "text-[16px]" } = options;
+  const rawIcon = typeof item?.icon === "string" ? item.icon.trim() : "";
+
+  if (rawIcon && BUILTIN_ICON_NAMES.has(rawIcon) && !BUILTIN_ICON_EMOJI[rawIcon]) {
+    return <Icon name={rawIcon} className={svgClass} />;
+  }
+
+  const emoji = deriveSidebarEmoji(item);
+  return (
+    <span className={`inline-flex items-center justify-center leading-none ${emojiClass}`} aria-hidden="true">
+      {emoji}
+    </span>
+  );
+}
+
 function mainLinkClass({ isActive }, collapsed) {
-  return `group flex w-full items-center gap-3 rounded-md border-l-2 text-sm font-medium transition-colors ${collapsed ? "justify-center px-0 py-2.5" : "px-3 py-2.5"
+  return `group flex items-center text-sm font-semibold transition-colors ${collapsed ? "mx-auto h-11 w-11 justify-center rounded-lg p-0" : "w-full gap-2 rounded-lg pl-4 pr-0 py-1.5"
     } ${isActive
-      ? "border-cyan-400 bg-cyan-400/10 text-cyan-100"
-      : "border-transparent text-slate-300 hover:bg-white/5 hover:text-white"
+      ? "bg-gray-100 text-[#143c62]"
+      : "text-[#143c62] hover:bg-gray-100 hover:text-[#143c62]"
     }`;
 }
 
-function subLinkClass(isActive) {
-  return `block rounded-md border-l px-3 py-1.5 text-sm transition-colors ${isActive
-    ? "border-cyan-300 bg-cyan-400/10 text-cyan-100"
-    : "border-slate-700 text-slate-400 hover:text-slate-100"
+function subLinkClass(isActive, nested = false) {
+  return `flex w-full items-start gap-2 rounded-sm ${nested ? "pl-2 pr-2 py-2" : "pl-2 pr-2 py-1.5"} text-sm font-medium transition-colors ${isActive
+    ? "bg-gray-100 text-black"
+    : "text-gray-700 hover:bg-gray-100 hover:text-black"
     }`;
 }
 
@@ -439,6 +520,11 @@ export default function AppLayout() {
 
   const closeMobileSidebar = () => setMobileOpen(false);
   const closeReadinessMenu = () => setReadinessMenuPathname(null);
+  const handleLogout = () => {
+    logout();
+    closeMobileSidebar();
+    navigate("/login", { replace: true });
+  };
 
   useEffect(() => {
     if (!readinessMenuOpen) return undefined;
@@ -478,41 +564,61 @@ export default function AppLayout() {
           );
 
         return (
-          <SidebarSection
+          <div
             key={subItem.title || `section-${depth}-${index}`}
-            title={getItemDisplayText(subItem, "title") || "Section"}
-            icon={<Icon name={subItem.icon || "spark"} className="h-4 w-4" />}
-            badge={subItem.badge}
-            collapsed={false}
-            defaultOpen={nestedSectionActive}
-            active={nestedSectionActive}
+            className="border-l-2 border-gray-300"
           >
-            {renderSectionChildren(nestedItems, depth + 1)}
-          </SidebarSection>
+            <SidebarSection
+              title={getItemDisplayText(subItem, "title") || "Section"}
+              icon={renderSidebarIcon(subItem, {
+                svgClass: "h-4 w-4",
+                emojiClass: "text-[16px]",
+              })}
+              badge={subItem.badge}
+              collapsed={collapsed}
+              nested
+              flyoutNested
+              defaultOpen={nestedSectionActive}
+              active={nestedSectionActive}
+            >
+              {renderSectionChildren(nestedItems, depth + 1)}
+            </SidebarSection>
+          </div>
         );
       }
 
       return (
-        <NavLink
+        <div
           key={subItem.to || `${subItem.label}-${depth}-${index}`}
-          to={subItem.to}
-          end={subItem.end}
-          className={() =>
-            subLinkClass(
-              isSidebarEntryActive(subItem, location.pathname, location.hash)
-            )
-          }
-          onClick={closeMobileSidebar}
+          className="border-l-2 border-gray-300"
         >
-          <span className="flex items-center justify-between gap-2">
-            <span className="truncate">{getItemDisplayText(subItem, "label")}</span>
-            {subItem.implemented !== true && (
-              <span className="rounded-full border border-slate-600 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-slate-400">
-                Soon
-              </span>
-            )}
-          </span>
-        </NavLink>
+          <NavLink
+            to={subItem.to}
+            end={subItem.end}
+            className={() =>
+              subLinkClass(
+                isSidebarEntryActive(subItem, location.pathname, location.hash),
+                depth > 0
+              )
+            }
+            onClick={closeMobileSidebar}
+          >
+            <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center text-[#143c62]">
+              {renderSidebarIcon(subItem, {
+                svgClass: "h-4 w-4",
+                emojiClass: "text-[15px]",
+              })}
+            </span>
+            <span className="flex min-w-0 flex-1 items-start justify-between gap-2">
+              <span className="whitespace-normal break-words leading-5">{getItemDisplayText(subItem, "label")}</span>
+              {subItem.implemented !== true && (
+                <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full border border-slate-300 px-1 text-[9px] font-semibold uppercase leading-none text-slate-500">
+                  S
+                </span>
+              )}
+            </span>
+          </NavLink>
+        </div>
       );
     });
   }
@@ -526,16 +632,15 @@ export default function AppLayout() {
       />
 
       <aside
-        className={`absolute inset-y-0 left-0 z-40 flex flex-col border-r border-white/10 bg-slate-950 text-slate-100 shadow-2xl transition-all duration-300 md:static md:translate-x-0 ${collapsed ? "w-20" : "w-72"
+        className={`absolute inset-y-0 left-0 z-40 flex flex-col border-r border-slate-200 bg-white text-slate-900 shadow-xl transition-all duration-300 md:static md:translate-x-0 lg:rounded-br-3xl ${collapsed ? "w-20" : "w-72"
           } ${mobileOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"}`}
       >
-        <div className="relative border-b border-white/10 px-3 py-3">
-          <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,#22d3ee30,transparent_60%)]" />
-          <div className="relative flex items-center gap-2">
+        <div className="shrink-0 border-b border-slate-200 px-3 py-3">
+          <div className="flex items-center gap-2 overflow-hidden">
             <button
               type="button"
               onClick={() => setCollapsed((value) => !value)}
-              className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-white/15 bg-white/5 text-slate-200 transition hover:bg-white/12 hover:text-white"
+              className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900"
               aria-label={collapsed ? t("layout.expandSidebar") : t("layout.collapseSidebar")}
             >
               <Icon
@@ -543,116 +648,142 @@ export default function AppLayout() {
                 className="h-4 w-4"
               />
             </button>
-            {!collapsed && (
-              <div className="min-w-0">
-                <p className="text-[10px] uppercase tracking-[0.24em] text-slate-400">
-                  {t("layout.financeConsole")}
-                </p>
-                <h3 className="truncate text-sm font-semibold text-slate-100">
-                  {t("layout.proSidebar")}
-                </h3>
-              </div>
-            )}
+            <div
+              className={`min-w-0 overflow-hidden transition-all duration-200 ease-out ${collapsed ? "max-w-0 opacity-0" : "max-w-[12rem] opacity-100"
+                }`}
+              aria-hidden={collapsed}
+            >
+              <p className="truncate whitespace-nowrap text-[10px] uppercase tracking-[0.2em] text-slate-500">
+                {t("layout.financeConsole")}
+              </p>
+              <h3 className="truncate whitespace-nowrap text-sm font-semibold text-[#143c62]">
+                {t("layout.proSidebar")}
+              </h3>
+            </div>
           </div>
         </div>
 
-        <nav
-          className={`flex-1 space-y-0.5 px-3 py-4 ${collapsed ? "overflow-visible" : "overflow-y-auto"
-            }`}
-        >
-          {visibleSidebarItems.map((item) => {
-            if (item.type === "link") {
-              return (
-                <NavLink
-                  key={item.to}
-                  to={item.to}
-                  end={item.end}
-                  title={collapsed ? getItemDisplayText(item, "label") : undefined}
-                  className={(state) => mainLinkClass(state, collapsed)}
-                  onClick={closeMobileSidebar}
-                >
-                  {({ isActive }) => (
-                    <>
-                      <span
-                        className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md transition-colors ${isActive
-                          ? "text-cyan-200"
-                          : collapsed
-                            ? "text-slate-200"
-                            : "text-slate-300 group-hover:text-slate-100"
-                          }`}
-                      >
-                        <Icon name={item.icon} className="h-4 w-4" />
-                      </span>
-                      {!collapsed && (
-                        <span className="truncate">{getItemDisplayText(item, "label")}</span>
-                      )}
-                      {!collapsed && item.badge && (
-                        <span className="ml-auto rounded-full bg-rose-400/20 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-rose-100">
-                          {item.badge}
+        <div className="flex-1 min-h-0">
+          <nav
+            className={`h-full space-y-0.5 pl-3 pr-0 py-3 ${collapsed
+                ? "overflow-visible"
+                : "overflow-y-scroll overflow-x-hidden [scrollbar-width:thin] [scrollbar-color:#cbd5e1_transparent] [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-slate-300 hover:[&::-webkit-scrollbar-thumb]:bg-slate-400"
+              }`}
+          >
+            {visibleSidebarItems.map((item) => {
+              if (item.type === "link") {
+                return (
+                  <NavLink
+                    key={item.to}
+                    to={item.to}
+                    end={item.end}
+                    title={collapsed ? getItemDisplayText(item, "label") : undefined}
+                    className={(state) => mainLinkClass(state, collapsed)}
+                    onClick={closeMobileSidebar}
+                  >
+                    {({ isActive }) => (
+                      <>
+                        <span
+                          className={`inline-flex h-8 w-8 shrink-0 items-center justify-center transition-colors ${isActive
+                              ? "text-[#143c62]"
+                              : "text-[#143c62]"
+                            }`}
+                        >
+                          {renderSidebarIcon(item, {
+                            svgClass: "h-4 w-4",
+                            emojiClass: "text-[18px]",
+                          })}
                         </span>
-                      )}
-                    </>
-                  )}
-                </NavLink>
-              );
-            }
+                        {!collapsed && (
+                          <span className="min-w-0 flex-1 truncate whitespace-nowrap leading-5">
+                            {getItemDisplayText(item, "label")}
+                          </span>
+                        )}
+                        {!collapsed && item.badge && (
+                          <span className="ml-auto rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-slate-700">
+                            {item.badge}
+                          </span>
+                        )}
+                      </>
+                    )}
+                  </NavLink>
+                );
+              }
 
-            const isSectionActive =
-              (item.matchPrefix && location.pathname.startsWith(item.matchPrefix)) ||
-              hasActiveChildPath(
-                item.items,
-                location.pathname,
-                location.hash
-              );
-            const sectionKey = item.matchPrefix || item.title;
-            const isSectionOpen = openTopSectionKey === sectionKey;
+              const isSectionActive =
+                (item.matchPrefix && location.pathname.startsWith(item.matchPrefix)) ||
+                hasActiveChildPath(
+                  item.items,
+                  location.pathname,
+                  location.hash
+                );
+              const sectionKey = item.matchPrefix || item.title;
+              const isSectionOpen = openTopSectionKey === sectionKey;
 
-            return (
+              return (
               <SidebarSection
                 key={item.title}
                 title={getItemDisplayText(item, "title")}
-                icon={<Icon name={item.icon} className="h-4 w-4" />}
+                icon={renderSidebarIcon(item, {
+                  svgClass: "h-5 w-5",
+                  emojiClass: "text-[18px]",
+                })}
                 badge={item.badge}
                 collapsed={collapsed}
                 open={isSectionOpen}
-                active={isSectionActive}
-                onToggle={() =>
-                  setOpenTopSectionKey((current) =>
-                    current === sectionKey ? null : sectionKey
-                  )
-                }
-              >
-                {renderSectionChildren(item.items)}
-              </SidebarSection>
-            );
-          })}
-        </nav>
+                  active={isSectionActive}
+                  onToggle={() =>
+                    setOpenTopSectionKey((current) =>
+                      current === sectionKey ? null : sectionKey
+                    )
+                  }
+                >
+                  {renderSectionChildren(item.items)}
+                </SidebarSection>
+              );
+            })}
+          </nav>
+        </div>
 
-        <div className="space-y-3 border-t border-white/10 p-3">
-          {!collapsed && (
-            <div className="rounded-lg border border-white/10 bg-white/5 px-3 py-2">
-              <p className="text-[10px] uppercase tracking-[0.16em] text-slate-400">
+        <div className="shrink-0 border-t border-slate-200 bg-white p-3 overflow-hidden">
+          <div
+            className={`mx-auto flex items-center rounded-lg transition-all duration-300 ${collapsed
+                ? "h-11 w-11 justify-center gap-0 p-0"
+                : "w-full justify-between gap-3 border border-slate-200 bg-slate-50 px-3 py-2"
+              }`}
+          >
+            <div
+              className={`min-w-0 transition-all duration-200 ${collapsed ? "max-w-0 overflow-hidden opacity-0" : "max-w-[11rem] opacity-100"
+                }`}
+              aria-hidden={collapsed}
+            >
+              <p className="truncate whitespace-nowrap text-[10px] uppercase tracking-[0.16em] text-slate-500">
                 {t("layout.myAccount")}
               </p>
-              <p className="mt-0.5 truncate text-sm font-semibold text-slate-100">
+              <p className="mt-0.5 truncate whitespace-nowrap text-sm font-semibold text-[#143c62]">
                 {user?.name || t("layout.loggedInUser")}
               </p>
             </div>
-          )}
-          <button
-            onClick={() => {
-              logout();
-              closeMobileSidebar();
-              navigate("/login", { replace: true });
-            }}
-            className={`group flex w-full items-center gap-3 rounded-lg border border-white/15 bg-white/5 text-sm font-semibold text-slate-100 transition hover:bg-white/12 ${collapsed ? "justify-center px-0 py-2.5" : "px-3 py-2.5"
-              }`}
-          >
-            <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/10 text-slate-200 transition group-hover:bg-white/20">
-              <Icon name="logout" className="h-4 w-4" />
-            </span>
-            {!collapsed && <span>{t("layout.logout")}</span>}
-          </button>
+
+            <button
+              type="button"
+              onClick={handleLogout}
+              title={collapsed ? t("layout.logout") : undefined}
+              className={`inline-flex shrink-0 items-center transition-all duration-200 ${collapsed
+                  ? "h-11 w-11 justify-center rounded-lg border border-slate-300 bg-white text-[#143c62] hover:bg-gray-100"
+                  : "gap-1.5 rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-semibold text-[#143c62] hover:bg-gray-100"
+                }`}
+            >
+              <Icon name="logout" className={collapsed ? "h-4 w-4" : "h-3.5 w-3.5"} />
+              <span
+                className={`overflow-hidden whitespace-nowrap transition-all duration-200 ${collapsed ? "max-w-0 opacity-0" : "max-w-16 opacity-100"
+                  }`}
+                aria-hidden={collapsed}
+              >
+                {t("layout.logout")}
+              </span>
+            </button>
+          </div>
         </div>
       </aside>
 

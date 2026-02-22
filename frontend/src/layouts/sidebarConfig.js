@@ -204,12 +204,12 @@ export const sidebarItems = [
     items: [
       {
         type: "section",
-        title: "Aylik Donem Sonu Islemler",
+        title: "Aysonu İşlemler",
         icon: "calendar",
         matchPrefix: "/app/donem-sonu-islemler/aylik",
         items: [
           {
-            label: "Degerleme Islemleri",
+            label: "Değerleme İşlemleri",
             to: "/app/donem-sonu-islemler/aylik/degerleme-islemleri",
           },
           {
@@ -230,7 +230,7 @@ export const sidebarItems = [
       },
       {
         type: "section",
-        title: "Yillik Donem Sonu Islemleri",
+        title: "Yılsonu İşlemler",
         icon: "calendar",
         matchPrefix: "/app/donem-sonu-islemler/yillik",
         items: [
