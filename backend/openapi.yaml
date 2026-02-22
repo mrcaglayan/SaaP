@@ -48,6 +48,22 @@
     {
       "name": "Onboarding",
       "description": "Tenant/company bootstrap flow endpoints."
+    },
+    {
+      "name": "Cash",
+      "description": "Cash register, session, transaction, and exception workflows."
+    },
+    {
+      "name": "Provider",
+      "description": "Provider control-plane administration endpoints."
+    },
+    {
+      "name": "Auth",
+      "description": "Session and identity endpoints."
+    },
+    {
+      "name": "System",
+      "description": "System health and operational endpoints."
     }
   ],
   "paths": {
@@ -1078,6 +1094,44 @@
           },
           "403": {
             "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Security"
+        ],
+        "operationId": "postApiV1SecurityUsers",
+        "summary": "Auto-generated: POST /api/v1/security/users",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
           }
         }
       }
@@ -2958,6 +3012,46 @@
             "$ref": "#/components/responses/ErrorResponse"
           }
         }
+      },
+      "get": {
+        "tags": [
+          "Consolidation"
+        ],
+        "operationId": "getApiV1ConsolidationGroupsGroupidMembers",
+        "summary": "Auto-generated: GET /api/v1/consolidation/groups/{groupId}/members",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "groupId",
+            "required": true,
+            "description": "groupId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
       }
     },
     "/api/v1/consolidation/runs": {
@@ -3842,6 +3936,1493 @@
           }
         }
       }
+    },
+    "/api/v1/cash/config": {
+      "get": {
+        "tags": [
+          "Cash"
+        ],
+        "operationId": "getApiV1CashConfig",
+        "summary": "Auto-generated: GET /api/v1/cash/config",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
+    "/api/v1/cash/exceptions": {
+      "get": {
+        "tags": [
+          "Cash"
+        ],
+        "operationId": "getApiV1CashExceptions",
+        "summary": "Auto-generated: GET /api/v1/cash/exceptions",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
+    "/api/v1/cash/registers": {
+      "get": {
+        "tags": [
+          "Cash"
+        ],
+        "operationId": "getApiV1CashRegisters",
+        "summary": "Auto-generated: GET /api/v1/cash/registers",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Cash"
+        ],
+        "operationId": "postApiV1CashRegisters",
+        "summary": "Auto-generated: POST /api/v1/cash/registers",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/cash/registers/{registerId}": {
+      "get": {
+        "tags": [
+          "Cash"
+        ],
+        "operationId": "getApiV1CashRegistersRegisterid",
+        "summary": "Auto-generated: GET /api/v1/cash/registers/{registerId}",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "registerId",
+            "required": true,
+            "description": "registerId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/cash/registers/{registerId}/status": {
+      "post": {
+        "tags": [
+          "Cash"
+        ],
+        "operationId": "postApiV1CashRegistersRegisteridStatus",
+        "summary": "Auto-generated: POST /api/v1/cash/registers/{registerId}/status",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "registerId",
+            "required": true,
+            "description": "registerId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/cash/sessions": {
+      "get": {
+        "tags": [
+          "Cash"
+        ],
+        "operationId": "getApiV1CashSessions",
+        "summary": "Auto-generated: GET /api/v1/cash/sessions",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
+    "/api/v1/cash/sessions/{sessionId}": {
+      "get": {
+        "tags": [
+          "Cash"
+        ],
+        "operationId": "getApiV1CashSessionsSessionid",
+        "summary": "Auto-generated: GET /api/v1/cash/sessions/{sessionId}",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "description": "sessionId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/cash/sessions/{sessionId}/close": {
+      "post": {
+        "tags": [
+          "Cash"
+        ],
+        "operationId": "postApiV1CashSessionsSessionidClose",
+        "summary": "Auto-generated: POST /api/v1/cash/sessions/{sessionId}/close",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "description": "sessionId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/cash/sessions/open": {
+      "post": {
+        "tags": [
+          "Cash"
+        ],
+        "operationId": "postApiV1CashSessionsOpen",
+        "summary": "Auto-generated: POST /api/v1/cash/sessions/open",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/cash/transactions": {
+      "get": {
+        "tags": [
+          "Cash"
+        ],
+        "operationId": "getApiV1CashTransactions",
+        "summary": "Auto-generated: GET /api/v1/cash/transactions",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Cash"
+        ],
+        "operationId": "postApiV1CashTransactions",
+        "summary": "Auto-generated: POST /api/v1/cash/transactions",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/cash/transactions/{transactionId}": {
+      "get": {
+        "tags": [
+          "Cash"
+        ],
+        "operationId": "getApiV1CashTransactionsTransactionid",
+        "summary": "Auto-generated: GET /api/v1/cash/transactions/{transactionId}",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "transactionId",
+            "required": true,
+            "description": "transactionId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/cash/transactions/{transactionId}/cancel": {
+      "post": {
+        "tags": [
+          "Cash"
+        ],
+        "operationId": "postApiV1CashTransactionsTransactionidCancel",
+        "summary": "Auto-generated: POST /api/v1/cash/transactions/{transactionId}/cancel",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "transactionId",
+            "required": true,
+            "description": "transactionId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/cash/transactions/{transactionId}/post": {
+      "post": {
+        "tags": [
+          "Cash"
+        ],
+        "operationId": "postApiV1CashTransactionsTransactionidPost",
+        "summary": "Auto-generated: POST /api/v1/cash/transactions/{transactionId}/post",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "transactionId",
+            "required": true,
+            "description": "transactionId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/cash/transactions/{transactionId}/reverse": {
+      "post": {
+        "tags": [
+          "Cash"
+        ],
+        "operationId": "postApiV1CashTransactionsTransactionidReverse",
+        "summary": "Auto-generated: POST /api/v1/cash/transactions/{transactionId}/reverse",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "transactionId",
+            "required": true,
+            "description": "transactionId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/gl/reclassifications/balance-split": {
+      "post": {
+        "tags": [
+          "GL"
+        ],
+        "operationId": "postApiV1GlReclassificationsBalanceSplit",
+        "summary": "Auto-generated: POST /api/v1/gl/reclassifications/balance-split",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/gl/reclassifications/runs": {
+      "get": {
+        "tags": [
+          "GL"
+        ],
+        "operationId": "getApiV1GlReclassificationsRuns",
+        "summary": "Auto-generated: GET /api/v1/gl/reclassifications/runs",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
+    "/api/v1/gl/reclassifications/source-lines": {
+      "get": {
+        "tags": [
+          "GL"
+        ],
+        "operationId": "getApiV1GlReclassificationsSourceLines",
+        "summary": "Auto-generated: GET /api/v1/gl/reclassifications/source-lines",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
+    "/api/v1/gl/reclassifications/transaction-lines": {
+      "post": {
+        "tags": [
+          "GL"
+        ],
+        "operationId": "postApiV1GlReclassificationsTransactionLines",
+        "summary": "Auto-generated: POST /api/v1/gl/reclassifications/transaction-lines",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/intercompany/compliance-issues": {
+      "get": {
+        "tags": [
+          "Intercompany"
+        ],
+        "operationId": "getApiV1IntercompanyComplianceIssues",
+        "summary": "Auto-generated: GET /api/v1/intercompany/compliance-issues",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
+    "/api/v1/org/currencies": {
+      "get": {
+        "tags": [
+          "Org"
+        ],
+        "operationId": "getApiV1OrgCurrencies",
+        "summary": "Auto-generated: GET /api/v1/org/currencies",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
+    "/api/v1/org/shareholder-journal-config": {
+      "get": {
+        "tags": [
+          "Org"
+        ],
+        "operationId": "getApiV1OrgShareholderJournalConfig",
+        "summary": "Auto-generated: GET /api/v1/org/shareholder-journal-config",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Org"
+        ],
+        "operationId": "postApiV1OrgShareholderJournalConfig",
+        "summary": "Auto-generated: POST /api/v1/org/shareholder-journal-config",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/org/shareholders": {
+      "get": {
+        "tags": [
+          "Org"
+        ],
+        "operationId": "getApiV1OrgShareholders",
+        "summary": "Auto-generated: GET /api/v1/org/shareholders",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Org"
+        ],
+        "operationId": "postApiV1OrgShareholders",
+        "summary": "Auto-generated: POST /api/v1/org/shareholders",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/org/shareholders/auto-provision-sub-accounts": {
+      "post": {
+        "tags": [
+          "Org"
+        ],
+        "operationId": "postApiV1OrgShareholdersAutoProvisionSubAccounts",
+        "summary": "Auto-generated: POST /api/v1/org/shareholders/auto-provision-sub-accounts",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/org/shareholders/commitment-journal-batch": {
+      "post": {
+        "tags": [
+          "Org"
+        ],
+        "operationId": "postApiV1OrgShareholdersCommitmentJournalBatch",
+        "summary": "Auto-generated: POST /api/v1/org/shareholders/commitment-journal-batch",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/org/shareholders/commitment-journal-batch/preview": {
+      "post": {
+        "tags": [
+          "Org"
+        ],
+        "operationId": "postApiV1OrgShareholdersCommitmentJournalBatchPreview",
+        "summary": "Auto-generated: POST /api/v1/org/shareholders/commitment-journal-batch/preview",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/provider/auth/login": {
+      "post": {
+        "tags": [
+          "Provider"
+        ],
+        "operationId": "postApiV1ProviderAuthLogin",
+        "summary": "Auto-generated: POST /api/v1/provider/auth/login",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        },
+        "security": []
+      }
+    },
+    "/api/v1/provider/me": {
+      "get": {
+        "tags": [
+          "Provider"
+        ],
+        "operationId": "getApiV1ProviderMe",
+        "summary": "Auto-generated: GET /api/v1/provider/me",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
+    "/api/v1/provider/tenants": {
+      "get": {
+        "tags": [
+          "Provider"
+        ],
+        "operationId": "getApiV1ProviderTenants",
+        "summary": "Auto-generated: GET /api/v1/provider/tenants",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Provider"
+        ],
+        "operationId": "postApiV1ProviderTenants",
+        "summary": "Auto-generated: POST /api/v1/provider/tenants",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/provider/tenants/{tenantId}/status": {
+      "patch": {
+        "tags": [
+          "Provider"
+        ],
+        "operationId": "patchApiV1ProviderTenantsTenantidStatus",
+        "summary": "Auto-generated: PATCH /api/v1/provider/tenants/{tenantId}/status",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tenantId",
+            "required": true,
+            "description": "tenantId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/provider/tenants/bootstrap": {
+      "post": {
+        "tags": [
+          "Provider"
+        ],
+        "operationId": "postApiV1ProviderTenantsBootstrap",
+        "summary": "Auto-generated: POST /api/v1/provider/tenants/bootstrap",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "providerApiKey": []
+          }
+        ]
+      }
+    },
+    "/auth/login": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "operationId": "postAuthLogin",
+        "summary": "Auto-generated: POST /auth/login",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        },
+        "security": []
+      }
+    },
+    "/auth/logout": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "operationId": "postAuthLogout",
+        "summary": "Auto-generated: POST /auth/logout",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        },
+        "security": []
+      }
+    },
+    "/health": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "operationId": "getHealth",
+        "summary": "Auto-generated: GET /health",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "security": []
+      }
+    },
+    "/me": {
+      "get": {
+        "tags": [
+          "Auth"
+        ],
+        "operationId": "getMe",
+        "summary": "Auto-generated: GET /me",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -3850,6 +5431,11 @@
         "type": "http",
         "scheme": "bearer",
         "bearerFormat": "JWT"
+      },
+      "providerApiKey": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Provider-Key"
       }
     },
     "responses": {

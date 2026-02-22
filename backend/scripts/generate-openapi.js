@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const errorResponseRef = { $ref: "#/components/responses/ErrorResponse" };
 const createdResponseRef = { $ref: "#/components/responses/CreatedResponse" };
@@ -61,6 +62,346 @@ function queryParamInt(name, required = false, description = `${name}`) {
     description,
     schema: intId,
   };
+}
+
+const HTTP_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE"]);
+const TAG_DESCRIPTION_MAP = new Map([
+  ["Org", "Organization hierarchy and fiscal structure management."],
+  ["Security", "Role and permission assignment APIs."],
+  ["GL", "General ledger setup and journal workflows."],
+  ["FX", "Foreign exchange rate management."],
+  ["Intercompany", "Intercompany relationship and reconciliation endpoints."],
+  ["Consolidation", "Consolidation setup, runs, and report endpoints."],
+  ["Onboarding", "Tenant/company bootstrap flow endpoints."],
+  ["Cash", "Cash register, session, transaction, and exception workflows."],
+  ["Auth", "Session and identity endpoints."],
+  ["Provider", "Provider control-plane administration endpoints."],
+  ["System", "System health and operational endpoints."],
+]);
+
+function normalizeApiPath(input) {
+  const normalized = String(input || "")
+    .trim()
+    .replace(/\\/g, "/")
+    .replace(/\/{2,}/g, "/")
+    .replace(/:([A-Za-z0-9_]+)/g, "{$1}");
+
+  if (!normalized) {
+    return "/";
+  }
+
+  const withLeadingSlash = normalized.startsWith("/") ? normalized : `/${normalized}`;
+  const withoutTrailingSlash =
+    withLeadingSlash.length > 1 ? withLeadingSlash.replace(/\/+$/, "") : withLeadingSlash;
+  return withoutTrailingSlash || "/";
+}
+
+function joinRoutePaths(basePath, routePath) {
+  return normalizeApiPath(`${basePath || ""}/${routePath || ""}`);
+}
+
+function sanitizeToken(value) {
+  return String(value || "")
+    .replace(/[{}]/g, "")
+    .replace(/[^A-Za-z0-9]+/g, " ")
+    .trim();
+}
+
+function toPascalCase(value) {
+  const words = sanitizeToken(value).split(/\s+/).filter(Boolean);
+  if (words.length === 0) {
+    return "Item";
+  }
+  return words
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join("");
+}
+
+function ensureUniqueOperationId(baseOperationId, usedOperationIds) {
+  let operationId = baseOperationId;
+  let suffix = 2;
+  while (usedOperationIds.has(operationId)) {
+    operationId = `${baseOperationId}${suffix}`;
+    suffix += 1;
+  }
+  usedOperationIds.add(operationId);
+  return operationId;
+}
+
+function buildOperationId(method, endpointPath, usedOperationIds) {
+  const parts = endpointPath
+    .split("/")
+    .filter(Boolean)
+    .map((segment) => toPascalCase(segment));
+  const baseOperationId = `${String(method || "").toLowerCase()}${parts.join("")}` || "operation";
+  return ensureUniqueOperationId(baseOperationId, usedOperationIds);
+}
+
+function extractPathParamNames(endpointPath) {
+  const matches = endpointPath.matchAll(/\{([A-Za-z0-9_]+)\}/g);
+  return Array.from(matches, (match) => match[1]);
+}
+
+function inferTagFromPath(endpointPath) {
+  const normalizedPath = normalizeApiPath(endpointPath);
+  if (normalizedPath === "/health") {
+    return "System";
+  }
+  if (normalizedPath.startsWith("/auth") || normalizedPath.startsWith("/me")) {
+    return "Auth";
+  }
+  if (normalizedPath.startsWith("/api/v1/provider")) {
+    return "Provider";
+  }
+  if (normalizedPath.startsWith("/api/v1/cash")) {
+    return "Cash";
+  }
+  if (normalizedPath.startsWith("/api/v1/org")) {
+    return "Org";
+  }
+  if (normalizedPath.startsWith("/api/v1/security") || normalizedPath.startsWith("/api/v1/rbac")) {
+    return "Security";
+  }
+  if (normalizedPath.startsWith("/api/v1/gl")) {
+    return "GL";
+  }
+  if (normalizedPath.startsWith("/api/v1/fx")) {
+    return "FX";
+  }
+  if (normalizedPath.startsWith("/api/v1/intercompany")) {
+    return "Intercompany";
+  }
+  if (normalizedPath.startsWith("/api/v1/consolidation")) {
+    return "Consolidation";
+  }
+  if (normalizedPath.startsWith("/api/v1/onboarding")) {
+    return "Onboarding";
+  }
+  return "System";
+}
+
+function ensureTagPresent(specObject, tagName) {
+  if (!Array.isArray(specObject.tags)) {
+    specObject.tags = [];
+  }
+  if (specObject.tags.some((tag) => tag.name === tagName)) {
+    return;
+  }
+  specObject.tags.push({
+    name: tagName,
+    description: TAG_DESCRIPTION_MAP.get(tagName) || "Auto-documented endpoints.",
+  });
+}
+
+function buildOperationSecurity(endpointPath) {
+  const normalizedPath = normalizeApiPath(endpointPath);
+  if (
+    normalizedPath === "/health" ||
+    normalizedPath.startsWith("/auth/") ||
+    normalizedPath === "/api/v1/provider/auth/login"
+  ) {
+    return [];
+  }
+  if (normalizedPath === "/api/v1/provider/tenants/bootstrap") {
+    return [{ providerApiKey: [] }];
+  }
+  return null;
+}
+
+function collectRouterEndpoints(router, mountPath = "/") {
+  if (!router || !Array.isArray(router.stack)) {
+    return [];
+  }
+
+  const endpoints = [];
+  for (const layer of router.stack) {
+    const route = layer?.route;
+    if (route?.path) {
+      const routePaths = Array.isArray(route.path) ? route.path : [route.path];
+      for (const routePath of routePaths) {
+        const fullPath = joinRoutePaths(mountPath, String(routePath));
+        const methods = route.methods || {};
+        for (const [methodName, enabled] of Object.entries(methods)) {
+          const method = String(methodName || "").toUpperCase();
+          if (enabled && HTTP_METHODS.has(method)) {
+            endpoints.push({ method, path: fullPath });
+          }
+        }
+      }
+      continue;
+    }
+
+    if (layer?.name === "router" && layer?.handle?.stack) {
+      const nestedMount = typeof layer.path === "string" ? layer.path : "/";
+      endpoints.push(...collectRouterEndpoints(layer.handle, joinRoutePaths(mountPath, nestedMount)));
+    }
+  }
+
+  return endpoints;
+}
+
+function parseRouteModuleImports(indexSource, indexDir) {
+  const imports = new Map();
+  const importRegex = /import\s+([A-Za-z_$][A-Za-z0-9_$]*)\s+from\s+["'](\.\/routes\/[^"']+)["'];?/g;
+  let match;
+  while ((match = importRegex.exec(indexSource))) {
+    const importName = match[1];
+    const importPath = path.resolve(indexDir, match[2]);
+    imports.set(importName, importPath);
+  }
+  return imports;
+}
+
+function parseMountedRouters(indexSource) {
+  const mounts = [];
+  const mountRegex =
+    /app\.use\(\s*["']([^"']+)["']\s*,\s*(?:requireAuth\s*,\s*)?([A-Za-z_$][A-Za-z0-9_$]*)\s*\)/g;
+  let match;
+  while ((match = mountRegex.exec(indexSource))) {
+    mounts.push({
+      mountPath: normalizeApiPath(match[1]),
+      routerImportName: match[2],
+    });
+  }
+  return mounts;
+}
+
+async function discoverExpressRoutes(indexFilePath) {
+  const indexSource = fs.readFileSync(indexFilePath, "utf8");
+  const indexDir = path.dirname(indexFilePath);
+  const routeImports = parseRouteModuleImports(indexSource, indexDir);
+  const mounts = parseMountedRouters(indexSource);
+
+  const moduleCache = new Map();
+  const discovered = [];
+
+  for (const mount of mounts) {
+    const modulePath = routeImports.get(mount.routerImportName);
+    if (!modulePath) {
+      continue;
+    }
+
+    let importedModule = moduleCache.get(modulePath);
+    if (!importedModule) {
+      importedModule = await import(pathToFileURL(modulePath).href);
+      moduleCache.set(modulePath, importedModule);
+    }
+
+    const router = importedModule?.default;
+    discovered.push(...collectRouterEndpoints(router, mount.mountPath));
+  }
+
+  discovered.push({ method: "GET", path: "/health" });
+
+  const deduped = new Map();
+  for (const endpoint of discovered) {
+    const key = `${endpoint.method} ${normalizeApiPath(endpoint.path)}`;
+    if (!deduped.has(key)) {
+      deduped.set(key, {
+        method: endpoint.method,
+        path: normalizeApiPath(endpoint.path),
+      });
+    }
+  }
+
+  return Array.from(deduped.values()).sort((a, b) => {
+    const pathCompare = a.path.localeCompare(b.path);
+    if (pathCompare !== 0) {
+      return pathCompare;
+    }
+    return a.method.localeCompare(b.method);
+  });
+}
+
+function buildFallbackOperation(specObject, endpoint, usedOperationIds) {
+  const tagName = inferTagFromPath(endpoint.path);
+  ensureTagPresent(specObject, tagName);
+
+  const pathParams = extractPathParamNames(endpoint.path).map((paramName) =>
+    pathParam(paramName, `${paramName} identifier`)
+  );
+
+  const operation = {
+    tags: [tagName],
+    operationId: buildOperationId(endpoint.method, endpoint.path, usedOperationIds),
+    summary: `Auto-generated: ${endpoint.method} ${endpoint.path}`,
+    responses: withStandardResponses("200", "Successful response"),
+  };
+
+  if (pathParams.length > 0) {
+    operation.parameters = pathParams;
+  }
+
+  if (["POST", "PUT", "PATCH"].includes(endpoint.method)) {
+    operation.requestBody = bodyFromRef("#/components/schemas/AnyObject", false);
+  }
+
+  const operationSecurity = buildOperationSecurity(endpoint.path);
+  if (operationSecurity !== null) {
+    operation.security = operationSecurity;
+  }
+
+  return operation;
+}
+
+function collectExistingOperationIds(specObject) {
+  const operationIds = new Set();
+  const paths = specObject.paths || {};
+  for (const pathItem of Object.values(paths)) {
+    for (const operation of Object.values(pathItem || {})) {
+      if (operation?.operationId) {
+        operationIds.add(operation.operationId);
+      }
+    }
+  }
+  return operationIds;
+}
+
+function collectDocumentedRouteKeys(specObject) {
+  const keys = new Set();
+  const paths = specObject.paths || {};
+  for (const [pathName, pathItem] of Object.entries(paths)) {
+    const normalizedPath = normalizeApiPath(pathName);
+    for (const methodName of Object.keys(pathItem || {})) {
+      const method = String(methodName || "").toUpperCase();
+      if (!HTTP_METHODS.has(method)) {
+        continue;
+      }
+      keys.add(`${method} ${normalizedPath}`);
+    }
+  }
+  return keys;
+}
+
+async function appendUndocumentedRoutes(specObject, indexFilePath) {
+  const discoveredRoutes = await discoverExpressRoutes(indexFilePath);
+  const documentedRouteKeys = collectDocumentedRouteKeys(specObject);
+  const usedOperationIds = collectExistingOperationIds(specObject);
+
+  let appendedCount = 0;
+  for (const route of discoveredRoutes) {
+    const routeKey = `${route.method} ${normalizeApiPath(route.path)}`;
+    if (documentedRouteKeys.has(routeKey)) {
+      continue;
+    }
+
+    const pathName = normalizeApiPath(route.path);
+    const methodName = route.method.toLowerCase();
+    if (!specObject.paths[pathName]) {
+      specObject.paths[pathName] = {};
+    }
+
+    specObject.paths[pathName][methodName] = buildFallbackOperation(
+      specObject,
+      route,
+      usedOperationIds
+    );
+
+    documentedRouteKeys.add(routeKey);
+    appendedCount += 1;
+  }
+
+  return appendedCount;
 }
 
 const spec = {
@@ -1171,6 +1512,11 @@ const spec = {
         scheme: "bearer",
         bearerFormat: "JWT",
       },
+      providerApiKey: {
+        type: "apiKey",
+        in: "header",
+        name: "X-Provider-Key",
+      },
     },
     responses: {
       ErrorResponse: {
@@ -1932,6 +2278,17 @@ const spec = {
   },
 };
 
-const targetPath = path.resolve(process.cwd(), "backend", "openapi.yaml");
+const scriptDir = path.dirname(fileURLToPath(import.meta.url));
+const backendRoot = path.resolve(scriptDir, "..");
+const indexRouteFilePath = path.resolve(backendRoot, "src", "index.js");
+
+const autoDocumentedOperationCount = await appendUndocumentedRoutes(
+  spec,
+  indexRouteFilePath
+);
+
+const targetPath = path.resolve(backendRoot, "openapi.yaml");
 fs.writeFileSync(targetPath, `${JSON.stringify(spec, null, 2)}\n`, "utf8");
-console.log(`Generated ${targetPath}`);
+console.log(
+  `Generated ${targetPath} (auto-documented operations added: ${autoDocumentedOperationCount})`
+);
