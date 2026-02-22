@@ -11,20 +11,13 @@ export const api = axios.create({
   withCredentials: true,
 });
 
-api.interceptors.request.use((config) => {
-  const token = localStorage.getItem("token");
-  if (token) config.headers.Authorization = `Bearer ${token}`;
-  return config;
-});
-
 api.interceptors.response.use(
   (res) => res,
   (err) => {
     const status = err?.response?.status;
     const skipAuthRedirect = Boolean(err?.config?.skipAuthRedirect);
     if (status === 401) {
-      // token expired/invalid
-      localStorage.removeItem("token");
+      // Cookie session expired/invalid.
       if (!skipAuthRedirect && typeof onUnauthorized === "function") onUnauthorized();
     }
     return Promise.reject(err);

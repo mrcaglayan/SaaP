@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { createClient } from "redis";
+import { logWarn } from "../observability/logger.js";
 
 const LOGIN_RATE_WINDOW_MS = parsePositiveIntEnv(
   process.env.AUTH_LOGIN_RATE_WINDOW_MS,
@@ -110,11 +111,7 @@ function logRedisError(message, err = null) {
     return;
   }
   lastRedisErrorLogAt = now;
-  if (err) {
-    console.error(`[auth-rate-limit] ${message}`, err);
-  } else {
-    console.error(`[auth-rate-limit] ${message}`);
-  }
+  logWarn("[auth-rate-limit] Redis warning", { detail: message }, err || null);
 }
 
 async function connectRedisClient() {
@@ -405,4 +402,62 @@ export async function clearFailedLoginAttempts(rateKey) {
 
 export async function getLoginRateLimiterBackend() {
   return resolveStoreBackend();
+}
+
+async function probeRedisHealth() {
+  if (!shouldAttemptRedis()) {
+    return {
+      configured: false,
+      reachable: null,
+      reason: "redis_not_configured",
+    };
+  }
+
+  try {
+    const client = await connectRedisClient();
+    if (!client) {
+      return {
+        configured: true,
+        reachable: false,
+        reason: "connect_failed",
+      };
+    }
+
+    await client.ping();
+    return {
+      configured: true,
+      reachable: true,
+      reason: null,
+    };
+  } catch (err) {
+    useMemoryFallback(err);
+    return {
+      configured: true,
+      reachable: false,
+      reason: "ping_failed",
+    };
+  }
+}
+
+export async function getLoginRateLimiterHealth() {
+  const backend = await resolveStoreBackend();
+  const redisProbe = await probeRedisHealth();
+
+  let redisStatus = "up";
+  if (LOGIN_RATE_STORE_MODE === "redis" && redisProbe.reachable !== true) {
+    redisStatus = "down";
+  } else if (redisProbe.configured && redisProbe.reachable !== true) {
+    redisStatus = "degraded";
+  }
+
+  return {
+    redis: {
+      status: redisStatus,
+      mode: LOGIN_RATE_STORE_MODE,
+      backend,
+      configured: redisProbe.configured,
+      reachable: redisProbe.reachable,
+      reason: redisProbe.reason,
+    },
+  };
 }

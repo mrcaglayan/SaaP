@@ -135,7 +135,6 @@ async function main() {
         path: path.join(outputDir, shot.name),
         fullPage: true,
       });
-      // eslint-disable-next-line no-console
       console.log(`Captured ${shot.name}`);
       continue;
     }
@@ -151,7 +150,6 @@ async function main() {
     }
 
     await capturePage(page, shot);
-    // eslint-disable-next-line no-console
     console.log(`Captured ${shot.name}`);
   }
 
@@ -160,7 +158,6 @@ async function main() {
 }
 
 main().catch((error) => {
-  // eslint-disable-next-line no-console
   console.error(error);
   process.exit(1);
 });

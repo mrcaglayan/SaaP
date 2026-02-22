@@ -1,7 +1,7 @@
 import express from "express";
 import bcrypt from "bcrypt";
 import { query, withTransaction } from "../db.js";
-import { assertScopeAccess, requirePermission } from "../middleware/rbac.js";
+import { assertScopeAccess, invalidateRbacCache, requirePermission } from "../middleware/rbac.js";
 import { logRbacAuditEvent } from "../audit/rbacAuditLogger.js";
 import {
   assertCountryExists,
@@ -541,6 +541,7 @@ router.post(
         );
       }
     });
+    await invalidateRbacCache(tenantId);
 
     return res.status(201).json({
       ok: true,
@@ -604,6 +605,7 @@ router.put(
 
       return beforeCodeRows;
     });
+    await invalidateRbacCache(tenantId);
 
     await logRbacAuditEvent(req, {
       tenantId,
@@ -752,9 +754,10 @@ router.post(
         )
        VALUES (?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
-         effect = VALUES(effect)`,
+       effect = VALUES(effect)`,
       [tenantId, userId, roleId, scopeType, scopeId, effect]
     );
+    await invalidateRbacCache(tenantId);
 
     const currentResult = await query(
       `SELECT id
@@ -861,6 +864,7 @@ router.put(
          AND tenant_id = ?`,
       [scopeType, scopeId, effect, assignmentId, tenantId]
     );
+    await invalidateRbacCache(tenantId);
 
     await logRbacAuditEvent(req, {
       tenantId,
@@ -937,6 +941,7 @@ router.delete(
          AND tenant_id = ?`,
       [assignmentId, tenantId]
     );
+    await invalidateRbacCache(tenantId);
 
     return res.json({ ok: true });
   })
@@ -1040,6 +1045,7 @@ router.post(
          created_by_user_id = VALUES(created_by_user_id)`,
       [tenantId, userId, scopeType, scopeId, effect, createdByUserId]
     );
+    await invalidateRbacCache(tenantId);
 
     return res.status(201).json({ ok: true });
   })
@@ -1126,6 +1132,7 @@ router.put(
 
       return beforeResult.rows;
     });
+    await invalidateRbacCache(tenantId);
 
     await logRbacAuditEvent(req, {
       tenantId,
@@ -1170,6 +1177,7 @@ router.delete(
          AND tenant_id = ?`,
       [dataScopeId, tenantId]
     );
+    await invalidateRbacCache(tenantId);
 
     return res.json({ ok: true });
   })

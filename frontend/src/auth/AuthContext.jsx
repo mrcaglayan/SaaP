@@ -11,7 +11,6 @@ export function AuthProvider({ children }) {
   const isAuthed = Boolean(user);
 
   const clearAuthState = useCallback(() => {
-    localStorage.removeItem("token");
     setToken(null);
     setUser(null);
     setPermissions([]);

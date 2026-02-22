@@ -29,7 +29,7 @@ async function apiRequest({
 }) {
   const headers = { "Content-Type": "application/json" };
   if (token) {
-    headers.Authorization = `Bearer ${token}`;
+    headers.Cookie = token;
   }
 
   const response = await fetch(`${BASE_URL}${path}`, {
@@ -44,6 +44,10 @@ async function apiRequest({
   } catch {
     json = null;
   }
+  const setCookieHeader = response.headers.get("set-cookie");
+  const cookie = setCookieHeader
+    ? String(setCookieHeader).split(";")[0].trim()
+    : null;
 
   if (expectedStatus !== undefined && response.status !== expectedStatus) {
     throw new Error(
@@ -53,7 +57,7 @@ async function apiRequest({
     );
   }
 
-  return { status: response.status, json };
+  return { status: response.status, json, cookie };
 }
 
 async function waitForServer() {
@@ -166,9 +170,9 @@ async function login(email, password) {
     body: { email, password },
     expectedStatus: 200,
   });
-  const token = response.json?.token;
-  assert(Boolean(token), "Login token missing");
-  return token;
+  const sessionCookie = response.cookie;
+  assert(Boolean(sessionCookie), "Login cookie missing");
+  return sessionCookie;
 }
 
 async function bootstrapCloseScenario(token) {

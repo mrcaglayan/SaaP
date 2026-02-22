@@ -452,7 +452,7 @@ export default function OrganizationManagementPage() {
         );
         return;
       }
-      if (!Boolean(account.is_active)) {
+      if (!account.is_active) {
         reasons.push(
           l(
             `${label} must be active.`,
@@ -918,7 +918,7 @@ export default function OrganizationManagementPage() {
     const previewReady =
       queueCount > 0 &&
       Boolean(batchPreviewData) &&
-      !Boolean(batchPreviewData?.validation?.has_blocking_errors) &&
+      !batchPreviewData?.validation?.has_blocking_errors &&
       Number(batchPreviewData?.included_shareholders?.length || 0) > 0;
 
     const stepDefinitions = [

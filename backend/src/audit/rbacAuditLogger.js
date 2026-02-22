@@ -1,5 +1,10 @@
 import { query } from "../db.js";
 import { parsePositiveInt, resolveTenantId } from "../routes/_utils.js";
+import {
+  buildRequestLogMeta,
+  logError,
+  resolveRequestId as resolveLoggerRequestId,
+} from "../observability/logger.js";
 
 const VALID_SCOPE_TYPES = new Set([
   "TENANT",
@@ -30,10 +35,7 @@ function resolveIpAddress(req) {
 }
 
 function resolveRequestId(req, explicitRequestId) {
-  if (explicitRequestId) {
-    return toNullableString(explicitRequestId, 80);
-  }
-  return toNullableString(req?.headers?.["x-request-id"], 80);
+  return toNullableString(resolveLoggerRequestId(req, explicitRequestId), 80);
 }
 
 function toPayloadJson(value) {
@@ -113,7 +115,15 @@ export async function logRbacAuditEvent(req, event) {
 
     return true;
   } catch (err) {
-    console.error("[rbac-audit] failed to write audit log", err);
+    logError(
+      "Failed to write RBAC audit log",
+      buildRequestLogMeta(req, {
+        tenantId: parsePositiveInt(event?.tenantId) || null,
+        action: toNullableString(event?.action, 120),
+        resourceType: toNullableString(event?.resourceType, 80),
+      }),
+      err
+    );
     return false;
   }
 }

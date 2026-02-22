@@ -2,6 +2,7 @@ import express from "express";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { query, withTransaction } from "../db.js";
+import { invalidateRbacCache } from "../middleware/rbac.js";
 import {
   asyncHandler,
   assertRequiredFields,
@@ -484,6 +485,7 @@ router.post(
     ]);
 
     const result = await withTransaction((tx) => createTenantWithAdmin(tx, req.body));
+    await invalidateRbacCache(result.tenantId);
 
     return res.status(201).json({
       ok: true,
@@ -552,6 +554,7 @@ router.post(
     ]);
 
     const result = await withTransaction((tx) => createTenantWithAdmin(tx, req.body));
+    await invalidateRbacCache(result.tenantId);
 
     return res.status(201).json({
       ok: true,

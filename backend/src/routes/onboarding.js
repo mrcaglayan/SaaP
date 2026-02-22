@@ -1,6 +1,6 @@
 import express from "express";
 import { query, withTransaction } from "../db.js";
-import { requirePermission } from "../middleware/rbac.js";
+import { invalidateRbacCache, requirePermission } from "../middleware/rbac.js";
 import {
   asyncHandler,
   assertRequiredFields,
@@ -784,6 +784,7 @@ router.post(
         booksCreated,
       };
     });
+    await invalidateRbacCache(tenantId);
 
     const readinessAfter = await buildTenantReadinessSnapshot(tenantId);
 
@@ -1090,6 +1091,7 @@ router.post(
         entitySummaries,
       };
     });
+    await invalidateRbacCache(tenantId);
 
     return res.status(201).json({
       ok: true,
