@@ -12,6 +12,8 @@ import migration011JournalLineSubledgerReference from "./m011_journal_line_suble
 import migration012ShareholderCommitmentDebitSubAccount from "./m012_shareholder_commitment_debit_sub_account.js";
 import migration013GlReclassificationRuns from "./m013_gl_reclassification_runs.js";
 import migration014ShareholderCommitmentJournalEntries from "./m014_shareholder_commitment_journal_entries.js";
+import migration015CashControlFoundation from "./m015_cash_control_foundation.js";
+import migration016CashControlIntegrity from "./m016_cash_control_integrity.js";
 
 const migrations = [
   migration001GlobalMultiEntity,
@@ -28,6 +30,8 @@ const migrations = [
   migration012ShareholderCommitmentDebitSubAccount,
   migration013GlReclassificationRuns,
   migration014ShareholderCommitmentJournalEntries,
+  migration015CashControlFoundation,
+  migration016CashControlIntegrity,
 ];
 
 export default migrations;

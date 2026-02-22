@@ -13,6 +13,248 @@ import {
   resolveTenantId,
 } from "./_utils.js";
 
+const CASH_CONTROL_MODES = new Set(["OFF", "WARN", "ENFORCE"]);
+
+function normalizeCashControlMode(value) {
+  const normalized = String(value || "ENFORCE").trim().toUpperCase();
+  if (CASH_CONTROL_MODES.has(normalized)) {
+    return normalized;
+  }
+  return "ENFORCE";
+}
+
+function collectLineAccountIds(lines) {
+  const ids = new Set();
+  for (const line of lines || []) {
+    const accountId = parsePositiveInt(line?.accountId);
+    if (accountId) {
+      ids.add(accountId);
+    }
+  }
+  return Array.from(ids);
+}
+
+async function loadCashControlledAccounts({
+  tenantId,
+  accountIds,
+  runQuery = query,
+}) {
+  const uniqueAccountIds = Array.from(
+    new Set((Array.isArray(accountIds) ? accountIds : []).map((id) => parsePositiveInt(id)).filter(Boolean))
+  );
+  if (uniqueAccountIds.length === 0) {
+    return [];
+  }
+
+  const placeholders = uniqueAccountIds.map(() => "?").join(", ");
+  const result = await runQuery(
+    `SELECT a.id, a.code, a.name
+     FROM accounts a
+     JOIN charts_of_accounts c ON c.id = a.coa_id
+     WHERE c.tenant_id = ?
+       AND a.id IN (${placeholders})
+       AND a.is_cash_controlled = TRUE`,
+    [tenantId, ...uniqueAccountIds]
+  );
+
+  return Array.isArray(result.rows) ? result.rows : [];
+}
+
+async function loadJournalLineAccountIds({
+  journalId,
+  runQuery = query,
+}) {
+  const result = await runQuery(
+    `SELECT account_id
+     FROM journal_lines
+     WHERE journal_entry_id = ?`,
+    [journalId]
+  );
+  const rows = Array.isArray(result.rows) ? result.rows : [];
+  return Array.from(
+    new Set(rows.map((row) => parsePositiveInt(row.account_id)).filter(Boolean))
+  );
+}
+
+function buildCashControlledAccountsSummary(controlledAccounts) {
+  return controlledAccounts
+    .map((row) => {
+      const code = String(row?.code || "").trim();
+      if (code) {
+        return code;
+      }
+      const id = parsePositiveInt(row?.id);
+      return id ? `#${id}` : "UNKNOWN";
+    })
+    .join(", ");
+}
+
+function evaluateCashControlDecision({
+  mode,
+  sourceType,
+  controlledAccounts,
+  overrideCashControl,
+  overrideReason,
+}) {
+  const normalizedMode = normalizeCashControlMode(mode);
+  const normalizedSourceType = String(sourceType || "MANUAL").trim().toUpperCase();
+  const matchedAccounts = Array.isArray(controlledAccounts) ? controlledAccounts : [];
+  if (matchedAccounts.length === 0) {
+    return {
+      blocked: false,
+      auditAction: null,
+      requiresOverridePermission: false,
+      controlledAccounts: [],
+      mode: normalizedMode,
+    };
+  }
+
+  if (normalizedSourceType === "CASH" || normalizedMode === "OFF") {
+    return {
+      blocked: false,
+      auditAction: null,
+      requiresOverridePermission: false,
+      controlledAccounts: matchedAccounts,
+      mode: normalizedMode,
+    };
+  }
+
+  if (normalizedMode === "WARN") {
+    return {
+      blocked: false,
+      auditAction: "WARN",
+      requiresOverridePermission: false,
+      controlledAccounts: matchedAccounts,
+      mode: normalizedMode,
+    };
+  }
+
+  const accountSummary = buildCashControlledAccountsSummary(matchedAccounts);
+  if (!overrideCashControl) {
+    return {
+      blocked: true,
+      message: `Direct GL posting to cash-controlled account(s) [${accountSummary}] is blocked. Use sourceType=CASH via cash transactions, or provide overrideCashControl=true with overrideReason.`,
+      auditAction: null,
+      requiresOverridePermission: false,
+      controlledAccounts: matchedAccounts,
+      mode: normalizedMode,
+    };
+  }
+
+  if (!overrideReason) {
+    return {
+      blocked: true,
+      message:
+        "overrideReason is required when overriding cash-controlled account posting",
+      auditAction: null,
+      requiresOverridePermission: false,
+      controlledAccounts: matchedAccounts,
+      mode: normalizedMode,
+    };
+  }
+
+  return {
+    blocked: false,
+    auditAction: "OVERRIDE",
+    requiresOverridePermission: true,
+    controlledAccounts: matchedAccounts,
+    mode: normalizedMode,
+  };
+}
+
+function resolveClientIp(req) {
+  const forwardedFor = req.headers["x-forwarded-for"];
+  const forwardedIp = Array.isArray(forwardedFor)
+    ? forwardedFor[0]
+    : String(forwardedFor || "")
+        .split(",")
+        .map((value) => value.trim())
+        .filter(Boolean)[0];
+  return forwardedIp || req.ip || req.socket?.remoteAddress || null;
+}
+
+async function writeCashControlAuditLog({
+  runQuery,
+  req,
+  tenantId,
+  userId,
+  legalEntityId,
+  journalId,
+  actionType,
+  sourceType,
+  mode,
+  overrideReason,
+  controlledAccounts,
+  stage,
+}) {
+  if (!runQuery || typeof runQuery !== "function") {
+    return;
+  }
+  const parsedTenantId = parsePositiveInt(tenantId);
+  if (!parsedTenantId || !actionType) {
+    return;
+  }
+
+  const parsedUserId = parsePositiveInt(userId);
+  const parsedLegalEntityId = parsePositiveInt(legalEntityId);
+  const parsedJournalId = parsePositiveInt(journalId);
+  const accountDetails = (Array.isArray(controlledAccounts) ? controlledAccounts : []).map(
+    (row) => ({
+      id: parsePositiveInt(row?.id) || null,
+      code: row?.code ? String(row.code) : null,
+      name: row?.name ? String(row.name) : null,
+    })
+  );
+
+  await runQuery(
+    `INSERT INTO audit_logs (
+        tenant_id,
+        user_id,
+        action,
+        resource_type,
+        resource_id,
+        scope_type,
+        scope_id,
+        request_id,
+        ip_address,
+        user_agent,
+        payload_json
+     )
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      parsedTenantId,
+      parsedUserId || null,
+      actionType === "OVERRIDE" ? "gl.cash_control.override" : "gl.cash_control.warn",
+      "journal_entry",
+      parsedJournalId ? String(parsedJournalId) : null,
+      parsedLegalEntityId ? "LEGAL_ENTITY" : null,
+      parsedLegalEntityId || null,
+      req.headers["x-request-id"] ? String(req.headers["x-request-id"]) : null,
+      resolveClientIp(req),
+      req.headers["user-agent"] ? String(req.headers["user-agent"]).slice(0, 255) : null,
+      JSON.stringify({
+        stage: stage || null,
+        mode: normalizeCashControlMode(mode),
+        sourceType: String(sourceType || "").toUpperCase(),
+        overrideReason: overrideReason || null,
+        controlledAccounts: accountDetails,
+      }),
+    ]
+  );
+}
+
+async function runPermissionMiddleware(middleware, req, res) {
+  await new Promise((resolve, reject) => {
+    middleware(req, res, (err) => {
+      if (err) {
+        reject(err);
+        return;
+      }
+      resolve();
+    });
+  });
+}
+
 export function registerGlWriteJournalRoutes(router, deps = {}) {
   const {
     applyShareholderCommitmentSyncForPostedJournalTx,
@@ -80,6 +322,21 @@ export function registerGlWriteJournalRoutes(router, deps = {}) {
     throw new Error("registerGlWriteJournalRoutes requires validateJournalLineScope");
   }
 
+  const cashControlMode = normalizeCashControlMode(process.env.GL_CASH_CONTROL_MODE);
+  const requireCashControlOverrideOnCreate = requirePermission("cash.override.post", {
+    resolveScope: (req, tenantId) => {
+      const legalEntityId = parsePositiveInt(req.body?.legalEntityId);
+      return legalEntityId
+        ? { scopeType: "LEGAL_ENTITY", scopeId: legalEntityId }
+        : { scopeType: "TENANT", scopeId: tenantId };
+    },
+  });
+  const requireCashControlOverrideOnPost = requirePermission("cash.override.post", {
+    resolveScope: async (req, tenantId) => {
+      return resolveScopeFromJournalId(req.params?.journalId, tenantId);
+    },
+  });
+
   router.post(
     "/journals",
     requirePermission("gl.journal.create", {
@@ -109,7 +366,23 @@ export function registerGlWriteJournalRoutes(router, deps = {}) {
       const fiscalPeriodId = parsePositiveInt(req.body.fiscalPeriodId);
       const sourceType = normalizeJournalSourceType(req.body.sourceType);
       const autoMirror = parseBooleanFlag(req.body?.autoMirror, false, "autoMirror");
+      const overrideCashControl = parseBooleanFlag(
+        req.body?.overrideCashControl,
+        false,
+        "overrideCashControl"
+      );
+      const overrideReason = normalizeOptionalShortText(
+        req.body?.overrideReason,
+        "overrideReason",
+        500
+      );
       const lines = Array.isArray(req.body.lines) ? req.body.lines : [];
+      if (sourceType === "CASH") {
+        throw badRequest("sourceType=CASH is reserved; use /api/v1/cash/transactions/:transactionId/post");
+      }
+      if (!overrideCashControl && overrideReason) {
+        throw badRequest("overrideReason requires overrideCashControl=true");
+      }
       if (!legalEntityId || !bookId || !fiscalPeriodId) {
         throw badRequest("legalEntityId, bookId and fiscalPeriodId must be positive integers");
       }
@@ -143,6 +416,24 @@ export function registerGlWriteJournalRoutes(router, deps = {}) {
         totalDebit += toAmount(line.debitBase);
         totalCredit += toAmount(line.creditBase);
         await validateJournalLineScope(req, tenantId, legalEntityId, line, i);
+      }
+
+      const controlledAccounts = await loadCashControlledAccounts({
+        tenantId,
+        accountIds: collectLineAccountIds(lines),
+      });
+      const cashControlDecision = evaluateCashControlDecision({
+        mode: cashControlMode,
+        sourceType,
+        controlledAccounts,
+        overrideCashControl,
+        overrideReason,
+      });
+      if (cashControlDecision.blocked) {
+        throw badRequest(cashControlDecision.message);
+      }
+      if (cashControlDecision.requiresOverridePermission) {
+        await runPermissionMiddleware(requireCashControlOverrideOnCreate, req, res);
       }
 
       await validateIntercompanyJournalPolicy(tenantId, legalEntityId, sourceType, lines);
@@ -231,6 +522,23 @@ export function registerGlWriteJournalRoutes(router, deps = {}) {
           createdMirrorIds.push(mirrorJournalEntryId);
         }
 
+        if (cashControlDecision.auditAction) {
+          await writeCashControlAuditLog({
+            runQuery: tx.query,
+            req,
+            tenantId,
+            userId,
+            legalEntityId,
+            journalId: createdJournalEntryId,
+            actionType: cashControlDecision.auditAction,
+            sourceType,
+            mode: cashControlDecision.mode,
+            overrideReason,
+            controlledAccounts: cashControlDecision.controlledAccounts,
+            stage: "CREATE_DRAFT",
+          });
+        }
+
         return {
           journalEntryId: createdJournalEntryId,
           mirrorJournalEntryIds: createdMirrorIds,
@@ -273,6 +581,19 @@ export function registerGlWriteJournalRoutes(router, deps = {}) {
         false,
         "postLinkedMirrors"
       );
+      const overrideCashControl = parseBooleanFlag(
+        req.body?.overrideCashControl,
+        false,
+        "overrideCashControl"
+      );
+      const overrideReason = normalizeOptionalShortText(
+        req.body?.overrideReason,
+        "overrideReason",
+        500
+      );
+      if (!overrideCashControl && overrideReason) {
+        throw badRequest("overrideReason requires overrideCashControl=true");
+      }
 
       const journal = await loadJournal(tenantId, journalId);
       if (!journal) throw badRequest("Journal not found");
@@ -286,6 +607,25 @@ export function registerGlWriteJournalRoutes(router, deps = {}) {
       let shareholderCommitmentSync = [];
 
       if (!postLinkedMirrors) {
+        const singleJournalAccountIds = await loadJournalLineAccountIds({ journalId });
+        const singleJournalControlledAccounts = await loadCashControlledAccounts({
+          tenantId,
+          accountIds: singleJournalAccountIds,
+        });
+        const singleJournalCashControlDecision = evaluateCashControlDecision({
+          mode: cashControlMode,
+          sourceType: journal.source_type,
+          controlledAccounts: singleJournalControlledAccounts,
+          overrideCashControl,
+          overrideReason,
+        });
+        if (singleJournalCashControlDecision.blocked) {
+          throw badRequest(singleJournalCashControlDecision.message);
+        }
+        if (singleJournalCashControlDecision.requiresOverridePermission) {
+          await runPermissionMiddleware(requireCashControlOverrideOnPost, req, res);
+        }
+
         result = await withTransaction(async (tx) => {
           await ensurePeriodOpen(
             parsePositiveInt(journal.book_id),
@@ -315,6 +655,22 @@ export function registerGlWriteJournalRoutes(router, deps = {}) {
                 createdByUserId: userId,
               })
             );
+            if (singleJournalCashControlDecision.auditAction) {
+              await writeCashControlAuditLog({
+                runQuery: tx.query,
+                req,
+                tenantId,
+                userId,
+                legalEntityId: parsePositiveInt(journal.legal_entity_id),
+                journalId,
+                actionType: singleJournalCashControlDecision.auditAction,
+                sourceType: journal.source_type,
+                mode: singleJournalCashControlDecision.mode,
+                overrideReason,
+                controlledAccounts: singleJournalCashControlDecision.controlledAccounts,
+                stage: "POST_DRAFT",
+              });
+            }
           }
 
           return {
@@ -361,6 +717,44 @@ export function registerGlWriteJournalRoutes(router, deps = {}) {
           });
         }
 
+        const linkedCashControlDecisions = new Map();
+        for (const draftJournalId of draftJournalIds) {
+          // eslint-disable-next-line no-await-in-loop
+          const draftJournal = await loadJournal(tenantId, draftJournalId);
+          if (!draftJournal) {
+            throw badRequest(`Linked journal not found: ${draftJournalId}`);
+          }
+          // eslint-disable-next-line no-await-in-loop
+          const accountIds = await loadJournalLineAccountIds({ journalId: draftJournalId });
+          // eslint-disable-next-line no-await-in-loop
+          const controlledAccounts = await loadCashControlledAccounts({
+            tenantId,
+            accountIds,
+          });
+          const decision = evaluateCashControlDecision({
+            mode: cashControlMode,
+            sourceType: draftJournal.source_type,
+            controlledAccounts,
+            overrideCashControl,
+            overrideReason,
+          });
+          if (decision.blocked) {
+            throw badRequest(`Linked journal ${draftJournalId}: ${decision.message}`);
+          }
+          linkedCashControlDecisions.set(draftJournalId, {
+            legalEntityId: parsePositiveInt(draftJournal.legal_entity_id),
+            sourceType: draftJournal.source_type,
+            decision,
+          });
+        }
+
+        const linkedRequiresOverride = Array.from(linkedCashControlDecisions.values()).some(
+          (value) => value?.decision?.requiresOverridePermission
+        );
+        if (linkedRequiresOverride) {
+          await runPermissionMiddleware(requireCashControlOverrideOnPost, req, res);
+        }
+
         result = await withTransaction(async (tx) => {
           for (const row of draftRows) {
             // eslint-disable-next-line no-await-in-loop
@@ -398,6 +792,25 @@ export function registerGlWriteJournalRoutes(router, deps = {}) {
                 }
               );
               syncRows.push(syncResult);
+
+              const auditEntry = linkedCashControlDecisions.get(postedJournalId);
+              if (auditEntry?.decision?.auditAction) {
+                // eslint-disable-next-line no-await-in-loop
+                await writeCashControlAuditLog({
+                  runQuery: tx.query,
+                  req,
+                  tenantId,
+                  userId,
+                  legalEntityId: auditEntry.legalEntityId,
+                  journalId: postedJournalId,
+                  actionType: auditEntry.decision.auditAction,
+                  sourceType: auditEntry.sourceType,
+                  mode: auditEntry.decision.mode,
+                  overrideReason,
+                  controlledAccounts: auditEntry.decision.controlledAccounts,
+                  stage: "POST_DRAFT_LINKED",
+                });
+              }
             }
           }
 

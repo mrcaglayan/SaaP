@@ -42,6 +42,7 @@ const JOURNAL_SOURCE_TYPES = new Set([
   "INTERCOMPANY",
   "ELIMINATION",
   "ADJUSTMENT",
+  "CASH",
 ]);
 const RECLASS_ALLOCATION_MODES = new Set(["PERCENT", "AMOUNT"]);
 const BALANCE_EPSILON = 0.0001;
@@ -1136,7 +1137,9 @@ function parseBooleanFlag(value, defaultValue, fieldLabel) {
 function normalizeJournalSourceType(value) {
   const sourceType = String(value || "MANUAL").toUpperCase();
   if (!JOURNAL_SOURCE_TYPES.has(sourceType)) {
-    throw badRequest("sourceType must be one of MANUAL, SYSTEM, INTERCOMPANY, ELIMINATION, ADJUSTMENT");
+    throw badRequest(
+      "sourceType must be one of MANUAL, SYSTEM, INTERCOMPANY, ELIMINATION, ADJUSTMENT, CASH"
+    );
   }
   return sourceType;
 }
@@ -2104,4 +2107,11 @@ registerGlPeriodClosingRoutes(router, {
   reversePostedJournalWithinTransaction,
   writeAuditLog,
 });
+
+export {
+  ensurePeriodOpen,
+  toAmount,
+  toIsoDate,
+  validateJournalLineScope,
+};
 export default router;

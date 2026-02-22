@@ -14,6 +14,11 @@ import consolidationRoutes from "./routes/consolidation.js";
 import onboardingRoutes from "./routes/onboarding.js";
 import rbacRoutes from "./routes/rbac.js";
 import providerRoutes from "./routes/provider.js";
+import cashRegisterRoutes from "./routes/cash.register.routes.js";
+import cashSessionRoutes from "./routes/cash.session.routes.js";
+import cashTransactionRoutes from "./routes/cash.transaction.routes.js";
+import cashConfigRoutes from "./routes/cash.config.routes.js";
+import cashExceptionRoutes from "./routes/cash.exception.routes.js";
 import { requireAuth } from "./middleware/auth.js";
 import {
   buildRequestLogMeta,
@@ -129,6 +134,11 @@ app.use("/api/v1/intercompany", requireAuth, intercompanyRoutes);
 app.use("/api/v1/consolidation", requireAuth, consolidationRoutes);
 app.use("/api/v1/onboarding", requireAuth, onboardingRoutes);
 app.use("/api/v1/rbac", requireAuth, rbacRoutes);
+app.use("/api/v1/cash/registers", requireAuth, cashRegisterRoutes);
+app.use("/api/v1/cash/sessions", requireAuth, cashSessionRoutes);
+app.use("/api/v1/cash/transactions", requireAuth, cashTransactionRoutes);
+app.use("/api/v1/cash/config", requireAuth, cashConfigRoutes);
+app.use("/api/v1/cash/exceptions", requireAuth, cashExceptionRoutes);
 
 app.use((req, res) => {
   return res.status(404).json({

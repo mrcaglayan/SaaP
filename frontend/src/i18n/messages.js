@@ -155,6 +155,10 @@ export const messages = {
         "/app/journal-entries": "Journal Entry",
         "/app/tediye-islemleri": "Tediye",
         "/app/tahsilat-islemleri": "Tahsilat",
+        "/app/kasa-tanimlari": "Kasa Tanimlari",
+        "/app/kasa-oturumlari": "Kasa Oturumlari",
+        "/app/kasa-islemleri": "Kasa Islemleri",
+        "/app/kasa-istisnalari": "Kasa Istisnalari",
         "/app/mahsup-islemleri": "Mahsup",
         "/app/banka-islemleri": "Banka Islemleri",
         "/app/banka-tanimla": "Banka Tanimla",
@@ -456,6 +460,489 @@ export const messages = {
         next: "Sonraki",
       },
     },
+    cashControlMode: {
+      title: "Kasa kontrol modu: {{mode}}",
+      modes: {
+        OFF: "OFF",
+        WARN: "WARN",
+        ENFORCE: "ENFORCE",
+      },
+      descriptions: {
+        OFF: "Direkt GL kayitlarinda cash-control denetimi kapali.",
+        WARN: "Direkt GL kayitlari engellenmez; cash-control uyari kaydi olusturulur.",
+        ENFORCE:
+          "Cash-controlled hesaplara direkt GL kaydi engellenir; CASH kaynagi veya override gerekir.",
+      },
+      unavailable: "Kasa kontrol modu bilgisi su an alinamiyor.",
+      requestId: "Talep ID: {{requestId}}",
+    },
+    cashRegisters: {
+      title: "Kasa Tanimlari",
+      subtitle:
+        "Kasa register kayitlarini listeleyin, yeni register olusturun, guncelleyin ve aktif/pasif yonetin.",
+      readOnlyNotice:
+        "Yalnizca goruntuleme modundasiniz. Duzenleme islemleri icin cash.register.upsert yetkisi gerekir.",
+      loading: "Kasa kayitlari yukleniyor...",
+      empty: "Kasa kaydi bulunamadi.",
+      sections: {
+        create: "Yeni Kasa Register",
+        edit: "Kasa Register Duzenle",
+        list: "Kasa Register Listesi",
+      },
+      actions: {
+        create: "Kaydet",
+        update: "Guncelle",
+        edit: "Duzenle",
+        cancelEdit: "Duzenlemeyi Iptal Et",
+        activate: "Aktif Et",
+        deactivate: "Pasif Et",
+        refresh: "Yenile",
+        loading: "Yukleniyor...",
+        saving: "Kaydediliyor...",
+      },
+      form: {
+        code: "Kod",
+        name: "Ad",
+        legalEntityId: "Legal entity ID",
+        operatingUnitIdOptional: "Operating unit ID (opsiyonel)",
+        accountId: "Hesap ID",
+        currencyCode: "Para birimi (USD)",
+        allowNegative: "Negatif bakiyeye izin ver",
+        varianceGainAccountIdOptional: "Fazla fark hesabi ID (opsiyonel)",
+        varianceLossAccountIdOptional: "Eksik fark hesabi ID (opsiyonel)",
+        maxTxnAmountOptional: "Maksimum islem tutari (opsiyonel)",
+        requiresApprovalOverAmountOptional:
+          "Onay gerektiren esik tutari (opsiyonel)",
+      },
+      placeholders: {
+        legalEntity: "Legal entity secin",
+        operatingUnit: "Operating unit secin (opsiyonel)",
+        account: "Hesap secin",
+        currencyCode: "Para birimi secin",
+        varianceGainAccount: "Fazla fark hesabi secin (opsiyonel)",
+        varianceLossAccount: "Eksik fark hesabi secin (opsiyonel)",
+      },
+      table: {
+        code: "Kod",
+        name: "Ad",
+        registerType: "Register Tipi",
+        sessionMode: "Oturum Modu",
+        legalEntity: "Legal Entity",
+        operatingUnit: "Operating Unit",
+        account: "Hesap",
+        currency: "Para Birimi",
+        allowNegative: "Negatif Izin",
+        status: "Durum",
+        actions: "Islemler",
+      },
+      values: {
+        yes: "Evet",
+        no: "Hayir",
+      },
+      errors: {
+        missingReadPermission:
+          "Bu sayfayi kullanmak icin cash.register.read yetkisi gerekir.",
+        missingUpsertPermission:
+          "Bu islem icin cash.register.upsert yetkisi gerekir.",
+        loadRegisters: "Kasa kayitlari yuklenemedi.",
+        loadOrgLookups:
+          "Organizasyon lookup verileri yuklenemedi. Gerekirse ID alanlarini manuel doldurun.",
+        loadAccountLookups:
+          "Hesap lookup verileri yuklenemedi. Gerekirse hesap ID alanlarini manuel doldurun.",
+        missingOrgLookupPermission:
+          "org.tree.read yetkisi olmadan legal entity/operating unit/currency lookup listeleri yuklenmez.",
+        missingAccountLookupPermission:
+          "gl.account.read yetkisi olmadan hesap lookup listeleri yuklenmez.",
+        requiredCodeName: "Kod ve ad alanlari zorunludur.",
+        requiredEntityAccount: "legalEntityId ve accountId zorunludur.",
+        requiredCurrency: "currencyCode zorunludur.",
+        invalidAmount: "Tutar alanlarinda gecersiz deger var.",
+        save: "Kasa kaydi kaydedilemedi.",
+        statusUpdate: "Kasa kaydi durumu guncellenemedi.",
+      },
+      messages: {
+        created: "Kasa kaydi olusturuldu.",
+        updated: "Kasa kaydi guncellendi.",
+        statusUpdated: "Kasa kaydi {{code}} durumu {{status}} olarak guncellendi.",
+      },
+    },
+    cashSessions: {
+      title: "Kasa Oturumlari",
+      subtitle:
+        "Kasa oturumlarini acin/kapatin, acik oturumlari ve gecmis oturum hareketlerini takip edin.",
+      loading: "Kasa oturumlari yukleniyor...",
+      emptyOpen: "Acik kasa oturumu bulunamadi.",
+      emptyHistory: "Kasa oturum gecmisi bulunamadi.",
+      readOnlyOpenNotice:
+        "Oturum acma islemi icin cash.session.open yetkisi gerekir.",
+      readOnlyCloseNotice:
+        "Oturum kapatma islemi icin cash.session.close yetkisi gerekir.",
+      approvalNotice:
+        "Esik uzeri farki onaylamak icin cash.variance.approve yetkisi gerekir.",
+      forcedCloseNotice:
+        "FORCED_CLOSE secildiginde closeNote zorunludur.",
+      sections: {
+        open: "Oturum Ac",
+        close: "Oturum Kapat",
+        openSessions: "Acik Oturumlar",
+        history: "Oturum Gecmisi",
+      },
+      actions: {
+        open: "Oturum Ac",
+        close: "Oturumu Kapat",
+        refresh: "Yenile",
+        loading: "Yukleniyor...",
+        saving: "Kaydediliyor...",
+        useForClose: "Kapatmak Icin Sec",
+      },
+      form: {
+        openingAmountOptional: "Acilis tutari (opsiyonel, varsayilan 0)",
+        countedClosingAmount: "Sayilan kapanis tutari",
+        closeNote: "Kapanis notu (FORCED_CLOSE / esik uzeri farkta zorunlu)",
+        approveVariance: "Esik uzeri farki onayla (approveVariance=true)",
+      },
+      placeholders: {
+        register: "Kasa register secin",
+        openSession: "Acik oturum secin",
+      },
+      table: {
+        register: "Register",
+        status: "Durum",
+        openedAt: "Acilis Zamani",
+        closedAt: "Kapanis Zamani",
+        opening: "Acilis",
+        expected: "Beklenen",
+        counted: "Sayilan",
+        variance: "Fark",
+        closedReason: "Kapanis Nedeni",
+        approvedBy: "Onaylayan",
+        approvedAt: "Onay Zamani",
+        actions: "Islemler",
+      },
+      requiredWarning: {
+        title: "Session mode REQUIRED ama acik oturum yok",
+        description:
+          "Asagidaki aktif registerlar icin acik oturum bulunmuyor. Islem olusturma/post akislarinda engel olusabilir.",
+      },
+      selectedSessionSummary:
+        "Secili oturum #{{id}} | Register: {{registerCode}} | Acilis: {{opening}} | Beklenen: {{expected}}",
+      errors: {
+        missingReadPermission:
+          "Bu sayfayi kullanmak icin cash.register.read yetkisi gerekir.",
+        missingOpenPermission:
+          "Bu islem icin cash.session.open yetkisi gerekir.",
+        missingClosePermission:
+          "Bu islem icin cash.session.close yetkisi gerekir.",
+        missingVarianceApprovePermission:
+          "Bu islem icin cash.variance.approve yetkisi gerekir.",
+        load: "Kasa oturumlari yuklenemedi.",
+        open: "Kasa oturumu acilamadi.",
+        close: "Kasa oturumu kapatilamadi.",
+        requestId: "Talep ID: {{requestId}}",
+        registerRequired: "registerId zorunludur.",
+        invalidOpeningAmount: "Acilis tutari gecersiz.",
+        sessionRequired: "sessionId zorunludur.",
+        countedRequired: "countedClosingAmount zorunludur.",
+        closeNoteForced: "FORCED_CLOSE icin closeNote zorunludur.",
+        closeNoteApproval:
+          "approveVariance=true oldugunda closeNote girmeniz gerekir.",
+      },
+      errorsMapped: {
+        registerNotFound: "Secilen register bulunamadi.",
+        sessionAlreadyOpen: "Bu register icin zaten OPEN oturum bulunuyor.",
+        sessionModeNone: "Bu register icin session_mode=NONE oldugu icin oturum acilamaz.",
+        registerInactive: "Secilen register ACTIVE degil.",
+        sessionNotFound: "Secilen oturum bulunamadi.",
+        onlyOpenClose: "Yalnizca OPEN oturumlar kapatilabilir.",
+        unpostedTransactionsExist:
+          "DRAFT/SUBMITTED/APPROVED islemler varken oturum kapatilamaz.",
+        closeNoteThreshold:
+          "Fark esigi asildiginda closeNote zorunludur.",
+        varianceApprovalRequired:
+          "Fark esigi asildi; supervisor/finance onayi gereklidir.",
+        varianceGainMissing:
+          "Fazla fark icin varianceGainAccountId register uzerinde tanimli olmalidir.",
+        varianceLossMissing:
+          "Eksik fark icin varianceLossAccountId register uzerinde tanimli olmalidir.",
+      },
+      messages: {
+        opened: "Kasa oturumu basariyla acildi.",
+        closed: "Kasa oturumu basariyla kapatildi.",
+      },
+    },
+    cashTransactions: {
+      presetTitles: {
+        all: "Kasa Islemleri",
+        payout: "Tediye Islemleri",
+        receipt: "Tahsilat Islemleri",
+      },
+      subtitle:
+        "Kasa islemlerini filtreleyin, yeni islem olusturun ve post/iptal/ters kayit akislarini yonetin.",
+      presetNotices: {
+        payout: "Bu ekranda islem tipi PAYOUT olarak sabitlenmistir.",
+        receipt: "Bu ekranda islem tipi RECEIPT olarak sabitlenmistir.",
+      },
+      loading: "Kasa islemleri yukleniyor...",
+      empty: "Kasa islem kaydi bulunamadi.",
+      readOnlyNotice:
+        "Yalnizca goruntuleme modundasiniz. Islem olusturmak icin cash.txn.create yetkisi gerekir.",
+      sections: {
+        filters: "Filtreler",
+        create: "Yeni Kasa Islemi",
+        action: "Secili Islem Aksiyonu",
+        list: "Kasa Islem Listesi",
+      },
+      placeholders: {
+        allRegisters: "Tum registerlar",
+        allTypes: "Tum islem tipleri",
+        allStatuses: "Tum durumlar",
+        register: "Register secin",
+        sessionOptional: "Oturum (opsiyonel)",
+        counterAccount: "Karsi hesap secin",
+        counterRegister: "Karsi register secin",
+      },
+      form: {
+        registerId: "registerId",
+        sessionId: "sessionId",
+        cashSessionIdOptional: "cashSessionId (opsiyonel)",
+        amount: "Tutar",
+        currencyCode: "Para birimi (USD)",
+        referenceNoOptional: "Referans no (opsiyonel)",
+        sourceDocIdOptional: "Kaynak dokuman ID (opsiyonel)",
+        sourceDocTypeOptional: "Kaynak dokuman tipi (opsiyonel)",
+        counterpartyTypeOptional: "Muhatap tipi (opsiyonel)",
+        counterpartyIdOptional: "Muhatap ID (opsiyonel)",
+        counterAccountIdOptional: "counterAccountId (opsiyonel)",
+        counterCashRegisterIdOptional: "counterCashRegisterId (opsiyonel)",
+        descriptionOptional: "Aciklama (opsiyonel)",
+        overrideCashControl: "Cash control override ile post et",
+        overrideReason: "Override nedeni (zorunlu)",
+        cancelReason: "Iptal nedeni (zorunlu)",
+        reverseReason: "Ters kayit nedeni (zorunlu)",
+      },
+      actions: {
+        applyFilters: "Filtreyi Uygula",
+        clearFilters: "Temizle",
+        refresh: "Yenile",
+        loading: "Yukleniyor...",
+        create: "Islem Olustur",
+        creating: "Olusturuluyor...",
+        preparePost: "Post Et",
+        prepareCancel: "Iptal Et",
+        prepareReverse: "Ters Kayit",
+        submitAction: "Aksiyonu Uygula",
+        cancelAction: "Vazgec",
+        saving: "Kaydediliyor...",
+      },
+      selectedTransactionSummary:
+        "Secili islem #{{id}} | No: {{txnNo}} | Durum: {{status}}",
+      table: {
+        id: "ID",
+        txnNo: "Islem No",
+        txnType: "Tip",
+        status: "Durum",
+        register: "Register",
+        session: "Oturum",
+        bookDate: "Book Date",
+        amount: "Tutar",
+        currency: "PB",
+        counterAccount: "Karsi Hesap",
+        counterRegister: "Karsi Register",
+        postedJournal: "Post Journal",
+        overrideReason: "Override Nedeni",
+        createdAt: "Olusturma",
+        actions: "Islemler",
+      },
+      values: {
+        notApplicable: "Uygulanmaz",
+        readOnly: "Salt okunur",
+      },
+      warnings: {
+        registerLookupUnavailable:
+          "Register lookup verileri yuklenemedi; register alanlarini manuel doldurmaniz gerekebilir.",
+        sessionLookupUnavailable:
+          "Oturum lookup verileri yuklenemedi; cashSessionId alanini manuel doldurmaniz gerekebilir.",
+        accountLookupUnavailable:
+          "Hesap lookup verileri yuklenemedi; counterAccountId alanini manuel doldurmaniz gerekebilir.",
+        registerInactive: "Secili register ACTIVE degil.",
+        currencyMismatch:
+          "Islem para birimi register para birimi ile uyusmuyor (register: {{registerCurrency}}).",
+        maxAmountExceeded:
+          "Islem tutari register maxTxnAmount limitini asiyor (max: {{max}}).",
+        sessionModeNone:
+          "Secili register session_mode=NONE. cashSessionId bos birakilabilir.",
+        sessionRequiredNoOpen:
+          "Secili register icin OPEN oturum bulunmuyor; create/post akisi bloklanabilir.",
+      },
+      errors: {
+        missingReadPermission:
+          "Bu sayfayi kullanmak icin cash.txn.read yetkisi gerekir.",
+        missingCreatePermission:
+          "Bu islem icin cash.txn.create yetkisi gerekir.",
+        missingPostPermission:
+          "Bu islem icin cash.txn.post yetkisi gerekir.",
+        missingCancelPermission:
+          "Bu islem icin cash.txn.cancel yetkisi gerekir.",
+        missingReversePermission:
+          "Bu islem icin cash.txn.reverse yetkisi gerekir.",
+        missingOverridePermission:
+          "Bu islem icin cash.override.post yetkisi gerekir.",
+        load: "Kasa islemleri yuklenemedi.",
+        create: "Kasa islemi olusturulamadi.",
+        action: "Islem aksiyonu tamamlanamadi.",
+        requestId: "Talep ID: {{requestId}}",
+        actionRowMissing: "Aksiyon icin gecerli islem bulunamadi.",
+        registerRequired: "registerId zorunludur.",
+        txnDatetimeRequired: "txnDatetime zorunludur.",
+        bookDateRequired: "bookDate zorunludur.",
+        amountRequired: "amount zorunludur.",
+        amountInvalid: "amount gecersiz.",
+        currencyRequired: "currencyCode zorunludur.",
+        invalidTxnType: "Gecersiz islem tipi.",
+        counterAccountRequired: "Bu islem tipi icin counterAccountId zorunludur.",
+        counterRegisterRequired:
+          "Bu islem tipi icin counterCashRegisterId zorunludur.",
+        counterRegisterSame:
+          "counterCashRegisterId registerId ile ayni olamaz.",
+        registerInactive: "Secili register ACTIVE degil.",
+        currencyMismatch:
+          "Islem para birimi register para birimi ile uyusmuyor (register: {{registerCurrency}}).",
+        maxAmountExceeded:
+          "Islem tutari register maxTxnAmount limitini asiyor (max: {{max}}).",
+        sessionRequiredNoOpen:
+          "Secili register icin OPEN oturum yok; islem olusturulamadi.",
+        postStatusInvalid:
+          "Yalnizca DRAFT/SUBMITTED/APPROVED islemler post edilebilir.",
+        cancelStatusInvalid: "Yalnizca DRAFT/SUBMITTED islemler iptal edilebilir.",
+        reverseStatusInvalid: "Yalnizca POSTED islemler ters kayit edilebilir.",
+        reverseReversalNotAllowed:
+          "Ters kayit satirlari tekrar ters kayit edilemez.",
+        overrideReasonRequired:
+          "overrideCashControl=true icin overrideReason zorunludur.",
+        cancelReasonRequired: "cancelReason zorunludur.",
+        reverseReasonRequired: "reverseReason zorunludur.",
+      },
+      errorsMapped: {
+        registerNotFound: "Secilen register bulunamadi.",
+        sessionNotFound: "Secilen oturum bulunamadi.",
+        sessionRegisterMismatch:
+          "Secilen oturum register ile eslesmiyor.",
+        sessionNotOpen: "Secilen oturum OPEN degil.",
+        counterRegisterNotFound: "Karsi register bulunamadi.",
+        counterAccountInvalid: "Karsi hesap gecersiz veya tenant kapsaminda degil.",
+        postRequiresOpenSession: "Post islemi icin OPEN oturum gereklidir.",
+        currencyMismatchGeneric:
+          "Islem para birimi register para birimi ile uyusmuyor.",
+        maxAmountExceededGeneric:
+          "Islem tutari register maxTxnAmount limitini asiyor.",
+        transactionNotFound: "Secilen kasa islemi bulunamadi.",
+        idempotencyDuplicate:
+          "Ayni idempotency anahtari ile daha once bir islem olusturulmus.",
+        systemGeneratedOnly:
+          "Bu islem tipi yalnizca sistem tarafindan olusturulabilir.",
+      },
+      messages: {
+        created: "Kasa islemi olusturuldu.",
+        posted: "Kasa islemi post edildi.",
+        cancelled: "Kasa islemi iptal edildi.",
+        reversed: "Ters kayit olusturuldu. Reversal ID: {{reversalId}}.",
+        idempotentReplay:
+          "Bu istek daha once islenmis; mevcut kayit geri donduruldu.",
+      },
+    },
+    cashExceptions: {
+      title: "Kasa Istisnalari",
+      subtitle:
+        "Kasa oturumlari ve kasa islemlerinden turetilen operasyonel istisnalari izleyin.",
+      glWarningNote:
+        "Bu ekranda cash endpointlerinden turetilen istisnalar ile birlikte dogrudan GL cash-control olaylari da listelenir.",
+      requestId: "Talep ID: {{requestId}}",
+      sections: {
+        filters: "Filtreler",
+        highVariance: "Yuksek Fark Oturumlari",
+        forcedClose: "Zorunlu Kapatilan Oturumlar",
+        overrideUsage: "Override Kullanilan Islemler",
+        unposted: "Post Edilmemis Islemler",
+        glCashControlEvents: "Dogrudan GL Cash-Control Olaylari",
+        notes: "Notlar",
+      },
+      actions: {
+        apply: "Filtreyi Uygula",
+        clear: "Temizle",
+        refresh: "Yenile",
+        loading: "Yukleniyor...",
+      },
+      filters: {
+        allLegalEntities: "Tum legal entityler",
+        allOperatingUnits: "Tum operating unitler",
+        allRegisters: "Tum registerlar",
+        fromDate: "Baslangic Tarihi",
+        toDate: "Bitis Tarihi",
+        minAbsVariance: "Minimum mutlak fark",
+      },
+      cards: {
+        highVariance: "Yuksek Fark",
+        forcedClose: "Forced Close",
+        overrideUsage: "Override Kullanimi",
+        unposted: "Post Edilmemis",
+        glCashControlEvents: "GL Cash-Control",
+      },
+      table: {
+        register: "Register",
+        legalEntity: "Legal Entity",
+        operatingUnit: "Operating Unit",
+        status: "Durum",
+        expected: "Beklenen",
+        counted: "Sayilan",
+        variance: "Fark",
+        closedAt: "Kapanis Zamani",
+        closedReason: "Kapanis Nedeni",
+        closeNote: "Kapanis Notu",
+        closedBy: "Kapatan",
+        txnNo: "Islem No",
+        txnType: "Islem Tipi",
+        bookDate: "Book Date",
+        amount: "Tutar",
+        overrideReason: "Override Nedeni",
+        postedJournal: "Post Journal",
+        createdAt: "Olusturma Zamani",
+        action: "Aksiyon",
+        journalNo: "Journal No",
+        resource: "Kaynak",
+        scope: "Scope",
+        requestId: "Talep ID",
+        payload: "Icerik",
+      },
+      empty: {
+        highVariance: "Filtrelere uygun yuksek farkli oturum bulunamadi.",
+        forcedClose: "Filtrelere uygun forced close oturum bulunamadi.",
+        overrideUsage: "Filtrelere uygun override kaydi bulunamadi.",
+        unposted: "Filtrelere uygun post edilmemis islem bulunamadi.",
+        glCashControlEvents:
+          "Filtrelere uygun dogrudan GL cash-control olayi bulunamadi.",
+      },
+      values: {
+        glActionWarn: "Uyari",
+        glActionOverride: "Override",
+      },
+      errors: {
+        missingReadPermission:
+          "Bu sayfayi kullanmak icin cash.report.read yetkisi gerekir.",
+        invalidVarianceThreshold:
+          "Minimum mutlak fark degeri sifir veya pozitif bir sayi olmalidir.",
+        invalidDateRange:
+          "Baslangic tarihi bitis tarihinden buyuk olamaz.",
+        load: "Kasa istisna verileri yuklenemedi.",
+      },
+      warnings: {
+        registerLookupUnavailable:
+          "Register lookup verileri yuklenemedi; filtre secenekleri kisitli olabilir.",
+        sessionsUnavailable:
+          "Kasa oturum verileri gecici olarak alinamadi; istisna bolumleri kismi gosteriliyor.",
+        transactionsUnavailable:
+          "Kasa islem verileri gecici olarak alinamadi; istisna bolumleri kismi gosteriliyor.",
+      },
+    },
     modulePlaceholder: {
       defaultTitle: "Modul",
       description:
@@ -667,6 +1154,10 @@ export const messages = {
         "/app/journal-entries": "Journal Entry",
         "/app/tediye-islemleri": "Disbursement",
         "/app/tahsilat-islemleri": "Collection",
+        "/app/kasa-tanimlari": "Cash Registers",
+        "/app/kasa-oturumlari": "Cash Sessions",
+        "/app/kasa-islemleri": "Cash Transactions",
+        "/app/kasa-istisnalari": "Cash Exceptions",
         "/app/mahsup-islemleri": "Adjustment",
         "/app/banka-islemleri": "Banking Operations",
         "/app/banka-tanimla": "Define Bank",
@@ -966,6 +1457,493 @@ export const messages = {
         summary: "Page {{page}} of {{totalPages}} | Total records: {{total}}",
         previous: "Previous",
         next: "Next",
+      },
+    },
+    cashControlMode: {
+      title: "Cash control mode: {{mode}}",
+      modes: {
+        OFF: "OFF",
+        WARN: "WARN",
+        ENFORCE: "ENFORCE",
+      },
+      descriptions: {
+        OFF: "Direct GL posting checks for cash-control are disabled.",
+        WARN: "Direct GL posting is allowed, but cash-control warnings are logged.",
+        ENFORCE:
+          "Direct GL posting to cash-controlled accounts is blocked unless source is CASH or override is used.",
+      },
+      unavailable: "Cash control mode is currently unavailable.",
+      requestId: "Request ID: {{requestId}}",
+    },
+    cashRegisters: {
+      title: "Cash Registers",
+      subtitle:
+        "List cash registers, create and update register definitions, and manage active/inactive status.",
+      readOnlyNotice:
+        "You are in read-only mode. cash.register.upsert permission is required for edit actions.",
+      loading: "Loading cash registers...",
+      empty: "No cash registers found.",
+      sections: {
+        create: "Create Cash Register",
+        edit: "Edit Cash Register",
+        list: "Cash Register List",
+      },
+      actions: {
+        create: "Save",
+        update: "Update",
+        edit: "Edit",
+        cancelEdit: "Cancel Edit",
+        activate: "Activate",
+        deactivate: "Deactivate",
+        refresh: "Refresh",
+        loading: "Loading...",
+        saving: "Saving...",
+      },
+      form: {
+        code: "Code",
+        name: "Name",
+        legalEntityId: "Legal entity ID",
+        operatingUnitIdOptional: "Operating unit ID (optional)",
+        accountId: "Account ID",
+        currencyCode: "Currency code (USD)",
+        allowNegative: "Allow negative balance",
+        varianceGainAccountIdOptional: "Variance gain account ID (optional)",
+        varianceLossAccountIdOptional: "Variance loss account ID (optional)",
+        maxTxnAmountOptional: "Max transaction amount (optional)",
+        requiresApprovalOverAmountOptional:
+          "Requires approval over amount (optional)",
+      },
+      placeholders: {
+        legalEntity: "Select legal entity",
+        operatingUnit: "Select operating unit (optional)",
+        account: "Select account",
+        currencyCode: "Select currency",
+        varianceGainAccount: "Select variance gain account (optional)",
+        varianceLossAccount: "Select variance loss account (optional)",
+      },
+      table: {
+        code: "Code",
+        name: "Name",
+        registerType: "Register Type",
+        sessionMode: "Session Mode",
+        legalEntity: "Legal Entity",
+        operatingUnit: "Operating Unit",
+        account: "Account",
+        currency: "Currency",
+        allowNegative: "Allow Negative",
+        status: "Status",
+        actions: "Actions",
+      },
+      values: {
+        yes: "Yes",
+        no: "No",
+      },
+      errors: {
+        missingReadPermission:
+          "cash.register.read permission is required to use this page.",
+        missingUpsertPermission:
+          "cash.register.upsert permission is required for this action.",
+        loadRegisters: "Failed to load cash registers.",
+        loadOrgLookups:
+          "Failed to load organization lookups. Fill IDs manually if needed.",
+        loadAccountLookups:
+          "Failed to load account lookups. Fill account IDs manually if needed.",
+        missingOrgLookupPermission:
+          "Without org.tree.read permission, legal entity/operating unit/currency lookup lists cannot be loaded.",
+        missingAccountLookupPermission:
+          "Without gl.account.read permission, account lookup lists cannot be loaded.",
+        requiredCodeName: "Code and name are required.",
+        requiredEntityAccount: "legalEntityId and accountId are required.",
+        requiredCurrency: "currencyCode is required.",
+        invalidAmount: "An invalid numeric value exists in amount fields.",
+        save: "Failed to save cash register.",
+        statusUpdate: "Failed to update cash register status.",
+      },
+      messages: {
+        created: "Cash register created.",
+        updated: "Cash register updated.",
+        statusUpdated: "Cash register {{code}} status updated to {{status}}.",
+      },
+    },
+    cashSessions: {
+      title: "Cash Sessions",
+      subtitle:
+        "Open and close cash sessions, monitor open sessions, and review session history.",
+      loading: "Loading cash sessions...",
+      emptyOpen: "No open cash sessions found.",
+      emptyHistory: "No cash session history found.",
+      readOnlyOpenNotice:
+        "cash.session.open permission is required to open sessions.",
+      readOnlyCloseNotice:
+        "cash.session.close permission is required to close sessions.",
+      approvalNotice:
+        "cash.variance.approve permission is required to approve over-threshold variance.",
+      forcedCloseNotice:
+        "closeNote is required when closedReason is FORCED_CLOSE.",
+      sections: {
+        open: "Open Session",
+        close: "Close Session",
+        openSessions: "Open Sessions",
+        history: "Session History",
+      },
+      actions: {
+        open: "Open Session",
+        close: "Close Session",
+        refresh: "Refresh",
+        loading: "Loading...",
+        saving: "Saving...",
+        useForClose: "Use For Close",
+      },
+      form: {
+        openingAmountOptional: "Opening amount (optional, defaults to 0)",
+        countedClosingAmount: "Counted closing amount",
+        closeNote: "Close note (required for FORCED_CLOSE / threshold variance)",
+        approveVariance: "Approve over-threshold variance (approveVariance=true)",
+      },
+      placeholders: {
+        register: "Select cash register",
+        openSession: "Select open session",
+      },
+      table: {
+        register: "Register",
+        status: "Status",
+        openedAt: "Opened At",
+        closedAt: "Closed At",
+        opening: "Opening",
+        expected: "Expected",
+        counted: "Counted",
+        variance: "Variance",
+        closedReason: "Closed Reason",
+        approvedBy: "Approved By",
+        approvedAt: "Approved At",
+        actions: "Actions",
+      },
+      requiredWarning: {
+        title: "Session mode REQUIRED but no open session",
+        description:
+          "Active registers below do not have an open session. Transaction create/post flows may be blocked.",
+      },
+      selectedSessionSummary:
+        "Selected session #{{id}} | Register: {{registerCode}} | Opening: {{opening}} | Expected: {{expected}}",
+      errors: {
+        missingReadPermission:
+          "cash.register.read permission is required to use this page.",
+        missingOpenPermission:
+          "cash.session.open permission is required for this action.",
+        missingClosePermission:
+          "cash.session.close permission is required for this action.",
+        missingVarianceApprovePermission:
+          "cash.variance.approve permission is required for this action.",
+        load: "Failed to load cash sessions.",
+        open: "Failed to open cash session.",
+        close: "Failed to close cash session.",
+        requestId: "Request ID: {{requestId}}",
+        registerRequired: "registerId is required.",
+        invalidOpeningAmount: "Opening amount is invalid.",
+        sessionRequired: "sessionId is required.",
+        countedRequired: "countedClosingAmount is required.",
+        closeNoteForced: "closeNote is required for FORCED_CLOSE.",
+        closeNoteApproval:
+          "closeNote is required when approveVariance=true.",
+      },
+      errorsMapped: {
+        registerNotFound: "Selected register was not found.",
+        sessionAlreadyOpen: "An OPEN session already exists for this register.",
+        sessionModeNone:
+          "Session cannot be opened because register session_mode is NONE.",
+        registerInactive: "Selected register is not ACTIVE.",
+        sessionNotFound: "Selected session was not found.",
+        onlyOpenClose: "Only OPEN sessions can be closed.",
+        unpostedTransactionsExist:
+          "Session cannot be closed while DRAFT/SUBMITTED/APPROVED transactions exist.",
+        closeNoteThreshold:
+          "closeNote is required when variance exceeds approval threshold.",
+        varianceApprovalRequired:
+          "Variance exceeds configured threshold; supervisor/finance approval is required.",
+        varianceGainMissing:
+          "varianceGainAccountId must be configured for over variance.",
+        varianceLossMissing:
+          "varianceLossAccountId must be configured for short variance.",
+      },
+      messages: {
+        opened: "Cash session opened successfully.",
+        closed: "Cash session closed successfully.",
+      },
+    },
+    cashTransactions: {
+      presetTitles: {
+        all: "Cash Transactions",
+        payout: "Payout Transactions",
+        receipt: "Receipt Transactions",
+      },
+      subtitle:
+        "Filter cash transactions, create new rows, and manage post/cancel/reverse workflows.",
+      presetNotices: {
+        payout: "Transaction type is fixed to PAYOUT on this route.",
+        receipt: "Transaction type is fixed to RECEIPT on this route.",
+      },
+      loading: "Loading cash transactions...",
+      empty: "No cash transactions found.",
+      readOnlyNotice:
+        "You are in read-only mode. cash.txn.create permission is required to create transactions.",
+      sections: {
+        filters: "Filters",
+        create: "Create Cash Transaction",
+        action: "Selected Transaction Action",
+        list: "Cash Transaction List",
+      },
+      placeholders: {
+        allRegisters: "All registers",
+        allTypes: "All transaction types",
+        allStatuses: "All statuses",
+        register: "Select register",
+        sessionOptional: "Session (optional)",
+        counterAccount: "Select counter account",
+        counterRegister: "Select counter register",
+      },
+      form: {
+        registerId: "registerId",
+        sessionId: "sessionId",
+        cashSessionIdOptional: "cashSessionId (optional)",
+        amount: "Amount",
+        currencyCode: "Currency code (USD)",
+        referenceNoOptional: "Reference no (optional)",
+        sourceDocIdOptional: "Source document ID (optional)",
+        sourceDocTypeOptional: "Source document type (optional)",
+        counterpartyTypeOptional: "Counterparty type (optional)",
+        counterpartyIdOptional: "Counterparty ID (optional)",
+        counterAccountIdOptional: "counterAccountId (optional)",
+        counterCashRegisterIdOptional: "counterCashRegisterId (optional)",
+        descriptionOptional: "Description (optional)",
+        overrideCashControl: "Post with cash-control override",
+        overrideReason: "Override reason (required)",
+        cancelReason: "Cancel reason (required)",
+        reverseReason: "Reverse reason (required)",
+      },
+      actions: {
+        applyFilters: "Apply Filters",
+        clearFilters: "Clear",
+        refresh: "Refresh",
+        loading: "Loading...",
+        create: "Create Transaction",
+        creating: "Creating...",
+        preparePost: "Post",
+        prepareCancel: "Cancel",
+        prepareReverse: "Reverse",
+        submitAction: "Apply Action",
+        cancelAction: "Dismiss",
+        saving: "Saving...",
+      },
+      selectedTransactionSummary:
+        "Selected transaction #{{id}} | No: {{txnNo}} | Status: {{status}}",
+      table: {
+        id: "ID",
+        txnNo: "Transaction No",
+        txnType: "Type",
+        status: "Status",
+        register: "Register",
+        session: "Session",
+        bookDate: "Book Date",
+        amount: "Amount",
+        currency: "Currency",
+        counterAccount: "Counter Account",
+        counterRegister: "Counter Register",
+        postedJournal: "Posted Journal",
+        overrideReason: "Override Reason",
+        createdAt: "Created At",
+        actions: "Actions",
+      },
+      values: {
+        notApplicable: "Not applicable",
+        readOnly: "Read-only",
+      },
+      warnings: {
+        registerLookupUnavailable:
+          "Register lookups could not be loaded; you may need to enter register fields manually.",
+        sessionLookupUnavailable:
+          "Session lookups could not be loaded; you may need to enter cashSessionId manually.",
+        accountLookupUnavailable:
+          "Account lookups could not be loaded; you may need to enter counterAccountId manually.",
+        registerInactive: "Selected register is not ACTIVE.",
+        currencyMismatch:
+          "Transaction currency does not match register currency (register: {{registerCurrency}}).",
+        maxAmountExceeded:
+          "Transaction amount exceeds register maxTxnAmount limit (max: {{max}}).",
+        sessionModeNone:
+          "Selected register has session_mode=NONE. cashSessionId can be empty.",
+        sessionRequiredNoOpen:
+          "Selected register has no OPEN session; create/post flow may be blocked.",
+      },
+      errors: {
+        missingReadPermission:
+          "cash.txn.read permission is required to use this page.",
+        missingCreatePermission:
+          "cash.txn.create permission is required for this action.",
+        missingPostPermission:
+          "cash.txn.post permission is required for this action.",
+        missingCancelPermission:
+          "cash.txn.cancel permission is required for this action.",
+        missingReversePermission:
+          "cash.txn.reverse permission is required for this action.",
+        missingOverridePermission:
+          "cash.override.post permission is required for this action.",
+        load: "Failed to load cash transactions.",
+        create: "Failed to create cash transaction.",
+        action: "Failed to complete transaction action.",
+        requestId: "Request ID: {{requestId}}",
+        actionRowMissing: "No valid transaction selected for action.",
+        registerRequired: "registerId is required.",
+        txnDatetimeRequired: "txnDatetime is required.",
+        bookDateRequired: "bookDate is required.",
+        amountRequired: "amount is required.",
+        amountInvalid: "amount is invalid.",
+        currencyRequired: "currencyCode is required.",
+        invalidTxnType: "Invalid transaction type.",
+        counterAccountRequired:
+          "counterAccountId is required for this transaction type.",
+        counterRegisterRequired:
+          "counterCashRegisterId is required for this transaction type.",
+        counterRegisterSame:
+          "counterCashRegisterId cannot be the same as registerId.",
+        registerInactive: "Selected register is not ACTIVE.",
+        currencyMismatch:
+          "Transaction currency does not match register currency (register: {{registerCurrency}}).",
+        maxAmountExceeded:
+          "Transaction amount exceeds register maxTxnAmount limit (max: {{max}}).",
+        sessionRequiredNoOpen:
+          "No OPEN session found for selected register; create is blocked.",
+        postStatusInvalid:
+          "Only DRAFT/SUBMITTED/APPROVED transactions can be posted.",
+        cancelStatusInvalid:
+          "Only DRAFT/SUBMITTED transactions can be cancelled.",
+        reverseStatusInvalid: "Only POSTED transactions can be reversed.",
+        reverseReversalNotAllowed:
+          "Reversal transactions cannot be reversed again.",
+        overrideReasonRequired:
+          "overrideReason is required when overrideCashControl=true.",
+        cancelReasonRequired: "cancelReason is required.",
+        reverseReasonRequired: "reverseReason is required.",
+      },
+      errorsMapped: {
+        registerNotFound: "Selected register was not found.",
+        sessionNotFound: "Selected session was not found.",
+        sessionRegisterMismatch:
+          "Selected session does not belong to selected register.",
+        sessionNotOpen: "Selected session is not OPEN.",
+        counterRegisterNotFound: "Counter register was not found.",
+        counterAccountInvalid:
+          "Counter account is invalid or outside tenant scope.",
+        postRequiresOpenSession: "Posting requires an OPEN cash session.",
+        currencyMismatchGeneric:
+          "Transaction currency must match register currency.",
+        maxAmountExceededGeneric:
+          "Transaction amount exceeds register maxTxnAmount limit.",
+        transactionNotFound: "Selected cash transaction was not found.",
+        idempotencyDuplicate:
+          "A transaction already exists with the same idempotency key.",
+        systemGeneratedOnly:
+          "This transaction type can only be system-generated.",
+      },
+      messages: {
+        created: "Cash transaction created.",
+        posted: "Cash transaction posted.",
+        cancelled: "Cash transaction cancelled.",
+        reversed: "Reversal created. Reversal ID: {{reversalId}}.",
+        idempotentReplay:
+          "This request was already processed; existing transaction returned.",
+      },
+    },
+    cashExceptions: {
+      title: "Cash Exceptions",
+      subtitle:
+        "Monitor operational exceptions derived from cash sessions and cash transactions.",
+      glWarningNote:
+        "This page includes both derived cash exceptions and direct GL cash-control events.",
+      requestId: "Request ID: {{requestId}}",
+      sections: {
+        filters: "Filters",
+        highVariance: "High Variance Sessions",
+        forcedClose: "Forced Close Sessions",
+        overrideUsage: "Override Usage Transactions",
+        unposted: "Unposted Transactions",
+        glCashControlEvents: "Direct GL Cash-Control Events",
+        notes: "Notes",
+      },
+      actions: {
+        apply: "Apply Filters",
+        clear: "Clear",
+        refresh: "Refresh",
+        loading: "Loading...",
+      },
+      filters: {
+        allLegalEntities: "All legal entities",
+        allOperatingUnits: "All operating units",
+        allRegisters: "All registers",
+        fromDate: "From Date",
+        toDate: "To Date",
+        minAbsVariance: "Minimum absolute variance",
+      },
+      cards: {
+        highVariance: "High Variance",
+        forcedClose: "Forced Close",
+        overrideUsage: "Override Usage",
+        unposted: "Unposted",
+        glCashControlEvents: "GL Cash-Control",
+      },
+      table: {
+        register: "Register",
+        legalEntity: "Legal Entity",
+        operatingUnit: "Operating Unit",
+        status: "Status",
+        expected: "Expected",
+        counted: "Counted",
+        variance: "Variance",
+        closedAt: "Closed At",
+        closedReason: "Closed Reason",
+        closeNote: "Close Note",
+        closedBy: "Closed By",
+        txnNo: "Transaction No",
+        txnType: "Transaction Type",
+        bookDate: "Book Date",
+        amount: "Amount",
+        overrideReason: "Override Reason",
+        postedJournal: "Posted Journal",
+        createdAt: "Created At",
+        action: "Action",
+        journalNo: "Journal No",
+        resource: "Resource",
+        scope: "Scope",
+        requestId: "Request ID",
+        payload: "Payload",
+      },
+      empty: {
+        highVariance: "No high-variance sessions matched the current filters.",
+        forcedClose: "No forced-close sessions matched the current filters.",
+        overrideUsage: "No override-usage transactions matched the current filters.",
+        unposted: "No unposted transactions matched the current filters.",
+        glCashControlEvents:
+          "No direct GL cash-control events matched the current filters.",
+      },
+      values: {
+        glActionWarn: "Warning",
+        glActionOverride: "Override",
+      },
+      errors: {
+        missingReadPermission:
+          "cash.report.read permission is required to use this page.",
+        invalidVarianceThreshold:
+          "Minimum absolute variance must be zero or a positive number.",
+        invalidDateRange:
+          "From date cannot be greater than to date.",
+        load: "Failed to load cash exception data.",
+      },
+      warnings: {
+        registerLookupUnavailable:
+          "Register lookup data is unavailable; filter options may be limited.",
+        sessionsUnavailable:
+          "Cash session data is temporarily unavailable; exception sections are partially populated.",
+        transactionsUnavailable:
+          "Cash transaction data is temporarily unavailable; exception sections are partially populated.",
       },
     },
     modulePlaceholder: {

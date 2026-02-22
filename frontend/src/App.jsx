@@ -24,6 +24,10 @@ import ConsolidationReportsPage from "./pages/ConsolidationReportsPage";
 import ProviderBootstrapPage from "./pages/ProviderBootstrapPage";
 import ProviderLoginPage from "./pages/provider/ProviderLoginPage.jsx";
 import ModulePlaceholderPage from "./pages/ModulePlaceholderPage";
+import CashRegistersPage from "./pages/cash/CashRegistersPage.jsx";
+import CashSessionsPage from "./pages/cash/CashSessionsPage.jsx";
+import CashTransactionsPage from "./pages/cash/CashTransactionsPage.jsx";
+import CashExceptionsPage from "./pages/cash/CashExceptionsPage.jsx";
 import { collectSidebarLinks, sidebarItems } from "./layouts/sidebarConfig.js";
 import TenantReadinessProvider from "./readiness/TenantReadinessProvider.jsx";
 import RequireTenantReadiness from "./readiness/RequireTenantReadiness.jsx";
@@ -77,6 +81,36 @@ const implementedRoutes = [
     appPath: "/app/mahsup-islemleri",
     childPath: "mahsup-islemleri",
     element: <JournalWorkbenchPage />,
+  },
+  {
+    appPath: "/app/kasa-tanimlari",
+    childPath: "kasa-tanimlari",
+    element: <CashRegistersPage />,
+  },
+  {
+    appPath: "/app/kasa-oturumlari",
+    childPath: "kasa-oturumlari",
+    element: <CashSessionsPage />,
+  },
+  {
+    appPath: "/app/tediye-islemleri",
+    childPath: "tediye-islemleri",
+    element: <CashTransactionsPage />,
+  },
+  {
+    appPath: "/app/tahsilat-islemleri",
+    childPath: "tahsilat-islemleri",
+    element: <CashTransactionsPage />,
+  },
+  {
+    appPath: "/app/kasa-islemleri",
+    childPath: "kasa-islemleri",
+    element: <CashTransactionsPage />,
+  },
+  {
+    appPath: "/app/kasa-istisnalari",
+    childPath: "kasa-istisnalari",
+    element: <CashExceptionsPage />,
   },
   {
     appPath: "/app/ayarlar/hesap-plani-olustur",

@@ -99,10 +99,38 @@ export const sidebarItems = [
       {
         label: "Tediye",
         to: "/app/tediye-islemleri",
+        requiredPermissions: ["cash.txn.read"],
+        implemented: true,
       },
       {
         label: "Tahsilat",
         to: "/app/tahsilat-islemleri",
+        requiredPermissions: ["cash.txn.read"],
+        implemented: true,
+      },
+      {
+        label: "Kasa Tanimlari",
+        to: "/app/kasa-tanimlari",
+        requiredPermissions: ["cash.register.read"],
+        implemented: true,
+      },
+      {
+        label: "Kasa Oturumlari",
+        to: "/app/kasa-oturumlari",
+        requiredPermissions: ["cash.register.read"],
+        implemented: true,
+      },
+      {
+        label: "Kasa Islemleri",
+        to: "/app/kasa-islemleri",
+        requiredPermissions: ["cash.txn.read"],
+        implemented: true,
+      },
+      {
+        label: "Kasa Istisnalari",
+        to: "/app/kasa-istisnalari",
+        requiredPermissions: ["cash.report.read"],
+        implemented: true,
       },
       {
         label: "Mahsup",
