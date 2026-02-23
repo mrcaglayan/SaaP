@@ -358,6 +358,7 @@ Build:
 ## Scope
 
 Create draft document lifecycle APIs for the 10 frozen transaction types.
+Also close the PR-04 payment-term default UX gap with a proper payment-term read contract (tenant/scope-safe) so counterparty defaults are selectable without manual ID entry.
 
 ## Implementation Tasks
 
@@ -368,6 +369,11 @@ Implement endpoints for `cari_documents` draft flow:
 * get detail
 * update draft
 
+Add supporting master-data read endpoint(s) for counterparty defaults:
+
+* `GET /api/v1/cari/payment-terms`
+* optional: `GET /api/v1/cari/payment-terms/:id`
+
 Rules:
 
 * only frozen 10 types allowed
@@ -376,6 +382,13 @@ Rules:
 * legal-entity / counterparty scope validation
 * no posting yet in this PR (posting comes in PR-06)
 * prepare snapshot capture logic to execute on POST boundary (can be in service layer now, invoked in PR-06)
+* payment-term read API must be tenant-safe and legal-entity scoped (same scope model as counterparties)
+* payment-term read responses should be stable for frontend selector usage (`id`, `code`, `name`, `status`, due/grace fields as needed)
+
+Frontend closure for payment default issue:
+
+* update buyer/vendor card create/edit pages to use payment-term lookup data (dropdown/autocomplete) instead of manual numeric-only input
+* keep backend validation as source of truth (invalid/foreign payment term still rejected)
 
 Recommended:
 
@@ -392,6 +405,11 @@ Recommended:
   * reject missing mandatory fields
   * update draft succeeds
   * updating non-draft fails
+* Payment-term contract tests:
+
+  * `GET /api/v1/cari/payment-terms` returns tenant-safe, scope-filtered rows
+  * legal entity filter works correctly
+  * cross-tenant and out-of-scope access is blocked
 * Scope/tenant tests:
 
   * invalid counterparty/legal entity combination rejected
@@ -400,6 +418,11 @@ Recommended:
 
   * only valid draft transitions allowed
   * draft cancel works (if implemented here)
+* Frontend smoke (payment default closure):
+
+  * create/edit counterparty can pick payment term from lookup control
+  * selected payment term persists and round-trips in detail/list
+  * duplicate/invalid term errors are still surfaced clearly
 
 ## Acceptance Criteria
 
@@ -407,6 +430,7 @@ Recommended:
 * Validation is txn-type aware and scope-aware.
 * Non-draft mutation is blocked.
 * API contracts are stable for posting engine integration in PR-06.
+* Payment-term default issue from PR-04 is closed via lookup-based UI + scoped backend read contract.
 
 ---
 
@@ -756,6 +780,5 @@ Requirements:
 If you want, I can also give you the **repo-specific file map per PR** (suggested migration filenames, backend route/service/test files, and frontend page/API files) so your Codex prompts can be even more precise.
 
 [1]: https://chatgpt.com/c/699bf58e-26b0-83a2-aa13-579cbffb521d "Project.zip Analysis and PR Review"
-
 
 

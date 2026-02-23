@@ -5,6 +5,7 @@ import {
   listCariCounterparties,
   updateCariCounterparty,
 } from "../../api/cariCounterparty.js";
+import { listCariPaymentTerms } from "../../api/cariPaymentTerms.js";
 import { listLegalEntities } from "../../api/orgAdmin.js";
 import { useAuth } from "../../auth/useAuth.js";
 import CounterpartyForm from "./CounterpartyForm.jsx";
@@ -13,6 +14,7 @@ import {
   buildInitialCounterpartyForm,
   mapCounterpartyApiError,
   mapDetailToCounterpartyForm,
+  toPositiveInt,
 } from "./counterpartyFormUtils.js";
 
 const PAGE_CONFIG = {
@@ -91,6 +93,18 @@ function buildListParams(filters) {
   };
 }
 
+function mapPaymentTermRows(response) {
+  if (!Array.isArray(response?.rows)) {
+    return [];
+  }
+  return response.rows.map((row) => ({
+    id: Number(row?.id || 0),
+    code: String(row?.code || ""),
+    name: String(row?.name || ""),
+    status: String(row?.status || "ACTIVE").toUpperCase(),
+  }));
+}
+
 export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
   const config = PAGE_CONFIG[pageKey] || PAGE_CONFIG.buyerList;
   const isCreatePage = config.mode === "create";
@@ -111,6 +125,9 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
   const [createSaving, setCreateSaving] = useState(false);
   const [createError, setCreateError] = useState("");
   const [createMessage, setCreateMessage] = useState("");
+  const [createPaymentTerms, setCreatePaymentTerms] = useState([]);
+  const [createPaymentTermsLoading, setCreatePaymentTermsLoading] = useState(false);
+  const [createPaymentTermsError, setCreatePaymentTermsError] = useState("");
 
   const [filters, setFilters] = useState(() => createListFilters(config.roleDefault));
   const [rows, setRows] = useState([]);
@@ -126,6 +143,9 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError] = useState("");
   const [editMessage, setEditMessage] = useState("");
+  const [editPaymentTerms, setEditPaymentTerms] = useState([]);
+  const [editPaymentTermsLoading, setEditPaymentTermsLoading] = useState(false);
+  const [editPaymentTermsError, setEditPaymentTermsError] = useState("");
 
   const legalEntityById = useMemo(() => {
     const map = new Map();
@@ -147,6 +167,10 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
     setListError("");
     setEditError("");
     setEditMessage("");
+    setCreatePaymentTerms([]);
+    setCreatePaymentTermsError("");
+    setEditPaymentTerms([]);
+    setEditPaymentTermsError("");
   }, [config.roleDefault, config.mode]);
 
   useEffect(() => {
@@ -205,6 +229,80 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
     }));
   }, [createForm.legalEntityId, isCreatePage, legalEntities]);
 
+  useEffect(() => {
+    let cancelled = false;
+    async function loadCreatePaymentTerms() {
+      if (!isCreatePage) {
+        setCreatePaymentTerms([]);
+        setCreatePaymentTermsError("");
+        setCreatePaymentTermsLoading(false);
+        return;
+      }
+
+      await loadPaymentTermsForLegalEntity({
+        legalEntityId: createForm.legalEntityId,
+        setRows: (rows) => {
+          if (!cancelled) {
+            setCreatePaymentTerms(rows);
+          }
+        },
+        setLoading: (loading) => {
+          if (!cancelled) {
+            setCreatePaymentTermsLoading(loading);
+          }
+        },
+        setError: (error) => {
+          if (!cancelled) {
+            setCreatePaymentTermsError(error);
+          }
+        },
+      });
+    }
+
+    loadCreatePaymentTerms();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isCreatePage, createForm.legalEntityId, canRead]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadEditPaymentTerms() {
+      if (!editingId) {
+        setEditPaymentTerms([]);
+        setEditPaymentTermsError("");
+        setEditPaymentTermsLoading(false);
+        return;
+      }
+
+      await loadPaymentTermsForLegalEntity({
+        legalEntityId: editingForm.legalEntityId,
+        setRows: (rows) => {
+          if (!cancelled) {
+            setEditPaymentTerms(rows);
+          }
+        },
+        setLoading: (loading) => {
+          if (!cancelled) {
+            setEditPaymentTermsLoading(loading);
+          }
+        },
+        setError: (error) => {
+          if (!cancelled) {
+            setEditPaymentTermsError(error);
+          }
+        },
+      });
+    }
+
+    loadEditPaymentTerms();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editingId, editingForm.legalEntityId, canRead]);
+
   async function loadCounterpartyRows(nextFilters = filters) {
     if (!canRead) {
       setRows([]);
@@ -224,6 +322,39 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
       setListError(mapCounterpartyApiError(err, "Failed to load counterparties."));
     } finally {
       setListLoading(false);
+    }
+  }
+
+  async function loadPaymentTermsForLegalEntity({
+    legalEntityId,
+    setRows,
+    setLoading,
+    setError,
+  }) {
+    const parsedLegalEntityId = toPositiveInt(legalEntityId);
+    if (!parsedLegalEntityId || !canRead) {
+      setRows([]);
+      setError("");
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    setError("");
+    try {
+      const response = await listCariPaymentTerms({
+        legalEntityId: parsedLegalEntityId,
+        limit: 300,
+        offset: 0,
+      });
+      setRows(mapPaymentTermRows(response));
+    } catch (err) {
+      setRows([]);
+      setError(
+        mapCounterpartyApiError(err, "Failed to load payment terms for selected legal entity.")
+      );
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -310,6 +441,9 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
         legalEntities={legalEntities}
         legalEntitiesLoading={legalEntitiesLoading}
         legalEntitiesError={legalEntitiesError}
+        paymentTerms={createPaymentTerms}
+        paymentTermsLoading={createPaymentTermsLoading}
+        paymentTermsError={createPaymentTermsError}
         canSubmit={canUpsert}
         submitting={createSaving}
         onSubmit={handleCreateSubmit}
@@ -526,6 +660,9 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
             legalEntities={legalEntities}
             legalEntitiesLoading={legalEntitiesLoading}
             legalEntitiesError={legalEntitiesError}
+            paymentTerms={editPaymentTerms}
+            paymentTermsLoading={editPaymentTermsLoading}
+            paymentTermsError={editPaymentTermsError}
             canSubmit={canUpsert}
             submitting={editSaving}
             onSubmit={handleEditSubmit}

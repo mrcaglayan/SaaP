@@ -1,6 +1,8 @@
 import express from "express";
 import { requirePermission } from "../middleware/rbac.js";
 import counterpartyRoutes from "./cari.counterparty.routes.js";
+import paymentTermRoutes from "./cari.payment-term.routes.js";
+import documentRoutes from "./cari.document.routes.js";
 import {
   asyncHandler,
   badRequest,
@@ -11,6 +13,8 @@ import {
 const router = express.Router();
 
 router.use("/counterparties", counterpartyRoutes);
+router.use("/payment-terms", paymentTermRoutes);
+router.use("/documents", documentRoutes);
 
 function requireTenant(req) {
   const tenantId = resolveTenantId(req);
@@ -70,82 +74,6 @@ router.post(
     return ok(res, {
       tenantId,
       message: "Cari card upsert endpoint is guard-ready for PR-03+",
-    });
-  })
-);
-
-router.get(
-  "/documents",
-  requirePermission("cari.doc.read", {
-    resolveScope: (req) => resolveCariScope(req),
-  }),
-  asyncHandler(async (req, res) => {
-    const tenantId = requireTenant(req);
-    return ok(res, {
-      tenantId,
-      rows: [],
-    });
-  })
-);
-
-router.post(
-  "/documents",
-  requirePermission("cari.doc.create", {
-    resolveScope: (req) => resolveCariScope(req),
-  }),
-  asyncHandler(async (req, res) => {
-    const tenantId = requireTenant(req);
-    return ok(res, {
-      tenantId,
-      message: "Cari document create endpoint is guard-ready for PR-03+",
-    });
-  })
-);
-
-router.put(
-  "/documents/:documentId",
-  requirePermission("cari.doc.update", {
-    resolveScope: (req) => resolveCariScope(req),
-  }),
-  asyncHandler(async (req, res) => {
-    const tenantId = requireTenant(req);
-    const documentId = parsePathId(req.params.documentId, "documentId");
-    return ok(res, {
-      tenantId,
-      documentId,
-      message: "Cari document update endpoint is guard-ready for PR-03+",
-    });
-  })
-);
-
-router.post(
-  "/documents/:documentId/post",
-  requirePermission("cari.doc.post", {
-    resolveScope: (req) => resolveCariScope(req),
-  }),
-  asyncHandler(async (req, res) => {
-    const tenantId = requireTenant(req);
-    const documentId = parsePathId(req.params.documentId, "documentId");
-    return ok(res, {
-      tenantId,
-      documentId,
-      message: "Cari document post endpoint is guard-ready for PR-03+",
-    });
-  })
-);
-
-router.post(
-  "/documents/:documentId/reverse",
-  requirePermission("cari.doc.reverse", {
-    resolveScope: (req) => resolveCariScope(req),
-  }),
-  asyncHandler(async (req, res) => {
-    const tenantId = requireTenant(req);
-    const documentId = parsePathId(req.params.documentId, "documentId");
-    return ok(res, {
-      tenantId,
-      documentId,
-      message: "Cari document reverse endpoint is guard-ready for PR-03+",
     });
   })
 );

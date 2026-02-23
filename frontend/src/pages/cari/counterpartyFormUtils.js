@@ -141,7 +141,8 @@ export function validateCounterpartyForm(form, { mode = "create" } = {}) {
 
   const paymentTermId = toTrimmed(form.defaultPaymentTermId);
   if (paymentTermId && !toPositiveInt(paymentTermId)) {
-    fieldErrors.defaultPaymentTermId = "Payment term must be a positive number.";
+    fieldErrors.defaultPaymentTermId =
+      "Payment term must be selected from available options.";
   }
 
   const currency = toTrimmed(form.defaultCurrencyCode).toUpperCase();

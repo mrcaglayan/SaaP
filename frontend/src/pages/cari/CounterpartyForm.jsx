@@ -47,6 +47,9 @@ export default function CounterpartyForm({
   legalEntities = [],
   legalEntitiesLoading = false,
   legalEntitiesError = "",
+  paymentTerms = [],
+  paymentTermsLoading = false,
+  paymentTermsError = "",
   canSubmit = true,
   submitting = false,
   onSubmit,
@@ -65,6 +68,11 @@ export default function CounterpartyForm({
   const roleLabel = normalizeRoleLabel(form.isCustomer, form.isVendor);
   const legalEntityOptions = Array.isArray(legalEntities) ? legalEntities : [];
   const showLegalEntitySelect = legalEntityOptions.length > 0;
+  const paymentTermOptions = Array.isArray(paymentTerms) ? paymentTerms : [];
+  const selectedPaymentTermId = String(form.defaultPaymentTermId || "");
+  const hasSelectedPaymentTerm = paymentTermOptions.some(
+    (row) => String(row.id) === selectedPaymentTermId
+  );
 
   function updateField(field, value) {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -398,16 +406,38 @@ export default function CounterpartyForm({
 
         <div>
           <label className="block text-xs font-semibold uppercase tracking-wide text-slate-600">
-            Default Payment Term Id
+            Default Payment Term
           </label>
-          <input
+          <select
             className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-            type="number"
-            min="1"
-            value={form.defaultPaymentTermId}
+            value={selectedPaymentTermId}
             onChange={(event) => updateField("defaultPaymentTermId", event.target.value)}
-            disabled={submitting}
-          />
+            disabled={submitting || !form.legalEntityId}
+          >
+            <option value="">No default payment term</option>
+            {selectedPaymentTermId && !hasSelectedPaymentTerm ? (
+              <option value={selectedPaymentTermId}>
+                Selected term #{selectedPaymentTermId}
+              </option>
+            ) : null}
+            {paymentTermOptions.map((row) => (
+              <option key={`payment-term-${row.id}`} value={String(row.id)}>
+                {row.code} - {row.name}
+                {row.status === "INACTIVE" ? " (INACTIVE)" : ""}
+              </option>
+            ))}
+          </select>
+          {!form.legalEntityId ? (
+            <p className="mt-1 text-xs text-slate-500">
+              Select legal entity first.
+            </p>
+          ) : null}
+          {paymentTermsLoading ? (
+            <p className="mt-1 text-xs text-slate-500">Loading payment terms...</p>
+          ) : null}
+          {paymentTermsError ? (
+            <p className="mt-1 text-xs text-amber-700">{paymentTermsError}</p>
+          ) : null}
           <FieldError message={findFieldError(fieldErrors, "defaultPaymentTermId")} />
         </div>
 
