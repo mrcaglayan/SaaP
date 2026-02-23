@@ -55,7 +55,10 @@ function ok(res, payload) {
 }
 
 function buildSettlementApplyResponse(tenantId, result) {
-  const metrics = result.metrics || result.applyAuditPayload || {};
+  const metrics = {
+    ...(result.applyAuditPayload || {}),
+    ...(result.metrics || {}),
+  };
   const realizedGainLossBase =
     metrics.realizedFxNetBase === undefined || metrics.realizedFxNetBase === null
       ? null
