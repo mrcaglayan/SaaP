@@ -1,8 +1,19 @@
 import express from "express";
-import { assertScopeAccess, requirePermission } from "../middleware/rbac.js";
+import {
+  assertScopeAccess,
+  buildScopeFilter,
+  requirePermission,
+} from "../middleware/rbac.js";
 import counterpartyRoutes from "./cari.counterparty.routes.js";
 import paymentTermRoutes from "./cari.payment-term.routes.js";
 import documentRoutes from "./cari.document.routes.js";
+import {
+  parseAgingReportFilters,
+  parseCariAuditFilters,
+  parseCounterpartyStatementFilters,
+  parseGenericAgingReportFilters,
+  parseOpenItemsReportFilters,
+} from "./cari.report.validators.js";
 import {
   parseBankApplyInput,
   parseBankAttachInput,
@@ -15,6 +26,12 @@ import {
   resolveCariSettlementScope,
   reverseCariSettlementById,
 } from "../services/cari.settlement.service.js";
+import {
+  getCariAgingReport,
+  getCariCounterpartyStatementReport,
+  getCariOpenItemsReport,
+} from "../services/cari.report.service.js";
+import { getCariAuditTrail } from "../services/cari.audit.service.js";
 import {
   asyncHandler,
   badRequest,
@@ -181,10 +198,96 @@ router.get(
     resolveScope: (req) => resolveCariScope(req),
   }),
   asyncHandler(async (req, res) => {
-    const tenantId = requireTenant(req);
-    return ok(res, {
-      tenantId,
-      rows: [],
+    const filters = parseGenericAgingReportFilters(req);
+    const result = await getCariAgingReport({
+      req,
+      filters,
+      buildScopeFilter,
+      assertScopeAccess,
+    });
+    return res.json({
+      tenantId: filters.tenantId,
+      ...result,
+    });
+  })
+);
+
+router.get(
+  "/reports/ar-aging",
+  requirePermission("cari.report.read", {
+    resolveScope: (req) => resolveCariScope(req),
+  }),
+  asyncHandler(async (req, res) => {
+    const filters = parseAgingReportFilters(req, { fixedDirection: "AR" });
+    const result = await getCariAgingReport({
+      req,
+      filters,
+      buildScopeFilter,
+      assertScopeAccess,
+    });
+    return res.json({
+      tenantId: filters.tenantId,
+      ...result,
+    });
+  })
+);
+
+router.get(
+  "/reports/ap-aging",
+  requirePermission("cari.report.read", {
+    resolveScope: (req) => resolveCariScope(req),
+  }),
+  asyncHandler(async (req, res) => {
+    const filters = parseAgingReportFilters(req, { fixedDirection: "AP" });
+    const result = await getCariAgingReport({
+      req,
+      filters,
+      buildScopeFilter,
+      assertScopeAccess,
+    });
+    return res.json({
+      tenantId: filters.tenantId,
+      ...result,
+    });
+  })
+);
+
+router.get(
+  "/reports/open-items",
+  requirePermission("cari.report.read", {
+    resolveScope: (req) => resolveCariScope(req),
+  }),
+  asyncHandler(async (req, res) => {
+    const filters = parseOpenItemsReportFilters(req);
+    const result = await getCariOpenItemsReport({
+      req,
+      filters,
+      buildScopeFilter,
+      assertScopeAccess,
+    });
+    return res.json({
+      tenantId: filters.tenantId,
+      ...result,
+    });
+  })
+);
+
+router.get(
+  "/reports/statement",
+  requirePermission("cari.report.read", {
+    resolveScope: (req) => resolveCariScope(req),
+  }),
+  asyncHandler(async (req, res) => {
+    const filters = parseCounterpartyStatementFilters(req);
+    const result = await getCariCounterpartyStatementReport({
+      req,
+      filters,
+      buildScopeFilter,
+      assertScopeAccess,
+    });
+    return res.json({
+      tenantId: filters.tenantId,
+      ...result,
     });
   })
 );
@@ -209,11 +312,14 @@ router.get(
     resolveScope: (req) => resolveCariScope(req),
   }),
   asyncHandler(async (req, res) => {
-    const tenantId = requireTenant(req);
-    return ok(res, {
-      tenantId,
-      rows: [],
+    const filters = parseCariAuditFilters(req);
+    const result = await getCariAuditTrail({
+      req,
+      filters,
+      buildScopeFilter,
+      assertScopeAccess,
     });
+    return res.json(result);
   })
 );
 

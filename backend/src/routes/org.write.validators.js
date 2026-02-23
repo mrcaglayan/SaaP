@@ -53,6 +53,7 @@ export function parseLegalEntityUpsertInput(req) {
     intercompanyPartnerRequired: req.body.intercompanyPartnerRequired,
     autoProvisionDefaults: req.body.autoProvisionDefaults,
     fiscalYear: req.body.fiscalYear,
+    paymentTerms: req.body.paymentTerms,
   };
 }
 

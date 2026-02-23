@@ -11,6 +11,218 @@ import {
   upsertOperatingUnitRow,
 } from "./org.write.queries.js";
 
+const PAYMENT_TERM_STATUS_VALUES = new Set(["ACTIVE", "INACTIVE"]);
+const DEFAULT_PAYMENT_TERM_TEMPLATES = [
+  {
+    code: "DUE_ON_RECEIPT",
+    name: "Due on Receipt",
+    dueDays: 0,
+    graceDays: 0,
+    isEndOfMonth: false,
+    status: "ACTIVE",
+  },
+  {
+    code: "NET_15",
+    name: "Net 15",
+    dueDays: 15,
+    graceDays: 0,
+    isEndOfMonth: false,
+    status: "ACTIVE",
+  },
+  {
+    code: "NET_30",
+    name: "Net 30",
+    dueDays: 30,
+    graceDays: 0,
+    isEndOfMonth: false,
+    status: "ACTIVE",
+  },
+  {
+    code: "NET_45",
+    name: "Net 45",
+    dueDays: 45,
+    graceDays: 0,
+    isEndOfMonth: false,
+    status: "ACTIVE",
+  },
+  {
+    code: "NET_60",
+    name: "Net 60",
+    dueDays: 60,
+    graceDays: 0,
+    isEndOfMonth: false,
+    status: "ACTIVE",
+  },
+];
+
+function normalizeCode(rawValue, fallback = "DEFAULT", maxLength = 50) {
+  const normalized = String(rawValue || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9_-]/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "");
+
+  const safe = normalized || fallback;
+  return safe.slice(0, maxLength);
+}
+
+function normalizeName(rawValue, fallback = "Default Name", maxLength = 255) {
+  const normalized = String(rawValue || "").trim();
+  return (normalized || fallback).slice(0, maxLength);
+}
+
+function parseNonNegativeInt(value, fieldName, defaultValue = 0) {
+  if (value === undefined || value === null || value === "") {
+    return defaultValue;
+  }
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw badRequest(`${fieldName} must be a non-negative integer`);
+  }
+  return parsed;
+}
+
+function parseBooleanFlag(value, fallback = false, fieldName = "value") {
+  if (value === undefined || value === null || value === "") {
+    return fallback;
+  }
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (value === 1 || value === "1") {
+    return true;
+  }
+  if (value === 0 || value === "0") {
+    return false;
+  }
+
+  const normalized = String(value).trim().toLowerCase();
+  if (normalized === "true") {
+    return true;
+  }
+  if (normalized === "false") {
+    return false;
+  }
+
+  throw badRequest(`${fieldName} must be a boolean`);
+}
+
+function normalizePaymentTermTemplate(rawTerm, index) {
+  const term = rawTerm || {};
+  const code = normalizeCode(term.code, `TERM_${index + 1}`, 50);
+  const name = normalizeName(term.name, `Payment Term ${index + 1}`, 255);
+  const dueDays = parseNonNegativeInt(
+    term.dueDays ?? term.due_days,
+    `paymentTerms[${index}].dueDays`,
+    0
+  );
+  const graceDays = parseNonNegativeInt(
+    term.graceDays ?? term.grace_days,
+    `paymentTerms[${index}].graceDays`,
+    0
+  );
+  const isEndOfMonth = parseBooleanFlag(
+    term.isEndOfMonth ?? term.is_end_of_month,
+    false,
+    `paymentTerms[${index}].isEndOfMonth`
+  );
+  const status = String(term.status || "ACTIVE")
+    .trim()
+    .toUpperCase();
+  if (!PAYMENT_TERM_STATUS_VALUES.has(status)) {
+    throw badRequest(`paymentTerms[${index}].status must be ACTIVE or INACTIVE`);
+  }
+
+  return {
+    code,
+    name,
+    dueDays,
+    graceDays,
+    isEndOfMonth,
+    status,
+  };
+}
+
+function resolvePaymentTermTemplates(rawTerms) {
+  if (rawTerms !== undefined && !Array.isArray(rawTerms)) {
+    throw badRequest("paymentTerms must be an array when provided");
+  }
+  if (Array.isArray(rawTerms) && rawTerms.length === 0) {
+    throw badRequest("paymentTerms must be a non-empty array when provided");
+  }
+
+  const defaultsUsed = !Array.isArray(rawTerms) || rawTerms.length === 0;
+  const sourceTemplates = defaultsUsed ? DEFAULT_PAYMENT_TERM_TEMPLATES : rawTerms;
+  const termTemplates = sourceTemplates.map((term, index) =>
+    normalizePaymentTermTemplate(term, index)
+  );
+
+  const seenCodes = new Set();
+  for (const term of termTemplates) {
+    const codeKey = String(term.code || "").toUpperCase();
+    if (seenCodes.has(codeKey)) {
+      throw badRequest(`Duplicate payment term code: ${term.code}`);
+    }
+    seenCodes.add(codeKey);
+  }
+
+  return {
+    defaultsUsed,
+    termTemplates,
+  };
+}
+
+async function bootstrapPaymentTermsForLegalEntity({
+  tx,
+  tenantId,
+  legalEntityId,
+  termTemplates,
+}) {
+  let createdCount = 0;
+  let skippedCount = 0;
+
+  for (const term of termTemplates) {
+    // eslint-disable-next-line no-await-in-loop
+    const insertResult = await tx.query(
+      `INSERT IGNORE INTO payment_terms (
+          tenant_id,
+          legal_entity_id,
+          code,
+          name,
+          due_days,
+          grace_days,
+          is_end_of_month,
+          status
+       )
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        tenantId,
+        legalEntityId,
+        term.code,
+        term.name,
+        term.dueDays,
+        term.graceDays,
+        term.isEndOfMonth ? 1 : 0,
+        term.status,
+      ]
+    );
+
+    const affectedRows = Number(insertResult.rows?.affectedRows || 0);
+    if (affectedRows > 0) {
+      createdCount += affectedRows;
+    } else {
+      skippedCount += 1;
+    }
+  }
+
+  return {
+    createdCount,
+    skippedCount,
+    templateCount: termTemplates.length,
+  };
+}
+
 export async function upsertGroupCompany({
   req,
   tenantId,
@@ -61,6 +273,7 @@ export async function upsertLegalEntity({
   intercompanyPartnerRequired,
   autoProvisionDefaults,
   fiscalYear,
+  paymentTerms,
   parseBooleanValue,
   assertGroupCompanyBelongsToTenant,
   assertCountryExists,
@@ -91,6 +304,8 @@ export async function upsertLegalEntity({
   const finalPartnerRequired = Boolean(intercompanyPartnerRequired);
   const finalAutoProvisionDefaults = parseBooleanValue(autoProvisionDefaults, false);
   const finalFiscalYear = parsePositiveInt(fiscalYear) || new Date().getUTCFullYear();
+  const shouldProvisionPaymentTerms =
+    finalAutoProvisionDefaults || paymentTerms !== undefined;
 
   const operationResult = await withTransaction(async (tx) => {
     const insertId = await upsertLegalEntityRowTx(tx, {
@@ -115,10 +330,25 @@ export async function upsertLegalEntity({
         finalFiscalYear
       );
     }
+    let paymentTermsProvisioning = null;
+    if (shouldProvisionPaymentTerms) {
+      const paymentTermTemplates = resolvePaymentTermTemplates(paymentTerms);
+      const seededTerms = await bootstrapPaymentTermsForLegalEntity({
+        tx,
+        tenantId,
+        legalEntityId: legalEntity.id,
+        termTemplates: paymentTermTemplates.termTemplates,
+      });
+      paymentTermsProvisioning = {
+        defaultsUsed: paymentTermTemplates.defaultsUsed,
+        ...seededTerms,
+      };
+    }
 
     return {
       legalEntity,
       provisioning,
+      paymentTermsProvisioning,
       insertId,
     };
   });
@@ -129,6 +359,7 @@ export async function upsertLegalEntity({
     autoProvisionDefaults: finalAutoProvisionDefaults,
     fiscalYear: finalFiscalYear,
     provisioning: operationResult.provisioning,
+    paymentTermsProvisioning: operationResult.paymentTermsProvisioning,
   };
 }
 

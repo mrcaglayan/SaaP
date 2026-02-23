@@ -62,33 +62,22 @@ function buildCounterpartyType({ isCustomer, isVendor }) {
   return "OTHER";
 }
 
-function parseCounterpartyTypeFlags(counterpartyType) {
-  const normalized = String(counterpartyType || "")
-    .trim()
-    .toUpperCase();
-  if (normalized === "BOTH") {
-    return { isCustomer: true, isVendor: true };
-  }
-  if (normalized === "CUSTOMER") {
-    return { isCustomer: true, isVendor: false };
-  }
-  if (normalized === "VENDOR") {
-    return { isCustomer: false, isVendor: true };
-  }
-  return { isCustomer: false, isVendor: false };
-}
-
 function mapCounterpartyRow(row) {
-  const flags = parseCounterpartyTypeFlags(row.counterparty_type);
+  const isCustomer = parseDbBoolean(row.is_customer);
+  const isVendor = parseDbBoolean(row.is_vendor);
+  const counterpartyType = buildCounterpartyType({
+    isCustomer,
+    isVendor,
+  });
   return {
     id: parsePositiveInt(row.id),
     tenantId: parsePositiveInt(row.tenant_id),
     legalEntityId: parsePositiveInt(row.legal_entity_id),
     code: row.code,
     name: row.name,
-    counterpartyType: row.counterparty_type,
-    isCustomer: flags.isCustomer,
-    isVendor: flags.isVendor,
+    counterpartyType,
+    isCustomer,
+    isVendor,
     taxId: row.tax_id || null,
     email: row.email || null,
     phone: row.phone || null,
@@ -888,11 +877,12 @@ export async function listCounterpartyRows({
   }
 
   if (filters.role === "CUSTOMER") {
-    conditions.push("c.counterparty_type IN ('CUSTOMER', 'BOTH')");
+    conditions.push("c.is_customer = TRUE");
   } else if (filters.role === "VENDOR") {
-    conditions.push("c.counterparty_type IN ('VENDOR', 'BOTH')");
+    conditions.push("c.is_vendor = TRUE");
   } else if (filters.role === "BOTH") {
-    conditions.push("c.counterparty_type = 'BOTH'");
+    conditions.push("c.is_customer = TRUE");
+    conditions.push("c.is_vendor = TRUE");
   }
 
   if (filters.q) {
@@ -982,11 +972,9 @@ export async function createCounterparty({
 }) {
   const tenantId = payload.tenantId;
   const legalEntityId = payload.legalEntityId;
-  const counterpartyType = buildCounterpartyType({
-    isCustomer: payload.isCustomer,
-    isVendor: payload.isVendor,
-  });
-  if (counterpartyType === "OTHER") {
+  const isCustomer = Boolean(payload.isCustomer);
+  const isVendor = Boolean(payload.isVendor);
+  if (!isCustomer && !isVendor) {
     throw badRequest("At least one of isCustomer or isVendor must be true");
   }
 
@@ -1012,7 +1000,8 @@ export async function createCounterparty({
             legal_entity_id,
             code,
             name,
-            counterparty_type,
+            is_customer,
+            is_vendor,
             tax_id,
             email,
             phone,
@@ -1021,13 +1010,14 @@ export async function createCounterparty({
             status,
             notes
          )
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           tenantId,
           legalEntityId,
           payload.code,
           payload.name,
-          counterpartyType,
+          isCustomer ? 1 : 0,
+          isVendor ? 1 : 0,
           payload.taxId,
           payload.email,
           payload.phone,
@@ -1083,6 +1073,8 @@ export async function createCounterparty({
           code: row.code,
           status: row.status,
           counterpartyType: row.counterpartyType,
+          isCustomer: row.isCustomer,
+          isVendor: row.isVendor,
         },
       });
 
@@ -1124,18 +1116,15 @@ export async function updateCounterpartyById({
   }
   const legalEntityId = existingLegalEntityId;
 
-  const currentFlags = parseCounterpartyTypeFlags(existing.counterparty_type);
+  const currentIsCustomer = parseDbBoolean(existing.is_customer);
+  const currentIsVendor = parseDbBoolean(existing.is_vendor);
   const nextIsCustomer =
-    payload.isCustomer === null ? currentFlags.isCustomer : payload.isCustomer;
+    payload.isCustomer === null ? currentIsCustomer : payload.isCustomer;
   const nextIsVendor =
-    payload.isVendor === null ? currentFlags.isVendor : payload.isVendor;
+    payload.isVendor === null ? currentIsVendor : payload.isVendor;
   if (!nextIsCustomer && !nextIsVendor) {
     throw badRequest("At least one of isCustomer or isVendor must be true");
   }
-  const nextCounterpartyType = buildCounterpartyType({
-    isCustomer: nextIsCustomer,
-    isVendor: nextIsVendor,
-  });
 
   if (payload.defaultCurrencyCode !== undefined && payload.defaultCurrencyCode) {
     await assertCurrencyExists(payload.defaultCurrencyCode, "defaultCurrencyCode");
@@ -1172,7 +1161,8 @@ export async function updateCounterpartyById({
         `UPDATE counterparties
          SET code = ?,
              name = ?,
-             counterparty_type = ?,
+             is_customer = ?,
+             is_vendor = ?,
              tax_id = ?,
              email = ?,
              phone = ?,
@@ -1185,7 +1175,8 @@ export async function updateCounterpartyById({
         [
           nextCode,
           nextName,
-          nextCounterpartyType,
+          nextIsCustomer ? 1 : 0,
+          nextIsVendor ? 1 : 0,
           nextTaxId,
           nextEmail,
           nextPhone,
@@ -1238,7 +1229,12 @@ export async function updateCounterpartyById({
             code: existing.code,
             name: existing.name,
             status: existing.status,
-            counterpartyType: existing.counterparty_type,
+            counterpartyType: buildCounterpartyType({
+              isCustomer: currentIsCustomer,
+              isVendor: currentIsVendor,
+            }),
+            isCustomer: currentIsCustomer,
+            isVendor: currentIsVendor,
             defaultPaymentTermId: parsePositiveInt(existing.default_payment_term_id),
           },
           after: {
@@ -1246,6 +1242,8 @@ export async function updateCounterpartyById({
             name: row.name,
             status: row.status,
             counterpartyType: row.counterpartyType,
+            isCustomer: row.isCustomer,
+            isVendor: row.isVendor,
             defaultPaymentTermId: row.defaultPaymentTermId,
             defaultContactId: row.defaultContactId,
             defaultAddressId: row.defaultAddressId,

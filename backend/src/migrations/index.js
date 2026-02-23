@@ -15,6 +15,8 @@ import migration014ShareholderCommitmentJournalEntries from "./m014_shareholder_
 import migration015CashControlFoundation from "./m015_cash_control_foundation.js";
 import migration016CashControlIntegrity from "./m016_cash_control_integrity.js";
 import migration017CariSchemaFoundation from "./m017_cari_schema_foundation.js";
+import migration018CariReportIndexes from "./m018_cari_report_indexes.js";
+import migration019CounterpartyRoleFlags from "./m019_counterparty_role_flags.js";
 
 const migrations = [
   migration001GlobalMultiEntity,
@@ -34,6 +36,8 @@ const migrations = [
   migration015CashControlFoundation,
   migration016CashControlIntegrity,
   migration017CariSchemaFoundation,
+  migration018CariReportIndexes,
+  migration019CounterpartyRoleFlags,
 ];
 
 export default migrations;

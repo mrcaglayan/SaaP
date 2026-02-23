@@ -29,6 +29,7 @@ import CashSessionsPage from "./pages/cash/CashSessionsPage.jsx";
 import CashTransactionsPage from "./pages/cash/CashTransactionsPage.jsx";
 import CashExceptionsPage from "./pages/cash/CashExceptionsPage.jsx";
 import CariCounterpartyPage from "./pages/cari/CariCounterpartyPage.jsx";
+import CariReportsPage from "./pages/cari/CariReportsPage.jsx";
 import { collectSidebarLinks, sidebarItems } from "./layouts/sidebarConfig.js";
 import TenantReadinessProvider from "./readiness/TenantReadinessProvider.jsx";
 import RequireTenantReadiness from "./readiness/RequireTenantReadiness.jsx";
@@ -132,6 +133,11 @@ const implementedRoutes = [
     appPath: "/app/satici-kart-listesi",
     childPath: "satici-kart-listesi",
     element: <CariCounterpartyPage pageKey="vendorList" />,
+  },
+  {
+    appPath: "/app/cari-raporlari",
+    childPath: "cari-raporlari",
+    element: <CariReportsPage />,
   },
   {
     appPath: "/app/ayarlar/hesap-plani-olustur",

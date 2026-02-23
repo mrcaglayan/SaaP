@@ -448,12 +448,13 @@ async function createOrgFixtures({ tenantId, stamp }) {
         legal_entity_id,
         code,
         name,
-        counterparty_type,
+        is_customer,
+        is_vendor,
         default_currency_code,
         default_payment_term_id,
         status
      )
-     VALUES (?, ?, ?, ?, 'CUSTOMER', ?, ?, 'ACTIVE')`,
+     VALUES (?, ?, ?, ?, TRUE, FALSE, ?, ?, 'ACTIVE')`,
     [
       tenantId,
       legalEntityId,

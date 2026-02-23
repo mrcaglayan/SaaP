@@ -54,7 +54,8 @@ const statements = [
     legal_entity_id BIGINT UNSIGNED NOT NULL,
     code VARCHAR(60) NOT NULL,
     name VARCHAR(255) NOT NULL,
-    counterparty_type ENUM('CUSTOMER','VENDOR','BOTH','OTHER') NOT NULL DEFAULT 'OTHER',
+    is_customer BOOLEAN NOT NULL DEFAULT FALSE,
+    is_vendor BOOLEAN NOT NULL DEFAULT FALSE,
     tax_id VARCHAR(80) NULL,
     email VARCHAR(255) NULL,
     phone VARCHAR(80) NULL,
@@ -69,6 +70,7 @@ const statements = [
     UNIQUE KEY uk_counterparties_tenant_entity_id (tenant_id, legal_entity_id, id),
     KEY ix_counterparties_tenant_id (tenant_id),
     KEY ix_counterparties_tenant_entity (tenant_id, legal_entity_id),
+    KEY ix_counterparties_tenant_entity_roles (tenant_id, legal_entity_id, is_customer, is_vendor),
     KEY ix_counterparties_tenant_status (tenant_id, status),
     CONSTRAINT fk_counterparties_tenant
       FOREIGN KEY (tenant_id) REFERENCES tenants(id),
@@ -79,7 +81,8 @@ const statements = [
     CONSTRAINT fk_counterparties_payment_term_tenant
       FOREIGN KEY (tenant_id, legal_entity_id, default_payment_term_id)
       REFERENCES payment_terms(tenant_id, legal_entity_id, id),
-    CHECK (CHAR_LENGTH(code) > 0)
+    CHECK (CHAR_LENGTH(code) > 0),
+    CHECK (is_customer OR is_vendor)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `,
   `

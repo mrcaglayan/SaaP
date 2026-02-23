@@ -60,6 +60,8 @@ async function assertSchemaExists() {
   assert(missingTables.length === 0, `Missing Cari tables: ${missingTables.join(", ")}`);
 
   const requiredColumns = [
+    ["counterparties", "is_customer"],
+    ["counterparties", "is_vendor"],
     ["cari_settlement_batches", "sequence_namespace"],
     ["cari_settlement_batches", "fiscal_year"],
     ["cari_settlement_batches", "sequence_no"],
@@ -137,6 +139,7 @@ async function assertSchemaExists() {
 
   const expectedIndexes = new Map([
     ["uk_counterparties_tenant_entity_code", 0],
+    ["ix_counterparties_tenant_entity_roles", 1],
     ["uk_cari_docs_tenant_entity_adr_doc_no", 0],
     ["uk_cari_settle_batches_tenant_seq", 0],
     ["uk_cari_alloc_apply_idempo", 0],
@@ -287,12 +290,13 @@ async function createFixture() {
         legal_entity_id,
         code,
         name,
-        counterparty_type,
+        is_customer,
+        is_vendor,
         default_currency_code,
         default_payment_term_id,
         status
       )
-      VALUES (?, ?, ?, ?, 'CUSTOMER', ?, ?, 'ACTIVE')`,
+      VALUES (?, ?, ?, ?, TRUE, FALSE, ?, ?, 'ACTIVE')`,
     [
       tenantId,
       legalEntityId,
@@ -456,12 +460,13 @@ async function runConstraintAssertions(fixture) {
             legal_entity_id,
             code,
             name,
-            counterparty_type,
+            is_customer,
+            is_vendor,
             default_currency_code,
             default_payment_term_id,
             status
           )
-          VALUES (?, ?, ?, ?, 'CUSTOMER', ?, ?, 'ACTIVE')`,
+          VALUES (?, ?, ?, ?, TRUE, FALSE, ?, ?, 'ACTIVE')`,
         [
           tenantId,
           legalEntityId,

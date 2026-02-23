@@ -537,14 +537,15 @@ async function createOrgAccountingFixtures({ tenantId, stamp }) {
         legal_entity_id,
         code,
         name,
-        counterparty_type,
+        is_customer,
+        is_vendor,
         default_currency_code,
         default_payment_term_id,
         status
      )
      VALUES
-       (?, ?, ?, ?, 'CUSTOMER', ?, ?, 'ACTIVE'),
-       (?, ?, ?, ?, 'CUSTOMER', ?, ?, 'ACTIVE')`,
+       (?, ?, ?, ?, TRUE, FALSE, ?, ?, 'ACTIVE'),
+       (?, ?, ?, ?, TRUE, FALSE, ?, ?, 'ACTIVE')`,
     [
       tenantId,
       legalEntityAId,

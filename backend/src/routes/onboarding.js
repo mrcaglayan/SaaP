@@ -75,6 +75,50 @@ const READINESS_DEFINITIONS = [
   },
 ];
 
+const PAYMENT_TERM_STATUS_VALUES = new Set(["ACTIVE", "INACTIVE"]);
+const DEFAULT_PAYMENT_TERM_TEMPLATES = [
+  {
+    code: "DUE_ON_RECEIPT",
+    name: "Due on Receipt",
+    dueDays: 0,
+    graceDays: 0,
+    isEndOfMonth: false,
+    status: "ACTIVE",
+  },
+  {
+    code: "NET_15",
+    name: "Net 15",
+    dueDays: 15,
+    graceDays: 0,
+    isEndOfMonth: false,
+    status: "ACTIVE",
+  },
+  {
+    code: "NET_30",
+    name: "Net 30",
+    dueDays: 30,
+    graceDays: 0,
+    isEndOfMonth: false,
+    status: "ACTIVE",
+  },
+  {
+    code: "NET_45",
+    name: "Net 45",
+    dueDays: 45,
+    graceDays: 0,
+    isEndOfMonth: false,
+    status: "ACTIVE",
+  },
+  {
+    code: "NET_60",
+    name: "Net 60",
+    dueDays: 60,
+    graceDays: 0,
+    isEndOfMonth: false,
+    status: "ACTIVE",
+  },
+];
+
 function toIsoDate(date) {
   return date.toISOString().slice(0, 10);
 }
@@ -94,6 +138,251 @@ function normalizeCode(rawValue, fallback = "DEFAULT", maxLength = 50) {
 function normalizeName(rawValue, fallback = "Default Name", maxLength = 255) {
   const normalized = String(rawValue || "").trim();
   return (normalized || fallback).slice(0, maxLength);
+}
+
+function parseNonNegativeInt(value, fieldName, defaultValue = 0) {
+  if (value === undefined || value === null || value === "") {
+    return defaultValue;
+  }
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw badRequest(`${fieldName} must be a non-negative integer`);
+  }
+  return parsed;
+}
+
+function parseBooleanFlag(value, fallback = false, fieldName = "value") {
+  if (value === undefined || value === null || value === "") {
+    return fallback;
+  }
+
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  if (value === 1 || value === "1") {
+    return true;
+  }
+  if (value === 0 || value === "0") {
+    return false;
+  }
+
+  const normalized = String(value).trim().toLowerCase();
+  if (normalized === "true") {
+    return true;
+  }
+  if (normalized === "false") {
+    return false;
+  }
+
+  throw badRequest(`${fieldName} must be a boolean`);
+}
+
+function normalizePaymentTermTemplate(rawTerm, index) {
+  const term = rawTerm || {};
+  const code = normalizeCode(term.code, `TERM_${index + 1}`, 50);
+  const name = normalizeName(term.name, `Payment Term ${index + 1}`, 255);
+  const dueDays = parseNonNegativeInt(
+    term.dueDays ?? term.due_days,
+    `terms[${index}].dueDays`,
+    0
+  );
+  const graceDays = parseNonNegativeInt(
+    term.graceDays ?? term.grace_days,
+    `terms[${index}].graceDays`,
+    0
+  );
+  const isEndOfMonth = parseBooleanFlag(
+    term.isEndOfMonth ?? term.is_end_of_month,
+    false,
+    `terms[${index}].isEndOfMonth`
+  );
+  const status = String(term.status || "ACTIVE")
+    .trim()
+    .toUpperCase();
+  if (!PAYMENT_TERM_STATUS_VALUES.has(status)) {
+    throw badRequest(`terms[${index}].status must be ACTIVE or INACTIVE`);
+  }
+
+  return {
+    code,
+    name,
+    dueDays,
+    graceDays,
+    isEndOfMonth,
+    status,
+  };
+}
+
+function normalizePaymentTermTemplates(rawTerms) {
+  if (rawTerms !== undefined && !Array.isArray(rawTerms)) {
+    throw badRequest("terms must be an array when provided");
+  }
+  if (Array.isArray(rawTerms) && rawTerms.length === 0) {
+    throw badRequest("terms must be a non-empty array when provided");
+  }
+
+  const useDefaults = !Array.isArray(rawTerms) || rawTerms.length === 0;
+  const sourceTemplates = useDefaults ? DEFAULT_PAYMENT_TERM_TEMPLATES : rawTerms;
+  const termTemplates = sourceTemplates.map((term, index) =>
+    normalizePaymentTermTemplate(term, index)
+  );
+
+  const seenCodes = new Set();
+  for (const term of termTemplates) {
+    const key = String(term.code || "").toUpperCase();
+    if (seenCodes.has(key)) {
+      throw badRequest(`Duplicate payment term code: ${term.code}`);
+    }
+    seenCodes.add(key);
+  }
+
+  return {
+    termTemplates,
+    defaultsUsed: useDefaults,
+  };
+}
+
+function parseRequestedLegalEntityIds(payload) {
+  const body = payload || {};
+  const ids = [];
+
+  if (body.legalEntityId !== undefined) {
+    const parsedLegalEntityId = parsePositiveInt(body.legalEntityId);
+    if (!parsedLegalEntityId) {
+      throw badRequest("legalEntityId must be a positive integer");
+    }
+    ids.push(parsedLegalEntityId);
+  }
+
+  if (body.legalEntityIds !== undefined) {
+    if (!Array.isArray(body.legalEntityIds)) {
+      throw badRequest("legalEntityIds must be an array when provided");
+    }
+    if (body.legalEntityIds.length === 0) {
+      throw badRequest("legalEntityIds must be a non-empty array when provided");
+    }
+
+    body.legalEntityIds.forEach((value, index) => {
+      const parsedId = parsePositiveInt(value);
+      if (!parsedId) {
+        throw badRequest(`legalEntityIds[${index}] must be a positive integer`);
+      }
+      ids.push(parsedId);
+    });
+  }
+
+  return Array.from(new Set(ids));
+}
+
+async function resolveTargetLegalEntityIds(
+  tenantId,
+  requestedLegalEntityIds,
+  runQuery = query
+) {
+  if (requestedLegalEntityIds.length === 0) {
+    const allEntities = await runQuery(
+      `SELECT id
+       FROM legal_entities
+       WHERE tenant_id = ?
+       ORDER BY id`,
+      [tenantId]
+    );
+    const allIds = allEntities.rows
+      .map((row) => parsePositiveInt(row.id))
+      .filter(Boolean);
+    if (allIds.length === 0) {
+      throw badRequest(
+        "No legal entities found for tenant. Run onboarding readiness bootstrap first."
+      );
+    }
+    return allIds;
+  }
+
+  const placeholders = requestedLegalEntityIds.map(() => "?").join(", ");
+  const result = await runQuery(
+    `SELECT id
+     FROM legal_entities
+     WHERE tenant_id = ?
+       AND id IN (${placeholders})`,
+    [tenantId, ...requestedLegalEntityIds]
+  );
+  const allowedIds = new Set(
+    result.rows.map((row) => parsePositiveInt(row.id)).filter(Boolean)
+  );
+  const missingIds = requestedLegalEntityIds.filter((id) => !allowedIds.has(id));
+  if (missingIds.length > 0) {
+    throw badRequest(
+      `Legal entity ids not found for tenant: ${missingIds.join(", ")}`
+    );
+  }
+
+  return requestedLegalEntityIds.filter((id, index) => {
+    return requestedLegalEntityIds.indexOf(id) === index;
+  });
+}
+
+async function bootstrapPaymentTermsForLegalEntities({
+  tenantId,
+  legalEntityIds,
+  termTemplates,
+  runQuery = query,
+}) {
+  const perLegalEntity = [];
+  let createdCount = 0;
+  let skippedCount = 0;
+
+  for (const legalEntityId of legalEntityIds) {
+    let entityCreatedCount = 0;
+    let entitySkippedCount = 0;
+
+    for (const term of termTemplates) {
+      // eslint-disable-next-line no-await-in-loop
+      const insertResult = await runQuery(
+        `INSERT IGNORE INTO payment_terms (
+            tenant_id,
+            legal_entity_id,
+            code,
+            name,
+            due_days,
+            grace_days,
+            is_end_of_month,
+            status
+         )
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          tenantId,
+          legalEntityId,
+          term.code,
+          term.name,
+          term.dueDays,
+          term.graceDays,
+          term.isEndOfMonth ? 1 : 0,
+          term.status,
+        ]
+      );
+      const affectedRows = Number(insertResult.rows?.affectedRows || 0);
+      if (affectedRows > 0) {
+        entityCreatedCount += affectedRows;
+      } else {
+        entitySkippedCount += 1;
+      }
+    }
+
+    createdCount += entityCreatedCount;
+    skippedCount += entitySkippedCount;
+    perLegalEntity.push({
+      legalEntityId,
+      createdCount: entityCreatedCount,
+      skippedCount: entitySkippedCount,
+    });
+  }
+
+  return {
+    createdCount,
+    skippedCount,
+    perLegalEntity,
+  };
 }
 
 async function scalarCount(sql, params = [], runQuery = query) {
@@ -814,6 +1103,52 @@ router.post(
 );
 
 router.post(
+  "/payment-terms/bootstrap",
+  requirePermission("onboarding.company.setup"),
+  asyncHandler(async (req, res) => {
+    const tenantId = resolveTenantId(req);
+    if (!tenantId) {
+      throw badRequest("tenantId is required");
+    }
+
+    const requestedLegalEntityIds = parseRequestedLegalEntityIds(req.body);
+    const { termTemplates, defaultsUsed } = normalizePaymentTermTemplates(
+      req.body?.terms
+    );
+
+    const bootstrapResult = await withTransaction(async (tx) => {
+      const legalEntityIds = await resolveTargetLegalEntityIds(
+        tenantId,
+        requestedLegalEntityIds,
+        tx.query
+      );
+      const insertResult = await bootstrapPaymentTermsForLegalEntities({
+        tenantId,
+        legalEntityIds,
+        termTemplates,
+        runQuery: tx.query,
+      });
+
+      return {
+        legalEntityIds,
+        ...insertResult,
+      };
+    });
+
+    return res.status(201).json({
+      ok: true,
+      tenantId,
+      defaultsUsed,
+      legalEntityIds: bootstrapResult.legalEntityIds,
+      termTemplates,
+      createdCount: bootstrapResult.createdCount,
+      skippedCount: bootstrapResult.skippedCount,
+      perLegalEntity: bootstrapResult.perLegalEntity,
+    });
+  })
+);
+
+router.post(
   "/company-bootstrap",
   requirePermission("onboarding.company.setup"),
   asyncHandler(async (req, res) => {
@@ -1085,10 +1420,19 @@ router.post(
         });
       }
 
+      const legalEntityIds = entitySummaries.map((entity) => entity.legalEntityId);
+      const paymentTermBootstrap = await bootstrapPaymentTermsForLegalEntities({
+        tenantId,
+        legalEntityIds,
+        termTemplates: DEFAULT_PAYMENT_TERM_TEMPLATES,
+        runQuery: tx.query,
+      });
+
       return {
         groupCompanyId,
         calendarId,
         entitySummaries,
+        paymentTermBootstrap,
       };
     });
     await invalidateRbacCache(tenantId);
@@ -1101,6 +1445,13 @@ router.post(
       fiscalYear,
       periodsGenerated: 12,
       legalEntities: bootstrapResult.entitySummaries,
+      paymentTerms: {
+        defaultsUsed: true,
+        templateCount: DEFAULT_PAYMENT_TERM_TEMPLATES.length,
+        createdCount: bootstrapResult.paymentTermBootstrap.createdCount,
+        skippedCount: bootstrapResult.paymentTermBootstrap.skippedCount,
+        perLegalEntity: bootstrapResult.paymentTermBootstrap.perLegalEntity,
+      },
     });
   })
 );

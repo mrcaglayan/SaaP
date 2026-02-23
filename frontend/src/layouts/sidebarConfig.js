@@ -186,6 +186,12 @@ export const sidebarItems = [
         requiredPermissions: ["cari.card.read"],
         implemented: true,
       },
+      {
+        label: "Cari Raporlari",
+        to: "/app/cari-raporlari",
+        requiredPermissions: ["cari.report.read"],
+        implemented: true,
+      },
     ],
   },
   {

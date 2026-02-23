@@ -64,12 +64,23 @@ function queryParamInt(name, required = false, description = `${name}`) {
   };
 }
 
+function queryParam(name, schema, required = false, description = `${name}`) {
+  return {
+    in: "query",
+    name,
+    required,
+    description,
+    schema,
+  };
+}
+
 const HTTP_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE"]);
 const TAG_DESCRIPTION_MAP = new Map([
   ["Org", "Organization hierarchy and fiscal structure management."],
   ["Security", "Role and permission assignment APIs."],
   ["GL", "General ledger setup and journal workflows."],
   ["FX", "Foreign exchange rate management."],
+  ["Cari", "Cari (AR/AP) documents, settlements, bank links, and reporting endpoints."],
   ["Intercompany", "Intercompany relationship and reconciliation endpoints."],
   ["Consolidation", "Consolidation setup, runs, and report endpoints."],
   ["Onboarding", "Tenant/company bootstrap flow endpoints."],
@@ -168,6 +179,9 @@ function inferTagFromPath(endpointPath) {
   if (normalizedPath.startsWith("/api/v1/fx")) {
     return "FX";
   }
+  if (normalizedPath.startsWith("/api/v1/cari")) {
+    return "Cari";
+  }
   if (normalizedPath.startsWith("/api/v1/intercompany")) {
     return "Intercompany";
   }
@@ -208,7 +222,7 @@ function buildOperationSecurity(endpointPath) {
   return null;
 }
 
-function collectRouterEndpoints(router, mountPath = "/") {
+function collectDirectRouterEndpoints(router, mountPath = "/") {
   if (!router || !Array.isArray(router.stack)) {
     return [];
   }
@@ -228,31 +242,25 @@ function collectRouterEndpoints(router, mountPath = "/") {
           }
         }
       }
-      continue;
-    }
-
-    if (layer?.name === "router" && layer?.handle?.stack) {
-      const nestedMount = typeof layer.path === "string" ? layer.path : "/";
-      endpoints.push(...collectRouterEndpoints(layer.handle, joinRoutePaths(mountPath, nestedMount)));
     }
   }
 
   return endpoints;
 }
 
-function parseRouteModuleImports(indexSource, indexDir) {
+function parseDefaultImports(moduleSource, moduleDir) {
   const imports = new Map();
-  const importRegex = /import\s+([A-Za-z_$][A-Za-z0-9_$]*)\s+from\s+["'](\.\/routes\/[^"']+)["'];?/g;
+  const importRegex = /import\s+([A-Za-z_$][A-Za-z0-9_$]*)\s+from\s+["'](\.[^"']+)["'];?/g;
   let match;
-  while ((match = importRegex.exec(indexSource))) {
+  while ((match = importRegex.exec(moduleSource))) {
     const importName = match[1];
-    const importPath = path.resolve(indexDir, match[2]);
+    const importPath = path.resolve(moduleDir, match[2]);
     imports.set(importName, importPath);
   }
   return imports;
 }
 
-function parseMountedRouters(indexSource) {
+function parseAppMountedRouters(indexSource) {
   const mounts = [];
   const mountRegex =
     /app\.use\(\s*["']([^"']+)["']\s*,\s*(?:requireAuth\s*,\s*)?([A-Za-z_$][A-Za-z0-9_$]*)\s*\)/g;
@@ -266,13 +274,74 @@ function parseMountedRouters(indexSource) {
   return mounts;
 }
 
+function parseRouterMountedRouters(moduleSource) {
+  const mounts = [];
+  const mountRegex =
+    /router\.use\(\s*["']([^"']+)["']\s*,\s*([A-Za-z_$][A-Za-z0-9_$]*)\s*\)/g;
+  let match;
+  while ((match = mountRegex.exec(moduleSource))) {
+    mounts.push({
+      mountPath: normalizeApiPath(match[1]),
+      routerImportName: match[2],
+    });
+  }
+  return mounts;
+}
+
+async function discoverRouterModuleRoutes({
+  modulePath,
+  mountPath,
+  moduleCache,
+  seenModules,
+}) {
+  const normalizedMountPath = normalizeApiPath(mountPath);
+  const visitKey = `${modulePath}::${normalizedMountPath}`;
+  if (seenModules.has(visitKey)) {
+    return [];
+  }
+  seenModules.add(visitKey);
+
+  let importedModule = moduleCache.get(modulePath);
+  if (!importedModule) {
+    importedModule = await import(pathToFileURL(modulePath).href);
+    moduleCache.set(modulePath, importedModule);
+  }
+
+  const router = importedModule?.default;
+  const discovered = collectDirectRouterEndpoints(router, normalizedMountPath);
+
+  const moduleSource = fs.readFileSync(modulePath, "utf8");
+  const moduleDir = path.dirname(modulePath);
+  const imports = parseDefaultImports(moduleSource, moduleDir);
+  const nestedMounts = parseRouterMountedRouters(moduleSource);
+
+  for (const nestedMount of nestedMounts) {
+    const nestedModulePath = imports.get(nestedMount.routerImportName);
+    if (!nestedModulePath) {
+      continue;
+    }
+
+    // eslint-disable-next-line no-await-in-loop
+    const nestedRoutes = await discoverRouterModuleRoutes({
+      modulePath: nestedModulePath,
+      mountPath: joinRoutePaths(normalizedMountPath, nestedMount.mountPath),
+      moduleCache,
+      seenModules,
+    });
+    discovered.push(...nestedRoutes);
+  }
+
+  return discovered;
+}
+
 async function discoverExpressRoutes(indexFilePath) {
   const indexSource = fs.readFileSync(indexFilePath, "utf8");
   const indexDir = path.dirname(indexFilePath);
-  const routeImports = parseRouteModuleImports(indexSource, indexDir);
-  const mounts = parseMountedRouters(indexSource);
+  const routeImports = parseDefaultImports(indexSource, indexDir);
+  const mounts = parseAppMountedRouters(indexSource);
 
   const moduleCache = new Map();
+  const seenModules = new Set();
   const discovered = [];
 
   for (const mount of mounts) {
@@ -280,15 +349,14 @@ async function discoverExpressRoutes(indexFilePath) {
     if (!modulePath) {
       continue;
     }
-
-    let importedModule = moduleCache.get(modulePath);
-    if (!importedModule) {
-      importedModule = await import(pathToFileURL(modulePath).href);
-      moduleCache.set(modulePath, importedModule);
-    }
-
-    const router = importedModule?.default;
-    discovered.push(...collectRouterEndpoints(router, mount.mountPath));
+    // eslint-disable-next-line no-await-in-loop
+    const routes = await discoverRouterModuleRoutes({
+      modulePath,
+      mountPath: mount.mountPath,
+      moduleCache,
+      seenModules,
+    });
+    discovered.push(...routes);
   }
 
   discovered.push({ method: "GET", path: "/health" });
@@ -404,6 +472,164 @@ async function appendUndocumentedRoutes(specObject, indexFilePath) {
   return appendedCount;
 }
 
+function mergeOperationParameters(operation, parametersToAppend) {
+  if (!operation || !Array.isArray(parametersToAppend) || parametersToAppend.length === 0) {
+    return;
+  }
+
+  const existing = Array.isArray(operation.parameters) ? operation.parameters : [];
+  const seen = new Set(
+    existing.map((parameter) => `${String(parameter?.in)}:${String(parameter?.name)}`)
+  );
+
+  const merged = [...existing];
+  for (const parameter of parametersToAppend) {
+    const key = `${String(parameter?.in)}:${String(parameter?.name)}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    merged.push(parameter);
+    seen.add(key);
+  }
+  operation.parameters = merged;
+}
+
+function applyCariOperationOverrides(specObject) {
+  ensureTagPresent(specObject, "Cari");
+  const paths = specObject.paths || {};
+
+  const reportCommonQueryParams = [
+    queryParam("asOfDate", { type: "string", format: "date" }, false, "As-of date cutoff"),
+    queryParamInt("legalEntityId", false, "Legal entity filter"),
+    queryParamInt("counterpartyId", false, "Counterparty filter"),
+    queryParam(
+      "role",
+      { type: "string", enum: ["CUSTOMER", "VENDOR", "BOTH"] },
+      false,
+      "Counterparty role filter"
+    ),
+    queryParam(
+      "status",
+      { type: "string", enum: ["OPEN", "PARTIALLY_SETTLED", "SETTLED", "ALL"] },
+      false,
+      "As-of status filter"
+    ),
+    queryParam("includeDetails", { type: "boolean" }, false, "Include detailed rows"),
+    queryParam("limit", { type: "integer", minimum: 1 }, false, "Page size"),
+    queryParam("offset", nonNegativeInt, false, "Page offset"),
+  ];
+
+  const reportDirectionParam = queryParam(
+    "direction",
+    { type: "string", enum: ["AR", "AP"] },
+    false,
+    "Cari direction filter"
+  );
+  const auditQueryParams = [
+    queryParamInt("tenantId", false, "Tenant identifier; optional if available in JWT"),
+    queryParamInt("legalEntityId", false, "Legal entity scope filter"),
+    queryParam("action", { type: "string" }, false, "Action code filter (supports prefix with *)"),
+    queryParam("resourceType", { type: "string" }, false, "Resource type filter"),
+    queryParam("resourceId", { type: "string" }, false, "Resource id filter"),
+    queryParamInt("actorUserId", false, "Actor user filter"),
+    queryParam("requestId", { type: "string" }, false, "Request id filter"),
+    queryParam(
+      "createdFrom",
+      { type: "string", format: "date-time" },
+      false,
+      "Created-at lower bound"
+    ),
+    queryParam(
+      "createdTo",
+      { type: "string", format: "date-time" },
+      false,
+      "Created-at upper bound"
+    ),
+    queryParam("includePayload", { type: "boolean" }, false, "Include payload_json in rows"),
+    queryParam("limit", { type: "integer", minimum: 1 }, false, "Page size"),
+    queryParam("offset", nonNegativeInt, false, "Page offset"),
+  ];
+
+  const reportRouteOverrides = new Map([
+    [
+      "/api/v1/cari/reports/aging",
+      {
+        summary: "Cari aging report (generic direction)",
+        parameters: [reportDirectionParam, ...reportCommonQueryParams],
+      },
+    ],
+    [
+      "/api/v1/cari/reports/ar-aging",
+      {
+        summary: "Cari AR aging report",
+        parameters: reportCommonQueryParams,
+      },
+    ],
+    [
+      "/api/v1/cari/reports/ap-aging",
+      {
+        summary: "Cari AP aging report",
+        parameters: reportCommonQueryParams,
+      },
+    ],
+    [
+      "/api/v1/cari/reports/open-items",
+      {
+        summary: "Cari open-items report",
+        parameters: [reportDirectionParam, ...reportCommonQueryParams],
+      },
+    ],
+    [
+      "/api/v1/cari/reports/statement",
+      {
+        summary: "Cari counterparty statement report",
+        parameters: [reportDirectionParam, ...reportCommonQueryParams],
+      },
+    ],
+  ]);
+
+  for (const [pathName, pathItem] of Object.entries(paths)) {
+    if (!String(pathName).startsWith("/api/v1/cari")) {
+      continue;
+    }
+
+    for (const methodName of Object.keys(pathItem || {})) {
+      const method = String(methodName || "").toUpperCase();
+      if (!HTTP_METHODS.has(method)) {
+        continue;
+      }
+
+      const operation = pathItem[methodName];
+      operation.tags = ["Cari"];
+
+      if (typeof operation.summary === "string" && operation.summary.startsWith("Auto-generated:")) {
+        operation.summary = `Cari endpoint: ${method} ${pathName}`;
+      }
+
+      if (method === "GET" && !operation.responses?.["200"]) {
+        operation.responses = withStandardResponses("200", "Cari response");
+      }
+    }
+  }
+
+  for (const [pathName, override] of reportRouteOverrides.entries()) {
+    const operation = paths[pathName]?.get;
+    if (!operation) {
+      continue;
+    }
+    operation.summary = override.summary;
+    mergeOperationParameters(operation, override.parameters);
+    operation.responses = withStandardResponses("200", `${override.summary} response`);
+  }
+
+  const auditOperation = paths["/api/v1/cari/audit"]?.get;
+  if (auditOperation) {
+    auditOperation.summary = "Cari audit visibility endpoint";
+    mergeOperationParameters(auditOperation, auditQueryParams);
+    auditOperation.responses = withStandardResponses("200", "Cari audit entries");
+  }
+}
+
 const spec = {
   openapi: "3.0.3",
   info: {
@@ -427,6 +653,10 @@ const spec = {
     { name: "Security", description: "Role and permission assignment APIs." },
     { name: "GL", description: "General ledger setup and journal workflows." },
     { name: "FX", description: "Foreign exchange rate management." },
+    {
+      name: "Cari",
+      description: "Cari (AR/AP) documents, settlements, bank links, and reporting endpoints.",
+    },
     { name: "Intercompany", description: "Intercompany relationship and reconciliation endpoints." },
     { name: "Consolidation", description: "Consolidation setup, runs, and report endpoints." },
     { name: "Onboarding", description: "Tenant/company bootstrap flow endpoints." },
@@ -1464,7 +1694,8 @@ const spec = {
       post: {
         tags: ["Onboarding"],
         operationId: "bootstrapCompany",
-        summary: "Run company onboarding bootstrap flow",
+        summary:
+          "Run company onboarding bootstrap flow (includes default Cari payment terms)",
         requestBody: bodyFromRef("#/components/schemas/AnyObject"),
         responses: withStandardResponses("201", "Company bootstrap result"),
       },
@@ -1501,6 +1732,22 @@ const spec = {
           "201",
           "Tenant readiness baseline bootstrap result",
           "#/components/schemas/TenantReadinessBootstrapResponse"
+        ),
+      },
+    },
+    "/api/v1/onboarding/payment-terms/bootstrap": {
+      post: {
+        tags: ["Onboarding"],
+        operationId: "bootstrapOnboardingPaymentTerms",
+        summary: "Bootstrap default or custom Cari payment terms by legal entity",
+        requestBody: bodyFromRef(
+          "#/components/schemas/OnboardingPaymentTermsBootstrapInput",
+          false
+        ),
+        responses: withStandardResponses(
+          "201",
+          "Cari payment-term bootstrap result",
+          "#/components/schemas/OnboardingPaymentTermsBootstrapResponse"
         ),
       },
     },
@@ -1689,6 +1936,75 @@ const spec = {
           "created",
           "readinessBefore",
           "readinessAfter",
+        ],
+      },
+      OnboardingPaymentTermTemplateInput: {
+        type: "object",
+        properties: {
+          code: { type: "string", minLength: 1, maxLength: 50 },
+          name: { type: "string", minLength: 1, maxLength: 255 },
+          dueDays: nonNegativeInt,
+          graceDays: nonNegativeInt,
+          isEndOfMonth: { type: "boolean" },
+          status: { type: "string", enum: ["ACTIVE", "INACTIVE"] },
+        },
+      },
+      OnboardingPaymentTermsBootstrapInput: {
+        type: "object",
+        properties: {
+          tenantId: intId,
+          legalEntityId: intId,
+          legalEntityIds: {
+            type: "array",
+            items: intId,
+          },
+          terms: {
+            type: "array",
+            items: { $ref: "#/components/schemas/OnboardingPaymentTermTemplateInput" },
+          },
+        },
+      },
+      OnboardingPaymentTermsBootstrapEntityResult: {
+        type: "object",
+        properties: {
+          legalEntityId: intId,
+          createdCount: nonNegativeInt,
+          skippedCount: nonNegativeInt,
+        },
+        required: ["legalEntityId", "createdCount", "skippedCount"],
+      },
+      OnboardingPaymentTermsBootstrapResponse: {
+        type: "object",
+        properties: {
+          ok: { type: "boolean" },
+          tenantId: intId,
+          defaultsUsed: { type: "boolean" },
+          legalEntityIds: {
+            type: "array",
+            items: intId,
+          },
+          termTemplates: {
+            type: "array",
+            items: { $ref: "#/components/schemas/OnboardingPaymentTermTemplateInput" },
+          },
+          createdCount: nonNegativeInt,
+          skippedCount: nonNegativeInt,
+          perLegalEntity: {
+            type: "array",
+            items: {
+              $ref: "#/components/schemas/OnboardingPaymentTermsBootstrapEntityResult",
+            },
+          },
+        },
+        required: [
+          "ok",
+          "tenantId",
+          "defaultsUsed",
+          "legalEntityIds",
+          "termTemplates",
+          "createdCount",
+          "skippedCount",
+          "perLegalEntity",
         ],
       },
       TrialBalanceRow: {
@@ -1988,6 +2304,14 @@ const spec = {
           taxId: { type: "string", nullable: true },
           countryId: intId,
           functionalCurrencyCode: currencyCode,
+          autoProvisionDefaults: { type: "boolean" },
+          fiscalYear: { type: "integer", minimum: 1 },
+          paymentTerms: {
+            type: "array",
+            items: {
+              $ref: "#/components/schemas/OnboardingPaymentTermTemplateInput",
+            },
+          },
         },
         required: ["groupCompanyId", "code", "name", "countryId", "functionalCurrencyCode"],
       },
@@ -2286,6 +2610,7 @@ const autoDocumentedOperationCount = await appendUndocumentedRoutes(
   spec,
   indexRouteFilePath
 );
+applyCariOperationOverrides(spec);
 
 const targetPath = path.resolve(backendRoot, "openapi.yaml");
 fs.writeFileSync(targetPath, `${JSON.stringify(spec, null, 2)}\n`, "utf8");

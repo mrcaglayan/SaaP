@@ -12,13 +12,13 @@ const SETTLEMENT_SEQUENCE_NAMESPACE = "SETTLEMENT";
 const SETTLEMENT_STATUS_POSTED = "POSTED";
 const SETTLEMENT_STATUS_REVERSED = "REVERSED";
 const OPEN_ITEM_STATUS_OPEN = "OPEN";
-const OPEN_ITEM_STATUS_PARTIAL = "PARTIALLY_SETTLED";
+const OPEN_ITEM_STATUS_PARTIALLY_SETTLED = "PARTIALLY_SETTLED";
 const OPEN_ITEM_STATUS_SETTLED = "SETTLED";
 const DOCUMENT_STATUS_POSTED = "POSTED";
-const DOCUMENT_STATUS_PARTIAL = "PARTIALLY_SETTLED";
+const DOCUMENT_STATUS_PARTIALLY_SETTLED = "PARTIALLY_SETTLED";
 const DOCUMENT_STATUS_SETTLED = "SETTLED";
 const UNAPPLIED_STATUS_UNAPPLIED = "UNAPPLIED";
-const UNAPPLIED_STATUS_PARTIAL = "PARTIALLY_APPLIED";
+const UNAPPLIED_STATUS_PARTIALLY_APPLIED = "PARTIALLY_APPLIED";
 const UNAPPLIED_STATUS_FULL = "FULLY_APPLIED";
 const UNAPPLIED_STATUS_REVERSED = "REVERSED";
 const BANK_ATTACH_TARGET_SETTLEMENT = "SETTLEMENT";
@@ -1092,7 +1092,7 @@ async function fetchOpenItemsForApply({
   openItemIds = null,
   runQuery = query,
 }) {
-  const statuses = [OPEN_ITEM_STATUS_OPEN, OPEN_ITEM_STATUS_PARTIAL];
+  const statuses = [OPEN_ITEM_STATUS_OPEN, OPEN_ITEM_STATUS_PARTIALLY_SETTLED];
   const params = [
     tenantId,
     legalEntityId,
@@ -1226,7 +1226,7 @@ async function fetchUnappliedRowsForApply({
       counterpartyId,
       normalizeUpperText(currencyCode),
       UNAPPLIED_STATUS_UNAPPLIED,
-      UNAPPLIED_STATUS_PARTIAL,
+      UNAPPLIED_STATUS_PARTIALLY_APPLIED,
     ]
   );
   return result.rows || [];
@@ -1247,7 +1247,7 @@ function normalizeOpenItemStatus({
   if (amountsAreEqual(settled, 0) || amountsAreEqual(residual, original)) {
     return OPEN_ITEM_STATUS_OPEN;
   }
-  return OPEN_ITEM_STATUS_PARTIAL;
+  return OPEN_ITEM_STATUS_PARTIALLY_SETTLED;
 }
 
 function normalizeUnappliedStatus({
@@ -1262,7 +1262,7 @@ function normalizeUnappliedStatus({
   if (amountsAreEqual(residual, amount)) {
     return UNAPPLIED_STATUS_UNAPPLIED;
   }
-  return UNAPPLIED_STATUS_PARTIAL;
+  return UNAPPLIED_STATUS_PARTIALLY_APPLIED;
 }
 
 function buildManualAllocationPlan(openItems, requestedAllocations) {
@@ -1419,7 +1419,7 @@ async function refreshDocumentBalancesTx({
     const residualBase = roundAmount(aggregateResult.rows?.[0]?.residual_base || 0);
     const amountTxn = normalizeAmount(documentRow.amount_txn, "document.amountTxn");
 
-    let nextStatus = DOCUMENT_STATUS_PARTIAL;
+    let nextStatus = DOCUMENT_STATUS_PARTIALLY_SETTLED;
     if (amountsAreEqual(residualTxn, 0)) {
       nextStatus = DOCUMENT_STATUS_SETTLED;
     } else if (amountsAreEqual(residualTxn, amountTxn)) {
@@ -2849,11 +2849,13 @@ export async function reverseCariSettlementById({
         );
         const currentResidualTxn = normalizeAmount(
           lockedOpenItem.residual_amount_txn,
-          "openItem.residualAmountTxn"
+          "openItem.residualAmountTxn",
+          { allowZero: true }
         );
         const currentResidualBase = normalizeAmount(
           lockedOpenItem.residual_amount_base,
-          "openItem.residualAmountBase"
+          "openItem.residualAmountBase",
+          { allowZero: true }
         );
         let nextResidualTxn = roundAmount(currentResidualTxn + allocationTxn);
         let nextResidualBase = roundAmount(currentResidualBase + allocationBase);

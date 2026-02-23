@@ -181,6 +181,8 @@ export default function OrganizationManagementPage() {
     isIntercompanyEnabled: true,
     intercompanyPartnerRequired: false,
     autoProvisionDefaults: true,
+    useCustomPaymentTerms: false,
+    paymentTermsJson: "",
   });
   const [unitForm, setUnitForm] = useState({
     legalEntityId: "",
@@ -1280,6 +1282,42 @@ export default function OrganizationManagementPage() {
       return;
     }
 
+    let paymentTermsPayload;
+    if (entityForm.useCustomPaymentTerms) {
+      const rawPaymentTerms = String(entityForm.paymentTermsJson || "").trim();
+      if (!rawPaymentTerms) {
+        setError(
+          l(
+            "Custom payment terms JSON is required when custom mode is enabled.",
+            "Ozel odeme kosulu modu acikken custom JSON zorunludur."
+          )
+        );
+        return;
+      }
+
+      try {
+        const parsed = JSON.parse(rawPaymentTerms);
+        if (!Array.isArray(parsed) || parsed.length === 0) {
+          setError(
+            l(
+              "Custom payment terms must be a non-empty JSON array.",
+              "Ozel odeme kosullari bos olmayan bir JSON dizi olmali."
+            )
+          );
+          return;
+        }
+        paymentTermsPayload = parsed;
+      } catch {
+        setError(
+          l(
+            "Custom payment terms JSON is invalid.",
+            "Ozel odeme kosullari JSON formati gecersiz."
+          )
+        );
+        return;
+      }
+    }
+
     setSaving("entity");
     setError("");
     setMessage("");
@@ -1296,6 +1334,7 @@ export default function OrganizationManagementPage() {
         isIntercompanyEnabled: Boolean(entityForm.isIntercompanyEnabled),
         intercompanyPartnerRequired: Boolean(entityForm.intercompanyPartnerRequired),
         autoProvisionDefaults: Boolean(entityForm.autoProvisionDefaults),
+        ...(paymentTermsPayload ? { paymentTerms: paymentTermsPayload } : {}),
       });
 
       setEntityForm((prev) => ({
@@ -1304,14 +1343,29 @@ export default function OrganizationManagementPage() {
         name: "",
         taxId: "",
         functionalCurrencyCode: prev.functionalCurrencyCode || "USD",
+        useCustomPaymentTerms: false,
+        paymentTermsJson: "",
       }));
-      if (response?.provisioning?.created) {
-        const created = response.provisioning.created;
+      const hasGlProvisioning = Boolean(response?.provisioning?.created);
+      const hasPaymentTermProvisioning = Boolean(response?.paymentTermsProvisioning);
+      if (hasGlProvisioning || hasPaymentTermProvisioning) {
+        const created = response?.provisioning?.created || null;
+        const paymentTermsProvisioning = response?.paymentTermsProvisioning || null;
+        const glSummary = created
+          ? l(
+              `Defaults created: calendar ${created.fiscalCalendars}, periods ${created.fiscalPeriods}, CoA ${created.chartsOfAccounts}, accounts ${created.accounts}, books ${created.books}.`,
+              `Varsayilanlar olusturuldu: takvim ${created.fiscalCalendars}, donem ${created.fiscalPeriods}, hesap plani ${created.chartsOfAccounts}, hesap ${created.accounts}, defter ${created.books}.`
+            )
+          : "";
+        const paymentTermsSummary = paymentTermsProvisioning
+          ? l(
+              `Payment terms: created ${paymentTermsProvisioning.createdCount}, skipped ${paymentTermsProvisioning.skippedCount}.`,
+              `Odeme kosullari: olusturulan ${paymentTermsProvisioning.createdCount}, atlanan ${paymentTermsProvisioning.skippedCount}.`
+            )
+          : "";
+        const detailMessage = [glSummary, paymentTermsSummary].filter(Boolean).join(" ");
         setMessage(
-          l(
-            `Legal entity saved. Defaults created: calendar ${created.fiscalCalendars}, periods ${created.fiscalPeriods}, CoA ${created.chartsOfAccounts}, accounts ${created.accounts}, books ${created.books}.`,
-            `Istirak / bagli ortak kaydedildi. Varsayilanlar olusturuldu: takvim ${created.fiscalCalendars}, donem ${created.fiscalPeriods}, hesap plani ${created.chartsOfAccounts}, hesap ${created.accounts}, defter ${created.books}.`
-          )
+          `${l("Legal entity saved.", "Istirak / bagli ortak kaydedildi.")} ${detailMessage}`.trim()
         );
       } else {
         setMessage(l("Legal entity saved.", "Istirak / bagli ortak kaydedildi."));
@@ -2345,6 +2399,39 @@ export default function OrganizationManagementPage() {
                 "Varsayilanlari otomatik olustur (takvim, donemler, hesap plani, hesaplar, defter)"
               )}
             </label>
+            <label className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 md:col-span-2">
+              <input
+                type="checkbox"
+                checked={entityForm.useCustomPaymentTerms}
+                onChange={(event) =>
+                  setEntityForm((prev) => ({
+                    ...prev,
+                    useCustomPaymentTerms: event.target.checked,
+                  }))
+                }
+              />
+              {l(
+                "Use custom payment terms (JSON array)",
+                "Ozel odeme kosulu kullan (JSON dizi)"
+              )}
+            </label>
+            {entityForm.useCustomPaymentTerms ? (
+              <textarea
+                value={entityForm.paymentTermsJson}
+                onChange={(event) =>
+                  setEntityForm((prev) => ({
+                    ...prev,
+                    paymentTermsJson: event.target.value,
+                  }))
+                }
+                rows={6}
+                className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-mono md:col-span-4"
+                placeholder={`[
+  {"code":"NET_30","name":"Net 30","dueDays":30},
+  {"code":"NET_45","name":"Net 45","dueDays":45,"graceDays":2}
+]`}
+              />
+            ) : null}
             <button
               type="submit"
               disabled={saving === "entity" || !canUpsertLegalEntity}

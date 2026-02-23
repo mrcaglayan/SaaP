@@ -334,6 +334,40 @@ async function createUserWithRole({
   return { userId, email };
 }
 
+async function assignRoleScope({
+  tenantId,
+  userId,
+  roleCode,
+  scopeType = "TENANT",
+  scopeId = tenantId,
+  effect = "ALLOW",
+}) {
+  const roleResult = await query(
+    `SELECT id
+     FROM roles
+     WHERE tenant_id = ?
+       AND code = ?
+     LIMIT 1`,
+    [tenantId, roleCode]
+  );
+  const roleId = toNumber(roleResult.rows?.[0]?.id);
+  assert(roleId > 0, `Role not found: ${roleCode}`);
+
+  await query(
+    `INSERT INTO user_role_scopes (
+        tenant_id,
+        user_id,
+        role_id,
+        scope_type,
+        scope_id,
+        effect
+     )
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE effect = VALUES(effect)`,
+    [tenantId, userId, roleId, scopeType, scopeId, effect]
+  );
+}
+
 async function main() {
   await seedCore({ ensureDefaultTenantIfMissing: true });
 
@@ -381,6 +415,17 @@ async function main() {
     email: `cari03_other_tenant_${stamp}@example.com`,
     passwordHash,
     name: "CARI03 Other Tenant",
+  });
+
+  await assignRoleScope({
+    tenantId: tenantAId,
+    userId: tenantWideIdentity.userId,
+    roleCode: "AuditorReadOnly",
+  });
+  await assignRoleScope({
+    tenantId: tenantAId,
+    userId: leScopedIdentity.userId,
+    roleCode: "AuditorReadOnly",
   });
 
   const server = startServerProcess();
@@ -650,6 +695,52 @@ async function main() {
       auditCounts.get("cari.counterparty.update") >= 1,
       "Update audit log should be written for counterparty"
     );
+
+    const auditApiResponse = await apiRequest({
+      token: tenantWideToken,
+      method: "GET",
+      path:
+        `/api/v1/cari/audit?` +
+        `legalEntityId=${fixtures.legalEntityAId}` +
+        `&resourceType=counterparty` +
+        `&resourceId=${customerId}` +
+        `&includePayload=true`,
+      expectedStatus: 200,
+    });
+    const auditApiRows = Array.isArray(auditApiResponse.json?.rows)
+      ? auditApiResponse.json.rows
+      : [];
+    assert(
+      auditApiRows.some((row) => String(row.action) === "cari.counterparty.create"),
+      "Audit API should return create event"
+    );
+    assert(
+      auditApiRows.some((row) => String(row.action) === "cari.counterparty.update"),
+      "Audit API should return update event"
+    );
+
+    const scopedAudit = await apiRequest({
+      token: leScopedToken,
+      method: "GET",
+      path: "/api/v1/cari/audit?resourceType=counterparty&includePayload=false",
+      expectedStatus: 200,
+    });
+    const scopedAuditRows = Array.isArray(scopedAudit.json?.rows)
+      ? scopedAudit.json.rows
+      : [];
+    assert(
+      scopedAuditRows.every(
+        (row) => toNumber(row.scopeId) === fixtures.legalEntityAId
+      ),
+      "Scoped audit endpoint must only return rows from allowed legal entities"
+    );
+
+    await apiRequest({
+      token: leScopedToken,
+      method: "GET",
+      path: `/api/v1/cari/audit?legalEntityId=${fixtures.legalEntityBId}`,
+      expectedStatus: 403,
+    });
 
     console.log("CARI PR-03 counterparty master API test passed.");
     console.log(

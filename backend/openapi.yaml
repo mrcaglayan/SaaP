@@ -38,6 +38,10 @@
       "description": "Foreign exchange rate management."
     },
     {
+      "name": "Cari",
+      "description": "Cari (AR/AP) documents, settlements, bank links, and reporting endpoints."
+    },
+    {
       "name": "Intercompany",
       "description": "Intercompany relationship and reconciliation endpoints."
     },
@@ -3821,7 +3825,7 @@
           "Onboarding"
         ],
         "operationId": "bootstrapCompany",
-        "summary": "Run company onboarding bootstrap flow",
+        "summary": "Run company onboarding bootstrap flow (includes default Cari payment terms)",
         "requestBody": {
           "required": true,
           "content": {
@@ -3933,6 +3937,1660 @@
           },
           "403": {
             "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
+    "/api/v1/onboarding/payment-terms/bootstrap": {
+      "post": {
+        "tags": [
+          "Onboarding"
+        ],
+        "operationId": "bootstrapOnboardingPaymentTerms",
+        "summary": "Bootstrap default or custom Cari payment terms by legal entity",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OnboardingPaymentTermsBootstrapInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Cari payment-term bootstrap result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OnboardingPaymentTermsBootstrapResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
+    "/api/v1/cari/audit": {
+      "get": {
+        "tags": [
+          "Cari"
+        ],
+        "operationId": "getApiV1CariAudit",
+        "summary": "Cari audit visibility endpoint",
+        "responses": {
+          "200": {
+            "description": "Cari audit entries",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "query",
+            "name": "tenantId",
+            "required": false,
+            "description": "Tenant identifier; optional if available in JWT",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "legalEntityId",
+            "required": false,
+            "description": "Legal entity scope filter",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "action",
+            "required": false,
+            "description": "Action code filter (supports prefix with *)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "resourceType",
+            "required": false,
+            "description": "Resource type filter",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "resourceId",
+            "required": false,
+            "description": "Resource id filter",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "actorUserId",
+            "required": false,
+            "description": "Actor user filter",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "requestId",
+            "required": false,
+            "description": "Request id filter",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "createdFrom",
+            "required": false,
+            "description": "Created-at lower bound",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "in": "query",
+            "name": "createdTo",
+            "required": false,
+            "description": "Created-at upper bound",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "in": "query",
+            "name": "includePayload",
+            "required": false,
+            "description": "Include payload_json in rows",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "description": "Page size",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "description": "Page offset",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/cari/bank/apply": {
+      "post": {
+        "tags": [
+          "Cari"
+        ],
+        "operationId": "postApiV1CariBankApply",
+        "summary": "Cari endpoint: POST /api/v1/cari/bank/apply",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/cari/bank/attach": {
+      "post": {
+        "tags": [
+          "Cari"
+        ],
+        "operationId": "postApiV1CariBankAttach",
+        "summary": "Cari endpoint: POST /api/v1/cari/bank/attach",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/cari/cards": {
+      "get": {
+        "tags": [
+          "Cari"
+        ],
+        "operationId": "getApiV1CariCards",
+        "summary": "Cari endpoint: GET /api/v1/cari/cards",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Cari"
+        ],
+        "operationId": "postApiV1CariCards",
+        "summary": "Cari endpoint: POST /api/v1/cari/cards",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/cari/counterparties": {
+      "get": {
+        "tags": [
+          "Cari"
+        ],
+        "operationId": "getApiV1CariCounterparties",
+        "summary": "Cari endpoint: GET /api/v1/cari/counterparties",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Cari"
+        ],
+        "operationId": "postApiV1CariCounterparties",
+        "summary": "Cari endpoint: POST /api/v1/cari/counterparties",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/cari/counterparties/{id}": {
+      "get": {
+        "tags": [
+          "Cari"
+        ],
+        "operationId": "getApiV1CariCounterpartiesId",
+        "summary": "Cari endpoint: GET /api/v1/cari/counterparties/{id}",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "description": "id identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "Cari"
+        ],
+        "operationId": "putApiV1CariCounterpartiesId",
+        "summary": "Cari endpoint: PUT /api/v1/cari/counterparties/{id}",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "description": "id identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/cari/documents": {
+      "get": {
+        "tags": [
+          "Cari"
+        ],
+        "operationId": "getApiV1CariDocuments",
+        "summary": "Cari endpoint: GET /api/v1/cari/documents",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Cari"
+        ],
+        "operationId": "postApiV1CariDocuments",
+        "summary": "Cari endpoint: POST /api/v1/cari/documents",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/cari/documents/{documentId}": {
+      "get": {
+        "tags": [
+          "Cari"
+        ],
+        "operationId": "getApiV1CariDocumentsDocumentid",
+        "summary": "Cari endpoint: GET /api/v1/cari/documents/{documentId}",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "documentId",
+            "required": true,
+            "description": "documentId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "Cari"
+        ],
+        "operationId": "putApiV1CariDocumentsDocumentid",
+        "summary": "Cari endpoint: PUT /api/v1/cari/documents/{documentId}",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "documentId",
+            "required": true,
+            "description": "documentId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/cari/documents/{documentId}/cancel": {
+      "post": {
+        "tags": [
+          "Cari"
+        ],
+        "operationId": "postApiV1CariDocumentsDocumentidCancel",
+        "summary": "Cari endpoint: POST /api/v1/cari/documents/{documentId}/cancel",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "documentId",
+            "required": true,
+            "description": "documentId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/cari/documents/{documentId}/post": {
+      "post": {
+        "tags": [
+          "Cari"
+        ],
+        "operationId": "postApiV1CariDocumentsDocumentidPost",
+        "summary": "Cari endpoint: POST /api/v1/cari/documents/{documentId}/post",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "documentId",
+            "required": true,
+            "description": "documentId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/cari/documents/{documentId}/reverse": {
+      "post": {
+        "tags": [
+          "Cari"
+        ],
+        "operationId": "postApiV1CariDocumentsDocumentidReverse",
+        "summary": "Cari endpoint: POST /api/v1/cari/documents/{documentId}/reverse",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "documentId",
+            "required": true,
+            "description": "documentId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/cari/fx/override": {
+      "post": {
+        "tags": [
+          "Cari"
+        ],
+        "operationId": "postApiV1CariFxOverride",
+        "summary": "Cari endpoint: POST /api/v1/cari/fx/override",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/cari/payment-terms": {
+      "get": {
+        "tags": [
+          "Cari"
+        ],
+        "operationId": "getApiV1CariPaymentTerms",
+        "summary": "Cari endpoint: GET /api/v1/cari/payment-terms",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
+    "/api/v1/cari/payment-terms/{paymentTermId}": {
+      "get": {
+        "tags": [
+          "Cari"
+        ],
+        "operationId": "getApiV1CariPaymentTermsPaymenttermid",
+        "summary": "Cari endpoint: GET /api/v1/cari/payment-terms/{paymentTermId}",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "paymentTermId",
+            "required": true,
+            "description": "paymentTermId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/cari/reports/aging": {
+      "get": {
+        "tags": [
+          "Cari"
+        ],
+        "operationId": "getApiV1CariReportsAging",
+        "summary": "Cari aging report (generic direction)",
+        "responses": {
+          "200": {
+            "description": "Cari aging report (generic direction) response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "query",
+            "name": "direction",
+            "required": false,
+            "description": "Cari direction filter",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "AR",
+                "AP"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "asOfDate",
+            "required": false,
+            "description": "As-of date cutoff",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "in": "query",
+            "name": "legalEntityId",
+            "required": false,
+            "description": "Legal entity filter",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "counterpartyId",
+            "required": false,
+            "description": "Counterparty filter",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "role",
+            "required": false,
+            "description": "Counterparty role filter",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "CUSTOMER",
+                "VENDOR",
+                "BOTH"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "description": "As-of status filter",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "OPEN",
+                "PARTIALLY_SETTLED",
+                "SETTLED",
+                "ALL"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "includeDetails",
+            "required": false,
+            "description": "Include detailed rows",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "description": "Page size",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "description": "Page offset",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/cari/reports/ap-aging": {
+      "get": {
+        "tags": [
+          "Cari"
+        ],
+        "operationId": "getApiV1CariReportsApAging",
+        "summary": "Cari AP aging report",
+        "responses": {
+          "200": {
+            "description": "Cari AP aging report response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "query",
+            "name": "asOfDate",
+            "required": false,
+            "description": "As-of date cutoff",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "in": "query",
+            "name": "legalEntityId",
+            "required": false,
+            "description": "Legal entity filter",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "counterpartyId",
+            "required": false,
+            "description": "Counterparty filter",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "role",
+            "required": false,
+            "description": "Counterparty role filter",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "CUSTOMER",
+                "VENDOR",
+                "BOTH"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "description": "As-of status filter",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "OPEN",
+                "PARTIALLY_SETTLED",
+                "SETTLED",
+                "ALL"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "includeDetails",
+            "required": false,
+            "description": "Include detailed rows",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "description": "Page size",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "description": "Page offset",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/cari/reports/ar-aging": {
+      "get": {
+        "tags": [
+          "Cari"
+        ],
+        "operationId": "getApiV1CariReportsArAging",
+        "summary": "Cari AR aging report",
+        "responses": {
+          "200": {
+            "description": "Cari AR aging report response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "query",
+            "name": "asOfDate",
+            "required": false,
+            "description": "As-of date cutoff",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "in": "query",
+            "name": "legalEntityId",
+            "required": false,
+            "description": "Legal entity filter",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "counterpartyId",
+            "required": false,
+            "description": "Counterparty filter",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "role",
+            "required": false,
+            "description": "Counterparty role filter",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "CUSTOMER",
+                "VENDOR",
+                "BOTH"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "description": "As-of status filter",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "OPEN",
+                "PARTIALLY_SETTLED",
+                "SETTLED",
+                "ALL"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "includeDetails",
+            "required": false,
+            "description": "Include detailed rows",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "description": "Page size",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "description": "Page offset",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/cari/reports/open-items": {
+      "get": {
+        "tags": [
+          "Cari"
+        ],
+        "operationId": "getApiV1CariReportsOpenItems",
+        "summary": "Cari open-items report",
+        "responses": {
+          "200": {
+            "description": "Cari open-items report response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "query",
+            "name": "direction",
+            "required": false,
+            "description": "Cari direction filter",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "AR",
+                "AP"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "asOfDate",
+            "required": false,
+            "description": "As-of date cutoff",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "in": "query",
+            "name": "legalEntityId",
+            "required": false,
+            "description": "Legal entity filter",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "counterpartyId",
+            "required": false,
+            "description": "Counterparty filter",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "role",
+            "required": false,
+            "description": "Counterparty role filter",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "CUSTOMER",
+                "VENDOR",
+                "BOTH"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "description": "As-of status filter",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "OPEN",
+                "PARTIALLY_SETTLED",
+                "SETTLED",
+                "ALL"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "includeDetails",
+            "required": false,
+            "description": "Include detailed rows",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "description": "Page size",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "description": "Page offset",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/cari/reports/statement": {
+      "get": {
+        "tags": [
+          "Cari"
+        ],
+        "operationId": "getApiV1CariReportsStatement",
+        "summary": "Cari counterparty statement report",
+        "responses": {
+          "200": {
+            "description": "Cari counterparty statement report response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "query",
+            "name": "direction",
+            "required": false,
+            "description": "Cari direction filter",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "AR",
+                "AP"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "asOfDate",
+            "required": false,
+            "description": "As-of date cutoff",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "in": "query",
+            "name": "legalEntityId",
+            "required": false,
+            "description": "Legal entity filter",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "counterpartyId",
+            "required": false,
+            "description": "Counterparty filter",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "role",
+            "required": false,
+            "description": "Counterparty role filter",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "CUSTOMER",
+                "VENDOR",
+                "BOTH"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "description": "As-of status filter",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "OPEN",
+                "PARTIALLY_SETTLED",
+                "SETTLED",
+                "ALL"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "includeDetails",
+            "required": false,
+            "description": "Include detailed rows",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "description": "Page size",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "description": "Page offset",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/cari/settlements/{settlementBatchId}/reverse": {
+      "post": {
+        "tags": [
+          "Cari"
+        ],
+        "operationId": "postApiV1CariSettlementsSettlementbatchidReverse",
+        "summary": "Cari endpoint: POST /api/v1/cari/settlements/{settlementBatchId}/reverse",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "settlementBatchId",
+            "required": true,
+            "description": "settlementBatchId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/cari/settlements/apply": {
+      "post": {
+        "tags": [
+          "Cari"
+        ],
+        "operationId": "postApiV1CariSettlementsApply",
+        "summary": "Cari endpoint: POST /api/v1/cari/settlements/apply",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
           }
         }
       }
@@ -5724,6 +7382,139 @@
           "readinessAfter"
         ]
       },
+      "OnboardingPaymentTermTemplateInput": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 50
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255
+          },
+          "dueDays": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "graceDays": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "isEndOfMonth": {
+            "type": "boolean"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ACTIVE",
+              "INACTIVE"
+            ]
+          }
+        }
+      },
+      "OnboardingPaymentTermsBootstrapInput": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "legalEntityId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "legalEntityIds": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "terms": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OnboardingPaymentTermTemplateInput"
+            }
+          }
+        }
+      },
+      "OnboardingPaymentTermsBootstrapEntityResult": {
+        "type": "object",
+        "properties": {
+          "legalEntityId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "createdCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "skippedCount": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "legalEntityId",
+          "createdCount",
+          "skippedCount"
+        ]
+      },
+      "OnboardingPaymentTermsBootstrapResponse": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "defaultsUsed": {
+            "type": "boolean"
+          },
+          "legalEntityIds": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "termTemplates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OnboardingPaymentTermTemplateInput"
+            }
+          },
+          "createdCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "skippedCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "perLegalEntity": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OnboardingPaymentTermsBootstrapEntityResult"
+            }
+          }
+        },
+        "required": [
+          "ok",
+          "tenantId",
+          "defaultsUsed",
+          "legalEntityIds",
+          "termTemplates",
+          "createdCount",
+          "skippedCount",
+          "perLegalEntity"
+        ]
+      },
       "TrialBalanceRow": {
         "type": "object",
         "properties": {
@@ -6485,6 +8276,19 @@
             "type": "string",
             "minLength": 3,
             "maxLength": 3
+          },
+          "autoProvisionDefaults": {
+            "type": "boolean"
+          },
+          "fiscalYear": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "paymentTerms": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OnboardingPaymentTermTemplateInput"
+            }
           }
         },
         "required": [

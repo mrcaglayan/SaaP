@@ -372,8 +372,8 @@ export default function CompanyOnboardingPage() {
             </h1>
             <p className="mt-1 text-sm text-slate-600">
               {l(
-                "Creates group company, fiscal calendar/periods, legal entities, branches, default CoA, accounts, and books in one flow.",
-                "Tek akisla grup sirketi, mali takvim/donemler, istirakler / bagli ortaklar, subeler, varsayilan hesap plani, hesaplar ve defterleri olusturur."
+                "Creates group company, fiscal calendar/periods, legal entities, branches, default CoA, accounts, books, and default payment terms in one flow.",
+                "Tek akisla grup sirketi, mali takvim/donemler, istirakler / bagli ortaklar, subeler, varsayilan hesap plani, hesaplar, defterler ve varsayilan odeme kosullarini olusturur."
               )}
             </p>
           </div>
@@ -752,7 +752,7 @@ export default function CompanyOnboardingPage() {
           <h2 className="text-sm font-semibold text-emerald-900">
             {l("Bootstrap Result", "Kurulum Sonucu")}
           </h2>
-          <div className="mt-2 grid gap-2 text-sm text-emerald-900 md:grid-cols-4">
+          <div className="mt-2 grid gap-2 text-sm text-emerald-900 md:grid-cols-5">
             <div>
               <span className="font-semibold">{l("Tenant:", "Kiraci:")}</span> {result.tenantId}
             </div>
@@ -764,6 +764,11 @@ export default function CompanyOnboardingPage() {
             </div>
             <div>
               <span className="font-semibold">{l("Periods:", "Donemler:")}</span> {result.periodsGenerated}
+            </div>
+            <div>
+              <span className="font-semibold">{l("Payment terms:", "Odeme kosullari:")}</span>{" "}
+              +{Number(result?.paymentTerms?.createdCount || 0)} /{" "}
+              {l("skipped", "atlandi")} {Number(result?.paymentTerms?.skippedCount || 0)}
             </div>
           </div>
           <div className="mt-3 overflow-x-auto rounded-lg border border-emerald-200 bg-white">
