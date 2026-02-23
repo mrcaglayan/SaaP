@@ -23,11 +23,15 @@
     "test:cash-control-enforcement": "node scripts/test-cash-control-enforcement.js",
     "test:cash-idempotency-double-post": "node scripts/test-cash-idempotency-and-double-post.js",
     "test:cash-exceptions": "node scripts/test-cash-exceptions.js",
+    "test:cari-pr01": "node scripts/test-cari-pr01-schema-and-constraints.js",
+    "test:cari-pr02": "node scripts/test-cari-pr02-rbac-seed-and-guards.js",
+    "test:cari-pr03": "node scripts/test-cari-pr03-counterparty-master.js",
+    "test:cari-pr04": "node scripts/test-cari-pr04-frontend-counterparty-pages.js",
     "test:cash-characterization": "npm run test:cash-registers-sessions && npm run test:cash-posting-reversal && npm run test:cash-control-enforcement",
     "test:tenant-safety": "node scripts/test-tenant-safety-and-transactions.js",
     "test:period-close": "node scripts/test-period-close-process.js",
     "test:intercompany-consolidation": "node scripts/test-intercompany-and-consolidation-reports.js",
-    "test:release-gate": "npm run test:permission-matrix && npm run test:cash-characterization && npm run test:cash-idempotency-double-post && npm run test:cash-exceptions && npm run test:tenant-safety && npm run test:period-close && npm run test:intercompany-consolidation"
+    "test:release-gate": "npm run test:permission-matrix && npm run test:cash-characterization && npm run test:cash-idempotency-double-post && npm run test:cash-exceptions && npm run test:tenant-safety && npm run test:period-close && npm run test:intercompany-consolidation && npm run test:cari-pr01 && npm run test:cari-pr02 && npm run test:cari-pr03 && npm run test:cari-pr04"
   },
   "keywords": [],
   "author": "",

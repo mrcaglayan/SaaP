@@ -14,6 +14,7 @@ import migration013GlReclassificationRuns from "./m013_gl_reclassification_runs.
 import migration014ShareholderCommitmentJournalEntries from "./m014_shareholder_commitment_journal_entries.js";
 import migration015CashControlFoundation from "./m015_cash_control_foundation.js";
 import migration016CashControlIntegrity from "./m016_cash_control_integrity.js";
+import migration017CariSchemaFoundation from "./m017_cari_schema_foundation.js";
 
 const migrations = [
   migration001GlobalMultiEntity,
@@ -32,6 +33,7 @@ const migrations = [
   migration014ShareholderCommitmentJournalEntries,
   migration015CashControlFoundation,
   migration016CashControlIntegrity,
+  migration017CariSchemaFoundation,
 ];
 
 export default migrations;

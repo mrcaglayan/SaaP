@@ -28,6 +28,7 @@ import CashRegistersPage from "./pages/cash/CashRegistersPage.jsx";
 import CashSessionsPage from "./pages/cash/CashSessionsPage.jsx";
 import CashTransactionsPage from "./pages/cash/CashTransactionsPage.jsx";
 import CashExceptionsPage from "./pages/cash/CashExceptionsPage.jsx";
+import CariCounterpartyPage from "./pages/cari/CariCounterpartyPage.jsx";
 import { collectSidebarLinks, sidebarItems } from "./layouts/sidebarConfig.js";
 import TenantReadinessProvider from "./readiness/TenantReadinessProvider.jsx";
 import RequireTenantReadiness from "./readiness/RequireTenantReadiness.jsx";
@@ -111,6 +112,26 @@ const implementedRoutes = [
     appPath: "/app/kasa-istisnalari",
     childPath: "kasa-istisnalari",
     element: <CashExceptionsPage />,
+  },
+  {
+    appPath: "/app/alici-kart-olustur",
+    childPath: "alici-kart-olustur",
+    element: <CariCounterpartyPage pageKey="buyerCreate" />,
+  },
+  {
+    appPath: "/app/alici-kart-listesi",
+    childPath: "alici-kart-listesi",
+    element: <CariCounterpartyPage pageKey="buyerList" />,
+  },
+  {
+    appPath: "/app/satici-kart-olustur",
+    childPath: "satici-kart-olustur",
+    element: <CariCounterpartyPage pageKey="vendorCreate" />,
+  },
+  {
+    appPath: "/app/satici-kart-listesi",
+    childPath: "satici-kart-listesi",
+    element: <CariCounterpartyPage pageKey="vendorList" />,
   },
   {
     appPath: "/app/ayarlar/hesap-plani-olustur",

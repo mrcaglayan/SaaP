@@ -165,18 +165,26 @@ export const sidebarItems = [
       {
         label: "Alici Karti Olustur",
         to: "/app/alici-kart-olustur",
+        requiredPermissions: ["cari.card.upsert"],
+        implemented: true,
       },
       {
         label: "Alici Karti Listesi",
         to: "/app/alici-kart-listesi",
+        requiredPermissions: ["cari.card.read"],
+        implemented: true,
       },
       {
         label: "Satici Karti Olustur",
         to: "/app/satici-kart-olustur",
+        requiredPermissions: ["cari.card.upsert"],
+        implemented: true,
       },
       {
         label: "Satici Karti Listesi",
         to: "/app/satici-kart-listesi",
+        requiredPermissions: ["cari.card.read"],
+        implemented: true,
       },
     ],
   },
