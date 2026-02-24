@@ -351,6 +351,18 @@ export default migration020ContractsFoundation;
   - PR-16 is contracts foundation + lifecycle + link-document only.
   - periodization/deferred/accrual logic is out-of-scope and belongs to PR-17B/17C/17D.
 
+### PR-16 Helper Reuse Guard (mandatory)
+
+- Reuse existing backend helpers instead of introducing PR-specific parallel utilities.
+- Account guard reuse:
+  - use `assertAccountBelongsToTenant(...)` for contract-line account checks (tenant-safe account + COA context source-of-truth).
+- Transaction wrapper reuse:
+  - use `withTransaction(...)` for contract create/update (header+lines), lifecycle-sensitive writes, and link-document cap validation flows.
+- Amount parsing reuse:
+  - use existing `parseAmount(...)` / `parseRequiredAmount(...)` helpers for PR-16 amount parsing and 6-decimal discipline.
+- Route RBAC reuse:
+  - follow the existing route-level RBAC middleware pattern from current route files (no ad-hoc permission checks in service layer).
+
 ### Checklist
 
 - [ ] Add migration and wire `m020` in `backend/src/migrations/index.js`.
@@ -366,6 +378,11 @@ export default migration020ContractsFoundation;
   - [ ] `contract.cancel`
   - [ ] `contract.link_document`
 - [ ] Add OpenAPI route docs in generator.
+- [ ] Reuse existing backend helpers in PR-16 (no parallel helper drift):
+  - [ ] `assertAccountBelongsToTenant(...)`
+  - [ ] `withTransaction(...)`
+  - [ ] `parseAmount(...)` / `parseRequiredAmount(...)`
+  - [ ] existing route RBAC middleware pattern
 - [ ] Enforce PR-16 endpoint-permission mapping in routes/OpenAPI:
   - [ ] `GET /contracts` -> `contract.read`
   - [ ] `GET /contracts/{id}` -> `contract.read`
@@ -536,6 +553,7 @@ export default migration020ContractsFoundation;
 - Capped linking remains correct under concurrency (no race-based cap overshoot).
 - Link immutability policy is unambiguous and consistent with DB uniqueness constraints.
 - Contracts foundation remains isolated from periodization engine concerns.
+- Existing backend helper discipline is preserved (reuse of account guard / transaction wrapper / amount parsing / RBAC middleware pattern; no parallel utility drift).
 - No regressions in Cari endpoints/tests.
 
 ### Global Guardrails Check (Mandatory)
@@ -1378,6 +1396,18 @@ For AP document/settlement:
 - otherwise use `CARI_AP_CONTROL`
 - offset remains `CARI_AP_OFFSET`
 
+### PR-19 Helper Reuse Guard (mandatory)
+
+- Reuse existing backend helpers instead of introducing PR-specific parallel utilities.
+- Account guard reuse:
+  - use `assertAccountBelongsToTenant(...)` for counterparty AR/AP mapping validation and posting-time revalidation.
+- Transaction wrapper reuse:
+  - use `withTransaction(...)` for counterparty mapping writes and posting-time validation+posting flows where atomicity is required.
+- Amount parsing reuse:
+  - where touched posting flows parse amounts, reuse `parseAmount(...)` / `parseRequiredAmount(...)` for 6-decimal discipline.
+- Route RBAC reuse:
+  - preserve existing route-level RBAC middleware pattern in Cari route files (no ad-hoc permission checks in services).
+
 ### Checklist
 
 - [ ] Add migration and wire `m022` in `backend/src/migrations/index.js`.
@@ -1407,6 +1437,11 @@ For AP document/settlement:
 - [ ] Keep fallback behavior to `journal_purpose_accounts` when no mapping exists.
 - [ ] Keep offset account resolution unchanged.
 - [ ] Update OpenAPI generator + generated output.
+- [ ] Reuse existing backend helpers in PR-19 (no parallel helper drift):
+  - [ ] `assertAccountBelongsToTenant(...)`
+  - [ ] `withTransaction(...)`
+  - [ ] `parseAmount(...)` / `parseRequiredAmount(...)` (for touched amount parsing paths)
+  - [ ] existing route RBAC middleware pattern
 - [ ] Enforce frontend AR/AP account-picker read-dependency gating:
   - [ ] if counterparty form uses GL accounts APIs, require `gl.account.read` before account-picker fetch/render
   - [ ] do not perform unauthorized background calls to `/api/v1/gl/accounts*`
@@ -1451,6 +1486,7 @@ For AP document/settlement:
   - when form uses GL account endpoints, `gl.account.read` is enforced before fetch/render
   - missing account-picker read permission does not produce avoidable background `403` noise
   - account-picker UI uses controlled fallback (hidden/disabled) when permission is missing
+- Existing backend helper discipline is preserved (reuse of account guard / transaction wrapper / amount parsing / RBAC middleware pattern; no parallel utility drift).
 - No regressions in existing Cari document/settlement flows.
 
 ### Commands
