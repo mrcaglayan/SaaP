@@ -11,8 +11,11 @@ Bu doküman aşağıdaki Cari modül ekranlarının kullanımını açıklar:
 - `Satıcı Kartı Oluştur (Satici Karti Olustur)`
 - `Satıcı Kartı Listesi (Satici Karti Listesi)`
 - `Cari Raporları (Cari Reports)`
+- `Cari Belgeler`
+- `Cari Mahsuplaştırma / Tahsilat-Ödeme`
+- `Cari Denetim İzleri`
 
-Ayrıca ödeme koşulu hazırlığı, günlük kullanım, ay sonu kullanımı ve sık hatalar için pratik öneriler içerir.
+Ayrıca ödeme koşulu hazırlığı, belge/mahsuplaştırma/audit operasyonu, günlük kullanım, ay sonu kullanımı ve sık hatalar için pratik öneriler içerir.
 
 ## 2. Kısa Sözlük
 
@@ -30,10 +33,26 @@ Ayrıca ödeme koşulu hazırlığı, günlük kullanım, ay sonu kullanımı ve
 
 Cari modülünü sorunsuz kullanmak için aşağıdakiler hazır olmalıdır:
 
-1. Yetkiler atanmış olmalı:
-- `cari.card.read`
-- `cari.card.upsert`
-- `cari.report.read`
+1. Yetkiler atanmış olmalı (rolünüze göre):
+- Kart ekranları için:
+  - `cari.card.read`
+  - `cari.card.upsert`
+- Rapor ve settlement preview için:
+  - `cari.report.read`
+- Cari Belgeler için:
+  - `cari.doc.read`
+  - `cari.doc.create`
+  - `cari.doc.update`
+  - `cari.doc.post`
+  - `cari.doc.reverse`
+  - opsiyonel: `cari.fx.override`
+- Cari Mahsuplaştırma / Tahsilat-Ödeme için:
+  - `cari.settlement.apply`
+  - `cari.settlement.reverse`
+  - `cari.bank.attach`
+  - `cari.bank.apply`
+- Cari Denetim İzleri için:
+  - `cari.audit.read`
 
 2. Şirket/organizasyon temel kurulumu yapılmış olmalı:
 - `Ayarlar > Şirket Ayarları (Sirket Ayarlari)` içindeki `Run Company Bootstrap` veya
@@ -49,6 +68,9 @@ Cari modülünü sorunsuz kullanmak için aşağıdakiler hazır olmalıdır:
 - `Cari İşlemler > Satıcı Kartı Oluştur`
 - `Cari İşlemler > Satıcı Kartı Listesi`
 - `Cari İşlemler > Cari Raporları`
+- `Cari İşlemler > Cari Belgeler`
+- `Cari İşlemler > Cari Mahsuplaştırma / Tahsilat-Ödeme`
+- `Cari İşlemler > Cari Denetim İzleri`
 
 ## 5. Alıcı Kartı Oluştur (Alici Karti Olustur)
 
@@ -363,3 +385,274 @@ Neden:
 ---
 
 Bu kılavuz son kullanıcı odaklıdır ve günlük kullanım içindir. Yetki/scope, şirket kurulumu ve muhasebe politikası gibi yönetimsel konular için ilgili yönetici ekranları ve şirket içi süreçler esas alınmalıdır.
+
+## 14. Yeni Cari Ekranlar (PR-11..14)
+
+Bu bölüm, kod bilmeyen son kullanıcılar için yeni Cari ekranlarının pratik kullanımını anlatır:
+
+- `Cari Belgeler` (`/app/cari-belgeler`)
+- `Cari Mahsuplaştırma / Tahsilat-Ödeme` (`/app/cari-settlements`)
+- `Cari Denetim İzleri` (`/app/cari-audit`)
+
+## 15. Cari Belgeler Ekranı (`/app/cari-belgeler`)
+
+### 15.1 Ekran ne için kullanılır?
+
+- Müşteri/satıcı belgelerini (fatura, dekont benzeri cari belgeler) taslak olarak oluşturmak.
+- Taslak belgeyi güncellemek veya iptal etmek.
+- Taslağı muhasebeleştirerek `POSTED` duruma geçirmek.
+- `POSTED` belgeyi ters kayıtla geri çevirmek (`REVERSE`).
+
+### 15.2 Liste filtreleri: hangi alan ne işe yarar?
+
+| Alan | Ne için kullanılır? | Boş bırakılırsa ne olur? |
+|---|---|---|
+| `Legal Entity ID` | Hangi yasal şirketin belgelerini görmek istediğinizi belirler. | Yetkiniz olan tüm şirket kapsamından sonuç gelebilir; liste kalabalık olabilir. |
+| `Counterparty ID` | Belirli bir cari kartın belgelerini filtreler. | Tüm cariler gelir. |
+| `Direction (AR/AP)` | `AR`: alacak, `AP`: borç yönünü ayırır. | Her iki yön de gelir. |
+| `Document Type` | Belge türüne göre filtreler (`INVOICE`, `DEBIT_NOTE`, `CREDIT_NOTE`, `PAYMENT`, `ADJUSTMENT`). | Tüm türler gelir. |
+| `Status` | Belge yaşam döngüsüne göre filtreler (`DRAFT`, `POSTED`, vb.). | Tüm statüler gelir. |
+| `Date From` / `Date To` | Belge tarih aralığına göre filtreler. | Tarih kısıtı uygulanmaz. |
+| `Search` | Belge numarası/cari snapshot bilgisi ile hızlı arama yapar. | Arama kısıtı uygulanmaz. |
+
+### 15.3 Taslak belge oluşturma: alan alan açıklama
+
+| Alan | Zorunlu mu? | Ne için? | Girilmezse / yanlışsa ne olur? |
+|---|---|---|---|
+| `Legal Entity ID` | Evet | Belgenin ait olduğu yasal şirket. | Kayıt engellenir (`legalEntityId is required`). |
+| `Counterparty ID` | Evet | Belgenin bağlı olduğu müşteri/tedarikçi. | Kayıt engellenir (`counterpartyId is required`). |
+| `Payment Term ID` | Hayır | Vade kuralını otomatik bağlar. | Boş ise backend varsayılan kurallarla devam eder. |
+| `Direction` | Evet | `AR` (alacak) veya `AP` (borç). | Yanlış/boş ise kayıt engellenir. |
+| `Document Type` | Evet | Belgenin türü. | Yanlış/boş ise kayıt engellenir. |
+| `Document Date` | Evet | Belgenin işlem tarihi. | Boş ise kayıt engellenir. |
+| `Due Date` | Türe bağlı | `INVOICE` ve `DEBIT_NOTE` için vade tarihi gerekir. | Bu türlerde boşsa kayıt engellenir. |
+| `Amount Txn` | Evet | İşlem para birimindeki tutar. | `0` veya negatif olamaz, kayıt engellenir. |
+| `Amount Base` | Evet | Ana para birimindeki karşılık. | `0` veya negatif olamaz, kayıt engellenir. |
+| `Currency` | Evet | 3 harfli para kodu (örn. `USD`, `TRY`, `EUR`). | Geçersiz formatta ise kayıt engellenir. |
+| `FX Rate` | Hayır | Kur bilgisi; bazı durumlarda post aşamasında gerekir. | Girilmişse `> 0` olmalıdır; aksi durumda kayıt engellenir. |
+
+### 15.4 Durum bazlı aksiyon kuralları
+
+- `Update Draft Document`: sadece `DRAFT` ve `cari.doc.update` yetkisi varsa.
+- `Cancel Draft`: sadece `DRAFT` ve `cari.doc.update` yetkisi varsa.
+- `Post Draft`: sadece `DRAFT` ve `cari.doc.post` yetkisi varsa.
+- `Reverse Posted Document`: sadece `POSTED` ve `cari.doc.reverse` yetkisi varsa.
+
+### 15.5 FX override (post sırasında)
+
+- `useFxOverride` işaretlenirse kullanıcıda `cari.fx.override` yetkisi olmalıdır.
+- `useFxOverride=true` ise `fxOverrideReason` girilmesi zorunludur.
+- Yetki yoksa kullanıcı açık bir uyarı görür ve işlem gönderilmez.
+
+### 15.6 Detay paneli nasıl okunur?
+
+- `documentNo`: belge numarası.
+- `status`: güncel durum.
+- `postedJournalEntryId`: post sonrası oluşan yevmiye referansı.
+- `reversalOfDocumentId`: bu belge bir ters kayıt belgesiyse, hangi belgenin ters kaydı olduğunu gösterir.
+- Snapshot alanları (`counterparty*Snapshot`, `dueDateSnapshot`, `currencyCodeSnapshot`, `fxRateSnapshot`):
+  - İşlem anındaki fotoğraf bilgisidir.
+  - Cari kart sonradan değişse bile geçmiş belge kaydı denetim için korunur.
+
+### 15.7 Gerçek hayat örnekleri
+
+Örnek A: Müşteri faturası oluşturma ve post etme
+1. `Direction=AR`, `DocumentType=INVOICE`, `Due Date` dolu.
+2. Taslak oluşturulur (`DRAFT`).
+3. Kontrol sonrası `Post Draft` yapılır.
+4. Sonuçta `postedJournalEntryId` oluşur.
+
+Örnek B: Hatalı post edilen belgenin geri alınması
+1. Belge `POSTED` durumdadır.
+2. `Reverse reason` yazılır, gerekirse `reversalDate` girilir.
+3. `Reverse Posted Document` ile ters kayıt oluşur.
+4. Ekranda reversal bağlantıları görünür.
+
+## 16. Cari Mahsuplaştırma / Tahsilat-Ödeme (`/app/cari-settlements`)
+
+### 16.1 Ekran ne için kullanılır?
+
+Bu ekran 4 ayrı iş akışını tek yerde toplar:
+
+1. `Settlement Apply`
+2. `Settlement Reverse`
+3. `Bank Attach`
+4. `Bank Apply`
+
+Not:
+- Sayfaya giriş yetkisi "any-of" olabilir.
+- Ama her panelin düğmeleri kendi özel yetkisine göre çalışır.
+
+### 16.2 Üstteki önizleme alanları (Open Items Preview)
+
+| Alan | Ne için? | Boş/yanlış olursa ne olur? |
+|---|---|---|
+| `Legal Entity ID` | Açık kalemlerin hangi şirkette aranacağını belirler. | Önizleme satırı çıkmaz. |
+| `Counterparty ID` | Hangi cari için açık kalemlerin çekileceğini belirler. | Önizleme satırı çıkmaz. |
+| `Direction` | `AR` veya `AP` yönüne göre ayrım yapar. | Özellikle auto-allocate için yön zorunlu hale gelir. |
+| `As-Of Date` | Açık kalemleri belirli tarih kesitine göre hesaplar. | Boşsa önizleme yüklenmez. |
+
+Ek not:
+- Kullanıcıda `cari.report.read` yoksa önizleme görünmez.
+- Bu durumda settlement/bank aksiyonları, ilgili aksiyon yetkileri varsa yine yapılabilir.
+
+### 16.3 Settlement Apply: alan alan açıklama
+
+| Alan | Zorunlu mu? | Ne için? | Girilmezse / yanlışsa ne olur? |
+|---|---|---|---|
+| `Settlement Date` | Evet | Mahsuplaştırma/tahsilat-ödeme tarihi. | İşlem gönderilmez. |
+| `Currency` | Evet | İşlem para birimi. | İşlem gönderilmez. |
+| `Incoming Amount Txn` | Evet | Kapanacak/dağıtılacak toplam tutar. | `0`/geçersiz ise işlem gönderilmez. |
+| `FX Rate` | Duruma bağlı | Kur bilgisi. Bazı kur politikalarında zorunlu hale gelebilir. | Eksikse backend hata dönebilir. |
+| `Note` | Hayır | Operasyon notu. | Boş bırakılabilir. |
+| `Idempotency Key` | Teknik olarak zorunlu, UI otomatik üretir | Aynı isteğin tekrarında çift kayıt oluşmasını önler. | Boşsa UI otomatik üretir. |
+| `autoAllocate` | Seçim | Sistem açık kalemlere otomatik dağıtım yapar. | Kapalıysa manuel allocation girmek gerekir. |
+| `useUnappliedCash` | Seçim | Varsa önceden oluşmuş `unapplied cash` bakiyesini kullanır. | Kapalıysa bu bakiye kullanılmaz. |
+
+Auto-allocate açıkken:
+- `Direction` seçilmelidir.
+- Önizlemede karışık yön (`AR` + `AP`) varsa işlem bloklanır.
+
+Auto-allocate kapalıyken:
+- Tablodaki `manual amount` girişleri ile allocation yapılmalıdır.
+- Hiç allocation yoksa işlem gönderilmez.
+- Girilen allocation, ilgili açık kalem bakiyesini aşamaz.
+
+### 16.4 `idempotentReplay` ve `followUpRisks` ne demek?
+
+- `idempotentReplay=true`:
+  - Hata değildir.
+  - Aynı istek daha önce uygulanmıştır, mevcut sonuç tekrar gösteriliyordur.
+- `followUpRisks`:
+  - Operasyon uyarısıdır.
+  - Sonuç alınsa bile takip gerektiren risk maddelerini gösterir.
+
+### 16.5 Settlement Reverse
+
+| Alan | Zorunlu mu? | Ne için? | Girilmezse / yanlışsa ne olur? |
+|---|---|---|---|
+| `settlementBatchId` | Evet | Geri çevrilecek settlement kaydı. | Geçersizse reverse yapılamaz. |
+| `reversalDate` | Hayır | Ters kayıt tarihi. | Boşsa sistem varsayılan tarih kullanabilir. |
+| `reason` | Hayır (önerilir) | Neden ters kayıt yapıldığını açıklar. | Boş geçilebilir, ama denetim için doldurulması önerilir. |
+
+### 16.6 Bank Attach (açık ve ayrı iş akışı)
+
+| Alan | Kural |
+|---|---|
+| `legalEntityId` | Zorunlu |
+| `targetType` | `SETTLEMENT` veya `UNAPPLIED_CASH` |
+| `bankStatementLineId` / `bankTransactionRef` | En az biri zorunlu |
+
+`targetType=SETTLEMENT` ise:
+- `settlementBatchId` zorunlu
+- `unappliedCashId` boş olmalı
+
+`targetType=UNAPPLIED_CASH` ise:
+- `unappliedCashId` zorunlu
+- `settlementBatchId` boş olmalı
+
+`idempotencyKey` boşsa UI otomatik üretir.
+
+### 16.7 Bank Apply (açık ve ayrı iş akışı)
+
+| Alan | Zorunlu mu? | Ne için? |
+|---|---|---|
+| `legalEntityId` | Evet | Şirket kapsamı |
+| `counterpartyId` | Evet | Cari kapsamı |
+| `direction` | auto-allocate açıksa evet | AR/AP yönü |
+| `settlementDate` | Evet | İşlem tarihi |
+| `currencyCode` | Evet | Para birimi |
+| `incomingAmountTxn` | Evet | Uygulanacak tutar |
+| `bankStatementLineId` veya `bankTransactionRef` | En az biri evet | Banka satırı/referansı |
+| `autoAllocate` | Seçim | Otomatik dağıtım |
+| `allocations JSON` | auto-allocate kapalıysa evet | Manuel dağıtım listesi |
+| `bankApplyIdempotencyKey` | UI otomatik üretebilir | Çift gönderimi önleme |
+| `note` | Hayır | Açıklama |
+
+### 16.8 Gerçek hayat örnekleri
+
+Örnek A: Müşteriden kısmi tahsilat (otomatik dağıtım)
+1. `Direction=AR`, `autoAllocate=true`.
+2. Önizlemede en eski vadeli açık kalemlerden başlanarak beklenen dağıtım görülür.
+3. `Apply Settlement` sonrası allocation ve kalan bakiye blokları kontrol edilir.
+
+Örnek B: Tedarikçiye elle parça ödeme (manuel dağıtım)
+1. `Direction=AP`, `autoAllocate=false`.
+2. Sadece seçilen açık kalemlere `manual amount` girilir.
+3. Her satırda girilen tutar açık bakiyeyi aşmamalıdır.
+
+Örnek C: Banka ekstresi ile kayıt eşleme
+1. Önce `Bank Attach` ile hedef kayıt ve banka referansı bağlanır.
+2. Sonra `Bank Apply` ile tutar uygulanır.
+3. Bu iki adım ayrı tutulduğu için yanlış otomatik eşleme riski düşer.
+
+## 17. Cari Denetim İzleri (`/app/cari-audit`)
+
+### 17.1 Ekran ne için kullanılır?
+
+- Kim, ne zaman, hangi kayıtta hangi işlemi yaptı sorusunu cevaplamak.
+- Operasyon, destek ve denetim süreçlerinde kanıt (audit trail) sağlamak.
+
+### 17.2 Filtre alanları: ne için, boşsa ne olur?
+
+| Alan | Ne için kullanılır? | Boş bırakılırsa ne olur? |
+|---|---|---|
+| `legalEntityId` | Belirli şirketi incelemek için. | Kapsamdaki tüm şirketlerden kayıt gelebilir. |
+| `action` | Örn. `cari.settlement.apply`, `cari.document.reverse`. | Tüm aksiyonlar gelir. |
+| `resourceType` | İşlem yapılan kayıt türü. | Tür filtresi olmaz. |
+| `resourceId` | Belirli kaydı nokta atışı bulur. | Kayıt bazlı daraltma olmaz. |
+| `actorUserId` | İşlemi yapan kullanıcıyı filtreler. | Tüm kullanıcılar gelir. |
+| `requestId` | Tek bir API talebini bulur. | Talep bazlı arama yapılmaz. |
+| `createdFrom` / `createdTo` | Tarih aralığı. | Tarih kısıtı uygulanmaz. |
+| `includePayload` | Payload içeriğini getirir. | Kapalıysa payload alanı alınmaz, liste daha hızlıdır. |
+| `limit` / `offset` | Sayfalama boyutu ve başlangıcı. | Varsayılan değerlerle çalışır. |
+
+Tarih notu:
+- `createdFrom` gün başına (`00:00:00.000`),
+- `createdTo` gün sonuna (`23:59:59.999`) dönüştürülür.
+- Böylece aynı gün içindeki kayıtlar eksik kalmaz.
+
+### 17.3 By-Action özeti nasıl kullanılır?
+
+- Üstteki kartlar her aksiyon için kaç kayıt olduğunu gösterir.
+- Ani artışlar (örneğin çok sayıda reverse veya apply) operasyonel inceleme ihtiyacı doğurabilir.
+
+### 17.4 Payload görünümü
+
+- Varsayılan yaklaşım: payload kapalı.
+- Sadece gerektiğinde `includePayload` açın.
+- Satır bazında `Expand payload` ile detay açılır.
+- `requestId` yanında `Copy` düğmesi ile destek kaydına hızlıca yapıştırabilirsiniz.
+
+### 17.5 Gerçek hayat örnekleri
+
+Örnek A: "Bu belgeyi kim reverse etti?"
+1. `action = cari.document.reverse`
+2. `resourceType` ve gerekirse `resourceId` girin.
+3. Sonuç satırında `actor`, `createdAt`, `requestId` bilgilerini alın.
+
+Örnek B: "Bu settlement neden iki kez görünüyor?"
+1. Aynı `requestId` ile arayın.
+2. Sonuçta `idempotentReplay` ile ilişkili tekrar cevabı olup olmadığını kontrol edin.
+
+Örnek C: "Bugünkü işlemler eksik görünüyor"
+1. `createdTo` tarihinin seçili olduğundan emin olun.
+2. Sistem gün sonu sınırı kullandığı için gün içi kayıtlar normalde dışarıda kalmamalıdır.
+
+## 18. Kısa Hata Mesajı Rehberi
+
+- `Missing permission: ...`
+  - Kullanıcının ilgili aksiyon yetkisi yok.
+  - Çözüm: sistem yöneticisinden yetki talep edin.
+- `Direction is required for auto-allocation`
+  - Otomatik dağıtım açıkken AR/AP yönü seçilmemiş.
+- `allocations are required when autoAllocate=false`
+  - Otomatik dağıtım kapalıyken manuel dağıtım girilmemiş.
+- `bankStatementLineId or bankTransactionRef is required`
+  - Banka satırı veya referans bilgisi eksik.
+- `FX override requires permission: cari.fx.override`
+  - Override işaretlendi ama kullanıcıda gerekli yetki yok.
+
+---
+
+Bu bölümde anlatılan adımlar kod bilgisi gerektirmez. Kritik durumlarda, hata mesajı + `requestId` bilgisini birlikte destek ekibine iletmeniz en hızlı çözümü sağlar.

@@ -25,6 +25,15 @@ const MANUAL_TXN_TYPES = [
   "CLOSING_ADJUSTMENT",
 ];
 const FILTER_TXN_TYPES = [...MANUAL_TXN_TYPES, "VARIANCE"];
+const COUNTER_ACCOUNT_REQUIRED_TXN_TYPES = new Set([
+  "RECEIPT",
+  "PAYOUT",
+  "OPENING_FLOAT",
+  "CLOSING_ADJUSTMENT",
+  "VARIANCE",
+  "DEPOSIT_TO_BANK",
+  "WITHDRAWAL_FROM_BANK",
+]);
 const TXN_STATUSES = ["DRAFT", "SUBMITTED", "APPROVED", "POSTED", "REVERSED", "CANCELLED"];
 const CANCELLABLE_STATUSES = new Set(["DRAFT", "SUBMITTED"]);
 const POSTABLE_STATUSES = new Set(["DRAFT", "SUBMITTED", "APPROVED"]);
@@ -53,6 +62,10 @@ function toOptionalNumber(value) {
 
 function toUpper(value) {
   return String(value || "").trim().toUpperCase();
+}
+
+function requiresCounterAccountTxnType(txnType) {
+  return COUNTER_ACCOUNT_REQUIRED_TXN_TYPES.has(toUpper(txnType));
 }
 
 function parseDbBoolean(value) {
@@ -194,7 +207,13 @@ function mapTransactionErrorMessage(rawMessage, t) {
   if (lower.includes("countercashregisterid not found for tenant")) {
     return t("cashTransactions.errorsMapped.counterRegisterNotFound");
   }
-  if (lower.includes("counteraccountid")) {
+  if (
+    lower.includes("requires counteraccountid") ||
+    lower.includes("counteraccountid is required")
+  ) {
+    return t("cashTransactions.errors.counterAccountRequired");
+  }
+  if (lower.includes("counteraccountid not found for tenant")) {
     return t("cashTransactions.errorsMapped.counterAccountInvalid");
   }
   if (lower.includes("an open cash session is required for this register")) {
@@ -378,11 +397,7 @@ export default function CashTransactionsPage() {
       warnings.push(t("cashTransactions.errors.counterRegisterRequired"));
     }
 
-    if (
-      (normalizedTxnType === "DEPOSIT_TO_BANK" ||
-        normalizedTxnType === "WITHDRAWAL_FROM_BANK") &&
-      !toPositiveInt(form.counterAccountId)
-    ) {
+    if (requiresCounterAccountTxnType(normalizedTxnType) && !toPositiveInt(form.counterAccountId)) {
       warnings.push(t("cashTransactions.errors.counterAccountRequired"));
     }
 
@@ -556,14 +571,13 @@ export default function CashTransactionsPage() {
   function handleTxnTypeChange(nextTxnType) {
     const normalized = toUpper(nextTxnType);
     const isTransfer = normalized === "TRANSFER_IN" || normalized === "TRANSFER_OUT";
-    const isBank =
-      normalized === "DEPOSIT_TO_BANK" || normalized === "WITHDRAWAL_FROM_BANK";
+    const requiresCounterAccount = requiresCounterAccountTxnType(normalized);
 
     setForm((prev) => ({
       ...prev,
       txnType: normalized,
       counterCashRegisterId: isTransfer ? prev.counterCashRegisterId : "",
-      counterAccountId: isBank ? prev.counterAccountId : "",
+      counterAccountId: requiresCounterAccount ? prev.counterAccountId : "",
     }));
   }
 
@@ -619,10 +633,7 @@ export default function CashTransactionsPage() {
       setSimpleError(t("cashTransactions.errors.counterRegisterRequired"));
       return;
     }
-    if (
-      (txnType === "DEPOSIT_TO_BANK" || txnType === "WITHDRAWAL_FROM_BANK") &&
-      !counterAccountId
-    ) {
+    if (requiresCounterAccountTxnType(txnType) && !counterAccountId) {
       setSimpleError(t("cashTransactions.errors.counterAccountRequired"));
       return;
     }
@@ -1232,9 +1243,7 @@ export default function CashTransactionsPage() {
               placeholder={t("cashTransactions.form.counterpartyIdOptional")}
             />
 
-            {(toUpper(form.txnType) === "DEPOSIT_TO_BANK" ||
-              toUpper(form.txnType) === "WITHDRAWAL_FROM_BANK") &&
-            accountOptions.length > 0 ? (
+            {requiresCounterAccountTxnType(form.txnType) && accountOptions.length > 0 ? (
               <select
                 value={form.counterAccountId}
                 onChange={(event) =>
@@ -1260,10 +1269,7 @@ export default function CashTransactionsPage() {
                 }
                 className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
                 placeholder={t("cashTransactions.form.counterAccountIdOptional")}
-                required={
-                  toUpper(form.txnType) === "DEPOSIT_TO_BANK" ||
-                  toUpper(form.txnType) === "WITHDRAWAL_FROM_BANK"
-                }
+                required={requiresCounterAccountTxnType(form.txnType)}
               />
             )}
 

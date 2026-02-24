@@ -22,6 +22,13 @@ import { createAndPostCashJournalTx } from "./cash.service.js";
 
 const TRANSFER_TXN_TYPES = new Set(["TRANSFER_OUT", "TRANSFER_IN"]);
 const BANK_TXN_TYPES = new Set(["DEPOSIT_TO_BANK", "WITHDRAWAL_FROM_BANK"]);
+const NON_BANK_COUNTER_ACCOUNT_REQUIRED_TXN_TYPES = new Set([
+  "RECEIPT",
+  "PAYOUT",
+  "OPENING_FLOAT",
+  "CLOSING_ADJUSTMENT",
+  "VARIANCE",
+]);
 const MANUAL_PROHIBITED_TXN_TYPES = new Set(["VARIANCE"]);
 const CANCELLABLE_TXN_STATUSES = new Set(["DRAFT", "SUBMITTED"]);
 const POSTABLE_TXN_STATUSES = new Set(["DRAFT", "SUBMITTED", "APPROVED"]);
@@ -110,7 +117,11 @@ function validateTxnTypeSpecificRules(payload) {
     throw badRequest(`${payload.txnType} requires counterCashRegisterId`);
   }
 
-  if (BANK_TXN_TYPES.has(payload.txnType) && !payload.counterAccountId) {
+  if (
+    (BANK_TXN_TYPES.has(payload.txnType) ||
+      NON_BANK_COUNTER_ACCOUNT_REQUIRED_TXN_TYPES.has(payload.txnType)) &&
+    !payload.counterAccountId
+  ) {
     throw badRequest(`${payload.txnType} requires counterAccountId`);
   }
 }

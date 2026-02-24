@@ -42,6 +42,43 @@ async function runNodeScript(scriptRelativePath, cwd) {
   });
 }
 
+function getNpmExecutable() {
+  return "npm";
+}
+
+async function runCommand(command, args, cwd, label = command, useShell = false) {
+  await new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd,
+      env: { ...process.env },
+      stdio: "inherit",
+      shell: useShell,
+    });
+
+    child.on("error", (err) => reject(err));
+    child.on("exit", (code) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      reject(new Error(`${label} failed with exit code ${code}`));
+    });
+  });
+}
+
+async function runNpmScript(scriptName, cwd) {
+  if (process.platform === "win32") {
+    await runCommand(
+      "cmd.exe",
+      ["/d", "/s", "/c", `npm run ${scriptName}`],
+      cwd,
+      `npm run ${scriptName}`
+    );
+    return;
+  }
+  await runCommand(getNpmExecutable(), ["run", scriptName], cwd, `npm run ${scriptName}`);
+}
+
 function findOperation(spec, routePath, method) {
   return spec?.paths?.[routePath]?.[method] || null;
 }
@@ -132,12 +169,34 @@ function assertRunbookSections(runbookSource) {
   }
 }
 
+function assertSupportGuideSections(source) {
+  const requiredHeadings = [
+    "## Document Lifecycle",
+    "## Settlement Idempotency Behavior",
+    "## Replay Behavior (`idempotentReplay`)",
+    "## Reverse Behavior (Document + Settlement)",
+    "## Bank Attach/Apply Meaning",
+    "## FX Override Use-Case and Permissions",
+  ];
+
+  for (const heading of requiredHeadings) {
+    assert(source.includes(heading), `Support guide heading missing: ${heading}`);
+  }
+}
+
 async function main() {
   const scriptDir = path.dirname(fileURLToPath(import.meta.url));
   const backendRoot = path.resolve(scriptDir, "..");
   const repoRoot = path.resolve(backendRoot, "..");
 
+  await runNpmScript("test:cari-pr12-documents-date-filter", backendRoot);
   await runNodeScript("scripts/generate-openapi.js", backendRoot);
+  await runCommand(
+    "git",
+    ["diff", "--exit-code", "--", "backend/openapi.yaml"],
+    repoRoot,
+    "git diff --exit-code -- backend/openapi.yaml"
+  );
 
   const openapiPath = path.resolve(backendRoot, "openapi.yaml");
   const openapiSource = await readFile(openapiPath, "utf8");
@@ -245,6 +304,14 @@ async function main() {
   const runbookPath = path.resolve(repoRoot, "docs", "runbooks", "cari-v1-operations.md");
   const runbookSource = await readFile(runbookPath, "utf8");
   assertRunbookSections(runbookSource);
+  const supportGuidePath = path.resolve(
+    repoRoot,
+    "docs",
+    "runbooks",
+    "cari-v1-support-finance-ui-guide.md"
+  );
+  const supportGuideSource = await readFile(supportGuidePath, "utf8");
+  assertSupportGuideSections(supportGuideSource);
 
   console.log("CARI PR-10 quality gate docs/openapi validation passed.");
   console.log(
@@ -255,6 +322,7 @@ async function main() {
           normalizePath(routePath).startsWith("/api/v1/cari")
         ).length,
         runbookPath,
+        supportGuidePath,
       },
       null,
       2

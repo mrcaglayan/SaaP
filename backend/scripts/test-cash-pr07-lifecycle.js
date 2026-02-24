@@ -20,6 +20,26 @@ function toNumber(value) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function toErrorText(jsonPayload) {
+  if (jsonPayload === null || jsonPayload === undefined) {
+    return "";
+  }
+  if (typeof jsonPayload === "string") {
+    return jsonPayload;
+  }
+  if (typeof jsonPayload.error === "string") {
+    return jsonPayload.error;
+  }
+  if (typeof jsonPayload.message === "string") {
+    return jsonPayload.message;
+  }
+  try {
+    return JSON.stringify(jsonPayload);
+  } catch {
+    return String(jsonPayload);
+  }
+}
+
 function parseTxnNo(txnNo) {
   const match = String(txnNo || "").match(/^CASH-([A-Z0-9]+)-(\d{4})-(\d{6})$/);
   if (!match) {
@@ -117,7 +137,7 @@ async function login(email, password) {
 }
 
 async function createTenantAndAdmin() {
-  const stamp = Date.now();
+  const stamp = Date.now() + Math.floor(Math.random() * 1000);
   const tenantCode = `CASH07_${stamp}`;
   const tenantName = `Cash PR07 ${stamp}`;
   const adminEmail = `cash_pr07_admin_${stamp}@example.com`;
@@ -374,7 +394,10 @@ async function createCashTxn({
   tenantId,
   registerId,
   currencyCode,
-  counterAccountId,
+  counterAccountId = null,
+  counterCashRegisterId = null,
+  txnType = "RECEIPT",
+  amount = "50.00",
   idempotencyKey,
   bookDate,
   expectedStatus = 200,
@@ -386,10 +409,11 @@ async function createCashTxn({
     body: {
       tenantId,
       registerId,
-      txnType: "RECEIPT",
-      amount: "50.00",
+      txnType,
+      amount,
       currencyCode,
       counterAccountId,
+      counterCashRegisterId,
       description: "PR07 lifecycle test txn",
       idempotencyKey,
       bookDate,
@@ -453,6 +477,88 @@ async function main() {
       name: "Register B",
       currencyCode: base.currencyCode,
     });
+
+    // Targeted validation coverage: receipt/payout now require counterAccountId at create time.
+    const missingReceiptCounterAccount = await createCashTxn({
+      token: adminToken,
+      tenantId: identity.tenantId,
+      registerId: registerAId,
+      currencyCode: base.currencyCode,
+      counterAccountId: null,
+      txnType: "RECEIPT",
+      idempotencyKey: `PR07-MISS-RECEIPT-${identity.stamp}`,
+      bookDate: "2026-03-10",
+      expectedStatus: 400,
+    });
+    assert(
+      toErrorText(missingReceiptCounterAccount.json).includes("RECEIPT requires counterAccountId"),
+      "RECEIPT create should fail with required counterAccountId message"
+    );
+
+    const missingPayoutCounterAccount = await createCashTxn({
+      token: adminToken,
+      tenantId: identity.tenantId,
+      registerId: registerAId,
+      currencyCode: base.currencyCode,
+      counterAccountId: null,
+      txnType: "PAYOUT",
+      idempotencyKey: `PR07-MISS-PAYOUT-${identity.stamp}`,
+      bookDate: "2026-03-11",
+      expectedStatus: 400,
+    });
+    assert(
+      toErrorText(missingPayoutCounterAccount.json).includes("PAYOUT requires counterAccountId"),
+      "PAYOUT create should fail with required counterAccountId message"
+    );
+
+    const transferWithoutCounterAccount = await createCashTxn({
+      token: adminToken,
+      tenantId: identity.tenantId,
+      registerId: registerAId,
+      currencyCode: base.currencyCode,
+      txnType: "TRANSFER_OUT",
+      counterCashRegisterId: registerBId,
+      counterAccountId: null,
+      idempotencyKey: `PR07-TRANSFER-NO-COUNTER-${identity.stamp}`,
+      bookDate: "2026-03-12",
+      expectedStatus: 200,
+    });
+    assert(
+      toNumber(transferWithoutCounterAccount.json?.row?.id) > 0,
+      "TRANSFER_OUT create should work without counterAccountId when counterCashRegisterId is present"
+    );
+
+    // Cross-tenant guard coverage for counterAccountId.
+    await sleep(5);
+    const foreignIdentity = await createTenantAndAdmin();
+    const foreignAdminToken = await login(foreignIdentity.adminEmail, foreignIdentity.password);
+    const foreignBase = await bootstrapOrgAndGlBase(foreignAdminToken, foreignIdentity.stamp);
+    const foreignTenantCounterAccountId = await createAccount({
+      token: foreignAdminToken,
+      coaId: foreignBase.coaId,
+      code: `FCNT${foreignIdentity.stamp}`,
+      name: "Foreign Tenant Counter Account",
+      accountType: "EXPENSE",
+      normalSide: "DEBIT",
+    });
+
+    const crossTenantCounterAccountAttempt = await createCashTxn({
+      token: adminToken,
+      tenantId: identity.tenantId,
+      registerId: registerAId,
+      currencyCode: base.currencyCode,
+      counterAccountId: foreignTenantCounterAccountId,
+      txnType: "RECEIPT",
+      idempotencyKey: `PR07-CROSS-TENANT-ACCOUNT-${identity.stamp}`,
+      bookDate: "2026-03-13",
+      expectedStatus: 400,
+    });
+    assert(
+      toErrorText(crossTenantCounterAccountAttempt.json).includes(
+        "counterAccountId not found for tenant"
+      ),
+      "Cross-tenant counterAccountId must fail with tenant-scope validation error"
+    );
 
     // Txn no sequence should be per legal entity + year across registers.
     const tx1 = await createCashTxn({

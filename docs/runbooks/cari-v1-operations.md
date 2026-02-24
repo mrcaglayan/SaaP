@@ -124,6 +124,34 @@ This runbook defines how to operate Cari v1 AR/AP workflows in production-like e
 9. Validate idempotency replay behavior for one apply request.
 10. Confirm bank-link fields display where available.
 
+## UI Route Coverage (PR-11..14)
+
+- `/app/cari-belgeler`: document lifecycle operations (draft, post, reverse) with document-level permissions.
+- `/app/cari-settlements`: settlement and bank-link workbench (route open is any-of; actions are permission-gated per panel).
+- `/app/cari-audit`: support/finance investigation view over `GET /api/v1/cari/audit`.
+
+## Operator Flow Summary
+
+- Document lifecycle:
+  - Create/update/cancel only in `DRAFT`.
+  - Post only in `DRAFT`.
+  - Reverse only from posted lifecycle states per backend guards.
+- Settlement lifecycle:
+  - Apply requires idempotency key and allocation rule compliance (`autoAllocate` vs `allocations`).
+  - Reverse uses `POST /api/v1/cari/settlements/{settlementBatchId}/reverse`.
+- Replay and idempotency:
+  - `idempotentReplay=true` must be treated as safe replay of an already-applied request.
+  - `followUpRisks` is an operational warning input, not a silent ignore field.
+- Bank-link meaning:
+  - Bank attach/apply actions are explicit, separate from settlement apply.
+  - Bank flows keep their own idempotency keys and target validation rules.
+- FX override:
+  - Only permitted for users with `cari.fx.override`.
+  - Override reason must be captured and reviewable.
+
+For day-to-day support and finance execution details, use:
+- `docs/runbooks/cari-v1-support-finance-ui-guide.md`
+
 ## Recommended Commands
 
 - Backend release gate:

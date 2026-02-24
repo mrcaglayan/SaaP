@@ -954,6 +954,21 @@ export const messages = {
       postDraft: "Taslagi post et",
       reversePosted: "Post edileni ters kaydet",
     },
+    cariAudit: {
+      title: "Cari Denetim Izleri",
+      subtitle:
+        "Finance/support incelemeleri icin audit log kayitlarini filtreleyin ve requestId ile izleyin.",
+      byActionTitle: "Aksiyon Ozeti",
+    },
+    cariSettlements: {
+      title: "Cari Mahsuplastirma / Tahsilat-Odeme",
+      apply: "Mahsuplastirma uygula",
+      reverse: "Mahsuplastirmayi ters kaydet",
+      replayInfo: "Bu istek daha once uygulanmis; mevcut sonuc gosteriliyor.",
+      directionRequired: "Auto-allocation icin direction zorunludur.",
+      mixedDirectionWarning:
+        "Open-item satirlari AR/AP karisik. Auto-allocation icin tek direction secin.",
+    },
     modulePlaceholder: {
       defaultTitle: "Modul",
       description:
@@ -1967,6 +1982,21 @@ export const messages = {
       cancelDraft: "Cancel draft",
       postDraft: "Post draft",
       reversePosted: "Reverse posted document",
+    },
+    cariAudit: {
+      title: "Cari Audit Trail",
+      subtitle:
+        "Filter audit log rows for finance/support investigations and trace request IDs quickly.",
+      byActionTitle: "Action Summary",
+    },
+    cariSettlements: {
+      title: "Cari Settlements",
+      apply: "Apply settlement",
+      reverse: "Reverse settlement",
+      replayInfo: "This request was already processed; existing result is shown.",
+      directionRequired: "Direction is required for auto-allocation.",
+      mixedDirectionWarning:
+        "Open-item rows are mixed AR/AP. Select one direction before auto-allocation.",
     },
     modulePlaceholder: {
       defaultTitle: "Module",

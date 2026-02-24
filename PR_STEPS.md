@@ -1132,6 +1132,9 @@ export default function CariSettlementsPage() {
 - [ ] Add bank idempotency key handling:
   - [ ] bank attach sends `idempotencyKey`
   - [ ] bank apply sends `bankApplyIdempotencyKey` (or validator-compatible fallback)
+- [ ] Add in-flight submit guards for bank actions:
+  - [ ] disable bank attach submit while attach request is in-flight
+  - [ ] disable bank apply submit while apply request is in-flight
 - [ ] Build deterministic auto-allocation preview (oldest due first).
 - [ ] Add mixed-direction UX guard for auto-allocate:
   - [ ] require direction when `autoAllocate=true`
