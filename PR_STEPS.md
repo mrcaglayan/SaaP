@@ -142,6 +142,9 @@ Add frontend foundations only, no backend business logic change.
 - `frontend/src/App.jsx`
 - `frontend/src/layouts/sidebarConfig.js`
 - `frontend/src/i18n/messages.js`
+- `frontend/src/api/cariCounterparty.js`
+- `frontend/src/api/cariPaymentTerms.js`
+- `frontend/src/api/cariReports.js`
 - `backend/package.json`
 
 ### Concrete skeletons
@@ -335,6 +338,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 function assert(c, m) { if (!c) throw new Error(m); }
+function hasPath(source, pathValue) {
+  const escaped = pathValue.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(escaped).test(source);
+}
 
 async function main() {
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -344,16 +351,31 @@ async function main() {
   const apiDocs = await readFile(path.resolve(root, "frontend/src/api/cariDocuments.js"), "utf8");
   const apiSettle = await readFile(path.resolve(root, "frontend/src/api/cariSettlements.js"), "utf8");
   const apiAudit = await readFile(path.resolve(root, "frontend/src/api/cariAudit.js"), "utf8");
+  const apiCounterparty = await readFile(
+    path.resolve(root, "frontend/src/api/cariCounterparty.js"),
+    "utf8"
+  );
+  const apiPaymentTerms = await readFile(
+    path.resolve(root, "frontend/src/api/cariPaymentTerms.js"),
+    "utf8"
+  );
+  const apiReports = await readFile(
+    path.resolve(root, "frontend/src/api/cariReports.js"),
+    "utf8"
+  );
 
-  assert(app.includes('appPath: "/app/cari-belgeler"'), "missing route /app/cari-belgeler");
-  assert(app.includes('appPath: "/app/cari-settlements"'), "missing route /app/cari-settlements");
-  assert(app.includes('appPath: "/app/cari-audit"'), "missing route /app/cari-audit");
-  assert(sidebar.includes('to: "/app/cari-belgeler"'), "missing sidebar cari-belgeler");
+  assert(hasPath(app, "/app/cari-belgeler"), "missing route /app/cari-belgeler");
+  assert(hasPath(app, "/app/cari-settlements"), "missing route /app/cari-settlements");
+  assert(hasPath(app, "/app/cari-audit"), "missing route /app/cari-audit");
+  assert(hasPath(sidebar, "/app/cari-belgeler"), "missing sidebar cari-belgeler");
   assert(apiCommon.includes("parseCariApiError"), "cariCommon parser missing");
   assert(apiCommon.includes("toCariQueryString"), "cariCommon query helper missing");
   assert(apiDocs.includes("/api/v1/cari/documents"), "docs api path missing");
   assert(apiSettle.includes("/api/v1/cari/settlements/apply"), "settlement api path missing");
   assert(apiAudit.includes("/api/v1/cari/audit"), "audit api path missing");
+  assert(apiCounterparty.includes('./cariCommon.js'), "cariCounterparty should use cariCommon");
+  assert(apiPaymentTerms.includes('./cariCommon.js'), "cariPaymentTerms should use cariCommon");
+  assert(apiReports.includes('./cariCommon.js'), "cariReports should use cariCommon");
 
   console.log("PR-11 smoke passed.");
 }
@@ -368,18 +390,23 @@ main().catch((err) => {
 
 - [ ] Create shared `frontend/src/api/cariCommon.js` and wire all Cari API files through it.
 - [ ] Create 3 frontend API files with exact endpoint names.
+- [ ] Refactor existing Cari API files to use `cariCommon.js`:
+  - [ ] `frontend/src/api/cariCounterparty.js`
+  - [ ] `frontend/src/api/cariPaymentTerms.js`
+  - [ ] `frontend/src/api/cariReports.js`
 - [ ] Add 3 implemented routes in `App.jsx`.
 - [ ] Add 3 sidebar links under Cari section.
-- [ ] Add i18n `sidebar.byPath` keys for the 3 routes.
+- [ ] Add i18n `sidebar.byPath` keys for the 3 routes (TR + EN message maps).
 - [ ] Use exact backend permission names in route/sidebar guards (no alias names).
 - [ ] Add PR-11 smoke script and package script:
   - [ ] `test:cari-pr11`
+- [ ] Keep PR-11 smoke assertions formatting-agnostic (path/pattern checks instead of fragile exact string fragments).
 
 ### Acceptance
 
 - Authorized users with route permission can open pages.
 - Unauthorized users blocked via `RequirePermission`.
-- Shared helper normalizes API errors and query-string behavior consistently.
+- Shared helper normalizes API errors and query-string behavior consistently across new and existing Cari API files.
 - Existing Cari pages continue to work.
 
 ### Command
@@ -458,7 +485,9 @@ Implement complete document lifecycle UI on existing backend.
   - `status`
   - `postedJournalEntryId`
   - snapshot fields (`counterparty*Snapshot`, `dueDateSnapshot`, `fxRateSnapshot`, `currencyCodeSnapshot`)
-  - reversal linkage (`reversedDocumentId`, `reversalDocumentId`, `reversalJournalEntryId`)
+  - reversal linkage:
+    - `reversalOfDocumentId` from document `GET/list` response
+    - `reversalDocumentId` and `reversalJournalEntryId` from reverse action response (`POST /reverse`)
 - FX override in post action:
   - UI must expose explicit `useFxOverride` checkbox + `fxOverrideReason` field.
   - `useFxOverride=true` requires `fxOverrideReason`.
@@ -469,6 +498,16 @@ Important repo note:
 
 - Current `parseDocumentReadFilters` does not parse date range yet.
 - PR-12 must include backend support for `dateFrom`/`dateTo` so UI filter contract is real (not client-only filtering).
+- Option A lock for reversal linkage (scope-safe):
+  - backend mapper field is `reversalOfDocumentId` (not `reversedDocumentId`)
+  - do not require `reversalDocumentId` / `reversalJournalEntryId` in `GET /documents` for PR-12
+  - show those from reverse action response, or add separate backend enhancement PR later.
+- Create draft payload alignment:
+  - do not force line-items in UI if backend create contract is header-level for current scope
+  - keep payload minimal and backend-validator-compatible
+- Due date rule alignment:
+  - `dueDate` is conditionally required based on `documentType` validator rules
+  - UI validation/help text must follow backend rule, not a single global required flag
 
 ### Skeleton
 
@@ -541,13 +580,18 @@ export default function CariDocumentsPage() {
 - [ ] Build edit/cancel/post/reverse action panel.
 - [ ] Implement permission-aware buttons.
 - [ ] Render posted journal reference and snapshot fields.
-- [ ] Add detail drawer/modal with reversal linkage visibility.
+- [ ] Add detail drawer/modal with reversal linkage visibility using `reversalOfDocumentId`.
+- [ ] Show `reversalDocumentId` + `reversalJournalEntryId` from reverse action response in result panel/detail state.
+- [ ] Keep create payload header-level unless backend contract expands (no artificial line-items requirement in PR-12).
+- [ ] Apply `dueDate` conditional required logic based on selected `documentType` and backend validator rules.
 - [ ] Add explicit FX override UX and unauthorized guidance text.
 - [ ] Add frontend smoke script:
   - [ ] verify route mounts `CariDocumentsPage`
   - [ ] verify filters include date range
   - [ ] verify action buttons and labels exist
   - [ ] verify API function usage by source scan
+  - [ ] verify source uses `reversalOfDocumentId` and does not reference `reversedDocumentId`
+  - [ ] verify reverse action result wiring for `reversalDocumentId` + `reversalJournalEntryId`
 - [ ] Add backend filter contract test for new date params.
 - [ ] Add script alias: `test:cari-pr12`
 
@@ -556,6 +600,9 @@ export default function CariDocumentsPage() {
 - Draft create/update/cancel works.
 - Post works and shows `postedJournalEntryId`.
 - Reverse works only on posted docs.
+- Reversal linkage rendering matches real backend payload names and sources.
+- Create flow matches real backend payload contract (header-level scope for this PR).
+- `dueDate` required behavior matches backend `documentType` validation.
 - Date-range filter is supported server-side and reflected in OpenAPI.
 - No regressions in `test:cari-pr05` and `test:cari-pr06`.
 
@@ -615,6 +662,7 @@ Implement settlement apply/reverse with unapplied and bank-link controls.
 
 - `frontend/src/App.jsx` (replace placeholder for `/app/cari-settlements`)
 - `frontend/src/i18n/messages.js`
+- `frontend/src/api/cariReports.js` (if query contract needs alignment for preview filters)
 - `backend/package.json`
 
 ### Concrete route
@@ -638,6 +686,10 @@ Critical UX requirements
   - reuse same key on retry
   - do not regenerate on double-click or refresh retry
   - keep last pending key in `sessionStorage` until success/final failure
+- Final-failure classification for pending key cleanup:
+  - clear pending key on final client-side failures (`400`, `401`, `403`)
+  - keep pending key on retryable/server failures (`408`, `429`, `5xx`, network/timeout)
+  - clear pending key on successful apply responses (including `idempotentReplay=true`)
 - Replay feedback:
   - if backend returns `idempotentReplay=true`, show info banner:
     - "Bu istek daha once uygulanmis; mevcut sonuc gosteriliyor."
@@ -648,6 +700,21 @@ Critical UX requirements
 - Keep workflows explicit:
   - settlement apply/reverse UI separate from bank attach/apply UI
   - no hidden automatic bank attach during settlement apply
+
+### Auto-allocation preview data source (mandatory)
+
+- Source API client: `getCariOpenItemsReport(...)` from `frontend/src/api/cariReports.js`
+- Source endpoint: `GET /api/v1/cari/reports/open-items`
+- Required preview filters:
+  - `legalEntityId`
+  - `counterpartyId`
+  - `asOfDate`
+- Optional preview filter:
+  - `direction` (`AR`/`AP`) when direction is selected in UI
+- Wiring rule:
+  - Fetch open items when preview filters change and feed returned rows into
+    `buildAutoAllocatePreview(openItems, incomingAmountTxn)`.
+  - Do not use static/empty arrays for preview calculation except initial empty state.
 
 ### Skeleton
 
@@ -715,18 +782,24 @@ export function createPendingIdempotencyKey() {
 export function clearPendingIdempotencyKey() {
   sessionStorage.removeItem(STORAGE_KEY);
 }
+
+export function shouldClearPendingKeyAfterError(error) {
+  const status = Number(error?.status || error?.response?.status || 0);
+  return status === 400 || status === 401 || status === 403;
+}
 ```
 
 `frontend/src/pages/cari/CariSettlementsPage.jsx`
 
 ```jsx
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   applyCariSettlement,
   reverseCariSettlement,
   attachCariBankReference,
   applyCariBankSettlement,
 } from "../../api/cariSettlements.js";
+import { getCariOpenItemsReport } from "../../api/cariReports.js";
 import { extractCariReplayAndRisks } from "../../api/cariCommon.js";
 import { useAuth } from "../../auth/useAuth.js";
 import {
@@ -736,6 +809,8 @@ import {
 import {
   clearPendingIdempotencyKey,
   createPendingIdempotencyKey,
+  loadPendingIdempotencyKey,
+  shouldClearPendingKeyAfterError,
 } from "./cariIdempotency.js";
 
 export default function CariSettlementsPage() {
@@ -744,6 +819,26 @@ export default function CariSettlementsPage() {
   const canReverse = hasPermission("cari.settlement.reverse");
   const canBankAttach = hasPermission("cari.bank.attach");
   const canBankApply = hasPermission("cari.bank.apply");
+  const [previewFilters, setPreviewFilters] = useState({
+    legalEntityId: "",
+    counterpartyId: "",
+    asOfDate: "",
+    direction: "",
+  });
+  const [openItems, setOpenItems] = useState([]);
+  const [applyForm, setApplyForm] = useState({
+    legalEntityId: "",
+    counterpartyId: "",
+    settlementDate: "",
+    currencyCode: "",
+    incomingAmountTxn: 0,
+    idempotencyKey: loadPendingIdempotencyKey(),
+    autoAllocate: true,
+    useUnappliedCash: false,
+    allocations: [],
+    fxRate: "",
+    note: "",
+  });
 
   // separate tabs/sections:
   // 1) Settlement Apply/Reverse
@@ -751,21 +846,58 @@ export default function CariSettlementsPage() {
   // apply submit:
   // - reuse stable idempotency key until request completes
   // - parse idempotentReplay + followUpRisks
-  // - clear pending key only after terminal success
+  // - clear key on success and final client failures; keep key for retryable failures
+  useEffect(() => {
+    const { legalEntityId, counterpartyId, asOfDate, direction } = previewFilters;
+    if (!legalEntityId || !counterpartyId || !asOfDate) {
+      setOpenItems([]);
+      return;
+    }
+
+    let isMounted = true;
+    async function loadPreviewOpenItems() {
+      const payload = await getCariOpenItemsReport({
+        legalEntityId,
+        counterpartyId,
+        asOfDate,
+        direction: direction || undefined,
+      });
+      const rows = Array.isArray(payload?.rows) ? payload.rows : [];
+      if (isMounted) setOpenItems(rows);
+    }
+
+    loadPreviewOpenItems();
+    return () => {
+      isMounted = false;
+    };
+  }, [
+    previewFilters.legalEntityId,
+    previewFilters.counterpartyId,
+    previewFilters.asOfDate,
+    previewFilters.direction,
+  ]);
+
   const previewRows = useMemo(
-    () => buildAutoAllocatePreview([], 0),
-    []
+    () => buildAutoAllocatePreview(openItems, Number(applyForm.incomingAmountTxn || 0)),
+    [openItems, applyForm.incomingAmountTxn]
   );
 
-  async function onApply(form) {
+  async function onApply(form = applyForm) {
     const idempotencyKey = form.idempotencyKey || createPendingIdempotencyKey();
-    const payload = buildSettlementApplyPayload({ ...form, idempotencyKey });
-    const response = await applyCariSettlement(payload);
-    const replayState = extractCariReplayAndRisks(response);
-    if (!replayState.idempotentReplay) {
+    setApplyForm((prev) => ({ ...prev, idempotencyKey }));
+    try {
+      const payload = buildSettlementApplyPayload({ ...form, idempotencyKey });
+      const response = await applyCariSettlement(payload);
+      const replayState = extractCariReplayAndRisks(response);
+      // replay is also a successful terminal result
       clearPendingIdempotencyKey();
+      return { response, replayState };
+    } catch (error) {
+      if (shouldClearPendingKeyAfterError(error)) {
+        clearPendingIdempotencyKey();
+      }
+      throw error;
     }
-    return response;
   }
 
   return <div>Cari Settlements</div>;
@@ -776,10 +908,17 @@ export default function CariSettlementsPage() {
 
 - [ ] Build apply section (manual/auto allocate).
 - [ ] Build reverse section.
+- [ ] Fetch preview source data via `getCariOpenItemsReport(...)` (not static rows).
+- [ ] Send required preview filters: `legalEntityId`, `counterpartyId`, `asOfDate`.
+- [ ] Send optional `direction` filter when selected.
 - [ ] Build deterministic auto-allocation preview (oldest due first).
 - [ ] Build bank attach + bank apply sections as separate workflow panel.
 - [ ] Render response blocks for `allocations`, `fx`, `unapplied`, `followUpRisks`.
-- [ ] Implement stable idempotency key reuse across retries/double-click.
+- [ ] Implement stable idempotency key reuse across retries/double-click and preload from `loadPendingIdempotencyKey()` after refresh.
+- [ ] Implement final-failure classification for pending key cleanup:
+  - [ ] clear on `400/401/403`
+  - [ ] keep on retryable/server/network failures
+  - [ ] clear on successful apply (including `idempotentReplay=true`)
 - [ ] Show idempotent replay info as non-error.
 - [ ] Show `followUpRisks` as warning box.
 - [ ] Add smoke script + `test:cari-pr13`.
@@ -791,6 +930,9 @@ export default function CariSettlementsPage() {
 - Unapplied consumption/create visibility works.
 - Replay and idempotency behavior is explicit and support-friendly.
 - Bank attach/apply actions stay explicit and separate from settlement actions.
+- Auto-allocation preview is fed by `/api/v1/cari/reports/open-items` rows using
+  `legalEntityId`, `counterpartyId`, `asOfDate` (and optional `direction`).
+- Pending idempotency key cleanup matches final-failure classification rules.
 - No regressions in `test:cari-pr07` and `test:cari-pr08`.
 
 ### Commands
@@ -820,6 +962,7 @@ npm run test:cari-pr08
   - `POST /api/v1/cari/settlements/{settlementBatchId}/reverse`
   - `POST /api/v1/cari/bank/attach`
   - `POST /api/v1/cari/bank/apply`
+  - `GET /api/v1/cari/reports/open-items` (preview source for auto-allocation UI)
 - Section `2.4` permission alignment:
   - `cari.settlement.apply`, `cari.settlement.reverse`, `cari.bank.attach`, `cari.bank.apply`
 - Section `3` data model alignment:
@@ -874,11 +1017,13 @@ export default function CariAuditPage() {
     requestId: "",
     createdFrom: "",
     createdTo: "",
-    includePayload: true,
+    includePayload: false,
     limit: 100,
     offset: 0,
   });
-  // load list, pagination, show payload collapse
+  // load list, pagination
+  // requestId should be copyable from each row
+  // payload detail panels should be collapsed by default and expanded on demand
   return <div>Cari Audit</div>;
 }
 ```
@@ -890,6 +1035,8 @@ export default function CariAuditPage() {
 - [ ] Support `includePayload` toggle.
 - [ ] Show `byAction` summary counts.
 - [ ] Show `requestId` prominently.
+- [ ] Add copy button for `requestId` in row/detail views.
+- [ ] Keep payload panels collapsed by default; expand only when user requests.
 - [ ] Keep `legalEntityId`, `action`, `resourceType`, `resourceId`, `actorUserId`, `requestId`, `createdFrom`, `createdTo` filters visible by default.
 - [ ] Add smoke script + `test:cari-pr14`.
 
@@ -898,6 +1045,7 @@ export default function CariAuditPage() {
 - Tenant/legal-entity safe visibility preserved by backend.
 - Support and finance can filter quickly by action/resource/date.
 - Page is backed by live `audit_logs` data (not placeholder output).
+- `requestId` and payload visibility patterns are support-friendly (copyable IDs, lazy payload read).
 - Existing PR-10 docs/openapi checks remain green.
 
 ### Commands
@@ -1133,6 +1281,9 @@ export default migration020ContractsFoundation;
   - [ ] `app.use("/api/v1/contracts", requireAuth, contractsRoutes);`
 - [ ] Add permissions in `seedCore` and role mapping.
 - [ ] Add OpenAPI route docs in generator.
+- [ ] Enforce strict scope checks in link service:
+  - [ ] linked `cari_document` must match contract `tenant_id`
+  - [ ] linked `cari_document` must match contract `legal_entity_id`
 - [ ] Add PR-16 integration test + package script.
 
 ### Acceptance
@@ -1172,6 +1323,21 @@ Add schedule generation and posting engine for Turkish periodization accounts:
 - accrued revenue (`181/281`)
 - accrued expense (`381/481`)
 - prepaid expense carry-forward (`180/280`)
+
+### Fazli implementation lock (mandatory)
+
+- Faz A (Phase A): foundation
+  - model + posting rules + mapping + subledger + reclass altyapisi
+  - no UI dependency
+- Faz B (Phase B): first accounting families
+  - `380/480` + `180/280`
+  - posting/reversal/reclass + reconciliation
+- Faz C (Phase C): accrual families
+  - `181/281` + `381/481` kapanis/settlement akislari
+  - due-based closure + reversal controls
+- Faz D (Phase D): reporting + consolidation + UI depth
+  - consolidation reports and split rollforward depth
+  - UI deepening for all families and reconciliation visibility
 
 ### Files to create
 
@@ -1275,6 +1441,11 @@ Use `journal_purpose_accounts` with purpose codes:
 - [ ] Add subledger-to-GL reconciliation checks per period/legal entity.
 - [ ] Add consolidation-facing report/query for periodization split.
 - [ ] Add PR-17 integration tests (generate -> post -> settle/reverse -> reclass).
+- [ ] Add duplicate-line guard for schedule generation reruns (same source should not create duplicate open lines).
+- [ ] Keep explicit original-run linkage on reversals for full traceability.
+- [ ] Add reconciliation assertions between rollforward report totals and posted GL movements.
+- [ ] Execute in strict faz order: A -> B -> C -> D (no phase skipping).
+- [ ] Add per-phase gate tests and mark phase completion in PR notes.
 
 ### Acceptance
 
@@ -1284,6 +1455,9 @@ Use `journal_purpose_accounts` with purpose codes:
 - 18x/28x/38x/48x split is correct and traceable in subledger.
 - Reclass (long -> short) is correct and auditable.
 - Consolidation can consume split balances without manual adjustments.
+- Phase A complete before any phase-specific UI is enabled.
+- Phase B (`380/480`, `180/280`) and Phase C (`181/281`, `381/481`) pass independently.
+- Phase D reports/UI operate only on reconciled subledger+GL data.
 
 ### Global Guardrails Check (Mandatory)
 
@@ -1346,6 +1520,26 @@ Convert both placeholder main-menu modules into real UI modules, with periodizat
 - `/app/contracts` -> `<ContractsPage />` (permission: `contract.read`)
 - `/app/gelecek-yillar-gelirleri` -> `<FutureYearRevenuePage />` (permission: `revenue.report.read`)
 
+### Placeholder-to-implemented conversion lock (mandatory)
+
+- `frontend/src/App.jsx`
+  - Replace placeholder elements with real components for:
+    - `/app/contracts`
+    - `/app/gelecek-yillar-gelirleri`
+  - Ensure both are included in implemented route list/branch used by app shell
+    (no fallback `ModulePlaceholderPage` for these two routes).
+- `frontend/src/layouts/sidebarConfig.js`
+  - `Contracts` menu item must include:
+    - `requiredPermissions: ["contract.read"]`
+    - `implemented: true`
+  - `Gelecek Yillar Gelirleri` menu item must include:
+    - `requiredPermissions: ["revenue.report.read"]`
+    - `implemented: true`
+- `frontend/src/i18n/messages.js`
+  - Add/verify `sidebar.byPath` keys for:
+    - `/app/contracts`
+    - `/app/gelecek-yillar-gelirleri`
+
 ### Checklist
 
 - [ ] Implement Contracts list/create/edit/activate/close/link-document flow.
@@ -1358,13 +1552,24 @@ Convert both placeholder main-menu modules into real UI modules, with periodizat
   - [ ] prepaid carry cards/tables: 180/280
   - [ ] reclass visibility: moved from long-term to short-term (period basis)
   - [ ] subledger/GL reconciliation summary panel
+- [ ] Replace placeholders in `App.jsx` with real page components for both routes (implemented route list included).
+- [ ] Set sidebar permission/implementation flags:
+  - [ ] `/app/contracts` -> `requiredPermissions: ["contract.read"]`, `implemented: true`
+  - [ ] `/app/gelecek-yillar-gelirleri` -> `requiredPermissions: ["revenue.report.read"]`, `implemented: true`
+- [ ] Add/verify `messages.js` `sidebar.byPath` labels for both routes.
+- [ ] Keep frontend API helper pattern consistent with PR-11:
+  - [ ] use shared API error/query helpers (extend to generic `apiCommon` if adopted)
 - [ ] Add per-action permission checks (not only route-level).
 - [ ] Update sidebar labels/translations.
-- [ ] Add PR-18 frontend smoke script.
+- [ ] Add PR-18 frontend smoke script:
+  - [ ] assert `App.jsx` uses real components (not placeholders) for both routes
+  - [ ] assert `sidebarConfig.js` contains `requiredPermissions` and `implemented: true` for both routes
+  - [ ] assert `messages.js` contains `sidebar.byPath` entries for both routes
 
 ### Acceptance
 
 - Main menu modules are fully functional (not placeholders).
+- Unauthorized users cannot see/use menu actions outside granted permissions.
 - Contract and periodization flows reconcile with backend reports.
 - Deferred revenue UI clearly separates short-term vs long-term balances and reclass movements.
 - Tahakkuk and prepaid flows are visible with open/closed status and due-based closures.
@@ -1425,10 +1630,16 @@ Update chained scripts:
 4. PR-14
 5. PR-15
 6. PR-16
-7. PR-17
-8. PR-18
+7. PR-17 Phase A
+8. PR-17 Phase B (`380/480` + `180/280`)
+9. PR-17 Phase C (`181/281` + `381/481`)
+10. PR-17 Phase D (consolidation reports depth + data-readiness)
+11. PR-18 (UI deepening on completed phase data)
 
 Do not start PR-16 before PR-15 is green.
+Do not start Phase B before Phase A is green.
+Do not start Phase C before Phase B is green.
+Do not start Phase D or PR-18 before Phase C is green.
 
 ---
 
