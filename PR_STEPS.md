@@ -370,6 +370,13 @@ function hasPath(source, pathValue) {
   const escaped = pathValue.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return new RegExp(escaped).test(source);
 }
+function getImplementedRoutesBlock(source) {
+  const start = source.indexOf("const implementedRoutes = [");
+  if (start < 0) return "";
+  const end = source.indexOf("const implementedPaths =", start);
+  if (end < 0) return source.slice(start);
+  return source.slice(start, end);
+}
 function countOccurrences(source, literal) {
   const escaped = literal.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const re = new RegExp(escaped, "g");
@@ -400,10 +407,21 @@ async function main() {
     path.resolve(root, "frontend/src/api/cariReports.js"),
     "utf8"
   );
+  const implementedRoutesBlock = getImplementedRoutesBlock(app);
 
-  assert(hasPath(app, "/app/cari-belgeler"), "missing route /app/cari-belgeler");
-  assert(hasPath(app, "/app/cari-settlements"), "missing route /app/cari-settlements");
-  assert(hasPath(app, "/app/cari-audit"), "missing route /app/cari-audit");
+  assert(implementedRoutesBlock, "missing implementedRoutes block in App.jsx");
+  assert(
+    hasPath(implementedRoutesBlock, "/app/cari-belgeler"),
+    "missing /app/cari-belgeler in implementedRoutes"
+  );
+  assert(
+    hasPath(implementedRoutesBlock, "/app/cari-settlements"),
+    "missing /app/cari-settlements in implementedRoutes"
+  );
+  assert(
+    hasPath(implementedRoutesBlock, "/app/cari-audit"),
+    "missing /app/cari-audit in implementedRoutes"
+  );
   assert(hasPath(sidebar, "/app/cari-belgeler"), "missing sidebar cari-belgeler");
   assert(hasPath(sidebar, "/app/cari-settlements"), "missing sidebar cari-settlements");
   assert(hasPath(sidebar, "/app/cari-audit"), "missing sidebar cari-audit");
@@ -464,6 +482,7 @@ main().catch((err) => {
   - [ ] `test:cari-pr11`
 - [ ] Keep PR-11 smoke assertions formatting-agnostic (path/pattern checks instead of fragile exact string fragments).
 - [ ] Ensure PR-11 smoke validates all three sidebar routes and i18n `sidebar.byPath` keys.
+- [ ] Ensure PR-11 smoke validates the 3 Cari routes are in `implementedRoutes` branch (not only present somewhere in `App.jsx`).
 
 ### Acceptance
 
@@ -546,7 +565,10 @@ Implement complete document lifecycle UI on existing backend.
   - `direction` (`AR`/`AP`)
   - `documentType`
   - `status`
-  - `dateFrom` + `dateTo` (document date range)
+  - `dateFrom` + `dateTo` (primary document date range params)
+  - backward-compatible aliases accepted by backend validator:
+    - `documentDateFrom` -> normalized to internal `dateFrom`
+    - `documentDateTo` -> normalized to internal `dateTo`
 - Detail drawer/modal must show:
   - `documentNo`
   - `status`
@@ -567,7 +589,11 @@ Implement complete document lifecycle UI on existing backend.
 Important repo note:
 
 - Current `parseDocumentReadFilters` does not parse date range yet.
-- PR-12 must include backend support for `dateFrom`/`dateTo` so UI filter contract is real (not client-only filtering).
+- PR-12 must include backend support for both date param variants:
+  - primary: `dateFrom` / `dateTo`
+  - legacy aliases: `documentDateFrom` / `documentDateTo`
+- Validator/service must normalize both variants to one internal filter shape
+  (`dateFrom`, `dateTo`) so existing callers/scripts do not break.
 - Option A lock for reversal linkage (scope-safe):
   - backend mapper field is `reversalOfDocumentId` (not `reversedDocumentId`)
   - do not require flat `reversalDocumentId` / `reversalJournalEntryId` in `GET /documents` for PR-12
@@ -607,8 +633,8 @@ export function buildDocumentListQuery(filters) {
     direction: filters.direction || undefined,
     documentType: filters.documentType || undefined,
     status: filters.status || undefined,
-    dateFrom: filters.dateFrom || undefined,
-    dateTo: filters.dateTo || undefined,
+    dateFrom: filters.dateFrom || filters.documentDateFrom || undefined,
+    dateTo: filters.dateTo || filters.documentDateTo || undefined,
     q: filters.q || undefined,
     limit: filters.limit || 100,
     offset: filters.offset || 0,
@@ -652,7 +678,10 @@ export default function CariDocumentsPage() {
 ### Checklist
 
 - [ ] Build list/filter with backend query params exactly.
-- [ ] Add backend date-range support for documents list (`dateFrom`, `dateTo`).
+- [ ] Add backend date-range support for documents list with alias compatibility:
+  - [ ] accept `dateFrom` / `dateTo`
+  - [ ] accept legacy `documentDateFrom` / `documentDateTo`
+  - [ ] normalize aliases to internal `dateFrom` / `dateTo` filter shape
 - [ ] Keep route guard wiring repo-aligned:
   - [ ] `/app/cari-belgeler` remains permission-gated through sidebar `requiredPermissions: ["cari.doc.read"]`
   - [ ] do not introduce route object `permissions` dependency
@@ -676,7 +705,9 @@ export default function CariDocumentsPage() {
   - [ ] verify reverse action result wiring uses nested fields:
     - [ ] `response.row.id` / `response.row.documentNo`
     - [ ] `response.journal.reversalJournalEntryId`
-- [ ] Add backend filter contract test for new date params.
+- [ ] Add backend filter contract test for date params and aliases:
+  - [ ] `dateFrom` / `dateTo`
+  - [ ] `documentDateFrom` / `documentDateTo` -> same normalized behavior
 - [ ] Add script alias: `test:cari-pr12`
 
 ### Acceptance
@@ -689,6 +720,8 @@ export default function CariDocumentsPage() {
 - Create flow matches real backend payload contract (header-level scope for this PR).
 - `dueDate` required behavior matches backend `documentType` validation.
 - Date-range filter is supported server-side and reflected in OpenAPI.
+- Date filter remains backward-compatible for existing callers/scripts that still send
+  `documentDateFrom` / `documentDateTo`.
 - No regressions in `test:cari-pr05` and `test:cari-pr06`.
 
 ### Commands
@@ -776,7 +809,11 @@ Critical UX requirements
   - generate once per submit intent
   - reuse same key on retry
   - do not regenerate on double-click or refresh retry
-  - keep last pending key in `sessionStorage` until success/final failure
+  - keep pending key in `sessionStorage` until success/final failure
+  - persist key by intent scope (not one global key):
+    - minimum scope: `legalEntityId + counterpartyId`
+    - recommended scope: add `direction`
+    - optional hardening: include payload fingerprint (`currencyCode`, `incomingAmountTxn`, `settlementDate`)
 - Final-failure classification for pending key cleanup:
   - clear pending key on final client-side failures (`400`, `401`, `403`)
   - keep pending key on retryable/server failures (`408`, `429`, `5xx`, network/timeout)
@@ -874,22 +911,53 @@ export function buildSettlementApplyPayload(form) {
 `frontend/src/pages/cari/cariIdempotency.js`
 
 ```js
-const STORAGE_KEY = "cari:settlement:pending-idempotency-key";
+const STORAGE_PREFIX = "cari:settlement:pending";
 
-export function loadPendingIdempotencyKey() {
-  return sessionStorage.getItem(STORAGE_KEY) || "";
+export function buildSettlementIntentScope(form = {}) {
+  const legalEntityId = String(form?.legalEntityId || "na");
+  const counterpartyId = String(form?.counterpartyId || "na");
+  const direction = String(form?.direction || "na");
+  return `${legalEntityId}:${counterpartyId}:${direction}`;
 }
 
-export function createPendingIdempotencyKey() {
-  const existing = loadPendingIdempotencyKey();
+export function buildSettlementIntentFingerprint(form = {}) {
+  return JSON.stringify({
+    currencyCode: String(form?.currencyCode || ""),
+    incomingAmountTxn: Number(form?.incomingAmountTxn || 0),
+    settlementDate: String(form?.settlementDate || ""),
+  });
+}
+
+function getScopedStorageKey(intentScope) {
+  return `${STORAGE_PREFIX}:${intentScope || "na:na:na"}`;
+}
+
+export function loadPendingIdempotencyKey(intentScope, intentFingerprint) {
+  const raw = sessionStorage.getItem(getScopedStorageKey(intentScope)) || "";
+  if (!raw) return "";
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed?.key) return "";
+    if (intentFingerprint && parsed?.fingerprint !== intentFingerprint) return "";
+    return String(parsed.key);
+  } catch {
+    return "";
+  }
+}
+
+export function createPendingIdempotencyKey(intentScope, intentFingerprint) {
+  const existing = loadPendingIdempotencyKey(intentScope, intentFingerprint);
   if (existing) return existing;
   const key = `CARI-SET-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-  sessionStorage.setItem(STORAGE_KEY, key);
+  sessionStorage.setItem(
+    getScopedStorageKey(intentScope),
+    JSON.stringify({ key, fingerprint: intentFingerprint || "" })
+  );
   return key;
 }
 
-export function clearPendingIdempotencyKey() {
-  sessionStorage.removeItem(STORAGE_KEY);
+export function clearPendingIdempotencyKey(intentScope) {
+  sessionStorage.removeItem(getScopedStorageKey(intentScope));
 }
 
 export function shouldClearPendingKeyAfterError(error) {
@@ -920,6 +988,8 @@ import {
   buildSettlementApplyPayload,
 } from "./cariSettlementsUtils.js";
 import {
+  buildSettlementIntentFingerprint,
+  buildSettlementIntentScope,
   clearPendingIdempotencyKey,
   createEphemeralIdempotencyKey,
   createPendingIdempotencyKey,
@@ -947,7 +1017,7 @@ export default function CariSettlementsPage() {
     settlementDate: "",
     currencyCode: "",
     incomingAmountTxn: 0,
-    idempotencyKey: loadPendingIdempotencyKey(),
+    idempotencyKey: "",
     autoAllocate: true,
     useUnappliedCash: false,
     allocations: [],
@@ -996,23 +1066,41 @@ export default function CariSettlementsPage() {
     () => buildAutoAllocatePreview(openItems, Number(applyForm.incomingAmountTxn || 0)),
     [openItems, applyForm.incomingAmountTxn]
   );
+  const applyIntentScope = useMemo(
+    () => buildSettlementIntentScope(applyForm),
+    [applyForm.legalEntityId, applyForm.counterpartyId, applyForm.direction]
+  );
+  const applyIntentFingerprint = useMemo(
+    () => buildSettlementIntentFingerprint(applyForm),
+    [applyForm.currencyCode, applyForm.incomingAmountTxn, applyForm.settlementDate]
+  );
+
+  useEffect(() => {
+    const pendingKey = loadPendingIdempotencyKey(applyIntentScope, applyIntentFingerprint);
+    setApplyForm((prev) =>
+      prev.idempotencyKey === pendingKey ? prev : { ...prev, idempotencyKey: pendingKey }
+    );
+  }, [applyIntentScope, applyIntentFingerprint]);
 
   async function onApply(form = applyForm) {
     if (form.autoAllocate && !form.direction) {
       throw new Error("Direction is required for auto-allocation.");
     }
-    const idempotencyKey = form.idempotencyKey || createPendingIdempotencyKey();
+    const intentScope = buildSettlementIntentScope(form);
+    const intentFingerprint = buildSettlementIntentFingerprint(form);
+    const idempotencyKey =
+      form.idempotencyKey || createPendingIdempotencyKey(intentScope, intentFingerprint);
     setApplyForm((prev) => ({ ...prev, idempotencyKey }));
     try {
       const payload = buildSettlementApplyPayload({ ...form, idempotencyKey });
       const response = await applyCariSettlement(payload);
       const replayState = extractCariReplayAndRisks(response);
       // replay is also a successful terminal result
-      clearPendingIdempotencyKey();
+      clearPendingIdempotencyKey(intentScope);
       return { response, replayState };
     } catch (error) {
       if (shouldClearPendingKeyAfterError(error)) {
-        clearPendingIdempotencyKey();
+        clearPendingIdempotencyKey(intentScope);
       }
       throw error;
     }
@@ -1052,6 +1140,9 @@ export default function CariSettlementsPage() {
 - [ ] Build bank attach + bank apply sections as separate workflow panel.
 - [ ] Render response blocks for `allocations`, `fx`, `unapplied`, `followUpRisks`.
 - [ ] Implement stable idempotency key reuse across retries/double-click and preload from `loadPendingIdempotencyKey()` after refresh.
+- [ ] Avoid stale key reuse across different settlement intents:
+  - [ ] key storage is intent-scoped (minimum `legalEntityId + counterpartyId`, recommended `+direction`)
+  - [ ] pending key lookup also validates an intent fingerprint (`currencyCode`, `incomingAmountTxn`, `settlementDate`) before reuse
 - [ ] Implement final-failure classification for pending key cleanup:
   - [ ] clear on `400/401/403`
   - [ ] keep on retryable/server/network failures
@@ -1062,9 +1153,13 @@ export default function CariSettlementsPage() {
   - [ ] verify bank attach/apply submit handlers include idempotency key fields
   - [ ] verify auto-allocate direction guard exists in submit flow
   - [ ] verify preview uses `residualAmountTxnAsOf`
+  - [ ] verify settlement idempotency persistence is scoped by intent (not a single global storage key)
 
 ### Acceptance
 
+- Settlement workbench route open rule is `any-of` settlement permissions
+  (`cari.settlement.apply`, `cari.settlement.reverse`, `cari.bank.attach`, `cari.bank.apply`),
+  and action buttons/panels remain strictly per-action permission gated.
 - Partial/full settlement flows work through UI.
 - Reverse settlement flow works.
 - Unapplied consumption/create visibility works.
@@ -1075,6 +1170,8 @@ export default function CariSettlementsPage() {
 - Bank attach/apply submissions always include required idempotency keys.
 - Auto-allocate UX prevents mixed-direction confusion before submit.
 - Pending idempotency key cleanup matches final-failure classification rules.
+- Settlement idempotency key persistence is intent-scoped and fingerprint-aware, so changed
+  settlement context does not accidentally reuse stale keys.
 - No regressions in `test:cari-pr07` and `test:cari-pr08`.
 
 ### Commands
@@ -1106,7 +1203,13 @@ npm run test:cari-pr08
   - `POST /api/v1/cari/bank/apply`
   - `GET /api/v1/cari/reports/open-items` (preview source for auto-allocation UI)
 - Section `2.4` permission alignment:
-  - `cari.settlement.apply`, `cari.settlement.reverse`, `cari.bank.attach`, `cari.bank.apply`
+  - route open (`/app/cari-settlements`) is any-of:
+    `cari.settlement.apply`, `cari.settlement.reverse`, `cari.bank.attach`, `cari.bank.apply`
+  - action-level enforcement stays strict per action/panel:
+    - settlement apply -> `cari.settlement.apply`
+    - settlement reverse -> `cari.settlement.reverse`
+    - bank attach -> `cari.bank.attach`
+    - bank apply -> `cari.bank.apply`
 - Section `3` data model alignment:
   - `cari_settlement_batches`, `cari_settlement_allocations`, `cari_unapplied_cash`
   - `cari_open_items` and `cari_documents` open balances must reconcile after apply/reverse.
@@ -1200,6 +1303,9 @@ export default function CariAuditPage() {
 - [ ] If date-only inputs are used for `createdFrom`/`createdTo`, convert to datetime bounds before API call:
   - [ ] `createdFrom` -> start-of-day (`00:00:00.000`)
   - [ ] `createdTo` -> end-of-day (`23:59:59.999`)
+- [ ] Add timezone edge test for date-bound conversion:
+  - [ ] verify `toDayBoundsForAuditFilters` keeps end-of-day inclusion behavior across non-UTC offsets
+    (example coverage: `UTC+04:30` environment case).
 - [ ] Add smoke script + `test:cari-pr14`.
 
 ### Acceptance
@@ -1209,6 +1315,7 @@ export default function CariAuditPage() {
 - Page is backed by live `audit_logs` data (not placeholder output).
 - `requestId` and payload visibility patterns are support-friendly (copyable IDs, lazy payload read).
 - Date-range UX does not accidentally exclude end-of-day rows when using date inputs.
+- Date-bound conversion remains correct in timezone edge scenarios (including non-UTC offsets like `UTC+04:30`).
 - Existing PR-10 docs/openapi checks remain green.
 
 ### Commands
@@ -1268,7 +1375,7 @@ Finalize Cari operational quality gate after PR-11..14.
 - run OpenAPI generation and immediately validate staleness:
   - run `npm run openapi:generate`
   - then fail if `backend/openapi.yaml` still has drift vs generated output
-    (for example via `git diff --exit-code backend/openapi.yaml`).
+    (for example via `git diff --exit-code -- backend/openapi.yaml`).
 
 ### Checklist
 
@@ -1501,6 +1608,9 @@ export default migration020ContractsFoundation;
   - partial linking is allowed.
   - cumulative linked amount per document must not exceed document amount
     (`linked_amount_txn` <= `cari_documents.amount_txn`, same for base).
+  - cap validation must be transaction-safe:
+    - read current linked totals, validate cap, insert link, and commit in one DB transaction.
+    - use locking (`FOR UPDATE` or equivalent) on cap-driving rows to prevent concurrent race overshoot.
 - Auditability freeze:
   - no silent link-row edits in PR-16.
   - corrections should be explicit (future unlink/adjustment action), with audit logging.
@@ -1531,6 +1641,10 @@ export default migration020ContractsFoundation;
   - [ ] reject `SUSPENDED`/`CLOSED`/`CANCELLED`
 - [ ] Enforce partial-link cap:
   - [ ] cumulative linked txn/base per document cannot exceed document txn/base
+  - [ ] enforce cap check inside one DB transaction with locking:
+    - [ ] read current linked totals + cap reference rows under lock
+    - [ ] validate + insert link within same transaction
+    - [ ] commit atomically (rollback on validation failure)
 - [ ] Keep `contract_lines` normalized (no `legal_entity_id` denormalization in PR-16 migration).
 - [ ] Keep `contract_document_links` with `legal_entity_id` for DB-level entity safety.
 - [ ] Keep link rows immutable in PR-16 (no silent update flow).
@@ -1545,6 +1659,7 @@ export default migration020ContractsFoundation;
 - Contract linking enforces posted-only + contract-status eligibility rules.
 - DB-level FKs/composite keys prevent cross-tenant/cross-entity link corruption.
 - Partial linking works with capped totals per document.
+- Capped linking remains correct under concurrency (no race-based cap overshoot).
 - Contracts foundation remains isolated from periodization engine concerns.
 - No regressions in Cari endpoints/tests.
 
@@ -1927,6 +2042,7 @@ Update chained scripts:
 - `backend/scripts/test-cari-pr10-quality-gate-and-docs.js` must explicitly:
   - run/assert `test:cari-pr12-documents-date-filter`
   - run `openapi:generate` and then fail on stale `backend/openapi.yaml`
+    using path-safe diff form: `git diff --exit-code -- backend/openapi.yaml`
 - Add a new chain script:
   - `test:contracts-revenue-gate` -> PR-16 + PR-17A + PR-17B + PR-17C + PR-17D + PR-18
 - Optionally extend `test:release-gate` once modules are production-ready.
@@ -1958,7 +2074,8 @@ Do not start PR-17D or PR-18 before PR-17C is green.
 
 - [ ] `npm run test:cari-quality-gate` passes.
 - [ ] `npm run openapi:generate` completed and `backend/openapi.yaml` updated.
-- [ ] Stale-openapi check after `openapi:generate` passes (no silent drift).
+- [ ] Stale-openapi check after `openapi:generate` passes (no silent drift),
+  using `git diff --exit-code -- backend/openapi.yaml`.
 - [ ] `docs/runbooks/cari-v1-operations.md` updated with final operational flow.
 - [ ] `docs/runbooks/cari-v1-support-finance-ui-guide.md` is present and current.
 - [ ] `docs/kullanim-kilavuzlari/cari-islemler-kullanim-kilavuzu.md` reflects final UI.
