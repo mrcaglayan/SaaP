@@ -42,6 +42,14 @@
       "description": "Cari (AR/AP) documents, settlements, bank links, and reporting endpoints."
     },
     {
+      "name": "Contracts",
+      "description": "Contract lifecycle, line management, and document-link workflows."
+    },
+    {
+      "name": "RevenueRecognition",
+      "description": "Revenue recognition schedule, run, accrual, and reporting endpoints."
+    },
+    {
       "name": "Intercompany",
       "description": "Intercompany relationship and reconciliation endpoints."
     },

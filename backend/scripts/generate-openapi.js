@@ -81,6 +81,8 @@ const TAG_DESCRIPTION_MAP = new Map([
   ["GL", "General ledger setup and journal workflows."],
   ["FX", "Foreign exchange rate management."],
   ["Cari", "Cari (AR/AP) documents, settlements, bank links, and reporting endpoints."],
+  ["Contracts", "Contract lifecycle, line management, and document-link workflows."],
+  ["RevenueRecognition", "Revenue recognition schedule, run, accrual, and reporting endpoints."],
   ["Intercompany", "Intercompany relationship and reconciliation endpoints."],
   ["Consolidation", "Consolidation setup, runs, and report endpoints."],
   ["Onboarding", "Tenant/company bootstrap flow endpoints."],
@@ -181,6 +183,12 @@ function inferTagFromPath(endpointPath) {
   }
   if (normalizedPath.startsWith("/api/v1/cari")) {
     return "Cari";
+  }
+  if (normalizedPath.startsWith("/api/v1/contracts")) {
+    return "Contracts";
+  }
+  if (normalizedPath.startsWith("/api/v1/revenue-recognition")) {
+    return "RevenueRecognition";
   }
   if (normalizedPath.startsWith("/api/v1/intercompany")) {
     return "Intercompany";
@@ -700,6 +708,14 @@ const spec = {
     {
       name: "Cari",
       description: "Cari (AR/AP) documents, settlements, bank links, and reporting endpoints.",
+    },
+    {
+      name: "Contracts",
+      description: "Contract lifecycle, line management, and document-link workflows.",
+    },
+    {
+      name: "RevenueRecognition",
+      description: "Revenue recognition schedule, run, accrual, and reporting endpoints.",
     },
     { name: "Intercompany", description: "Intercompany relationship and reconciliation endpoints." },
     { name: "Consolidation", description: "Consolidation setup, runs, and report endpoints." },
