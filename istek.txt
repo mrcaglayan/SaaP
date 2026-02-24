@@ -1,0 +1,5 @@
+pr testlerni incele.
+db deki tablerı ve relvant columnları nasıl ilişkilenceğini ne gerektiğini incele.
+route service ayrımlarını dikkate al. 
+frontend smoke testlerini de al.
+wording embugityden kaçın. 

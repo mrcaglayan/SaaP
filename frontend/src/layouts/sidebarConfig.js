@@ -195,6 +195,18 @@ export const sidebarItems = [
     ],
   },
   {
+    type: "link",
+    label: "Contracts",
+    to: "/app/contracts",
+    icon: "company",
+  },
+  {
+    type: "link",
+    label: "Gelecek Yillar Gelirleri",
+    to: "/app/gelecek-yillar-gelirleri",
+    icon: "report",
+  },
+  {
     type: "section",
     title: "Stoklar",
     icon: "box",
