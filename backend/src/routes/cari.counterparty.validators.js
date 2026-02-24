@@ -240,6 +240,8 @@ export function parseCounterpartyCreateInput(req) {
     req.body?.defaultPaymentTermId,
     "defaultPaymentTermId"
   );
+  const arAccountId = optionalPositiveInt(req.body?.arAccountId, "arAccountId");
+  const apAccountId = optionalPositiveInt(req.body?.apAccountId, "apAccountId");
   const defaultContactId = optionalPositiveInt(
     req.body?.defaultContactId,
     "defaultContactId"
@@ -257,6 +259,12 @@ export function parseCounterpartyCreateInput(req) {
     throw badRequest(
       "defaultAddressId is not supported on create; set addresses[].isPrimary instead"
     );
+  }
+  if (!isCustomer && arAccountId) {
+    throw badRequest("arAccountId requires isCustomer=true");
+  }
+  if (!isVendor && apAccountId) {
+    throw badRequest("apAccountId requires isVendor=true");
   }
 
   const contacts = parseContactRows(req.body?.contacts, "contacts", {
@@ -281,6 +289,8 @@ export function parseCounterpartyCreateInput(req) {
     notes,
     defaultCurrencyCode,
     defaultPaymentTermId,
+    arAccountId,
+    apAccountId,
     defaultContactId,
     defaultAddressId,
     contacts,
@@ -336,6 +346,14 @@ export function parseCounterpartyUpdateInput(req) {
     req.body?.defaultPaymentTermId !== undefined
       ? optionalPositiveInt(req.body?.defaultPaymentTermId, "defaultPaymentTermId")
       : undefined;
+  const arAccountId =
+    req.body?.arAccountId !== undefined
+      ? optionalPositiveInt(req.body?.arAccountId, "arAccountId")
+      : undefined;
+  const apAccountId =
+    req.body?.apAccountId !== undefined
+      ? optionalPositiveInt(req.body?.apAccountId, "apAccountId")
+      : undefined;
   const defaultContactId =
     req.body?.defaultContactId !== undefined
       ? optionalPositiveInt(req.body?.defaultContactId, "defaultContactId")
@@ -351,6 +369,12 @@ export function parseCounterpartyUpdateInput(req) {
   const addresses = parseAddressRows(req.body?.addresses, "addresses", {
     allowIds: true,
   });
+  if (isCustomer === false && arAccountId) {
+    throw badRequest("arAccountId requires isCustomer=true");
+  }
+  if (isVendor === false && apAccountId) {
+    throw badRequest("apAccountId requires isVendor=true");
+  }
 
   const hasAnyMutationField =
     legalEntityId !== null ||
@@ -365,6 +389,8 @@ export function parseCounterpartyUpdateInput(req) {
     notes !== undefined ||
     defaultCurrencyCode !== undefined ||
     defaultPaymentTermId !== undefined ||
+    arAccountId !== undefined ||
+    apAccountId !== undefined ||
     defaultContactId !== undefined ||
     defaultAddressId !== undefined ||
     contacts !== undefined ||
@@ -390,6 +416,8 @@ export function parseCounterpartyUpdateInput(req) {
     notes,
     defaultCurrencyCode,
     defaultPaymentTermId,
+    arAccountId,
+    apAccountId,
     defaultContactId,
     defaultAddressId,
     contacts,

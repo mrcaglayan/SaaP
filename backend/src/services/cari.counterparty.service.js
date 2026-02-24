@@ -1,5 +1,6 @@
 import { query, withTransaction } from "../db.js";
 import {
+  assertAccountBelongsToTenant,
   assertCountryExists,
   assertCurrencyExists,
   assertLegalEntityBelongsToTenant,
@@ -8,6 +9,96 @@ import { badRequest, parsePositiveInt } from "../routes/_utils.js";
 
 function parseDbBoolean(value) {
   return value === true || value === 1 || value === "1";
+}
+
+function normalizeUpperText(value) {
+  return String(value || "")
+    .trim()
+    .toUpperCase();
+}
+
+function assertCounterpartyAccountRoleCompatibility({
+  isCustomer,
+  isVendor,
+  arAccountId,
+  apAccountId,
+}) {
+  if (!isCustomer && arAccountId) {
+    throw badRequest("arAccountId requires isCustomer=true");
+  }
+  if (!isVendor && apAccountId) {
+    throw badRequest("apAccountId requires isVendor=true");
+  }
+}
+
+async function fetchMappedAccountRow({
+  tenantId,
+  accountId,
+  runQuery = query,
+}) {
+  const result = await runQuery(
+    `SELECT
+        a.id,
+        a.code,
+        a.name,
+        a.account_type,
+        a.is_active,
+        a.allow_posting,
+        c.scope AS coa_scope,
+        c.legal_entity_id AS coa_legal_entity_id
+     FROM accounts a
+     JOIN charts_of_accounts c ON c.id = a.coa_id
+     WHERE a.id = ?
+       AND c.tenant_id = ?
+     LIMIT 1`,
+    [accountId, tenantId]
+  );
+  return result.rows?.[0] || null;
+}
+
+async function assertCounterpartyMappedAccount({
+  tenantId,
+  legalEntityId,
+  accountId,
+  fieldLabel,
+  expectedAccountType,
+  runQuery = query,
+}) {
+  if (!accountId) {
+    return null;
+  }
+
+  await assertAccountBelongsToTenant(tenantId, accountId, fieldLabel, { runQuery });
+  const row = await fetchMappedAccountRow({
+    tenantId,
+    accountId,
+    runQuery,
+  });
+  if (!row) {
+    throw badRequest(`${fieldLabel} not found for tenant`);
+  }
+
+  if (normalizeUpperText(row.coa_scope) !== "LEGAL_ENTITY") {
+    throw badRequest(`${fieldLabel} must belong to a LEGAL_ENTITY chart`);
+  }
+  if (parsePositiveInt(row.coa_legal_entity_id) !== parsePositiveInt(legalEntityId)) {
+    throw badRequest(`${fieldLabel} must belong to legalEntityId`);
+  }
+  if (normalizeUpperText(row.account_type) !== normalizeUpperText(expectedAccountType)) {
+    throw badRequest(`${fieldLabel} must have accountType=${expectedAccountType}`);
+  }
+  if (!parseDbBoolean(row.is_active)) {
+    throw badRequest(`${fieldLabel} must reference an ACTIVE account`);
+  }
+  if (!parseDbBoolean(row.allow_posting)) {
+    throw badRequest(`${fieldLabel} must reference a postable account`);
+  }
+
+  return {
+    id: parsePositiveInt(row.id),
+    code: row.code || null,
+    name: row.name || null,
+  };
 }
 
 function isDuplicateConstraintError(err) {
@@ -85,6 +176,12 @@ function mapCounterpartyRow(row) {
     defaultPaymentTermId: parsePositiveInt(row.default_payment_term_id),
     defaultPaymentTermCode: row.default_payment_term_code || null,
     defaultPaymentTermName: row.default_payment_term_name || null,
+    arAccountId: parsePositiveInt(row.ar_account_id),
+    arAccountCode: row.ar_account_code || null,
+    arAccountName: row.ar_account_name || null,
+    apAccountId: parsePositiveInt(row.ap_account_id),
+    apAccountCode: row.ap_account_code || null,
+    apAccountName: row.ap_account_name || null,
     defaultContactId: parsePositiveInt(row.default_contact_id),
     defaultAddressId: parsePositiveInt(row.default_address_id),
     status: row.status,
@@ -141,6 +238,22 @@ async function getCounterpartyBaseRow({
         c.*,
         pt.code AS default_payment_term_code,
         pt.name AS default_payment_term_name,
+        CASE
+          WHEN ar_coa.id IS NULL THEN NULL
+          ELSE ar_acc.code
+        END AS ar_account_code,
+        CASE
+          WHEN ar_coa.id IS NULL THEN NULL
+          ELSE ar_acc.name
+        END AS ar_account_name,
+        CASE
+          WHEN ap_coa.id IS NULL THEN NULL
+          ELSE ap_acc.code
+        END AS ap_account_code,
+        CASE
+          WHEN ap_coa.id IS NULL THEN NULL
+          ELSE ap_acc.name
+        END AS ap_account_name,
         (
           SELECT cc.id
           FROM counterparty_contacts cc
@@ -166,6 +279,16 @@ async function getCounterpartyBaseRow({
        ON pt.tenant_id = c.tenant_id
       AND pt.legal_entity_id = c.legal_entity_id
       AND pt.id = c.default_payment_term_id
+     LEFT JOIN accounts ar_acc
+       ON ar_acc.id = c.ar_account_id
+     LEFT JOIN charts_of_accounts ar_coa
+       ON ar_coa.id = ar_acc.coa_id
+      AND ar_coa.tenant_id = c.tenant_id
+     LEFT JOIN accounts ap_acc
+       ON ap_acc.id = c.ap_account_id
+     LEFT JOIN charts_of_accounts ap_coa
+       ON ap_coa.id = ap_acc.coa_id
+      AND ap_coa.tenant_id = c.tenant_id
      WHERE c.tenant_id = ?
        AND c.id = ?
      LIMIT 1`,
@@ -908,6 +1031,22 @@ export async function listCounterpartyRows({
         c.*,
         pt.code AS default_payment_term_code,
         pt.name AS default_payment_term_name,
+        CASE
+          WHEN ar_coa.id IS NULL THEN NULL
+          ELSE ar_acc.code
+        END AS ar_account_code,
+        CASE
+          WHEN ar_coa.id IS NULL THEN NULL
+          ELSE ar_acc.name
+        END AS ar_account_name,
+        CASE
+          WHEN ap_coa.id IS NULL THEN NULL
+          ELSE ap_acc.code
+        END AS ap_account_code,
+        CASE
+          WHEN ap_coa.id IS NULL THEN NULL
+          ELSE ap_acc.name
+        END AS ap_account_name,
         (
           SELECT cc.id
           FROM counterparty_contacts cc
@@ -933,6 +1072,16 @@ export async function listCounterpartyRows({
        ON pt.tenant_id = c.tenant_id
       AND pt.legal_entity_id = c.legal_entity_id
       AND pt.id = c.default_payment_term_id
+     LEFT JOIN accounts ar_acc
+       ON ar_acc.id = c.ar_account_id
+     LEFT JOIN charts_of_accounts ar_coa
+       ON ar_coa.id = ar_acc.coa_id
+      AND ar_coa.tenant_id = c.tenant_id
+     LEFT JOIN accounts ap_acc
+       ON ap_acc.id = c.ap_account_id
+     LEFT JOIN charts_of_accounts ap_coa
+       ON ap_coa.id = ap_acc.coa_id
+      AND ap_coa.tenant_id = c.tenant_id
      WHERE ${whereSql}
      ORDER BY c.id DESC
      LIMIT ${safeLimit} OFFSET ${safeOffset}`,
@@ -977,6 +1126,12 @@ export async function createCounterparty({
   if (!isCustomer && !isVendor) {
     throw badRequest("At least one of isCustomer or isVendor must be true");
   }
+  assertCounterpartyAccountRoleCompatibility({
+    isCustomer,
+    isVendor,
+    arAccountId: payload.arAccountId,
+    apAccountId: payload.apAccountId,
+  });
 
   await assertLegalEntityBelongsToTenant(tenantId, legalEntityId, "legalEntityId");
   assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
@@ -988,6 +1143,20 @@ export async function createCounterparty({
     tenantId,
     legalEntityId,
     defaultPaymentTermId: payload.defaultPaymentTermId,
+  });
+  await assertCounterpartyMappedAccount({
+    tenantId,
+    legalEntityId,
+    accountId: payload.arAccountId,
+    fieldLabel: "arAccountId",
+    expectedAccountType: "ASSET",
+  });
+  await assertCounterpartyMappedAccount({
+    tenantId,
+    legalEntityId,
+    accountId: payload.apAccountId,
+    fieldLabel: "apAccountId",
+    expectedAccountType: "LIABILITY",
   });
 
   await assertCountryIdsExist((payload.addresses || []).map((row) => row.countryId));
@@ -1007,10 +1176,12 @@ export async function createCounterparty({
             phone,
             default_currency_code,
             default_payment_term_id,
+            ar_account_id,
+            ap_account_id,
             status,
             notes
          )
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           tenantId,
           legalEntityId,
@@ -1023,6 +1194,8 @@ export async function createCounterparty({
           payload.phone,
           payload.defaultCurrencyCode,
           payload.defaultPaymentTermId,
+          payload.arAccountId,
+          payload.apAccountId,
           payload.status,
           payload.notes,
         ]
@@ -1075,6 +1248,8 @@ export async function createCounterparty({
           counterpartyType: row.counterpartyType,
           isCustomer: row.isCustomer,
           isVendor: row.isVendor,
+          arAccountId: row.arAccountId,
+          apAccountId: row.apAccountId,
         },
       });
 
@@ -1134,10 +1309,40 @@ export async function updateCounterpartyById({
     payload.defaultPaymentTermId === undefined
       ? parsePositiveInt(existing.default_payment_term_id)
       : payload.defaultPaymentTermId;
+  const nextArAccountId =
+    payload.arAccountId === undefined
+      ? parsePositiveInt(existing.ar_account_id)
+      : payload.arAccountId;
+  const nextApAccountId =
+    payload.apAccountId === undefined
+      ? parsePositiveInt(existing.ap_account_id)
+      : payload.apAccountId;
+
+  assertCounterpartyAccountRoleCompatibility({
+    isCustomer: nextIsCustomer,
+    isVendor: nextIsVendor,
+    arAccountId: nextArAccountId,
+    apAccountId: nextApAccountId,
+  });
+
   await assertPaymentTermBelongsToCounterpartyScope({
     tenantId,
     legalEntityId,
     defaultPaymentTermId: nextDefaultPaymentTermId,
+  });
+  await assertCounterpartyMappedAccount({
+    tenantId,
+    legalEntityId,
+    accountId: nextArAccountId,
+    fieldLabel: "arAccountId",
+    expectedAccountType: "ASSET",
+  });
+  await assertCounterpartyMappedAccount({
+    tenantId,
+    legalEntityId,
+    accountId: nextApAccountId,
+    fieldLabel: "apAccountId",
+    expectedAccountType: "LIABILITY",
   });
 
   const addressRows = Array.isArray(payload.addresses) ? payload.addresses : [];
@@ -1168,6 +1373,8 @@ export async function updateCounterpartyById({
              phone = ?,
              default_currency_code = ?,
              default_payment_term_id = ?,
+             ar_account_id = ?,
+             ap_account_id = ?,
              status = ?,
              notes = ?
          WHERE tenant_id = ?
@@ -1182,6 +1389,8 @@ export async function updateCounterpartyById({
           nextPhone,
           nextCurrencyCode,
           nextDefaultPaymentTermId,
+          nextArAccountId,
+          nextApAccountId,
           nextStatus,
           nextNotes,
           tenantId,
@@ -1236,6 +1445,12 @@ export async function updateCounterpartyById({
             isCustomer: currentIsCustomer,
             isVendor: currentIsVendor,
             defaultPaymentTermId: parsePositiveInt(existing.default_payment_term_id),
+            arAccountId: parsePositiveInt(existing.ar_account_id),
+            apAccountId: parsePositiveInt(existing.ap_account_id),
+            arAccountCode: existing.ar_account_code || null,
+            arAccountName: existing.ar_account_name || null,
+            apAccountCode: existing.ap_account_code || null,
+            apAccountName: existing.ap_account_name || null,
           },
           after: {
             code: row.code,
@@ -1245,6 +1460,12 @@ export async function updateCounterpartyById({
             isCustomer: row.isCustomer,
             isVendor: row.isVendor,
             defaultPaymentTermId: row.defaultPaymentTermId,
+            arAccountId: row.arAccountId,
+            apAccountId: row.apAccountId,
+            arAccountCode: row.arAccountCode,
+            arAccountName: row.arAccountName,
+            apAccountCode: row.apAccountCode,
+            apAccountName: row.apAccountName,
             defaultContactId: row.defaultContactId,
             defaultAddressId: row.defaultAddressId,
           },

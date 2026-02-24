@@ -50,6 +50,11 @@ export default function CounterpartyForm({
   paymentTerms = [],
   paymentTermsLoading = false,
   paymentTermsError = "",
+  accountOptions = [],
+  accountOptionsLoading = false,
+  accountOptionsError = "",
+  canReadGlAccounts = true,
+  accountReadFallbackMessage = "",
   canSubmit = true,
   submitting = false,
   onSubmit,
@@ -72,6 +77,21 @@ export default function CounterpartyForm({
   const selectedPaymentTermId = String(form.defaultPaymentTermId || "");
   const hasSelectedPaymentTerm = paymentTermOptions.some(
     (row) => String(row.id) === selectedPaymentTermId
+  );
+  const allAccountOptions = Array.isArray(accountOptions) ? accountOptions : [];
+  const arAccountOptions = allAccountOptions.filter(
+    (row) => String(row.accountType || "").toUpperCase() === "ASSET"
+  );
+  const apAccountOptions = allAccountOptions.filter(
+    (row) => String(row.accountType || "").toUpperCase() === "LIABILITY"
+  );
+  const selectedArAccountId = String(form.arAccountId || "");
+  const selectedApAccountId = String(form.apAccountId || "");
+  const hasSelectedArAccount = arAccountOptions.some(
+    (row) => String(row.id) === selectedArAccountId
+  );
+  const hasSelectedApAccount = apAccountOptions.some(
+    (row) => String(row.id) === selectedApAccountId
   );
 
   function updateField(field, value) {
@@ -439,6 +459,94 @@ export default function CounterpartyForm({
             <p className="mt-1 text-xs text-amber-700">{paymentTermsError}</p>
           ) : null}
           <FieldError message={findFieldError(fieldErrors, "defaultPaymentTermId")} />
+        </div>
+
+        <div>
+          <label className="block text-xs font-semibold uppercase tracking-wide text-slate-600">
+            AR Control Account Override
+          </label>
+          {canReadGlAccounts ? (
+            <>
+              <select
+                className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                value={selectedArAccountId}
+                onChange={(event) => updateField("arAccountId", event.target.value)}
+                disabled={submitting || !form.legalEntityId || !form.isCustomer}
+              >
+                <option value="">No AR override</option>
+                {selectedArAccountId && !hasSelectedArAccount ? (
+                  <option value={selectedArAccountId}>
+                    Selected account #{selectedArAccountId}
+                  </option>
+                ) : null}
+                {arAccountOptions.map((row) => (
+                  <option key={`ar-account-${row.id}`} value={String(row.id)}>
+                    {row.code} - {row.name}
+                  </option>
+                ))}
+              </select>
+              {!form.isCustomer ? (
+                <p className="mt-1 text-xs text-slate-500">
+                  Enable Customer role to set AR mapping.
+                </p>
+              ) : null}
+              {accountOptionsLoading ? (
+                <p className="mt-1 text-xs text-slate-500">Loading account options...</p>
+              ) : null}
+              {accountOptionsError ? (
+                <p className="mt-1 text-xs text-amber-700">{accountOptionsError}</p>
+              ) : null}
+            </>
+          ) : (
+            <p className="mt-1 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              {accountReadFallbackMessage || "Missing permission: gl.account.read"}
+            </p>
+          )}
+          <FieldError message={findFieldError(fieldErrors, "arAccountId")} />
+        </div>
+
+        <div>
+          <label className="block text-xs font-semibold uppercase tracking-wide text-slate-600">
+            AP Control Account Override
+          </label>
+          {canReadGlAccounts ? (
+            <>
+              <select
+                className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                value={selectedApAccountId}
+                onChange={(event) => updateField("apAccountId", event.target.value)}
+                disabled={submitting || !form.legalEntityId || !form.isVendor}
+              >
+                <option value="">No AP override</option>
+                {selectedApAccountId && !hasSelectedApAccount ? (
+                  <option value={selectedApAccountId}>
+                    Selected account #{selectedApAccountId}
+                  </option>
+                ) : null}
+                {apAccountOptions.map((row) => (
+                  <option key={`ap-account-${row.id}`} value={String(row.id)}>
+                    {row.code} - {row.name}
+                  </option>
+                ))}
+              </select>
+              {!form.isVendor ? (
+                <p className="mt-1 text-xs text-slate-500">
+                  Enable Vendor role to set AP mapping.
+                </p>
+              ) : null}
+              {accountOptionsLoading ? (
+                <p className="mt-1 text-xs text-slate-500">Loading account options...</p>
+              ) : null}
+              {accountOptionsError ? (
+                <p className="mt-1 text-xs text-amber-700">{accountOptionsError}</p>
+              ) : null}
+            </>
+          ) : (
+            <p className="mt-1 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              {accountReadFallbackMessage || "Missing permission: gl.account.read"}
+            </p>
+          )}
+          <FieldError message={findFieldError(fieldErrors, "apAccountId")} />
         </div>
 
         <div className="md:col-span-2">

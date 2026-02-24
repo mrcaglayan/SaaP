@@ -948,6 +948,14 @@ export const messages = {
           "Kasa islem verileri gecici olarak alinamadi; istisna bolumleri kismi gosteriliyor.",
       },
     },
+    cariCounterparty: {
+      accountPickerPermissionMissing:
+        "gl.account.read yetkisi olmadigi icin AR/AP hesap secicileri gizlendi.",
+      accountPickerLoadError:
+        "Secilen legal entity icin hesap secenekleri yuklenemedi.",
+      arAccountLabel: "AR Kontrol Hesabi Override",
+      apAccountLabel: "AP Kontrol Hesabi Override",
+    },
     cariDocuments: {
       title: "Cari Belgeler",
       createDraft: "Taslak belge olustur",
@@ -1978,6 +1986,13 @@ export const messages = {
         transactionsUnavailable:
           "Cash transaction data is temporarily unavailable; exception sections are partially populated.",
       },
+    },
+    cariCounterparty: {
+      accountPickerPermissionMissing:
+        "AR/AP account pickers are hidden because gl.account.read permission is missing.",
+      accountPickerLoadError: "Failed to load account options for selected legal entity.",
+      arAccountLabel: "AR Control Account Override",
+      apAccountLabel: "AP Control Account Override",
     },
     cariDocuments: {
       title: "Cari Documents",

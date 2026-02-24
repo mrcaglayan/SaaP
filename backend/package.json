@@ -41,6 +41,8 @@
     "test:cari-pr12-documents-date-filter": "node scripts/test-cari-pr12-documents-date-filter-contract.js",
     "test:cari-pr13": "node scripts/test-cari-pr13-frontend-settlement-smoke.js",
     "test:cari-pr14": "node scripts/test-cari-pr14-frontend-audit-smoke.js",
+    "test:cari-pr19": "node scripts/test-cari-pr19-counterparty-account-mapping-and-posting-resolution.js",
+    "test:cari-pr19-frontend-smoke": "node scripts/test-cari-pr19-frontend-counterparty-account-fields-smoke.js",
     "test:contracts-pr16": "node scripts/test-contracts-pr16-schema-and-api.js",
     "test:revenue-pr17a": "node scripts/test-revenue-pr17a-foundation.js",
     "test:revenue-pr17b": "node scripts/test-revenue-pr17b.js",

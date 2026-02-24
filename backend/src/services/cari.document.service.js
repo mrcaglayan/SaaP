@@ -1,5 +1,6 @@
 import { query, withTransaction } from "../db.js";
 import {
+  assertAccountBelongsToTenant,
   assertCurrencyExists,
   assertLegalEntityBelongsToTenant,
 } from "../tenantGuards.js";
@@ -278,6 +279,10 @@ async function fetchCounterpartyRow({
         legal_entity_id,
         code,
         name,
+        is_customer,
+        is_vendor,
+        ar_account_id,
+        ap_account_id,
         status
      FROM counterparties
      WHERE tenant_id = ?
@@ -589,10 +594,98 @@ async function resolveBookAndOpenPeriodForDate({
   };
 }
 
+async function resolveCounterpartyControlAccountOverride({
+  tenantId,
+  legalEntityId,
+  direction,
+  counterpartyRow,
+  runQuery = query,
+}) {
+  if (!counterpartyRow || !parsePositiveInt(counterpartyRow.id)) {
+    return null;
+  }
+
+  const normalizedDirection = normalizeUpperText(direction);
+  const mapping =
+    normalizedDirection === "AR"
+      ? {
+          accountId: parsePositiveInt(counterpartyRow.ar_account_id),
+          roleEnabled: counterpartyRow.is_customer === true || Number(counterpartyRow.is_customer) === 1,
+          fieldLabel: "arAccountId",
+          expectedAccountType: "ASSET",
+        }
+      : normalizedDirection === "AP"
+        ? {
+            accountId: parsePositiveInt(counterpartyRow.ap_account_id),
+            roleEnabled:
+              counterpartyRow.is_vendor === true || Number(counterpartyRow.is_vendor) === 1,
+            fieldLabel: "apAccountId",
+            expectedAccountType: "LIABILITY",
+          }
+        : null;
+
+  if (!mapping) {
+    throw badRequest("direction must be AR or AP");
+  }
+  if (!mapping.accountId) {
+    return null;
+  }
+  if (!mapping.roleEnabled) {
+    throw badRequest(`${mapping.fieldLabel} requires compatible counterparty role`);
+  }
+
+  await assertAccountBelongsToTenant(tenantId, mapping.accountId, mapping.fieldLabel, {
+    runQuery,
+  });
+
+  const accountResult = await runQuery(
+    `SELECT
+        a.id,
+        a.code,
+        a.account_type,
+        a.is_active,
+        a.allow_posting,
+        c.scope AS coa_scope,
+        c.legal_entity_id AS coa_legal_entity_id
+     FROM accounts a
+     JOIN charts_of_accounts c ON c.id = a.coa_id
+     WHERE a.id = ?
+       AND c.tenant_id = ?
+     LIMIT 1`,
+    [mapping.accountId, tenantId]
+  );
+  const account = accountResult.rows?.[0] || null;
+  if (!account) {
+    throw badRequest(`${mapping.fieldLabel} not found for tenant`);
+  }
+
+  if (normalizeUpperText(account.coa_scope) !== "LEGAL_ENTITY") {
+    throw badRequest(`${mapping.fieldLabel} must belong to a LEGAL_ENTITY chart`);
+  }
+  if (parsePositiveInt(account.coa_legal_entity_id) !== parsePositiveInt(legalEntityId)) {
+    throw badRequest(`${mapping.fieldLabel} must belong to legalEntityId`);
+  }
+  if (normalizeUpperText(account.account_type) !== mapping.expectedAccountType) {
+    throw badRequest(`${mapping.fieldLabel} must have accountType=${mapping.expectedAccountType}`);
+  }
+  if (!(account.is_active === true || Number(account.is_active) === 1)) {
+    throw badRequest(`${mapping.fieldLabel} must reference an ACTIVE account`);
+  }
+  if (!(account.allow_posting === true || Number(account.allow_posting) === 1)) {
+    throw badRequest(`${mapping.fieldLabel} must reference a postable account`);
+  }
+
+  return {
+    id: parsePositiveInt(account.id),
+    code: account.code || null,
+  };
+}
+
 async function resolveCariPostingAccounts({
   tenantId,
   legalEntityId,
   direction,
+  counterpartyRow = null,
   runQuery = query,
 }) {
   const purposeDefinition = CARI_POSTING_PURPOSES[normalizeUpperText(direction)];
@@ -637,14 +730,29 @@ async function resolveCariPostingAccounts({
       `Setup required: configure journal_purpose_accounts for ${purposeDefinition.control} and ${purposeDefinition.offset}`
     );
   }
-  if (control.id === offset.id) {
+
+  const overrideControl = await resolveCounterpartyControlAccountOverride({
+    tenantId,
+    legalEntityId,
+    direction,
+    counterpartyRow,
+    runQuery,
+  });
+  const effectiveControl = overrideControl?.id
+    ? {
+        id: overrideControl.id,
+        code: overrideControl.code || null,
+      }
+    : control;
+
+  if (effectiveControl.id === offset.id) {
     throw badRequest("Cari control and offset accounts must be different");
   }
 
   return {
-    controlAccountId: control.id,
+    controlAccountId: effectiveControl.id,
     offsetAccountId: offset.id,
-    controlAccountCode: control.code || null,
+    controlAccountCode: effectiveControl.code || null,
     offsetAccountCode: offset.code || null,
   };
 }
@@ -1674,6 +1782,7 @@ export async function postCariDocumentById({
       tenantId,
       legalEntityId: lockedLegalEntityId,
       direction,
+      counterpartyRow: counterparty,
       runQuery: tx.query,
     });
 

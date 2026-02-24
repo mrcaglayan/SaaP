@@ -10,6 +10,20 @@ async function run(requestFn) {
   }
 }
 
+function normalizeCounterpartyPayload(payload) {
+  if (!payload || typeof payload !== "object") {
+    return payload;
+  }
+  const normalized = { ...payload };
+  if (normalized.arAccountId === undefined) {
+    delete normalized.arAccountId;
+  }
+  if (normalized.apAccountId === undefined) {
+    delete normalized.apAccountId;
+  }
+  return normalized;
+}
+
 export async function listCariCounterparties(params = {}) {
   return run(() => api.get(`/api/v1/cari/counterparties${toCariQueryString(params)}`));
 }
@@ -19,9 +33,16 @@ export async function getCariCounterparty(counterpartyId) {
 }
 
 export async function createCariCounterparty(payload) {
-  return run(() => api.post("/api/v1/cari/counterparties", payload));
+  return run(() =>
+    api.post("/api/v1/cari/counterparties", normalizeCounterpartyPayload(payload))
+  );
 }
 
 export async function updateCariCounterparty(counterpartyId, payload) {
-  return run(() => api.put(`/api/v1/cari/counterparties/${counterpartyId}`, payload));
+  return run(() =>
+    api.put(
+      `/api/v1/cari/counterparties/${counterpartyId}`,
+      normalizeCounterpartyPayload(payload)
+    )
+  );
 }

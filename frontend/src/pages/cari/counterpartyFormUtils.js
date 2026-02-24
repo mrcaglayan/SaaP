@@ -4,6 +4,19 @@ export const ADDRESS_STATUSES = ["ACTIVE", "INACTIVE"];
 export const ADDRESS_TYPES = ["BILLING", "SHIPPING", "REGISTERED", "OTHER"];
 export const ROLE_FILTERS = ["CUSTOMER", "VENDOR", "BOTH"];
 
+export function resolveCounterpartyAccountPickerGates(permissionCodes = []) {
+  const codes = Array.isArray(permissionCodes)
+    ? permissionCodes.map((code) => String(code || "").trim())
+    : [];
+  const codeSet = new Set(codes);
+  const canReadGlAccounts = codeSet.has("gl.account.read");
+  return {
+    canReadGlAccounts,
+    shouldFetchGlAccounts: canReadGlAccounts,
+    showAccountPickers: canReadGlAccounts,
+  };
+}
+
 export function toPositiveInt(value) {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
@@ -64,6 +77,8 @@ export function buildInitialCounterpartyForm(defaultRole = "CUSTOMER") {
     notes: "",
     defaultCurrencyCode: "",
     defaultPaymentTermId: "",
+    arAccountId: "",
+    apAccountId: "",
     contacts: [],
     addresses: [],
   };
@@ -114,6 +129,8 @@ export function mapDetailToCounterpartyForm(row, fallbackRole = "CUSTOMER") {
     notes: String(row.notes || ""),
     defaultCurrencyCode: String(row.defaultCurrencyCode || ""),
     defaultPaymentTermId: String(row.defaultPaymentTermId || ""),
+    arAccountId: String(row.arAccountId || ""),
+    apAccountId: String(row.apAccountId || ""),
     contacts,
     addresses,
   };
@@ -143,6 +160,21 @@ export function validateCounterpartyForm(form, { mode = "create" } = {}) {
   if (paymentTermId && !toPositiveInt(paymentTermId)) {
     fieldErrors.defaultPaymentTermId =
       "Payment term must be selected from available options.";
+  }
+
+  const arAccountId = toTrimmed(form.arAccountId);
+  if (arAccountId && !toPositiveInt(arAccountId)) {
+    fieldErrors.arAccountId = "AR account must be selected from available options.";
+  }
+  const apAccountId = toTrimmed(form.apAccountId);
+  if (apAccountId && !toPositiveInt(apAccountId)) {
+    fieldErrors.apAccountId = "AP account must be selected from available options.";
+  }
+  if (!form.isCustomer && toPositiveInt(form.arAccountId)) {
+    fieldErrors.arAccountId = "AR account requires Customer role.";
+  }
+  if (!form.isVendor && toPositiveInt(form.apAccountId)) {
+    fieldErrors.apAccountId = "AP account requires Vendor role.";
   }
 
   const currency = toTrimmed(form.defaultCurrencyCode).toUpperCase();
@@ -244,6 +276,8 @@ export function buildCounterpartyPayload(form, { mode = "create" } = {}) {
     notes: normalizeOptionalText(form.notes),
     defaultCurrencyCode: normalizeOptionalCode(form.defaultCurrencyCode),
     defaultPaymentTermId: toPositiveInt(form.defaultPaymentTermId),
+    arAccountId: toPositiveInt(form.arAccountId),
+    apAccountId: toPositiveInt(form.apAccountId),
     contacts,
     addresses,
   };
@@ -271,6 +305,27 @@ export function mapCounterpartyApiError(err, fallback = "Operation failed.") {
   }
   if (lower.includes("defaultpaymenttermid")) {
     return "Payment term must belong to the selected legal entity.";
+  }
+  if (lower.includes("araccountid requires iscustomer=true")) {
+    return "AR account mapping requires Customer role.";
+  }
+  if (lower.includes("apaccountid requires isvendor=true")) {
+    return "AP account mapping requires Vendor role.";
+  }
+  if (lower.includes("must have accounttype=asset")) {
+    return "AR account must be an ASSET account.";
+  }
+  if (lower.includes("must have accounttype=liability")) {
+    return "AP account must be a LIABILITY account.";
+  }
+  if (lower.includes("must belong to legalentityid")) {
+    return "Selected account must belong to the selected legal entity chart.";
+  }
+  if (lower.includes("must reference an active account")) {
+    return "Selected account must be active.";
+  }
+  if (lower.includes("must reference a postable account")) {
+    return "Selected account must allow posting.";
   }
   if (lower.includes("legalentityid is required")) {
     return "Legal entity is required.";

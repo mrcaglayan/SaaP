@@ -4290,14 +4290,14 @@
           "Cari"
         ],
         "operationId": "getApiV1CariCounterparties",
-        "summary": "Cari endpoint: GET /api/v1/cari/counterparties",
+        "summary": "List cari counterparties",
         "responses": {
           "200": {
-            "description": "Successful response",
+            "description": "Counterparty list",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/CounterpartyListResponse"
                 }
               }
             }
@@ -4311,21 +4311,89 @@
           "403": {
             "$ref": "#/components/responses/ErrorResponse"
           }
-        }
+        },
+        "parameters": [
+          {
+            "in": "query",
+            "name": "legalEntityId",
+            "required": false,
+            "description": "Legal entity filter",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "description": "Code/name search",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "role",
+            "required": false,
+            "description": "Role filter",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "CUSTOMER",
+                "VENDOR",
+                "BOTH"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "description": "Status filter",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "ACTIVE",
+                "INACTIVE"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "description": "Page size",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "description": "Page offset",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ]
       },
       "post": {
         "tags": [
           "Cari"
         ],
         "operationId": "postApiV1CariCounterparties",
-        "summary": "Cari endpoint: POST /api/v1/cari/counterparties",
+        "summary": "Create cari counterparty",
         "responses": {
-          "200": {
-            "description": "Successful response",
+          "201": {
+            "description": "Counterparty created",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/CounterpartyMutationResponse"
                 }
               }
             }
@@ -4341,11 +4409,11 @@
           }
         },
         "requestBody": {
-          "required": false,
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/AnyObject"
+                "$ref": "#/components/schemas/CounterpartyUpsertInput"
               }
             }
           }
@@ -4358,14 +4426,14 @@
           "Cari"
         ],
         "operationId": "getApiV1CariCounterpartiesId",
-        "summary": "Cari endpoint: GET /api/v1/cari/counterparties/{id}",
+        "summary": "Get cari counterparty detail",
         "responses": {
           "200": {
-            "description": "Successful response",
+            "description": "Counterparty detail",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/CounterpartyDetailResponse"
                 }
               }
             }
@@ -4398,14 +4466,14 @@
           "Cari"
         ],
         "operationId": "putApiV1CariCounterpartiesId",
-        "summary": "Cari endpoint: PUT /api/v1/cari/counterparties/{id}",
+        "summary": "Update cari counterparty",
         "responses": {
           "200": {
-            "description": "Successful response",
+            "description": "Counterparty updated",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/CounterpartyMutationResponse"
                 }
               }
             }
@@ -4433,11 +4501,11 @@
           }
         ],
         "requestBody": {
-          "required": false,
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/AnyObject"
+                "$ref": "#/components/schemas/CounterpartyUpsertInput"
               }
             }
           }
@@ -8803,6 +8871,603 @@
       "AnyObject": {
         "type": "object",
         "additionalProperties": true
+      },
+      "CounterpartyContactInput": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "contactName": {
+            "type": "string",
+            "minLength": 1
+          },
+          "email": {
+            "type": "string",
+            "nullable": true
+          },
+          "phone": {
+            "type": "string",
+            "nullable": true
+          },
+          "title": {
+            "type": "string",
+            "nullable": true
+          },
+          "isPrimary": {
+            "type": "boolean"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ACTIVE",
+              "INACTIVE"
+            ]
+          }
+        },
+        "required": [
+          "contactName",
+          "isPrimary",
+          "status"
+        ]
+      },
+      "CounterpartyAddressInput": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "addressType": {
+            "type": "string",
+            "enum": [
+              "BILLING",
+              "SHIPPING",
+              "REGISTERED",
+              "OTHER"
+            ]
+          },
+          "addressLine1": {
+            "type": "string",
+            "minLength": 1
+          },
+          "addressLine2": {
+            "type": "string",
+            "nullable": true
+          },
+          "city": {
+            "type": "string",
+            "nullable": true
+          },
+          "stateRegion": {
+            "type": "string",
+            "nullable": true
+          },
+          "postalCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "countryId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "isPrimary": {
+            "type": "boolean"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ACTIVE",
+              "INACTIVE"
+            ]
+          }
+        },
+        "required": [
+          "addressType",
+          "addressLine1",
+          "isPrimary",
+          "status"
+        ]
+      },
+      "CounterpartyUpsertInput": {
+        "type": "object",
+        "properties": {
+          "legalEntityId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "code": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 60
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255
+          },
+          "isCustomer": {
+            "type": "boolean"
+          },
+          "isVendor": {
+            "type": "boolean"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ACTIVE",
+              "INACTIVE"
+            ]
+          },
+          "taxId": {
+            "type": "string",
+            "nullable": true
+          },
+          "email": {
+            "type": "string",
+            "nullable": true
+          },
+          "phone": {
+            "type": "string",
+            "nullable": true
+          },
+          "notes": {
+            "type": "string",
+            "nullable": true
+          },
+          "defaultCurrencyCode": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 3,
+            "nullable": true
+          },
+          "defaultPaymentTermId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "arAccountId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "apAccountId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "defaultContactId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "defaultAddressId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "contacts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CounterpartyContactInput"
+            }
+          },
+          "addresses": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CounterpartyAddressInput"
+            }
+          }
+        },
+        "required": [
+          "legalEntityId",
+          "code",
+          "name",
+          "isCustomer",
+          "isVendor"
+        ]
+      },
+      "CounterpartyContactRow": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "legalEntityId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "counterpartyId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "contactName": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string",
+            "nullable": true
+          },
+          "phone": {
+            "type": "string",
+            "nullable": true
+          },
+          "title": {
+            "type": "string",
+            "nullable": true
+          },
+          "isPrimary": {
+            "type": "boolean"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ACTIVE",
+              "INACTIVE"
+            ]
+          },
+          "createdAt": {
+            "type": "string",
+            "nullable": true
+          },
+          "updatedAt": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "tenantId",
+          "legalEntityId",
+          "counterpartyId",
+          "contactName",
+          "isPrimary",
+          "status"
+        ]
+      },
+      "CounterpartyAddressRow": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "legalEntityId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "counterpartyId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "addressType": {
+            "type": "string",
+            "enum": [
+              "BILLING",
+              "SHIPPING",
+              "REGISTERED",
+              "OTHER"
+            ]
+          },
+          "addressLine1": {
+            "type": "string"
+          },
+          "addressLine2": {
+            "type": "string",
+            "nullable": true
+          },
+          "city": {
+            "type": "string",
+            "nullable": true
+          },
+          "stateRegion": {
+            "type": "string",
+            "nullable": true
+          },
+          "postalCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "countryId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "isPrimary": {
+            "type": "boolean"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ACTIVE",
+              "INACTIVE"
+            ]
+          },
+          "createdAt": {
+            "type": "string",
+            "nullable": true
+          },
+          "updatedAt": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "tenantId",
+          "legalEntityId",
+          "counterpartyId",
+          "addressType",
+          "addressLine1",
+          "isPrimary",
+          "status"
+        ]
+      },
+      "CounterpartySummaryRow": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "legalEntityId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "code": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "counterpartyType": {
+            "type": "string",
+            "enum": [
+              "CUSTOMER",
+              "VENDOR",
+              "BOTH",
+              "OTHER"
+            ]
+          },
+          "isCustomer": {
+            "type": "boolean"
+          },
+          "isVendor": {
+            "type": "boolean"
+          },
+          "taxId": {
+            "type": "string",
+            "nullable": true
+          },
+          "email": {
+            "type": "string",
+            "nullable": true
+          },
+          "phone": {
+            "type": "string",
+            "nullable": true
+          },
+          "defaultCurrencyCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "defaultPaymentTermId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "defaultPaymentTermCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "defaultPaymentTermName": {
+            "type": "string",
+            "nullable": true
+          },
+          "arAccountId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "arAccountCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "arAccountName": {
+            "type": "string",
+            "nullable": true
+          },
+          "apAccountId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "apAccountCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "apAccountName": {
+            "type": "string",
+            "nullable": true
+          },
+          "defaultContactId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "defaultAddressId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ACTIVE",
+              "INACTIVE"
+            ]
+          },
+          "notes": {
+            "type": "string",
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string",
+            "nullable": true
+          },
+          "updatedAt": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "tenantId",
+          "legalEntityId",
+          "code",
+          "name",
+          "counterpartyType",
+          "isCustomer",
+          "isVendor",
+          "status"
+        ]
+      },
+      "CounterpartyDetailRow": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/CounterpartySummaryRow"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "contacts": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/CounterpartyContactRow"
+                }
+              },
+              "addresses": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/CounterpartyAddressRow"
+                }
+              },
+              "defaults": {
+                "type": "object",
+                "properties": {
+                  "paymentTermId": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "nullable": true
+                  },
+                  "contactId": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "nullable": true
+                  },
+                  "addressId": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "nullable": true
+                  }
+                },
+                "required": [
+                  "paymentTermId",
+                  "contactId",
+                  "addressId"
+                ]
+              }
+            },
+            "required": [
+              "contacts",
+              "addresses",
+              "defaults"
+            ]
+          }
+        ]
+      },
+      "CounterpartyListResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CounterpartySummaryRow"
+            }
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "tenantId",
+          "rows",
+          "total",
+          "limit",
+          "offset"
+        ]
+      },
+      "CounterpartyDetailResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "row": {
+            "$ref": "#/components/schemas/CounterpartyDetailRow"
+          }
+        },
+        "required": [
+          "tenantId",
+          "row"
+        ]
+      },
+      "CounterpartyMutationResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "row": {
+            "$ref": "#/components/schemas/CounterpartyDetailRow"
+          }
+        },
+        "required": [
+          "tenantId",
+          "row"
+        ]
       },
       "TenantReadinessCheck": {
         "type": "object",

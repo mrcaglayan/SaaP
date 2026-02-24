@@ -680,6 +680,66 @@ function applyCariOperationOverrides(specObject) {
     mergeOperationParameters(documentsListOperation, documentListQueryParams);
     documentsListOperation.responses = withStandardResponses("200", "Cari document list");
   }
+
+  const counterpartyListQueryParams = [
+    queryParamInt("legalEntityId", false, "Legal entity filter"),
+    queryParam("q", { type: "string" }, false, "Code/name search"),
+    queryParam("role", { type: "string", enum: ["CUSTOMER", "VENDOR", "BOTH"] }, false, "Role filter"),
+    queryParam("status", { type: "string", enum: ["ACTIVE", "INACTIVE"] }, false, "Status filter"),
+    queryParam("limit", { type: "integer", minimum: 1 }, false, "Page size"),
+    queryParam("offset", nonNegativeInt, false, "Page offset"),
+  ];
+
+  const counterpartiesListOperation = paths["/api/v1/cari/counterparties"]?.get;
+  if (counterpartiesListOperation) {
+    counterpartiesListOperation.summary = "List cari counterparties";
+    mergeOperationParameters(counterpartiesListOperation, counterpartyListQueryParams);
+    counterpartiesListOperation.responses = withStandardResponses(
+      "200",
+      "Counterparty list",
+      "#/components/schemas/CounterpartyListResponse"
+    );
+  }
+
+  const counterpartiesCreateOperation = paths["/api/v1/cari/counterparties"]?.post;
+  if (counterpartiesCreateOperation) {
+    counterpartiesCreateOperation.summary = "Create cari counterparty";
+    counterpartiesCreateOperation.requestBody = bodyFromRef(
+      "#/components/schemas/CounterpartyUpsertInput"
+    );
+    counterpartiesCreateOperation.responses = {
+      "201": jsonResponse(
+        "#/components/schemas/CounterpartyMutationResponse",
+        "Counterparty created"
+      ),
+      "400": errorResponseRef,
+      "401": errorResponseRef,
+      "403": errorResponseRef,
+    };
+  }
+
+  const counterpartiesDetailOperation = paths["/api/v1/cari/counterparties/{id}"]?.get;
+  if (counterpartiesDetailOperation) {
+    counterpartiesDetailOperation.summary = "Get cari counterparty detail";
+    counterpartiesDetailOperation.responses = withStandardResponses(
+      "200",
+      "Counterparty detail",
+      "#/components/schemas/CounterpartyDetailResponse"
+    );
+  }
+
+  const counterpartiesUpdateOperation = paths["/api/v1/cari/counterparties/{id}"]?.put;
+  if (counterpartiesUpdateOperation) {
+    counterpartiesUpdateOperation.summary = "Update cari counterparty";
+    counterpartiesUpdateOperation.requestBody = bodyFromRef(
+      "#/components/schemas/CounterpartyUpsertInput"
+    );
+    counterpartiesUpdateOperation.responses = withStandardResponses(
+      "200",
+      "Counterparty updated",
+      "#/components/schemas/CounterpartyMutationResponse"
+    );
+  }
 }
 
 function applyContractsOperationOverrides(specObject) {
@@ -2266,6 +2326,225 @@ const spec = {
       AnyObject: {
         type: "object",
         additionalProperties: true,
+      },
+      CounterpartyContactInput: {
+        type: "object",
+        properties: {
+          id: { ...intId, nullable: true },
+          contactName: shortText,
+          email: { type: "string", nullable: true },
+          phone: { type: "string", nullable: true },
+          title: { type: "string", nullable: true },
+          isPrimary: { type: "boolean" },
+          status: { type: "string", enum: ["ACTIVE", "INACTIVE"] },
+        },
+        required: ["contactName", "isPrimary", "status"],
+      },
+      CounterpartyAddressInput: {
+        type: "object",
+        properties: {
+          id: { ...intId, nullable: true },
+          addressType: { type: "string", enum: ["BILLING", "SHIPPING", "REGISTERED", "OTHER"] },
+          addressLine1: shortText,
+          addressLine2: { type: "string", nullable: true },
+          city: { type: "string", nullable: true },
+          stateRegion: { type: "string", nullable: true },
+          postalCode: { type: "string", nullable: true },
+          countryId: { ...intId, nullable: true },
+          isPrimary: { type: "boolean" },
+          status: { type: "string", enum: ["ACTIVE", "INACTIVE"] },
+        },
+        required: ["addressType", "addressLine1", "isPrimary", "status"],
+      },
+      CounterpartyUpsertInput: {
+        type: "object",
+        properties: {
+          legalEntityId: intId,
+          code: { type: "string", minLength: 1, maxLength: 60 },
+          name: { type: "string", minLength: 1, maxLength: 255 },
+          isCustomer: { type: "boolean" },
+          isVendor: { type: "boolean" },
+          status: { type: "string", enum: ["ACTIVE", "INACTIVE"] },
+          taxId: { type: "string", nullable: true },
+          email: { type: "string", nullable: true },
+          phone: { type: "string", nullable: true },
+          notes: { type: "string", nullable: true },
+          defaultCurrencyCode: { type: "string", minLength: 3, maxLength: 3, nullable: true },
+          defaultPaymentTermId: { ...intId, nullable: true },
+          arAccountId: { ...intId, nullable: true },
+          apAccountId: { ...intId, nullable: true },
+          defaultContactId: { ...intId, nullable: true },
+          defaultAddressId: { ...intId, nullable: true },
+          contacts: {
+            type: "array",
+            items: { $ref: "#/components/schemas/CounterpartyContactInput" },
+          },
+          addresses: {
+            type: "array",
+            items: { $ref: "#/components/schemas/CounterpartyAddressInput" },
+          },
+        },
+        required: ["legalEntityId", "code", "name", "isCustomer", "isVendor"],
+      },
+      CounterpartyContactRow: {
+        type: "object",
+        properties: {
+          id: intId,
+          tenantId: intId,
+          legalEntityId: intId,
+          counterpartyId: intId,
+          contactName: { type: "string" },
+          email: { type: "string", nullable: true },
+          phone: { type: "string", nullable: true },
+          title: { type: "string", nullable: true },
+          isPrimary: { type: "boolean" },
+          status: { type: "string", enum: ["ACTIVE", "INACTIVE"] },
+          createdAt: { type: "string", nullable: true },
+          updatedAt: { type: "string", nullable: true },
+        },
+        required: [
+          "id",
+          "tenantId",
+          "legalEntityId",
+          "counterpartyId",
+          "contactName",
+          "isPrimary",
+          "status",
+        ],
+      },
+      CounterpartyAddressRow: {
+        type: "object",
+        properties: {
+          id: intId,
+          tenantId: intId,
+          legalEntityId: intId,
+          counterpartyId: intId,
+          addressType: {
+            type: "string",
+            enum: ["BILLING", "SHIPPING", "REGISTERED", "OTHER"],
+          },
+          addressLine1: { type: "string" },
+          addressLine2: { type: "string", nullable: true },
+          city: { type: "string", nullable: true },
+          stateRegion: { type: "string", nullable: true },
+          postalCode: { type: "string", nullable: true },
+          countryId: { ...intId, nullable: true },
+          isPrimary: { type: "boolean" },
+          status: { type: "string", enum: ["ACTIVE", "INACTIVE"] },
+          createdAt: { type: "string", nullable: true },
+          updatedAt: { type: "string", nullable: true },
+        },
+        required: [
+          "id",
+          "tenantId",
+          "legalEntityId",
+          "counterpartyId",
+          "addressType",
+          "addressLine1",
+          "isPrimary",
+          "status",
+        ],
+      },
+      CounterpartySummaryRow: {
+        type: "object",
+        properties: {
+          id: intId,
+          tenantId: intId,
+          legalEntityId: intId,
+          code: { type: "string" },
+          name: { type: "string" },
+          counterpartyType: { type: "string", enum: ["CUSTOMER", "VENDOR", "BOTH", "OTHER"] },
+          isCustomer: { type: "boolean" },
+          isVendor: { type: "boolean" },
+          taxId: { type: "string", nullable: true },
+          email: { type: "string", nullable: true },
+          phone: { type: "string", nullable: true },
+          defaultCurrencyCode: { type: "string", nullable: true },
+          defaultPaymentTermId: { ...intId, nullable: true },
+          defaultPaymentTermCode: { type: "string", nullable: true },
+          defaultPaymentTermName: { type: "string", nullable: true },
+          arAccountId: { ...intId, nullable: true },
+          arAccountCode: { type: "string", nullable: true },
+          arAccountName: { type: "string", nullable: true },
+          apAccountId: { ...intId, nullable: true },
+          apAccountCode: { type: "string", nullable: true },
+          apAccountName: { type: "string", nullable: true },
+          defaultContactId: { ...intId, nullable: true },
+          defaultAddressId: { ...intId, nullable: true },
+          status: { type: "string", enum: ["ACTIVE", "INACTIVE"] },
+          notes: { type: "string", nullable: true },
+          createdAt: { type: "string", nullable: true },
+          updatedAt: { type: "string", nullable: true },
+        },
+        required: [
+          "id",
+          "tenantId",
+          "legalEntityId",
+          "code",
+          "name",
+          "counterpartyType",
+          "isCustomer",
+          "isVendor",
+          "status",
+        ],
+      },
+      CounterpartyDetailRow: {
+        allOf: [
+          { $ref: "#/components/schemas/CounterpartySummaryRow" },
+          {
+            type: "object",
+            properties: {
+              contacts: {
+                type: "array",
+                items: { $ref: "#/components/schemas/CounterpartyContactRow" },
+              },
+              addresses: {
+                type: "array",
+                items: { $ref: "#/components/schemas/CounterpartyAddressRow" },
+              },
+              defaults: {
+                type: "object",
+                properties: {
+                  paymentTermId: { ...intId, nullable: true },
+                  contactId: { ...intId, nullable: true },
+                  addressId: { ...intId, nullable: true },
+                },
+                required: ["paymentTermId", "contactId", "addressId"],
+              },
+            },
+            required: ["contacts", "addresses", "defaults"],
+          },
+        ],
+      },
+      CounterpartyListResponse: {
+        type: "object",
+        properties: {
+          tenantId: intId,
+          rows: {
+            type: "array",
+            items: { $ref: "#/components/schemas/CounterpartySummaryRow" },
+          },
+          total: nonNegativeInt,
+          limit: { type: "integer", minimum: 1 },
+          offset: nonNegativeInt,
+        },
+        required: ["tenantId", "rows", "total", "limit", "offset"],
+      },
+      CounterpartyDetailResponse: {
+        type: "object",
+        properties: {
+          tenantId: intId,
+          row: { $ref: "#/components/schemas/CounterpartyDetailRow" },
+        },
+        required: ["tenantId", "row"],
+      },
+      CounterpartyMutationResponse: {
+        type: "object",
+        properties: {
+          tenantId: intId,
+          row: { $ref: "#/components/schemas/CounterpartyDetailRow" },
+        },
+        required: ["tenantId", "row"],
       },
       TenantReadinessCheck: {
         type: "object",

@@ -19,6 +19,7 @@ import migration018CariReportIndexes from "./m018_cari_report_indexes.js";
 import migration019CounterpartyRoleFlags from "./m019_counterparty_role_flags.js";
 import migration020ContractsFoundation from "./m020_contracts_foundation.js";
 import migration021RevenueRecognitionSchedules from "./m021_revenue_recognition_schedules.js";
+import migration022CounterpartyAccountMapping from "./m022_counterparty_account_mapping.js";
 
 const migrations = [
   migration001GlobalMultiEntity,
@@ -42,6 +43,7 @@ const migrations = [
   migration019CounterpartyRoleFlags,
   migration020ContractsFoundation,
   migration021RevenueRecognitionSchedules,
+  migration022CounterpartyAccountMapping,
 ];
 
 export default migrations;
