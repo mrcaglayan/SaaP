@@ -20,6 +20,8 @@ import cashTransactionRoutes from "./routes/cash.transaction.routes.js";
 import cashConfigRoutes from "./routes/cash.config.routes.js";
 import cashExceptionRoutes from "./routes/cash.exception.routes.js";
 import cariRoutes from "./routes/cari.js";
+import contractsRoutes from "./routes/contracts.js";
+import revenueRecognitionRoutes from "./routes/revenue-recognition.js";
 import { requireAuth } from "./middleware/auth.js";
 import {
   buildRequestLogMeta,
@@ -141,6 +143,8 @@ app.use("/api/v1/cash/transactions", requireAuth, cashTransactionRoutes);
 app.use("/api/v1/cash/config", requireAuth, cashConfigRoutes);
 app.use("/api/v1/cash/exceptions", requireAuth, cashExceptionRoutes);
 app.use("/api/v1/cari", requireAuth, cariRoutes);
+app.use("/api/v1/contracts", requireAuth, contractsRoutes);
+app.use("/api/v1/revenue-recognition", requireAuth, revenueRecognitionRoutes);
 
 app.use((req, res) => {
   return res.status(404).json({

@@ -682,6 +682,395 @@ function applyCariOperationOverrides(specObject) {
   }
 }
 
+function applyContractsOperationOverrides(specObject) {
+  ensureTagPresent(specObject, "Contracts");
+  const paths = specObject.paths || {};
+
+  for (const [pathName, pathItem] of Object.entries(paths)) {
+    if (!String(pathName).startsWith("/api/v1/contracts")) {
+      continue;
+    }
+    for (const methodName of Object.keys(pathItem || {})) {
+      const method = String(methodName || "").toUpperCase();
+      if (!HTTP_METHODS.has(method)) {
+        continue;
+      }
+      const operation = pathItem[methodName];
+      operation.tags = ["Contracts"];
+      if (typeof operation.summary === "string" && operation.summary.startsWith("Auto-generated:")) {
+        operation.summary = `Contracts endpoint: ${method} ${pathName}`;
+      }
+    }
+  }
+
+  const listOperation = paths["/api/v1/contracts"]?.get;
+  if (listOperation) {
+    listOperation.summary = "List contracts (summary rows only)";
+    mergeOperationParameters(listOperation, [
+      queryParamInt("legalEntityId", false, "Legal entity filter"),
+      queryParamInt("counterpartyId", false, "Counterparty filter"),
+      queryParam("contractType", { type: "string", enum: ["CUSTOMER", "VENDOR"] }, false, "Contract type filter"),
+      queryParam(
+        "status",
+        { type: "string", enum: ["DRAFT", "ACTIVE", "SUSPENDED", "CLOSED", "CANCELLED"] },
+        false,
+        "Contract status filter"
+      ),
+      queryParam("q", { type: "string" }, false, "Contract no/notes search"),
+      queryParam("limit", { type: "integer", minimum: 1 }, false, "Page size"),
+      queryParam("offset", nonNegativeInt, false, "Page offset"),
+    ]);
+    listOperation.responses = withStandardResponses(
+      "200",
+      "Contract list",
+      "#/components/schemas/ContractListResponse"
+    );
+  }
+
+  const createOperation = paths["/api/v1/contracts"]?.post;
+  if (createOperation) {
+    createOperation.summary = "Create contract with nested lines[]";
+    createOperation.requestBody = bodyFromRef("#/components/schemas/ContractUpsertInput");
+    createOperation.responses = {
+      "201": jsonResponse("#/components/schemas/ContractMutationResponse", "Contract created"),
+      "400": errorResponseRef,
+      "401": errorResponseRef,
+      "403": errorResponseRef,
+    };
+  }
+
+  const detailOperation = paths["/api/v1/contracts/{contractId}"]?.get;
+  if (detailOperation) {
+    detailOperation.summary = "Get contract detail with full lines[]";
+    detailOperation.responses = withStandardResponses(
+      "200",
+      "Contract detail",
+      "#/components/schemas/ContractDetailResponse"
+    );
+  }
+
+  const updateOperation = paths["/api/v1/contracts/{contractId}"]?.put;
+  if (updateOperation) {
+    updateOperation.summary = "Update draft contract with atomic full-replace lines[]";
+    updateOperation.requestBody = bodyFromRef("#/components/schemas/ContractUpsertInput");
+    updateOperation.responses = withStandardResponses(
+      "200",
+      "Contract updated",
+      "#/components/schemas/ContractMutationResponse"
+    );
+  }
+
+  const lifecycleMappings = [
+    ["/api/v1/contracts/{contractId}/activate", "Activate contract"],
+    ["/api/v1/contracts/{contractId}/suspend", "Suspend contract"],
+    ["/api/v1/contracts/{contractId}/close", "Close contract"],
+    ["/api/v1/contracts/{contractId}/cancel", "Cancel contract"],
+  ];
+  for (const [pathName, summary] of lifecycleMappings) {
+    const operation = paths[pathName]?.post;
+    if (!operation) {
+      continue;
+    }
+    operation.summary = summary;
+    operation.responses = withStandardResponses(
+      "200",
+      `${summary} response`,
+      "#/components/schemas/ContractMutationResponse"
+    );
+  }
+
+  const linkOperation = paths["/api/v1/contracts/{contractId}/link-document"]?.post;
+  if (linkOperation) {
+    linkOperation.summary = "Create immutable contract-document link row";
+    linkOperation.requestBody = bodyFromRef("#/components/schemas/ContractLinkDocumentInput");
+    linkOperation.responses = {
+      "201": jsonResponse(
+        "#/components/schemas/ContractLinkMutationResponse",
+        "Contract-document link created"
+      ),
+      "400": errorResponseRef,
+      "401": errorResponseRef,
+      "403": errorResponseRef,
+    };
+  }
+
+  const documentsOperation = paths["/api/v1/contracts/{contractId}/documents"]?.get;
+  if (documentsOperation) {
+    documentsOperation.summary = "List contract-document links with minimal document summary";
+    documentsOperation.responses = withStandardResponses(
+      "200",
+      "Contract-document links",
+      "#/components/schemas/ContractDocumentsResponse"
+    );
+  }
+}
+
+function applyRevenueRecognitionOperationOverrides(specObject) {
+  ensureTagPresent(specObject, "RevenueRecognition");
+  const paths = specObject.paths || {};
+
+  const listQueryParams = [
+    queryParamInt("legalEntityId", false, "Legal entity filter"),
+    queryParamInt("fiscalPeriodId", false, "Fiscal period filter"),
+    queryParam(
+      "accountFamily",
+      {
+        type: "string",
+        enum: ["DEFREV", "ACCRUED_REVENUE", "ACCRUED_EXPENSE", "PREPAID_EXPENSE"],
+      },
+      false,
+      "Accounting family filter"
+    ),
+    queryParam(
+      "status",
+      { type: "string", enum: ["DRAFT", "READY", "POSTED", "REVERSED"] },
+      false,
+      "Run/schedule status filter"
+    ),
+    queryParam("q", { type: "string" }, false, "Search by source uid / run no"),
+    queryParam("limit", { type: "integer", minimum: 1 }, false, "Page size"),
+    queryParam("offset", nonNegativeInt, false, "Page offset"),
+  ];
+
+  const reportQueryParams = [
+    queryParamInt("legalEntityId", false, "Legal entity filter"),
+    queryParamInt("fiscalPeriodId", false, "Fiscal period filter"),
+    queryParam(
+      "accountFamily",
+      {
+        type: "string",
+        enum: ["DEFREV", "ACCRUED_REVENUE", "ACCRUED_EXPENSE", "PREPAID_EXPENSE"],
+      },
+      false,
+      "Accounting family filter"
+    ),
+    queryParam("asOfDate", { type: "string", format: "date" }, false, "As-of date"),
+    queryParam("limit", { type: "integer", minimum: 1 }, false, "Page size"),
+    queryParam("offset", nonNegativeInt, false, "Page offset"),
+  ];
+
+  const purposeCodeList = [
+    "PREPAID_EXP_SHORT_ASSET",
+    "PREPAID_EXP_LONG_ASSET",
+    "ACCR_REV_SHORT_ASSET",
+    "ACCR_REV_LONG_ASSET",
+    "DEFREV_SHORT_LIABILITY",
+    "DEFREV_LONG_LIABILITY",
+    "ACCR_EXP_SHORT_LIABILITY",
+    "ACCR_EXP_LONG_LIABILITY",
+    "DEFREV_REVENUE",
+    "DEFREV_RECLASS",
+    "PREPAID_EXPENSE",
+    "PREPAID_RECLASS",
+    "ACCR_REV_REVENUE",
+    "ACCR_REV_RECLASS",
+    "ACCR_EXP_EXPENSE",
+    "ACCR_EXP_RECLASS",
+  ];
+
+  for (const [pathName, pathItem] of Object.entries(paths)) {
+    if (!String(pathName).startsWith("/api/v1/revenue-recognition")) {
+      continue;
+    }
+    for (const methodName of Object.keys(pathItem || {})) {
+      const method = String(methodName || "").toUpperCase();
+      if (!HTTP_METHODS.has(method)) {
+        continue;
+      }
+      const operation = pathItem[methodName];
+      operation.tags = ["RevenueRecognition"];
+      if (typeof operation.summary === "string" && operation.summary.startsWith("Auto-generated:")) {
+        operation.summary = `Revenue-recognition endpoint: ${method} ${pathName}`;
+      }
+    }
+  }
+
+  const listSchedulesOperation = paths["/api/v1/revenue-recognition/schedules"]?.get;
+  if (listSchedulesOperation) {
+    listSchedulesOperation.summary = "List revenue-recognition schedules";
+    mergeOperationParameters(listSchedulesOperation, listQueryParams);
+    listSchedulesOperation.responses = withStandardResponses(
+      "200",
+      "Revenue-recognition schedules",
+      "#/components/schemas/RevenueScheduleListResponse"
+    );
+  }
+
+  const generateScheduleOperation = paths["/api/v1/revenue-recognition/schedules/generate"]?.post;
+  if (generateScheduleOperation) {
+    generateScheduleOperation.summary = "Generate revenue-recognition schedule";
+    generateScheduleOperation.description =
+      "PR-17B keeps schedule generation deterministic with tenant/legal-entity scope controls.";
+    generateScheduleOperation.requestBody = bodyFromRef(
+      "#/components/schemas/RevenueScheduleGenerateInput"
+    );
+    generateScheduleOperation.responses = {
+      "201": jsonResponse(
+        "#/components/schemas/RevenueScheduleMutationResponse",
+        "Schedule generated"
+      ),
+      "400": errorResponseRef,
+      "401": errorResponseRef,
+      "403": errorResponseRef,
+    };
+  }
+
+  const listRunsOperation = paths["/api/v1/revenue-recognition/runs"]?.get;
+  if (listRunsOperation) {
+    listRunsOperation.summary = "List revenue-recognition runs";
+    mergeOperationParameters(listRunsOperation, listQueryParams);
+    listRunsOperation.responses = withStandardResponses(
+      "200",
+      "Revenue-recognition runs",
+      "#/components/schemas/RevenueRunListResponse"
+    );
+  }
+
+  const createRunOperation = paths["/api/v1/revenue-recognition/runs"]?.post;
+  if (createRunOperation) {
+    createRunOperation.summary = "Create revenue-recognition run";
+    createRunOperation.description =
+      "PR-17B creates runs and run-lines with duplicate open-line guard for reruns.";
+    createRunOperation.requestBody = bodyFromRef("#/components/schemas/RevenueRunCreateInput");
+    createRunOperation.responses = {
+      "201": jsonResponse("#/components/schemas/RevenueRunMutationResponse", "Run created"),
+      "400": errorResponseRef,
+      "401": errorResponseRef,
+      "403": errorResponseRef,
+    };
+  }
+
+  const postRunOperation = paths["/api/v1/revenue-recognition/runs/{runId}/post"]?.post;
+  if (postRunOperation) {
+    postRunOperation.summary = "Post revenue-recognition run";
+    postRunOperation.description =
+      `PR-17B posts DEFREV/PREPAID runs with period-open + setup guards. ` +
+      `Purpose-code setup must include: ${purposeCodeList.join(", ")}.`;
+    postRunOperation.responses = {
+      "200": jsonResponse("#/components/schemas/RevenueRunPostResponse", "Run posted"),
+      "400": errorResponseRef,
+      "401": errorResponseRef,
+      "403": errorResponseRef,
+    };
+  }
+
+  const reverseRunOperation = paths["/api/v1/revenue-recognition/runs/{runId}/reverse"]?.post;
+  if (reverseRunOperation) {
+    reverseRunOperation.summary = "Reverse revenue-recognition run";
+    reverseRunOperation.description =
+      `PR-17B creates a posted reversal journal/run and marks original run REVERSED. ` +
+      `Purpose-code setup must include: ${purposeCodeList.join(", ")}.`;
+    reverseRunOperation.requestBody = bodyFromRef(
+      "#/components/schemas/RevenueRunReverseInput",
+      false
+    );
+    reverseRunOperation.responses = {
+      "201": jsonResponse("#/components/schemas/RevenueRunReverseResponse", "Run reversed"),
+      "400": errorResponseRef,
+      "401": errorResponseRef,
+      "403": errorResponseRef,
+    };
+  }
+
+  const generateAccrualOperation = paths["/api/v1/revenue-recognition/accruals/generate"]?.post;
+  if (generateAccrualOperation) {
+    generateAccrualOperation.summary = "Generate accrual run (ACCRUED_REVENUE / ACCRUED_EXPENSE)";
+    generateAccrualOperation.description =
+      "PR-17C accrual generation endpoint. Permission: revenue.run.create.";
+    generateAccrualOperation.requestBody = bodyFromRef(
+      "#/components/schemas/RevenueAccrualGenerateInput"
+    );
+    generateAccrualOperation.responses = {
+      "201": jsonResponse(
+        "#/components/schemas/RevenueAccrualGenerateResponse",
+        "Accrual generated"
+      ),
+      "400": errorResponseRef,
+      "401": errorResponseRef,
+      "403": errorResponseRef,
+    };
+  }
+
+  const settleAccrualOperation =
+    paths["/api/v1/revenue-recognition/accruals/{accrualId}/settle"]?.post;
+  if (settleAccrualOperation) {
+    settleAccrualOperation.summary = "Settle posted accrual (due-boundary + period-open guarded)";
+    settleAccrualOperation.description =
+      "PR-17C accrual settle endpoint. Permission: revenue.run.post.";
+    settleAccrualOperation.requestBody = bodyFromRef(
+      "#/components/schemas/RevenueAccrualSettleInput",
+      false
+    );
+    settleAccrualOperation.responses = {
+      "200": jsonResponse(
+        "#/components/schemas/RevenueAccrualSettleResponse",
+        "Accrual settled"
+      ),
+      "400": errorResponseRef,
+      "401": errorResponseRef,
+      "403": errorResponseRef,
+    };
+  }
+
+  const reverseAccrualOperation =
+    paths["/api/v1/revenue-recognition/accruals/{accrualId}/reverse"]?.post;
+  if (reverseAccrualOperation) {
+    reverseAccrualOperation.summary = "Reverse settled accrual";
+    reverseAccrualOperation.description =
+      "PR-17C accrual reverse endpoint. Permission: revenue.run.reverse.";
+    reverseAccrualOperation.requestBody = bodyFromRef(
+      "#/components/schemas/RevenueAccrualReverseInput",
+      false
+    );
+    reverseAccrualOperation.responses = {
+      "201": jsonResponse(
+        "#/components/schemas/RevenueAccrualReverseResponse",
+        "Accrual reversed"
+      ),
+      "400": errorResponseRef,
+      "401": errorResponseRef,
+      "403": errorResponseRef,
+    };
+  }
+
+  const reportPathMappings = [
+    [
+      "/api/v1/revenue-recognition/reports/future-year-rollforward",
+      "Future-year rollforward report",
+      "PR-17D rollforward view with short/long maturity rollups and subledger-vs-GL reconciliation.",
+    ],
+    [
+      "/api/v1/revenue-recognition/reports/deferred-revenue-split",
+      "Deferred revenue split report",
+      "PR-17D deferred-revenue split for short-term vs long-term balances (380/480 families).",
+    ],
+    [
+      "/api/v1/revenue-recognition/reports/accrual-split",
+      "Accrual split report",
+      "PR-17D accrual split for accrued revenue/expense with maturity separation and reconciliation payload.",
+    ],
+    [
+      "/api/v1/revenue-recognition/reports/prepaid-expense-split",
+      "Prepaid expense split report",
+      "PR-17D prepaid split endpoint for short/long prepaid balances (180/280).",
+    ],
+  ];
+  for (const [pathName, summary, description] of reportPathMappings) {
+    const operation = paths[pathName]?.get;
+    if (!operation) {
+      continue;
+    }
+    operation.summary = summary;
+    operation.description = description;
+    mergeOperationParameters(operation, reportQueryParams);
+    operation.responses = withStandardResponses(
+      "200",
+      `${summary} response`,
+      "#/components/schemas/RevenueReportResponse"
+    );
+  }
+}
+
 const spec = {
   openapi: "3.0.3",
   info: {
@@ -2658,6 +3047,722 @@ const spec = {
         },
         required: ["accountId", "currencyCode", "description", "debitAmount", "creditAmount"],
       },
+      RevenueScheduleGenerateInput: {
+        type: "object",
+        properties: {
+          legalEntityId: intId,
+          fiscalPeriodId: intId,
+          accountFamily: {
+            type: "string",
+            enum: ["DEFREV", "ACCRUED_REVENUE", "ACCRUED_EXPENSE", "PREPAID_EXPENSE"],
+          },
+          maturityBucket: { type: "string", enum: ["SHORT_TERM", "LONG_TERM"] },
+          maturityDate: { type: "string", format: "date" },
+          reclassRequired: { type: "boolean" },
+          currencyCode,
+          fxRate: { type: "number", exclusiveMinimum: 0, nullable: true },
+          amountTxn: { type: "number", minimum: 0 },
+          amountBase: { type: "number", minimum: 0 },
+          sourceEventUid: { type: "string", maxLength: 160, nullable: true },
+        },
+        required: [
+          "legalEntityId",
+          "fiscalPeriodId",
+          "accountFamily",
+          "maturityBucket",
+          "maturityDate",
+          "currencyCode",
+          "amountTxn",
+          "amountBase",
+        ],
+      },
+      RevenueScheduleRow: {
+        type: "object",
+        properties: {
+          id: intId,
+          tenantId: intId,
+          legalEntityId: intId,
+          fiscalPeriodId: intId,
+          sourceEventUid: { type: "string" },
+          status: { type: "string", enum: ["DRAFT", "READY", "POSTED", "REVERSED"] },
+          accountFamily: {
+            type: "string",
+            enum: ["DEFREV", "ACCRUED_REVENUE", "ACCRUED_EXPENSE", "PREPAID_EXPENSE"],
+          },
+          maturityBucket: { type: "string", enum: ["SHORT_TERM", "LONG_TERM"] },
+          maturityDate: { type: "string", format: "date" },
+          reclassRequired: { type: "boolean" },
+          currencyCode,
+          fxRate: { type: "number", nullable: true },
+          amountTxn: { type: "number" },
+          amountBase: { type: "number" },
+          periodStartDate: { type: "string", format: "date" },
+          periodEndDate: { type: "string", format: "date" },
+          createdByUserId: intId,
+          postedJournalEntryId: { ...intId, nullable: true },
+          createdAt: { type: "string", nullable: true },
+          updatedAt: { type: "string", nullable: true },
+          lineCount: { type: "integer", minimum: 0, nullable: true },
+        },
+        required: [
+          "id",
+          "tenantId",
+          "legalEntityId",
+          "fiscalPeriodId",
+          "sourceEventUid",
+          "status",
+          "accountFamily",
+          "maturityBucket",
+          "maturityDate",
+          "reclassRequired",
+          "currencyCode",
+          "amountTxn",
+          "amountBase",
+          "periodStartDate",
+          "periodEndDate",
+          "createdByUserId",
+        ],
+      },
+      RevenueScheduleListResponse: {
+        type: "object",
+        properties: {
+          tenantId: intId,
+          rows: {
+            type: "array",
+            items: { $ref: "#/components/schemas/RevenueScheduleRow" },
+          },
+          total: { type: "integer", minimum: 0 },
+          limit: { type: "integer", minimum: 1 },
+          offset: nonNegativeInt,
+        },
+        required: ["tenantId", "rows", "total", "limit", "offset"],
+      },
+      RevenueScheduleMutationResponse: {
+        type: "object",
+        properties: {
+          tenantId: intId,
+          row: { $ref: "#/components/schemas/RevenueScheduleRow" },
+          scaffolded: { type: "boolean" },
+        },
+        required: ["tenantId", "row"],
+      },
+      RevenueRunCreateInput: {
+        type: "object",
+        properties: {
+          legalEntityId: intId,
+          fiscalPeriodId: intId,
+          scheduleId: { ...intId, nullable: true },
+          runNo: { type: "string", maxLength: 80, nullable: true },
+          sourceRunUid: { type: "string", maxLength: 160, nullable: true },
+          accountFamily: {
+            type: "string",
+            enum: ["DEFREV", "ACCRUED_REVENUE", "ACCRUED_EXPENSE", "PREPAID_EXPENSE"],
+          },
+          maturityBucket: { type: "string", enum: ["SHORT_TERM", "LONG_TERM"] },
+          maturityDate: { type: "string", format: "date" },
+          reclassRequired: { type: "boolean" },
+          currencyCode,
+          fxRate: { type: "number", exclusiveMinimum: 0, nullable: true },
+          totalAmountTxn: { type: "number", minimum: 0 },
+          totalAmountBase: { type: "number", minimum: 0 },
+        },
+        required: [
+          "legalEntityId",
+          "fiscalPeriodId",
+          "accountFamily",
+          "maturityBucket",
+          "maturityDate",
+          "currencyCode",
+          "totalAmountTxn",
+          "totalAmountBase",
+        ],
+      },
+      RevenueAccrualGenerateInput: {
+        type: "object",
+        properties: {
+          legalEntityId: intId,
+          fiscalPeriodId: intId,
+          scheduleId: { ...intId, nullable: true },
+          runNo: { type: "string", maxLength: 80, nullable: true },
+          sourceRunUid: { type: "string", maxLength: 160, nullable: true },
+          accountFamily: {
+            type: "string",
+            enum: ["ACCRUED_REVENUE", "ACCRUED_EXPENSE"],
+          },
+          maturityBucket: { type: "string", enum: ["SHORT_TERM", "LONG_TERM"] },
+          maturityDate: { type: "string", format: "date" },
+          reclassRequired: { type: "boolean" },
+          currencyCode,
+          fxRate: { type: "number", exclusiveMinimum: 0, nullable: true },
+          totalAmountTxn: { type: "number", minimum: 0 },
+          totalAmountBase: { type: "number", minimum: 0 },
+        },
+        required: [
+          "legalEntityId",
+          "fiscalPeriodId",
+          "accountFamily",
+          "maturityBucket",
+          "maturityDate",
+          "currencyCode",
+          "totalAmountTxn",
+          "totalAmountBase",
+        ],
+      },
+      RevenueRunReverseInput: {
+        type: "object",
+        properties: {
+          reversalPeriodId: { ...intId, nullable: true },
+          reason: { type: "string", maxLength: 255, nullable: true },
+        },
+      },
+      RevenueAccrualSettleInput: {
+        type: "object",
+        properties: {
+          settlementPeriodId: { ...intId, nullable: true },
+        },
+      },
+      RevenueAccrualReverseInput: {
+        type: "object",
+        properties: {
+          reversalPeriodId: { ...intId, nullable: true },
+          reason: { type: "string", maxLength: 255, nullable: true },
+        },
+      },
+      RevenueRunRow: {
+        type: "object",
+        properties: {
+          id: intId,
+          tenantId: intId,
+          legalEntityId: intId,
+          scheduleId: { ...intId, nullable: true },
+          fiscalPeriodId: intId,
+          runNo: { type: "string" },
+          sourceRunUid: { type: "string" },
+          status: { type: "string", enum: ["DRAFT", "READY", "POSTED", "REVERSED"] },
+          accountFamily: {
+            type: "string",
+            enum: ["DEFREV", "ACCRUED_REVENUE", "ACCRUED_EXPENSE", "PREPAID_EXPENSE"],
+          },
+          maturityBucket: { type: "string", enum: ["SHORT_TERM", "LONG_TERM"] },
+          maturityDate: { type: "string", format: "date" },
+          reclassRequired: { type: "boolean" },
+          currencyCode,
+          fxRate: { type: "number", nullable: true },
+          totalAmountTxn: { type: "number" },
+          totalAmountBase: { type: "number" },
+          periodStartDate: { type: "string", format: "date" },
+          periodEndDate: { type: "string", format: "date" },
+          reversalOfRunId: { ...intId, nullable: true },
+          postedJournalEntryId: { ...intId, nullable: true },
+          reversalJournalEntryId: { ...intId, nullable: true },
+          createdByUserId: intId,
+          postedByUserId: { ...intId, nullable: true },
+          reversedByUserId: { ...intId, nullable: true },
+          postedAt: { type: "string", nullable: true },
+          reversedAt: { type: "string", nullable: true },
+          createdAt: { type: "string", nullable: true },
+          updatedAt: { type: "string", nullable: true },
+          lineCount: { type: "integer", minimum: 0, nullable: true },
+        },
+        required: [
+          "id",
+          "tenantId",
+          "legalEntityId",
+          "fiscalPeriodId",
+          "runNo",
+          "sourceRunUid",
+          "status",
+          "accountFamily",
+          "maturityBucket",
+          "maturityDate",
+          "reclassRequired",
+          "currencyCode",
+          "totalAmountTxn",
+          "totalAmountBase",
+          "periodStartDate",
+          "periodEndDate",
+          "createdByUserId",
+        ],
+      },
+      RevenueRunListResponse: {
+        type: "object",
+        properties: {
+          tenantId: intId,
+          rows: {
+            type: "array",
+            items: { $ref: "#/components/schemas/RevenueRunRow" },
+          },
+          total: { type: "integer", minimum: 0 },
+          limit: { type: "integer", minimum: 1 },
+          offset: nonNegativeInt,
+        },
+        required: ["tenantId", "rows", "total", "limit", "offset"],
+      },
+      RevenueRunMutationResponse: {
+        type: "object",
+        properties: {
+          tenantId: intId,
+          row: { $ref: "#/components/schemas/RevenueRunRow" },
+          scaffolded: { type: "boolean" },
+        },
+        required: ["tenantId", "row"],
+      },
+      RevenueAccrualGenerateResponse: {
+        type: "object",
+        properties: {
+          tenantId: intId,
+          row: { $ref: "#/components/schemas/RevenueRunRow" },
+        },
+        required: ["tenantId", "row"],
+      },
+      RevenueRunPostJournalSummary: {
+        type: "object",
+        properties: {
+          journalEntryId: intId,
+          journalNo: { type: "string" },
+          lineCount: { type: "integer", minimum: 1 },
+          totalDebitBase: { type: "number" },
+          totalCreditBase: { type: "number" },
+        },
+        required: [
+          "journalEntryId",
+          "journalNo",
+          "lineCount",
+          "totalDebitBase",
+          "totalCreditBase",
+        ],
+      },
+      RevenueRunPostResponse: {
+        type: "object",
+        properties: {
+          tenantId: intId,
+          row: { $ref: "#/components/schemas/RevenueRunRow" },
+          journal: { $ref: "#/components/schemas/RevenueRunPostJournalSummary" },
+          subledgerEntryCount: { type: "integer", minimum: 0 },
+        },
+        required: ["tenantId", "row", "journal", "subledgerEntryCount"],
+      },
+      RevenueAccrualSettleResponse: {
+        type: "object",
+        properties: {
+          tenantId: intId,
+          row: { $ref: "#/components/schemas/RevenueRunRow" },
+          journal: { $ref: "#/components/schemas/RevenueRunPostJournalSummary" },
+          subledgerEntryCount: { type: "integer", minimum: 0 },
+        },
+        required: ["tenantId", "row", "journal", "subledgerEntryCount"],
+      },
+      RevenueRunReverseJournalSummary: {
+        type: "object",
+        properties: {
+          originalPostedJournalEntryId: intId,
+          reversalJournalEntryId: intId,
+          reversalJournalNo: { type: "string" },
+          lineCount: { type: "integer", minimum: 1 },
+          totalDebitBase: { type: "number" },
+          totalCreditBase: { type: "number" },
+        },
+        required: [
+          "originalPostedJournalEntryId",
+          "reversalJournalEntryId",
+          "reversalJournalNo",
+          "lineCount",
+          "totalDebitBase",
+          "totalCreditBase",
+        ],
+      },
+      RevenueRunReverseResponse: {
+        type: "object",
+        properties: {
+          tenantId: intId,
+          row: { $ref: "#/components/schemas/RevenueRunRow" },
+          reversalRun: { $ref: "#/components/schemas/RevenueRunRow" },
+          journal: { $ref: "#/components/schemas/RevenueRunReverseJournalSummary" },
+        },
+        required: ["tenantId", "row", "reversalRun", "journal"],
+      },
+      RevenueAccrualReverseResponse: {
+        type: "object",
+        properties: {
+          tenantId: intId,
+          row: { $ref: "#/components/schemas/RevenueRunRow" },
+          reversalRun: { $ref: "#/components/schemas/RevenueRunRow" },
+          journal: { $ref: "#/components/schemas/RevenueRunReverseJournalSummary" },
+        },
+        required: ["tenantId", "row", "reversalRun", "journal"],
+      },
+      RevenueReportSummary: {
+        type: "object",
+        properties: {
+          openingAmountTxn: { type: "number" },
+          openingAmountBase: { type: "number" },
+          movementAmountTxn: { type: "number" },
+          movementAmountBase: { type: "number" },
+          closingAmountTxn: { type: "number" },
+          closingAmountBase: { type: "number" },
+          shortTermAmountTxn: { type: "number" },
+          shortTermAmountBase: { type: "number" },
+          longTermAmountTxn: { type: "number" },
+          longTermAmountBase: { type: "number" },
+          totalAmountTxn: { type: "number" },
+          totalAmountBase: { type: "number" },
+          grossMovementAmountTxn: { type: "number" },
+          grossMovementAmountBase: { type: "number" },
+          entryCount: { type: "integer", minimum: 0 },
+          journalCount: { type: "integer", minimum: 0 },
+        },
+        required: [
+          "openingAmountTxn",
+          "openingAmountBase",
+          "movementAmountTxn",
+          "movementAmountBase",
+          "closingAmountTxn",
+          "closingAmountBase",
+          "shortTermAmountTxn",
+          "shortTermAmountBase",
+          "longTermAmountTxn",
+          "longTermAmountBase",
+          "totalAmountTxn",
+          "totalAmountBase",
+          "grossMovementAmountTxn",
+          "grossMovementAmountBase",
+          "entryCount",
+          "journalCount",
+        ],
+      },
+      RevenueReportReconciliationRow: {
+        type: "object",
+        properties: {
+          legalEntityId: intId,
+          fiscalPeriodId: intId,
+          currencyCode,
+          accountFamily: {
+            type: "string",
+            enum: ["DEFREV", "ACCRUED_REVENUE", "ACCRUED_EXPENSE", "PREPAID_EXPENSE"],
+          },
+          subledgerAmountBase: { type: "number" },
+          glAmountBase: { type: "number" },
+          differenceBase: { type: "number" },
+          journalCount: { type: "integer", minimum: 0 },
+          matches: { type: "boolean" },
+        },
+        required: [
+          "legalEntityId",
+          "fiscalPeriodId",
+          "currencyCode",
+          "accountFamily",
+          "subledgerAmountBase",
+          "glAmountBase",
+          "differenceBase",
+          "journalCount",
+          "matches",
+        ],
+      },
+      RevenueReportReconciliation: {
+        type: "object",
+        properties: {
+          totalGroups: { type: "integer", minimum: 0 },
+          matchedGroups: { type: "integer", minimum: 0 },
+          unmatchedGroups: { type: "integer", minimum: 0 },
+          differenceBaseTotal: { type: "number" },
+          rows: {
+            type: "array",
+            items: { $ref: "#/components/schemas/RevenueReportReconciliationRow" },
+          },
+          reconciled: { type: "boolean" },
+        },
+        required: [
+          "totalGroups",
+          "matchedGroups",
+          "unmatchedGroups",
+          "differenceBaseTotal",
+          "rows",
+          "reconciled",
+        ],
+      },
+      RevenueReportResponse: {
+        type: "object",
+        properties: {
+          tenantId: intId,
+          reportCode: { type: "string" },
+          accountFamily: {
+            type: "string",
+            enum: ["DEFREV", "ACCRUED_REVENUE", "ACCRUED_EXPENSE", "PREPAID_EXPENSE"],
+            nullable: true,
+          },
+          legalEntityId: { ...intId, nullable: true },
+          fiscalPeriodId: { ...intId, nullable: true },
+          asOfDate: { type: "string", format: "date", nullable: true },
+          windowStartDate: { type: "string", format: "date", nullable: true },
+          windowEndDate: { type: "string", format: "date", nullable: true },
+          rows: {
+            type: "array",
+            items: { $ref: "#/components/schemas/AnyObject" },
+          },
+          total: { type: "integer", minimum: 0 },
+          limit: { type: "integer", minimum: 1 },
+          offset: nonNegativeInt,
+          summary: { $ref: "#/components/schemas/RevenueReportSummary" },
+          reconciliation: { $ref: "#/components/schemas/RevenueReportReconciliation" },
+          reconciled: { type: "boolean" },
+          scaffolded: { type: "boolean" },
+        },
+        required: [
+          "tenantId",
+          "reportCode",
+          "rows",
+          "total",
+          "limit",
+          "offset",
+          "summary",
+          "reconciliation",
+          "reconciled",
+          "scaffolded",
+        ],
+      },
+      RevenuePurposeCodeCatalog: {
+        type: "object",
+        properties: {
+          purposeCodes: {
+            type: "array",
+            items: {
+              type: "string",
+              enum: [
+                "PREPAID_EXP_SHORT_ASSET",
+                "PREPAID_EXP_LONG_ASSET",
+                "ACCR_REV_SHORT_ASSET",
+                "ACCR_REV_LONG_ASSET",
+                "DEFREV_SHORT_LIABILITY",
+                "DEFREV_LONG_LIABILITY",
+                "ACCR_EXP_SHORT_LIABILITY",
+                "ACCR_EXP_LONG_LIABILITY",
+                "DEFREV_REVENUE",
+                "DEFREV_RECLASS",
+                "PREPAID_EXPENSE",
+                "PREPAID_RECLASS",
+                "ACCR_REV_REVENUE",
+                "ACCR_REV_RECLASS",
+                "ACCR_EXP_EXPENSE",
+                "ACCR_EXP_RECLASS",
+              ],
+            },
+          },
+        },
+        required: ["purposeCodes"],
+      },
+      ContractLineInput: {
+        type: "object",
+        properties: {
+          lineNo: { type: "integer", minimum: 1, nullable: true },
+          description: { type: "string", minLength: 1, maxLength: 255 },
+          lineAmountTxn: { type: "number", exclusiveMinimum: 0 },
+          lineAmountBase: { type: "number", exclusiveMinimum: 0 },
+          recognitionMethod: {
+            type: "string",
+            enum: ["STRAIGHT_LINE", "MILESTONE", "MANUAL"],
+          },
+          recognitionStartDate: { type: "string", format: "date", nullable: true },
+          recognitionEndDate: { type: "string", format: "date", nullable: true },
+          deferredAccountId: { ...intId, nullable: true },
+          revenueAccountId: { ...intId, nullable: true },
+          status: { type: "string", enum: ["ACTIVE", "INACTIVE"], nullable: true },
+        },
+        required: ["description", "lineAmountTxn", "lineAmountBase"],
+      },
+      ContractUpsertInput: {
+        type: "object",
+        properties: {
+          legalEntityId: intId,
+          counterpartyId: intId,
+          contractNo: { type: "string", minLength: 1, maxLength: 80 },
+          contractType: { type: "string", enum: ["CUSTOMER", "VENDOR"] },
+          currencyCode,
+          startDate: { type: "string", format: "date" },
+          endDate: { type: "string", format: "date", nullable: true },
+          notes: { type: "string", maxLength: 500, nullable: true },
+          lines: {
+            type: "array",
+            items: { $ref: "#/components/schemas/ContractLineInput" },
+          },
+        },
+        required: [
+          "legalEntityId",
+          "counterpartyId",
+          "contractNo",
+          "contractType",
+          "currencyCode",
+          "startDate",
+          "lines",
+        ],
+      },
+      ContractSummaryRow: {
+        type: "object",
+        properties: {
+          id: intId,
+          tenantId: intId,
+          legalEntityId: intId,
+          counterpartyId: intId,
+          contractNo: { type: "string" },
+          contractType: { type: "string", enum: ["CUSTOMER", "VENDOR"] },
+          status: {
+            type: "string",
+            enum: ["DRAFT", "ACTIVE", "SUSPENDED", "CLOSED", "CANCELLED"],
+          },
+          currencyCode,
+          startDate: { type: "string", format: "date" },
+          endDate: { type: "string", format: "date", nullable: true },
+          totalAmountTxn: { type: "number" },
+          totalAmountBase: { type: "number" },
+          notes: { type: "string", nullable: true },
+          createdByUserId: intId,
+          createdAt: { type: "string", nullable: true },
+          updatedAt: { type: "string", nullable: true },
+          lineCount: { type: "integer", minimum: 0, nullable: true },
+        },
+        required: [
+          "id",
+          "tenantId",
+          "legalEntityId",
+          "counterpartyId",
+          "contractNo",
+          "contractType",
+          "status",
+          "currencyCode",
+          "startDate",
+          "totalAmountTxn",
+          "totalAmountBase",
+          "createdByUserId",
+        ],
+      },
+      ContractLineRow: {
+        type: "object",
+        properties: {
+          id: intId,
+          lineNo: { type: "integer", minimum: 1 },
+          description: { type: "string" },
+          lineAmountTxn: { type: "number" },
+          lineAmountBase: { type: "number" },
+          recognitionMethod: {
+            type: "string",
+            enum: ["STRAIGHT_LINE", "MILESTONE", "MANUAL"],
+          },
+          recognitionStartDate: { type: "string", format: "date", nullable: true },
+          recognitionEndDate: { type: "string", format: "date", nullable: true },
+          deferredAccountId: { ...intId, nullable: true },
+          revenueAccountId: { ...intId, nullable: true },
+          status: { type: "string", enum: ["ACTIVE", "INACTIVE"] },
+          createdAt: { type: "string", nullable: true },
+          updatedAt: { type: "string", nullable: true },
+        },
+        required: [
+          "id",
+          "lineNo",
+          "description",
+          "lineAmountTxn",
+          "lineAmountBase",
+          "recognitionMethod",
+          "status",
+        ],
+      },
+      ContractDetailRow: {
+        allOf: [
+          { $ref: "#/components/schemas/ContractSummaryRow" },
+          {
+            type: "object",
+            properties: {
+              lines: {
+                type: "array",
+                items: { $ref: "#/components/schemas/ContractLineRow" },
+              },
+            },
+            required: ["lines"],
+          },
+        ],
+      },
+      ContractListResponse: {
+        type: "object",
+        properties: {
+          tenantId: intId,
+          rows: {
+            type: "array",
+            items: { $ref: "#/components/schemas/ContractSummaryRow" },
+          },
+          total: { type: "integer", minimum: 0 },
+          limit: { type: "integer", minimum: 1 },
+          offset: nonNegativeInt,
+        },
+        required: ["tenantId", "rows", "total", "limit", "offset"],
+      },
+      ContractDetailResponse: {
+        type: "object",
+        properties: {
+          tenantId: intId,
+          row: { $ref: "#/components/schemas/ContractDetailRow" },
+        },
+        required: ["tenantId", "row"],
+      },
+      ContractMutationResponse: {
+        type: "object",
+        properties: {
+          tenantId: intId,
+          row: { $ref: "#/components/schemas/ContractSummaryRow" },
+        },
+        required: ["tenantId", "row"],
+      },
+      ContractLinkDocumentInput: {
+        type: "object",
+        properties: {
+          cariDocumentId: intId,
+          linkType: { type: "string", enum: ["BILLING", "ADVANCE", "ADJUSTMENT"] },
+          linkedAmountTxn: { type: "number", exclusiveMinimum: 0 },
+          linkedAmountBase: { type: "number", exclusiveMinimum: 0 },
+        },
+        required: ["cariDocumentId", "linkType", "linkedAmountTxn", "linkedAmountBase"],
+      },
+      ContractDocumentLinkRow: {
+        type: "object",
+        properties: {
+          linkType: { type: "string", enum: ["BILLING", "ADVANCE", "ADJUSTMENT"] },
+          linkedAmountTxn: { type: "number" },
+          linkedAmountBase: { type: "number" },
+          createdAt: { type: "string", nullable: true },
+          createdByUserId: intId,
+          cariDocumentId: intId,
+          documentNo: { type: "string", nullable: true },
+          direction: { type: "string", enum: ["AR", "AP"], nullable: true },
+          status: { type: "string", nullable: true },
+          documentDate: { type: "string", format: "date", nullable: true },
+          amountTxn: { type: "number", nullable: true },
+          amountBase: { type: "number", nullable: true },
+        },
+        required: [
+          "linkType",
+          "linkedAmountTxn",
+          "linkedAmountBase",
+          "createdByUserId",
+          "cariDocumentId",
+        ],
+      },
+      ContractDocumentsResponse: {
+        type: "object",
+        properties: {
+          tenantId: intId,
+          contractId: intId,
+          rows: {
+            type: "array",
+            items: { $ref: "#/components/schemas/ContractDocumentLinkRow" },
+          },
+        },
+        required: ["tenantId", "contractId", "rows"],
+      },
+      ContractLinkMutationResponse: {
+        type: "object",
+        properties: {
+          tenantId: intId,
+          row: { $ref: "#/components/schemas/ContractDocumentLinkRow" },
+        },
+        required: ["tenantId", "row"],
+      },
     },
   },
 };
@@ -2671,6 +3776,8 @@ const autoDocumentedOperationCount = await appendUndocumentedRoutes(
   indexRouteFilePath
 );
 applyCariOperationOverrides(spec);
+applyContractsOperationOverrides(spec);
+applyRevenueRecognitionOperationOverrides(spec);
 
 const targetPath = path.resolve(backendRoot, "openapi.yaml");
 fs.writeFileSync(targetPath, `${JSON.stringify(spec, null, 2)}\n`, "utf8");

@@ -33,6 +33,8 @@ import CariDocumentsPage from "./pages/cari/CariDocumentsPage.jsx";
 import CariReportsPage from "./pages/cari/CariReportsPage.jsx";
 import CariSettlementsPage from "./pages/cari/CariSettlementsPage.jsx";
 import CariAuditPage from "./pages/cari/CariAuditPage.jsx";
+import ContractsPage from "./pages/contracts/ContractsPage.jsx";
+import FutureYearRevenuePage from "./pages/revenue/FutureYearRevenuePage.jsx";
 import { collectSidebarLinks, sidebarItems } from "./layouts/sidebarConfig.js";
 import TenantReadinessProvider from "./readiness/TenantReadinessProvider.jsx";
 import RequireTenantReadiness from "./readiness/RequireTenantReadiness.jsx";
@@ -156,6 +158,16 @@ const implementedRoutes = [
     appPath: "/app/cari-audit",
     childPath: "cari-audit",
     element: <CariAuditPage />,
+  },
+  {
+    appPath: "/app/contracts",
+    childPath: "contracts",
+    element: <ContractsPage />,
+  },
+  {
+    appPath: "/app/gelecek-yillar-gelirleri",
+    childPath: "gelecek-yillar-gelirleri",
+    element: <FutureYearRevenuePage />,
   },
   {
     appPath: "/app/ayarlar/hesap-plani-olustur",

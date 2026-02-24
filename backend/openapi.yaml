@@ -6392,6 +6392,548 @@
         }
       }
     },
+    "/api/v1/contracts": {
+      "get": {
+        "tags": [
+          "Contracts"
+        ],
+        "operationId": "getApiV1Contracts",
+        "summary": "List contracts (summary rows only)",
+        "responses": {
+          "200": {
+            "description": "Contract list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContractListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "query",
+            "name": "legalEntityId",
+            "required": false,
+            "description": "Legal entity filter",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "counterpartyId",
+            "required": false,
+            "description": "Counterparty filter",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "contractType",
+            "required": false,
+            "description": "Contract type filter",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "CUSTOMER",
+                "VENDOR"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "description": "Contract status filter",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "DRAFT",
+                "ACTIVE",
+                "SUSPENDED",
+                "CLOSED",
+                "CANCELLED"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "description": "Contract no/notes search",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "description": "Page size",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "description": "Page offset",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "Contracts"
+        ],
+        "operationId": "postApiV1Contracts",
+        "summary": "Create contract with nested lines[]",
+        "responses": {
+          "201": {
+            "description": "Contract created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContractMutationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContractUpsertInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/contracts/{contractId}": {
+      "get": {
+        "tags": [
+          "Contracts"
+        ],
+        "operationId": "getApiV1ContractsContractid",
+        "summary": "Get contract detail with full lines[]",
+        "responses": {
+          "200": {
+            "description": "Contract detail",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContractDetailResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "contractId",
+            "required": true,
+            "description": "contractId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "Contracts"
+        ],
+        "operationId": "putApiV1ContractsContractid",
+        "summary": "Update draft contract with atomic full-replace lines[]",
+        "responses": {
+          "200": {
+            "description": "Contract updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContractMutationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "contractId",
+            "required": true,
+            "description": "contractId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContractUpsertInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/contracts/{contractId}/activate": {
+      "post": {
+        "tags": [
+          "Contracts"
+        ],
+        "operationId": "postApiV1ContractsContractidActivate",
+        "summary": "Activate contract",
+        "responses": {
+          "200": {
+            "description": "Activate contract response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContractMutationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "contractId",
+            "required": true,
+            "description": "contractId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/contracts/{contractId}/cancel": {
+      "post": {
+        "tags": [
+          "Contracts"
+        ],
+        "operationId": "postApiV1ContractsContractidCancel",
+        "summary": "Cancel contract",
+        "responses": {
+          "200": {
+            "description": "Cancel contract response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContractMutationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "contractId",
+            "required": true,
+            "description": "contractId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/contracts/{contractId}/close": {
+      "post": {
+        "tags": [
+          "Contracts"
+        ],
+        "operationId": "postApiV1ContractsContractidClose",
+        "summary": "Close contract",
+        "responses": {
+          "200": {
+            "description": "Close contract response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContractMutationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "contractId",
+            "required": true,
+            "description": "contractId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/contracts/{contractId}/documents": {
+      "get": {
+        "tags": [
+          "Contracts"
+        ],
+        "operationId": "getApiV1ContractsContractidDocuments",
+        "summary": "List contract-document links with minimal document summary",
+        "responses": {
+          "200": {
+            "description": "Contract-document links",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContractDocumentsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "contractId",
+            "required": true,
+            "description": "contractId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/contracts/{contractId}/link-document": {
+      "post": {
+        "tags": [
+          "Contracts"
+        ],
+        "operationId": "postApiV1ContractsContractidLinkDocument",
+        "summary": "Create immutable contract-document link row",
+        "responses": {
+          "201": {
+            "description": "Contract-document link created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContractLinkMutationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "contractId",
+            "required": true,
+            "description": "contractId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContractLinkDocumentInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/contracts/{contractId}/suspend": {
+      "post": {
+        "tags": [
+          "Contracts"
+        ],
+        "operationId": "postApiV1ContractsContractidSuspend",
+        "summary": "Suspend contract",
+        "responses": {
+          "200": {
+            "description": "Suspend contract response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContractMutationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "contractId",
+            "required": true,
+            "description": "contractId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/gl/reclassifications/balance-split": {
       "post": {
         "tags": [
@@ -7082,6 +7624,953 @@
             "providerApiKey": []
           }
         ]
+      }
+    },
+    "/api/v1/revenue-recognition/accruals/{accrualId}/reverse": {
+      "post": {
+        "tags": [
+          "RevenueRecognition"
+        ],
+        "operationId": "postApiV1RevenueRecognitionAccrualsAccrualidReverse",
+        "summary": "Reverse settled accrual",
+        "responses": {
+          "201": {
+            "description": "Accrual reversed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RevenueAccrualReverseResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "accrualId",
+            "required": true,
+            "description": "accrualId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RevenueAccrualReverseInput"
+              }
+            }
+          }
+        },
+        "description": "PR-17C accrual reverse endpoint. Permission: revenue.run.reverse."
+      }
+    },
+    "/api/v1/revenue-recognition/accruals/{accrualId}/settle": {
+      "post": {
+        "tags": [
+          "RevenueRecognition"
+        ],
+        "operationId": "postApiV1RevenueRecognitionAccrualsAccrualidSettle",
+        "summary": "Settle posted accrual (due-boundary + period-open guarded)",
+        "responses": {
+          "200": {
+            "description": "Accrual settled",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RevenueAccrualSettleResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "accrualId",
+            "required": true,
+            "description": "accrualId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RevenueAccrualSettleInput"
+              }
+            }
+          }
+        },
+        "description": "PR-17C accrual settle endpoint. Permission: revenue.run.post."
+      }
+    },
+    "/api/v1/revenue-recognition/accruals/generate": {
+      "post": {
+        "tags": [
+          "RevenueRecognition"
+        ],
+        "operationId": "postApiV1RevenueRecognitionAccrualsGenerate",
+        "summary": "Generate accrual run (ACCRUED_REVENUE / ACCRUED_EXPENSE)",
+        "responses": {
+          "201": {
+            "description": "Accrual generated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RevenueAccrualGenerateResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RevenueAccrualGenerateInput"
+              }
+            }
+          }
+        },
+        "description": "PR-17C accrual generation endpoint. Permission: revenue.run.create."
+      }
+    },
+    "/api/v1/revenue-recognition/reports/accrual-split": {
+      "get": {
+        "tags": [
+          "RevenueRecognition"
+        ],
+        "operationId": "getApiV1RevenueRecognitionReportsAccrualSplit",
+        "summary": "Accrual split report",
+        "responses": {
+          "200": {
+            "description": "Accrual split report response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RevenueReportResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "description": "PR-17D accrual split for accrued revenue/expense with maturity separation and reconciliation payload.",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "legalEntityId",
+            "required": false,
+            "description": "Legal entity filter",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "fiscalPeriodId",
+            "required": false,
+            "description": "Fiscal period filter",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "accountFamily",
+            "required": false,
+            "description": "Accounting family filter",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "DEFREV",
+                "ACCRUED_REVENUE",
+                "ACCRUED_EXPENSE",
+                "PREPAID_EXPENSE"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "asOfDate",
+            "required": false,
+            "description": "As-of date",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "description": "Page size",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "description": "Page offset",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/revenue-recognition/reports/deferred-revenue-split": {
+      "get": {
+        "tags": [
+          "RevenueRecognition"
+        ],
+        "operationId": "getApiV1RevenueRecognitionReportsDeferredRevenueSplit",
+        "summary": "Deferred revenue split report",
+        "responses": {
+          "200": {
+            "description": "Deferred revenue split report response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RevenueReportResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "description": "PR-17D deferred-revenue split for short-term vs long-term balances (380/480 families).",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "legalEntityId",
+            "required": false,
+            "description": "Legal entity filter",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "fiscalPeriodId",
+            "required": false,
+            "description": "Fiscal period filter",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "accountFamily",
+            "required": false,
+            "description": "Accounting family filter",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "DEFREV",
+                "ACCRUED_REVENUE",
+                "ACCRUED_EXPENSE",
+                "PREPAID_EXPENSE"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "asOfDate",
+            "required": false,
+            "description": "As-of date",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "description": "Page size",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "description": "Page offset",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/revenue-recognition/reports/future-year-rollforward": {
+      "get": {
+        "tags": [
+          "RevenueRecognition"
+        ],
+        "operationId": "getApiV1RevenueRecognitionReportsFutureYearRollforward",
+        "summary": "Future-year rollforward report",
+        "responses": {
+          "200": {
+            "description": "Future-year rollforward report response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RevenueReportResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "description": "PR-17D rollforward view with short/long maturity rollups and subledger-vs-GL reconciliation.",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "legalEntityId",
+            "required": false,
+            "description": "Legal entity filter",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "fiscalPeriodId",
+            "required": false,
+            "description": "Fiscal period filter",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "accountFamily",
+            "required": false,
+            "description": "Accounting family filter",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "DEFREV",
+                "ACCRUED_REVENUE",
+                "ACCRUED_EXPENSE",
+                "PREPAID_EXPENSE"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "asOfDate",
+            "required": false,
+            "description": "As-of date",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "description": "Page size",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "description": "Page offset",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/revenue-recognition/reports/prepaid-expense-split": {
+      "get": {
+        "tags": [
+          "RevenueRecognition"
+        ],
+        "operationId": "getApiV1RevenueRecognitionReportsPrepaidExpenseSplit",
+        "summary": "Prepaid expense split report",
+        "responses": {
+          "200": {
+            "description": "Prepaid expense split report response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RevenueReportResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "description": "PR-17D prepaid split endpoint for short/long prepaid balances (180/280).",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "legalEntityId",
+            "required": false,
+            "description": "Legal entity filter",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "fiscalPeriodId",
+            "required": false,
+            "description": "Fiscal period filter",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "accountFamily",
+            "required": false,
+            "description": "Accounting family filter",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "DEFREV",
+                "ACCRUED_REVENUE",
+                "ACCRUED_EXPENSE",
+                "PREPAID_EXPENSE"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "asOfDate",
+            "required": false,
+            "description": "As-of date",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "description": "Page size",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "description": "Page offset",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/revenue-recognition/runs": {
+      "get": {
+        "tags": [
+          "RevenueRecognition"
+        ],
+        "operationId": "getApiV1RevenueRecognitionRuns",
+        "summary": "List revenue-recognition runs",
+        "responses": {
+          "200": {
+            "description": "Revenue-recognition runs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RevenueRunListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "query",
+            "name": "legalEntityId",
+            "required": false,
+            "description": "Legal entity filter",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "fiscalPeriodId",
+            "required": false,
+            "description": "Fiscal period filter",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "accountFamily",
+            "required": false,
+            "description": "Accounting family filter",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "DEFREV",
+                "ACCRUED_REVENUE",
+                "ACCRUED_EXPENSE",
+                "PREPAID_EXPENSE"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "description": "Run/schedule status filter",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "DRAFT",
+                "READY",
+                "POSTED",
+                "REVERSED"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "description": "Search by source uid / run no",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "description": "Page size",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "description": "Page offset",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "RevenueRecognition"
+        ],
+        "operationId": "postApiV1RevenueRecognitionRuns",
+        "summary": "Create revenue-recognition run",
+        "responses": {
+          "201": {
+            "description": "Run created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RevenueRunMutationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RevenueRunCreateInput"
+              }
+            }
+          }
+        },
+        "description": "PR-17B creates runs and run-lines with duplicate open-line guard for reruns."
+      }
+    },
+    "/api/v1/revenue-recognition/runs/{runId}/post": {
+      "post": {
+        "tags": [
+          "RevenueRecognition"
+        ],
+        "operationId": "postApiV1RevenueRecognitionRunsRunidPost",
+        "summary": "Post revenue-recognition run",
+        "responses": {
+          "200": {
+            "description": "Run posted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RevenueRunPostResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runId",
+            "required": true,
+            "description": "runId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        },
+        "description": "PR-17B posts DEFREV/PREPAID runs with period-open + setup guards. Purpose-code setup must include: PREPAID_EXP_SHORT_ASSET, PREPAID_EXP_LONG_ASSET, ACCR_REV_SHORT_ASSET, ACCR_REV_LONG_ASSET, DEFREV_SHORT_LIABILITY, DEFREV_LONG_LIABILITY, ACCR_EXP_SHORT_LIABILITY, ACCR_EXP_LONG_LIABILITY, DEFREV_REVENUE, DEFREV_RECLASS, PREPAID_EXPENSE, PREPAID_RECLASS, ACCR_REV_REVENUE, ACCR_REV_RECLASS, ACCR_EXP_EXPENSE, ACCR_EXP_RECLASS."
+      }
+    },
+    "/api/v1/revenue-recognition/runs/{runId}/reverse": {
+      "post": {
+        "tags": [
+          "RevenueRecognition"
+        ],
+        "operationId": "postApiV1RevenueRecognitionRunsRunidReverse",
+        "summary": "Reverse revenue-recognition run",
+        "responses": {
+          "201": {
+            "description": "Run reversed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RevenueRunReverseResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runId",
+            "required": true,
+            "description": "runId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RevenueRunReverseInput"
+              }
+            }
+          }
+        },
+        "description": "PR-17B creates a posted reversal journal/run and marks original run REVERSED. Purpose-code setup must include: PREPAID_EXP_SHORT_ASSET, PREPAID_EXP_LONG_ASSET, ACCR_REV_SHORT_ASSET, ACCR_REV_LONG_ASSET, DEFREV_SHORT_LIABILITY, DEFREV_LONG_LIABILITY, ACCR_EXP_SHORT_LIABILITY, ACCR_EXP_LONG_LIABILITY, DEFREV_REVENUE, DEFREV_RECLASS, PREPAID_EXPENSE, PREPAID_RECLASS, ACCR_REV_REVENUE, ACCR_REV_RECLASS, ACCR_EXP_EXPENSE, ACCR_EXP_RECLASS."
+      }
+    },
+    "/api/v1/revenue-recognition/schedules": {
+      "get": {
+        "tags": [
+          "RevenueRecognition"
+        ],
+        "operationId": "getApiV1RevenueRecognitionSchedules",
+        "summary": "List revenue-recognition schedules",
+        "responses": {
+          "200": {
+            "description": "Revenue-recognition schedules",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RevenueScheduleListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "query",
+            "name": "legalEntityId",
+            "required": false,
+            "description": "Legal entity filter",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "fiscalPeriodId",
+            "required": false,
+            "description": "Fiscal period filter",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "accountFamily",
+            "required": false,
+            "description": "Accounting family filter",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "DEFREV",
+                "ACCRUED_REVENUE",
+                "ACCRUED_EXPENSE",
+                "PREPAID_EXPENSE"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "description": "Run/schedule status filter",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "DRAFT",
+                "READY",
+                "POSTED",
+                "REVERSED"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "description": "Search by source uid / run no",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "description": "Page size",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "description": "Page offset",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/revenue-recognition/schedules/generate": {
+      "post": {
+        "tags": [
+          "RevenueRecognition"
+        ],
+        "operationId": "postApiV1RevenueRecognitionSchedulesGenerate",
+        "summary": "Generate revenue-recognition schedule",
+        "responses": {
+          "201": {
+            "description": "Schedule generated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RevenueScheduleMutationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RevenueScheduleGenerateInput"
+              }
+            }
+          }
+        },
+        "description": "PR-17B keeps schedule generation deterministic with tenant/legal-entity scope controls."
       }
     },
     "/auth/login": {
@@ -9206,6 +10695,1632 @@
           "description",
           "debitAmount",
           "creditAmount"
+        ]
+      },
+      "RevenueScheduleGenerateInput": {
+        "type": "object",
+        "properties": {
+          "legalEntityId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "fiscalPeriodId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "accountFamily": {
+            "type": "string",
+            "enum": [
+              "DEFREV",
+              "ACCRUED_REVENUE",
+              "ACCRUED_EXPENSE",
+              "PREPAID_EXPENSE"
+            ]
+          },
+          "maturityBucket": {
+            "type": "string",
+            "enum": [
+              "SHORT_TERM",
+              "LONG_TERM"
+            ]
+          },
+          "maturityDate": {
+            "type": "string",
+            "format": "date"
+          },
+          "reclassRequired": {
+            "type": "boolean"
+          },
+          "currencyCode": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 3
+          },
+          "fxRate": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "nullable": true
+          },
+          "amountTxn": {
+            "type": "number",
+            "minimum": 0
+          },
+          "amountBase": {
+            "type": "number",
+            "minimum": 0
+          },
+          "sourceEventUid": {
+            "type": "string",
+            "maxLength": 160,
+            "nullable": true
+          }
+        },
+        "required": [
+          "legalEntityId",
+          "fiscalPeriodId",
+          "accountFamily",
+          "maturityBucket",
+          "maturityDate",
+          "currencyCode",
+          "amountTxn",
+          "amountBase"
+        ]
+      },
+      "RevenueScheduleRow": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "legalEntityId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "fiscalPeriodId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "sourceEventUid": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "DRAFT",
+              "READY",
+              "POSTED",
+              "REVERSED"
+            ]
+          },
+          "accountFamily": {
+            "type": "string",
+            "enum": [
+              "DEFREV",
+              "ACCRUED_REVENUE",
+              "ACCRUED_EXPENSE",
+              "PREPAID_EXPENSE"
+            ]
+          },
+          "maturityBucket": {
+            "type": "string",
+            "enum": [
+              "SHORT_TERM",
+              "LONG_TERM"
+            ]
+          },
+          "maturityDate": {
+            "type": "string",
+            "format": "date"
+          },
+          "reclassRequired": {
+            "type": "boolean"
+          },
+          "currencyCode": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 3
+          },
+          "fxRate": {
+            "type": "number",
+            "nullable": true
+          },
+          "amountTxn": {
+            "type": "number"
+          },
+          "amountBase": {
+            "type": "number"
+          },
+          "periodStartDate": {
+            "type": "string",
+            "format": "date"
+          },
+          "periodEndDate": {
+            "type": "string",
+            "format": "date"
+          },
+          "createdByUserId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "postedJournalEntryId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string",
+            "nullable": true
+          },
+          "updatedAt": {
+            "type": "string",
+            "nullable": true
+          },
+          "lineCount": {
+            "type": "integer",
+            "minimum": 0,
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "tenantId",
+          "legalEntityId",
+          "fiscalPeriodId",
+          "sourceEventUid",
+          "status",
+          "accountFamily",
+          "maturityBucket",
+          "maturityDate",
+          "reclassRequired",
+          "currencyCode",
+          "amountTxn",
+          "amountBase",
+          "periodStartDate",
+          "periodEndDate",
+          "createdByUserId"
+        ]
+      },
+      "RevenueScheduleListResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RevenueScheduleRow"
+            }
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "tenantId",
+          "rows",
+          "total",
+          "limit",
+          "offset"
+        ]
+      },
+      "RevenueScheduleMutationResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "row": {
+            "$ref": "#/components/schemas/RevenueScheduleRow"
+          },
+          "scaffolded": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "tenantId",
+          "row"
+        ]
+      },
+      "RevenueRunCreateInput": {
+        "type": "object",
+        "properties": {
+          "legalEntityId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "fiscalPeriodId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "scheduleId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "runNo": {
+            "type": "string",
+            "maxLength": 80,
+            "nullable": true
+          },
+          "sourceRunUid": {
+            "type": "string",
+            "maxLength": 160,
+            "nullable": true
+          },
+          "accountFamily": {
+            "type": "string",
+            "enum": [
+              "DEFREV",
+              "ACCRUED_REVENUE",
+              "ACCRUED_EXPENSE",
+              "PREPAID_EXPENSE"
+            ]
+          },
+          "maturityBucket": {
+            "type": "string",
+            "enum": [
+              "SHORT_TERM",
+              "LONG_TERM"
+            ]
+          },
+          "maturityDate": {
+            "type": "string",
+            "format": "date"
+          },
+          "reclassRequired": {
+            "type": "boolean"
+          },
+          "currencyCode": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 3
+          },
+          "fxRate": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "nullable": true
+          },
+          "totalAmountTxn": {
+            "type": "number",
+            "minimum": 0
+          },
+          "totalAmountBase": {
+            "type": "number",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "legalEntityId",
+          "fiscalPeriodId",
+          "accountFamily",
+          "maturityBucket",
+          "maturityDate",
+          "currencyCode",
+          "totalAmountTxn",
+          "totalAmountBase"
+        ]
+      },
+      "RevenueAccrualGenerateInput": {
+        "type": "object",
+        "properties": {
+          "legalEntityId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "fiscalPeriodId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "scheduleId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "runNo": {
+            "type": "string",
+            "maxLength": 80,
+            "nullable": true
+          },
+          "sourceRunUid": {
+            "type": "string",
+            "maxLength": 160,
+            "nullable": true
+          },
+          "accountFamily": {
+            "type": "string",
+            "enum": [
+              "ACCRUED_REVENUE",
+              "ACCRUED_EXPENSE"
+            ]
+          },
+          "maturityBucket": {
+            "type": "string",
+            "enum": [
+              "SHORT_TERM",
+              "LONG_TERM"
+            ]
+          },
+          "maturityDate": {
+            "type": "string",
+            "format": "date"
+          },
+          "reclassRequired": {
+            "type": "boolean"
+          },
+          "currencyCode": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 3
+          },
+          "fxRate": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "nullable": true
+          },
+          "totalAmountTxn": {
+            "type": "number",
+            "minimum": 0
+          },
+          "totalAmountBase": {
+            "type": "number",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "legalEntityId",
+          "fiscalPeriodId",
+          "accountFamily",
+          "maturityBucket",
+          "maturityDate",
+          "currencyCode",
+          "totalAmountTxn",
+          "totalAmountBase"
+        ]
+      },
+      "RevenueRunReverseInput": {
+        "type": "object",
+        "properties": {
+          "reversalPeriodId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 255,
+            "nullable": true
+          }
+        }
+      },
+      "RevenueAccrualSettleInput": {
+        "type": "object",
+        "properties": {
+          "settlementPeriodId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          }
+        }
+      },
+      "RevenueAccrualReverseInput": {
+        "type": "object",
+        "properties": {
+          "reversalPeriodId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 255,
+            "nullable": true
+          }
+        }
+      },
+      "RevenueRunRow": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "legalEntityId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "scheduleId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "fiscalPeriodId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "runNo": {
+            "type": "string"
+          },
+          "sourceRunUid": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "DRAFT",
+              "READY",
+              "POSTED",
+              "REVERSED"
+            ]
+          },
+          "accountFamily": {
+            "type": "string",
+            "enum": [
+              "DEFREV",
+              "ACCRUED_REVENUE",
+              "ACCRUED_EXPENSE",
+              "PREPAID_EXPENSE"
+            ]
+          },
+          "maturityBucket": {
+            "type": "string",
+            "enum": [
+              "SHORT_TERM",
+              "LONG_TERM"
+            ]
+          },
+          "maturityDate": {
+            "type": "string",
+            "format": "date"
+          },
+          "reclassRequired": {
+            "type": "boolean"
+          },
+          "currencyCode": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 3
+          },
+          "fxRate": {
+            "type": "number",
+            "nullable": true
+          },
+          "totalAmountTxn": {
+            "type": "number"
+          },
+          "totalAmountBase": {
+            "type": "number"
+          },
+          "periodStartDate": {
+            "type": "string",
+            "format": "date"
+          },
+          "periodEndDate": {
+            "type": "string",
+            "format": "date"
+          },
+          "reversalOfRunId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "postedJournalEntryId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "reversalJournalEntryId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "createdByUserId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "postedByUserId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "reversedByUserId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "postedAt": {
+            "type": "string",
+            "nullable": true
+          },
+          "reversedAt": {
+            "type": "string",
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string",
+            "nullable": true
+          },
+          "updatedAt": {
+            "type": "string",
+            "nullable": true
+          },
+          "lineCount": {
+            "type": "integer",
+            "minimum": 0,
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "tenantId",
+          "legalEntityId",
+          "fiscalPeriodId",
+          "runNo",
+          "sourceRunUid",
+          "status",
+          "accountFamily",
+          "maturityBucket",
+          "maturityDate",
+          "reclassRequired",
+          "currencyCode",
+          "totalAmountTxn",
+          "totalAmountBase",
+          "periodStartDate",
+          "periodEndDate",
+          "createdByUserId"
+        ]
+      },
+      "RevenueRunListResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RevenueRunRow"
+            }
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "tenantId",
+          "rows",
+          "total",
+          "limit",
+          "offset"
+        ]
+      },
+      "RevenueRunMutationResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "row": {
+            "$ref": "#/components/schemas/RevenueRunRow"
+          },
+          "scaffolded": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "tenantId",
+          "row"
+        ]
+      },
+      "RevenueAccrualGenerateResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "row": {
+            "$ref": "#/components/schemas/RevenueRunRow"
+          }
+        },
+        "required": [
+          "tenantId",
+          "row"
+        ]
+      },
+      "RevenueRunPostJournalSummary": {
+        "type": "object",
+        "properties": {
+          "journalEntryId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "journalNo": {
+            "type": "string"
+          },
+          "lineCount": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "totalDebitBase": {
+            "type": "number"
+          },
+          "totalCreditBase": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "journalEntryId",
+          "journalNo",
+          "lineCount",
+          "totalDebitBase",
+          "totalCreditBase"
+        ]
+      },
+      "RevenueRunPostResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "row": {
+            "$ref": "#/components/schemas/RevenueRunRow"
+          },
+          "journal": {
+            "$ref": "#/components/schemas/RevenueRunPostJournalSummary"
+          },
+          "subledgerEntryCount": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "tenantId",
+          "row",
+          "journal",
+          "subledgerEntryCount"
+        ]
+      },
+      "RevenueAccrualSettleResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "row": {
+            "$ref": "#/components/schemas/RevenueRunRow"
+          },
+          "journal": {
+            "$ref": "#/components/schemas/RevenueRunPostJournalSummary"
+          },
+          "subledgerEntryCount": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "tenantId",
+          "row",
+          "journal",
+          "subledgerEntryCount"
+        ]
+      },
+      "RevenueRunReverseJournalSummary": {
+        "type": "object",
+        "properties": {
+          "originalPostedJournalEntryId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "reversalJournalEntryId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "reversalJournalNo": {
+            "type": "string"
+          },
+          "lineCount": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "totalDebitBase": {
+            "type": "number"
+          },
+          "totalCreditBase": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "originalPostedJournalEntryId",
+          "reversalJournalEntryId",
+          "reversalJournalNo",
+          "lineCount",
+          "totalDebitBase",
+          "totalCreditBase"
+        ]
+      },
+      "RevenueRunReverseResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "row": {
+            "$ref": "#/components/schemas/RevenueRunRow"
+          },
+          "reversalRun": {
+            "$ref": "#/components/schemas/RevenueRunRow"
+          },
+          "journal": {
+            "$ref": "#/components/schemas/RevenueRunReverseJournalSummary"
+          }
+        },
+        "required": [
+          "tenantId",
+          "row",
+          "reversalRun",
+          "journal"
+        ]
+      },
+      "RevenueAccrualReverseResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "row": {
+            "$ref": "#/components/schemas/RevenueRunRow"
+          },
+          "reversalRun": {
+            "$ref": "#/components/schemas/RevenueRunRow"
+          },
+          "journal": {
+            "$ref": "#/components/schemas/RevenueRunReverseJournalSummary"
+          }
+        },
+        "required": [
+          "tenantId",
+          "row",
+          "reversalRun",
+          "journal"
+        ]
+      },
+      "RevenueReportSummary": {
+        "type": "object",
+        "properties": {
+          "openingAmountTxn": {
+            "type": "number"
+          },
+          "openingAmountBase": {
+            "type": "number"
+          },
+          "movementAmountTxn": {
+            "type": "number"
+          },
+          "movementAmountBase": {
+            "type": "number"
+          },
+          "closingAmountTxn": {
+            "type": "number"
+          },
+          "closingAmountBase": {
+            "type": "number"
+          },
+          "shortTermAmountTxn": {
+            "type": "number"
+          },
+          "shortTermAmountBase": {
+            "type": "number"
+          },
+          "longTermAmountTxn": {
+            "type": "number"
+          },
+          "longTermAmountBase": {
+            "type": "number"
+          },
+          "totalAmountTxn": {
+            "type": "number"
+          },
+          "totalAmountBase": {
+            "type": "number"
+          },
+          "grossMovementAmountTxn": {
+            "type": "number"
+          },
+          "grossMovementAmountBase": {
+            "type": "number"
+          },
+          "entryCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "journalCount": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "openingAmountTxn",
+          "openingAmountBase",
+          "movementAmountTxn",
+          "movementAmountBase",
+          "closingAmountTxn",
+          "closingAmountBase",
+          "shortTermAmountTxn",
+          "shortTermAmountBase",
+          "longTermAmountTxn",
+          "longTermAmountBase",
+          "totalAmountTxn",
+          "totalAmountBase",
+          "grossMovementAmountTxn",
+          "grossMovementAmountBase",
+          "entryCount",
+          "journalCount"
+        ]
+      },
+      "RevenueReportReconciliationRow": {
+        "type": "object",
+        "properties": {
+          "legalEntityId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "fiscalPeriodId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "currencyCode": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 3
+          },
+          "accountFamily": {
+            "type": "string",
+            "enum": [
+              "DEFREV",
+              "ACCRUED_REVENUE",
+              "ACCRUED_EXPENSE",
+              "PREPAID_EXPENSE"
+            ]
+          },
+          "subledgerAmountBase": {
+            "type": "number"
+          },
+          "glAmountBase": {
+            "type": "number"
+          },
+          "differenceBase": {
+            "type": "number"
+          },
+          "journalCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "matches": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "legalEntityId",
+          "fiscalPeriodId",
+          "currencyCode",
+          "accountFamily",
+          "subledgerAmountBase",
+          "glAmountBase",
+          "differenceBase",
+          "journalCount",
+          "matches"
+        ]
+      },
+      "RevenueReportReconciliation": {
+        "type": "object",
+        "properties": {
+          "totalGroups": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "matchedGroups": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "unmatchedGroups": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "differenceBaseTotal": {
+            "type": "number"
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RevenueReportReconciliationRow"
+            }
+          },
+          "reconciled": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "totalGroups",
+          "matchedGroups",
+          "unmatchedGroups",
+          "differenceBaseTotal",
+          "rows",
+          "reconciled"
+        ]
+      },
+      "RevenueReportResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "reportCode": {
+            "type": "string"
+          },
+          "accountFamily": {
+            "type": "string",
+            "enum": [
+              "DEFREV",
+              "ACCRUED_REVENUE",
+              "ACCRUED_EXPENSE",
+              "PREPAID_EXPENSE"
+            ],
+            "nullable": true
+          },
+          "legalEntityId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "fiscalPeriodId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "asOfDate": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "windowStartDate": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "windowEndDate": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AnyObject"
+            }
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "summary": {
+            "$ref": "#/components/schemas/RevenueReportSummary"
+          },
+          "reconciliation": {
+            "$ref": "#/components/schemas/RevenueReportReconciliation"
+          },
+          "reconciled": {
+            "type": "boolean"
+          },
+          "scaffolded": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "tenantId",
+          "reportCode",
+          "rows",
+          "total",
+          "limit",
+          "offset",
+          "summary",
+          "reconciliation",
+          "reconciled",
+          "scaffolded"
+        ]
+      },
+      "RevenuePurposeCodeCatalog": {
+        "type": "object",
+        "properties": {
+          "purposeCodes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "PREPAID_EXP_SHORT_ASSET",
+                "PREPAID_EXP_LONG_ASSET",
+                "ACCR_REV_SHORT_ASSET",
+                "ACCR_REV_LONG_ASSET",
+                "DEFREV_SHORT_LIABILITY",
+                "DEFREV_LONG_LIABILITY",
+                "ACCR_EXP_SHORT_LIABILITY",
+                "ACCR_EXP_LONG_LIABILITY",
+                "DEFREV_REVENUE",
+                "DEFREV_RECLASS",
+                "PREPAID_EXPENSE",
+                "PREPAID_RECLASS",
+                "ACCR_REV_REVENUE",
+                "ACCR_REV_RECLASS",
+                "ACCR_EXP_EXPENSE",
+                "ACCR_EXP_RECLASS"
+              ]
+            }
+          }
+        },
+        "required": [
+          "purposeCodes"
+        ]
+      },
+      "ContractLineInput": {
+        "type": "object",
+        "properties": {
+          "lineNo": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255
+          },
+          "lineAmountTxn": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "lineAmountBase": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "recognitionMethod": {
+            "type": "string",
+            "enum": [
+              "STRAIGHT_LINE",
+              "MILESTONE",
+              "MANUAL"
+            ]
+          },
+          "recognitionStartDate": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "recognitionEndDate": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "deferredAccountId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "revenueAccountId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ACTIVE",
+              "INACTIVE"
+            ],
+            "nullable": true
+          }
+        },
+        "required": [
+          "description",
+          "lineAmountTxn",
+          "lineAmountBase"
+        ]
+      },
+      "ContractUpsertInput": {
+        "type": "object",
+        "properties": {
+          "legalEntityId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "counterpartyId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "contractNo": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "contractType": {
+            "type": "string",
+            "enum": [
+              "CUSTOMER",
+              "VENDOR"
+            ]
+          },
+          "currencyCode": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 3
+          },
+          "startDate": {
+            "type": "string",
+            "format": "date"
+          },
+          "endDate": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "notes": {
+            "type": "string",
+            "maxLength": 500,
+            "nullable": true
+          },
+          "lines": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ContractLineInput"
+            }
+          }
+        },
+        "required": [
+          "legalEntityId",
+          "counterpartyId",
+          "contractNo",
+          "contractType",
+          "currencyCode",
+          "startDate",
+          "lines"
+        ]
+      },
+      "ContractSummaryRow": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "legalEntityId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "counterpartyId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "contractNo": {
+            "type": "string"
+          },
+          "contractType": {
+            "type": "string",
+            "enum": [
+              "CUSTOMER",
+              "VENDOR"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "DRAFT",
+              "ACTIVE",
+              "SUSPENDED",
+              "CLOSED",
+              "CANCELLED"
+            ]
+          },
+          "currencyCode": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 3
+          },
+          "startDate": {
+            "type": "string",
+            "format": "date"
+          },
+          "endDate": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "totalAmountTxn": {
+            "type": "number"
+          },
+          "totalAmountBase": {
+            "type": "number"
+          },
+          "notes": {
+            "type": "string",
+            "nullable": true
+          },
+          "createdByUserId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "createdAt": {
+            "type": "string",
+            "nullable": true
+          },
+          "updatedAt": {
+            "type": "string",
+            "nullable": true
+          },
+          "lineCount": {
+            "type": "integer",
+            "minimum": 0,
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "tenantId",
+          "legalEntityId",
+          "counterpartyId",
+          "contractNo",
+          "contractType",
+          "status",
+          "currencyCode",
+          "startDate",
+          "totalAmountTxn",
+          "totalAmountBase",
+          "createdByUserId"
+        ]
+      },
+      "ContractLineRow": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "lineNo": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "description": {
+            "type": "string"
+          },
+          "lineAmountTxn": {
+            "type": "number"
+          },
+          "lineAmountBase": {
+            "type": "number"
+          },
+          "recognitionMethod": {
+            "type": "string",
+            "enum": [
+              "STRAIGHT_LINE",
+              "MILESTONE",
+              "MANUAL"
+            ]
+          },
+          "recognitionStartDate": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "recognitionEndDate": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "deferredAccountId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "revenueAccountId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ACTIVE",
+              "INACTIVE"
+            ]
+          },
+          "createdAt": {
+            "type": "string",
+            "nullable": true
+          },
+          "updatedAt": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "lineNo",
+          "description",
+          "lineAmountTxn",
+          "lineAmountBase",
+          "recognitionMethod",
+          "status"
+        ]
+      },
+      "ContractDetailRow": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ContractSummaryRow"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "lines": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/ContractLineRow"
+                }
+              }
+            },
+            "required": [
+              "lines"
+            ]
+          }
+        ]
+      },
+      "ContractListResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ContractSummaryRow"
+            }
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "tenantId",
+          "rows",
+          "total",
+          "limit",
+          "offset"
+        ]
+      },
+      "ContractDetailResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "row": {
+            "$ref": "#/components/schemas/ContractDetailRow"
+          }
+        },
+        "required": [
+          "tenantId",
+          "row"
+        ]
+      },
+      "ContractMutationResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "row": {
+            "$ref": "#/components/schemas/ContractSummaryRow"
+          }
+        },
+        "required": [
+          "tenantId",
+          "row"
+        ]
+      },
+      "ContractLinkDocumentInput": {
+        "type": "object",
+        "properties": {
+          "cariDocumentId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "linkType": {
+            "type": "string",
+            "enum": [
+              "BILLING",
+              "ADVANCE",
+              "ADJUSTMENT"
+            ]
+          },
+          "linkedAmountTxn": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "linkedAmountBase": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          }
+        },
+        "required": [
+          "cariDocumentId",
+          "linkType",
+          "linkedAmountTxn",
+          "linkedAmountBase"
+        ]
+      },
+      "ContractDocumentLinkRow": {
+        "type": "object",
+        "properties": {
+          "linkType": {
+            "type": "string",
+            "enum": [
+              "BILLING",
+              "ADVANCE",
+              "ADJUSTMENT"
+            ]
+          },
+          "linkedAmountTxn": {
+            "type": "number"
+          },
+          "linkedAmountBase": {
+            "type": "number"
+          },
+          "createdAt": {
+            "type": "string",
+            "nullable": true
+          },
+          "createdByUserId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "cariDocumentId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "documentNo": {
+            "type": "string",
+            "nullable": true
+          },
+          "direction": {
+            "type": "string",
+            "enum": [
+              "AR",
+              "AP"
+            ],
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "nullable": true
+          },
+          "documentDate": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "amountTxn": {
+            "type": "number",
+            "nullable": true
+          },
+          "amountBase": {
+            "type": "number",
+            "nullable": true
+          }
+        },
+        "required": [
+          "linkType",
+          "linkedAmountTxn",
+          "linkedAmountBase",
+          "createdByUserId",
+          "cariDocumentId"
+        ]
+      },
+      "ContractDocumentsResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "contractId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ContractDocumentLinkRow"
+            }
+          }
+        },
+        "required": [
+          "tenantId",
+          "contractId",
+          "rows"
+        ]
+      },
+      "ContractLinkMutationResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "row": {
+            "$ref": "#/components/schemas/ContractDocumentLinkRow"
+          }
+        },
+        "required": [
+          "tenantId",
+          "row"
         ]
       }
     }

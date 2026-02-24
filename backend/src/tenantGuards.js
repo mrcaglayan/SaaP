@@ -17,8 +17,10 @@ function badRequest(message) {
   return err;
 }
 
-async function requireRow(sql, params, errorMessage) {
-  const result = await query(sql, params);
+async function requireRow(sql, params, errorMessage, options = {}) {
+  const runQuery =
+    typeof options === "function" ? options : options.runQuery || query;
+  const result = await runQuery(sql, params);
   const row = result.rows[0] || null;
   if (!row) {
     throw badRequest(errorMessage);
@@ -256,7 +258,8 @@ export async function assertCoaBelongsToTenant(tenantId, coaId, label = "coaId")
 export async function assertAccountBelongsToTenant(
   tenantId,
   accountId,
-  label = "accountId"
+  label = "accountId",
+  options = {}
 ) {
   const parsedTenantId = parsePositiveInt(tenantId);
   const parsedAccountId = parsePositiveInt(accountId);
@@ -277,7 +280,8 @@ export async function assertAccountBelongsToTenant(
        AND c.tenant_id = ?
      LIMIT 1`,
     [parsedAccountId, parsedTenantId],
-    `${label} not found for tenant`
+    `${label} not found for tenant`,
+    options
   );
 }
 

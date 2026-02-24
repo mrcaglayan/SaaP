@@ -222,12 +222,20 @@ export const sidebarItems = [
     label: "Contracts",
     to: "/app/contracts",
     icon: "company",
+    requiredPermissions: ["contract.read"],
+    implemented: true,
   },
   {
     type: "link",
     label: "Gelecek Yillar Gelirleri",
     to: "/app/gelecek-yillar-gelirleri",
     icon: "report",
+    requiredPermissions: [
+      "revenue.schedule.read",
+      "revenue.run.read",
+      "revenue.report.read",
+    ],
+    implemented: true,
   },
   {
     type: "section",
