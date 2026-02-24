@@ -246,8 +246,10 @@ export default migration020ContractsFoundation;
   - keep normalized via parent `contracts.legal_entity_id` (no extra `legal_entity_id` column in `contract_lines` for now)
   - if reporting/index pressure appears later, add denormalization in a separate optimization PR.
 - Contract-line account mapping safety (mandatory):
+  - `assertAccountBelongsToTenant(...)` is mandatory as tenant/COA ownership pre-check, but not sufficient on its own.
   - if `deferred_account_id` or `revenue_account_id` is provided, account must belong to same tenant.
   - account must be legal-entity compatible with contract scope (`account -> coa -> legal_entity_id`).
+  - account must use legal-entity chart scope for contract posting context (`coa.scope='LEGAL_ENTITY'`).
   - account must be active and postable (`is_active=true`, `allow_posting=true`).
   - account type compatibility:
     - `CUSTOMER`: `deferred_account_id` -> `LIABILITY`, `revenue_account_id` -> `REVENUE`
@@ -355,11 +357,15 @@ export default migration020ContractsFoundation;
 
 - Reuse existing backend helpers instead of introducing PR-specific parallel utilities.
 - Account guard reuse:
-  - use `assertAccountBelongsToTenant(...)` for contract-line account checks (tenant-safe account + COA context source-of-truth).
+  - use `assertAccountBelongsToTenant(...)` as the first-step guard for contract-line account checks (tenant-safe account + COA context source-of-truth).
+  - helper return is not sufficient alone; still run explicit checks for `account_type`, `is_active`, `allow_posting`, and legal-entity chart compatibility.
 - Transaction wrapper reuse:
   - use `withTransaction(...)` for contract create/update (header+lines), lifecycle-sensitive writes, and link-document cap validation flows.
 - Amount parsing reuse:
-  - use existing `parseAmount(...)` / `parseRequiredAmount(...)` helpers for PR-16 amount parsing and 6-decimal discipline.
+  - use shared `parseAmount(...)` helper for PR-16 amount parsing and 6-decimal discipline.
+  - `parseRequiredAmount(...)` is not a shared global helper yet (currently local in Cari validator). Avoid creating PR-specific duplicates.
+  - preferred Option A: extract `parseRequiredAmount(...)` into a shared validator helper module (for example alongside `parseAmount(...)`) and reuse it.
+  - if extraction is deferred, call `parseAmount(..., { required: true, allowZero: false })` directly (or via a thin local wrapper) without duplicating parsing logic.
 - Route RBAC reuse:
   - follow the existing route-level RBAC middleware pattern from current route files (no ad-hoc permission checks in service layer).
 
@@ -381,7 +387,8 @@ export default migration020ContractsFoundation;
 - [ ] Reuse existing backend helpers in PR-16 (no parallel helper drift):
   - [ ] `assertAccountBelongsToTenant(...)`
   - [ ] `withTransaction(...)`
-  - [ ] `parseAmount(...)` / `parseRequiredAmount(...)`
+  - [ ] shared `parseAmount(...)`
+  - [ ] `parseRequiredAmount(...)` is shared-extracted (preferred) or PR code uses `parseAmount(..., { required: true, allowZero: false })` without duplicating amount-parse logic
   - [ ] existing route RBAC middleware pattern
 - [ ] Enforce PR-16 endpoint-permission mapping in routes/OpenAPI:
   - [ ] `GET /contracts` -> `contract.read`
@@ -433,6 +440,7 @@ export default migration020ContractsFoundation;
     with the same row shape as `GET /contracts/{id}/documents`
 - [ ] Add composite unique keys/FKs on new tables in migration (tenant/entity-safe).
 - [ ] Match `created_by_user_id` to `users.id` exact SQL type (including signedness/width), not just logical `INT`.
+- [ ] Keep `created_by_user_id` SQL type exactly equal to `users.id` in current repo (`INT`, signed).
 - [ ] Enforce creator-user audit FKs (mandatory for PR-16):
   - [ ] confirm `users` has tenant-composite unique key `(tenant_id, id)` (repo baseline `uk_users_tenant_id_id`)
   - [ ] `contracts(tenant_id, created_by_user_id) -> users(tenant_id, id)` FK
@@ -980,12 +988,19 @@ Convert both placeholder main-menu modules into real UI modules, with periodizat
 
 - Extract revenue read-fetch gating into small pure helper(s) (for example `revenueFetchGating.js`).
 - `FutureYearRevenuePage` must consume helper outputs before any schedules/runs/reports fetch is executed.
+- Extract contracts picker read-fetch gating into small pure helper(s) (for example `contractsPermissionGating.js` or pure helpers in `contractsUtils.js`).
+- `ContractsPage` must consume helper outputs before any counterparty/account/document picker fetch is executed.
 - Validate helper behavior with a dedicated test script covering permission combinations:
   - no read permissions
   - only `revenue.schedule.read`
   - only `revenue.run.read`
   - only `revenue.report.read`
   - mixed read permissions (`schedule.read`, `run.read`, `report.read`)
+- Validate contracts picker gating helper behavior with dedicated assertions covering:
+  - missing `cari.card.read` blocks counterparties picker fetch
+  - missing `gl.account.read` blocks line account picker fetch
+  - missing `cari.doc.read` blocks link-document picker fetch
+  - matching read permission enables each picker fetch path
 - Keep `test-contracts-revenue-pr18-frontend-smoke.js` focused on static assertions
   (`App.jsx` route wiring, `sidebarConfig.js`, `messages.js`), not runtime fetch suppression.
 
@@ -994,6 +1009,18 @@ Guard source note (repo-aligned):
 - Permission labels above are enforced via `sidebarConfig.js` `requiredPermissions`.
 - In current `App.jsx`, `withPermissionGuard` reads permissions from sidebar map by `appPath`.
 - Do not rely on a route object `permissions` field for PR-18.
+
+### PR-18 Permission Semantics Freeze (mandatory)
+
+- `requiredPermissions: [...]` arrays in route/sidebar guards are any-of (`OR`) by default.
+- Route-level any-of is correct for `/app/gelecek-yillar-gelirleri` open policy.
+- Do not combine unrelated action/picker dependencies into one plain permission array and assume `AND`.
+- For action/picker gating, use separate booleans per dependency (recommended), or explicit `allOf` where true `AND` semantics are required.
+- Example implementation shape:
+  - edit panel visibility by `contract.upsert`
+  - counterparty picker fetch/render by `cari.card.read`
+  - line account picker fetch/render by `gl.account.read`
+  - link-document picker fetch/render by `cari.doc.read`
 
 ### Placeholder-to-implemented conversion lock (mandatory)
 
@@ -1045,6 +1072,9 @@ Guard source note (repo-aligned):
 - [ ] Add/verify `messages.js` `sidebar.byPath` labels for both routes.
 - [ ] Keep frontend API helper pattern consistent with PR-11:
   - [ ] use shared API error/query helpers (extend to generic `apiCommon` if adopted)
+- [ ] Freeze permission semantics explicitly:
+  - [ ] do not model `AND` dependencies with a plain `requiredPermissions` array
+  - [ ] use separate dependency booleans or explicit `allOf` for true `AND` checks
 - [ ] Add per-action permission checks (not only route-level).
   - [ ] Contracts action buttons/panels follow:
     - [ ] `contract.upsert`, `contract.activate`, `contract.suspend`, `contract.close`, `contract.cancel`, `contract.link_document`
@@ -1071,7 +1101,8 @@ Guard source note (repo-aligned):
   - [ ] reports sections fetch/render only with `revenue.report.read`
   - [ ] no unauthorized background fetches for hidden/disabled sections (avoid avoidable `403` responses)
 - [ ] Extract revenue fetch gating into pure helper(s) and use helper decisions in page loaders before request dispatch.
-- [ ] Add helper-focused test script for gating behavior across permission combinations (separate from static smoke checks).
+- [ ] Extract contracts picker gating into pure helper(s) (`contractsPermissionGating.js` or `contractsUtils.js`) and use helper decisions before picker request dispatch.
+- [ ] Add helper-focused test coverage for gating behavior across permission combinations (separate from static smoke checks).
 - [ ] Update sidebar labels/translations.
 - [ ] Add PR-18 frontend smoke script:
   - [ ] assert `App.jsx` uses real components (not placeholders) for both routes
@@ -1082,6 +1113,8 @@ Guard source note (repo-aligned):
 - [ ] Add PR-18 fetch-gating behavior test script:
   - [ ] assert helper outputs prevent schedules/runs/reports fetch attempts when matching read permission is missing
   - [ ] assert helper outputs allow fetch when matching read permission exists
+  - [ ] assert contracts picker-gating helper outputs prevent counterparties/accounts/documents picker fetch attempts when matching read permission is missing
+  - [ ] assert contracts picker-gating helper outputs allow picker fetch when matching read permission exists
 
 ### Acceptance
 
@@ -1095,6 +1128,9 @@ Guard source note (repo-aligned):
   - users with only `revenue.schedule.read` or only `revenue.run.read` can open the route.
   - users with only `revenue.report.read` can also open the route.
   - section fetch/render still stays permission-scoped (`schedule.read` / `run.read` / `report.read`).
+- Permission semantics are implementation-safe:
+  - route/sidebar `requiredPermissions` arrays are treated as any-of (`OR`)
+  - action/picker dependencies that require `AND` semantics are enforced via separate checks or explicit `allOf`
 - Counterparty picker UX is RBAC-consistent:
   - when picker uses Cari counterparties endpoints, `cari.card.read` is enforced before fetch/render
   - missing picker-read permission does not produce avoidable background `403` noise
@@ -1104,6 +1140,8 @@ Guard source note (repo-aligned):
 - Link-document picker UX is RBAC-consistent:
   - when picker uses Cari document endpoints, `cari.doc.read` is enforced before fetch/render
   - missing picker-read permission does not produce avoidable background `403` noise
+- Contracts picker fetch suppression is testable and tested via helper-level gating checks
+  (counterparty/account/document picker fetch decisions are not hidden only in component conditionals).
 - Revenue fetch suppression is testable and tested via dedicated helper-level gating tests
   (static smoke script remains route/sidebar/messages focused).
 - No regression in Cari quality gate.
@@ -1131,6 +1169,9 @@ Guard source note (repo-aligned):
   - route-level:
     - `/app/contracts` -> `contract.read`
     - `/app/gelecek-yillar-gelirleri` -> any-of `revenue.schedule.read`, `revenue.run.read`, `revenue.report.read`
+  - semantics:
+    - route/sidebar `requiredPermissions` arrays are any-of (`OR`) in this repo
+    - action/picker `AND` dependencies must be expressed explicitly (separate checks or `allOf`), not inferred from a plain array
   - action-level:
     - contracts: `contract.upsert`, `contract.activate`, `contract.suspend`, `contract.close`,
       `contract.cancel`, `contract.link_document`
@@ -1356,7 +1397,8 @@ export default migration022CounterpartyAccountMapping;
   - mapped account must use legal-entity scoped chart for Cari control usage
     (`charts_of_accounts.scope='LEGAL_ENTITY'` and
     `charts_of_accounts.legal_entity_id = counterparty.legal_entity_id`).
-  - service-layer enforcement is mandatory (`assertAccountBelongsToTenant` + chart/entity compatibility checks), DB FK alone is not sufficient.
+  - service-layer enforcement is mandatory (`assertAccountBelongsToTenant` + explicit chart/entity/type/postability checks), DB FK alone is not sufficient.
+  - `assertAccountBelongsToTenant(...)` alone is not sufficient for PR-19 rules because helper output does not enforce `account_type`, `is_active`, or `allow_posting`.
 - Posting suitability:
   - mapped account must be active and postable (`is_active=true`, `allow_posting=true`).
 - Posting-time revalidation (mandatory):
@@ -1400,11 +1442,15 @@ For AP document/settlement:
 
 - Reuse existing backend helpers instead of introducing PR-specific parallel utilities.
 - Account guard reuse:
-  - use `assertAccountBelongsToTenant(...)` for counterparty AR/AP mapping validation and posting-time revalidation.
+  - use `assertAccountBelongsToTenant(...)` as the first-step guard for counterparty AR/AP mapping validation and posting-time revalidation.
+  - helper return is not sufficient alone; still run explicit checks for `account_type`, `is_active`, `allow_posting`, and legal-entity chart compatibility.
 - Transaction wrapper reuse:
   - use `withTransaction(...)` for counterparty mapping writes and posting-time validation+posting flows where atomicity is required.
 - Amount parsing reuse:
-  - where touched posting flows parse amounts, reuse `parseAmount(...)` / `parseRequiredAmount(...)` for 6-decimal discipline.
+  - where touched posting flows parse amounts, reuse shared `parseAmount(...)` for 6-decimal discipline.
+  - `parseRequiredAmount(...)` is not a shared global helper yet (currently local in Cari validator). Avoid introducing parallel PR-specific copies.
+  - preferred Option A: extract `parseRequiredAmount(...)` into a shared validator helper module and reuse it.
+  - if extraction is deferred, use `parseAmount(..., { required: true, allowZero: false })` path directly (or a thin wrapper) without duplicating parsing logic.
 - Route RBAC reuse:
   - preserve existing route-level RBAC middleware pattern in Cari route files (no ad-hoc permission checks in services).
 
@@ -1440,7 +1486,8 @@ For AP document/settlement:
 - [ ] Reuse existing backend helpers in PR-19 (no parallel helper drift):
   - [ ] `assertAccountBelongsToTenant(...)`
   - [ ] `withTransaction(...)`
-  - [ ] `parseAmount(...)` / `parseRequiredAmount(...)` (for touched amount parsing paths)
+  - [ ] shared `parseAmount(...)` (for touched amount parsing paths)
+  - [ ] `parseRequiredAmount(...)` is shared-extracted (preferred) or touched paths use `parseAmount(..., { required: true, allowZero: false })` without duplicated parse logic
   - [ ] existing route RBAC middleware pattern
 - [ ] Enforce frontend AR/AP account-picker read-dependency gating:
   - [ ] if counterparty form uses GL accounts APIs, require `gl.account.read` before account-picker fetch/render
