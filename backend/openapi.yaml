@@ -4442,10 +4442,10 @@
           "Cari"
         ],
         "operationId": "getApiV1CariDocuments",
-        "summary": "Cari endpoint: GET /api/v1/cari/documents",
+        "summary": "List cari documents",
         "responses": {
           "200": {
-            "description": "Successful response",
+            "description": "Cari document list",
             "content": {
               "application/json": {
                 "schema": {
@@ -4463,7 +4463,144 @@
           "403": {
             "$ref": "#/components/responses/ErrorResponse"
           }
-        }
+        },
+        "parameters": [
+          {
+            "in": "query",
+            "name": "legalEntityId",
+            "required": false,
+            "description": "Legal entity filter",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "counterpartyId",
+            "required": false,
+            "description": "Counterparty filter",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "direction",
+            "required": false,
+            "description": "Document direction filter",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "AR",
+                "AP"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "documentType",
+            "required": false,
+            "description": "Document type filter",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "INVOICE",
+                "DEBIT_NOTE",
+                "CREDIT_NOTE",
+                "PAYMENT",
+                "ADJUSTMENT"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "description": "Document status filter",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "DRAFT",
+                "POSTED",
+                "REVERSED",
+                "CANCELLED",
+                "PARTIALLY_SETTLED",
+                "SETTLED"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "dateFrom",
+            "required": false,
+            "description": "Document date lower bound",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "in": "query",
+            "name": "dateTo",
+            "required": false,
+            "description": "Document date upper bound",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "in": "query",
+            "name": "documentDateFrom",
+            "required": false,
+            "description": "Legacy alias for dateFrom",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "in": "query",
+            "name": "documentDateTo",
+            "required": false,
+            "description": "Legacy alias for dateTo",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "description": "Document no / counterparty search",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "description": "Page size",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "description": "Page offset",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ]
       },
       "post": {
         "tags": [

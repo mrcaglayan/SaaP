@@ -525,6 +525,43 @@ function applyCariOperationOverrides(specObject) {
     false,
     "Cari direction filter"
   );
+  const documentListQueryParams = [
+    queryParamInt("legalEntityId", false, "Legal entity filter"),
+    queryParamInt("counterpartyId", false, "Counterparty filter"),
+    queryParam("direction", { type: "string", enum: ["AR", "AP"] }, false, "Document direction filter"),
+    queryParam(
+      "documentType",
+      { type: "string", enum: ["INVOICE", "DEBIT_NOTE", "CREDIT_NOTE", "PAYMENT", "ADJUSTMENT"] },
+      false,
+      "Document type filter"
+    ),
+    queryParam(
+      "status",
+      {
+        type: "string",
+        enum: ["DRAFT", "POSTED", "REVERSED", "CANCELLED", "PARTIALLY_SETTLED", "SETTLED"],
+      },
+      false,
+      "Document status filter"
+    ),
+    queryParam("dateFrom", { type: "string", format: "date" }, false, "Document date lower bound"),
+    queryParam("dateTo", { type: "string", format: "date" }, false, "Document date upper bound"),
+    queryParam(
+      "documentDateFrom",
+      { type: "string", format: "date" },
+      false,
+      "Legacy alias for dateFrom"
+    ),
+    queryParam(
+      "documentDateTo",
+      { type: "string", format: "date" },
+      false,
+      "Legacy alias for dateTo"
+    ),
+    queryParam("q", { type: "string" }, false, "Document no / counterparty search"),
+    queryParam("limit", { type: "integer", minimum: 1 }, false, "Page size"),
+    queryParam("offset", nonNegativeInt, false, "Page offset"),
+  ];
   const auditQueryParams = [
     queryParamInt("tenantId", false, "Tenant identifier; optional if available in JWT"),
     queryParamInt("legalEntityId", false, "Legal entity scope filter"),
@@ -627,6 +664,13 @@ function applyCariOperationOverrides(specObject) {
     auditOperation.summary = "Cari audit visibility endpoint";
     mergeOperationParameters(auditOperation, auditQueryParams);
     auditOperation.responses = withStandardResponses("200", "Cari audit entries");
+  }
+
+  const documentsListOperation = paths["/api/v1/cari/documents"]?.get;
+  if (documentsListOperation) {
+    documentsListOperation.summary = "List cari documents";
+    mergeOperationParameters(documentsListOperation, documentListQueryParams);
+    documentsListOperation.responses = withStandardResponses("200", "Cari document list");
   }
 }
 

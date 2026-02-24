@@ -29,6 +29,7 @@ import CashSessionsPage from "./pages/cash/CashSessionsPage.jsx";
 import CashTransactionsPage from "./pages/cash/CashTransactionsPage.jsx";
 import CashExceptionsPage from "./pages/cash/CashExceptionsPage.jsx";
 import CariCounterpartyPage from "./pages/cari/CariCounterpartyPage.jsx";
+import CariDocumentsPage from "./pages/cari/CariDocumentsPage.jsx";
 import CariReportsPage from "./pages/cari/CariReportsPage.jsx";
 import { collectSidebarLinks, sidebarItems } from "./layouts/sidebarConfig.js";
 import TenantReadinessProvider from "./readiness/TenantReadinessProvider.jsx";
@@ -138,6 +139,26 @@ const implementedRoutes = [
     appPath: "/app/cari-raporlari",
     childPath: "cari-raporlari",
     element: <CariReportsPage />,
+  },
+  {
+    appPath: "/app/cari-belgeler",
+    childPath: "cari-belgeler",
+    element: <CariDocumentsPage />,
+  },
+  {
+    appPath: "/app/cari-settlements",
+    childPath: "cari-settlements",
+    element: (
+      <ModulePlaceholderPage
+        title="Cari Mahsuplastirma / Tahsilat-Odeme"
+        path="/app/cari-settlements"
+      />
+    ),
+  },
+  {
+    appPath: "/app/cari-audit",
+    childPath: "cari-audit",
+    element: <ModulePlaceholderPage title="Cari Denetim Izleri" path="/app/cari-audit" />,
   },
   {
     appPath: "/app/ayarlar/hesap-plani-olustur",

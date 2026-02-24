@@ -40,6 +40,27 @@ function parseOptionalDate(value, label) {
   return parseDateOnly(value, label);
 }
 
+function parseOptionalFilterDate(value, label) {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  const raw = String(value).trim();
+  if (!raw) {
+    return null;
+  }
+  return parseDateOnly(raw, label);
+}
+
+function pickPrimaryOrAlias(primaryValue, aliasValue) {
+  if (primaryValue !== undefined && primaryValue !== null) {
+    const normalizedPrimary = String(primaryValue).trim();
+    if (normalizedPrimary) {
+      return primaryValue;
+    }
+  }
+  return aliasValue;
+}
+
 function parseOptionalPositiveIntField(value, label) {
   if (value === undefined) {
     return undefined;
@@ -139,6 +160,17 @@ export function parseDocumentReadFilters(req) {
   const legalEntityId = optionalPositiveInt(req.query?.legalEntityId, "legalEntityId");
   const counterpartyId = optionalPositiveInt(req.query?.counterpartyId, "counterpartyId");
   const q = normalizeText(req.query?.q, "q", 120);
+  const dateFrom = parseOptionalFilterDate(
+    pickPrimaryOrAlias(req.query?.dateFrom, req.query?.documentDateFrom),
+    "dateFrom"
+  );
+  const dateTo = parseOptionalFilterDate(
+    pickPrimaryOrAlias(req.query?.dateTo, req.query?.documentDateTo),
+    "dateTo"
+  );
+  if (dateFrom && dateTo && dateFrom > dateTo) {
+    throw badRequest("dateFrom cannot be greater than dateTo");
+  }
 
   const directionRaw = String(req.query?.direction || "")
     .trim()
@@ -166,6 +198,8 @@ export function parseDocumentReadFilters(req) {
     tenantId,
     legalEntityId,
     counterpartyId,
+    dateFrom,
+    dateTo,
     q,
     direction,
     documentType,

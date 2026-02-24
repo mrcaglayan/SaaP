@@ -192,6 +192,29 @@ export const sidebarItems = [
         requiredPermissions: ["cari.report.read"],
         implemented: true,
       },
+      {
+        label: "Cari Belgeler",
+        to: "/app/cari-belgeler",
+        requiredPermissions: ["cari.doc.read"],
+        implemented: true,
+      },
+      {
+        label: "Cari Mahsuplastirma / Tahsilat-Odeme",
+        to: "/app/cari-settlements",
+        requiredPermissions: [
+          "cari.settlement.apply",
+          "cari.settlement.reverse",
+          "cari.bank.attach",
+          "cari.bank.apply",
+        ],
+        implemented: true,
+      },
+      {
+        label: "Cari Denetim Izleri",
+        to: "/app/cari-audit",
+        requiredPermissions: ["cari.audit.read"],
+        implemented: true,
+      },
     ],
   },
   {

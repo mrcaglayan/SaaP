@@ -43,20 +43,39 @@ async function hasIndex(connection, tableName, indexName) {
 }
 
 async function hasCounterpartyRoleCheckConstraint(connection) {
-  const [rows] = await connection.execute(
-    `SELECT tc.constraint_name
-     FROM information_schema.table_constraints tc
-     JOIN information_schema.check_constraints cc
-       ON cc.constraint_schema = tc.constraint_schema
-      AND cc.constraint_name = tc.constraint_name
-     WHERE tc.constraint_schema = DATABASE()
-       AND tc.table_name = 'counterparties'
-       AND tc.constraint_type = 'CHECK'
-       AND cc.check_clause LIKE '%is_customer%'
-       AND cc.check_clause LIKE '%is_vendor%'
-     LIMIT 1`
-  );
-  return Array.isArray(rows) && rows.length > 0;
+  try {
+    const [rows] = await connection.execute(
+      `SELECT tc.constraint_name
+       FROM information_schema.table_constraints tc
+       JOIN information_schema.check_constraints cc
+         ON cc.constraint_schema = tc.constraint_schema
+        AND cc.constraint_name = tc.constraint_name
+       WHERE tc.constraint_schema = DATABASE()
+         AND tc.table_name = 'counterparties'
+         AND tc.constraint_type = 'CHECK'
+         AND cc.check_clause LIKE '%is_customer%'
+         AND cc.check_clause LIKE '%is_vendor%'
+       LIMIT 1`
+    );
+    return Array.isArray(rows) && rows.length > 0;
+  } catch (err) {
+    // Some engines/existing versions don't expose information_schema.check_constraints.
+    // Fallback to constraint-name lookup so migration stays portable.
+    if (err?.errno !== 1109) {
+      throw err;
+    }
+
+    const [rows] = await connection.execute(
+      `SELECT 1
+       FROM information_schema.table_constraints
+       WHERE constraint_schema = DATABASE()
+         AND table_name = 'counterparties'
+         AND constraint_type = 'CHECK'
+         AND constraint_name = 'chk_counterparties_customer_or_vendor'
+       LIMIT 1`
+    );
+    return Array.isArray(rows) && rows.length > 0;
+  }
 }
 
 const migration019CounterpartyRoleFlags = {

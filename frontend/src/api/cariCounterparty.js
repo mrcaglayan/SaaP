@@ -1,35 +1,27 @@
 import { api } from "./client.js";
+import { parseCariApiError, toCariQueryString } from "./cariCommon.js";
 
-function toQueryString(params = {}) {
-  const searchParams = new URLSearchParams();
-  for (const [key, value] of Object.entries(params)) {
-    if (value === undefined || value === null || value === "") {
-      continue;
-    }
-    searchParams.set(key, String(value));
+async function run(requestFn) {
+  try {
+    const response = await requestFn();
+    return response.data;
+  } catch (error) {
+    throw parseCariApiError(error);
   }
-  const query = searchParams.toString();
-  return query ? `?${query}` : "";
 }
 
 export async function listCariCounterparties(params = {}) {
-  const response = await api.get(
-    `/api/v1/cari/counterparties${toQueryString(params)}`
-  );
-  return response.data;
+  return run(() => api.get(`/api/v1/cari/counterparties${toCariQueryString(params)}`));
 }
 
 export async function getCariCounterparty(counterpartyId) {
-  const response = await api.get(`/api/v1/cari/counterparties/${counterpartyId}`);
-  return response.data;
+  return run(() => api.get(`/api/v1/cari/counterparties/${counterpartyId}`));
 }
 
 export async function createCariCounterparty(payload) {
-  const response = await api.post("/api/v1/cari/counterparties", payload);
-  return response.data;
+  return run(() => api.post("/api/v1/cari/counterparties", payload));
 }
 
 export async function updateCariCounterparty(counterpartyId, payload) {
-  const response = await api.put(`/api/v1/cari/counterparties/${counterpartyId}`, payload);
-  return response.data;
+  return run(() => api.put(`/api/v1/cari/counterparties/${counterpartyId}`, payload));
 }

@@ -167,6 +167,9 @@ export const messages = {
         "/app/alici-kart-listesi": "Alicilar Karti Listesi",
         "/app/satici-kart-olustur": "Saticilar Karti Olustur",
         "/app/satici-kart-listesi": "Saticilar Karti Listesi",
+        "/app/cari-belgeler": "Cari Belgeler",
+        "/app/cari-settlements": "Cari Mahsuplastirma / Tahsilat-Odeme",
+        "/app/cari-audit": "Cari Denetim Izleri",
         "/app/stoklar": "Stoklar",
         "/app/stok-karti-olustur": "Stok Karti Olustur",
         "/app/stok-yansitma-islemleri": "Stok Yansitma Islemleri",
@@ -943,6 +946,14 @@ export const messages = {
           "Kasa islem verileri gecici olarak alinamadi; istisna bolumleri kismi gosteriliyor.",
       },
     },
+    cariDocuments: {
+      title: "Cari Belgeler",
+      createDraft: "Taslak belge olustur",
+      updateDraft: "Taslak belgeyi guncelle",
+      cancelDraft: "Taslagi iptal et",
+      postDraft: "Taslagi post et",
+      reversePosted: "Post edileni ters kaydet",
+    },
     modulePlaceholder: {
       defaultTitle: "Modul",
       description:
@@ -1166,6 +1177,9 @@ export const messages = {
         "/app/alici-kart-listesi": "Customer Card List",
         "/app/satici-kart-olustur": "Create Vendor Card",
         "/app/satici-kart-listesi": "Vendor Card List",
+        "/app/cari-belgeler": "Cari Documents",
+        "/app/cari-settlements": "Cari Settlements / Collection-Payment",
+        "/app/cari-audit": "Cari Audit Trails",
         "/app/stoklar": "Inventory",
         "/app/stok-karti-olustur": "Create Stock Card",
         "/app/stok-yansitma-islemleri": "Stock Reflection Transactions",
@@ -1945,6 +1959,14 @@ export const messages = {
         transactionsUnavailable:
           "Cash transaction data is temporarily unavailable; exception sections are partially populated.",
       },
+    },
+    cariDocuments: {
+      title: "Cari Documents",
+      createDraft: "Create draft document",
+      updateDraft: "Update draft document",
+      cancelDraft: "Cancel draft",
+      postDraft: "Post draft",
+      reversePosted: "Reverse posted document",
     },
     modulePlaceholder: {
       defaultTitle: "Module",

@@ -1073,6 +1073,14 @@ export async function listCariDocuments({
     conditions.push("d.status = ?");
     params.push(filters.status);
   }
+  if (filters.dateFrom) {
+    conditions.push("d.document_date >= ?");
+    params.push(filters.dateFrom);
+  }
+  if (filters.dateTo) {
+    conditions.push("d.document_date <= ?");
+    params.push(filters.dateTo);
+  }
   if (filters.q) {
     conditions.push(
       "(d.document_no LIKE ? OR d.counterparty_code_snapshot LIKE ? OR d.counterparty_name_snapshot LIKE ?)"
