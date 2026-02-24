@@ -163,16 +163,36 @@ export function toCariQueryString(params = {}) {
 }
 
 export function parseCariApiError(error) {
-  const status = Number(error?.response?.status || 0) || null;
-  const data = error?.response?.data || {};
+  const status = Number(error?.response?.status || error?.status || 0) || null;
+  const data = error?.response?.data || error?.data || {};
   const message = String(data?.message || error?.message || "Request failed");
+  const requestId = data?.requestId || error?.requestId || null;
+  const isIdempotentReplay = Boolean(data?.idempotentReplay);
+  const followUpRisks = Array.isArray(data?.followUpRisks) ? data.followUpRisks : [];
+
+  // Keep legacy compatibility for pages/utilities that still read
+  // err.response.data.message/requestId (Axios-style shape).
+  const response = {
+    status,
+    data: {
+      ...data,
+      message,
+      requestId,
+      idempotentReplay: isIdempotentReplay,
+      followUpRisks,
+    },
+  };
+
   return {
     status,
     message,
-    requestId: data?.requestId || null,
+    requestId,
     isValidation: status === 400,
     isPermission: status === 401 || status === 403,
-    isIdempotentReplay: false,
+    isIdempotentReplay,
+    followUpRisks,
+    response,
+    originalError: error,
   };
 }
 
@@ -342,11 +362,15 @@ function hasPath(source, pathValue) {
   const escaped = pathValue.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return new RegExp(escaped).test(source);
 }
+function hasCariCommonImport(source) {
+  return /from\s+['"]\.\/cariCommon\.js['"]/.test(source);
+}
 
 async function main() {
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
   const app = await readFile(path.resolve(root, "frontend/src/App.jsx"), "utf8");
   const sidebar = await readFile(path.resolve(root, "frontend/src/layouts/sidebarConfig.js"), "utf8");
+  const i18nMessages = await readFile(path.resolve(root, "frontend/src/i18n/messages.js"), "utf8");
   const apiCommon = await readFile(path.resolve(root, "frontend/src/api/cariCommon.js"), "utf8");
   const apiDocs = await readFile(path.resolve(root, "frontend/src/api/cariDocuments.js"), "utf8");
   const apiSettle = await readFile(path.resolve(root, "frontend/src/api/cariSettlements.js"), "utf8");
@@ -368,14 +392,21 @@ async function main() {
   assert(hasPath(app, "/app/cari-settlements"), "missing route /app/cari-settlements");
   assert(hasPath(app, "/app/cari-audit"), "missing route /app/cari-audit");
   assert(hasPath(sidebar, "/app/cari-belgeler"), "missing sidebar cari-belgeler");
+  assert(hasPath(sidebar, "/app/cari-settlements"), "missing sidebar cari-settlements");
+  assert(hasPath(sidebar, "/app/cari-audit"), "missing sidebar cari-audit");
+  assert(hasPath(i18nMessages, "sidebar.byPath"), "missing i18n sidebar.byPath map");
+  assert(hasPath(i18nMessages, "/app/cari-belgeler"), "missing i18n key /app/cari-belgeler");
+  assert(hasPath(i18nMessages, "/app/cari-settlements"), "missing i18n key /app/cari-settlements");
+  assert(hasPath(i18nMessages, "/app/cari-audit"), "missing i18n key /app/cari-audit");
   assert(apiCommon.includes("parseCariApiError"), "cariCommon parser missing");
   assert(apiCommon.includes("toCariQueryString"), "cariCommon query helper missing");
+  assert(apiCommon.includes("response"), "cariCommon should keep axios-compatible response shape");
   assert(apiDocs.includes("/api/v1/cari/documents"), "docs api path missing");
   assert(apiSettle.includes("/api/v1/cari/settlements/apply"), "settlement api path missing");
   assert(apiAudit.includes("/api/v1/cari/audit"), "audit api path missing");
-  assert(apiCounterparty.includes('./cariCommon.js'), "cariCounterparty should use cariCommon");
-  assert(apiPaymentTerms.includes('./cariCommon.js'), "cariPaymentTerms should use cariCommon");
-  assert(apiReports.includes('./cariCommon.js'), "cariReports should use cariCommon");
+  assert(hasCariCommonImport(apiCounterparty), "cariCounterparty should use cariCommon");
+  assert(hasCariCommonImport(apiPaymentTerms), "cariPaymentTerms should use cariCommon");
+  assert(hasCariCommonImport(apiReports), "cariReports should use cariCommon");
 
   console.log("PR-11 smoke passed.");
 }
@@ -398,15 +429,20 @@ main().catch((err) => {
 - [ ] Add 3 sidebar links under Cari section.
 - [ ] Add i18n `sidebar.byPath` keys for the 3 routes (TR + EN message maps).
 - [ ] Use exact backend permission names in route/sidebar guards (no alias names).
+- [ ] Keep error normalization backward-compatible:
+  - [ ] normalized error still exposes Axios-like `response.status` and `response.data.*`
+  - [ ] legacy callers reading `err.response.data.message` continue to work
 - [ ] Add PR-11 smoke script and package script:
   - [ ] `test:cari-pr11`
 - [ ] Keep PR-11 smoke assertions formatting-agnostic (path/pattern checks instead of fragile exact string fragments).
+- [ ] Ensure PR-11 smoke validates all three sidebar routes and i18n `sidebar.byPath` keys.
 
 ### Acceptance
 
 - Authorized users with route permission can open pages.
 - Unauthorized users blocked via `RequirePermission`.
 - Shared helper normalizes API errors and query-string behavior consistently across new and existing Cari API files.
+- Existing utilities that parse Axios-style errors (`err.response.data.message`) keep working.
 - Existing Cari pages continue to work.
 
 ### Command
@@ -487,7 +523,10 @@ Implement complete document lifecycle UI on existing backend.
   - snapshot fields (`counterparty*Snapshot`, `dueDateSnapshot`, `fxRateSnapshot`, `currencyCodeSnapshot`)
   - reversal linkage:
     - `reversalOfDocumentId` from document `GET/list` response
-    - `reversalDocumentId` and `reversalJournalEntryId` from reverse action response (`POST /reverse`)
+    - reverse action nested response from `POST /reverse`:
+      - `response.row.id` (reversal document id)
+      - `response.row.documentNo` (reversal document no, if shown in UI)
+      - `response.journal.reversalJournalEntryId`
 - FX override in post action:
   - UI must expose explicit `useFxOverride` checkbox + `fxOverrideReason` field.
   - `useFxOverride=true` requires `fxOverrideReason`.
@@ -500,8 +539,11 @@ Important repo note:
 - PR-12 must include backend support for `dateFrom`/`dateTo` so UI filter contract is real (not client-only filtering).
 - Option A lock for reversal linkage (scope-safe):
   - backend mapper field is `reversalOfDocumentId` (not `reversedDocumentId`)
-  - do not require `reversalDocumentId` / `reversalJournalEntryId` in `GET /documents` for PR-12
-  - show those from reverse action response, or add separate backend enhancement PR later.
+  - do not require flat `reversalDocumentId` / `reversalJournalEntryId` in `GET /documents` for PR-12
+  - read reverse linkage from nested reverse response:
+    - `response.row.id`
+    - `response.journal.reversalJournalEntryId`
+  - if flattening is needed, do it in a separate backend enhancement PR.
 - Create draft payload alignment:
   - do not force line-items in UI if backend create contract is header-level for current scope
   - keep payload minimal and backend-validator-compatible
@@ -581,7 +623,9 @@ export default function CariDocumentsPage() {
 - [ ] Implement permission-aware buttons.
 - [ ] Render posted journal reference and snapshot fields.
 - [ ] Add detail drawer/modal with reversal linkage visibility using `reversalOfDocumentId`.
-- [ ] Show `reversalDocumentId` + `reversalJournalEntryId` from reverse action response in result panel/detail state.
+- [ ] Show reverse result linkage from nested response in result panel/detail state:
+  - [ ] `response.row.id` / `response.row.documentNo`
+  - [ ] `response.journal.reversalJournalEntryId`
 - [ ] Keep create payload header-level unless backend contract expands (no artificial line-items requirement in PR-12).
 - [ ] Apply `dueDate` conditional required logic based on selected `documentType` and backend validator rules.
 - [ ] Add explicit FX override UX and unauthorized guidance text.
@@ -591,7 +635,9 @@ export default function CariDocumentsPage() {
   - [ ] verify action buttons and labels exist
   - [ ] verify API function usage by source scan
   - [ ] verify source uses `reversalOfDocumentId` and does not reference `reversedDocumentId`
-  - [ ] verify reverse action result wiring for `reversalDocumentId` + `reversalJournalEntryId`
+  - [ ] verify reverse action result wiring uses nested fields:
+    - [ ] `response.row.id` / `response.row.documentNo`
+    - [ ] `response.journal.reversalJournalEntryId`
 - [ ] Add backend filter contract test for new date params.
 - [ ] Add script alias: `test:cari-pr12`
 
@@ -601,6 +647,7 @@ export default function CariDocumentsPage() {
 - Post works and shows `postedJournalEntryId`.
 - Reverse works only on posted docs.
 - Reversal linkage rendering matches real backend payload names and sources.
+- Reverse action UI reads real nested response shape (`row.*`, `journal.reversalJournalEntryId`) without requiring flat fields.
 - Create flow matches real backend payload contract (header-level scope for this PR).
 - `dueDate` required behavior matches backend `documentType` validation.
 - Date-range filter is supported server-side and reflected in OpenAPI.
@@ -714,6 +761,8 @@ Critical UX requirements
 - Wiring rule:
   - Fetch open items when preview filters change and feed returned rows into
     `buildAutoAllocatePreview(openItems, incomingAmountTxn)`.
+  - In preview math, use `residualAmountTxnAsOf` as the open balance source
+    from report rows.
   - Do not use static/empty arrays for preview calculation except initial empty state.
 
 ### Skeleton
@@ -731,7 +780,7 @@ export function buildAutoAllocatePreview(openItems = [], incomingAmountTxn = 0) 
 
   let remaining = Number(incomingAmountTxn || 0);
   return sorted.map((item) => {
-    const openTxn = Number(item?.openAmountTxn || 0);
+    const openTxn = Number(item?.residualAmountTxnAsOf || 0);
     const applyTxn = Math.max(0, Math.min(openTxn, remaining));
     remaining = Math.max(0, remaining - applyTxn);
     return {
@@ -909,6 +958,7 @@ export default function CariSettlementsPage() {
 - [ ] Build apply section (manual/auto allocate).
 - [ ] Build reverse section.
 - [ ] Fetch preview source data via `getCariOpenItemsReport(...)` (not static rows).
+- [ ] Use `residualAmountTxnAsOf` from open-items rows as preview open balance input.
 - [ ] Send required preview filters: `legalEntityId`, `counterpartyId`, `asOfDate`.
 - [ ] Send optional `direction` filter when selected.
 - [ ] Build deterministic auto-allocation preview (oldest due first).
@@ -1096,6 +1146,17 @@ Finalize Cari operational quality gate after PR-11..14.
 
 - `docs/runbooks/cari-v1-support-finance-ui-guide.md`
 
+### Quality gate script lock (explicit)
+
+`backend/scripts/test-cari-pr10-quality-gate-and-docs.js` must explicitly:
+
+- include the new PR-12 contract check in gate flow:
+  - `test:cari-pr12-documents-date-filter`
+- run OpenAPI generation and immediately validate staleness:
+  - run `npm run openapi:generate`
+  - then fail if `backend/openapi.yaml` still has drift vs generated output
+    (for example via `git diff --exit-code backend/openapi.yaml`).
+
 ### Checklist
 
 - [ ] Add scripts:
@@ -1105,6 +1166,7 @@ Finalize Cari operational quality gate after PR-11..14.
   - [ ] `test:cari-pr13`
   - [ ] `test:cari-pr14`
 - [ ] Extend `test:cari-quality-gate` chain with PR-11..14 scripts plus `test:cari-pr12-documents-date-filter`.
+- [ ] In `backend/scripts/test-cari-pr10-quality-gate-and-docs.js`, explicitly run/assert `test:cari-pr12-documents-date-filter`.
 - [ ] Update runbook with new UI routes and operator flows.
 - [ ] Add short support/finance UI operations guide:
   - [ ] document lifecycle
@@ -1116,6 +1178,7 @@ Finalize Cari operational quality gate after PR-11..14.
 - [ ] Regenerate OpenAPI:
   - [ ] `cd backend && npm run openapi:generate`
 - [ ] Validate OpenAPI generation in CI script (fail if stale).
+- [ ] In quality gate script, stale-openapi check is executed immediately after `openapi:generate`.
 - [ ] Keep `test:cari-pr10` openapi/doc assertions valid.
 
 ### Acceptance
@@ -1273,6 +1336,19 @@ export default migration020ContractsFoundation;
 - `contract.close`
 - `contract.link_document`
 
+### Domain correctness lock (PR-16)
+
+- Link-document direction compatibility must be enforced in service layer:
+  - `contract_type=CUSTOMER` can link only to `cari_documents.direction=AR`
+  - `contract_type=VENDOR` can link only to `cari_documents.direction=AP`
+  - reject mismatches with explicit validation error.
+- `contract_lines` legal-entity denormalization decision for PR-16:
+  - keep normalized via parent `contracts.legal_entity_id` (no extra `legal_entity_id` column in `contract_lines` for now)
+  - if reporting/index pressure appears later, add denormalization in a separate optimization PR.
+- Scope boundary:
+  - PR-16 is contracts foundation + lifecycle + link-document only.
+  - periodization/deferred/accrual logic is out-of-scope and belongs to PR-17B/17C/17D.
+
 ### Checklist
 
 - [ ] Add migration and wire `m020` in `backend/src/migrations/index.js`.
@@ -1284,12 +1360,19 @@ export default migration020ContractsFoundation;
 - [ ] Enforce strict scope checks in link service:
   - [ ] linked `cari_document` must match contract `tenant_id`
   - [ ] linked `cari_document` must match contract `legal_entity_id`
+- [ ] Enforce `contract_type` vs document direction compatibility:
+  - [ ] CUSTOMER -> AR only
+  - [ ] VENDOR -> AP only
+- [ ] Keep `contract_lines` normalized (no `legal_entity_id` denormalization in PR-16 migration).
+- [ ] Keep PR-16 free of periodization/deferred/accrual posting logic.
 - [ ] Add PR-16 integration test + package script.
 
 ### Acceptance
 
 - Contracts CRUD and lifecycle stable.
 - Contract-document links are tenant-safe and scope-safe.
+- Contract-document linking enforces type/direction compatibility (`CUSTOMER/AR`, `VENDOR/AP`).
+- Contracts foundation remains isolated from periodization engine concerns.
 - No regressions in Cari endpoints/tests.
 
 ### Global Guardrails Check (Mandatory)
@@ -1310,113 +1393,49 @@ export default migration020ContractsFoundation;
 - Section `3` data model alignment:
   - existing Cari tables stay unchanged semantically.
   - `contract_document_links` must reference `cari_documents` safely (tenant/legal entity boundaries).
+  - `contract_lines` stays normalized through `contracts` in PR-16 (no premature denormalization).
 
 ---
 
-## 10) PR-17: Deferred + Accrual Periodization Engine (18x/28x/38x/48x)
+## 10) PR-17 Split: Deferred + Accrual Periodization Engine (18x/28x/38x/48x)
 
-### Goal
+### Why split PR-17 into 17A/17B/17C/17D
 
-Add schedule generation and posting engine for Turkish periodization accounts:
+- Reviewability: each accounting family/lifecycle is independently reviewable.
+- Rollback safety: a bad phase can be reverted without rolling back full engine scope.
+- Cleaner test gates: each PR has its own deterministic pass/fail boundary.
+- Lower regression risk on existing accounting behavior.
 
-- deferred revenue (`380/480`)
-- accrued revenue (`181/281`)
-- accrued expense (`381/481`)
-- prepaid expense carry-forward (`180/280`)
+### Shared accounting semantics (apply to PR-17A..17D)
 
-### Fazli implementation lock (mandatory)
-
-- Faz A (Phase A): foundation
-  - model + posting rules + mapping + subledger + reclass altyapisi
-  - no UI dependency
-- Faz B (Phase B): first accounting families
-  - `380/480` + `180/280`
-  - posting/reversal/reclass + reconciliation
-- Faz C (Phase C): accrual families
-  - `181/281` + `381/481` kapanis/settlement akislari
-  - due-based closure + reversal controls
-- Faz D (Phase D): reporting + consolidation + UI depth
-  - consolidation reports and split rollforward depth
-  - UI deepening for all families and reconciliation visibility
-
-### Files to create
-
-- `backend/src/migrations/m021_revenue_recognition_schedules.js`
-- `backend/src/routes/revenue-recognition.js`
-- `backend/src/routes/revenue-recognition.validators.js`
-- `backend/src/services/revenue-recognition.service.js`
-- `backend/scripts/test-revenue-pr17-engine.js`
-
-### Files to update
-
-- `backend/src/migrations/index.js`
-- `backend/src/index.js`
-- `backend/src/seedCore.js`
-- `backend/scripts/generate-openapi.js`
-- `backend/package.json`
-
-### New backend endpoints
-
-- `GET /api/v1/revenue-recognition/schedules`
-- `POST /api/v1/revenue-recognition/schedules/generate`
-- `GET /api/v1/revenue-recognition/runs`
-- `POST /api/v1/revenue-recognition/runs`
-- `POST /api/v1/revenue-recognition/runs/{runId}/post`
-- `POST /api/v1/revenue-recognition/runs/{runId}/reverse`
-- `GET /api/v1/revenue-recognition/reports/future-year-rollforward`
-- `GET /api/v1/revenue-recognition/reports/deferred-revenue-split`
-- `GET /api/v1/revenue-recognition/reports/accrual-split`
-- `POST /api/v1/revenue-recognition/accruals/generate`
-- `POST /api/v1/revenue-recognition/accruals/{accrualId}/settle`
-- `POST /api/v1/revenue-recognition/accruals/{accrualId}/reverse`
-
-### Data model (new)
-
-- `revenue_recognition_schedules`
-- `revenue_recognition_schedule_lines`
-- `revenue_recognition_runs`
-- `revenue_recognition_run_lines`
-- `revenue_recognition_subledger_entries`
-
-Required classification fields in schedule/run lines:
-
-- `liability_bucket` (`SHORT_TERM` | `LONG_TERM`)
-- `maturity_date`
-- `reclass_required` flag
-- `account_family` (`DEFREV` | `ACCRUED_REVENUE` | `ACCRUED_EXPENSE` | `PREPAID_EXPENSE`)
-
-### Accounting mapping requirement
-
-Use `journal_purpose_accounts` with purpose codes:
-
-- `PREPAID_EXP_SHORT_ASSET` (180 Gelecek Aylara Ait Giderler)
-- `PREPAID_EXP_LONG_ASSET` (280 Gelecek Yillara Ait Giderler)
-- `ACCR_REV_SHORT_ASSET` (181 Gelir Tahakkuklari)
-- `ACCR_REV_LONG_ASSET` (281 Gelir Tahakkuklari)
-- `DEFREV_SHORT_LIABILITY` (Gelecek Aylar Gelirleri)
-- `DEFREV_LONG_LIABILITY` (Gelecek Yillar Gelirleri)
-- `ACCR_EXP_SHORT_LIABILITY` (381 Gider Tahakkuklari)
-- `ACCR_EXP_LONG_LIABILITY` (481 Gider Tahakkuklari)
-- `DEFREV_REVENUE`
-- `DEFREV_RECLASS` (optional dedicated reclass purpose)
-
-### Turkish periodization lock rules (must implement)
-
-- Initial recognition split by maturity:
-  - <= 12 months -> short-term bucket (`180/181/380/381`)
-  - > 12 months -> long-term bucket (`280/281/480/481`)
-- Mandatory long->short reclass on maturity horizon change:
+- Namespace: `/api/v1/revenue-recognition/*`
+- Classification fields in schedule/run/subledger rows:
+  - `liability_bucket` (`SHORT_TERM` | `LONG_TERM`)
+  - `maturity_date`
+  - `reclass_required`
+  - `account_family` (`DEFREV` | `ACCRUED_REVENUE` | `ACCRUED_EXPENSE` | `PREPAID_EXPENSE`)
+- Initial bucket split by maturity:
+  - <= 12 months -> short-term (`180/181/380/381`)
+  - > 12 months -> long-term (`280/281/480/481`)
+- Mandatory long->short reclass:
   - `280 -> 180`, `281 -> 181`, `480 -> 380`, `481 -> 381`
-- Closing/settlement flows:
-  - deferred revenue recognition: `380/480` decreases as revenue is recognized.
-  - accrued revenue closure: `181/281` closes when receivable/cash posting occurs.
-  - accrued expense closure: `381/481` closes when payable/cash posting occurs.
-  - prepaid expense amortization: `180/280` closes into expense accounts by period.
-- Subledger rows must store bucket, family, due/maturity, and source contract/document reference.
-- GL postings must always reconcile to subledger balances by legal entity, currency, and period.
-- Consolidation must include short-term and long-term balances separately for each family (no netting by default).
+- GL must reconcile to subledger by tenant/legal-entity/period/currency.
+- Consolidation reports must show short/long balances separately by family (no default netting).
 
-### New permissions
+### Shared accounting mapping (journal_purpose_accounts)
+
+- `PREPAID_EXP_SHORT_ASSET` (180)
+- `PREPAID_EXP_LONG_ASSET` (280)
+- `ACCR_REV_SHORT_ASSET` (181)
+- `ACCR_REV_LONG_ASSET` (281)
+- `DEFREV_SHORT_LIABILITY` (380)
+- `DEFREV_LONG_LIABILITY` (480)
+- `ACCR_EXP_SHORT_LIABILITY` (381)
+- `ACCR_EXP_LONG_LIABILITY` (481)
+- `DEFREV_REVENUE`
+- `DEFREV_RECLASS`
+
+### Shared permissions (seed + RBAC)
 
 - `revenue.schedule.read`
 - `revenue.schedule.generate`
@@ -1426,40 +1445,131 @@ Use `journal_purpose_accounts` with purpose codes:
 - `revenue.run.reverse`
 - `revenue.report.read`
 
-### Checklist
+### 10.1 PR-17A: Foundation (No posting)
 
-- [ ] Add `m021` migration and wire index.
-- [ ] Add route/validator/service files for engine.
-- [ ] Add index mount:
+Goal:
+
+- Build schema, permissions, route/validator/service skeletons, and OpenAPI base.
+- Do not implement posting/reversal/accrual settlement logic in this PR.
+
+Files to create:
+
+- `backend/src/migrations/m021_revenue_recognition_schedules.js`
+- `backend/src/routes/revenue-recognition.js`
+- `backend/src/routes/revenue-recognition.validators.js`
+- `backend/src/services/revenue-recognition.service.js`
+- `backend/scripts/test-revenue-pr17a-foundation.js`
+
+Files to update:
+
+- `backend/src/migrations/index.js`
+- `backend/src/index.js`
+- `backend/src/seedCore.js`
+- `backend/scripts/generate-openapi.js`
+- `backend/package.json`
+
+Scope checklist:
+
+- [ ] Create base tables:
+  - [ ] `revenue_recognition_schedules`
+  - [ ] `revenue_recognition_schedule_lines`
+  - [ ] `revenue_recognition_runs`
+  - [ ] `revenue_recognition_run_lines`
+  - [ ] `revenue_recognition_subledger_entries`
+- [ ] Mount namespace route:
   - [ ] `app.use("/api/v1/revenue-recognition", requireAuth, revenueRecognitionRoutes);`
-- [ ] Add permissions in `seedCore`.
-- [ ] Add OpenAPI generator entries and tags.
-- [ ] Implement short/long bucket split logic for all periodization families.
-- [ ] Implement automatic or scheduled long->short reclass flow (`280->180`, `281->181`, `480->380`, `481->381`).
-- [ ] Implement accrual generate/settle/reverse flows for `181/281/381/481`.
-- [ ] Implement prepaid expense carry/amortization flow for `180/280`.
-- [ ] Add subledger-to-GL reconciliation checks per period/legal entity.
-- [ ] Add consolidation-facing report/query for periodization split.
-- [ ] Add PR-17 integration tests (generate -> post -> settle/reverse -> reclass).
-- [ ] Add duplicate-line guard for schedule generation reruns (same source should not create duplicate open lines).
-- [ ] Keep explicit original-run linkage on reversals for full traceability.
-- [ ] Add reconciliation assertions between rollforward report totals and posted GL movements.
-- [ ] Execute in strict faz order: A -> B -> C -> D (no phase skipping).
-- [ ] Add per-phase gate tests and mark phase completion in PR notes.
+- [ ] Add permissions in seed + role mappings.
+- [ ] Add OpenAPI tags/routes for foundation endpoints.
+- [ ] Add test script `test:revenue-pr17a`.
+- [ ] Assert no posting/reversal side effects are active in PR-17A.
 
-### Acceptance
+Acceptance:
 
-- Schedule generation deterministic and rerun-safe.
-- Posting/reversal creates balanced GL entries.
-- Rollforward report matches schedule balances.
-- 18x/28x/38x/48x split is correct and traceable in subledger.
-- Reclass (long -> short) is correct and auditable.
-- Consolidation can consume split balances without manual adjustments.
-- Phase A complete before any phase-specific UI is enabled.
-- Phase B (`380/480`, `180/280`) and Phase C (`181/281`, `381/481`) pass independently.
-- Phase D reports/UI operate only on reconciled subledger+GL data.
+- Schema and permission foundation is ready.
+- Namespace and validator/service skeletons are in place.
+- No accounting posting behavior has been introduced yet.
 
-### Global Guardrails Check (Mandatory)
+### 10.2 PR-17B: DEFREV + PREPAID (380/480, 180/280)
+
+Goal:
+
+- Implement posting/reversal/reclass for deferred revenue and prepaid expense families.
+
+Primary endpoints activated in this PR:
+
+- `POST /api/v1/revenue-recognition/schedules/generate`
+- `GET /api/v1/revenue-recognition/schedules`
+- `POST /api/v1/revenue-recognition/runs`
+- `GET /api/v1/revenue-recognition/runs`
+- `POST /api/v1/revenue-recognition/runs/{runId}/post`
+- `POST /api/v1/revenue-recognition/runs/{runId}/reverse`
+
+Scope checklist:
+
+- [ ] Implement DEFREV family flow (`380/480`) with recognition posting.
+- [ ] Implement PREPAID family flow (`180/280`) with amortization posting.
+- [ ] Implement long->short reclass for `280->180` and `480->380`.
+- [ ] Add duplicate-line guard for reruns (same source should not create duplicate open lines).
+- [ ] Keep explicit original-run linkage on reversals.
+- [ ] Add test script `test:revenue-pr17b`.
+
+Acceptance:
+
+- DEFREV/PREPAID posting and reversal are balanced and auditable.
+- Reclass behavior is deterministic.
+- Reruns are idempotent at schedule/run-line level for this scope.
+
+### 10.3 PR-17C: Accruals (181/281, 381/481) + Settle/Reverse
+
+Goal:
+
+- Implement accrued revenue/expense generation and due-based settle/reverse lifecycle.
+
+Primary endpoints activated in this PR:
+
+- `POST /api/v1/revenue-recognition/accruals/generate`
+- `POST /api/v1/revenue-recognition/accruals/{accrualId}/settle`
+- `POST /api/v1/revenue-recognition/accruals/{accrualId}/reverse`
+
+Scope checklist:
+
+- [ ] Implement ACCRUED_REVENUE (`181/281`) lifecycle.
+- [ ] Implement ACCRUED_EXPENSE (`381/481`) lifecycle.
+- [ ] Enforce due-based closure and reversal boundaries.
+- [ ] Implement long->short reclass for `281->181` and `481->381`.
+- [ ] Add test script `test:revenue-pr17c`.
+
+Acceptance:
+
+- Accrual generation/settlement/reversal behavior is deterministic and scoped correctly.
+- Subledger and GL remain reconciled for accrual families.
+
+### 10.4 PR-17D: Reports + Reconciliation + UI-facing Endpoint Polish
+
+Goal:
+
+- Finalize reporting surface and reconciliation guarantees for frontend consumption.
+
+Primary endpoints activated/refined in this PR:
+
+- `GET /api/v1/revenue-recognition/reports/future-year-rollforward`
+- `GET /api/v1/revenue-recognition/reports/deferred-revenue-split`
+- `GET /api/v1/revenue-recognition/reports/accrual-split`
+
+Scope checklist:
+
+- [ ] Add/finish rollforward and split reports with legal-entity/time filters.
+- [ ] Add reconciliation assertions between rollforward totals and posted GL movements.
+- [ ] Add subledger-to-GL reconciliation checks per period/legal-entity/currency.
+- [ ] Add query-shape/index checks for report queries (`EXPLAIN`).
+- [ ] Add test script `test:revenue-pr17d`.
+
+Acceptance:
+
+- Reporting layer is stable, auditable, and frontend-ready.
+- Consolidation consumers can use split balances without manual corrections.
+
+### Global Guardrails Check (Mandatory for each PR-17x)
 
 - [ ] Section 1) Global Guardrails maddeleri bu PR icin tek tek dogrulandi.
 - [ ] ADR-frozen kurallar korunuyor (docs/adr/adr-cari-v1.md).
@@ -1468,7 +1578,7 @@ Use `journal_purpose_accounts` with purpose codes:
 - [ ] Endpoint kontrati degistiyse OpenAPI generator guncellendi ve cikti uretildi.
 - [ ] Bu PR testi + mevcut regresyon testleri yesil.
 
-### Canonical Route/Permission/Data Model Mapping (PR-17)
+### Canonical Route/Permission/Data Model Mapping (PR-17A..17D)
 
 - Section `2.3` namespace coverage:
   - `/api/v1/revenue-recognition/*`
@@ -1477,8 +1587,8 @@ Use `journal_purpose_accounts` with purpose codes:
     `revenue.run.create`, `revenue.run.post`, `revenue.run.reverse`, `revenue.report.read`
 - Section `3` data model alignment:
   - existing Cari tables remain semantically stable.
-  - new revenue-recognition tables must stay tenant/legal-entity safe.
-  - periodization engine must keep explicit `SHORT_TERM` and `LONG_TERM` buckets across DEFREV/ACCRUAL/PREPAID families.
+  - new revenue-recognition tables stay tenant/legal-entity safe.
+  - periodization semantics remain explicit across DEFREV/ACCRUAL/PREPAID families.
 
 ---
 
@@ -1492,6 +1602,13 @@ Convert both placeholder main-menu modules into real UI modules, with periodizat
 - Gelir Tahakkuklari (kisa/uzun)
 - Gider Tahakkuklari (kisa/uzun)
 - Gelecek Aylara/Yillara Ait Giderler (prepaid carry)
+
+### Product naming note (future-safe)
+
+- Current route `/app/gelecek-yillar-gelirleri` can stay for backward compatibility.
+- Since UI scope includes deferred + accrual + prepaid families, consider a broader product/module name later
+  (for example `Donemsellik ve Tahakkuklar` / `Periodization & Accruals`).
+- If renamed later, keep route aliases/redirects to avoid breaking bookmarks/integrations.
 
 ### Existing placeholder routes to convert
 
@@ -1528,6 +1645,10 @@ Convert both placeholder main-menu modules into real UI modules, with periodizat
     - `/app/gelecek-yillar-gelirleri`
   - Ensure both are included in implemented route list/branch used by app shell
     (no fallback `ModulePlaceholderPage` for these two routes).
+  - Repo-specific rule:
+    - in current `App.jsx`, placeholder routing is derived from `implementedPaths` vs sidebar links.
+    - therefore `sidebarConfig.js` `implemented: true` alone is not sufficient.
+    - both routes must exist in `implementedRoutes` (so they are part of `implementedPaths`).
 - `frontend/src/layouts/sidebarConfig.js`
   - `Contracts` menu item must include:
     - `requiredPermissions: ["contract.read"]`
@@ -1553,6 +1674,7 @@ Convert both placeholder main-menu modules into real UI modules, with periodizat
   - [ ] reclass visibility: moved from long-term to short-term (period basis)
   - [ ] subledger/GL reconciliation summary panel
 - [ ] Replace placeholders in `App.jsx` with real page components for both routes (implemented route list included).
+- [ ] Verify both routes are in `implementedRoutes`/`implementedPaths` and not rendered via `placeholderRoutes`.
 - [ ] Set sidebar permission/implementation flags:
   - [ ] `/app/contracts` -> `requiredPermissions: ["contract.read"]`, `implemented: true`
   - [ ] `/app/gelecek-yillar-gelirleri` -> `requiredPermissions: ["revenue.report.read"]`, `implemented: true`
@@ -1563,6 +1685,7 @@ Convert both placeholder main-menu modules into real UI modules, with periodizat
 - [ ] Update sidebar labels/translations.
 - [ ] Add PR-18 frontend smoke script:
   - [ ] assert `App.jsx` uses real components (not placeholders) for both routes
+  - [ ] assert both routes are present in implemented route branch (not only sidebar metadata)
   - [ ] assert `sidebarConfig.js` contains `requiredPermissions` and `implemented: true` for both routes
   - [ ] assert `messages.js` contains `sidebar.byPath` entries for both routes
 
@@ -1610,14 +1733,21 @@ Add the following scripts in `backend/package.json`:
 - `test:cari-pr13`
 - `test:cari-pr14`
 - `test:contracts-pr16`
-- `test:revenue-pr17`
+- `test:revenue-pr17a`
+- `test:revenue-pr17b`
+- `test:revenue-pr17c`
+- `test:revenue-pr17d`
+- `test:revenue-pr17-all` (aggregate chain)
 - `test:contracts-revenue-pr18`
 
 Update chained scripts:
 
 - Extend `test:cari-quality-gate` with PR-11..14 plus date-filter contract script.
+- `backend/scripts/test-cari-pr10-quality-gate-and-docs.js` must explicitly:
+  - run/assert `test:cari-pr12-documents-date-filter`
+  - run `openapi:generate` and then fail on stale `backend/openapi.yaml`
 - Add a new chain script:
-  - `test:contracts-revenue-gate` -> PR-16 + PR-17 + PR-18
+  - `test:contracts-revenue-gate` -> PR-16 + PR-17A + PR-17B + PR-17C + PR-17D + PR-18
 - Optionally extend `test:release-gate` once modules are production-ready.
 
 ---
@@ -1630,16 +1760,16 @@ Update chained scripts:
 4. PR-14
 5. PR-15
 6. PR-16
-7. PR-17 Phase A
-8. PR-17 Phase B (`380/480` + `180/280`)
-9. PR-17 Phase C (`181/281` + `381/481`)
-10. PR-17 Phase D (consolidation reports depth + data-readiness)
+7. PR-17A (foundation, no posting)
+8. PR-17B (`380/480` + `180/280`)
+9. PR-17C (`181/281` + `381/481`)
+10. PR-17D (reports + reconciliation + endpoint polish)
 11. PR-18 (UI deepening on completed phase data)
 
 Do not start PR-16 before PR-15 is green.
-Do not start Phase B before Phase A is green.
-Do not start Phase C before Phase B is green.
-Do not start Phase D or PR-18 before Phase C is green.
+Do not start PR-17B before PR-17A is green.
+Do not start PR-17C before PR-17B is green.
+Do not start PR-17D or PR-18 before PR-17C is green.
 
 ---
 
@@ -1647,11 +1777,12 @@ Do not start Phase D or PR-18 before Phase C is green.
 
 - [ ] `npm run test:cari-quality-gate` passes.
 - [ ] `npm run openapi:generate` completed and `backend/openapi.yaml` updated.
+- [ ] Stale-openapi check after `openapi:generate` passes (no silent drift).
 - [ ] `docs/runbooks/cari-v1-operations.md` updated with final operational flow.
 - [ ] `docs/runbooks/cari-v1-support-finance-ui-guide.md` is present and current.
 - [ ] `docs/kullanim-kilavuzlari/cari-islemler-kullanim-kilavuzu.md` reflects final UI.
 - [ ] Periodization split (18x/28x/38x/48x) reconciles across subledger, GL, and consolidation.
-- [ ] Contracts + periodization test gate passes.
+- [ ] Contracts + periodization test gate passes (`PR-16 + PR-17A..D + PR-18`).
 - [ ] No unresolved high-severity permission/tenant-scope issues.
 
 
