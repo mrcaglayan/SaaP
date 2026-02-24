@@ -322,6 +322,14 @@ export async function listCariAudit(params = {}) {
 },
 ```
 
+Important App guard note (repo-aligned):
+
+- Current `App.jsx` permission guard resolves from `sidebarLinkByPath`:
+  - `withPermissionGuard(appPath, element)` -> `sidebar requiredPermissions`
+- Do not rely on a route object `permissions` field for PR-11.
+- Route access control for these entries is valid only when matching sidebar items define
+  exact `requiredPermissions`.
+
 `frontend/src/layouts/sidebarConfig.js` (under `Cari Islemler`)
 
 ```js
@@ -362,6 +370,11 @@ function hasPath(source, pathValue) {
   const escaped = pathValue.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return new RegExp(escaped).test(source);
 }
+function countOccurrences(source, literal) {
+  const escaped = literal.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const re = new RegExp(escaped, "g");
+  return (source.match(re) || []).length;
+}
 function hasCariCommonImport(source) {
   return /from\s+['"]\.\/cariCommon\.js['"]/.test(source);
 }
@@ -394,10 +407,22 @@ async function main() {
   assert(hasPath(sidebar, "/app/cari-belgeler"), "missing sidebar cari-belgeler");
   assert(hasPath(sidebar, "/app/cari-settlements"), "missing sidebar cari-settlements");
   assert(hasPath(sidebar, "/app/cari-audit"), "missing sidebar cari-audit");
-  assert(hasPath(i18nMessages, "sidebar.byPath"), "missing i18n sidebar.byPath map");
-  assert(hasPath(i18nMessages, "/app/cari-belgeler"), "missing i18n key /app/cari-belgeler");
-  assert(hasPath(i18nMessages, "/app/cari-settlements"), "missing i18n key /app/cari-settlements");
-  assert(hasPath(i18nMessages, "/app/cari-audit"), "missing i18n key /app/cari-audit");
+  assert(
+    /sidebar\s*:\s*\{[\s\S]*?byPath\s*:\s*\{/.test(i18nMessages),
+    "missing i18n sidebar.byPath structure"
+  );
+  assert(
+    countOccurrences(i18nMessages, "/app/cari-belgeler") >= 2,
+    "missing i18n key /app/cari-belgeler in tr/en maps"
+  );
+  assert(
+    countOccurrences(i18nMessages, "/app/cari-settlements") >= 2,
+    "missing i18n key /app/cari-settlements in tr/en maps"
+  );
+  assert(
+    countOccurrences(i18nMessages, "/app/cari-audit") >= 2,
+    "missing i18n key /app/cari-audit in tr/en maps"
+  );
   assert(apiCommon.includes("parseCariApiError"), "cariCommon parser missing");
   assert(apiCommon.includes("toCariQueryString"), "cariCommon query helper missing");
   assert(apiCommon.includes("response"), "cariCommon should keep axios-compatible response shape");
@@ -428,6 +453,9 @@ main().catch((err) => {
 - [ ] Add 3 implemented routes in `App.jsx`.
 - [ ] Add 3 sidebar links under Cari section.
 - [ ] Add i18n `sidebar.byPath` keys for the 3 routes (TR + EN message maps).
+- [ ] Keep App guard model repo-aligned:
+  - [ ] rely on sidebar `requiredPermissions` for route guarding
+  - [ ] do not add/use route-level `permissions` field in PR-11 entries
 - [ ] Use exact backend permission names in route/sidebar guards (no alias names).
 - [ ] Keep error normalization backward-compatible:
   - [ ] normalized error still exposes Axios-like `response.status` and `response.data.*`
@@ -503,6 +531,9 @@ Implement complete document lifecycle UI on existing backend.
 ### Concrete route
 
 - `/app/cari-belgeler` -> `<CariDocumentsPage />`
+- Route guard source (repo-aligned): `sidebarConfig.js` `requiredPermissions` for `/app/cari-belgeler`
+  must stay `["cari.doc.read"]`.
+- Do not rely on route object `permissions` field for PR-12 (`App.jsx` guard uses sidebar map).
 
 ### UI behavior rules (must match backend)
 
@@ -550,6 +581,10 @@ Important repo note:
 - Due date rule alignment:
   - `dueDate` is conditionally required based on `documentType` validator rules
   - UI validation/help text must follow backend rule, not a single global required flag
+- Guard alignment:
+  - replacing placeholder with `<CariDocumentsPage />` must preserve guard behavior via
+    sidebar permission mapping (`cari.doc.read`).
+  - no new route-level `permissions` field dependency should be introduced.
 
 ### Skeleton
 
@@ -618,6 +653,9 @@ export default function CariDocumentsPage() {
 
 - [ ] Build list/filter with backend query params exactly.
 - [ ] Add backend date-range support for documents list (`dateFrom`, `dateTo`).
+- [ ] Keep route guard wiring repo-aligned:
+  - [ ] `/app/cari-belgeler` remains permission-gated through sidebar `requiredPermissions: ["cari.doc.read"]`
+  - [ ] do not introduce route object `permissions` dependency
 - [ ] Build create draft form with required fields.
 - [ ] Build edit/cancel/post/reverse action panel.
 - [ ] Implement permission-aware buttons.
@@ -725,6 +763,12 @@ Implement settlement apply/reverse with unapplied and bank-link controls.
 - Bank attach target rules:
   - `targetType=SETTLEMENT` => `settlementBatchId` required, `unappliedCashId` empty.
   - `targetType=UNAPPLIED_CASH` => inverse.
+- Bank attach idempotency:
+  - `POST /api/v1/cari/bank/attach` requires `idempotencyKey`.
+- Bank apply idempotency:
+  - `POST /api/v1/cari/bank/apply` requires idempotency key
+    (`bankApplyIdempotencyKey` preferred; `idempotencyKey` fallback accepted by validator).
+  - bank apply also requires bank reference context (`bankStatementLineId` or `bankTransactionRef`).
 
 Critical UX requirements
 
@@ -737,6 +781,10 @@ Critical UX requirements
   - clear pending key on final client-side failures (`400`, `401`, `403`)
   - keep pending key on retryable/server failures (`408`, `429`, `5xx`, network/timeout)
   - clear pending key on successful apply responses (including `idempotentReplay=true`)
+- Bank attach/apply idempotency UX:
+  - UI must generate and send idempotency keys for bank attach and bank apply submissions.
+  - if full retry persistence is not implemented yet for bank flows, at minimum generate-on-submit and
+    reuse key within the same in-flight attempt (double-click safe).
 - Replay feedback:
   - if backend returns `idempotentReplay=true`, show info banner:
     - "Bu istek daha once uygulanmis; mevcut sonuc gosteriliyor."
@@ -764,6 +812,17 @@ Critical UX requirements
   - In preview math, use `residualAmountTxnAsOf` as the open balance source
     from report rows.
   - Do not use static/empty arrays for preview calculation except initial empty state.
+
+### Direction safety for auto-allocation (mandatory)
+
+- Backend settlement apply determines final direction from fetched open items.
+- When open items contain mixed `AR/AP`, backend rejects with one-direction constraint.
+- UX guard for PR-13:
+  - require explicit direction selection before `autoAllocate=true` submit.
+  - load preview rows with selected direction filter.
+  - if no direction selected, disable auto-allocate submit and show guidance.
+  - if mixed-direction risk is detected in fetched rows, force manual allocation flow or
+    require backend enhancement in a separate PR.
 
 ### Skeleton
 
@@ -798,6 +857,7 @@ export function buildSettlementApplyPayload(form) {
   return {
     legalEntityId: Number(form.legalEntityId),
     counterpartyId: Number(form.counterpartyId),
+    direction: form.direction || undefined,
     settlementDate: form.settlementDate,
     currencyCode: form.currencyCode,
     incomingAmountTxn: Number(form.incomingAmountTxn || 0),
@@ -836,6 +896,10 @@ export function shouldClearPendingKeyAfterError(error) {
   const status = Number(error?.status || error?.response?.status || 0);
   return status === 400 || status === 401 || status === 403;
 }
+
+export function createEphemeralIdempotencyKey(prefix = "CARI-IDEMP") {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
 ```
 
 `frontend/src/pages/cari/CariSettlementsPage.jsx`
@@ -857,6 +921,7 @@ import {
 } from "./cariSettlementsUtils.js";
 import {
   clearPendingIdempotencyKey,
+  createEphemeralIdempotencyKey,
   createPendingIdempotencyKey,
   loadPendingIdempotencyKey,
   shouldClearPendingKeyAfterError,
@@ -878,6 +943,7 @@ export default function CariSettlementsPage() {
   const [applyForm, setApplyForm] = useState({
     legalEntityId: "",
     counterpartyId: "",
+    direction: "",
     settlementDate: "",
     currencyCode: "",
     incomingAmountTxn: 0,
@@ -932,6 +998,9 @@ export default function CariSettlementsPage() {
   );
 
   async function onApply(form = applyForm) {
+    if (form.autoAllocate && !form.direction) {
+      throw new Error("Direction is required for auto-allocation.");
+    }
     const idempotencyKey = form.idempotencyKey || createPendingIdempotencyKey();
     setApplyForm((prev) => ({ ...prev, idempotencyKey }));
     try {
@@ -949,6 +1018,17 @@ export default function CariSettlementsPage() {
     }
   }
 
+  async function onBankAttach(form) {
+    const idempotencyKey = form.idempotencyKey || createEphemeralIdempotencyKey("CARI-BANK-ATTACH");
+    return attachCariBankReference({ ...form, idempotencyKey });
+  }
+
+  async function onBankApply(form) {
+    const bankApplyIdempotencyKey =
+      form.bankApplyIdempotencyKey || createEphemeralIdempotencyKey("CARI-BANK-APPLY");
+    return applyCariBankSettlement({ ...form, bankApplyIdempotencyKey });
+  }
+
   return <div>Cari Settlements</div>;
 }
 ```
@@ -961,7 +1041,14 @@ export default function CariSettlementsPage() {
 - [ ] Use `residualAmountTxnAsOf` from open-items rows as preview open balance input.
 - [ ] Send required preview filters: `legalEntityId`, `counterpartyId`, `asOfDate`.
 - [ ] Send optional `direction` filter when selected.
+- [ ] Add bank idempotency key handling:
+  - [ ] bank attach sends `idempotencyKey`
+  - [ ] bank apply sends `bankApplyIdempotencyKey` (or validator-compatible fallback)
 - [ ] Build deterministic auto-allocation preview (oldest due first).
+- [ ] Add mixed-direction UX guard for auto-allocate:
+  - [ ] require direction when `autoAllocate=true`
+  - [ ] disable or block auto-allocate submit if direction is missing
+  - [ ] show guidance when mixed-direction settlement risk exists
 - [ ] Build bank attach + bank apply sections as separate workflow panel.
 - [ ] Render response blocks for `allocations`, `fx`, `unapplied`, `followUpRisks`.
 - [ ] Implement stable idempotency key reuse across retries/double-click and preload from `loadPendingIdempotencyKey()` after refresh.
@@ -971,7 +1058,10 @@ export default function CariSettlementsPage() {
   - [ ] clear on successful apply (including `idempotentReplay=true`)
 - [ ] Show idempotent replay info as non-error.
 - [ ] Show `followUpRisks` as warning box.
-- [ ] Add smoke script + `test:cari-pr13`.
+- [ ] Add smoke script + `test:cari-pr13`:
+  - [ ] verify bank attach/apply submit handlers include idempotency key fields
+  - [ ] verify auto-allocate direction guard exists in submit flow
+  - [ ] verify preview uses `residualAmountTxnAsOf`
 
 ### Acceptance
 
@@ -982,6 +1072,8 @@ export default function CariSettlementsPage() {
 - Bank attach/apply actions stay explicit and separate from settlement actions.
 - Auto-allocation preview is fed by `/api/v1/cari/reports/open-items` rows using
   `legalEntityId`, `counterpartyId`, `asOfDate` (and optional `direction`).
+- Bank attach/apply submissions always include required idempotency keys.
+- Auto-allocate UX prevents mixed-direction confusion before submit.
 - Pending idempotency key cleanup matches final-failure classification rules.
 - No regressions in `test:cari-pr07` and `test:cari-pr08`.
 
@@ -1055,6 +1147,21 @@ import { useEffect, useState } from "react";
 import { listCariAudit } from "../../api/cariAudit.js";
 import { useAuth } from "../../auth/useAuth.js";
 
+function toDayBoundsForAuditFilters({ createdFrom, createdTo }) {
+  // If UI uses <input type="date"> values (YYYY-MM-DD), convert to full-day datetime bounds.
+  const from = createdFrom
+    ? new Date(`${createdFrom}T00:00:00.000`)
+    : null;
+  const to = createdTo
+    ? new Date(`${createdTo}T23:59:59.999`)
+    : null;
+
+  return {
+    createdFrom: from ? from.toISOString() : "",
+    createdTo: to ? to.toISOString() : "",
+  };
+}
+
 export default function CariAuditPage() {
   const { hasPermission } = useAuth();
   const canReadAudit = hasPermission("cari.audit.read");
@@ -1072,6 +1179,8 @@ export default function CariAuditPage() {
     offset: 0,
   });
   // load list, pagination
+  // before listCariAudit call, normalize date-only inputs:
+  // createdFrom -> 00:00:00.000, createdTo -> 23:59:59.999
   // requestId should be copyable from each row
   // payload detail panels should be collapsed by default and expanded on demand
   return <div>Cari Audit</div>;
@@ -1088,6 +1197,9 @@ export default function CariAuditPage() {
 - [ ] Add copy button for `requestId` in row/detail views.
 - [ ] Keep payload panels collapsed by default; expand only when user requests.
 - [ ] Keep `legalEntityId`, `action`, `resourceType`, `resourceId`, `actorUserId`, `requestId`, `createdFrom`, `createdTo` filters visible by default.
+- [ ] If date-only inputs are used for `createdFrom`/`createdTo`, convert to datetime bounds before API call:
+  - [ ] `createdFrom` -> start-of-day (`00:00:00.000`)
+  - [ ] `createdTo` -> end-of-day (`23:59:59.999`)
 - [ ] Add smoke script + `test:cari-pr14`.
 
 ### Acceptance
@@ -1096,6 +1208,7 @@ export default function CariAuditPage() {
 - Support and finance can filter quickly by action/resource/date.
 - Page is backed by live `audit_logs` data (not placeholder output).
 - `requestId` and payload visibility patterns are support-friendly (copyable IDs, lazy payload read).
+- Date-range UX does not accidentally exclude end-of-day rows when using date inputs.
 - Existing PR-10 docs/openapi checks remain green.
 
 ### Commands
@@ -1281,7 +1394,17 @@ const migration020ContractsFoundation = {
         created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         UNIQUE KEY uk_contract_no (tenant_id, legal_entity_id, contract_no),
-        KEY ix_contract_scope (tenant_id, legal_entity_id, counterparty_id, status)
+        UNIQUE KEY uk_contracts_tenant_id_id (tenant_id, id),
+        UNIQUE KEY uk_contracts_tenant_entity_id (tenant_id, legal_entity_id, id),
+        KEY ix_contract_tenant_id (tenant_id),
+        KEY ix_contract_scope (tenant_id, legal_entity_id, counterparty_id, status),
+        CONSTRAINT fk_contracts_tenant
+          FOREIGN KEY (tenant_id) REFERENCES tenants(id),
+        CONSTRAINT fk_contracts_entity_tenant
+          FOREIGN KEY (tenant_id, legal_entity_id) REFERENCES legal_entities(tenant_id, id),
+        CONSTRAINT fk_contracts_counterparty_tenant
+          FOREIGN KEY (tenant_id, legal_entity_id, counterparty_id)
+          REFERENCES counterparties(tenant_id, legal_entity_id, id)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     `);
 
@@ -1302,8 +1425,13 @@ const migration020ContractsFoundation = {
         status ENUM('ACTIVE','INACTIVE') NOT NULL DEFAULT 'ACTIVE',
         created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY uk_contract_lines_tenant_id_id (tenant_id, id),
         UNIQUE KEY uk_contract_line_no (tenant_id, contract_id, line_no),
-        KEY ix_contract_line_scope (tenant_id, contract_id, status)
+        KEY ix_contract_line_scope (tenant_id, contract_id, status),
+        CONSTRAINT fk_contract_lines_tenant
+          FOREIGN KEY (tenant_id) REFERENCES tenants(id),
+        CONSTRAINT fk_contract_lines_contract_tenant
+          FOREIGN KEY (tenant_id, contract_id) REFERENCES contracts(tenant_id, id)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     `);
 
@@ -1311,6 +1439,7 @@ const migration020ContractsFoundation = {
       CREATE TABLE IF NOT EXISTS contract_document_links (
         id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
         tenant_id BIGINT UNSIGNED NOT NULL,
+        legal_entity_id BIGINT UNSIGNED NOT NULL,
         contract_id BIGINT UNSIGNED NOT NULL,
         cari_document_id BIGINT UNSIGNED NOT NULL,
         link_type ENUM('BILLING','ADVANCE','ADJUSTMENT') NOT NULL,
@@ -1318,8 +1447,19 @@ const migration020ContractsFoundation = {
         linked_amount_base DECIMAL(20,6) NOT NULL DEFAULT 0,
         created_by_user_id BIGINT UNSIGNED NOT NULL,
         created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY uk_contract_doc_links_tenant_id_id (tenant_id, id),
         UNIQUE KEY uk_contract_doc_link (tenant_id, contract_id, cari_document_id, link_type),
-        KEY ix_contract_doc_link_scope (tenant_id, contract_id, cari_document_id)
+        KEY ix_contract_doc_link_scope (tenant_id, legal_entity_id, contract_id, cari_document_id),
+        CONSTRAINT fk_contract_doc_links_tenant
+          FOREIGN KEY (tenant_id) REFERENCES tenants(id),
+        CONSTRAINT fk_contract_doc_links_entity_tenant
+          FOREIGN KEY (tenant_id, legal_entity_id) REFERENCES legal_entities(tenant_id, id),
+        CONSTRAINT fk_contract_doc_links_contract_tenant
+          FOREIGN KEY (tenant_id, legal_entity_id, contract_id)
+          REFERENCES contracts(tenant_id, legal_entity_id, id),
+        CONSTRAINT fk_contract_doc_links_cari_doc_tenant
+          FOREIGN KEY (tenant_id, legal_entity_id, cari_document_id)
+          REFERENCES cari_documents(tenant_id, legal_entity_id, id)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     `);
   },
@@ -1338,6 +1478,9 @@ export default migration020ContractsFoundation;
 
 ### Domain correctness lock (PR-16)
 
+- DB integrity discipline (repo-style):
+  - keep composite unique keys for tenant/entity-safe FK targets on new tables.
+  - enforce composite FKs so cross-tenant/cross-entity mistakes fail at DB level, not only in service logic.
 - Link-document direction compatibility must be enforced in service layer:
   - `contract_type=CUSTOMER` can link only to `cari_documents.direction=AR`
   - `contract_type=VENDOR` can link only to `cari_documents.direction=AP`
@@ -1345,6 +1488,22 @@ export default migration020ContractsFoundation;
 - `contract_lines` legal-entity denormalization decision for PR-16:
   - keep normalized via parent `contracts.legal_entity_id` (no extra `legal_entity_id` column in `contract_lines` for now)
   - if reporting/index pressure appears later, add denormalization in a separate optimization PR.
+- `contract_document_links` legal-entity decision (freeze now):
+  - store `legal_entity_id` on link rows to enable strong composite FK enforcement to both
+    `contracts` and `cari_documents`.
+- Link eligibility freeze:
+  - link only accounting-final posted-family statuses (`POSTED`, `PARTIALLY_SETTLED`, `SETTLED`).
+  - reject non-final/non-linkable statuses (`DRAFT`, `CANCELLED`, `REVERSED`).
+- Contract lifecycle freeze for linking:
+  - allow link when contract status is `DRAFT` or `ACTIVE`.
+  - reject link when `SUSPENDED`, `CLOSED`, or `CANCELLED`.
+- Link amount policy freeze:
+  - partial linking is allowed.
+  - cumulative linked amount per document must not exceed document amount
+    (`linked_amount_txn` <= `cari_documents.amount_txn`, same for base).
+- Auditability freeze:
+  - no silent link-row edits in PR-16.
+  - corrections should be explicit (future unlink/adjustment action), with audit logging.
 - Scope boundary:
   - PR-16 is contracts foundation + lifecycle + link-document only.
   - periodization/deferred/accrual logic is out-of-scope and belongs to PR-17B/17C/17D.
@@ -1357,13 +1516,24 @@ export default migration020ContractsFoundation;
   - [ ] `app.use("/api/v1/contracts", requireAuth, contractsRoutes);`
 - [ ] Add permissions in `seedCore` and role mapping.
 - [ ] Add OpenAPI route docs in generator.
+- [ ] Add composite unique keys/FKs on new tables in migration (tenant/entity-safe).
 - [ ] Enforce strict scope checks in link service:
   - [ ] linked `cari_document` must match contract `tenant_id`
   - [ ] linked `cari_document` must match contract `legal_entity_id`
 - [ ] Enforce `contract_type` vs document direction compatibility:
   - [ ] CUSTOMER -> AR only
   - [ ] VENDOR -> AP only
+- [ ] Enforce link eligibility rules:
+  - [ ] only posted-family statuses can be linked (`POSTED`/`PARTIALLY_SETTLED`/`SETTLED`)
+  - [ ] reject `DRAFT`/`CANCELLED`/`REVERSED` documents
+- [ ] Enforce contract status rules for linking:
+  - [ ] allow only `DRAFT`/`ACTIVE`
+  - [ ] reject `SUSPENDED`/`CLOSED`/`CANCELLED`
+- [ ] Enforce partial-link cap:
+  - [ ] cumulative linked txn/base per document cannot exceed document txn/base
 - [ ] Keep `contract_lines` normalized (no `legal_entity_id` denormalization in PR-16 migration).
+- [ ] Keep `contract_document_links` with `legal_entity_id` for DB-level entity safety.
+- [ ] Keep link rows immutable in PR-16 (no silent update flow).
 - [ ] Keep PR-16 free of periodization/deferred/accrual posting logic.
 - [ ] Add PR-16 integration test + package script.
 
@@ -1372,6 +1542,9 @@ export default migration020ContractsFoundation;
 - Contracts CRUD and lifecycle stable.
 - Contract-document links are tenant-safe and scope-safe.
 - Contract-document linking enforces type/direction compatibility (`CUSTOMER/AR`, `VENDOR/AP`).
+- Contract linking enforces posted-only + contract-status eligibility rules.
+- DB-level FKs/composite keys prevent cross-tenant/cross-entity link corruption.
+- Partial linking works with capped totals per document.
 - Contracts foundation remains isolated from periodization engine concerns.
 - No regressions in Cari endpoints/tests.
 
@@ -1392,7 +1565,8 @@ export default migration020ContractsFoundation;
   - `contract.read`, `contract.upsert`, `contract.activate`, `contract.close`, `contract.link_document`
 - Section `3` data model alignment:
   - existing Cari tables stay unchanged semantically.
-  - `contract_document_links` must reference `cari_documents` safely (tenant/legal entity boundaries).
+  - `contract_document_links` includes `legal_entity_id` and references both `contracts` and `cari_documents`
+    with composite tenant/entity-safe FKs.
   - `contract_lines` stays normalized through `contracts` in PR-16 (no premature denormalization).
 
 ---
@@ -1637,6 +1811,12 @@ Convert both placeholder main-menu modules into real UI modules, with periodizat
 - `/app/contracts` -> `<ContractsPage />` (permission: `contract.read`)
 - `/app/gelecek-yillar-gelirleri` -> `<FutureYearRevenuePage />` (permission: `revenue.report.read`)
 
+Guard source note (repo-aligned):
+
+- Permission labels above are enforced via `sidebarConfig.js` `requiredPermissions`.
+- In current `App.jsx`, `withPermissionGuard` reads permissions from sidebar map by `appPath`.
+- Do not rely on a route object `permissions` field for PR-18.
+
 ### Placeholder-to-implemented conversion lock (mandatory)
 
 - `frontend/src/App.jsx`
@@ -1678,6 +1858,7 @@ Convert both placeholder main-menu modules into real UI modules, with periodizat
 - [ ] Set sidebar permission/implementation flags:
   - [ ] `/app/contracts` -> `requiredPermissions: ["contract.read"]`, `implemented: true`
   - [ ] `/app/gelecek-yillar-gelirleri` -> `requiredPermissions: ["revenue.report.read"]`, `implemented: true`
+- [ ] Keep guard model repo-aligned (no route object `permissions` dependency for these routes).
 - [ ] Add/verify `messages.js` `sidebar.byPath` labels for both routes.
 - [ ] Keep frontend API helper pattern consistent with PR-11:
   - [ ] use shared API error/query helpers (extend to generic `apiCommon` if adopted)
