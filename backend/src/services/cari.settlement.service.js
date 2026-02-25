@@ -5,6 +5,16 @@ import {
   assertLegalEntityBelongsToTenant,
 } from "../tenantGuards.js";
 import { badRequest, parsePositiveInt } from "../routes/_utils.js";
+import { assertRegisterOperationalConfig } from "./cash.register.service.js";
+import {
+  findCashRegisterById,
+  findCashSessionById,
+  findOpenCashSessionByRegisterId,
+  findCashTransactionByIdempotency,
+  findCashTransactionByIntegrationEventUid,
+  generateCashTxnNoForLegalEntityYearTx,
+  insertCashTransaction,
+} from "./cash.queries.js";
 
 const AMOUNT_SCALE = 6;
 const AMOUNT_EPSILON = 0.000001;
@@ -24,16 +34,25 @@ const UNAPPLIED_STATUS_FULL = "FULLY_APPLIED";
 const UNAPPLIED_STATUS_REVERSED = "REVERSED";
 const INTEGRATION_LINK_STATUS_UNLINKED = "UNLINKED";
 const INTEGRATION_LINK_STATUS_LINKED = "LINKED";
+const INTEGRATION_LINK_STATUS_PENDING = "PENDING";
+const PAYMENT_CHANNEL_MANUAL = "MANUAL";
+const PAYMENT_CHANNEL_CASH = "CASH";
 const DIRECTION_TO_CASH_TXN_TYPE = Object.freeze({
   AR: "RECEIPT",
   AP: "PAYOUT",
+});
+const DIRECTION_TO_CASH_COUNTERPARTY_TYPE = Object.freeze({
+  AR: "CUSTOMER",
+  AP: "VENDOR",
 });
 const BANK_ATTACH_TARGET_SETTLEMENT = "SETTLEMENT";
 const BANK_ATTACH_TARGET_UNAPPLIED_CASH = "UNAPPLIED_CASH";
 const RESOURCE_TYPE_SETTLEMENT_BATCH = "cari_settlement_batch";
 const RESOURCE_TYPE_UNAPPLIED_CASH = "cari_unapplied_cash";
+const RESOURCE_TYPE_CASH_TRANSACTION = "cash_transaction";
 const CARI_SETTLEMENT_REFERENCE_PREFIX = "CARI_SETTLE:";
 const CARI_SETTLEMENT_REVERSE_REFERENCE_PREFIX = "CARI_SETTLE_REV:";
+const CARI_SETTLEMENT_INTENT_SOURCE_ENTITY_TYPE = "cari_settlement_apply";
 const FOLLOW_UP_RISKS = Object.freeze([
   "Posting depends on configured journal_purpose_accounts mappings (CARI_AR_CONTROL, CARI_AR_OFFSET, CARI_AP_CONTROL, CARI_AP_OFFSET). Missing setup blocks posting.",
   "FX lookup uses exact-date SPOT for currency pair in this PR. Nearest-prior fallback or rate-type selection can be added in a follow-up PR.",
@@ -54,6 +73,17 @@ function normalizeUpperText(value) {
   return String(value || "")
     .trim()
     .toUpperCase();
+}
+
+function normalizePaymentChannel(value) {
+  const normalized = normalizeUpperText(value || PAYMENT_CHANNEL_MANUAL);
+  if (
+    normalized !== PAYMENT_CHANNEL_MANUAL &&
+    normalized !== PAYMENT_CHANNEL_CASH
+  ) {
+    throw badRequest("paymentChannel must be CASH or MANUAL");
+  }
+  return normalized;
 }
 
 function toDecimalNumber(value) {
@@ -156,28 +186,54 @@ function normalizeOptionalPositiveInt(value, label) {
   return parsed;
 }
 
-function resolveSettlementIntegrationMetadata({ payload, idempotencyKey, cashTransactionId }) {
+function resolveSettlementIntegrationMetadata({
+  payload,
+  idempotencyKey,
+  cashTransactionId,
+  paymentChannel,
+  integrationEventUid,
+}) {
   const resolvedCashTransactionId = parsePositiveInt(cashTransactionId);
+  const resolvedPaymentChannel = normalizePaymentChannel(
+    paymentChannel || payload?.paymentChannel || PAYMENT_CHANNEL_MANUAL
+  );
   const sourceModule =
-    toNullableString(payload?.sourceModule, 40) || (resolvedCashTransactionId ? "CASH" : "MANUAL");
+    toNullableString(payload?.sourceModule, 40) ||
+    (resolvedPaymentChannel === PAYMENT_CHANNEL_CASH
+      ? "CARI"
+      : resolvedCashTransactionId
+        ? "CASH"
+        : "MANUAL");
   const sourceEntityType =
     toNullableString(payload?.sourceEntityType, 60) ||
-    (resolvedCashTransactionId ? "cash_transaction" : null);
+    (sourceModule === "CASH" && resolvedCashTransactionId
+      ? "cash_transaction"
+      : sourceModule === "CARI"
+        ? CARI_SETTLEMENT_INTENT_SOURCE_ENTITY_TYPE
+        : null);
   const sourceEntityId =
     toNullableString(payload?.sourceEntityId, 120) ||
-    (resolvedCashTransactionId ? String(resolvedCashTransactionId) : null);
+    (sourceModule === "CASH" && resolvedCashTransactionId
+      ? String(resolvedCashTransactionId)
+      : sourceModule === "CARI"
+        ? toNullableString(idempotencyKey, 100)
+        : null);
   const integrationLinkStatus =
     toNullableString(payload?.integrationLinkStatus, 30) ||
-    (resolvedCashTransactionId ? INTEGRATION_LINK_STATUS_LINKED : INTEGRATION_LINK_STATUS_UNLINKED);
-  const integrationEventUid =
-    toNullableString(payload?.integrationEventUid, 100) || toNullableString(idempotencyKey, 100);
+    (resolvedCashTransactionId || resolvedPaymentChannel === PAYMENT_CHANNEL_CASH
+      ? INTEGRATION_LINK_STATUS_LINKED
+      : INTEGRATION_LINK_STATUS_UNLINKED);
+  const resolvedIntegrationEventUid =
+    toNullableString(integrationEventUid, 100) ||
+    toNullableString(payload?.integrationEventUid, 100) ||
+    toNullableString(idempotencyKey, 100);
 
   return {
     sourceModule,
     sourceEntityType,
     sourceEntityId,
     integrationLinkStatus,
-    integrationEventUid,
+    integrationEventUid: resolvedIntegrationEventUid,
   };
 }
 
@@ -399,6 +455,37 @@ function mapUnappliedCashRow(row) {
     note: row.note || null,
     createdAt: row.created_at || null,
     updatedAt: row.updated_at || null,
+  };
+}
+
+function mapCashTransactionLinkRow(row) {
+  if (!row) {
+    return null;
+  }
+  return {
+    id: parsePositiveInt(row.id),
+    tenantId: parsePositiveInt(row.tenant_id),
+    legalEntityId: parsePositiveInt(row.register_legal_entity_id),
+    cashRegisterId: parsePositiveInt(row.cash_register_id),
+    cashSessionId: parsePositiveInt(row.cash_session_id),
+    txnNo: row.txn_no || null,
+    txnType: row.txn_type || null,
+    status: row.status || null,
+    amount: toDecimalNumber(row.amount),
+    currencyCode: row.currency_code || null,
+    bookDate: toDateOnlyString(row.book_date, "bookDate"),
+    referenceNo: row.reference_no || null,
+    description: row.description || null,
+    counterpartyType: row.counterparty_type || null,
+    counterpartyId: parsePositiveInt(row.counterparty_id),
+    linkedCariSettlementBatchId: parsePositiveInt(row.linked_cari_settlement_batch_id),
+    linkedCariUnappliedCashId: parsePositiveInt(row.linked_cari_unapplied_cash_id),
+    sourceModule: row.source_module || null,
+    sourceEntityType: row.source_entity_type || null,
+    sourceEntityId: row.source_entity_id || null,
+    integrationLinkStatus: row.integration_link_status || null,
+    integrationEventUid: row.integration_event_uid || null,
+    idempotencyKey: row.idempotency_key || null,
   };
 }
 
@@ -1146,14 +1233,26 @@ async function fetchCashTransactionForSettlementLink({
     `SELECT
        ct.id,
        ct.tenant_id,
+       ct.cash_register_id,
+       ct.cash_session_id,
+       ct.txn_no,
        ct.txn_type,
        ct.status,
+       ct.amount,
+       ct.book_date,
        ct.currency_code,
+       ct.reference_no,
+       ct.description,
        ct.counterparty_type,
        ct.counterparty_id,
        ct.linked_cari_settlement_batch_id,
        ct.linked_cari_unapplied_cash_id,
+       ct.source_module,
+       ct.source_entity_type,
+       ct.source_entity_id,
        ct.integration_link_status,
+       ct.integration_event_uid,
+       ct.idempotency_key,
        cr.legal_entity_id AS register_legal_entity_id
      FROM cash_transactions ct
      JOIN cash_registers cr ON cr.id = ct.cash_register_id
@@ -1164,6 +1263,388 @@ async function fetchCashTransactionForSettlementLink({
     [tenantId, parsedCashTxnId]
   );
   return result.rows?.[0] || null;
+}
+
+async function resolveCashSessionForSettlementPayment({
+  tenantId,
+  register,
+  requestedSessionId,
+  runQuery = query,
+}) {
+  const sessionMode = normalizeUpperText(register?.session_mode);
+  const registerId = parsePositiveInt(register?.id);
+
+  if (requestedSessionId) {
+    const session = await findCashSessionById({
+      tenantId,
+      sessionId: requestedSessionId,
+      runQuery,
+      forUpdate: true,
+    });
+    if (!session) {
+      throw badRequest("linkedCashTransaction.cashSessionId not found for tenant");
+    }
+    if (parsePositiveInt(session.cash_register_id) !== registerId) {
+      throw badRequest("linkedCashTransaction.cashSessionId must belong to linkedCashTransaction.registerId");
+    }
+    if (normalizeUpperText(session.status) !== "OPEN") {
+      throw badRequest("linkedCashTransaction.cashSessionId must be OPEN");
+    }
+    return session;
+  }
+
+  if (sessionMode === "NONE") {
+    return null;
+  }
+
+  const openSession = await findOpenCashSessionByRegisterId({
+    tenantId,
+    registerId,
+    runQuery,
+    forUpdate: true,
+  });
+
+  if (sessionMode === "REQUIRED" && !openSession) {
+    throw badRequest(
+      "An OPEN cash session is required for linkedCashTransaction.registerId"
+    );
+  }
+
+  return openSession || null;
+}
+
+function buildDefaultLinkedCashIdempotencyKey({
+  legalEntityId,
+  settlementIdempotencyKey,
+}) {
+  return toNullableString(
+    `CARI-CASH-${Number(legalEntityId)}-${String(settlementIdempotencyKey || "").trim()}`,
+    100
+  );
+}
+
+function buildDefaultLinkedCashIntegrationEventUid({
+  legalEntityId,
+  settlementIntegrationEventUid,
+  settlementIdempotencyKey,
+}) {
+  return toNullableString(
+    settlementIntegrationEventUid ||
+      `CARI-CASH-EVT-${Number(legalEntityId)}-${String(settlementIdempotencyKey || "").trim()}`,
+    100
+  );
+}
+
+async function createOrReplaySettlementCashTransaction({
+  req,
+  tenantId,
+  userId,
+  legalEntityId,
+  direction,
+  counterpartyId,
+  counterpartyRow,
+  currencyCode,
+  amountTxn,
+  settlementDate,
+  settlementIdempotencyKey,
+  settlementIntegrationEventUid,
+  linkedCashTransaction,
+  assertScopeAccess,
+  runQuery = query,
+}) {
+  if (!linkedCashTransaction || typeof linkedCashTransaction !== "object") {
+    throw badRequest("linkedCashTransaction is required when paymentChannel=CASH");
+  }
+  if (!Number.isFinite(Number(amountTxn)) || Number(amountTxn) <= AMOUNT_EPSILON) {
+    throw badRequest("incomingAmountTxn must be > 0 when paymentChannel=CASH");
+  }
+
+  const normalizedDirection = normalizeUpperText(direction);
+  const txnType = DIRECTION_TO_CASH_TXN_TYPE[normalizedDirection];
+  const counterpartyType = DIRECTION_TO_CASH_COUNTERPARTY_TYPE[normalizedDirection];
+  if (!txnType || !counterpartyType) {
+    throw badRequest("direction must be AR or AP for paymentChannel=CASH");
+  }
+
+  const roleAllowed =
+    counterpartyType === "CUSTOMER"
+      ? counterpartyRow?.is_customer === true || Number(counterpartyRow?.is_customer) === 1
+      : counterpartyRow?.is_vendor === true || Number(counterpartyRow?.is_vendor) === 1;
+  if (!roleAllowed) {
+    throw badRequest(
+      `counterpartyId is not marked as ${counterpartyType === "CUSTOMER" ? "customer" : "vendor"}`
+    );
+  }
+
+  const registerId = normalizeOptionalPositiveInt(
+    linkedCashTransaction.registerId,
+    "linkedCashTransaction.registerId"
+  );
+  const cashSessionId = normalizeOptionalPositiveInt(
+    linkedCashTransaction.cashSessionId,
+    "linkedCashTransaction.cashSessionId"
+  );
+  const counterAccountId = normalizeOptionalPositiveInt(
+    linkedCashTransaction.counterAccountId,
+    "linkedCashTransaction.counterAccountId"
+  );
+  const txnDatetime =
+    toNullableString(linkedCashTransaction.txnDatetime, 40) ||
+    new Date().toISOString().slice(0, 19).replace("T", " ");
+  const bookDate =
+    normalizeDateInput(
+      linkedCashTransaction.bookDate || settlementDate,
+      "linkedCashTransaction.bookDate"
+    ) || settlementDate;
+  const referenceNo = toNullableString(linkedCashTransaction.referenceNo, 100);
+  const description =
+    toNullableString(linkedCashTransaction.description, 500) ||
+    `Linked cash transaction for settlement intent ${String(
+      settlementIdempotencyKey || ""
+    ).slice(0, 60)}`;
+  const cashIdempotencyKey =
+    toNullableString(linkedCashTransaction.idempotencyKey, 100) ||
+    buildDefaultLinkedCashIdempotencyKey({
+      legalEntityId,
+      settlementIdempotencyKey,
+    });
+  const cashIntegrationEventUid =
+    toNullableString(linkedCashTransaction.integrationEventUid, 100) ||
+    buildDefaultLinkedCashIntegrationEventUid({
+      legalEntityId,
+      settlementIntegrationEventUid,
+      settlementIdempotencyKey,
+    });
+
+  if (!registerId) {
+    throw badRequest("linkedCashTransaction.registerId is required");
+  }
+  if (!counterAccountId) {
+    throw badRequest("linkedCashTransaction.counterAccountId is required");
+  }
+  if (!cashIdempotencyKey) {
+    throw badRequest("linkedCashTransaction.idempotencyKey could not be resolved");
+  }
+
+  const register = await findCashRegisterById({
+    tenantId,
+    registerId,
+    runQuery,
+  });
+  if (!register) {
+    throw badRequest("linkedCashTransaction.registerId not found for tenant");
+  }
+  assertRegisterOperationalConfig(register, {
+    requireActive: true,
+    requireCashControlledAccount: true,
+    label: "linkedCashTransaction.registerId",
+  });
+  assertScopeAccess(req, "legal_entity", register.legal_entity_id, "linkedCashTransaction.registerId");
+  if (register.operating_unit_id) {
+    assertScopeAccess(
+      req,
+      "operating_unit",
+      register.operating_unit_id,
+      "linkedCashTransaction.registerId"
+    );
+  }
+  if (parsePositiveInt(register.legal_entity_id) !== legalEntityId) {
+    throw badRequest("linkedCashTransaction.registerId must belong to legalEntityId");
+  }
+  if (normalizeUpperText(register.currency_code) !== normalizeUpperText(currencyCode)) {
+    throw badRequest("linkedCashTransaction.registerId currency must match settlement currencyCode");
+  }
+  if (Number(register.max_txn_amount || 0) > 0 && Number(amountTxn) > Number(register.max_txn_amount)) {
+    throw badRequest("incomingAmountTxn exceeds linkedCashTransaction.registerId max_txn_amount");
+  }
+
+  await assertAccountBelongsToTenant(
+    tenantId,
+    counterAccountId,
+    "linkedCashTransaction.counterAccountId",
+    { runQuery }
+  );
+
+  const resolvedSession = await resolveCashSessionForSettlementPayment({
+    tenantId,
+    register,
+    requestedSessionId: cashSessionId,
+    runQuery,
+  });
+
+  const replayByEvent = cashIntegrationEventUid
+    ? await findCashTransactionByIntegrationEventUid({
+        tenantId,
+        integrationEventUid: cashIntegrationEventUid,
+        runQuery,
+      })
+    : null;
+  const replayByIdempotency = await findCashTransactionByIdempotency({
+    tenantId,
+    registerId,
+    idempotencyKey: cashIdempotencyKey,
+    runQuery,
+  });
+
+  const replayRow = replayByEvent || replayByIdempotency;
+  if (replayByEvent && replayByIdempotency && parsePositiveInt(replayByEvent.id) !== parsePositiveInt(replayByIdempotency.id)) {
+    throw badRequest(
+      "linkedCashTransaction.idempotencyKey and linkedCashTransaction.integrationEventUid map to different cash transactions"
+    );
+  }
+  if (replayRow) {
+    const replayLegalEntityId =
+      parsePositiveInt(replayRow.register_legal_entity_id) ||
+      parsePositiveInt(replayRow.legal_entity_id);
+    if (parsePositiveInt(replayRow.cash_register_id) !== registerId) {
+      throw badRequest(
+        "linkedCashTransaction.idempotencyKey/integrationEventUid is already used by a different registerId"
+      );
+    }
+    if (replayLegalEntityId !== legalEntityId) {
+      throw badRequest(
+        "linkedCashTransaction.idempotencyKey/integrationEventUid is already used by a different legalEntityId"
+      );
+    }
+    if (normalizeUpperText(replayRow.txn_type) !== txnType) {
+      throw badRequest(
+        "linkedCashTransaction.idempotencyKey/integrationEventUid is already used by a different txnType"
+      );
+    }
+    if (normalizeUpperText(replayRow.counterparty_type) !== counterpartyType) {
+      throw badRequest(
+        "linkedCashTransaction.idempotencyKey/integrationEventUid is already used by a different counterpartyType"
+      );
+    }
+    if (parsePositiveInt(replayRow.counterparty_id) !== counterpartyId) {
+      throw badRequest(
+        "linkedCashTransaction.idempotencyKey/integrationEventUid is already used by a different counterpartyId"
+      );
+    }
+    if (normalizeUpperText(replayRow.currency_code) !== normalizeUpperText(currencyCode)) {
+      throw badRequest(
+        "linkedCashTransaction.idempotencyKey/integrationEventUid is already used by a different currencyCode"
+      );
+    }
+    if (!amountsAreEqual(replayRow.amount, amountTxn)) {
+      throw badRequest(
+        "linkedCashTransaction.idempotencyKey/integrationEventUid is already used by a different amount"
+      );
+    }
+    return replayRow;
+  }
+
+  const txnNo = await generateCashTxnNoForLegalEntityYearTx({
+    tenantId,
+    legalEntityId,
+    legalEntityCode: register.legal_entity_code,
+    bookDate,
+    runQuery,
+  });
+  try {
+    const transactionId = await insertCashTransaction({
+      payload: {
+        tenantId,
+        registerId,
+        cashSessionId: parsePositiveInt(resolvedSession?.id) || null,
+        txnNo,
+        txnType,
+        status: "DRAFT",
+        txnDatetime,
+        bookDate,
+        amount: roundAmount(Number(amountTxn)).toFixed(6),
+        currencyCode,
+        description,
+        referenceNo,
+        sourceDocType: null,
+        sourceDocId: null,
+        sourceModule: "CARI",
+        sourceEntityType: CARI_SETTLEMENT_INTENT_SOURCE_ENTITY_TYPE,
+        sourceEntityId: toNullableString(settlementIdempotencyKey, 120),
+        integrationLinkStatus: INTEGRATION_LINK_STATUS_PENDING,
+        counterpartyType,
+        counterpartyId,
+        counterAccountId,
+        counterCashRegisterId: null,
+        linkedCariSettlementBatchId: null,
+        linkedCariUnappliedCashId: null,
+        reversalOfTransactionId: null,
+        overrideCashControl: false,
+        overrideReason: null,
+        idempotencyKey: cashIdempotencyKey,
+        integrationEventUid: cashIntegrationEventUid,
+        userId,
+        postedByUserId: null,
+        postedAt: null,
+      },
+      runQuery,
+    });
+    const insertedRow = await fetchCashTransactionForSettlementLink({
+      tenantId,
+      cashTransactionId: transactionId,
+      runQuery,
+    });
+    if (!insertedRow) {
+      throw new Error("Linked cash transaction create failed");
+    }
+    return insertedRow;
+  } catch (err) {
+    if (!isDuplicateKeyError(err)) {
+      throw err;
+    }
+    const replayByIdempotency = await findCashTransactionByIdempotency({
+      tenantId,
+      registerId,
+      idempotencyKey: cashIdempotencyKey,
+      runQuery,
+    });
+    if (replayByIdempotency) {
+      return replayByIdempotency;
+    }
+    if (cashIntegrationEventUid) {
+      const replayByEvent = await findCashTransactionByIntegrationEventUid({
+        tenantId,
+        integrationEventUid: cashIntegrationEventUid,
+        runQuery,
+      });
+      if (replayByEvent) {
+        return replayByEvent;
+      }
+    }
+    if (isDuplicateKeyError(err, "uk_cash_txn_tenant_integration_event_uid")) {
+      throw badRequest("linkedCashTransaction.integrationEventUid conflicts with an existing cash transaction");
+    }
+    throw badRequest("Duplicate linkedCashTransaction.idempotencyKey");
+  }
+}
+
+async function enrichSettlementResultWithCashTransaction({
+  tenantId,
+  result,
+  runQuery = query,
+}) {
+  if (!result) {
+    return result;
+  }
+  const cashTransactionId =
+    parsePositiveInt(result?.cashTransaction?.id) ||
+    parsePositiveInt(result?.row?.cashTransactionId) ||
+    parsePositiveInt(result?.row?.cash_transaction_id);
+  if (!cashTransactionId) {
+    return {
+      ...result,
+      cashTransaction: null,
+    };
+  }
+  const cashRow = await fetchCashTransactionForSettlementLink({
+    tenantId,
+    cashTransactionId,
+    runQuery,
+  });
+  return {
+    ...result,
+    cashTransaction: mapCashTransactionLinkRow(cashRow),
+  };
 }
 
 async function fetchSettlementBatchRowByBankAttachIdempotency({
@@ -1919,7 +2400,13 @@ export async function applyCariSettlement({
   const legalEntityId = payload.legalEntityId;
   const counterpartyId = payload.counterpartyId;
   const idempotencyKey = toNullableString(payload.idempotencyKey, 100);
-  const cashTransactionId = normalizeOptionalPositiveInt(payload.cashTransactionId, "cashTransactionId");
+  const requestedCashTransactionId = normalizeOptionalPositiveInt(
+    payload.cashTransactionId,
+    "cashTransactionId"
+  );
+  let effectiveCashTransactionId = requestedCashTransactionId;
+  const paymentChannel = normalizePaymentChannel(payload.paymentChannel);
+  const linkedCashTransaction = payload.linkedCashTransaction || null;
   const settlementDate = normalizeDateInput(payload.settlementDate, "settlementDate");
   const incomingAmountTxn = normalizeAmount(payload.incomingAmountTxn || 0, "incomingAmountTxn", {
     allowZero: true,
@@ -1932,12 +2419,13 @@ export async function applyCariSettlement({
     "bankStatementLineId"
   );
   const bankTransactionRef = toNullableString(payload.bankTransactionRef, 100);
-  const integrationMetadata = resolveSettlementIntegrationMetadata({
+  const initialIntegrationMetadata = resolveSettlementIntegrationMetadata({
     payload,
     idempotencyKey,
-    cashTransactionId,
+    cashTransactionId: requestedCashTransactionId,
+    paymentChannel,
   });
-  const integrationEventUid = integrationMetadata.integrationEventUid;
+  const integrationEventUid = initialIntegrationMetadata.integrationEventUid;
 
   if (!idempotencyKey) {
     throw badRequest("idempotencyKey is required");
@@ -1945,6 +2433,24 @@ export async function applyCariSettlement({
   if (bankApplyIdempotencyKey && !bankStatementLineId && !bankTransactionRef) {
     throw badRequest(
       "bankStatementLineId or bankTransactionRef is required when bankApplyIdempotencyKey is set"
+    );
+  }
+  if (paymentChannel !== PAYMENT_CHANNEL_CASH && linkedCashTransaction) {
+    throw badRequest("linkedCashTransaction is only supported when paymentChannel=CASH");
+  }
+  if (paymentChannel === PAYMENT_CHANNEL_CASH && requestedCashTransactionId && linkedCashTransaction) {
+    throw badRequest(
+      "linkedCashTransaction cannot be provided together with cashTransactionId when paymentChannel=CASH"
+    );
+  }
+  if (paymentChannel === PAYMENT_CHANNEL_CASH && !requestedCashTransactionId && !linkedCashTransaction) {
+    throw badRequest(
+      "linkedCashTransaction is required when paymentChannel=CASH and cashTransactionId is not provided"
+    );
+  }
+  if (paymentChannel === PAYMENT_CHANNEL_CASH && !requestedCashTransactionId && incomingAmountTxn <= AMOUNT_EPSILON) {
+    throw badRequest(
+      "incomingAmountTxn must be > 0 when paymentChannel=CASH and cashTransactionId is not provided"
     );
   }
 
@@ -1975,7 +2481,7 @@ export async function applyCariSettlement({
   const existingBatchIdByCashTxn = await findSettlementBatchIdByCashTransactionId({
     tenantId,
     legalEntityId,
-    cashTransactionId,
+    cashTransactionId: effectiveCashTransactionId,
   });
   const existingBatchIdCandidates = [
     existingBatchIdByApply,
@@ -1995,8 +2501,12 @@ export async function applyCariSettlement({
       settlementBatchId: existingBatchId,
       includeApplyAudit: true,
     });
+    const replayWithCash = await enrichSettlementResultWithCashTransaction({
+      tenantId,
+      result: replay,
+    });
     return {
-      ...replay,
+      ...replayWithCash,
       idempotentReplay: true,
       followUpRisks: FOLLOW_UP_RISKS,
     };
@@ -2034,7 +2544,7 @@ export async function applyCariSettlement({
       const replayBatchIdByCashTxn = await findSettlementBatchIdByCashTransactionId({
         tenantId,
         legalEntityId,
-        cashTransactionId,
+        cashTransactionId: effectiveCashTransactionId,
         runQuery: tx.query,
       });
       const replayBatchCandidates = [
@@ -2056,8 +2566,13 @@ export async function applyCariSettlement({
           includeApplyAudit: true,
           runQuery: tx.query,
         });
+        const replayWithCash = await enrichSettlementResultWithCashTransaction({
+          tenantId,
+          result: replay,
+          runQuery: tx.query,
+        });
         return {
-          ...replay,
+          ...replayWithCash,
           idempotentReplay: true,
           followUpRisks: FOLLOW_UP_RISKS,
         };
@@ -2092,10 +2607,69 @@ export async function applyCariSettlement({
         throw badRequest("Settlement apply supports one direction (AR or AP) per request");
       }
       const direction = Array.from(directions)[0];
-      if (cashTransactionId) {
+      if (paymentChannel === PAYMENT_CHANNEL_CASH && !effectiveCashTransactionId) {
+        const linkedCashTxn = await createOrReplaySettlementCashTransaction({
+          req,
+          tenantId,
+          userId: payload.userId,
+          legalEntityId,
+          direction,
+          counterpartyId,
+          counterpartyRow: counterparty,
+          currencyCode: settlementCurrencyCode,
+          amountTxn: incomingAmountTxn,
+          settlementDate,
+          settlementIdempotencyKey: idempotencyKey,
+          settlementIntegrationEventUid: integrationEventUid,
+          linkedCashTransaction,
+          assertScopeAccess,
+          runQuery: tx.query,
+        });
+        effectiveCashTransactionId = parsePositiveInt(linkedCashTxn?.id);
+        if (!effectiveCashTransactionId) {
+          throw new Error("Failed to resolve linked cash transaction");
+        }
+      }
+
+      if (effectiveCashTransactionId) {
+        const replayBatchIdByCashTxn = await findSettlementBatchIdByCashTransactionId({
+          tenantId,
+          legalEntityId,
+          cashTransactionId: effectiveCashTransactionId,
+          runQuery: tx.query,
+        });
+        if (replayBatchIdByCashTxn) {
+          const replay = await loadSettlementResult({
+            tenantId,
+            settlementBatchId: replayBatchIdByCashTxn,
+            includeApplyAudit: true,
+            runQuery: tx.query,
+          });
+          const replayWithCash = await enrichSettlementResultWithCashTransaction({
+            tenantId,
+            result: replay,
+            runQuery: tx.query,
+          });
+          return {
+            ...replayWithCash,
+            idempotentReplay: true,
+            followUpRisks: FOLLOW_UP_RISKS,
+          };
+        }
+      }
+
+      const integrationMetadata = resolveSettlementIntegrationMetadata({
+        payload,
+        idempotencyKey,
+        cashTransactionId: effectiveCashTransactionId,
+        paymentChannel,
+        integrationEventUid,
+      });
+
+      if (effectiveCashTransactionId) {
         const linkedCashTransaction = await fetchCashTransactionForSettlementLink({
           tenantId,
-          cashTransactionId,
+          cashTransactionId: effectiveCashTransactionId,
           runQuery: tx.query,
           forUpdate: true,
         });
@@ -2339,7 +2913,7 @@ export async function applyCariSettlement({
           tenantId,
           legalEntityId,
           counterpartyId,
-          cashTransactionId,
+          effectiveCashTransactionId,
           sequence.sequenceNamespace,
           sequence.fiscalYear,
           sequence.sequenceNo,
@@ -2577,7 +3151,7 @@ export async function applyCariSettlement({
             tenantId,
             legalEntityId,
             counterpartyId,
-            cashTransactionId,
+            effectiveCashTransactionId,
             buildUnappliedReceiptNo(sequence.settlementNo),
             settlementDate,
             UNAPPLIED_STATUS_UNAPPLIED,
@@ -2604,13 +3178,13 @@ export async function applyCariSettlement({
         createdUnappliedCashId = parsePositiveInt(unappliedInsert.rows?.insertId);
       }
 
-      if (cashTransactionId) {
+      if (effectiveCashTransactionId) {
         const cashLinkUpdate = await tx.query(
           `UPDATE cash_transactions
            SET linked_cari_settlement_batch_id = ?,
                linked_cari_unapplied_cash_id = COALESCE(?, linked_cari_unapplied_cash_id),
                integration_link_status = CASE
-                 WHEN integration_link_status = 'UNLINKED' THEN 'LINKED'
+                 WHEN integration_link_status IN ('UNLINKED', 'PENDING') THEN 'LINKED'
                  ELSE integration_link_status
                END,
                source_module = COALESCE(source_module, 'CARI'),
@@ -2631,7 +3205,7 @@ export async function applyCariSettlement({
             String(settlementBatchId),
             integrationMetadata.integrationEventUid,
             tenantId,
-            cashTransactionId,
+            effectiveCashTransactionId,
             settlementBatchId,
             createdUnappliedCashId,
             createdUnappliedCashId,
@@ -2659,7 +3233,9 @@ export async function applyCariSettlement({
           sourceEntityType: integrationMetadata.sourceEntityType,
           sourceEntityId: integrationMetadata.sourceEntityId,
           integrationLinkStatus: integrationMetadata.integrationLinkStatus,
-          cashTransactionId,
+          cashTransactionId: effectiveCashTransactionId,
+          paymentChannel,
+          linkedCashTransactionRequested: Boolean(paymentChannel === PAYMENT_CHANNEL_CASH),
           bankApplyIdempotencyKey,
           bankStatementLineId,
           bankTransactionRef,
@@ -2703,7 +3279,7 @@ export async function applyCariSettlement({
             settlementNo: sequence.settlementNo,
             idempotencyKey,
             integrationEventUid,
-            cashTransactionId,
+            cashTransactionId: effectiveCashTransactionId,
             bankApplyIdempotencyKey,
             bankStatementLineId,
             bankTransactionRef,
@@ -2718,12 +3294,18 @@ export async function applyCariSettlement({
         includeApplyAudit: true,
         runQuery: tx.query,
       });
+      const resultWithCash = await enrichSettlementResultWithCashTransaction({
+        tenantId,
+        result,
+        runQuery: tx.query,
+      });
 
       return {
-        ...result,
+        ...resultWithCash,
         idempotentReplay: false,
         followUpRisks: FOLLOW_UP_RISKS,
         metrics: {
+          createdCashTransactionId: effectiveCashTransactionId,
           totalAllocatedTxn,
           totalAllocatedBaseHistorical,
           totalAllocatedBaseSettlement,
@@ -2794,7 +3376,7 @@ export async function applyCariSettlement({
       const replayBatchIdByCashTxn = await findSettlementBatchIdByCashTransactionId({
         tenantId,
         legalEntityId,
-        cashTransactionId,
+        cashTransactionId: effectiveCashTransactionId,
       });
       const replayBatchCandidates = [
         replayBatchIdByApply,
@@ -2814,13 +3396,17 @@ export async function applyCariSettlement({
           settlementBatchId: replayBatchId,
           includeApplyAudit: true,
         });
+        const replayWithCash = await enrichSettlementResultWithCashTransaction({
+          tenantId,
+          result: replay,
+        });
         return {
-          ...replay,
+          ...replayWithCash,
           idempotentReplay: true,
           followUpRisks: FOLLOW_UP_RISKS,
         };
       }
-      if (cashTransactionId && (duplicateSettlementCashTxn || duplicateUnappliedCashTxn)) {
+      if (effectiveCashTransactionId && (duplicateSettlementCashTxn || duplicateUnappliedCashTxn)) {
         throw badRequest("cashTransactionId is already linked to another Cari settlement/unapplied row");
       }
       if (integrationEventUid && (duplicateSettlementEventUid || duplicateUnappliedEventUid)) {
@@ -3241,6 +3827,20 @@ export async function reverseCariSettlementById({
       }
       const lockedLegalEntityId = parsePositiveInt(original.legal_entity_id);
       const originalJournalEntryId = parsePositiveInt(original.posted_journal_entry_id);
+      const linkedCashTransactionId = parsePositiveInt(original.cash_transaction_id);
+      if (linkedCashTransactionId) {
+        const linkedCashTxn = await fetchCashTransactionForSettlementLink({
+          tenantId,
+          cashTransactionId: linkedCashTransactionId,
+          runQuery: tx.query,
+          forUpdate: true,
+        });
+        if (linkedCashTxn && normalizeUpperText(linkedCashTxn.status) === "POSTED") {
+          throw badRequest(
+            `Settlement cannot be reversed while linked cash transaction ${linkedCashTransactionId} is POSTED. Reverse cash transaction first.`
+          );
+        }
+      }
       if (!originalJournalEntryId) {
         throw badRequest("Settlement posted journal linkage is missing");
       }

@@ -24,7 +24,7 @@ export function buildAutoAllocatePreview(openItems = [], incomingAmountTxn = 0) 
 }
 
 export function buildSettlementApplyPayload(form) {
-  return {
+  const payload = {
     legalEntityId: Number(form.legalEntityId),
     counterpartyId: Number(form.counterpartyId),
     direction: form.direction || undefined,
@@ -38,4 +38,13 @@ export function buildSettlementApplyPayload(form) {
     fxRate: form.fxRate || undefined,
     note: form.note || undefined,
   };
+
+  if (form.paymentChannel) {
+    payload.paymentChannel = String(form.paymentChannel).trim().toUpperCase();
+  }
+  if (form.linkedCashTransaction) {
+    payload.linkedCashTransaction = form.linkedCashTransaction;
+  }
+
+  return payload;
 }

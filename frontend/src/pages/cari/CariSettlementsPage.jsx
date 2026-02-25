@@ -5,6 +5,13 @@ import {
   applyCariBankSettlement,
   reverseCariSettlement,
 } from "../../api/cariSettlements.js";
+import {
+  listCashRegisters,
+  listCashSessions,
+} from "../../api/cashAdmin.js";
+import { listAccounts } from "../../api/glAdmin.js";
+import { listCariCounterparties } from "../../api/cariCounterparty.js";
+import { listLegalEntities } from "../../api/orgAdmin.js";
 import { getCariOpenItemsReport } from "../../api/cariReports.js";
 import { extractCariReplayAndRisks } from "../../api/cariCommon.js";
 import { useAuth } from "../../auth/useAuth.js";
@@ -24,6 +31,19 @@ import {
 
 function todayIsoDate() {
   return new Date().toISOString().slice(0, 10);
+}
+
+function toDateTimeLocalInput(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hour = String(date.getHours()).padStart(2, "0");
+  const minute = String(date.getMinutes()).padStart(2, "0");
+  return `${year}-${month}-${day}T${hour}:${minute}`;
+}
+
+function toUpper(value) {
+  return String(value || "").trim().toUpperCase();
 }
 
 function toPositiveInt(value) {
@@ -125,6 +145,20 @@ function buildApplyDefaultForm() {
   };
 }
 
+function buildLinkedCashDefaultForm() {
+  return {
+    paymentChannel: "MANUAL",
+    createLinkedCashTransaction: false,
+    registerId: "",
+    cashSessionId: "",
+    counterAccountId: "",
+    txnDatetime: toDateTimeLocalInput(),
+    bookDate: todayIsoDate(),
+    referenceNo: "",
+    description: "",
+  };
+}
+
 function buildBankAttachDefaultForm() {
   return {
     legalEntityId: "",
@@ -171,6 +205,12 @@ export default function CariSettlementsPage() {
   const canBankAttach = hasPermission("cari.bank.attach");
   const canBankApply = hasPermission("cari.bank.apply");
   const canReadReports = hasPermission("cari.report.read");
+  const canReadCards = hasPermission("cari.card.read");
+  const canReadOrg = hasPermission("org.tree.read");
+  const canCreateCashTxn = hasPermission("cash.txn.create");
+  const canReadCashRegisters = hasPermission("cash.register.read");
+  const canReadCashSessions = hasPermission("cash.session.read");
+  const canReadGlAccounts = hasPermission("gl.account.read");
 
   const [previewFilters, setPreviewFilters] = useState({
     legalEntityId: "",
@@ -190,6 +230,16 @@ export default function CariSettlementsPage() {
   const [applyReplayMessage, setApplyReplayMessage] = useState("");
   const [applyResult, setApplyResult] = useState(null);
   const [applyFollowUpRisks, setApplyFollowUpRisks] = useState([]);
+  const [linkedCashForm, setLinkedCashForm] = useState(() => buildLinkedCashDefaultForm());
+  const [linkedCashError, setLinkedCashError] = useState("");
+  const [linkedCashMessage, setLinkedCashMessage] = useState("");
+  const [linkedCashResult, setLinkedCashResult] = useState(null);
+  const [legalEntities, setLegalEntities] = useState([]);
+  const [counterpartyOptions, setCounterpartyOptions] = useState([]);
+  const [lookupWarning, setLookupWarning] = useState("");
+  const [cashRegisterOptions, setCashRegisterOptions] = useState([]);
+  const [openCashSessions, setOpenCashSessions] = useState([]);
+  const [cashAccountOptions, setCashAccountOptions] = useState([]);
 
   const [reverseForm, setReverseForm] = useState(() => buildReverseDefaultForm());
   const [reverseSubmitting, setReverseSubmitting] = useState(false);
@@ -215,6 +265,51 @@ export default function CariSettlementsPage() {
     [openItems, applyForm.incomingAmountTxn]
   );
   const mixedDirectionRisk = useMemo(() => hasMixedDirections(openItems), [openItems]);
+  const linkedRegisterOptions = useMemo(() => {
+    const legalEntityId = toPositiveInt(applyForm.legalEntityId);
+    if (!legalEntityId) {
+      return cashRegisterOptions;
+    }
+    return cashRegisterOptions.filter(
+      (row) => toPositiveInt(row?.legal_entity_id) === legalEntityId
+    );
+  }, [applyForm.legalEntityId, cashRegisterOptions]);
+  const selectedLinkedRegister = useMemo(() => {
+    const registerId = toPositiveInt(linkedCashForm.registerId);
+    if (!registerId) {
+      return null;
+    }
+    return linkedRegisterOptions.find((row) => toPositiveInt(row?.id) === registerId) || null;
+  }, [linkedCashForm.registerId, linkedRegisterOptions]);
+  const linkedRegisterOpenSessions = useMemo(() => {
+    const registerId = toPositiveInt(linkedCashForm.registerId);
+    if (!registerId) {
+      return [];
+    }
+    return openCashSessions.filter(
+      (row) => toPositiveInt(row?.cash_register_id) === registerId
+    );
+  }, [linkedCashForm.registerId, openCashSessions]);
+  const postingAccountOptions = useMemo(
+    () =>
+      (cashAccountOptions || []).filter((row) => {
+        if (!row) {
+          return false;
+        }
+        const legalEntityId = toPositiveInt(applyForm.legalEntityId);
+        if (
+          legalEntityId &&
+          toPositiveInt(row.legal_entity_id || row.legalEntityId) !== legalEntityId
+        ) {
+          return false;
+        }
+        const allowPosting =
+          row.allow_posting === 1 || row.allowPosting === true || row.allow_posting === true;
+        const isActive = row.is_active === 1 || row.isActive === true || row.is_active === true;
+        return allowPosting && isActive;
+      }),
+    [applyForm.legalEntityId, cashAccountOptions]
+  );
 
   const applyIntentScope = useMemo(
     () => buildSettlementIntentScope(applyForm),
@@ -293,11 +388,221 @@ export default function CariSettlementsPage() {
     previewDirection,
   ]);
 
+  useEffect(() => {
+    let active = true;
+    async function loadLookups() {
+      const warnings = [];
+      const [legalEntitiesResult, registersResult, sessionsResult, accountsResult] =
+        await Promise.allSettled([
+          canReadOrg ? listLegalEntities({ limit: 500, includeInactive: true }) : Promise.resolve({ rows: [] }),
+          canReadCashRegisters ? listCashRegisters({ limit: 300, offset: 0 }) : Promise.resolve({ rows: [] }),
+          canReadCashSessions ? listCashSessions({ status: "OPEN", limit: 300, offset: 0 }) : Promise.resolve({ rows: [] }),
+          canReadGlAccounts ? listAccounts({ includeInactive: true, limit: 800 }) : Promise.resolve({ rows: [] }),
+        ]);
+
+      if (!active) {
+        return;
+      }
+
+      if (legalEntitiesResult.status === "fulfilled") {
+        setLegalEntities(Array.isArray(legalEntitiesResult.value?.rows) ? legalEntitiesResult.value.rows : []);
+      } else {
+        setLegalEntities([]);
+        warnings.push("Legal entity lookup unavailable.");
+      }
+
+      if (registersResult.status === "fulfilled") {
+        setCashRegisterOptions(Array.isArray(registersResult.value?.rows) ? registersResult.value.rows : []);
+      } else {
+        setCashRegisterOptions([]);
+        warnings.push("Cash register lookup unavailable.");
+      }
+
+      if (sessionsResult.status === "fulfilled") {
+        setOpenCashSessions(Array.isArray(sessionsResult.value?.rows) ? sessionsResult.value.rows : []);
+      } else {
+        setOpenCashSessions([]);
+        warnings.push("Cash session lookup unavailable.");
+      }
+
+      if (accountsResult.status === "fulfilled") {
+        setCashAccountOptions(Array.isArray(accountsResult.value?.rows) ? accountsResult.value.rows : []);
+      } else {
+        setCashAccountOptions([]);
+        warnings.push("GL account lookup unavailable.");
+      }
+
+      setLookupWarning(warnings.join(" "));
+    }
+
+    loadLookups();
+    return () => {
+      active = false;
+    };
+  }, [canReadCashRegisters, canReadCashSessions, canReadGlAccounts, canReadOrg]);
+
+  useEffect(() => {
+    if (!canReadCards) {
+      setCounterpartyOptions([]);
+      return;
+    }
+    const legalEntityId = toPositiveInt(applyForm.legalEntityId);
+    if (!legalEntityId) {
+      setCounterpartyOptions([]);
+      return;
+    }
+
+    const role =
+      toUpper(applyForm.direction) === "AR"
+        ? "CUSTOMER"
+        : toUpper(applyForm.direction) === "AP"
+          ? "VENDOR"
+          : undefined;
+
+    let active = true;
+    async function loadCounterpartyRows() {
+      try {
+        const response = await listCariCounterparties({
+          legalEntityId,
+          role,
+          status: "ACTIVE",
+          sortBy: "NAME",
+          sortDir: "ASC",
+          limit: 300,
+          offset: 0,
+        });
+        if (!active) {
+          return;
+        }
+        setCounterpartyOptions(Array.isArray(response?.rows) ? response.rows : []);
+      } catch {
+        if (!active) {
+          return;
+        }
+        setCounterpartyOptions([]);
+      }
+    }
+
+    loadCounterpartyRows();
+    return () => {
+      active = false;
+    };
+  }, [applyForm.direction, applyForm.legalEntityId, canReadCards]);
+
+  useEffect(() => {
+    if (!linkedCashForm.createLinkedCashTransaction) {
+      return;
+    }
+    if (toPositiveInt(linkedCashForm.registerId)) {
+      return;
+    }
+    if (!linkedRegisterOptions.length) {
+      return;
+    }
+    const preferred = linkedRegisterOptions.find((row) => toUpper(row?.status) === "ACTIVE");
+    setLinkedCashForm((prev) => ({
+      ...prev,
+      registerId: String(preferred?.id || linkedRegisterOptions[0]?.id || ""),
+    }));
+  }, [
+    linkedCashForm.createLinkedCashTransaction,
+    linkedCashForm.registerId,
+    linkedRegisterOptions,
+  ]);
+
+  useEffect(() => {
+    const registerId = toPositiveInt(linkedCashForm.registerId);
+    if (!registerId) {
+      return;
+    }
+    const exists = linkedRegisterOptions.some(
+      (row) => toPositiveInt(row?.id) === registerId
+    );
+    if (exists) {
+      return;
+    }
+    setLinkedCashForm((prev) => ({
+      ...prev,
+      registerId: "",
+      cashSessionId: "",
+    }));
+  }, [linkedCashForm.registerId, linkedRegisterOptions]);
+
   function updateApplyForm(field, value) {
     setApplyForm((prev) => ({ ...prev, [field]: value }));
     if (field === "legalEntityId" || field === "counterpartyId" || field === "direction") {
       setPreviewFilters((prev) => ({ ...prev, [field]: value }));
     }
+    if (field === "settlementDate") {
+      setLinkedCashForm((prev) => ({
+        ...prev,
+        bookDate: String(value || "").trim() || prev.bookDate,
+      }));
+    }
+  }
+
+  function validateLinkedCashFormBeforeApply(formSnapshot) {
+    if (
+      !linkedCashForm.createLinkedCashTransaction ||
+      toUpper(linkedCashForm.paymentChannel) !== "CASH"
+    ) {
+      return "";
+    }
+    if (!canCreateCashTxn) {
+      return "Missing permission: cash.txn.create";
+    }
+    if (!toPositiveInt(linkedCashForm.registerId)) {
+      return "registerId is required for linked cash transaction.";
+    }
+    if (!toPositiveInt(linkedCashForm.counterAccountId)) {
+      return "counterAccountId is required for linked cash transaction.";
+    }
+    const direction = toUpper(formSnapshot.direction);
+    if (direction !== "AR" && direction !== "AP") {
+      return "direction must be AR or AP when linked cash creation is enabled.";
+    }
+    if (!toPositiveInt(formSnapshot.counterpartyId)) {
+      return "counterpartyId is required when linked cash creation is enabled.";
+    }
+    if (!toPositiveDecimal(formSnapshot.incomingAmountTxn)) {
+      return "incomingAmountTxn must be > 0 when linked cash creation is enabled.";
+    }
+    return "";
+  }
+
+  function buildLinkedCashPayloadForApply(formSnapshot, settlementIdempotencyKey) {
+    const wantsCashLink =
+      linkedCashForm.createLinkedCashTransaction &&
+      toUpper(linkedCashForm.paymentChannel) === "CASH";
+    if (!wantsCashLink) {
+      return {
+        paymentChannel: "MANUAL",
+        linkedCashTransaction: undefined,
+      };
+    }
+
+    const registerId = toPositiveInt(linkedCashForm.registerId);
+    const counterAccountId = toPositiveInt(linkedCashForm.counterAccountId);
+    const deterministicCashKey = `CARI-CASH-${settlementIdempotencyKey}`.slice(0, 100);
+    const deterministicCashEvent = `CARI-CASH-EVT-${settlementIdempotencyKey}`.slice(0, 100);
+
+    return {
+      paymentChannel: "CASH",
+      linkedCashTransaction: {
+        registerId,
+        cashSessionId: toPositiveInt(linkedCashForm.cashSessionId) || undefined,
+        counterAccountId,
+        txnDatetime: String(linkedCashForm.txnDatetime || "").trim() || toDateTimeLocalInput(),
+        bookDate:
+          String(linkedCashForm.bookDate || "").trim() ||
+          String(formSnapshot.settlementDate || "").trim() ||
+          todayIsoDate(),
+        referenceNo: String(linkedCashForm.referenceNo || "").trim() || undefined,
+        description: String(linkedCashForm.description || "").trim() || undefined,
+        idempotencyKey: deterministicCashKey,
+        integrationEventUid: deterministicCashEvent,
+      },
+    };
   }
 
   async function onApply(form = applyForm) {
@@ -306,6 +611,9 @@ export default function CariSettlementsPage() {
     setApplyReplayMessage("");
     setApplyResult(null);
     setApplyFollowUpRisks([]);
+    setLinkedCashError("");
+    setLinkedCashMessage("");
+    setLinkedCashResult(null);
 
     if (!canApply) {
       setApplyError("Missing permission: cari.settlement.apply");
@@ -320,6 +628,12 @@ export default function CariSettlementsPage() {
       setApplyError(
         "Open-items preview contains mixed AR/AP rows. Select one direction and retry."
       );
+      return;
+    }
+
+    const linkedCashValidationError = validateLinkedCashFormBeforeApply(form);
+    if (linkedCashValidationError) {
+      setApplyError(linkedCashValidationError);
       return;
     }
 
@@ -352,6 +666,7 @@ export default function CariSettlementsPage() {
         ...form,
         idempotencyKey,
         allocations: form.autoAllocate ? [] : manualAllocations,
+        ...buildLinkedCashPayloadForApply(form, idempotencyKey),
       });
       const response = await applyCariSettlement(payload);
       const replayState = extractCariReplayAndRisks(response);
@@ -365,6 +680,26 @@ export default function CariSettlementsPage() {
       setApplyMessage(
         `Settlement apply completed. settlementBatchId=${response?.row?.id || "-"}`
       );
+      const wantsCashLink =
+        linkedCashForm.createLinkedCashTransaction &&
+        toUpper(linkedCashForm.paymentChannel) === "CASH";
+      if (wantsCashLink) {
+        const linkedCashId =
+          toPositiveInt(response?.cashTransaction?.id) ||
+          toPositiveInt(response?.row?.cashTransactionId);
+        if (!linkedCashId) {
+          setLinkedCashError(
+            "Settlement applied, but linked cash transaction details were not returned."
+          );
+        } else {
+          setLinkedCashResult(response?.cashTransaction || { id: linkedCashId });
+          setLinkedCashMessage(
+            replayState.idempotentReplay
+              ? `Linked cash transaction already exists. cashTransactionId=${linkedCashId}`
+              : `Linked cash transaction created. cashTransactionId=${linkedCashId}`
+          );
+        }
+      }
     } catch (error) {
       if (shouldClearPendingKeyAfterError(error)) {
         clearPendingIdempotencyKey(intentScope);
@@ -585,28 +920,65 @@ export default function CariSettlementsPage() {
         <p className="mt-1 text-sm text-slate-600">
           Settlement apply/reverse and bank attach/apply workflows are separated on this page.
         </p>
+        {lookupWarning ? (
+          <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            {lookupWarning}
+          </div>
+        ) : null}
         <div className="mt-4 grid gap-3 md:grid-cols-4">
           <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
             Legal Entity ID
-            <input
-              type="number"
-              min="1"
-              className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
-              value={applyForm.legalEntityId}
-              onChange={(event) => updateApplyForm("legalEntityId", event.target.value)}
-              disabled={!canApply}
-            />
+            {legalEntities.length > 0 ? (
+              <select
+                className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                value={applyForm.legalEntityId}
+                onChange={(event) => updateApplyForm("legalEntityId", event.target.value)}
+                disabled={!canApply}
+              >
+                <option value="">Select legal entity</option>
+                {legalEntities.map((row) => (
+                  <option key={`settlement-le-${row.id}`} value={row.id}>
+                    {`${row.code || row.id} - ${row.name || "-"}`}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                type="number"
+                min="1"
+                className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                value={applyForm.legalEntityId}
+                onChange={(event) => updateApplyForm("legalEntityId", event.target.value)}
+                disabled={!canApply}
+              />
+            )}
           </label>
           <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
             Counterparty ID
-            <input
-              type="number"
-              min="1"
-              className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
-              value={applyForm.counterpartyId}
-              onChange={(event) => updateApplyForm("counterpartyId", event.target.value)}
-              disabled={!canApply}
-            />
+            {counterpartyOptions.length > 0 ? (
+              <select
+                className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                value={applyForm.counterpartyId}
+                onChange={(event) => updateApplyForm("counterpartyId", event.target.value)}
+                disabled={!canApply}
+              >
+                <option value="">Select counterparty</option>
+                {counterpartyOptions.map((row) => (
+                  <option key={`settlement-cp-${row.id}`} value={row.id}>
+                    {`${row.code || row.id} - ${row.name || "-"} (${row.counterpartyType || "OTHER"})`}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                type="number"
+                min="1"
+                className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                value={applyForm.counterpartyId}
+                onChange={(event) => updateApplyForm("counterpartyId", event.target.value)}
+                disabled={!canApply}
+              />
+            )}
           </label>
           <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
             Direction
@@ -633,6 +1005,45 @@ export default function CariSettlementsPage() {
               disabled={!canApply}
             />
           </label>
+          <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+            Payment Channel
+            <select
+              className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+              value={linkedCashForm.paymentChannel}
+              onChange={(event) =>
+                setLinkedCashForm((prev) => ({
+                  ...prev,
+                  paymentChannel: event.target.value,
+                  createLinkedCashTransaction:
+                    event.target.value === "CASH" ? prev.createLinkedCashTransaction : false,
+                }))
+              }
+              disabled={!canApply}
+            >
+              <option value="MANUAL">MANUAL</option>
+              <option value="CASH">CASH</option>
+            </select>
+          </label>
+          <label className="flex items-center gap-2 rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-700 md:col-span-2">
+            <input
+              type="checkbox"
+              checked={Boolean(linkedCashForm.createLinkedCashTransaction)}
+              onChange={(event) =>
+                setLinkedCashForm((prev) => ({
+                  ...prev,
+                  createLinkedCashTransaction:
+                    toUpper(prev.paymentChannel) === "CASH" ? event.target.checked : false,
+                }))
+              }
+              disabled={!canApply || toUpper(linkedCashForm.paymentChannel) !== "CASH"}
+            />
+            Create linked cash transaction after settlement apply
+          </label>
+          {toUpper(linkedCashForm.paymentChannel) !== "CASH" ? (
+            <p className="text-xs text-slate-500 md:col-span-2">
+              Select payment channel CASH to enable linked cash transaction creation.
+            </p>
+          ) : null}
         </div>
       </section>
 
@@ -666,6 +1077,16 @@ export default function CariSettlementsPage() {
                 <li key={`apply-risk-${index}`}>{risk}</li>
               ))}
             </ul>
+          </div>
+        ) : null}
+        {linkedCashError ? (
+          <div className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+            {linkedCashError}
+          </div>
+        ) : null}
+        {linkedCashMessage ? (
+          <div className="mt-3 rounded-md border border-cyan-200 bg-cyan-50 px-3 py-2 text-sm text-cyan-800">
+            {linkedCashMessage}
           </div>
         ) : null}
 
@@ -763,6 +1184,185 @@ export default function CariSettlementsPage() {
             useUnappliedCash
           </label>
 
+          {linkedCashForm.createLinkedCashTransaction &&
+          toUpper(linkedCashForm.paymentChannel) === "CASH" ? (
+            <>
+              {!canCreateCashTxn ? (
+                <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 md:col-span-4">
+                  Missing permission: `cash.txn.create`
+                </div>
+              ) : null}
+              <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                cash register
+                {linkedRegisterOptions.length > 0 ? (
+                  <select
+                    className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                    value={linkedCashForm.registerId}
+                    onChange={(event) =>
+                      setLinkedCashForm((prev) => ({
+                        ...prev,
+                        registerId: event.target.value,
+                        cashSessionId: "",
+                      }))
+                    }
+                    disabled={applySubmitting}
+                    required
+                  >
+                    <option value="">Select register</option>
+                    {linkedRegisterOptions.map((row) => (
+                      <option key={`linked-register-${row.id}`} value={row.id}>
+                        {`${row.code || row.id} - ${row.name || "-"} (${row.currency_code || "-"})`}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    type="number"
+                    min="1"
+                    className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                    value={linkedCashForm.registerId}
+                    onChange={(event) =>
+                      setLinkedCashForm((prev) => ({
+                        ...prev,
+                        registerId: event.target.value,
+                        cashSessionId: "",
+                      }))
+                    }
+                    disabled={applySubmitting}
+                    required
+                  />
+                )}
+              </label>
+              <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                cash session (optional)
+                {linkedRegisterOpenSessions.length > 0 ? (
+                  <select
+                    className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                    value={linkedCashForm.cashSessionId}
+                    onChange={(event) =>
+                      setLinkedCashForm((prev) => ({ ...prev, cashSessionId: event.target.value }))
+                    }
+                    disabled={applySubmitting}
+                  >
+                    <option value="">Select open session</option>
+                    {linkedRegisterOpenSessions.map((row) => (
+                      <option key={`linked-session-${row.id}`} value={row.id}>
+                        {`#${row.id} - ${row.cash_register_code || row.cash_register_id}`}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    type="number"
+                    min="1"
+                    className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                    value={linkedCashForm.cashSessionId}
+                    onChange={(event) =>
+                      setLinkedCashForm((prev) => ({ ...prev, cashSessionId: event.target.value }))
+                    }
+                    disabled={applySubmitting}
+                  />
+                )}
+              </label>
+              <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                counterAccount
+                {postingAccountOptions.length > 0 ? (
+                  <select
+                    className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                    value={linkedCashForm.counterAccountId}
+                    onChange={(event) =>
+                      setLinkedCashForm((prev) => ({
+                        ...prev,
+                        counterAccountId: event.target.value,
+                      }))
+                    }
+                    disabled={applySubmitting}
+                    required
+                  >
+                    <option value="">Select account</option>
+                    {postingAccountOptions.map((row) => (
+                      <option key={`linked-account-${row.id}`} value={row.id}>
+                        {`${row.code || row.id} - ${row.name || "-"}`}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    type="number"
+                    min="1"
+                    className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                    value={linkedCashForm.counterAccountId}
+                    onChange={(event) =>
+                      setLinkedCashForm((prev) => ({
+                        ...prev,
+                        counterAccountId: event.target.value,
+                      }))
+                    }
+                    disabled={applySubmitting}
+                    required
+                  />
+                )}
+              </label>
+              <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                txnDatetime
+                <input
+                  type="datetime-local"
+                  className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                  value={linkedCashForm.txnDatetime}
+                  onChange={(event) =>
+                    setLinkedCashForm((prev) => ({ ...prev, txnDatetime: event.target.value }))
+                  }
+                  disabled={applySubmitting}
+                  required
+                />
+              </label>
+              <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                bookDate
+                <input
+                  type="date"
+                  className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                  value={linkedCashForm.bookDate}
+                  onChange={(event) =>
+                    setLinkedCashForm((prev) => ({ ...prev, bookDate: event.target.value }))
+                  }
+                  disabled={applySubmitting}
+                  required
+                />
+              </label>
+              <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                referenceNo (optional)
+                <input
+                  type="text"
+                  className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                  value={linkedCashForm.referenceNo}
+                  onChange={(event) =>
+                    setLinkedCashForm((prev) => ({ ...prev, referenceNo: event.target.value }))
+                  }
+                  disabled={applySubmitting}
+                />
+              </label>
+              <label className="text-xs font-semibold uppercase tracking-wide text-slate-600 md:col-span-2">
+                description (optional)
+                <input
+                  type="text"
+                  className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                  value={linkedCashForm.description}
+                  onChange={(event) =>
+                    setLinkedCashForm((prev) => ({ ...prev, description: event.target.value }))
+                  }
+                  disabled={applySubmitting}
+                />
+              </label>
+              {selectedLinkedRegister &&
+              toUpper(selectedLinkedRegister.currency_code) !== toUpper(applyForm.currencyCode) ? (
+                <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 md:col-span-4">
+                  Register currency ({selectedLinkedRegister.currency_code}) differs from settlement
+                  currency ({toUpper(applyForm.currencyCode)}). Cash creation will fail unless they match.
+                </div>
+              ) : null}
+            </>
+          ) : null}
+
           <div className="md:col-span-4 flex flex-wrap gap-2">
             <button
               type="submit"
@@ -782,6 +1382,10 @@ export default function CariSettlementsPage() {
                 setApplyReplayMessage("");
                 setApplyResult(null);
                 setApplyFollowUpRisks([]);
+                setLinkedCashForm(buildLinkedCashDefaultForm());
+                setLinkedCashError("");
+                setLinkedCashMessage("");
+                setLinkedCashResult(null);
                 setPreviewFilters((prev) => ({
                   ...prev,
                   legalEntityId: "",
@@ -897,6 +1501,12 @@ export default function CariSettlementsPage() {
               <dd>{String(Boolean(applyResult?.idempotentReplay))}</dd>
               <dt className="font-semibold text-slate-600">allocationCount</dt>
               <dd>{Array.isArray(applyResult?.allocations) ? applyResult.allocations.length : 0}</dd>
+              <dt className="font-semibold text-slate-600">linkedCashTransactionId</dt>
+              <dd>
+                {applyResult?.row?.cashTransactionId ||
+                  linkedCashResult?.id ||
+                  "-"}
+              </dd>
             </dl>
             <pre className="mt-3 overflow-x-auto rounded-md bg-slate-900 p-3 text-xs text-slate-100">
 {JSON.stringify(

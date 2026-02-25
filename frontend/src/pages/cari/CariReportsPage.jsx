@@ -544,6 +544,7 @@ export default function CariReportsPage() {
                     <th className="px-3 py-2">Date</th>
                     <th className="px-3 py-2">Status</th>
                     <th className="px-3 py-2">Total</th>
+                    <th className="px-3 py-2">Cash Txn</th>
                     <th className="px-3 py-2">Reversal Of</th>
                     <th className="px-3 py-2">Reversed By</th>
                     <th className="px-3 py-2">Bank Ref</th>
@@ -556,6 +557,7 @@ export default function CariReportsPage() {
                       <td className="px-3 py-2">{formatDate(row.settlementDate)}</td>
                       <td className="px-3 py-2">{row.statusCurrent}</td>
                       <td className="px-3 py-2">{formatAmount(row.totalAllocatedTxn)}</td>
+                      <td className="px-3 py-2">{row.cashTransactionId || "-"}</td>
                       <td className="px-3 py-2">{row.reversalOfSettlementNo || "-"}</td>
                       <td className="px-3 py-2">{row.reversedBySettlementNo || "-"}</td>
                       <td className="px-3 py-2">

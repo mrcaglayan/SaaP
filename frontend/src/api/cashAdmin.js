@@ -97,6 +97,14 @@ export async function reverseCashTransaction(transactionId, payload) {
   return response.data;
 }
 
+export async function applyCariForCashTransaction(transactionId, payload) {
+  const response = await api.post(
+    `/api/v1/cash/transactions/${transactionId}/apply-cari`,
+    payload
+  );
+  return response.data;
+}
+
 export async function getCashConfig() {
   const response = await api.get("/api/v1/cash/config");
   return response.data;

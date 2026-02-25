@@ -95,9 +95,10 @@ function toDateOnlyString(value, label = "date") {
     if (Number.isNaN(value.getTime())) {
       throw badRequest(`${label} must be a valid date`);
     }
-    const year = value.getUTCFullYear();
-    const month = String(value.getUTCMonth() + 1).padStart(2, "0");
-    const day = String(value.getUTCDate()).padStart(2, "0");
+    // Preserve DATE semantics from DB drivers that hydrate date-only columns to local midnight.
+    const year = value.getFullYear();
+    const month = String(value.getMonth() + 1).padStart(2, "0");
+    const day = String(value.getDate()).padStart(2, "0");
     return `${year}-${month}-${day}`;
   }
   const raw = String(value).trim();
@@ -175,6 +176,145 @@ function buildDeterministicUid(prefix, parts = []) {
     .map((part) => String(part ?? "").trim())
     .join(":");
   return `${prefix}:${serialized}`.slice(0, 160);
+}
+
+function toUnixTimeMs(dateOnly) {
+  const normalized = toDateOnlyString(dateOnly, "date");
+  if (!normalized) {
+    return null;
+  }
+  const parsed = new Date(`${normalized}T00:00:00.000Z`);
+  if (Number.isNaN(parsed.getTime())) {
+    throw badRequest("date must be valid");
+  }
+  return parsed.getTime();
+}
+
+function toMonthStartDateOnly(dateOnly) {
+  const normalized = toDateOnlyString(dateOnly, "date");
+  if (!normalized) {
+    return null;
+  }
+  return `${normalized.slice(0, 7)}-01`;
+}
+
+function toMonthEndDateOnly(dateOnly) {
+  const normalized = toDateOnlyString(dateOnly, "date");
+  if (!normalized) {
+    return null;
+  }
+  const parsed = new Date(`${normalized.slice(0, 7)}-01T00:00:00.000Z`);
+  if (Number.isNaN(parsed.getTime())) {
+    throw badRequest("date must be valid");
+  }
+  parsed.setUTCMonth(parsed.getUTCMonth() + 1, 0);
+  return parsed.toISOString().slice(0, 10);
+}
+
+function addMonthsDateOnly(dateOnly, monthDelta = 0) {
+  const normalized = toDateOnlyString(dateOnly, "date");
+  if (!normalized) {
+    return null;
+  }
+  const parsed = new Date(`${normalized}T00:00:00.000Z`);
+  if (Number.isNaN(parsed.getTime())) {
+    throw badRequest("date must be valid");
+  }
+  parsed.setUTCMonth(parsed.getUTCMonth() + Number(monthDelta || 0));
+  return parsed.toISOString().slice(0, 10);
+}
+
+function enumerateMonthEndDatesInRange(startDate, endDate) {
+  const normalizedStart = toDateOnlyString(startDate, "recognitionStartDate");
+  const normalizedEnd = toDateOnlyString(endDate, "recognitionEndDate");
+  if (!normalizedStart || !normalizedEnd) {
+    return [];
+  }
+  if (normalizedStart > normalizedEnd) {
+    throw badRequest("recognitionStartDate cannot be greater than recognitionEndDate");
+  }
+
+  const dates = [];
+  let cursor = toMonthStartDateOnly(normalizedStart);
+  const endMonth = toMonthStartDateOnly(normalizedEnd);
+  while (cursor && endMonth && cursor <= endMonth) {
+    dates.push(toMonthEndDateOnly(cursor));
+    cursor = addMonthsDateOnly(cursor, 1);
+  }
+  return dates;
+}
+
+function splitAmountAcrossBuckets(totalAmount, bucketCount, label) {
+  const parsedTotal = Number(totalAmount);
+  if (!Number.isFinite(parsedTotal)) {
+    throw badRequest(`${label} must be numeric`);
+  }
+  const count = Number(bucketCount || 0);
+  if (!Number.isInteger(count) || count <= 0) {
+    throw badRequest("bucketCount must be a positive integer");
+  }
+  if (count === 1) {
+    return [Number(parsedTotal.toFixed(6))];
+  }
+
+  const chunk = Number((parsedTotal / count).toFixed(6));
+  const values = [];
+  for (let index = 0; index < count - 1; index += 1) {
+    values.push(chunk);
+  }
+  const remainder = Number((parsedTotal - chunk * (count - 1)).toFixed(6));
+  values.push(remainder);
+  return values;
+}
+
+function resolveMaturityBucketForDate({
+  maturityDate,
+  periodEndDate,
+}) {
+  const maturityMs = toUnixTimeMs(maturityDate);
+  const periodEndMs = toUnixTimeMs(periodEndDate);
+  if (maturityMs === null || periodEndMs === null) {
+    return "SHORT_TERM";
+  }
+  const oneYearMs = 365 * 24 * 60 * 60 * 1000;
+  return maturityMs - periodEndMs > oneYearMs ? "LONG_TERM" : "SHORT_TERM";
+}
+
+function resolveFxRateFromAmounts(amountTxn, amountBase) {
+  const txn = Math.abs(Number(amountTxn || 0));
+  const base = Math.abs(Number(amountBase || 0));
+  if (txn <= JOURNAL_BALANCE_EPSILON || base <= JOURNAL_BALANCE_EPSILON) {
+    return 1;
+  }
+  const ratio = base / txn;
+  if (!Number.isFinite(ratio) || ratio <= 0) {
+    return 1;
+  }
+  return Number(ratio.toFixed(10));
+}
+
+function buildContractRevrecScheduleSourceUid({
+  contractId,
+  contractLineId,
+  fiscalPeriodId,
+  generationMode,
+  sourceCariDocumentId,
+}) {
+  const modeCode = asUpper(generationMode) === "BY_LINKED_DOCUMENT" ? "DOC" : "LINE";
+  return buildDeterministicUid("CONREV_SCHED", [
+    contractId,
+    contractLineId,
+    fiscalPeriodId,
+    modeCode,
+    sourceCariDocumentId || 0,
+  ]);
+}
+
+function buildContractRevrecLineSourceUid({
+  scheduleSourceUid,
+  maturityDate,
+}) {
+  return buildDeterministicUid("CONREV_LINE", [scheduleSourceUid, maturityDate]);
 }
 
 function mapScheduleRow(row) {
@@ -348,6 +488,138 @@ async function fetchScheduleRow({
     [tenantId, scheduleId]
   );
   return result.rows?.[0] || null;
+}
+
+async function fetchScheduleRowBySourceEventUid({
+  tenantId,
+  legalEntityId,
+  sourceEventUid,
+  runQuery = query,
+  forUpdate = false,
+}) {
+  const lockSql = forUpdate ? " FOR UPDATE" : "";
+  const result = await runQuery(
+    `SELECT
+        rrs.id,
+        rrs.tenant_id,
+        rrs.legal_entity_id,
+        rrs.fiscal_period_id,
+        rrs.source_event_uid,
+        rrs.status,
+        rrs.account_family,
+        rrs.maturity_bucket,
+        rrs.maturity_date,
+        rrs.reclass_required,
+        rrs.currency_code,
+        rrs.fx_rate,
+        rrs.amount_txn,
+        rrs.amount_base,
+        rrs.period_start_date,
+        rrs.period_end_date,
+        rrs.created_by_user_id,
+        rrs.posted_journal_entry_id,
+        rrs.created_at,
+        rrs.updated_at,
+        (
+          SELECT COUNT(*)
+          FROM revenue_recognition_schedule_lines rrsl
+          WHERE rrsl.tenant_id = rrs.tenant_id
+            AND rrsl.schedule_id = rrs.id
+        ) AS line_count
+     FROM revenue_recognition_schedules rrs
+     WHERE rrs.tenant_id = ?
+       AND rrs.legal_entity_id = ?
+       AND rrs.source_event_uid = ?
+     LIMIT 1${lockSql}`,
+    [tenantId, legalEntityId, sourceEventUid]
+  );
+  return result.rows?.[0] || null;
+}
+
+async function fetchScheduleLineSourceSetAndMaxLineNo({
+  tenantId,
+  legalEntityId,
+  scheduleId,
+  runQuery = query,
+}) {
+  const result = await runQuery(
+    `SELECT
+        source_row_uid,
+        line_no
+     FROM revenue_recognition_schedule_lines
+     WHERE tenant_id = ?
+       AND legal_entity_id = ?
+       AND schedule_id = ?`,
+    [tenantId, legalEntityId, scheduleId]
+  );
+  const sourceUidSet = new Set();
+  let maxLineNo = 0;
+  for (const row of result.rows || []) {
+    const uid = String(row.source_row_uid || "").trim();
+    if (uid) {
+      sourceUidSet.add(uid);
+    }
+    const lineNo = Number(row.line_no || 0);
+    if (Number.isFinite(lineNo) && lineNo > maxLineNo) {
+      maxLineNo = lineNo;
+    }
+  }
+  return { sourceUidSet, maxLineNo };
+}
+
+async function refreshScheduleAggregates({
+  tenantId,
+  legalEntityId,
+  scheduleId,
+  targetStatus = "DRAFT",
+  runQuery = query,
+}) {
+  const aggregateResult = await runQuery(
+    `SELECT
+        COALESCE(SUM(rrsl.amount_txn), 0) AS total_amount_txn,
+        COALESCE(SUM(rrsl.amount_base), 0) AS total_amount_base,
+        MAX(rrsl.maturity_date) AS max_maturity_date,
+        MAX(CASE WHEN rrsl.maturity_bucket = 'LONG_TERM' THEN 1 ELSE 0 END) AS has_long_term,
+        MAX(CASE WHEN rrsl.reclass_required = 1 THEN 1 ELSE 0 END) AS has_reclass_required
+     FROM revenue_recognition_schedule_lines rrsl
+     WHERE rrsl.tenant_id = ?
+       AND rrsl.legal_entity_id = ?
+       AND rrsl.schedule_id = ?`,
+    [tenantId, legalEntityId, scheduleId]
+  );
+  const aggregate = aggregateResult.rows?.[0] || {};
+  const totalAmountTxn = Number(Number(aggregate.total_amount_txn || 0).toFixed(6));
+  const totalAmountBase = Number(Number(aggregate.total_amount_base || 0).toFixed(6));
+  const maturityDate = toDateOnlyString(aggregate.max_maturity_date, "maturityDate");
+  const maturityBucket = Number(aggregate.has_long_term || 0) > 0 ? "LONG_TERM" : "SHORT_TERM";
+  const reclassRequired = Number(aggregate.has_reclass_required || 0) > 0 ? 1 : 0;
+
+  await runQuery(
+    `UPDATE revenue_recognition_schedules
+     SET status = CASE
+           WHEN status IN ('POSTED', 'REVERSED') THEN status
+           ELSE ?
+         END,
+         maturity_bucket = ?,
+         maturity_date = ?,
+         reclass_required = ?,
+         amount_txn = ?,
+         amount_base = ?
+     WHERE tenant_id = ?
+       AND legal_entity_id = ?
+       AND id = ?`,
+    [
+      asUpper(targetStatus) || "DRAFT",
+      maturityBucket,
+      maturityDate,
+      reclassRequired,
+      totalAmountTxn,
+      totalAmountBase,
+      tenantId,
+      legalEntityId,
+      scheduleId,
+    ]
+  );
 }
 
 async function fetchScheduleLines({
@@ -2221,6 +2493,453 @@ export async function generateRevenueRecognitionSchedule({
     }
     throw err;
   }
+}
+
+function buildContractLineRevrecBuckets({
+  lineRow,
+  periodStartDate,
+  periodEndDate,
+}) {
+  const recognitionMethod = asUpper(lineRow?.recognition_method);
+  const lineAmountTxn = Number(lineRow?.line_amount_txn || 0);
+  const lineAmountBase = Number(lineRow?.line_amount_base || 0);
+  if (!Number.isFinite(lineAmountTxn) || !Number.isFinite(lineAmountBase)) {
+    throw badRequest("Contract line amounts must be numeric for RevRec generation");
+  }
+  if (Math.abs(lineAmountTxn) <= JOURNAL_BALANCE_EPSILON) {
+    throw badRequest("Contract line amount_txn must be non-zero for RevRec generation");
+  }
+  if (Math.abs(lineAmountBase) <= JOURNAL_BALANCE_EPSILON) {
+    throw badRequest("Contract line amount_base must be non-zero for RevRec generation");
+  }
+
+  if (recognitionMethod === "MANUAL") {
+    return {
+      reason: "MANUAL recognition_method is excluded from auto generation",
+      allBuckets: [],
+      inPeriodBuckets: [],
+    };
+  }
+
+  let bucketDates = [];
+  if (recognitionMethod === "STRAIGHT_LINE") {
+    const recognitionStartDate = toDateOnlyString(
+      lineRow?.recognition_start_date,
+      "recognitionStartDate"
+    );
+    const recognitionEndDate = toDateOnlyString(
+      lineRow?.recognition_end_date,
+      "recognitionEndDate"
+    );
+    if (!recognitionStartDate || !recognitionEndDate) {
+      throw badRequest(
+        "STRAIGHT_LINE contract lines require recognition_start_date and recognition_end_date"
+      );
+    }
+    bucketDates = enumerateMonthEndDatesInRange(recognitionStartDate, recognitionEndDate);
+  } else if (recognitionMethod === "MILESTONE") {
+    const recognitionStartDate = toDateOnlyString(
+      lineRow?.recognition_start_date,
+      "recognitionStartDate"
+    );
+    const recognitionEndDate = toDateOnlyString(
+      lineRow?.recognition_end_date,
+      "recognitionEndDate"
+    );
+    if (!recognitionStartDate || !recognitionEndDate) {
+      throw badRequest(
+        "MILESTONE contract lines require recognition_start_date and recognition_end_date"
+      );
+    }
+    if (recognitionStartDate !== recognitionEndDate) {
+      throw badRequest(
+        "MILESTONE contract lines require recognition_start_date and recognition_end_date to match"
+      );
+    }
+    bucketDates = [recognitionStartDate];
+  } else {
+    throw badRequest(`Unsupported recognition_method for RevRec: ${recognitionMethod}`);
+  }
+
+  if (bucketDates.length === 0) {
+    return {
+      reason: "No recognition buckets resolved",
+      allBuckets: [],
+      inPeriodBuckets: [],
+    };
+  }
+
+  const bucketAmountTxn = splitAmountAcrossBuckets(
+    lineAmountTxn,
+    bucketDates.length,
+    "lineAmountTxn"
+  );
+  const bucketAmountBase = splitAmountAcrossBuckets(
+    lineAmountBase,
+    bucketDates.length,
+    "lineAmountBase"
+  );
+  const normalizedPeriodStartDate = toDateOnlyString(periodStartDate, "periodStartDate");
+  const normalizedPeriodEndDate = toDateOnlyString(periodEndDate, "periodEndDate");
+
+  const allBuckets = bucketDates.map((bucketDate, index) => {
+    const amountTxn = Number(bucketAmountTxn[index] || 0);
+    const amountBase = Number(bucketAmountBase[index] || 0);
+    const maturityBucket = resolveMaturityBucketForDate({
+      maturityDate: bucketDate,
+      periodEndDate: normalizedPeriodEndDate,
+    });
+    return {
+      maturityDate: bucketDate,
+      maturityBucket,
+      reclassRequired: maturityBucket === "LONG_TERM",
+      amountTxn: Number(amountTxn.toFixed(6)),
+      amountBase: Number(amountBase.toFixed(6)),
+      fxRate: resolveFxRateFromAmounts(amountTxn, amountBase),
+    };
+  });
+
+  const inPeriodBuckets = allBuckets.filter(
+    (bucket) =>
+      bucket.maturityDate >= normalizedPeriodStartDate &&
+      bucket.maturityDate <= normalizedPeriodEndDate
+  );
+
+  return {
+    reason: null,
+    allBuckets,
+    inPeriodBuckets,
+  };
+}
+
+export async function generateRevenueRecognitionSchedulesFromContract({
+  payload,
+  runQuery = query,
+}) {
+  const normalizedMode =
+    asUpper(payload?.generationMode) === "BY_LINKED_DOCUMENT"
+      ? "BY_LINKED_DOCUMENT"
+      : "BY_CONTRACT_LINE";
+  const regenerateMissingOnly = payload?.regenerateMissingOnly !== false;
+  const normalizedScheduleStatus = asUpper(payload?.scheduleStatus || "DRAFT");
+  if (!["DRAFT", "READY"].includes(normalizedScheduleStatus)) {
+    throw badRequest("scheduleStatus must be DRAFT or READY");
+  }
+  const accountFamily = asUpper(payload?.accountFamily);
+  if (!PR17_POSTABLE_FAMILIES.has(accountFamily)) {
+    throw badRequest(`Unsupported accountFamily for contract RevRec generation: ${accountFamily}`);
+  }
+
+  const lineRows = Array.isArray(payload?.lineRows) ? payload.lineRows : [];
+  if (lineRows.length === 0) {
+    throw badRequest("No contract lines selected for RevRec generation");
+  }
+
+  await assertLegalEntityExists({
+    tenantId: payload.tenantId,
+    legalEntityId: payload.legalEntityId,
+    runQuery,
+  });
+  await assertCurrencyExists({
+    currencyCode: payload.currencyCode,
+    runQuery,
+  });
+
+  const period = await resolvePeriodScope({
+    tenantId: payload.tenantId,
+    legalEntityId: payload.legalEntityId,
+    fiscalPeriodId: payload.fiscalPeriodId,
+    runQuery,
+  });
+  if (!period) {
+    throw badRequest("fiscalPeriodId is not valid in legalEntity scope");
+  }
+
+  const periodStartDate = toDateOnlyString(period.start_date, "periodStartDate");
+  const periodEndDate = toDateOnlyString(period.end_date, "periodEndDate");
+  let generatedScheduleCount = 0;
+  let generatedLineCount = 0;
+  let skippedLineCount = 0;
+  let idempotentReplay = true;
+  const scheduleById = new Map();
+
+  for (const lineRow of lineRows) {
+    const contractLineId = parsePositiveInt(lineRow?.id);
+    if (!contractLineId) {
+      throw badRequest("Selected contract line has invalid id");
+    }
+    if (!parsePositiveInt(lineRow?.deferred_account_id)) {
+      throw badRequest(`contractLineId=${contractLineId} missing deferred_account_id`);
+    }
+    if (!parsePositiveInt(lineRow?.revenue_account_id)) {
+      throw badRequest(`contractLineId=${contractLineId} missing revenue_account_id`);
+    }
+
+    const bucketPlan = buildContractLineRevrecBuckets({
+      lineRow,
+      periodStartDate,
+      periodEndDate,
+    });
+    if (!Array.isArray(bucketPlan.inPeriodBuckets) || bucketPlan.inPeriodBuckets.length === 0) {
+      skippedLineCount += 1;
+      continue;
+    }
+
+    const scheduleSourceUid = buildContractRevrecScheduleSourceUid({
+      contractId: payload.contractId,
+      contractLineId,
+      fiscalPeriodId: payload.fiscalPeriodId,
+      generationMode: normalizedMode,
+      sourceCariDocumentId: payload.sourceCariDocumentId,
+    });
+
+    let schedule = await fetchScheduleRowBySourceEventUid({
+      tenantId: payload.tenantId,
+      legalEntityId: payload.legalEntityId,
+      sourceEventUid: scheduleSourceUid,
+      runQuery,
+      forUpdate: true,
+    });
+
+    let scheduleId = parsePositiveInt(schedule?.id);
+    if (!scheduleId) {
+      const firstBucket = bucketPlan.inPeriodBuckets[0];
+      const maturityDate = bucketPlan.inPeriodBuckets.reduce(
+        (maxDate, bucket) => (bucket.maturityDate > maxDate ? bucket.maturityDate : maxDate),
+        firstBucket.maturityDate
+      );
+      const hasLongTermBucket = bucketPlan.inPeriodBuckets.some(
+        (bucket) => bucket.maturityBucket === "LONG_TERM"
+      );
+      const hasReclassRequired = bucketPlan.inPeriodBuckets.some((bucket) => bucket.reclassRequired);
+      const totalAmountTxn = bucketPlan.inPeriodBuckets.reduce(
+        (sum, bucket) => sum + Number(bucket.amountTxn || 0),
+        0
+      );
+      const totalAmountBase = bucketPlan.inPeriodBuckets.reduce(
+        (sum, bucket) => sum + Number(bucket.amountBase || 0),
+        0
+      );
+      const fxRate = resolveFxRateFromAmounts(totalAmountTxn, totalAmountBase);
+
+      try {
+        const insertResult = await runQuery(
+          `INSERT INTO revenue_recognition_schedules (
+              tenant_id,
+              legal_entity_id,
+              fiscal_period_id,
+              source_event_uid,
+              status,
+              account_family,
+              maturity_bucket,
+              maturity_date,
+              reclass_required,
+              currency_code,
+              fx_rate,
+              amount_txn,
+              amount_base,
+              period_start_date,
+              period_end_date,
+              created_by_user_id
+           )
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            payload.tenantId,
+            payload.legalEntityId,
+            payload.fiscalPeriodId,
+            scheduleSourceUid,
+            normalizedScheduleStatus,
+            accountFamily,
+            hasLongTermBucket ? "LONG_TERM" : "SHORT_TERM",
+            maturityDate,
+            hasReclassRequired ? 1 : 0,
+            asUpper(payload.currencyCode),
+            fxRate,
+            Number(totalAmountTxn.toFixed(6)),
+            Number(totalAmountBase.toFixed(6)),
+            periodStartDate,
+            periodEndDate,
+            payload.userId,
+          ]
+        );
+        scheduleId = parsePositiveInt(insertResult.rows?.insertId);
+      } catch (err) {
+        if (!isDuplicateKeyError(err, "uk_revrec_sched_source_uid")) {
+          throw err;
+        }
+        const replaySchedule = await fetchScheduleRowBySourceEventUid({
+          tenantId: payload.tenantId,
+          legalEntityId: payload.legalEntityId,
+          sourceEventUid: scheduleSourceUid,
+          runQuery,
+          forUpdate: true,
+        });
+        scheduleId = parsePositiveInt(replaySchedule?.id);
+      }
+
+      if (!scheduleId) {
+        throw new Error("Failed to create/fetch contract RevRec schedule");
+      }
+      schedule = await fetchScheduleRow({
+        tenantId: payload.tenantId,
+        scheduleId,
+        runQuery,
+        forUpdate: true,
+      });
+      generatedScheduleCount += 1;
+      idempotentReplay = false;
+    } else {
+      if (parsePositiveInt(schedule.fiscal_period_id) !== payload.fiscalPeriodId) {
+        throw badRequest(
+          `RevRec schedule source collision for contractLineId=${contractLineId} and fiscalPeriodId mismatch`
+        );
+      }
+      if (asUpper(schedule.account_family) !== accountFamily) {
+        throw badRequest(
+          `RevRec schedule accountFamily mismatch for contractLineId=${contractLineId}`
+        );
+      }
+    }
+
+    if (!scheduleId) {
+      throw new Error("RevRec schedule id not resolved");
+    }
+
+    const scheduleStatus = asUpper(schedule?.status);
+    if (!["DRAFT", "READY", "POSTED", "REVERSED"].includes(scheduleStatus)) {
+      throw badRequest(`Unsupported schedule status: ${scheduleStatus}`);
+    }
+
+    const { sourceUidSet, maxLineNo } = await fetchScheduleLineSourceSetAndMaxLineNo({
+      tenantId: payload.tenantId,
+      legalEntityId: payload.legalEntityId,
+      scheduleId,
+      runQuery,
+    });
+    let nextLineNo = maxLineNo;
+
+    for (const bucket of bucketPlan.inPeriodBuckets) {
+      const lineSourceUid = buildContractRevrecLineSourceUid({
+        scheduleSourceUid,
+        maturityDate: bucket.maturityDate,
+      });
+      if (sourceUidSet.has(lineSourceUid)) {
+        if (!regenerateMissingOnly) {
+          throw badRequest(
+            `Duplicate RevRec schedule bucket exists for contractLineId=${contractLineId}, maturityDate=${bucket.maturityDate}`
+          );
+        }
+        skippedLineCount += 1;
+        continue;
+      }
+      if (!["DRAFT", "READY"].includes(scheduleStatus)) {
+        throw badRequest(
+          `Schedule ${scheduleId} is ${scheduleStatus}; cannot append missing contract RevRec lines`
+        );
+      }
+
+      nextLineNo += 1;
+      try {
+        await runQuery(
+          `INSERT INTO revenue_recognition_schedule_lines (
+              tenant_id,
+              legal_entity_id,
+              schedule_id,
+              line_no,
+              source_row_uid,
+              source_contract_id,
+              source_contract_line_id,
+              source_cari_document_id,
+              status,
+              account_family,
+              maturity_bucket,
+              maturity_date,
+              reclass_required,
+              currency_code,
+              fx_rate,
+              amount_txn,
+              amount_base,
+              period_start_date,
+              period_end_date,
+              fiscal_period_id,
+              created_by_user_id
+           )
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'OPEN', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            payload.tenantId,
+            payload.legalEntityId,
+            scheduleId,
+            nextLineNo,
+            lineSourceUid,
+            payload.contractId,
+            contractLineId,
+            payload.sourceCariDocumentId || null,
+            accountFamily,
+            bucket.maturityBucket,
+            bucket.maturityDate,
+            bucket.reclassRequired ? 1 : 0,
+            asUpper(payload.currencyCode),
+            bucket.fxRate,
+            Number(bucket.amountTxn || 0).toFixed(6),
+            Number(bucket.amountBase || 0).toFixed(6),
+            periodStartDate,
+            periodEndDate,
+            payload.fiscalPeriodId,
+            payload.userId,
+          ]
+        );
+      } catch (err) {
+        if (!isDuplicateKeyError(err, "uk_revrec_sched_line_source_uid")) {
+          throw err;
+        }
+        if (!regenerateMissingOnly) {
+          throw badRequest(
+            `Duplicate RevRec schedule bucket exists for contractLineId=${contractLineId}, maturityDate=${bucket.maturityDate}`
+          );
+        }
+        skippedLineCount += 1;
+        nextLineNo -= 1;
+        continue;
+      }
+      sourceUidSet.add(lineSourceUid);
+      generatedLineCount += 1;
+      idempotentReplay = false;
+    }
+
+    await refreshScheduleAggregates({
+      tenantId: payload.tenantId,
+      legalEntityId: payload.legalEntityId,
+      scheduleId,
+      targetStatus: normalizedScheduleStatus,
+      runQuery,
+    });
+
+    const updatedSchedule = await fetchScheduleRow({
+      tenantId: payload.tenantId,
+      scheduleId,
+      runQuery,
+    });
+    if (updatedSchedule) {
+      scheduleById.set(parsePositiveInt(updatedSchedule.id), mapScheduleRow(updatedSchedule));
+    }
+  }
+
+  if (scheduleById.size === 0) {
+    throw badRequest(
+      "No contract recognition buckets found in the selected fiscal period for RevRec generation"
+    );
+  }
+
+  return {
+    idempotentReplay: Boolean(idempotentReplay),
+    generationMode: normalizedMode,
+    accountFamily,
+    sourceCariDocumentId: payload.sourceCariDocumentId || null,
+    generatedScheduleCount,
+    generatedLineCount,
+    skippedLineCount,
+    rows: Array.from(scheduleById.values()),
+  };
 }
 
 export async function listRevenueRecognitionRuns({

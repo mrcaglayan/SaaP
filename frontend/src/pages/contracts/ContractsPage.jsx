@@ -7,6 +7,8 @@ import {
   cancelContract,
   closeContract,
   createContract,
+  generateContractBilling,
+  generateContractRevrec,
   getContract,
   listContractLinkableDocuments,
   linkContractDocument,
@@ -26,6 +28,7 @@ import {
   LINK_TYPES,
   RECOGNITION_METHODS,
   buildContractLinkPayload,
+  buildContractBillingPayload,
   buildContractLinkAdjustmentPayload,
   buildContractLinkUnlinkPayload,
   buildContractListQuery,
@@ -33,6 +36,8 @@ import {
   canUnlinkContractLink,
   createEmptyContractLine,
   createInitialContractForm,
+  createInitialBillingForm,
+  createInitialRevrecForm,
   createInitialLinkAdjustmentForm,
   createInitialLinkForm,
   createInitialLinkUnlinkForm,
@@ -44,10 +49,15 @@ import {
   resolveContractsPermissionGates,
   toPositiveInt,
   validateContractForm,
+  validateContractBillingForm,
+  validateContractRevrecForm,
   validateContractLinePatchForm,
   validateContractLinkAdjustmentForm,
   validateContractLinkForm,
   validateContractLinkUnlinkForm,
+  BILLING_DOC_TYPES,
+  BILLING_AMOUNT_STRATEGIES,
+  REVREC_GENERATION_MODES,
 } from "./contractsUtils.js";
 
 const DEFAULT_FILTERS = {
@@ -62,6 +72,10 @@ const DEFAULT_FILTERS = {
 
 function toUpper(value) {
   return String(value || "").trim().toUpperCase();
+}
+
+function todayDateOnly() {
+  return new Date().toISOString().slice(0, 10);
 }
 
 function normalizeApiError(error, fallback = "Operation failed.") {
@@ -100,6 +114,17 @@ export default function ContractsPage() {
   const [lifecycleLoading, setLifecycleLoading] = useState("");
   const [lifecycleError, setLifecycleError] = useState("");
   const [lifecycleMessage, setLifecycleMessage] = useState("");
+
+  const [billingForm, setBillingForm] = useState(() => createInitialBillingForm());
+  const [billingSaving, setBillingSaving] = useState(false);
+  const [billingError, setBillingError] = useState("");
+  const [billingMessage, setBillingMessage] = useState("");
+  const [billingResult, setBillingResult] = useState(null);
+  const [revrecForm, setRevrecForm] = useState(() => createInitialRevrecForm());
+  const [revrecSaving, setRevrecSaving] = useState(false);
+  const [revrecError, setRevrecError] = useState("");
+  const [revrecMessage, setRevrecMessage] = useState("");
+  const [revrecResult, setRevrecResult] = useState(null);
 
   const [linkForm, setLinkForm] = useState(() => createInitialLinkForm());
   const [linkSaving, setLinkSaving] = useState(false);
@@ -204,6 +229,14 @@ export default function ContractsPage() {
     if (!toPositiveInt(selectedContractId)) {
       setSelectedContractDetail(null);
       setDocumentLinks([]);
+      setBillingForm(createInitialBillingForm());
+      setBillingError("");
+      setBillingMessage("");
+      setBillingResult(null);
+      setRevrecForm(createInitialRevrecForm());
+      setRevrecError("");
+      setRevrecMessage("");
+      setRevrecResult(null);
       setLinkAdjustmentForm(createInitialLinkAdjustmentForm());
       setLinkUnlinkForm(createInitialLinkUnlinkForm());
       setAmendReason("");
@@ -211,6 +244,14 @@ export default function ContractsPage() {
       setLinePatchSavingId(null);
       return;
     }
+    setBillingForm(createInitialBillingForm());
+    setBillingError("");
+    setBillingMessage("");
+    setBillingResult(null);
+    setRevrecForm(createInitialRevrecForm());
+    setRevrecError("");
+    setRevrecMessage("");
+    setRevrecResult(null);
     setLinkAdjustmentForm(createInitialLinkAdjustmentForm());
     setLinkUnlinkForm(createInitialLinkUnlinkForm());
     setLinePatchSavingId(null);
@@ -301,12 +342,58 @@ export default function ContractsPage() {
     };
   }, [gates.shouldFetchDocuments, selectedContractId]);
 
+  useEffect(() => {
+    const lines = Array.isArray(selectedContract?.lines) ? selectedContract.lines : [];
+    if (lines.length === 0) {
+      return;
+    }
+    setBillingForm((prev) => {
+      const hasSelected = Array.isArray(prev.selectedLineIds) && prev.selectedLineIds.length > 0;
+      const nextSelected = hasSelected
+        ? prev.selectedLineIds
+        : lines
+            .filter((line) => toUpper(line?.status) === "ACTIVE")
+            .map((line) => String(line?.id || ""))
+            .filter((entry) => toPositiveInt(entry));
+      const nextBillingDate = prev.billingDate || todayDateOnly();
+      if (hasSelected && prev.billingDate) {
+        return prev;
+      }
+      return {
+        ...prev,
+        selectedLineIds: nextSelected,
+        billingDate: nextBillingDate,
+      };
+    });
+    setRevrecForm((prev) => {
+      const hasSelected = Array.isArray(prev.contractLineIds) && prev.contractLineIds.length > 0;
+      if (hasSelected) {
+        return prev;
+      }
+      return {
+        ...prev,
+        contractLineIds: lines
+          .filter((line) => toUpper(line?.status) === "ACTIVE")
+          .map((line) => String(line?.id || ""))
+          .filter((entry) => toPositiveInt(entry)),
+      };
+    });
+  }, [selectedContract]);
+
   function handleStartCreate() {
     setFormMode("create");
     setContractForm(createInitialContractForm());
     setAmendReason("");
     setLinePatchReason("");
     setLinePatchSavingId(null);
+    setBillingForm(createInitialBillingForm());
+    setBillingError("");
+    setBillingMessage("");
+    setBillingResult(null);
+    setRevrecForm(createInitialRevrecForm());
+    setRevrecError("");
+    setRevrecMessage("");
+    setRevrecResult(null);
     setSelectedContractId(null);
     setSelectedContractDetail(null);
     setDocumentLinks([]);
@@ -513,6 +600,169 @@ export default function ContractsPage() {
       setLifecycleError(normalizeApiError(error, `Failed to ${action} contract.`));
     } finally {
       setLifecycleLoading("");
+    }
+  }
+
+  function handleToggleBillingLine(lineId, checked) {
+    const normalizedLineId = String(lineId || "").trim();
+    if (!toPositiveInt(normalizedLineId)) {
+      return;
+    }
+    setBillingForm((prev) => {
+      const current = new Set(
+        (Array.isArray(prev.selectedLineIds) ? prev.selectedLineIds : []).map((entry) =>
+          String(entry || "").trim()
+        )
+      );
+      if (checked) {
+        current.add(normalizedLineId);
+      } else {
+        current.delete(normalizedLineId);
+      }
+      return {
+        ...prev,
+        selectedLineIds: Array.from(current),
+      };
+    });
+  }
+
+  function handleSelectAllBillingLines() {
+    const lineIds = (Array.isArray(selectedContract?.lines) ? selectedContract.lines : [])
+      .filter((line) => toUpper(line?.status) === "ACTIVE")
+      .map((line) => String(line?.id || ""))
+      .filter((value) => toPositiveInt(value));
+    setBillingForm((prev) => ({
+      ...prev,
+      selectedLineIds: lineIds,
+    }));
+  }
+
+  function handleClearBillingLines() {
+    setBillingForm((prev) => ({
+      ...prev,
+      selectedLineIds: [],
+    }));
+  }
+
+  async function handleGenerateBilling(event) {
+    event.preventDefault();
+    const contractId = toPositiveInt(selectedContractId);
+    if (!contractId) {
+      setBillingError("Select a contract first.");
+      return;
+    }
+    if (!gates.canGenerateBilling) {
+      setBillingError("Missing permission: contract.link_document");
+      return;
+    }
+
+    setBillingSaving(true);
+    setBillingError("");
+    setBillingMessage("");
+    setBillingResult(null);
+    try {
+      const { payload, errors } = validateContractBillingForm(billingForm);
+      if (errors.length > 0) {
+        setBillingError(errors.join(" "));
+        return;
+      }
+      const requestPayload = buildContractBillingPayload(payload);
+      const response = await generateContractBilling(contractId, requestPayload);
+      const replay = Boolean(response?.idempotentReplay);
+      const documentLabel = response?.document?.documentNo || response?.document?.id || "-";
+      const linkLabel = response?.link?.linkId || "-";
+      setBillingResult(response || null);
+      setBillingMessage(
+        `${replay ? "Idempotent replay returned" : "Billing generated"} (doc: ${documentLabel}, link: ${linkLabel}).`
+      );
+      setBillingForm((prev) => ({
+        ...prev,
+        idempotencyKey: createInitialBillingForm().idempotencyKey,
+        integrationEventUid: "",
+      }));
+      await Promise.all([loadContracts(filters), loadContractDetail(contractId)]);
+    } catch (error) {
+      setBillingError(normalizeApiError(error, "Failed to generate billing."));
+    } finally {
+      setBillingSaving(false);
+    }
+  }
+
+  function handleToggleRevrecLine(lineId, checked) {
+    const normalizedLineId = String(lineId || "").trim();
+    if (!toPositiveInt(normalizedLineId)) {
+      return;
+    }
+    setRevrecForm((prev) => {
+      const current = new Set(
+        (Array.isArray(prev.contractLineIds) ? prev.contractLineIds : []).map((entry) =>
+          String(entry || "").trim()
+        )
+      );
+      if (checked) {
+        current.add(normalizedLineId);
+      } else {
+        current.delete(normalizedLineId);
+      }
+      return {
+        ...prev,
+        contractLineIds: Array.from(current),
+      };
+    });
+  }
+
+  function handleSelectAllRevrecLines() {
+    const lineIds = (Array.isArray(selectedContract?.lines) ? selectedContract.lines : [])
+      .filter((line) => toUpper(line?.status) === "ACTIVE")
+      .map((line) => String(line?.id || ""))
+      .filter((value) => toPositiveInt(value));
+    setRevrecForm((prev) => ({
+      ...prev,
+      contractLineIds: lineIds,
+    }));
+  }
+
+  function handleClearRevrecLines() {
+    setRevrecForm((prev) => ({
+      ...prev,
+      contractLineIds: [],
+    }));
+  }
+
+  async function handleGenerateRevrec(event) {
+    event.preventDefault();
+    const contractId = toPositiveInt(selectedContractId);
+    if (!contractId) {
+      setRevrecError("Select a contract first.");
+      return;
+    }
+    if (!gates.canGenerateRevrec) {
+      setRevrecError("Missing permission: revenue.schedule.generate");
+      return;
+    }
+
+    setRevrecSaving(true);
+    setRevrecError("");
+    setRevrecMessage("");
+    setRevrecResult(null);
+    try {
+      const { payload, errors } = validateContractRevrecForm(revrecForm);
+      if (errors.length > 0) {
+        setRevrecError(errors.join(" "));
+        return;
+      }
+      const response = await generateContractRevrec(contractId, payload);
+      setRevrecResult(response || null);
+      setRevrecMessage(
+        `${response?.idempotentReplay ? "Idempotent replay returned" : "RevRec schedules generated"} ` +
+          `(schedules: ${response?.generatedScheduleCount || 0}, lines: ${
+            response?.generatedLineCount || 0
+          }, skipped: ${response?.skippedLineCount || 0}).`
+      );
+    } catch (error) {
+      setRevrecError(normalizeApiError(error, "Failed to generate RevRec schedules."));
+    } finally {
+      setRevrecSaving(false);
     }
   }
 
@@ -919,6 +1169,330 @@ export default function ContractsPage() {
           </div>
         ) : (
           <div className="mt-2 text-sm text-slate-500">{detailLoading ? "Loading..." : "Select a contract."}</div>
+        )}
+      </section>
+
+      <section className="rounded-xl border border-slate-200 bg-white p-4">
+        <h2 className="font-semibold text-slate-900">Generate Billing</h2>
+        {billingError ? <div className="mt-2 text-sm text-rose-700">{billingError}</div> : null}
+        {billingMessage ? <div className="mt-2 text-sm text-emerald-700">{billingMessage}</div> : null}
+
+        {!selectedContract ? (
+          <p className="mt-2 text-sm text-slate-500">Select a contract first.</p>
+        ) : (
+          <form className="mt-3 space-y-3" onSubmit={handleGenerateBilling}>
+            <div className="grid gap-2 md:grid-cols-3">
+              <select
+                className="rounded border border-slate-300 px-2 py-1 text-sm"
+                value={billingForm.docType}
+                onChange={(event) =>
+                  setBillingForm((prev) => ({ ...prev, docType: event.target.value }))
+                }
+              >
+                {BILLING_DOC_TYPES.map((type) => (
+                  <option key={`doc-${type}`} value={type}>
+                    {type}
+                  </option>
+                ))}
+              </select>
+              <select
+                className="rounded border border-slate-300 px-2 py-1 text-sm"
+                value={billingForm.amountStrategy}
+                onChange={(event) =>
+                  setBillingForm((prev) => ({
+                    ...prev,
+                    amountStrategy: event.target.value,
+                    amountTxn: event.target.value === "FULL" ? "" : prev.amountTxn,
+                    amountBase: event.target.value === "FULL" ? "" : prev.amountBase,
+                  }))
+                }
+              >
+                {BILLING_AMOUNT_STRATEGIES.map((strategy) => (
+                  <option key={`strategy-${strategy}`} value={strategy}>
+                    {strategy}
+                  </option>
+                ))}
+              </select>
+              <input
+                type="date"
+                className="rounded border border-slate-300 px-2 py-1 text-sm"
+                value={billingForm.billingDate}
+                onChange={(event) =>
+                  setBillingForm((prev) => ({ ...prev, billingDate: event.target.value }))
+                }
+              />
+              <input
+                type="date"
+                className="rounded border border-slate-300 px-2 py-1 text-sm"
+                value={billingForm.dueDate}
+                onChange={(event) =>
+                  setBillingForm((prev) => ({ ...prev, dueDate: event.target.value }))
+                }
+              />
+              {toUpper(billingForm.amountStrategy) !== "FULL" ? (
+                <input
+                  className="rounded border border-slate-300 px-2 py-1 text-sm"
+                  placeholder="amountTxn"
+                  value={billingForm.amountTxn}
+                  onChange={(event) =>
+                    setBillingForm((prev) => ({ ...prev, amountTxn: event.target.value }))
+                  }
+                />
+              ) : null}
+              {toUpper(billingForm.amountStrategy) !== "FULL" ? (
+                <input
+                  className="rounded border border-slate-300 px-2 py-1 text-sm"
+                  placeholder="amountBase"
+                  value={billingForm.amountBase}
+                  onChange={(event) =>
+                    setBillingForm((prev) => ({ ...prev, amountBase: event.target.value }))
+                  }
+                />
+              ) : null}
+              <input
+                className="rounded border border-slate-300 px-2 py-1 text-sm md:col-span-2"
+                placeholder="idempotencyKey"
+                value={billingForm.idempotencyKey}
+                onChange={(event) =>
+                  setBillingForm((prev) => ({ ...prev, idempotencyKey: event.target.value }))
+                }
+              />
+              <input
+                className="rounded border border-slate-300 px-2 py-1 text-sm"
+                placeholder="integrationEventUid (optional)"
+                value={billingForm.integrationEventUid}
+                onChange={(event) =>
+                  setBillingForm((prev) => ({ ...prev, integrationEventUid: event.target.value }))
+                }
+              />
+              <input
+                className="rounded border border-slate-300 px-2 py-1 text-sm md:col-span-3"
+                placeholder="note (optional)"
+                value={billingForm.note}
+                onChange={(event) =>
+                  setBillingForm((prev) => ({ ...prev, note: event.target.value }))
+                }
+              />
+            </div>
+
+            <div className="rounded border border-slate-200 p-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="text-sm font-semibold text-slate-700">Billable Lines</div>
+                <button
+                  type="button"
+                  className="rounded border border-slate-300 px-2 py-1 text-xs"
+                  onClick={handleSelectAllBillingLines}
+                >
+                  Select Active
+                </button>
+                <button
+                  type="button"
+                  className="rounded border border-slate-300 px-2 py-1 text-xs"
+                  onClick={handleClearBillingLines}
+                >
+                  Clear
+                </button>
+                <div className="text-xs text-slate-500">
+                  Empty selection means: use all ACTIVE lines.
+                </div>
+              </div>
+              <div className="mt-2 grid gap-2 md:grid-cols-2">
+                {(Array.isArray(selectedContract?.lines) ? selectedContract.lines : []).map((line, index) => {
+                  const lineId = String(line?.id || "");
+                  const checked = (billingForm.selectedLineIds || []).some(
+                    (entry) => String(entry) === lineId
+                  );
+                  return (
+                    <label
+                      key={`bill-line-${lineId || index}`}
+                      className="flex items-center gap-2 rounded border border-slate-200 px-2 py-1 text-sm"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={(event) => handleToggleBillingLine(lineId, event.target.checked)}
+                      />
+                      <span>
+                        #{lineId || "-"} | {line?.description || "-"} | {line?.status} | txn{" "}
+                        {formatAmount(line?.lineAmountTxn)}
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+
+            <button
+              className="rounded bg-slate-900 px-3 py-1 text-sm text-white disabled:opacity-60"
+              disabled={!gates.canGenerateBilling || billingSaving}
+            >
+              {billingSaving ? "Generating..." : "Generate Billing"}
+            </button>
+
+            {billingResult ? (
+              <div className="rounded border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
+                <div>
+                  Batch: {billingResult?.billingBatch?.batchId || "-"} | Replay:{" "}
+                  {billingResult?.idempotentReplay ? "YES" : "NO"}
+                </div>
+                <div>
+                  Document: {billingResult?.document?.documentNo || billingResult?.document?.id || "-"}{" "}
+                  ({billingResult?.document?.documentType || "-"})
+                </div>
+                <div>LinkId: {billingResult?.link?.linkId || "-"}</div>
+              </div>
+            ) : null}
+          </form>
+        )}
+      </section>
+
+      <section className="rounded-xl border border-slate-200 bg-white p-4">
+        <h2 className="font-semibold text-slate-900">Generate RevRec Schedule</h2>
+        {revrecError ? <div className="mt-2 text-sm text-rose-700">{revrecError}</div> : null}
+        {revrecMessage ? <div className="mt-2 text-sm text-emerald-700">{revrecMessage}</div> : null}
+
+        {!selectedContract ? (
+          <p className="mt-2 text-sm text-slate-500">Select a contract first.</p>
+        ) : (
+          <form className="mt-3 space-y-3" onSubmit={handleGenerateRevrec}>
+            <div className="grid gap-2 md:grid-cols-3">
+              <input
+                className="rounded border border-slate-300 px-2 py-1 text-sm"
+                placeholder="fiscalPeriodId"
+                value={revrecForm.fiscalPeriodId}
+                onChange={(event) =>
+                  setRevrecForm((prev) => ({ ...prev, fiscalPeriodId: event.target.value }))
+                }
+              />
+              <select
+                className="rounded border border-slate-300 px-2 py-1 text-sm"
+                value={revrecForm.generationMode}
+                onChange={(event) =>
+                  setRevrecForm((prev) => ({
+                    ...prev,
+                    generationMode: event.target.value,
+                    sourceCariDocumentId:
+                      event.target.value === "BY_LINKED_DOCUMENT" ? prev.sourceCariDocumentId : "",
+                  }))
+                }
+              >
+                {REVREC_GENERATION_MODES.map((mode) => (
+                  <option key={`revrec-mode-${mode}`} value={mode}>
+                    {mode}
+                  </option>
+                ))}
+              </select>
+              {toUpper(revrecForm.generationMode) === "BY_LINKED_DOCUMENT" ? (
+                <select
+                  className="rounded border border-slate-300 px-2 py-1 text-sm"
+                  value={revrecForm.sourceCariDocumentId}
+                  onChange={(event) =>
+                    setRevrecForm((prev) => ({
+                      ...prev,
+                      sourceCariDocumentId: event.target.value,
+                    }))
+                  }
+                >
+                  <option value="">sourceCariDocumentId</option>
+                  {documentLinks
+                    .filter((row) => !row?.isUnlinked)
+                    .map((row) => (
+                      <option key={`revrec-doc-${row?.linkId || row?.cariDocumentId}`} value={row?.cariDocumentId}>
+                        {row?.documentNo || row?.cariDocumentId} | {row?.linkType || "-"}
+                      </option>
+                    ))}
+                </select>
+              ) : null}
+              <label className="flex items-center gap-2 text-sm text-slate-700 md:col-span-2">
+                <input
+                  type="checkbox"
+                  checked={Boolean(revrecForm.regenerateMissingOnly)}
+                  onChange={(event) =>
+                    setRevrecForm((prev) => ({
+                      ...prev,
+                      regenerateMissingOnly: event.target.checked,
+                    }))
+                  }
+                />
+                Regenerate missing only (idempotent-safe)
+              </label>
+            </div>
+
+            <div className="rounded border border-slate-200 p-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="text-sm font-semibold text-slate-700">RevRec Lines</div>
+                <button
+                  type="button"
+                  className="rounded border border-slate-300 px-2 py-1 text-xs"
+                  onClick={handleSelectAllRevrecLines}
+                >
+                  Select Active
+                </button>
+                <button
+                  type="button"
+                  className="rounded border border-slate-300 px-2 py-1 text-xs"
+                  onClick={handleClearRevrecLines}
+                >
+                  Clear
+                </button>
+                <div className="text-xs text-slate-500">
+                  Empty selection means: use all ACTIVE lines.
+                </div>
+              </div>
+              <div className="mt-2 grid gap-2 md:grid-cols-2">
+                {(Array.isArray(selectedContract?.lines) ? selectedContract.lines : []).map((line, index) => {
+                  const lineId = String(line?.id || "");
+                  const checked = (revrecForm.contractLineIds || []).some(
+                    (entry) => String(entry) === lineId
+                  );
+                  return (
+                    <label
+                      key={`revrec-line-${lineId || index}`}
+                      className="flex items-center gap-2 rounded border border-slate-200 px-2 py-1 text-sm"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={(event) => handleToggleRevrecLine(lineId, event.target.checked)}
+                      />
+                      <span>
+                        #{lineId || "-"} | {line?.description || "-"} | {line?.recognitionMethod} |{" "}
+                        {line?.recognitionStartDate || "-"} .. {line?.recognitionEndDate || "-"}
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+
+            <button
+              className="rounded bg-slate-900 px-3 py-1 text-sm text-white disabled:opacity-60"
+              disabled={!gates.canGenerateRevrec || revrecSaving}
+            >
+              {revrecSaving ? "Generating..." : "Generate RevRec"}
+            </button>
+
+            {revrecResult ? (
+              <div className="rounded border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
+                <div>
+                  Replay: {revrecResult?.idempotentReplay ? "YES" : "NO"} | Family:{" "}
+                  {revrecResult?.accountFamily || "-"} | Mode: {revrecResult?.generationMode || "-"}
+                </div>
+                <div>
+                  Generated schedules: {revrecResult?.generatedScheduleCount || 0} | Generated lines:{" "}
+                  {revrecResult?.generatedLineCount || 0} | Skipped:{" "}
+                  {revrecResult?.skippedLineCount || 0}
+                </div>
+                <div>
+                  Schedule IDs:{" "}
+                  {(Array.isArray(revrecResult?.rows) ? revrecResult.rows : [])
+                    .map((row) => row?.id)
+                    .filter((value) => value)
+                    .join(", ") || "-"}
+                </div>
+              </div>
+            ) : null}
+          </form>
         )}
       </section>
 

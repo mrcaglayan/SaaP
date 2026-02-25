@@ -166,6 +166,18 @@ const implementedRoutes = [
     element: <ContractsPage />,
   },
   {
+    appPath: "/app/sozlesmeler",
+    childPath: "sozlesmeler",
+    permissionPath: "/app/contracts",
+    element: <Navigate to="/app/contracts" replace />,
+  },
+  {
+    appPath: "/app/contracts-and-revenue",
+    childPath: "contracts-and-revenue",
+    permissionPath: "/app/contracts",
+    element: <Navigate to="/app/contracts" replace />,
+  },
+  {
     appPath: PERIODIZATION_REVENUE_CANONICAL_PATH,
     childPath: "gelecek-yillar-gelirleri",
     element: <FutureYearRevenuePage />,

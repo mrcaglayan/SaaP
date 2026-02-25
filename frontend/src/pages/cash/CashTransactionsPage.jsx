@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "react-router-dom";
 import {
+  applyCariForCashTransaction,
   cancelCashTransaction,
   createCashTransaction,
   listCashRegisters,
@@ -9,6 +10,8 @@ import {
   postCashTransaction,
   reverseCashTransaction,
 } from "../../api/cashAdmin.js";
+import { listCariCounterparties } from "../../api/cariCounterparty.js";
+import { getCariOpenItemsReport } from "../../api/cariReports.js";
 import { listAccounts } from "../../api/glAdmin.js";
 import { useAuth } from "../../auth/useAuth.js";
 import { useI18n } from "../../i18n/useI18n.js";
@@ -46,6 +49,8 @@ const SOURCE_DOC_TYPES = [
   "BANK_DEPOSIT_SLIP",
   "OTHER",
 ];
+
+const CARI_SETTLEMENT_LINKED_TXN_TYPES = new Set(["RECEIPT", "PAYOUT"]);
 
 function toPositiveInt(value) {
   const parsed = Number(value);
@@ -123,6 +128,35 @@ function resolvePresetTxnType(pathname) {
     return "RECEIPT";
   }
   return null;
+}
+
+function resolveCariDirection(txnType) {
+  const normalized = toUpper(txnType);
+  if (normalized === "RECEIPT") {
+    return "AR";
+  }
+  if (normalized === "PAYOUT") {
+    return "AP";
+  }
+  return null;
+}
+
+function resolveExpectedCounterpartyType(txnType) {
+  const normalized = toUpper(txnType);
+  if (normalized === "RECEIPT") {
+    return "CUSTOMER";
+  }
+  if (normalized === "PAYOUT") {
+    return "VENDOR";
+  }
+  return null;
+}
+
+function buildApplyCariIdempotencyKey() {
+  if (globalThis.crypto && typeof globalThis.crypto.randomUUID === "function") {
+    return `cash-apply-${globalThis.crypto.randomUUID()}`;
+  }
+  return `cash-apply-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 function buildInitialForm(presetTxnType) {
@@ -258,6 +292,24 @@ function mapTransactionErrorMessage(rawMessage, t) {
   if (lower.includes("can only be system-generated")) {
     return t("cashTransactions.errorsMapped.systemGeneratedOnly");
   }
+  if (lower.includes("must be posted before applying cari settlement")) {
+    return "Cash transaction must be POSTED before apply.";
+  }
+  if (lower.includes("must include counterpartytype")) {
+    return "Cash transaction counterparty is invalid for Cari apply.";
+  }
+  if (lower.includes("total allocations exceed incoming + unapplied available funds")) {
+    return "Applied total exceeds available amount.";
+  }
+  if (lower.includes("applications amount exceeds available residual")) {
+    return "Selected apply amount exceeds open document residual.";
+  }
+  if (lower.includes("no open items available")) {
+    return "No open Cari documents found for selected counterparty.";
+  }
+  if (lower.includes("already linked to another cari settlement")) {
+    return "This cash transaction is already linked to another Cari settlement.";
+  }
 
   return "";
 }
@@ -288,6 +340,9 @@ export default function CashTransactionsPage() {
   const canReverse = hasPermission("cash.txn.reverse");
   const canOverridePost = hasPermission("cash.override.post");
   const canReadAccounts = hasPermission("gl.account.read");
+  const canReadCariCards = hasPermission("cari.card.read");
+  const canReadCariReports = hasPermission("cari.report.read");
+  const canApplyCari = hasPermission("cari.settlement.apply");
 
   const [loading, setLoading] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -306,6 +361,13 @@ export default function CashTransactionsPage() {
   const [filters, setFilters] = useState(buildInitialFilters(presetTxnType));
   const [form, setForm] = useState(buildInitialForm(presetTxnType));
   const [actionForm, setActionForm] = useState(null);
+  const [counterpartyQuery, setCounterpartyQuery] = useState("");
+  const [counterpartyOptions, setCounterpartyOptions] = useState([]);
+  const [counterpartyLoading, setCounterpartyLoading] = useState(false);
+  const [counterpartyWarning, setCounterpartyWarning] = useState("");
+  const [applyOpenItems, setApplyOpenItems] = useState([]);
+  const [applyOpenItemsLoading, setApplyOpenItemsLoading] = useState(false);
+  const [applyOpenItemsError, setApplyOpenItemsError] = useState("");
 
   const registerOptions = useMemo(
     () =>
@@ -344,6 +406,25 @@ export default function CashTransactionsPage() {
     }
     return rows.find((row) => toPositiveInt(row?.id) === transactionId) || null;
   }, [actionForm?.transactionId, rows]);
+  const selectedCounterpartyOption = useMemo(() => {
+    const counterpartyId = toPositiveInt(form.counterpartyId);
+    if (!counterpartyId) {
+      return null;
+    }
+    return counterpartyOptions.find((row) => toPositiveInt(row?.id) === counterpartyId) || null;
+  }, [counterpartyOptions, form.counterpartyId]);
+  const applySelectedTotal = useMemo(() => {
+    if (actionForm?.type !== "applyCari") {
+      return 0;
+    }
+    const drafts = actionForm?.applyDrafts || {};
+    return Number(
+      Object.values(drafts).reduce((sum, value) => {
+        const parsed = Number(value);
+        return Number.isFinite(parsed) && parsed > 0 ? sum + parsed : sum;
+      }, 0).toFixed(6)
+    );
+  }, [actionForm]);
   const canFilterByTxnType = !presetTxnType;
   const effectiveTxnTypeFilter = presetTxnType || filters.txnType || "";
 
@@ -401,12 +482,23 @@ export default function CashTransactionsPage() {
       warnings.push(t("cashTransactions.errors.counterAccountRequired"));
     }
 
+    const expectedCounterpartyType = resolveExpectedCounterpartyType(normalizedTxnType);
+    const selectedCounterpartyId = toPositiveInt(form.counterpartyId);
+    if (expectedCounterpartyType && toUpper(form.counterpartyType) && toUpper(form.counterpartyType) !== expectedCounterpartyType) {
+      warnings.push(`Expected counterparty type ${expectedCounterpartyType} for ${normalizedTxnType}.`);
+    }
+    if (expectedCounterpartyType && selectedCounterpartyId && !toUpper(form.counterpartyType)) {
+      warnings.push(`Set counterparty type ${expectedCounterpartyType} for better apply compatibility.`);
+    }
+
     return warnings;
   }, [
     form.amount,
     form.cashSessionId,
     form.counterAccountId,
     form.counterCashRegisterId,
+    form.counterpartyId,
+    form.counterpartyType,
     form.currencyCode,
     form.txnType,
     selectedRegister,
@@ -508,6 +600,8 @@ export default function CashTransactionsPage() {
     setFilters(buildInitialFilters(presetTxnType));
     setForm(buildInitialForm(presetTxnType));
     setActionForm(null);
+    setCounterpartyQuery("");
+    setCounterpartyOptions([]);
   }, [presetTxnType]);
 
   useEffect(() => {
@@ -540,6 +634,132 @@ export default function CashTransactionsPage() {
     });
   }, [canCreate, form.registerId, registerOptions]);
 
+  useEffect(() => {
+    if (!canReadCariCards) {
+      setCounterpartyOptions([]);
+      setCounterpartyLoading(false);
+      setCounterpartyWarning("");
+      return;
+    }
+
+    const legalEntityId = toPositiveInt(selectedRegister?.legal_entity_id);
+    const expectedType = resolveExpectedCounterpartyType(form.txnType);
+    const roleFilter =
+      expectedType === "CUSTOMER"
+        ? "CUSTOMER"
+        : expectedType === "VENDOR"
+          ? "VENDOR"
+          : undefined;
+    if (!legalEntityId) {
+      setCounterpartyOptions([]);
+      setCounterpartyWarning("");
+      return;
+    }
+
+    let active = true;
+    async function loadCounterparties() {
+      setCounterpartyLoading(true);
+      setCounterpartyWarning("");
+      try {
+        const response = await listCariCounterparties({
+          legalEntityId,
+          role: roleFilter,
+          status: "ACTIVE",
+          q: counterpartyQuery || undefined,
+          limit: 100,
+          offset: 0,
+          sortBy: "NAME",
+          sortDir: "ASC",
+        });
+        if (!active) {
+          return;
+        }
+        setCounterpartyOptions(Array.isArray(response?.rows) ? response.rows : []);
+      } catch (err) {
+        if (!active) {
+          return;
+        }
+        setCounterpartyOptions([]);
+        setCounterpartyWarning(
+          String(err?.response?.data?.message || "Counterparty picker is unavailable; use manual ID.")
+        );
+      } finally {
+        if (active) {
+          setCounterpartyLoading(false);
+        }
+      }
+    }
+
+    loadCounterparties();
+    return () => {
+      active = false;
+    };
+  }, [canReadCariCards, counterpartyQuery, form.txnType, selectedRegister?.legal_entity_id]);
+
+  useEffect(() => {
+    if (actionForm?.type !== "applyCari" || !selectedActionRow) {
+      setApplyOpenItems([]);
+      setApplyOpenItemsLoading(false);
+      setApplyOpenItemsError("");
+      return;
+    }
+
+    if (!canReadCariReports) {
+      setApplyOpenItems([]);
+      setApplyOpenItemsLoading(false);
+      setApplyOpenItemsError("Open document picker requires permission: cari.report.read");
+      return;
+    }
+
+    const legalEntityId = toPositiveInt(selectedActionRow?.legal_entity_id);
+    const counterpartyId = toPositiveInt(selectedActionRow?.counterparty_id);
+    const direction = resolveCariDirection(selectedActionRow?.txn_type);
+    if (!legalEntityId || !counterpartyId || !direction) {
+      setApplyOpenItems([]);
+      setApplyOpenItemsLoading(false);
+      setApplyOpenItemsError("Selected transaction cannot load Cari open documents.");
+      return;
+    }
+
+    let active = true;
+    async function loadActionOpenItems() {
+      setApplyOpenItemsLoading(true);
+      setApplyOpenItemsError("");
+      try {
+        const payload = await getCariOpenItemsReport({
+          legalEntityId,
+          counterpartyId,
+          asOfDate: actionForm.asOfDate || selectedActionRow.book_date || todayIsoDate(),
+          direction,
+          status: "OPEN",
+          limit: 500,
+          offset: 0,
+        });
+        if (!active) {
+          return;
+        }
+        setApplyOpenItems(Array.isArray(payload?.rows) ? payload.rows : []);
+      } catch (err) {
+        if (!active) {
+          return;
+        }
+        setApplyOpenItems([]);
+        setApplyOpenItemsError(
+          String(err?.response?.data?.message || "Failed to load open documents for apply.")
+        );
+      } finally {
+        if (active) {
+          setApplyOpenItemsLoading(false);
+        }
+      }
+    }
+
+    loadActionOpenItems();
+    return () => {
+      active = false;
+    };
+  }, [actionForm?.type, actionForm?.asOfDate, canReadCariReports, selectedActionRow]);
+
   function clearMessages() {
     setError("");
     setErrorRequestId(null);
@@ -560,25 +780,85 @@ export default function CashTransactionsPage() {
       registerId: String(nextRegisterId || ""),
       cashSessionId: "",
       currencyCode: nextRegister ? toUpper(nextRegister.currency_code) : prev.currencyCode,
+      counterpartyId: "",
+      counterpartyType: prev.counterpartyType,
       counterCashRegisterId:
         toPositiveInt(nextRegisterId) &&
         toPositiveInt(prev.counterCashRegisterId) === toPositiveInt(nextRegisterId)
           ? ""
           : prev.counterCashRegisterId,
     }));
+    setCounterpartyQuery("");
   }
 
   function handleTxnTypeChange(nextTxnType) {
     const normalized = toUpper(nextTxnType);
     const isTransfer = normalized === "TRANSFER_IN" || normalized === "TRANSFER_OUT";
     const requiresCounterAccount = requiresCounterAccountTxnType(normalized);
+    const expectedCounterpartyType = resolveExpectedCounterpartyType(normalized);
 
     setForm((prev) => ({
       ...prev,
       txnType: normalized,
       counterCashRegisterId: isTransfer ? prev.counterCashRegisterId : "",
       counterAccountId: requiresCounterAccount ? prev.counterAccountId : "",
+      counterpartyType: expectedCounterpartyType || prev.counterpartyType,
+      counterpartyId:
+        expectedCounterpartyType && expectedCounterpartyType !== toUpper(prev.counterpartyType)
+          ? ""
+          : prev.counterpartyId,
     }));
+    setCounterpartyQuery("");
+  }
+
+  function handleCounterpartyPick(nextCounterpartyId) {
+    const option =
+      counterpartyOptions.find((row) => toPositiveInt(row?.id) === toPositiveInt(nextCounterpartyId)) || null;
+    const expectedCounterpartyType = resolveExpectedCounterpartyType(form.txnType);
+    const fallbackType = option?.counterpartyType || "";
+    setForm((prev) => ({
+      ...prev,
+      counterpartyId: nextCounterpartyId ? String(nextCounterpartyId) : "",
+      counterpartyType: expectedCounterpartyType || fallbackType || prev.counterpartyType,
+    }));
+  }
+
+  function setApplyDraftAmount(openItemId, nextValue) {
+    setActionForm((prev) => {
+      if (!prev || prev.type !== "applyCari") {
+        return prev;
+      }
+      return {
+        ...prev,
+        applyDrafts: {
+          ...(prev.applyDrafts || {}),
+          [String(openItemId)]: nextValue,
+        },
+      };
+    });
+  }
+
+  function fillApplyDraftsWithOpenAmounts() {
+    setActionForm((prev) => {
+      if (!prev || prev.type !== "applyCari") {
+        return prev;
+      }
+      const nextDrafts = {};
+      for (const row of applyOpenItems) {
+        const openItemId = toPositiveInt(row?.openItemId);
+        if (!openItemId) {
+          continue;
+        }
+        const residual = Number(row?.residualAmountTxnAsOf || 0);
+        if (Number.isFinite(residual) && residual > 0) {
+          nextDrafts[String(openItemId)] = String(Number(residual.toFixed(6)));
+        }
+      }
+      return {
+        ...prev,
+        applyDrafts: nextDrafts,
+      };
+    });
   }
 
   async function handleCreateTransaction(event) {
@@ -692,6 +972,7 @@ export default function CashTransactionsPage() {
         counterpartyId: counterpartyId || undefined,
         counterAccountId: counterAccountId || undefined,
         counterCashRegisterId: counterCashRegisterId || undefined,
+        sourceModule: "MANUAL",
         idempotencyKey: generateIdempotencyKey(),
       });
 
@@ -742,6 +1023,26 @@ export default function CashTransactionsPage() {
     }
     if (type === "reverse" && !canReverse) {
       setSimpleError(t("cashTransactions.errors.missingReversePermission"));
+      return;
+    }
+    if (type === "applyCari" && !canApplyCari) {
+      setSimpleError("Missing permission: cari.settlement.apply");
+      return;
+    }
+
+    if (type === "applyCari") {
+      const asOfDate = String(row?.book_date || todayIsoDate()).slice(0, 10);
+      setActionForm({
+        type,
+        transactionId: String(transactionId),
+        settlementDate: asOfDate,
+        asOfDate,
+        idempotencyKey: buildApplyCariIdempotencyKey(),
+        useUnappliedCash: false,
+        fxRate: "",
+        note: "",
+        applyDrafts: {},
+      });
       return;
     }
 
@@ -830,6 +1131,90 @@ export default function CashTransactionsPage() {
             })
           );
         }
+      } else if (actionForm.type === "applyCari") {
+        if (!canApplyCari) {
+          throw new Error("Missing permission: cari.settlement.apply");
+        }
+        if (toUpper(row.status) !== "POSTED") {
+          throw new Error("Cash transaction must be POSTED before apply.");
+        }
+        if (!CARI_SETTLEMENT_LINKED_TXN_TYPES.has(toUpper(row.txn_type))) {
+          throw new Error("Only RECEIPT/PAYOUT transactions can be applied to Cari.");
+        }
+
+        const expectedCounterpartyType = resolveExpectedCounterpartyType(row.txn_type);
+        const rowCounterpartyType = toUpper(row.counterparty_type);
+        const rowCounterpartyId = toPositiveInt(row.counterparty_id);
+        if (!rowCounterpartyId || rowCounterpartyType !== expectedCounterpartyType) {
+          throw new Error(
+            `Transaction requires counterpartyType=${expectedCounterpartyType} and a valid counterpartyId.`
+          );
+        }
+
+        const settlementDate = String(actionForm.settlementDate || "").trim();
+        if (!settlementDate) {
+          throw new Error("settlementDate is required.");
+        }
+
+        const draftMap = actionForm.applyDrafts || {};
+        const applications = [];
+        for (const [openItemIdText, amountText] of Object.entries(draftMap)) {
+          const openItemId = toPositiveInt(openItemIdText);
+          const amountTxn = toOptionalNumber(amountText);
+          if (!openItemId || !Number.isFinite(amountTxn) || amountTxn <= 0) {
+            continue;
+          }
+          const openRow = applyOpenItems.find(
+            (item) => toPositiveInt(item?.openItemId) === openItemId
+          );
+          const maxResidual = Number(openRow?.residualAmountTxnAsOf || 0);
+          if (amountTxn > maxResidual + 0.000001) {
+            throw new Error(`Over-apply detected for openItemId=${openItemId}.`);
+          }
+          applications.push({
+            openItemId,
+            amountTxn: Number(amountTxn.toFixed(6)),
+          });
+        }
+
+        const selectedTotal = applications.reduce(
+          (sum, item) => Number((sum + Number(item.amountTxn || 0)).toFixed(6)),
+          0
+        );
+        const cashAmount = Number(row.amount || 0);
+        if (selectedTotal > cashAmount + 0.000001) {
+          throw new Error("Selected application total exceeds cash transaction amount.");
+        }
+
+        const response = await applyCariForCashTransaction(transactionId, {
+          settlementDate,
+          idempotencyKey:
+            String(actionForm.idempotencyKey || "").trim() || buildApplyCariIdempotencyKey(),
+          autoAllocate: false,
+          useUnappliedCash: Boolean(actionForm.useUnappliedCash),
+          fxRate:
+            actionForm.fxRate === null ||
+            actionForm.fxRate === undefined ||
+            String(actionForm.fxRate).trim() === ""
+              ? undefined
+              : Number(actionForm.fxRate),
+          note: String(actionForm.note || "").trim() || undefined,
+          applications,
+        });
+
+        if (response?.idempotentReplay) {
+          setInfoMessage("Apply request replayed; existing Cari linkage returned.");
+        } else {
+          const settlementBatchId = response?.row?.id || null;
+          const createdUnappliedCashId = response?.unapplied?.createdUnappliedCashId || null;
+          setMessage(
+            settlementBatchId
+              ? `Cari apply completed. settlementBatchId=${settlementBatchId}`
+              : createdUnappliedCashId
+                ? `Cari unapplied cash created. unappliedCashId=${createdUnappliedCashId}`
+                : "Cari apply completed."
+          );
+        }
       }
 
       setActionForm(null);
@@ -856,6 +1241,32 @@ export default function CashTransactionsPage() {
       return false;
     }
     if (toPositiveInt(row?.reversal_of_transaction_id)) {
+      return false;
+    }
+    return true;
+  }
+
+  function canApplyCariRow(row) {
+    if (toUpper(row?.status) !== "POSTED") {
+      return false;
+    }
+    if (!CARI_SETTLEMENT_LINKED_TXN_TYPES.has(toUpper(row?.txn_type))) {
+      return false;
+    }
+    const expectedCounterpartyType = resolveExpectedCounterpartyType(row?.txn_type);
+    if (!expectedCounterpartyType) {
+      return false;
+    }
+    if (toUpper(row?.counterparty_type) !== expectedCounterpartyType) {
+      return false;
+    }
+    if (!toPositiveInt(row?.counterparty_id)) {
+      return false;
+    }
+    if (
+      toPositiveInt(row?.linked_cari_settlement_batch_id || row?.linkedCariSettlementBatchId) ||
+      toPositiveInt(row?.linked_cari_unapplied_cash_id || row?.linkedCariUnappliedCashId)
+    ) {
       return false;
     }
     return true;
@@ -918,6 +1329,11 @@ export default function CashTransactionsPage() {
       {lookupWarning ? (
         <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
           {lookupWarning}
+        </div>
+      ) : null}
+      {counterpartyWarning ? (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          {counterpartyWarning}
         </div>
       ) : null}
 
@@ -1232,16 +1648,49 @@ export default function CashTransactionsPage() {
               ))}
             </select>
 
-            <input
-              type="number"
-              min={1}
-              value={form.counterpartyId}
-              onChange={(event) =>
-                setForm((prev) => ({ ...prev, counterpartyId: event.target.value }))
-              }
-              className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              placeholder={t("cashTransactions.form.counterpartyIdOptional")}
-            />
+            {canReadCariCards && toPositiveInt(selectedRegister?.legal_entity_id) ? (
+              <div className="md:col-span-2 grid gap-2 md:grid-cols-2">
+                <input
+                  type="text"
+                  value={counterpartyQuery}
+                  onChange={(event) => setCounterpartyQuery(event.target.value)}
+                  className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  placeholder="Search counterparty code/name"
+                />
+                <select
+                  value={form.counterpartyId}
+                  onChange={(event) => handleCounterpartyPick(event.target.value)}
+                  className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                >
+                  <option value="">
+                    {counterpartyLoading ? "Loading counterparties..." : "Select counterparty"}
+                  </option>
+                  {counterpartyOptions.map((row) => (
+                    <option key={`counterparty-option-${row.id}`} value={row.id}>
+                      {`${row.code || row.id} - ${row.name || "-"} (${row.counterpartyType || "OTHER"})`}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : (
+              <input
+                type="number"
+                min={1}
+                value={form.counterpartyId}
+                onChange={(event) =>
+                  setForm((prev) => ({ ...prev, counterpartyId: event.target.value }))
+                }
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                placeholder={t("cashTransactions.form.counterpartyIdOptional")}
+              />
+            )}
+
+            {selectedCounterpartyOption ? (
+              <div className="md:col-span-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+                Selected counterparty: {selectedCounterpartyOption.code || selectedCounterpartyOption.id} -{" "}
+                {selectedCounterpartyOption.name || "-"} ({selectedCounterpartyOption.counterpartyType || "OTHER"})
+              </div>
+            ) : null}
 
             {requiresCounterAccountTxnType(form.txnType) && accountOptions.length > 0 ? (
               <select
@@ -1440,6 +1889,189 @@ export default function CashTransactionsPage() {
               />
             ) : null}
 
+            {actionForm.type === "applyCari" ? (
+              <>
+                <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                  settlementDate
+                  <input
+                    type="date"
+                    value={actionForm.settlementDate || ""}
+                    onChange={(event) =>
+                      setActionForm((prev) => ({
+                        ...prev,
+                        settlementDate: event.target.value,
+                      }))
+                    }
+                    className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-normal"
+                    disabled={actionSaving}
+                    required
+                  />
+                </label>
+                <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                  asOfDate (open docs)
+                  <input
+                    type="date"
+                    value={actionForm.asOfDate || ""}
+                    onChange={(event) =>
+                      setActionForm((prev) => ({
+                        ...prev,
+                        asOfDate: event.target.value,
+                      }))
+                    }
+                    className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-normal"
+                    disabled={actionSaving}
+                  />
+                </label>
+                <label className="text-xs font-semibold uppercase tracking-wide text-slate-600 md:col-span-2">
+                  idempotencyKey
+                  <input
+                    type="text"
+                    value={actionForm.idempotencyKey || ""}
+                    onChange={(event) =>
+                      setActionForm((prev) => ({
+                        ...prev,
+                        idempotencyKey: event.target.value,
+                      }))
+                    }
+                    className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-normal"
+                    disabled={actionSaving}
+                    required
+                  />
+                </label>
+                <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                  fxRate (optional)
+                  <input
+                    type="number"
+                    min="0.0000000001"
+                    step="0.0000000001"
+                    value={actionForm.fxRate || ""}
+                    onChange={(event) =>
+                      setActionForm((prev) => ({
+                        ...prev,
+                        fxRate: event.target.value,
+                      }))
+                    }
+                    className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-normal"
+                    disabled={actionSaving}
+                  />
+                </label>
+                <label className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(actionForm.useUnappliedCash)}
+                    onChange={(event) =>
+                      setActionForm((prev) => ({
+                        ...prev,
+                        useUnappliedCash: event.target.checked,
+                      }))
+                    }
+                    disabled={actionSaving}
+                  />
+                  useUnappliedCash
+                </label>
+                <label className="text-xs font-semibold uppercase tracking-wide text-slate-600 md:col-span-2">
+                  note (optional)
+                  <input
+                    type="text"
+                    value={actionForm.note || ""}
+                    onChange={(event) =>
+                      setActionForm((prev) => ({
+                        ...prev,
+                        note: event.target.value,
+                      }))
+                    }
+                    className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-normal"
+                    disabled={actionSaving}
+                  />
+                </label>
+
+                <div className="rounded-lg border border-slate-200 bg-white p-3 text-xs text-slate-700 md:col-span-2">
+                  <p className="font-semibold text-slate-800">
+                    Open documents picker (no raw ID typing)
+                  </p>
+                  <p className="mt-1">
+                    Enter amounts for each open item to apply. Leave all amounts empty to store the
+                    full transaction as unapplied cash.
+                  </p>
+                  <p className="mt-1">
+                    Selected total: <span className="font-semibold">{formatAmount(applySelectedTotal)}</span>
+                  </p>
+                  {applyOpenItemsError ? (
+                    <p className="mt-1 text-rose-700">{applyOpenItemsError}</p>
+                  ) : null}
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={fillApplyDraftsWithOpenAmounts}
+                      className="rounded-md border border-slate-300 px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                      disabled={actionSaving || applyOpenItemsLoading}
+                    >
+                      Fill All
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setActionForm((prev) =>
+                          prev && prev.type === "applyCari"
+                            ? { ...prev, applyDrafts: {} }
+                            : prev
+                        )
+                      }
+                      className="rounded-md border border-slate-300 px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                      disabled={actionSaving || applyOpenItemsLoading}
+                    >
+                      Clear
+                    </button>
+                  </div>
+                  <div className="mt-2 max-h-64 overflow-auto rounded border border-slate-200">
+                    <table className="min-w-full text-xs">
+                      <thead className="bg-slate-50 text-left text-slate-600">
+                        <tr>
+                          <th className="px-2 py-1">Doc</th>
+                          <th className="px-2 py-1">OpenItem</th>
+                          <th className="px-2 py-1">Due</th>
+                          <th className="px-2 py-1">Open</th>
+                          <th className="px-2 py-1">Apply</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {applyOpenItems.map((item) => (
+                          <tr key={`apply-open-item-${item.openItemId}`} className="border-t border-slate-100">
+                            <td className="px-2 py-1">{item.documentNo || item.documentId}</td>
+                            <td className="px-2 py-1">{item.openItemId}</td>
+                            <td className="px-2 py-1">{item.dueDate || "-"}</td>
+                            <td className="px-2 py-1">{formatAmount(item.residualAmountTxnAsOf)}</td>
+                            <td className="px-2 py-1">
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.000001"
+                                value={(actionForm.applyDrafts || {})[String(item.openItemId)] || ""}
+                                onChange={(event) =>
+                                  setApplyDraftAmount(item.openItemId, event.target.value)
+                                }
+                                className="w-24 rounded border border-slate-300 px-2 py-1"
+                                disabled={actionSaving}
+                              />
+                            </td>
+                          </tr>
+                        ))}
+                        {applyOpenItems.length === 0 ? (
+                          <tr>
+                            <td colSpan={5} className="px-2 py-2 text-slate-500">
+                              {applyOpenItemsLoading
+                                ? "Loading open documents..."
+                                : "No open documents found for this transaction."}
+                            </td>
+                          </tr>
+                        ) : null}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </>
+            ) : null}
+
             <div className="md:col-span-2 flex flex-wrap gap-2">
               <button
                 type="submit"
@@ -1481,8 +2113,10 @@ export default function CashTransactionsPage() {
                 <th className="px-3 py-2">{t("cashTransactions.table.bookDate")}</th>
                 <th className="px-3 py-2">{t("cashTransactions.table.amount")}</th>
                 <th className="px-3 py-2">{t("cashTransactions.table.currency")}</th>
+                <th className="px-3 py-2">Counterparty</th>
                 <th className="px-3 py-2">{t("cashTransactions.table.counterAccount")}</th>
                 <th className="px-3 py-2">{t("cashTransactions.table.counterRegister")}</th>
+                <th className="px-3 py-2">Cari Link</th>
                 <th className="px-3 py-2">{t("cashTransactions.table.postedJournal")}</th>
                 <th className="px-3 py-2">{t("cashTransactions.table.overrideReason")}</th>
                 <th className="px-3 py-2">{t("cashTransactions.table.createdAt")}</th>
@@ -1519,6 +2153,11 @@ export default function CashTransactionsPage() {
                     <td className="px-3 py-2">{formatAmount(row.amount)}</td>
                     <td className="px-3 py-2">{row.currency_code || "-"}</td>
                     <td className="px-3 py-2">
+                      {toPositiveInt(row.counterparty_id)
+                        ? `${row.counterparty_type || "OTHER"} #${row.counterparty_id}`
+                        : "-"}
+                    </td>
+                    <td className="px-3 py-2">
                       {row.counter_account_id
                         ? `${row.counter_account_code || row.counter_account_id} - ${
                             row.counter_account_name || "-"
@@ -1531,6 +2170,24 @@ export default function CashTransactionsPage() {
                             row.counter_cash_register_name || "-"
                           }`
                         : "-"}
+                    </td>
+                    <td className="px-3 py-2">
+                      <div className="flex flex-wrap gap-1">
+                        {toPositiveInt(row.linked_cari_settlement_batch_id || row.linkedCariSettlementBatchId) ? (
+                          <span className="inline-flex rounded border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700">
+                            Settlement #{row.linked_cari_settlement_batch_id || row.linkedCariSettlementBatchId}
+                          </span>
+                        ) : null}
+                        {toPositiveInt(row.linked_cari_unapplied_cash_id || row.linkedCariUnappliedCashId) ? (
+                          <span className="inline-flex rounded border border-cyan-200 bg-cyan-50 px-2 py-0.5 text-xs font-semibold text-cyan-700">
+                            Unapplied #{row.linked_cari_unapplied_cash_id || row.linkedCariUnappliedCashId}
+                          </span>
+                        ) : null}
+                        {!toPositiveInt(row.linked_cari_settlement_batch_id || row.linkedCariSettlementBatchId) &&
+                        !toPositiveInt(row.linked_cari_unapplied_cash_id || row.linkedCariUnappliedCashId) ? (
+                          <span className="text-slate-400">-</span>
+                        ) : null}
+                      </div>
                     </td>
                     <td className="px-3 py-2">
                       {row.posted_journal_entry_id || row.postedJournalEntryId || "-"}
@@ -1568,7 +2225,25 @@ export default function CashTransactionsPage() {
                             {t("cashTransactions.actions.prepareReverse")}
                           </button>
                         ) : null}
-                        {!canPostRow(row) && !canCancelRow(row) && !canReverseRow(row) ? (
+                        {canApplyCari && canApplyCariRow(row) ? (
+                          <button
+                            type="button"
+                            onClick={() => openActionForm("applyCari", row)}
+                            className="rounded-md border border-emerald-300 px-2 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-50"
+                          >
+                            Apply Cari
+                          </button>
+                        ) : null}
+                        {toPositiveInt(row.linked_cari_settlement_batch_id || row.linkedCariSettlementBatchId) ||
+                        toPositiveInt(row.linked_cari_unapplied_cash_id || row.linkedCariUnappliedCashId) ? (
+                          <span className="inline-flex rounded bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700">
+                            Linked
+                          </span>
+                        ) : null}
+                        {!canPostRow(row) &&
+                        !canCancelRow(row) &&
+                        !canReverseRow(row) &&
+                        !(canApplyCari && canApplyCariRow(row)) ? (
                           <span className="text-slate-400">{t("cashTransactions.values.readOnly")}</span>
                         ) : null}
                       </div>
@@ -1578,14 +2253,14 @@ export default function CashTransactionsPage() {
               })}
               {loading ? (
                 <tr>
-                  <td colSpan={15} className="px-3 py-3 text-slate-500">
+                  <td colSpan={17} className="px-3 py-3 text-slate-500">
                     {t("cashTransactions.loading")}
                   </td>
                 </tr>
               ) : null}
               {!loading && transactionRows.length === 0 ? (
                 <tr>
-                  <td colSpan={15} className="px-3 py-3 text-slate-500">
+                  <td colSpan={17} className="px-3 py-3 text-slate-500">
                     {t("cashTransactions.empty")}
                   </td>
                 </tr>

@@ -54,6 +54,14 @@ export async function linkContractDocument(contractId, payload) {
   return run(() => api.post(`/api/v1/contracts/${contractId}/link-document`, payload));
 }
 
+export async function generateContractBilling(contractId, payload) {
+  return run(() => api.post(`/api/v1/contracts/${contractId}/generate-billing`, payload));
+}
+
+export async function generateContractRevrec(contractId, payload) {
+  return run(() => api.post(`/api/v1/contracts/${contractId}/generate-revrec`, payload));
+}
+
 export async function adjustContractDocumentLink(contractId, linkId, payload) {
   return run(() =>
     api.post(`/api/v1/contracts/${contractId}/documents/${linkId}/adjust`, payload)

@@ -1,6 +1,7 @@
 import { query, withTransaction } from "../db.js";
 import { assertAccountBelongsToTenant } from "../tenantGuards.js";
 import { badRequest, parsePositiveInt } from "../routes/_utils.js";
+import { generateRevenueRecognitionSchedulesFromContract } from "./revenue-recognition.service.js";
 
 const CONTRACT_STATUS = Object.freeze({
   DRAFT: "DRAFT",
@@ -69,10 +70,45 @@ const LINK_EVENT_ACTION = Object.freeze({
   ADJUST: "ADJUST",
   UNLINK: "UNLINK",
 });
+const BILLING_DOC_TYPE = Object.freeze({
+  INVOICE: "INVOICE",
+  ADVANCE: "ADVANCE",
+  ADJUSTMENT: "ADJUSTMENT",
+});
+const BILLING_AMOUNT_STRATEGY = Object.freeze({
+  FULL: "FULL",
+  PARTIAL: "PARTIAL",
+  MILESTONE: "MILESTONE",
+});
+const BILLING_GENERATABLE_CONTRACT_STATUSES = new Set([
+  CONTRACT_STATUS.DRAFT,
+  CONTRACT_STATUS.ACTIVE,
+]);
+const REVREC_GENERATABLE_CONTRACT_STATUSES = new Set([
+  CONTRACT_STATUS.DRAFT,
+  CONTRACT_STATUS.ACTIVE,
+]);
+const REVREC_GENERATION_MODE = Object.freeze({
+  BY_CONTRACT_LINE: "BY_CONTRACT_LINE",
+  BY_LINKED_DOCUMENT: "BY_LINKED_DOCUMENT",
+});
+const CARI_DOCUMENT_DRAFT_NAMESPACE = "DRAFT";
+const CARI_DOCUMENT_LINK_STATUS = Object.freeze({
+  UNLINKED: "UNLINKED",
+  PENDING: "PENDING",
+  LINKED: "LINKED",
+});
+const CONTRACT_BILLING_STATUS = Object.freeze({
+  PENDING: "PENDING",
+  COMPLETED: "COMPLETED",
+  FAILED: "FAILED",
+});
 const AUDIT_ACTIONS = Object.freeze({
   LINK_CREATE: "contract.document_link.create",
   LINK_ADJUST: "contract.document_link.adjust",
   LINK_UNLINK: "contract.document_link.unlink",
+  BILLING_GENERATE: "contract.billing.generate",
+  REVREC_GENERATE: "contract.revrec.generate",
 });
 
 function toDecimalNumber(value) {
@@ -91,9 +127,10 @@ function toDateOnlyString(value, label = "date") {
     if (Number.isNaN(value.getTime())) {
       throw badRequest(`${label} must be a valid date`);
     }
-    const year = value.getUTCFullYear();
-    const month = String(value.getUTCMonth() + 1).padStart(2, "0");
-    const day = String(value.getUTCDate()).padStart(2, "0");
+    // Preserve DATE semantics from DB drivers that hydrate date-only columns to local midnight.
+    const year = value.getFullYear();
+    const month = String(value.getMonth() + 1).padStart(2, "0");
+    const day = String(value.getDate()).padStart(2, "0");
     return `${year}-${month}-${day}`;
   }
   const raw = String(value).trim();
@@ -365,6 +402,170 @@ function mapContractLinkableDocumentRow(row) {
   };
 }
 
+function toPositiveIntArray(values) {
+  if (!Array.isArray(values)) {
+    return [];
+  }
+  return values
+    .map((value) => parsePositiveInt(value))
+    .filter((value) => Number.isInteger(value) && value > 0);
+}
+
+function sortNumeric(values) {
+  return [...values].sort((left, right) => left - right);
+}
+
+function arraysEqual(left, right) {
+  if (left.length !== right.length) {
+    return false;
+  }
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] !== right[index]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function buildContractBillingFingerprint(payload) {
+  return {
+    docType: asUpper(payload.docType),
+    amountStrategy: asUpper(payload.amountStrategy || BILLING_AMOUNT_STRATEGY.FULL),
+    billingDate: toDateOnlyString(payload.billingDate, "billingDate"),
+    dueDate: toDateOnlyString(payload.dueDate, "dueDate"),
+    amountTxn:
+      payload.amountTxn === null || payload.amountTxn === undefined
+        ? null
+        : toDecimalNumber(payload.amountTxn),
+    amountBase:
+      payload.amountBase === null || payload.amountBase === undefined
+        ? null
+        : toDecimalNumber(payload.amountBase),
+    selectedLineIds: sortNumeric(toPositiveIntArray(payload.selectedLineIds || [])),
+  };
+}
+
+function mapContractBillingBatchRow(row) {
+  if (!row) {
+    return null;
+  }
+  return {
+    batchId: parsePositiveInt(row.id),
+    tenantId: parsePositiveInt(row.tenant_id),
+    legalEntityId: parsePositiveInt(row.legal_entity_id),
+    contractId: parsePositiveInt(row.contract_id),
+    idempotencyKey: row.idempotency_key || null,
+    integrationEventUid: row.integration_event_uid || null,
+    sourceModule: row.source_module || null,
+    sourceEntityType: row.source_entity_type || null,
+    sourceEntityId: row.source_entity_id || null,
+    docType: row.doc_type || null,
+    amountStrategy: row.amount_strategy || null,
+    billingDate: toDateOnlyString(row.billing_date, "billingDate"),
+    dueDate: toDateOnlyString(row.due_date, "dueDate"),
+    amountTxn: toDecimalNumber(row.amount_txn),
+    amountBase: toDecimalNumber(row.amount_base),
+    currencyCode: row.currency_code || null,
+    selectedLineIds: sortNumeric(toPositiveIntArray(parseNullableJson(row.selected_line_ids_json))),
+    status: row.status || null,
+    generatedDocumentId: parsePositiveInt(row.generated_document_id),
+    generatedLinkId: parsePositiveInt(row.generated_link_id),
+    payload: parseNullableJson(row.payload_json),
+    createdByUserId: parsePositiveInt(row.created_by_user_id),
+    createdAt: row.created_at || null,
+    updatedAt: row.updated_at || null,
+  };
+}
+
+function mapContractGeneratedDocumentRow(row) {
+  if (!row) {
+    return null;
+  }
+  return {
+    id: parsePositiveInt(row.id),
+    tenantId: parsePositiveInt(row.tenant_id),
+    legalEntityId: parsePositiveInt(row.legal_entity_id),
+    contractId: parsePositiveInt(row.contract_id),
+    counterpartyId: parsePositiveInt(row.counterparty_id),
+    direction: row.direction || null,
+    documentType: row.document_type || null,
+    status: row.status || null,
+    documentNo: row.document_no || null,
+    documentDate: toDateOnlyString(row.document_date, "documentDate"),
+    dueDate: toDateOnlyString(row.due_date, "dueDate"),
+    amountTxn: toDecimalNumber(row.amount_txn),
+    amountBase: toDecimalNumber(row.amount_base),
+    openAmountTxn: toDecimalNumber(row.open_amount_txn),
+    openAmountBase: toDecimalNumber(row.open_amount_base),
+    currencyCode: row.currency_code || null,
+    fxRate: toDecimalNumber(row.fx_rate),
+    sourceModule: row.source_module || null,
+    sourceEntityType: row.source_entity_type || null,
+    sourceEntityId: row.source_entity_id || null,
+    integrationLinkStatus: row.integration_link_status || null,
+    integrationEventUid: row.integration_event_uid || null,
+    createdAt: row.created_at || null,
+    updatedAt: row.updated_at || null,
+  };
+}
+
+function assertBillingReplayCompatibility({ batchRow, payload }) {
+  const storedPayload = parseNullableJson(batchRow?.payload_json) || {};
+  const stored = mapContractBillingBatchRow(batchRow);
+  const nextFingerprint = buildContractBillingFingerprint(payload);
+  const storedFingerprint = buildContractBillingFingerprint({
+    docType: storedPayload.docType || stored.docType,
+    amountStrategy: storedPayload.amountStrategy || stored.amountStrategy,
+    billingDate: storedPayload.billingDate || stored.billingDate,
+    dueDate:
+      storedPayload.dueDate === undefined
+        ? stored.dueDate
+        : storedPayload.dueDate,
+    amountTxn:
+      storedPayload.amountTxn === undefined
+        ? stored.amountTxn
+        : storedPayload.amountTxn,
+    amountBase:
+      storedPayload.amountBase === undefined
+        ? stored.amountBase
+        : storedPayload.amountBase,
+    selectedLineIds:
+      storedPayload.selectedLineIds === undefined
+        ? stored.selectedLineIds
+        : storedPayload.selectedLineIds,
+  });
+
+  if (storedFingerprint.docType !== nextFingerprint.docType) {
+    throw badRequest("idempotencyKey was already used with a different docType");
+  }
+  if (storedFingerprint.amountStrategy !== nextFingerprint.amountStrategy) {
+    throw badRequest("idempotencyKey was already used with a different amountStrategy");
+  }
+  if (storedFingerprint.billingDate !== nextFingerprint.billingDate) {
+    throw badRequest("idempotencyKey was already used with a different billingDate");
+  }
+  if (storedFingerprint.dueDate !== nextFingerprint.dueDate) {
+    throw badRequest("idempotencyKey was already used with a different dueDate");
+  }
+  if (
+    Math.abs(
+      Number(storedFingerprint.amountTxn ?? 0) - Number(nextFingerprint.amountTxn ?? 0)
+    ) > EPSILON
+  ) {
+    throw badRequest("idempotencyKey was already used with a different amountTxn");
+  }
+  if (
+    Math.abs(
+      Number(storedFingerprint.amountBase ?? 0) - Number(nextFingerprint.amountBase ?? 0)
+    ) > EPSILON
+  ) {
+    throw badRequest("idempotencyKey was already used with a different amountBase");
+  }
+  if (!arraysEqual(storedFingerprint.selectedLineIds, nextFingerprint.selectedLineIds)) {
+    throw badRequest("idempotencyKey was already used with a different selectedLineIds set");
+  }
+}
+
 function mapContractAmendmentRow(row) {
   if (!row) {
     return null;
@@ -555,6 +756,9 @@ async function fetchCounterpartyRow({
         id,
         tenant_id,
         legal_entity_id,
+        code,
+        name,
+        default_payment_term_id,
         is_customer,
         is_vendor,
         status
@@ -866,8 +1070,17 @@ async function insertContractAuditLog({
   action,
   legalEntityId,
   linkId,
+  resourceType = "contract_document_link",
+  resourceId = null,
   payload,
 }) {
+  const normalizedResourceType = String(resourceType || "").trim() || "contract_document_link";
+  const normalizedResourceId =
+    resourceId === null || resourceId === undefined || resourceId === ""
+      ? linkId
+        ? String(linkId)
+        : null
+      : String(resourceId);
   await runQuery(
     `INSERT INTO audit_logs (
         tenant_id,
@@ -887,8 +1100,8 @@ async function insertContractAuditLog({
       tenantId,
       userId || null,
       action,
-      "contract_document_link",
-      linkId ? String(linkId) : null,
+      normalizedResourceType,
+      normalizedResourceId,
       legalEntityId ? "LEGAL_ENTITY" : null,
       legalEntityId || null,
       toNullableString(req?.requestId || req?.headers?.["x-request-id"], 80),
@@ -1107,6 +1320,339 @@ async function fetchLockedDocumentRowTx({
     [tenantId, legalEntityId, cariDocumentId]
   );
   return result.rows?.[0] || null;
+}
+
+function resolveContractDocumentDirection(contractType) {
+  return asUpper(contractType) === CONTRACT_TYPE.VENDOR ? "AP" : "AR";
+}
+
+function resolveGeneratedDocumentType(docType) {
+  const normalizedDocType = asUpper(docType);
+  if (normalizedDocType === BILLING_DOC_TYPE.INVOICE) {
+    return "INVOICE";
+  }
+  if (normalizedDocType === BILLING_DOC_TYPE.ADVANCE) {
+    return "PAYMENT";
+  }
+  if (normalizedDocType === BILLING_DOC_TYPE.ADJUSTMENT) {
+    return "ADJUSTMENT";
+  }
+  throw badRequest(`Unsupported docType: ${docType}`);
+}
+
+function resolveGeneratedLinkType(docType) {
+  const normalizedDocType = asUpper(docType);
+  if (normalizedDocType === BILLING_DOC_TYPE.INVOICE) {
+    return "BILLING";
+  }
+  if (normalizedDocType === BILLING_DOC_TYPE.ADVANCE) {
+    return "ADVANCE";
+  }
+  if (normalizedDocType === BILLING_DOC_TYPE.ADJUSTMENT) {
+    return "ADJUSTMENT";
+  }
+  throw badRequest(`Unsupported docType: ${docType}`);
+}
+
+function addDaysToDateOnly(dateString, days) {
+  const normalized = toDateOnlyString(dateString, "date");
+  if (!normalized) {
+    throw badRequest("date must be valid");
+  }
+  const utcDate = new Date(`${normalized}T00:00:00.000Z`);
+  if (Number.isNaN(utcDate.getTime())) {
+    throw badRequest("date must be valid");
+  }
+  const parsedDays = Number(days || 0);
+  if (!Number.isFinite(parsedDays)) {
+    throw badRequest("paymentTerm days must be numeric");
+  }
+  utcDate.setUTCDate(utcDate.getUTCDate() + parsedDays);
+  return utcDate.toISOString().slice(0, 10);
+}
+
+function resolveGeneratedDueDate({
+  billingDate,
+  explicitDueDate,
+  generatedDocumentType,
+  paymentTermRow,
+}) {
+  const normalizedBillingDate = toDateOnlyString(billingDate, "billingDate");
+  if (!normalizedBillingDate) {
+    throw badRequest("billingDate is required");
+  }
+  const normalizedDueDate = toDateOnlyString(explicitDueDate, "dueDate");
+  if (normalizedDueDate) {
+    return normalizedDueDate;
+  }
+
+  if (generatedDocumentType !== "INVOICE") {
+    return null;
+  }
+
+  if (!paymentTermRow) {
+    return normalizedBillingDate;
+  }
+
+  const dueDays = Number(paymentTermRow.due_days || 0);
+  const graceDays = Number(paymentTermRow.grace_days || 0);
+  return addDaysToDateOnly(normalizedBillingDate, dueDays + graceDays);
+}
+
+function resolveGeneratedDocumentFxRate({ amountTxn, amountBase }) {
+  const txn = Number(amountTxn || 0);
+  const base = Number(amountBase || 0);
+  if (txn <= EPSILON || base <= EPSILON) {
+    return toFixedFxRate(1, "fxRate");
+  }
+  return toFixedFxRate(base / txn, "fxRate");
+}
+
+async function reserveDraftCariDocumentSequenceTx({
+  tenantId,
+  legalEntityId,
+  direction,
+  billingDate,
+  runQuery,
+}) {
+  const normalizedDate = toDateOnlyString(billingDate, "billingDate");
+  const fiscalYear = Number(String(normalizedDate).slice(0, 4));
+  if (!Number.isInteger(fiscalYear) || fiscalYear < 1900) {
+    throw badRequest("billingDate must include a valid fiscal year");
+  }
+
+  const result = await runQuery(
+    `SELECT COALESCE(MAX(sequence_no), 0) AS current_max
+     FROM cari_documents
+     WHERE tenant_id = ?
+       AND legal_entity_id = ?
+       AND direction = ?
+       AND sequence_namespace = ?
+       AND fiscal_year = ?
+     FOR UPDATE`,
+    [tenantId, legalEntityId, direction, CARI_DOCUMENT_DRAFT_NAMESPACE, fiscalYear]
+  );
+  const currentMax = Number(result.rows?.[0]?.current_max || 0);
+  const nextSequenceNo = currentMax + 1;
+  return {
+    sequenceNamespace: CARI_DOCUMENT_DRAFT_NAMESPACE,
+    fiscalYear,
+    sequenceNo: nextSequenceNo,
+    documentNo: `DRAFT-${direction}-${fiscalYear}-${String(nextSequenceNo).padStart(6, "0")}`.slice(
+      0,
+      80
+    ),
+  };
+}
+
+async function fetchPaymentTermRowByIdTx({
+  tenantId,
+  legalEntityId,
+  paymentTermId,
+  runQuery,
+}) {
+  const parsedPaymentTermId = parsePositiveInt(paymentTermId);
+  if (!parsedPaymentTermId) {
+    return null;
+  }
+  const result = await runQuery(
+    `SELECT
+        id,
+        code,
+        name,
+        due_days,
+        grace_days,
+        status
+     FROM payment_terms
+     WHERE tenant_id = ?
+       AND legal_entity_id = ?
+       AND id = ?
+     LIMIT 1`,
+    [tenantId, legalEntityId, parsedPaymentTermId]
+  );
+  return result.rows?.[0] || null;
+}
+
+async function fetchContractBillingBatchByIdempotencyTx({
+  tenantId,
+  legalEntityId,
+  contractId,
+  idempotencyKey,
+  runQuery,
+}) {
+  const result = await runQuery(
+    `SELECT *
+     FROM contract_billing_batches
+     WHERE tenant_id = ?
+       AND legal_entity_id = ?
+       AND contract_id = ?
+       AND idempotency_key = ?
+     LIMIT 1
+     FOR UPDATE`,
+    [tenantId, legalEntityId, contractId, idempotencyKey]
+  );
+  return result.rows?.[0] || null;
+}
+
+async function fetchContractBillingBatchByIntegrationEventUidTx({
+  tenantId,
+  legalEntityId,
+  integrationEventUid,
+  runQuery,
+}) {
+  const result = await runQuery(
+    `SELECT *
+     FROM contract_billing_batches
+     WHERE tenant_id = ?
+       AND legal_entity_id = ?
+       AND integration_event_uid = ?
+     LIMIT 1
+     FOR UPDATE`,
+    [tenantId, legalEntityId, integrationEventUid]
+  );
+  return result.rows?.[0] || null;
+}
+
+async function fetchGeneratedCariDocumentRowTx({
+  tenantId,
+  legalEntityId,
+  contractId,
+  documentId,
+  runQuery,
+}) {
+  const parsedDocumentId = parsePositiveInt(documentId);
+  if (!parsedDocumentId) {
+    return null;
+  }
+  const result = await runQuery(
+    `SELECT
+        d.id,
+        d.tenant_id,
+        d.legal_entity_id,
+        ? AS contract_id,
+        d.counterparty_id,
+        d.direction,
+        d.document_type,
+        d.status,
+        d.document_no,
+        d.document_date,
+        d.due_date,
+        d.amount_txn,
+        d.amount_base,
+        d.open_amount_txn,
+        d.open_amount_base,
+        d.currency_code,
+        d.fx_rate,
+        d.source_module,
+        d.source_entity_type,
+        d.source_entity_id,
+        d.integration_link_status,
+        d.integration_event_uid,
+        d.created_at,
+        d.updated_at
+     FROM cari_documents d
+     WHERE d.tenant_id = ?
+       AND d.legal_entity_id = ?
+       AND d.id = ?
+     LIMIT 1`,
+    [contractId, tenantId, legalEntityId, parsedDocumentId]
+  );
+  return result.rows?.[0] || null;
+}
+
+async function fetchGeneratedContractLinkByTupleTx({
+  tenantId,
+  contractId,
+  cariDocumentId,
+  linkType,
+  runQuery,
+}) {
+  const result = await runQuery(
+    `SELECT id
+     FROM contract_document_links
+     WHERE tenant_id = ?
+       AND contract_id = ?
+       AND cari_document_id = ?
+       AND link_type = ?
+     LIMIT 1`,
+    [tenantId, contractId, cariDocumentId, linkType]
+  );
+  return parsePositiveInt(result.rows?.[0]?.id);
+}
+
+async function listActiveContractLinkedDocumentIdsTx({
+  tenantId,
+  legalEntityId,
+  contractId,
+  runQuery,
+}) {
+  const result = await runQuery(
+    `SELECT DISTINCT active_links.cari_document_id
+     FROM (
+       SELECT
+         l.id,
+         l.cari_document_id
+       FROM contract_document_links l
+       LEFT JOIN contract_document_link_events e
+         ON e.tenant_id = l.tenant_id
+        AND e.contract_document_link_id = l.id
+       WHERE l.tenant_id = ?
+         AND l.legal_entity_id = ?
+         AND l.contract_id = ?
+       GROUP BY
+         l.id,
+         l.cari_document_id
+       HAVING SUM(CASE WHEN e.action_type = 'UNLINK' THEN 1 ELSE 0 END) = 0
+     ) active_links
+     ORDER BY active_links.cari_document_id ASC`,
+    [tenantId, legalEntityId, contractId]
+  );
+  return (result.rows || [])
+    .map((row) => parsePositiveInt(row.cari_document_id))
+    .filter((value) => Boolean(value));
+}
+
+async function buildContractBillingResponseTx({
+  tenantId,
+  legalEntityId,
+  contractId,
+  batchRow,
+  idempotentReplay,
+  runQuery,
+}) {
+  const mappedBatch = mapContractBillingBatchRow(batchRow);
+  const generatedDocumentId = parsePositiveInt(mappedBatch?.generatedDocumentId);
+  const generatedLinkId = parsePositiveInt(mappedBatch?.generatedLinkId);
+  if (!generatedDocumentId || !generatedLinkId) {
+    throw new Error("Contract billing batch is incomplete and cannot be replayed");
+  }
+
+  const generatedDocument = await fetchGeneratedCariDocumentRowTx({
+    tenantId,
+    legalEntityId,
+    contractId,
+    documentId: generatedDocumentId,
+    runQuery,
+  });
+  if (!generatedDocument) {
+    throw new Error("Generated Cari document not found for billing batch");
+  }
+
+  const generatedLink = await fetchContractDocumentLinkRowById({
+    tenantId,
+    linkId: generatedLinkId,
+    runQuery,
+  });
+  if (!generatedLink) {
+    throw new Error("Generated contract-document link not found for billing batch");
+  }
+
+  return {
+    idempotentReplay: Boolean(idempotentReplay),
+    billingBatch: mappedBatch,
+    document: mapContractGeneratedDocumentRow(generatedDocument),
+    link: mapContractDocumentLinkRow(generatedLink),
+  };
 }
 
 async function fetchContractDocumentLinkBaseRowTx({
@@ -2040,6 +2586,646 @@ export async function cancelContractById({
     contractId: payload.contractId,
     action: "cancel",
     assertScopeAccess,
+  });
+}
+
+export async function generateContractBilling({
+  req,
+  payload,
+  assertScopeAccess,
+}) {
+  const existing = await fetchContractRow({
+    tenantId: payload.tenantId,
+    contractId: payload.contractId,
+  });
+  if (!existing) {
+    throw badRequest("Contract not found");
+  }
+  assertScopeAccess(req, "legal_entity", existing.legal_entity_id, "contractId");
+
+  return withTransaction(async (tx) => {
+    const contract = await fetchContractRow({
+      tenantId: payload.tenantId,
+      contractId: payload.contractId,
+      runQuery: tx.query,
+      forUpdate: true,
+    });
+    if (!contract) {
+      throw badRequest("Contract not found");
+    }
+    if (!BILLING_GENERATABLE_CONTRACT_STATUSES.has(asUpper(contract.status))) {
+      throw badRequest(
+        `Contract status ${contract.status} is not eligible for billing generation`
+      );
+    }
+
+    const legalEntityId = parsePositiveInt(contract.legal_entity_id);
+    const contractId = parsePositiveInt(contract.id);
+    const direction = resolveContractDocumentDirection(contract.contract_type);
+    const generatedDocumentType = resolveGeneratedDocumentType(payload.docType);
+    const generatedLinkType = resolveGeneratedLinkType(payload.docType);
+    const integrationEventUid =
+      payload.integrationEventUid ||
+      `CONTRACT-BILLING-${contractId}-${payload.idempotencyKey}`.slice(0, 100);
+
+    const replayByIdempotency = await fetchContractBillingBatchByIdempotencyTx({
+      tenantId: payload.tenantId,
+      legalEntityId,
+      contractId,
+      idempotencyKey: payload.idempotencyKey,
+      runQuery: tx.query,
+    });
+    if (replayByIdempotency) {
+      assertBillingReplayCompatibility({
+        batchRow: replayByIdempotency,
+        payload,
+      });
+      return buildContractBillingResponseTx({
+        tenantId: payload.tenantId,
+        legalEntityId,
+        contractId,
+        batchRow: replayByIdempotency,
+        idempotentReplay: true,
+        runQuery: tx.query,
+      });
+    }
+
+    const replayByEventUid = await fetchContractBillingBatchByIntegrationEventUidTx({
+      tenantId: payload.tenantId,
+      legalEntityId,
+      integrationEventUid,
+      runQuery: tx.query,
+    });
+    if (replayByEventUid) {
+      if (String(replayByEventUid.idempotency_key || "") !== payload.idempotencyKey) {
+        throw badRequest("integrationEventUid is already bound to another idempotencyKey");
+      }
+      assertBillingReplayCompatibility({
+        batchRow: replayByEventUid,
+        payload,
+      });
+      return buildContractBillingResponseTx({
+        tenantId: payload.tenantId,
+        legalEntityId,
+        contractId,
+        batchRow: replayByEventUid,
+        idempotentReplay: true,
+        runQuery: tx.query,
+      });
+    }
+
+    const lineRows = await listContractLineRowsByContractId({
+      tenantId: payload.tenantId,
+      legalEntityId,
+      contractId,
+      runQuery: tx.query,
+    });
+    if (!Array.isArray(lineRows) || lineRows.length === 0) {
+      throw badRequest("Contract has no lines to bill");
+    }
+
+    const requestedLineIds = sortNumeric(toPositiveIntArray(payload.selectedLineIds || []));
+    let selectedLineRows = lineRows;
+    if (requestedLineIds.length > 0) {
+      const lineById = new Map(
+        lineRows.map((row) => [parsePositiveInt(row.id), row]).filter(([id]) => id > 0)
+      );
+      selectedLineRows = requestedLineIds.map((lineId) => {
+        const row = lineById.get(lineId);
+        if (!row) {
+          throw badRequest(`selectedLineIds contains unknown contract line id ${lineId}`);
+        }
+        return row;
+      });
+    }
+
+    const activeSelectedRows = selectedLineRows.filter(
+      (row) => asUpper(row.status) === "ACTIVE"
+    );
+    if (activeSelectedRows.length === 0) {
+      throw badRequest("No ACTIVE contract lines selected for billing");
+    }
+
+    const billableTotals = calculateHeaderTotals(
+      mapLineRowsForHeaderTotals(activeSelectedRows)
+    );
+    const billableAmountTxn = Number(billableTotals.totalAmountTxn || 0);
+    const billableAmountBase = Number(billableTotals.totalAmountBase || 0);
+    if (billableAmountTxn <= EPSILON || billableAmountBase <= EPSILON) {
+      throw badRequest("Selected line totals must be positive for billing generation");
+    }
+
+    const normalizedAmountStrategy =
+      asUpper(payload.amountStrategy) || BILLING_AMOUNT_STRATEGY.FULL;
+    let resolvedAmountTxn = billableAmountTxn;
+    let resolvedAmountBase = billableAmountBase;
+    if (
+      normalizedAmountStrategy === BILLING_AMOUNT_STRATEGY.PARTIAL ||
+      normalizedAmountStrategy === BILLING_AMOUNT_STRATEGY.MILESTONE
+    ) {
+      resolvedAmountTxn = Number(payload.amountTxn || 0);
+      resolvedAmountBase = Number(payload.amountBase || 0);
+      if (resolvedAmountTxn <= EPSILON || resolvedAmountBase <= EPSILON) {
+        throw badRequest("amountTxn and amountBase must be > 0 for PARTIAL/MILESTONE");
+      }
+      if (resolvedAmountTxn - billableAmountTxn > EPSILON) {
+        throw badRequest("amountTxn exceeds selected line total");
+      }
+      if (resolvedAmountBase - billableAmountBase > EPSILON) {
+        throw badRequest("amountBase exceeds selected line total");
+      }
+    }
+
+    const counterparty = await fetchCounterpartyRow({
+      tenantId: payload.tenantId,
+      legalEntityId,
+      counterpartyId: contract.counterparty_id,
+      runQuery: tx.query,
+    });
+    assertCounterpartyRoleCompatibility(contract.contract_type, counterparty);
+    if (asUpper(counterparty?.status) !== "ACTIVE") {
+      throw badRequest("Contract counterparty must be ACTIVE for billing generation");
+    }
+
+    const paymentTerm = await fetchPaymentTermRowByIdTx({
+      tenantId: payload.tenantId,
+      legalEntityId,
+      paymentTermId: counterparty?.default_payment_term_id,
+      runQuery: tx.query,
+    });
+    if (paymentTerm && asUpper(paymentTerm.status) !== "ACTIVE") {
+      throw badRequest("Counterparty default payment term must be ACTIVE");
+    }
+
+    const billingDate = toDateOnlyString(payload.billingDate, "billingDate");
+    const dueDate = resolveGeneratedDueDate({
+      billingDate,
+      explicitDueDate: payload.dueDate,
+      generatedDocumentType,
+      paymentTermRow: paymentTerm,
+    });
+    if (dueDate && dueDate < billingDate) {
+      throw badRequest("dueDate cannot be earlier than billingDate");
+    }
+
+    const sequence = await reserveDraftCariDocumentSequenceTx({
+      tenantId: payload.tenantId,
+      legalEntityId,
+      direction,
+      billingDate,
+      runQuery: tx.query,
+    });
+    const fxRate = resolveGeneratedDocumentFxRate({
+      amountTxn: resolvedAmountTxn,
+      amountBase: resolvedAmountBase,
+    });
+
+    const requestFingerprint = buildContractBillingFingerprint({
+      docType: payload.docType,
+      amountStrategy: normalizedAmountStrategy,
+      billingDate: payload.billingDate,
+      dueDate: payload.dueDate,
+      amountTxn: payload.amountTxn,
+      amountBase: payload.amountBase,
+      selectedLineIds: requestedLineIds,
+    });
+
+    let billingBatchId = null;
+    try {
+      const insertBatchResult = await tx.query(
+        `INSERT INTO contract_billing_batches (
+            tenant_id,
+            legal_entity_id,
+            contract_id,
+            idempotency_key,
+            integration_event_uid,
+            source_module,
+            source_entity_type,
+            source_entity_id,
+            doc_type,
+            amount_strategy,
+            billing_date,
+            due_date,
+            amount_txn,
+            amount_base,
+            currency_code,
+            selected_line_ids_json,
+            status,
+            payload_json,
+            created_by_user_id
+         )
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          payload.tenantId,
+          legalEntityId,
+          contractId,
+          payload.idempotencyKey,
+          integrationEventUid,
+          "CONTRACTS",
+          "CONTRACT_BILLING",
+          String(contractId),
+          asUpper(payload.docType),
+          normalizedAmountStrategy,
+          billingDate,
+          dueDate,
+          toFixedAmount(resolvedAmountTxn),
+          toFixedAmount(resolvedAmountBase),
+          asUpper(contract.currency_code),
+          JSON.stringify(requestedLineIds),
+          CONTRACT_BILLING_STATUS.PENDING,
+          safeStringify(requestFingerprint),
+          payload.userId,
+        ]
+      );
+      billingBatchId = parsePositiveInt(insertBatchResult.rows?.insertId);
+    } catch (err) {
+      const duplicateIdempotency =
+        isDuplicateKeyError(err, "uk_contract_bill_batch_scope_idempo") ||
+        isDuplicateKeyError(err, "uk_contract_bill_batch_scope_event_uid");
+      if (!duplicateIdempotency) {
+        throw err;
+      }
+      const replayBatch = await fetchContractBillingBatchByIdempotencyTx({
+        tenantId: payload.tenantId,
+        legalEntityId,
+        contractId,
+        idempotencyKey: payload.idempotencyKey,
+        runQuery: tx.query,
+      });
+      if (!replayBatch) {
+        throw err;
+      }
+      assertBillingReplayCompatibility({
+        batchRow: replayBatch,
+        payload,
+      });
+      return buildContractBillingResponseTx({
+        tenantId: payload.tenantId,
+        legalEntityId,
+        contractId,
+        batchRow: replayBatch,
+        idempotentReplay: true,
+        runQuery: tx.query,
+      });
+    }
+
+    if (!billingBatchId) {
+      throw new Error("Failed to create contract billing batch");
+    }
+
+    const generatedDocumentSourceEntityId = `${contractId}:${billingBatchId}`.slice(0, 120);
+    const insertDocumentResult = await tx.query(
+      `INSERT INTO cari_documents (
+          tenant_id,
+          legal_entity_id,
+          counterparty_id,
+          payment_term_id,
+          direction,
+          document_type,
+          sequence_namespace,
+          fiscal_year,
+          sequence_no,
+          document_no,
+          status,
+          document_date,
+          due_date,
+          amount_txn,
+          amount_base,
+          open_amount_txn,
+          open_amount_base,
+          currency_code,
+          fx_rate,
+          counterparty_code_snapshot,
+          counterparty_name_snapshot,
+          payment_term_snapshot,
+          due_date_snapshot,
+          currency_code_snapshot,
+          fx_rate_snapshot,
+          source_module,
+          source_entity_type,
+          source_entity_id,
+          integration_link_status,
+          integration_event_uid
+       )
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        payload.tenantId,
+        legalEntityId,
+        parsePositiveInt(counterparty.id),
+        parsePositiveInt(paymentTerm?.id),
+        direction,
+        generatedDocumentType,
+        sequence.sequenceNamespace,
+        sequence.fiscalYear,
+        sequence.sequenceNo,
+        sequence.documentNo,
+        "DRAFT",
+        billingDate,
+        dueDate,
+        toFixedAmount(resolvedAmountTxn),
+        toFixedAmount(resolvedAmountBase),
+        toFixedAmount(resolvedAmountTxn),
+        toFixedAmount(resolvedAmountBase),
+        asUpper(contract.currency_code),
+        fxRate,
+        counterparty.code || `CP-${counterparty.id}`,
+        counterparty.name || `Counterparty ${counterparty.id}`,
+        paymentTerm?.code || null,
+        dueDate,
+        asUpper(contract.currency_code),
+        fxRate,
+        "CONTRACTS",
+        "CONTRACT_BILLING",
+        generatedDocumentSourceEntityId,
+        CARI_DOCUMENT_LINK_STATUS.PENDING,
+        integrationEventUid,
+      ]
+    );
+    const generatedDocumentId = parsePositiveInt(insertDocumentResult.rows?.insertId);
+    if (!generatedDocumentId) {
+      throw new Error("Failed to create generated Cari document");
+    }
+
+    const linkFxRateSnapshot = resolveLinkFxRateSnapshot({
+      contractCurrencyCode: asUpper(contract.currency_code),
+      documentCurrencyCode: asUpper(contract.currency_code),
+      linkedAmountTxn: resolvedAmountTxn,
+      linkedAmountBase: resolvedAmountBase,
+      requestedFxRate: null,
+      documentFxRate: fxRate,
+    });
+
+    const insertLinkResult = await tx.query(
+      `INSERT INTO contract_document_links (
+          tenant_id,
+          legal_entity_id,
+          contract_id,
+          cari_document_id,
+          link_type,
+          linked_amount_txn,
+          linked_amount_base,
+          contract_currency_code_snapshot,
+          document_currency_code_snapshot,
+          link_fx_rate_snapshot,
+          created_by_user_id
+       )
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        payload.tenantId,
+        legalEntityId,
+        contractId,
+        generatedDocumentId,
+        generatedLinkType,
+        toFixedAmount(resolvedAmountTxn),
+        toFixedAmount(resolvedAmountBase),
+        asUpper(contract.currency_code),
+        asUpper(contract.currency_code),
+        linkFxRateSnapshot,
+        payload.userId,
+      ]
+    );
+    let generatedLinkId = parsePositiveInt(insertLinkResult.rows?.insertId);
+    if (!generatedLinkId) {
+      generatedLinkId = await fetchGeneratedContractLinkByTupleTx({
+        tenantId: payload.tenantId,
+        contractId,
+        cariDocumentId: generatedDocumentId,
+        linkType: generatedLinkType,
+        runQuery: tx.query,
+      });
+    }
+    if (!generatedLinkId) {
+      throw new Error("Failed to create generated contract-document link");
+    }
+
+    await tx.query(
+      `UPDATE contract_billing_batches
+       SET generated_document_id = ?,
+           generated_link_id = ?,
+           status = ?
+       WHERE tenant_id = ?
+         AND legal_entity_id = ?
+         AND contract_id = ?
+         AND id = ?`,
+      [
+        generatedDocumentId,
+        generatedLinkId,
+        CONTRACT_BILLING_STATUS.COMPLETED,
+        payload.tenantId,
+        legalEntityId,
+        contractId,
+        billingBatchId,
+      ]
+    );
+
+    await tx.query(
+      `UPDATE cari_documents
+       SET integration_link_status = ?
+       WHERE tenant_id = ?
+         AND legal_entity_id = ?
+         AND id = ?`,
+      [CARI_DOCUMENT_LINK_STATUS.LINKED, payload.tenantId, legalEntityId, generatedDocumentId]
+    );
+
+    const batchReadbackResult = await tx.query(
+      `SELECT *
+       FROM contract_billing_batches
+       WHERE tenant_id = ?
+         AND legal_entity_id = ?
+         AND contract_id = ?
+         AND id = ?
+       LIMIT 1`,
+      [payload.tenantId, legalEntityId, contractId, billingBatchId]
+    );
+    const batchRow = batchReadbackResult.rows?.[0] || null;
+    if (!batchRow) {
+      throw new Error("Contract billing batch readback failed");
+    }
+
+    await insertContractAuditLog({
+      req,
+      runQuery: tx.query,
+      tenantId: payload.tenantId,
+      userId: payload.userId,
+      action: AUDIT_ACTIONS.BILLING_GENERATE,
+      legalEntityId,
+      linkId: generatedLinkId,
+      payload: {
+        contractId,
+        billingBatchId,
+        generatedDocumentId,
+        generatedLinkId,
+        docType: asUpper(payload.docType),
+        amountStrategy: normalizedAmountStrategy,
+        billingDate,
+        dueDate,
+        selectedLineIds: requestedLineIds,
+        amountTxn: toDecimalNumber(resolvedAmountTxn),
+        amountBase: toDecimalNumber(resolvedAmountBase),
+        integrationEventUid,
+      },
+    });
+
+    return buildContractBillingResponseTx({
+      tenantId: payload.tenantId,
+      legalEntityId,
+      contractId,
+      batchRow,
+      idempotentReplay: false,
+      runQuery: tx.query,
+    });
+  });
+}
+
+export async function generateContractRevrec({
+  req,
+  payload,
+  assertScopeAccess,
+}) {
+  const existing = await fetchContractRow({
+    tenantId: payload.tenantId,
+    contractId: payload.contractId,
+  });
+  if (!existing) {
+    throw badRequest("Contract not found");
+  }
+  assertScopeAccess(req, "legal_entity", existing.legal_entity_id, "contractId");
+
+  return withTransaction(async (tx) => {
+    const contract = await fetchContractRow({
+      tenantId: payload.tenantId,
+      contractId: payload.contractId,
+      runQuery: tx.query,
+      forUpdate: true,
+    });
+    if (!contract) {
+      throw badRequest("Contract not found");
+    }
+    if (!REVREC_GENERATABLE_CONTRACT_STATUSES.has(asUpper(contract.status))) {
+      throw badRequest(
+        `Contract status ${contract.status} is not eligible for RevRec generation`
+      );
+    }
+
+    const legalEntityId = parsePositiveInt(contract.legal_entity_id);
+    const contractId = parsePositiveInt(contract.id);
+    const lineRows = await listContractLineRowsByContractId({
+      tenantId: payload.tenantId,
+      legalEntityId,
+      contractId,
+      runQuery: tx.query,
+    });
+    if (!Array.isArray(lineRows) || lineRows.length === 0) {
+      throw badRequest("Contract has no lines for RevRec generation");
+    }
+
+    const requestedLineIds = sortNumeric(toPositiveIntArray(payload.contractLineIds || []));
+    let selectedLineRows = lineRows;
+    if (requestedLineIds.length > 0) {
+      const lineById = new Map(
+        lineRows.map((row) => [parsePositiveInt(row.id), row]).filter(([id]) => id > 0)
+      );
+      selectedLineRows = requestedLineIds.map((lineId) => {
+        const row = lineById.get(lineId);
+        if (!row) {
+          throw badRequest(`contractLineIds contains unknown contract line id ${lineId}`);
+        }
+        return row;
+      });
+    }
+    selectedLineRows = selectedLineRows.filter((row) => asUpper(row.status) === "ACTIVE");
+    if (selectedLineRows.length === 0) {
+      throw badRequest("No ACTIVE contract lines selected for RevRec generation");
+    }
+
+    for (const row of selectedLineRows) {
+      const contractLineId = parsePositiveInt(row.id);
+      if (!parsePositiveInt(row.deferred_account_id)) {
+        throw badRequest(`contractLineId=${contractLineId} is missing deferred_account_id`);
+      }
+      if (!parsePositiveInt(row.revenue_account_id)) {
+        throw badRequest(`contractLineId=${contractLineId} is missing revenue_account_id`);
+      }
+    }
+
+    const generationMode =
+      asUpper(payload.generationMode) === REVREC_GENERATION_MODE.BY_LINKED_DOCUMENT
+        ? REVREC_GENERATION_MODE.BY_LINKED_DOCUMENT
+        : REVREC_GENERATION_MODE.BY_CONTRACT_LINE;
+    const activeLinkedDocumentIds = await listActiveContractLinkedDocumentIdsTx({
+      tenantId: payload.tenantId,
+      legalEntityId,
+      contractId,
+      runQuery: tx.query,
+    });
+    const activeLinkedDocumentIdSet = new Set(activeLinkedDocumentIds);
+    let sourceCariDocumentId = parsePositiveInt(payload.sourceCariDocumentId);
+    if (generationMode === REVREC_GENERATION_MODE.BY_LINKED_DOCUMENT) {
+      if (!sourceCariDocumentId) {
+        throw badRequest("sourceCariDocumentId is required for BY_LINKED_DOCUMENT mode");
+      }
+      if (!activeLinkedDocumentIdSet.has(sourceCariDocumentId)) {
+        throw badRequest("sourceCariDocumentId is not an active linked contract document");
+      }
+    } else if (sourceCariDocumentId && !activeLinkedDocumentIdSet.has(sourceCariDocumentId)) {
+      throw badRequest("sourceCariDocumentId is not an active linked contract document");
+    }
+
+    const accountFamily =
+      asUpper(contract.contract_type) === CONTRACT_TYPE.VENDOR
+        ? "PREPAID_EXPENSE"
+        : "DEFREV";
+    const revrecResult = await generateRevenueRecognitionSchedulesFromContract({
+      payload: {
+        tenantId: payload.tenantId,
+        userId: payload.userId,
+        legalEntityId,
+        contractId,
+        fiscalPeriodId: payload.fiscalPeriodId,
+        generationMode,
+        regenerateMissingOnly: payload.regenerateMissingOnly,
+        scheduleStatus: "DRAFT",
+        sourceCariDocumentId: sourceCariDocumentId || null,
+        accountFamily,
+        currencyCode: asUpper(contract.currency_code),
+        lineRows: selectedLineRows,
+      },
+      runQuery: tx.query,
+    });
+
+    await insertContractAuditLog({
+      req,
+      runQuery: tx.query,
+      tenantId: payload.tenantId,
+      userId: payload.userId,
+      action: AUDIT_ACTIONS.REVREC_GENERATE,
+      legalEntityId,
+      resourceType: "contract_revrec_schedule",
+      resourceId: String(contractId),
+      payload: {
+        contractId,
+        legalEntityId,
+        fiscalPeriodId: payload.fiscalPeriodId,
+        generationMode,
+        regenerateMissingOnly: payload.regenerateMissingOnly,
+        sourceCariDocumentId: sourceCariDocumentId || null,
+        accountFamily,
+        selectedLineIds: selectedLineRows
+          .map((row) => parsePositiveInt(row.id))
+          .filter((value) => Boolean(value)),
+        generatedScheduleCount: revrecResult.generatedScheduleCount,
+        generatedLineCount: revrecResult.generatedLineCount,
+        skippedLineCount: revrecResult.skippedLineCount,
+        idempotentReplay: revrecResult.idempotentReplay,
+      },
+    });
+
+    return {
+      ...revrecResult,
+      contractId,
+      legalEntityId,
+      sourceCariDocumentId: sourceCariDocumentId || null,
+    };
   });
 }
 

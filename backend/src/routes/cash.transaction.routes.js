@@ -4,6 +4,7 @@ import { asyncHandler, parsePositiveInt } from "./_utils.js";
 import { resolveCashRegisterScope } from "../services/cash.register.service.js";
 import {
   createCashTransaction,
+  applyCariFromCashTransactionById,
   getCashTransactionByIdForTenant,
   listCashTransactionRows,
   postCashTransactionById,
@@ -13,6 +14,7 @@ import {
 } from "../services/cash.transaction.service.js";
 import {
   parseCashTransactionCancelInput,
+  parseCashTransactionApplyCariInput,
   parseCashTransactionCreateInput,
   parseCashTransactionIdParam,
   parseCashTransactionPostInput,
@@ -39,6 +41,55 @@ async function runPermissionMiddleware(middleware, req, res) {
       resolve();
     });
   });
+}
+
+function buildCashApplyCariResponse(tenantId, result) {
+  const metrics = {
+    ...(result.applyAuditPayload || {}),
+    ...(result.metrics || {}),
+  };
+  const unappliedConsumed = Array.isArray(metrics.unappliedConsumed)
+    ? metrics.unappliedConsumed
+    : [];
+
+  return {
+    tenantId,
+    cashTransaction: result.cashTransaction || null,
+    row: result.row || null,
+    allocations: Array.isArray(result.allocations) ? result.allocations : [],
+    journal: result.journal || null,
+    fx: {
+      settlementFxRate:
+        metrics.settlementFxRate === undefined || metrics.settlementFxRate === null
+          ? null
+          : Number(metrics.settlementFxRate),
+      settlementFxSource: metrics.settlementFxSource || null,
+      fxRateDate: metrics.fxRateDate || null,
+      realizedGainLossBase:
+        metrics.realizedFxNetBase === undefined || metrics.realizedFxNetBase === null
+          ? null
+          : Number(metrics.realizedFxNetBase),
+    },
+    unapplied: {
+      createdUnappliedCashId: parsePositiveInt(metrics.createdUnappliedCashId) || null,
+      consumed: unappliedConsumed.map((entry) => ({
+        unappliedCashId: parsePositiveInt(entry?.unappliedCashId) || null,
+        consumeTxn:
+          entry?.consumeTxn === undefined || entry?.consumeTxn === null
+            ? null
+            : Number(entry.consumeTxn),
+        consumeBase:
+          entry?.consumeBase === undefined || entry?.consumeBase === null
+            ? null
+            : Number(entry.consumeBase),
+      })),
+      rows: Array.isArray(result.unappliedCash) ? result.unappliedCash : [],
+    },
+    unappliedCash: Array.isArray(result.unappliedCash) ? result.unappliedCash : [],
+    metrics: result.metrics || null,
+    idempotentReplay: Boolean(result.idempotentReplay),
+    followUpRisks: Array.isArray(result.followUpRisks) ? result.followUpRisks : [],
+  };
 }
 
 router.get(
@@ -187,6 +238,26 @@ router.post(
       reversal: result.reversal,
       idempotentReplay: result.idempotentReplay,
     });
+  })
+);
+
+router.post(
+  "/:transactionId/apply-cari",
+  requirePermission("cari.settlement.apply", {
+    resolveScope: async (req, tenantId) => {
+      return resolveCashTransactionScope(req.params?.transactionId, tenantId);
+    },
+  }),
+  asyncHandler(async (req, res) => {
+    const payload = parseCashTransactionApplyCariInput(req);
+    const result = await applyCariFromCashTransactionById({
+      req,
+      payload,
+      assertScopeAccess,
+    });
+    return res
+      .status(result.idempotentReplay ? 200 : 201)
+      .json(buildCashApplyCariResponse(payload.tenantId, result));
   })
 );
 

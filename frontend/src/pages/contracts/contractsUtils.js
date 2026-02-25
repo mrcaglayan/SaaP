@@ -9,6 +9,9 @@ export const CONTRACT_STATUSES = [
 export const CONTRACT_LINE_STATUSES = ["ACTIVE", "INACTIVE"];
 export const RECOGNITION_METHODS = ["STRAIGHT_LINE", "MILESTONE", "MANUAL"];
 export const LINK_TYPES = ["BILLING", "ADVANCE", "ADJUSTMENT"];
+export const BILLING_DOC_TYPES = ["INVOICE", "ADVANCE", "ADJUSTMENT"];
+export const BILLING_AMOUNT_STRATEGIES = ["FULL", "PARTIAL", "MILESTONE"];
+export const REVREC_GENERATION_MODES = ["BY_CONTRACT_LINE", "BY_LINKED_DOCUMENT"];
 
 const LIFECYCLE_FROM_STATUS = Object.freeze({
   activate: new Set(["DRAFT", "SUSPENDED"]),
@@ -45,6 +48,8 @@ export function resolveContractsPermissionGates(permissionCodes = []) {
     canCloseContract: permissionSet.has("contract.close"),
     canCancelContract: permissionSet.has("contract.cancel"),
     canLinkDocument: permissionSet.has("contract.link_document"),
+    canGenerateBilling: permissionSet.has("contract.link_document"),
+    canGenerateRevrec: permissionSet.has("revenue.schedule.generate"),
     canReadCounterpartyPicker,
     canReadAccountPicker,
     canReadDocumentPicker,
@@ -134,6 +139,37 @@ export function createInitialLinkUnlinkForm() {
   return {
     linkId: "",
     reason: "",
+  };
+}
+
+function createSuggestedBillingIdempotencyKey() {
+  const stamp = Date.now().toString(36).toUpperCase();
+  const random = Math.random().toString(36).slice(2, 8).toUpperCase();
+  return `BILL-${stamp}-${random}`.slice(0, 100);
+}
+
+export function createInitialBillingForm() {
+  return {
+    docType: "INVOICE",
+    amountStrategy: "FULL",
+    billingDate: "",
+    dueDate: "",
+    amountTxn: "",
+    amountBase: "",
+    idempotencyKey: createSuggestedBillingIdempotencyKey(),
+    integrationEventUid: "",
+    note: "",
+    selectedLineIds: [],
+  };
+}
+
+export function createInitialRevrecForm() {
+  return {
+    fiscalPeriodId: "",
+    generationMode: "BY_CONTRACT_LINE",
+    sourceCariDocumentId: "",
+    regenerateMissingOnly: true,
+    contractLineIds: [],
   };
 }
 
@@ -351,6 +387,99 @@ export function buildContractLinkPayload(form) {
     linkedAmountBase: toOptionalNumber(form?.linkedAmountBase),
     linkFxRate: toOptionalNumber(form?.linkFxRate),
   };
+}
+
+export function buildContractBillingPayload(form) {
+  const selectedLineIds = Array.isArray(form?.selectedLineIds)
+    ? form.selectedLineIds.map((entry) => toPositiveInt(entry)).filter(Boolean)
+    : [];
+
+  return {
+    docType: toUpper(form?.docType),
+    amountStrategy: toUpper(form?.amountStrategy) || "FULL",
+    billingDate: String(form?.billingDate || "").trim(),
+    dueDate: String(form?.dueDate || "").trim() || null,
+    amountTxn: toOptionalNumber(form?.amountTxn),
+    amountBase: toOptionalNumber(form?.amountBase),
+    idempotencyKey: String(form?.idempotencyKey || "").trim(),
+    integrationEventUid: String(form?.integrationEventUid || "").trim() || null,
+    note: String(form?.note || "").trim() || null,
+    selectedLineIds,
+  };
+}
+
+export function validateContractBillingForm(form) {
+  const payload = buildContractBillingPayload(form);
+  const errors = [];
+
+  if (!BILLING_DOC_TYPES.includes(payload.docType)) {
+    errors.push("docType is invalid.");
+  }
+  if (!BILLING_AMOUNT_STRATEGIES.includes(payload.amountStrategy)) {
+    errors.push("amountStrategy is invalid.");
+  }
+  if (!payload.billingDate) {
+    errors.push("billingDate is required.");
+  }
+  if (!payload.idempotencyKey) {
+    errors.push("idempotencyKey is required.");
+  }
+
+  const hasAmountTxn = Number.isFinite(payload.amountTxn);
+  const hasAmountBase = Number.isFinite(payload.amountBase);
+  if (hasAmountTxn !== hasAmountBase) {
+    errors.push("amountTxn and amountBase must be provided together.");
+  }
+  if (payload.amountStrategy === "FULL" && (hasAmountTxn || hasAmountBase)) {
+    errors.push("amountTxn and amountBase must be empty for FULL strategy.");
+  }
+  if (payload.amountStrategy !== "FULL") {
+    if (!hasAmountTxn || Number(payload.amountTxn) <= 0) {
+      errors.push("amountTxn must be > 0 for PARTIAL/MILESTONE.");
+    }
+    if (!hasAmountBase || Number(payload.amountBase) <= 0) {
+      errors.push("amountBase must be > 0 for PARTIAL/MILESTONE.");
+    }
+  }
+
+  if (payload.dueDate && payload.billingDate && payload.dueDate < payload.billingDate) {
+    errors.push("dueDate cannot be earlier than billingDate.");
+  }
+
+  return { payload, errors };
+}
+
+export function buildContractRevrecPayload(form) {
+  const contractLineIds = Array.isArray(form?.contractLineIds)
+    ? form.contractLineIds.map((entry) => toPositiveInt(entry)).filter(Boolean)
+    : [];
+  return {
+    fiscalPeriodId: toPositiveInt(form?.fiscalPeriodId),
+    generationMode: toUpper(form?.generationMode) || "BY_CONTRACT_LINE",
+    sourceCariDocumentId: toPositiveInt(form?.sourceCariDocumentId),
+    regenerateMissingOnly: Boolean(form?.regenerateMissingOnly ?? true),
+    contractLineIds,
+  };
+}
+
+export function validateContractRevrecForm(form) {
+  const payload = buildContractRevrecPayload(form);
+  const errors = [];
+
+  if (!payload.fiscalPeriodId) {
+    errors.push("fiscalPeriodId is required.");
+  }
+  if (!REVREC_GENERATION_MODES.includes(payload.generationMode)) {
+    errors.push("generationMode is invalid.");
+  }
+  if (
+    payload.generationMode === "BY_LINKED_DOCUMENT" &&
+    !payload.sourceCariDocumentId
+  ) {
+    errors.push("sourceCariDocumentId is required for BY_LINKED_DOCUMENT mode.");
+  }
+
+  return { payload, errors };
 }
 
 export function validateContractLinkForm(form) {

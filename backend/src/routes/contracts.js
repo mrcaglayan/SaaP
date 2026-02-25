@@ -11,6 +11,8 @@ import {
   parseContractIdParam,
   parseContractLifecycleInput,
   parseContractLinkDocumentInput,
+  parseContractGenerateBillingInput,
+  parseContractGenerateRevrecInput,
   parseContractLinkUnlinkInput,
   parseContractListFilters,
   parseContractUpdateInput,
@@ -23,6 +25,8 @@ import {
   patchContractLineById,
   closeContractById,
   createContract,
+  generateContractBilling,
+  generateContractRevrec,
   getContractByIdForTenant,
   linkDocumentToContract,
   listContractAmendments,
@@ -246,6 +250,48 @@ router.post(
     return res.status(201).json({
       tenantId: payload.tenantId,
       row,
+    });
+  })
+);
+
+router.post(
+  "/:contractId/generate-billing",
+  requirePermission("contract.link_document", {
+    resolveScope: async (req, tenantId) => {
+      return resolveContractScope(req.params?.contractId, tenantId);
+    },
+  }),
+  asyncHandler(async (req, res) => {
+    const payload = parseContractGenerateBillingInput(req);
+    const result = await generateContractBilling({
+      req,
+      payload,
+      assertScopeAccess,
+    });
+    return res.status(result.idempotentReplay ? 200 : 201).json({
+      tenantId: payload.tenantId,
+      ...result,
+    });
+  })
+);
+
+router.post(
+  "/:contractId/generate-revrec",
+  requirePermission("revenue.schedule.generate", {
+    resolveScope: async (req, tenantId) => {
+      return resolveContractScope(req.params?.contractId, tenantId);
+    },
+  }),
+  asyncHandler(async (req, res) => {
+    const payload = parseContractGenerateRevrecInput(req);
+    const result = await generateContractRevrec({
+      req,
+      payload,
+      assertScopeAccess,
+    });
+    return res.status(result.idempotentReplay ? 200 : 201).json({
+      tenantId: payload.tenantId,
+      ...result,
     });
   })
 );

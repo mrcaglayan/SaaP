@@ -8,6 +8,7 @@ import {
   reverseCariDocument,
   updateCariDocument,
 } from "../../api/cariDocuments.js";
+import { getCariCounterpartyStatementReport } from "../../api/cariReports.js";
 import { useAuth } from "../../auth/useAuth.js";
 import {
   buildDocumentListQuery,
@@ -83,6 +84,7 @@ export default function CariDocumentsPage() {
   const canPost = hasPermission("cari.doc.post");
   const canReverse = hasPermission("cari.doc.reverse");
   const canFxOverride = hasPermission("cari.fx.override");
+  const canReadReports = hasPermission("cari.report.read");
 
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
   const [rows, setRows] = useState([]);
@@ -116,6 +118,9 @@ export default function CariDocumentsPage() {
   const [reverseError, setReverseError] = useState("");
   const [reverseMessage, setReverseMessage] = useState("");
   const [reverseResult, setReverseResult] = useState(null);
+  const [linkedCashRows, setLinkedCashRows] = useState([]);
+  const [linkedCashLoading, setLinkedCashLoading] = useState(false);
+  const [linkedCashError, setLinkedCashError] = useState("");
 
   const selectedRow = useMemo(
     () => rows.find((row) => Number(row?.id || 0) === Number(selectedDocumentId || 0)) || null,
@@ -178,6 +183,74 @@ export default function CariDocumentsPage() {
     loadDocumentDetail(selectedDocumentId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedDocumentId, canRead]);
+
+  useEffect(() => {
+    const documentId = Number(selectedSnapshot?.id || 0);
+    const legalEntityId = Number(selectedSnapshot?.legalEntityId || 0);
+    const counterpartyId = Number(selectedSnapshot?.counterpartyId || 0);
+    if (!canReadReports || !documentId || !legalEntityId || !counterpartyId) {
+      setLinkedCashRows([]);
+      setLinkedCashError("");
+      setLinkedCashLoading(false);
+      return;
+    }
+
+    let active = true;
+    async function loadLinkedCashRows() {
+      setLinkedCashLoading(true);
+      setLinkedCashError("");
+      try {
+        const payload = await getCariCounterpartyStatementReport({
+          legalEntityId,
+          counterpartyId,
+          asOfDate: todayIsoDate(),
+          status: "ALL",
+          includeDetails: true,
+          limit: 1000,
+          offset: 0,
+        });
+        if (!active) {
+          return;
+        }
+        const allocationRows = Array.isArray(payload?.allocations?.rows)
+          ? payload.allocations.rows
+          : [];
+        const settlementRows = Array.isArray(payload?.settlements?.rows)
+          ? payload.settlements.rows
+          : [];
+        const settlementIdSet = new Set(
+          allocationRows
+            .filter((row) => Number(row?.documentId || 0) === documentId)
+            .map((row) => Number(row?.settlementBatchId || 0))
+            .filter((id) => id > 0)
+        );
+        const linkedRows = settlementRows
+          .filter((row) => settlementIdSet.has(Number(row?.settlementBatchId || 0)))
+          .map((row) => ({
+            settlementBatchId: Number(row?.settlementBatchId || 0) || null,
+            settlementNo: row?.settlementNo || null,
+            settlementDate: row?.settlementDate || null,
+            cashTransactionId: Number(row?.cashTransactionId || 0) || null,
+          }));
+        setLinkedCashRows(linkedRows);
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+        setLinkedCashRows([]);
+        setLinkedCashError(normalizeApiError(error, "Failed to load settlement/cash links."));
+      } finally {
+        if (active) {
+          setLinkedCashLoading(false);
+        }
+      }
+    }
+
+    loadLinkedCashRows();
+    return () => {
+      active = false;
+    };
+  }, [canReadReports, selectedSnapshot?.counterpartyId, selectedSnapshot?.id, selectedSnapshot?.legalEntityId]);
 
   async function handleCreateDraft(event) {
     event.preventDefault();
@@ -405,6 +478,25 @@ export default function CariDocumentsPage() {
                 <dt className="font-semibold text-slate-600">fxRateSnapshot</dt><dd>{selectedSnapshot.fxRateSnapshot || "-"}</dd>
               </dl>
               {reverseResult ? <div className="mt-4 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">Reverse linkage: `response.row.id`={reverseResult.reversalDocumentId || "-"}, `response.row.documentNo`={reverseResult.reversalDocumentNo || "-"}, `response.journal.reversalJournalEntryId`={reverseResult.reversalJournalEntryId || "-"}</div> : null}
+              {canReadReports ? (
+                <div className="mt-4 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                  <p className="font-semibold text-slate-800">Linked settlements / cash transactions</p>
+                  {linkedCashError ? <p className="mt-1 text-rose-700">{linkedCashError}</p> : null}
+                  {linkedCashLoading ? <p className="mt-1 text-slate-600">Loading linkage...</p> : null}
+                  {!linkedCashLoading && linkedCashRows.length === 0 ? (
+                    <p className="mt-1 text-slate-600">No linked settlements found for this document as of today.</p>
+                  ) : null}
+                  {!linkedCashLoading && linkedCashRows.length > 0 ? (
+                    <ul className="mt-2 space-y-1">
+                      {linkedCashRows.map((row, index) => (
+                        <li key={`doc-link-${row.settlementBatchId || row.settlementNo || index}`} className="rounded border border-slate-200 bg-white px-2 py-1">
+                          settlement={row.settlementNo || row.settlementBatchId || "-"} ({row.settlementDate || "-"}) | cashTransactionId={row.cashTransactionId || "-"}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
 
             <div className="space-y-4">

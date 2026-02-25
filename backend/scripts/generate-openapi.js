@@ -763,6 +763,79 @@ function applyCariOperationOverrides(specObject) {
       "#/components/schemas/CounterpartyMutationResponse"
     );
   }
+
+  const settlementApplyOperation = paths["/api/v1/cari/settlements/apply"]?.post;
+  if (settlementApplyOperation) {
+    settlementApplyOperation.summary =
+      "Apply cari settlement (manual or CASH-linked payment channel)";
+    settlementApplyOperation.requestBody = bodyFromRef(
+      "#/components/schemas/CariSettlementApplyRequest"
+    );
+    settlementApplyOperation.responses = {
+      "200": jsonResponse(
+        "#/components/schemas/CariSettlementApplyResponse",
+        "Idempotent replay response"
+      ),
+      "201": jsonResponse(
+        "#/components/schemas/CariSettlementApplyResponse",
+        "Cari settlement apply created"
+      ),
+      "400": errorResponseRef,
+      "401": errorResponseRef,
+      "403": errorResponseRef,
+    };
+  }
+
+  const bankApplyOperation = paths["/api/v1/cari/bank/apply"]?.post;
+  if (bankApplyOperation) {
+    bankApplyOperation.summary =
+      "Apply cari settlement from bank reference (manual payment channel)";
+    bankApplyOperation.requestBody = bodyFromRef(
+      "#/components/schemas/CariBankApplyRequest"
+    );
+    bankApplyOperation.responses = {
+      "200": jsonResponse(
+        "#/components/schemas/CariSettlementApplyResponse",
+        "Idempotent replay response"
+      ),
+      "201": jsonResponse(
+        "#/components/schemas/CariSettlementApplyResponse",
+        "Cari bank-apply settlement created"
+      ),
+      "400": errorResponseRef,
+      "401": errorResponseRef,
+      "403": errorResponseRef,
+    };
+  }
+}
+
+function applyCashOperationOverrides(specObject) {
+  ensureTagPresent(specObject, "Cash");
+  const paths = specObject.paths || {};
+
+  const applyCariOperation = paths["/api/v1/cash/transactions/{transactionId}/apply-cari"]?.post;
+  if (!applyCariOperation) {
+    return;
+  }
+
+  applyCariOperation.summary = "Apply Cari settlement from posted cash transaction";
+  applyCariOperation.tags = ["Cash"];
+  applyCariOperation.requestBody = bodyFromRef(
+    "#/components/schemas/CashTransactionApplyCariRequest"
+  );
+  applyCariOperation.responses = {
+    "200": jsonResponse(
+      "#/components/schemas/CashTransactionApplyCariResponse",
+      "Idempotent replay response"
+    ),
+    "201": jsonResponse(
+      "#/components/schemas/CashTransactionApplyCariResponse",
+      "Settlement/unapplied apply created"
+    ),
+    "400": errorResponseRef,
+    "401": errorResponseRef,
+    "403": errorResponseRef,
+  };
 }
 
 function applyContractsOperationOverrides(specObject) {
@@ -892,6 +965,50 @@ function applyContractsOperationOverrides(specObject) {
       "201": jsonResponse(
         "#/components/schemas/ContractLinkMutationResponse",
         "Contract-document link created"
+      ),
+      "400": errorResponseRef,
+      "401": errorResponseRef,
+      "403": errorResponseRef,
+    };
+  }
+
+  const generateBillingOperation = paths["/api/v1/contracts/{contractId}/generate-billing"]?.post;
+  if (generateBillingOperation) {
+    generateBillingOperation.summary =
+      "Generate contract-driven Cari billing document and auto-create contract-document link";
+    generateBillingOperation.requestBody = bodyFromRef(
+      "#/components/schemas/ContractGenerateBillingInput"
+    );
+    generateBillingOperation.responses = {
+      "200": jsonResponse(
+        "#/components/schemas/ContractGenerateBillingResponse",
+        "Idempotent replay response"
+      ),
+      "201": jsonResponse(
+        "#/components/schemas/ContractGenerateBillingResponse",
+        "Contract billing generation created"
+      ),
+      "400": errorResponseRef,
+      "401": errorResponseRef,
+      "403": errorResponseRef,
+    };
+  }
+
+  const generateRevrecOperation = paths["/api/v1/contracts/{contractId}/generate-revrec"]?.post;
+  if (generateRevrecOperation) {
+    generateRevrecOperation.summary =
+      "Generate draft contract-driven RevRec schedules/lines with source references";
+    generateRevrecOperation.requestBody = bodyFromRef(
+      "#/components/schemas/ContractGenerateRevrecInput"
+    );
+    generateRevrecOperation.responses = {
+      "200": jsonResponse(
+        "#/components/schemas/ContractGenerateRevrecResponse",
+        "Idempotent replay response"
+      ),
+      "201": jsonResponse(
+        "#/components/schemas/ContractGenerateRevrecResponse",
+        "Contract RevRec schedule generation created"
       ),
       "400": errorResponseRef,
       "401": errorResponseRef,
@@ -2424,6 +2541,242 @@ const spec = {
       AnyObject: {
         type: "object",
         additionalProperties: true,
+      },
+      CashTransactionApplyCariApplicationInput: {
+        oneOf: [
+          {
+            type: "object",
+            properties: {
+              openItemId: intId,
+              amountTxn: { type: "number", exclusiveMinimum: 0 },
+            },
+            required: ["openItemId", "amountTxn"],
+          },
+          {
+            type: "object",
+            properties: {
+              openItemId: intId,
+              amount: { type: "number", exclusiveMinimum: 0 },
+            },
+            required: ["openItemId", "amount"],
+          },
+          {
+            type: "object",
+            properties: {
+              cariDocumentId: intId,
+              amountTxn: { type: "number", exclusiveMinimum: 0 },
+            },
+            required: ["cariDocumentId", "amountTxn"],
+          },
+          {
+            type: "object",
+            properties: {
+              cariDocumentId: intId,
+              amount: { type: "number", exclusiveMinimum: 0 },
+            },
+            required: ["cariDocumentId", "amount"],
+          },
+        ],
+      },
+      CashTransactionApplyCariRequest: {
+        type: "object",
+        properties: {
+          settlementDate: { type: "string", format: "date", nullable: true },
+          idempotencyKey: { type: "string", maxLength: 100 },
+          integrationEventUid: { type: "string", maxLength: 100, nullable: true },
+          autoAllocate: { type: "boolean", default: false },
+          useUnappliedCash: { type: "boolean", default: true },
+          note: { type: "string", maxLength: 500, nullable: true },
+          fxRate: { type: "number", exclusiveMinimum: 0, nullable: true },
+          applications: {
+            type: "array",
+            items: { $ref: "#/components/schemas/CashTransactionApplyCariApplicationInput" },
+          },
+        },
+        required: ["idempotencyKey"],
+      },
+      CashTransactionApplyCariFxSummary: {
+        type: "object",
+        properties: {
+          settlementFxRate: { type: "number", nullable: true },
+          settlementFxSource: { type: "string", nullable: true },
+          fxRateDate: { type: "string", format: "date", nullable: true },
+          realizedGainLossBase: { type: "number", nullable: true },
+        },
+        required: [
+          "settlementFxRate",
+          "settlementFxSource",
+          "fxRateDate",
+          "realizedGainLossBase",
+        ],
+      },
+      CashTransactionApplyCariUnappliedConsumedRow: {
+        type: "object",
+        properties: {
+          unappliedCashId: { ...intId, nullable: true },
+          consumeTxn: { type: "number", nullable: true },
+          consumeBase: { type: "number", nullable: true },
+        },
+        required: ["unappliedCashId", "consumeTxn", "consumeBase"],
+      },
+      CashTransactionApplyCariUnappliedSummary: {
+        type: "object",
+        properties: {
+          createdUnappliedCashId: { ...intId, nullable: true },
+          consumed: {
+            type: "array",
+            items: { $ref: "#/components/schemas/CashTransactionApplyCariUnappliedConsumedRow" },
+          },
+          rows: {
+            type: "array",
+            items: { $ref: "#/components/schemas/AnyObject" },
+          },
+        },
+        required: ["createdUnappliedCashId", "consumed", "rows"],
+      },
+      CashTransactionApplyCariResponse: {
+        type: "object",
+        properties: {
+          tenantId: intId,
+          cashTransaction: { type: "object", additionalProperties: true, nullable: true },
+          row: { type: "object", additionalProperties: true, nullable: true },
+          allocations: { type: "array", items: { $ref: "#/components/schemas/AnyObject" } },
+          journal: { type: "object", additionalProperties: true, nullable: true },
+          fx: { $ref: "#/components/schemas/CashTransactionApplyCariFxSummary" },
+          unapplied: { $ref: "#/components/schemas/CashTransactionApplyCariUnappliedSummary" },
+          unappliedCash: { type: "array", items: { $ref: "#/components/schemas/AnyObject" } },
+          metrics: { type: "object", additionalProperties: true, nullable: true },
+          idempotentReplay: { type: "boolean" },
+          followUpRisks: { type: "array", items: { type: "string" } },
+        },
+        required: [
+          "tenantId",
+          "cashTransaction",
+          "row",
+          "allocations",
+          "journal",
+          "fx",
+          "unapplied",
+          "unappliedCash",
+          "metrics",
+          "idempotentReplay",
+          "followUpRisks",
+        ],
+      },
+      CariSettlementApplyAllocationInput: {
+        type: "object",
+        properties: {
+          openItemId: intId,
+          amountTxn: { type: "number", exclusiveMinimum: 0 },
+        },
+        required: ["openItemId", "amountTxn"],
+      },
+      CariSettlementLinkedCashTransactionInput: {
+        type: "object",
+        properties: {
+          registerId: intId,
+          cashSessionId: { ...intId, nullable: true },
+          counterAccountId: intId,
+          txnDatetime: { type: "string", format: "date-time", nullable: true },
+          bookDate: { type: "string", format: "date", nullable: true },
+          referenceNo: { type: "string", maxLength: 100, nullable: true },
+          description: { type: "string", maxLength: 500, nullable: true },
+          idempotencyKey: { type: "string", maxLength: 100, nullable: true },
+          integrationEventUid: { type: "string", maxLength: 100, nullable: true },
+        },
+        required: ["registerId", "counterAccountId"],
+      },
+      CariSettlementApplyRequest: {
+        type: "object",
+        properties: {
+          legalEntityId: intId,
+          counterpartyId: intId,
+          direction: { type: "string", enum: ["AR", "AP"], nullable: true },
+          settlementDate: { type: "string", format: "date", nullable: true },
+          cashTransactionId: { ...intId, nullable: true },
+          paymentChannel: {
+            type: "string",
+            enum: ["CASH", "MANUAL"],
+            default: "MANUAL",
+          },
+          linkedCashTransaction: {
+            $ref: "#/components/schemas/CariSettlementLinkedCashTransactionInput",
+          },
+          currencyCode,
+          incomingAmountTxn: { type: "number", minimum: 0 },
+          idempotencyKey: { type: "string", maxLength: 100 },
+          autoAllocate: { type: "boolean", default: false },
+          useUnappliedCash: { type: "boolean", default: true },
+          allocations: {
+            type: "array",
+            items: { $ref: "#/components/schemas/CariSettlementApplyAllocationInput" },
+          },
+          fxRate: { type: "number", exclusiveMinimum: 0, nullable: true },
+          note: { type: "string", maxLength: 500, nullable: true },
+          sourceModule: {
+            type: "string",
+            enum: ["MANUAL", "CARI", "CONTRACTS", "REVREC", "CASH", "SYSTEM", "OTHER"],
+            nullable: true,
+          },
+          sourceEntityType: { type: "string", maxLength: 60, nullable: true },
+          sourceEntityId: { type: "string", maxLength: 120, nullable: true },
+          integrationLinkStatus: {
+            type: "string",
+            enum: ["UNLINKED", "PENDING", "LINKED", "PARTIALLY_LINKED", "FAILED"],
+            nullable: true,
+          },
+          integrationEventUid: { type: "string", maxLength: 100, nullable: true },
+          bankApplyIdempotencyKey: { type: "string", maxLength: 100, nullable: true },
+          bankStatementLineId: { ...intId, nullable: true },
+          bankTransactionRef: { type: "string", maxLength: 100, nullable: true },
+        },
+        required: ["legalEntityId", "counterpartyId", "currencyCode", "idempotencyKey"],
+      },
+      CariBankApplyRequest: {
+        type: "object",
+        properties: {
+          legalEntityId: intId,
+          counterpartyId: intId,
+          direction: { type: "string", enum: ["AR", "AP"], nullable: true },
+          settlementDate: { type: "string", format: "date", nullable: true },
+          cashTransactionId: { ...intId, nullable: true },
+          currencyCode,
+          incomingAmountTxn: { type: "number", minimum: 0 },
+          idempotencyKey: { type: "string", maxLength: 100, nullable: true },
+          bankApplyIdempotencyKey: { type: "string", maxLength: 100 },
+          autoAllocate: { type: "boolean", default: false },
+          useUnappliedCash: { type: "boolean", default: true },
+          allocations: {
+            type: "array",
+            items: { $ref: "#/components/schemas/CariSettlementApplyAllocationInput" },
+          },
+          fxRate: { type: "number", exclusiveMinimum: 0, nullable: true },
+          note: { type: "string", maxLength: 500, nullable: true },
+          sourceModule: {
+            type: "string",
+            enum: ["MANUAL", "CARI", "CONTRACTS", "REVREC", "CASH", "SYSTEM", "OTHER"],
+            nullable: true,
+          },
+          sourceEntityType: { type: "string", maxLength: 60, nullable: true },
+          sourceEntityId: { type: "string", maxLength: 120, nullable: true },
+          integrationLinkStatus: {
+            type: "string",
+            enum: ["UNLINKED", "PENDING", "LINKED", "PARTIALLY_LINKED", "FAILED"],
+            nullable: true,
+          },
+          integrationEventUid: { type: "string", maxLength: 100, nullable: true },
+          bankStatementLineId: { ...intId, nullable: true },
+          bankTransactionRef: { type: "string", maxLength: 100, nullable: true },
+        },
+        required: [
+          "legalEntityId",
+          "counterpartyId",
+          "currencyCode",
+          "bankApplyIdempotencyKey",
+        ],
+      },
+      CariSettlementApplyResponse: {
+        allOf: [{ $ref: "#/components/schemas/CashTransactionApplyCariResponse" }],
       },
       CounterpartyContactInput: {
         type: "object",
@@ -4212,6 +4565,45 @@ const spec = {
         },
         required: ["cariDocumentId", "linkType", "linkedAmountTxn", "linkedAmountBase"],
       },
+      ContractGenerateBillingInput: {
+        type: "object",
+        properties: {
+          docType: { type: "string", enum: ["INVOICE", "ADVANCE", "ADJUSTMENT"] },
+          amountStrategy: {
+            type: "string",
+            enum: ["FULL", "PARTIAL", "MILESTONE"],
+          },
+          billingDate: { type: "string", format: "date" },
+          dueDate: { type: "string", format: "date", nullable: true },
+          amountTxn: { type: "number", exclusiveMinimum: 0, nullable: true },
+          amountBase: { type: "number", exclusiveMinimum: 0, nullable: true },
+          idempotencyKey: { type: "string", minLength: 1, maxLength: 100 },
+          integrationEventUid: { type: "string", maxLength: 100, nullable: true },
+          note: { type: "string", maxLength: 500, nullable: true },
+          selectedLineIds: {
+            type: "array",
+            items: intId,
+          },
+        },
+        required: ["docType", "amountStrategy", "billingDate", "idempotencyKey"],
+      },
+      ContractGenerateRevrecInput: {
+        type: "object",
+        properties: {
+          fiscalPeriodId: intId,
+          generationMode: {
+            type: "string",
+            enum: ["BY_CONTRACT_LINE", "BY_LINKED_DOCUMENT"],
+          },
+          sourceCariDocumentId: { ...intId, nullable: true },
+          regenerateMissingOnly: { type: "boolean" },
+          contractLineIds: {
+            type: "array",
+            items: intId,
+          },
+        },
+        required: ["fiscalPeriodId"],
+      },
       ContractLinkAdjustInput: {
         type: "object",
         properties: {
@@ -4325,6 +4717,134 @@ const spec = {
         },
         required: ["tenantId", "row"],
       },
+      ContractBillingBatchRow: {
+        type: "object",
+        properties: {
+          batchId: intId,
+          tenantId: intId,
+          legalEntityId: intId,
+          contractId: intId,
+          idempotencyKey: { type: "string", nullable: true },
+          integrationEventUid: { type: "string", nullable: true },
+          sourceModule: { type: "string", nullable: true },
+          sourceEntityType: { type: "string", nullable: true },
+          sourceEntityId: { type: "string", nullable: true },
+          docType: { type: "string", enum: ["INVOICE", "ADVANCE", "ADJUSTMENT"], nullable: true },
+          amountStrategy: {
+            type: "string",
+            enum: ["FULL", "PARTIAL", "MILESTONE"],
+            nullable: true,
+          },
+          billingDate: { type: "string", format: "date", nullable: true },
+          dueDate: { type: "string", format: "date", nullable: true },
+          amountTxn: { type: "number", nullable: true },
+          amountBase: { type: "number", nullable: true },
+          currencyCode: { type: "string", nullable: true },
+          selectedLineIds: {
+            type: "array",
+            items: intId,
+          },
+          status: { type: "string", enum: ["PENDING", "COMPLETED", "FAILED"], nullable: true },
+          generatedDocumentId: { ...intId, nullable: true },
+          generatedLinkId: { ...intId, nullable: true },
+          payload: { type: "object", additionalProperties: true, nullable: true },
+          createdByUserId: intId,
+          createdAt: { type: "string", nullable: true },
+          updatedAt: { type: "string", nullable: true },
+        },
+        required: [
+          "batchId",
+          "tenantId",
+          "legalEntityId",
+          "contractId",
+          "selectedLineIds",
+          "createdByUserId",
+        ],
+      },
+      ContractGeneratedBillingDocumentRow: {
+        type: "object",
+        properties: {
+          id: intId,
+          tenantId: intId,
+          legalEntityId: intId,
+          contractId: intId,
+          counterpartyId: intId,
+          direction: { type: "string", enum: ["AR", "AP"], nullable: true },
+          documentType: { type: "string", nullable: true },
+          status: { type: "string", nullable: true },
+          documentNo: { type: "string", nullable: true },
+          documentDate: { type: "string", format: "date", nullable: true },
+          dueDate: { type: "string", format: "date", nullable: true },
+          amountTxn: { type: "number", nullable: true },
+          amountBase: { type: "number", nullable: true },
+          openAmountTxn: { type: "number", nullable: true },
+          openAmountBase: { type: "number", nullable: true },
+          currencyCode: { type: "string", nullable: true },
+          fxRate: { type: "number", nullable: true },
+          sourceModule: { type: "string", nullable: true },
+          sourceEntityType: { type: "string", nullable: true },
+          sourceEntityId: { type: "string", nullable: true },
+          integrationLinkStatus: { type: "string", nullable: true },
+          integrationEventUid: { type: "string", nullable: true },
+          createdAt: { type: "string", nullable: true },
+          updatedAt: { type: "string", nullable: true },
+        },
+        required: [
+          "id",
+          "tenantId",
+          "legalEntityId",
+          "contractId",
+          "counterpartyId",
+        ],
+      },
+      ContractGenerateBillingResponse: {
+        type: "object",
+        properties: {
+          tenantId: intId,
+          idempotentReplay: { type: "boolean" },
+          billingBatch: { $ref: "#/components/schemas/ContractBillingBatchRow" },
+          document: { $ref: "#/components/schemas/ContractGeneratedBillingDocumentRow" },
+          link: { $ref: "#/components/schemas/ContractDocumentLinkRow" },
+        },
+        required: ["tenantId", "idempotentReplay", "billingBatch", "document", "link"],
+      },
+      ContractGenerateRevrecResponse: {
+        type: "object",
+        properties: {
+          tenantId: intId,
+          contractId: intId,
+          legalEntityId: intId,
+          idempotentReplay: { type: "boolean" },
+          generationMode: {
+            type: "string",
+            enum: ["BY_CONTRACT_LINE", "BY_LINKED_DOCUMENT"],
+          },
+          accountFamily: {
+            type: "string",
+            enum: ["DEFREV", "PREPAID_EXPENSE"],
+          },
+          sourceCariDocumentId: { ...intId, nullable: true },
+          generatedScheduleCount: { type: "integer", minimum: 0 },
+          generatedLineCount: { type: "integer", minimum: 0 },
+          skippedLineCount: { type: "integer", minimum: 0 },
+          rows: {
+            type: "array",
+            items: { $ref: "#/components/schemas/RevenueScheduleRow" },
+          },
+        },
+        required: [
+          "tenantId",
+          "contractId",
+          "legalEntityId",
+          "idempotentReplay",
+          "generationMode",
+          "accountFamily",
+          "generatedScheduleCount",
+          "generatedLineCount",
+          "skippedLineCount",
+          "rows",
+        ],
+      },
     },
   },
 };
@@ -4338,6 +4858,7 @@ const autoDocumentedOperationCount = await appendUndocumentedRoutes(
   indexRouteFilePath
 );
 applyCariOperationOverrides(spec);
+applyCashOperationOverrides(spec);
 applyContractsOperationOverrides(spec);
 applyRevenueRecognitionOperationOverrides(spec);
 

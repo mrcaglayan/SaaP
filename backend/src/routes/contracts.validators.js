@@ -5,6 +5,7 @@ import {
   normalizeText,
   optionalPositiveInt,
   parseAmount,
+  parseBooleanFlag,
   parseDateOnly,
   parsePagination,
   requireTenantId,
@@ -16,6 +17,9 @@ const CONTRACT_STATUS_VALUES = ["DRAFT", "ACTIVE", "SUSPENDED", "CLOSED", "CANCE
 const LINE_STATUS_VALUES = ["ACTIVE", "INACTIVE"];
 const RECOGNITION_METHOD_VALUES = ["STRAIGHT_LINE", "MILESTONE", "MANUAL"];
 const LINK_TYPE_VALUES = ["BILLING", "ADVANCE", "ADJUSTMENT"];
+const BILLING_DOC_TYPE_VALUES = ["INVOICE", "ADVANCE", "ADJUSTMENT"];
+const BILLING_STRATEGY_VALUES = ["FULL", "PARTIAL", "MILESTONE"];
+const REVREC_GENERATION_MODE_VALUES = ["BY_CONTRACT_LINE", "BY_LINKED_DOCUMENT"];
 
 function parseRequiredPositiveIntField(value, label) {
   const parsed = optionalPositiveInt(value, label);
@@ -56,6 +60,34 @@ function parseOptionalFxRate(value, label = "linkFxRate") {
     throw badRequest(`${label} must be a numeric value greater than 0`);
   }
   return parsed.toFixed(10);
+}
+
+function parseOptionalPositiveAmount(value, label) {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+  return parseAmount(value, label, {
+    required: true,
+    allowZero: false,
+    allowNegative: false,
+  });
+}
+
+function parsePositiveIntArray(value, label) {
+  if (value === undefined || value === null || value === "") {
+    return [];
+  }
+  if (!Array.isArray(value)) {
+    throw badRequest(`${label} must be an array`);
+  }
+  const parsed = value.map((entry, index) =>
+    parseRequiredPositiveIntField(entry, `${label}[${index}]`)
+  );
+  const unique = new Set(parsed);
+  if (unique.size !== parsed.length) {
+    throw badRequest(`${label} contains duplicate values`);
+  }
+  return parsed;
 }
 
 function hasOwnField(obj, key) {
@@ -512,5 +544,97 @@ export function parseContractLinkUnlinkInput(req) {
     contractId,
     linkId,
     reason,
+  };
+}
+
+export function parseContractGenerateBillingInput(req) {
+  const tenantId = requireTenantId(req);
+  const userId = requireUserId(req);
+  const contractId = parseContractIdParam(req);
+
+  const docType = normalizeEnum(req.body?.docType, "docType", BILLING_DOC_TYPE_VALUES);
+  const amountStrategy = normalizeEnum(
+    req.body?.amountStrategy || "FULL",
+    "amountStrategy",
+    BILLING_STRATEGY_VALUES
+  );
+  const billingDate = parseDateOnly(req.body?.billingDate, "billingDate");
+  const dueDate = parseOptionalDate(req.body?.dueDate, "dueDate");
+  if (dueDate && dueDate < billingDate) {
+    throw badRequest("dueDate cannot be earlier than billingDate");
+  }
+
+  const selectedLineIds = parsePositiveIntArray(req.body?.selectedLineIds, "selectedLineIds");
+  const amountTxn = parseOptionalPositiveAmount(req.body?.amountTxn, "amountTxn");
+  const amountBase = parseOptionalPositiveAmount(req.body?.amountBase, "amountBase");
+  if ((amountTxn === null) !== (amountBase === null)) {
+    throw badRequest("amountTxn and amountBase must be provided together");
+  }
+  if (amountStrategy === "FULL" && (amountTxn !== null || amountBase !== null)) {
+    throw badRequest("amountTxn and amountBase must be omitted for FULL strategy");
+  }
+  if (amountStrategy !== "FULL" && (amountTxn === null || amountBase === null)) {
+    throw badRequest("amountTxn and amountBase are required for PARTIAL/MILESTONE strategies");
+  }
+
+  const idempotencyKey = normalizeText(req.body?.idempotencyKey, "idempotencyKey", 100, {
+    required: true,
+  });
+  const integrationEventUid = parseOptionalText(
+    req.body?.integrationEventUid,
+    "integrationEventUid",
+    100
+  );
+  const referenceNo = parseOptionalText(req.body?.referenceNo, "referenceNo", 100);
+  const note = parseOptionalText(req.body?.note, "note", 500);
+
+  return {
+    tenantId,
+    userId,
+    contractId,
+    docType,
+    amountStrategy,
+    billingDate,
+    dueDate,
+    selectedLineIds,
+    amountTxn,
+    amountBase,
+    idempotencyKey,
+    integrationEventUid,
+    referenceNo,
+    note,
+  };
+}
+
+export function parseContractGenerateRevrecInput(req) {
+  const tenantId = requireTenantId(req);
+  const userId = requireUserId(req);
+  const contractId = parseContractIdParam(req);
+  const fiscalPeriodId = parseRequiredPositiveIntField(req.body?.fiscalPeriodId, "fiscalPeriodId");
+  const generationMode = normalizeEnum(
+    req.body?.generationMode || "BY_CONTRACT_LINE",
+    "generationMode",
+    REVREC_GENERATION_MODE_VALUES
+  );
+  const contractLineIds = parsePositiveIntArray(req.body?.contractLineIds, "contractLineIds");
+  const sourceCariDocumentId = parseOptionalPositiveIntField(
+    req.body?.sourceCariDocumentId,
+    "sourceCariDocumentId"
+  );
+  const regenerateMissingOnly = parseBooleanFlag(req.body?.regenerateMissingOnly, true);
+
+  if (generationMode === "BY_LINKED_DOCUMENT" && !sourceCariDocumentId) {
+    throw badRequest("sourceCariDocumentId is required for BY_LINKED_DOCUMENT mode");
+  }
+
+  return {
+    tenantId,
+    userId,
+    contractId,
+    fiscalPeriodId,
+    generationMode,
+    contractLineIds,
+    sourceCariDocumentId,
+    regenerateMissingOnly,
   };
 }

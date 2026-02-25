@@ -26,6 +26,7 @@ import {
   resolveCariSettlementScope,
   reverseCariSettlementById,
 } from "../services/cari.settlement.service.js";
+import { resolveCashRegisterScope } from "../services/cash.register.service.js";
 import {
   getCariAgingReport,
   getCariCounterpartyStatementReport,
@@ -71,6 +72,30 @@ function ok(res, payload) {
   });
 }
 
+const requireCashTxnCreatePermissionForCariApply = requirePermission("cash.txn.create", {
+  resolveScope: async (req, tenantId) => {
+    const registerId =
+      parsePositiveInt(req.body?.linkedCashTransaction?.registerId) ||
+      parsePositiveInt(req.body?.cashTransaction?.registerId);
+    if (registerId) {
+      return resolveCashRegisterScope(registerId, tenantId);
+    }
+    return resolveCariScope(req);
+  },
+});
+
+async function runPermissionMiddleware(middleware, req, res) {
+  await new Promise((resolve, reject) => {
+    middleware(req, res, (err) => {
+      if (err) {
+        reject(err);
+        return;
+      }
+      resolve();
+    });
+  });
+}
+
 function buildSettlementApplyResponse(tenantId, result) {
   const metrics = {
     ...(result.applyAuditPayload || {}),
@@ -87,6 +112,7 @@ function buildSettlementApplyResponse(tenantId, result) {
   return {
     tenantId,
     row: result.row,
+    cashTransaction: result.cashTransaction || null,
     allocations: Array.isArray(result.allocations) ? result.allocations : [],
     journal: result.journal || null,
     fx: {
@@ -155,6 +181,9 @@ router.post(
   }),
   asyncHandler(async (req, res) => {
     const payload = parseSettlementApplyInput(req);
+    if (payload.paymentChannel === "CASH" && !payload.cashTransactionId) {
+      await runPermissionMiddleware(requireCashTxnCreatePermissionForCariApply, req, res);
+    }
     const result = await applyCariSettlement({
       req,
       payload,

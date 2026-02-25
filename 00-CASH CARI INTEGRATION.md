@@ -184,6 +184,33 @@ PR-18 handles cash-first flow. Many users work cari-first. This PR prevents “t
 * Reverse settlement also handles linked cash transaction rules safely (either block if posted or reverse workflow defined).
 
 ---
+Use these as non-negotiable acceptance rules:
+
+1. **No double-posting risk**
+
+   * Same business event should not create duplicate cash/cari/revrec records.
+
+2. **Idempotent actions**
+
+   * Re-running the same action (same contract billing batch, same settlement apply, same schedule generation) should be safe.
+
+3. **Linkability first**
+
+   * Every cross-module record should store source references (IDs) for traceability.
+
+4. **GL posting remains explicit**
+
+   * Integration can create drafts/links, but posting should stay controlled (unless explicitly designed otherwise).
+
+5. **Backward compatible**
+
+   * Existing manual flows continue to work while new synced flows are added.
+
+6. **Auditability**
+
+   * User, timestamp, source module/action should be recorded where possible.
+
+---
 
 ## PR-20: Frontend Integration UX for Tahsilat / Tediye (Pickers + Guided Flow)
 
@@ -283,6 +310,33 @@ Move from manual link-only behavior to **contract-driven billing document genera
 * Duplicate click → no duplicate doc batch
 
 ---
+Use these as non-negotiable acceptance rules:
+
+1. **No double-posting risk**
+
+   * Same business event should not create duplicate cash/cari/revrec records.
+
+2. **Idempotent actions**
+
+   * Re-running the same action (same contract billing batch, same settlement apply, same schedule generation) should be safe.
+
+3. **Linkability first**
+
+   * Every cross-module record should store source references (IDs) for traceability.
+
+4. **GL posting remains explicit**
+
+   * Integration can create drafts/links, but posting should stay controlled (unless explicitly designed otherwise).
+
+5. **Backward compatible**
+
+   * Existing manual flows continue to work while new synced flows are added.
+
+6. **Auditability**
+
+   * User, timestamp, source module/action should be recorded where possible.
+
+---
 
 ## PR-22: Contracts → RevRec Auto Schedule Generation (Deferred Revenue sync)
 
@@ -335,6 +389,33 @@ Automatically generate **RevRec schedules** from contract lines / linked billing
 * Re-run “generate missing only” produces no duplicates.
 
 ---
+Use these as non-negotiable acceptance rules:
+
+1. **No double-posting risk**
+
+   * Same business event should not create duplicate cash/cari/revrec records.
+
+2. **Idempotent actions**
+
+   * Re-running the same action (same contract billing batch, same settlement apply, same schedule generation) should be safe.
+
+3. **Linkability first**
+
+   * Every cross-module record should store source references (IDs) for traceability.
+
+4. **GL posting remains explicit**
+
+   * Integration can create drafts/links, but posting should stay controlled (unless explicitly designed otherwise).
+
+5. **Backward compatible**
+
+   * Existing manual flows continue to work while new synced flows are added.
+
+6. **Auditability**
+
+   * User, timestamp, source module/action should be recorded where possible.
+
+---
 
 ## PR-23: RevRec Posting Account Derivation from Contract Line (Line-level accounting wins)
 
@@ -371,6 +452,33 @@ You already store line-level accounting intent in contracts. This PR makes that 
 * Contract line has custom deferred/revenue accounts → journal uses them.
 * Another line without custom accounts → fallback mapping used.
 * Missing both → clear validation error.
+
+---
+Use these as non-negotiable acceptance rules:
+
+1. **No double-posting risk**
+
+   * Same business event should not create duplicate cash/cari/revrec records.
+
+2. **Idempotent actions**
+
+   * Re-running the same action (same contract billing batch, same settlement apply, same schedule generation) should be safe.
+
+3. **Linkability first**
+
+   * Every cross-module record should store source references (IDs) for traceability.
+
+4. **GL posting remains explicit**
+
+   * Integration can create drafts/links, but posting should stay controlled (unless explicitly designed otherwise).
+
+5. **Backward compatible**
+
+   * Existing manual flows continue to work while new synced flows are added.
+
+6. **Auditability**
+
+   * User, timestamp, source module/action should be recorded where possible.
 
 ---
 
@@ -414,6 +522,33 @@ Add contract-level KPIs, computed from linked modules:
 * Contract with no linked records → zero-safe response
 
 ---
+Use these as non-negotiable acceptance rules:
+
+1. **No double-posting risk**
+
+   * Same business event should not create duplicate cash/cari/revrec records.
+
+2. **Idempotent actions**
+
+   * Re-running the same action (same contract billing batch, same settlement apply, same schedule generation) should be safe.
+
+3. **Linkability first**
+
+   * Every cross-module record should store source references (IDs) for traceability.
+
+4. **GL posting remains explicit**
+
+   * Integration can create drafts/links, but posting should stay controlled (unless explicitly designed otherwise).
+
+5. **Backward compatible**
+
+   * Existing manual flows continue to work while new synced flows are added.
+
+6. **Auditability**
+
+   * User, timestamp, source module/action should be recorded where possible.
+
+---
 
 ## PR-25: Settlement Posting Refinement (Source-aware posting + FX fallback)
 
@@ -452,6 +587,33 @@ Upgrade cari settlement posting quality (still non-bank), especially for cash/ma
 * Cash-linked settlement in FX currency posts correctly.
 * Exact-date rate missing, prior-date rate available → uses fallback (if configured).
 * Manual local-currency settlement remains unchanged.
+
+---
+Use these as non-negotiable acceptance rules:
+
+1. **No double-posting risk**
+
+   * Same business event should not create duplicate cash/cari/revrec records.
+
+2. **Idempotent actions**
+
+   * Re-running the same action (same contract billing batch, same settlement apply, same schedule generation) should be safe.
+
+3. **Linkability first**
+
+   * Every cross-module record should store source references (IDs) for traceability.
+
+4. **GL posting remains explicit**
+
+   * Integration can create drafts/links, but posting should stay controlled (unless explicitly designed otherwise).
+
+5. **Backward compatible**
+
+   * Existing manual flows continue to work while new synced flows are added.
+
+6. **Auditability**
+
+   * User, timestamp, source module/action should be recorded where possible.
 
 ---
 
@@ -495,21 +657,48 @@ This is important, but not needed for the first integration wave of tahsilat/ted
 * Reversal preserves audit trail
 
 ---
+Use these as non-negotiable acceptance rules:
+
+1. **No double-posting risk**
+
+   * Same business event should not create duplicate cash/cari/revrec records.
+
+2. **Idempotent actions**
+
+   * Re-running the same action (same contract billing batch, same settlement apply, same schedule generation) should be safe.
+
+3. **Linkability first**
+
+   * Every cross-module record should store source references (IDs) for traceability.
+
+4. **GL posting remains explicit**
+
+   * Integration can create drafts/links, but posting should stay controlled (unless explicitly designed otherwise).
+
+5. **Backward compatible**
+
+   * Existing manual flows continue to work while new synced flows are added.
+
+6. **Auditability**
+
+   * User, timestamp, source module/action should be recorded where possible.
+
+---
 
 # Suggested execution order (practical)
 
 If you want the cleanest value fast:
 
-1. **PR-17** foundation links
-2. **PR-18** cash-first tahsilat/tediye apply
-3. **PR-20** frontend UX for integrated flow
-4. **PR-19** cari-first reverse integration
-5. **PR-21** contracts → cari auto billing
-6. **PR-22** contracts → revrec schedule auto-generation
+1. **PR-17** foundation links (done)
+2. **PR-18** cash-first tahsilat/tediye apply (done)
+3. **PR-20** frontend UX for integrated flow (done)
+4. **PR-19** cari-first reverse integration (done)
+5. **PR-21** contracts → cari auto billing (done)
+6. **PR-22** contracts → revrec schedule auto-generation (done)
 7. **PR-23** revrec account derivation from contract lines
 8. **PR-24** contract rollup KPIs
 9. **PR-25** settlement posting/FX refinement
-10. **PR-26** cross-OU transit (optional/v2)
+10. **PR-26** cross-OU transit 
 
 ---
 

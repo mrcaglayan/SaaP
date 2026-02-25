@@ -257,3 +257,89 @@ export function parseCashTransactionReverseInput(req) {
     reverseReason,
   };
 }
+
+function parseOptionalPositiveDecimal(value, label) {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw badRequest(`${label} must be a numeric value greater than 0`);
+  }
+  return Number(parsed.toFixed(10));
+}
+
+function parseCariApplications(value) {
+  if (value === undefined || value === null) {
+    return [];
+  }
+  if (!Array.isArray(value)) {
+    throw badRequest("applications must be an array");
+  }
+
+  return value.map((entry, index) => {
+    const openItemId = optionalPositiveInt(entry?.openItemId, `applications[${index}].openItemId`);
+    const cariDocumentId = optionalPositiveInt(
+      entry?.cariDocumentId,
+      `applications[${index}].cariDocumentId`
+    );
+    if (!openItemId && !cariDocumentId) {
+      throw badRequest(`applications[${index}] requires openItemId or cariDocumentId`);
+    }
+    if (openItemId && cariDocumentId) {
+      throw badRequest(`applications[${index}] cannot include both openItemId and cariDocumentId`);
+    }
+
+    const amountTxn = parseAmount(
+      entry?.amountTxn ?? entry?.amount,
+      `applications[${index}].amountTxn`,
+      {
+        required: true,
+        allowZero: false,
+      }
+    );
+    return {
+      openItemId: openItemId || null,
+      cariDocumentId: cariDocumentId || null,
+      amountTxn: Number(amountTxn),
+    };
+  });
+}
+
+export function parseCashTransactionApplyCariInput(req) {
+  const tenantId = requireTenantId(req);
+  const userId = requireUserId(req);
+  const transactionId = parseCashTransactionIdParam(req);
+  const settlementDate = parseDateOnly(
+    req.body?.settlementDate,
+    "settlementDate",
+    new Date().toISOString().slice(0, 10)
+  );
+  const idempotencyKey = normalizeText(req.body?.idempotencyKey, "idempotencyKey", 100, {
+    required: true,
+  });
+  const integrationEventUid = normalizeText(req.body?.integrationEventUid, "integrationEventUid", 100);
+  const autoAllocate = parseBooleanFlag(req.body?.autoAllocate, false);
+  const useUnappliedCash = parseBooleanFlag(req.body?.useUnappliedCash, true);
+  const note = normalizeText(req.body?.note, "note", 500);
+  const fxRate = parseOptionalPositiveDecimal(req.body?.fxRate, "fxRate");
+  const applications = parseCariApplications(req.body?.applications);
+
+  if (autoAllocate && applications.length > 0) {
+    throw badRequest("applications must be empty when autoAllocate=true");
+  }
+
+  return {
+    tenantId,
+    userId,
+    transactionId,
+    settlementDate,
+    idempotencyKey,
+    integrationEventUid,
+    autoAllocate,
+    useUnappliedCash,
+    note,
+    fxRate,
+    applications,
+  };
+}

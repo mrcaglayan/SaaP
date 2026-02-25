@@ -7,6 +7,7 @@ import {
   parseAmount,
   parseBooleanFlag,
   parseDateOnly,
+  parseDateTime,
   requirePositiveInt,
   requireTenantId,
   requireUserId,
@@ -14,6 +15,7 @@ import {
 
 const DIRECTION_VALUES = ["AR", "AP"];
 const BANK_ATTACH_TARGET_VALUES = ["SETTLEMENT", "UNAPPLIED_CASH"];
+const PAYMENT_CHANNEL_VALUES = ["CASH", "MANUAL"];
 const SOURCE_MODULE_VALUES = ["MANUAL", "CARI", "CONTRACTS", "REVREC", "CASH", "SYSTEM", "OTHER"];
 const INTEGRATION_LINK_STATUS_VALUES = [
   "UNLINKED",
@@ -62,6 +64,67 @@ function parseAllocations(value) {
   });
 }
 
+function parseLinkedCashTransaction(value) {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw badRequest("linkedCashTransaction must be an object");
+  }
+
+  const registerId = optionalPositiveInt(value?.registerId, "linkedCashTransaction.registerId");
+  const cashSessionId = optionalPositiveInt(
+    value?.cashSessionId,
+    "linkedCashTransaction.cashSessionId"
+  );
+  const counterAccountId = optionalPositiveInt(
+    value?.counterAccountId,
+    "linkedCashTransaction.counterAccountId"
+  );
+  const txnDatetime = parseDateTime(
+    value?.txnDatetime,
+    "linkedCashTransaction.txnDatetime",
+    new Date().toISOString()
+  );
+  const bookDate = parseDateOnly(
+    value?.bookDate,
+    "linkedCashTransaction.bookDate",
+    new Date().toISOString().slice(0, 10)
+  );
+  const referenceNo = normalizeText(
+    value?.referenceNo,
+    "linkedCashTransaction.referenceNo",
+    100
+  );
+  const description = normalizeText(
+    value?.description,
+    "linkedCashTransaction.description",
+    500
+  );
+  const idempotencyKey = normalizeText(
+    value?.idempotencyKey,
+    "linkedCashTransaction.idempotencyKey",
+    100
+  );
+  const integrationEventUid = normalizeText(
+    value?.integrationEventUid,
+    "linkedCashTransaction.integrationEventUid",
+    100
+  );
+
+  return {
+    registerId: registerId || null,
+    cashSessionId: cashSessionId || null,
+    counterAccountId: counterAccountId || null,
+    txnDatetime,
+    bookDate,
+    referenceNo,
+    description,
+    idempotencyKey,
+    integrationEventUid,
+  };
+}
+
 function parseBankReferenceFields(rawBody, { required = false } = {}) {
   const bankStatementLineId = optionalPositiveInt(
     rawBody?.bankStatementLineId,
@@ -80,7 +143,10 @@ function parseBankReferenceFields(rawBody, { required = false } = {}) {
   };
 }
 
-function parseSettlementApplyCommon(req, { idempotencyKeySource, bankReferenceRequired = false }) {
+function parseSettlementApplyCommon(
+  req,
+  { idempotencyKeySource, bankReferenceRequired = false, allowPaymentChannel = true }
+) {
   const tenantId = requireTenantId(req);
   const userId = requireUserId(req);
   const legalEntityId = requirePositiveInt(req.body?.legalEntityId, "legalEntityId");
@@ -97,6 +163,19 @@ function parseSettlementApplyCommon(req, { idempotencyKeySource, bankReferenceRe
     new Date().toISOString().slice(0, 10)
   );
   const cashTransactionId = optionalPositiveInt(req.body?.cashTransactionId, "cashTransactionId");
+  const paymentChannelRaw = String(
+    allowPaymentChannel ? req.body?.paymentChannel || "MANUAL" : "MANUAL"
+  )
+    .trim()
+    .toUpperCase();
+  const paymentChannel = normalizeEnum(
+    paymentChannelRaw,
+    "paymentChannel",
+    PAYMENT_CHANNEL_VALUES
+  );
+  const linkedCashTransaction = allowPaymentChannel
+    ? parseLinkedCashTransaction(req.body?.linkedCashTransaction ?? req.body?.cashTransaction)
+    : null;
   const currencyCode = normalizeCurrencyCode(req.body?.currencyCode, "currencyCode");
   const incomingAmountTxn = parseAmount(
     req.body?.incomingAmountTxn ?? req.body?.paymentAmountTxn ?? req.body?.amountTxn ?? 0,
@@ -158,6 +237,35 @@ function parseSettlementApplyCommon(req, { idempotencyKeySource, bankReferenceRe
   if (cashTransactionId && integrationLinkStatus === "UNLINKED") {
     throw badRequest("integrationLinkStatus cannot be UNLINKED when cashTransactionId is provided");
   }
+  if (!allowPaymentChannel) {
+    if (req.body?.paymentChannel !== undefined) {
+      throw badRequest("paymentChannel is not supported on this endpoint");
+    }
+    if (req.body?.linkedCashTransaction !== undefined || req.body?.cashTransaction !== undefined) {
+      throw badRequest("linkedCashTransaction is not supported on this endpoint");
+    }
+  }
+  if (paymentChannel === "MANUAL" && linkedCashTransaction) {
+    throw badRequest("linkedCashTransaction is only allowed when paymentChannel=CASH");
+  }
+  if (paymentChannel === "CASH" && cashTransactionId && linkedCashTransaction) {
+    throw badRequest(
+      "linkedCashTransaction cannot be provided together with cashTransactionId when paymentChannel=CASH"
+    );
+  }
+  if (paymentChannel === "CASH" && !cashTransactionId) {
+    if (!linkedCashTransaction) {
+      throw badRequest(
+        "linkedCashTransaction is required when paymentChannel=CASH and cashTransactionId is not provided"
+      );
+    }
+    if (!linkedCashTransaction.registerId) {
+      throw badRequest("linkedCashTransaction.registerId is required for paymentChannel=CASH");
+    }
+    if (!linkedCashTransaction.counterAccountId) {
+      throw badRequest("linkedCashTransaction.counterAccountId is required for paymentChannel=CASH");
+    }
+  }
 
   return {
     tenantId,
@@ -167,6 +275,8 @@ function parseSettlementApplyCommon(req, { idempotencyKeySource, bankReferenceRe
     direction,
     settlementDate,
     cashTransactionId,
+    paymentChannel,
+    linkedCashTransaction,
     currencyCode,
     idempotencyKey,
     incomingAmountTxn: Number(incomingAmountTxn ?? "0.000000"),
@@ -190,6 +300,7 @@ export function parseSettlementApplyInput(req) {
   const payload = parseSettlementApplyCommon(req, {
     idempotencyKeySource: req.body?.idempotencyKey,
     bankReferenceRequired: false,
+    allowPaymentChannel: true,
   });
   const bankApplyIdempotencyKey =
     normalizeText(req.body?.bankApplyIdempotencyKey, "bankApplyIdempotencyKey", 100) || null;
@@ -204,6 +315,7 @@ export function parseBankApplyInput(req) {
   const payload = parseSettlementApplyCommon(req, {
     idempotencyKeySource: req.body?.bankApplyIdempotencyKey ?? req.body?.idempotencyKey,
     bankReferenceRequired: true,
+    allowPaymentChannel: false,
   });
 
   return {
