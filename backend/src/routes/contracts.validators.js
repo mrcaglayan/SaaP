@@ -47,6 +47,21 @@ function parseOptionalPositiveIntField(value, label) {
   return optionalPositiveInt(value, label);
 }
 
+function parseOptionalFxRate(value, label = "linkFxRate") {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw badRequest(`${label} must be a numeric value greater than 0`);
+  }
+  return parsed.toFixed(10);
+}
+
+function hasOwnField(obj, key) {
+  return Object.prototype.hasOwnProperty.call(obj || {}, key);
+}
+
 function parseLineStatus(value, label) {
   if (value === undefined || value === null || value === "") {
     return "ACTIVE";
@@ -67,18 +82,30 @@ function assertRecognitionDates({
   recognitionEndDate,
   basePath,
 }) {
+  const hasStart = Boolean(recognitionStartDate);
+  const hasEnd = Boolean(recognitionEndDate);
+
   if (recognitionMethod === "STRAIGHT_LINE") {
-    if (!recognitionStartDate || !recognitionEndDate) {
+    if (!hasStart || !hasEnd) {
       throw badRequest(
         `${basePath}.recognitionStartDate and ${basePath}.recognitionEndDate are required for STRAIGHT_LINE`
       );
     }
-  } else {
-    const hasStart = Boolean(recognitionStartDate);
-    const hasEnd = Boolean(recognitionEndDate);
-    if (hasStart !== hasEnd) {
+  } else if (recognitionMethod === "MILESTONE") {
+    if (!hasStart || !hasEnd) {
       throw badRequest(
-        `${basePath}.recognitionStartDate and ${basePath}.recognitionEndDate must both be provided or both omitted`
+        `${basePath}.recognitionStartDate and ${basePath}.recognitionEndDate are required for MILESTONE`
+      );
+    }
+    if (recognitionStartDate !== recognitionEndDate) {
+      throw badRequest(
+        `${basePath}.recognitionStartDate and ${basePath}.recognitionEndDate must match for MILESTONE`
+      );
+    }
+  } else if (recognitionMethod === "MANUAL") {
+    if (hasStart || hasEnd) {
+      throw badRequest(
+        `${basePath}.recognitionStartDate and ${basePath}.recognitionEndDate must be omitted for MANUAL`
       );
     }
   }
@@ -110,10 +137,12 @@ function parseContractLines(linesInput, label = "lines") {
     const lineAmountTxn = parseAmount(line?.lineAmountTxn, `${linePath}.lineAmountTxn`, {
       required: true,
       allowZero: false,
+      allowNegative: true,
     });
     const lineAmountBase = parseAmount(line?.lineAmountBase, `${linePath}.lineAmountBase`, {
       required: true,
       allowZero: false,
+      allowNegative: true,
     });
 
     const recognitionMethod = parseRecognitionMethod(
@@ -263,6 +292,132 @@ export function parseContractUpdateInput(req) {
   return parseContractUpsertInput(req, { includeContractId: true });
 }
 
+export function parseContractAmendInput(req) {
+  const payload = parseContractUpsertInput(req, { includeContractId: true });
+  const reason = normalizeText(req.body?.reason, "reason", 500, {
+    required: true,
+  });
+  return {
+    ...payload,
+    reason,
+  };
+}
+
+function parsePatchDateField(value, label) {
+  if (value === null || value === "") {
+    return null;
+  }
+  return parseDateOnly(value, label);
+}
+
+function parsePatchOptionalAccountField(value, label) {
+  if (value === null || value === "") {
+    return null;
+  }
+  return optionalPositiveInt(value, label);
+}
+
+export function parseContractLinePatchInput(req) {
+  const tenantId = requireTenantId(req);
+  const userId = requireUserId(req);
+  const contractId = parseContractIdParam(req);
+  const lineId = parseRequiredPositiveIntField(req.params?.lineId, "lineId");
+  const reason = normalizeText(req.body?.reason, "reason", 500, {
+    required: true,
+  });
+
+  const patch = {};
+  const body = req.body || {};
+
+  if (hasOwnField(body, "description")) {
+    patch.description = normalizeText(body.description, "description", 255, {
+      required: true,
+    });
+  }
+  if (hasOwnField(body, "lineAmountTxn")) {
+    patch.lineAmountTxn = parseAmount(body.lineAmountTxn, "lineAmountTxn", {
+      required: true,
+      allowZero: false,
+      allowNegative: true,
+    });
+  }
+  if (hasOwnField(body, "lineAmountBase")) {
+    patch.lineAmountBase = parseAmount(body.lineAmountBase, "lineAmountBase", {
+      required: true,
+      allowZero: false,
+      allowNegative: true,
+    });
+  }
+  if (hasOwnField(body, "recognitionMethod")) {
+    patch.recognitionMethod = parseRecognitionMethod(body.recognitionMethod, "recognitionMethod");
+  }
+  if (hasOwnField(body, "recognitionStartDate")) {
+    patch.recognitionStartDate = parsePatchDateField(
+      body.recognitionStartDate,
+      "recognitionStartDate"
+    );
+  }
+  if (hasOwnField(body, "recognitionEndDate")) {
+    patch.recognitionEndDate = parsePatchDateField(body.recognitionEndDate, "recognitionEndDate");
+  }
+  if (hasOwnField(body, "deferredAccountId")) {
+    patch.deferredAccountId = parsePatchOptionalAccountField(
+      body.deferredAccountId,
+      "deferredAccountId"
+    );
+  }
+  if (hasOwnField(body, "revenueAccountId")) {
+    patch.revenueAccountId = parsePatchOptionalAccountField(
+      body.revenueAccountId,
+      "revenueAccountId"
+    );
+  }
+  if (hasOwnField(body, "status")) {
+    patch.status = parseLineStatus(body.status, "status");
+  }
+
+  if (Object.keys(patch).length === 0) {
+    throw badRequest("At least one patch field must be provided");
+  }
+
+  return {
+    tenantId,
+    userId,
+    contractId,
+    lineId,
+    reason,
+    patch,
+  };
+}
+
+export function parseContractAmendmentsListInput(req) {
+  const tenantId = requireTenantId(req);
+  const contractId = parseContractIdParam(req);
+  return {
+    tenantId,
+    contractId,
+  };
+}
+
+export function parseContractLinkableDocumentsInput(req) {
+  const tenantId = requireTenantId(req);
+  const contractId = parseContractIdParam(req);
+  const q = normalizeText(req.query?.q, "q", 120);
+  const pagination = parsePagination(req.query, {
+    limit: 100,
+    offset: 0,
+    maxLimit: 300,
+  });
+
+  return {
+    tenantId,
+    contractId,
+    q,
+    limit: pagination.limit,
+    offset: pagination.offset,
+  };
+}
+
 export function parseContractLifecycleInput(req) {
   const tenantId = requireTenantId(req);
   const userId = requireUserId(req);
@@ -292,6 +447,7 @@ export function parseContractLinkDocumentInput(req) {
     required: true,
     allowZero: false,
   });
+  const linkFxRate = parseOptionalFxRate(req.body?.linkFxRate, "linkFxRate");
 
   return {
     tenantId,
@@ -301,5 +457,60 @@ export function parseContractLinkDocumentInput(req) {
     linkType,
     linkedAmountTxn,
     linkedAmountBase,
+    linkFxRate,
+  };
+}
+
+export function parseContractLinkAdjustmentInput(req) {
+  const tenantId = requireTenantId(req);
+  const userId = requireUserId(req);
+  const contractId = parseContractIdParam(req);
+  const linkId = parseRequiredPositiveIntField(req.params?.linkId, "linkId");
+  const nextLinkedAmountTxn = parseAmount(
+    req.body?.nextLinkedAmountTxn,
+    "nextLinkedAmountTxn",
+    {
+      required: true,
+      allowZero: false,
+    }
+  );
+  const nextLinkedAmountBase = parseAmount(
+    req.body?.nextLinkedAmountBase,
+    "nextLinkedAmountBase",
+    {
+      required: true,
+      allowZero: false,
+    }
+  );
+  const reason = normalizeText(req.body?.reason, "reason", 500, {
+    required: true,
+  });
+
+  return {
+    tenantId,
+    userId,
+    contractId,
+    linkId,
+    nextLinkedAmountTxn,
+    nextLinkedAmountBase,
+    reason,
+  };
+}
+
+export function parseContractLinkUnlinkInput(req) {
+  const tenantId = requireTenantId(req);
+  const userId = requireUserId(req);
+  const contractId = parseContractIdParam(req);
+  const linkId = parseRequiredPositiveIntField(req.params?.linkId, "linkId");
+  const reason = normalizeText(req.body?.reason, "reason", 500, {
+    required: true,
+  });
+
+  return {
+    tenantId,
+    userId,
+    contractId,
+    linkId,
+    reason,
   };
 }

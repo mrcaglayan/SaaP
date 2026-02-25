@@ -51,7 +51,7 @@ Action seviyesinde:
 - Picker bagimli read izinleri:
   - Counterparty picker: `cari.card.read`
   - Hesap picker: `gl.account.read`
-  - Belge picker: `cari.doc.read`
+  - Belge picker (contract-scoped): `contract.link_document`
 
 Not:
 - Izin yoksa ilgili buton ya pasif olur ya da section gizlenir.
@@ -105,9 +105,9 @@ Satir alanlari:
 | Alan | Ne icin kullanilir | Secmezsen ne olur |
 |---|---|---|
 | `description` | Satir aciklamasi | Kayit bloklanir |
-| `lineAmountTxn` / `lineAmountBase` | Tutar | `> 0` olmak zorunda; 0/eksi blok |
+| `lineAmountTxn` / `lineAmountBase` | Tutar | `0` olamaz; eksi tutar (credit/adjustment) kabul edilir |
 | `recognitionMethod` (`STRAIGHT_LINE`,`MILESTONE`,`MANUAL`) | Dagitim metodu | Bossa `STRAIGHT_LINE` kabul edilir |
-| `recognitionStartDate` / `recognitionEndDate` | Donemleme araligi | `STRAIGHT_LINE` icin ikisi de zorunlu; digerlerinde ya ikisi birden ya hicbiri |
+| `recognitionStartDate` / `recognitionEndDate` | Donemleme araligi | `STRAIGHT_LINE`: ikisi de zorunlu; `MILESTONE`: ikisi de zorunlu ve ayni tarih; `MANUAL`: ikisi de bos olmali |
 | `deferredAccountId` | Erteleme hesabi | Opsiyonel; girilirse tip/scope/aktif/postable kontrolu yapilir |
 | `revenueAccountId` | Gelir/gider hesabi | Opsiyonel; girilirse tip/scope/aktif/postable kontrolu yapilir |
 | `status` (`ACTIVE`,`INACTIVE`) | Satir aktifligi | Bossa `ACTIVE` kabul edilir |
@@ -139,11 +139,13 @@ Yanlis secim etkisi:
 | `cariDocumentId` | Hangi cari belge baglanacak | Kayit bloklanir |
 | `linkType` (`BILLING`,`ADVANCE`,`ADJUSTMENT`) | Baglama amaci | UI default `BILLING`; API'de invalid deger blok |
 | `linkedAmountTxn` / `linkedAmountBase` | Baglanan tutar | `>0` zorunlu, bos/0/eksi blok |
+| `linkFxRate` (opsiyonel) | Cross-currency baglamada link-level FX snapshot override | Bos birakirsan belge `fx_rate` (yoksa `linkedAmountBase/linkedAmountTxn`, ayni currency ise `1`) kullanilir |
 
 Ek kontroller:
 - Contract status sadece `DRAFT` veya `ACTIVE` ise linklenebilir.
 - Belge status sadece `POSTED`, `PARTIALLY_SETTLED`, `SETTLED` ise linklenebilir.
-- Sozlesme ve belge currency ayni olmali.
+- Sozlesme ve belge currency ayni olmak zorunda degildir (cross-currency desteklenir).
+- Link satirinda `contractCurrencyCodeSnapshot`, `documentCurrencyCodeSnapshot`, `linkFxRateSnapshot` saklanir.
 - Ayni tuple (`contract_id`,`cari_document_id`,`link_type`) tekrar insert edilemez.
 - Kumulatif linked tutar belge tutar cap'ini gecemez.
 
@@ -254,7 +256,7 @@ Contracts sayfasi:
 - Hesap picker icin `gl.account.read` yoksa:
   - Picker fetch yapilmaz.
   - Manual `deferredAccountId/revenueAccountId` girilebilir.
-- Belge picker icin `cari.doc.read` yoksa:
+- Belge picker icin `contract.link_document` yoksa:
   - Picker fetch yapilmaz.
   - Manual `cariDocumentId` girilebilir.
 

@@ -2,18 +2,22 @@ import { useEffect, useMemo, useState } from "react";
 import { listAccounts } from "../../api/glAdmin.js";
 import {
   activateContract,
+  amendContract,
+  adjustContractDocumentLink,
   cancelContract,
   closeContract,
   createContract,
   getContract,
+  listContractLinkableDocuments,
   linkContractDocument,
   listContractDocuments,
   listContracts,
+  patchContractLine,
   suspendContract,
+  unlinkContractDocumentLink,
   updateContract,
 } from "../../api/contracts.js";
 import { listCariCounterparties } from "../../api/cariCounterparty.js";
-import { listCariDocuments } from "../../api/cariDocuments.js";
 import { useAuth } from "../../auth/useAuth.js";
 import {
   CONTRACT_LINE_STATUSES,
@@ -21,21 +25,30 @@ import {
   CONTRACT_TYPES,
   LINK_TYPES,
   RECOGNITION_METHODS,
+  buildContractLinePatchPayload,
   buildContractLinkPayload,
+  buildContractLinkAdjustmentPayload,
+  buildContractLinkUnlinkPayload,
   buildContractListQuery,
+  canAdjustContractLink,
+  canUnlinkContractLink,
   createEmptyContractLine,
   createInitialContractForm,
+  createInitialLinkAdjustmentForm,
   createInitialLinkForm,
+  createInitialLinkUnlinkForm,
   filterAccountsForContractRole,
   formatAmount,
   getCounterpartyRoleForContractType,
-  getDocumentDirectionForContractType,
   getLifecycleActionStates,
   mapContractDetailToForm,
   resolveContractsPermissionGates,
   toPositiveInt,
   validateContractForm,
+  validateContractLinePatchForm,
+  validateContractLinkAdjustmentForm,
   validateContractLinkForm,
+  validateContractLinkUnlinkForm,
 } from "./contractsUtils.js";
 
 const DEFAULT_FILTERS = {
@@ -81,6 +94,9 @@ export default function ContractsPage() {
   const [formSaving, setFormSaving] = useState(false);
   const [formError, setFormError] = useState("");
   const [formMessage, setFormMessage] = useState("");
+  const [amendReason, setAmendReason] = useState("");
+  const [linePatchReason, setLinePatchReason] = useState("");
+  const [linePatchSavingId, setLinePatchSavingId] = useState(null);
 
   const [lifecycleLoading, setLifecycleLoading] = useState("");
   const [lifecycleError, setLifecycleError] = useState("");
@@ -90,6 +106,16 @@ export default function ContractsPage() {
   const [linkSaving, setLinkSaving] = useState(false);
   const [linkError, setLinkError] = useState("");
   const [linkMessage, setLinkMessage] = useState("");
+  const [linkAdjustmentForm, setLinkAdjustmentForm] = useState(() =>
+    createInitialLinkAdjustmentForm()
+  );
+  const [linkUnlinkForm, setLinkUnlinkForm] = useState(() =>
+    createInitialLinkUnlinkForm()
+  );
+  const [linkAdjustmentSaving, setLinkAdjustmentSaving] = useState(false);
+  const [linkUnlinkSaving, setLinkUnlinkSaving] = useState(false);
+  const [linkActionError, setLinkActionError] = useState("");
+  const [linkActionMessage, setLinkActionMessage] = useState("");
 
   const [counterpartyOptions, setCounterpartyOptions] = useState([]);
   const [accountOptions, setAccountOptions] = useState([]);
@@ -105,10 +131,10 @@ export default function ContractsPage() {
     [selectedContract?.status, gates]
   );
 
-  const canEditSelected = gates.canUpsertContract && toUpper(selectedContract?.status) === "DRAFT";
-  const selectedLegalEntityId =
-    toPositiveInt(selectedContract?.legalEntityId) || toPositiveInt(contractForm.legalEntityId) || null;
-  const selectedType = toUpper(selectedContract?.contractType || contractForm.contractType);
+  const selectedStatus = toUpper(selectedContract?.status);
+  const canDraftEditSelected = gates.canUpsertContract && selectedStatus === "DRAFT";
+  const canAmendSelected =
+    gates.canUpsertContract && (selectedStatus === "ACTIVE" || selectedStatus === "SUSPENDED");
 
   const deferredAccountOptions = useMemo(
     () => filterAccountsForContractRole(accountOptions, contractForm.contractType, "deferred"),
@@ -145,7 +171,7 @@ export default function ContractsPage() {
     if (!gates.canReadContractsRoute || !toPositiveInt(contractId)) {
       setSelectedContractDetail(null);
       setDocumentLinks([]);
-      return;
+      return null;
     }
     setDetailLoading(true);
     setDetailError("");
@@ -157,12 +183,14 @@ export default function ContractsPage() {
       ]);
       setSelectedContractDetail(detailResponse?.row || null);
       setDocumentLinks(Array.isArray(linksResponse?.rows) ? linksResponse.rows : []);
+      return detailResponse?.row || null;
     } catch (error) {
       const message = normalizeApiError(error, "Failed to load contract detail.");
       setSelectedContractDetail(null);
       setDocumentLinks([]);
       setDetailError(message);
       setLinksError(message);
+      return null;
     } finally {
       setDetailLoading(false);
     }
@@ -177,8 +205,18 @@ export default function ContractsPage() {
     if (!toPositiveInt(selectedContractId)) {
       setSelectedContractDetail(null);
       setDocumentLinks([]);
+      setLinkAdjustmentForm(createInitialLinkAdjustmentForm());
+      setLinkUnlinkForm(createInitialLinkUnlinkForm());
+      setAmendReason("");
+      setLinePatchReason("");
+      setLinePatchSavingId(null);
       return;
     }
+    setLinkAdjustmentForm(createInitialLinkAdjustmentForm());
+    setLinkUnlinkForm(createInitialLinkUnlinkForm());
+    setLinePatchSavingId(null);
+    setLinkActionError("");
+    setLinkActionMessage("");
     loadContractDetail(selectedContractId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedContractId, gates.canReadContractsRoute]);
@@ -238,17 +276,15 @@ export default function ContractsPage() {
   }, [contractForm.legalEntityId, gates.shouldFetchAccounts]);
 
   useEffect(() => {
-    if (!gates.shouldFetchDocuments || !toPositiveInt(selectedContractId) || !selectedLegalEntityId) {
+    const contractId = toPositiveInt(selectedContractId);
+    if (!gates.shouldFetchDocuments || !contractId) {
       setDocumentPickerRows([]);
       return;
     }
     let cancelled = false;
     (async () => {
       try {
-        const response = await listCariDocuments({
-          legalEntityId: selectedLegalEntityId,
-          direction: getDocumentDirectionForContractType(selectedType),
-          status: "POSTED",
+        const response = await listContractLinkableDocuments(contractId, {
           limit: 100,
           offset: 0,
         });
@@ -264,16 +300,23 @@ export default function ContractsPage() {
     return () => {
       cancelled = true;
     };
-  }, [gates.shouldFetchDocuments, selectedContractId, selectedLegalEntityId, selectedType]);
+  }, [gates.shouldFetchDocuments, selectedContractId]);
 
   function handleStartCreate() {
     setFormMode("create");
     setContractForm(createInitialContractForm());
+    setAmendReason("");
+    setLinePatchReason("");
+    setLinePatchSavingId(null);
     setSelectedContractId(null);
     setSelectedContractDetail(null);
     setDocumentLinks([]);
+    setLinkAdjustmentForm(createInitialLinkAdjustmentForm());
+    setLinkUnlinkForm(createInitialLinkUnlinkForm());
     setFormError("");
     setFormMessage("");
+    setLinkActionError("");
+    setLinkActionMessage("");
   }
 
   function handleLoadSelectedForEdit() {
@@ -281,8 +324,23 @@ export default function ContractsPage() {
       setFormError("Select a contract first.");
       return;
     }
-    setFormMode("edit");
+    if (!Array.isArray(selectedContract?.lines)) {
+      setFormError("Load contract detail first, then retry edit/amend.");
+      return;
+    }
+    const status = toUpper(selectedContract.status);
+    if (status === "DRAFT") {
+      setFormMode("edit");
+    } else if (status === "ACTIVE" || status === "SUSPENDED") {
+      setFormMode("amend");
+    } else {
+      setFormError("Only DRAFT, ACTIVE, or SUSPENDED contracts can be edited/amended.");
+      return;
+    }
     setContractForm(mapContractDetailToForm(selectedContract));
+    setAmendReason("");
+    setLinePatchReason("");
+    setLinePatchSavingId(null);
     setFormError("");
     setFormMessage("");
   }
@@ -316,6 +374,51 @@ export default function ContractsPage() {
     });
   }
 
+  async function handlePatchLine(index) {
+    const contractId = toPositiveInt(selectedContractId);
+    if (!contractId) {
+      setFormError("Select a contract first.");
+      return;
+    }
+    if (!canAmendSelected) {
+      setFormError("Line patch is allowed only for selected ACTIVE/SUSPENDED contracts.");
+      return;
+    }
+
+    const lines = Array.isArray(contractForm.lines) ? contractForm.lines : [];
+    const line = lines[index];
+    const lineId = toPositiveInt(line?.id);
+    if (!lineId) {
+      setFormError("Selected line does not have a persisted id.");
+      return;
+    }
+
+    const { payload, errors } = validateContractLinePatchForm(line, linePatchReason);
+    if (errors.length > 0) {
+      setFormError(errors.join(" "));
+      return;
+    }
+
+    setLinePatchSavingId(lineId);
+    setFormError("");
+    setFormMessage("");
+    try {
+      const requestPayload = buildContractLinePatchPayload(line, linePatchReason);
+      await patchContractLine(contractId, lineId, requestPayload);
+      setFormMessage(`Line ${lineId} patched.`);
+      setLinePatchReason("");
+      const updatedDetail = await loadContractDetail(contractId);
+      if (updatedDetail) {
+        setContractForm(mapContractDetailToForm(updatedDetail));
+      }
+      await loadContracts(filters);
+    } catch (error) {
+      setFormError(normalizeApiError(error, "Failed to patch contract line."));
+    } finally {
+      setLinePatchSavingId(null);
+    }
+  }
+
   async function handleSubmitContract(event) {
     event.preventDefault();
     if (!gates.canUpsertContract) {
@@ -335,13 +438,35 @@ export default function ContractsPage() {
 
       if (formMode === "edit") {
         const contractId = toPositiveInt(selectedContractId);
-        if (!contractId || !canEditSelected) {
+        if (!contractId || !canDraftEditSelected) {
           setFormError("Only selected DRAFT contracts can be edited.");
           return;
         }
         await updateContract(contractId, payload);
         setFormMessage("Contract updated.");
-        await Promise.all([loadContracts(filters), loadContractDetail(contractId)]);
+        const updatedDetail = await loadContractDetail(contractId);
+        if (updatedDetail) {
+          setContractForm(mapContractDetailToForm(updatedDetail));
+        }
+        await loadContracts(filters);
+      } else if (formMode === "amend") {
+        const contractId = toPositiveInt(selectedContractId);
+        if (!contractId || !canAmendSelected) {
+          setFormError("Only selected ACTIVE/SUSPENDED contracts can be amended.");
+          return;
+        }
+        const reason = String(amendReason || "").trim();
+        if (!reason) {
+          setFormError("reason is required for amendment.");
+          return;
+        }
+        await amendContract(contractId, { ...payload, reason });
+        setFormMessage("Contract amended.");
+        const updatedDetail = await loadContractDetail(contractId);
+        if (updatedDetail) {
+          setContractForm(mapContractDetailToForm(updatedDetail));
+        }
+        await loadContracts(filters);
       } else {
         const response = await createContract(payload);
         const createdId = toPositiveInt(response?.row?.id);
@@ -425,6 +550,139 @@ export default function ContractsPage() {
     }
   }
 
+  function handleSelectLinkForAdjustment(row) {
+    const linkId = toPositiveInt(row?.linkId ?? row?.id);
+    if (!linkId) {
+      setLinkActionError("Selected link row is missing linkId.");
+      return;
+    }
+
+    setLinkActionError("");
+    setLinkActionMessage("");
+    setLinkAdjustmentForm({
+      linkId: String(linkId),
+      nextLinkedAmountTxn:
+        row?.linkedAmountTxn === undefined || row?.linkedAmountTxn === null
+          ? ""
+          : String(row.linkedAmountTxn),
+      nextLinkedAmountBase:
+        row?.linkedAmountBase === undefined || row?.linkedAmountBase === null
+          ? ""
+          : String(row.linkedAmountBase),
+      reason: "",
+    });
+  }
+
+  function handleSelectLinkForUnlink(row) {
+    const linkId = toPositiveInt(row?.linkId ?? row?.id);
+    if (!linkId) {
+      setLinkActionError("Selected link row is missing linkId.");
+      return;
+    }
+
+    setLinkActionError("");
+    setLinkActionMessage("");
+    setLinkUnlinkForm({
+      linkId: String(linkId),
+      reason: "",
+    });
+  }
+
+  async function handleAdjustLink(event) {
+    event.preventDefault();
+    const contractId = toPositiveInt(selectedContractId);
+    if (!contractId) {
+      setLinkActionError("Select a contract first.");
+      return;
+    }
+    if (!gates.canLinkDocument) {
+      setLinkActionError("Missing permission: contract.link_document");
+      return;
+    }
+
+    const row = documentLinks.find(
+      (candidate) =>
+        toPositiveInt(candidate?.linkId ?? candidate?.id) ===
+        toPositiveInt(linkAdjustmentForm.linkId)
+    );
+    const state = canAdjustContractLink(row, gates);
+    if (!state.allowed) {
+      setLinkActionError(state.reason || "Selected link cannot be adjusted.");
+      return;
+    }
+
+    setLinkAdjustmentSaving(true);
+    setLinkActionError("");
+    setLinkActionMessage("");
+    try {
+      const { payload, errors } = validateContractLinkAdjustmentForm(linkAdjustmentForm);
+      if (errors.length > 0) {
+        setLinkActionError(errors.join(" "));
+        return;
+      }
+      const requestPayload = buildContractLinkAdjustmentPayload(payload);
+      await adjustContractDocumentLink(contractId, payload.linkId, {
+        nextLinkedAmountTxn: requestPayload.nextLinkedAmountTxn,
+        nextLinkedAmountBase: requestPayload.nextLinkedAmountBase,
+        reason: requestPayload.reason,
+      });
+      setLinkActionMessage(`Link ${payload.linkId} adjusted.`);
+      setLinkAdjustmentForm(createInitialLinkAdjustmentForm());
+      await loadContractDetail(contractId);
+    } catch (error) {
+      setLinkActionError(normalizeApiError(error, "Failed to adjust link."));
+    } finally {
+      setLinkAdjustmentSaving(false);
+    }
+  }
+
+  async function handleUnlinkLink(event) {
+    event.preventDefault();
+    const contractId = toPositiveInt(selectedContractId);
+    if (!contractId) {
+      setLinkActionError("Select a contract first.");
+      return;
+    }
+    if (!gates.canLinkDocument) {
+      setLinkActionError("Missing permission: contract.link_document");
+      return;
+    }
+
+    const row = documentLinks.find(
+      (candidate) =>
+        toPositiveInt(candidate?.linkId ?? candidate?.id) ===
+        toPositiveInt(linkUnlinkForm.linkId)
+    );
+    const state = canUnlinkContractLink(row, gates);
+    if (!state.allowed) {
+      setLinkActionError(state.reason || "Selected link cannot be unlinked.");
+      return;
+    }
+
+    setLinkUnlinkSaving(true);
+    setLinkActionError("");
+    setLinkActionMessage("");
+    try {
+      const { payload, errors } = validateContractLinkUnlinkForm(linkUnlinkForm);
+      if (errors.length > 0) {
+        setLinkActionError(errors.join(" "));
+        return;
+      }
+      const requestPayload = buildContractLinkUnlinkPayload(payload);
+      await unlinkContractDocumentLink(contractId, payload.linkId, {
+        reason: requestPayload.reason,
+      });
+      setLinkActionMessage(`Link ${payload.linkId} unlinked.`);
+      setLinkUnlinkForm(createInitialLinkUnlinkForm());
+      setLinkAdjustmentForm(createInitialLinkAdjustmentForm());
+      await loadContractDetail(contractId);
+    } catch (error) {
+      setLinkActionError(normalizeApiError(error, "Failed to unlink link."));
+    } finally {
+      setLinkUnlinkSaving(false);
+    }
+  }
+
   if (!gates.canReadContractsRoute) {
     return (
       <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
@@ -444,7 +702,7 @@ export default function ContractsPage() {
           <p className="mt-1 text-xs text-amber-700">Picker disabled: gl.account.read</p>
         ) : null}
         {!gates.canReadDocumentPicker ? (
-          <p className="mt-1 text-xs text-amber-700">Picker disabled: cari.doc.read</p>
+          <p className="mt-1 text-xs text-amber-700">Picker disabled: contract.link_document</p>
         ) : null}
 
         {listError ? <div className="mt-2 text-sm text-rose-700">{listError}</div> : null}
@@ -530,7 +788,13 @@ export default function ContractsPage() {
       </section>
 
       <section className="rounded-xl border border-slate-200 bg-white p-4">
-        <h2 className="font-semibold text-slate-900">{formMode === "edit" ? "Edit Draft" : "Create Draft"}</h2>
+        <h2 className="font-semibold text-slate-900">
+          {formMode === "edit"
+            ? "Edit Draft"
+            : formMode === "amend"
+              ? "Amend Active/Suspended"
+              : "Create Draft"}
+        </h2>
         {formError ? <div className="mt-2 text-sm text-rose-700">{formError}</div> : null}
         {formMessage ? <div className="mt-2 text-sm text-emerald-700">{formMessage}</div> : null}
 
@@ -556,6 +820,22 @@ export default function ContractsPage() {
           </div>
 
           <div className="space-y-2 rounded border border-slate-200 p-3">
+            {formMode === "amend" ? (
+              <div className="grid gap-2 md:grid-cols-2">
+                <input
+                  className="rounded border border-slate-300 px-2 py-1 text-sm"
+                  placeholder="amendment reason (required)"
+                  value={amendReason}
+                  onChange={(event) => setAmendReason(event.target.value)}
+                />
+                <input
+                  className="rounded border border-slate-300 px-2 py-1 text-sm"
+                  placeholder="line patch reason"
+                  value={linePatchReason}
+                  onChange={(event) => setLinePatchReason(event.target.value)}
+                />
+              </div>
+            ) : null}
             <div className="flex items-center justify-between">
               <div className="text-sm font-semibold text-slate-700">Lines</div>
               <button type="button" className="rounded border border-slate-300 px-2 py-1 text-xs" onClick={addLine}>Add line</button>
@@ -566,6 +846,16 @@ export default function ContractsPage() {
                 <input className="rounded border border-slate-300 px-2 py-1 text-sm" placeholder="amountTxn" value={line.lineAmountTxn} onChange={(event) => handleLineChange(index, "lineAmountTxn", event.target.value)} />
                 <input className="rounded border border-slate-300 px-2 py-1 text-sm" placeholder="amountBase" value={line.lineAmountBase} onChange={(event) => handleLineChange(index, "lineAmountBase", event.target.value)} />
                 <button type="button" className="rounded border border-rose-300 px-2 py-1 text-xs text-rose-700" onClick={() => removeLine(index)} disabled={(contractForm.lines || []).length <= 1}>Remove</button>
+                {formMode === "amend" ? (
+                  <button
+                    type="button"
+                    className="rounded border border-sky-300 px-2 py-1 text-xs text-sky-700 disabled:opacity-60"
+                    onClick={() => handlePatchLine(index)}
+                    disabled={!toPositiveInt(line.id) || linePatchSavingId === toPositiveInt(line.id)}
+                  >
+                    {linePatchSavingId === toPositiveInt(line.id) ? "Patching..." : "Patch Line"}
+                  </button>
+                ) : null}
 
                 <select className="rounded border border-slate-300 px-2 py-1 text-sm" value={line.recognitionMethod} onChange={(event) => handleLineChange(index, "recognitionMethod", event.target.value)}>
                   {RECOGNITION_METHODS.map((method) => <option key={`${index}-${method}`} value={method}>{method}</option>)}
@@ -599,7 +889,13 @@ export default function ContractsPage() {
 
           <div className="flex gap-2">
             <button type="submit" className="rounded bg-slate-900 px-3 py-1 text-sm text-white" disabled={formSaving || !gates.canUpsertContract}>
-              {formSaving ? "Saving..." : formMode === "edit" ? "Update" : "Create"}
+              {formSaving
+                ? "Saving..."
+                : formMode === "edit"
+                  ? "Update"
+                  : formMode === "amend"
+                    ? "Apply Amendment"
+                    : "Create"}
             </button>
             <button type="button" className="rounded border border-slate-300 px-3 py-1 text-sm" onClick={handleStartCreate}>Reset</button>
           </div>
@@ -633,18 +929,20 @@ export default function ContractsPage() {
         {linksError ? <div className="mt-2 text-sm text-rose-700">{linksError}</div> : null}
         {linkError ? <div className="mt-2 text-sm text-rose-700">{linkError}</div> : null}
         {linkMessage ? <div className="mt-2 text-sm text-emerald-700">{linkMessage}</div> : null}
+        {linkActionError ? <div className="mt-2 text-sm text-rose-700">{linkActionError}</div> : null}
+        {linkActionMessage ? <div className="mt-2 text-sm text-emerald-700">{linkActionMessage}</div> : null}
 
         {!selectedContract ? (
           <p className="mt-2 text-sm text-slate-500">Select a contract first.</p>
         ) : (
           <div className="mt-3 space-y-3">
             {!gates.canReadDocumentPicker ? (
-              <div className="text-xs text-amber-700">Picker hidden: cari.doc.read missing.</div>
+              <div className="text-xs text-amber-700">Picker hidden: contract.link_document missing.</div>
             ) : null}
-            <form className="grid gap-2 md:grid-cols-4" onSubmit={handleLinkDocument}>
+            <form className="grid gap-2 md:grid-cols-5" onSubmit={handleLinkDocument}>
               <input className="rounded border border-slate-300 px-2 py-1 text-sm" placeholder="cariDocumentId" value={linkForm.cariDocumentId} onChange={(event) => setLinkForm((prev) => ({ ...prev, cariDocumentId: event.target.value }))} />
               {gates.canReadDocumentPicker ? (
-                <select className="rounded border border-slate-300 px-2 py-1 text-sm md:col-span-3" value="" onChange={(event) => setLinkForm((prev) => ({ ...prev, cariDocumentId: event.target.value }))}>
+                <select className="rounded border border-slate-300 px-2 py-1 text-sm md:col-span-4" value="" onChange={(event) => setLinkForm((prev) => ({ ...prev, cariDocumentId: event.target.value }))}>
                   <option value="">picker documents</option>
                   {documentPickerRows.map((row) => <option key={row.id} value={row.id}>{row.documentNo || row.id} | {row.direction} | {row.status}</option>)}
                 </select>
@@ -654,6 +952,7 @@ export default function ContractsPage() {
               </select>
               <input className="rounded border border-slate-300 px-2 py-1 text-sm" placeholder="linkedAmountTxn" value={linkForm.linkedAmountTxn} onChange={(event) => setLinkForm((prev) => ({ ...prev, linkedAmountTxn: event.target.value }))} />
               <input className="rounded border border-slate-300 px-2 py-1 text-sm" placeholder="linkedAmountBase" value={linkForm.linkedAmountBase} onChange={(event) => setLinkForm((prev) => ({ ...prev, linkedAmountBase: event.target.value }))} />
+              <input className="rounded border border-slate-300 px-2 py-1 text-sm" placeholder="linkFxRate (optional)" value={linkForm.linkFxRate} onChange={(event) => setLinkForm((prev) => ({ ...prev, linkFxRate: event.target.value }))} />
               <button className="rounded bg-slate-900 px-3 py-1 text-sm text-white disabled:opacity-60" disabled={!gates.canLinkDocument || linkSaving}>
                 {linkSaving ? "Linking..." : "Link"}
               </button>
@@ -662,22 +961,137 @@ export default function ContractsPage() {
             <div className="overflow-x-auto">
               <table className="min-w-full text-sm">
                 <thead className="text-left text-slate-600">
-                  <tr><th>Document</th><th>Type</th><th>Txn</th><th>Base</th></tr>
+                  <tr>
+                    <th>LinkId</th>
+                    <th>Document</th>
+                    <th>Type</th>
+                    <th>Ccy Snapshot</th>
+                    <th>FX Snapshot</th>
+                    <th>Effective Txn</th>
+                    <th>Effective Base</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                  </tr>
                 </thead>
                 <tbody>
                   {documentLinks.map((row, index) => (
                     <tr key={`link-${index}`} className="border-t border-slate-200">
+                      <td>{row.linkId || "-"}</td>
                       <td>{row.documentNo || row.cariDocumentId}</td>
                       <td>{row.linkType}</td>
+                      <td>
+                        {(row.contractCurrencyCodeSnapshot || "-")} ->{" "}
+                        {(row.documentCurrencyCodeSnapshot || "-")}
+                      </td>
+                      <td>{formatAmount(row.linkFxRateSnapshot)}</td>
                       <td>{formatAmount(row.linkedAmountTxn)}</td>
                       <td>{formatAmount(row.linkedAmountBase)}</td>
+                      <td>{row.isUnlinked ? "UNLINKED" : "ACTIVE"}</td>
+                      <td>
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            className="rounded border border-slate-300 px-2 py-1 text-xs disabled:opacity-60"
+                            onClick={() => handleSelectLinkForAdjustment(row)}
+                            disabled={!canAdjustContractLink(row, gates).allowed}
+                            title={canAdjustContractLink(row, gates).reason || "Prepare adjustment"}
+                          >
+                            Adjust
+                          </button>
+                          <button
+                            type="button"
+                            className="rounded border border-rose-300 px-2 py-1 text-xs text-rose-700 disabled:opacity-60"
+                            onClick={() => handleSelectLinkForUnlink(row)}
+                            disabled={!canUnlinkContractLink(row, gates).allowed}
+                            title={canUnlinkContractLink(row, gates).reason || "Prepare unlink"}
+                          >
+                            Unlink
+                          </button>
+                        </div>
+                      </td>
                     </tr>
                   ))}
                   {documentLinks.length === 0 ? (
-                    <tr><td colSpan={4} className="py-2 text-slate-500">No links.</td></tr>
+                    <tr><td colSpan={9} className="py-2 text-slate-500">No links.</td></tr>
                   ) : null}
                 </tbody>
               </table>
+            </div>
+
+            <div className="grid gap-3 md:grid-cols-2">
+              <form className="rounded border border-slate-200 p-3 space-y-2" onSubmit={handleAdjustLink}>
+                <h3 className="text-sm font-semibold text-slate-800">Adjust Link</h3>
+                <input
+                  className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                  placeholder="linkId"
+                  value={linkAdjustmentForm.linkId}
+                  onChange={(event) =>
+                    setLinkAdjustmentForm((prev) => ({ ...prev, linkId: event.target.value }))
+                  }
+                />
+                <input
+                  className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                  placeholder="nextLinkedAmountTxn"
+                  value={linkAdjustmentForm.nextLinkedAmountTxn}
+                  onChange={(event) =>
+                    setLinkAdjustmentForm((prev) => ({
+                      ...prev,
+                      nextLinkedAmountTxn: event.target.value,
+                    }))
+                  }
+                />
+                <input
+                  className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                  placeholder="nextLinkedAmountBase"
+                  value={linkAdjustmentForm.nextLinkedAmountBase}
+                  onChange={(event) =>
+                    setLinkAdjustmentForm((prev) => ({
+                      ...prev,
+                      nextLinkedAmountBase: event.target.value,
+                    }))
+                  }
+                />
+                <input
+                  className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                  placeholder="reason"
+                  value={linkAdjustmentForm.reason}
+                  onChange={(event) =>
+                    setLinkAdjustmentForm((prev) => ({ ...prev, reason: event.target.value }))
+                  }
+                />
+                <button
+                  className="rounded bg-slate-900 px-3 py-1 text-sm text-white disabled:opacity-60"
+                  disabled={!gates.canLinkDocument || linkAdjustmentSaving}
+                >
+                  {linkAdjustmentSaving ? "Applying..." : "Apply Adjust"}
+                </button>
+              </form>
+
+              <form className="rounded border border-slate-200 p-3 space-y-2" onSubmit={handleUnlinkLink}>
+                <h3 className="text-sm font-semibold text-slate-800">Unlink Link</h3>
+                <input
+                  className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                  placeholder="linkId"
+                  value={linkUnlinkForm.linkId}
+                  onChange={(event) =>
+                    setLinkUnlinkForm((prev) => ({ ...prev, linkId: event.target.value }))
+                  }
+                />
+                <input
+                  className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                  placeholder="reason"
+                  value={linkUnlinkForm.reason}
+                  onChange={(event) =>
+                    setLinkUnlinkForm((prev) => ({ ...prev, reason: event.target.value }))
+                  }
+                />
+                <button
+                  className="rounded bg-rose-700 px-3 py-1 text-sm text-white disabled:opacity-60"
+                  disabled={!gates.canLinkDocument || linkUnlinkSaving}
+                >
+                  {linkUnlinkSaving ? "Applying..." : "Apply Unlink"}
+                </button>
+              </form>
             </div>
           </div>
         )}

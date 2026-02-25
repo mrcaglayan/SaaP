@@ -26,6 +26,14 @@ export async function updateContract(contractId, payload) {
   return run(() => api.put(`/api/v1/contracts/${contractId}`, payload));
 }
 
+export async function amendContract(contractId, payload) {
+  return run(() => api.post(`/api/v1/contracts/${contractId}/amend`, payload));
+}
+
+export async function patchContractLine(contractId, lineId, payload) {
+  return run(() => api.patch(`/api/v1/contracts/${contractId}/lines/${lineId}`, payload));
+}
+
 export async function activateContract(contractId) {
   return run(() => api.post(`/api/v1/contracts/${contractId}/activate`, {}));
 }
@@ -46,7 +54,29 @@ export async function linkContractDocument(contractId, payload) {
   return run(() => api.post(`/api/v1/contracts/${contractId}/link-document`, payload));
 }
 
+export async function adjustContractDocumentLink(contractId, linkId, payload) {
+  return run(() =>
+    api.post(`/api/v1/contracts/${contractId}/documents/${linkId}/adjust`, payload)
+  );
+}
+
+export async function unlinkContractDocumentLink(contractId, linkId, payload) {
+  return run(() =>
+    api.post(`/api/v1/contracts/${contractId}/documents/${linkId}/unlink`, payload)
+  );
+}
+
 export async function listContractDocuments(contractId) {
   return run(() => api.get(`/api/v1/contracts/${contractId}/documents`));
+}
+
+export async function listContractLinkableDocuments(contractId, params = {}) {
+  return run(() =>
+    api.get(`/api/v1/contracts/${contractId}/linkable-documents${toCariQueryString(params)}`)
+  );
+}
+
+export async function listContractAmendments(contractId) {
+  return run(() => api.get(`/api/v1/contracts/${contractId}/amendments`));
 }
 

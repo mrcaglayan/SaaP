@@ -161,6 +161,8 @@ async function assertSchemaExists() {
     "fk_contract_doc_links_contract_tenant",
     "fk_contract_doc_links_cari_doc_tenant",
     "fk_contract_doc_links_creator_user",
+    "fk_contract_doc_links_contract_currency",
+    "fk_contract_doc_links_document_currency",
   ];
   const fkRows = await query(
     `SELECT constraint_name AS constraint_name
@@ -181,10 +183,13 @@ async function assertSchemaExists() {
      FROM information_schema.columns
      WHERE table_schema = DATABASE()
        AND (
-         (table_name = 'users' AND column_name = 'id')
-         OR (table_name = 'contracts' AND column_name = 'created_by_user_id')
-         OR (table_name = 'contract_document_links' AND column_name = 'created_by_user_id')
-       )`
+          (table_name = 'users' AND column_name = 'id')
+          OR (table_name = 'contracts' AND column_name = 'created_by_user_id')
+          OR (table_name = 'contract_document_links' AND column_name = 'created_by_user_id')
+          OR (table_name = 'contract_document_links' AND column_name = 'contract_currency_code_snapshot')
+          OR (table_name = 'contract_document_links' AND column_name = 'document_currency_code_snapshot')
+          OR (table_name = 'contract_document_links' AND column_name = 'link_fx_rate_snapshot')
+        )`
   );
   const byKey = new Map(
     columnRows.rows.map((row) => [
@@ -201,6 +206,18 @@ async function assertSchemaExists() {
   assert(
     byKey.get("contract_document_links.created_by_user_id") === usersIdType,
     `contract_document_links.created_by_user_id type mismatch: expected ${usersIdType}`
+  );
+  assert(
+    byKey.get("contract_document_links.contract_currency_code_snapshot") === "char(3)",
+    "contract_currency_code_snapshot type mismatch: expected char(3)"
+  );
+  assert(
+    byKey.get("contract_document_links.document_currency_code_snapshot") === "char(3)",
+    "document_currency_code_snapshot type mismatch: expected char(3)"
+  );
+  assert(
+    byKey.get("contract_document_links.link_fx_rate_snapshot") === "decimal(20,10)",
+    "link_fx_rate_snapshot type mismatch: expected decimal(20,10)"
   );
 }
 
@@ -662,7 +679,7 @@ async function runApiAssertions({ token, fixture, stamp }) {
           lineAmountBase: 80,
           recognitionMethod: "MILESTONE",
           recognitionStartDate: "2026-02-01",
-          recognitionEndDate: "2026-06-30",
+          recognitionEndDate: "2026-02-01",
           deferredAccountId: fixture.liabilityDeferredAccountId,
           revenueAccountId: fixture.revenueAccountId,
         },
@@ -679,6 +696,64 @@ async function runApiAssertions({ token, fixture, stamp }) {
   assert(
     updateResponse.json?.row?.totalAmountTxn === 80,
     "Updated totals must still be ACTIVE-line derived"
+  );
+
+  const invalidMilestoneResponse = await apiRequest({
+    token,
+    method: "POST",
+    path: "/api/v1/contracts",
+    expectedStatus: 400,
+    body: {
+      legalEntityId: fixture.legalEntityId,
+      counterpartyId: fixture.customerCounterpartyId,
+      contractNo: `CTR-${stamp}-MILESTONE-ERR`,
+      contractType: "CUSTOMER",
+      currencyCode: "USD",
+      startDate: "2026-01-01",
+      lines: [
+        {
+          description: "Invalid milestone date range",
+          lineAmountTxn: 10,
+          lineAmountBase: 10,
+          recognitionMethod: "MILESTONE",
+          recognitionStartDate: "2026-03-01",
+          recognitionEndDate: "2026-03-15",
+        },
+      ],
+    },
+  });
+  assert(
+    String(invalidMilestoneResponse.json?.message || "").includes("must match for MILESTONE"),
+    "MILESTONE should require recognitionStartDate=recognitionEndDate"
+  );
+
+  const invalidManualResponse = await apiRequest({
+    token,
+    method: "POST",
+    path: "/api/v1/contracts",
+    expectedStatus: 400,
+    body: {
+      legalEntityId: fixture.legalEntityId,
+      counterpartyId: fixture.customerCounterpartyId,
+      contractNo: `CTR-${stamp}-MANUAL-ERR`,
+      contractType: "CUSTOMER",
+      currencyCode: "USD",
+      startDate: "2026-01-01",
+      lines: [
+        {
+          description: "Invalid manual dates",
+          lineAmountTxn: 10,
+          lineAmountBase: 10,
+          recognitionMethod: "MANUAL",
+          recognitionStartDate: "2026-03-01",
+          recognitionEndDate: "2026-03-01",
+        },
+      ],
+    },
+  });
+  assert(
+    String(invalidManualResponse.json?.message || "").includes("must be omitted for MANUAL"),
+    "MANUAL should reject recognitionStartDate/recognitionEndDate"
   );
 
   const activateResponse = await apiRequest({
@@ -806,6 +881,32 @@ async function runApiAssertions({ token, fixture, stamp }) {
   });
   assert((docsListResponse.json?.rows || []).length === 1, "Documents list must return one link row");
 
+  const linkableDocumentsResponse = await apiRequest({
+    token,
+    method: "GET",
+    path: `/api/v1/contracts/${linkableContractId}/linkable-documents?limit=100&offset=0`,
+    expectedStatus: 200,
+  });
+  const linkableIds = new Set(
+    (linkableDocumentsResponse.json?.rows || []).map((row) => toNumber(row?.id))
+  );
+  assert(
+    linkableIds.has(fixture.postedArDocumentId),
+    "linkable-documents should include posted AR document for CUSTOMER contract"
+  );
+  assert(
+    linkableIds.has(fixture.postedTryDocumentId),
+    "linkable-documents should include cross-currency AR document for CUSTOMER contract"
+  );
+  assert(
+    !linkableIds.has(fixture.postedApDocumentId),
+    "linkable-documents should exclude AP document for CUSTOMER contract"
+  );
+  assert(
+    !linkableIds.has(fixture.draftArDocumentId),
+    "linkable-documents should exclude DRAFT documents"
+  );
+
   const capContractResponse = await apiRequest({
     token,
     method: "POST",
@@ -873,11 +974,11 @@ async function runApiAssertions({ token, fixture, stamp }) {
     },
   });
 
-  await apiRequest({
+  const crossCurrencyLinkResponse = await apiRequest({
     token,
     method: "POST",
     path: `/api/v1/contracts/${capContractId}/link-document`,
-    expectedStatus: 400,
+    expectedStatus: 201,
     body: {
       cariDocumentId: fixture.postedTryDocumentId,
       linkType: "BILLING",
@@ -885,6 +986,36 @@ async function runApiAssertions({ token, fixture, stamp }) {
       linkedAmountBase: 10,
     },
   });
+  assert(
+    String(crossCurrencyLinkResponse.json?.row?.contractCurrencyCodeSnapshot || "") === "USD",
+    "Cross-currency link must expose contractCurrencyCodeSnapshot"
+  );
+  assert(
+    String(crossCurrencyLinkResponse.json?.row?.documentCurrencyCodeSnapshot || "") === "TRY",
+    "Cross-currency link must expose documentCurrencyCodeSnapshot"
+  );
+  assert(
+    toNumber(crossCurrencyLinkResponse.json?.row?.linkFxRateSnapshot) === 1,
+    "Cross-currency link should fallback to document fx_rate snapshot when linkFxRate is not provided"
+  );
+
+  const explicitFxLinkResponse = await apiRequest({
+    token,
+    method: "POST",
+    path: `/api/v1/contracts/${capContractId}/link-document`,
+    expectedStatus: 201,
+    body: {
+      cariDocumentId: fixture.postedTryDocumentId,
+      linkType: "ADJUSTMENT",
+      linkedAmountTxn: 5,
+      linkedAmountBase: 5,
+      linkFxRate: 35.125,
+    },
+  });
+  assert(
+    toNumber(explicitFxLinkResponse.json?.row?.linkFxRateSnapshot) === 35.125,
+    "Cross-currency link must persist explicit linkFxRate snapshot"
+  );
 
   await apiRequest({
     token,

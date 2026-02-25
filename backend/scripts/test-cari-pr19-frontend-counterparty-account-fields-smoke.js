@@ -2,9 +2,13 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  buildCounterpartyListParams,
   buildCounterpartyPayload,
   buildInitialCounterpartyForm,
+  createCounterpartyListFilters,
   mapDetailToCounterpartyForm,
+  normalizeCounterpartyListSortBy,
+  normalizeCounterpartyListSortDir,
   resolveCounterpartyAccountPickerGates,
 } from "../../frontend/src/pages/cari/counterpartyFormUtils.js";
 
@@ -51,6 +55,18 @@ async function main() {
   assert(
     pageSource.includes("canReadGlAccounts={accountPickerGates.showAccountPickers}"),
     "Counterparty form should receive GL picker visibility gate"
+  );
+  assert(
+    pageSource.includes("AR Account Code"),
+    "Counterparty list should expose AR account code filter"
+  );
+  assert(
+    pageSource.includes("AP Account Name"),
+    "Counterparty list should expose AP account name filter"
+  );
+  assert(
+    pageSource.includes("Sort Field") && pageSource.includes("Sort Direction"),
+    "Counterparty list should expose enrichment sort controls"
   );
 
   assert(
@@ -122,6 +138,55 @@ async function main() {
   assert(payload.arAccountId === 101, "Payload builder should output numeric arAccountId");
   assert(payload.apAccountId === 202, "Payload builder should output numeric apAccountId");
 
+  const initialListFilters = createCounterpartyListFilters("CUSTOMER");
+  assert(initialListFilters.sortBy === "id", "List filters should default sortBy=id");
+  assert(initialListFilters.sortDir === "desc", "List filters should default sortDir=desc");
+  assert(
+    Object.prototype.hasOwnProperty.call(initialListFilters, "arAccountCode") &&
+      Object.prototype.hasOwnProperty.call(initialListFilters, "apAccountName"),
+    "List filters should include AR/AP enrichment filter fields"
+  );
+
+  assert(
+    normalizeCounterpartyListSortBy("arAccountCode") === "arAccountCode",
+    "normalizeCounterpartyListSortBy should preserve supported enrichment sort field"
+  );
+  assert(
+    normalizeCounterpartyListSortBy("AR_ACCOUNT_NAME") === "arAccountName",
+    "normalizeCounterpartyListSortBy should normalize snake/uppercase alias"
+  );
+  assert(
+    normalizeCounterpartyListSortBy("unknown-sort") === "id",
+    "normalizeCounterpartyListSortBy should fallback to id for invalid values"
+  );
+  assert(
+    normalizeCounterpartyListSortDir("ASC") === "asc",
+    "normalizeCounterpartyListSortDir should normalize ASC"
+  );
+  assert(
+    normalizeCounterpartyListSortDir("bad-value") === "desc",
+    "normalizeCounterpartyListSortDir should fallback to desc"
+  );
+
+  const listParams = buildCounterpartyListParams({
+    ...initialListFilters,
+    legalEntityId: "11",
+    role: "CUSTOMER",
+    q: "Acme",
+    arAccountCode: "120",
+    apAccountName: "Payables",
+    sortBy: "AP_ACCOUNT_CODE",
+    sortDir: "ASC",
+  });
+  assert(listParams.legalEntityId === "11", "List param builder should keep legalEntityId");
+  assert(listParams.arAccountCode === "120", "List param builder should keep arAccountCode");
+  assert(listParams.apAccountName === "Payables", "List param builder should keep apAccountName");
+  assert(
+    listParams.sortBy === "apAccountCode",
+    "List param builder should normalize sortBy aliases"
+  );
+  assert(listParams.sortDir === "asc", "List param builder should normalize sortDir");
+
   assert(
     countOccurrences(messagesSource, "accountPickerPermissionMissing") >= 2,
     "messages.js should contain accountPickerPermissionMissing in tr/en"
@@ -135,7 +200,7 @@ async function main() {
     "messages.js should contain apAccountLabel in tr/en"
   );
 
-  console.log("PR19 frontend counterparty account fields smoke passed.");
+  console.log("PR19/PR26 frontend counterparty account fields + list enrichment smoke passed.");
 }
 
 main().catch((error) => {

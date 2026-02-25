@@ -155,7 +155,7 @@ export default function SidebarSection({
                   ? "bg-gray-100 text-black"
                   : "text-gray-700 hover:bg-gray-100 hover:text-black"
               }`
-            : `${collapseTopLevel ? "mx-auto h-11 w-11 justify-center rounded-lg p-0" : "w-full gap-2 rounded-lg pl-4 pr-0 py-1.5"} ${
+            : `${collapseTopLevel ? "mx-1 h-10 w-[calc(100%-0.5rem)] justify-center rounded-lg p-0" : "w-full gap-2 rounded-lg pl-4 pr-0 py-1.5"} ${
                 sectionHighlighted
                   ? "bg-gray-100 text-[#143c62]"
                   : "text-[#143c62] hover:bg-gray-100 hover:text-[#143c62]"

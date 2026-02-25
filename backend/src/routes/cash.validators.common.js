@@ -102,7 +102,11 @@ export function parseBooleanFlag(value, fallback = false) {
   throw badRequest("Boolean value is invalid");
 }
 
-export function parseAmount(value, label, { allowZero = false, required = false } = {}) {
+export function parseAmount(
+  value,
+  label,
+  { allowZero = false, required = false, allowNegative = false } = {}
+) {
   if (value === undefined || value === null || value === "") {
     if (required) {
       throw badRequest(`${label} is required`);
@@ -115,7 +119,11 @@ export function parseAmount(value, label, { allowZero = false, required = false 
     throw badRequest(`${label} must be a numeric value`);
   }
 
-  if (allowZero) {
+  if (allowNegative) {
+    if (!allowZero && parsed === 0) {
+      throw badRequest(`${label} must be non-zero`);
+    }
+  } else if (allowZero) {
     if (parsed < 0) {
       throw badRequest(`${label} must be >= 0`);
     }

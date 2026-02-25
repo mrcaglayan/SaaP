@@ -101,7 +101,7 @@ async function main() {
     shouldFetchDocuments: false,
   });
 
-  assertContractsCase("contracts-document-read", ["contract.read", "cari.doc.read"], {
+  assertContractsCase("contracts-document-read", ["contract.read", "contract.link_document"], {
     shouldFetchCounterparties: false,
     shouldFetchAccounts: false,
     shouldFetchDocuments: true,
@@ -109,7 +109,7 @@ async function main() {
 
   assertContractsCase(
     "contracts-all-picker-reads",
-    ["contract.read", "cari.card.read", "gl.account.read", "cari.doc.read"],
+    ["contract.read", "cari.card.read", "gl.account.read", "contract.link_document"],
     {
       shouldFetchCounterparties: true,
       shouldFetchAccounts: true,

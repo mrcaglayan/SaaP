@@ -77,6 +77,7 @@ const MODULE_PREVIEW_ADMIN_PERMISSIONS = [
   "security.role.upsert",
   "security.role_permissions.assign",
 ];
+const PERIODIZATION_REVENUE_CANONICAL_PATH = "/app/gelecek-yillar-gelirleri";
 
 const implementedRoutes = [
   {
@@ -165,9 +166,21 @@ const implementedRoutes = [
     element: <ContractsPage />,
   },
   {
-    appPath: "/app/gelecek-yillar-gelirleri",
+    appPath: PERIODIZATION_REVENUE_CANONICAL_PATH,
     childPath: "gelecek-yillar-gelirleri",
     element: <FutureYearRevenuePage />,
+  },
+  {
+    appPath: "/app/donemsellik-ve-tahakkuklar",
+    childPath: "donemsellik-ve-tahakkuklar",
+    permissionPath: PERIODIZATION_REVENUE_CANONICAL_PATH,
+    element: <Navigate to={PERIODIZATION_REVENUE_CANONICAL_PATH} replace />,
+  },
+  {
+    appPath: "/app/periodization-and-accruals",
+    childPath: "periodization-and-accruals",
+    permissionPath: PERIODIZATION_REVENUE_CANONICAL_PATH,
+    element: <Navigate to={PERIODIZATION_REVENUE_CANONICAL_PATH} replace />,
   },
   {
     appPath: "/app/ayarlar/hesap-plani-olustur",
@@ -246,8 +259,8 @@ const allPlaceholderRoutes = sidebarRouteLinks.filter(
     link.routePath.startsWith("/app/") && !implementedPaths.has(link.routePath)
 );
 
-function withPermissionGuard(appPath, element) {
-  const requiredPermissions = sidebarLinkByPath.get(appPath)?.requiredPermissions;
+function withPermissionGuard(pathForPermissions, element) {
+  const requiredPermissions = sidebarLinkByPath.get(pathForPermissions)?.requiredPermissions;
   if (!Array.isArray(requiredPermissions) || requiredPermissions.length === 0) {
     return element;
   }
@@ -319,7 +332,7 @@ export default function App() {
           <Route
             key={route.appPath}
             path={route.childPath}
-            element={withPermissionGuard(route.appPath, route.element)}
+            element={withPermissionGuard(route.permissionPath || route.appPath, route.element)}
           />
         ))}
 

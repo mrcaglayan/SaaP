@@ -20,6 +20,10 @@ import migration019CounterpartyRoleFlags from "./m019_counterparty_role_flags.js
 import migration020ContractsFoundation from "./m020_contracts_foundation.js";
 import migration021RevenueRecognitionSchedules from "./m021_revenue_recognition_schedules.js";
 import migration022CounterpartyAccountMapping from "./m022_counterparty_account_mapping.js";
+import migration023ContractDocumentLinkEvents from "./m023_contract_document_link_events.js";
+import migration024ContractAmendmentsAndVersioning from "./m024_contract_amendments_and_versioning.js";
+import migration025ContractDocumentLinkFxSnapshots from "./m025_contract_document_link_fx_snapshots.js";
+import migration026ContractLineReportingOptimization from "./m026_contract_line_reporting_optimization.js";
 
 const migrations = [
   migration001GlobalMultiEntity,
@@ -44,6 +48,10 @@ const migrations = [
   migration020ContractsFoundation,
   migration021RevenueRecognitionSchedules,
   migration022CounterpartyAccountMapping,
+  migration023ContractDocumentLinkEvents,
+  migration024ContractAmendmentsAndVersioning,
+  migration025ContractDocumentLinkFxSnapshots,
+  migration026ContractLineReportingOptimization,
 ];
 
 export default migrations;

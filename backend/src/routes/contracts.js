@@ -2,24 +2,36 @@ import express from "express";
 import { asyncHandler, parsePositiveInt } from "./_utils.js";
 import { requirePermission, assertScopeAccess, buildScopeFilter } from "../middleware/rbac.js";
 import {
+  parseContractAmendInput,
+  parseContractAmendmentsListInput,
+  parseContractLinkableDocumentsInput,
+  parseContractLinePatchInput,
+  parseContractLinkAdjustmentInput,
   parseContractCreateInput,
   parseContractIdParam,
   parseContractLifecycleInput,
   parseContractLinkDocumentInput,
+  parseContractLinkUnlinkInput,
   parseContractListFilters,
   parseContractUpdateInput,
 } from "./contracts.validators.js";
 import {
   activateContractById,
+  amendContractById,
+  adjustContractDocumentLink,
   cancelContractById,
+  patchContractLineById,
   closeContractById,
   createContract,
   getContractByIdForTenant,
   linkDocumentToContract,
+  listContractAmendments,
   listContractDocumentLinks,
+  listContractLinkableDocuments,
   listContracts,
   resolveContractScope,
   suspendContractById,
+  unlinkContractDocumentLink,
   updateContractById,
 } from "../services/contracts.service.js";
 
@@ -238,6 +250,96 @@ router.post(
   })
 );
 
+router.post(
+  "/:contractId/amend",
+  requirePermission("contract.upsert", {
+    resolveScope: async (req, tenantId) => {
+      const scope = await resolveContractScope(req.params?.contractId, tenantId);
+      if (scope) {
+        return scope;
+      }
+      return resolveLegalEntityScopeFromBody(req);
+    },
+  }),
+  asyncHandler(async (req, res) => {
+    const payload = parseContractAmendInput(req);
+    const row = await amendContractById({
+      req,
+      payload,
+      assertScopeAccess,
+    });
+
+    return res.json({
+      tenantId: payload.tenantId,
+      row,
+    });
+  })
+);
+
+router.patch(
+  "/:contractId/lines/:lineId",
+  requirePermission("contract.upsert", {
+    resolveScope: async (req, tenantId) => {
+      return resolveContractScope(req.params?.contractId, tenantId);
+    },
+  }),
+  asyncHandler(async (req, res) => {
+    const payload = parseContractLinePatchInput(req);
+    const result = await patchContractLineById({
+      req,
+      payload,
+      assertScopeAccess,
+    });
+    return res.json({
+      tenantId: payload.tenantId,
+      row: result.row,
+      line: result.line,
+    });
+  })
+);
+
+router.post(
+  "/:contractId/documents/:linkId/adjust",
+  requirePermission("contract.link_document", {
+    resolveScope: async (req, tenantId) => {
+      return resolveContractScope(req.params?.contractId, tenantId);
+    },
+  }),
+  asyncHandler(async (req, res) => {
+    const payload = parseContractLinkAdjustmentInput(req);
+    const row = await adjustContractDocumentLink({
+      req,
+      payload,
+      assertScopeAccess,
+    });
+    return res.json({
+      tenantId: payload.tenantId,
+      row,
+    });
+  })
+);
+
+router.post(
+  "/:contractId/documents/:linkId/unlink",
+  requirePermission("contract.link_document", {
+    resolveScope: async (req, tenantId) => {
+      return resolveContractScope(req.params?.contractId, tenantId);
+    },
+  }),
+  asyncHandler(async (req, res) => {
+    const payload = parseContractLinkUnlinkInput(req);
+    const row = await unlinkContractDocumentLink({
+      req,
+      payload,
+      assertScopeAccess,
+    });
+    return res.json({
+      tenantId: payload.tenantId,
+      row,
+    });
+  })
+);
+
 router.get(
   "/:contractId/documents",
   requirePermission("contract.read", {
@@ -257,6 +359,58 @@ router.get(
     return res.json({
       tenantId: filters.tenantId,
       contractId,
+      rows,
+    });
+  })
+);
+
+router.get(
+  "/:contractId/linkable-documents",
+  requirePermission("contract.link_document", {
+    resolveScope: async (req, tenantId) => {
+      return resolveContractScope(req.params?.contractId, tenantId);
+    },
+  }),
+  asyncHandler(async (req, res) => {
+    const payload = parseContractLinkableDocumentsInput(req);
+    const rows = await listContractLinkableDocuments({
+      req,
+      tenantId: payload.tenantId,
+      contractId: payload.contractId,
+      q: payload.q,
+      limit: payload.limit,
+      offset: payload.offset,
+      assertScopeAccess,
+    });
+    return res.json({
+      tenantId: payload.tenantId,
+      contractId: payload.contractId,
+      rows,
+      limit: payload.limit,
+      offset: payload.offset,
+    });
+  })
+);
+
+router.get(
+  "/:contractId/amendments",
+  requirePermission("contract.read", {
+    resolveScope: async (req, tenantId) => {
+      return resolveContractScope(req.params?.contractId, tenantId);
+    },
+  }),
+  asyncHandler(async (req, res) => {
+    const payload = parseContractAmendmentsListInput(req);
+    const rows = await listContractAmendments({
+      req,
+      tenantId: payload.tenantId,
+      contractId: payload.contractId,
+      assertScopeAccess,
+    });
+
+    return res.json({
+      tenantId: payload.tenantId,
+      contractId: payload.contractId,
       rows,
     });
   })

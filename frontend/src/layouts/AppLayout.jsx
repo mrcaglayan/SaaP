@@ -297,7 +297,7 @@ function renderSidebarIcon(item, options = {}) {
 }
 
 function mainLinkClass({ isActive }, collapsed) {
-  return `group flex items-center text-sm font-semibold transition-colors ${collapsed ? "mx-auto h-11 w-11 justify-center rounded-lg p-0" : "w-full gap-2 rounded-lg pl-4 pr-0 py-1.5"
+  return `group flex items-center text-sm font-semibold transition-colors ${collapsed ? "mx-1 h-10 w-[calc(100%-0.5rem)] justify-center rounded-lg p-0" : "w-full gap-2 rounded-lg pl-4 pr-0 py-1.5"
     } ${isActive
       ? "bg-gray-100 text-[#143c62]"
       : "text-[#143c62] hover:bg-gray-100 hover:text-[#143c62]"
@@ -632,11 +632,19 @@ export default function AppLayout() {
       />
 
       <aside
-        className={`absolute inset-y-0 left-0 z-40 flex flex-col border-r border-slate-200 bg-white text-slate-900 shadow-xl transition-all duration-300 md:static md:translate-x-0 lg:rounded-br-3xl ${collapsed ? "w-20" : "w-72"
+        className={`absolute inset-y-0 left-0 z-40 flex flex-col border-r border-slate-200 bg-white text-slate-900 shadow-xl transition-all duration-300 md:static md:translate-x-0 lg:rounded-br-3xl ${collapsed ? "w-[52px]" : "w-[229px]"
           } ${mobileOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"}`}
       >
-        <div className="shrink-0 border-b border-slate-200 px-3 py-3">
-          <div className="flex items-center gap-2 overflow-hidden">
+        <div
+          className={`shrink-0 border-b border-slate-200 ${
+            collapsed ? "px-2 py-2" : "px-3 py-3"
+          }`}
+        >
+          <div
+            className={`flex items-center overflow-hidden ${
+              collapsed ? "gap-0" : "gap-2"
+            }`}
+          >
             <button
               type="button"
               onClick={() => setCollapsed((value) => !value)}
@@ -665,7 +673,7 @@ export default function AppLayout() {
 
         <div className="flex-1 min-h-0">
           <nav
-            className={`h-full space-y-0.5 pl-3 pr-0 py-3 ${collapsed
+            className={`h-full space-y-0.5 pl-0 pr-0 py-3 ${collapsed
                 ? "overflow-visible"
                 : "overflow-y-scroll overflow-x-hidden [scrollbar-width:thin] [scrollbar-color:#cbd5e1_transparent] [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-slate-300 hover:[&::-webkit-scrollbar-thumb]:bg-slate-400"
               }`}
@@ -745,10 +753,14 @@ export default function AppLayout() {
           </nav>
         </div>
 
-        <div className="shrink-0 border-t border-slate-200 bg-white p-3 overflow-hidden">
+        <div
+          className={`shrink-0 border-t border-slate-200 bg-white overflow-hidden ${
+            collapsed ? "p-1" : "p-3"
+          }`}
+        >
           <div
             className={`mx-auto flex items-center rounded-lg transition-all duration-300 ${collapsed
-                ? "h-11 w-11 justify-center gap-0 p-0"
+                ? "h-10 w-full justify-center gap-0 p-0"
                 : "w-full justify-between gap-3 border border-slate-200 bg-slate-50 px-3 py-2"
               }`}
           >
@@ -770,7 +782,7 @@ export default function AppLayout() {
               onClick={handleLogout}
               title={collapsed ? t("layout.logout") : undefined}
               className={`inline-flex shrink-0 items-center transition-all duration-200 ${collapsed
-                  ? "h-11 w-11 justify-center rounded-lg border border-slate-300 bg-white text-[#143c62] hover:bg-gray-100"
+                  ? "h-10 w-full justify-center rounded-lg border border-slate-300 bg-white text-[#143c62] hover:bg-gray-100"
                   : "gap-1.5 rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-semibold text-[#143c62] hover:bg-gray-100"
                 }`}
             >

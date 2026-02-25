@@ -35,7 +35,7 @@ export function resolveContractsPermissionGates(permissionCodes = []) {
   const permissionSet = toPermissionSet(permissionCodes);
   const canReadCounterpartyPicker = permissionSet.has("cari.card.read");
   const canReadAccountPicker = permissionSet.has("gl.account.read");
-  const canReadDocumentPicker = permissionSet.has("cari.doc.read");
+  const canReadDocumentPicker = permissionSet.has("contract.link_document");
 
   return {
     canReadContractsRoute: permissionSet.has("contract.read"),
@@ -67,6 +67,10 @@ export function toOptionalNumber(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function isFiniteNonZero(value) {
+  return Number.isFinite(value) && value !== 0;
+}
+
 export function formatAmount(value) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) {
@@ -80,6 +84,7 @@ export function formatAmount(value) {
 
 export function createEmptyContractLine() {
   return {
+    id: "",
     description: "",
     lineAmountTxn: "",
     lineAmountBase: "",
@@ -112,6 +117,23 @@ export function createInitialLinkForm() {
     linkType: "BILLING",
     linkedAmountTxn: "",
     linkedAmountBase: "",
+    linkFxRate: "",
+  };
+}
+
+export function createInitialLinkAdjustmentForm() {
+  return {
+    linkId: "",
+    nextLinkedAmountTxn: "",
+    nextLinkedAmountBase: "",
+    reason: "",
+  };
+}
+
+export function createInitialLinkUnlinkForm() {
+  return {
+    linkId: "",
+    reason: "",
   };
 }
 
@@ -149,6 +171,7 @@ export function filterAccountsForContractRole(accounts, contractType, role = "de
 export function mapContractDetailToForm(row) {
   const lines = Array.isArray(row?.lines)
     ? row.lines.map((line) => ({
+        id: String(line?.id || ""),
         description: String(line?.description || ""),
         lineAmountTxn:
           line?.lineAmountTxn === null || line?.lineAmountTxn === undefined
@@ -271,11 +294,11 @@ export function validateContractForm(form) {
     if (!line.description) {
       errors.push(`${lineLabel}.description is required.`);
     }
-    if (!Number.isFinite(line.lineAmountTxn) || line.lineAmountTxn <= 0) {
-      errors.push(`${lineLabel}.lineAmountTxn must be > 0.`);
+    if (!isFiniteNonZero(line.lineAmountTxn)) {
+      errors.push(`${lineLabel}.lineAmountTxn must be non-zero.`);
     }
-    if (!Number.isFinite(line.lineAmountBase) || line.lineAmountBase <= 0) {
-      errors.push(`${lineLabel}.lineAmountBase must be > 0.`);
+    if (!isFiniteNonZero(line.lineAmountBase)) {
+      errors.push(`${lineLabel}.lineAmountBase must be non-zero.`);
     }
     if (!RECOGNITION_METHODS.includes(line.recognitionMethod)) {
       errors.push(`${lineLabel}.recognitionMethod is invalid.`);
@@ -289,12 +312,20 @@ export function validateContractForm(form) {
           `${lineLabel}.recognitionStartDate and ${lineLabel}.recognitionEndDate are required for STRAIGHT_LINE.`
         );
       }
-    } else {
-      const hasStart = Boolean(line.recognitionStartDate);
-      const hasEnd = Boolean(line.recognitionEndDate);
-      if (hasStart !== hasEnd) {
+    } else if (line.recognitionMethod === "MILESTONE") {
+      if (!line.recognitionStartDate || !line.recognitionEndDate) {
         errors.push(
-          `${lineLabel}.recognitionStartDate and ${lineLabel}.recognitionEndDate must both be provided or omitted.`
+          `${lineLabel}.recognitionStartDate and ${lineLabel}.recognitionEndDate are required for MILESTONE.`
+        );
+      } else if (line.recognitionStartDate !== line.recognitionEndDate) {
+        errors.push(
+          `${lineLabel}.recognitionStartDate and ${lineLabel}.recognitionEndDate must match for MILESTONE.`
+        );
+      }
+    } else if (line.recognitionMethod === "MANUAL") {
+      if (line.recognitionStartDate || line.recognitionEndDate) {
+        errors.push(
+          `${lineLabel}.recognitionStartDate and ${lineLabel}.recognitionEndDate must be omitted for MANUAL.`
         );
       }
     }
@@ -318,6 +349,7 @@ export function buildContractLinkPayload(form) {
     linkType: toUpper(form?.linkType),
     linkedAmountTxn: toOptionalNumber(form?.linkedAmountTxn),
     linkedAmountBase: toOptionalNumber(form?.linkedAmountBase),
+    linkFxRate: toOptionalNumber(form?.linkFxRate),
   };
 }
 
@@ -337,8 +369,191 @@ export function validateContractLinkForm(form) {
   if (!Number.isFinite(payload.linkedAmountBase) || payload.linkedAmountBase <= 0) {
     errors.push("linkedAmountBase must be > 0.");
   }
+  if (payload.linkFxRate !== null && payload.linkFxRate !== undefined) {
+    if (!Number.isFinite(payload.linkFxRate) || payload.linkFxRate <= 0) {
+      errors.push("linkFxRate must be > 0 when provided.");
+    }
+  }
 
   return { payload, errors };
+}
+
+export function buildContractLinePatchPayload(lineForm, reason) {
+  const normalized = normalizeLinePayload(lineForm || {});
+  return {
+    description: normalized.description,
+    lineAmountTxn: normalized.lineAmountTxn,
+    lineAmountBase: normalized.lineAmountBase,
+    recognitionMethod: normalized.recognitionMethod,
+    recognitionStartDate: normalized.recognitionStartDate || null,
+    recognitionEndDate: normalized.recognitionEndDate || null,
+    deferredAccountId: normalized.deferredAccountId,
+    revenueAccountId: normalized.revenueAccountId,
+    status: normalized.status,
+    reason: String(reason || "").trim(),
+  };
+}
+
+export function validateContractLinePatchForm(lineForm, reason) {
+  const payload = buildContractLinePatchPayload(lineForm, reason);
+  const errors = [];
+
+  if (!payload.description) {
+    errors.push("line.description is required.");
+  }
+  if (!isFiniteNonZero(payload.lineAmountTxn)) {
+    errors.push("line.lineAmountTxn must be non-zero.");
+  }
+  if (!isFiniteNonZero(payload.lineAmountBase)) {
+    errors.push("line.lineAmountBase must be non-zero.");
+  }
+  if (!RECOGNITION_METHODS.includes(payload.recognitionMethod)) {
+    errors.push("line.recognitionMethod is invalid.");
+  }
+  if (!CONTRACT_LINE_STATUSES.includes(payload.status)) {
+    errors.push("line.status is invalid.");
+  }
+  if (payload.recognitionMethod === "STRAIGHT_LINE") {
+    if (!payload.recognitionStartDate || !payload.recognitionEndDate) {
+      errors.push(
+        "line.recognitionStartDate and line.recognitionEndDate are required for STRAIGHT_LINE."
+      );
+    }
+  } else if (payload.recognitionMethod === "MILESTONE") {
+    if (!payload.recognitionStartDate || !payload.recognitionEndDate) {
+      errors.push("line.recognitionStartDate and line.recognitionEndDate are required for MILESTONE.");
+    } else if (payload.recognitionStartDate !== payload.recognitionEndDate) {
+      errors.push("line.recognitionStartDate and line.recognitionEndDate must match for MILESTONE.");
+    }
+  } else if (payload.recognitionMethod === "MANUAL") {
+    if (payload.recognitionStartDate || payload.recognitionEndDate) {
+      errors.push(
+        "line.recognitionStartDate and line.recognitionEndDate must be omitted for MANUAL."
+      );
+    }
+  }
+  if (
+    payload.recognitionStartDate &&
+    payload.recognitionEndDate &&
+    payload.recognitionStartDate > payload.recognitionEndDate
+  ) {
+    errors.push("line.recognitionStartDate cannot be greater than line.recognitionEndDate.");
+  }
+  if (!payload.reason) {
+    errors.push("reason is required for line patch.");
+  }
+
+  return { payload, errors };
+}
+
+export function buildContractLinkAdjustmentPayload(form) {
+  return {
+    linkId: toPositiveInt(form?.linkId),
+    nextLinkedAmountTxn: toOptionalNumber(form?.nextLinkedAmountTxn),
+    nextLinkedAmountBase: toOptionalNumber(form?.nextLinkedAmountBase),
+    reason: String(form?.reason || "").trim(),
+  };
+}
+
+export function validateContractLinkAdjustmentForm(form) {
+  const payload = buildContractLinkAdjustmentPayload(form);
+  const errors = [];
+
+  if (!payload.linkId) {
+    errors.push("linkId is required.");
+  }
+  if (
+    !Number.isFinite(payload.nextLinkedAmountTxn) ||
+    Number(payload.nextLinkedAmountTxn) <= 0
+  ) {
+    errors.push("nextLinkedAmountTxn must be > 0.");
+  }
+  if (
+    !Number.isFinite(payload.nextLinkedAmountBase) ||
+    Number(payload.nextLinkedAmountBase) <= 0
+  ) {
+    errors.push("nextLinkedAmountBase must be > 0.");
+  }
+  if (!payload.reason) {
+    errors.push("reason is required.");
+  }
+
+  return { payload, errors };
+}
+
+export function buildContractLinkUnlinkPayload(form) {
+  return {
+    linkId: toPositiveInt(form?.linkId),
+    reason: String(form?.reason || "").trim(),
+  };
+}
+
+export function validateContractLinkUnlinkForm(form) {
+  const payload = buildContractLinkUnlinkPayload(form);
+  const errors = [];
+
+  if (!payload.linkId) {
+    errors.push("linkId is required.");
+  }
+  if (!payload.reason) {
+    errors.push("reason is required.");
+  }
+
+  return { payload, errors };
+}
+
+export function canAdjustContractLink(linkRow, gates = {}) {
+  const canWrite = Boolean(gates?.canLinkDocument);
+  if (!canWrite) {
+    return {
+      allowed: false,
+      reason: "Missing permission: contract.link_document",
+    };
+  }
+
+  const linkId = toPositiveInt(linkRow?.linkId ?? linkRow?.id);
+  if (!linkId) {
+    return {
+      allowed: false,
+      reason: "linkId is missing",
+    };
+  }
+
+  if (Boolean(linkRow?.isUnlinked)) {
+    return {
+      allowed: false,
+      reason: "Link is already unlinked",
+    };
+  }
+
+  return { allowed: true, reason: null };
+}
+
+export function canUnlinkContractLink(linkRow, gates = {}) {
+  const canWrite = Boolean(gates?.canLinkDocument);
+  if (!canWrite) {
+    return {
+      allowed: false,
+      reason: "Missing permission: contract.link_document",
+    };
+  }
+
+  const linkId = toPositiveInt(linkRow?.linkId ?? linkRow?.id);
+  if (!linkId) {
+    return {
+      allowed: false,
+      reason: "linkId is missing",
+    };
+  }
+
+  if (Boolean(linkRow?.isUnlinked)) {
+    return {
+      allowed: false,
+      reason: "Link is already unlinked",
+    };
+  }
+
+  return { allowed: true, reason: null };
 }
 
 export function canTransitionContractStatus(status, action) {

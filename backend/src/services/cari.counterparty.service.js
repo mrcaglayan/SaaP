@@ -977,6 +977,57 @@ export async function resolveCounterpartyScope(counterpartyId, tenantId) {
   };
 }
 
+const COUNTERPARTY_AR_ACCOUNT_CODE_SQL =
+  "CASE WHEN ar_coa.id IS NULL THEN NULL ELSE ar_acc.code END";
+const COUNTERPARTY_AR_ACCOUNT_NAME_SQL =
+  "CASE WHEN ar_coa.id IS NULL THEN NULL ELSE ar_acc.name END";
+const COUNTERPARTY_AP_ACCOUNT_CODE_SQL =
+  "CASE WHEN ap_coa.id IS NULL THEN NULL ELSE ap_acc.code END";
+const COUNTERPARTY_AP_ACCOUNT_NAME_SQL =
+  "CASE WHEN ap_coa.id IS NULL THEN NULL ELSE ap_acc.name END";
+
+const COUNTERPARTY_LIST_FROM_SQL = `
+     FROM counterparties c
+     LEFT JOIN payment_terms pt
+       ON pt.tenant_id = c.tenant_id
+      AND pt.legal_entity_id = c.legal_entity_id
+      AND pt.id = c.default_payment_term_id
+     LEFT JOIN accounts ar_acc
+       ON ar_acc.id = c.ar_account_id
+     LEFT JOIN charts_of_accounts ar_coa
+       ON ar_coa.id = ar_acc.coa_id
+      AND ar_coa.tenant_id = c.tenant_id
+     LEFT JOIN accounts ap_acc
+       ON ap_acc.id = c.ap_account_id
+     LEFT JOIN charts_of_accounts ap_coa
+       ON ap_coa.id = ap_acc.coa_id
+      AND ap_coa.tenant_id = c.tenant_id`;
+
+function resolveCounterpartyListSortExpression(sortBy) {
+  if (sortBy === "CODE") {
+    return "c.code";
+  }
+  if (sortBy === "NAME") {
+    return "c.name";
+  }
+  if (sortBy === "STATUS") {
+    return "c.status";
+  }
+  if (sortBy === "AR_ACCOUNT_CODE") {
+    return COUNTERPARTY_AR_ACCOUNT_CODE_SQL;
+  }
+  if (sortBy === "AR_ACCOUNT_NAME") {
+    return COUNTERPARTY_AR_ACCOUNT_NAME_SQL;
+  }
+  if (sortBy === "AP_ACCOUNT_CODE") {
+    return COUNTERPARTY_AP_ACCOUNT_CODE_SQL;
+  }
+  if (sortBy === "AP_ACCOUNT_NAME") {
+    return COUNTERPARTY_AP_ACCOUNT_NAME_SQL;
+  }
+  return "c.id";
+}
+
 export async function listCounterpartyRows({
   req,
   tenantId,
@@ -1009,16 +1060,44 @@ export async function listCounterpartyRows({
   }
 
   if (filters.q) {
-    conditions.push("(c.code LIKE ? OR c.name LIKE ?)");
-    params.push(`%${filters.q}%`, `%${filters.q}%`);
+    conditions.push(
+      `(
+        c.code LIKE ?
+        OR c.name LIKE ?
+        OR ${COUNTERPARTY_AR_ACCOUNT_CODE_SQL} LIKE ?
+        OR ${COUNTERPARTY_AR_ACCOUNT_NAME_SQL} LIKE ?
+        OR ${COUNTERPARTY_AP_ACCOUNT_CODE_SQL} LIKE ?
+        OR ${COUNTERPARTY_AP_ACCOUNT_NAME_SQL} LIKE ?
+      )`
+    );
+    const qLike = `%${filters.q}%`;
+    params.push(qLike, qLike, qLike, qLike, qLike, qLike);
+  }
+
+  if (filters.arAccountCode) {
+    conditions.push(`${COUNTERPARTY_AR_ACCOUNT_CODE_SQL} LIKE ?`);
+    params.push(`%${filters.arAccountCode}%`);
+  }
+  if (filters.arAccountName) {
+    conditions.push(`${COUNTERPARTY_AR_ACCOUNT_NAME_SQL} LIKE ?`);
+    params.push(`%${filters.arAccountName}%`);
+  }
+  if (filters.apAccountCode) {
+    conditions.push(`${COUNTERPARTY_AP_ACCOUNT_CODE_SQL} LIKE ?`);
+    params.push(`%${filters.apAccountCode}%`);
+  }
+  if (filters.apAccountName) {
+    conditions.push(`${COUNTERPARTY_AP_ACCOUNT_NAME_SQL} LIKE ?`);
+    params.push(`%${filters.apAccountName}%`);
   }
 
   const whereSql = conditions.join(" AND ");
+  const baseParams = [...params];
   const totalResult = await query(
     `SELECT COUNT(*) AS row_count
-     FROM counterparties c
+     ${COUNTERPARTY_LIST_FROM_SQL}
      WHERE ${whereSql}`,
-    params
+    baseParams
   );
   const total = Number(totalResult.rows?.[0]?.row_count || 0);
 
@@ -1026,27 +1105,17 @@ export async function listCounterpartyRows({
     Number.isInteger(filters.limit) && filters.limit > 0 ? filters.limit : 50;
   const safeOffset =
     Number.isInteger(filters.offset) && filters.offset >= 0 ? filters.offset : 0;
+  const sortExpression = resolveCounterpartyListSortExpression(filters.sortBy);
+  const sortDirection = filters.sortDir === "ASC" ? "ASC" : "DESC";
   const result = await query(
     `SELECT
         c.*,
         pt.code AS default_payment_term_code,
         pt.name AS default_payment_term_name,
-        CASE
-          WHEN ar_coa.id IS NULL THEN NULL
-          ELSE ar_acc.code
-        END AS ar_account_code,
-        CASE
-          WHEN ar_coa.id IS NULL THEN NULL
-          ELSE ar_acc.name
-        END AS ar_account_name,
-        CASE
-          WHEN ap_coa.id IS NULL THEN NULL
-          ELSE ap_acc.code
-        END AS ap_account_code,
-        CASE
-          WHEN ap_coa.id IS NULL THEN NULL
-          ELSE ap_acc.name
-        END AS ap_account_name,
+        ${COUNTERPARTY_AR_ACCOUNT_CODE_SQL} AS ar_account_code,
+        ${COUNTERPARTY_AR_ACCOUNT_NAME_SQL} AS ar_account_name,
+        ${COUNTERPARTY_AP_ACCOUNT_CODE_SQL} AS ap_account_code,
+        ${COUNTERPARTY_AP_ACCOUNT_NAME_SQL} AS ap_account_name,
         (
           SELECT cc.id
           FROM counterparty_contacts cc
@@ -1067,25 +1136,14 @@ export async function listCounterpartyRows({
           ORDER BY ca.id ASC
           LIMIT 1
         ) AS default_address_id
-     FROM counterparties c
-     LEFT JOIN payment_terms pt
-       ON pt.tenant_id = c.tenant_id
-      AND pt.legal_entity_id = c.legal_entity_id
-      AND pt.id = c.default_payment_term_id
-     LEFT JOIN accounts ar_acc
-       ON ar_acc.id = c.ar_account_id
-     LEFT JOIN charts_of_accounts ar_coa
-       ON ar_coa.id = ar_acc.coa_id
-      AND ar_coa.tenant_id = c.tenant_id
-     LEFT JOIN accounts ap_acc
-       ON ap_acc.id = c.ap_account_id
-     LEFT JOIN charts_of_accounts ap_coa
-       ON ap_coa.id = ap_acc.coa_id
-      AND ap_coa.tenant_id = c.tenant_id
+     ${COUNTERPARTY_LIST_FROM_SQL}
      WHERE ${whereSql}
-     ORDER BY c.id DESC
+     ORDER BY
+       (${sortExpression} IS NULL) ASC,
+       ${sortExpression} ${sortDirection},
+       c.id DESC
      LIMIT ${safeLimit} OFFSET ${safeOffset}`,
-    params
+    baseParams
   );
 
   return {

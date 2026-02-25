@@ -16,6 +16,60 @@ const CONTACT_STATUSES = ["ACTIVE", "INACTIVE"];
 const ADDRESS_STATUSES = ["ACTIVE", "INACTIVE"];
 const ADDRESS_TYPES = ["BILLING", "SHIPPING", "REGISTERED", "OTHER"];
 const LIST_ROLE_FILTERS = ["CUSTOMER", "VENDOR", "BOTH"];
+const LIST_SORT_DIRECTIONS = ["ASC", "DESC"];
+const LIST_SORT_FIELD_HINTS = [
+  "id",
+  "code",
+  "name",
+  "status",
+  "arAccountCode",
+  "arAccountName",
+  "apAccountCode",
+  "apAccountName",
+];
+
+function normalizeSortBy(value) {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return "ID";
+  }
+  const compact = raw.replace(/[\s_-]/g, "").toUpperCase();
+  if (compact === "ID") {
+    return "ID";
+  }
+  if (compact === "CODE") {
+    return "CODE";
+  }
+  if (compact === "NAME") {
+    return "NAME";
+  }
+  if (compact === "STATUS") {
+    return "STATUS";
+  }
+  if (compact === "ARACCOUNTCODE") {
+    return "AR_ACCOUNT_CODE";
+  }
+  if (compact === "ARACCOUNTNAME") {
+    return "AR_ACCOUNT_NAME";
+  }
+  if (compact === "APACCOUNTCODE") {
+    return "AP_ACCOUNT_CODE";
+  }
+  if (compact === "APACCOUNTNAME") {
+    return "AP_ACCOUNT_NAME";
+  }
+  throw badRequest(`sortBy must be one of ${LIST_SORT_FIELD_HINTS.join(", ")}`);
+}
+
+function normalizeSortDir(value) {
+  const raw = String(value || "")
+    .trim()
+    .toUpperCase();
+  if (!raw) {
+    return "DESC";
+  }
+  return normalizeEnum(raw, "sortDir", LIST_SORT_DIRECTIONS);
+}
 
 function parseOptionalBoolean(value, label) {
   if (value === undefined || value === null || value === "") {
@@ -184,7 +238,13 @@ export function parseCounterpartyReadFilters(req) {
   const tenantId = requireTenantId(req);
   const legalEntityId = optionalPositiveInt(req.query?.legalEntityId, "legalEntityId");
   const q = normalizeText(req.query?.q, "q", 120);
+  const arAccountCode = normalizeText(req.query?.arAccountCode, "arAccountCode", 120);
+  const arAccountName = normalizeText(req.query?.arAccountName, "arAccountName", 255);
+  const apAccountCode = normalizeText(req.query?.apAccountCode, "apAccountCode", 120);
+  const apAccountName = normalizeText(req.query?.apAccountName, "apAccountName", 255);
   const role = normalizeRoleFilter(req.query?.role);
+  const sortBy = normalizeSortBy(req.query?.sortBy);
+  const sortDir = normalizeSortDir(req.query?.sortDir);
 
   const statusRaw = String(req.query?.status || "")
     .trim()
@@ -199,8 +259,14 @@ export function parseCounterpartyReadFilters(req) {
     tenantId,
     legalEntityId,
     q,
+    arAccountCode,
+    arAccountName,
+    apAccountCode,
+    apAccountName,
     role,
     status,
+    sortBy,
+    sortDir,
     limit: pagination.limit,
     offset: pagination.offset,
   };

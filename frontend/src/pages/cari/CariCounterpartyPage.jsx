@@ -11,10 +11,16 @@ import { listLegalEntities } from "../../api/orgAdmin.js";
 import { useAuth } from "../../auth/useAuth.js";
 import CounterpartyForm from "./CounterpartyForm.jsx";
 import {
+  COUNTERPARTY_LIST_SORT_DIRECTIONS,
+  COUNTERPARTY_LIST_SORT_FIELDS,
   ROLE_FILTERS,
+  buildCounterpartyListParams,
   buildInitialCounterpartyForm,
+  createCounterpartyListFilters,
   mapCounterpartyApiError,
   mapDetailToCounterpartyForm,
+  normalizeCounterpartyListSortBy,
+  normalizeCounterpartyListSortDir,
   resolveCounterpartyAccountPickerGates,
   toPositiveInt,
 } from "./counterpartyFormUtils.js";
@@ -46,6 +52,22 @@ const PAGE_CONFIG = {
   },
 };
 
+const SORT_FIELD_LABELS = {
+  id: "Newest (ID)",
+  code: "Counterparty Code",
+  name: "Counterparty Name",
+  status: "Status",
+  arAccountCode: "AR Account Code",
+  arAccountName: "AR Account Name",
+  apAccountCode: "AP Account Code",
+  apAccountName: "AP Account Name",
+};
+
+const SORT_DIRECTION_LABELS = {
+  asc: "Ascending",
+  desc: "Descending",
+};
+
 function roleBadgeClass(role) {
   const normalized = String(role || "").toUpperCase();
   if (normalized === "BOTH") {
@@ -60,6 +82,18 @@ function roleBadgeClass(role) {
   return "bg-slate-200 text-slate-700";
 }
 
+function formatMappedAccountLabel(code, name) {
+  const codeText = String(code || "").trim();
+  const nameText = String(name || "").trim();
+  if (!codeText && !nameText) {
+    return "-";
+  }
+  if (codeText && nameText) {
+    return `${codeText} - ${nameText}`;
+  }
+  return codeText || nameText;
+}
+
 function normalizeFilterRole(value, fallback) {
   const normalized = String(value || "")
     .trim()
@@ -71,28 +105,6 @@ function normalizeFilterRole(value, fallback) {
     return fallback;
   }
   return normalized;
-}
-
-function createListFilters(roleDefault = "CUSTOMER") {
-  return {
-    legalEntityId: "",
-    status: "",
-    role: roleDefault,
-    q: "",
-    limit: 100,
-    offset: 0,
-  };
-}
-
-function buildListParams(filters) {
-  return {
-    legalEntityId: String(filters.legalEntityId || "").trim() || undefined,
-    status: String(filters.status || "").trim() || undefined,
-    role: String(filters.role || "").trim() || undefined,
-    q: String(filters.q || "").trim() || undefined,
-    limit: Number(filters.limit || 100),
-    offset: Number(filters.offset || 0),
-  };
 }
 
 function mapPaymentTermRows(response) {
@@ -152,7 +164,9 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
   const [createAccountsLoading, setCreateAccountsLoading] = useState(false);
   const [createAccountsError, setCreateAccountsError] = useState("");
 
-  const [filters, setFilters] = useState(() => createListFilters(config.roleDefault));
+  const [filters, setFilters] = useState(() =>
+    createCounterpartyListFilters(config.roleDefault)
+  );
   const [rows, setRows] = useState([]);
   const [totalRows, setTotalRows] = useState(0);
   const [listLoading, setListLoading] = useState(false);
@@ -183,7 +197,7 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
 
   useEffect(() => {
     setCreateForm(buildInitialCounterpartyForm(config.roleDefault));
-    setFilters(createListFilters(config.roleDefault));
+    setFilters(createCounterpartyListFilters(config.roleDefault));
     setRows([]);
     setTotalRows(0);
     setEditingId(null);
@@ -417,7 +431,7 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
     setListLoading(true);
     setListError("");
     try {
-      const response = await listCariCounterparties(buildListParams(nextFilters));
+      const response = await listCariCounterparties(buildCounterpartyListParams(nextFilters));
       setRows(Array.isArray(response?.rows) ? response.rows : []);
       setTotalRows(Number(response?.total || 0));
     } catch (err) {
@@ -500,6 +514,8 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
     const normalized = {
       ...filters,
       role: normalizeFilterRole(filters.role, config.roleDefault),
+      sortBy: normalizeCounterpartyListSortBy(filters.sortBy, "id"),
+      sortDir: normalizeCounterpartyListSortDir(filters.sortDir, "desc"),
     };
     loadCounterpartyRows(normalized);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -698,6 +714,110 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
                 placeholder="Search"
               />
             </div>
+
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-wide text-slate-600">
+                AR Account Code
+              </label>
+              <input
+                className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                type="text"
+                value={filters.arAccountCode}
+                onChange={(event) =>
+                  setFilters((prev) => ({ ...prev, arAccountCode: event.target.value }))
+                }
+                placeholder="Contains..."
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-wide text-slate-600">
+                AR Account Name
+              </label>
+              <input
+                className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                type="text"
+                value={filters.arAccountName}
+                onChange={(event) =>
+                  setFilters((prev) => ({ ...prev, arAccountName: event.target.value }))
+                }
+                placeholder="Contains..."
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-wide text-slate-600">
+                AP Account Code
+              </label>
+              <input
+                className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                type="text"
+                value={filters.apAccountCode}
+                onChange={(event) =>
+                  setFilters((prev) => ({ ...prev, apAccountCode: event.target.value }))
+                }
+                placeholder="Contains..."
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-wide text-slate-600">
+                AP Account Name
+              </label>
+              <input
+                className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                type="text"
+                value={filters.apAccountName}
+                onChange={(event) =>
+                  setFilters((prev) => ({ ...prev, apAccountName: event.target.value }))
+                }
+                placeholder="Contains..."
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-wide text-slate-600">
+                Sort Field
+              </label>
+              <select
+                className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                value={normalizeCounterpartyListSortBy(filters.sortBy, "id")}
+                onChange={(event) =>
+                  setFilters((prev) => ({
+                    ...prev,
+                    sortBy: normalizeCounterpartyListSortBy(event.target.value, "id"),
+                  }))
+                }
+              >
+                {COUNTERPARTY_LIST_SORT_FIELDS.map((sortField) => (
+                  <option key={`counterparty-sort-field-${sortField}`} value={sortField}>
+                    {SORT_FIELD_LABELS[sortField] || sortField}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-wide text-slate-600">
+                Sort Direction
+              </label>
+              <select
+                className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                value={normalizeCounterpartyListSortDir(filters.sortDir, "desc")}
+                onChange={(event) =>
+                  setFilters((prev) => ({
+                    ...prev,
+                    sortDir: normalizeCounterpartyListSortDir(event.target.value, "desc"),
+                  }))
+                }
+              >
+                {COUNTERPARTY_LIST_SORT_DIRECTIONS.map((sortDir) => (
+                  <option key={`counterparty-sort-dir-${sortDir}`} value={sortDir}>
+                    {SORT_DIRECTION_LABELS[sortDir] || sortDir}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
 
           <div className="mt-3 flex gap-2">
@@ -713,7 +833,7 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
               type="button"
               className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700"
               onClick={() => {
-                const reset = createListFilters(config.roleDefault);
+                const reset = createCounterpartyListFilters(config.roleDefault);
                 setFilters(reset);
                 loadCounterpartyRows(reset);
               }}
@@ -738,6 +858,8 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
                   <th className="px-3 py-2">Role</th>
                   <th className="px-3 py-2">Status</th>
                   <th className="px-3 py-2">Legal Entity</th>
+                  <th className="px-3 py-2">AR Account</th>
+                  <th className="px-3 py-2">AP Account</th>
                   <th className="px-3 py-2">Payment Term</th>
                   <th className="px-3 py-2 text-right">Actions</th>
                 </tr>
@@ -762,6 +884,12 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
                         row.legalEntityId}
                     </td>
                     <td className="px-3 py-2 text-slate-700">
+                      {formatMappedAccountLabel(row.arAccountCode, row.arAccountName)}
+                    </td>
+                    <td className="px-3 py-2 text-slate-700">
+                      {formatMappedAccountLabel(row.apAccountCode, row.apAccountName)}
+                    </td>
+                    <td className="px-3 py-2 text-slate-700">
                       {row.defaultPaymentTermCode || row.defaultPaymentTermId || "-"}
                     </td>
                     <td className="px-3 py-2 text-right">
@@ -780,7 +908,7 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
                   <tr>
                     <td
                       className="px-3 py-6 text-center text-sm text-slate-500"
-                      colSpan={7}
+                      colSpan={9}
                     >
                       {listLoading ? "Loading..." : "No rows found for current filters."}
                     </td>

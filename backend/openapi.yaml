@@ -4327,7 +4327,7 @@
             "in": "query",
             "name": "q",
             "required": false,
-            "description": "Code/name search",
+            "description": "Code/name/AR/AP enrichment search",
             "schema": {
               "type": "string"
             }
@@ -4356,6 +4356,74 @@
               "enum": [
                 "ACTIVE",
                 "INACTIVE"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "arAccountCode",
+            "required": false,
+            "description": "AR account code contains filter",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "arAccountName",
+            "required": false,
+            "description": "AR account name contains filter",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "apAccountCode",
+            "required": false,
+            "description": "AP account code contains filter",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "apAccountName",
+            "required": false,
+            "description": "AP account name contains filter",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sortBy",
+            "required": false,
+            "description": "List sort field",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "id",
+                "code",
+                "name",
+                "status",
+                "arAccountCode",
+                "arAccountName",
+                "apAccountCode",
+                "apAccountName"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "sortDir",
+            "required": false,
+            "description": "List sort direction",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "asc",
+                "desc"
               ]
             }
           },
@@ -6752,6 +6820,100 @@
         }
       }
     },
+    "/api/v1/contracts/{contractId}/amend": {
+      "post": {
+        "tags": [
+          "Contracts"
+        ],
+        "operationId": "postApiV1ContractsContractidAmend",
+        "summary": "Amend ACTIVE/SUSPENDED contract with version increment",
+        "responses": {
+          "200": {
+            "description": "Contract amended",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContractMutationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "contractId",
+            "required": true,
+            "description": "contractId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContractAmendInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/contracts/{contractId}/amendments": {
+      "get": {
+        "tags": [
+          "Contracts"
+        ],
+        "operationId": "getApiV1ContractsContractidAmendments",
+        "summary": "List contract amendment/version history",
+        "responses": {
+          "200": {
+            "description": "Contract amendment history",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContractAmendmentsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "contractId",
+            "required": true,
+            "description": "contractId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      }
+    },
     "/api/v1/contracts/{contractId}/cancel": {
       "post": {
         "tags": [
@@ -6898,6 +7060,192 @@
         ]
       }
     },
+    "/api/v1/contracts/{contractId}/documents/{linkId}/adjust": {
+      "post": {
+        "tags": [
+          "Contracts"
+        ],
+        "operationId": "postApiV1ContractsContractidDocumentsLinkidAdjust",
+        "summary": "Adjust contract-document link amount via append-only event",
+        "responses": {
+          "200": {
+            "description": "Contract-document link adjusted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContractLinkMutationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "contractId",
+            "required": true,
+            "description": "contractId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "path",
+            "name": "linkId",
+            "required": true,
+            "description": "linkId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContractLinkAdjustInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/contracts/{contractId}/documents/{linkId}/unlink": {
+      "post": {
+        "tags": [
+          "Contracts"
+        ],
+        "operationId": "postApiV1ContractsContractidDocumentsLinkidUnlink",
+        "summary": "Unlink contract-document link via append-only event",
+        "responses": {
+          "200": {
+            "description": "Contract-document link unlinked",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContractLinkMutationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "contractId",
+            "required": true,
+            "description": "contractId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "path",
+            "name": "linkId",
+            "required": true,
+            "description": "linkId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContractLinkUnlinkInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/contracts/{contractId}/lines/{lineId}": {
+      "patch": {
+        "tags": [
+          "Contracts"
+        ],
+        "operationId": "patchApiV1ContractsContractidLinesLineid",
+        "summary": "Patch one contract line (partial update) with version increment",
+        "responses": {
+          "200": {
+            "description": "Contract line patched",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContractLinePatchResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "contractId",
+            "required": true,
+            "description": "contractId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "path",
+            "name": "lineId",
+            "required": true,
+            "description": "lineId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContractLinePatchInput"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/contracts/{contractId}/link-document": {
       "post": {
         "tags": [
@@ -6948,6 +7296,77 @@
             }
           }
         }
+      }
+    },
+    "/api/v1/contracts/{contractId}/linkable-documents": {
+      "get": {
+        "tags": [
+          "Contracts"
+        ],
+        "operationId": "getApiV1ContractsContractidLinkableDocuments",
+        "summary": "List contract-scoped linkable documents (no direct cari.doc.read dependency)",
+        "responses": {
+          "200": {
+            "description": "Contract-scoped linkable documents",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContractLinkableDocumentsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "contractId",
+            "required": true,
+            "description": "contractId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "description": "Search by document no or counterparty snapshot",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "description": "Page size",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "description": "Page offset",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ]
       }
     },
     "/api/v1/contracts/{contractId}/suspend": {
@@ -12485,11 +12904,11 @@
           },
           "lineAmountTxn": {
             "type": "number",
-            "exclusiveMinimum": 0
+            "description": "Signed non-zero amount; negative values model credit/adjustment lines."
           },
           "lineAmountBase": {
             "type": "number",
-            "exclusiveMinimum": 0
+            "description": "Signed non-zero amount; negative values model credit/adjustment lines."
           },
           "recognitionMethod": {
             "type": "string",
@@ -12593,6 +13012,90 @@
           "lines"
         ]
       },
+      "ContractAmendInput": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ContractUpsertInput"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "reason": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 500
+              }
+            },
+            "required": [
+              "reason"
+            ]
+          }
+        ]
+      },
+      "ContractLinePatchInput": {
+        "type": "object",
+        "properties": {
+          "description": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255
+          },
+          "lineAmountTxn": {
+            "type": "number",
+            "description": "Signed non-zero amount; negative values model credit/adjustment lines."
+          },
+          "lineAmountBase": {
+            "type": "number",
+            "description": "Signed non-zero amount; negative values model credit/adjustment lines."
+          },
+          "recognitionMethod": {
+            "type": "string",
+            "enum": [
+              "STRAIGHT_LINE",
+              "MILESTONE",
+              "MANUAL"
+            ],
+            "description": "STRAIGHT_LINE requires start/end dates; MILESTONE requires start=end (single milestone date); MANUAL requires both dates omitted."
+          },
+          "recognitionStartDate": {
+            "type": "string",
+            "format": "date",
+            "nullable": true,
+            "description": "STRAIGHT_LINE: required. MILESTONE: required and must equal recognitionEndDate. MANUAL: must be null."
+          },
+          "recognitionEndDate": {
+            "type": "string",
+            "format": "date",
+            "nullable": true,
+            "description": "STRAIGHT_LINE: required. MILESTONE: required and must equal recognitionStartDate. MANUAL: must be null."
+          },
+          "deferredAccountId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "revenueAccountId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ACTIVE",
+              "INACTIVE"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          }
+        },
+        "required": [
+          "reason"
+        ]
+      },
       "ContractSummaryRow": {
         "type": "object",
         "properties": {
@@ -12631,6 +13134,10 @@
               "CLOSED",
               "CANCELLED"
             ]
+          },
+          "versionNo": {
+            "type": "integer",
+            "minimum": 1
           },
           "currencyCode": {
             "type": "string",
@@ -12682,6 +13189,7 @@
           "contractNo",
           "contractType",
           "status",
+          "versionNo",
           "currencyCode",
           "startDate",
           "totalAmountTxn",
@@ -12715,17 +13223,20 @@
               "STRAIGHT_LINE",
               "MILESTONE",
               "MANUAL"
-            ]
+            ],
+            "description": "STRAIGHT_LINE requires start/end dates; MILESTONE requires start=end (single milestone date); MANUAL requires both dates omitted."
           },
           "recognitionStartDate": {
             "type": "string",
             "format": "date",
-            "nullable": true
+            "nullable": true,
+            "description": "STRAIGHT_LINE: required. MILESTONE: required and must equal recognitionEndDate. MANUAL: must be null."
           },
           "recognitionEndDate": {
             "type": "string",
             "format": "date",
-            "nullable": true
+            "nullable": true,
+            "description": "STRAIGHT_LINE: required. MILESTONE: required and must equal recognitionStartDate. MANUAL: must be null."
           },
           "deferredAccountId": {
             "type": "integer",
@@ -12850,6 +13361,98 @@
           "row"
         ]
       },
+      "ContractLinePatchResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "row": {
+            "$ref": "#/components/schemas/ContractSummaryRow"
+          },
+          "line": {
+            "$ref": "#/components/schemas/ContractLineRow"
+          }
+        },
+        "required": [
+          "tenantId",
+          "row",
+          "line"
+        ]
+      },
+      "ContractAmendmentRow": {
+        "type": "object",
+        "properties": {
+          "amendmentId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "contractId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "versionNo": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "amendmentType": {
+            "type": "string",
+            "enum": [
+              "FULL_REPLACE",
+              "LINE_PATCH"
+            ]
+          },
+          "reason": {
+            "type": "string"
+          },
+          "payload": {
+            "type": "object",
+            "nullable": true,
+            "additionalProperties": true
+          },
+          "createdByUserId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "createdAt": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "amendmentId",
+          "contractId",
+          "versionNo",
+          "amendmentType",
+          "reason",
+          "createdByUserId"
+        ]
+      },
+      "ContractAmendmentsResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "contractId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ContractAmendmentRow"
+            }
+          }
+        },
+        "required": [
+          "tenantId",
+          "contractId",
+          "rows"
+        ]
+      },
       "ContractLinkDocumentInput": {
         "type": "object",
         "properties": {
@@ -12872,6 +13475,11 @@
           "linkedAmountBase": {
             "type": "number",
             "exclusiveMinimum": 0
+          },
+          "linkFxRate": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "nullable": true
           }
         },
         "required": [
@@ -12881,9 +13489,53 @@
           "linkedAmountBase"
         ]
       },
+      "ContractLinkAdjustInput": {
+        "type": "object",
+        "properties": {
+          "nextLinkedAmountTxn": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "nextLinkedAmountBase": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          }
+        },
+        "required": [
+          "nextLinkedAmountTxn",
+          "nextLinkedAmountBase",
+          "reason"
+        ]
+      },
+      "ContractLinkUnlinkInput": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          }
+        },
+        "required": [
+          "reason"
+        ]
+      },
       "ContractDocumentLinkRow": {
         "type": "object",
         "properties": {
+          "linkId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "contractId": {
+            "type": "integer",
+            "minimum": 1
+          },
           "linkType": {
             "type": "string",
             "enum": [
@@ -12898,6 +13550,25 @@
           "linkedAmountBase": {
             "type": "number"
           },
+          "originalLinkedAmountTxn": {
+            "type": "number"
+          },
+          "originalLinkedAmountBase": {
+            "type": "number"
+          },
+          "adjustmentsDeltaTxn": {
+            "type": "number"
+          },
+          "adjustmentsDeltaBase": {
+            "type": "number"
+          },
+          "adjustmentCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "isUnlinked": {
+            "type": "boolean"
+          },
           "createdAt": {
             "type": "string",
             "nullable": true
@@ -12909,6 +13580,18 @@
           "cariDocumentId": {
             "type": "integer",
             "minimum": 1
+          },
+          "contractCurrencyCodeSnapshot": {
+            "type": "string",
+            "nullable": true
+          },
+          "documentCurrencyCodeSnapshot": {
+            "type": "string",
+            "nullable": true
+          },
+          "linkFxRateSnapshot": {
+            "type": "number",
+            "nullable": true
           },
           "documentNo": {
             "type": "string",
@@ -12941,11 +13624,22 @@
           }
         },
         "required": [
+          "linkId",
+          "contractId",
           "linkType",
           "linkedAmountTxn",
           "linkedAmountBase",
+          "originalLinkedAmountTxn",
+          "originalLinkedAmountBase",
+          "adjustmentsDeltaTxn",
+          "adjustmentsDeltaBase",
+          "adjustmentCount",
+          "isUnlinked",
           "createdByUserId",
-          "cariDocumentId"
+          "cariDocumentId",
+          "contractCurrencyCodeSnapshot",
+          "documentCurrencyCodeSnapshot",
+          "linkFxRateSnapshot"
         ]
       },
       "ContractDocumentsResponse": {
@@ -12970,6 +13664,97 @@
           "tenantId",
           "contractId",
           "rows"
+        ]
+      },
+      "ContractLinkableDocumentRow": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "documentNo": {
+            "type": "string",
+            "nullable": true
+          },
+          "direction": {
+            "type": "string",
+            "enum": [
+              "AR",
+              "AP"
+            ],
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "nullable": true
+          },
+          "documentDate": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "currencyCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "amountTxn": {
+            "type": "number",
+            "nullable": true
+          },
+          "amountBase": {
+            "type": "number",
+            "nullable": true
+          },
+          "openAmountTxn": {
+            "type": "number",
+            "nullable": true
+          },
+          "openAmountBase": {
+            "type": "number",
+            "nullable": true
+          },
+          "fxRate": {
+            "type": "number",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "ContractLinkableDocumentsResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "contractId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ContractLinkableDocumentRow"
+            }
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "tenantId",
+          "contractId",
+          "rows",
+          "limit",
+          "offset"
         ]
       },
       "ContractLinkMutationResponse": {

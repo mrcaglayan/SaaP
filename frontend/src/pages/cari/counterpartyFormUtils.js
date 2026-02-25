@@ -3,6 +3,26 @@ export const CONTACT_STATUSES = ["ACTIVE", "INACTIVE"];
 export const ADDRESS_STATUSES = ["ACTIVE", "INACTIVE"];
 export const ADDRESS_TYPES = ["BILLING", "SHIPPING", "REGISTERED", "OTHER"];
 export const ROLE_FILTERS = ["CUSTOMER", "VENDOR", "BOTH"];
+export const COUNTERPARTY_LIST_SORT_FIELDS = [
+  "id",
+  "code",
+  "name",
+  "status",
+  "arAccountCode",
+  "arAccountName",
+  "apAccountCode",
+  "apAccountName",
+];
+export const COUNTERPARTY_LIST_SORT_DIRECTIONS = ["asc", "desc"];
+function toSortLookup(value) {
+  return String(value || "")
+    .trim()
+    .replace(/[\s_-]/g, "")
+    .toLowerCase();
+}
+const COUNTERPARTY_LIST_SORT_FIELD_MAP = new Map(
+  COUNTERPARTY_LIST_SORT_FIELDS.map((field) => [toSortLookup(field), field])
+);
 
 export function resolveCounterpartyAccountPickerGates(permissionCodes = []) {
   const codes = Array.isArray(permissionCodes)
@@ -20,6 +40,64 @@ export function resolveCounterpartyAccountPickerGates(permissionCodes = []) {
 export function toPositiveInt(value) {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function normalizeFilterText(value) {
+  return String(value || "").trim();
+}
+
+export function normalizeCounterpartyListSortBy(value, fallback = "id") {
+  const normalized = normalizeFilterText(value);
+  const fallbackResolved = COUNTERPARTY_LIST_SORT_FIELD_MAP.get(toSortLookup(fallback)) || "id";
+  if (!normalized) {
+    return fallbackResolved;
+  }
+  const lookup = toSortLookup(normalized);
+  return COUNTERPARTY_LIST_SORT_FIELD_MAP.get(lookup) || fallbackResolved;
+}
+
+export function normalizeCounterpartyListSortDir(value, fallback = "desc") {
+  const normalized = normalizeFilterText(value).toLowerCase();
+  if (!normalized) {
+    return fallback;
+  }
+  return COUNTERPARTY_LIST_SORT_DIRECTIONS.includes(normalized)
+    ? normalized
+    : fallback;
+}
+
+export function createCounterpartyListFilters(roleDefault = "CUSTOMER") {
+  return {
+    legalEntityId: "",
+    status: "",
+    role: roleDefault,
+    q: "",
+    arAccountCode: "",
+    arAccountName: "",
+    apAccountCode: "",
+    apAccountName: "",
+    sortBy: "id",
+    sortDir: "desc",
+    limit: 100,
+    offset: 0,
+  };
+}
+
+export function buildCounterpartyListParams(filters = {}) {
+  return {
+    legalEntityId: normalizeFilterText(filters.legalEntityId) || undefined,
+    status: normalizeFilterText(filters.status) || undefined,
+    role: normalizeFilterText(filters.role) || undefined,
+    q: normalizeFilterText(filters.q) || undefined,
+    arAccountCode: normalizeFilterText(filters.arAccountCode) || undefined,
+    arAccountName: normalizeFilterText(filters.arAccountName) || undefined,
+    apAccountCode: normalizeFilterText(filters.apAccountCode) || undefined,
+    apAccountName: normalizeFilterText(filters.apAccountName) || undefined,
+    sortBy: normalizeCounterpartyListSortBy(filters.sortBy, "id"),
+    sortDir: normalizeCounterpartyListSortDir(filters.sortDir, "desc"),
+    limit: Number(filters.limit || 100),
+    offset: Number(filters.offset || 0),
+  };
 }
 
 function toTrimmed(value) {

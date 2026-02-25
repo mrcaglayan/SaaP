@@ -659,6 +659,28 @@ async function getCounterparty(token, counterpartyId) {
   return response.json?.row || {};
 }
 
+async function listCounterparties(token, filters = {}) {
+  const searchParams = new URLSearchParams();
+  for (const [key, value] of Object.entries(filters)) {
+    if (value === undefined || value === null || value === "") {
+      continue;
+    }
+    searchParams.set(key, String(value));
+  }
+  const querySuffix = searchParams.toString();
+  const requestPath = querySuffix
+    ? `/api/v1/cari/counterparties?${querySuffix}`
+    : "/api/v1/cari/counterparties";
+
+  const response = await apiRequest({
+    token,
+    method: "GET",
+    requestPath,
+    expectedStatus: 200,
+  });
+  return response.json || {};
+}
+
 async function createAndPostDocument({
   token,
   tenantId,
@@ -856,6 +878,148 @@ async function main() {
     assert(
       Boolean(mappedVendor.apAccountCode) && Boolean(mappedVendor.apAccountName),
       "Mapped vendor should return AP enrichment fields"
+    );
+
+    const pr26ArAlpha = await createCounterparty({
+      token,
+      legalEntityId: fixturesA.legalEntityAId,
+      code: `CP26_AR_A_${stamp}`,
+      name: "PR26 AR Alpha",
+      isCustomer: true,
+      isVendor: false,
+      paymentTermId: fixturesA.paymentTermAId,
+      arAccountId: fixturesA.accounts.arControlDefault,
+      apAccountId: null,
+    });
+    const pr26ArBeta = await createCounterparty({
+      token,
+      legalEntityId: fixturesA.legalEntityAId,
+      code: `CP26_AR_B_${stamp}`,
+      name: "PR26 AR Beta",
+      isCustomer: true,
+      isVendor: false,
+      paymentTermId: fixturesA.paymentTermAId,
+      arAccountId: fixturesA.accounts.arOverridePrimary,
+      apAccountId: null,
+    });
+    const pr26ApAlpha = await createCounterparty({
+      token,
+      legalEntityId: fixturesA.legalEntityAId,
+      code: `CP26_AP_A_${stamp}`,
+      name: "PR26 AP Alpha",
+      isCustomer: false,
+      isVendor: true,
+      paymentTermId: fixturesA.paymentTermAId,
+      arAccountId: null,
+      apAccountId: fixturesA.accounts.apControlDefault,
+    });
+    const pr26NoMap = await createCounterparty({
+      token,
+      legalEntityId: fixturesA.legalEntityAId,
+      code: `CP26_NONE_${stamp}`,
+      name: "PR26 No Mapping",
+      isCustomer: true,
+      isVendor: false,
+      paymentTermId: fixturesA.paymentTermAId,
+      arAccountId: null,
+      apAccountId: null,
+    });
+
+    const pr26ArAlphaId = toNumber(pr26ArAlpha.id);
+    const pr26ArBetaId = toNumber(pr26ArBeta.id);
+    const pr26ApAlphaId = toNumber(pr26ApAlpha.id);
+    const pr26NoMapId = toNumber(pr26NoMap.id);
+    assert(
+      pr26ArAlphaId > 0 && pr26ArBetaId > 0 && pr26ApAlphaId > 0 && pr26NoMapId > 0,
+      "PR26 counterparties should be created"
+    );
+
+    const qByArCodeResponse = await listCounterparties(token, {
+      q: pr26ArAlpha.arAccountCode,
+      limit: 100,
+      offset: 0,
+    });
+    const qByArCodeRows = Array.isArray(qByArCodeResponse.rows) ? qByArCodeResponse.rows : [];
+    assert(
+      qByArCodeRows.some((row) => toNumber(row.id) === pr26ArAlphaId),
+      "q search should match AR account code enrichment"
+    );
+
+    const filterArCodeResponse = await listCounterparties(token, {
+      q: `CP26_`,
+      arAccountCode: pr26ArAlpha.arAccountCode,
+      limit: 100,
+      offset: 0,
+    });
+    const filterArCodeRows = Array.isArray(filterArCodeResponse.rows)
+      ? filterArCodeResponse.rows
+      : [];
+    assert(
+      filterArCodeRows.length === 1 && toNumber(filterArCodeRows[0]?.id) === pr26ArAlphaId,
+      "arAccountCode filter should scope to matching enrichment row"
+    );
+
+    const filterApNameResponse = await listCounterparties(token, {
+      q: `CP26_`,
+      apAccountName: "AP Control",
+      limit: 100,
+      offset: 0,
+    });
+    const filterApNameRows = Array.isArray(filterApNameResponse.rows)
+      ? filterApNameResponse.rows
+      : [];
+    assert(
+      filterApNameRows.length === 1 && toNumber(filterApNameRows[0]?.id) === pr26ApAlphaId,
+      "apAccountName filter should scope to matching enrichment row"
+    );
+
+    const sortedArResponse = await listCounterparties(token, {
+      q: `CP26_`,
+      role: "CUSTOMER",
+      sortBy: "arAccountCode",
+      sortDir: "asc",
+      limit: 100,
+      offset: 0,
+    });
+    const sortedArRows = Array.isArray(sortedArResponse.rows) ? sortedArResponse.rows : [];
+    const sortedArIndexes = {
+      alpha: sortedArRows.findIndex((row) => toNumber(row.id) === pr26ArAlphaId),
+      beta: sortedArRows.findIndex((row) => toNumber(row.id) === pr26ArBetaId),
+      noMap: sortedArRows.findIndex((row) => toNumber(row.id) === pr26NoMapId),
+    };
+    assert(
+      sortedArIndexes.alpha >= 0 && sortedArIndexes.beta >= 0 && sortedArIndexes.noMap >= 0,
+      "Sorted AR response should include all PR26 customer rows"
+    );
+    assert(
+      sortedArIndexes.alpha < sortedArIndexes.beta,
+      "sortBy=arAccountCode&sortDir=asc should sort mapped AR codes ascending"
+    );
+    assert(
+      sortedArIndexes.noMap > sortedArIndexes.beta,
+      "sortBy=arAccountCode should place null AR mappings after non-null rows"
+    );
+
+    const invalidSortBy = await apiRequest({
+      token,
+      method: "GET",
+      requestPath: "/api/v1/cari/counterparties?sortBy=not_a_real_field",
+      expectedStatus: 400,
+    });
+    assert(
+      messageIncludes(invalidSortBy, "sortby must be one of"),
+      "Invalid sortBy should fail with validation error"
+    );
+
+    const invalidSortDir = await apiRequest({
+      token,
+      method: "GET",
+      requestPath: "/api/v1/cari/counterparties?sortDir=sideways",
+      expectedStatus: 400,
+    });
+    assert(
+      messageIncludes(invalidSortDir, "sortdir must be one of"),
+      "Invalid sortDir should fail with validation error"
     );
 
     const roleMismatchAr = await apiRequest({
@@ -1326,7 +1490,7 @@ async function main() {
       "Settlement should fail when mapped AR account becomes non-postable after save"
     );
 
-    console.log("PR19 counterparty account mapping + posting resolution test passed.");
+    console.log("PR19/PR26 counterparty account mapping + enrichment list behavior test passed.");
     console.log(
       JSON.stringify(
         {

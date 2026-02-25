@@ -51,10 +51,10 @@ async function main() {
     implementedRoutesBlock.includes('element: <ContractsPage />'),
     "/app/contracts must use <ContractsPage />"
   );
-  assert(
-    implementedRoutesBlock.includes('appPath: "/app/gelecek-yillar-gelirleri"'),
-    "missing /app/gelecek-yillar-gelirleri in implementedRoutes"
-  );
+  const hasRevenueRoutePath =
+    implementedRoutesBlock.includes('appPath: "/app/gelecek-yillar-gelirleri"') ||
+    implementedRoutesBlock.includes("appPath: PERIODIZATION_REVENUE_CANONICAL_PATH");
+  assert(hasRevenueRoutePath, "missing /app/gelecek-yillar-gelirleri in implementedRoutes");
   assert(
     implementedRoutesBlock.includes('element: <FutureYearRevenuePage />'),
     "/app/gelecek-yillar-gelirleri must use <FutureYearRevenuePage />"

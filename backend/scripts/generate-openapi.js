@@ -683,9 +683,32 @@ function applyCariOperationOverrides(specObject) {
 
   const counterpartyListQueryParams = [
     queryParamInt("legalEntityId", false, "Legal entity filter"),
-    queryParam("q", { type: "string" }, false, "Code/name search"),
+    queryParam("q", { type: "string" }, false, "Code/name/AR/AP enrichment search"),
     queryParam("role", { type: "string", enum: ["CUSTOMER", "VENDOR", "BOTH"] }, false, "Role filter"),
     queryParam("status", { type: "string", enum: ["ACTIVE", "INACTIVE"] }, false, "Status filter"),
+    queryParam("arAccountCode", { type: "string" }, false, "AR account code contains filter"),
+    queryParam("arAccountName", { type: "string" }, false, "AR account name contains filter"),
+    queryParam("apAccountCode", { type: "string" }, false, "AP account code contains filter"),
+    queryParam("apAccountName", { type: "string" }, false, "AP account name contains filter"),
+    queryParam(
+      "sortBy",
+      {
+        type: "string",
+        enum: [
+          "id",
+          "code",
+          "name",
+          "status",
+          "arAccountCode",
+          "arAccountName",
+          "apAccountCode",
+          "apAccountName",
+        ],
+      },
+      false,
+      "List sort field"
+    ),
+    queryParam("sortDir", { type: "string", enum: ["asc", "desc"] }, false, "List sort direction"),
     queryParam("limit", { type: "integer", minimum: 1 }, false, "Page size"),
     queryParam("offset", nonNegativeInt, false, "Page offset"),
   ];
@@ -820,6 +843,28 @@ function applyContractsOperationOverrides(specObject) {
     );
   }
 
+  const amendOperation = paths["/api/v1/contracts/{contractId}/amend"]?.post;
+  if (amendOperation) {
+    amendOperation.summary = "Amend ACTIVE/SUSPENDED contract with version increment";
+    amendOperation.requestBody = bodyFromRef("#/components/schemas/ContractAmendInput");
+    amendOperation.responses = withStandardResponses(
+      "200",
+      "Contract amended",
+      "#/components/schemas/ContractMutationResponse"
+    );
+  }
+
+  const patchLineOperation = paths["/api/v1/contracts/{contractId}/lines/{lineId}"]?.patch;
+  if (patchLineOperation) {
+    patchLineOperation.summary = "Patch one contract line (partial update) with version increment";
+    patchLineOperation.requestBody = bodyFromRef("#/components/schemas/ContractLinePatchInput");
+    patchLineOperation.responses = withStandardResponses(
+      "200",
+      "Contract line patched",
+      "#/components/schemas/ContractLinePatchResponse"
+    );
+  }
+
   const lifecycleMappings = [
     ["/api/v1/contracts/{contractId}/activate", "Activate contract"],
     ["/api/v1/contracts/{contractId}/suspend", "Suspend contract"],
@@ -854,6 +899,32 @@ function applyContractsOperationOverrides(specObject) {
     };
   }
 
+  const adjustLinkOperation = paths["/api/v1/contracts/{contractId}/documents/{linkId}/adjust"]?.post;
+  if (adjustLinkOperation) {
+    adjustLinkOperation.summary = "Adjust contract-document link amount via append-only event";
+    adjustLinkOperation.requestBody = bodyFromRef(
+      "#/components/schemas/ContractLinkAdjustInput"
+    );
+    adjustLinkOperation.responses = withStandardResponses(
+      "200",
+      "Contract-document link adjusted",
+      "#/components/schemas/ContractLinkMutationResponse"
+    );
+  }
+
+  const unlinkLinkOperation = paths["/api/v1/contracts/{contractId}/documents/{linkId}/unlink"]?.post;
+  if (unlinkLinkOperation) {
+    unlinkLinkOperation.summary = "Unlink contract-document link via append-only event";
+    unlinkLinkOperation.requestBody = bodyFromRef(
+      "#/components/schemas/ContractLinkUnlinkInput"
+    );
+    unlinkLinkOperation.responses = withStandardResponses(
+      "200",
+      "Contract-document link unlinked",
+      "#/components/schemas/ContractLinkMutationResponse"
+    );
+  }
+
   const documentsOperation = paths["/api/v1/contracts/{contractId}/documents"]?.get;
   if (documentsOperation) {
     documentsOperation.summary = "List contract-document links with minimal document summary";
@@ -861,6 +932,33 @@ function applyContractsOperationOverrides(specObject) {
       "200",
       "Contract-document links",
       "#/components/schemas/ContractDocumentsResponse"
+    );
+  }
+
+  const linkableDocumentsOperation =
+    paths["/api/v1/contracts/{contractId}/linkable-documents"]?.get;
+  if (linkableDocumentsOperation) {
+    linkableDocumentsOperation.summary =
+      "List contract-scoped linkable documents (no direct cari.doc.read dependency)";
+    mergeOperationParameters(linkableDocumentsOperation, [
+      queryParam("q", { type: "string" }, false, "Search by document no or counterparty snapshot"),
+      queryParam("limit", { type: "integer", minimum: 1 }, false, "Page size"),
+      queryParam("offset", nonNegativeInt, false, "Page offset"),
+    ]);
+    linkableDocumentsOperation.responses = withStandardResponses(
+      "200",
+      "Contract-scoped linkable documents",
+      "#/components/schemas/ContractLinkableDocumentsResponse"
+    );
+  }
+
+  const amendmentsOperation = paths["/api/v1/contracts/{contractId}/amendments"]?.get;
+  if (amendmentsOperation) {
+    amendmentsOperation.summary = "List contract amendment/version history";
+    amendmentsOperation.responses = withStandardResponses(
+      "200",
+      "Contract amendment history",
+      "#/components/schemas/ContractAmendmentsResponse"
     );
   }
 }
@@ -3834,8 +3932,14 @@ const spec = {
         properties: {
           lineNo: { type: "integer", minimum: 1, nullable: true },
           description: { type: "string", minLength: 1, maxLength: 255 },
-          lineAmountTxn: { type: "number", exclusiveMinimum: 0 },
-          lineAmountBase: { type: "number", exclusiveMinimum: 0 },
+          lineAmountTxn: {
+            type: "number",
+            description: "Signed non-zero amount; negative values model credit/adjustment lines.",
+          },
+          lineAmountBase: {
+            type: "number",
+            description: "Signed non-zero amount; negative values model credit/adjustment lines.",
+          },
           recognitionMethod: {
             type: "string",
             enum: ["STRAIGHT_LINE", "MILESTONE", "MANUAL"],
@@ -3874,6 +3978,57 @@ const spec = {
           "lines",
         ],
       },
+      ContractAmendInput: {
+        allOf: [
+          { $ref: "#/components/schemas/ContractUpsertInput" },
+          {
+            type: "object",
+            properties: {
+              reason: { type: "string", minLength: 1, maxLength: 500 },
+            },
+            required: ["reason"],
+          },
+        ],
+      },
+      ContractLinePatchInput: {
+        type: "object",
+        properties: {
+          description: { type: "string", minLength: 1, maxLength: 255 },
+          lineAmountTxn: {
+            type: "number",
+            description: "Signed non-zero amount; negative values model credit/adjustment lines.",
+          },
+          lineAmountBase: {
+            type: "number",
+            description: "Signed non-zero amount; negative values model credit/adjustment lines.",
+          },
+          recognitionMethod: {
+            type: "string",
+            enum: ["STRAIGHT_LINE", "MILESTONE", "MANUAL"],
+            description:
+              "STRAIGHT_LINE requires start/end dates; MILESTONE requires start=end (single milestone date); MANUAL requires both dates omitted.",
+          },
+          recognitionStartDate: {
+            type: "string",
+            format: "date",
+            nullable: true,
+            description:
+              "STRAIGHT_LINE: required. MILESTONE: required and must equal recognitionEndDate. MANUAL: must be null.",
+          },
+          recognitionEndDate: {
+            type: "string",
+            format: "date",
+            nullable: true,
+            description:
+              "STRAIGHT_LINE: required. MILESTONE: required and must equal recognitionStartDate. MANUAL: must be null.",
+          },
+          deferredAccountId: { ...intId, nullable: true },
+          revenueAccountId: { ...intId, nullable: true },
+          status: { type: "string", enum: ["ACTIVE", "INACTIVE"] },
+          reason: { type: "string", minLength: 1, maxLength: 500 },
+        },
+        required: ["reason"],
+      },
       ContractSummaryRow: {
         type: "object",
         properties: {
@@ -3887,6 +4042,7 @@ const spec = {
             type: "string",
             enum: ["DRAFT", "ACTIVE", "SUSPENDED", "CLOSED", "CANCELLED"],
           },
+          versionNo: { type: "integer", minimum: 1 },
           currencyCode,
           startDate: { type: "string", format: "date" },
           endDate: { type: "string", format: "date", nullable: true },
@@ -3906,6 +4062,7 @@ const spec = {
           "contractNo",
           "contractType",
           "status",
+          "versionNo",
           "currencyCode",
           "startDate",
           "totalAmountTxn",
@@ -3924,9 +4081,23 @@ const spec = {
           recognitionMethod: {
             type: "string",
             enum: ["STRAIGHT_LINE", "MILESTONE", "MANUAL"],
+            description:
+              "STRAIGHT_LINE requires start/end dates; MILESTONE requires start=end (single milestone date); MANUAL requires both dates omitted.",
           },
-          recognitionStartDate: { type: "string", format: "date", nullable: true },
-          recognitionEndDate: { type: "string", format: "date", nullable: true },
+          recognitionStartDate: {
+            type: "string",
+            format: "date",
+            nullable: true,
+            description:
+              "STRAIGHT_LINE: required. MILESTONE: required and must equal recognitionEndDate. MANUAL: must be null.",
+          },
+          recognitionEndDate: {
+            type: "string",
+            format: "date",
+            nullable: true,
+            description:
+              "STRAIGHT_LINE: required. MILESTONE: required and must equal recognitionStartDate. MANUAL: must be null.",
+          },
           deferredAccountId: { ...intId, nullable: true },
           revenueAccountId: { ...intId, nullable: true },
           status: { type: "string", enum: ["ACTIVE", "INACTIVE"] },
@@ -3988,6 +4159,48 @@ const spec = {
         },
         required: ["tenantId", "row"],
       },
+      ContractLinePatchResponse: {
+        type: "object",
+        properties: {
+          tenantId: intId,
+          row: { $ref: "#/components/schemas/ContractSummaryRow" },
+          line: { $ref: "#/components/schemas/ContractLineRow" },
+        },
+        required: ["tenantId", "row", "line"],
+      },
+      ContractAmendmentRow: {
+        type: "object",
+        properties: {
+          amendmentId: intId,
+          contractId: intId,
+          versionNo: { type: "integer", minimum: 1 },
+          amendmentType: { type: "string", enum: ["FULL_REPLACE", "LINE_PATCH"] },
+          reason: { type: "string" },
+          payload: { type: "object", nullable: true, additionalProperties: true },
+          createdByUserId: intId,
+          createdAt: { type: "string", nullable: true },
+        },
+        required: [
+          "amendmentId",
+          "contractId",
+          "versionNo",
+          "amendmentType",
+          "reason",
+          "createdByUserId",
+        ],
+      },
+      ContractAmendmentsResponse: {
+        type: "object",
+        properties: {
+          tenantId: intId,
+          contractId: intId,
+          rows: {
+            type: "array",
+            items: { $ref: "#/components/schemas/ContractAmendmentRow" },
+          },
+        },
+        required: ["tenantId", "contractId", "rows"],
+      },
       ContractLinkDocumentInput: {
         type: "object",
         properties: {
@@ -3995,18 +4208,46 @@ const spec = {
           linkType: { type: "string", enum: ["BILLING", "ADVANCE", "ADJUSTMENT"] },
           linkedAmountTxn: { type: "number", exclusiveMinimum: 0 },
           linkedAmountBase: { type: "number", exclusiveMinimum: 0 },
+          linkFxRate: { type: "number", exclusiveMinimum: 0, nullable: true },
         },
         required: ["cariDocumentId", "linkType", "linkedAmountTxn", "linkedAmountBase"],
+      },
+      ContractLinkAdjustInput: {
+        type: "object",
+        properties: {
+          nextLinkedAmountTxn: { type: "number", exclusiveMinimum: 0 },
+          nextLinkedAmountBase: { type: "number", exclusiveMinimum: 0 },
+          reason: { type: "string", minLength: 1, maxLength: 500 },
+        },
+        required: ["nextLinkedAmountTxn", "nextLinkedAmountBase", "reason"],
+      },
+      ContractLinkUnlinkInput: {
+        type: "object",
+        properties: {
+          reason: { type: "string", minLength: 1, maxLength: 500 },
+        },
+        required: ["reason"],
       },
       ContractDocumentLinkRow: {
         type: "object",
         properties: {
+          linkId: intId,
+          contractId: intId,
           linkType: { type: "string", enum: ["BILLING", "ADVANCE", "ADJUSTMENT"] },
           linkedAmountTxn: { type: "number" },
           linkedAmountBase: { type: "number" },
+          originalLinkedAmountTxn: { type: "number" },
+          originalLinkedAmountBase: { type: "number" },
+          adjustmentsDeltaTxn: { type: "number" },
+          adjustmentsDeltaBase: { type: "number" },
+          adjustmentCount: { type: "integer", minimum: 0 },
+          isUnlinked: { type: "boolean" },
           createdAt: { type: "string", nullable: true },
           createdByUserId: intId,
           cariDocumentId: intId,
+          contractCurrencyCodeSnapshot: { type: "string", nullable: true },
+          documentCurrencyCodeSnapshot: { type: "string", nullable: true },
+          linkFxRateSnapshot: { type: "number", nullable: true },
           documentNo: { type: "string", nullable: true },
           direction: { type: "string", enum: ["AR", "AP"], nullable: true },
           status: { type: "string", nullable: true },
@@ -4015,11 +4256,22 @@ const spec = {
           amountBase: { type: "number", nullable: true },
         },
         required: [
+          "linkId",
+          "contractId",
           "linkType",
           "linkedAmountTxn",
           "linkedAmountBase",
+          "originalLinkedAmountTxn",
+          "originalLinkedAmountBase",
+          "adjustmentsDeltaTxn",
+          "adjustmentsDeltaBase",
+          "adjustmentCount",
+          "isUnlinked",
           "createdByUserId",
           "cariDocumentId",
+          "contractCurrencyCodeSnapshot",
+          "documentCurrencyCodeSnapshot",
+          "linkFxRateSnapshot",
         ],
       },
       ContractDocumentsResponse: {
@@ -4033,6 +4285,37 @@ const spec = {
           },
         },
         required: ["tenantId", "contractId", "rows"],
+      },
+      ContractLinkableDocumentRow: {
+        type: "object",
+        properties: {
+          id: intId,
+          documentNo: { type: "string", nullable: true },
+          direction: { type: "string", enum: ["AR", "AP"], nullable: true },
+          status: { type: "string", nullable: true },
+          documentDate: { type: "string", format: "date", nullable: true },
+          currencyCode: { type: "string", nullable: true },
+          amountTxn: { type: "number", nullable: true },
+          amountBase: { type: "number", nullable: true },
+          openAmountTxn: { type: "number", nullable: true },
+          openAmountBase: { type: "number", nullable: true },
+          fxRate: { type: "number", nullable: true },
+        },
+        required: ["id"],
+      },
+      ContractLinkableDocumentsResponse: {
+        type: "object",
+        properties: {
+          tenantId: intId,
+          contractId: intId,
+          rows: {
+            type: "array",
+            items: { $ref: "#/components/schemas/ContractLinkableDocumentRow" },
+          },
+          limit: { type: "integer", minimum: 1 },
+          offset: nonNegativeInt,
+        },
+        required: ["tenantId", "contractId", "rows", "limit", "offset"],
       },
       ContractLinkMutationResponse: {
         type: "object",
@@ -4063,3 +4346,5 @@ fs.writeFileSync(targetPath, `${JSON.stringify(spec, null, 2)}\n`, "utf8");
 console.log(
   `Generated ${targetPath} (auto-documented operations added: ${autoDocumentedOperationCount})`
 );
+
+
