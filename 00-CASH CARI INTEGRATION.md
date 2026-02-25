@@ -714,4 +714,4 @@ This will save you from duplicate clicks / retries causing duplicate settlement 
 ---
 
 
-at the end, edit the related manuals in the same style for the changes we have done in 00-CASH CARI INTEGRATION.md file that others explained in detailed with examples etc. for the relevant flows in the relevant manuals. 
+at the end, after analyzing through the all application edit the related manuals in the same style for the changes we have done in 00-CASH CARI INTEGRATION.md file that others explained in detailed with examples etc. also if you see missing ones add them as wellfor the relevant flows in the relevant manuals. 

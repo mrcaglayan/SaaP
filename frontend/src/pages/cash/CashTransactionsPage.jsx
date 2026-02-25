@@ -283,22 +283,22 @@ function mapTransactionErrorMessage(rawMessage, t) {
     return t("cashTransactions.errors.registerInactive");
   }
   if (lower.includes("cash transit workflow requires")) {
-    return "Transit workflow requires source and target registers in different operating units.";
+    return t("cashTransactions.errorsMapped.transitSourceTargetOuMismatch");
   }
   if (lower.includes("cross-legal-entity cash transit transfer is not supported")) {
-    return "Cross-legal-entity transit transfer is not supported.";
+    return t("cashTransactions.errorsMapped.transitCrossLegalEntityNotSupported");
   }
   if (lower.includes("must be in_transit before receive")) {
-    return "Transit transfer must be IN_TRANSIT before receive.";
+    return t("cashTransactions.errorsMapped.transitMustBeInTransitBeforeReceive");
   }
   if (lower.includes("must be posted before receive")) {
-    return "Transfer-out must be POSTED before receive.";
+    return t("cashTransactions.errorsMapped.transitTransferOutMustBePostedBeforeReceive");
   }
   if (lower.includes("already received or not in transit")) {
-    return "Transit transfer is already received.";
+    return t("cashTransactions.errorsMapped.transitAlreadyReceived");
   }
   if (lower.includes("cannot reverse transfer-out after transit is received")) {
-    return "Reverse transfer-in first; transfer-out cannot be reversed after receive.";
+    return t("cashTransactions.errorsMapped.transitReverseTransferInFirst");
   }
   if (lower.includes("transaction currency must match register currency")) {
     return t("cashTransactions.errorsMapped.currencyMismatchGeneric");
@@ -331,22 +331,22 @@ function mapTransactionErrorMessage(rawMessage, t) {
     return t("cashTransactions.errorsMapped.systemGeneratedOnly");
   }
   if (lower.includes("must be posted before applying cari settlement")) {
-    return "Cash transaction must be POSTED before apply.";
+    return t("cashTransactions.errorsMapped.applyRequiresPostedTxn");
   }
   if (lower.includes("must include counterpartytype")) {
-    return "Cash transaction counterparty is invalid for Cari apply.";
+    return t("cashTransactions.errorsMapped.applyCounterpartyInvalid");
   }
   if (lower.includes("total allocations exceed incoming + unapplied available funds")) {
-    return "Applied total exceeds available amount.";
+    return t("cashTransactions.errorsMapped.applyTotalExceedsAvailable");
   }
   if (lower.includes("applications amount exceeds available residual")) {
-    return "Selected apply amount exceeds open document residual.";
+    return t("cashTransactions.errorsMapped.applyOpenItemResidualExceeded");
   }
   if (lower.includes("no open items available")) {
-    return "No open Cari documents found for selected counterparty.";
+    return t("cashTransactions.errorsMapped.applyNoOpenDocs");
   }
   if (lower.includes("already linked to another cari settlement")) {
-    return "This cash transaction is already linked to another Cari settlement.";
+    return t("cashTransactions.errorsMapped.applyAlreadyLinked");
   }
 
   return "";
@@ -369,6 +369,53 @@ export default function CashTransactionsPage() {
   const { pathname } = useLocation();
   const { hasPermission } = useAuth();
   const { t } = useI18n();
+  const localizeTxnStatus = (status) => {
+    const normalized = toUpper(status);
+    if (!normalized) {
+      return "-";
+    }
+    if (normalized === "DRAFT") {
+      return t("cashTransactions.values.statusDraft");
+    }
+    if (normalized === "SUBMITTED") {
+      return t("cashTransactions.values.statusSubmitted");
+    }
+    if (normalized === "APPROVED") {
+      return t("cashTransactions.values.statusApproved");
+    }
+    if (normalized === "POSTED") {
+      return t("cashTransactions.values.statusPosted");
+    }
+    if (normalized === "REVERSED") {
+      return t("cashTransactions.values.statusReversed");
+    }
+    if (normalized === "CANCELLED" || normalized === "CANCELED") {
+      return t("cashTransactions.values.statusCancelled");
+    }
+    return normalized;
+  };
+  const localizeTransitStatus = (status) => {
+    const normalized = toUpper(status);
+    if (!normalized) {
+      return "?";
+    }
+    if (normalized === "INITIATED") {
+      return t("cashTransactions.values.transitStatusInitiated");
+    }
+    if (normalized === "IN_TRANSIT") {
+      return t("cashTransactions.values.transitStatusInTransit");
+    }
+    if (normalized === "RECEIVED") {
+      return t("cashTransactions.values.transitStatusReceived");
+    }
+    if (normalized === "CANCELED" || normalized === "CANCELLED") {
+      return t("cashTransactions.values.transitStatusCanceled");
+    }
+    if (normalized === "REVERSED") {
+      return t("cashTransactions.values.transitStatusReversed");
+    }
+    return normalized;
+  };
 
   const presetTxnType = useMemo(() => resolvePresetTxnType(pathname), [pathname]);
   const canRead = hasPermission("cash.txn.read");
@@ -571,19 +618,28 @@ export default function CashTransactionsPage() {
       selectedIsCrossOuTransfer &&
       !toPositiveInt(form.counterAccountId)
     ) {
-      warnings.push("Cross-OU transfer requires transit counter account (CASH_IN_TRANSIT).");
+      warnings.push(t("cashTransactions.warnings.crossOuTransitCounterRequired"));
     }
     if (normalizedTxnType === "TRANSFER_IN" && selectedIsCrossOuTransfer) {
-      warnings.push("Use Transit Receive action for cross-OU transfer-in.");
+      warnings.push(t("cashTransactions.warnings.crossOuTransferInUseTransitReceive"));
     }
 
     const expectedCounterpartyType = resolveExpectedCounterpartyType(normalizedTxnType);
     const selectedCounterpartyId = toPositiveInt(form.counterpartyId);
     if (expectedCounterpartyType && toUpper(form.counterpartyType) && toUpper(form.counterpartyType) !== expectedCounterpartyType) {
-      warnings.push(`Expected counterparty type ${expectedCounterpartyType} for ${normalizedTxnType}.`);
+      warnings.push(
+        t("cashTransactions.warnings.expectedCounterpartyTypeForTxn", {
+          expected: expectedCounterpartyType,
+          txnType: normalizedTxnType,
+        })
+      );
     }
     if (expectedCounterpartyType && selectedCounterpartyId && !toUpper(form.counterpartyType)) {
-      warnings.push(`Set counterparty type ${expectedCounterpartyType} for better apply compatibility.`);
+      warnings.push(
+        t("cashTransactions.warnings.recommendCounterpartyType", {
+          expected: expectedCounterpartyType,
+        })
+      );
     }
 
     return warnings;
@@ -777,7 +833,10 @@ export default function CashTransactionsPage() {
         }
         setCounterpartyOptions([]);
         setCounterpartyWarning(
-          String(err?.response?.data?.message || "Counterparty picker is unavailable; use manual ID.")
+          String(
+            err?.response?.data?.message ||
+              t("cashTransactions.warnings.counterpartyPickerUnavailableManual")
+          )
         );
       } finally {
         if (active) {
@@ -803,7 +862,7 @@ export default function CashTransactionsPage() {
     if (!canReadCariReports) {
       setApplyOpenItems([]);
       setApplyOpenItemsLoading(false);
-      setApplyOpenItemsError("Open document picker requires permission: cari.report.read");
+      setApplyOpenItemsError(t("cashTransactions.errors.openDocumentsPermissionMissing"));
       return;
     }
 
@@ -813,7 +872,7 @@ export default function CashTransactionsPage() {
     if (!legalEntityId || !counterpartyId || !direction) {
       setApplyOpenItems([]);
       setApplyOpenItemsLoading(false);
-      setApplyOpenItemsError("Selected transaction cannot load Cari open documents.");
+      setApplyOpenItemsError(t("cashTransactions.errors.openDocumentsLoadNotAllowedForRow"));
       return;
     }
 
@@ -841,7 +900,7 @@ export default function CashTransactionsPage() {
         }
         setApplyOpenItems([]);
         setApplyOpenItemsError(
-          String(err?.response?.data?.message || "Failed to load open documents for apply.")
+          String(err?.response?.data?.message || t("cashTransactions.errors.openDocumentsLoadFailed"))
         );
       } finally {
         if (active) {
@@ -1018,7 +1077,7 @@ export default function CashTransactionsPage() {
       return;
     }
     if (crossOuTransfer && txnType !== "TRANSFER_OUT") {
-      setSimpleError("Cross-OU transfer-in must be created from Transit Receive action.");
+      setSimpleError(t("cashTransactions.errors.crossOuTransferInMustUseTransitReceive"));
       return;
     }
     if (counterCashRegisterId && counterCashRegisterId === registerId) {
@@ -1079,9 +1138,14 @@ export default function CashTransactionsPage() {
         const transferId = response?.transfer?.id || "-";
         const transferOutTxnId = response?.transferOutTransaction?.id || "-";
         if (response?.idempotentReplay) {
-          setInfoMessage(`Transit transfer replayed. transferId=${transferId}`);
+          setInfoMessage(t("cashTransactions.messages.transitReplay", { transferId }));
         } else {
-          setMessage(`Transit initiated. transferId=${transferId}, transferOutTxnId=${transferOutTxnId}`);
+          setMessage(
+            t("cashTransactions.messages.transitInitiated", {
+              transferId,
+              transferOutTxnId,
+            })
+          );
         }
       } else {
         const response = await createCashTransaction({
@@ -1159,14 +1223,14 @@ export default function CashTransactionsPage() {
       return;
     }
     if (type === "applyCari" && !canApplyCari) {
-      setSimpleError("Missing permission: cari.settlement.apply");
+      setSimpleError(t("cashTransactions.errors.missingApplyCariPermission"));
       return;
     }
 
     if (type === "receiveTransit") {
       const transitTransferId = toPositiveInt(row?.cash_transit_transfer_id);
       if (!transitTransferId) {
-        setSimpleError("Transit transfer link is missing on this row.");
+        setSimpleError(t("cashTransactions.errors.transitTransferLinkMissing"));
         return;
       }
       setActionForm({
@@ -1232,7 +1296,7 @@ export default function CashTransactionsPage() {
           actionForm.transitTransferId || row?.cash_transit_transfer_id
         );
         if (!transitTransferId) {
-          throw new Error("transitTransferId is required.");
+          throw new Error(t("cashTransactions.errors.transitTransferIdRequired"));
         }
         const response = await receiveCashTransitTransfer(transitTransferId, {
           cashSessionId: toPositiveInt(actionForm.cashSessionId) || undefined,
@@ -1245,9 +1309,9 @@ export default function CashTransactionsPage() {
         });
         const transferInTxnId = response?.transferInTransaction?.id || "-";
         if (response?.idempotentReplay) {
-          setInfoMessage(`Transit receive replayed. transferInTxnId=${transferInTxnId}`);
+          setInfoMessage(t("cashTransactions.messages.transitReceiveReplay", { transferInTxnId }));
         } else {
-          setMessage(`Transit received. transferInTxnId=${transferInTxnId}`);
+          setMessage(t("cashTransactions.messages.transitReceived", { transferInTxnId }));
         }
       } else if (actionForm.type === "post") {
         if (!canPost) {
@@ -1308,13 +1372,13 @@ export default function CashTransactionsPage() {
         }
       } else if (actionForm.type === "applyCari") {
         if (!canApplyCari) {
-          throw new Error("Missing permission: cari.settlement.apply");
+          throw new Error(t("cashTransactions.errors.missingApplyCariPermission"));
         }
         if (toUpper(row.status) !== "POSTED") {
-          throw new Error("Cash transaction must be POSTED before apply.");
+          throw new Error(t("cashTransactions.errorsMapped.applyRequiresPostedTxn"));
         }
         if (!CARI_SETTLEMENT_LINKED_TXN_TYPES.has(toUpper(row.txn_type))) {
-          throw new Error("Only RECEIPT/PAYOUT transactions can be applied to Cari.");
+          throw new Error(t("cashTransactions.errors.onlyReceiptPayoutCanApplyCari"));
         }
 
         const expectedCounterpartyType = resolveExpectedCounterpartyType(row.txn_type);
@@ -1322,13 +1386,15 @@ export default function CashTransactionsPage() {
         const rowCounterpartyId = toPositiveInt(row.counterparty_id);
         if (!rowCounterpartyId || rowCounterpartyType !== expectedCounterpartyType) {
           throw new Error(
-            `Transaction requires counterpartyType=${expectedCounterpartyType} and a valid counterpartyId.`
+            t("cashTransactions.errors.applyCounterpartyTypeMismatch", {
+              expected: expectedCounterpartyType,
+            })
           );
         }
 
         const settlementDate = String(actionForm.settlementDate || "").trim();
         if (!settlementDate) {
-          throw new Error("settlementDate is required.");
+          throw new Error(t("cashTransactions.errors.settlementDateRequired"));
         }
 
         const draftMap = actionForm.applyDrafts || {};
@@ -1344,7 +1410,7 @@ export default function CashTransactionsPage() {
           );
           const maxResidual = Number(openRow?.residualAmountTxnAsOf || 0);
           if (amountTxn > maxResidual + 0.000001) {
-            throw new Error(`Over-apply detected for openItemId=${openItemId}.`);
+            throw new Error(t("cashTransactions.errors.overApplyDetected", { openItemId }));
           }
           applications.push({
             openItemId,
@@ -1358,7 +1424,7 @@ export default function CashTransactionsPage() {
         );
         const cashAmount = Number(row.amount || 0);
         if (selectedTotal > cashAmount + 0.000001) {
-          throw new Error("Selected application total exceeds cash transaction amount.");
+          throw new Error(t("cashTransactions.errors.applySelectedTotalExceedsCashAmount"));
         }
 
         const response = await applyCariForCashTransaction(transactionId, {
@@ -1378,16 +1444,16 @@ export default function CashTransactionsPage() {
         });
 
         if (response?.idempotentReplay) {
-          setInfoMessage("Apply request replayed; existing Cari linkage returned.");
+          setInfoMessage(t("cashTransactions.messages.applyReplayReturned"));
         } else {
           const settlementBatchId = response?.row?.id || null;
           const createdUnappliedCashId = response?.unapplied?.createdUnappliedCashId || null;
           setMessage(
             settlementBatchId
-              ? `Cari apply completed. settlementBatchId=${settlementBatchId}`
+              ? t("cashTransactions.messages.applyCompletedSettlement", { settlementBatchId })
               : createdUnappliedCashId
-                ? `Cari unapplied cash created. unappliedCashId=${createdUnappliedCashId}`
-                : "Cari apply completed."
+                ? t("cashTransactions.messages.applyCreatedUnapplied", { createdUnappliedCashId })
+                : t("cashTransactions.messages.applyCompleted")
           );
         }
       }
@@ -1890,7 +1956,7 @@ export default function CashTransactionsPage() {
                   value={counterpartyQuery}
                   onChange={(event) => setCounterpartyQuery(event.target.value)}
                   className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                  placeholder="Search counterparty code/name"
+                  placeholder={t("cashTransactions.placeholders.searchCounterparty")}
                 />
                 <select
                   value={form.counterpartyId}
@@ -1898,7 +1964,9 @@ export default function CashTransactionsPage() {
                   className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
                 >
                   <option value="">
-                    {counterpartyLoading ? "Loading counterparties..." : "Select counterparty"}
+                    {counterpartyLoading
+                      ? t("cashTransactions.values.loadingCounterparties")
+                      : t("cashTransactions.placeholders.selectCounterparty")}
                   </option>
                   {counterpartyOptions.map((row) => (
                     <option key={`counterparty-option-${row.id}`} value={row.id}>
@@ -1937,8 +2005,11 @@ export default function CashTransactionsPage() {
 
             {selectedCounterpartyOption ? (
               <div className="md:col-span-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
-                Selected counterparty: {selectedCounterpartyOption.code || selectedCounterpartyOption.id} -{" "}
-                {selectedCounterpartyOption.name || "-"} ({selectedCounterpartyOption.counterpartyType || "OTHER"})
+                {t("cashTransactions.values.selectedCounterparty", {
+                  code: selectedCounterpartyOption.code || selectedCounterpartyOption.id,
+                  name: selectedCounterpartyOption.name || "-",
+                  type: selectedCounterpartyOption.counterpartyType || "OTHER",
+                })}
               </div>
             ) : null}
 
@@ -2068,7 +2139,7 @@ export default function CashTransactionsPage() {
               {t("cashTransactions.selectedTransactionSummary", {
                 id: selectedActionRow?.id || "-",
                 txnNo: selectedActionRow?.txn_no || "-",
-                status: selectedActionRow?.status || "-",
+                status: localizeTxnStatus(selectedActionRow?.status),
               })}
             </div>
 
@@ -2142,7 +2213,7 @@ export default function CashTransactionsPage() {
             {actionForm.type === "receiveTransit" ? (
               <>
                 <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                  transitTransferId
+                  {t("cashTransactions.form.transitTransferId")}
                   <input
                     type="text"
                     value={actionForm.transitTransferId || ""}
@@ -2151,7 +2222,7 @@ export default function CashTransactionsPage() {
                   />
                 </label>
                 <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                  bookDate
+                  {t("cashTransactions.form.bookDate")}
                   <input
                     type="date"
                     value={actionForm.bookDate || ""}
@@ -2167,7 +2238,7 @@ export default function CashTransactionsPage() {
                   />
                 </label>
                 <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                  txnDatetime
+                  {t("cashTransactions.form.txnDatetime")}
                   <input
                     type="datetime-local"
                     value={actionForm.txnDatetime || ""}
@@ -2184,7 +2255,7 @@ export default function CashTransactionsPage() {
                 </label>
                 {selectedTransitTargetOpenSessions.length > 0 ? (
                   <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                    cashSessionId (optional)
+                    {t("cashTransactions.form.cashSessionIdOptional")}
                     <select
                       value={actionForm.cashSessionId || ""}
                       onChange={(event) =>
@@ -2196,7 +2267,7 @@ export default function CashTransactionsPage() {
                       className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-normal"
                       disabled={actionSaving}
                     >
-                      <option value="">Auto / none</option>
+                      <option value="">{t("cashTransactions.placeholders.autoOrNone")}</option>
                       {selectedTransitTargetOpenSessions.map((session) => (
                         <option key={`receive-transit-session-${session.id}`} value={session.id}>
                           #{session.id} - {session.status || "OPEN"}
@@ -2206,7 +2277,7 @@ export default function CashTransactionsPage() {
                   </label>
                 ) : (
                   <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                    cashSessionId (optional)
+                    {t("cashTransactions.form.cashSessionIdOptional")}
                     <input
                       type="number"
                       min={1}
@@ -2223,7 +2294,7 @@ export default function CashTransactionsPage() {
                   </label>
                 )}
                 <label className="text-xs font-semibold uppercase tracking-wide text-slate-600 md:col-span-2">
-                  idempotencyKey
+                  {t("cashTransactions.form.idempotencyKey")}
                   <input
                     type="text"
                     value={actionForm.idempotencyKey || ""}
@@ -2239,7 +2310,7 @@ export default function CashTransactionsPage() {
                   />
                 </label>
                 <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                  referenceNo (optional)
+                  {t("cashTransactions.form.referenceNoOptional")}
                   <input
                     type="text"
                     value={actionForm.referenceNo || ""}
@@ -2254,7 +2325,7 @@ export default function CashTransactionsPage() {
                   />
                 </label>
                 <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                  description (optional)
+                  {t("cashTransactions.form.descriptionOptional")}
                   <input
                     type="text"
                     value={actionForm.description || ""}
@@ -2274,7 +2345,7 @@ export default function CashTransactionsPage() {
             {actionForm.type === "applyCari" ? (
               <>
                 <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                  settlementDate
+                  {t("cashTransactions.form.settlementDate")}
                   <input
                     type="date"
                     value={actionForm.settlementDate || ""}
@@ -2290,7 +2361,7 @@ export default function CashTransactionsPage() {
                   />
                 </label>
                 <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                  asOfDate (open docs)
+                  {t("cashTransactions.form.asOfDateOpenDocs")}
                   <input
                     type="date"
                     value={actionForm.asOfDate || ""}
@@ -2305,7 +2376,7 @@ export default function CashTransactionsPage() {
                   />
                 </label>
                 <label className="text-xs font-semibold uppercase tracking-wide text-slate-600 md:col-span-2">
-                  idempotencyKey
+                  {t("cashTransactions.form.idempotencyKey")}
                   <input
                     type="text"
                     value={actionForm.idempotencyKey || ""}
@@ -2321,7 +2392,7 @@ export default function CashTransactionsPage() {
                   />
                 </label>
                 <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                  fxRate (optional)
+                  {t("cashTransactions.form.fxRateOptional")}
                   <input
                     type="number"
                     min="0.0000000001"
@@ -2349,10 +2420,10 @@ export default function CashTransactionsPage() {
                     }
                     disabled={actionSaving}
                   />
-                  useUnappliedCash
+                  {t("cashTransactions.form.useUnappliedCash")}
                 </label>
                 <label className="text-xs font-semibold uppercase tracking-wide text-slate-600 md:col-span-2">
-                  note (optional)
+                  {t("cashTransactions.form.noteOptional")}
                   <input
                     type="text"
                     value={actionForm.note || ""}
@@ -2369,14 +2440,15 @@ export default function CashTransactionsPage() {
 
                 <div className="rounded-lg border border-slate-200 bg-white p-3 text-xs text-slate-700 md:col-span-2">
                   <p className="font-semibold text-slate-800">
-                    Open documents picker (no raw ID typing)
+                    {t("cashTransactions.apply.openDocsTitle")}
                   </p>
                   <p className="mt-1">
-                    Enter amounts for each open item to apply. Leave all amounts empty to store the
-                    full transaction as unapplied cash.
+                    {t("cashTransactions.apply.openDocsDescription")}
                   </p>
                   <p className="mt-1">
-                    Selected total: <span className="font-semibold">{formatAmount(applySelectedTotal)}</span>
+                    {t("cashTransactions.apply.selectedTotal", {
+                      total: formatAmount(applySelectedTotal),
+                    })}
                   </p>
                   {applyOpenItemsError ? (
                     <p className="mt-1 text-rose-700">{applyOpenItemsError}</p>
@@ -2388,7 +2460,7 @@ export default function CashTransactionsPage() {
                       className="rounded-md border border-slate-300 px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
                       disabled={actionSaving || applyOpenItemsLoading}
                     >
-                      Fill All
+                      {t("cashTransactions.actions.fillAll")}
                     </button>
                     <button
                       type="button"
@@ -2402,18 +2474,18 @@ export default function CashTransactionsPage() {
                       className="rounded-md border border-slate-300 px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
                       disabled={actionSaving || applyOpenItemsLoading}
                     >
-                      Clear
+                      {t("cashTransactions.actions.clear")}
                     </button>
                   </div>
                   <div className="mt-2 max-h-64 overflow-auto rounded border border-slate-200">
                     <table className="min-w-full text-xs">
                       <thead className="bg-slate-50 text-left text-slate-600">
                         <tr>
-                          <th className="px-2 py-1">Doc</th>
-                          <th className="px-2 py-1">OpenItem</th>
-                          <th className="px-2 py-1">Due</th>
-                          <th className="px-2 py-1">Open</th>
-                          <th className="px-2 py-1">Apply</th>
+                          <th className="px-2 py-1">{t("cashTransactions.apply.table.document")}</th>
+                          <th className="px-2 py-1">{t("cashTransactions.apply.table.openItem")}</th>
+                          <th className="px-2 py-1">{t("cashTransactions.apply.table.dueDate")}</th>
+                          <th className="px-2 py-1">{t("cashTransactions.apply.table.openAmount")}</th>
+                          <th className="px-2 py-1">{t("cashTransactions.apply.table.applyAmount")}</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -2442,8 +2514,8 @@ export default function CashTransactionsPage() {
                           <tr>
                             <td colSpan={5} className="px-2 py-2 text-slate-500">
                               {applyOpenItemsLoading
-                                ? "Loading open documents..."
-                                : "No open documents found for this transaction."}
+                                ? t("cashTransactions.apply.loadingOpenDocuments")
+                                : t("cashTransactions.apply.noOpenDocuments")}
                             </td>
                           </tr>
                         ) : null}
@@ -2495,10 +2567,10 @@ export default function CashTransactionsPage() {
                 <th className="px-3 py-2">{t("cashTransactions.table.bookDate")}</th>
                 <th className="px-3 py-2">{t("cashTransactions.table.amount")}</th>
                 <th className="px-3 py-2">{t("cashTransactions.table.currency")}</th>
-                <th className="px-3 py-2">Counterparty</th>
+                <th className="px-3 py-2">{t("cashTransactions.table.counterparty")}</th>
                 <th className="px-3 py-2">{t("cashTransactions.table.counterAccount")}</th>
                 <th className="px-3 py-2">{t("cashTransactions.table.counterRegister")}</th>
-                <th className="px-3 py-2">Links</th>
+                <th className="px-3 py-2">{t("cashTransactions.table.links")}</th>
                 <th className="px-3 py-2">{t("cashTransactions.table.postedJournal")}</th>
                 <th className="px-3 py-2">{t("cashTransactions.table.overrideReason")}</th>
                 <th className="px-3 py-2">{t("cashTransactions.table.createdAt")}</th>
@@ -2508,6 +2580,7 @@ export default function CashTransactionsPage() {
             <tbody>
               {transactionRows.map((row) => {
                 const rowStatus = toUpper(row.status);
+                const rowStatusLabel = localizeTxnStatus(row.status);
                 const rowIsPosted = rowStatus === "POSTED";
                 return (
                   <tr
@@ -2523,7 +2596,7 @@ export default function CashTransactionsPage() {
                           row.status
                         )}`}
                       >
-                        {rowStatus || "-"}
+                        {rowStatusLabel}
                       </span>
                     </td>
                     <td className="px-3 py-2">
@@ -2557,24 +2630,35 @@ export default function CashTransactionsPage() {
                       <div className="flex flex-wrap gap-1">
                         {toPositiveInt(row.cash_transit_transfer_id) ? (
                           <span className="inline-flex rounded border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-xs font-semibold text-indigo-700">
-                            Transit #{row.cash_transit_transfer_id} ({toUpper(row.cash_transit_status) || "?"})
+                            {t("cashTransactions.values.transitBadge", {
+                              transferId: row.cash_transit_transfer_id,
+                              status: localizeTransitStatus(row.cash_transit_status),
+                            })}
                           </span>
                         ) : null}
                         {toPositiveInt(row.cash_transit_transfer_out_transaction_id) &&
                         toPositiveInt(row.cash_transit_transfer_in_transaction_id) ? (
                           <span className="inline-flex rounded border border-indigo-200 bg-white px-2 py-0.5 text-xs font-semibold text-indigo-700">
-                            OUT #{row.cash_transit_transfer_out_transaction_id} / IN #
-                            {row.cash_transit_transfer_in_transaction_id}
+                            {t("cashTransactions.values.transitPairBadge", {
+                              outTxnId: row.cash_transit_transfer_out_transaction_id,
+                              inTxnId: row.cash_transit_transfer_in_transaction_id,
+                            })}
                           </span>
                         ) : null}
                         {toPositiveInt(row.linked_cari_settlement_batch_id || row.linkedCariSettlementBatchId) ? (
                           <span className="inline-flex rounded border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700">
-                            Settlement #{row.linked_cari_settlement_batch_id || row.linkedCariSettlementBatchId}
+                            {t("cashTransactions.values.settlementBadge", {
+                              settlementBatchId:
+                                row.linked_cari_settlement_batch_id || row.linkedCariSettlementBatchId,
+                            })}
                           </span>
                         ) : null}
                         {toPositiveInt(row.linked_cari_unapplied_cash_id || row.linkedCariUnappliedCashId) ? (
                           <span className="inline-flex rounded border border-cyan-200 bg-cyan-50 px-2 py-0.5 text-xs font-semibold text-cyan-700">
-                            Unapplied #{row.linked_cari_unapplied_cash_id || row.linkedCariUnappliedCashId}
+                            {t("cashTransactions.values.unappliedBadge", {
+                              unappliedCashId:
+                                row.linked_cari_unapplied_cash_id || row.linkedCariUnappliedCashId,
+                            })}
                           </span>
                         ) : null}
                         {!toPositiveInt(row.linked_cari_settlement_batch_id || row.linkedCariSettlementBatchId) &&
@@ -2626,7 +2710,7 @@ export default function CashTransactionsPage() {
                             onClick={() => openActionForm("receiveTransit", row)}
                             className="rounded-md border border-indigo-300 px-2 py-1 text-xs font-semibold text-indigo-700 hover:bg-indigo-50"
                           >
-                            Receive Transit
+                            {t("cashTransactions.actions.receiveTransit")}
                           </button>
                         ) : null}
                         {canApplyCari && canApplyCariRow(row) ? (
@@ -2635,13 +2719,13 @@ export default function CashTransactionsPage() {
                             onClick={() => openActionForm("applyCari", row)}
                             className="rounded-md border border-emerald-300 px-2 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-50"
                           >
-                            Apply Cari
+                            {t("cashTransactions.actions.applyCari")}
                           </button>
                         ) : null}
                         {toPositiveInt(row.linked_cari_settlement_batch_id || row.linkedCariSettlementBatchId) ||
                         toPositiveInt(row.linked_cari_unapplied_cash_id || row.linkedCariUnappliedCashId) ? (
                           <span className="inline-flex rounded bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700">
-                            Linked
+                            {t("cashTransactions.values.linked")}
                           </span>
                         ) : null}
                         {!canPostRow(row) &&

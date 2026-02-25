@@ -714,6 +714,9 @@ export const messages = {
         allStatuses: "Tum durumlar",
         register: "Register secin",
         sessionOptional: "Oturum (opsiyonel)",
+        autoOrNone: "Otomatik / yok",
+        searchCounterparty: "Muhatap kodu/adi ara",
+        selectCounterparty: "Muhatap secin",
         counterAccount: "Karsi hesap secin",
         counterRegister: "Karsi register secin",
       },
@@ -735,6 +738,15 @@ export const messages = {
         counterAccountIdOptional: "counterAccountId (opsiyonel)",
         counterCashRegisterIdOptional: "counterCashRegisterId (opsiyonel)",
         descriptionOptional: "Aciklama (opsiyonel)",
+        transitTransferId: "transitTransferId",
+        bookDate: "bookDate",
+        txnDatetime: "txnDatetime",
+        idempotencyKey: "idempotencyKey",
+        fxRateOptional: "fxRate (opsiyonel)",
+        useUnappliedCash: "useUnappliedCash",
+        noteOptional: "Not (opsiyonel)",
+        settlementDate: "settlementDate",
+        asOfDateOpenDocs: "asOfDate (acik belgeler)",
         overrideCashControl: "Cash control override ile post et",
         overrideReason: "Override nedeni (zorunlu)",
         cancelReason: "Iptal nedeni (zorunlu)",
@@ -742,16 +754,20 @@ export const messages = {
       },
       actions: {
         applyFilters: "Filtreyi Uygula",
+        clear: "Temizle",
         clearFilters: "Temizle",
         refresh: "Yenile",
         loading: "Yukleniyor...",
         openRegisterSetup: "Kasa Tanimlari'na git",
         openSessionSetup: "Kasa Oturumlari'na git",
+        fillAll: "Tumunu Doldur",
         create: "Islem Olustur",
         creating: "Olusturuluyor...",
         preparePost: "Post Et",
         prepareCancel: "Iptal Et",
         prepareReverse: "Ters Kayit",
+        receiveTransit: "Transit Teslim Al",
+        applyCari: "Cari Uygula",
         submitAction: "Aksiyonu Uygula",
         cancelAction: "Vazgec",
         saving: "Kaydediliyor...",
@@ -768,8 +784,10 @@ export const messages = {
         bookDate: "Book Date",
         amount: "Tutar",
         currency: "PB",
+        counterparty: "Muhatap",
         counterAccount: "Karsi Hesap",
         counterRegister: "Karsi Register",
+        links: "Baglantilar",
         postedJournal: "Post Journal",
         overrideReason: "Override Nedeni",
         createdAt: "Olusturma",
@@ -778,6 +796,39 @@ export const messages = {
       values: {
         notApplicable: "Uygulanmaz",
         readOnly: "Salt okunur",
+        statusDraft: "Taslak",
+        statusSubmitted: "Gonderildi",
+        statusApproved: "Onaylandi",
+        statusPosted: "Post Edildi",
+        statusReversed: "Ters Kayit",
+        statusCancelled: "Iptal Edildi",
+        loadingCounterparties: "Muhataplar yukleniyor...",
+        selectedCounterparty: "Secili muhatap: {{code}} - {{name}} ({{type}})",
+        linked: "Bagli",
+        transitStatusInitiated: "Baslatildi",
+        transitStatusInTransit: "Yolda",
+        transitStatusReceived: "Teslim Alindi",
+        transitStatusCanceled: "Iptal Edildi",
+        transitStatusReversed: "Ters Kayit",
+        transitBadge: "Transit #{{transferId}} ({{status}})",
+        transitPairBadge: "CIKIS #{{outTxnId}} / GIRIS #{{inTxnId}}",
+        settlementBadge: "Mahsuplastirma #{{settlementBatchId}}",
+        unappliedBadge: "Uygulanmamis #{{unappliedCashId}}",
+      },
+      apply: {
+        openDocsTitle: "Acik belge secici (ham ID girmeden)",
+        openDocsDescription:
+          "Her acik kalem icin uygulanacak tutari girin. Tum tutarlar bos birakilirsa islemin tamami unapplied cash olarak kaydedilir.",
+        selectedTotal: "Secili toplam: {{total}}",
+        loadingOpenDocuments: "Acik belgeler yukleniyor...",
+        noOpenDocuments: "Bu islem icin acik belge bulunamadi.",
+        table: {
+          document: "Belge",
+          openItem: "OpenItem",
+          dueDate: "Vade",
+          openAmount: "Acik",
+          applyAmount: "Uygula",
+        },
       },
       warnings: {
         registerLookupUnavailable:
@@ -786,6 +837,8 @@ export const messages = {
           "Oturum lookup verileri yuklenemedi; cashSessionId alanini manuel doldurmaniz gerekebilir.",
         accountLookupUnavailable:
           "Hesap lookup verileri yuklenemedi; counterAccountId alanini manuel doldurmaniz gerekebilir.",
+        counterpartyPickerUnavailableManual:
+          "Muhatap secici kullanilamiyor; muhatap ID'yi manuel girin.",
         noRegisterList:
           "Register listesi bulunamadi. Kasa Tanimlari ekranindan en az bir register olusturup aktif hale getirin.",
         sessionPickerNeedsRegister:
@@ -803,6 +856,14 @@ export const messages = {
           "Islem para birimi register para birimi ile uyusmuyor (register: {{registerCurrency}}).",
         maxAmountExceeded:
           "Islem tutari register maxTxnAmount limitini asiyor (max: {{max}}).",
+        crossOuTransitCounterRequired:
+          "Cross-OU transfer icin transit karsi hesap (CASH_IN_TRANSIT) zorunludur.",
+        crossOuTransferInUseTransitReceive:
+          "Cross-OU transfer-in icin Transit Teslim Al aksiyonunu kullanin.",
+        expectedCounterpartyTypeForTxn:
+          "{{txnType}} icin beklenen muhatap tipi {{expected}}.",
+        recommendCounterpartyType:
+          "Daha iyi apply uyumlulugu icin muhatap tipini {{expected}} yapin.",
         sessionModeNone:
           "Secili register session_mode=NONE. cashSessionId bos birakilabilir.",
         sessionRequiredNoOpen:
@@ -826,6 +887,12 @@ export const messages = {
         action: "Islem aksiyonu tamamlanamadi.",
         requestId: "Talep ID: {{requestId}}",
         actionRowMissing: "Aksiyon icin gecerli islem bulunamadi.",
+        openDocumentsPermissionMissing:
+          "Acik belge secici icin cari.report.read yetkisi gerekir.",
+        openDocumentsLoadNotAllowedForRow:
+          "Secilen islem icin Cari acik belgeleri yuklenemiyor.",
+        openDocumentsLoadFailed:
+          "Cari apply icin acik belgeler yuklenemedi.",
         registerRequired: "registerId zorunludur.",
         txnDatetimeRequired: "txnDatetime zorunludur.",
         bookDateRequired: "bookDate zorunludur.",
@@ -839,6 +906,22 @@ export const messages = {
         counterRegisterSame:
           "counterCashRegisterId registerId ile ayni olamaz.",
         registerInactive: "Secili register ACTIVE degil.",
+        crossOuTransferInMustUseTransitReceive:
+          "Cross-OU transfer-in, Transit Teslim Al aksiyonu ile olusturulmalidir.",
+        missingApplyCariPermission:
+          "Bu islem icin cari.settlement.apply yetkisi gerekir.",
+        transitTransferLinkMissing:
+          "Bu satirda transit transfer baglantisi bulunamadi.",
+        transitTransferIdRequired: "transitTransferId zorunludur.",
+        onlyReceiptPayoutCanApplyCari:
+          "Yalnizca RECEIPT/PAYOUT islemleri Cari'ye uygulanabilir.",
+        applyCounterpartyTypeMismatch:
+          "Islem icin counterpartyType={{expected}} ve gecerli bir counterpartyId gerekir.",
+        settlementDateRequired: "settlementDate zorunludur.",
+        overApplyDetected:
+          "Fazla uygulama tespit edildi (openItemId={{openItemId}}).",
+        applySelectedTotalExceedsCashAmount:
+          "Secilen uygulama toplami kasa islem tutarini asiyor.",
         currencyMismatch:
           "Islem para birimi register para birimi ile uyusmuyor (register: {{registerCurrency}}).",
         maxAmountExceeded:
@@ -874,12 +957,50 @@ export const messages = {
           "Ayni idempotency anahtari ile daha once bir islem olusturulmus.",
         systemGeneratedOnly:
           "Bu islem tipi yalnizca sistem tarafindan olusturulabilir.",
+        transitSourceTargetOuMismatch:
+          "Transit akisi, kaynak ve hedef register'in farkli operating unit'lerde olmasini gerektirir.",
+        transitCrossLegalEntityNotSupported:
+          "Cross-legal-entity transit transfer desteklenmiyor.",
+        transitMustBeInTransitBeforeReceive:
+          "Transit transfer teslim almadan once IN_TRANSIT durumunda olmalidir.",
+        transitTransferOutMustBePostedBeforeReceive:
+          "Teslim almadan once transfer-out islemi POSTED olmalidir.",
+        transitAlreadyReceived:
+          "Transit transfer zaten teslim alinmis.",
+        transitReverseTransferInFirst:
+          "Transfer-out ters kaydi oncesi once transfer-in ters kaydini alin.",
+        applyRequiresPostedTxn:
+          "Cari apply icin kasa islemi POSTED olmalidir.",
+        applyCounterpartyInvalid:
+          "Cari apply icin kasa islemi muhatap bilgisi gecersiz.",
+        applyTotalExceedsAvailable:
+          "Uygulanan toplam kullanilabilir tutari asiyor.",
+        applyOpenItemResidualExceeded:
+          "Secilen uygulama tutari acik belge bakiyesini asiyor.",
+        applyNoOpenDocs:
+          "Secilen muhatap icin acik Cari belgesi bulunamadi.",
+        applyAlreadyLinked:
+          "Bu kasa islemi zaten baska bir Cari settlement ile bagli.",
       },
       messages: {
         created: "Kasa islemi olusturuldu.",
         posted: "Kasa islemi post edildi.",
         cancelled: "Kasa islemi iptal edildi.",
         reversed: "Ters kayit olusturuldu. Reversal ID: {{reversalId}}.",
+        transitReplay:
+          "Transit transfer tekrarlandi (replay). transferId={{transferId}}",
+        transitInitiated:
+          "Transit baslatildi. transferId={{transferId}}, transferOutTxnId={{transferOutTxnId}}",
+        transitReceiveReplay:
+          "Transit teslim alma tekrarlandi (replay). transferInTxnId={{transferInTxnId}}",
+        transitReceived: "Transit teslim alindi. transferInTxnId={{transferInTxnId}}",
+        applyReplayReturned:
+          "Apply istegi replay edildi; mevcut Cari baglantisi geri donduruldu.",
+        applyCompletedSettlement:
+          "Cari apply tamamlandi. settlementBatchId={{settlementBatchId}}",
+        applyCreatedUnapplied:
+          "Cari unapplied cash olusturuldu. unappliedCashId={{createdUnappliedCashId}}",
+        applyCompleted: "Cari apply tamamlandi.",
         idempotentReplay:
           "Bu istek daha once islenmis; mevcut kayit geri donduruldu.",
       },
@@ -1779,6 +1900,9 @@ export const messages = {
         allStatuses: "All statuses",
         register: "Select register",
         sessionOptional: "Session (optional)",
+        autoOrNone: "Auto / none",
+        searchCounterparty: "Search counterparty code/name",
+        selectCounterparty: "Select counterparty",
         counterAccount: "Select counter account",
         counterRegister: "Select counter register",
       },
@@ -1800,6 +1924,15 @@ export const messages = {
         counterAccountIdOptional: "counterAccountId (optional)",
         counterCashRegisterIdOptional: "counterCashRegisterId (optional)",
         descriptionOptional: "Description (optional)",
+        transitTransferId: "transitTransferId",
+        bookDate: "bookDate",
+        txnDatetime: "txnDatetime",
+        idempotencyKey: "idempotencyKey",
+        fxRateOptional: "fxRate (optional)",
+        useUnappliedCash: "useUnappliedCash",
+        noteOptional: "note (optional)",
+        settlementDate: "settlementDate",
+        asOfDateOpenDocs: "asOfDate (open docs)",
         overrideCashControl: "Post with cash-control override",
         overrideReason: "Override reason (required)",
         cancelReason: "Cancel reason (required)",
@@ -1807,16 +1940,20 @@ export const messages = {
       },
       actions: {
         applyFilters: "Apply Filters",
+        clear: "Clear",
         clearFilters: "Clear",
         refresh: "Refresh",
         loading: "Loading...",
         openRegisterSetup: "Go to Cash Registers",
         openSessionSetup: "Go to Cash Sessions",
+        fillAll: "Fill All",
         create: "Create Transaction",
         creating: "Creating...",
         preparePost: "Post",
         prepareCancel: "Cancel",
         prepareReverse: "Reverse",
+        receiveTransit: "Receive Transit",
+        applyCari: "Apply Cari",
         submitAction: "Apply Action",
         cancelAction: "Dismiss",
         saving: "Saving...",
@@ -1833,8 +1970,10 @@ export const messages = {
         bookDate: "Book Date",
         amount: "Amount",
         currency: "Currency",
+        counterparty: "Counterparty",
         counterAccount: "Counter Account",
         counterRegister: "Counter Register",
+        links: "Links",
         postedJournal: "Posted Journal",
         overrideReason: "Override Reason",
         createdAt: "Created At",
@@ -1843,6 +1982,39 @@ export const messages = {
       values: {
         notApplicable: "Not applicable",
         readOnly: "Read-only",
+        statusDraft: "Draft",
+        statusSubmitted: "Submitted",
+        statusApproved: "Approved",
+        statusPosted: "Posted",
+        statusReversed: "Reversed",
+        statusCancelled: "Cancelled",
+        loadingCounterparties: "Loading counterparties...",
+        selectedCounterparty: "Selected counterparty: {{code}} - {{name}} ({{type}})",
+        linked: "Linked",
+        transitStatusInitiated: "Initiated",
+        transitStatusInTransit: "In transit",
+        transitStatusReceived: "Received",
+        transitStatusCanceled: "Canceled",
+        transitStatusReversed: "Reversed",
+        transitBadge: "Transit #{{transferId}} ({{status}})",
+        transitPairBadge: "OUT #{{outTxnId}} / IN #{{inTxnId}}",
+        settlementBadge: "Settlement #{{settlementBatchId}}",
+        unappliedBadge: "Unapplied #{{unappliedCashId}}",
+      },
+      apply: {
+        openDocsTitle: "Open documents picker (no raw ID typing)",
+        openDocsDescription:
+          "Enter amounts for each open item to apply. Leave all amounts empty to store the full transaction as unapplied cash.",
+        selectedTotal: "Selected total: {{total}}",
+        loadingOpenDocuments: "Loading open documents...",
+        noOpenDocuments: "No open documents found for this transaction.",
+        table: {
+          document: "Doc",
+          openItem: "OpenItem",
+          dueDate: "Due",
+          openAmount: "Open",
+          applyAmount: "Apply",
+        },
       },
       warnings: {
         registerLookupUnavailable:
@@ -1851,6 +2023,8 @@ export const messages = {
           "Session lookups could not be loaded; you may need to enter cashSessionId manually.",
         accountLookupUnavailable:
           "Account lookups could not be loaded; you may need to enter counterAccountId manually.",
+        counterpartyPickerUnavailableManual:
+          "Counterparty picker is unavailable; use manual counterparty ID.",
         noRegisterList:
           "No register list is available. Go to Cash Registers and create/activate at least one register.",
         sessionPickerNeedsRegister:
@@ -1868,6 +2042,14 @@ export const messages = {
           "Transaction currency does not match register currency (register: {{registerCurrency}}).",
         maxAmountExceeded:
           "Transaction amount exceeds register maxTxnAmount limit (max: {{max}}).",
+        crossOuTransitCounterRequired:
+          "Cross-OU transfer requires transit counter account (CASH_IN_TRANSIT).",
+        crossOuTransferInUseTransitReceive:
+          "Use Transit Receive action for cross-OU transfer-in.",
+        expectedCounterpartyTypeForTxn:
+          "Expected counterparty type {{expected}} for {{txnType}}.",
+        recommendCounterpartyType:
+          "Set counterparty type {{expected}} for better apply compatibility.",
         sessionModeNone:
           "Selected register has session_mode=NONE. cashSessionId can be empty.",
         sessionRequiredNoOpen:
@@ -1891,6 +2073,12 @@ export const messages = {
         action: "Failed to complete transaction action.",
         requestId: "Request ID: {{requestId}}",
         actionRowMissing: "No valid transaction selected for action.",
+        openDocumentsPermissionMissing:
+          "Open document picker requires permission: cari.report.read",
+        openDocumentsLoadNotAllowedForRow:
+          "Selected transaction cannot load Cari open documents.",
+        openDocumentsLoadFailed:
+          "Failed to load open documents for apply.",
         registerRequired: "registerId is required.",
         txnDatetimeRequired: "txnDatetime is required.",
         bookDateRequired: "bookDate is required.",
@@ -1905,6 +2093,21 @@ export const messages = {
         counterRegisterSame:
           "counterCashRegisterId cannot be the same as registerId.",
         registerInactive: "Selected register is not ACTIVE.",
+        crossOuTransferInMustUseTransitReceive:
+          "Cross-OU transfer-in must be created from Transit Receive action.",
+        missingApplyCariPermission:
+          "Missing permission: cari.settlement.apply",
+        transitTransferLinkMissing:
+          "Transit transfer link is missing on this row.",
+        transitTransferIdRequired: "transitTransferId is required.",
+        onlyReceiptPayoutCanApplyCari:
+          "Only RECEIPT/PAYOUT transactions can be applied to Cari.",
+        applyCounterpartyTypeMismatch:
+          "Transaction requires counterpartyType={{expected}} and a valid counterpartyId.",
+        settlementDateRequired: "settlementDate is required.",
+        overApplyDetected: "Over-apply detected for openItemId={{openItemId}}.",
+        applySelectedTotalExceedsCashAmount:
+          "Selected application total exceeds cash transaction amount.",
         currencyMismatch:
           "Transaction currency does not match register currency (register: {{registerCurrency}}).",
         maxAmountExceeded:
@@ -1942,12 +2145,50 @@ export const messages = {
           "A transaction already exists with the same idempotency key.",
         systemGeneratedOnly:
           "This transaction type can only be system-generated.",
+        transitSourceTargetOuMismatch:
+          "Transit workflow requires source and target registers in different operating units.",
+        transitCrossLegalEntityNotSupported:
+          "Cross-legal-entity transit transfer is not supported.",
+        transitMustBeInTransitBeforeReceive:
+          "Transit transfer must be IN_TRANSIT before receive.",
+        transitTransferOutMustBePostedBeforeReceive:
+          "Transfer-out must be POSTED before receive.",
+        transitAlreadyReceived:
+          "Transit transfer is already received.",
+        transitReverseTransferInFirst:
+          "Reverse transfer-in first; transfer-out cannot be reversed after receive.",
+        applyRequiresPostedTxn:
+          "Cash transaction must be POSTED before apply.",
+        applyCounterpartyInvalid:
+          "Cash transaction counterparty is invalid for Cari apply.",
+        applyTotalExceedsAvailable:
+          "Applied total exceeds available amount.",
+        applyOpenItemResidualExceeded:
+          "Selected apply amount exceeds open document residual.",
+        applyNoOpenDocs:
+          "No open Cari documents found for selected counterparty.",
+        applyAlreadyLinked:
+          "This cash transaction is already linked to another Cari settlement.",
       },
       messages: {
         created: "Cash transaction created.",
         posted: "Cash transaction posted.",
         cancelled: "Cash transaction cancelled.",
         reversed: "Reversal created. Reversal ID: {{reversalId}}.",
+        transitReplay:
+          "Transit transfer replayed. transferId={{transferId}}",
+        transitInitiated:
+          "Transit initiated. transferId={{transferId}}, transferOutTxnId={{transferOutTxnId}}",
+        transitReceiveReplay:
+          "Transit receive replayed. transferInTxnId={{transferInTxnId}}",
+        transitReceived: "Transit received. transferInTxnId={{transferInTxnId}}",
+        applyReplayReturned:
+          "Apply request replayed; existing Cari linkage returned.",
+        applyCompletedSettlement:
+          "Cari apply completed. settlementBatchId={{settlementBatchId}}",
+        applyCreatedUnapplied:
+          "Cari unapplied cash created. unappliedCashId={{createdUnappliedCashId}}",
+        applyCompleted: "Cari apply completed.",
         idempotentReplay:
           "This request was already processed; existing transaction returned.",
       },

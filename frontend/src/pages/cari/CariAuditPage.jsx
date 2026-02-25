@@ -115,7 +115,8 @@ function buildAuditQuery(filters) {
 
 export default function CariAuditPage() {
   const { hasPermission } = useAuth();
-  const { t } = useI18n();
+  const { t, language } = useI18n();
+  const l = (en, tr) => (language === "tr" ? tr : en);
   const canReadAudit = hasPermission("cari.audit.read");
 
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
@@ -139,7 +140,7 @@ export default function CariAuditPage() {
       setRows([]);
       setByAction([]);
       setTotal(0);
-      setError("Missing permission: cari.audit.read");
+      setError(l("Missing permission: cari.audit.read", "Eksik yetki: cari.audit.read"));
       return;
     }
 
@@ -156,7 +157,7 @@ export default function CariAuditPage() {
       setRows([]);
       setByAction([]);
       setTotal(0);
-      setError(normalizeApiError(err, "Failed to load audit logs."));
+      setError(normalizeApiError(err, l("Failed to load audit logs.", "Denetim kayitlari yuklenemedi.")));
     } finally {
       setLoading(false);
     }
@@ -189,12 +190,17 @@ export default function CariAuditPage() {
     try {
       const copied = await copyText(String(requestId));
       if (copied) {
-        setInfo(`requestId copied: ${requestId}`);
+        setInfo(l(`requestId copied: ${requestId}`, `requestId kopyalandi: ${requestId}`));
       } else {
-        setInfo("Could not copy requestId on this browser.");
+        setInfo(
+          l(
+            "Could not copy requestId on this browser.",
+            "Bu tarayicida requestId kopyalanamadi."
+          )
+        );
       }
     } catch (err) {
-      setInfo(normalizeApiError(err, "Could not copy requestId."));
+      setInfo(normalizeApiError(err, l("Could not copy requestId.", "requestId kopyalanamadi.")));
     }
   }
 
@@ -241,7 +247,7 @@ export default function CariAuditPage() {
   if (!canReadAudit) {
     return (
       <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-        Missing permission: `cari.audit.read`
+        {l("Missing permission: `cari.audit.read`", "Eksik yetki: `cari.audit.read`")}
       </div>
     );
   }
@@ -361,7 +367,7 @@ export default function CariAuditPage() {
                 setFilters((prev) => ({ ...prev, includePayload: event.target.checked }))
               }
             />
-            includePayload
+            {l("includePayload", "includePayload")}
           </label>
           <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
             limit
@@ -382,7 +388,7 @@ export default function CariAuditPage() {
               className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
               disabled={loading}
             >
-              {loading ? "Loading..." : "Apply Filters"}
+              {loading ? l("Loading...", "Yukleniyor...") : l("Apply Filters", "Filtrele")}
             </button>
             <button
               type="button"
@@ -390,7 +396,7 @@ export default function CariAuditPage() {
               onClick={resetFilters}
               disabled={loading}
             >
-              Reset
+              {l("Reset", "Sifirla")}
             </button>
           </div>
         </form>
@@ -411,7 +417,9 @@ export default function CariAuditPage() {
             </article>
           ))}
           {byAction.length === 0 ? (
-            <p className="text-sm text-slate-500">No action summary rows.</p>
+            <p className="text-sm text-slate-500">
+              {l("No action summary rows.", "Aksiyon ozeti satiri yok.")}
+            </p>
           ) : null}
         </div>
       </section>
@@ -419,22 +427,22 @@ export default function CariAuditPage() {
       <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
         <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-700">
-            Audit rows
+            {l("Audit rows", "Denetim kayitlari")}
           </h2>
           <p className="text-xs text-slate-500">
-            Total: {total} | Page {currentPage}/{totalPages}
+            {l("Total", "Toplam")}: {total} | {l("Page", "Sayfa")} {currentPage}/{totalPages}
           </p>
         </div>
         <div className="overflow-x-auto">
           <table className="min-w-full text-sm">
             <thead className="bg-slate-50 text-left text-slate-600">
               <tr>
-                <th className="px-3 py-2">createdAt</th>
-                <th className="px-3 py-2">action</th>
-                <th className="px-3 py-2">resource</th>
-                <th className="px-3 py-2">actor</th>
-                <th className="px-3 py-2">requestId</th>
-                <th className="px-3 py-2">payload</th>
+                <th className="px-3 py-2">{l("createdAt", "olusturmaZamani")}</th>
+                <th className="px-3 py-2">{l("action", "aksiyon")}</th>
+                <th className="px-3 py-2">{l("resource", "kaynak")}</th>
+                <th className="px-3 py-2">{l("actor", "kullanici")}</th>
+                <th className="px-3 py-2">{l("requestId", "requestId")}</th>
+                <th className="px-3 py-2">{l("payload", "icerik")}</th>
               </tr>
             </thead>
             <tbody>
@@ -448,7 +456,7 @@ export default function CariAuditPage() {
                     <td className="px-3 py-2 text-xs">
                       <div>{row.actorName || "-"}</div>
                       <div className="text-slate-500">{row.actorEmail || ""}</div>
-                      <div className="text-slate-500">userId: {row.actorUserId || "-"}</div>
+                      <div className="text-slate-500">{l("userId", "kullaniciId")}: {row.actorUserId || "-"}</div>
                     </td>
                     <td className="px-3 py-2">
                       <div className="flex items-center gap-2">
@@ -461,14 +469,17 @@ export default function CariAuditPage() {
                           onClick={() => handleCopyRequestId(row.requestId)}
                           disabled={!row.requestId}
                         >
-                          Copy
+                          {l("Copy", "Kopyala")}
                         </button>
                       </div>
                     </td>
                     <td className="px-3 py-2">
                       {!filters.includePayload ? (
                         <span className="text-xs text-slate-500">
-                          Enable includePayload to fetch payload.
+                          {l(
+                            "Enable includePayload to fetch payload.",
+                            "Icerigi almak icin includePayload secenegini acin."
+                          )}
                         </span>
                       ) : (
                         <div className="space-y-2">
@@ -477,7 +488,9 @@ export default function CariAuditPage() {
                             className="rounded border border-slate-300 px-2 py-1 text-xs font-medium text-slate-700"
                             onClick={() => togglePayload(row.auditLogId)}
                           >
-                            {payloadExpanded ? "Collapse payload" : "Expand payload"}
+                            {payloadExpanded
+                              ? l("Collapse payload", "Icerigi daralt")
+                              : l("Expand payload", "Icerigi genislet")}
                           </button>
                           {payloadExpanded ? (
                             <pre className="max-w-[520px] overflow-auto whitespace-pre-wrap rounded bg-slate-900 p-2 text-xs text-slate-100">
@@ -493,7 +506,12 @@ export default function CariAuditPage() {
               {rows.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="px-3 py-4 text-slate-500">
-                    {loading ? "Loading audit rows..." : "No audit rows found for current filters."}
+                    {loading
+                      ? l("Loading audit rows...", "Denetim kayitlari yukleniyor...")
+                      : l(
+                          "No audit rows found for current filters.",
+                          "Secili filtreler icin denetim kaydi bulunamadi."
+                        )}
                   </td>
                 </tr>
               ) : null}
@@ -511,7 +529,7 @@ export default function CariAuditPage() {
               onClick={goPrevPage}
               disabled={!hasPrev || loading}
             >
-              Previous
+              {l("Previous", "Onceki")}
             </button>
             <button
               type="button"
@@ -519,7 +537,7 @@ export default function CariAuditPage() {
               onClick={goNextPage}
               disabled={!hasNext || loading}
             >
-              Next
+              {l("Next", "Sonraki")}
             </button>
           </div>
         </div>

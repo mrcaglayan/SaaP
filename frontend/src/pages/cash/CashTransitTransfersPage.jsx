@@ -7,6 +7,7 @@ import {
   receiveCashTransitTransfer,
 } from "../../api/cashAdmin.js";
 import { useAuth } from "../../auth/useAuth.js";
+import { useI18n } from "../../i18n/useI18n.js";
 import CashControlModeBanner from "./CashControlModeBanner.jsx";
 
 const TRANSIT_STATUSES = ["INITIATED", "IN_TRANSIT", "RECEIVED", "CANCELED", "REVERSED"];
@@ -83,7 +84,7 @@ function extractRequestId(err) {
   );
 }
 
-function mapTransitErrorMessage(rawMessage) {
+function mapTransitErrorMessage(rawMessage, l) {
   const message = normalizeErrorMessage(rawMessage);
   if (!message) {
     return "";
@@ -91,31 +92,40 @@ function mapTransitErrorMessage(rawMessage) {
   const lower = message.toLowerCase();
 
   if (lower.includes("sourceregisterid not found for tenant")) {
-    return "Source register not found.";
+    return l("Source register not found.", "Kaynak kasa bulunamadi.");
   }
   if (lower.includes("targetregisterid not found for tenant")) {
-    return "Target register not found.";
+    return l("Target register not found.", "Hedef kasa bulunamadi.");
   }
   if (lower.includes("must be in_transit before receive")) {
-    return "Transit transfer must be IN_TRANSIT before receive.";
+    return l(
+      "Transit transfer must be IN_TRANSIT before receive.",
+      "Transit transfer teslim alinmadan once IN_TRANSIT olmali."
+    );
   }
   if (lower.includes("must be posted before receive")) {
-    return "Transfer-out must be POSTED before receive.";
+    return l(
+      "Transfer-out must be POSTED before receive.",
+      "Teslim almadan once transfer-out kaydi POSTED olmali."
+    );
   }
   if (lower.includes("already received or not in transit")) {
-    return "Transit transfer is already received.";
+    return l("Transit transfer is already received.", "Transit transfer zaten teslim alinmis.");
   }
   if (lower.includes("cashsessionid must be open")) {
-    return "Selected cash session must be OPEN.";
+    return l("Selected cash session must be OPEN.", "Secilen kasa oturumu OPEN olmali.");
   }
   if (lower.includes("cash transit transfer not found")) {
-    return "Transit transfer not found.";
+    return l("Transit transfer not found.", "Transit transfer bulunamadi.");
   }
   if (lower.includes("cancelreason is required")) {
-    return "Cancel reason is required.";
+    return l("Cancel reason is required.", "Iptal nedeni zorunludur.");
   }
   if (lower.includes("only initiated transfer can be cancelled")) {
-    return "Only INITIATED transit transfers can be cancelled.";
+    return l(
+      "Only INITIATED transit transfers can be cancelled.",
+      "Sadece INITIATED durumundaki transferler iptal edilebilir."
+    );
   }
 
   return "";
@@ -150,7 +160,9 @@ function toLegalEntityLabel(row) {
 }
 
 export default function CashTransitTransfersPage() {
+  const { language } = useI18n();
   const { hasPermission } = useAuth();
+  const l = (en, tr) => (language === "tr" ? tr : en);
 
   const canRead = hasPermission("cash.txn.read");
   const canCreate = hasPermission("cash.txn.create");
@@ -279,7 +291,10 @@ export default function CashTransitTransfersPage() {
         setRegisterRows([]);
         warnings.push(
           registerResult.reason?.response?.data?.message ||
-            "Register lookup is unavailable."
+            l(
+              "Register lookup is unavailable.",
+              "Kasa listesi su anda alinmiyor."
+            )
         );
       }
 
@@ -289,7 +304,10 @@ export default function CashTransitTransfersPage() {
         setOpenSessions([]);
         warnings.push(
           sessionResult.reason?.response?.data?.message ||
-            "Open session lookup is unavailable."
+            l(
+              "Open session lookup is unavailable.",
+              "Acik kasa oturum listesi su anda alinmiyor."
+            )
         );
       }
 
@@ -304,12 +322,12 @@ export default function CashTransitTransfersPage() {
       const rawMessage = normalizeErrorMessage(
         err?.response?.data?.message || err?.message
       );
-      const mappedMessage = mapTransitErrorMessage(rawMessage);
+      const mappedMessage = mapTransitErrorMessage(rawMessage, l);
       setError(
         mappedMessage ||
           (rawMessage
-            ? `Transit transfers could not be loaded. (${rawMessage})`
-            : "Transit transfers could not be loaded.")
+            ? `${l("Transit transfers could not be loaded.", "Transit transfer kayitlari yuklenemedi.")} (${rawMessage})`
+            : l("Transit transfers could not be loaded.", "Transit transfer kayitlari yuklenemedi."))
       );
       setErrorRequestId(extractRequestId(err));
       setRows([]);
@@ -390,7 +408,7 @@ export default function CashTransitTransfersPage() {
 
     const transferId = toPositiveInt(actionForm.transferId);
     if (!transferId) {
-      setError("transferId is required.");
+      setError(l("transferId is required.", "transferId zorunludur."));
       setErrorRequestId(null);
       return;
     }
@@ -417,18 +435,33 @@ export default function CashTransitTransfersPage() {
           toPositiveInt(response?.transfer?.transfer_in_cash_transaction_id);
 
         if (response?.idempotentReplay) {
-          setMessage(`Transit receive replayed. transferInTxnId=${transferInTxnId || "-"}`);
+          setMessage(
+            l(
+              `Transit receive replayed. transferInTxnId=${transferInTxnId || "-"}`,
+              `Transit teslim alma istegi tekrar oynatildi. transferInTxnId=${transferInTxnId || "-"}`
+            )
+          );
         } else {
-          setMessage(`Transit received. transferInTxnId=${transferInTxnId || "-"}`);
+          setMessage(
+            l(
+              `Transit received. transferInTxnId=${transferInTxnId || "-"}`,
+              `Transit teslim alindi. transferInTxnId=${transferInTxnId || "-"}`
+            )
+          );
         }
       } else if (actionForm.type === "cancel") {
         if (!String(actionForm.cancelReason || "").trim()) {
-          throw new Error("cancelReason is required.");
+          throw new Error(l("cancelReason is required.", "cancelReason zorunludur."));
         }
         await cancelCashTransitTransfer(transferId, {
           cancelReason: String(actionForm.cancelReason || "").trim(),
         });
-        setMessage(`Transit transfer #${transferId} cancelled.`);
+        setMessage(
+          l(
+            `Transit transfer #${transferId} cancelled.`,
+            `Transit transfer #${transferId} iptal edildi.`
+          )
+        );
       }
 
       setActionForm(null);
@@ -437,12 +470,12 @@ export default function CashTransitTransfersPage() {
       const rawMessage = normalizeErrorMessage(
         err?.response?.data?.message || err?.message
       );
-      const mappedMessage = mapTransitErrorMessage(rawMessage);
+      const mappedMessage = mapTransitErrorMessage(rawMessage, l);
       setError(
         mappedMessage ||
           (rawMessage
-            ? `Transit action failed. (${rawMessage})`
-            : "Transit action failed.")
+            ? `${l("Transit action failed.", "Transit islemi basarisiz oldu.")} (${rawMessage})`
+            : l("Transit action failed.", "Transit islemi basarisiz oldu."))
       );
       setErrorRequestId(extractRequestId(err));
     } finally {
@@ -475,13 +508,20 @@ export default function CashTransitTransfersPage() {
       <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <h1 className="text-xl font-semibold text-slate-900">Cash Transit Transfers</h1>
+            <h1 className="text-xl font-semibold text-slate-900">
+              {l("Cash Transit Transfers", "Kasa Transit Transferleri")}
+            </h1>
             <p className="mt-1 text-sm text-slate-600">
-              Monitor cross-OU transfer lifecycle and complete receive/cancel actions safely.
+              {l(
+                "Monitor cross-OU transfer lifecycle and complete receive/cancel actions safely.",
+                "OU'lar arasi transfer yasam dongusunu izleyin, teslim alma/iptal islemlerini guvenle tamamlayin."
+              )}
             </p>
           </div>
           <div className="text-xs text-slate-500">
-            {canRead ? "Permission: cash.txn.read" : "Read permission missing"}
+            {canRead
+              ? l("Permission: cash.txn.read", "Yetki: cash.txn.read")
+              : l("Read permission missing", "Okuma yetkisi eksik")}
           </div>
         </div>
       </section>
@@ -491,8 +531,14 @@ export default function CashTransitTransfersPage() {
           <div className="mb-3 flex items-center justify-between gap-3">
             <h2 className="text-base font-semibold text-indigo-900">
               {actionForm.type === "receive"
-                ? `Transit Receive #${actionForm.transferId}`
-                : `Transit Cancel #${actionForm.transferId}`}
+                ? l(
+                    `Transit Receive #${actionForm.transferId}`,
+                    `Transit Teslim Alma #${actionForm.transferId}`
+                  )
+                : l(
+                    `Transit Cancel #${actionForm.transferId}`,
+                    `Transit Iptal #${actionForm.transferId}`
+                  )}
             </h2>
             <button
               type="button"
@@ -500,7 +546,7 @@ export default function CashTransitTransfersPage() {
               className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-white"
               disabled={actionSaving}
             >
-              Close
+              {l("Close", "Kapat")}
             </button>
           </div>
 
@@ -508,7 +554,7 @@ export default function CashTransitTransfersPage() {
             {actionForm.type === "receive" ? (
               <div className="grid gap-3 md:grid-cols-2">
                 <label className="flex flex-col gap-1 text-sm text-slate-700">
-                  Target register session (optional)
+                  {l("Target register session (optional)", "Hedef kasa oturumu (opsiyonel)")}
                   <select
                     value={actionForm.cashSessionId || ""}
                     onChange={(event) =>
@@ -523,17 +569,20 @@ export default function CashTransitTransfersPage() {
                     }
                     className="rounded-xl border border-slate-300 px-3 py-2"
                   >
-                    <option value="">No session</option>
+                    <option value="">{l("No session", "Oturum yok")}</option>
                     {selectedTargetOpenSessions.map((session) => (
                       <option key={`transit-receive-session-${session.id}`} value={session.id}>
-                        Session #{session.id} ({session.cash_register_code || session.cash_register_id})
+                        {l(
+                          `Session #${session.id} (${session.cash_register_code || session.cash_register_id})`,
+                          `Oturum #${session.id} (${session.cash_register_code || session.cash_register_id})`
+                        )}
                       </option>
                     ))}
                   </select>
                 </label>
 
                 <label className="flex flex-col gap-1 text-sm text-slate-700">
-                  Book date
+                  {l("Book date", "Kayit tarihi")}
                   <input
                     type="date"
                     value={actionForm.bookDate || ""}
@@ -552,7 +601,7 @@ export default function CashTransitTransfersPage() {
                 </label>
 
                 <label className="flex flex-col gap-1 text-sm text-slate-700">
-                  Transaction datetime
+                  {l("Transaction datetime", "Islem tarihi-saati")}
                   <input
                     type="datetime-local"
                     value={actionForm.txnDatetime || ""}
@@ -571,7 +620,7 @@ export default function CashTransitTransfersPage() {
                 </label>
 
                 <label className="flex flex-col gap-1 text-sm text-slate-700">
-                  Reference no
+                  {l("Reference no", "Referans no")}
                   <input
                     value={actionForm.referenceNo || ""}
                     onChange={(event) =>
@@ -586,12 +635,12 @@ export default function CashTransitTransfersPage() {
                     }
                     className="rounded-xl border border-slate-300 px-3 py-2"
                     maxLength={100}
-                    placeholder="Optional"
+                    placeholder={l("Optional", "Opsiyonel")}
                   />
                 </label>
 
                 <label className="md:col-span-2 flex flex-col gap-1 text-sm text-slate-700">
-                  Description
+                  {l("Description", "Aciklama")}
                   <input
                     value={actionForm.description || ""}
                     onChange={(event) =>
@@ -606,13 +655,13 @@ export default function CashTransitTransfersPage() {
                     }
                     className="rounded-xl border border-slate-300 px-3 py-2"
                     maxLength={500}
-                    placeholder="Optional"
+                    placeholder={l("Optional", "Opsiyonel")}
                   />
                 </label>
               </div>
             ) : (
               <label className="flex flex-col gap-1 text-sm text-slate-700">
-                Cancel reason
+                {l("Cancel reason", "Iptal nedeni")}
                 <textarea
                   rows={3}
                   value={actionForm.cancelReason || ""}
@@ -628,7 +677,7 @@ export default function CashTransitTransfersPage() {
                   }
                   className="rounded-xl border border-slate-300 px-3 py-2"
                   maxLength={255}
-                  placeholder="Required"
+                  placeholder={l("Required", "Zorunlu")}
                 />
               </label>
             )}
@@ -640,10 +689,10 @@ export default function CashTransitTransfersPage() {
                 className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:bg-indigo-300"
               >
                 {actionSaving
-                  ? "Saving..."
+                  ? l("Saving...", "Kaydediliyor...")
                   : actionForm.type === "receive"
-                    ? "Receive Transit"
-                    : "Cancel Transit"}
+                    ? l("Receive Transit", "Transit Teslim Al")
+                    : l("Cancel Transit", "Transit Iptal Et")}
               </button>
             </div>
           </form>
@@ -651,10 +700,10 @@ export default function CashTransitTransfersPage() {
       ) : null}
 
       <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-        <h2 className="text-base font-semibold text-slate-900">Filters</h2>
+        <h2 className="text-base font-semibold text-slate-900">{l("Filters", "Filtreler")}</h2>
         <form className="mt-4 grid gap-3 md:grid-cols-6" onSubmit={handleFilterSubmit}>
           <label className="flex flex-col gap-1 text-sm text-slate-700">
-            Legal entity
+            {l("Legal entity", "Hukuki birim")}
             <select
               value={filters.legalEntityId}
               onChange={(event) =>
@@ -667,7 +716,7 @@ export default function CashTransitTransfersPage() {
               }
               className="rounded-xl border border-slate-300 px-3 py-2"
             >
-              <option value="">All</option>
+              <option value="">{l("All", "Tum")}</option>
               {legalEntityOptions.map((entity) => (
                 <option key={`transit-entity-${entity.id}`} value={entity.id}>
                   {toLegalEntityLabel(entity)}
@@ -677,7 +726,7 @@ export default function CashTransitTransfersPage() {
           </label>
 
           <label className="flex flex-col gap-1 text-sm text-slate-700">
-            Source register
+            {l("Source register", "Kaynak kasa")}
             <select
               value={filters.sourceRegisterId}
               onChange={(event) =>
@@ -688,7 +737,7 @@ export default function CashTransitTransfersPage() {
               }
               className="rounded-xl border border-slate-300 px-3 py-2"
             >
-              <option value="">All</option>
+              <option value="">{l("All", "Tum")}</option>
               {sourceRegisterOptions.map((register) => (
                 <option key={`transit-source-register-${register.id}`} value={register.id}>
                   {toRegisterLabel(register)}
@@ -698,7 +747,7 @@ export default function CashTransitTransfersPage() {
           </label>
 
           <label className="flex flex-col gap-1 text-sm text-slate-700">
-            Target register
+            {l("Target register", "Hedef kasa")}
             <select
               value={filters.targetRegisterId}
               onChange={(event) =>
@@ -709,7 +758,7 @@ export default function CashTransitTransfersPage() {
               }
               className="rounded-xl border border-slate-300 px-3 py-2"
             >
-              <option value="">All</option>
+              <option value="">{l("All", "Tum")}</option>
               {targetRegisterOptions.map((register) => (
                 <option key={`transit-target-register-${register.id}`} value={register.id}>
                   {toRegisterLabel(register)}
@@ -719,7 +768,7 @@ export default function CashTransitTransfersPage() {
           </label>
 
           <label className="flex flex-col gap-1 text-sm text-slate-700">
-            Status
+            {l("Status", "Durum")}
             <select
               value={filters.status}
               onChange={(event) =>
@@ -730,7 +779,7 @@ export default function CashTransitTransfersPage() {
               }
               className="rounded-xl border border-slate-300 px-3 py-2"
             >
-              <option value="">All</option>
+              <option value="">{l("All", "Tum")}</option>
               {TRANSIT_STATUSES.map((status) => (
                 <option key={`transit-status-${status}`} value={status}>
                   {status}
@@ -740,7 +789,7 @@ export default function CashTransitTransfersPage() {
           </label>
 
           <label className="flex flex-col gap-1 text-sm text-slate-700">
-            Initiated from
+            {l("Initiated from", "Baslangic tarihi")}
             <input
               type="date"
               value={filters.initiatedDateFrom}
@@ -755,7 +804,7 @@ export default function CashTransitTransfersPage() {
           </label>
 
           <label className="flex flex-col gap-1 text-sm text-slate-700">
-            Initiated to
+            {l("Initiated to", "Bitis tarihi")}
             <input
               type="date"
               value={filters.initiatedDateTo}
@@ -775,7 +824,7 @@ export default function CashTransitTransfersPage() {
               disabled={loading}
               className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700 disabled:cursor-not-allowed disabled:bg-slate-400"
             >
-              {loading ? "Loading..." : "Apply filters"}
+              {loading ? l("Loading...", "Yukleniyor...") : l("Apply filters", "Filtrele")}
             </button>
             <button
               type="button"
@@ -783,7 +832,7 @@ export default function CashTransitTransfersPage() {
               className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-100"
               disabled={loading}
             >
-              Reset
+              {l("Reset", "Sifirla")}
             </button>
           </div>
         </form>
@@ -791,7 +840,9 @@ export default function CashTransitTransfersPage() {
         {error ? (
           <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
             <p>{error}</p>
-            {errorRequestId ? <p className="mt-1 text-xs">requestId: {errorRequestId}</p> : null}
+            {errorRequestId ? (
+              <p className="mt-1 text-xs">{l("requestId", "talepId")}: {errorRequestId}</p>
+            ) : null}
           </div>
         ) : null}
 
@@ -810,30 +861,37 @@ export default function CashTransitTransfersPage() {
 
       <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="mb-3 flex items-center justify-between gap-3">
-          <h2 className="text-base font-semibold text-slate-900">Transit transfers</h2>
-          <span className="text-xs text-slate-500">{transferRows.length} row(s)</span>
+          <h2 className="text-base font-semibold text-slate-900">
+            {l("Transit transfers", "Transit transferler")}
+          </h2>
+          <span className="text-xs text-slate-500">
+            {l(`${transferRows.length} row(s)`, `${transferRows.length} satir`)}
+          </span>
         </div>
 
         {!canRead ? (
           <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
-            You do not have permission to view transit transfers.
+            {l(
+              "You do not have permission to view transit transfers.",
+              "Transit transferleri goruntuleme yetkiniz yok."
+            )}
           </div>
         ) : transferRows.length === 0 ? (
           <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
-            No transit transfers found.
+            {l("No transit transfers found.", "Transit transfer kaydi bulunamadi.")}
           </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-slate-200 text-sm">
               <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
                 <tr>
-                  <th className="px-3 py-2">Transfer</th>
-                  <th className="px-3 py-2">Route</th>
-                  <th className="px-3 py-2">Amount</th>
-                  <th className="px-3 py-2">Linked txns</th>
-                  <th className="px-3 py-2">Timeline</th>
-                  <th className="px-3 py-2">Notes</th>
-                  <th className="px-3 py-2">Actions</th>
+                  <th className="px-3 py-2">{l("Transfer", "Transfer")}</th>
+                  <th className="px-3 py-2">{l("Route", "Rota")}</th>
+                  <th className="px-3 py-2">{l("Amount", "Tutar")}</th>
+                  <th className="px-3 py-2">{l("Linked txns", "Bagli islemler")}</th>
+                  <th className="px-3 py-2">{l("Timeline", "Zaman cizelgesi")}</th>
+                  <th className="px-3 py-2">{l("Notes", "Notlar")}</th>
+                  <th className="px-3 py-2">{l("Actions", "Aksiyonlar")}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-slate-700">
@@ -855,7 +913,7 @@ export default function CashTransitTransfersPage() {
                           {status || "-"}
                         </div>
                         <div className="mt-1 text-xs text-slate-500">
-                          LE: {row?.legal_entity_code || row?.legal_entity_id || "-"}
+                          {l("LE", "HB")}: {row?.legal_entity_code || row?.legal_entity_id || "-"}
                         </div>
                       </td>
 
@@ -870,7 +928,8 @@ export default function CashTransitTransfersPage() {
                           </span>
                         </div>
                         <div className="text-xs text-slate-500">
-                          OU: {row?.source_operating_unit_code || row?.source_operating_unit_id || "-"}
+                          {l("OU", "OU")}:{" "}
+                          {row?.source_operating_unit_code || row?.source_operating_unit_id || "-"}
                           <span className="mx-1">-&gt;</span>
                           {row?.target_operating_unit_code || row?.target_operating_unit_id || "-"}
                         </div>
@@ -881,19 +940,20 @@ export default function CashTransitTransfersPage() {
                           {formatAmount(row?.amount)} {row?.currency_code || ""}
                         </div>
                         <div className="text-xs text-slate-500">
-                          Transit account: {row?.transit_account_code || row?.transit_account_id || "-"}
+                          {l("Transit account", "Transit hesap")}:{" "}
+                          {row?.transit_account_code || row?.transit_account_id || "-"}
                         </div>
                       </td>
 
                       <td className="px-3 py-2 align-top">
                         <div>
-                          OUT: #{row?.transfer_out_cash_transaction_id || "-"}
+                          {l("OUT", "CIKIS")}: #{row?.transfer_out_cash_transaction_id || "-"}
                           <span className="ml-1 text-xs text-slate-500">
                             ({row?.transfer_out_txn_status || "-"})
                           </span>
                         </div>
                         <div>
-                          IN: #{row?.transfer_in_cash_transaction_id || "-"}
+                          {l("IN", "GIRIS")}: #{row?.transfer_in_cash_transaction_id || "-"}
                           <span className="ml-1 text-xs text-slate-500">
                             ({row?.transfer_in_txn_status || "-"})
                           </span>
@@ -901,15 +961,19 @@ export default function CashTransitTransfersPage() {
                       </td>
 
                       <td className="px-3 py-2 align-top text-xs text-slate-600">
-                        <div>Initiated: {formatDateTime(row?.initiated_at)}</div>
-                        <div>In transit: {formatDateTime(row?.in_transit_at)}</div>
-                        <div>Received: {formatDateTime(row?.received_at)}</div>
+                        <div>{l("Initiated", "Baslatildi")}: {formatDateTime(row?.initiated_at)}</div>
+                        <div>{l("In transit", "Yolda")}: {formatDateTime(row?.in_transit_at)}</div>
+                        <div>{l("Received", "Teslim alindi")}: {formatDateTime(row?.received_at)}</div>
                       </td>
 
                       <td className="px-3 py-2 align-top text-xs text-slate-600">
                         <div>{row?.note || "-"}</div>
-                        {row?.cancel_reason ? <div>Cancel: {row.cancel_reason}</div> : null}
-                        {row?.reverse_reason ? <div>Reverse: {row.reverse_reason}</div> : null}
+                        {row?.cancel_reason ? (
+                          <div>{l("Cancel", "Iptal")}: {row.cancel_reason}</div>
+                        ) : null}
+                        {row?.reverse_reason ? (
+                          <div>{l("Reverse", "Ters kayit")}: {row.reverse_reason}</div>
+                        ) : null}
                       </td>
 
                       <td className="px-3 py-2 align-top">
@@ -920,7 +984,7 @@ export default function CashTransitTransfersPage() {
                             disabled={!canReceive || actionSaving}
                             className="rounded-lg border border-indigo-200 px-3 py-1.5 text-xs font-medium text-indigo-700 hover:bg-indigo-50 disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-400"
                           >
-                            Receive
+                            {l("Receive", "Teslim al")}
                           </button>
                           <button
                             type="button"
@@ -928,7 +992,7 @@ export default function CashTransitTransfersPage() {
                             disabled={!canCancelTransit || actionSaving}
                             className="rounded-lg border border-rose-200 px-3 py-1.5 text-xs font-medium text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-400"
                           >
-                            Cancel
+                            {l("Cancel", "Iptal et")}
                           </button>
                         </div>
                       </td>
