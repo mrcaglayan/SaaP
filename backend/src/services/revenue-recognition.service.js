@@ -716,36 +716,141 @@ async function fetchRunLines({
   const lockSql = forUpdate ? " FOR UPDATE" : "";
   const result = await runQuery(
     `SELECT
-        id,
-        tenant_id,
-        legal_entity_id,
-        run_id,
-        schedule_line_id,
-        line_no,
-        source_row_uid,
-        status,
-        account_family,
-        maturity_bucket,
-        maturity_date,
-        reclass_required,
-        currency_code,
-        fx_rate,
-        amount_txn,
-        amount_base,
-        fiscal_period_id,
-        period_start_date,
-        period_end_date,
-        reversal_of_run_line_id,
-        posted_journal_entry_id,
-        posted_journal_line_id
-     FROM revenue_recognition_run_lines
-     WHERE tenant_id = ?
-       AND legal_entity_id = ?
-       AND run_id = ?
-     ORDER BY line_no ASC, id ASC${lockSql}`,
+        rrrl.id,
+        rrrl.tenant_id,
+        rrrl.legal_entity_id,
+        rrrl.run_id,
+        rrrl.schedule_line_id,
+        rrrl.line_no,
+        rrrl.source_row_uid,
+        rrrl.status,
+        rrrl.account_family,
+        rrrl.maturity_bucket,
+        rrrl.maturity_date,
+        rrrl.reclass_required,
+        rrrl.currency_code,
+        rrrl.fx_rate,
+        rrrl.amount_txn,
+        rrrl.amount_base,
+        rrrl.fiscal_period_id,
+        rrrl.period_start_date,
+        rrrl.period_end_date,
+        rrrl.reversal_of_run_line_id,
+        rrrl.posted_journal_entry_id,
+        rrrl.posted_journal_line_id,
+        rrsl.source_contract_id,
+        rrsl.source_contract_line_id,
+        rrsl.source_cari_document_id
+     FROM revenue_recognition_run_lines rrrl
+     LEFT JOIN revenue_recognition_schedule_lines rrsl
+       ON rrsl.tenant_id = rrrl.tenant_id
+      AND rrsl.legal_entity_id = rrrl.legal_entity_id
+      AND rrsl.id = rrrl.schedule_line_id
+     WHERE rrrl.tenant_id = ?
+       AND rrrl.legal_entity_id = ?
+       AND rrrl.run_id = ?
+     ORDER BY rrrl.line_no ASC, rrrl.id ASC${lockSql}`,
     [tenantId, legalEntityId, runId]
   );
   return result.rows || [];
+}
+
+async function fetchContractLinePostingOverrides({
+  tenantId,
+  legalEntityId,
+  contractLineIds,
+  runQuery = query,
+}) {
+  const normalizedLineIds = Array.from(
+    new Set((contractLineIds || []).map((value) => parsePositiveInt(value)).filter(Boolean))
+  );
+  const lineOverridesById = new Map();
+  if (normalizedLineIds.length === 0) {
+    return lineOverridesById;
+  }
+
+  const linePlaceholders = normalizedLineIds.map(() => "?").join(", ");
+  const lineResult = await runQuery(
+    `SELECT
+        id,
+        deferred_account_id,
+        revenue_account_id
+     FROM contract_lines
+     WHERE tenant_id = ?
+       AND legal_entity_id = ?
+       AND id IN (${linePlaceholders})`,
+    [tenantId, legalEntityId, ...normalizedLineIds]
+  );
+  const lineRows = lineResult.rows || [];
+  const lineRowById = new Map(
+    lineRows
+      .map((row) => [parsePositiveInt(row.id), row])
+      .filter(([lineId]) => Boolean(lineId))
+  );
+  const missingLineIds = normalizedLineIds.filter((lineId) => !lineRowById.has(lineId));
+  if (missingLineIds.length > 0) {
+    throw badRequest(
+      `Posting account resolution failed: missing source contract lines ${missingLineIds.join(", ")}`
+    );
+  }
+
+  const accountIdSet = new Set();
+  for (const row of lineRows) {
+    const deferredAccountId = parsePositiveInt(row.deferred_account_id);
+    const revenueAccountId = parsePositiveInt(row.revenue_account_id);
+    if (deferredAccountId) {
+      accountIdSet.add(deferredAccountId);
+    }
+    if (revenueAccountId) {
+      accountIdSet.add(revenueAccountId);
+    }
+  }
+
+  const validPostingAccountIdSet = new Set();
+  if (accountIdSet.size > 0) {
+    const accountIds = Array.from(accountIdSet);
+    const accountPlaceholders = accountIds.map(() => "?").join(", ");
+    const accountResult = await runQuery(
+      `SELECT a.id
+       FROM accounts a
+       JOIN charts_of_accounts c ON c.id = a.coa_id
+       WHERE a.id IN (${accountPlaceholders})
+         AND c.tenant_id = ?
+         AND c.legal_entity_id = ?
+         AND c.scope = 'LEGAL_ENTITY'
+         AND a.is_active = TRUE
+         AND a.allow_posting = TRUE`,
+      [...accountIds, tenantId, legalEntityId]
+    );
+    for (const row of accountResult.rows || []) {
+      const accountId = parsePositiveInt(row.id);
+      if (accountId) {
+        validPostingAccountIdSet.add(accountId);
+      }
+    }
+  }
+
+  for (const row of lineRows) {
+    const lineId = parsePositiveInt(row.id);
+    const deferredAccountId = parsePositiveInt(row.deferred_account_id);
+    const revenueAccountId = parsePositiveInt(row.revenue_account_id);
+    if (deferredAccountId && !validPostingAccountIdSet.has(deferredAccountId)) {
+      throw badRequest(
+        `contractLineId=${lineId} deferred_account_id=${deferredAccountId} is not an active posting account in legalEntity scope`
+      );
+    }
+    if (revenueAccountId && !validPostingAccountIdSet.has(revenueAccountId)) {
+      throw badRequest(
+        `contractLineId=${lineId} revenue_account_id=${revenueAccountId} is not an active posting account in legalEntity scope`
+      );
+    }
+    lineOverridesById.set(lineId, {
+      deferredAccountId: deferredAccountId || null,
+      revenueAccountId: revenueAccountId || null,
+    });
+  }
+
+  return lineOverridesById;
 }
 
 async function fetchRunSubledgerEntries({
@@ -1005,14 +1110,76 @@ async function resolveRevenuePostingAccounts({
     ])
   );
 
-  const missing = purposeCodes.filter((code) => !byPurpose.get(code)?.id);
-  if (missing.length > 0) {
-    throw badRequest(
-      `Setup required: configure journal_purpose_accounts for ${missing.join(", ")}`
-    );
-  }
-
   return byPurpose;
+}
+
+function formatRunLineContext(runLine) {
+  const runLineId = parsePositiveInt(runLine?.id);
+  const scheduleLineId = parsePositiveInt(runLine?.schedule_line_id);
+  const sourceContractLineId = parsePositiveInt(runLine?.source_contract_line_id);
+  const context = [];
+  if (runLineId) {
+    context.push(`runLineId=${runLineId}`);
+  }
+  if (scheduleLineId) {
+    context.push(`scheduleLineId=${scheduleLineId}`);
+  }
+  if (sourceContractLineId) {
+    context.push(`sourceContractLineId=${sourceContractLineId}`);
+  }
+  return context.length > 0 ? context.join(", ") : "runLine context unavailable";
+}
+
+function resolveMappedPurposeAccountIdOrThrow({
+  mappingByPurpose,
+  purposeCode,
+  runLine,
+  accountLabel,
+}) {
+  const accountId = mappingByPurpose.get(asUpper(purposeCode))?.id;
+  if (accountId) {
+    return accountId;
+  }
+  throw badRequest(
+    `Setup required: configure journal_purpose_accounts for ${purposeCode} (${accountLabel}; ${formatRunLineContext(
+      runLine
+    )})`
+  );
+}
+
+function resolveRecognitionAccountIdForRunLine({
+  runLine,
+  accountLabel,
+  contractLineAccountOverridesById,
+  contractLineField,
+  fallbackPurposeCode,
+  mappingByPurpose,
+}) {
+  const overrideMap =
+    contractLineAccountOverridesById instanceof Map
+      ? contractLineAccountOverridesById
+      : new Map();
+  const sourceContractLineId = parsePositiveInt(runLine?.source_contract_line_id);
+  if (sourceContractLineId) {
+    const lineOverride = overrideMap.get(sourceContractLineId);
+    if (!lineOverride) {
+      throw badRequest(
+        `Posting account resolution failed: source_contract_line_id=${sourceContractLineId} not found (${formatRunLineContext(
+          runLine
+        )})`
+      );
+    }
+    const overrideAccountId = parsePositiveInt(lineOverride?.[contractLineField]);
+    if (overrideAccountId) {
+      return overrideAccountId;
+    }
+  }
+  return resolveMappedPurposeAccountIdOrThrow({
+    mappingByPurpose,
+    purposeCode: fallbackPurposeCode,
+    runLine,
+    accountLabel,
+  });
 }
 
 function buildRevenueJournalNo(prefix, runNo, runId) {
@@ -1046,6 +1213,7 @@ function buildPostingEntriesForRunLine({
   runNo,
   runLine,
   mappingByPurpose,
+  contractLineAccountOverridesById,
 }) {
   const accountFamily = assertPostingFamilySupported(
     runLine.account_family,
@@ -1075,12 +1243,22 @@ function buildPostingEntriesForRunLine({
     const deferredPurpose = isLongTerm
       ? REVREC_PURPOSE_CODES.DEFREV_LONG_LIABILITY
       : REVREC_PURPOSE_CODES.DEFREV_SHORT_LIABILITY;
-    const deferredAccountId = mappingByPurpose.get(deferredPurpose)?.id;
-    const revenueAccountId = mappingByPurpose.get(REVREC_PURPOSE_CODES.DEFREV_REVENUE)?.id;
-
-    if (!deferredAccountId || !revenueAccountId) {
-      throw badRequest("Setup required: DEFREV posting account mapping is missing");
-    }
+    const deferredAccountId = resolveRecognitionAccountIdForRunLine({
+      runLine,
+      accountLabel: "DEFREV deferred account",
+      contractLineAccountOverridesById,
+      contractLineField: "deferredAccountId",
+      fallbackPurposeCode: deferredPurpose,
+      mappingByPurpose,
+    });
+    const revenueAccountId = resolveRecognitionAccountIdForRunLine({
+      runLine,
+      accountLabel: "DEFREV revenue account",
+      contractLineAccountOverridesById,
+      contractLineField: "revenueAccountId",
+      fallbackPurposeCode: REVREC_PURPOSE_CODES.DEFREV_REVENUE,
+      mappingByPurpose,
+    });
 
     recognitionLines.push(
       {
@@ -1122,11 +1300,18 @@ function buildPostingEntriesForRunLine({
     ];
 
     if (reclassRequired) {
-      const longAccountId = mappingByPurpose.get(REVREC_PURPOSE_CODES.DEFREV_LONG_LIABILITY)?.id;
-      const shortAccountId = mappingByPurpose.get(REVREC_PURPOSE_CODES.DEFREV_SHORT_LIABILITY)?.id;
-      if (!longAccountId || !shortAccountId) {
-        throw badRequest("Setup required: DEFREV long/short reclass mappings are missing");
-      }
+      const longAccountId = resolveMappedPurposeAccountIdOrThrow({
+        mappingByPurpose,
+        purposeCode: REVREC_PURPOSE_CODES.DEFREV_LONG_LIABILITY,
+        runLine,
+        accountLabel: "DEFREV long liability reclass account",
+      });
+      const shortAccountId = resolveMappedPurposeAccountIdOrThrow({
+        mappingByPurpose,
+        purposeCode: REVREC_PURPOSE_CODES.DEFREV_SHORT_LIABILITY,
+        runLine,
+        accountLabel: "DEFREV short liability reclass account",
+      });
       if (longAccountId === shortAccountId) {
         throw badRequest("DEFREV long and short liability mappings must be different");
       }
@@ -1173,11 +1358,22 @@ function buildPostingEntriesForRunLine({
     const assetPurpose = isLongTerm
       ? REVREC_PURPOSE_CODES.PREPAID_EXP_LONG_ASSET
       : REVREC_PURPOSE_CODES.PREPAID_EXP_SHORT_ASSET;
-    const assetAccountId = mappingByPurpose.get(assetPurpose)?.id;
-    const expenseAccountId = mappingByPurpose.get(REVREC_PURPOSE_CODES.PREPAID_EXPENSE)?.id;
-    if (!assetAccountId || !expenseAccountId) {
-      throw badRequest("Setup required: PREPAID posting account mapping is missing");
-    }
+    const assetAccountId = resolveRecognitionAccountIdForRunLine({
+      runLine,
+      accountLabel: "PREPAID deferred asset account",
+      contractLineAccountOverridesById,
+      contractLineField: "deferredAccountId",
+      fallbackPurposeCode: assetPurpose,
+      mappingByPurpose,
+    });
+    const expenseAccountId = resolveRecognitionAccountIdForRunLine({
+      runLine,
+      accountLabel: "PREPAID expense account",
+      contractLineAccountOverridesById,
+      contractLineField: "revenueAccountId",
+      fallbackPurposeCode: REVREC_PURPOSE_CODES.PREPAID_EXPENSE,
+      mappingByPurpose,
+    });
 
     const entries = [
       {
@@ -1217,13 +1413,18 @@ function buildPostingEntriesForRunLine({
     ];
 
     if (reclassRequired) {
-      const longAccountId = mappingByPurpose.get(REVREC_PURPOSE_CODES.PREPAID_EXP_LONG_ASSET)?.id;
-      const shortAccountId = mappingByPurpose.get(
-        REVREC_PURPOSE_CODES.PREPAID_EXP_SHORT_ASSET
-      )?.id;
-      if (!longAccountId || !shortAccountId) {
-        throw badRequest("Setup required: PREPAID long/short reclass mappings are missing");
-      }
+      const longAccountId = resolveMappedPurposeAccountIdOrThrow({
+        mappingByPurpose,
+        purposeCode: REVREC_PURPOSE_CODES.PREPAID_EXP_LONG_ASSET,
+        runLine,
+        accountLabel: "PREPAID long asset reclass account",
+      });
+      const shortAccountId = resolveMappedPurposeAccountIdOrThrow({
+        mappingByPurpose,
+        purposeCode: REVREC_PURPOSE_CODES.PREPAID_EXP_SHORT_ASSET,
+        runLine,
+        accountLabel: "PREPAID short asset reclass account",
+      });
       if (longAccountId === shortAccountId) {
         throw badRequest("PREPAID long and short asset mappings must be different");
       }
@@ -1270,11 +1471,22 @@ function buildPostingEntriesForRunLine({
     const accruedAssetPurpose = isLongTerm
       ? REVREC_PURPOSE_CODES.ACCR_REV_LONG_ASSET
       : REVREC_PURPOSE_CODES.ACCR_REV_SHORT_ASSET;
-    const accruedAssetAccountId = mappingByPurpose.get(accruedAssetPurpose)?.id;
-    const revenueAccountId = mappingByPurpose.get(REVREC_PURPOSE_CODES.ACCR_REV_REVENUE)?.id;
-    if (!accruedAssetAccountId || !revenueAccountId) {
-      throw badRequest("Setup required: ACCRUED_REVENUE posting account mapping is missing");
-    }
+    const accruedAssetAccountId = resolveRecognitionAccountIdForRunLine({
+      runLine,
+      accountLabel: "ACCRUED_REVENUE accrued-asset account",
+      contractLineAccountOverridesById,
+      contractLineField: "deferredAccountId",
+      fallbackPurposeCode: accruedAssetPurpose,
+      mappingByPurpose,
+    });
+    const revenueAccountId = resolveRecognitionAccountIdForRunLine({
+      runLine,
+      accountLabel: "ACCRUED_REVENUE revenue account",
+      contractLineAccountOverridesById,
+      contractLineField: "revenueAccountId",
+      fallbackPurposeCode: REVREC_PURPOSE_CODES.ACCR_REV_REVENUE,
+      mappingByPurpose,
+    });
 
     const entries = [
       {
@@ -1314,11 +1526,18 @@ function buildPostingEntriesForRunLine({
     ];
 
     if (reclassRequired) {
-      const longAccountId = mappingByPurpose.get(REVREC_PURPOSE_CODES.ACCR_REV_LONG_ASSET)?.id;
-      const shortAccountId = mappingByPurpose.get(REVREC_PURPOSE_CODES.ACCR_REV_SHORT_ASSET)?.id;
-      if (!longAccountId || !shortAccountId) {
-        throw badRequest("Setup required: ACCR_REV long/short reclass mappings are missing");
-      }
+      const longAccountId = resolveMappedPurposeAccountIdOrThrow({
+        mappingByPurpose,
+        purposeCode: REVREC_PURPOSE_CODES.ACCR_REV_LONG_ASSET,
+        runLine,
+        accountLabel: "ACCRUED_REVENUE long asset reclass account",
+      });
+      const shortAccountId = resolveMappedPurposeAccountIdOrThrow({
+        mappingByPurpose,
+        purposeCode: REVREC_PURPOSE_CODES.ACCR_REV_SHORT_ASSET,
+        runLine,
+        accountLabel: "ACCRUED_REVENUE short asset reclass account",
+      });
       if (longAccountId === shortAccountId) {
         throw badRequest("ACCR_REV long and short asset mappings must be different");
       }
@@ -1365,11 +1584,22 @@ function buildPostingEntriesForRunLine({
     const accruedLiabilityPurpose = isLongTerm
       ? REVREC_PURPOSE_CODES.ACCR_EXP_LONG_LIABILITY
       : REVREC_PURPOSE_CODES.ACCR_EXP_SHORT_LIABILITY;
-    const accruedLiabilityAccountId = mappingByPurpose.get(accruedLiabilityPurpose)?.id;
-    const expenseAccountId = mappingByPurpose.get(REVREC_PURPOSE_CODES.ACCR_EXP_EXPENSE)?.id;
-    if (!accruedLiabilityAccountId || !expenseAccountId) {
-      throw badRequest("Setup required: ACCRUED_EXPENSE posting account mapping is missing");
-    }
+    const accruedLiabilityAccountId = resolveRecognitionAccountIdForRunLine({
+      runLine,
+      accountLabel: "ACCRUED_EXPENSE accrued-liability account",
+      contractLineAccountOverridesById,
+      contractLineField: "deferredAccountId",
+      fallbackPurposeCode: accruedLiabilityPurpose,
+      mappingByPurpose,
+    });
+    const expenseAccountId = resolveRecognitionAccountIdForRunLine({
+      runLine,
+      accountLabel: "ACCRUED_EXPENSE expense account",
+      contractLineAccountOverridesById,
+      contractLineField: "revenueAccountId",
+      fallbackPurposeCode: REVREC_PURPOSE_CODES.ACCR_EXP_EXPENSE,
+      mappingByPurpose,
+    });
 
     const entries = [
       {
@@ -1409,13 +1639,18 @@ function buildPostingEntriesForRunLine({
     ];
 
     if (reclassRequired) {
-      const longAccountId = mappingByPurpose.get(REVREC_PURPOSE_CODES.ACCR_EXP_LONG_LIABILITY)?.id;
-      const shortAccountId = mappingByPurpose.get(
-        REVREC_PURPOSE_CODES.ACCR_EXP_SHORT_LIABILITY
-      )?.id;
-      if (!longAccountId || !shortAccountId) {
-        throw badRequest("Setup required: ACCR_EXP long/short reclass mappings are missing");
-      }
+      const longAccountId = resolveMappedPurposeAccountIdOrThrow({
+        mappingByPurpose,
+        purposeCode: REVREC_PURPOSE_CODES.ACCR_EXP_LONG_LIABILITY,
+        runLine,
+        accountLabel: "ACCRUED_EXPENSE long liability reclass account",
+      });
+      const shortAccountId = resolveMappedPurposeAccountIdOrThrow({
+        mappingByPurpose,
+        purposeCode: REVREC_PURPOSE_CODES.ACCR_EXP_SHORT_LIABILITY,
+        runLine,
+        accountLabel: "ACCRUED_EXPENSE short liability reclass account",
+      });
       if (longAccountId === shortAccountId) {
         throw badRequest("ACCR_EXP long and short liability mappings must be different");
       }
@@ -2668,12 +2903,6 @@ export async function generateRevenueRecognitionSchedulesFromContract({
     if (!contractLineId) {
       throw badRequest("Selected contract line has invalid id");
     }
-    if (!parsePositiveInt(lineRow?.deferred_account_id)) {
-      throw badRequest(`contractLineId=${contractLineId} missing deferred_account_id`);
-    }
-    if (!parsePositiveInt(lineRow?.revenue_account_id)) {
-      throw badRequest(`contractLineId=${contractLineId} missing revenue_account_id`);
-    }
 
     const bucketPlan = buildContractLineRevrecBuckets({
       lineRow,
@@ -3441,6 +3670,15 @@ export async function postRevenueRecognitionRun({
     if (runLines.length === 0) {
       throw badRequest("Run has no lines to post");
     }
+    const sourceContractLineIds = Array.from(
+      new Set(runLines.map((line) => parsePositiveInt(line.source_contract_line_id)).filter(Boolean))
+    );
+    const contractLineAccountOverridesById = await fetchContractLinePostingOverrides({
+      tenantId,
+      legalEntityId,
+      contractLineIds: sourceContractLineIds,
+      runQuery: tx.query,
+    });
 
     const postingEntries = [];
     const journalLines = [];
@@ -3453,6 +3691,7 @@ export async function postRevenueRecognitionRun({
         runNo: run.run_no,
         runLine,
         mappingByPurpose,
+        contractLineAccountOverridesById,
       });
       postingEntries.push(...lineEntries);
       for (const entry of lineEntries) {

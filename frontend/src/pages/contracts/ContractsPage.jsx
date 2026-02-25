@@ -46,6 +46,7 @@ import {
   getCounterpartyRoleForContractType,
   getLifecycleActionStates,
   mapContractDetailToForm,
+  normalizeContractFinancialRollup,
   resolveContractsPermissionGates,
   toPositiveInt,
   validateContractForm,
@@ -76,6 +77,20 @@ function toUpper(value) {
 
 function todayDateOnly() {
   return new Date().toISOString().slice(0, 10);
+}
+
+function clampPercent(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return 0;
+  }
+  if (parsed < 0) {
+    return 0;
+  }
+  if (parsed > 100) {
+    return 100;
+  }
+  return parsed;
 }
 
 function normalizeApiError(error, fallback = "Operation failed.") {
@@ -150,6 +165,30 @@ export default function ContractsPage() {
     [rows, selectedContractId]
   );
   const selectedContract = selectedContractDetail || selectedContractRow;
+  const financialRollup = useMemo(
+    () =>
+      normalizeContractFinancialRollup(
+        selectedContract?.financialRollup,
+        selectedContract?.contractType
+      ),
+    [selectedContract?.financialRollup, selectedContract?.contractType]
+  );
+  const collectionProgressPct = clampPercent(
+    financialRollup?.collectedCoveragePct ||
+      (financialRollup?.billedAmountBase
+        ? (Number(financialRollup?.collectedAmountBase || 0) /
+            Number(financialRollup?.billedAmountBase || 0)) *
+          100
+        : 0)
+  );
+  const recognitionProgressPct = clampPercent(
+    financialRollup?.recognizedCoveragePct ||
+      (financialRollup?.revrecScheduledAmountBase
+        ? (Number(financialRollup?.recognizedToDateBase || 0) /
+            Number(financialRollup?.revrecScheduledAmountBase || 0)) *
+          100
+        : 0)
+  );
   const lifecycleStates = useMemo(
     () => getLifecycleActionStates(selectedContract?.status, gates),
     [selectedContract?.status, gates]
@@ -1169,6 +1208,110 @@ export default function ContractsPage() {
           </div>
         ) : (
           <div className="mt-2 text-sm text-slate-500">{detailLoading ? "Loading..." : "Select a contract."}</div>
+        )}
+      </section>
+
+      <section className="rounded-xl border border-slate-200 bg-white p-4">
+        <h2 className="font-semibold text-slate-900">Financial Rollups</h2>
+        {!selectedContract ? (
+          <div className="mt-2 text-sm text-slate-500">Select a contract.</div>
+        ) : (
+          <div className="mt-3 space-y-3">
+            <div className="grid gap-2 md:grid-cols-3">
+              <div className="rounded border border-slate-200 bg-slate-50 p-3">
+                <div className="text-xs uppercase tracking-wide text-slate-500">Billed</div>
+                <div className="mt-1 text-lg font-semibold text-slate-900">
+                  {formatAmount(financialRollup?.billedAmountBase)}
+                </div>
+                <div className="text-xs text-slate-600">Txn {formatAmount(financialRollup?.billedAmountTxn)}</div>
+              </div>
+              <div className="rounded border border-slate-200 bg-slate-50 p-3">
+                <div className="text-xs uppercase tracking-wide text-slate-500">Collected</div>
+                <div className="mt-1 text-lg font-semibold text-emerald-700">
+                  {formatAmount(financialRollup?.collectedAmountBase)}
+                </div>
+                <div className="text-xs text-slate-600">Txn {formatAmount(financialRollup?.collectedAmountTxn)}</div>
+              </div>
+              <div className="rounded border border-slate-200 bg-slate-50 p-3">
+                <div className="text-xs uppercase tracking-wide text-slate-500">Uncollected</div>
+                <div className="mt-1 text-lg font-semibold text-amber-700">
+                  {formatAmount(financialRollup?.uncollectedAmountBase)}
+                </div>
+                <div className="text-xs text-slate-600">
+                  Txn {formatAmount(financialRollup?.uncollectedAmountTxn)}
+                </div>
+              </div>
+              <div className="rounded border border-slate-200 bg-slate-50 p-3">
+                <div className="text-xs uppercase tracking-wide text-slate-500">Recognized To Date</div>
+                <div className="mt-1 text-lg font-semibold text-sky-700">
+                  {formatAmount(financialRollup?.recognizedToDateBase)}
+                </div>
+                <div className="text-xs text-slate-600">
+                  Txn {formatAmount(financialRollup?.recognizedToDateTxn)}
+                </div>
+              </div>
+              <div className="rounded border border-slate-200 bg-slate-50 p-3">
+                <div className="text-xs uppercase tracking-wide text-slate-500">Deferred Balance</div>
+                <div className="mt-1 text-lg font-semibold text-indigo-700">
+                  {formatAmount(financialRollup?.deferredBalanceBase)}
+                </div>
+                <div className="text-xs text-slate-600">
+                  Txn {formatAmount(financialRollup?.deferredBalanceTxn)}
+                </div>
+              </div>
+              <div className="rounded border border-slate-200 bg-slate-50 p-3">
+                <div className="text-xs uppercase tracking-wide text-slate-500">
+                  {toUpper(selectedContract?.contractType) === "VENDOR"
+                    ? "Open Payable"
+                    : "Open Receivable"}
+                </div>
+                <div className="mt-1 text-lg font-semibold text-rose-700">
+                  {toUpper(selectedContract?.contractType) === "VENDOR"
+                    ? formatAmount(financialRollup?.openPayableBase)
+                    : formatAmount(financialRollup?.openReceivableBase)}
+                </div>
+                <div className="text-xs text-slate-600">
+                  Txn{" "}
+                  {toUpper(selectedContract?.contractType) === "VENDOR"
+                    ? formatAmount(financialRollup?.openPayableTxn)
+                    : formatAmount(financialRollup?.openReceivableTxn)}
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-2 rounded border border-slate-200 p-3">
+              <div>
+                <div className="flex items-center justify-between text-xs text-slate-600">
+                  <span>Collection Progress (Collected / Billed)</span>
+                  <span>{collectionProgressPct.toFixed(2)}%</span>
+                </div>
+                <div className="mt-1 h-2 overflow-hidden rounded bg-slate-200">
+                  <div
+                    className="h-2 rounded bg-emerald-500"
+                    style={{ width: `${collectionProgressPct}%` }}
+                  />
+                </div>
+              </div>
+              <div>
+                <div className="flex items-center justify-between text-xs text-slate-600">
+                  <span>Recognition Progress (Recognized / Scheduled)</span>
+                  <span>{recognitionProgressPct.toFixed(2)}%</span>
+                </div>
+                <div className="mt-1 h-2 overflow-hidden rounded bg-slate-200">
+                  <div
+                    className="h-2 rounded bg-sky-500"
+                    style={{ width: `${recognitionProgressPct}%` }}
+                  />
+                </div>
+              </div>
+              <div className="text-xs text-slate-500">
+                Linked docs: {financialRollup?.activeLinkedDocumentCount || 0} active /{" "}
+                {financialRollup?.linkedDocumentCount || 0} total. RevRec lines:{" "}
+                {financialRollup?.revrecRecognizedRunLineCount || 0} recognized /{" "}
+                {financialRollup?.revrecScheduleLineCount || 0} scheduled.
+              </div>
+            </div>
+          </div>
         )}
       </section>
 

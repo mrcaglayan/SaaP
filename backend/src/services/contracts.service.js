@@ -402,6 +402,240 @@ function mapContractLinkableDocumentRow(row) {
   };
 }
 
+function toRoundedAmount(value) {
+  const parsed = Number(value || 0);
+  if (!Number.isFinite(parsed)) {
+    return 0;
+  }
+  return Number(parsed.toFixed(6));
+}
+
+function clampAmount(value, minValue, maxValue) {
+  const parsed = Number(value || 0);
+  if (!Number.isFinite(parsed)) {
+    return toRoundedAmount(minValue);
+  }
+  const min = Number(minValue || 0);
+  const max = Number(maxValue || 0);
+  if (parsed < min) {
+    return toRoundedAmount(min);
+  }
+  if (parsed > max) {
+    return toRoundedAmount(max);
+  }
+  return toRoundedAmount(parsed);
+}
+
+async function computeContractFinancialRollupTx({
+  tenantId,
+  legalEntityId,
+  contractId,
+  contractType,
+  currencyCode,
+  runQuery = query,
+}) {
+  const linkRowsResult = await runQuery(
+    `SELECT
+        l.id,
+        l.cari_document_id,
+        l.link_type,
+        l.linked_amount_txn,
+        l.linked_amount_base,
+        COALESCE(SUM(CASE WHEN e.action_type = 'ADJUST' THEN e.delta_amount_txn ELSE 0 END), 0) AS adjust_delta_txn,
+        COALESCE(SUM(CASE WHEN e.action_type = 'ADJUST' THEN e.delta_amount_base ELSE 0 END), 0) AS adjust_delta_base,
+        COALESCE(SUM(CASE WHEN e.action_type = 'UNLINK' THEN 1 ELSE 0 END), 0) AS unlink_event_count,
+        d.direction,
+        d.status AS document_status,
+        d.amount_txn AS document_amount_txn,
+        d.amount_base AS document_amount_base,
+        d.open_amount_txn AS document_open_amount_txn,
+        d.open_amount_base AS document_open_amount_base
+     FROM contract_document_links l
+     JOIN cari_documents d
+       ON d.tenant_id = l.tenant_id
+      AND d.legal_entity_id = l.legal_entity_id
+      AND d.id = l.cari_document_id
+     LEFT JOIN contract_document_link_events e
+       ON e.tenant_id = l.tenant_id
+      AND e.contract_document_link_id = l.id
+     WHERE l.tenant_id = ?
+       AND l.legal_entity_id = ?
+       AND l.contract_id = ?
+     GROUP BY
+       l.id,
+       l.cari_document_id,
+       l.link_type,
+       l.linked_amount_txn,
+       l.linked_amount_base,
+       d.direction,
+       d.status,
+       d.amount_txn,
+       d.amount_base,
+       d.open_amount_txn,
+       d.open_amount_base`,
+    [tenantId, legalEntityId, contractId]
+  );
+
+  const linkedDocumentIds = new Set();
+  const activeLinkedDocumentIds = new Set();
+  let billedAmountTxn = 0;
+  let billedAmountBase = 0;
+  let collectedAmountTxn = 0;
+  let collectedAmountBase = 0;
+
+  for (const row of linkRowsResult.rows || []) {
+    const linkedDocumentId = parsePositiveInt(row.cari_document_id);
+    if (linkedDocumentId) {
+      linkedDocumentIds.add(linkedDocumentId);
+    }
+
+    const unlinkEventCount = Number(row.unlink_event_count || 0);
+    if (unlinkEventCount > 0) {
+      continue;
+    }
+    if (linkedDocumentId) {
+      activeLinkedDocumentIds.add(linkedDocumentId);
+    }
+
+    const effectiveLinkedAmountTxnRaw =
+      Number(row.linked_amount_txn || 0) + Number(row.adjust_delta_txn || 0);
+    const effectiveLinkedAmountBaseRaw =
+      Number(row.linked_amount_base || 0) + Number(row.adjust_delta_base || 0);
+    const effectiveLinkedAmountTxn = Math.max(normalizeNearZero(effectiveLinkedAmountTxnRaw), 0);
+    const effectiveLinkedAmountBase = Math.max(normalizeNearZero(effectiveLinkedAmountBaseRaw), 0);
+    if (effectiveLinkedAmountTxn <= EPSILON && effectiveLinkedAmountBase <= EPSILON) {
+      continue;
+    }
+
+    billedAmountTxn += effectiveLinkedAmountTxn;
+    billedAmountBase += effectiveLinkedAmountBase;
+
+    const documentAmountTxn = Math.max(Number(row.document_amount_txn || 0), 0);
+    const documentAmountBase = Math.max(Number(row.document_amount_base || 0), 0);
+    const documentOpenAmountTxn = clampAmount(
+      row.document_open_amount_txn,
+      0,
+      documentAmountTxn
+    );
+    const documentOpenAmountBase = clampAmount(
+      row.document_open_amount_base,
+      0,
+      documentAmountBase
+    );
+    const documentCollectedAmountTxn = Math.max(documentAmountTxn - documentOpenAmountTxn, 0);
+    const documentCollectedAmountBase = Math.max(documentAmountBase - documentOpenAmountBase, 0);
+
+    let collectedShareTxn = 0;
+    if (documentAmountTxn > EPSILON && effectiveLinkedAmountTxn > EPSILON) {
+      collectedShareTxn = clampAmount(
+        (documentCollectedAmountTxn * effectiveLinkedAmountTxn) / documentAmountTxn,
+        0,
+        effectiveLinkedAmountTxn
+      );
+    }
+    let collectedShareBase = 0;
+    if (documentAmountBase > EPSILON && effectiveLinkedAmountBase > EPSILON) {
+      collectedShareBase = clampAmount(
+        (documentCollectedAmountBase * effectiveLinkedAmountBase) / documentAmountBase,
+        0,
+        effectiveLinkedAmountBase
+      );
+    }
+
+    collectedAmountTxn += collectedShareTxn;
+    collectedAmountBase += collectedShareBase;
+  }
+
+  const scheduleTotalsResult = await runQuery(
+    `SELECT
+        COUNT(*) AS total_schedule_line_count,
+        COALESCE(SUM(rrsl.amount_txn), 0) AS total_schedule_amount_txn,
+        COALESCE(SUM(rrsl.amount_base), 0) AS total_schedule_amount_base
+     FROM revenue_recognition_schedule_lines rrsl
+     WHERE rrsl.tenant_id = ?
+       AND rrsl.legal_entity_id = ?
+       AND rrsl.source_contract_id = ?`,
+    [tenantId, legalEntityId, contractId]
+  );
+  const scheduleTotals = scheduleTotalsResult.rows?.[0] || {};
+
+  const recognizedTotalsResult = await runQuery(
+    `SELECT
+        COUNT(*) AS total_recognized_run_line_count,
+        COALESCE(SUM(rrrl.amount_txn), 0) AS total_recognized_amount_txn,
+        COALESCE(SUM(rrrl.amount_base), 0) AS total_recognized_amount_base
+     FROM revenue_recognition_run_lines rrrl
+     JOIN revenue_recognition_runs rrr
+       ON rrr.id = rrrl.run_id
+      AND rrr.tenant_id = rrrl.tenant_id
+      AND rrr.legal_entity_id = rrrl.legal_entity_id
+     JOIN revenue_recognition_schedule_lines rrsl
+       ON rrsl.id = rrrl.schedule_line_id
+      AND rrsl.tenant_id = rrrl.tenant_id
+      AND rrsl.legal_entity_id = rrrl.legal_entity_id
+     WHERE rrrl.tenant_id = ?
+       AND rrrl.legal_entity_id = ?
+       AND rrsl.source_contract_id = ?
+       AND rrr.status = 'POSTED'
+       AND rrr.reversal_of_run_id IS NULL
+       AND rrrl.status IN ('POSTED', 'SETTLED')`,
+    [tenantId, legalEntityId, contractId]
+  );
+  const recognizedTotals = recognizedTotalsResult.rows?.[0] || {};
+
+  const revrecScheduledAmountTxn = toRoundedAmount(scheduleTotals.total_schedule_amount_txn);
+  const revrecScheduledAmountBase = toRoundedAmount(scheduleTotals.total_schedule_amount_base);
+  const recognizedToDateTxn = toRoundedAmount(recognizedTotals.total_recognized_amount_txn);
+  const recognizedToDateBase = toRoundedAmount(recognizedTotals.total_recognized_amount_base);
+  const deferredBalanceTxn = toRoundedAmount(revrecScheduledAmountTxn - recognizedToDateTxn);
+  const deferredBalanceBase = toRoundedAmount(revrecScheduledAmountBase - recognizedToDateBase);
+  const billedTxn = toRoundedAmount(billedAmountTxn);
+  const billedBase = toRoundedAmount(billedAmountBase);
+  const collectedTxn = toRoundedAmount(collectedAmountTxn);
+  const collectedBase = toRoundedAmount(collectedAmountBase);
+  const uncollectedTxn = toRoundedAmount(Math.max(billedTxn - collectedTxn, 0));
+  const uncollectedBase = toRoundedAmount(Math.max(billedBase - collectedBase, 0));
+
+  const isVendorContract = asUpper(contractType) === CONTRACT_TYPE.VENDOR;
+  const openReceivableTxn = isVendorContract ? 0 : uncollectedTxn;
+  const openReceivableBase = isVendorContract ? 0 : uncollectedBase;
+  const openPayableTxn = isVendorContract ? uncollectedTxn : 0;
+  const openPayableBase = isVendorContract ? uncollectedBase : 0;
+
+  const collectedCoveragePct =
+    billedBase > EPSILON ? toRoundedAmount((collectedBase / billedBase) * 100) : 0;
+  const recognizedCoveragePct =
+    revrecScheduledAmountBase > EPSILON
+      ? toRoundedAmount((recognizedToDateBase / revrecScheduledAmountBase) * 100)
+      : 0;
+
+  return {
+    currencyCode: asUpper(currencyCode) || null,
+    linkedDocumentCount: linkedDocumentIds.size,
+    activeLinkedDocumentCount: activeLinkedDocumentIds.size,
+    revrecScheduleLineCount: Number(scheduleTotals.total_schedule_line_count || 0),
+    revrecRecognizedRunLineCount: Number(recognizedTotals.total_recognized_run_line_count || 0),
+    billedAmountTxn: billedTxn,
+    billedAmountBase: billedBase,
+    collectedAmountTxn: collectedTxn,
+    collectedAmountBase: collectedBase,
+    uncollectedAmountTxn: uncollectedTxn,
+    uncollectedAmountBase: uncollectedBase,
+    revrecScheduledAmountTxn,
+    revrecScheduledAmountBase,
+    recognizedToDateTxn,
+    recognizedToDateBase,
+    deferredBalanceTxn,
+    deferredBalanceBase,
+    openReceivableTxn: toRoundedAmount(openReceivableTxn),
+    openReceivableBase: toRoundedAmount(openReceivableBase),
+    openPayableTxn: toRoundedAmount(openPayableTxn),
+    openPayableBase: toRoundedAmount(openPayableBase),
+    collectedCoveragePct,
+    recognizedCoveragePct,
+  };
+}
+
 function toPositiveIntArray(values) {
   if (!Array.isArray(values)) {
     return [];
@@ -1936,9 +2170,18 @@ export async function getContractByIdForTenant({
   );
 
   const summary = mapContractSummaryRow(contract);
+  const financialRollup = await computeContractFinancialRollupTx({
+    tenantId,
+    legalEntityId: parsePositiveInt(contract.legal_entity_id),
+    contractId,
+    contractType: contract.contract_type,
+    currencyCode: contract.currency_code,
+    runQuery: query,
+  });
   return {
     ...summary,
     lines: (linesResult.rows || []).map((lineRow) => mapContractLineRow(lineRow)),
+    financialRollup,
   };
 }
 
@@ -3136,16 +3379,6 @@ export async function generateContractRevrec({
     selectedLineRows = selectedLineRows.filter((row) => asUpper(row.status) === "ACTIVE");
     if (selectedLineRows.length === 0) {
       throw badRequest("No ACTIVE contract lines selected for RevRec generation");
-    }
-
-    for (const row of selectedLineRows) {
-      const contractLineId = parsePositiveInt(row.id);
-      if (!parsePositiveInt(row.deferred_account_id)) {
-        throw badRequest(`contractLineId=${contractLineId} is missing deferred_account_id`);
-      }
-      if (!parsePositiveInt(row.revenue_account_id)) {
-        throw badRequest(`contractLineId=${contractLineId} is missing revenue_account_id`);
-      }
     }
 
     const generationMode =

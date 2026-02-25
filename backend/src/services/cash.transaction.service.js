@@ -3,8 +3,15 @@ import { assertAccountBelongsToTenant } from "../tenantGuards.js";
 import { badRequest, parsePositiveInt } from "../routes/_utils.js";
 import {
   cancelCashTransaction,
+  countCashTransitTransfers,
   countCashTransactions,
   findCashRegisterById,
+  findCashTransitTransferById,
+  findCashTransitTransferByIdempotency,
+  findCashTransitTransferByInTransactionId,
+  findCashTransitTransferByIntegrationEventUid,
+  findCashTransitTransferByOutTransactionId,
+  findCashTransitTransferScopeById,
   findCashTransactionById,
   findCashTransactionByIntegrationEventUid,
   findCashTransactionByIdempotency,
@@ -13,8 +20,14 @@ import {
   findOpenCashSessionByRegisterId,
   findCashSessionById,
   generateCashTxnNoForLegalEntityYearTx,
+  insertCashTransitTransfer,
   insertCashTransaction,
+  listCashTransitTransfers,
   listCashTransactions,
+  markCashTransitTransferCanceled,
+  markCashTransitTransferInTransit,
+  markCashTransitTransferReceived,
+  markCashTransitTransferReversed,
   markCashTransactionAsReversed,
   postCashTransaction,
 } from "./cash.queries.js";
@@ -39,6 +52,11 @@ const CANCELLABLE_TXN_STATUSES = new Set(["DRAFT", "SUBMITTED"]);
 const POSTABLE_TXN_STATUSES = new Set(["DRAFT", "SUBMITTED", "APPROVED"]);
 const CARI_LINKED_TXN_TYPES = new Set(["RECEIPT", "PAYOUT"]);
 const CARI_COUNTERPARTY_TYPES = new Set(["CUSTOMER", "VENDOR"]);
+const TRANSIT_STATUS_INITIATED = "INITIATED";
+const TRANSIT_STATUS_IN_TRANSIT = "IN_TRANSIT";
+const TRANSIT_STATUS_RECEIVED = "RECEIVED";
+const TRANSIT_STATUS_CANCELED = "CANCELED";
+const TRANSIT_STATUS_REVERSED = "REVERSED";
 
 function nowMysqlDateTime() {
   return new Date().toISOString().slice(0, 19).replace("T", " ");
@@ -243,6 +261,26 @@ function parseDuplicateKeyError(err, constraintName = null) {
     return true;
   }
   return String(err?.message || "").includes(constraintName);
+}
+
+function buildDerivedIdempotencyKey(prefix, rawValue) {
+  const suffix = String(rawValue || "").trim();
+  if (!suffix) {
+    throw badRequest("idempotency key is required");
+  }
+  return `${String(prefix || "").trim()}:${suffix}`.slice(0, 100);
+}
+
+function assertTransitScopeAccess(req, transferRow, assertScopeAccess, fieldLabel) {
+  assertScopeAccess(req, "legal_entity", transferRow.legal_entity_id, fieldLabel);
+  const sourceOuId = parsePositiveInt(transferRow.source_operating_unit_id);
+  if (sourceOuId) {
+    assertScopeAccess(req, "operating_unit", sourceOuId, fieldLabel);
+  }
+  const targetOuId = parsePositiveInt(transferRow.target_operating_unit_id);
+  if (targetOuId && targetOuId !== sourceOuId) {
+    assertScopeAccess(req, "operating_unit", targetOuId, fieldLabel);
+  }
 }
 
 function mapCariUnappliedCashRow(row) {
@@ -523,6 +561,144 @@ export async function resolveCashTransactionScope(transactionId, tenantId) {
   };
 }
 
+export async function resolveCashTransitTransferScope(transitTransferId, tenantId) {
+  const parsedTransitTransferId = parsePositiveInt(transitTransferId);
+  const parsedTenantId = parsePositiveInt(tenantId);
+  if (!parsedTransitTransferId || !parsedTenantId) {
+    return null;
+  }
+
+  const row = await findCashTransitTransferScopeById({
+    tenantId: parsedTenantId,
+    transitTransferId: parsedTransitTransferId,
+  });
+  if (!row) {
+    return null;
+  }
+
+  return {
+    scopeType: "LEGAL_ENTITY",
+    scopeId: Number(row.legal_entity_id),
+  };
+}
+
+export async function getCashTransitTransferByIdForTenant({
+  req,
+  tenantId,
+  transitTransferId,
+  assertScopeAccess,
+}) {
+  const row = await findCashTransitTransferById({
+    tenantId,
+    transitTransferId,
+  });
+  if (!row) {
+    throw badRequest("Cash transit transfer not found");
+  }
+
+  assertTransitScopeAccess(req, row, assertScopeAccess, "transitTransferId");
+
+  const transferOutTransactionId = parsePositiveInt(row.transfer_out_cash_transaction_id);
+  const transferInTransactionId = parsePositiveInt(row.transfer_in_cash_transaction_id);
+  const transferOutTransaction = transferOutTransactionId
+    ? await findCashTransactionById({
+        tenantId,
+        transactionId: transferOutTransactionId,
+      })
+    : null;
+  const transferInTransaction = transferInTransactionId
+    ? await findCashTransactionById({
+        tenantId,
+        transactionId: transferInTransactionId,
+      })
+    : null;
+
+  return {
+    transfer: row,
+    transferOutTransaction: transferOutTransaction || null,
+    transferInTransaction: transferInTransaction || null,
+  };
+}
+
+export async function listCashTransitTransferRows({
+  req,
+  tenantId,
+  filters,
+  buildScopeFilter,
+  assertScopeAccess,
+}) {
+  const params = [tenantId];
+  const conditions = ["ctt.tenant_id = ?"];
+  conditions.push(buildScopeFilter(req, "legal_entity", "ctt.legal_entity_id", params));
+
+  if (filters.legalEntityId) {
+    assertScopeAccess(req, "legal_entity", filters.legalEntityId, "legalEntityId");
+    conditions.push("ctt.legal_entity_id = ?");
+    params.push(filters.legalEntityId);
+  }
+
+  if (filters.sourceRegisterId) {
+    const sourceRegister = await findCashRegisterById({
+      tenantId,
+      registerId: filters.sourceRegisterId,
+    });
+    if (!sourceRegister) {
+      throw badRequest("sourceRegisterId not found for tenant");
+    }
+    assertScopeAccess(req, "legal_entity", sourceRegister.legal_entity_id, "sourceRegisterId");
+    if (sourceRegister.operating_unit_id) {
+      assertScopeAccess(req, "operating_unit", sourceRegister.operating_unit_id, "sourceRegisterId");
+    }
+    conditions.push("ctt.source_cash_register_id = ?");
+    params.push(filters.sourceRegisterId);
+  }
+
+  if (filters.targetRegisterId) {
+    const targetRegister = await findCashRegisterById({
+      tenantId,
+      registerId: filters.targetRegisterId,
+    });
+    if (!targetRegister) {
+      throw badRequest("targetRegisterId not found for tenant");
+    }
+    assertScopeAccess(req, "legal_entity", targetRegister.legal_entity_id, "targetRegisterId");
+    if (targetRegister.operating_unit_id) {
+      assertScopeAccess(req, "operating_unit", targetRegister.operating_unit_id, "targetRegisterId");
+    }
+    conditions.push("ctt.target_cash_register_id = ?");
+    params.push(filters.targetRegisterId);
+  }
+
+  if (filters.status) {
+    conditions.push("ctt.status = ?");
+    params.push(filters.status);
+  }
+  if (filters.initiatedDateFrom) {
+    conditions.push("DATE(ctt.initiated_at) >= ?");
+    params.push(filters.initiatedDateFrom);
+  }
+  if (filters.initiatedDateTo) {
+    conditions.push("DATE(ctt.initiated_at) <= ?");
+    params.push(filters.initiatedDateTo);
+  }
+
+  const whereSql = conditions.join(" AND ");
+  const total = await countCashTransitTransfers({ whereSql, params });
+  const rows = await listCashTransitTransfers({
+    whereSql,
+    params,
+    limit: filters.limit,
+    offset: filters.offset,
+  });
+
+  return {
+    rows,
+    total,
+    limit: filters.limit,
+    offset: filters.offset,
+  };
+}
+
 export async function listCashTransactionRows({
   req,
   tenantId,
@@ -615,6 +791,660 @@ export async function getCashTransactionByIdForTenant({
   }
 
   return row;
+}
+
+async function loadTransitTransferBundle({
+  tenantId,
+  transitTransferId,
+  runQuery = query,
+  forUpdate = false,
+}) {
+  const transfer = await findCashTransitTransferById({
+    tenantId,
+    transitTransferId,
+    runQuery,
+    forUpdate,
+  });
+  if (!transfer) {
+    return null;
+  }
+  const transferOutTransactionId = parsePositiveInt(transfer.transfer_out_cash_transaction_id);
+  const transferInTransactionId = parsePositiveInt(transfer.transfer_in_cash_transaction_id);
+  const transferOutTransaction = transferOutTransactionId
+    ? await findCashTransactionById({
+        tenantId,
+        transactionId: transferOutTransactionId,
+        runQuery,
+        forUpdate,
+      })
+    : null;
+  const transferInTransaction = transferInTransactionId
+    ? await findCashTransactionById({
+        tenantId,
+        transactionId: transferInTransactionId,
+        runQuery,
+        forUpdate,
+      })
+    : null;
+  return {
+    transfer,
+    transferOutTransaction: transferOutTransaction || null,
+    transferInTransaction: transferInTransaction || null,
+  };
+}
+
+async function createTransferCashTransactionTx({
+  tx,
+  tenantId,
+  userId,
+  register,
+  requestedSessionId,
+  txnType,
+  amount,
+  currencyCode,
+  txnDatetime,
+  bookDate,
+  description,
+  referenceNo,
+  counterCashRegisterId,
+  counterAccountId,
+  sourceModule,
+  sourceEntityType,
+  sourceEntityId,
+  integrationLinkStatus,
+  idempotencyKey,
+  integrationEventUid,
+}) {
+  validateTxnTypeSpecificRules({
+    txnType,
+    counterCashRegisterId,
+    counterAccountId,
+  });
+  const linkedSession = await resolveSessionForCreate({
+    tenantId,
+    register,
+    requestedSessionId,
+    runQuery: tx.query,
+  });
+  const txnNo = await generateCashTxnNoForLegalEntityYearTx({
+    tenantId,
+    legalEntityId: register.legal_entity_id,
+    legalEntityCode: register.legal_entity_code,
+    bookDate,
+    runQuery: tx.query,
+  });
+
+  const transactionId = await insertCashTransaction({
+    payload: {
+      tenantId,
+      registerId: parsePositiveInt(register.id),
+      cashSessionId: linkedSession?.id || null,
+      txnNo,
+      txnType,
+      status: "DRAFT",
+      txnDatetime,
+      bookDate,
+      amount: normalizeMoney(amount),
+      currencyCode,
+      description,
+      referenceNo,
+      sourceDocType: null,
+      sourceDocId: null,
+      sourceModule,
+      sourceEntityType,
+      sourceEntityId,
+      integrationLinkStatus,
+      counterpartyType: null,
+      counterpartyId: null,
+      counterAccountId,
+      counterCashRegisterId,
+      linkedCariSettlementBatchId: null,
+      linkedCariUnappliedCashId: null,
+      reversalOfTransactionId: null,
+      overrideCashControl: false,
+      overrideReason: null,
+      idempotencyKey,
+      integrationEventUid,
+      userId,
+      postedByUserId: null,
+      postedAt: null,
+    },
+    runQuery: tx.query,
+  });
+
+  return findCashTransactionById({
+    tenantId,
+    transactionId,
+    runQuery: tx.query,
+  });
+}
+
+export async function initiateCashTransitTransfer({
+  req,
+  payload,
+  assertScopeAccess,
+}) {
+  const integrationEventUid =
+    payload.integrationEventUid ||
+    buildDerivedIdempotencyKey(`TRANSIT_EVENT_${payload.registerId}`, payload.idempotencyKey);
+
+  const replayByEvent = await findCashTransitTransferByIntegrationEventUid({
+    tenantId: payload.tenantId,
+    integrationEventUid,
+  });
+  if (replayByEvent) {
+    const replayBundle = await loadTransitTransferBundle({
+      tenantId: payload.tenantId,
+      transitTransferId: parsePositiveInt(replayByEvent.id),
+      runQuery: query,
+    });
+    if (replayBundle) {
+      assertTransitScopeAccess(req, replayBundle.transfer, assertScopeAccess, "registerId");
+      return {
+        ...replayBundle,
+        idempotentReplay: true,
+      };
+    }
+  }
+
+  try {
+    return await withTransaction(async (tx) => {
+      const replayByIdempotency = await findCashTransitTransferByIdempotency({
+        tenantId: payload.tenantId,
+        sourceRegisterId: payload.registerId,
+        idempotencyKey: payload.idempotencyKey,
+        runQuery: tx.query,
+        forUpdate: true,
+      });
+      if (replayByIdempotency) {
+        const replayBundle = await loadTransitTransferBundle({
+          tenantId: payload.tenantId,
+          transitTransferId: parsePositiveInt(replayByIdempotency.id),
+          runQuery: tx.query,
+          forUpdate: true,
+        });
+        if (!replayBundle) {
+          throw badRequest("Failed to load existing cash transit transfer replay");
+        }
+        assertTransitScopeAccess(req, replayBundle.transfer, assertScopeAccess, "registerId");
+        return {
+          ...replayBundle,
+          idempotentReplay: true,
+        };
+      }
+
+      const sourceRegister = await findCashRegisterById({
+        tenantId: payload.tenantId,
+        registerId: payload.registerId,
+        runQuery: tx.query,
+      });
+      if (!sourceRegister) {
+        throw badRequest("registerId not found for tenant");
+      }
+      const targetRegister = await findCashRegisterById({
+        tenantId: payload.tenantId,
+        registerId: payload.targetRegisterId,
+        runQuery: tx.query,
+      });
+      if (!targetRegister) {
+        throw badRequest("targetRegisterId not found for tenant");
+      }
+
+      assertRegisterOperationalConfig(sourceRegister, {
+        requireActive: true,
+        requireCashControlledAccount: true,
+      });
+      assertRegisterOperationalConfig(targetRegister, {
+        requireActive: true,
+        requireCashControlledAccount: true,
+      });
+
+      assertScopeAccess(req, "legal_entity", sourceRegister.legal_entity_id, "registerId");
+      if (sourceRegister.operating_unit_id) {
+        assertScopeAccess(req, "operating_unit", sourceRegister.operating_unit_id, "registerId");
+      }
+      assertScopeAccess(req, "legal_entity", targetRegister.legal_entity_id, "targetRegisterId");
+      if (
+        targetRegister.operating_unit_id &&
+        parsePositiveInt(targetRegister.operating_unit_id) !==
+          parsePositiveInt(sourceRegister.operating_unit_id)
+      ) {
+        assertScopeAccess(req, "operating_unit", targetRegister.operating_unit_id, "targetRegisterId");
+      }
+
+      if (parsePositiveInt(sourceRegister.id) === parsePositiveInt(targetRegister.id)) {
+        throw badRequest("registerId and targetRegisterId must be different");
+      }
+      if (
+        parsePositiveInt(sourceRegister.legal_entity_id) !==
+        parsePositiveInt(targetRegister.legal_entity_id)
+      ) {
+        throw badRequest("Cross-legal-entity cash transit transfer is not supported");
+      }
+
+      const sourceOuId = parsePositiveInt(sourceRegister.operating_unit_id);
+      const targetOuId = parsePositiveInt(targetRegister.operating_unit_id);
+      if (!sourceOuId || !targetOuId || sourceOuId === targetOuId) {
+        throw badRequest(
+          "Cash transit workflow requires source and target registers from different operating units"
+        );
+      }
+
+      const sourceCurrency = normalizeCurrency(sourceRegister.currency_code);
+      const targetCurrency = normalizeCurrency(targetRegister.currency_code);
+      const requestedCurrency = normalizeCurrency(payload.currencyCode || sourceCurrency);
+      if (!requestedCurrency || requestedCurrency.length !== 3) {
+        throw badRequest("currencyCode must be a 3-letter code");
+      }
+      if (sourceCurrency !== targetCurrency || requestedCurrency !== sourceCurrency) {
+        throw badRequest("Transit transfer currency must match both source and target register currency");
+      }
+
+      if (Number(sourceRegister.max_txn_amount || 0) > 0) {
+        if (Number(payload.amount) > Number(sourceRegister.max_txn_amount)) {
+          throw badRequest("amount exceeds register max_txn_amount");
+        }
+      }
+
+      await assertAccountBelongsToTenant(
+        payload.tenantId,
+        payload.transitAccountId,
+        "transitAccountId"
+      );
+
+      const transferOutTxnIdempotencyKey = buildDerivedIdempotencyKey(
+        "TRANSIT_OUT",
+        payload.idempotencyKey
+      );
+      const transferOutEventUid = buildDerivedIdempotencyKey("TRANSIT_OUT_EVENT", integrationEventUid);
+
+      const transferOutDescription =
+        payload.description ||
+        `Transit transfer out to ${targetRegister.code || targetRegister.id}`;
+      const transferOutReferenceNo =
+        payload.referenceNo ||
+        `TRANSIT-OUT-${sourceRegister.code || sourceRegister.id}-${targetRegister.code || targetRegister.id}`;
+
+      const transferOutTransaction = await createTransferCashTransactionTx({
+        tx,
+        tenantId: payload.tenantId,
+        userId: payload.userId,
+        register: sourceRegister,
+        requestedSessionId: payload.cashSessionId,
+        txnType: "TRANSFER_OUT",
+        amount: payload.amount,
+        currencyCode: requestedCurrency,
+        txnDatetime: payload.txnDatetime,
+        bookDate: payload.bookDate,
+        description: transferOutDescription,
+        referenceNo: transferOutReferenceNo.slice(0, 100),
+        counterCashRegisterId: parsePositiveInt(targetRegister.id),
+        counterAccountId: payload.transitAccountId,
+        sourceModule: "CASH",
+        sourceEntityType: "cash_transit_transfer",
+        sourceEntityId: "PENDING",
+        integrationLinkStatus: "PENDING",
+        idempotencyKey: transferOutTxnIdempotencyKey,
+        integrationEventUid: transferOutEventUid,
+      });
+      if (!transferOutTransaction) {
+        throw badRequest("Failed to create transfer-out transaction");
+      }
+
+      const transferOutTransactionId = parsePositiveInt(transferOutTransaction.id);
+      const transitTransferId = await insertCashTransitTransfer({
+        payload: {
+          tenantId: payload.tenantId,
+          legalEntityId: parsePositiveInt(sourceRegister.legal_entity_id),
+          sourceCashRegisterId: parsePositiveInt(sourceRegister.id),
+          targetCashRegisterId: parsePositiveInt(targetRegister.id),
+          sourceOperatingUnitId: sourceOuId,
+          targetOperatingUnitId: targetOuId,
+          transferOutCashTransactionId: transferOutTransactionId,
+          transferInCashTransactionId: null,
+          status: TRANSIT_STATUS_INITIATED,
+          amount: normalizeMoney(payload.amount),
+          currencyCode: requestedCurrency,
+          transitAccountId: payload.transitAccountId,
+          initiatedByUserId: payload.userId,
+          idempotencyKey: payload.idempotencyKey,
+          integrationEventUid,
+          sourceModule: "CASH",
+          sourceEntityType: "cash_transaction",
+          sourceEntityId: String(transferOutTransactionId),
+          note: payload.note || null,
+        },
+        runQuery: tx.query,
+      });
+      if (!transitTransferId) {
+        throw badRequest("Failed to create cash transit transfer");
+      }
+
+      await tx.query(
+        `UPDATE cash_transactions
+         SET source_module = 'CASH',
+             source_entity_type = 'cash_transit_transfer',
+             source_entity_id = ?,
+             integration_link_status = 'LINKED'
+         WHERE tenant_id = ?
+           AND id = ?`,
+        [String(transitTransferId), payload.tenantId, transferOutTransactionId]
+      );
+
+      const bundle = await loadTransitTransferBundle({
+        tenantId: payload.tenantId,
+        transitTransferId,
+        runQuery: tx.query,
+        forUpdate: true,
+      });
+      if (!bundle) {
+        throw badRequest("Failed to load created cash transit transfer");
+      }
+      return {
+        ...bundle,
+        idempotentReplay: false,
+      };
+    });
+  } catch (err) {
+    const duplicateTransitIdempotency =
+      parseDuplicateKeyError(err, "uk_cash_transit_tenant_source_register_idem") ||
+      parseDuplicateKeyError(err, "uk_cash_transit_tenant_event_uid");
+    const duplicateTransferOutTxn =
+      parseDuplicateKeyError(err, "uk_cash_txn_tenant_register_idempotency") ||
+      parseDuplicateKeyError(err, "uk_cash_txn_tenant_integration_event_uid");
+    if (duplicateTransitIdempotency || duplicateTransferOutTxn) {
+      const replay =
+        (await findCashTransitTransferByIdempotency({
+          tenantId: payload.tenantId,
+          sourceRegisterId: payload.registerId,
+          idempotencyKey: payload.idempotencyKey,
+          runQuery: query,
+        })) ||
+        (await findCashTransitTransferByIntegrationEventUid({
+          tenantId: payload.tenantId,
+          integrationEventUid,
+          runQuery: query,
+        }));
+      if (replay) {
+        const bundle = await loadTransitTransferBundle({
+          tenantId: payload.tenantId,
+          transitTransferId: parsePositiveInt(replay.id),
+          runQuery: query,
+        });
+        if (bundle) {
+          assertTransitScopeAccess(req, bundle.transfer, assertScopeAccess, "registerId");
+          return {
+            ...bundle,
+            idempotentReplay: true,
+          };
+        }
+      }
+    }
+    throw err;
+  }
+}
+
+export async function receiveCashTransitTransferById({
+  req,
+  payload,
+  assertScopeAccess,
+}) {
+  try {
+    return await withTransaction(async (tx) => {
+      const transitTransfer = await findCashTransitTransferById({
+        tenantId: payload.tenantId,
+        transitTransferId: payload.transitTransferId,
+        runQuery: tx.query,
+        forUpdate: true,
+      });
+      if (!transitTransfer) {
+        throw badRequest("Cash transit transfer not found");
+      }
+
+      assertTransitScopeAccess(req, transitTransfer, assertScopeAccess, "transitTransferId");
+
+      const currentStatus = asUpper(transitTransfer.status);
+      const existingTransferInTxnId = parsePositiveInt(transitTransfer.transfer_in_cash_transaction_id);
+      if (currentStatus === TRANSIT_STATUS_RECEIVED && existingTransferInTxnId) {
+        const replayBundle = await loadTransitTransferBundle({
+          tenantId: payload.tenantId,
+          transitTransferId: payload.transitTransferId,
+          runQuery: tx.query,
+          forUpdate: true,
+        });
+        return {
+          ...replayBundle,
+          idempotentReplay: true,
+        };
+      }
+
+      if (currentStatus !== TRANSIT_STATUS_IN_TRANSIT) {
+        throw badRequest("Cash transit transfer must be IN_TRANSIT before receive");
+      }
+
+      const transferOutTransactionId = parsePositiveInt(transitTransfer.transfer_out_cash_transaction_id);
+      if (!transferOutTransactionId) {
+        throw badRequest("Cash transit transfer is missing transfer-out transaction link");
+      }
+      const transferOutTransaction = await findCashTransactionById({
+        tenantId: payload.tenantId,
+        transactionId: transferOutTransactionId,
+        runQuery: tx.query,
+        forUpdate: true,
+      });
+      if (!transferOutTransaction) {
+        throw badRequest("Linked transfer-out transaction not found");
+      }
+      if (asUpper(transferOutTransaction.status) !== "POSTED") {
+        throw badRequest("Transfer-out transaction must be POSTED before receive");
+      }
+
+      const targetRegister = await findCashRegisterById({
+        tenantId: payload.tenantId,
+        registerId: parsePositiveInt(transitTransfer.target_cash_register_id),
+        runQuery: tx.query,
+      });
+      if (!targetRegister) {
+        throw badRequest("Target register not found for transit transfer");
+      }
+      assertRegisterOperationalConfig(targetRegister, {
+        requireActive: true,
+        requireCashControlledAccount: true,
+      });
+
+      const receiveTxnIdempotencyKey = buildDerivedIdempotencyKey(
+        `TRANSIT_IN_${payload.transitTransferId}`,
+        payload.idempotencyKey
+      );
+      const receiveTxnEventUid = buildDerivedIdempotencyKey(
+        "TRANSIT_IN_EVENT",
+        payload.integrationEventUid || `${payload.transitTransferId}:${payload.idempotencyKey}`
+      );
+
+      const referenceNo =
+        payload.referenceNo ||
+        transferOutTransaction.reference_no ||
+        `TRANSIT-IN-${payload.transitTransferId}`;
+      const description =
+        payload.description ||
+        `Transit receive from ${
+          transferOutTransaction.cash_register_code || transferOutTransaction.cash_register_id
+        }`;
+
+      const transferInDraft = await createTransferCashTransactionTx({
+        tx,
+        tenantId: payload.tenantId,
+        userId: payload.userId,
+        register: targetRegister,
+        requestedSessionId: payload.cashSessionId,
+        txnType: "TRANSFER_IN",
+        amount: transitTransfer.amount,
+        currencyCode: transitTransfer.currency_code,
+        txnDatetime: payload.txnDatetime,
+        bookDate: payload.bookDate,
+        description: description.slice(0, 500),
+        referenceNo: referenceNo.slice(0, 100),
+        counterCashRegisterId: parsePositiveInt(transitTransfer.source_cash_register_id),
+        counterAccountId: parsePositiveInt(transitTransfer.transit_account_id),
+        sourceModule: "CASH",
+        sourceEntityType: "cash_transit_transfer",
+        sourceEntityId: String(payload.transitTransferId),
+        integrationLinkStatus: "LINKED",
+        idempotencyKey: receiveTxnIdempotencyKey,
+        integrationEventUid: receiveTxnEventUid,
+      });
+      if (!transferInDraft) {
+        throw badRequest("Failed to create transfer-in transaction");
+      }
+
+      const transferInTransactionId = parsePositiveInt(transferInDraft.id);
+      const transferInPosting = await createAndPostCashJournalTx(tx, {
+        tenantId: payload.tenantId,
+        userId: payload.userId,
+        legalEntityId: parsePositiveInt(targetRegister.legal_entity_id),
+        cashTxn: transferInDraft,
+        req,
+      });
+      await postCashTransaction({
+        tenantId: payload.tenantId,
+        transactionId: transferInTransactionId,
+        userId: payload.userId,
+        postedJournalEntryId: transferInPosting.journalEntryId,
+        overrideCashControl: false,
+        overrideReason: null,
+        runQuery: tx.query,
+      });
+
+      const markedReceived = await markCashTransitTransferReceived({
+        tenantId: payload.tenantId,
+        transitTransferId: payload.transitTransferId,
+        transferInCashTransactionId: transferInTransactionId,
+        receivedByUserId: payload.userId,
+        runQuery: tx.query,
+      });
+      if (!markedReceived) {
+        throw badRequest("Cash transit transfer is already received or not in transit");
+      }
+
+      const bundle = await loadTransitTransferBundle({
+        tenantId: payload.tenantId,
+        transitTransferId: payload.transitTransferId,
+        runQuery: tx.query,
+        forUpdate: true,
+      });
+      return {
+        ...bundle,
+        idempotentReplay: false,
+      };
+    });
+  } catch (err) {
+    const duplicateReceive =
+      parseDuplicateKeyError(err, "uk_cash_transit_tenant_in_txn") ||
+      parseDuplicateKeyError(err, "uk_cash_txn_tenant_register_idempotency") ||
+      parseDuplicateKeyError(err, "uk_cash_txn_tenant_integration_event_uid");
+    if (duplicateReceive) {
+      const replayBundle = await loadTransitTransferBundle({
+        tenantId: payload.tenantId,
+        transitTransferId: payload.transitTransferId,
+        runQuery: query,
+      });
+      if (replayBundle && parsePositiveInt(replayBundle.transfer?.transfer_in_cash_transaction_id)) {
+        assertTransitScopeAccess(req, replayBundle.transfer, assertScopeAccess, "transitTransferId");
+        return {
+          ...replayBundle,
+          idempotentReplay: true,
+        };
+      }
+    }
+    throw err;
+  }
+}
+
+export async function cancelCashTransitTransferById({
+  req,
+  payload,
+  assertScopeAccess,
+}) {
+  return withTransaction(async (tx) => {
+    const transitTransfer = await findCashTransitTransferById({
+      tenantId: payload.tenantId,
+      transitTransferId: payload.transitTransferId,
+      runQuery: tx.query,
+      forUpdate: true,
+    });
+    if (!transitTransfer) {
+      throw badRequest("Cash transit transfer not found");
+    }
+
+    assertTransitScopeAccess(req, transitTransfer, assertScopeAccess, "transitTransferId");
+
+    const currentStatus = asUpper(transitTransfer.status);
+    if (currentStatus === TRANSIT_STATUS_CANCELED) {
+      const replayBundle = await loadTransitTransferBundle({
+        tenantId: payload.tenantId,
+        transitTransferId: payload.transitTransferId,
+        runQuery: tx.query,
+        forUpdate: true,
+      });
+      return {
+        ...replayBundle,
+        idempotentReplay: true,
+      };
+    }
+    if (currentStatus !== TRANSIT_STATUS_INITIATED) {
+      throw badRequest("Only INITIATED cash transit transfer can be cancelled");
+    }
+
+    const transferOutTransactionId = parsePositiveInt(transitTransfer.transfer_out_cash_transaction_id);
+    if (!transferOutTransactionId) {
+      throw badRequest("Cash transit transfer is missing transfer-out transaction link");
+    }
+    const transferOutTransaction = await findCashTransactionById({
+      tenantId: payload.tenantId,
+      transactionId: transferOutTransactionId,
+      runQuery: tx.query,
+      forUpdate: true,
+    });
+    if (!transferOutTransaction) {
+      throw badRequest("Linked transfer-out transaction not found");
+    }
+
+    assertStatusAllowed(
+      transferOutTransaction.status,
+      CANCELLABLE_TXN_STATUSES,
+      "Transit transfer-out transaction can only be cancelled from DRAFT or SUBMITTED status"
+    );
+
+    await cancelCashTransaction({
+      tenantId: payload.tenantId,
+      transactionId: transferOutTransactionId,
+      userId: payload.userId,
+      cancelReason: payload.cancelReason,
+      runQuery: tx.query,
+    });
+
+    const markedCanceled = await markCashTransitTransferCanceled({
+      tenantId: payload.tenantId,
+      transitTransferId: payload.transitTransferId,
+      canceledByUserId: payload.userId,
+      cancelReason: payload.cancelReason,
+      runQuery: tx.query,
+    });
+    if (!markedCanceled) {
+      throw badRequest("Cash transit transfer cancellation failed");
+    }
+
+    const bundle = await loadTransitTransferBundle({
+      tenantId: payload.tenantId,
+      transitTransferId: payload.transitTransferId,
+      runQuery: tx.query,
+      forUpdate: true,
+    });
+    return {
+      ...bundle,
+      idempotentReplay: false,
+    };
+  });
 }
 
 export async function createCashTransaction({
@@ -1380,35 +2210,80 @@ export async function cancelCashTransactionById({
   payload,
   assertScopeAccess,
 }) {
-  const row = await findCashTransactionById({
-    tenantId: payload.tenantId,
-    transactionId: payload.transactionId,
-  });
-  if (!row) {
-    throw badRequest("Cash transaction not found");
-  }
+  return withTransaction(async (tx) => {
+    const row = await findCashTransactionById({
+      tenantId: payload.tenantId,
+      transactionId: payload.transactionId,
+      runQuery: tx.query,
+      forUpdate: true,
+    });
+    if (!row) {
+      throw badRequest("Cash transaction not found");
+    }
 
-  assertScopeAccess(req, "legal_entity", row.legal_entity_id, "transactionId");
-  if (row.operating_unit_id) {
-    assertScopeAccess(req, "operating_unit", row.operating_unit_id, "transactionId");
-  }
+    assertScopeAccess(req, "legal_entity", row.legal_entity_id, "transactionId");
+    if (row.operating_unit_id) {
+      assertScopeAccess(req, "operating_unit", row.operating_unit_id, "transactionId");
+    }
 
-  assertStatusAllowed(
-    row.status,
-    CANCELLABLE_TXN_STATUSES,
-    "Only DRAFT or SUBMITTED transactions can be cancelled"
-  );
+    assertStatusAllowed(
+      row.status,
+      CANCELLABLE_TXN_STATUSES,
+      "Only DRAFT or SUBMITTED transactions can be cancelled"
+    );
 
-  await cancelCashTransaction({
-    tenantId: payload.tenantId,
-    transactionId: payload.transactionId,
-    userId: payload.userId,
-    cancelReason: payload.cancelReason,
-  });
+    const linkedTransitAsOut = await findCashTransitTransferByOutTransactionId({
+      tenantId: payload.tenantId,
+      transactionId: payload.transactionId,
+      runQuery: tx.query,
+      forUpdate: true,
+    });
+    const linkedTransitAsIn = linkedTransitAsOut
+      ? null
+      : await findCashTransitTransferByInTransactionId({
+          tenantId: payload.tenantId,
+          transactionId: payload.transactionId,
+          runQuery: tx.query,
+          forUpdate: true,
+        });
 
-  return findCashTransactionById({
-    tenantId: payload.tenantId,
-    transactionId: payload.transactionId,
+    if (linkedTransitAsIn) {
+      throw badRequest(
+        "Transit receive transaction cannot be cancelled; reverse the transaction instead"
+      );
+    }
+    if (linkedTransitAsOut && asUpper(linkedTransitAsOut.status) !== TRANSIT_STATUS_INITIATED) {
+      throw badRequest(
+        "Transit transfer-out can only be cancelled while transfer status is INITIATED"
+      );
+    }
+
+    await cancelCashTransaction({
+      tenantId: payload.tenantId,
+      transactionId: payload.transactionId,
+      userId: payload.userId,
+      cancelReason: payload.cancelReason,
+      runQuery: tx.query,
+    });
+
+    if (linkedTransitAsOut) {
+      const markedCanceled = await markCashTransitTransferCanceled({
+        tenantId: payload.tenantId,
+        transitTransferId: parsePositiveInt(linkedTransitAsOut.id),
+        canceledByUserId: payload.userId,
+        cancelReason: payload.cancelReason,
+        runQuery: tx.query,
+      });
+      if (!markedCanceled && asUpper(linkedTransitAsOut.status) !== TRANSIT_STATUS_CANCELED) {
+        throw badRequest("Transit transfer status update failed during cancellation");
+      }
+    }
+
+    return findCashTransactionById({
+      tenantId: payload.tenantId,
+      transactionId: payload.transactionId,
+      runQuery: tx.query,
+    });
   });
 }
 
@@ -1478,6 +2353,30 @@ export async function postCashTransactionById({
       runQuery: tx.query,
     });
 
+    if (asUpper(row.txn_type) === "TRANSFER_OUT") {
+      const linkedTransit = await findCashTransitTransferByOutTransactionId({
+        tenantId: payload.tenantId,
+        transactionId: payload.transactionId,
+        runQuery: tx.query,
+        forUpdate: true,
+      });
+      if (linkedTransit) {
+        const markedInTransit = await markCashTransitTransferInTransit({
+          tenantId: payload.tenantId,
+          transitTransferId: parsePositiveInt(linkedTransit.id),
+          runQuery: tx.query,
+        });
+        const currentTransitStatus = asUpper(linkedTransit.status);
+        if (
+          !markedInTransit &&
+          currentTransitStatus !== TRANSIT_STATUS_IN_TRANSIT &&
+          currentTransitStatus !== TRANSIT_STATUS_RECEIVED
+        ) {
+          throw badRequest("Transit transfer status update failed during transfer-out posting");
+        }
+      }
+    }
+
     const saved = await findCashTransactionById({
       tenantId: payload.tenantId,
       transactionId: payload.transactionId,
@@ -1514,6 +2413,26 @@ export async function reverseCashTransactionById({
       assertScopeAccess(req, "operating_unit", original.operating_unit_id, "transactionId");
     }
 
+    const linkedTransitAsOut = await findCashTransitTransferByOutTransactionId({
+      tenantId: payload.tenantId,
+      transactionId: payload.transactionId,
+      runQuery: tx.query,
+      forUpdate: true,
+    });
+    const linkedTransitAsIn = linkedTransitAsOut
+      ? null
+      : await findCashTransitTransferByInTransactionId({
+          tenantId: payload.tenantId,
+          transactionId: payload.transactionId,
+          runQuery: tx.query,
+          forUpdate: true,
+        });
+    if (linkedTransitAsOut && asUpper(linkedTransitAsOut.status) === TRANSIT_STATUS_RECEIVED) {
+      throw badRequest(
+        "Cannot reverse transfer-out after transit is RECEIVED; reverse transfer-in first"
+      );
+    }
+
     const existingReversal = await findCashTransactionByReversalOf({
       tenantId: payload.tenantId,
       transactionId: payload.transactionId,
@@ -1539,6 +2458,10 @@ export async function reverseCashTransactionById({
     let reversal = existingReversal;
     if (!reversal) {
       const reversalBookDate = todayIsoDate();
+      const originalTxnType = asUpper(original.txn_type);
+      const isTransitLinkedTransfer =
+        (originalTxnType === "TRANSFER_OUT" || originalTxnType === "TRANSFER_IN") &&
+        asUpper(original.source_entity_type) === "CASH_TRANSIT_TRANSFER";
       const reversalTxnNo = await generateCashTxnNoForLegalEntityYearTx({
         tenantId: payload.tenantId,
         legalEntityId: original.legal_entity_id,
@@ -1564,9 +2487,15 @@ export async function reverseCashTransactionById({
           sourceDocType: original.source_doc_type,
           sourceDocId: original.source_doc_id,
           sourceModule: "CASH",
-          sourceEntityType: "cash_transaction_reversal",
-          sourceEntityId: String(original.id),
-          integrationLinkStatus: "UNLINKED",
+          sourceEntityType: isTransitLinkedTransfer
+            ? original.source_entity_type
+            : "cash_transaction_reversal",
+          sourceEntityId: isTransitLinkedTransfer
+            ? original.source_entity_id
+            : String(original.id),
+          integrationLinkStatus: isTransitLinkedTransfer
+            ? original.integration_link_status || "LINKED"
+            : "UNLINKED",
           counterpartyType: original.counterparty_type,
           counterpartyId: original.counterparty_id,
           counterAccountId: original.counter_account_id,
@@ -1628,6 +2557,20 @@ export async function reverseCashTransactionById({
       userId: payload.userId,
       runQuery: tx.query,
     });
+
+    const linkedTransit = linkedTransitAsOut || linkedTransitAsIn;
+    if (linkedTransit) {
+      const markedReversed = await markCashTransitTransferReversed({
+        tenantId: payload.tenantId,
+        transitTransferId: parsePositiveInt(linkedTransit.id),
+        reversedByUserId: payload.userId,
+        reverseReason: payload.reverseReason,
+        runQuery: tx.query,
+      });
+      if (!markedReversed && asUpper(linkedTransit.status) !== TRANSIT_STATUS_REVERSED) {
+        throw badRequest("Transit transfer status update failed during reversal");
+      }
+    }
 
     const refreshedOriginal = await findCashTransactionById({
       tenantId: payload.tenantId,

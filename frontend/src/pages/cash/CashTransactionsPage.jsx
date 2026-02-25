@@ -4,10 +4,12 @@ import {
   applyCariForCashTransaction,
   cancelCashTransaction,
   createCashTransaction,
+  initiateCashTransitTransfer,
   listCashRegisters,
   listCashSessions,
   listCashTransactions,
   postCashTransaction,
+  receiveCashTransitTransfer,
   reverseCashTransaction,
 } from "../../api/cashAdmin.js";
 import { listCariCounterparties } from "../../api/cariCounterparty.js";
@@ -159,6 +161,22 @@ function buildApplyCariIdempotencyKey() {
   return `cash-apply-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+function buildTransitReceiveIdempotencyKey() {
+  if (globalThis.crypto && typeof globalThis.crypto.randomUUID === "function") {
+    return `cash-transit-receive-${globalThis.crypto.randomUUID()}`;
+  }
+  return `cash-transit-receive-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function isCrossOuRegisterPair(sourceRegister, targetRegister) {
+  const sourceOu = toPositiveInt(sourceRegister?.operating_unit_id);
+  const targetOu = toPositiveInt(targetRegister?.operating_unit_id);
+  if (!sourceOu || !targetOu) {
+    return false;
+  }
+  return sourceOu !== targetOu;
+}
+
 function buildInitialForm(presetTxnType) {
   return {
     registerId: "",
@@ -261,6 +279,24 @@ function mapTransactionErrorMessage(rawMessage, t) {
   }
   if (lower.includes("cash register is not active")) {
     return t("cashTransactions.errors.registerInactive");
+  }
+  if (lower.includes("cash transit workflow requires")) {
+    return "Transit workflow requires source and target registers in different operating units.";
+  }
+  if (lower.includes("cross-legal-entity cash transit transfer is not supported")) {
+    return "Cross-legal-entity transit transfer is not supported.";
+  }
+  if (lower.includes("must be in_transit before receive")) {
+    return "Transit transfer must be IN_TRANSIT before receive.";
+  }
+  if (lower.includes("must be posted before receive")) {
+    return "Transfer-out must be POSTED before receive.";
+  }
+  if (lower.includes("already received or not in transit")) {
+    return "Transit transfer is already received.";
+  }
+  if (lower.includes("cannot reverse transfer-out after transit is received")) {
+    return "Reverse transfer-in first; transfer-out cannot be reversed after receive.";
   }
   if (lower.includes("transaction currency must match register currency")) {
     return t("cashTransactions.errorsMapped.currencyMismatchGeneric");
@@ -390,6 +426,16 @@ export default function CashTransactionsPage() {
     }
     return registers.find((row) => toPositiveInt(row?.id) === registerId) || null;
   }, [form.registerId, registers]);
+  const selectedCounterRegister = useMemo(() => {
+    const registerId = toPositiveInt(form.counterCashRegisterId);
+    if (!registerId) {
+      return null;
+    }
+    return registers.find((row) => toPositiveInt(row?.id) === registerId) || null;
+  }, [form.counterCashRegisterId, registers]);
+  const selectedIsCrossOuTransfer = useMemo(() => {
+    return isCrossOuRegisterPair(selectedRegister, selectedCounterRegister);
+  }, [selectedCounterRegister, selectedRegister]);
   const selectedRegisterOpenSessions = useMemo(() => {
     const registerId = toPositiveInt(form.registerId);
     if (!registerId) {
@@ -406,6 +452,20 @@ export default function CashTransactionsPage() {
     }
     return rows.find((row) => toPositiveInt(row?.id) === transactionId) || null;
   }, [actionForm?.transactionId, rows]);
+  const selectedTransitTargetOpenSessions = useMemo(() => {
+    if (actionForm?.type !== "receiveTransit") {
+      return [];
+    }
+    const targetRegisterId = toPositiveInt(
+      selectedActionRow?.cash_transit_target_register_id || selectedActionRow?.counter_cash_register_id
+    );
+    if (!targetRegisterId) {
+      return [];
+    }
+    return openSessions.filter(
+      (row) => toPositiveInt(row?.cash_register_id) === targetRegisterId
+    );
+  }, [actionForm?.type, openSessions, selectedActionRow]);
   const selectedCounterpartyOption = useMemo(() => {
     const counterpartyId = toPositiveInt(form.counterpartyId);
     if (!counterpartyId) {
@@ -481,6 +541,16 @@ export default function CashTransactionsPage() {
     if (requiresCounterAccountTxnType(normalizedTxnType) && !toPositiveInt(form.counterAccountId)) {
       warnings.push(t("cashTransactions.errors.counterAccountRequired"));
     }
+    if (
+      (normalizedTxnType === "TRANSFER_IN" || normalizedTxnType === "TRANSFER_OUT") &&
+      selectedIsCrossOuTransfer &&
+      !toPositiveInt(form.counterAccountId)
+    ) {
+      warnings.push("Cross-OU transfer requires transit counter account (CASH_IN_TRANSIT).");
+    }
+    if (normalizedTxnType === "TRANSFER_IN" && selectedIsCrossOuTransfer) {
+      warnings.push("Use Transit Receive action for cross-OU transfer-in.");
+    }
 
     const expectedCounterpartyType = resolveExpectedCounterpartyType(normalizedTxnType);
     const selectedCounterpartyId = toPositiveInt(form.counterpartyId);
@@ -501,6 +571,7 @@ export default function CashTransactionsPage() {
     form.counterpartyType,
     form.currencyCode,
     form.txnType,
+    selectedIsCrossOuTransfer,
     selectedRegister,
     selectedRegisterOpenSessions.length,
     t,
@@ -877,9 +948,13 @@ export default function CashTransactionsPage() {
     const counterpartyId = toPositiveInt(form.counterpartyId);
     const amount = toOptionalNumber(form.amount);
     const txnType = toUpper(form.txnType);
+    const isTransferTxn = txnType === "TRANSFER_IN" || txnType === "TRANSFER_OUT";
     const currencyCode = toUpper(form.currencyCode);
     const txnDatetime = String(form.txnDatetime || "").trim();
     const bookDate = String(form.bookDate || "").trim();
+    const crossOuTransfer = isTransferTxn
+      ? isCrossOuRegisterPair(selectedRegister, selectedCounterRegister)
+      : false;
 
     if (!registerId) {
       setSimpleError(t("cashTransactions.errors.registerRequired"));
@@ -909,12 +984,16 @@ export default function CashTransactionsPage() {
       setSimpleError(t("cashTransactions.errors.invalidTxnType"));
       return;
     }
-    if ((txnType === "TRANSFER_IN" || txnType === "TRANSFER_OUT") && !counterCashRegisterId) {
+    if (isTransferTxn && !counterCashRegisterId) {
       setSimpleError(t("cashTransactions.errors.counterRegisterRequired"));
       return;
     }
-    if (requiresCounterAccountTxnType(txnType) && !counterAccountId) {
+    if ((requiresCounterAccountTxnType(txnType) || crossOuTransfer) && !counterAccountId) {
       setSimpleError(t("cashTransactions.errors.counterAccountRequired"));
+      return;
+    }
+    if (crossOuTransfer && txnType !== "TRANSFER_OUT") {
+      setSimpleError("Cross-OU transfer-in must be created from Transit Receive action.");
       return;
     }
     if (counterCashRegisterId && counterCashRegisterId === registerId) {
@@ -956,30 +1035,55 @@ export default function CashTransactionsPage() {
 
     setCreating(true);
     try {
-      const response = await createCashTransaction({
-        registerId,
-        cashSessionId: cashSessionId || undefined,
-        txnType,
-        txnDatetime,
-        bookDate,
-        amount,
-        currencyCode,
-        description: String(form.description || "").trim() || undefined,
-        referenceNo: String(form.referenceNo || "").trim() || undefined,
-        sourceDocType: String(form.sourceDocType || "").trim() || undefined,
-        sourceDocId: String(form.sourceDocId || "").trim() || undefined,
-        counterpartyType: String(form.counterpartyType || "").trim() || undefined,
-        counterpartyId: counterpartyId || undefined,
-        counterAccountId: counterAccountId || undefined,
-        counterCashRegisterId: counterCashRegisterId || undefined,
-        sourceModule: "MANUAL",
-        idempotencyKey: generateIdempotencyKey(),
-      });
-
-      if (response?.idempotentReplay) {
-        setInfoMessage(t("cashTransactions.messages.idempotentReplay"));
+      const idempotencyKey = generateIdempotencyKey();
+      if (crossOuTransfer) {
+        const response = await initiateCashTransitTransfer({
+          registerId,
+          targetRegisterId: counterCashRegisterId,
+          transitAccountId: counterAccountId,
+          cashSessionId: cashSessionId || undefined,
+          txnDatetime,
+          bookDate,
+          amount,
+          currencyCode,
+          description: String(form.description || "").trim() || undefined,
+          referenceNo: String(form.referenceNo || "").trim() || undefined,
+          note: String(form.description || "").trim() || undefined,
+          idempotencyKey,
+        });
+        const transferId = response?.transfer?.id || "-";
+        const transferOutTxnId = response?.transferOutTransaction?.id || "-";
+        if (response?.idempotentReplay) {
+          setInfoMessage(`Transit transfer replayed. transferId=${transferId}`);
+        } else {
+          setMessage(`Transit initiated. transferId=${transferId}, transferOutTxnId=${transferOutTxnId}`);
+        }
       } else {
-        setMessage(t("cashTransactions.messages.created"));
+        const response = await createCashTransaction({
+          registerId,
+          cashSessionId: cashSessionId || undefined,
+          txnType,
+          txnDatetime,
+          bookDate,
+          amount,
+          currencyCode,
+          description: String(form.description || "").trim() || undefined,
+          referenceNo: String(form.referenceNo || "").trim() || undefined,
+          sourceDocType: String(form.sourceDocType || "").trim() || undefined,
+          sourceDocId: String(form.sourceDocId || "").trim() || undefined,
+          counterpartyType: String(form.counterpartyType || "").trim() || undefined,
+          counterpartyId: counterpartyId || undefined,
+          counterAccountId: counterAccountId || undefined,
+          counterCashRegisterId: counterCashRegisterId || undefined,
+          sourceModule: "MANUAL",
+          idempotencyKey,
+        });
+
+        if (response?.idempotentReplay) {
+          setInfoMessage(t("cashTransactions.messages.idempotentReplay"));
+        } else {
+          setMessage(t("cashTransactions.messages.created"));
+        }
       }
 
       setForm((prev) => ({
@@ -1025,8 +1129,32 @@ export default function CashTransactionsPage() {
       setSimpleError(t("cashTransactions.errors.missingReversePermission"));
       return;
     }
+    if (type === "receiveTransit" && !canCreate) {
+      setSimpleError(t("cashTransactions.errors.missingCreatePermission"));
+      return;
+    }
     if (type === "applyCari" && !canApplyCari) {
       setSimpleError("Missing permission: cari.settlement.apply");
+      return;
+    }
+
+    if (type === "receiveTransit") {
+      const transitTransferId = toPositiveInt(row?.cash_transit_transfer_id);
+      if (!transitTransferId) {
+        setSimpleError("Transit transfer link is missing on this row.");
+        return;
+      }
+      setActionForm({
+        type,
+        transactionId: String(transactionId),
+        transitTransferId: String(transitTransferId),
+        cashSessionId: "",
+        txnDatetime: toDateTimeLocalInput(),
+        bookDate: todayIsoDate(),
+        idempotencyKey: buildTransitReceiveIdempotencyKey(),
+        referenceNo: String(row?.reference_no || "").trim(),
+        description: String(row?.description || "").trim(),
+      });
       return;
     }
 
@@ -1074,7 +1202,29 @@ export default function CashTransactionsPage() {
 
     setActionSaving(true);
     try {
-      if (actionForm.type === "post") {
+      if (actionForm.type === "receiveTransit") {
+        const transitTransferId = toPositiveInt(
+          actionForm.transitTransferId || row?.cash_transit_transfer_id
+        );
+        if (!transitTransferId) {
+          throw new Error("transitTransferId is required.");
+        }
+        const response = await receiveCashTransitTransfer(transitTransferId, {
+          cashSessionId: toPositiveInt(actionForm.cashSessionId) || undefined,
+          txnDatetime: String(actionForm.txnDatetime || "").trim() || undefined,
+          bookDate: String(actionForm.bookDate || "").trim() || undefined,
+          idempotencyKey:
+            String(actionForm.idempotencyKey || "").trim() || buildTransitReceiveIdempotencyKey(),
+          referenceNo: String(actionForm.referenceNo || "").trim() || undefined,
+          description: String(actionForm.description || "").trim() || undefined,
+        });
+        const transferInTxnId = response?.transferInTransaction?.id || "-";
+        if (response?.idempotentReplay) {
+          setInfoMessage(`Transit receive replayed. transferInTxnId=${transferInTxnId}`);
+        } else {
+          setMessage(`Transit received. transferInTxnId=${transferInTxnId}`);
+        }
+      } else if (actionForm.type === "post") {
         if (!canPost) {
           throw new Error(t("cashTransactions.errors.missingPostPermission"));
         }
@@ -1267,6 +1417,28 @@ export default function CashTransactionsPage() {
       toPositiveInt(row?.linked_cari_settlement_batch_id || row?.linkedCariSettlementBatchId) ||
       toPositiveInt(row?.linked_cari_unapplied_cash_id || row?.linkedCariUnappliedCashId)
     ) {
+      return false;
+    }
+    return true;
+  }
+
+  function canReceiveTransitRow(row) {
+    if (!canCreate) {
+      return false;
+    }
+    if (toUpper(row?.txn_type) !== "TRANSFER_OUT") {
+      return false;
+    }
+    if (toUpper(row?.status) !== "POSTED") {
+      return false;
+    }
+    if (!toPositiveInt(row?.cash_transit_transfer_id)) {
+      return false;
+    }
+    if (toUpper(row?.cash_transit_status) !== "IN_TRANSIT") {
+      return false;
+    }
+    if (toPositiveInt(row?.cash_transit_transfer_in_transaction_id)) {
       return false;
     }
     return true;
@@ -1889,6 +2061,138 @@ export default function CashTransactionsPage() {
               />
             ) : null}
 
+            {actionForm.type === "receiveTransit" ? (
+              <>
+                <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                  transitTransferId
+                  <input
+                    type="text"
+                    value={actionForm.transitTransferId || ""}
+                    readOnly
+                    className="mt-1 w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm font-normal text-slate-600"
+                  />
+                </label>
+                <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                  bookDate
+                  <input
+                    type="date"
+                    value={actionForm.bookDate || ""}
+                    onChange={(event) =>
+                      setActionForm((prev) => ({
+                        ...prev,
+                        bookDate: event.target.value,
+                      }))
+                    }
+                    className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-normal"
+                    disabled={actionSaving}
+                    required
+                  />
+                </label>
+                <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                  txnDatetime
+                  <input
+                    type="datetime-local"
+                    value={actionForm.txnDatetime || ""}
+                    onChange={(event) =>
+                      setActionForm((prev) => ({
+                        ...prev,
+                        txnDatetime: event.target.value,
+                      }))
+                    }
+                    className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-normal"
+                    disabled={actionSaving}
+                    required
+                  />
+                </label>
+                {selectedTransitTargetOpenSessions.length > 0 ? (
+                  <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                    cashSessionId (optional)
+                    <select
+                      value={actionForm.cashSessionId || ""}
+                      onChange={(event) =>
+                        setActionForm((prev) => ({
+                          ...prev,
+                          cashSessionId: event.target.value,
+                        }))
+                      }
+                      className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-normal"
+                      disabled={actionSaving}
+                    >
+                      <option value="">Auto / none</option>
+                      {selectedTransitTargetOpenSessions.map((session) => (
+                        <option key={`receive-transit-session-${session.id}`} value={session.id}>
+                          #{session.id} - {session.status || "OPEN"}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ) : (
+                  <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                    cashSessionId (optional)
+                    <input
+                      type="number"
+                      min={1}
+                      value={actionForm.cashSessionId || ""}
+                      onChange={(event) =>
+                        setActionForm((prev) => ({
+                          ...prev,
+                          cashSessionId: event.target.value,
+                        }))
+                      }
+                      className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-normal"
+                      disabled={actionSaving}
+                    />
+                  </label>
+                )}
+                <label className="text-xs font-semibold uppercase tracking-wide text-slate-600 md:col-span-2">
+                  idempotencyKey
+                  <input
+                    type="text"
+                    value={actionForm.idempotencyKey || ""}
+                    onChange={(event) =>
+                      setActionForm((prev) => ({
+                        ...prev,
+                        idempotencyKey: event.target.value,
+                      }))
+                    }
+                    className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-normal"
+                    disabled={actionSaving}
+                    required
+                  />
+                </label>
+                <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                  referenceNo (optional)
+                  <input
+                    type="text"
+                    value={actionForm.referenceNo || ""}
+                    onChange={(event) =>
+                      setActionForm((prev) => ({
+                        ...prev,
+                        referenceNo: event.target.value,
+                      }))
+                    }
+                    className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-normal"
+                    disabled={actionSaving}
+                  />
+                </label>
+                <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                  description (optional)
+                  <input
+                    type="text"
+                    value={actionForm.description || ""}
+                    onChange={(event) =>
+                      setActionForm((prev) => ({
+                        ...prev,
+                        description: event.target.value,
+                      }))
+                    }
+                    className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-normal"
+                    disabled={actionSaving}
+                  />
+                </label>
+              </>
+            ) : null}
+
             {actionForm.type === "applyCari" ? (
               <>
                 <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
@@ -2116,7 +2420,7 @@ export default function CashTransactionsPage() {
                 <th className="px-3 py-2">Counterparty</th>
                 <th className="px-3 py-2">{t("cashTransactions.table.counterAccount")}</th>
                 <th className="px-3 py-2">{t("cashTransactions.table.counterRegister")}</th>
-                <th className="px-3 py-2">Cari Link</th>
+                <th className="px-3 py-2">Links</th>
                 <th className="px-3 py-2">{t("cashTransactions.table.postedJournal")}</th>
                 <th className="px-3 py-2">{t("cashTransactions.table.overrideReason")}</th>
                 <th className="px-3 py-2">{t("cashTransactions.table.createdAt")}</th>
@@ -2173,6 +2477,18 @@ export default function CashTransactionsPage() {
                     </td>
                     <td className="px-3 py-2">
                       <div className="flex flex-wrap gap-1">
+                        {toPositiveInt(row.cash_transit_transfer_id) ? (
+                          <span className="inline-flex rounded border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-xs font-semibold text-indigo-700">
+                            Transit #{row.cash_transit_transfer_id} ({toUpper(row.cash_transit_status) || "?"})
+                          </span>
+                        ) : null}
+                        {toPositiveInt(row.cash_transit_transfer_out_transaction_id) &&
+                        toPositiveInt(row.cash_transit_transfer_in_transaction_id) ? (
+                          <span className="inline-flex rounded border border-indigo-200 bg-white px-2 py-0.5 text-xs font-semibold text-indigo-700">
+                            OUT #{row.cash_transit_transfer_out_transaction_id} / IN #
+                            {row.cash_transit_transfer_in_transaction_id}
+                          </span>
+                        ) : null}
                         {toPositiveInt(row.linked_cari_settlement_batch_id || row.linkedCariSettlementBatchId) ? (
                           <span className="inline-flex rounded border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700">
                             Settlement #{row.linked_cari_settlement_batch_id || row.linkedCariSettlementBatchId}
@@ -2184,7 +2500,8 @@ export default function CashTransactionsPage() {
                           </span>
                         ) : null}
                         {!toPositiveInt(row.linked_cari_settlement_batch_id || row.linkedCariSettlementBatchId) &&
-                        !toPositiveInt(row.linked_cari_unapplied_cash_id || row.linkedCariUnappliedCashId) ? (
+                        !toPositiveInt(row.linked_cari_unapplied_cash_id || row.linkedCariUnappliedCashId) &&
+                        !toPositiveInt(row.cash_transit_transfer_id) ? (
                           <span className="text-slate-400">-</span>
                         ) : null}
                       </div>
@@ -2225,6 +2542,15 @@ export default function CashTransactionsPage() {
                             {t("cashTransactions.actions.prepareReverse")}
                           </button>
                         ) : null}
+                        {canReceiveTransitRow(row) ? (
+                          <button
+                            type="button"
+                            onClick={() => openActionForm("receiveTransit", row)}
+                            className="rounded-md border border-indigo-300 px-2 py-1 text-xs font-semibold text-indigo-700 hover:bg-indigo-50"
+                          >
+                            Receive Transit
+                          </button>
+                        ) : null}
                         {canApplyCari && canApplyCariRow(row) ? (
                           <button
                             type="button"
@@ -2243,6 +2569,7 @@ export default function CashTransactionsPage() {
                         {!canPostRow(row) &&
                         !canCancelRow(row) &&
                         !canReverseRow(row) &&
+                        !canReceiveTransitRow(row) &&
                         !(canApplyCari && canApplyCariRow(row)) ? (
                           <span className="text-slate-400">{t("cashTransactions.values.readOnly")}</span>
                         ) : null}

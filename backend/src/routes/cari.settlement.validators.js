@@ -16,6 +16,7 @@ import {
 const DIRECTION_VALUES = ["AR", "AP"];
 const BANK_ATTACH_TARGET_VALUES = ["SETTLEMENT", "UNAPPLIED_CASH"];
 const PAYMENT_CHANNEL_VALUES = ["CASH", "MANUAL"];
+const FX_FALLBACK_MODE_VALUES = ["EXACT_ONLY", "PRIOR_DATE"];
 const SOURCE_MODULE_VALUES = ["MANUAL", "CARI", "CONTRACTS", "REVREC", "CASH", "SYSTEM", "OTHER"];
 const INTEGRATION_LINK_STATUS_VALUES = [
   "UNLINKED",
@@ -41,6 +42,17 @@ function parseOptionalPositiveDecimal(value, label) {
     throw badRequest(`${label} must be a numeric value greater than 0`);
   }
   return Number(parsed.toFixed(10));
+}
+
+function parseOptionalNonNegativeInt(value, label) {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw badRequest(`${label} must be a non-negative integer`);
+  }
+  return parsed;
 }
 
 function parseAllocations(value) {
@@ -195,6 +207,16 @@ function parseSettlementApplyCommon(
       ? parseBooleanFlag(req.body?.useUnappliedCash, true)
       : parseBooleanFlag(req.body?.consumeUnapplied, true);
   const fxRate = parseOptionalPositiveDecimal(req.body?.fxRate, "fxRate");
+  const fxFallbackModeRaw = String(req.body?.fxFallbackMode || "")
+    .trim()
+    .toUpperCase();
+  const fxFallbackMode = fxFallbackModeRaw
+    ? normalizeEnum(fxFallbackModeRaw, "fxFallbackMode", FX_FALLBACK_MODE_VALUES)
+    : null;
+  const fxFallbackMaxDays = parseOptionalNonNegativeInt(
+    req.body?.fxFallbackMaxDays,
+    "fxFallbackMaxDays"
+  );
   const sourceModuleRaw = String(req.body?.sourceModule || "")
     .trim()
     .toUpperCase();
@@ -233,6 +255,13 @@ function parseSettlementApplyCommon(
   }
   if (sourceModule && sourceModule !== "MANUAL" && (!sourceEntityType || !sourceEntityId)) {
     throw badRequest("sourceEntityType and sourceEntityId are required when sourceModule is not MANUAL");
+  }
+  if (
+    fxFallbackMaxDays !== null &&
+    fxFallbackMode &&
+    fxFallbackMode !== "PRIOR_DATE"
+  ) {
+    throw badRequest("fxFallbackMaxDays is only supported when fxFallbackMode=PRIOR_DATE");
   }
   if (cashTransactionId && integrationLinkStatus === "UNLINKED") {
     throw badRequest("integrationLinkStatus cannot be UNLINKED when cashTransactionId is provided");
@@ -286,6 +315,8 @@ function parseSettlementApplyCommon(
     note,
     autoAllocate,
     fxRate,
+    fxFallbackMode,
+    fxFallbackMaxDays,
     sourceModule,
     sourceEntityType,
     sourceEntityId,

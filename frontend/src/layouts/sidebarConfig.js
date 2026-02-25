@@ -127,6 +127,12 @@ export const sidebarItems = [
             implemented: true,
           },
           {
+            label: "Kasa Transit Transferleri",
+            to: "/app/kasa-transit-transferleri",
+            requiredPermissions: ["cash.txn.read"],
+            implemented: true,
+          },
+          {
             label: "Tahsilat",
             to: "/app/tahsilat-islemleri",
             requiredPermissions: ["cash.txn.read"],

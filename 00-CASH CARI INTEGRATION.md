@@ -695,9 +695,9 @@ If you want the cleanest value fast:
 4. **PR-19** cari-first reverse integration (done)
 5. **PR-21** contracts → cari auto billing (done)
 6. **PR-22** contracts → revrec schedule auto-generation (done)
-7. **PR-23** revrec account derivation from contract lines
-8. **PR-24** contract rollup KPIs
-9. **PR-25** settlement posting/FX refinement
+7. **PR-23** revrec account derivation from contract lines (done)
+8. **PR-24** contract rollup KPIs (done)
+9. **PR-25** settlement posting/FX refinement (done)
 10. **PR-26** cross-OU transit 
 
 ---
@@ -712,3 +712,6 @@ Before PR-18, add a tiny **integration identity strategy** (can be in PR-17):
 This will save you from duplicate clicks / retries causing duplicate settlement or billing actions.
 
 ---
+
+
+at the end, edit the related manuals in the same style for the changes we have done in 00-CASH CARI INTEGRATION.md file that others explained in detailed with examples etc. for the relevant flows in the relevant manuals. 

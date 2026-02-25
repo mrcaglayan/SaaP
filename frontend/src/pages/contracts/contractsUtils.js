@@ -12,6 +12,30 @@ export const LINK_TYPES = ["BILLING", "ADVANCE", "ADJUSTMENT"];
 export const BILLING_DOC_TYPES = ["INVOICE", "ADVANCE", "ADJUSTMENT"];
 export const BILLING_AMOUNT_STRATEGIES = ["FULL", "PARTIAL", "MILESTONE"];
 export const REVREC_GENERATION_MODES = ["BY_CONTRACT_LINE", "BY_LINKED_DOCUMENT"];
+const FINANCIAL_ROLLUP_NUMERIC_FIELDS = Object.freeze([
+  "linkedDocumentCount",
+  "activeLinkedDocumentCount",
+  "revrecScheduleLineCount",
+  "revrecRecognizedRunLineCount",
+  "billedAmountTxn",
+  "billedAmountBase",
+  "collectedAmountTxn",
+  "collectedAmountBase",
+  "uncollectedAmountTxn",
+  "uncollectedAmountBase",
+  "revrecScheduledAmountTxn",
+  "revrecScheduledAmountBase",
+  "recognizedToDateTxn",
+  "recognizedToDateBase",
+  "deferredBalanceTxn",
+  "deferredBalanceBase",
+  "openReceivableTxn",
+  "openReceivableBase",
+  "openPayableTxn",
+  "openPayableBase",
+  "collectedCoveragePct",
+  "recognizedCoveragePct",
+]);
 
 const LIFECYCLE_FROM_STATUS = Object.freeze({
   activate: new Set(["DRAFT", "SUSPENDED"]),
@@ -171,6 +195,46 @@ export function createInitialRevrecForm() {
     regenerateMissingOnly: true,
     contractLineIds: [],
   };
+}
+
+export function createEmptyContractFinancialRollup(contractType = "CUSTOMER") {
+  const isVendorContract = toUpper(contractType) === "VENDOR";
+  return {
+    currencyCode: null,
+    linkedDocumentCount: 0,
+    activeLinkedDocumentCount: 0,
+    revrecScheduleLineCount: 0,
+    revrecRecognizedRunLineCount: 0,
+    billedAmountTxn: 0,
+    billedAmountBase: 0,
+    collectedAmountTxn: 0,
+    collectedAmountBase: 0,
+    uncollectedAmountTxn: 0,
+    uncollectedAmountBase: 0,
+    revrecScheduledAmountTxn: 0,
+    revrecScheduledAmountBase: 0,
+    recognizedToDateTxn: 0,
+    recognizedToDateBase: 0,
+    deferredBalanceTxn: 0,
+    deferredBalanceBase: 0,
+    openReceivableTxn: isVendorContract ? 0 : 0,
+    openReceivableBase: isVendorContract ? 0 : 0,
+    openPayableTxn: isVendorContract ? 0 : 0,
+    openPayableBase: isVendorContract ? 0 : 0,
+    collectedCoveragePct: 0,
+    recognizedCoveragePct: 0,
+  };
+}
+
+export function normalizeContractFinancialRollup(rollup, contractType = "CUSTOMER") {
+  const base = createEmptyContractFinancialRollup(contractType);
+  const next = { ...base, ...(rollup && typeof rollup === "object" ? rollup : {}) };
+  const normalized = { ...next };
+  for (const field of FINANCIAL_ROLLUP_NUMERIC_FIELDS) {
+    normalized[field] = toOptionalNumber(next[field]) ?? 0;
+  }
+  normalized.currencyCode = String(next.currencyCode || "").trim().toUpperCase() || null;
+  return normalized;
 }
 
 export function getCounterpartyRoleForContractType(contractType) {

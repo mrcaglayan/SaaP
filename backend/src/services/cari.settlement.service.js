@@ -19,6 +19,8 @@ import {
 const AMOUNT_SCALE = 6;
 const AMOUNT_EPSILON = 0.000001;
 const FX_RATE_TYPE_SPOT = "SPOT";
+const FX_FALLBACK_MODE_EXACT_ONLY = "EXACT_ONLY";
+const FX_FALLBACK_MODE_PRIOR_DATE = "PRIOR_DATE";
 const SETTLEMENT_SEQUENCE_NAMESPACE = "SETTLEMENT";
 const SETTLEMENT_STATUS_POSTED = "POSTED";
 const SETTLEMENT_STATUS_REVERSED = "REVERSED";
@@ -53,10 +55,15 @@ const RESOURCE_TYPE_CASH_TRANSACTION = "cash_transaction";
 const CARI_SETTLEMENT_REFERENCE_PREFIX = "CARI_SETTLE:";
 const CARI_SETTLEMENT_REVERSE_REFERENCE_PREFIX = "CARI_SETTLE_REV:";
 const CARI_SETTLEMENT_INTENT_SOURCE_ENTITY_TYPE = "cari_settlement_apply";
+const SETTLEMENT_POSTING_SOURCE_CONTEXT = Object.freeze({
+  CASH_LINKED: "CASH_LINKED",
+  MANUAL: "MANUAL",
+  ON_ACCOUNT_APPLY: "ON_ACCOUNT_APPLY",
+});
 const FOLLOW_UP_RISKS = Object.freeze([
   "Posting depends on configured journal_purpose_accounts mappings (CARI_AR_CONTROL, CARI_AR_OFFSET, CARI_AP_CONTROL, CARI_AP_OFFSET). Missing setup blocks posting.",
-  "FX lookup uses exact-date SPOT for currency pair in this PR. Nearest-prior fallback or rate-type selection can be added in a follow-up PR.",
-  "Settlement posting uses a generic 2-line control/offset model. Transaction-type-specific derivation can be added in a follow-up PR.",
+  "FX lookup uses request fxRate first, then exact-date SPOT, then optional nearest-prior fallback when enabled by config.",
+  "Settlement posting resolves source context (CASH_LINKED, MANUAL, ON_ACCOUNT_APPLY) and falls back to generic purpose mappings for compatibility.",
 ]);
 const CARI_SETTLEMENT_PURPOSES = Object.freeze({
   AR: Object.freeze({
@@ -68,6 +75,32 @@ const CARI_SETTLEMENT_PURPOSES = Object.freeze({
     offset: "CARI_AP_OFFSET",
   }),
 });
+const DEFAULT_SETTLEMENT_FX_FALLBACK_MODE = (() => {
+  const normalized = normalizeUpperText(process.env.CARI_SETTLEMENT_FX_FALLBACK_MODE);
+  if (!normalized) {
+    return FX_FALLBACK_MODE_EXACT_ONLY;
+  }
+  if (
+    normalized !== FX_FALLBACK_MODE_EXACT_ONLY &&
+    normalized !== FX_FALLBACK_MODE_PRIOR_DATE
+  ) {
+    throw new Error(
+      "CARI_SETTLEMENT_FX_FALLBACK_MODE must be EXACT_ONLY or PRIOR_DATE when provided"
+    );
+  }
+  return normalized;
+})();
+const DEFAULT_SETTLEMENT_FX_FALLBACK_MAX_DAYS = (() => {
+  const raw = process.env.CARI_SETTLEMENT_FX_FALLBACK_MAX_DAYS;
+  if (raw === undefined || raw === null || raw === "") {
+    return null;
+  }
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw new Error("CARI_SETTLEMENT_FX_FALLBACK_MAX_DAYS must be a non-negative integer");
+  }
+  return parsed;
+})();
 
 function normalizeUpperText(value) {
   return String(value || "")
@@ -184,6 +217,127 @@ function normalizeOptionalPositiveInt(value, label) {
     throw badRequest(`${label} must be a positive integer`);
   }
   return parsed;
+}
+
+function normalizeSettlementFxFallbackMode(value) {
+  const normalized = normalizeUpperText(
+    value === undefined || value === null || value === ""
+      ? DEFAULT_SETTLEMENT_FX_FALLBACK_MODE
+      : value
+  );
+  if (
+    normalized !== FX_FALLBACK_MODE_EXACT_ONLY &&
+    normalized !== FX_FALLBACK_MODE_PRIOR_DATE
+  ) {
+    throw badRequest("fxFallbackMode must be EXACT_ONLY or PRIOR_DATE");
+  }
+  return normalized;
+}
+
+function normalizeSettlementFxFallbackMaxDays(value) {
+  const source =
+    value === undefined || value === null || value === ""
+      ? DEFAULT_SETTLEMENT_FX_FALLBACK_MAX_DAYS
+      : value;
+  if (source === null || source === undefined || source === "") {
+    return null;
+  }
+  const parsed = Number(source);
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw badRequest("fxFallbackMaxDays must be a non-negative integer");
+  }
+  return parsed;
+}
+
+function normalizeSettlementPostingSourceContext(value) {
+  const normalized = normalizeUpperText(
+    value || SETTLEMENT_POSTING_SOURCE_CONTEXT.MANUAL
+  );
+  if (
+    normalized !== SETTLEMENT_POSTING_SOURCE_CONTEXT.CASH_LINKED &&
+    normalized !== SETTLEMENT_POSTING_SOURCE_CONTEXT.MANUAL &&
+    normalized !== SETTLEMENT_POSTING_SOURCE_CONTEXT.ON_ACCOUNT_APPLY
+  ) {
+    throw badRequest(
+      "Settlement posting source context must be CASH_LINKED, MANUAL, or ON_ACCOUNT_APPLY"
+    );
+  }
+  return normalized;
+}
+
+function deriveSettlementPostingSourceContext({
+  paymentChannel,
+  cashTransactionId,
+  sourceModule,
+  unappliedConsumedCount,
+}) {
+  const normalizedPaymentChannel = normalizePaymentChannel(paymentChannel);
+  const normalizedSourceModule = normalizeUpperText(sourceModule);
+  if (
+    parsePositiveInt(cashTransactionId) ||
+    normalizedPaymentChannel === PAYMENT_CHANNEL_CASH ||
+    normalizedSourceModule === "CASH"
+  ) {
+    return SETTLEMENT_POSTING_SOURCE_CONTEXT.CASH_LINKED;
+  }
+  if (Number(unappliedConsumedCount || 0) > 0) {
+    return SETTLEMENT_POSTING_SOURCE_CONTEXT.ON_ACCOUNT_APPLY;
+  }
+  return SETTLEMENT_POSTING_SOURCE_CONTEXT.MANUAL;
+}
+
+function buildSettlementPostingPurposeCandidates({
+  direction,
+  sourceContext,
+}) {
+  const normalizedDirection = normalizeUpperText(direction);
+  const normalizedSourceContext =
+    normalizeSettlementPostingSourceContext(sourceContext);
+  const basePurposes = CARI_SETTLEMENT_PURPOSES[normalizedDirection];
+  if (!basePurposes) {
+    throw badRequest("Settlement direction must be AR or AP");
+  }
+
+  const prefix = normalizedDirection === "AR" ? "CARI_AR" : "CARI_AP";
+  if (normalizedSourceContext === SETTLEMENT_POSTING_SOURCE_CONTEXT.CASH_LINKED) {
+    return {
+      controlCandidates: [`${prefix}_CONTROL_CASH`, basePurposes.control],
+      offsetCandidates: [`${prefix}_OFFSET_CASH`, basePurposes.offset],
+      normalizedDirection,
+      normalizedSourceContext,
+    };
+  }
+  if (normalizedSourceContext === SETTLEMENT_POSTING_SOURCE_CONTEXT.ON_ACCOUNT_APPLY) {
+    return {
+      controlCandidates: [`${prefix}_CONTROL_ON_ACCOUNT`, basePurposes.control],
+      offsetCandidates: [`${prefix}_OFFSET_ON_ACCOUNT`, basePurposes.offset],
+      normalizedDirection,
+      normalizedSourceContext,
+    };
+  }
+  return {
+    controlCandidates: [`${prefix}_CONTROL_MANUAL`, basePurposes.control],
+    offsetCandidates: [`${prefix}_OFFSET_MANUAL`, basePurposes.offset],
+    normalizedDirection,
+    normalizedSourceContext,
+  };
+}
+
+function resolvePurposeAccountByCandidates({
+  byPurpose,
+  candidates,
+}) {
+  for (const candidate of candidates) {
+    const normalizedPurpose = normalizeUpperText(candidate);
+    const found = byPurpose.get(normalizedPurpose);
+    if (found?.id) {
+      return {
+        ...found,
+        purposeCode: normalizedPurpose,
+      };
+    }
+  }
+  return null;
 }
 
 function resolveSettlementIntegrationMetadata({
@@ -769,15 +923,20 @@ async function resolveSettlementPostingAccounts({
   tenantId,
   legalEntityId,
   direction,
+  sourceContext = SETTLEMENT_POSTING_SOURCE_CONTEXT.MANUAL,
   counterpartyRow = null,
   runQuery = query,
 }) {
-  const purposeDefinition = CARI_SETTLEMENT_PURPOSES[normalizeUpperText(direction)];
-  if (!purposeDefinition) {
-    throw badRequest("Settlement direction must be AR or AP");
-  }
-
-  const requestedPurposes = [purposeDefinition.control, purposeDefinition.offset];
+  const purposeCandidates = buildSettlementPostingPurposeCandidates({
+    direction,
+    sourceContext,
+  });
+  const requestedPurposes = Array.from(
+    new Set([
+      ...purposeCandidates.controlCandidates.map((entry) => normalizeUpperText(entry)),
+      ...purposeCandidates.offsetCandidates.map((entry) => normalizeUpperText(entry)),
+    ])
+  );
   const placeholders = requestedPurposes.map(() => "?").join(", ");
   const result = await runQuery(
     `SELECT
@@ -807,11 +966,19 @@ async function resolveSettlementPostingAccounts({
     ])
   );
 
-  const control = byPurpose.get(purposeDefinition.control);
-  const offset = byPurpose.get(purposeDefinition.offset);
+  const control = resolvePurposeAccountByCandidates({
+    byPurpose,
+    candidates: purposeCandidates.controlCandidates,
+  });
+  const offset = resolvePurposeAccountByCandidates({
+    byPurpose,
+    candidates: purposeCandidates.offsetCandidates,
+  });
   if (!control?.id || !offset?.id) {
+    const joinedControls = purposeCandidates.controlCandidates.join(" -> ");
+    const joinedOffsets = purposeCandidates.offsetCandidates.join(" -> ");
     throw badRequest(
-      `Setup required: configure journal_purpose_accounts for ${purposeDefinition.control} and ${purposeDefinition.offset}`
+      `Setup required: configure journal_purpose_accounts for control [${joinedControls}] and offset [${joinedOffsets}]`
     );
   }
 
@@ -834,10 +1001,14 @@ async function resolveSettlementPostingAccounts({
   }
 
   return {
+    sourceContext: purposeCandidates.normalizedSourceContext,
+    direction: purposeCandidates.normalizedDirection,
     controlAccountId: effectiveControl.id,
     offsetAccountId: offset.id,
     controlAccountCode: effectiveControl.code || null,
     offsetAccountCode: offset.code || null,
+    controlPurposeCode: control.purposeCode || null,
+    offsetPurposeCode: offset.purposeCode || null,
   };
 }
 
@@ -847,6 +1018,8 @@ async function resolveSettlementFxRate({
   settlementCurrencyCode,
   functionalCurrencyCode,
   providedFxRate,
+  fxFallbackMode,
+  fxFallbackMaxDays,
   runQuery = query,
 }) {
   const normalizedDate = normalizeDateInput(settlementDate, "settlementDate");
@@ -855,6 +1028,10 @@ async function resolveSettlementFxRate({
   const normalizedProvidedRate = normalizeOptionalPositiveDecimal(
     providedFxRate,
     "fxRate"
+  );
+  const normalizedFallbackMode = normalizeSettlementFxFallbackMode(fxFallbackMode);
+  const normalizedFallbackMaxDays = normalizeSettlementFxFallbackMaxDays(
+    fxFallbackMaxDays
   );
 
   if (!settlementCurrency || !functionalCurrency) {
@@ -872,6 +1049,8 @@ async function resolveSettlementFxRate({
       settlementFxRate: 1,
       source: "PARITY",
       rateDate: normalizedDate,
+      fallbackMode: normalizedFallbackMode,
+      fallbackMaxDays: normalizedFallbackMaxDays,
       riskNotes: FOLLOW_UP_RISKS,
     };
   }
@@ -896,19 +1075,78 @@ async function resolveSettlementFxRate({
   );
   const fxRow = fxResult.rows?.[0] || null;
   const tableRate = normalizeOptionalPositiveDecimal(fxRow?.rate, "fxRates.rate");
-  const effectiveRate = normalizedProvidedRate || tableRate;
-  if (!effectiveRate) {
+  if (normalizedProvidedRate) {
+    return {
+      settlementFxRate: normalizedProvidedRate,
+      source: "REQUEST",
+      rateDate: normalizedDate,
+      fallbackMode: normalizedFallbackMode,
+      fallbackMaxDays: normalizedFallbackMaxDays,
+      riskNotes: FOLLOW_UP_RISKS,
+    };
+  }
+  if (tableRate) {
+    return {
+      settlementFxRate: tableRate,
+      source: "FX_TABLE_EXACT_SPOT",
+      rateDate: toDateOnlyString(fxRow?.rate_date || normalizedDate, "fxRateDate"),
+      fallbackMode: normalizedFallbackMode,
+      fallbackMaxDays: normalizedFallbackMaxDays,
+      riskNotes: FOLLOW_UP_RISKS,
+    };
+  }
+
+  if (normalizedFallbackMode === FX_FALLBACK_MODE_PRIOR_DATE) {
+    const fallbackClauses = [];
+    const fallbackParams = [
+      tenantId,
+      settlementCurrency,
+      functionalCurrency,
+      FX_RATE_TYPE_SPOT,
+      normalizedDate,
+    ];
+    if (normalizedFallbackMaxDays !== null) {
+      fallbackClauses.push("AND DATEDIFF(?, rate_date) <= ?");
+      fallbackParams.push(normalizedDate, normalizedFallbackMaxDays);
+    }
+    const fallbackResult = await runQuery(
+      `SELECT rate, rate_date
+       FROM fx_rates
+       WHERE tenant_id = ?
+         AND from_currency_code = ?
+         AND to_currency_code = ?
+         AND rate_type = ?
+         AND rate_date < ?
+         ${fallbackClauses.join(" ")}
+       ORDER BY rate_date DESC, id DESC
+       LIMIT 1`,
+      fallbackParams
+    );
+    const fallbackRow = fallbackResult.rows?.[0] || null;
+    const fallbackRate = normalizeOptionalPositiveDecimal(
+      fallbackRow?.rate,
+      "fxRates.rate"
+    );
+    if (fallbackRate) {
+      return {
+        settlementFxRate: fallbackRate,
+        source: "FX_TABLE_PRIOR_SPOT",
+        rateDate: toDateOnlyString(fallbackRow?.rate_date, "fxRateDate"),
+        fallbackMode: normalizedFallbackMode,
+        fallbackMaxDays: normalizedFallbackMaxDays,
+        riskNotes: FOLLOW_UP_RISKS,
+      };
+    }
     throw badRequest(
-      "fxRate is required because no exact-date SPOT FX rate exists for settlementDate and currency pair"
+      normalizedFallbackMaxDays === null
+        ? "fxRate is required because no exact-date SPOT rate exists and no prior SPOT rate was found for settlement currency pair"
+        : "fxRate is required because no exact-date SPOT rate exists and no prior SPOT rate was found within fxFallbackMaxDays for settlement currency pair"
     );
   }
 
-  return {
-    settlementFxRate: effectiveRate,
-    source: normalizedProvidedRate ? "REQUEST" : "FX_TABLE_EXACT_SPOT",
-    rateDate: toDateOnlyString(fxRow?.rate_date || normalizedDate, "fxRateDate"),
-    riskNotes: FOLLOW_UP_RISKS,
-  };
+  throw badRequest(
+    "fxRate is required because no exact-date SPOT FX rate exists for settlementDate and currency pair"
+  );
 }
 
 async function insertPostedJournalWithLinesTx(tx, payload) {
@@ -2708,6 +2946,8 @@ export async function applyCariSettlement({
         settlementCurrencyCode,
         functionalCurrencyCode: legalEntity.functional_currency_code,
         providedFxRate: payload.fxRate,
+        fxFallbackMode: payload.fxFallbackMode,
+        fxFallbackMaxDays: payload.fxFallbackMaxDays,
         runQuery: tx.query,
       });
 
@@ -2841,10 +3081,17 @@ export async function applyCariSettlement({
         settlementDate,
         runQuery: tx.query,
       });
+      const postingSourceContext = deriveSettlementPostingSourceContext({
+        paymentChannel,
+        cashTransactionId: effectiveCashTransactionId,
+        sourceModule: integrationMetadata.sourceModule,
+        unappliedConsumedCount: unappliedConsumePlan.length,
+      });
       const postingAccounts = await resolveSettlementPostingAccounts({
         tenantId,
         legalEntityId,
         direction,
+        sourceContext: postingSourceContext,
         counterpartyRow: counterparty,
         runQuery: tx.query,
       });
@@ -3249,6 +3496,8 @@ export async function applyCariSettlement({
           realizedFxNetBase,
           settlementFxRate: fxPolicy.settlementFxRate,
           settlementFxSource: fxPolicy.source,
+          settlementFxFallbackMode: fxPolicy.fallbackMode,
+          settlementFxFallbackMaxDays: fxPolicy.fallbackMaxDays,
           allocations: enrichedAllocations.map((entry) => ({
             openItemId: entry.openItemId,
             documentId: parsePositiveInt(entry.row.document_id),
@@ -3261,6 +3510,9 @@ export async function applyCariSettlement({
             consumeTxn: entry.consumeTxn,
             consumeBase: entry.consumeBase,
           })),
+          postingSourceContext: postingAccounts.sourceContext,
+          postingControlPurposeCode: postingAccounts.controlPurposeCode,
+          postingOffsetPurposeCode: postingAccounts.offsetPurposeCode,
           createdUnappliedCashId,
           followUpRisks: FOLLOW_UP_RISKS,
         },
@@ -3314,11 +3566,16 @@ export async function applyCariSettlement({
           settlementFxSource: fxPolicy.source,
           fxRateDate: fxPolicy.rateDate,
           journalPurposeAccounts: {
+            sourceContext: postingAccounts.sourceContext,
             controlAccountId: postingAccounts.controlAccountId,
             offsetAccountId: postingAccounts.offsetAccountId,
             controlAccountCode: postingAccounts.controlAccountCode,
             offsetAccountCode: postingAccounts.offsetAccountCode,
+            controlPurposeCode: postingAccounts.controlPurposeCode,
+            offsetPurposeCode: postingAccounts.offsetPurposeCode,
           },
+          settlementFxFallbackMode: fxPolicy.fallbackMode,
+          settlementFxFallbackMaxDays: fxPolicy.fallbackMaxDays,
         },
       };
     });

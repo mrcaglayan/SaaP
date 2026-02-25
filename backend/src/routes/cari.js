@@ -121,6 +121,12 @@ function buildSettlementApplyResponse(tenantId, result) {
           ? null
           : Number(metrics.settlementFxRate),
       settlementFxSource: metrics.settlementFxSource || null,
+      settlementFxFallbackMode: metrics.settlementFxFallbackMode || null,
+      settlementFxFallbackMaxDays:
+        metrics.settlementFxFallbackMaxDays === undefined ||
+        metrics.settlementFxFallbackMaxDays === null
+          ? null
+          : Number(metrics.settlementFxFallbackMaxDays),
       fxRateDate: metrics.fxRateDate || null,
       realizedGainLossBase,
     },

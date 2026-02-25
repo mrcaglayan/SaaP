@@ -158,13 +158,109 @@ const CASH_TXN_BASE_SELECT = `
     ccr.account_id AS counter_cash_register_account_id,
     ccr.currency_code AS counter_cash_register_currency_code,
     ccr.code AS counter_cash_register_code,
-    ccr.name AS counter_cash_register_name
+    ccr.name AS counter_cash_register_name,
+    ctt.id AS cash_transit_transfer_id,
+    ctt.status AS cash_transit_status,
+    ctt.source_cash_register_id AS cash_transit_source_register_id,
+    ctt.target_cash_register_id AS cash_transit_target_register_id,
+    ctt.transfer_out_cash_transaction_id AS cash_transit_transfer_out_transaction_id,
+    ctt.transfer_in_cash_transaction_id AS cash_transit_transfer_in_transaction_id,
+    ctt.transit_account_id AS cash_transit_account_id,
+    ctt.initiated_at AS cash_transit_initiated_at,
+    ctt.in_transit_at AS cash_transit_in_transit_at,
+    ctt.received_at AS cash_transit_received_at,
+    ctt.canceled_at AS cash_transit_canceled_at,
+    ctt.reversed_at AS cash_transit_reversed_at,
+    ctt.cancel_reason AS cash_transit_cancel_reason,
+    ctt.reverse_reason AS cash_transit_reverse_reason,
+    ctt.note AS cash_transit_note
   FROM cash_transactions ct
   JOIN cash_registers cr ON cr.id = ct.cash_register_id
   JOIN legal_entities le ON le.id = cr.legal_entity_id
   LEFT JOIN cash_sessions s ON s.id = ct.cash_session_id
   LEFT JOIN accounts ca ON ca.id = ct.counter_account_id
   LEFT JOIN cash_registers ccr ON ccr.id = ct.counter_cash_register_id
+  LEFT JOIN cash_transit_transfers ctt
+    ON ctt.tenant_id = ct.tenant_id
+   AND (
+     ctt.transfer_out_cash_transaction_id = ct.id
+     OR ctt.transfer_in_cash_transaction_id = ct.id
+   )
+`;
+
+const CASH_TRANSIT_BASE_SELECT = `
+  SELECT
+    ctt.id,
+    ctt.tenant_id,
+    ctt.legal_entity_id,
+    ctt.source_cash_register_id,
+    ctt.target_cash_register_id,
+    ctt.source_operating_unit_id,
+    ctt.target_operating_unit_id,
+    ctt.transfer_out_cash_transaction_id,
+    ctt.transfer_in_cash_transaction_id,
+    ctt.status,
+    ctt.amount,
+    ctt.currency_code,
+    ctt.transit_account_id,
+    ctt.initiated_by_user_id,
+    ctt.received_by_user_id,
+    ctt.canceled_by_user_id,
+    ctt.reversed_by_user_id,
+    ctt.initiated_at,
+    ctt.in_transit_at,
+    ctt.received_at,
+    ctt.canceled_at,
+    ctt.reversed_at,
+    ctt.cancel_reason,
+    ctt.reverse_reason,
+    ctt.idempotency_key,
+    ctt.integration_event_uid,
+    ctt.source_module,
+    ctt.source_entity_type,
+    ctt.source_entity_id,
+    ctt.note,
+    ctt.created_at,
+    ctt.updated_at,
+    le.code AS legal_entity_code,
+    le.name AS legal_entity_name,
+    sr.code AS source_cash_register_code,
+    sr.name AS source_cash_register_name,
+    sou.code AS source_operating_unit_code,
+    sou.name AS source_operating_unit_name,
+    tr.code AS target_cash_register_code,
+    tr.name AS target_cash_register_name,
+    tou.code AS target_operating_unit_code,
+    tou.name AS target_operating_unit_name,
+    ta.code AS transit_account_code,
+    ta.name AS transit_account_name,
+    out_txn.txn_no AS transfer_out_txn_no,
+    out_txn.book_date AS transfer_out_book_date,
+    out_txn.posted_at AS transfer_out_posted_at,
+    out_txn.status AS transfer_out_txn_status,
+    out_txn.posted_journal_entry_id AS transfer_out_posted_journal_entry_id,
+    in_txn.txn_no AS transfer_in_txn_no,
+    in_txn.book_date AS transfer_in_book_date,
+    in_txn.posted_at AS transfer_in_posted_at,
+    in_txn.status AS transfer_in_txn_status,
+    in_txn.posted_journal_entry_id AS transfer_in_posted_journal_entry_id
+  FROM cash_transit_transfers ctt
+  JOIN legal_entities le ON le.id = ctt.legal_entity_id
+  JOIN cash_registers sr
+    ON sr.id = ctt.source_cash_register_id
+   AND sr.tenant_id = ctt.tenant_id
+  LEFT JOIN operating_units sou ON sou.id = ctt.source_operating_unit_id
+  JOIN cash_registers tr
+    ON tr.id = ctt.target_cash_register_id
+   AND tr.tenant_id = ctt.tenant_id
+  LEFT JOIN operating_units tou ON tou.id = ctt.target_operating_unit_id
+  LEFT JOIN accounts ta ON ta.id = ctt.transit_account_id
+  LEFT JOIN cash_transactions out_txn
+    ON out_txn.id = ctt.transfer_out_cash_transaction_id
+   AND out_txn.tenant_id = ctt.tenant_id
+  LEFT JOIN cash_transactions in_txn
+    ON in_txn.id = ctt.transfer_in_cash_transaction_id
+   AND in_txn.tenant_id = ctt.tenant_id
 `;
 
 function asRow(result) {
@@ -689,6 +785,242 @@ export async function findCashTransactionByReversalOf({
   return asRow(result);
 }
 
+export async function findCashTransitTransferScopeById({
+  tenantId,
+  transitTransferId,
+  runQuery = query,
+}) {
+  const result = await runQuery(
+    `SELECT id, legal_entity_id
+     FROM cash_transit_transfers
+     WHERE tenant_id = ?
+       AND id = ?
+     LIMIT 1`,
+    [tenantId, transitTransferId]
+  );
+  return asRow(result);
+}
+
+export async function findCashTransitTransferById({
+  tenantId,
+  transitTransferId,
+  runQuery = query,
+  forUpdate = false,
+}) {
+  const result = await runQuery(
+    `${CASH_TRANSIT_BASE_SELECT}
+     WHERE ctt.tenant_id = ?
+       AND ctt.id = ?
+     LIMIT 1
+     ${forUpdate ? "FOR UPDATE" : ""}`,
+    [tenantId, transitTransferId]
+  );
+  return asRow(result);
+}
+
+export async function findCashTransitTransferByIdempotency({
+  tenantId,
+  sourceRegisterId,
+  idempotencyKey,
+  runQuery = query,
+  forUpdate = false,
+}) {
+  const result = await runQuery(
+    `${CASH_TRANSIT_BASE_SELECT}
+     WHERE ctt.tenant_id = ?
+       AND ctt.source_cash_register_id = ?
+       AND ctt.idempotency_key = ?
+     LIMIT 1
+     ${forUpdate ? "FOR UPDATE" : ""}`,
+    [tenantId, sourceRegisterId, idempotencyKey]
+  );
+  return asRow(result);
+}
+
+export async function findCashTransitTransferByIntegrationEventUid({
+  tenantId,
+  integrationEventUid,
+  runQuery = query,
+  forUpdate = false,
+}) {
+  const result = await runQuery(
+    `${CASH_TRANSIT_BASE_SELECT}
+     WHERE ctt.tenant_id = ?
+       AND ctt.integration_event_uid = ?
+     LIMIT 1
+     ${forUpdate ? "FOR UPDATE" : ""}`,
+    [tenantId, integrationEventUid]
+  );
+  return asRow(result);
+}
+
+export async function findCashTransitTransferByOutTransactionId({
+  tenantId,
+  transactionId,
+  runQuery = query,
+  forUpdate = false,
+}) {
+  const result = await runQuery(
+    `${CASH_TRANSIT_BASE_SELECT}
+     WHERE ctt.tenant_id = ?
+       AND ctt.transfer_out_cash_transaction_id = ?
+     LIMIT 1
+     ${forUpdate ? "FOR UPDATE" : ""}`,
+    [tenantId, transactionId]
+  );
+  return asRow(result);
+}
+
+export async function findCashTransitTransferByInTransactionId({
+  tenantId,
+  transactionId,
+  runQuery = query,
+  forUpdate = false,
+}) {
+  const result = await runQuery(
+    `${CASH_TRANSIT_BASE_SELECT}
+     WHERE ctt.tenant_id = ?
+       AND ctt.transfer_in_cash_transaction_id = ?
+     LIMIT 1
+     ${forUpdate ? "FOR UPDATE" : ""}`,
+    [tenantId, transactionId]
+  );
+  return asRow(result);
+}
+
+export async function insertCashTransitTransfer({ payload, runQuery = query }) {
+  const result = await runQuery(
+    `INSERT INTO cash_transit_transfers (
+       tenant_id,
+       legal_entity_id,
+       source_cash_register_id,
+       target_cash_register_id,
+       source_operating_unit_id,
+       target_operating_unit_id,
+       transfer_out_cash_transaction_id,
+       transfer_in_cash_transaction_id,
+       status,
+       amount,
+       currency_code,
+       transit_account_id,
+       initiated_by_user_id,
+       idempotency_key,
+       integration_event_uid,
+       source_module,
+       source_entity_type,
+       source_entity_id,
+       note
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      payload.tenantId,
+      payload.legalEntityId,
+      payload.sourceCashRegisterId,
+      payload.targetCashRegisterId,
+      payload.sourceOperatingUnitId,
+      payload.targetOperatingUnitId,
+      payload.transferOutCashTransactionId,
+      payload.transferInCashTransactionId,
+      payload.status,
+      payload.amount,
+      payload.currencyCode,
+      payload.transitAccountId,
+      payload.initiatedByUserId,
+      payload.idempotencyKey,
+      payload.integrationEventUid,
+      payload.sourceModule,
+      payload.sourceEntityType,
+      payload.sourceEntityId,
+      payload.note,
+    ]
+  );
+  return Number(result.rows?.insertId || 0);
+}
+
+export async function markCashTransitTransferInTransit({
+  tenantId,
+  transitTransferId,
+  runQuery = query,
+}) {
+  const result = await runQuery(
+    `UPDATE cash_transit_transfers
+     SET
+       status = 'IN_TRANSIT',
+       in_transit_at = COALESCE(in_transit_at, UTC_TIMESTAMP())
+     WHERE tenant_id = ?
+       AND id = ?
+       AND status = 'INITIATED'`,
+    [tenantId, transitTransferId]
+  );
+  return Number(result.rows?.affectedRows || 0);
+}
+
+export async function markCashTransitTransferReceived({
+  tenantId,
+  transitTransferId,
+  transferInCashTransactionId,
+  receivedByUserId,
+  runQuery = query,
+}) {
+  const result = await runQuery(
+    `UPDATE cash_transit_transfers
+     SET
+       transfer_in_cash_transaction_id = ?,
+       status = 'RECEIVED',
+       received_by_user_id = ?,
+       received_at = COALESCE(received_at, UTC_TIMESTAMP())
+     WHERE tenant_id = ?
+       AND id = ?
+       AND status = 'IN_TRANSIT'
+       AND transfer_in_cash_transaction_id IS NULL`,
+    [transferInCashTransactionId, receivedByUserId, tenantId, transitTransferId]
+  );
+  return Number(result.rows?.affectedRows || 0);
+}
+
+export async function markCashTransitTransferCanceled({
+  tenantId,
+  transitTransferId,
+  canceledByUserId,
+  cancelReason,
+  runQuery = query,
+}) {
+  const result = await runQuery(
+    `UPDATE cash_transit_transfers
+     SET
+       status = 'CANCELED',
+       canceled_by_user_id = ?,
+       canceled_at = UTC_TIMESTAMP(),
+       cancel_reason = ?
+     WHERE tenant_id = ?
+       AND id = ?
+       AND status = 'INITIATED'`,
+    [canceledByUserId, cancelReason, tenantId, transitTransferId]
+  );
+  return Number(result.rows?.affectedRows || 0);
+}
+
+export async function markCashTransitTransferReversed({
+  tenantId,
+  transitTransferId,
+  reversedByUserId,
+  reverseReason,
+  runQuery = query,
+}) {
+  const result = await runQuery(
+    `UPDATE cash_transit_transfers
+     SET
+       status = 'REVERSED',
+       reversed_by_user_id = ?,
+       reversed_at = UTC_TIMESTAMP(),
+       reverse_reason = ?
+     WHERE tenant_id = ?
+       AND id = ?
+       AND status IN ('IN_TRANSIT', 'RECEIVED')`,
+    [reversedByUserId, reverseReason, tenantId, transitTransferId]
+  );
+  return Number(result.rows?.affectedRows || 0);
+}
+
 export async function countCashTransactions({ whereSql, params, runQuery = query }) {
   const result = await runQuery(
     `SELECT COUNT(*) AS total
@@ -711,6 +1043,34 @@ export async function listCashTransactions({
     `${CASH_TXN_BASE_SELECT}
      WHERE ${whereSql}
      ORDER BY ct.id DESC
+     LIMIT ${limit}
+     OFFSET ${offset}`,
+    params
+  );
+  return result.rows || [];
+}
+
+export async function countCashTransitTransfers({ whereSql, params, runQuery = query }) {
+  const result = await runQuery(
+    `SELECT COUNT(*) AS total
+     FROM cash_transit_transfers ctt
+     WHERE ${whereSql}`,
+    params
+  );
+  return asCount(result);
+}
+
+export async function listCashTransitTransfers({
+  whereSql,
+  params,
+  limit,
+  offset,
+  runQuery = query,
+}) {
+  const result = await runQuery(
+    `${CASH_TRANSIT_BASE_SELECT}
+     WHERE ${whereSql}
+     ORDER BY ctt.id DESC
      LIMIT ${limit}
      OFFSET ${offset}`,
     params

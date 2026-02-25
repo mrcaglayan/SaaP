@@ -27,6 +27,7 @@ import ModulePlaceholderPage from "./pages/ModulePlaceholderPage";
 import CashRegistersPage from "./pages/cash/CashRegistersPage.jsx";
 import CashSessionsPage from "./pages/cash/CashSessionsPage.jsx";
 import CashTransactionsPage from "./pages/cash/CashTransactionsPage.jsx";
+import CashTransitTransfersPage from "./pages/cash/CashTransitTransfersPage.jsx";
 import CashExceptionsPage from "./pages/cash/CashExceptionsPage.jsx";
 import CariCounterpartyPage from "./pages/cari/CariCounterpartyPage.jsx";
 import CariDocumentsPage from "./pages/cari/CariDocumentsPage.jsx";
@@ -114,6 +115,17 @@ const implementedRoutes = [
     appPath: "/app/kasa-islemleri",
     childPath: "kasa-islemleri",
     element: <CashTransactionsPage />,
+  },
+  {
+    appPath: "/app/kasa-transit-transferleri",
+    childPath: "kasa-transit-transferleri",
+    element: <CashTransitTransfersPage />,
+  },
+  {
+    appPath: "/app/cash-transit-transfers",
+    childPath: "cash-transit-transfers",
+    permissionPath: "/app/kasa-transit-transferleri",
+    element: <Navigate to="/app/kasa-transit-transferleri" replace />,
   },
   {
     appPath: "/app/kasa-istisnalari",

@@ -3,11 +3,17 @@ import { assertScopeAccess, buildScopeFilter, requirePermission } from "../middl
 import { asyncHandler, parsePositiveInt } from "./_utils.js";
 import { resolveCashRegisterScope } from "../services/cash.register.service.js";
 import {
+  cancelCashTransitTransferById,
   createCashTransaction,
+  getCashTransitTransferByIdForTenant,
   applyCariFromCashTransactionById,
   getCashTransactionByIdForTenant,
+  initiateCashTransitTransfer,
+  listCashTransitTransferRows,
   listCashTransactionRows,
   postCashTransactionById,
+  receiveCashTransitTransferById,
+  resolveCashTransitTransferScope,
   resolveCashTransactionScope,
   reverseCashTransactionById,
   cancelCashTransactionById,
@@ -15,6 +21,11 @@ import {
 import {
   parseCashTransactionCancelInput,
   parseCashTransactionApplyCariInput,
+  parseCashTransitTransferCancelInput,
+  parseCashTransitTransferReadFilters,
+  parseCashTransitTransferIdParam,
+  parseCashTransitTransferInitiateInput,
+  parseCashTransitTransferReceiveInput,
   parseCashTransactionCreateInput,
   parseCashTransactionIdParam,
   parseCashTransactionPostInput,
@@ -92,6 +103,16 @@ function buildCashApplyCariResponse(tenantId, result) {
   };
 }
 
+function buildCashTransitTransferResponse(tenantId, result) {
+  return {
+    tenantId,
+    transfer: result.transfer || null,
+    transferOutTransaction: result.transferOutTransaction || null,
+    transferInTransaction: result.transferInTransaction || null,
+    idempotentReplay: Boolean(result.idempotentReplay),
+  };
+}
+
 router.get(
   "/",
   requirePermission("cash.txn.read", {
@@ -121,6 +142,122 @@ router.get(
       tenantId: filters.tenantId,
       ...result,
     });
+  })
+);
+
+router.get(
+  "/transit",
+  requirePermission("cash.txn.read", {
+    resolveScope: async (req, tenantId) => {
+      const legalEntityId = parsePositiveInt(req.query?.legalEntityId);
+      if (legalEntityId) {
+        return { scopeType: "LEGAL_ENTITY", scopeId: legalEntityId };
+      }
+
+      const sourceRegisterId = parsePositiveInt(req.query?.sourceRegisterId);
+      if (sourceRegisterId) {
+        return resolveCashRegisterScope(sourceRegisterId, tenantId);
+      }
+
+      const targetRegisterId = parsePositiveInt(req.query?.targetRegisterId);
+      if (targetRegisterId) {
+        return resolveCashRegisterScope(targetRegisterId, tenantId);
+      }
+
+      return null;
+    },
+  }),
+  asyncHandler(async (req, res) => {
+    const filters = parseCashTransitTransferReadFilters(req);
+    const result = await listCashTransitTransferRows({
+      req,
+      tenantId: filters.tenantId,
+      filters,
+      buildScopeFilter,
+      assertScopeAccess,
+    });
+    return res.json({
+      tenantId: filters.tenantId,
+      ...result,
+    });
+  })
+);
+
+router.get(
+  "/transit/:transitTransferId",
+  requirePermission("cash.txn.read", {
+    resolveScope: async (req, tenantId) => {
+      return resolveCashTransitTransferScope(req.params?.transitTransferId, tenantId);
+    },
+  }),
+  asyncHandler(async (req, res) => {
+    const tenantId = requireTenantId(req);
+    const transitTransferId = parseCashTransitTransferIdParam(req);
+    const result = await getCashTransitTransferByIdForTenant({
+      req,
+      tenantId,
+      transitTransferId,
+      assertScopeAccess,
+    });
+    return res.json(buildCashTransitTransferResponse(tenantId, result));
+  })
+);
+
+router.post(
+  "/transit/initiate",
+  requirePermission("cash.txn.create", {
+    resolveScope: async (req, tenantId) => {
+      return resolveCashRegisterScope(req.body?.registerId, tenantId);
+    },
+  }),
+  asyncHandler(async (req, res) => {
+    const payload = parseCashTransitTransferInitiateInput(req);
+    const result = await initiateCashTransitTransfer({
+      req,
+      payload,
+      assertScopeAccess,
+    });
+    return res
+      .status(result.idempotentReplay ? 200 : 201)
+      .json(buildCashTransitTransferResponse(payload.tenantId, result));
+  })
+);
+
+router.post(
+  "/transit/:transitTransferId/receive",
+  requirePermission("cash.txn.create", {
+    resolveScope: async (req, tenantId) => {
+      return resolveCashTransitTransferScope(req.params?.transitTransferId, tenantId);
+    },
+  }),
+  asyncHandler(async (req, res) => {
+    const payload = parseCashTransitTransferReceiveInput(req);
+    const result = await receiveCashTransitTransferById({
+      req,
+      payload,
+      assertScopeAccess,
+    });
+    return res
+      .status(result.idempotentReplay ? 200 : 201)
+      .json(buildCashTransitTransferResponse(payload.tenantId, result));
+  })
+);
+
+router.post(
+  "/transit/:transitTransferId/cancel",
+  requirePermission("cash.txn.cancel", {
+    resolveScope: async (req, tenantId) => {
+      return resolveCashTransitTransferScope(req.params?.transitTransferId, tenantId);
+    },
+  }),
+  asyncHandler(async (req, res) => {
+    const payload = parseCashTransitTransferCancelInput(req);
+    const result = await cancelCashTransitTransferById({
+      req,
+      payload,
+      assertScopeAccess,
+    });
+    return res.json(buildCashTransitTransferResponse(payload.tenantId, result));
   })
 );
 

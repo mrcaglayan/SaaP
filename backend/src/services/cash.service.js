@@ -70,7 +70,7 @@ function requireAccountId(value, label) {
   return id;
 }
 
-function requireSameOperatingUnitForDirectTransfer(cashTxn) {
+function resolveTransferPostingMode(cashTxn) {
   const sourceOu = parsePositiveInt(cashTxn.operating_unit_id);
   const counterOu = parsePositiveInt(cashTxn.counter_cash_register_operating_unit_id);
   const sourceLegalEntityId = parsePositiveInt(cashTxn.legal_entity_id);
@@ -82,16 +82,22 @@ function requireSameOperatingUnitForDirectTransfer(cashTxn) {
     throw badRequest("Direct transfer is only supported within the same legal entity in v1");
   }
 
-  const sameOu = sourceOu === counterOu;
-  if (!sameOu) {
-    throw badRequest(
-      "Cross-OU transfer requires CASH_IN_TRANSIT workflow (planned for v2)"
-    );
-  }
-
   if (counterCurrency && sourceCurrency && counterCurrency !== sourceCurrency) {
     throw badRequest("Transfer register currencies must match");
   }
+
+  if (sourceOu === counterOu) {
+    return "DIRECT";
+  }
+
+  const sourceEntityType = asUpper(cashTxn.source_entity_type);
+  const hasTransitLink = sourceEntityType === "CASH_TRANSIT_TRANSFER";
+  if (!hasTransitLink) {
+    throw badRequest("Cross-OU transfer requires CASH_IN_TRANSIT workflow");
+  }
+
+  requireAccountId(cashTxn.counter_account_id, "counterAccountId (CASH_IN_TRANSIT)");
+  return "TRANSIT";
 }
 
 function buildBaseLine({
@@ -259,51 +265,99 @@ function buildCashPostingLines(cashTxn) {
       ];
     }
   } else if (txnType === "TRANSFER_OUT") {
-    requireSameOperatingUnitForDirectTransfer(cashTxn);
-    lines = [
-      buildBaseLine({
-        accountId: requireAccountId(
-          counterRegisterAccountId,
-          "counterCashRegisterId account"
-        ),
-        operatingUnitId: cashTxn.counter_cash_register_operating_unit_id,
-        debitBase: amount,
-        creditBase: 0,
-        description: lineDescription,
-        subledgerReferenceNo,
-      }),
-      buildBaseLine({
-        accountId: registerAccountId,
-        operatingUnitId: cashTxn.operating_unit_id,
-        debitBase: 0,
-        creditBase: amount,
-        description: lineDescription,
-        subledgerReferenceNo,
-      }),
-    ];
+    const transferPostingMode = resolveTransferPostingMode(cashTxn);
+    if (transferPostingMode === "DIRECT") {
+      lines = [
+        buildBaseLine({
+          accountId: requireAccountId(
+            counterRegisterAccountId,
+            "counterCashRegisterId account"
+          ),
+          operatingUnitId: cashTxn.counter_cash_register_operating_unit_id,
+          debitBase: amount,
+          creditBase: 0,
+          description: lineDescription,
+          subledgerReferenceNo,
+        }),
+        buildBaseLine({
+          accountId: registerAccountId,
+          operatingUnitId: cashTxn.operating_unit_id,
+          debitBase: 0,
+          creditBase: amount,
+          description: lineDescription,
+          subledgerReferenceNo,
+        }),
+      ];
+    } else {
+      lines = [
+        buildBaseLine({
+          accountId: requireAccountId(
+            counterAccountId,
+            "counterAccountId (CASH_IN_TRANSIT)"
+          ),
+          operatingUnitId: cashTxn.operating_unit_id,
+          debitBase: amount,
+          creditBase: 0,
+          description: lineDescription,
+          subledgerReferenceNo,
+        }),
+        buildBaseLine({
+          accountId: registerAccountId,
+          operatingUnitId: cashTxn.operating_unit_id,
+          debitBase: 0,
+          creditBase: amount,
+          description: lineDescription,
+          subledgerReferenceNo,
+        }),
+      ];
+    }
   } else if (txnType === "TRANSFER_IN") {
-    requireSameOperatingUnitForDirectTransfer(cashTxn);
-    lines = [
-      buildBaseLine({
-        accountId: registerAccountId,
-        operatingUnitId: cashTxn.operating_unit_id,
-        debitBase: amount,
-        creditBase: 0,
-        description: lineDescription,
-        subledgerReferenceNo,
-      }),
-      buildBaseLine({
-        accountId: requireAccountId(
-          counterRegisterAccountId,
-          "counterCashRegisterId account"
-        ),
-        operatingUnitId: cashTxn.counter_cash_register_operating_unit_id,
-        debitBase: 0,
-        creditBase: amount,
-        description: lineDescription,
-        subledgerReferenceNo,
-      }),
-    ];
+    const transferPostingMode = resolveTransferPostingMode(cashTxn);
+    if (transferPostingMode === "DIRECT") {
+      lines = [
+        buildBaseLine({
+          accountId: registerAccountId,
+          operatingUnitId: cashTxn.operating_unit_id,
+          debitBase: amount,
+          creditBase: 0,
+          description: lineDescription,
+          subledgerReferenceNo,
+        }),
+        buildBaseLine({
+          accountId: requireAccountId(
+            counterRegisterAccountId,
+            "counterCashRegisterId account"
+          ),
+          operatingUnitId: cashTxn.counter_cash_register_operating_unit_id,
+          debitBase: 0,
+          creditBase: amount,
+          description: lineDescription,
+          subledgerReferenceNo,
+        }),
+      ];
+    } else {
+      lines = [
+        buildBaseLine({
+          accountId: registerAccountId,
+          operatingUnitId: cashTxn.operating_unit_id,
+          debitBase: amount,
+          creditBase: 0,
+          description: lineDescription,
+          subledgerReferenceNo,
+        }),
+        buildBaseLine({
+          accountId: requireAccountId(
+            counterAccountId,
+            "counterAccountId (CASH_IN_TRANSIT)"
+          ),
+          operatingUnitId: cashTxn.operating_unit_id,
+          debitBase: 0,
+          creditBase: amount,
+          description: lineDescription,
+          subledgerReferenceNo,
+        }),
+      ];
+    }
   } else {
     throw badRequest(`Unsupported cash transaction type for posting: ${txnType}`);
   }

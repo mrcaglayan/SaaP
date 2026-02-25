@@ -6610,6 +6610,330 @@
         }
       }
     },
+    "/api/v1/cash/transactions/transit": {
+      "get": {
+        "tags": [
+          "Cash"
+        ],
+        "operationId": "getApiV1CashTransactionsTransit",
+        "summary": "List cash transit transfers",
+        "responses": {
+          "200": {
+            "description": "Cash transit transfer list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CashTransitTransferListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "query",
+            "name": "legalEntityId",
+            "required": false,
+            "description": "Legal entity filter",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "sourceRegisterId",
+            "required": false,
+            "description": "Source cash register filter",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "targetRegisterId",
+            "required": false,
+            "description": "Target cash register filter",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "description": "Transit status filter",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "INITIATED",
+                "IN_TRANSIT",
+                "RECEIVED",
+                "CANCELED",
+                "REVERSED"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "initiatedDateFrom",
+            "required": false,
+            "description": "Initiated date lower bound",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "in": "query",
+            "name": "initiatedDateTo",
+            "required": false,
+            "description": "Initiated date upper bound",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "description": "Page size",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "description": "Page offset",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/cash/transactions/transit/{transitTransferId}": {
+      "get": {
+        "tags": [
+          "Cash"
+        ],
+        "operationId": "getApiV1CashTransactionsTransitTransittransferid",
+        "summary": "Get cash transit transfer detail",
+        "responses": {
+          "200": {
+            "description": "Cash transit transfer detail",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CashTransitTransferResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "transitTransferId",
+            "required": true,
+            "description": "transitTransferId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/cash/transactions/transit/{transitTransferId}/cancel": {
+      "post": {
+        "tags": [
+          "Cash"
+        ],
+        "operationId": "postApiV1CashTransactionsTransitTransittransferidCancel",
+        "summary": "Cancel initiated cash transit transfer",
+        "responses": {
+          "200": {
+            "description": "Cash transit transfer cancelled",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CashTransitTransferResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "transitTransferId",
+            "required": true,
+            "description": "transitTransferId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CashTransitTransferCancelRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/cash/transactions/transit/{transitTransferId}/receive": {
+      "post": {
+        "tags": [
+          "Cash"
+        ],
+        "operationId": "postApiV1CashTransactionsTransitTransittransferidReceive",
+        "summary": "Receive cash transit transfer (creates and posts linked transfer-in)",
+        "responses": {
+          "200": {
+            "description": "Idempotent replay response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CashTransitTransferResponse"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Cash transit transfer received",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CashTransitTransferResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "transitTransferId",
+            "required": true,
+            "description": "transitTransferId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CashTransitTransferReceiveRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/cash/transactions/transit/initiate": {
+      "post": {
+        "tags": [
+          "Cash"
+        ],
+        "operationId": "postApiV1CashTransactionsTransitInitiate",
+        "summary": "Initiate cross-OU cash transit transfer (creates transfer-out)",
+        "responses": {
+          "200": {
+            "description": "Idempotent replay response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CashTransitTransferResponse"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Cash transit transfer initiated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CashTransitTransferResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CashTransitTransferInitiateRequest"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/contracts": {
       "get": {
         "tags": [
@@ -9626,6 +9950,19 @@
             "type": "string",
             "nullable": true
           },
+          "settlementFxFallbackMode": {
+            "type": "string",
+            "enum": [
+              "EXACT_ONLY",
+              "PRIOR_DATE"
+            ],
+            "nullable": true
+          },
+          "settlementFxFallbackMaxDays": {
+            "type": "integer",
+            "minimum": 0,
+            "nullable": true
+          },
           "fxRateDate": {
             "type": "string",
             "format": "date",
@@ -9639,6 +9976,8 @@
         "required": [
           "settlementFxRate",
           "settlementFxSource",
+          "settlementFxFallbackMode",
+          "settlementFxFallbackMaxDays",
           "fxRateDate",
           "realizedGainLossBase"
         ]
@@ -9760,6 +10099,201 @@
           "metrics",
           "idempotentReplay",
           "followUpRisks"
+        ]
+      },
+      "CashTransitTransferInitiateRequest": {
+        "type": "object",
+        "properties": {
+          "registerId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "targetRegisterId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "transitAccountId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "cashSessionId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "txnDatetime": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "bookDate": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "amount": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "currencyCode": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 3
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 500,
+            "nullable": true
+          },
+          "referenceNo": {
+            "type": "string",
+            "maxLength": 100,
+            "nullable": true
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 500,
+            "nullable": true
+          },
+          "integrationEventUid": {
+            "type": "string",
+            "maxLength": 100,
+            "nullable": true
+          },
+          "idempotencyKey": {
+            "type": "string",
+            "maxLength": 100
+          }
+        },
+        "required": [
+          "registerId",
+          "targetRegisterId",
+          "transitAccountId",
+          "amount",
+          "currencyCode",
+          "idempotencyKey"
+        ]
+      },
+      "CashTransitTransferReceiveRequest": {
+        "type": "object",
+        "properties": {
+          "cashSessionId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "txnDatetime": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "bookDate": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 500,
+            "nullable": true
+          },
+          "referenceNo": {
+            "type": "string",
+            "maxLength": 100,
+            "nullable": true
+          },
+          "integrationEventUid": {
+            "type": "string",
+            "maxLength": 100,
+            "nullable": true
+          },
+          "idempotencyKey": {
+            "type": "string",
+            "maxLength": 100
+          }
+        },
+        "required": [
+          "idempotencyKey"
+        ]
+      },
+      "CashTransitTransferCancelRequest": {
+        "type": "object",
+        "properties": {
+          "cancelReason": {
+            "type": "string",
+            "maxLength": 255
+          }
+        },
+        "required": [
+          "cancelReason"
+        ]
+      },
+      "CashTransitTransferResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "transfer": {
+            "type": "object",
+            "additionalProperties": true,
+            "nullable": true
+          },
+          "transferOutTransaction": {
+            "type": "object",
+            "additionalProperties": true,
+            "nullable": true
+          },
+          "transferInTransaction": {
+            "type": "object",
+            "additionalProperties": true,
+            "nullable": true
+          },
+          "idempotentReplay": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "tenantId",
+          "transfer",
+          "transferOutTransaction",
+          "transferInTransaction",
+          "idempotentReplay"
+        ]
+      },
+      "CashTransitTransferListResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AnyObject"
+            }
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "tenantId",
+          "rows",
+          "total",
+          "limit",
+          "offset"
         ]
       },
       "CariSettlementApplyAllocationInput": {
@@ -9903,6 +10437,19 @@
             "exclusiveMinimum": 0,
             "nullable": true
           },
+          "fxFallbackMode": {
+            "type": "string",
+            "enum": [
+              "EXACT_ONLY",
+              "PRIOR_DATE"
+            ],
+            "nullable": true
+          },
+          "fxFallbackMaxDays": {
+            "type": "integer",
+            "minimum": 0,
+            "nullable": true
+          },
           "note": {
             "type": "string",
             "maxLength": 500,
@@ -10034,6 +10581,19 @@
           "fxRate": {
             "type": "number",
             "exclusiveMinimum": 0,
+            "nullable": true
+          },
+          "fxFallbackMode": {
+            "type": "string",
+            "enum": [
+              "EXACT_ONLY",
+              "PRIOR_DATE"
+            ],
+            "nullable": true
+          },
+          "fxFallbackMaxDays": {
+            "type": "integer",
+            "minimum": 0,
             "nullable": true
           },
           "note": {
@@ -14088,6 +14648,110 @@
           "status"
         ]
       },
+      "ContractFinancialRollup": {
+        "type": "object",
+        "properties": {
+          "currencyCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "linkedDocumentCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "activeLinkedDocumentCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "revrecScheduleLineCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "revrecRecognizedRunLineCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "billedAmountTxn": {
+            "type": "number"
+          },
+          "billedAmountBase": {
+            "type": "number"
+          },
+          "collectedAmountTxn": {
+            "type": "number"
+          },
+          "collectedAmountBase": {
+            "type": "number"
+          },
+          "uncollectedAmountTxn": {
+            "type": "number"
+          },
+          "uncollectedAmountBase": {
+            "type": "number"
+          },
+          "revrecScheduledAmountTxn": {
+            "type": "number"
+          },
+          "revrecScheduledAmountBase": {
+            "type": "number"
+          },
+          "recognizedToDateTxn": {
+            "type": "number"
+          },
+          "recognizedToDateBase": {
+            "type": "number"
+          },
+          "deferredBalanceTxn": {
+            "type": "number"
+          },
+          "deferredBalanceBase": {
+            "type": "number"
+          },
+          "openReceivableTxn": {
+            "type": "number"
+          },
+          "openReceivableBase": {
+            "type": "number"
+          },
+          "openPayableTxn": {
+            "type": "number"
+          },
+          "openPayableBase": {
+            "type": "number"
+          },
+          "collectedCoveragePct": {
+            "type": "number"
+          },
+          "recognizedCoveragePct": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "currencyCode",
+          "linkedDocumentCount",
+          "activeLinkedDocumentCount",
+          "revrecScheduleLineCount",
+          "revrecRecognizedRunLineCount",
+          "billedAmountTxn",
+          "billedAmountBase",
+          "collectedAmountTxn",
+          "collectedAmountBase",
+          "uncollectedAmountTxn",
+          "uncollectedAmountBase",
+          "revrecScheduledAmountTxn",
+          "revrecScheduledAmountBase",
+          "recognizedToDateTxn",
+          "recognizedToDateBase",
+          "deferredBalanceTxn",
+          "deferredBalanceBase",
+          "openReceivableTxn",
+          "openReceivableBase",
+          "openPayableTxn",
+          "openPayableBase",
+          "collectedCoveragePct",
+          "recognizedCoveragePct"
+        ]
+      },
       "ContractDetailRow": {
         "allOf": [
           {
@@ -14101,10 +14765,14 @@
                 "items": {
                   "$ref": "#/components/schemas/ContractLineRow"
                 }
+              },
+              "financialRollup": {
+                "$ref": "#/components/schemas/ContractFinancialRollup"
               }
             },
             "required": [
-              "lines"
+              "lines",
+              "financialRollup"
             ]
           }
         ]

@@ -105,6 +105,39 @@ export async function applyCariForCashTransaction(transactionId, payload) {
   return response.data;
 }
 
+export async function getCashTransitTransfer(transitTransferId, params = {}) {
+  const response = await api.get(
+    `/api/v1/cash/transactions/transit/${transitTransferId}${toQueryString(params)}`
+  );
+  return response.data;
+}
+
+export async function listCashTransitTransfers(params = {}) {
+  const response = await api.get(`/api/v1/cash/transactions/transit${toQueryString(params)}`);
+  return response.data;
+}
+
+export async function initiateCashTransitTransfer(payload) {
+  const response = await api.post("/api/v1/cash/transactions/transit/initiate", payload);
+  return response.data;
+}
+
+export async function receiveCashTransitTransfer(transitTransferId, payload) {
+  const response = await api.post(
+    `/api/v1/cash/transactions/transit/${transitTransferId}/receive`,
+    payload
+  );
+  return response.data;
+}
+
+export async function cancelCashTransitTransfer(transitTransferId, payload) {
+  const response = await api.post(
+    `/api/v1/cash/transactions/transit/${transitTransferId}/cancel`,
+    payload
+  );
+  return response.data;
+}
+
 export async function getCashConfig() {
   const response = await api.get("/api/v1/cash/config");
   return response.data;

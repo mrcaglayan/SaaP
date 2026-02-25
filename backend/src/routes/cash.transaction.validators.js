@@ -26,6 +26,7 @@ const TXN_TYPES = [
 ];
 
 const TXN_STATUSES = ["DRAFT", "SUBMITTED", "APPROVED", "POSTED", "REVERSED", "CANCELLED"];
+const TRANSIT_STATUSES = ["INITIATED", "IN_TRANSIT", "RECEIVED", "CANCELED", "REVERSED"];
 
 const SOURCE_DOC_TYPES = [
   "AP_PAYMENT",
@@ -45,6 +46,14 @@ const INTEGRATION_LINK_STATUSES = [
   "PARTIALLY_LINKED",
   "FAILED",
 ];
+
+export function parseCashTransitTransferIdParam(req) {
+  const transitTransferId = parsePositiveInt(req.params?.transitTransferId);
+  if (!transitTransferId) {
+    throw badRequest("transitTransferId must be a positive integer");
+  }
+  return transitTransferId;
+}
 
 export function parseCashTransactionIdParam(req) {
   const transactionId = parsePositiveInt(req.params?.transactionId);
@@ -84,6 +93,36 @@ export function parseCashTransactionReadFilters(req) {
     status,
     bookDateFrom,
     bookDateTo,
+    limit: pagination.limit,
+    offset: pagination.offset,
+  };
+}
+
+export function parseCashTransitTransferReadFilters(req) {
+  const tenantId = requireTenantId(req);
+  const legalEntityId = optionalPositiveInt(req.query?.legalEntityId, "legalEntityId");
+  const sourceRegisterId = optionalPositiveInt(req.query?.sourceRegisterId, "sourceRegisterId");
+  const targetRegisterId = optionalPositiveInt(req.query?.targetRegisterId, "targetRegisterId");
+  const statusRaw = String(req.query?.status || "")
+    .trim()
+    .toUpperCase();
+  const status = statusRaw ? normalizeEnum(statusRaw, "status", TRANSIT_STATUSES) : null;
+  const initiatedDateFrom = req.query?.initiatedDateFrom
+    ? parseDateOnly(req.query?.initiatedDateFrom, "initiatedDateFrom")
+    : null;
+  const initiatedDateTo = req.query?.initiatedDateTo
+    ? parseDateOnly(req.query?.initiatedDateTo, "initiatedDateTo")
+    : null;
+  const pagination = parsePagination(req.query, { limit: 50, offset: 0, maxLimit: 200 });
+
+  return {
+    tenantId,
+    legalEntityId,
+    sourceRegisterId,
+    targetRegisterId,
+    status,
+    initiatedDateFrom,
+    initiatedDateTo,
     limit: pagination.limit,
     offset: pagination.offset,
   };
@@ -341,5 +380,114 @@ export function parseCashTransactionApplyCariInput(req) {
     note,
     fxRate,
     applications,
+  };
+}
+
+export function parseCashTransitTransferInitiateInput(req) {
+  const tenantId = requireTenantId(req);
+  const userId = requireUserId(req);
+  const registerId = optionalPositiveInt(req.body?.registerId, "registerId");
+  const targetRegisterId = optionalPositiveInt(
+    req.body?.targetRegisterId ?? req.body?.counterCashRegisterId,
+    "targetRegisterId"
+  );
+  const transitAccountId = optionalPositiveInt(
+    req.body?.transitAccountId ?? req.body?.counterAccountId,
+    "transitAccountId"
+  );
+  const cashSessionId = optionalPositiveInt(req.body?.cashSessionId, "cashSessionId");
+  const txnDatetime = parseDateTime(req.body?.txnDatetime, "txnDatetime", new Date().toISOString());
+  const bookDate = parseDateOnly(
+    req.body?.bookDate,
+    "bookDate",
+    new Date().toISOString().slice(0, 10)
+  );
+  const amount = parseAmount(req.body?.amount, "amount", { required: true });
+  const currencyCode = normalizeCurrencyCode(req.body?.currencyCode, "currencyCode");
+  const description = normalizeText(req.body?.description, "description", 500);
+  const referenceNo = normalizeText(req.body?.referenceNo, "referenceNo", 100);
+  const note = normalizeText(req.body?.note, "note", 500);
+  const integrationEventUid = normalizeText(req.body?.integrationEventUid, "integrationEventUid", 100);
+  const idempotencyKey = normalizeText(req.body?.idempotencyKey, "idempotencyKey", 100, {
+    required: true,
+  });
+
+  if (!registerId) {
+    throw badRequest("registerId is required");
+  }
+  if (!targetRegisterId) {
+    throw badRequest("targetRegisterId is required");
+  }
+  if (!transitAccountId) {
+    throw badRequest("transitAccountId is required");
+  }
+  if (registerId === targetRegisterId) {
+    throw badRequest("registerId and targetRegisterId must be different");
+  }
+
+  return {
+    tenantId,
+    userId,
+    registerId,
+    targetRegisterId,
+    transitAccountId,
+    cashSessionId,
+    txnDatetime,
+    bookDate,
+    amount: Number(amount),
+    currencyCode,
+    description,
+    referenceNo,
+    note,
+    integrationEventUid,
+    idempotencyKey,
+  };
+}
+
+export function parseCashTransitTransferReceiveInput(req) {
+  const tenantId = requireTenantId(req);
+  const userId = requireUserId(req);
+  const transitTransferId = parseCashTransitTransferIdParam(req);
+  const cashSessionId = optionalPositiveInt(req.body?.cashSessionId, "cashSessionId");
+  const txnDatetime = parseDateTime(req.body?.txnDatetime, "txnDatetime", new Date().toISOString());
+  const bookDate = parseDateOnly(
+    req.body?.bookDate,
+    "bookDate",
+    new Date().toISOString().slice(0, 10)
+  );
+  const description = normalizeText(req.body?.description, "description", 500);
+  const referenceNo = normalizeText(req.body?.referenceNo, "referenceNo", 100);
+  const integrationEventUid = normalizeText(req.body?.integrationEventUid, "integrationEventUid", 100);
+  const idempotencyKey = normalizeText(req.body?.idempotencyKey, "idempotencyKey", 100, {
+    required: true,
+  });
+
+  return {
+    tenantId,
+    userId,
+    transitTransferId,
+    cashSessionId,
+    txnDatetime,
+    bookDate,
+    description,
+    referenceNo,
+    integrationEventUid,
+    idempotencyKey,
+  };
+}
+
+export function parseCashTransitTransferCancelInput(req) {
+  const tenantId = requireTenantId(req);
+  const userId = requireUserId(req);
+  const transitTransferId = parseCashTransitTransferIdParam(req);
+  const cancelReason = normalizeText(req.body?.cancelReason, "cancelReason", 255, {
+    required: true,
+  });
+
+  return {
+    tenantId,
+    userId,
+    transitTransferId,
+    cancelReason,
   };
 }

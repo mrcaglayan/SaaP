@@ -814,28 +814,146 @@ function applyCashOperationOverrides(specObject) {
   const paths = specObject.paths || {};
 
   const applyCariOperation = paths["/api/v1/cash/transactions/{transactionId}/apply-cari"]?.post;
-  if (!applyCariOperation) {
-    return;
+  if (applyCariOperation) {
+    applyCariOperation.summary = "Apply Cari settlement from posted cash transaction";
+    applyCariOperation.tags = ["Cash"];
+    applyCariOperation.requestBody = bodyFromRef(
+      "#/components/schemas/CashTransactionApplyCariRequest"
+    );
+    applyCariOperation.responses = {
+      "200": jsonResponse(
+        "#/components/schemas/CashTransactionApplyCariResponse",
+        "Idempotent replay response"
+      ),
+      "201": jsonResponse(
+        "#/components/schemas/CashTransactionApplyCariResponse",
+        "Settlement/unapplied apply created"
+      ),
+      "400": errorResponseRef,
+      "401": errorResponseRef,
+      "403": errorResponseRef,
+    };
   }
 
-  applyCariOperation.summary = "Apply Cari settlement from posted cash transaction";
-  applyCariOperation.tags = ["Cash"];
-  applyCariOperation.requestBody = bodyFromRef(
-    "#/components/schemas/CashTransactionApplyCariRequest"
-  );
-  applyCariOperation.responses = {
-    "200": jsonResponse(
-      "#/components/schemas/CashTransactionApplyCariResponse",
-      "Idempotent replay response"
-    ),
-    "201": jsonResponse(
-      "#/components/schemas/CashTransactionApplyCariResponse",
-      "Settlement/unapplied apply created"
-    ),
-    "400": errorResponseRef,
-    "401": errorResponseRef,
-    "403": errorResponseRef,
-  };
+  const transitListOperation = paths["/api/v1/cash/transactions/transit"]?.get;
+  if (transitListOperation) {
+    transitListOperation.summary = "List cash transit transfers";
+    transitListOperation.tags = ["Cash"];
+    mergeOperationParameters(transitListOperation, [
+      queryParamInt("legalEntityId", false, "Legal entity filter"),
+      queryParamInt("sourceRegisterId", false, "Source cash register filter"),
+      queryParamInt("targetRegisterId", false, "Target cash register filter"),
+      queryParam(
+        "status",
+        {
+          type: "string",
+          enum: ["INITIATED", "IN_TRANSIT", "RECEIVED", "CANCELED", "REVERSED"],
+        },
+        false,
+        "Transit status filter"
+      ),
+      queryParam(
+        "initiatedDateFrom",
+        { type: "string", format: "date" },
+        false,
+        "Initiated date lower bound"
+      ),
+      queryParam(
+        "initiatedDateTo",
+        { type: "string", format: "date" },
+        false,
+        "Initiated date upper bound"
+      ),
+      queryParam("limit", { type: "integer", minimum: 1 }, false, "Page size"),
+      queryParam("offset", nonNegativeInt, false, "Page offset"),
+    ]);
+    transitListOperation.responses = withStandardResponses(
+      "200",
+      "Cash transit transfer list",
+      "#/components/schemas/CashTransitTransferListResponse"
+    );
+  }
+
+  const transitDetailOperation = paths["/api/v1/cash/transactions/transit/{transitTransferId}"]?.get;
+  if (transitDetailOperation) {
+    transitDetailOperation.summary = "Get cash transit transfer detail";
+    transitDetailOperation.tags = ["Cash"];
+    mergeOperationParameters(transitDetailOperation, [
+      pathParam("transitTransferId", "Cash transit transfer identifier"),
+    ]);
+    transitDetailOperation.responses = withStandardResponses(
+      "200",
+      "Cash transit transfer detail",
+      "#/components/schemas/CashTransitTransferResponse"
+    );
+  }
+
+  const transitInitiateOperation = paths["/api/v1/cash/transactions/transit/initiate"]?.post;
+  if (transitInitiateOperation) {
+    transitInitiateOperation.summary = "Initiate cross-OU cash transit transfer (creates transfer-out)";
+    transitInitiateOperation.tags = ["Cash"];
+    transitInitiateOperation.requestBody = bodyFromRef(
+      "#/components/schemas/CashTransitTransferInitiateRequest"
+    );
+    transitInitiateOperation.responses = {
+      "200": jsonResponse(
+        "#/components/schemas/CashTransitTransferResponse",
+        "Idempotent replay response"
+      ),
+      "201": jsonResponse(
+        "#/components/schemas/CashTransitTransferResponse",
+        "Cash transit transfer initiated"
+      ),
+      "400": errorResponseRef,
+      "401": errorResponseRef,
+      "403": errorResponseRef,
+    };
+  }
+
+  const transitReceiveOperation =
+    paths["/api/v1/cash/transactions/transit/{transitTransferId}/receive"]?.post;
+  if (transitReceiveOperation) {
+    transitReceiveOperation.summary =
+      "Receive cash transit transfer (creates and posts linked transfer-in)";
+    transitReceiveOperation.tags = ["Cash"];
+    mergeOperationParameters(transitReceiveOperation, [
+      pathParam("transitTransferId", "Cash transit transfer identifier"),
+    ]);
+    transitReceiveOperation.requestBody = bodyFromRef(
+      "#/components/schemas/CashTransitTransferReceiveRequest"
+    );
+    transitReceiveOperation.responses = {
+      "200": jsonResponse(
+        "#/components/schemas/CashTransitTransferResponse",
+        "Idempotent replay response"
+      ),
+      "201": jsonResponse(
+        "#/components/schemas/CashTransitTransferResponse",
+        "Cash transit transfer received"
+      ),
+      "400": errorResponseRef,
+      "401": errorResponseRef,
+      "403": errorResponseRef,
+    };
+  }
+
+  const transitCancelOperation =
+    paths["/api/v1/cash/transactions/transit/{transitTransferId}/cancel"]?.post;
+  if (transitCancelOperation) {
+    transitCancelOperation.summary = "Cancel initiated cash transit transfer";
+    transitCancelOperation.tags = ["Cash"];
+    mergeOperationParameters(transitCancelOperation, [
+      pathParam("transitTransferId", "Cash transit transfer identifier"),
+    ]);
+    transitCancelOperation.requestBody = bodyFromRef(
+      "#/components/schemas/CashTransitTransferCancelRequest"
+    );
+    transitCancelOperation.responses = withStandardResponses(
+      "200",
+      "Cash transit transfer cancelled",
+      "#/components/schemas/CashTransitTransferResponse"
+    );
+  }
 }
 
 function applyContractsOperationOverrides(specObject) {
@@ -2600,12 +2718,20 @@ const spec = {
         properties: {
           settlementFxRate: { type: "number", nullable: true },
           settlementFxSource: { type: "string", nullable: true },
+          settlementFxFallbackMode: {
+            type: "string",
+            enum: ["EXACT_ONLY", "PRIOR_DATE"],
+            nullable: true,
+          },
+          settlementFxFallbackMaxDays: { type: "integer", minimum: 0, nullable: true },
           fxRateDate: { type: "string", format: "date", nullable: true },
           realizedGainLossBase: { type: "number", nullable: true },
         },
         required: [
           "settlementFxRate",
           "settlementFxSource",
+          "settlementFxFallbackMode",
+          "settlementFxFallbackMaxDays",
           "fxRateDate",
           "realizedGainLossBase",
         ],
@@ -2663,6 +2789,91 @@ const spec = {
           "followUpRisks",
         ],
       },
+      CashTransitTransferInitiateRequest: {
+        type: "object",
+        properties: {
+          registerId: intId,
+          targetRegisterId: intId,
+          transitAccountId: intId,
+          cashSessionId: { ...intId, nullable: true },
+          txnDatetime: { type: "string", format: "date-time", nullable: true },
+          bookDate: { type: "string", format: "date", nullable: true },
+          amount: { type: "number", exclusiveMinimum: 0 },
+          currencyCode,
+          description: { type: "string", maxLength: 500, nullable: true },
+          referenceNo: { type: "string", maxLength: 100, nullable: true },
+          note: { type: "string", maxLength: 500, nullable: true },
+          integrationEventUid: { type: "string", maxLength: 100, nullable: true },
+          idempotencyKey: { type: "string", maxLength: 100 },
+        },
+        required: [
+          "registerId",
+          "targetRegisterId",
+          "transitAccountId",
+          "amount",
+          "currencyCode",
+          "idempotencyKey",
+        ],
+      },
+      CashTransitTransferReceiveRequest: {
+        type: "object",
+        properties: {
+          cashSessionId: { ...intId, nullable: true },
+          txnDatetime: { type: "string", format: "date-time", nullable: true },
+          bookDate: { type: "string", format: "date", nullable: true },
+          description: { type: "string", maxLength: 500, nullable: true },
+          referenceNo: { type: "string", maxLength: 100, nullable: true },
+          integrationEventUid: { type: "string", maxLength: 100, nullable: true },
+          idempotencyKey: { type: "string", maxLength: 100 },
+        },
+        required: ["idempotencyKey"],
+      },
+      CashTransitTransferCancelRequest: {
+        type: "object",
+        properties: {
+          cancelReason: { type: "string", maxLength: 255 },
+        },
+        required: ["cancelReason"],
+      },
+      CashTransitTransferResponse: {
+        type: "object",
+        properties: {
+          tenantId: intId,
+          transfer: { type: "object", additionalProperties: true, nullable: true },
+          transferOutTransaction: {
+            type: "object",
+            additionalProperties: true,
+            nullable: true,
+          },
+          transferInTransaction: {
+            type: "object",
+            additionalProperties: true,
+            nullable: true,
+          },
+          idempotentReplay: { type: "boolean" },
+        },
+        required: [
+          "tenantId",
+          "transfer",
+          "transferOutTransaction",
+          "transferInTransaction",
+          "idempotentReplay",
+        ],
+      },
+      CashTransitTransferListResponse: {
+        type: "object",
+        properties: {
+          tenantId: intId,
+          rows: {
+            type: "array",
+            items: { $ref: "#/components/schemas/AnyObject" },
+          },
+          total: nonNegativeInt,
+          limit: { type: "integer", minimum: 1 },
+          offset: nonNegativeInt,
+        },
+        required: ["tenantId", "rows", "total", "limit", "offset"],
+      },
       CariSettlementApplyAllocationInput: {
         type: "object",
         properties: {
@@ -2712,6 +2923,12 @@ const spec = {
             items: { $ref: "#/components/schemas/CariSettlementApplyAllocationInput" },
           },
           fxRate: { type: "number", exclusiveMinimum: 0, nullable: true },
+          fxFallbackMode: {
+            type: "string",
+            enum: ["EXACT_ONLY", "PRIOR_DATE"],
+            nullable: true,
+          },
+          fxFallbackMaxDays: { type: "integer", minimum: 0, nullable: true },
           note: { type: "string", maxLength: 500, nullable: true },
           sourceModule: {
             type: "string",
@@ -2751,6 +2968,12 @@ const spec = {
             items: { $ref: "#/components/schemas/CariSettlementApplyAllocationInput" },
           },
           fxRate: { type: "number", exclusiveMinimum: 0, nullable: true },
+          fxFallbackMode: {
+            type: "string",
+            enum: ["EXACT_ONLY", "PRIOR_DATE"],
+            nullable: true,
+          },
+          fxFallbackMaxDays: { type: "integer", minimum: 0, nullable: true },
           note: { type: "string", maxLength: 500, nullable: true },
           sourceModule: {
             type: "string",
@@ -4467,6 +4690,59 @@ const spec = {
           "status",
         ],
       },
+      ContractFinancialRollup: {
+        type: "object",
+        properties: {
+          currencyCode: { type: "string", nullable: true },
+          linkedDocumentCount: { type: "integer", minimum: 0 },
+          activeLinkedDocumentCount: { type: "integer", minimum: 0 },
+          revrecScheduleLineCount: { type: "integer", minimum: 0 },
+          revrecRecognizedRunLineCount: { type: "integer", minimum: 0 },
+          billedAmountTxn: { type: "number" },
+          billedAmountBase: { type: "number" },
+          collectedAmountTxn: { type: "number" },
+          collectedAmountBase: { type: "number" },
+          uncollectedAmountTxn: { type: "number" },
+          uncollectedAmountBase: { type: "number" },
+          revrecScheduledAmountTxn: { type: "number" },
+          revrecScheduledAmountBase: { type: "number" },
+          recognizedToDateTxn: { type: "number" },
+          recognizedToDateBase: { type: "number" },
+          deferredBalanceTxn: { type: "number" },
+          deferredBalanceBase: { type: "number" },
+          openReceivableTxn: { type: "number" },
+          openReceivableBase: { type: "number" },
+          openPayableTxn: { type: "number" },
+          openPayableBase: { type: "number" },
+          collectedCoveragePct: { type: "number" },
+          recognizedCoveragePct: { type: "number" },
+        },
+        required: [
+          "currencyCode",
+          "linkedDocumentCount",
+          "activeLinkedDocumentCount",
+          "revrecScheduleLineCount",
+          "revrecRecognizedRunLineCount",
+          "billedAmountTxn",
+          "billedAmountBase",
+          "collectedAmountTxn",
+          "collectedAmountBase",
+          "uncollectedAmountTxn",
+          "uncollectedAmountBase",
+          "revrecScheduledAmountTxn",
+          "revrecScheduledAmountBase",
+          "recognizedToDateTxn",
+          "recognizedToDateBase",
+          "deferredBalanceTxn",
+          "deferredBalanceBase",
+          "openReceivableTxn",
+          "openReceivableBase",
+          "openPayableTxn",
+          "openPayableBase",
+          "collectedCoveragePct",
+          "recognizedCoveragePct",
+        ],
+      },
       ContractDetailRow: {
         allOf: [
           { $ref: "#/components/schemas/ContractSummaryRow" },
@@ -4477,8 +4753,11 @@ const spec = {
                 type: "array",
                 items: { $ref: "#/components/schemas/ContractLineRow" },
               },
+              financialRollup: {
+                $ref: "#/components/schemas/ContractFinancialRollup",
+              },
             },
-            required: ["lines"],
+            required: ["lines", "financialRollup"],
           },
         ],
       },
