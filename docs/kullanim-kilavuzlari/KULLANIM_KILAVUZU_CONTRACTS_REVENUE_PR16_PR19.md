@@ -1,11 +1,12 @@
 # KULLANIM_KILAVUZU_CONTRACTS_REVENUE_PR16_PR19.md
 
-## SAAP Contracts + Periodization + Counterparty Mapping Kilavuzu (PR-16/17/18/19)
+## SAAP Contracts + Periodization + Counterparty Mapping Kilavuzu (PR-16..24)
 
 Surum: v1  
 Tarih: 2026-02-25  
 Kapsam:
 - `/app/contracts`
+- `/app/contracts-and-revenue` (alias, `/app/contracts`e yonlenir)
 - `/app/gelecek-yillar-gelirleri`
 - Counterparty ekranlarindaki AR/AP hesap esleme alanlari (`Alici/Satici kart` ekranlari)
 
@@ -14,18 +15,24 @@ Amac: "Hangi secenek ne icin var, secmezsem ne olur, hata olursa nasil okumaliyi
 
 ---
 
-## 1. PR-16/17/18/19 neyi cozer?
+## 1. PR-16..24 neyi cozer?
 
 - PR-16: Sozlesme (contract) omurgasi, durum yonetimi, belge baglama.
 - PR-17: Gelecek donem gelir/gider dagitim motoru (DEFREV, PREPAID, ACCRUAL).
 - PR-18: Contracts + Revenue ekranlarinin operasyonel UI akisi ve yetkiye gore fetch-gating.
 - PR-19: Cari kart bazli AR/AP kontrol hesap esleme ve postingte cozum sirasi.
+- PR-21: Contracttan otomatik cari belge uretimi (invoice/advance/adjustment) + otomatik link.
+- PR-22: Contract satirlarindan otomatik RevRec schedule uretimi.
+- PR-23: RevRec postingte satir bazli hesap cozumleme (deferred/revenue account override).
+- PR-24: Contract detayinda finansal rollup KPI'lari (billed/collected/deferred/recognized/open).
 
 Kisa is etkisi:
 - Sozlesme bazli tahakkuk/erteleme surecleri izlenebilir olur.
 - Subledger -> GL baglantisi denetlenebilir olur.
 - Yetki yoksa sistem gereksiz fetch yapmaz, kontrolsuz erisim azalir.
 - Musteri/tedarikciye ozel kontrol hesaplari ile daha dogru muhasebe dagitimi yapilir.
+- Contract ekranindan belgeleme + revrec uretimi tek akista yonetilir.
+- Finans, "faturaladim mi/tahsil ettim mi/tanidim mi?" sorusunu tek ekranda KPI ile gorur.
 
 ---
 
@@ -42,9 +49,9 @@ Action seviyesinde:
   - `contract.suspend`
   - `contract.close`
   - `contract.cancel`
-  - `contract.link_document`
+  - `contract.link_document` (link + adjust/unlink + `generate-billing`)
 - Revenue:
-  - `revenue.schedule.generate`
+  - `revenue.schedule.generate` (`generate-revrec`)
   - `revenue.run.create`
   - `revenue.run.post`
   - `revenue.run.reverse`
@@ -369,7 +376,7 @@ Gercek hayat ornekleri:
 
 ---
 
-## 9. Canliya cikis kontrol listesi (PR-16..19)
+## 9. Canliya cikis kontrol listesi (PR-16..24)
 
 1. Contracts lifecycle aksiyonlari rol bazinda test edildi.
 2. Link-document senaryolarinda direction/currency/status kontrolleri test edildi.
@@ -380,6 +387,241 @@ Gercek hayat ornekleri:
 7. Counterparty AR/AP mapping:
    - omit ve explicit null semantigi dogrulandi.
    - posting aninda hesap gecerlilik kontrolleri dogrulandi.
+8. `generate-billing`:
+   - `FULL` / `PARTIAL` / `MILESTONE` stratejileri test edildi.
+   - Ayni `idempotencyKey` ile replay davranisi dogrulandi.
+9. `generate-revrec`:
+   - `BY_CONTRACT_LINE` ve `BY_LINKED_DOCUMENT` modlari test edildi.
+   - `regenerateMissingOnly=true` ile duplicate olusmadigi dogrulandi.
+10. RevRec posting account precedence:
+    - satir hesabi doluysa satir hesabi,
+    - satir hesabi bossa purpose mapping fallback.
+11. Contract detail `financialRollup` KPI'lari:
+    - billed/collected/deferred/recognized/open degerleri
+    - bagli cari/revrec kayitlariyla mutabik kontrol edildi.
 
 Bu kontrol listesi yesil olmadan uretim kullanimi onerilmez.
+
+---
+
+## 10. PR-21 Contract -> Cari Auto-Billing Kilavuzu
+
+Endpoint:
+- `POST /api/v1/contracts/:contractId/generate-billing`
+
+UI:
+- `/app/contracts` icindeki **Generate Billing** paneli
+
+### 10.1 Alanlar ve secim etkileri
+
+| Alan | Ne icin kullanilir | Secmezsen ne olur |
+|---|---|---|
+| `docType` (`INVOICE`,`ADVANCE`,`ADJUSTMENT`) | Uretilecek cari belge tipi | Invalid deger bloklanir |
+| `amountStrategy` (`FULL`,`PARTIAL`,`MILESTONE`) | Tutarin nasil hesaplanacagi | Bos ise `FULL` kabul edilir |
+| `billingDate` | Belge tarihi / donemleme capasi | Bossa islem bloklanir |
+| `dueDate` | Vade tarihi | Bos olabilir; doluysa `dueDate >= billingDate` olmali |
+| `selectedLineIds[]` | Hangi contract satirlari faturalanacak | Bos birakirsaniz tum `ACTIVE` satirlar kullanilir |
+| `amountTxn` + `amountBase` | `PARTIAL/MILESTONE` icin hedef tutar | Ikisi birlikte verilmelidir; `FULL`te ikisi de bos olmali |
+| `idempotencyKey` | Tekrarda duplicate belgeyi engeller | Zorunlu; bos olursa islem gitmez |
+| `integrationEventUid` | Cross-module takip kimligi | Bos olabilir |
+| `note` / `referenceNo` | Operasyon aciklamasi | Bos olabilir |
+
+Sonuc:
+- `billingBatch`
+- uretilen `document`
+- otomatik olusan `link`
+- `idempotentReplay` bayragi
+
+### 10.2 Idempotency davranisi
+
+- Ayni `idempotencyKey` + ayni payload:
+  - Yeni batch olusmaz, onceki sonuc replay edilir.
+- Ayni `idempotencyKey` + farkli kritik alan:
+  - Islem bloklanir (fingerprint uyusmazligi).
+
+### 10.3 Gercek hayat ornekleri
+
+Ornek A - Full invoice:
+1. `docType=INVOICE`, `amountStrategy=FULL`
+2. `selectedLineIds` bos birakilir
+3. Tum aktif satirlar icin tek belge + otomatik link olusur
+
+Ornek B - Milestone billing:
+1. `docType=INVOICE`, `amountStrategy=MILESTONE`
+2. Milestone satirlari secilir
+3. `amountTxn/amountBase` girilir, sadece secili satirlar icin belge uretilir
+
+Ornek C - Duplicate click:
+1. Ayni form ikinci kez ayni `idempotencyKey` ile gonderilir
+2. `idempotentReplay=true` doner, ikinci belge acilmaz
+
+---
+
+## 11. PR-22 Contract -> RevRec Auto Schedule Kilavuzu
+
+Endpoint:
+- `POST /api/v1/contracts/:contractId/generate-revrec`
+
+UI:
+- `/app/contracts` icindeki **Generate RevRec Schedule** paneli
+
+### 11.1 Alanlar ve secim etkileri
+
+| Alan | Ne icin kullanilir | Secmezsen ne olur |
+|---|---|---|
+| `fiscalPeriodId` | Uretim donemi baglami | Bossa islem bloklanir |
+| `generationMode` (`BY_CONTRACT_LINE`,`BY_LINKED_DOCUMENT`) | Uretim kaynagi | Bossa `BY_CONTRACT_LINE` |
+| `contractLineIds[]` | Uretime dahil satirlar | Bos birakirsaniz tum `ACTIVE` satirlar kullanilir |
+| `sourceCariDocumentId` | Belge bazli uretimde kaynak belge | `BY_LINKED_DOCUMENT` modunda zorunlu |
+| `regenerateMissingOnly` | Sadece eksik schedule satiri uret | Default `true` (onerilen) |
+
+Sonuc:
+- `generatedScheduleCount`
+- `generatedLineCount`
+- `skippedLineCount`
+- `rows[]` (uretilen schedule ID listesi)
+- `idempotentReplay`
+
+### 11.2 Operasyon notlari
+
+- `MANUAL` recognition method satirlari auto-generation disinda kalabilir.
+- `regenerateMissingOnly=true` tekrarda duplicate satir riskini azaltir.
+- `BY_LINKED_DOCUMENT` modu, contract-cari baglantisinin dogru kurulmus olmasina baglidir.
+
+---
+
+## 12. PR-23 RevRec Postingte Hesap Cozum Sirasi
+
+Sistem postingte hesaplari su sirayla cozer:
+
+1. `contract_line.deferred_account_id` / `contract_line.revenue_account_id`
+2. Fallback: `journal_purpose_accounts` purpose mapping
+
+Ne olur?
+- Satir hesabi dolu ve gecerliyse (aktif, postable, legalEntity scope) o kullanilir.
+- Satir hesabi bossa fallback purpose hesabi kullanilir.
+- Satir hesabi dolu ama gecersizse posting acik hata ile bloklanir.
+- Ikisi de yoksa setup hatasi ile bloklanir.
+
+Tipik hata sinyalleri:
+- `contractLineId=... deferred_account_id=... is not an active posting account ...`
+- `Setup required: configure journal_purpose_accounts ...`
+
+Bu davranis, line-level muhasebe niyetini gercek postinge tasir.
+
+---
+
+## 13. PR-24 Contract Financial Rollup KPI Kilavuzu
+
+Contract detay API'si artik `financialRollup` alani dondurur.
+UI'da KPI kartlari ve progress bar'lar buradan beslenir.
+
+### 13.1 KPI alanlari (is anlami)
+
+| KPI | Kaynak mantik | Yorum |
+|---|---|---|
+| `billedAmount*` | Contracta bagli cari belge linkleri | Ne kadar faturalandi |
+| `collectedAmount*` | Bagli belgelerde tahsil/odeme etkisi | Ne kadar tahsil/odendi |
+| `uncollectedAmount*` | `billed - collected` | Kalan tahsilat/odeme |
+| `revrecScheduledAmount*` | Schedule line toplami | Planlanan tanima |
+| `recognizedToDate*` | `POSTED` run line toplami | Gerceklesen tanima |
+| `deferredBalance*` | `scheduled - recognized` | Henuz taninmayan bakiye |
+| `openReceivable*` / `openPayable*` | Contract type'a gore acik kalan | CUSTOMER'da AR, VENDOR'da AP bakisi |
+| `collectedCoveragePct` | `collected / billed` | Tahsilat/odeme kapsama yuzdesi |
+| `recognizedCoveragePct` | `recognized / scheduled` | Tanima ilerleme yuzdesi |
+
+### 13.2 Null/partial durum okuma
+
+- Hic link yoksa KPI'lar sifir-donusludur (null degil, operasyonel okunabilir).
+- Faturalama var ama tahsilat yoksa: `billed > 0`, `collected = 0`.
+- Faturalama var, RevRec henuz yoksa: `revrecScheduled = 0`, `recognized = 0`.
+- Kismi tanimada: progress bar'lar 0-100 arasi ilerleme gosterir.
+
+### 13.3 Gercek hayat mutabakat ornegi
+
+1. Contractta 1.000.000 TRY billing olustu.
+2. 400.000 TRY tahsil edildi.
+3. RevRec schedule 1.000.000, posted recognition 250.000.
+4. Beklenen KPI:
+   - billed: 1.000.000
+   - collected: 400.000
+   - uncollected/open receivable: 600.000
+   - recognized: 250.000
+   - deferred: 750.000
+
+---
+
+## 14. Ekran Bazli Kart/Buton Rehberi (Contracts + Revenue)
+
+Bu bolumde iki ana ekranin (Contracts ve Gelecek Yillar Gelirleri) kullanici aksiyonlari kart/buton bazinda ozetlenir.
+
+### 14.1 `/app/contracts` (ContractsPage)
+
+Kartlar:
+- Ust filtre karti
+- Contract liste tablosu
+- Contract form karti (`Create Draft` / `Edit Draft` / `Amend Active/Suspended`)
+- `Lifecycle` karti
+- `Financial Rollups` KPI karti
+- `Generate Billing` karti
+- `Generate RevRec Schedule` karti
+- `Link Document` karti
+  - Link listesi
+  - `Adjust Link`
+  - `Unlink Link`
+
+Ana butonlar:
+- Liste: `Refresh`, `New`, `Edit Selected`, satirda `Select`
+- Form: `Create Draft` / `Update Draft` / `Apply Amendment`, `Reset`
+- Satir bazinda: `Patch Line`, `Add line`, `Remove`
+- Lifecycle: `Activate`, `Suspend`, `Close`, `Cancel`
+- Billing: `Generate Billing`, `Select Active`, `Clear`
+- RevRec: `Generate RevRec`, `Select Active`, `Clear`
+- Link: `Link`, satirda `Adjust`, `Unlink`, formlarda `Apply Adjust`, `Apply Unlink`
+
+Kritik davranis:
+- `Generate Billing` sonucu: batch + document + link + replay bilgisi.
+- `Generate RevRec` sonucu: generated/skipped line sayilari + replay bilgisi.
+- `Financial Rollups` karti contract secimi olmadan bos gorunur; secim yapinca KPI/progress dolar.
+- Link adjust/unlink butonlari satir durumuna gore acilir/kapanir (state guard).
+
+Gercek hayat ornegi A (sozlesmeden fatura ve link):
+1. Contract satirlari secilir.
+2. `Generate Billing` calistirilir.
+3. Sonuc kartinda `Batch`, `Document`, `LinkId` dogrulanir.
+4. `Financial Rollups`ta billed artisi gorulur.
+
+Gercek hayat ornegi B (kismi tanima takibi):
+1. Ayni contractta `Generate RevRec` calistirilir.
+2. Sonraki run postinglerinden sonra tekrar detay acilir.
+3. `Recognition Progress` barinda artis teyit edilir.
+
+### 14.2 `/app/gelecek-yillar-gelirleri` (FutureYearRevenuePage)
+
+Kartlar:
+- `Schedules` karti
+  - query filtreleri + liste + `Generate Schedule` formu
+- `Runs` karti
+  - query filtreleri + run listesi + `Create Run` formu + selected run action paneli
+- `Reports and Split Panels` karti
+  - report filtreleri
+  - KPI kutulari (deferred/accrual/prepaid/reclass)
+  - reconciliation summary
+  - rollforward + split tablolari
+
+Ana butonlar:
+- `Schedules`: `Refresh`, `Generate Schedule`
+- `Runs`: `Refresh`, `Create Run`, satirda `Select`, aksiyonda `Post` / `Reverse`
+- `Reports`: `Load Reports`
+
+Kritik davranis:
+- Okuma izinleri yoksa ilgili section "hidden/missing permission" notuyla kapanir.
+- `Post` sadece secili run `DRAFT/READY` iken acik olur.
+- `Reverse` sadece secili run `POSTED` iken acik olur.
+- Rapor panelindeki reconciliation tablosu subledger-vs-GL farkini hizli gosterir.
+
+Gercek hayat ornegi:
+1. Ay kapanisinda `Load Reports` ile split panelleri acilir.
+2. `Reclass Visibility` ve reconciliation summary kontrol edilir.
+3. Fark varsa ilgili run/schedule secilip post veya reverse aksiyonu planlanir.
 

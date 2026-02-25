@@ -61,6 +61,7 @@ Sol menu > **Yevmiye Kayitlari**:
 - **Tahsilat**: Sadece RECEIPT tipi islemler
 - **Tediye**: Sadece PAYOUT tipi islemler
 - **Kasa Islemleri**: Tum islem tipleri
+- **Kasa Transit Transferleri**: Farkli OU registerlar arasi transferin baslat/receive/iptal takibi
 - **Kasa Istisnalari**: Risk/denetim paneli
 
 Not:
@@ -365,6 +366,8 @@ Sistem tarafi kritik:
 
 - `TRANSFER_IN` / `TRANSFER_OUT`:
   - `counterCashRegisterId` zorunlu
+  - Ayni OU transferde direkt register->register kaydi calisir.
+  - Farkli OU transferde transit akisi (`/app/kasa-transit-transferleri`) kullanilir; `transitAccountId` zorunludur.
 
 - `DEPOSIT_TO_BANK` / `WITHDRAWAL_FROM_BANK`:
   - `counterAccountId` zorunlu
@@ -696,9 +699,12 @@ Bu bolum, sistemde gercekten calisan kurallarin is diline cevrilmis ozetidir.
 - Cift tiklama/yeniden denemede replay korumasi vardir.
 - `txn_no` legal entity + yil bazli deterministik gider.
 
-8. Transfer kapsam siniri (v1)
-- Registerlar arasi direkt transfer ayni legal entity + ayni operating unit icin desteklenir.
-- Cross-OU transfer icin cash-in-transit akisi v2 backlog'dadir.
+8. Transfer kapsam siniri (guncel)
+- Registerlar arasi direkt transfer ayni legal entity + ayni operating unit icin calismaya devam eder.
+- Cross-OU transfer artik CASH_IN_TRANSIT akisiyla aktif desteklenir:
+  - Ayni legal entity zorunlu
+  - Kaynak ve hedef register farkli operating unitte olmali
+  - Transfer-out + transfer-in cift kayit zinciri korunur (tek tarafli transfer olusmaz)
 
 ---
 
@@ -710,8 +716,8 @@ Bu bolum, sistemde gercekten calisan kurallarin is diline cevrilmis ozetidir.
 | `PAYOUT` | Karsi Hesap | Register Kasa | Odeme |
 | `DEPOSIT_TO_BANK` | Karsi Hesap (banka vb.) | Register Kasa | Kasadan bankaya cikis |
 | `WITHDRAWAL_FROM_BANK` | Register Kasa | Karsi Hesap (banka vb.) | Bankadan kasaya giris |
-| `TRANSFER_OUT` | Hedef Register Kasa (`counterCashRegisterId`) | Kaynak Register Kasa (`registerId`) | Ayni LE + ayni OU zorunlu |
-| `TRANSFER_IN` | Hedef Register Kasa (`registerId`) | Kaynak Register Kasa (`counterCashRegisterId`) | Ayni LE + ayni OU zorunlu |
+| `TRANSFER_OUT` | Hedef Register Kasa (direkt) veya CASH_IN_TRANSIT hesabi (`counterAccountId`) | Kaynak Register Kasa (`registerId`) | Ayni LE zorunlu. Ayni OU: direkt transfer. Farkli OU: transit akisi (`transitAccountId` zorunlu). |
+| `TRANSFER_IN` | Hedef Register Kasa (`registerId`) | Kaynak Register Kasa (direkt) veya CASH_IN_TRANSIT hesabi (`counterAccountId`) | Ayni LE zorunlu. Transit receive icin transfer-out kaydi once `POSTED` olmalidir. |
 | `VARIANCE` (eksik) | Varyans Zarar Hesabi | Register Kasa | Counted < Expected |
 | `VARIANCE` (fazla) | Register Kasa | Varyans Kazanc Hesabi | Counted > Expected |
 | `OPENING_FLOAT` | Register Kasa | Karsi Hesap | Opsiyonel acilis hareketi |
@@ -765,3 +771,213 @@ Not:
 
 Bu nedenle organizasyonel SoD (rol ayrimi) halen onemlidir:
 - Operator agirlikli rollerde `post/reverse/override` verilmemelidir.
+
+---
+
+## 24. Kasa Transit Transferleri (Cross-OU Is Akisi)
+
+Bu bolum, farkli operating unit (OU) registerlari arasinda para tasima akisinin nasil calistigini anlatir.
+
+### 24.1 Ne zaman transit kullanilir?
+
+- Ayni legal entity altinda,
+- Kaynak ve hedef register farkli OU'da ise,
+- Fiziksel para transferini iki adimli ve denetlenebilir yapmak istiyorsaniz.
+
+Not:
+- Cross-legal-entity transit desteklenmez.
+- Register para birimleri ayni olmadan transit baslatilamaz.
+
+### 24.2 Durumlar (state machine)
+
+- `INITIATED`: Transit kaydi olustu, transfer-out henuz kapanmadi.
+- `IN_TRANSIT`: Transfer-out `POSTED`, para yolda.
+- `RECEIVED`: Hedef registerda transfer-in olustu ve post edildi.
+- `CANCELED`: Sadece `INITIATED` durumunda iptal edildi.
+- `REVERSED`: Transfer zinciri reversal ile geri alindi.
+
+### 24.3 Ekran ve adimlar
+
+Ekran:
+- `/app/kasa-transit-transferleri` (alias: `/app/cash-transit-transfers`)
+
+Adim 1 - Transit baslat:
+- Kaynak register (`registerId`)
+- Hedef register (`targetRegisterId`)
+- Transit hesabi (`transitAccountId`)
+- Tutar, para birimi, tarih
+- `idempotencyKey`
+
+Adim 2 - Transfer-out post:
+- Transfer-out kaydi post edilince durum `IN_TRANSIT` olur.
+
+Adim 3 - Receive:
+- Hedef tarafta receive aksiyonu calisir.
+- Sistem `TRANSFER_IN` kaydini olusturur ve post eder.
+- Basarili durumda durum `RECEIVED` olur.
+
+### 24.4 Kritik kurallar (operasyonel)
+
+- Ayni registera kaynak+hedef secilemez.
+- Kaynak/hedef registerlar farkli OU'da olmali.
+- Receive icin transfer-out kaydi `POSTED` olmali.
+- Ayni transit kaydina ikinci kez receive denemesi idempotent veya bloklu doner; cift kapanis olmaz.
+- Sadece `INITIATED` transit iptal edilebilir.
+- `RECEIVED` olduktan sonra transfer-out reversal'i dogrudan yapilamaz; once transfer-in reversal gerekir.
+
+### 24.5 Gercek hayat ornegi
+
+Ornek: OU-1 Ana Kasa -> OU-2 Sube Kasasi, 25.000 TRY
+1. Operasyon, transit kaydini baslatir (`INITIATED`).
+2. Kaynak kasada transfer-out post edilir (`IN_TRANSIT`).
+3. Sube kasasi teslim aldiginda receive yapar (`RECEIVED`).
+4. Hata varsa reversal sureci tek tek izlenir; denetim izi korunur.
+
+---
+
+## 25. Ekran Bazli Kartlar ve Butonlar (Tam Islev Rehberi)
+
+Bu bolumde her kasa ekranindaki kart/bolum, buton ve tipik kullanimi bir arada verilir.
+
+### 25.1 `/app/kasa-tanimlari` (CashRegistersPage)
+
+Kartlar:
+- Register olustur/guncelle karti
+- Register listesi karti
+
+Ana butonlar:
+- `Create` / `Update`
+- `Cancel Edit`
+- Liste satirinda `Edit`
+- Liste satirinda `Activate` / `Deactivate`
+- Liste ustunde `Refresh`
+
+Ne zaman hangi buton?
+- Yeni kasa aciliyorsa: formu doldurup `Create`.
+- Yanlis register secildiysa: `Cancel Edit` ile formu temizle.
+- Gecici kapanacak kasada: satirdan `Deactivate`.
+- Donem basi kontrolunde: `Refresh` ile durumlari tazele.
+
+Gercek hayat ornegi:
+1. Yeni sube acildi, yeni register acilacak.
+2. Register hesap, currency, session mode set edilir.
+3. `Create` ile kayit acilir.
+4. Operasyon baslamadan once listeden durum `ACTIVE` teyit edilir.
+
+### 25.2 `/app/kasa-oturumlari` (CashSessionsPage)
+
+Kartlar:
+- Oturum Ac (`Open`) karti
+- Oturum Kapat (`Close`) karti
+- Acik oturumlar tablosu
+- Gecmis oturumlar tablosu
+
+Ana butonlar:
+- `Open`
+- `Close`
+- Acik satirda `Use for Close`
+- Tablo ustunde `Refresh`
+- (Yetki varsa) `approveVariance` secimi
+
+Ne zaman hangi buton?
+- Vardiya basinda: `Open`.
+- Vardiya sonunda sayimla: `Close`.
+- Kapatilacak oturumu hizli secmek icin: `Use for Close`.
+- Beklenen/sayilan farki esik uzeri ise: `approveVariance` + acik `closeNote`.
+
+Gercek hayat ornegi:
+1. Kasiyer sabah `Open` yapar.
+2. Aksam sayimda fark cikarsa aciklama girer.
+3. Supervisor, yetkisi varsa `approveVariance` ile kapatir.
+4. History tablosundan ay sonu denetim izi kontrol edilir.
+
+### 25.3 `/app/kasa-islemleri`, `/app/tahsilat-islemleri`, `/app/tediye-islemleri` (CashTransactionsPage)
+
+Kartlar:
+- Filtre karti
+- Islem olusturma karti
+- Aksiyon hazirlama karti (`prepare post/cancel/reverse`, `receive transit`, `apply cari`)
+- Islem listesi karti
+
+Ana butonlar:
+- Filtrede `Apply Filters`, `Clear Filters`, `Refresh`
+- Create formunda `Create`
+- Satir bazinda:
+  - `Prepare Post`
+  - `Prepare Cancel`
+  - `Prepare Reverse`
+  - `Receive Transit` (uygunsa)
+  - `Apply Cari` (RECEIPT/PAYOUT icin)
+- Aksiyon formunda `Submit Action`, `Cancel Action`
+
+Link badge'leri:
+- `Transit #...`
+- `Settlement #...`
+- `Unapplied #...`
+- `Linked`
+
+Ne zaman hangi buton?
+- Liste kirli/uzunsa: once filtre kartini kullan.
+- Yanlis draft fiş: `Prepare Cancel`.
+- Post edilmis hatali fiş: `Prepare Reverse`.
+- Nakit tahsilati hemen cariye baglamak icin: `Apply Cari`.
+- Cross-OU transfer hedefe ulasmis ise: `Receive Transit`.
+
+Gercek hayat ornegi A (Tahsilat + cari uygulama):
+1. `Tahsilat` ekranindan RECEIPT olusturulur.
+2. Satirdan `Apply Cari` secilir.
+3. Open documents picker'da faturalar secilip tutar dagitilir.
+4. Sonucta satirda `Settlement #...` veya `Unapplied #...` badge'i gorulur.
+
+Gercek hayat ornegi B (Yanlis post duzeltme):
+1. Hatali POSTED fiş bulunur.
+2. `Prepare Reverse` ile ters kayit olusturulur.
+3. Denetim zinciri korunur, orijinal fiş silinmez.
+
+### 25.4 `/app/kasa-transit-transferleri` (CashTransitTransfersPage)
+
+Kartlar:
+- Transit filtre karti
+- Transit listesi karti
+- Aksiyon karti (Receive veya Cancel)
+
+Ana butonlar:
+- Filtrede `Apply filters`, `Clear`, `Refresh`
+- Satir bazinda `Receive`, `Cancel`
+- Aksiyon kartinda `Receive Transit` veya `Cancel Transit`
+
+Ne zaman hangi buton?
+- Yoldaki transferleri bulmak icin status=`IN_TRANSIT` filtrele.
+- Hedef teslim aldiysa satirdan `Receive`.
+- Henuz yola cikmamis transfer iptal edilecekse `Cancel` (yalniz `INITIATED`).
+
+Gercek hayat ornegi:
+1. Merkez kasadan subeye transfer baslatildi.
+2. Status `IN_TRANSIT` oldugunda sube sorumlusu satirdan `Receive` yapar.
+3. Cift tiklamada ikinci receive duplicate yaratmaz; idempotent koruma vardir.
+
+### 25.5 `/app/kasa-istisnalari` (CashExceptionsPage)
+
+Kartlar:
+- Filtre karti
+- Ozet KPI kartlari:
+  - High variance
+  - Forced close
+  - Override usage
+  - Unposted
+  - GL cash-control events
+- Her KPI icin detay tablolar
+
+Ana butonlar:
+- Filtrede `Apply`, `Clear`, `Refresh`
+
+Ne zaman hangi kart?
+- Gun sonu kontrol: once KPI kartlarini tara.
+- `Forced close` artisi varsa vardiya disiplinini incele.
+- `Override usage` artisi varsa cash-control politika ihlali riski vardir.
+- `Unposted` yuksekse muhasebe kapanisinda gecikme riski vardir.
+
+Gercek hayat ornegi:
+1. Haftalik kontrolde `High variance` ve `Forced close` kartlari yuksek cikti.
+2. Detay tablolardan ilgili register ve kullanici bulunur.
+3. Ayni hafta icinde duzeltici aksiyon plani (egitim + rol/yetki gozden gecirme) acilir.

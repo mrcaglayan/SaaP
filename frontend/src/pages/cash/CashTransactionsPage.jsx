@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useLocation } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import {
   applyCariForCashTransaction,
   cancelCashTransaction,
@@ -53,6 +53,8 @@ const SOURCE_DOC_TYPES = [
 ];
 
 const CARI_SETTLEMENT_LINKED_TXN_TYPES = new Set(["RECEIPT", "PAYOUT"]);
+const CASH_REGISTER_SETUP_PATH = "/app/kasa-tanimlari";
+const CASH_SESSION_SETUP_PATH = "/app/kasa-oturumlari";
 
 function toPositiveInt(value) {
   const parsed = Number(value);
@@ -473,6 +475,29 @@ export default function CashTransactionsPage() {
     }
     return counterpartyOptions.find((row) => toPositiveInt(row?.id) === counterpartyId) || null;
   }, [counterpartyOptions, form.counterpartyId]);
+  const selectedRegisterId = useMemo(() => toPositiveInt(form.registerId), [form.registerId]);
+  const counterpartyPickerReady = canReadCariCards && toPositiveInt(selectedRegister?.legal_entity_id);
+  const counterpartyFallbackHint = useMemo(() => {
+    if (counterpartyPickerReady) {
+      return "";
+    }
+    if (!canReadCariCards) {
+      return t("cashTransactions.warnings.counterpartyPickerPermissionMissing");
+    }
+    if (!selectedRegisterId) {
+      return t("cashTransactions.warnings.counterpartyPickerNeedsRegister");
+    }
+    return t("cashTransactions.warnings.counterpartyPickerNeedsLegalEntity");
+  }, [canReadCariCards, counterpartyPickerReady, selectedRegisterId, t]);
+  const sessionFallbackHint = useMemo(() => {
+    if (!selectedRegisterId) {
+      return t("cashTransactions.warnings.sessionPickerNeedsRegister");
+    }
+    if (selectedRegisterOpenSessions.length === 0) {
+      return t("cashTransactions.warnings.noOpenSessionForRegister");
+    }
+    return "";
+  }, [selectedRegisterId, selectedRegisterOpenSessions.length, t]);
   const applySelectedTotal = useMemo(() => {
     if (actionForm?.type !== "applyCari") {
       return 0;
@@ -1674,16 +1699,29 @@ export default function CashTransactionsPage() {
                 ))}
               </select>
             ) : (
-              <input
-                type="number"
-                min={1}
-                value={form.registerId}
-                onChange={(event) => handleRegisterChange(event.target.value)}
-                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                placeholder={t("cashTransactions.form.registerId")}
-                required
-              />
-            )}
+                <input
+                  type="number"
+                  min={1}
+                  value={form.registerId}
+                  onChange={(event) => handleRegisterChange(event.target.value)}
+                  className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  placeholder={t("cashTransactions.form.registerIdManualFallback")}
+                  required
+                />
+              )}
+            {registerOptions.length === 0 ? (
+              <div className="md:col-span-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                <p>{t("cashTransactions.warnings.noRegisterList")}</p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <Link
+                    to={CASH_REGISTER_SETUP_PATH}
+                    className="inline-flex items-center rounded border border-amber-400 bg-amber-100 px-2 py-1 text-xs font-medium text-amber-900 hover:bg-amber-200"
+                  >
+                    {t("cashTransactions.actions.openRegisterSetup")}
+                  </Link>
+                </div>
+              </div>
+            ) : null}
 
             {selectedRegisterOpenSessions.length > 0 ? (
               <select
@@ -1701,17 +1739,42 @@ export default function CashTransactionsPage() {
                 ))}
               </select>
             ) : (
-              <input
-                type="number"
-                min={1}
-                value={form.cashSessionId}
-                onChange={(event) =>
-                  setForm((prev) => ({ ...prev, cashSessionId: event.target.value }))
-                }
-                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                placeholder={t("cashTransactions.form.cashSessionIdOptional")}
-              />
-            )}
+                <input
+                  type="number"
+                  min={1}
+                  value={form.cashSessionId}
+                  onChange={(event) =>
+                    setForm((prev) => ({ ...prev, cashSessionId: event.target.value }))
+                  }
+                  className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  placeholder={t("cashTransactions.form.cashSessionIdManualFallback")}
+                />
+              )}
+            {sessionFallbackHint ? (
+              <div className="md:col-span-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                <p>{sessionFallbackHint}</p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <Link
+                    to={
+                      selectedRegisterId
+                        ? `${CASH_SESSION_SETUP_PATH}?registerId=${selectedRegisterId}`
+                        : CASH_SESSION_SETUP_PATH
+                    }
+                    className="inline-flex items-center rounded border border-amber-400 bg-amber-100 px-2 py-1 text-xs font-medium text-amber-900 hover:bg-amber-200"
+                  >
+                    {t("cashTransactions.actions.openSessionSetup")}
+                  </Link>
+                  {!selectedRegisterId ? (
+                    <Link
+                      to={CASH_REGISTER_SETUP_PATH}
+                      className="inline-flex items-center rounded border border-amber-400 bg-amber-100 px-2 py-1 text-xs font-medium text-amber-900 hover:bg-amber-200"
+                    >
+                      {t("cashTransactions.actions.openRegisterSetup")}
+                    </Link>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
 
             <select
               value={form.txnType}
@@ -1820,7 +1883,7 @@ export default function CashTransactionsPage() {
               ))}
             </select>
 
-            {canReadCariCards && toPositiveInt(selectedRegister?.legal_entity_id) ? (
+            {counterpartyPickerReady ? (
               <div className="md:col-span-2 grid gap-2 md:grid-cols-2">
                 <input
                   type="text"
@@ -1845,17 +1908,32 @@ export default function CashTransactionsPage() {
                 </select>
               </div>
             ) : (
-              <input
-                type="number"
-                min={1}
-                value={form.counterpartyId}
-                onChange={(event) =>
-                  setForm((prev) => ({ ...prev, counterpartyId: event.target.value }))
-                }
-                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                placeholder={t("cashTransactions.form.counterpartyIdOptional")}
-              />
-            )}
+                <input
+                  type="number"
+                  min={1}
+                  value={form.counterpartyId}
+                  onChange={(event) =>
+                    setForm((prev) => ({ ...prev, counterpartyId: event.target.value }))
+                  }
+                  className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  placeholder={t("cashTransactions.form.counterpartyIdManualFallback")}
+                />
+              )}
+            {counterpartyFallbackHint ? (
+              <div className="md:col-span-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                <p>{counterpartyFallbackHint}</p>
+                {!selectedRegisterId || !toPositiveInt(selectedRegister?.legal_entity_id) ? (
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <Link
+                      to={CASH_REGISTER_SETUP_PATH}
+                      className="inline-flex items-center rounded border border-amber-400 bg-amber-100 px-2 py-1 text-xs font-medium text-amber-900 hover:bg-amber-200"
+                    >
+                      {t("cashTransactions.actions.openRegisterSetup")}
+                    </Link>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
 
             {selectedCounterpartyOption ? (
               <div className="md:col-span-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">

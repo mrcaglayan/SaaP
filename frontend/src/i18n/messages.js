@@ -719,8 +719,11 @@ export const messages = {
       },
       form: {
         registerId: "registerId",
+        registerIdManualFallback: "Register listesi yok; register ID girin",
         sessionId: "sessionId",
         cashSessionIdOptional: "cashSessionId (opsiyonel)",
+        cashSessionIdManualFallback:
+          "Oturum listesi yoksa cashSessionId girin (opsiyonel)",
         amount: "Tutar",
         currencyCode: "Para birimi (USD)",
         referenceNoOptional: "Referans no (opsiyonel)",
@@ -728,6 +731,7 @@ export const messages = {
         sourceDocTypeOptional: "Kaynak dokuman tipi (opsiyonel)",
         counterpartyTypeOptional: "Muhatap tipi (opsiyonel)",
         counterpartyIdOptional: "Muhatap ID (opsiyonel)",
+        counterpartyIdManualFallback: "Muhatap ID (manuel)",
         counterAccountIdOptional: "counterAccountId (opsiyonel)",
         counterCashRegisterIdOptional: "counterCashRegisterId (opsiyonel)",
         descriptionOptional: "Aciklama (opsiyonel)",
@@ -741,6 +745,8 @@ export const messages = {
         clearFilters: "Temizle",
         refresh: "Yenile",
         loading: "Yukleniyor...",
+        openRegisterSetup: "Kasa Tanimlari'na git",
+        openSessionSetup: "Kasa Oturumlari'na git",
         create: "Islem Olustur",
         creating: "Olusturuluyor...",
         preparePost: "Post Et",
@@ -780,6 +786,18 @@ export const messages = {
           "Oturum lookup verileri yuklenemedi; cashSessionId alanini manuel doldurmaniz gerekebilir.",
         accountLookupUnavailable:
           "Hesap lookup verileri yuklenemedi; counterAccountId alanini manuel doldurmaniz gerekebilir.",
+        noRegisterList:
+          "Register listesi bulunamadi. Kasa Tanimlari ekranindan en az bir register olusturup aktif hale getirin.",
+        sessionPickerNeedsRegister:
+          "Oturum secmek icin once register secin. Register yoksa Kasa Tanimlari ekranindan olusturun.",
+        noOpenSessionForRegister:
+          "Secili register icin acik (OPEN) oturum bulunamadi. Kasa Oturumlari ekranindan yeni oturum acin.",
+        counterpartyPickerPermissionMissing:
+          "Muhatap secici kullanilamiyor: cari.card.read yetkisi eksik. Muhatap ID'yi manuel girin.",
+        counterpartyPickerNeedsRegister:
+          "Muhatap secici icin once register secilmelidir. Register yoksa Kasa Tanimlari ekranindan olusturun.",
+        counterpartyPickerNeedsLegalEntity:
+          "Secili register icin legal entity bilgisi bulunamadi. Kasa Tanimlari ekranindan register kaydini kontrol edin.",
         registerInactive: "Secili register ACTIVE degil.",
         currencyMismatch:
           "Islem para birimi register para birimi ile uyusmuyor (register: {{registerCurrency}}).",
@@ -1766,8 +1784,11 @@ export const messages = {
       },
       form: {
         registerId: "registerId",
+        registerIdManualFallback: "No register list available; enter register ID",
         sessionId: "sessionId",
         cashSessionIdOptional: "cashSessionId (optional)",
+        cashSessionIdManualFallback:
+          "If open session list is unavailable, enter cashSessionId (optional)",
         amount: "Amount",
         currencyCode: "Currency code (USD)",
         referenceNoOptional: "Reference no (optional)",
@@ -1775,6 +1796,7 @@ export const messages = {
         sourceDocTypeOptional: "Source document type (optional)",
         counterpartyTypeOptional: "Counterparty type (optional)",
         counterpartyIdOptional: "Counterparty ID (optional)",
+        counterpartyIdManualFallback: "Counterparty ID (manual)",
         counterAccountIdOptional: "counterAccountId (optional)",
         counterCashRegisterIdOptional: "counterCashRegisterId (optional)",
         descriptionOptional: "Description (optional)",
@@ -1788,6 +1810,8 @@ export const messages = {
         clearFilters: "Clear",
         refresh: "Refresh",
         loading: "Loading...",
+        openRegisterSetup: "Go to Cash Registers",
+        openSessionSetup: "Go to Cash Sessions",
         create: "Create Transaction",
         creating: "Creating...",
         preparePost: "Post",
@@ -1827,6 +1851,18 @@ export const messages = {
           "Session lookups could not be loaded; you may need to enter cashSessionId manually.",
         accountLookupUnavailable:
           "Account lookups could not be loaded; you may need to enter counterAccountId manually.",
+        noRegisterList:
+          "No register list is available. Go to Cash Registers and create/activate at least one register.",
+        sessionPickerNeedsRegister:
+          "Select a register first before choosing a session. If none exists, create one in Cash Registers.",
+        noOpenSessionForRegister:
+          "No OPEN session was found for the selected register. Open a new session from Cash Sessions.",
+        counterpartyPickerPermissionMissing:
+          "Counterparty picker is unavailable because cari.card.read permission is missing. Enter counterparty ID manually.",
+        counterpartyPickerNeedsRegister:
+          "Counterparty picker needs a selected register first. If none exists, create one in Cash Registers.",
+        counterpartyPickerNeedsLegalEntity:
+          "Counterparty picker could not start because selected register has no legal entity context. Review the register in Cash Registers.",
         registerInactive: "Selected register is not ACTIVE.",
         currencyMismatch:
           "Transaction currency does not match register currency (register: {{registerCurrency}}).",

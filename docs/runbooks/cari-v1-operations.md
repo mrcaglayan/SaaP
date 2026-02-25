@@ -27,14 +27,21 @@ This runbook defines how to operate Cari v1 AR/AP workflows in production-like e
   - Review settlement apply audit payload (`unappliedConsumed`, `createdUnappliedCashId`).
   - Confirm reversal effects are additive and traceable via linked settlement rows.
 
-## FX Override Policy
+## FX Resolution Policy (Exact + Prior-Date Fallback)
 
-- FX override is controlled by explicit permission (`cari.fx.override`).
-- Realized FX at settlement time must come from configured purpose mappings (no hardcoded account IDs).
-- If exact-date FX is missing for the configured policy, settlement apply must fail instead of silently guessing a rate.
+- FX override remains controlled by explicit permission (`cari.fx.override`).
+- Settlement FX resolution order is deterministic:
+  - request `fxRate` (if supplied)
+  - exact-date SPOT rate
+  - optional nearest-prior SPOT fallback (`PRIOR_DATE`) when enabled
+- Fallback controls:
+  - default mode can be set by `CARI_SETTLEMENT_FX_FALLBACK_MODE` (`EXACT_ONLY` or `PRIOR_DATE`)
+  - max search depth can be set by `CARI_SETTLEMENT_FX_FALLBACK_MAX_DAYS`
+  - request-level overrides are supported via `fxFallbackMode` and `fxFallbackMaxDays`
+- If neither exact-date nor allowed prior-date rate is available and `fxRate` is not provided, apply must fail with explicit error.
 - Operational actions:
-  - Validate FX rates exist for the effective date and pair before posting/apply.
-  - Confirm journals/audit rows show override context when override is used.
+  - Validate the expected currency pair rate chain (exact date + prior window) before batch apply windows.
+  - Confirm audit/journal evidence captures fallback/override context when used.
 
 ## Reversal Effects on Statements and Aging
 
@@ -53,6 +60,18 @@ This runbook defines how to operate Cari v1 AR/AP workflows in production-like e
 - `bank_statement_line_id` and `bank_transaction_ref` indicate external bank linkage context.
 - `bank_attach_idempotency_key` and `bank_apply_idempotency_key` protect against duplicate bank-triggered requests.
 - Bank-linked flows follow the same accounting and idempotency rules as manual apply.
+
+## Source-Aware Settlement Posting Context
+
+- Settlement posting derives context from source linkage and intent:
+  - `CASH_LINKED`
+  - `MANUAL`
+  - `ON_ACCOUNT_APPLY`
+- The context influences posting derivation while preserving generic mapping fallback for compatibility.
+- Practical checks:
+  - verify linked-cash settlements carry cash references (`cash_transaction_id`, link metadata)
+  - verify manual flows remain cash-agnostic
+  - verify on-account consumption leaves a traceable unapplied-cash history
 
 ## Operational Troubleshooting
 
@@ -123,6 +142,11 @@ This runbook defines how to operate Cari v1 AR/AP workflows in production-like e
 8. Verify audit logs for post/apply/reverse actions.
 9. Validate idempotency replay behavior for one apply request.
 10. Confirm bank-link fields display where available.
+11. Run one `paymentChannel=CASH` apply and verify linked cash references are present.
+12. Validate settlement reverse guard when linked cash transaction is still `POSTED`.
+13. Validate FX fallback behavior:
+  - `EXACT_ONLY` missing rate -> explicit failure
+  - `PRIOR_DATE` with available prior rate -> success
 
 ## UI Route Coverage (PR-11..14)
 
@@ -138,7 +162,9 @@ This runbook defines how to operate Cari v1 AR/AP workflows in production-like e
   - Reverse only from posted lifecycle states per backend guards.
 - Settlement lifecycle:
   - Apply requires idempotency key and allocation rule compliance (`autoAllocate` vs `allocations`).
+  - `paymentChannel=CASH` allows linking existing cash txn (`cashTransactionId`) or creating one (`linkedCashTransaction`).
   - Reverse uses `POST /api/v1/cari/settlements/{settlementBatchId}/reverse`.
+  - Reverse is blocked when linked cash txn is still posted; reverse cash first.
 - Replay and idempotency:
   - `idempotentReplay=true` must be treated as safe replay of an already-applied request.
   - `followUpRisks` is an operational warning input, not a silent ignore field.
@@ -147,7 +173,7 @@ This runbook defines how to operate Cari v1 AR/AP workflows in production-like e
   - Bank flows keep their own idempotency keys and target validation rules.
 - FX override:
   - Only permitted for users with `cari.fx.override`.
-  - Override reason must be captured and reviewable.
+  - Override/fallback behavior must be reviewable (`EXACT_ONLY` vs `PRIOR_DATE`, optional max-day bound).
 
 For day-to-day support and finance execution details, use:
 - `docs/runbooks/cari-v1-support-finance-ui-guide.md`

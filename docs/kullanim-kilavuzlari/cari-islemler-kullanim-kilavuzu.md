@@ -518,16 +518,47 @@ Auto-allocate kapalıyken:
 - Hiç allocation yoksa işlem gönderilmez.
 - Girilen allocation, ilgili açık kalem bakiyesini aşamaz.
 
-### 16.4 `idempotentReplay` ve `followUpRisks` ne demek?
+### 16.4 `paymentChannel` ve linked cash akışı (`MANUAL` / `CASH`)
+
+`Settlement Apply` artık iki ödeme kanalını destekler:
+
+| Seçenek | Ne yapar? | Ne zaman kullanılır? |
+|---|---|---|
+| `paymentChannel=MANUAL` | Sadece cari settlement kaydı üretir. | Nakit işlemi sistem dışında yapıldıysa veya bu ekrandan kasa kaydı açmak istenmiyorsa. |
+| `paymentChannel=CASH` + `cashTransactionId` | Var olan kasa işlemini settlement ile bağlar. | Tahsilat/tediye kaydı zaten kasada açıldıysa. |
+| `paymentChannel=CASH` + `linkedCashTransaction` | Settlement apply ile birlikte yeni kasa işlemi üretir. | Cari-öncelikli çalışıp, aynı adımda kasaya da kayıt düşmek istendiğinde. |
+
+Yön kuralı:
+- `Direction=AR` ise linked cash işlemi `RECEIPT` olarak açılır.
+- `Direction=AP` ise linked cash işlemi `PAYOUT` olarak açılır.
+
+`linkedCashTransaction` alan seti (özet):
+
+| Alan | Zorunlu mu? | Not |
+|---|---|---|
+| `registerId` | Evet (`paymentChannel=CASH` ve `cashTransactionId` yoksa) | Kasa fişinin açılacağı register. |
+| `counterAccountId` | Evet (`paymentChannel=CASH` ve `cashTransactionId` yoksa) | Karşı muhasebe hesabı. |
+| `cashSessionId` | Duruma bağlı | Verilmezse uygun açık session bulunur; register politikası gerektiriyorsa açık session şarttır. |
+| `txnDatetime`, `bookDate`, `referenceNo`, `description` | Hayır | Operasyonel detay alanları. |
+| `idempotencyKey`, `integrationEventUid` | Güçlü öneri | Tekrarlı gönderimlerde çift kasa kaydını önler. |
+
+Kritik doğrulamalar:
+- `linkedCashTransaction` yalnızca `paymentChannel=CASH` iken kullanılabilir.
+- `cashTransactionId` ile `linkedCashTransaction` aynı istekte birlikte gönderilemez.
+- Settlement para birimi, linked cash register para birimi ile uyumlu olmalıdır.
+
+### 16.5 `idempotentReplay` ve `followUpRisks` ne demek?
 
 - `idempotentReplay=true`:
   - Hata değildir.
   - Aynı istek daha önce uygulanmıştır, mevcut sonuç tekrar gösteriliyordur.
+  - CASH senaryosunda da aynı kural geçerlidir; yeni bir ikinci kasa fişi oluşturulmaz.
 - `followUpRisks`:
   - Operasyon uyarısıdır.
   - Sonuç alınsa bile takip gerektiren risk maddelerini gösterir.
+  - Tipik olarak: mapping setup bağımlılığı, FX fallback davranışı, kaynak-bağlamlı posting bilgisi.
 
-### 16.5 Settlement Reverse
+### 16.6 Settlement Reverse
 
 | Alan | Zorunlu mu? | Ne için? | Girilmezse / yanlışsa ne olur? |
 |---|---|---|---|
@@ -535,7 +566,11 @@ Auto-allocate kapalıyken:
 | `reversalDate` | Hayır | Ters kayıt tarihi. | Boşsa sistem varsayılan tarih kullanabilir. |
 | `reason` | Hayır (önerilir) | Neden ters kayıt yapıldığını açıklar. | Boş geçilebilir, ama denetim için doldurulması önerilir. |
 
-### 16.6 Bank Attach (açık ve ayrı iş akışı)
+Linked cash kuralı:
+- Settlement bir `cashTransactionId` ile bağlıysa ve ilgili kasa fişi `POSTED` durumdaysa, settlement reverse doğrudan bloklanır.
+- Bu durumda önce kasa fişi reverse edilmelidir.
+
+### 16.7 Bank Attach (açık ve ayrı iş akışı)
 
 | Alan | Kural |
 |---|---|
@@ -553,7 +588,7 @@ Auto-allocate kapalıyken:
 
 `idempotencyKey` boşsa UI otomatik üretir.
 
-### 16.7 Bank Apply (açık ve ayrı iş akışı)
+### 16.8 Bank Apply (açık ve ayrı iş akışı)
 
 | Alan | Zorunlu mu? | Ne için? |
 |---|---|---|
@@ -569,7 +604,22 @@ Auto-allocate kapalıyken:
 | `bankApplyIdempotencyKey` | UI otomatik üretebilir | Çift gönderimi önleme |
 | `note` | Hayır | Açıklama |
 
-### 16.8 Gerçek hayat örnekleri
+### 16.9 FX fallback davranışı (PR-25)
+
+Settlement apply sırasında kur bulunamadığında iki yaklaşım vardır:
+
+1. `EXACT_ONLY`:
+   - Sadece işlem tarihindeki kur aranır.
+   - Bulunamazsa, manuel `fxRate` verilmediyse işlem hata döner.
+2. `PRIOR_DATE`:
+   - İşlem tarihine en yakın önceki kur aranır.
+   - `fxFallbackMaxDays` verilirse, sadece bu gün sınırı içindeki kurlar kabul edilir.
+
+Önemli:
+- `fxFallbackMaxDays` sadece `fxFallbackMode=PRIOR_DATE` iken kullanılabilir.
+- Uygun kur bulunamazsa backend açık hata mesajı döner; sessizce tahmini kur kullanılmaz.
+
+### 16.10 Gerçek hayat örnekleri
 
 Örnek A: Müşteriden kısmi tahsilat (otomatik dağıtım)
 1. `Direction=AR`, `autoAllocate=true`.
@@ -585,6 +635,16 @@ Auto-allocate kapalıyken:
 1. Önce `Bank Attach` ile hedef kayıt ve banka referansı bağlanır.
 2. Sonra `Bank Apply` ile tutar uygulanır.
 3. Bu iki adım ayrı tutulduğu için yanlış otomatik eşleme riski düşer.
+
+Örnek D: Cari ekranından CASH kanalı ile tahsilat + kasa fişi üretme
+1. `paymentChannel=CASH` seçilir.
+2. `Create linked cash transaction` açıkken `registerId` ve `counterAccountId` doldurulur.
+3. `Apply Settlement` sonrası hem settlement hem linked cash referansı birlikte döner.
+
+Örnek E: `MANUAL` kanalında settlement
+1. `paymentChannel=MANUAL` bırakılır.
+2. Settlement uygulanır; kasa tarafında yeni fiş oluşmaz.
+3. Sonuç sadece cari tarafında izlenir, gerekirse bank attach/apply ayrı yürütülür.
 
 ## 17. Cari Denetim İzleri (`/app/cari-audit`)
 
@@ -652,7 +712,158 @@ Tarih notu:
   - Banka satırı veya referans bilgisi eksik.
 - `FX override requires permission: cari.fx.override`
   - Override işaretlendi ama kullanıcıda gerekli yetki yok.
+- `linkedCashTransaction is required when paymentChannel=CASH and cashTransactionId is not provided`
+  - CASH kanalı seçildi ama yeni kasa fişi için zorunlu alan seti gönderilmedi.
+- `linkedCashTransaction.registerId is required for paymentChannel=CASH`
+  - CASH kanalında yeni kasa fişi açarken register seçimi eksik.
+- `Settlement cannot be reversed while linked cash transaction ... is POSTED`
+  - Settlement ters kaydı, bağlı kasa fişi post edilmiş olduğu için bloklandı.
+  - Çözüm: önce bağlı kasa fişini reverse edin.
+- `fxRate is required because no exact-date SPOT rate exists ...`
+  - İşlem tarihi için kur bulunamadı; fallback ile de uygun prior-date kur gelmedi.
+  - Çözüm: geçerli `fxRate` girin veya FX rate setup'ını tamamlayın.
 
 ---
 
 Bu bölümde anlatılan adımlar kod bilgisi gerektirmez. Kritik durumlarda, hata mesajı + `requestId` bilgisini birlikte destek ekibine iletmeniz en hızlı çözümü sağlar.
+
+---
+
+## 19. Ekran Bazlı Kart/Buton Rehberi (Tüm Cari Sayfaları)
+
+Bu bolum, Cari modulu ekranlarinda kullanicinin tikladigi kartlar ve butonlarin ne is yaptigini operasyon diliyle ozetler.
+
+### 19.1 Alıcı/Satıcı Kart Ekranları (`/app/alici-*`, `/app/satici-*`)
+
+Ekranlar:
+- `Alici Karti Olustur`
+- `Alici Kart Listesi`
+- `Satici Karti Olustur`
+- `Satici Kart Listesi`
+
+Kartlar:
+- Kart olusturma/guncelleme formu
+- Liste filtre karti
+- Liste tablosu + satir bazli `Edit`
+
+Ana butonlar:
+- `Create Card`
+- `Save Changes`
+- `Apply Filters`
+- `Clear`
+- satirda `Edit`
+
+Kritik davranis:
+- `gl.account.read` yoksa AR/AP hesap seciciler gizlenir.
+- `role filter` ile sadece customer/vendor/both kartlari daraltabilirsiniz.
+
+Gercek hayat ornegi:
+1. Yeni musteri icin alici karti acilir.
+2. Role/customer alanlari ve payment term set edilir.
+3. Liste ekraninda kod/ad aramasiyla kart bulunur.
+4. Tahsilat stratejisi degistiginde `Edit` ile kart guncellenir.
+
+### 19.2 Cari Belgeler (`/app/cari-belgeler`)
+
+Kartlar:
+- Filtre karti
+- `Create Draft Document` karti
+- Belge listesi karti
+- `Detail + Actions` karti
+  - `Draft Actions`
+  - `Post / Reverse`
+
+Ana butonlar:
+- Filtrede `Refresh List`, `Reset Filters`
+- Taslakta `Create Draft Document`, `Reset Draft Form`
+- Listede `View / Actions`
+- Draft aksiyonda `Update Draft Document`, `Cancel Draft`
+- Post aksiyonda `Post Draft`
+- Reverse aksiyonda `Reverse Posted Document`
+
+Kritik davranis:
+- Draft duzenleme/iptal yalniz `DRAFT`.
+- Post yalniz draft.
+- Reverse yalniz posted lifecycle durumlari.
+- `useFxOverride` aciksa `cari.fx.override` yetkisi gerekir.
+
+Gercek hayat ornegi:
+1. Müşteri faturası taslak acilir ve kontrol edilir.
+2. `Post Draft` ile muhasebe kaydi olusur.
+3. Tutar/hukuki hata varsa `Reverse Posted Document` ile ters kayit acilir.
+
+### 19.3 Cari Raporları (`/app/cari-raporlari`)
+
+Kartlar:
+- Filtre karti (`asOfDate`, entity, counterparty, role, status)
+- Tab seciciler:
+  - `AR Aging`
+  - `AP Aging`
+  - `Open Items`
+  - `Counterparty Statement`
+- Ozet kartlari
+- Tab bazli detay tablolar
+
+Ana butonlar:
+- Filtrede `Apply Filters`, `Reset`
+- Tab butonlari (rapor turu degistirme)
+
+Kritik davranis:
+- `Open Items` ve `Statement` tablarinda reconcile bantlari vardir (diff gosterir).
+- Bank linked kolonlari dogrudan operasyonel mutabakat icin kullanilir.
+
+Gercek hayat ornegi:
+1. Kapanis oncesi `AP Aging` tabinda geciken borclar bulunur.
+2. `Open Items` tabinda bank linked ve residual kontrol edilir.
+3. Tahsilat ekipleri `Counterparty Statement` ile mutabakat cikarir.
+
+### 19.4 Cari Settlements (`/app/cari-settlements`)
+
+Kartlar:
+- Ust baglam/preview karti
+- `Settlement Apply`
+- `Settlement Reverse`
+- `Bank Attach`
+- `Bank Apply`
+- Apply response bloklari
+
+Ana butonlar:
+- `Apply Settlement`
+- `Reset Apply Form`
+- `Reverse Settlement`
+- `Attach Bank Reference`
+- `Apply Bank Settlement`
+- Apply icinde `Fill All` / `Clear` (open item dagitim gridi)
+
+Kritik davranis:
+- `paymentChannel=MANUAL|CASH`
+- CASH seciliyse linked cash olusturma alanlari acilir.
+- `followUpRisks` ve `idempotentReplay` sonucu operasyonel olarak okunmalidir.
+
+Gercek hayat ornegi:
+1. Tahsilat ayni anda kasaya da dusecekse `paymentChannel=CASH` secilir.
+2. Open item gridinde faturalara dagitim yapilip `Apply Settlement` tiklanir.
+3. Sonuc bloklarinda settlement batch + linked cash referansi kontrol edilir.
+
+### 19.5 Cari Audit (`/app/cari-audit`)
+
+Kartlar:
+- Filtre karti
+- By-action ozet kartlari
+- Audit row listesi
+
+Ana butonlar:
+- `Apply Filters`
+- `Reset`
+- `Prev` / `Next` (sayfalama)
+- satirda `Copy` (`requestId`)
+- satirda `Expand payload` / `Collapse payload`
+
+Kritik davranis:
+- `includePayload` kapaliysa payload cekilmez (performans + guvenlik).
+- Incident desteginde en kritik alan: `requestId`.
+
+Gercek hayat ornegi:
+1. Kullanici "islem iki kez oldu" bildirir.
+2. Audit'te `requestId` ile arama yapilir.
+3. `idempotentReplay` / tekrar patterni gorulup olay siniflandirilir.
