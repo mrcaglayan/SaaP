@@ -14,6 +14,14 @@ import {
 
 const DIRECTION_VALUES = ["AR", "AP"];
 const BANK_ATTACH_TARGET_VALUES = ["SETTLEMENT", "UNAPPLIED_CASH"];
+const SOURCE_MODULE_VALUES = ["MANUAL", "CARI", "CONTRACTS", "REVREC", "CASH", "SYSTEM", "OTHER"];
+const INTEGRATION_LINK_STATUS_VALUES = [
+  "UNLINKED",
+  "PENDING",
+  "LINKED",
+  "PARTIALLY_LINKED",
+  "FAILED",
+];
 
 function parseOptionalDate(value, label) {
   if (value === undefined || value === null || value === "") {
@@ -88,6 +96,7 @@ function parseSettlementApplyCommon(req, { idempotencyKeySource, bankReferenceRe
     "settlementDate",
     new Date().toISOString().slice(0, 10)
   );
+  const cashTransactionId = optionalPositiveInt(req.body?.cashTransactionId, "cashTransactionId");
   const currencyCode = normalizeCurrencyCode(req.body?.currencyCode, "currencyCode");
   const incomingAmountTxn = parseAmount(
     req.body?.incomingAmountTxn ?? req.body?.paymentAmountTxn ?? req.body?.amountTxn ?? 0,
@@ -107,6 +116,26 @@ function parseSettlementApplyCommon(req, { idempotencyKeySource, bankReferenceRe
       ? parseBooleanFlag(req.body?.useUnappliedCash, true)
       : parseBooleanFlag(req.body?.consumeUnapplied, true);
   const fxRate = parseOptionalPositiveDecimal(req.body?.fxRate, "fxRate");
+  const sourceModuleRaw = String(req.body?.sourceModule || "")
+    .trim()
+    .toUpperCase();
+  const sourceModule = sourceModuleRaw
+    ? normalizeEnum(sourceModuleRaw, "sourceModule", SOURCE_MODULE_VALUES)
+    : null;
+  const sourceEntityType = normalizeText(req.body?.sourceEntityType, "sourceEntityType", 60);
+  const sourceEntityId = normalizeText(req.body?.sourceEntityId, "sourceEntityId", 120);
+  const integrationLinkStatusRaw = String(req.body?.integrationLinkStatus || "")
+    .trim()
+    .toUpperCase();
+  const integrationLinkStatus = integrationLinkStatusRaw
+    ? normalizeEnum(
+        integrationLinkStatusRaw,
+        "integrationLinkStatus",
+        INTEGRATION_LINK_STATUS_VALUES
+      )
+    : null;
+  const integrationEventUid =
+    normalizeText(req.body?.integrationEventUid, "integrationEventUid", 100) || null;
   const allocations = parseAllocations(req.body?.allocations);
   const bankFields = parseBankReferenceFields(req.body, {
     required: bankReferenceRequired,
@@ -118,6 +147,17 @@ function parseSettlementApplyCommon(req, { idempotencyKeySource, bankReferenceRe
   if (autoAllocate && allocations.length > 0) {
     throw badRequest("allocations must be empty when autoAllocate=true");
   }
+  if ((sourceEntityType || sourceEntityId || integrationEventUid) && !sourceModule) {
+    throw badRequest(
+      "sourceModule is required when sourceEntityType, sourceEntityId, or integrationEventUid is provided"
+    );
+  }
+  if (sourceModule && sourceModule !== "MANUAL" && (!sourceEntityType || !sourceEntityId)) {
+    throw badRequest("sourceEntityType and sourceEntityId are required when sourceModule is not MANUAL");
+  }
+  if (cashTransactionId && integrationLinkStatus === "UNLINKED") {
+    throw badRequest("integrationLinkStatus cannot be UNLINKED when cashTransactionId is provided");
+  }
 
   return {
     tenantId,
@@ -126,6 +166,7 @@ function parseSettlementApplyCommon(req, { idempotencyKeySource, bankReferenceRe
     counterpartyId,
     direction,
     settlementDate,
+    cashTransactionId,
     currencyCode,
     idempotencyKey,
     incomingAmountTxn: Number(incomingAmountTxn ?? "0.000000"),
@@ -135,6 +176,11 @@ function parseSettlementApplyCommon(req, { idempotencyKeySource, bankReferenceRe
     note,
     autoAllocate,
     fxRate,
+    sourceModule,
+    sourceEntityType,
+    sourceEntityId,
+    integrationLinkStatus,
+    integrationEventUid,
     allocations,
     ...bankFields,
   };

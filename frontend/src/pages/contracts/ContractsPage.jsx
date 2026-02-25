@@ -25,7 +25,6 @@ import {
   CONTRACT_TYPES,
   LINK_TYPES,
   RECOGNITION_METHODS,
-  buildContractLinePatchPayload,
   buildContractLinkPayload,
   buildContractLinkAdjustmentPayload,
   buildContractLinkUnlinkPayload,
@@ -403,8 +402,7 @@ export default function ContractsPage() {
     setFormError("");
     setFormMessage("");
     try {
-      const requestPayload = buildContractLinePatchPayload(line, linePatchReason);
-      await patchContractLine(contractId, lineId, requestPayload);
+      await patchContractLine(contractId, lineId, payload);
       setFormMessage(`Line ${lineId} patched.`);
       setLinePatchReason("");
       const updatedDetail = await loadContractDetail(contractId);
@@ -980,7 +978,7 @@ export default function ContractsPage() {
                       <td>{row.documentNo || row.cariDocumentId}</td>
                       <td>{row.linkType}</td>
                       <td>
-                        {(row.contractCurrencyCodeSnapshot || "-")} ->{" "}
+                        {(row.contractCurrencyCodeSnapshot || "-")} {"->"}{" "}
                         {(row.documentCurrencyCodeSnapshot || "-")}
                       </td>
                       <td>{formatAmount(row.linkFxRateSnapshot)}</td>

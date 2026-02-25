@@ -156,6 +156,7 @@ For day-to-day support and finance execution details, use:
 
 - Backend release gate:
   - `cd backend && npm run test:release-gate`
+  - Core-only (skip contracts/revenue module extension): `cd backend && RELEASE_GATE_SKIP_CONTRACTS_REVENUE=1 npm run test:release-gate`
 - Cari focused quality gate:
   - `cd backend && npm run test:cari-quality-gate`
 - OpenAPI/docs validation:

@@ -1,3 +1,8 @@
+# Bank PR Steps (Original Draft)
+
+> Implementation note (mandatory): do not execute this file directly in this repository.
+> First align every Bank PR with [04-PR_STPES_BANK_ADOPTION_BASELINE.md](./04-PR_STPES_BANK_ADOPTION_BASELINE.md), then implement from the adopted mapping there.
+
 # PR-B01: Bank Foundation (Master Data + GL Link)
 
     ## Goal

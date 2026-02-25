@@ -19,7 +19,7 @@ Goal:
 | PR-26 (Implemented) | Counterparty enrichment search/sort/filter by AR/AP account fields | Explicitly out-of-scope in PR-19 | contracts-steps doc `:1262`; contracts-steps doc `:1499` |
 | PR-27 (Implemented) | Reporting/index optimization pass (contract-line denormalization only if needed) | Deferred behind real index/report pressure | `PR_STEPS.md:1600`; contracts-steps doc `:247` |
 | PR-28 (Implemented) | Product/module rename hardening + route alias/redirect compatibility | Rename was intentionally postponed | `PR_STEPS.md:1901`; `PR_STEPS.md:1903`; contracts-steps doc `:902`; contracts-steps doc `:904` |
-| PR-29 | Release gate expansion to include contracts/revenue modules in final chain | Kept optional until modules are production-ready | `PR_STEPS.md:2051` |
+| PR-29 (Implemented) | Release gate expansion to include contracts/revenue modules in final chain | Kept optional until modules are production-ready; now wired into release gate with explicit opt-out flag | `01-PR_STEPS CARI.md:1549`; `backend/package.json`; `backend/scripts/test-release-gate.js` |
 
 ## Contracts-Steps Doc Reference
 
@@ -36,7 +36,7 @@ Goal:
 7. PR-26 (enrichment search/sort/filter)
 8. PR-27 (denormalization/index optimization only if pressure exists)
 9. PR-28 (implemented)
-10. PR-29 (release-gate expansion)
+10. PR-29 (implemented)
 
 ## Validation Note
 

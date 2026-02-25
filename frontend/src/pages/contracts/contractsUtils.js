@@ -519,7 +519,7 @@ export function canAdjustContractLink(linkRow, gates = {}) {
     };
   }
 
-  if (Boolean(linkRow?.isUnlinked)) {
+  if (linkRow?.isUnlinked) {
     return {
       allowed: false,
       reason: "Link is already unlinked",
@@ -546,7 +546,7 @@ export function canUnlinkContractLink(linkRow, gates = {}) {
     };
   }
 
-  if (Boolean(linkRow?.isUnlinked)) {
+  if (linkRow?.isUnlinked) {
     return {
       allowed: false,
       reason: "Link is already unlinked",

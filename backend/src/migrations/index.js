@@ -24,6 +24,7 @@ import migration023ContractDocumentLinkEvents from "./m023_contract_document_lin
 import migration024ContractAmendmentsAndVersioning from "./m024_contract_amendments_and_versioning.js";
 import migration025ContractDocumentLinkFxSnapshots from "./m025_contract_document_link_fx_snapshots.js";
 import migration026ContractLineReportingOptimization from "./m026_contract_line_reporting_optimization.js";
+import migration027CariCashIntegrationFoundation from "./m027_cari_cash_integration_foundation.js";
 
 const migrations = [
   migration001GlobalMultiEntity,
@@ -52,6 +53,7 @@ const migrations = [
   migration024ContractAmendmentsAndVersioning,
   migration025ContractDocumentLinkFxSnapshots,
   migration026ContractLineReportingOptimization,
+  migration027CariCashIntegrationFoundation,
 ];
 
 export default migrations;

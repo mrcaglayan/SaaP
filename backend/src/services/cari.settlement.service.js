@@ -22,6 +22,12 @@ const UNAPPLIED_STATUS_UNAPPLIED = "UNAPPLIED";
 const UNAPPLIED_STATUS_PARTIALLY_APPLIED = "PARTIALLY_APPLIED";
 const UNAPPLIED_STATUS_FULL = "FULLY_APPLIED";
 const UNAPPLIED_STATUS_REVERSED = "REVERSED";
+const INTEGRATION_LINK_STATUS_UNLINKED = "UNLINKED";
+const INTEGRATION_LINK_STATUS_LINKED = "LINKED";
+const DIRECTION_TO_CASH_TXN_TYPE = Object.freeze({
+  AR: "RECEIPT",
+  AP: "PAYOUT",
+});
 const BANK_ATTACH_TARGET_SETTLEMENT = "SETTLEMENT";
 const BANK_ATTACH_TARGET_UNAPPLIED_CASH = "UNAPPLIED_CASH";
 const RESOURCE_TYPE_SETTLEMENT_BATCH = "cari_settlement_batch";
@@ -148,6 +154,31 @@ function normalizeOptionalPositiveInt(value, label) {
     throw badRequest(`${label} must be a positive integer`);
   }
   return parsed;
+}
+
+function resolveSettlementIntegrationMetadata({ payload, idempotencyKey, cashTransactionId }) {
+  const resolvedCashTransactionId = parsePositiveInt(cashTransactionId);
+  const sourceModule =
+    toNullableString(payload?.sourceModule, 40) || (resolvedCashTransactionId ? "CASH" : "MANUAL");
+  const sourceEntityType =
+    toNullableString(payload?.sourceEntityType, 60) ||
+    (resolvedCashTransactionId ? "cash_transaction" : null);
+  const sourceEntityId =
+    toNullableString(payload?.sourceEntityId, 120) ||
+    (resolvedCashTransactionId ? String(resolvedCashTransactionId) : null);
+  const integrationLinkStatus =
+    toNullableString(payload?.integrationLinkStatus, 30) ||
+    (resolvedCashTransactionId ? INTEGRATION_LINK_STATUS_LINKED : INTEGRATION_LINK_STATUS_UNLINKED);
+  const integrationEventUid =
+    toNullableString(payload?.integrationEventUid, 100) || toNullableString(idempotencyKey, 100);
+
+  return {
+    sourceModule,
+    sourceEntityType,
+    sourceEntityId,
+    integrationLinkStatus,
+    integrationEventUid,
+  };
 }
 
 function textsEqual(left, right) {
@@ -291,6 +322,7 @@ function mapSettlementBatchRow(row) {
     tenantId: parsePositiveInt(row.tenant_id),
     legalEntityId: parsePositiveInt(row.legal_entity_id),
     counterpartyId: parsePositiveInt(row.counterparty_id),
+    cashTransactionId: parsePositiveInt(row.cash_transaction_id),
     sequenceNamespace: row.sequence_namespace,
     fiscalYear: Number(row.fiscal_year),
     sequenceNo: Number(row.sequence_no),
@@ -306,6 +338,11 @@ function mapSettlementBatchRow(row) {
     bankTransactionRef: row.bank_transaction_ref || null,
     bankAttachIdempotencyKey: row.bank_attach_idempotency_key || null,
     bankApplyIdempotencyKey: row.bank_apply_idempotency_key || null,
+    sourceModule: row.source_module || null,
+    sourceEntityType: row.source_entity_type || null,
+    sourceEntityId: row.source_entity_id || null,
+    integrationLinkStatus: row.integration_link_status || null,
+    integrationEventUid: row.integration_event_uid || null,
     createdAt: row.created_at || null,
     updatedAt: row.updated_at || null,
     postedAt: row.posted_at || null,
@@ -338,6 +375,7 @@ function mapUnappliedCashRow(row) {
     tenantId: parsePositiveInt(row.tenant_id),
     legalEntityId: parsePositiveInt(row.legal_entity_id),
     counterpartyId: parsePositiveInt(row.counterparty_id),
+    cashTransactionId: parsePositiveInt(row.cash_transaction_id),
     cashReceiptNo: row.cash_receipt_no,
     receiptDate: toDateOnlyString(row.receipt_date, "receiptDate"),
     status: row.status,
@@ -353,6 +391,11 @@ function mapUnappliedCashRow(row) {
     bankTransactionRef: row.bank_transaction_ref || null,
     bankAttachIdempotencyKey: row.bank_attach_idempotency_key || null,
     bankApplyIdempotencyKey: row.bank_apply_idempotency_key || null,
+    sourceModule: row.source_module || null,
+    sourceEntityType: row.source_entity_type || null,
+    sourceEntityId: row.source_entity_id || null,
+    integrationLinkStatus: row.integration_link_status || null,
+    integrationEventUid: row.integration_event_uid || null,
     note: row.note || null,
     createdAt: row.created_at || null,
     updatedAt: row.updated_at || null,
@@ -936,6 +979,7 @@ async function fetchSettlementBatchRow({
        tenant_id,
        legal_entity_id,
        counterparty_id,
+       cash_transaction_id,
        sequence_namespace,
        fiscal_year,
        sequence_no,
@@ -951,6 +995,11 @@ async function fetchSettlementBatchRow({
        bank_transaction_ref,
        bank_attach_idempotency_key,
        bank_apply_idempotency_key,
+       source_module,
+       source_entity_type,
+       source_entity_id,
+       integration_link_status,
+       integration_event_uid,
        created_at,
        updated_at,
        posted_at,
@@ -1038,6 +1087,85 @@ async function findSettlementBatchIdByBankApplyIdempotency({
   return parsePositiveInt(result.rows?.[0]?.id);
 }
 
+async function findSettlementBatchIdByIntegrationEventUid({
+  tenantId,
+  legalEntityId,
+  integrationEventUid,
+  runQuery = query,
+}) {
+  const normalizedUid = toNullableString(integrationEventUid, 100);
+  if (!normalizedUid) {
+    return null;
+  }
+  const result = await runQuery(
+    `SELECT id
+     FROM cari_settlement_batches
+     WHERE tenant_id = ?
+       AND legal_entity_id = ?
+       AND integration_event_uid = ?
+     LIMIT 1`,
+    [tenantId, legalEntityId, normalizedUid]
+  );
+  return parsePositiveInt(result.rows?.[0]?.id);
+}
+
+async function findSettlementBatchIdByCashTransactionId({
+  tenantId,
+  legalEntityId,
+  cashTransactionId,
+  runQuery = query,
+}) {
+  const parsedCashTxnId = parsePositiveInt(cashTransactionId);
+  if (!parsedCashTxnId) {
+    return null;
+  }
+  const result = await runQuery(
+    `SELECT id
+     FROM cari_settlement_batches
+     WHERE tenant_id = ?
+       AND legal_entity_id = ?
+       AND cash_transaction_id = ?
+     LIMIT 1`,
+    [tenantId, legalEntityId, parsedCashTxnId]
+  );
+  return parsePositiveInt(result.rows?.[0]?.id);
+}
+
+async function fetchCashTransactionForSettlementLink({
+  tenantId,
+  cashTransactionId,
+  runQuery = query,
+  forUpdate = false,
+}) {
+  const parsedCashTxnId = parsePositiveInt(cashTransactionId);
+  if (!parsedCashTxnId) {
+    return null;
+  }
+  const lockClause = forUpdate ? "FOR UPDATE" : "";
+  const result = await runQuery(
+    `SELECT
+       ct.id,
+       ct.tenant_id,
+       ct.txn_type,
+       ct.status,
+       ct.currency_code,
+       ct.counterparty_type,
+       ct.counterparty_id,
+       ct.linked_cari_settlement_batch_id,
+       ct.linked_cari_unapplied_cash_id,
+       ct.integration_link_status,
+       cr.legal_entity_id AS register_legal_entity_id
+     FROM cash_transactions ct
+     JOIN cash_registers cr ON cr.id = ct.cash_register_id
+     WHERE ct.tenant_id = ?
+       AND ct.id = ?
+     LIMIT 1
+     ${lockClause}`,
+    [tenantId, parsedCashTxnId]
+  );
+  return result.rows?.[0] || null;
+}
+
 async function fetchSettlementBatchRowByBankAttachIdempotency({
   tenantId,
   legalEntityId,
@@ -1056,6 +1184,7 @@ async function fetchSettlementBatchRowByBankAttachIdempotency({
        tenant_id,
        legal_entity_id,
        counterparty_id,
+       cash_transaction_id,
        sequence_namespace,
        fiscal_year,
        sequence_no,
@@ -1071,6 +1200,11 @@ async function fetchSettlementBatchRowByBankAttachIdempotency({
        bank_transaction_ref,
        bank_attach_idempotency_key,
        bank_apply_idempotency_key,
+       source_module,
+       source_entity_type,
+       source_entity_id,
+       integration_link_status,
+       integration_event_uid,
        created_at,
        updated_at,
        posted_at,
@@ -1100,6 +1234,7 @@ async function fetchUnappliedCashRowById({
        tenant_id,
        legal_entity_id,
        counterparty_id,
+       cash_transaction_id,
        cash_receipt_no,
        receipt_date,
        status,
@@ -1115,6 +1250,11 @@ async function fetchUnappliedCashRowById({
        bank_transaction_ref,
        bank_attach_idempotency_key,
        bank_apply_idempotency_key,
+       source_module,
+       source_entity_type,
+       source_entity_id,
+       integration_link_status,
+       integration_event_uid,
        note,
        created_at,
        updated_at
@@ -1147,6 +1287,7 @@ async function fetchUnappliedCashRowByBankAttachIdempotency({
        tenant_id,
        legal_entity_id,
        counterparty_id,
+       cash_transaction_id,
        cash_receipt_no,
        receipt_date,
        status,
@@ -1162,6 +1303,11 @@ async function fetchUnappliedCashRowByBankAttachIdempotency({
        bank_transaction_ref,
        bank_attach_idempotency_key,
        bank_apply_idempotency_key,
+       source_module,
+       source_entity_type,
+       source_entity_id,
+       integration_link_status,
+       integration_event_uid,
        note,
        created_at,
        updated_at
@@ -1310,6 +1456,7 @@ async function fetchUnappliedRowsForApply({
        tenant_id,
        legal_entity_id,
        counterparty_id,
+       cash_transaction_id,
        cash_receipt_no,
        receipt_date,
        status,
@@ -1685,6 +1832,11 @@ async function loadSettlementResult({
        bank_transaction_ref,
        bank_attach_idempotency_key,
        bank_apply_idempotency_key,
+       source_module,
+       source_entity_type,
+       source_entity_id,
+       integration_link_status,
+       integration_event_uid,
        note,
        created_at,
        updated_at
@@ -1767,6 +1919,7 @@ export async function applyCariSettlement({
   const legalEntityId = payload.legalEntityId;
   const counterpartyId = payload.counterpartyId;
   const idempotencyKey = toNullableString(payload.idempotencyKey, 100);
+  const cashTransactionId = normalizeOptionalPositiveInt(payload.cashTransactionId, "cashTransactionId");
   const settlementDate = normalizeDateInput(payload.settlementDate, "settlementDate");
   const incomingAmountTxn = normalizeAmount(payload.incomingAmountTxn || 0, "incomingAmountTxn", {
     allowZero: true,
@@ -1779,6 +1932,12 @@ export async function applyCariSettlement({
     "bankStatementLineId"
   );
   const bankTransactionRef = toNullableString(payload.bankTransactionRef, 100);
+  const integrationMetadata = resolveSettlementIntegrationMetadata({
+    payload,
+    idempotencyKey,
+    cashTransactionId,
+  });
+  const integrationEventUid = integrationMetadata.integrationEventUid;
 
   if (!idempotencyKey) {
     throw badRequest("idempotencyKey is required");
@@ -1808,14 +1967,28 @@ export async function applyCariSettlement({
     legalEntityId,
     bankApplyIdempotencyKey,
   });
-  if (
-    existingBatchIdByApply &&
-    existingBatchIdByBankApply &&
-    existingBatchIdByApply !== existingBatchIdByBankApply
-  ) {
-    throw badRequest("idempotencyKey and bankApplyIdempotencyKey map to different settlements");
+  const existingBatchIdByEventUid = await findSettlementBatchIdByIntegrationEventUid({
+    tenantId,
+    legalEntityId,
+    integrationEventUid,
+  });
+  const existingBatchIdByCashTxn = await findSettlementBatchIdByCashTransactionId({
+    tenantId,
+    legalEntityId,
+    cashTransactionId,
+  });
+  const existingBatchIdCandidates = [
+    existingBatchIdByApply,
+    existingBatchIdByBankApply,
+    existingBatchIdByEventUid,
+    existingBatchIdByCashTxn,
+  ].filter(Boolean);
+  if (new Set(existingBatchIdCandidates).size > 1) {
+    throw badRequest(
+      "idempotencyKey, bankApplyIdempotencyKey, integrationEventUid, and cashTransactionId map to different settlements"
+    );
   }
-  const existingBatchId = existingBatchIdByApply || existingBatchIdByBankApply;
+  const existingBatchId = existingBatchIdCandidates[0] || null;
   if (existingBatchId) {
     const replay = await loadSettlementResult({
       tenantId,
@@ -1852,14 +2025,30 @@ export async function applyCariSettlement({
         bankApplyIdempotencyKey,
         runQuery: tx.query,
       });
-      if (
-        replayBatchIdByApply &&
-        replayBatchIdByBankApply &&
-        replayBatchIdByApply !== replayBatchIdByBankApply
-      ) {
-        throw badRequest("idempotencyKey and bankApplyIdempotencyKey map to different settlements");
+      const replayBatchIdByEventUid = await findSettlementBatchIdByIntegrationEventUid({
+        tenantId,
+        legalEntityId,
+        integrationEventUid,
+        runQuery: tx.query,
+      });
+      const replayBatchIdByCashTxn = await findSettlementBatchIdByCashTransactionId({
+        tenantId,
+        legalEntityId,
+        cashTransactionId,
+        runQuery: tx.query,
+      });
+      const replayBatchCandidates = [
+        replayBatchIdByApply,
+        replayBatchIdByBankApply,
+        replayBatchIdByEventUid,
+        replayBatchIdByCashTxn,
+      ].filter(Boolean);
+      if (new Set(replayBatchCandidates).size > 1) {
+        throw badRequest(
+          "idempotencyKey, bankApplyIdempotencyKey, integrationEventUid, and cashTransactionId map to different settlements"
+        );
       }
-      const replayBatchId = replayBatchIdByApply || replayBatchIdByBankApply;
+      const replayBatchId = replayBatchCandidates[0] || null;
       if (replayBatchId) {
         const replay = await loadSettlementResult({
           tenantId,
@@ -1903,6 +2092,41 @@ export async function applyCariSettlement({
         throw badRequest("Settlement apply supports one direction (AR or AP) per request");
       }
       const direction = Array.from(directions)[0];
+      if (cashTransactionId) {
+        const linkedCashTransaction = await fetchCashTransactionForSettlementLink({
+          tenantId,
+          cashTransactionId,
+          runQuery: tx.query,
+          forUpdate: true,
+        });
+        if (!linkedCashTransaction) {
+          throw badRequest("cashTransactionId not found for tenant");
+        }
+        if (parsePositiveInt(linkedCashTransaction.register_legal_entity_id) !== legalEntityId) {
+          throw badRequest("cashTransactionId must belong to legalEntityId");
+        }
+        const expectedCashTxnType = DIRECTION_TO_CASH_TXN_TYPE[direction];
+        if (normalizeUpperText(linkedCashTransaction.txn_type) !== expectedCashTxnType) {
+          throw badRequest(
+            `cashTransactionId must be txnType=${expectedCashTxnType} for settlement direction=${direction}`
+          );
+        }
+        if (
+          parsePositiveInt(linkedCashTransaction.counterparty_id) &&
+          parsePositiveInt(linkedCashTransaction.counterparty_id) !== counterpartyId
+        ) {
+          throw badRequest("cashTransactionId counterparty does not match counterpartyId");
+        }
+        if (normalizeUpperText(linkedCashTransaction.currency_code) !== settlementCurrencyCode) {
+          throw badRequest("cashTransactionId currency must match settlement currencyCode");
+        }
+        const linkedBatchOnCash = parsePositiveInt(
+          linkedCashTransaction.linked_cari_settlement_batch_id
+        );
+        if (linkedBatchOnCash) {
+          throw badRequest("cashTransactionId is already linked to a settlement batch");
+        }
+      }
 
       const fxPolicy = await resolveSettlementFxRate({
         tenantId,
@@ -2087,6 +2311,7 @@ export async function applyCariSettlement({
             tenant_id,
             legal_entity_id,
             counterparty_id,
+            cash_transaction_id,
             sequence_namespace,
             fiscal_year,
             sequence_no,
@@ -2102,13 +2327,19 @@ export async function applyCariSettlement({
             bank_transaction_ref,
             bank_attach_idempotency_key,
             bank_apply_idempotency_key,
+            source_module,
+            source_entity_type,
+            source_entity_id,
+            integration_link_status,
+            integration_event_uid,
             posted_at
          )
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL, ?, CURRENT_TIMESTAMP)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
         [
           tenantId,
           legalEntityId,
           counterpartyId,
+          cashTransactionId,
           sequence.sequenceNamespace,
           sequence.fiscalYear,
           sequence.sequenceNo,
@@ -2122,6 +2353,11 @@ export async function applyCariSettlement({
           bankStatementLineId,
           bankTransactionRef,
           bankApplyIdempotencyKey,
+          integrationMetadata.sourceModule,
+          integrationMetadata.sourceEntityType,
+          integrationMetadata.sourceEntityId,
+          integrationMetadata.integrationLinkStatus,
+          integrationMetadata.integrationEventUid,
         ]
       );
       const settlementBatchId = parsePositiveInt(settlementInsert.rows?.insertId);
@@ -2313,6 +2549,7 @@ export async function applyCariSettlement({
               tenant_id,
               legal_entity_id,
               counterparty_id,
+              cash_transaction_id,
               cash_receipt_no,
               receipt_date,
               status,
@@ -2328,13 +2565,19 @@ export async function applyCariSettlement({
               bank_transaction_ref,
               bank_attach_idempotency_key,
               bank_apply_idempotency_key,
+              source_module,
+              source_entity_type,
+              source_entity_id,
+              integration_link_status,
+              integration_event_uid,
               note
            )
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, ?, ?, NULL, ?, ?)`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)`,
           [
             tenantId,
             legalEntityId,
             counterpartyId,
+            cashTransactionId,
             buildUnappliedReceiptNo(sequence.settlementNo),
             settlementDate,
             UNAPPLIED_STATUS_UNAPPLIED,
@@ -2347,6 +2590,11 @@ export async function applyCariSettlement({
             bankStatementLineId,
             bankTransactionRef,
             bankApplyIdempotencyKey,
+            integrationMetadata.sourceModule,
+            integrationMetadata.sourceEntityType,
+            integrationMetadata.sourceEntityId,
+            integrationMetadata.integrationLinkStatus,
+            integrationMetadata.integrationEventUid,
             toNullableString(
               `Residual unapplied from settlement ${sequence.settlementNo}`,
               500
@@ -2354,6 +2602,44 @@ export async function applyCariSettlement({
           ]
         );
         createdUnappliedCashId = parsePositiveInt(unappliedInsert.rows?.insertId);
+      }
+
+      if (cashTransactionId) {
+        const cashLinkUpdate = await tx.query(
+          `UPDATE cash_transactions
+           SET linked_cari_settlement_batch_id = ?,
+               linked_cari_unapplied_cash_id = COALESCE(?, linked_cari_unapplied_cash_id),
+               integration_link_status = CASE
+                 WHEN integration_link_status = 'UNLINKED' THEN 'LINKED'
+                 ELSE integration_link_status
+               END,
+               source_module = COALESCE(source_module, 'CARI'),
+               source_entity_type = COALESCE(source_entity_type, 'cari_settlement_batch'),
+               source_entity_id = COALESCE(source_entity_id, ?),
+               integration_event_uid = COALESCE(integration_event_uid, ?)
+           WHERE tenant_id = ?
+             AND id = ?
+             AND (linked_cari_settlement_batch_id IS NULL OR linked_cari_settlement_batch_id = ?)
+             AND (
+               ? IS NULL
+               OR linked_cari_unapplied_cash_id IS NULL
+               OR linked_cari_unapplied_cash_id = ?
+             )`,
+          [
+            settlementBatchId,
+            createdUnappliedCashId,
+            String(settlementBatchId),
+            integrationMetadata.integrationEventUid,
+            tenantId,
+            cashTransactionId,
+            settlementBatchId,
+            createdUnappliedCashId,
+            createdUnappliedCashId,
+          ]
+        );
+        if (Number(cashLinkUpdate.rows?.affectedRows || 0) === 0) {
+          throw badRequest("cashTransactionId already has conflicting Cari integration links");
+        }
       }
 
       await insertAuditLog({
@@ -2368,6 +2654,12 @@ export async function applyCariSettlement({
           settlementBatchId,
           settlementNo: sequence.settlementNo,
           idempotencyKey,
+          integrationEventUid,
+          sourceModule: integrationMetadata.sourceModule,
+          sourceEntityType: integrationMetadata.sourceEntityType,
+          sourceEntityId: integrationMetadata.sourceEntityId,
+          integrationLinkStatus: integrationMetadata.integrationLinkStatus,
+          cashTransactionId,
           bankApplyIdempotencyKey,
           bankStatementLineId,
           bankTransactionRef,
@@ -2410,6 +2702,8 @@ export async function applyCariSettlement({
             settlementBatchId,
             settlementNo: sequence.settlementNo,
             idempotencyKey,
+            integrationEventUid,
+            cashTransactionId,
             bankApplyIdempotencyKey,
             bankStatementLineId,
             bankTransactionRef,
@@ -2449,11 +2743,38 @@ export async function applyCariSettlement({
 
     return created;
   } catch (err) {
+    const duplicateApplyIdempotency = isDuplicateKeyError(err, "uk_cari_alloc_apply_idempo");
+    const duplicateBankApplyIdempotency = isDuplicateKeyError(err, "uk_cari_alloc_bank_apply_idempo");
+    const duplicateSettlementBankApply = isDuplicateKeyError(
+      err,
+      "uk_cari_settle_batches_bank_apply_idempo"
+    );
+    const duplicateUnappliedBankApply = isDuplicateKeyError(err, "uk_cari_unap_bank_apply_idempo");
+    const duplicateSettlementEventUid = isDuplicateKeyError(
+      err,
+      "uk_cari_settle_batches_tenant_event_uid"
+    );
+    const duplicateUnappliedEventUid = isDuplicateKeyError(err, "uk_cari_unap_tenant_event_uid");
+    const duplicateSettlementCashTxn = isDuplicateKeyError(
+      err,
+      "uk_cari_settle_batches_tenant_cash_txn"
+    );
+    const duplicateUnappliedCashTxn = isDuplicateKeyError(err, "uk_cari_unap_tenant_cash_txn");
+    const duplicateCashEventUid = isDuplicateKeyError(
+      err,
+      "uk_cash_txn_tenant_integration_event_uid"
+    );
+
     if (
-      isDuplicateKeyError(err, "uk_cari_alloc_apply_idempo") ||
-      isDuplicateKeyError(err, "uk_cari_alloc_bank_apply_idempo") ||
-      isDuplicateKeyError(err, "uk_cari_settle_batches_bank_apply_idempo") ||
-      isDuplicateKeyError(err, "uk_cari_unap_bank_apply_idempo")
+      duplicateApplyIdempotency ||
+      duplicateBankApplyIdempotency ||
+      duplicateSettlementBankApply ||
+      duplicateUnappliedBankApply ||
+      duplicateSettlementEventUid ||
+      duplicateUnappliedEventUid ||
+      duplicateSettlementCashTxn ||
+      duplicateUnappliedCashTxn ||
+      duplicateCashEventUid
     ) {
       const replayBatchIdByApply = await findSettlementBatchIdByApplyIdempotency({
         tenantId,
@@ -2465,14 +2786,28 @@ export async function applyCariSettlement({
         legalEntityId,
         bankApplyIdempotencyKey,
       });
-      if (
-        replayBatchIdByApply &&
-        replayBatchIdByBankApply &&
-        replayBatchIdByApply !== replayBatchIdByBankApply
-      ) {
-        throw badRequest("idempotencyKey and bankApplyIdempotencyKey map to different settlements");
+      const replayBatchIdByEventUid = await findSettlementBatchIdByIntegrationEventUid({
+        tenantId,
+        legalEntityId,
+        integrationEventUid,
+      });
+      const replayBatchIdByCashTxn = await findSettlementBatchIdByCashTransactionId({
+        tenantId,
+        legalEntityId,
+        cashTransactionId,
+      });
+      const replayBatchCandidates = [
+        replayBatchIdByApply,
+        replayBatchIdByBankApply,
+        replayBatchIdByEventUid,
+        replayBatchIdByCashTxn,
+      ].filter(Boolean);
+      if (new Set(replayBatchCandidates).size > 1) {
+        throw badRequest(
+          "idempotencyKey, bankApplyIdempotencyKey, integrationEventUid, and cashTransactionId map to different settlements"
+        );
       }
-      const replayBatchId = replayBatchIdByApply || replayBatchIdByBankApply;
+      const replayBatchId = replayBatchCandidates[0] || null;
       if (replayBatchId) {
         const replay = await loadSettlementResult({
           tenantId,
@@ -2484,6 +2819,15 @@ export async function applyCariSettlement({
           idempotentReplay: true,
           followUpRisks: FOLLOW_UP_RISKS,
         };
+      }
+      if (cashTransactionId && (duplicateSettlementCashTxn || duplicateUnappliedCashTxn)) {
+        throw badRequest("cashTransactionId is already linked to another Cari settlement/unapplied row");
+      }
+      if (integrationEventUid && (duplicateSettlementEventUid || duplicateUnappliedEventUid)) {
+        throw badRequest("Duplicate integrationEventUid");
+      }
+      if (integrationEventUid && duplicateCashEventUid) {
+        throw badRequest("integrationEventUid conflicts with an existing cash transaction");
       }
       if (bankApplyIdempotencyKey) {
         throw badRequest("Duplicate settlement bank-apply idempotency key");

@@ -2569,6 +2569,9 @@ export async function listContractLinkableDocuments({
   const direction = asUpper(contract.contract_type) === CONTRACT_TYPE.VENDOR ? "AP" : "AR";
   const statuses = Array.from(LINKABLE_DOCUMENT_STATUSES);
   const statusPlaceholders = inClausePlaceholders(statuses);
+  const normalizedLimit = Number.isInteger(Number(limit)) && Number(limit) > 0 ? Number(limit) : 100;
+  const normalizedOffset =
+    Number.isInteger(Number(offset)) && Number(offset) >= 0 ? Number(offset) : 0;
 
   const params = [tenantId, contract.legal_entity_id, direction, ...statuses];
   const conditions = [
@@ -2586,8 +2589,6 @@ export async function listContractLinkableDocuments({
     params.push(like, like, like);
   }
 
-  params.push(Number(limit), Number(offset));
-
   const result = await query(
     `SELECT
         d.id,
@@ -2604,8 +2605,8 @@ export async function listContractLinkableDocuments({
      FROM cari_documents d
      WHERE ${conditions.join(" AND ")}
      ORDER BY d.document_date DESC, d.id DESC
-     LIMIT ?
-     OFFSET ?`,
+     LIMIT ${normalizedLimit}
+     OFFSET ${normalizedOffset}`,
     params
   );
 

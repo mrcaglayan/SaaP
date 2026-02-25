@@ -249,6 +249,39 @@ const implementedRoutes = [
   },
 ];
 
+for (const route of implementedRoutes) {
+  const permissionPath = route.permissionPath || route.appPath;
+  if (permissionPath === route.appPath) {
+    continue;
+  }
+
+  const baseLink = sidebarLinkByPath.get(permissionPath);
+  if (!baseLink) {
+    continue;
+  }
+
+  const aliasLink = sidebarLinkByPath.get(route.appPath);
+  const basePermissions = Array.isArray(baseLink.requiredPermissions)
+    ? baseLink.requiredPermissions
+    : [];
+  const aliasPermissions = Array.isArray(aliasLink?.requiredPermissions)
+    ? aliasLink.requiredPermissions
+    : [];
+  const mergedPermissions = Array.from(
+    new Set([...aliasPermissions, ...basePermissions])
+  );
+  if (mergedPermissions.length === 0) {
+    continue;
+  }
+
+  sidebarLinkByPath.set(route.appPath, {
+    ...(aliasLink || baseLink),
+    to: route.appPath,
+    routePath: route.appPath,
+    requiredPermissions: mergedPermissions,
+  });
+}
+
 const implementedPaths = new Set([
   "/app",
   ...implementedRoutes.map((route) => route.appPath),
@@ -332,7 +365,7 @@ export default function App() {
           <Route
             key={route.appPath}
             path={route.childPath}
-            element={withPermissionGuard(route.permissionPath || route.appPath, route.element)}
+            element={withPermissionGuard(route.appPath, route.element)}
           />
         ))}
 

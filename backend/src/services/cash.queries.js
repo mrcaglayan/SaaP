@@ -107,16 +107,23 @@ const CASH_TXN_BASE_SELECT = `
     ct.reference_no,
     ct.source_doc_type,
     ct.source_doc_id,
+    ct.source_module,
+    ct.source_entity_type,
+    ct.source_entity_id,
+    ct.integration_link_status,
     ct.counterparty_type,
     ct.counterparty_id,
     ct.counter_account_id,
     ct.counter_cash_register_id,
+    ct.linked_cari_settlement_batch_id,
+    ct.linked_cari_unapplied_cash_id,
     ct.posted_journal_entry_id,
     ct.reversal_of_transaction_id,
     ct.cancel_reason,
     ct.override_cash_control,
     ct.override_reason,
     ct.idempotency_key,
+    ct.integration_event_uid,
     ct.created_by_user_id,
     ct.submitted_by_user_id,
     ct.approved_by_user_id,
@@ -652,6 +659,21 @@ export async function findCashTransactionByIdempotency({
   return asRow(result);
 }
 
+export async function findCashTransactionByIntegrationEventUid({
+  tenantId,
+  integrationEventUid,
+  runQuery = query,
+}) {
+  const result = await runQuery(
+    `${CASH_TXN_BASE_SELECT}
+     WHERE ct.tenant_id = ?
+       AND ct.integration_event_uid = ?
+     LIMIT 1`,
+    [tenantId, integrationEventUid]
+  );
+  return asRow(result);
+}
+
 export async function findCashTransactionByReversalOf({
   tenantId,
   transactionId,
@@ -710,23 +732,30 @@ export async function insertCashTransaction({ payload, runQuery = query }) {
        amount,
        currency_code,
        description,
-       reference_no,
-       source_doc_type,
-       source_doc_id,
-       counterparty_type,
-       counterparty_id,
-       counter_account_id,
-       counter_cash_register_id,
-       reversal_of_transaction_id,
-       override_cash_control,
-       override_reason,
-       idempotency_key,
-       created_by_user_id,
-       posted_by_user_id,
-       posted_at
-     ) VALUES (
-       ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-     )`,
+        reference_no,
+        source_doc_type,
+        source_doc_id,
+        source_module,
+        source_entity_type,
+        source_entity_id,
+        integration_link_status,
+        counterparty_type,
+        counterparty_id,
+        counter_account_id,
+        counter_cash_register_id,
+        linked_cari_settlement_batch_id,
+        linked_cari_unapplied_cash_id,
+        reversal_of_transaction_id,
+        override_cash_control,
+        override_reason,
+        idempotency_key,
+        integration_event_uid,
+        created_by_user_id,
+        posted_by_user_id,
+        posted_at
+      ) VALUES (
+        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+      )`,
     [
       payload.tenantId,
       payload.registerId,
@@ -742,14 +771,21 @@ export async function insertCashTransaction({ payload, runQuery = query }) {
       payload.referenceNo,
       payload.sourceDocType,
       payload.sourceDocId,
+      payload.sourceModule,
+      payload.sourceEntityType,
+      payload.sourceEntityId,
+      payload.integrationLinkStatus,
       payload.counterpartyType,
       payload.counterpartyId,
       payload.counterAccountId,
       payload.counterCashRegisterId,
+      payload.linkedCariSettlementBatchId,
+      payload.linkedCariUnappliedCashId,
       payload.reversalOfTransactionId,
       payload.overrideCashControl,
       payload.overrideReason,
       payload.idempotencyKey,
+      payload.integrationEventUid,
       payload.userId,
       payload.postedByUserId,
       payload.postedAt,

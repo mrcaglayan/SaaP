@@ -218,12 +218,16 @@ export default function CariSettlementsPage() {
 
   const applyIntentScope = useMemo(
     () => buildSettlementIntentScope(applyForm),
-    [applyForm.legalEntityId, applyForm.counterpartyId, applyForm.direction]
+    [applyForm]
   );
   const applyIntentFingerprint = useMemo(
     () => buildSettlementIntentFingerprint(applyForm),
-    [applyForm.currencyCode, applyForm.incomingAmountTxn, applyForm.settlementDate]
+    [applyForm]
   );
+  const previewLegalEntityId = previewFilters.legalEntityId;
+  const previewCounterpartyId = previewFilters.counterpartyId;
+  const previewAsOfDate = previewFilters.asOfDate;
+  const previewDirection = previewFilters.direction;
 
   useEffect(() => {
     const pendingKey = loadPendingIdempotencyKey(applyIntentScope, applyIntentFingerprint);
@@ -239,8 +243,7 @@ export default function CariSettlementsPage() {
       return;
     }
 
-    const { legalEntityId, counterpartyId, asOfDate, direction } = previewFilters;
-    if (!legalEntityId || !counterpartyId || !asOfDate) {
+    if (!previewLegalEntityId || !previewCounterpartyId || !previewAsOfDate) {
       setOpenItems([]);
       setPreviewError("");
       return;
@@ -252,10 +255,10 @@ export default function CariSettlementsPage() {
       setPreviewError("");
       try {
         const payload = await getCariOpenItemsReport({
-          legalEntityId,
-          counterpartyId,
-          asOfDate,
-          direction: direction || undefined,
+          legalEntityId: previewLegalEntityId,
+          counterpartyId: previewCounterpartyId,
+          asOfDate: previewAsOfDate,
+          direction: previewDirection || undefined,
           status: "OPEN",
           limit: 500,
           offset: 0,
@@ -284,10 +287,10 @@ export default function CariSettlementsPage() {
     };
   }, [
     canReadReports,
-    previewFilters.legalEntityId,
-    previewFilters.counterpartyId,
-    previewFilters.asOfDate,
-    previewFilters.direction,
+    previewLegalEntityId,
+    previewCounterpartyId,
+    previewAsOfDate,
+    previewDirection,
   ]);
 
   function updateApplyForm(field, value) {

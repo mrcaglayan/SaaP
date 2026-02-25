@@ -37,6 +37,14 @@ const SOURCE_DOC_TYPES = [
 ];
 
 const COUNTERPARTY_TYPES = ["CUSTOMER", "VENDOR", "EMPLOYEE", "LEGAL_ENTITY", "OTHER"];
+const SOURCE_MODULES = ["MANUAL", "CARI", "CONTRACTS", "REVREC", "CASH", "SYSTEM", "OTHER"];
+const INTEGRATION_LINK_STATUSES = [
+  "UNLINKED",
+  "PENDING",
+  "LINKED",
+  "PARTIALLY_LINKED",
+  "FAILED",
+];
 
 export function parseCashTransactionIdParam(req) {
   const transactionId = parsePositiveInt(req.params?.transactionId);
@@ -92,6 +100,14 @@ export function parseCashTransactionCreateInput(req) {
     "counterCashRegisterId"
   );
   const counterpartyId = optionalPositiveInt(req.body?.counterpartyId, "counterpartyId");
+  const linkedCariSettlementBatchId = optionalPositiveInt(
+    req.body?.linkedCariSettlementBatchId,
+    "linkedCariSettlementBatchId"
+  );
+  const linkedCariUnappliedCashId = optionalPositiveInt(
+    req.body?.linkedCariUnappliedCashId,
+    "linkedCariUnappliedCashId"
+  );
 
   if (!registerId) {
     throw badRequest("registerId is required");
@@ -121,9 +137,45 @@ export function parseCashTransactionCreateInput(req) {
   const counterpartyType = counterpartyTypeRaw
     ? normalizeEnum(counterpartyTypeRaw, "counterpartyType", COUNTERPARTY_TYPES)
     : null;
+  const sourceModuleRaw = String(req.body?.sourceModule || "")
+    .trim()
+    .toUpperCase();
+  const sourceModule = sourceModuleRaw
+    ? normalizeEnum(sourceModuleRaw, "sourceModule", SOURCE_MODULES)
+    : null;
+  const sourceEntityType = normalizeText(req.body?.sourceEntityType, "sourceEntityType", 60);
+  const sourceEntityId = normalizeText(req.body?.sourceEntityId, "sourceEntityId", 120);
+  const integrationLinkStatusRaw = String(req.body?.integrationLinkStatus || "")
+    .trim()
+    .toUpperCase();
+  const integrationLinkStatus = integrationLinkStatusRaw
+    ? normalizeEnum(
+        integrationLinkStatusRaw,
+        "integrationLinkStatus",
+        INTEGRATION_LINK_STATUSES
+      )
+    : null;
+  const integrationEventUid = normalizeText(req.body?.integrationEventUid, "integrationEventUid", 100);
   const idempotencyKey = normalizeText(req.body?.idempotencyKey, "idempotencyKey", 100, {
     required: true,
   });
+
+  if ((sourceEntityType || sourceEntityId || integrationEventUid) && !sourceModule) {
+    throw badRequest(
+      "sourceModule is required when sourceEntityType, sourceEntityId, or integrationEventUid is provided"
+    );
+  }
+  if (sourceModule && sourceModule !== "MANUAL" && (!sourceEntityType || !sourceEntityId)) {
+    throw badRequest("sourceEntityType and sourceEntityId are required when sourceModule is not MANUAL");
+  }
+  if (
+    (linkedCariSettlementBatchId || linkedCariUnappliedCashId) &&
+    integrationLinkStatus === "UNLINKED"
+  ) {
+    throw badRequest(
+      "integrationLinkStatus cannot be UNLINKED when linkedCariSettlementBatchId or linkedCariUnappliedCashId is provided"
+    );
+  }
 
   return {
     tenantId,
@@ -143,6 +195,13 @@ export function parseCashTransactionCreateInput(req) {
     counterpartyId,
     counterAccountId,
     counterCashRegisterId,
+    linkedCariSettlementBatchId,
+    linkedCariUnappliedCashId,
+    sourceModule,
+    sourceEntityType,
+    sourceEntityId,
+    integrationLinkStatus,
+    integrationEventUid,
     idempotencyKey,
   };
 }
@@ -198,4 +257,3 @@ export function parseCashTransactionReverseInput(req) {
     reverseReason,
   };
 }
-
