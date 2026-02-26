@@ -63,8 +63,10 @@ router.post(
     });
     return res.status(201).json({
       tenantId: input.tenantId,
-      row: result.row,
-      idempotent: Boolean(result.idempotent),
+      row: result?.row || null,
+      approval_required: Boolean(result?.approval_required),
+      approval_request: result?.approval_request || null,
+      idempotent: Boolean(result?.idempotent),
     });
   })
 );

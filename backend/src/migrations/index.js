@@ -48,6 +48,7 @@ import migration057BankReconciliationRulesAndExceptions from "./m057_bank_reconc
 import migration058BankConnectivityAdapters from "./m058_bank_connectivity_adapters.js";
 import migration059BankReconciliationAutopostTemplates from "./m059_bank_reconciliation_autopost_templates.js";
 import migration060BankReturnsAndReconDifferences from "./m060_bank_returns_and_recon_differences.js";
+import migration061BankGovernanceApprovalsSod from "./m061_bank_governance_approvals_sod.js";
 
 const migrations = [
   migration001GlobalMultiEntity,
@@ -100,6 +101,7 @@ const migrations = [
   migration058BankConnectivityAdapters,
   migration059BankReconciliationAutopostTemplates,
   migration060BankReturnsAndReconDifferences,
+  migration061BankGovernanceApprovalsSod,
 ];
 
 export default migrations;

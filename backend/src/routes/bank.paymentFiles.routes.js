@@ -58,7 +58,9 @@ router.post(
     return res.json({
       tenantId: input.tenantId,
       row: result.row,
-      export: result.export,
+      export: result.export || null,
+      approval_required: Boolean(result.approval_required),
+      approval_request: result.approval_request || null,
       idempotent: Boolean(result.idempotent),
     });
   })

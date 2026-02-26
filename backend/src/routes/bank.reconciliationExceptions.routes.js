@@ -85,7 +85,7 @@ router.post(
   }),
   asyncHandler(async (req, res) => {
     const input = parseReconciliationExceptionResolveInput(req);
-    const row = await resolveReconciliationException({
+    const result = await resolveReconciliationException({
       req,
       tenantId: input.tenantId,
       exceptionId: input.exceptionId,
@@ -94,7 +94,13 @@ router.post(
       userId: input.userId,
       assertScopeAccess,
     });
-    return res.json({ tenantId: input.tenantId, row });
+    return res.json({
+      tenantId: input.tenantId,
+      row: result?.row || result || null,
+      approval_required: Boolean(result?.approval_required),
+      approval_request: result?.approval_request || null,
+      idempotent: Boolean(result?.idempotent),
+    });
   })
 );
 
@@ -105,7 +111,7 @@ router.post(
   }),
   asyncHandler(async (req, res) => {
     const input = parseReconciliationExceptionIgnoreInput(req);
-    const row = await ignoreReconciliationException({
+    const result = await ignoreReconciliationException({
       req,
       tenantId: input.tenantId,
       exceptionId: input.exceptionId,
@@ -113,7 +119,13 @@ router.post(
       userId: input.userId,
       assertScopeAccess,
     });
-    return res.json({ tenantId: input.tenantId, row });
+    return res.json({
+      tenantId: input.tenantId,
+      row: result?.row || result || null,
+      approval_required: Boolean(result?.approval_required),
+      approval_request: result?.approval_request || null,
+      idempotent: Boolean(result?.idempotent),
+    });
   })
 );
 

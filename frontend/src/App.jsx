@@ -34,6 +34,7 @@ import BankAccountsPage from "./pages/bank/BankAccountsPage.jsx";
 import BankStatementImportPage from "./pages/bank/BankStatementImportPage.jsx";
 import BankStatementQueuePage from "./pages/bank/BankStatementQueuePage.jsx";
 import BankReconciliationPage from "./pages/bank/BankReconciliationPage.jsx";
+import BankGovernancePage from "./pages/bank/BankGovernancePage.jsx";
 import PaymentBatchListPage from "./pages/payments/PaymentBatchListPage.jsx";
 import PaymentBatchDetailPage from "./pages/payments/PaymentBatchDetailPage.jsx";
 import PayrollRunImportPage from "./pages/payroll/PayrollRunImportPage.jsx";
@@ -166,6 +167,11 @@ const implementedRoutes = [
     appPath: "/app/banka-mutabakat",
     childPath: "banka-mutabakat",
     element: <BankReconciliationPage />,
+  },
+  {
+    appPath: "/app/banka-onaylar",
+    childPath: "banka-onaylar",
+    element: <BankGovernancePage />,
   },
   {
     appPath: "/app/banka-islemleri",

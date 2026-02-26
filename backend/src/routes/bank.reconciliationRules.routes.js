@@ -62,8 +62,14 @@ router.post(
   requirePermission("bank.reconcile.rules.write", { resolveScope: resolveRulesScope }),
   asyncHandler(async (req, res) => {
     const input = parseReconciliationRuleCreateInput(req);
-    const row = await createReconciliationRule({ req, input, assertScopeAccess });
-    return res.status(201).json({ tenantId: input.tenantId, row });
+    const result = await createReconciliationRule({ req, input, assertScopeAccess });
+    return res.status(201).json({
+      tenantId: input.tenantId,
+      row: result?.row || result || null,
+      approval_required: Boolean(result?.approval_required),
+      approval_request: result?.approval_request || null,
+      idempotent: Boolean(result?.idempotent),
+    });
   })
 );
 
@@ -72,8 +78,14 @@ router.patch(
   requirePermission("bank.reconcile.rules.write"),
   asyncHandler(async (req, res) => {
     const input = parseReconciliationRuleUpdateInput(req);
-    const row = await updateReconciliationRule({ req, input, assertScopeAccess });
-    return res.json({ tenantId: input.tenantId, row });
+    const result = await updateReconciliationRule({ req, input, assertScopeAccess });
+    return res.json({
+      tenantId: input.tenantId,
+      row: result?.row || result || null,
+      approval_required: Boolean(result?.approval_required),
+      approval_request: result?.approval_request || null,
+      idempotent: Boolean(result?.idempotent),
+    });
   })
 );
 

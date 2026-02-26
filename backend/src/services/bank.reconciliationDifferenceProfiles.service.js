@@ -1,6 +1,8 @@
 import { query } from "../db.js";
 import { badRequest, parsePositiveInt } from "../routes/_utils.js";
 import { resolveBankAccountScope } from "./bank.accounts.service.js";
+import { evaluateBankApprovalNeed } from "./bank.governance.service.js";
+import { submitBankApprovalRequest } from "./bank.approvals.service.js";
 
 function u(value) {
   return String(value || "").trim().toUpperCase();
@@ -368,10 +370,18 @@ export async function createDifferenceProfile({ req, input, assertScopeAccess })
     [input.tenantId, ctx.legalEntityId, input.profileCode]
   );
   const profileId = parsePositiveInt(lookup.rows?.[0]?.id);
-  return getDifferenceProfileById({
+  const row = await getDifferenceProfileById({
     req,
     tenantId: input.tenantId,
     profileId,
+    assertScopeAccess,
+  });
+  return maybeStageDifferenceProfileApproval({
+    req,
+    tenantId: input.tenantId,
+    userId: input.userId,
+    row,
+    actionType: "CREATE",
     assertScopeAccess,
   });
 }
@@ -448,17 +458,137 @@ export async function updateDifferenceProfile({ req, input, assertScopeAccess })
     ]
   );
 
-  return getDifferenceProfileById({
+  const row = await getDifferenceProfileById({
     req,
     tenantId: input.tenantId,
     profileId: input.profileId,
+    assertScopeAccess,
+  });
+  return maybeStageDifferenceProfileApproval({
+    req,
+    tenantId: input.tenantId,
+    userId: input.userId,
+    row,
+    actionType: "UPDATE",
     assertScopeAccess,
   });
 }
 
 export async function getDifferenceProfileForAutomation({ tenantId, profileId, runQuery = query }) {
   const row = await getProfileByIdRaw({ tenantId, profileId, runQuery });
-  return hydrate(row);
+  const hydrated = hydrate(row);
+  if (!hydrated) return null;
+  if (u(hydrated.approval_state || "APPROVED") !== "APPROVED") {
+    throw badRequest("Difference profile is pending approval");
+  }
+  return hydrated;
+}
+
+async function maybeStageDifferenceProfileApproval({
+  req,
+  tenantId,
+  userId,
+  row,
+  actionType,
+  assertScopeAccess,
+}) {
+  if (!row) return { row, approval_required: false };
+  const legalEntityId = parsePositiveInt(row.legal_entity_id) || null;
+  const bankAccountId = parsePositiveInt(row.bank_account_id) || null;
+  if (legalEntityId) {
+    assertScopeAccess(req, "legal_entity", legalEntityId, "profileId");
+  }
+
+  const gov = await evaluateBankApprovalNeed({
+    tenantId,
+    targetType: "DIFF_PROFILE",
+    actionType,
+    legalEntityId,
+    bankAccountId,
+    currencyCode: row.currency_code || null,
+  });
+  if (!gov?.approvalRequired && !gov?.approval_required) {
+    return { row, approval_required: false };
+  }
+
+  const submitRes = await submitBankApprovalRequest({
+    tenantId,
+    userId,
+    requestInput: {
+      requestKey: `B09:DIFF_PROFILE:${tenantId}:${row.id}:${u(actionType)}:v${Number(
+        row.version_no || 1
+      )}:${String(row.updated_at || "")}`,
+      targetType: "DIFF_PROFILE",
+      targetId: row.id,
+      actionType: u(actionType),
+      legalEntityId,
+      bankAccountId,
+      currencyCode: row.currency_code || null,
+      actionPayload: { profileId: row.id },
+    },
+    snapshotBuilder: async () => ({
+      profile_id: row.id,
+      profile_code: row.profile_code,
+      profile_name: row.profile_name,
+      status: row.status,
+      approval_state: row.approval_state || "APPROVED",
+      version_no: Number(row.version_no || 1),
+      legal_entity_id: legalEntityId,
+      bank_account_id: bankAccountId,
+      difference_type: row.difference_type,
+      max_abs_difference: row.max_abs_difference,
+      currency_code: row.currency_code || null,
+    }),
+    policyOverride: gov,
+  });
+  const approvalRequestId = parsePositiveInt(submitRes?.item?.id) || null;
+  if (!approvalRequestId) return { row, approval_required: false };
+
+  await query(
+    `UPDATE bank_reconciliation_difference_profiles
+     SET approval_state = 'PENDING_APPROVAL',
+         approval_request_id = ?,
+         status = CASE WHEN status = 'ACTIVE' THEN 'PAUSED' ELSE status END,
+         version_no = CASE WHEN ? = 'UPDATE' THEN version_no + 1 ELSE version_no END,
+         updated_by_user_id = COALESCE(?, updated_by_user_id)
+     WHERE tenant_id = ?
+       AND id = ?`,
+    [approvalRequestId, u(actionType), userId || null, tenantId, row.id]
+  );
+
+  const staged = await getDifferenceProfileById({
+    req,
+    tenantId,
+    profileId: row.id,
+    assertScopeAccess,
+  });
+  return {
+    row: staged,
+    approval_required: true,
+    approval_request: submitRes.item,
+    idempotent: Boolean(submitRes?.idempotent),
+  };
+}
+
+export async function activateApprovedDifferenceProfileChange({
+  tenantId,
+  profileId,
+  approvalRequestId,
+  approvedByUserId,
+}) {
+  const current = await getProfileByIdRaw({ tenantId, profileId });
+  if (!current) throw badRequest("Difference profile not found");
+  await query(
+    `UPDATE bank_reconciliation_difference_profiles
+     SET approval_state = 'APPROVED',
+         approval_request_id = ?,
+         status = CASE WHEN status = 'PAUSED' THEN 'ACTIVE' ELSE status END,
+         updated_by_user_id = ?
+     WHERE tenant_id = ?
+       AND id = ?`,
+    [approvalRequestId || null, approvedByUserId || null, tenantId, profileId]
+  );
+  return { profile_id: profileId, activated: true };
 }
 
 export default {

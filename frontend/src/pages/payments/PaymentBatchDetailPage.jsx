@@ -169,8 +169,18 @@ export default function PaymentBatchDetailPage() {
         : exportPaymentBatch(row.id, { format: "CSV" })
     );
     if (res) {
-      setExportPreview(String(res?.export?.csv || ""));
-      setMessage(canBankExportB06 ? "B06 banka export olusturuldu" : "CSV export olusturuldu");
+      if (res?.approval_required) {
+        const approvalId = res?.approval_request?.id;
+        setExportPreview("");
+        setMessage(
+          approvalId
+            ? `B09 onay talebi olusturuldu (#${approvalId}). Export onaydan sonra calisacak.`
+            : "B09 onay talebi olusturuldu. Export onaydan sonra calisacak."
+        );
+      } else {
+        setExportPreview(String(res?.export?.csv || ""));
+        setMessage(canBankExportB06 ? "B06 banka export olusturuldu" : "CSV export olusturuldu");
+      }
     }
   }
 
@@ -311,6 +321,13 @@ export default function PaymentBatchDetailPage() {
                 <div className="font-medium">{row.bank_export_status || "-"}</div>
               </div>
               <div>
+                <div className="text-slate-500">B09 Onay Durumu</div>
+                <div className="font-medium">{row.governance_approval_status || "-"}</div>
+                <div className="text-xs text-slate-500">
+                  Req #{row.governance_approval_request_id || "-"}
+                </div>
+              </div>
+              <div>
                 <div className="text-slate-500">Bank Ack Durumu</div>
                 <div className="font-medium">{row.bank_ack_status || "-"}</div>
                 <div className="text-xs text-slate-500">{formatDateTime(row.last_ack_imported_at)}</div>
@@ -318,6 +335,11 @@ export default function PaymentBatchDetailPage() {
               <div>
                 <div className="text-slate-500">Posted Journal</div>
                 <div className="font-medium">{row.posted_journal_entry_id || "-"}</div>
+              </div>
+              <div>
+                <div className="text-slate-500">B09 Onaylayan</div>
+                <div className="font-medium">#{row.governance_approved_by_user_id || "-"}</div>
+                <div className="text-xs text-slate-500">{formatDateTime(row.governance_approved_at)}</div>
               </div>
             </div>
 

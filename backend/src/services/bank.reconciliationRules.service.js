@@ -1,5 +1,11 @@
 import { query } from "../db.js";
 import { badRequest, parsePositiveInt } from "../routes/_utils.js";
+import { evaluateBankApprovalNeed } from "./bank.governance.service.js";
+import { submitBankApprovalRequest } from "./bank.approvals.service.js";
+
+function u(value) {
+  return String(value || "").trim().toUpperCase();
+}
 
 function parseJson(value, fallback = null) {
   if (value === undefined || value === null) return fallback;
@@ -105,6 +111,94 @@ function normalizeRuleScopeForWrite(input, current = null) {
     throw badRequest("scopeType is invalid");
   }
   return next;
+}
+
+async function maybeStageRuleChangeApproval({
+  req,
+  tenantId,
+  userId,
+  row,
+  actionType,
+  assertScopeAccess,
+}) {
+  if (!row) return { row, approval_required: false };
+  const legalEntityId = parsePositiveInt(row.legal_entity_id) || null;
+  const bankAccountId = parsePositiveInt(row.bank_account_id) || null;
+  if (legalEntityId) {
+    assertScopeAccess(req, "legal_entity", legalEntityId, "ruleId");
+  }
+
+  const gov = await evaluateBankApprovalNeed({
+    tenantId,
+    targetType: "RECON_RULE",
+    actionType,
+    legalEntityId,
+    bankAccountId,
+    thresholdAmount: null,
+    currencyCode: null,
+  });
+  if (!gov?.approvalRequired && !gov?.approval_required) {
+    return { row, approval_required: false };
+  }
+
+  const submitRes = await submitBankApprovalRequest({
+    tenantId,
+    userId,
+    requestInput: {
+      requestKey: `B09:RULE:${tenantId}:${row.id}:${u(actionType)}:v${Number(row.version_no || 1)}:${String(
+        row.updated_at || ""
+      )}`,
+      targetType: "RECON_RULE",
+      targetId: row.id,
+      actionType: u(actionType),
+      legalEntityId,
+      bankAccountId,
+      actionPayload: {
+        ruleId: row.id,
+      },
+    },
+    snapshotBuilder: async () => ({
+      rule_id: row.id,
+      rule_code: row.rule_code,
+      rule_name: row.rule_name,
+      status: row.status,
+      approval_state: row.approval_state || "APPROVED",
+      version_no: Number(row.version_no || 1),
+      scope_type: row.scope_type,
+      legal_entity_id: legalEntityId,
+      bank_account_id: bankAccountId,
+      match_type: row.match_type,
+      action_type: row.action_type,
+      conditions_json: row.conditions_json || {},
+      action_payload_json: row.action_payload_json || {},
+    }),
+    policyOverride: gov,
+  });
+
+  const approvalRequestId = parsePositiveInt(submitRes?.item?.id) || null;
+  if (!approvalRequestId) {
+    return { row, approval_required: false };
+  }
+
+  await query(
+    `UPDATE bank_reconciliation_rules
+     SET approval_state = 'PENDING_APPROVAL',
+         approval_request_id = ?,
+         status = CASE WHEN status = 'ACTIVE' THEN 'PAUSED' ELSE status END,
+         version_no = CASE WHEN ? = 'UPDATE' THEN version_no + 1 ELSE version_no END,
+         updated_by_user_id = COALESCE(?, updated_by_user_id)
+     WHERE tenant_id = ?
+       AND id = ?`,
+    [approvalRequestId, u(actionType), userId || null, tenantId, row.id]
+  );
+
+  const staged = await getRuleRowById({ tenantId, ruleId: row.id });
+  return {
+    row: staged,
+    approval_required: true,
+    approval_request: submitRes.item,
+    idempotent: Boolean(submitRes?.idempotent),
+  };
 }
 
 export async function listReconciliationRuleRows({
@@ -264,7 +358,15 @@ export async function createReconciliationRule({
   );
 
   const ruleId = parsePositiveInt(insertResult.rows?.insertId);
-  return getRuleRowById({ tenantId: input.tenantId, ruleId });
+  const row = await getRuleRowById({ tenantId: input.tenantId, ruleId });
+  return maybeStageRuleChangeApproval({
+    req,
+    tenantId: input.tenantId,
+    userId: input.userId,
+    row,
+    actionType: "CREATE",
+    assertScopeAccess,
+  });
 }
 
 export async function updateReconciliationRule({
@@ -347,7 +449,15 @@ export async function updateReconciliationRule({
     ]
   );
 
-  return getRuleRowById({ tenantId: input.tenantId, ruleId: input.ruleId });
+  const row = await getRuleRowById({ tenantId: input.tenantId, ruleId: input.ruleId });
+  return maybeStageRuleChangeApproval({
+    req,
+    tenantId: input.tenantId,
+    userId: input.userId,
+    row,
+    actionType: "UPDATE",
+    assertScopeAccess,
+  });
 }
 
 export async function listActiveRulesForAutomation({
@@ -356,8 +466,8 @@ export async function listActiveRulesForAutomation({
   bankAccountId = null,
   asOfDate = null,
 }) {
-  const params = [tenantId, "ACTIVE"];
-  const conditions = ["tenant_id = ?", "status = ?"];
+  const params = [tenantId, "ACTIVE", "APPROVED"];
+  const conditions = ["tenant_id = ?", "status = ?", "COALESCE(approval_state, 'APPROVED') = ?"];
 
   if (legalEntityId) {
     conditions.push(
@@ -392,3 +502,24 @@ export default {
   updateReconciliationRule,
   listActiveRulesForAutomation,
 };
+
+export async function activateApprovedRuleChange({
+  tenantId,
+  ruleId,
+  approvalRequestId,
+  approvedByUserId,
+}) {
+  const current = await getRuleRowById({ tenantId, ruleId });
+  if (!current) throw badRequest("Reconciliation rule not found");
+  await query(
+    `UPDATE bank_reconciliation_rules
+     SET approval_state = 'APPROVED',
+         approval_request_id = ?,
+         status = CASE WHEN status = 'PAUSED' THEN 'ACTIVE' ELSE status END,
+         updated_by_user_id = ?
+     WHERE tenant_id = ?
+       AND id = ?`,
+    [approvalRequestId || null, approvedByUserId || null, tenantId, ruleId]
+  );
+  return { rule_id: ruleId, activated: true };
+}

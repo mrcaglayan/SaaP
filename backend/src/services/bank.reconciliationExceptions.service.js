@@ -1,5 +1,7 @@
 import { query, withTransaction } from "../db.js";
 import { badRequest, parsePositiveInt } from "../routes/_utils.js";
+import { evaluateBankApprovalNeed } from "./bank.governance.service.js";
+import { submitBankApprovalRequest } from "./bank.approvals.service.js";
 
 function safeJson(value) {
   return JSON.stringify(value ?? null);
@@ -462,6 +464,8 @@ export async function resolveReconciliationException({
   resolutionNote,
   userId,
   assertScopeAccess,
+  skipApprovalGate = false,
+  approvalRequestId = null,
 }) {
   const current = await getReconciliationExceptionById({
     req,
@@ -476,6 +480,64 @@ export async function resolveReconciliationException({
     throw badRequest("Ignored exception cannot be resolved directly; retry first");
   }
 
+  if (!skipApprovalGate) {
+    const gov = await evaluateBankApprovalNeed({
+      tenantId,
+      targetType: "RECON_EXCEPTION_OVERRIDE",
+      actionType: "RESOLVE",
+      legalEntityId: current.legal_entity_id,
+      bankAccountId: current.bank_account_id,
+    });
+    if (gov?.approvalRequired || gov?.approval_required) {
+      const submitRes = await submitBankApprovalRequest({
+        tenantId,
+        userId,
+        requestInput: {
+          requestKey: `B09:RECON_EXC:${tenantId}:${exceptionId}:RESOLVE:${String(current.updated_at || "")}`,
+          targetType: "RECON_EXCEPTION_OVERRIDE",
+          targetId: exceptionId,
+          actionType: "RESOLVE",
+          legalEntityId: current.legal_entity_id,
+          bankAccountId: current.bank_account_id,
+          actionPayload: {
+            exceptionId,
+            overrideAction: "RESOLVE",
+            resolutionCode,
+            resolutionNote: resolutionNote || null,
+          },
+        },
+        snapshotBuilder: async () => ({
+          exception_id: current.id,
+          status: current.status,
+          severity: current.severity,
+          reason_code: current.reason_code,
+          bank_account_id: current.bank_account_id,
+          statement_line_id: current.statement_line_id,
+          requested_action: "RESOLVE",
+          resolution_code: resolutionCode,
+          resolution_note: resolutionNote || null,
+        }),
+        policyOverride: gov,
+      });
+      const approvalReqId = parsePositiveInt(submitRes?.item?.id) || null;
+      if (approvalReqId) {
+        await query(
+          `UPDATE bank_reconciliation_exceptions
+           SET override_approval_request_id = ?
+           WHERE tenant_id = ?
+             AND legal_entity_id = ?
+             AND id = ?`,
+          [approvalReqId, tenantId, current.legal_entity_id, exceptionId]
+        );
+      }
+      return {
+        approval_required: true,
+        approval_request: submitRes.item || null,
+        idempotent: Boolean(submitRes?.idempotent),
+      };
+    }
+  }
+
   return withTransaction(async (tx) => {
     await tx.query(
       `UPDATE bank_reconciliation_exceptions
@@ -483,11 +545,20 @@ export async function resolveReconciliationException({
            resolved_by_user_id = ?,
            resolved_at = CURRENT_TIMESTAMP,
            resolution_code = ?,
-           resolution_note = ?
+           resolution_note = ?,
+           override_approval_request_id = COALESCE(?, override_approval_request_id)
        WHERE tenant_id = ?
          AND legal_entity_id = ?
          AND id = ?`,
-      [userId, resolutionCode, resolutionNote || null, tenantId, current.legal_entity_id, exceptionId]
+      [
+        userId,
+        resolutionCode,
+        resolutionNote || null,
+        approvalRequestId || null,
+        tenantId,
+        current.legal_entity_id,
+        exceptionId,
+      ]
     );
 
     await insertExceptionEvent({
@@ -514,6 +585,8 @@ export async function ignoreReconciliationException({
   resolutionNote,
   userId,
   assertScopeAccess,
+  skipApprovalGate = false,
+  approvalRequestId = null,
 }) {
   const current = await getReconciliationExceptionById({
     req,
@@ -528,6 +601,62 @@ export async function ignoreReconciliationException({
     throw badRequest("Resolved exception cannot be ignored directly; retry first");
   }
 
+  if (!skipApprovalGate) {
+    const gov = await evaluateBankApprovalNeed({
+      tenantId,
+      targetType: "RECON_EXCEPTION_OVERRIDE",
+      actionType: "IGNORE",
+      legalEntityId: current.legal_entity_id,
+      bankAccountId: current.bank_account_id,
+    });
+    if (gov?.approvalRequired || gov?.approval_required) {
+      const submitRes = await submitBankApprovalRequest({
+        tenantId,
+        userId,
+        requestInput: {
+          requestKey: `B09:RECON_EXC:${tenantId}:${exceptionId}:IGNORE:${String(current.updated_at || "")}`,
+          targetType: "RECON_EXCEPTION_OVERRIDE",
+          targetId: exceptionId,
+          actionType: "IGNORE",
+          legalEntityId: current.legal_entity_id,
+          bankAccountId: current.bank_account_id,
+          actionPayload: {
+            exceptionId,
+            overrideAction: "IGNORE",
+            resolutionNote: resolutionNote || "Ignored",
+          },
+        },
+        snapshotBuilder: async () => ({
+          exception_id: current.id,
+          status: current.status,
+          severity: current.severity,
+          reason_code: current.reason_code,
+          bank_account_id: current.bank_account_id,
+          statement_line_id: current.statement_line_id,
+          requested_action: "IGNORE",
+          resolution_note: resolutionNote || "Ignored",
+        }),
+        policyOverride: gov,
+      });
+      const approvalReqId = parsePositiveInt(submitRes?.item?.id) || null;
+      if (approvalReqId) {
+        await query(
+          `UPDATE bank_reconciliation_exceptions
+           SET override_approval_request_id = ?
+           WHERE tenant_id = ?
+             AND legal_entity_id = ?
+             AND id = ?`,
+          [approvalReqId, tenantId, current.legal_entity_id, exceptionId]
+        );
+      }
+      return {
+        approval_required: true,
+        approval_request: submitRes.item || null,
+        idempotent: Boolean(submitRes?.idempotent),
+      };
+    }
+  }
+
   return withTransaction(async (tx) => {
     await tx.query(
       `UPDATE bank_reconciliation_exceptions
@@ -535,11 +664,19 @@ export async function ignoreReconciliationException({
            resolved_by_user_id = ?,
            resolved_at = CURRENT_TIMESTAMP,
            resolution_code = 'IGNORED',
-           resolution_note = ?
+           resolution_note = ?,
+           override_approval_request_id = COALESCE(?, override_approval_request_id)
        WHERE tenant_id = ?
          AND legal_entity_id = ?
          AND id = ?`,
-      [userId, resolutionNote || "Ignored", tenantId, current.legal_entity_id, exceptionId]
+      [
+        userId,
+        resolutionNote || "Ignored",
+        approvalRequestId || null,
+        tenantId,
+        current.legal_entity_id,
+        exceptionId,
+      ]
     );
 
     await insertExceptionEvent({
@@ -556,6 +693,45 @@ export async function ignoreReconciliationException({
 
     return getExceptionRowById({ tenantId, exceptionId, runQuery: tx.query });
   });
+}
+
+export async function executeApprovedExceptionOverride({
+  tenantId,
+  approvalRequestId,
+  approvedByUserId,
+  payload = {},
+}) {
+  const action = u(payload.overrideAction || payload.actionType || "");
+  const exceptionId = parsePositiveInt(payload.exceptionId || payload.exception_id);
+  if (!exceptionId) throw badRequest("exceptionId is required in approval payload");
+  if (action === "RESOLVE") {
+    const row = await resolveReconciliationException({
+      req: null,
+      tenantId,
+      exceptionId,
+      resolutionCode: payload.resolutionCode || payload.resolution_code || "OVERRIDE_APPROVED",
+      resolutionNote: payload.resolutionNote || payload.resolution_note || null,
+      userId: approvedByUserId,
+      assertScopeAccess: () => {},
+      skipApprovalGate: true,
+      approvalRequestId,
+    });
+    return { exception_id: exceptionId, action: "RESOLVE", status: row?.status || "RESOLVED" };
+  }
+  if (action === "IGNORE") {
+    const row = await ignoreReconciliationException({
+      req: null,
+      tenantId,
+      exceptionId,
+      resolutionNote: payload.resolutionNote || payload.resolution_note || "Ignored",
+      userId: approvedByUserId,
+      assertScopeAccess: () => {},
+      skipApprovalGate: true,
+      approvalRequestId,
+    });
+    return { exception_id: exceptionId, action: "IGNORE", status: row?.status || "IGNORED" };
+  }
+  throw badRequest(`Unsupported overrideAction: ${action || "<empty>"}`);
 }
 
 export async function retryReconciliationException({
@@ -624,4 +800,5 @@ export default {
   resolveReconciliationException,
   ignoreReconciliationException,
   retryReconciliationException,
+  executeApprovedExceptionOverride,
 };

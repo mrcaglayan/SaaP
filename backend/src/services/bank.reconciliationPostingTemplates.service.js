@@ -1,5 +1,7 @@
 import { query } from "../db.js";
 import { badRequest, parsePositiveInt } from "../routes/_utils.js";
+import { evaluateBankApprovalNeed } from "./bank.governance.service.js";
+import { submitBankApprovalRequest } from "./bank.approvals.service.js";
 
 function u(value) {
   return String(value || "").trim().toUpperCase();
@@ -368,9 +370,17 @@ export async function createPostingTemplate({
     ]
   );
 
-  return getTemplateById({
+  const created = await getTemplateById({
     tenantId: input.tenantId,
     templateId: parsePositiveInt(insertResult.rows?.insertId),
+  });
+  return maybeStagePostingTemplateApproval({
+    req,
+    tenantId: input.tenantId,
+    userId: input.userId,
+    row: created,
+    actionType: "CREATE",
+    assertScopeAccess,
   });
 }
 
@@ -487,7 +497,15 @@ export async function updatePostingTemplate({
     ]
   );
 
-  return getTemplateById({ tenantId: input.tenantId, templateId: input.templateId });
+  const updated = await getTemplateById({ tenantId: input.tenantId, templateId: input.templateId });
+  return maybeStagePostingTemplateApproval({
+    req,
+    tenantId: input.tenantId,
+    userId: input.userId,
+    row: updated,
+    actionType: "UPDATE",
+    assertScopeAccess,
+  });
 }
 
 export async function getPostingTemplateByIdForAutoPost({
@@ -495,7 +513,115 @@ export async function getPostingTemplateByIdForAutoPost({
   templateId,
   runQuery = query,
 }) {
-  return getTemplateById({ tenantId, templateId, runQuery });
+  const row = await getTemplateById({ tenantId, templateId, runQuery });
+  if (!row) return null;
+  if (u(row.approval_state || "APPROVED") !== "APPROVED") {
+    throw badRequest("Posting template is pending approval");
+  }
+  return row;
+}
+
+async function maybeStagePostingTemplateApproval({
+  req,
+  tenantId,
+  userId,
+  row,
+  actionType,
+  assertScopeAccess,
+}) {
+  if (!row) return { row, approval_required: false };
+  const legalEntityId = parsePositiveInt(row.legal_entity_id) || null;
+  const bankAccountId = parsePositiveInt(row.bank_account_id) || null;
+  if (legalEntityId) {
+    assertScopeAccess(req, "legal_entity", legalEntityId, "templateId");
+  }
+
+  const gov = await evaluateBankApprovalNeed({
+    tenantId,
+    targetType: "POST_TEMPLATE",
+    actionType,
+    legalEntityId,
+    bankAccountId,
+  });
+  if (!gov?.approvalRequired && !gov?.approval_required) {
+    return { row, approval_required: false };
+  }
+
+  const submitRes = await submitBankApprovalRequest({
+    tenantId,
+    userId,
+    requestInput: {
+      requestKey: `B09:POST_TEMPLATE:${tenantId}:${row.id}:${u(actionType)}:v${Number(
+        row.version_no || 1
+      )}:${String(row.updated_at || "")}`,
+      targetType: "POST_TEMPLATE",
+      targetId: row.id,
+      actionType: u(actionType),
+      legalEntityId,
+      bankAccountId,
+      currencyCode: row.currency_code || null,
+      actionPayload: { templateId: row.id },
+    },
+    snapshotBuilder: async () => ({
+      template_id: row.id,
+      template_code: row.template_code,
+      template_name: row.template_name,
+      status: row.status,
+      approval_state: row.approval_state || "APPROVED",
+      version_no: Number(row.version_no || 1),
+      scope_type: row.scope_type,
+      legal_entity_id: legalEntityId,
+      bank_account_id: bankAccountId,
+      entry_kind: row.entry_kind,
+      direction_policy: row.direction_policy,
+      counter_account_id: row.counter_account_id,
+      currency_code: row.currency_code || null,
+    }),
+    policyOverride: gov,
+  });
+  const approvalRequestId = parsePositiveInt(submitRes?.item?.id) || null;
+  if (!approvalRequestId) return { row, approval_required: false };
+
+  await query(
+    `UPDATE bank_reconciliation_posting_templates
+     SET approval_state = 'PENDING_APPROVAL',
+         approval_request_id = ?,
+         status = CASE WHEN status = 'ACTIVE' THEN 'PAUSED' ELSE status END,
+         version_no = CASE WHEN ? = 'UPDATE' THEN version_no + 1 ELSE version_no END,
+         updated_by_user_id = COALESCE(?, updated_by_user_id)
+     WHERE tenant_id = ?
+       AND id = ?`,
+    [approvalRequestId, u(actionType), userId || null, tenantId, row.id]
+  );
+
+  const staged = await getTemplateById({ tenantId, templateId: row.id });
+  return {
+    row: staged,
+    approval_required: true,
+    approval_request: submitRes.item,
+    idempotent: Boolean(submitRes?.idempotent),
+  };
+}
+
+export async function activateApprovedPostingTemplateChange({
+  tenantId,
+  templateId,
+  approvalRequestId,
+  approvedByUserId,
+}) {
+  const current = await getTemplateById({ tenantId, templateId });
+  if (!current) throw badRequest("Posting template not found");
+  await query(
+    `UPDATE bank_reconciliation_posting_templates
+     SET approval_state = 'APPROVED',
+         approval_request_id = ?,
+         status = CASE WHEN status = 'PAUSED' THEN 'ACTIVE' ELSE status END,
+         updated_by_user_id = ?
+     WHERE tenant_id = ?
+       AND id = ?`,
+    [approvalRequestId || null, approvedByUserId || null, tenantId, templateId]
+  );
+  return { template_id: templateId, activated: true };
 }
 
 export default {

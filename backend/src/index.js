@@ -35,6 +35,8 @@ import bankReconciliationDifferenceProfilesRoutes from "./routes/bank.reconcilia
 import bankReconciliationExceptionsRoutes from "./routes/bank.reconciliationExceptions.routes.js";
 import bankPaymentFilesRoutes from "./routes/bank.paymentFiles.routes.js";
 import bankPaymentReturnsRoutes from "./routes/bank.paymentReturns.routes.js";
+import bankApprovalPoliciesRoutes from "./routes/bank.approvalPolicies.routes.js";
+import bankApprovalRequestsRoutes from "./routes/bank.approvalRequests.routes.js";
 import paymentsRoutes from "./routes/payments.routes.js";
 import payrollRunsRoutes from "./routes/payroll.runs.routes.js";
 import payrollMappingsRoutes from "./routes/payroll.mappings.routes.js";
@@ -199,6 +201,8 @@ app.use("/api/v1/bank/reconciliation", requireAuth, bankReconciliationDifference
 app.use("/api/v1/bank/reconciliation", requireAuth, bankReconciliationExceptionsRoutes);
 app.use("/api/v1/bank", requireAuth, bankPaymentFilesRoutes);
 app.use("/api/v1/bank", requireAuth, bankPaymentReturnsRoutes);
+app.use("/api/v1/bank", requireAuth, bankApprovalPoliciesRoutes);
+app.use("/api/v1/bank", requireAuth, bankApprovalRequestsRoutes);
 app.use("/api/v1/payments", requireAuth, paymentsRoutes);
 app.use("/api/v1/payroll/runs", requireAuth, payrollRunsRoutes);
 app.use("/api/v1/payroll/mappings", requireAuth, payrollMappingsRoutes);

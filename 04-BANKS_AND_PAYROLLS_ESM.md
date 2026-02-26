@@ -58,7 +58,7 @@ Permission naming note (important):
 - [x] PR-B07 Reconciliation Rules + Exception Queue (implemented)
 - [x] PR-B08-A Auto-Posting Templates (implemented)
 - [x] PR-B08-B Returns / Rejections / FX Difference (implemented)
-- [ ] PR-B09 Bank Approvals / SoD / Thresholds
+- [x] PR-B09 Bank Approvals / SoD / Thresholds (implemented)
 - [x] PR-P07 Beneficiary Bank Master + Immutable Snapshots (implemented)
 - [x] PR-P08 Payroll Close Controls + Locks (implemented)
 - [x] PR-P09 Provider-Specific Payroll Adapters (implemented)

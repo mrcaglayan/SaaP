@@ -7,6 +7,8 @@ import {
 } from "./payments.service.js";
 import { getBankPaymentFileFormat } from "./bankPaymentFileFormats/index.js";
 import { ingestReturnEventsFromAckImportTx } from "./bank.paymentReturns.service.js";
+import { evaluateBankApprovalNeed } from "./bank.governance.service.js";
+import { submitBankApprovalRequest } from "./bank.approvals.service.js";
 
 function up(value) {
   return String(value || "")
@@ -87,9 +89,14 @@ async function findBatchHeader({ tenantId, batchId, runQuery = query, forUpdate 
         pb.legal_entity_id,
         pb.batch_no,
         pb.status,
+        pb.total_amount,
+        pb.bank_account_id,
         pb.currency_code,
         pb.bank_export_status,
-        pb.bank_ack_status
+        pb.bank_ack_status,
+        pb.governance_approval_status,
+        pb.governance_approval_request_id,
+        pb.updated_at
      FROM payment_batches pb
      WHERE pb.tenant_id = ?
        AND pb.id = ?
@@ -257,6 +264,106 @@ export async function listBatchExports({
   return { items: (result.rows || []).map(mapDbRowWithJson) };
 }
 
+async function maybeRequestPaymentBatchExportApproval({
+  req,
+  tenantId,
+  batchId,
+  userId,
+  batch,
+  input,
+  assertScopeAccess,
+}) {
+  if (input?._b09SkipApprovalGate) {
+    return null;
+  }
+  if (!batch) return null;
+
+  assertBatchScope(req, assertScopeAccess, batch.legal_entity_id, "batchId");
+
+  const gov = await evaluateBankApprovalNeed({
+    tenantId,
+    targetType: "PAYMENT_BATCH",
+    actionType: "SUBMIT_EXPORT",
+    legalEntityId: batch.legal_entity_id,
+    bankAccountId: batch.bank_account_id,
+    thresholdAmount: batch.total_amount,
+    currencyCode: batch.currency_code,
+  });
+  if (!gov?.approvalRequired && !gov?.approval_required) {
+    return null;
+  }
+
+  const requestKey =
+    (input?.b09ApprovalRequestKey && String(input.b09ApprovalRequestKey).trim()) ||
+    (input?.exportRequestId && `B09:PBEXPORT:${tenantId}:${batchId}:${String(input.exportRequestId).trim()}`) ||
+    `B09:PBEXPORT:${tenantId}:${batchId}:v${String(batch.updated_at || "")}:${up(
+      input?.fileFormatCode || "GENERIC_CSV_V1"
+    )}:${Boolean(input?.markSent)}`;
+
+  const submitRes = await submitBankApprovalRequest({
+    tenantId,
+    userId,
+    requestInput: {
+      requestKey,
+      targetType: "PAYMENT_BATCH",
+      targetId: batchId,
+      actionType: "SUBMIT_EXPORT",
+      legalEntityId: batch.legal_entity_id,
+      bankAccountId: batch.bank_account_id,
+      thresholdAmount: batch.total_amount,
+      currencyCode: batch.currency_code,
+      actionPayload: {
+        batchId,
+        fileFormatCode: up(input?.fileFormatCode || "GENERIC_CSV_V1"),
+        markSent: Boolean(input?.markSent),
+        exportRequestId: input?.exportRequestId || null,
+      },
+    },
+    snapshotBuilder: async () => ({
+      batch_id: batch.id,
+      batch_no: batch.batch_no,
+      status: batch.status,
+      legal_entity_id: parsePositiveInt(batch.legal_entity_id) || null,
+      bank_account_id: parsePositiveInt(batch.bank_account_id) || null,
+      total_amount: toAmount(batch.total_amount),
+      currency_code: up(batch.currency_code || ""),
+      bank_export_status: batch.bank_export_status || null,
+      bank_ack_status: batch.bank_ack_status || null,
+    }),
+    policyOverride: gov,
+  });
+
+  const approvalRequest = submitRes?.item || null;
+  if (!approvalRequest) {
+    return null;
+  }
+
+  await query(
+    `UPDATE payment_batches
+     SET governance_approval_status = 'PENDING',
+         governance_approval_request_id = ?,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE tenant_id = ?
+       AND id = ?`,
+    [approvalRequest.id, tenantId, batchId]
+  );
+
+  const row = await getPaymentBatchDetailByIdForTenant({
+    req,
+    tenantId,
+    batchId,
+    assertScopeAccess,
+  });
+
+  return {
+    approval_required: true,
+    approvalRequired: true,
+    approval_request: approvalRequest,
+    row,
+    idempotent: Boolean(submitRes?.idempotent),
+  };
+}
+
 export async function exportPaymentBatchFile({
   req,
   tenantId,
@@ -267,6 +374,21 @@ export async function exportPaymentBatchFile({
 }) {
   const formatCode = up(input?.fileFormatCode || "GENERIC_CSV_V1");
   getBankPaymentFileFormat(formatCode);
+
+  const headerForGate = await findBatchHeader({ tenantId, batchId });
+  if (!headerForGate) throw notFound("Payment batch not found");
+  const approvalPending = await maybeRequestPaymentBatchExportApproval({
+    req,
+    tenantId,
+    batchId,
+    userId,
+    batch: headerForGate,
+    input: { ...input, fileFormatCode: formatCode },
+    assertScopeAccess,
+  });
+  if (approvalPending) {
+    return approvalPending;
+  }
 
   const existing = await findExportByRequestId({
     tenantId,
@@ -407,14 +529,6 @@ export async function exportPaymentBatchFile({
         userId,
       ]
     );
-
-    await ingestReturnEventsFromAckImportTx({
-      tenantId,
-      legalEntityId: batch.legal_entity_id,
-      ackImportId,
-      userId,
-      runQuery: tx.query,
-    });
   });
 
   const row = await getPaymentBatchDetailByIdForTenant({ req, tenantId, batchId, assertScopeAccess });
@@ -426,6 +540,47 @@ export async function exportPaymentBatchFile({
       csv: result?.export?.csv || null,
     },
     idempotent: false,
+  };
+}
+
+export async function executeApprovedPaymentBatchExportFile({
+  tenantId,
+  batchId,
+  approvalRequestId,
+  approvedByUserId,
+  payload = {},
+}) {
+  const result = await exportPaymentBatchFile({
+    req: null,
+    tenantId,
+    batchId,
+    userId: approvedByUserId,
+    input: {
+      fileFormatCode: payload.fileFormatCode || payload.file_format_code || "GENERIC_CSV_V1",
+      markSent: Boolean(payload.markSent ?? payload.mark_sent),
+      exportRequestId: payload.exportRequestId || payload.export_request_id || null,
+      _b09SkipApprovalGate: true,
+    },
+    assertScopeAccess: () => {},
+  });
+
+  await query(
+    `UPDATE payment_batches
+     SET governance_approval_status = 'APPROVED',
+         governance_approval_request_id = ?,
+         governance_approved_at = CURRENT_TIMESTAMP,
+         governance_approved_by_user_id = ?
+     WHERE tenant_id = ?
+       AND id = ?`,
+    [approvalRequestId || null, approvedByUserId || null, tenantId, batchId]
+  );
+
+  return {
+    batch_id: batchId,
+    approval_request_id: approvalRequestId || null,
+    export_id: parsePositiveInt(result?.export?.id) || null,
+    exported: true,
+    idempotent: Boolean(result?.idempotent),
   };
 }
 
@@ -868,6 +1023,7 @@ export async function importPaymentBatchAck({
 export default {
   listBatchExports,
   exportPaymentBatchFile,
+  executeApprovedPaymentBatchExportFile,
   listBatchAckImports,
   importPaymentBatchAck,
 };

@@ -70,12 +70,18 @@ router.post(
   }),
   asyncHandler(async (req, res) => {
     const input = parsePostingTemplateCreateInput(req);
-    const row = await createPostingTemplate({
+    const result = await createPostingTemplate({
       req,
       input,
       assertScopeAccess,
     });
-    return res.status(201).json({ tenantId: input.tenantId, row });
+    return res.status(201).json({
+      tenantId: input.tenantId,
+      row: result?.row || result || null,
+      approval_required: Boolean(result?.approval_required),
+      approval_request: result?.approval_request || null,
+      idempotent: Boolean(result?.idempotent),
+    });
   })
 );
 
@@ -92,12 +98,18 @@ router.patch(
   }),
   asyncHandler(async (req, res) => {
     const input = parsePostingTemplateUpdateInput(req);
-    const row = await updatePostingTemplate({
+    const result = await updatePostingTemplate({
       req,
       input,
       assertScopeAccess,
     });
-    return res.json({ tenantId: input.tenantId, row });
+    return res.json({
+      tenantId: input.tenantId,
+      row: result?.row || result || null,
+      approval_required: Boolean(result?.approval_required),
+      approval_request: result?.approval_request || null,
+      idempotent: Boolean(result?.idempotent),
+    });
   })
 );
 

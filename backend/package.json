@@ -39,6 +39,7 @@
     "test:bank:prb06": "node scripts/test-bank-prb06-payment-file-and-ack.js",
     "test:bank:prb08a": "node scripts/test-bank-prb08a-autopost-templates.js",
     "test:bank:prb08b": "node scripts/test-bank-prb08b-returns-rejections-fx.js",
+    "test:bank:prb09": "node scripts/test-bank-prb09-approvals-sod-thresholds.js",
     "test:payments:prb04": "node scripts/test-payments-prb04-batches.js",
     "test:payroll:prp01": "node scripts/test-payroll-prp01-import.js",
     "test:payroll:prp02": "node scripts/test-payroll-prp02-accrual-posting.js",

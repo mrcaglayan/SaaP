@@ -201,6 +201,15 @@ export const sidebarItems = [
         implemented: true,
       },
       {
+        label: "Banka Onaylari",
+        to: "/app/banka-onaylar",
+        requiredPermissions: [
+          "bank.approvals.policies.read",
+          "bank.approvals.requests.read",
+        ],
+        implemented: true,
+      },
+      {
         label: "Banka Islemleri",
         to: "/app/banka-islemleri",
         requiredPermissions: ["bank.statements.read"],

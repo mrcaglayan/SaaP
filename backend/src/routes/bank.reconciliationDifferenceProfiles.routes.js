@@ -65,8 +65,14 @@ router.post(
   requirePermission("bank.reconcile.diffprofiles.write", { resolveScope: resolveDifferenceProfileListScope }),
   asyncHandler(async (req, res) => {
     const input = parseDifferenceProfileCreateInput(req);
-    const row = await createDifferenceProfile({ req, input, assertScopeAccess });
-    return res.status(201).json({ tenantId: input.tenantId, row });
+    const result = await createDifferenceProfile({ req, input, assertScopeAccess });
+    return res.status(201).json({
+      tenantId: input.tenantId,
+      row: result?.row || result || null,
+      approval_required: Boolean(result?.approval_required),
+      approval_request: result?.approval_request || null,
+      idempotent: Boolean(result?.idempotent),
+    });
   })
 );
 
@@ -77,8 +83,14 @@ router.patch(
   }),
   asyncHandler(async (req, res) => {
     const input = parseDifferenceProfileUpdateInput(req);
-    const row = await updateDifferenceProfile({ req, input, assertScopeAccess });
-    return res.json({ tenantId: input.tenantId, row });
+    const result = await updateDifferenceProfile({ req, input, assertScopeAccess });
+    return res.json({
+      tenantId: input.tenantId,
+      row: result?.row || result || null,
+      approval_required: Boolean(result?.approval_required),
+      approval_request: result?.approval_request || null,
+      idempotent: Boolean(result?.idempotent),
+    });
   })
 );
 

@@ -1,6 +1,8 @@
 import { query, withTransaction } from "../db.js";
 import { badRequest, parsePositiveInt } from "../routes/_utils.js";
 import { matchReconciliationLine } from "./bank.reconciliation.service.js";
+import { evaluateBankApprovalNeed } from "./bank.governance.service.js";
+import { submitBankApprovalRequest } from "./bank.approvals.service.js";
 
 const AMOUNT_EPSILON = 0.005;
 
@@ -470,6 +472,65 @@ export async function getPaymentReturnEventById({ req, tenantId, eventId, assert
 }
 
 export async function createManualPaymentReturnEvent({ req, tenantId, userId, input, assertScopeAccess }) {
+  if (!input?._b09SkipApprovalGate) {
+    const paymentLine = await getPaymentBatchLineForReturn({
+      tenantId,
+      paymentBatchLineId: input.paymentBatchLineId,
+    });
+    if (!paymentLine) throw badRequest("paymentBatchLineId not found");
+    assertScopeAccess(req, "legal_entity", paymentLine.legal_entity_id, "paymentBatchLineId");
+
+    const gov = await evaluateBankApprovalNeed({
+      tenantId,
+      targetType: "MANUAL_RETURN",
+      actionType: "CREATE",
+      legalEntityId: paymentLine.legal_entity_id,
+      bankAccountId: paymentLine.bank_account_id,
+      thresholdAmount: absAmount(input.amount),
+      currencyCode: input.currencyCode,
+    });
+    if (gov?.approvalRequired || gov?.approval_required) {
+      const submitRes = await submitBankApprovalRequest({
+        tenantId,
+        userId,
+        requestInput: {
+          requestKey:
+            input.eventRequestId && String(input.eventRequestId).trim()
+              ? `B09:MANUAL_RETURN:${String(input.eventRequestId).trim()}`
+              : `B09:MANUAL_RETURN:${tenantId}:${input.paymentBatchLineId}:${absAmount(input.amount)}:${u(
+                  input.currencyCode
+                )}:r${absAmount(paymentLine.returned_amount)}`,
+          targetType: "MANUAL_RETURN",
+          targetId: null,
+          actionType: "CREATE",
+          legalEntityId: paymentLine.legal_entity_id,
+          bankAccountId: paymentLine.bank_account_id,
+          thresholdAmount: absAmount(input.amount),
+          currencyCode: input.currencyCode,
+          actionPayload: {
+            ...input,
+            sourceType: "MANUAL",
+          },
+        },
+        snapshotBuilder: async () => ({
+          source_type: "MANUAL",
+          payment_batch_line_id: parsePositiveInt(input.paymentBatchLineId),
+          bank_statement_line_id: parsePositiveInt(input.bankStatementLineId) || null,
+          amount: absAmount(input.amount),
+          currency_code: u(input.currencyCode),
+          reason_code: input.reasonCode || null,
+        }),
+        policyOverride: gov,
+      });
+
+      return {
+        approval_required: true,
+        approval_request: submitRes.item || null,
+        idempotent: Boolean(submitRes?.idempotent),
+      };
+    }
+  }
+
   return withTransaction(async (tx) => {
     const result = await createPaymentReturnEventTx({
       tenantId,
@@ -481,6 +542,35 @@ export async function createManualPaymentReturnEvent({ req, tenantId, userId, in
     assertScopeAccess(req, "legal_entity", result.legalEntityId, "paymentBatchLineId");
     return result;
   });
+}
+
+export async function executeApprovedManualReturn({
+  tenantId,
+  approvalRequestId,
+  approvedByUserId,
+  payload = {},
+}) {
+  const result = await withTransaction(async (tx) => {
+    return createPaymentReturnEventTx({
+      tenantId,
+      input: {
+        ...payload,
+        sourceType: "MANUAL",
+        sourceRef: `B09_APPROVAL:${approvalRequestId}`,
+        _b09SkipApprovalGate: true,
+      },
+      userId: approvedByUserId,
+      applyEffects: true,
+      runQuery: tx.query,
+    });
+  });
+
+  return {
+    payment_return_event_id: parsePositiveInt(result?.row?.id) || null,
+    approval_request_id: approvalRequestId || null,
+    created: true,
+    idempotent: Boolean(result?.idempotent),
+  };
 }
 
 export async function ignorePaymentReturnEvent({ req, tenantId, eventId, reasonMessage, userId, assertScopeAccess }) {
@@ -806,6 +896,7 @@ export default {
   listPaymentReturnEventRows,
   getPaymentReturnEventById,
   createManualPaymentReturnEvent,
+  executeApprovedManualReturn,
   ignorePaymentReturnEvent,
   ingestReturnEventsFromAckImportTx,
   findPaymentLineCandidatesForReturnAutomation,
