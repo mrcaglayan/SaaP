@@ -87,6 +87,7 @@ const TAG_DESCRIPTION_MAP = new Map([
   ["Consolidation", "Consolidation setup, runs, and report endpoints."],
   ["Onboarding", "Tenant/company bootstrap flow endpoints."],
   ["Cash", "Cash register, session, transaction, and exception workflows."],
+  ["Bank", "Bank account, statements, reconciliation, and payment-file workflows."],
   ["Payments", "Generic payment batch workflows (create, approve, export, post, cancel)."],
   ["Payroll", "Payroll import runs and payroll subledger workflow endpoints."],
   ["Jobs", "Background jobs, retries, and operational queue management endpoints."],
@@ -171,6 +172,9 @@ function inferTagFromPath(endpointPath) {
   }
   if (normalizedPath.startsWith("/api/v1/cash")) {
     return "Cash";
+  }
+  if (normalizedPath.startsWith("/api/v1/bank")) {
+    return "Bank";
   }
   if (normalizedPath.startsWith("/api/v1/payments")) {
     return "Payments";

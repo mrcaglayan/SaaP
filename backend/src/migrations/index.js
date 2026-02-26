@@ -43,6 +43,7 @@ import migration046PayrollCloseControls from "./m046_payroll_close_controls.js";
 import migration047PayrollProviderAdapters from "./m047_payroll_provider_adapters.js";
 import migration054SensitiveDataSecurity from "./m054_sensitive_data_security.js";
 import migration055JobEngine from "./m055_job_engine.js";
+import migration056BankPaymentFileAcks from "./m056_bank_payment_file_acks.js";
 
 const migrations = [
   migration001GlobalMultiEntity,
@@ -90,6 +91,7 @@ const migrations = [
   migration047PayrollProviderAdapters,
   migration054SensitiveDataSecurity,
   migration055JobEngine,
+  migration056BankPaymentFileAcks,
 ];
 
 export default migrations;
