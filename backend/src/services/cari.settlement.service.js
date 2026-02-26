@@ -61,7 +61,7 @@ const SETTLEMENT_POSTING_SOURCE_CONTEXT = Object.freeze({
   ON_ACCOUNT_APPLY: "ON_ACCOUNT_APPLY",
 });
 const FOLLOW_UP_RISKS = Object.freeze([
-  "Posting depends on configured journal_purpose_accounts mappings (CARI_AR_CONTROL, CARI_AR_OFFSET, CARI_AP_CONTROL, CARI_AP_OFFSET). Missing setup blocks posting.",
+  "Posting depends on configured journal_purpose_accounts mappings. Engine tries context codes first (for CASH, MANUAL, ON_ACCOUNT) and falls back to base mappings (CARI_AR_CONTROL/CARI_AR_OFFSET/CARI_AP_CONTROL/CARI_AP_OFFSET). Missing setup blocks posting.",
   "FX lookup uses request fxRate first, then exact-date SPOT, then optional nearest-prior fallback when enabled by config.",
   "Settlement posting resolves source context (CASH_LINKED, MANUAL, ON_ACCOUNT_APPLY) and falls back to generic purpose mappings for compatibility.",
 ]);

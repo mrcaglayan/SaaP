@@ -93,6 +93,222 @@ const PACKS = Object.freeze([
               allowPosting: true,
             }),
           }),
+          Object.freeze({
+            purposeCode: "CARI_AR_CONTROL_CASH",
+            rules: Object.freeze({
+              allowPosting: true,
+              accountType: "ASSET",
+              normalSide: "DEBIT",
+            }),
+            match: Object.freeze({
+              codeExact: Object.freeze(["120"]),
+            }),
+            suggestCreate: Object.freeze({
+              code: "120",
+              name: "Trade Receivables",
+              accountType: "ASSET",
+              normalSide: "DEBIT",
+              allowPosting: true,
+            }),
+          }),
+          Object.freeze({
+            purposeCode: "CARI_AR_OFFSET_CASH",
+            rules: Object.freeze({
+              allowPosting: true,
+              accountType: "ASSET",
+              normalSide: "DEBIT",
+            }),
+            match: Object.freeze({
+              codeExact: Object.freeze(["102", "100"]),
+            }),
+            suggestCreate: Object.freeze({
+              code: "102",
+              name: "Banks",
+              accountType: "ASSET",
+              normalSide: "DEBIT",
+              allowPosting: true,
+            }),
+          }),
+          Object.freeze({
+            purposeCode: "CARI_AP_CONTROL_CASH",
+            rules: Object.freeze({
+              allowPosting: true,
+              accountType: "LIABILITY",
+              normalSide: "CREDIT",
+            }),
+            match: Object.freeze({
+              codeExact: Object.freeze(["320"]),
+            }),
+            suggestCreate: Object.freeze({
+              code: "320",
+              name: "Trade Payables",
+              accountType: "LIABILITY",
+              normalSide: "CREDIT",
+              allowPosting: true,
+            }),
+          }),
+          Object.freeze({
+            purposeCode: "CARI_AP_OFFSET_CASH",
+            rules: Object.freeze({
+              allowPosting: true,
+              accountType: "ASSET",
+              normalSide: "DEBIT",
+            }),
+            match: Object.freeze({
+              codeExact: Object.freeze(["102", "100"]),
+            }),
+            suggestCreate: Object.freeze({
+              code: "102",
+              name: "Banks",
+              accountType: "ASSET",
+              normalSide: "DEBIT",
+              allowPosting: true,
+            }),
+          }),
+          Object.freeze({
+            purposeCode: "CARI_AR_CONTROL_MANUAL",
+            rules: Object.freeze({
+              allowPosting: true,
+              accountType: "ASSET",
+              normalSide: "DEBIT",
+            }),
+            match: Object.freeze({
+              codeExact: Object.freeze(["120"]),
+            }),
+            suggestCreate: Object.freeze({
+              code: "120",
+              name: "Trade Receivables",
+              accountType: "ASSET",
+              normalSide: "DEBIT",
+              allowPosting: true,
+            }),
+          }),
+          Object.freeze({
+            purposeCode: "CARI_AR_OFFSET_MANUAL",
+            rules: Object.freeze({
+              allowPosting: true,
+              accountType: "ASSET",
+              normalSide: "DEBIT",
+            }),
+            match: Object.freeze({
+              codeExact: Object.freeze(["102", "100"]),
+            }),
+            suggestCreate: Object.freeze({
+              code: "102",
+              name: "Banks",
+              accountType: "ASSET",
+              normalSide: "DEBIT",
+              allowPosting: true,
+            }),
+          }),
+          Object.freeze({
+            purposeCode: "CARI_AP_CONTROL_MANUAL",
+            rules: Object.freeze({
+              allowPosting: true,
+              accountType: "LIABILITY",
+              normalSide: "CREDIT",
+            }),
+            match: Object.freeze({
+              codeExact: Object.freeze(["320"]),
+            }),
+            suggestCreate: Object.freeze({
+              code: "320",
+              name: "Trade Payables",
+              accountType: "LIABILITY",
+              normalSide: "CREDIT",
+              allowPosting: true,
+            }),
+          }),
+          Object.freeze({
+            purposeCode: "CARI_AP_OFFSET_MANUAL",
+            rules: Object.freeze({
+              allowPosting: true,
+              accountType: "ASSET",
+              normalSide: "DEBIT",
+            }),
+            match: Object.freeze({
+              codeExact: Object.freeze(["102", "100"]),
+            }),
+            suggestCreate: Object.freeze({
+              code: "102",
+              name: "Banks",
+              accountType: "ASSET",
+              normalSide: "DEBIT",
+              allowPosting: true,
+            }),
+          }),
+          Object.freeze({
+            purposeCode: "CARI_AR_CONTROL_ON_ACCOUNT",
+            rules: Object.freeze({
+              allowPosting: true,
+              accountType: "ASSET",
+              normalSide: "DEBIT",
+            }),
+            match: Object.freeze({
+              codeExact: Object.freeze(["120"]),
+            }),
+            suggestCreate: Object.freeze({
+              code: "120",
+              name: "Trade Receivables",
+              accountType: "ASSET",
+              normalSide: "DEBIT",
+              allowPosting: true,
+            }),
+          }),
+          Object.freeze({
+            purposeCode: "CARI_AR_OFFSET_ON_ACCOUNT",
+            rules: Object.freeze({
+              allowPosting: true,
+              accountType: "LIABILITY",
+              normalSide: "CREDIT",
+            }),
+            match: Object.freeze({
+              codeExact: Object.freeze(["340", "380"]),
+            }),
+            suggestCreate: Object.freeze({
+              code: "340",
+              name: "Customer Advances Received",
+              accountType: "LIABILITY",
+              normalSide: "CREDIT",
+              allowPosting: true,
+            }),
+          }),
+          Object.freeze({
+            purposeCode: "CARI_AP_CONTROL_ON_ACCOUNT",
+            rules: Object.freeze({
+              allowPosting: true,
+              accountType: "LIABILITY",
+              normalSide: "CREDIT",
+            }),
+            match: Object.freeze({
+              codeExact: Object.freeze(["320"]),
+            }),
+            suggestCreate: Object.freeze({
+              code: "320",
+              name: "Trade Payables",
+              accountType: "LIABILITY",
+              normalSide: "CREDIT",
+              allowPosting: true,
+            }),
+          }),
+          Object.freeze({
+            purposeCode: "CARI_AP_OFFSET_ON_ACCOUNT",
+            rules: Object.freeze({
+              allowPosting: true,
+              accountType: "ASSET",
+              normalSide: "DEBIT",
+            }),
+            match: Object.freeze({
+              codeExact: Object.freeze(["159"]),
+            }),
+            suggestCreate: Object.freeze({
+              code: "159",
+              name: "Advances Given for Orders",
+              accountType: "ASSET",
+              normalSide: "DEBIT",
+              allowPosting: true,
+            }),
+          }),
         ]),
       }),
       Object.freeze({
@@ -424,4 +640,3 @@ export function getPolicyPack(packId) {
 
   return deepClone(pack);
 }
-

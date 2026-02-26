@@ -7,6 +7,8 @@ import authRoutes from "./routes/auth.js";
 import meRoutes from "./routes/me.js";
 import orgRoutes from "./routes/org.js";
 import securityRoutes from "./routes/security.js";
+import securitySensitiveDataAuditRoutes from "./routes/security.sensitiveDataAudit.routes.js";
+import jobsAdminRoutes from "./routes/jobs.admin.routes.js";
 import glRoutes from "./routes/gl.js";
 import fxRoutes from "./routes/fx.js";
 import intercompanyRoutes from "./routes/intercompany.js";
@@ -23,6 +25,20 @@ import cashSessionRoutes from "./routes/cash.session.routes.js";
 import cashTransactionRoutes from "./routes/cash.transaction.routes.js";
 import cashConfigRoutes from "./routes/cash.config.routes.js";
 import cashExceptionRoutes from "./routes/cash.exception.routes.js";
+import bankAccountsRoutes from "./routes/bank.accounts.routes.js";
+import bankStatementsRoutes from "./routes/bank.statements.routes.js";
+import bankReconciliationRoutes from "./routes/bank.reconciliation.routes.js";
+import paymentsRoutes from "./routes/payments.routes.js";
+import payrollRunsRoutes from "./routes/payroll.runs.routes.js";
+import payrollMappingsRoutes from "./routes/payroll.mappings.routes.js";
+import payrollAccrualsRoutes from "./routes/payroll.accruals.routes.js";
+import payrollLiabilitiesRoutes from "./routes/payroll.liabilities.routes.js";
+import payrollPaymentSyncRoutes from "./routes/payroll.paymentSync.routes.js";
+import payrollCorrectionsRoutes from "./routes/payroll.corrections.routes.js";
+import payrollSettlementOverridesRoutes from "./routes/payroll.settlementOverrides.routes.js";
+import payrollBeneficiariesRoutes from "./routes/payroll.beneficiaries.routes.js";
+import payrollCloseRoutes from "./routes/payroll.close.routes.js";
+import payrollProvidersRoutes from "./routes/payroll.providers.routes.js";
 import cariRoutes from "./routes/cari.js";
 import contractsRoutes from "./routes/contracts.js";
 import revenueRecognitionRoutes from "./routes/revenue-recognition.js";
@@ -34,11 +50,25 @@ import {
   logWarn,
   resolveRequestId,
 } from "./observability/logger.js";
+import { assertEncryptionConfigured } from "./utils/cryptoEnvelope.js";
 
 dotenv.config();
 
 const app = express();
 app.set("trust proxy", 1);
+
+if (process.env.NODE_ENV !== "production" && process.env.NODE_ENV !== "staging") {
+  try {
+    assertEncryptionConfigured();
+  } catch (err) {
+    // Dev mode warning only; H01 enforces fail-fast in prod/staging.
+    // eslint-disable-next-line no-console
+    console.warn("[WARN] Encryption not fully configured (dev mode):", err?.message || err);
+  }
+} else {
+  assertEncryptionConfigured();
+}
+
 const allowedOrigins = (
   process.env.CORS_ORIGIN ||
   "http://localhost:5173,http://127.0.0.1:5173"
@@ -135,6 +165,8 @@ app.use("/me", meRoutes);
 app.use("/api/v1/provider", providerRoutes);
 app.use("/api/v1/org", requireAuth, orgRoutes);
 app.use("/api/v1/security", requireAuth, securityRoutes);
+app.use("/api/v1/security", requireAuth, securitySensitiveDataAuditRoutes);
+app.use("/api/v1/jobs", requireAuth, jobsAdminRoutes);
 app.use("/api/v1/gl", requireAuth, glRoutes);
 app.use("/api/v1/fx", requireAuth, fxRoutes);
 app.use("/api/v1/intercompany", requireAuth, intercompanyRoutes);
@@ -150,6 +182,20 @@ app.use("/api/v1/cash/sessions", requireAuth, cashSessionRoutes);
 app.use("/api/v1/cash/transactions", requireAuth, cashTransactionRoutes);
 app.use("/api/v1/cash/config", requireAuth, cashConfigRoutes);
 app.use("/api/v1/cash/exceptions", requireAuth, cashExceptionRoutes);
+app.use("/api/v1/bank/accounts", requireAuth, bankAccountsRoutes);
+app.use("/api/v1/bank/statements", requireAuth, bankStatementsRoutes);
+app.use("/api/v1/bank/reconciliation", requireAuth, bankReconciliationRoutes);
+app.use("/api/v1/payments", requireAuth, paymentsRoutes);
+app.use("/api/v1/payroll/runs", requireAuth, payrollRunsRoutes);
+app.use("/api/v1/payroll/mappings", requireAuth, payrollMappingsRoutes);
+app.use("/api/v1/payroll/runs", requireAuth, payrollAccrualsRoutes);
+app.use("/api/v1/payroll/runs", requireAuth, payrollPaymentSyncRoutes);
+app.use("/api/v1/payroll", requireAuth, payrollCorrectionsRoutes);
+app.use("/api/v1/payroll", requireAuth, payrollSettlementOverridesRoutes);
+app.use("/api/v1/payroll", requireAuth, payrollBeneficiariesRoutes);
+app.use("/api/v1/payroll", requireAuth, payrollLiabilitiesRoutes);
+app.use("/api/v1/payroll", requireAuth, payrollProvidersRoutes);
+app.use("/api/v1/payroll/close-controls", requireAuth, payrollCloseRoutes);
 app.use("/api/v1/cari", requireAuth, cariRoutes);
 app.use("/api/v1/contracts", requireAuth, contractsRoutes);
 app.use("/api/v1/revenue-recognition", requireAuth, revenueRecognitionRoutes);

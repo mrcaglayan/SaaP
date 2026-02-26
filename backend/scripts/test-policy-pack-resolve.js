@@ -365,6 +365,22 @@ async function buildResolveFixtures(tenantId, stamp) {
   });
   await createAccount({
     coaId: goodCoaId,
+    code: "100",
+    name: "Cash",
+    accountType: "ASSET",
+    normalSide: "DEBIT",
+    allowPosting: true,
+  });
+  await createAccount({
+    coaId: goodCoaId,
+    code: "102",
+    name: "Banks",
+    accountType: "ASSET",
+    normalSide: "DEBIT",
+    allowPosting: true,
+  });
+  await createAccount({
+    coaId: goodCoaId,
     code: "600",
     name: "AR Offset",
     accountType: "REVENUE",
@@ -381,9 +397,25 @@ async function buildResolveFixtures(tenantId, stamp) {
   });
   await createAccount({
     coaId: goodCoaId,
+    code: "340",
+    name: "Customer Advances",
+    accountType: "LIABILITY",
+    normalSide: "CREDIT",
+    allowPosting: true,
+  });
+  await createAccount({
+    coaId: goodCoaId,
     code: "632",
     name: "AP Offset Fallback",
     accountType: "EXPENSE",
+    normalSide: "DEBIT",
+    allowPosting: true,
+  });
+  await createAccount({
+    coaId: goodCoaId,
+    code: "159",
+    name: "Vendor Advances",
+    accountType: "ASSET",
     normalSide: "DEBIT",
     allowPosting: true,
   });
@@ -569,8 +601,8 @@ async function main() {
       expectedStatus: 200,
     });
     assert(
-      toNumber(goodResolve.json?.summary?.total) === 6,
-      "Good resolve should evaluate 6 purpose rows"
+      toNumber(goodResolve.json?.summary?.total) === 18,
+      "Good resolve should evaluate 18 purpose rows"
     );
     assert(
       toNumber(goodResolve.json?.summary?.missing) === 0,
@@ -585,6 +617,24 @@ async function main() {
     assert(
       String(goodApOffset?.accountCode || "") === "632",
       "TR fallback must resolve CARI_AP_OFFSET to 632 when 770 is missing"
+    );
+    const goodArOffsetCash = findRow(goodRows, "CARI_AR_OFFSET_CASH");
+    assert(
+      goodArOffsetCash?.missing === false,
+      "Good resolve CARI_AR_OFFSET_CASH must resolve"
+    );
+    assert(
+      String(goodArOffsetCash?.accountCode || "") === "102",
+      "CARI_AR_OFFSET_CASH should resolve to 102 when available"
+    );
+    const goodApOffsetOnAccount = findRow(goodRows, "CARI_AP_OFFSET_ON_ACCOUNT");
+    assert(
+      goodApOffsetOnAccount?.missing === false,
+      "Good resolve CARI_AP_OFFSET_ON_ACCOUNT must resolve"
+    );
+    assert(
+      String(goodApOffsetOnAccount?.accountCode || "") === "159",
+      "CARI_AP_OFFSET_ON_ACCOUNT should resolve to 159 when available"
     );
 
     const issueResolve = await apiRequest({
@@ -647,4 +697,3 @@ main().catch((error) => {
   console.error(error);
   process.exit(1);
 });
-

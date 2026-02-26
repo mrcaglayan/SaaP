@@ -97,6 +97,7 @@ const TURKISH_DEFAULT_COA_ACCOUNTS = [
     accountType: "ASSET",
     normalSide: "DEBIT",
   },
+  { code: "181", name: "Gelir Tahakkuklari", accountType: "ASSET", normalSide: "DEBIT" },
   { code: "191", name: "Indirilecek KDV", accountType: "ASSET", normalSide: "DEBIT" },
   {
     code: "193",
@@ -160,6 +161,7 @@ const TURKISH_DEFAULT_COA_ACCOUNTS = [
     accountType: "ASSET",
     normalSide: "DEBIT",
   },
+  { code: "281", name: "Gelir Tahakkuklari", accountType: "ASSET", normalSide: "DEBIT" },
   { code: "300", name: "Banka Kredileri", accountType: "LIABILITY", normalSide: "CREDIT" },
   { code: "320", name: "Saticilar", accountType: "LIABILITY", normalSide: "CREDIT" },
   { code: "321", name: "Borc Senetleri", accountType: "LIABILITY", normalSide: "CREDIT" },
@@ -172,6 +174,7 @@ const TURKISH_DEFAULT_COA_ACCOUNTS = [
   { code: "329", name: "Diger Ticari Borclar", accountType: "LIABILITY", normalSide: "CREDIT" },
   { code: "331", name: "Ortaklara Borclar", accountType: "LIABILITY", normalSide: "CREDIT" },
   { code: "335", name: "Personele Borclar", accountType: "LIABILITY", normalSide: "CREDIT" },
+  { code: "340", name: "Alinan Siparis Avanslari", accountType: "LIABILITY", normalSide: "CREDIT" },
   {
     code: "360",
     name: "Odenecek Vergi ve Fonlar",
@@ -193,6 +196,12 @@ const TURKISH_DEFAULT_COA_ACCOUNTS = [
   {
     code: "370",
     name: "Donem Kari Vergi ve Diger Yasal Yukumluluk Karsiliklari",
+    accountType: "LIABILITY",
+    normalSide: "CREDIT",
+  },
+  {
+    code: "380",
+    name: "Gelecek Aylara Ait Gelirler",
     accountType: "LIABILITY",
     normalSide: "CREDIT",
   },
@@ -224,6 +233,7 @@ const TURKISH_DEFAULT_COA_ACCOUNTS = [
     accountType: "LIABILITY",
     normalSide: "CREDIT",
   },
+  { code: "481", name: "Gider Tahakkuklari", accountType: "LIABILITY", normalSide: "CREDIT" },
   {
     code: "500",
     name: "Sermaye",
@@ -448,6 +458,124 @@ const CARI_REQUIRED_PURPOSE_CODES = Object.freeze([
   "CARI_AP_CONTROL",
   "CARI_AP_OFFSET",
 ]);
+const CARI_OPTIONAL_CONTEXT_PURPOSE_CODES = Object.freeze([
+  "CARI_AR_CONTROL_CASH",
+  "CARI_AR_OFFSET_CASH",
+  "CARI_AP_CONTROL_CASH",
+  "CARI_AP_OFFSET_CASH",
+  "CARI_AR_CONTROL_MANUAL",
+  "CARI_AR_OFFSET_MANUAL",
+  "CARI_AP_CONTROL_MANUAL",
+  "CARI_AP_OFFSET_MANUAL",
+  "CARI_AR_CONTROL_ON_ACCOUNT",
+  "CARI_AR_OFFSET_ON_ACCOUNT",
+  "CARI_AP_CONTROL_ON_ACCOUNT",
+  "CARI_AP_OFFSET_ON_ACCOUNT",
+]);
+const CARI_MANUAL_PURPOSE_CODES = Object.freeze([
+  ...CARI_REQUIRED_PURPOSE_CODES,
+  ...CARI_OPTIONAL_CONTEXT_PURPOSE_CODES,
+]);
+const CARI_REQUIRED_PURPOSE_CODE_SET = new Set(CARI_REQUIRED_PURPOSE_CODES);
+const CARI_OPTIONAL_PURPOSE_CODE_SET = new Set(CARI_OPTIONAL_CONTEXT_PURPOSE_CODES);
+const CARI_PURPOSE_UI_META = Object.freeze({
+  CARI_AR_CONTROL: Object.freeze({
+    en: "AR control account (customer balance account).",
+    tr: "AR kontrol hesabi (musteri bakiye hesabi).",
+    exampleEn: "Example: AR invoice -> Dr 120, Cr 600",
+    exampleTr: "Ornek: AR fatura -> Borc 120, Alacak 600",
+  }),
+  CARI_AR_OFFSET: Object.freeze({
+    en: "AR document offset account (usually revenue).",
+    tr: "AR belge karsi hesabi (genelde gelir hesabi).",
+    exampleEn: "Example: AR invoice sales side -> 600/601/602",
+    exampleTr: "Ornek: AR fatura satis tarafi -> 600/601/602",
+  }),
+  CARI_AP_CONTROL: Object.freeze({
+    en: "AP control account (vendor balance account).",
+    tr: "AP kontrol hesabi (satici bakiye hesabi).",
+    exampleEn: "Example: AP invoice -> Dr 770, Cr 320",
+    exampleTr: "Ornek: AP fatura -> Borc 770, Alacak 320",
+  }),
+  CARI_AP_OFFSET: Object.freeze({
+    en: "AP document offset account (usually expense/cost).",
+    tr: "AP belge karsi hesabi (genelde gider/maliyet hesabi).",
+    exampleEn: "Example: AP expense side -> 770 or 632",
+    exampleTr: "Ornek: AP gider tarafi -> 770 veya 632",
+  }),
+  CARI_AR_CONTROL_CASH: Object.freeze({
+    en: "Optional AR control override for CASH settlement context.",
+    tr: "CASH settlement baglami icin opsiyonel AR kontrol override.",
+    exampleEn: "Used only in cash-linked settlement; else fallback to CARI_AR_CONTROL.",
+    exampleTr: "Sadece kasa/banka bagli settlement'ta kullanilir; yoksa CARI_AR_CONTROL fallback olur.",
+  }),
+  CARI_AR_OFFSET_CASH: Object.freeze({
+    en: "Optional AR cash offset (cash/bank account).",
+    tr: "Opsiyonel AR nakit karsi hesabi (kasa/banka hesabi).",
+    exampleEn: "Example: cash collection apply -> Dr 102, Cr 120",
+    exampleTr: "Ornek: nakit tahsilat apply -> Borc 102, Alacak 120",
+  }),
+  CARI_AP_CONTROL_CASH: Object.freeze({
+    en: "Optional AP control override for CASH settlement context.",
+    tr: "CASH settlement baglami icin opsiyonel AP kontrol override.",
+    exampleEn: "Used only in cash-linked settlement; else fallback to CARI_AP_CONTROL.",
+    exampleTr: "Sadece kasa/banka bagli settlement'ta kullanilir; yoksa CARI_AP_CONTROL fallback olur.",
+  }),
+  CARI_AP_OFFSET_CASH: Object.freeze({
+    en: "Optional AP cash offset (cash/bank account).",
+    tr: "Opsiyonel AP nakit karsi hesabi (kasa/banka hesabi).",
+    exampleEn: "Example: vendor payout apply -> Dr 320, Cr 102",
+    exampleTr: "Ornek: satici odeme apply -> Borc 320, Alacak 102",
+  }),
+  CARI_AR_CONTROL_MANUAL: Object.freeze({
+    en: "Optional AR control override for MANUAL settlement context.",
+    tr: "MANUAL settlement baglami icin opsiyonel AR kontrol override.",
+    exampleEn: "Used in manual settlement without cash transaction link.",
+    exampleTr: "Kasa islemi baglantisi olmayan manuel settlement'ta kullanilir.",
+  }),
+  CARI_AR_OFFSET_MANUAL: Object.freeze({
+    en: "Optional AR offset for MANUAL settlement context.",
+    tr: "MANUAL settlement baglami icin opsiyonel AR karsi hesap.",
+    exampleEn: "Example: manual collection settlement -> usually 100/102.",
+    exampleTr: "Ornek: manuel tahsilat settlement -> genelde 100/102.",
+  }),
+  CARI_AP_CONTROL_MANUAL: Object.freeze({
+    en: "Optional AP control override for MANUAL settlement context.",
+    tr: "MANUAL settlement baglami icin opsiyonel AP kontrol override.",
+    exampleEn: "Used in manual settlement without cash transaction link.",
+    exampleTr: "Kasa islemi baglantisi olmayan manuel settlement'ta kullanilir.",
+  }),
+  CARI_AP_OFFSET_MANUAL: Object.freeze({
+    en: "Optional AP offset for MANUAL settlement context.",
+    tr: "MANUAL settlement baglami icin opsiyonel AP karsi hesap.",
+    exampleEn: "Example: manual payout settlement -> usually 100/102.",
+    exampleTr: "Ornek: manuel odeme settlement -> genelde 100/102.",
+  }),
+  CARI_AR_CONTROL_ON_ACCOUNT: Object.freeze({
+    en: "Optional AR control override for ON_ACCOUNT apply context.",
+    tr: "ON_ACCOUNT apply baglami icin opsiyonel AR kontrol override.",
+    exampleEn: "Used when settlement consumes/relieves on-account balances.",
+    exampleTr: "Settlement on-account bakiyeleri tukettiginde/cozdugunde kullanilir.",
+  }),
+  CARI_AR_OFFSET_ON_ACCOUNT: Object.freeze({
+    en: "Optional AR on-account offset (customer advances liability).",
+    tr: "Opsiyonel AR on-account karsi hesabi (alinan siparis avansi yukumlulugu).",
+    exampleEn: "Example: clear customer advance -> Dr 340, Cr 120",
+    exampleTr: "Ornek: musteri avans kapama -> Borc 340, Alacak 120",
+  }),
+  CARI_AP_CONTROL_ON_ACCOUNT: Object.freeze({
+    en: "Optional AP control override for ON_ACCOUNT apply context.",
+    tr: "ON_ACCOUNT apply baglami icin opsiyonel AP kontrol override.",
+    exampleEn: "Used when settlement consumes/relieves on-account balances.",
+    exampleTr: "Settlement on-account bakiyeleri tukettiginde/cozdugunde kullanilir.",
+  }),
+  CARI_AP_OFFSET_ON_ACCOUNT: Object.freeze({
+    en: "Optional AP on-account offset (vendor advances asset).",
+    tr: "Opsiyonel AP on-account karsi hesabi (verilen siparis avansi varligi).",
+    exampleEn: "Example: clear vendor advance -> Dr 320, Cr 159",
+    exampleTr: "Ornek: satici avans kapama -> Borc 320, Alacak 159",
+  }),
+});
 const SHAREHOLDER_REQUIRED_PURPOSE_CODES = Object.freeze([
   "SHAREHOLDER_CAPITAL_CREDIT_PARENT",
   "SHAREHOLDER_COMMITMENT_DEBIT_PARENT",
@@ -462,6 +590,13 @@ function toUpper(value) {
   return String(value || "")
     .trim()
     .toUpperCase();
+}
+
+function getCariPurposeUiMeta(purposeCode) {
+  const normalized = String(purposeCode || "")
+    .trim()
+    .toUpperCase();
+  return CARI_PURPOSE_UI_META[normalized] || null;
 }
 
 function toBoolean(value) {
@@ -578,6 +713,7 @@ export default function GlSetupPage() {
     commitmentDebitParentAccountId: "",
   });
   const [manualCariMappingsByPurpose, setManualCariMappingsByPurpose] = useState({});
+  const [showOptionalCariMappings, setShowOptionalCariMappings] = useState(false);
   const [loadingManualMappings, setLoadingManualMappings] = useState(false);
   const parentAccountIds = new Set(
     accounts.map((row) => toPositiveInt(row.parent_account_id)).filter(Boolean)
@@ -658,6 +794,9 @@ export default function GlSetupPage() {
     "shareholderCommitment",
     selectedManualLegalEntityId
   );
+  const visibleCariPurposeCodes = showOptionalCariMappings
+    ? CARI_MANUAL_PURPOSE_CODES
+    : CARI_REQUIRED_PURPOSE_CODES;
 
   async function loadData() {
     setLoading(true);
@@ -1092,6 +1231,15 @@ export default function GlSetupPage() {
           )
         );
         return;
+      }
+      payloadRows.push({ purposeCode, accountId });
+    }
+    for (const purposeCode of CARI_OPTIONAL_CONTEXT_PURPOSE_CODES) {
+      const accountId = toPositiveInt(
+        manualCariMappingsByPurpose[purposeCode]?.accountId
+      );
+      if (!accountId) {
+        continue;
       }
       payloadRows.push({ purposeCode, accountId });
     }
@@ -1777,15 +1925,45 @@ export default function GlSetupPage() {
           {l("Required CARI purpose codes:", "Zorunlu CARI amac kodlari:")}{" "}
           {CARI_REQUIRED_PURPOSE_CODES.join(", ")} <br />
           {l(
+            "Optional CARI settlement context purpose codes:",
+            "Opsiyonel CARI settlement baglam amac kodlari:"
+          )}{" "}
+          {CARI_OPTIONAL_CONTEXT_PURPOSE_CODES.length}{" "}
+          {l(
+            "(hidden by default; use Show optional button below).",
+            "(varsayilan gizli; asagidaki Opsiyonelleri goster butonunu kullanin)."
+          )}{" "}
+          <br />
+          {l(
             "Required shareholder parent purpose codes:",
             "Zorunlu ortak parent amac kodlari:"
           )}{" "}
           {SHAREHOLDER_REQUIRED_PURPOSE_CODES.join(", ")}
         </div>
 
-        <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-600">
-          {l("CARI mappings", "CARI eslemeleri")}
-        </h3>
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+            {l("CARI mappings", "CARI eslemeleri")}
+          </h3>
+          <button
+            type="button"
+            onClick={() => setShowOptionalCariMappings((prev) => !prev)}
+            className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700"
+          >
+            {showOptionalCariMappings
+              ? l("Hide optional context mappings", "Opsiyonel baglam eslemelerini gizle")
+              : l(
+                  `Show optional context mappings (${CARI_OPTIONAL_CONTEXT_PURPOSE_CODES.length})`,
+                  `Opsiyonel baglam eslemelerini goster (${CARI_OPTIONAL_CONTEXT_PURPOSE_CODES.length})`
+                )}
+          </button>
+        </div>
+        <p className="mb-2 text-xs text-slate-500">
+          {l(
+            "Start with 4 required rows. Optional context rows only override settlement behavior for CASH, MANUAL, or ON_ACCOUNT.",
+            "Ilk olarak 4 zorunlu satiri doldurun. Opsiyonel baglam satirlari sadece CASH, MANUAL veya ON_ACCOUNT settlement davranisini override eder."
+          )}
+        </p>
         <div className="overflow-x-auto rounded-lg border border-slate-200">
           <table className="min-w-full text-sm">
             <thead className="bg-slate-50 text-left text-slate-600">
@@ -1796,16 +1974,42 @@ export default function GlSetupPage() {
               </tr>
             </thead>
             <tbody>
-              {CARI_REQUIRED_PURPOSE_CODES.map((purposeCode) => {
+              {visibleCariPurposeCodes.map((purposeCode) => {
                 const row = manualCariMappingsByPurpose[purposeCode] || null;
                 const selectedAccountId = String(toPositiveInt(row?.accountId) || "");
-                const readinessStatus = getPurposeReadinessStatus(
-                  selectedManualCariReadiness,
-                  purposeCode
-                );
+                const isRequiredPurpose = CARI_REQUIRED_PURPOSE_CODE_SET.has(purposeCode);
+                const isOptionalPurpose = CARI_OPTIONAL_PURPOSE_CODE_SET.has(purposeCode);
+                const purposeMeta = getCariPurposeUiMeta(purposeCode);
+                const readinessStatus = isRequiredPurpose
+                  ? getPurposeReadinessStatus(selectedManualCariReadiness, purposeCode)
+                  : {
+                      label: l("Optional", "Opsiyonel"),
+                      className: "bg-slate-100 text-slate-700",
+                      detail: l(
+                        "Optional override; if empty fallback uses base mapping.",
+                        "Opsiyonel override; bos ise fallback temel mapping'i kullanir."
+                      ),
+                    };
                 return (
                   <tr key={purposeCode} className="border-t border-slate-100">
-                    <td className="px-3 py-2 font-medium text-slate-800">{purposeCode}</td>
+                    <td className="px-3 py-2">
+                      <div className="font-medium text-slate-800">{purposeCode}</div>
+                      {purposeMeta ? (
+                        <p className="mt-1 text-[11px] text-slate-500">
+                          {l(purposeMeta.en, purposeMeta.tr)}
+                        </p>
+                      ) : null}
+                      {purposeMeta ? (
+                        <p className="text-[11px] text-slate-400">
+                          {l(purposeMeta.exampleEn, purposeMeta.exampleTr)}
+                        </p>
+                      ) : null}
+                      {isOptionalPurpose ? (
+                        <span className="mt-1 inline-block rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-700">
+                          {l("Context override", "Baglam override")}
+                        </span>
+                      ) : null}
+                    </td>
                     <td className="px-3 py-2">
                       <select
                         value={selectedAccountId}

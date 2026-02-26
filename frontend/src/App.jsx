@@ -19,6 +19,7 @@ import RolesPermissionsPage from "./pages/security/RolesPermissionsPage";
 import UserAssignmentsPage from "./pages/security/UserAssignmentsPage";
 import ScopeAssignmentsPage from "./pages/security/ScopeAssignmentsPage";
 import RbacAuditLogsPage from "./pages/security/RbacAuditLogsPage";
+import SensitiveDataAuditPage from "./pages/security/SensitiveDataAuditPage.jsx";
 import IntercompanyReconciliationPage from "./pages/IntercompanyReconciliationPage";
 import ConsolidationReportsPage from "./pages/ConsolidationReportsPage";
 import ProviderBootstrapPage from "./pages/ProviderBootstrapPage";
@@ -29,6 +30,19 @@ import CashSessionsPage from "./pages/cash/CashSessionsPage.jsx";
 import CashTransactionsPage from "./pages/cash/CashTransactionsPage.jsx";
 import CashTransitTransfersPage from "./pages/cash/CashTransitTransfersPage.jsx";
 import CashExceptionsPage from "./pages/cash/CashExceptionsPage.jsx";
+import BankAccountsPage from "./pages/bank/BankAccountsPage.jsx";
+import BankStatementImportPage from "./pages/bank/BankStatementImportPage.jsx";
+import BankStatementQueuePage from "./pages/bank/BankStatementQueuePage.jsx";
+import BankReconciliationPage from "./pages/bank/BankReconciliationPage.jsx";
+import PaymentBatchListPage from "./pages/payments/PaymentBatchListPage.jsx";
+import PaymentBatchDetailPage from "./pages/payments/PaymentBatchDetailPage.jsx";
+import PayrollRunImportPage from "./pages/payroll/PayrollRunImportPage.jsx";
+import PayrollRunsPage from "./pages/payroll/PayrollRunsPage.jsx";
+import PayrollRunDetailPage from "./pages/payroll/PayrollRunDetailPage.jsx";
+import PayrollComponentMappingsPage from "./pages/payroll/PayrollComponentMappingsPage.jsx";
+import PayrollLiabilitiesPage from "./pages/payroll/PayrollLiabilitiesPage.jsx";
+import PayrollBeneficiariesPage from "./pages/payroll/PayrollBeneficiariesPage.jsx";
+import PayrollCloseControlsPage from "./pages/payroll/PayrollCloseControlsPage.jsx";
 import CariCounterpartyPage from "./pages/cari/CariCounterpartyPage.jsx";
 import CariDocumentsPage from "./pages/cari/CariDocumentsPage.jsx";
 import CariReportsPage from "./pages/cari/CariReportsPage.jsx";
@@ -132,6 +146,85 @@ const implementedRoutes = [
     appPath: "/app/kasa-istisnalari",
     childPath: "kasa-istisnalari",
     element: <CashExceptionsPage />,
+  },
+  {
+    appPath: "/app/banka-tanimla",
+    childPath: "banka-tanimla",
+    element: <BankAccountsPage />,
+  },
+  {
+    appPath: "/app/banka-ekstre-ice-aktar",
+    childPath: "banka-ekstre-ice-aktar",
+    element: <BankStatementImportPage />,
+  },
+  {
+    appPath: "/app/banka-ekstre-kuyrugu",
+    childPath: "banka-ekstre-kuyrugu",
+    element: <BankStatementQueuePage />,
+  },
+  {
+    appPath: "/app/banka-mutabakat",
+    childPath: "banka-mutabakat",
+    element: <BankReconciliationPage />,
+  },
+  {
+    appPath: "/app/banka-islemleri",
+    childPath: "banka-islemleri",
+    permissionPath: "/app/banka-ekstre-kuyrugu",
+    element: <Navigate to="/app/banka-ekstre-kuyrugu" replace />,
+  },
+  {
+    appPath: "/app/odeme-batchleri",
+    childPath: "odeme-batchleri",
+    element: <PaymentBatchListPage />,
+  },
+  {
+    appPath: "/app/odeme-batchleri/:batchId",
+    childPath: "odeme-batchleri/:batchId",
+    permissionPath: "/app/odeme-batchleri",
+    element: <PaymentBatchDetailPage />,
+  },
+  {
+    appPath: "/app/payroll-runs",
+    childPath: "payroll-runs",
+    element: <PayrollRunsPage />,
+  },
+  {
+    appPath: "/app/payroll-runs/import",
+    childPath: "payroll-runs/import",
+    element: <PayrollRunImportPage />,
+  },
+  {
+    appPath: "/app/payroll-mappings",
+    childPath: "payroll-mappings",
+    element: <PayrollComponentMappingsPage />,
+  },
+  {
+    appPath: "/app/payroll-liabilities",
+    childPath: "payroll-liabilities",
+    element: <PayrollLiabilitiesPage />,
+  },
+  {
+    appPath: "/app/payroll-beneficiaries",
+    childPath: "payroll-beneficiaries",
+    element: <PayrollBeneficiariesPage />,
+  },
+  {
+    appPath: "/app/payroll-close-controls",
+    childPath: "payroll-close-controls",
+    element: <PayrollCloseControlsPage />,
+  },
+  {
+    appPath: "/app/payroll-runs/:runId",
+    childPath: "payroll-runs/:runId",
+    permissionPath: "/app/payroll-runs",
+    element: <PayrollRunDetailPage />,
+  },
+  {
+    appPath: "/app/payroll-runs/:runId/liabilities",
+    childPath: "payroll-runs/:runId/liabilities",
+    permissionPath: "/app/payroll-liabilities",
+    element: <PayrollLiabilitiesPage />,
   },
   {
     appPath: "/app/alici-kart-olustur",
@@ -261,6 +354,11 @@ const implementedRoutes = [
     appPath: "/app/ayarlar/rbac/audit-logs",
     childPath: "ayarlar/rbac/audit-logs",
     element: <RbacAuditLogsPage />,
+  },
+  {
+    appPath: "/app/ayarlar/rbac/sensitive-data-audit",
+    childPath: "ayarlar/rbac/sensitive-data-audit",
+    element: <SensitiveDataAuditPage />,
   },
   {
     appPath: "/app/donem-sonu-islemler/aylik/intercompany-mutabakat",

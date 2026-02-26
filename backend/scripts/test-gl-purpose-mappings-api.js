@@ -12,6 +12,7 @@ const TEST_PASSWORD = "GlPurposeMappings#123";
 
 const CARI_AR_CONTROL = "CARI_AR_CONTROL";
 const CARI_AR_OFFSET = "CARI_AR_OFFSET";
+const EXPECTED_CARI_PURPOSE_ROW_COUNT = 16;
 
 function assert(condition, message) {
   if (!condition) {
@@ -460,8 +461,9 @@ async function main() {
       expectedStatus: 200,
     });
     assert(
-      Array.isArray(initialList.json?.rows) && initialList.json.rows.length === 4,
-      "Initial list must include 4 CARI purpose rows"
+      Array.isArray(initialList.json?.rows) &&
+        initialList.json.rows.length === EXPECTED_CARI_PURPOSE_ROW_COUNT,
+      `Initial list must include ${EXPECTED_CARI_PURPOSE_ROW_COUNT} CARI purpose rows`
     );
     assert(
       initialList.json.rows.every((row) => row.accountId === null),
@@ -622,4 +624,3 @@ main().catch((error) => {
   console.error(error);
   process.exit(1);
 });
-

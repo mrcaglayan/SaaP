@@ -17,6 +17,9 @@ const SCOPE_ASSIGNMENTS_PAGE_PERMISSIONS = [
 ];
 
 const AUDIT_LOGS_PAGE_PERMISSIONS = ["security.audit.read"];
+const SENSITIVE_DATA_AUDIT_PAGE_PERMISSIONS = [
+  "security.sensitive_data.audit.read",
+];
 const COMPANY_SETTINGS_PAGE_PERMISSIONS = ["onboarding.company.setup"];
 const ORG_SETTINGS_PAGE_PERMISSIONS = ["org.tree.read", "org.fiscal_calendar.read"];
 const GL_SETUP_PAGE_PERMISSIONS = [
@@ -176,10 +179,32 @@ export const sidebarItems = [
       {
         label: "Banka Tanimla",
         to: "/app/banka-tanimla",
+        requiredPermissions: ["bank.accounts.read"],
+        implemented: true,
+      },
+      {
+        label: "Banka Ekstre Ice Aktar",
+        to: "/app/banka-ekstre-ice-aktar",
+        requiredPermissions: ["bank.statements.import"],
+        implemented: true,
+      },
+      {
+        label: "Banka Ekstre Kuyrugu",
+        to: "/app/banka-ekstre-kuyrugu",
+        requiredPermissions: ["bank.statements.read"],
+        implemented: true,
+      },
+      {
+        label: "Banka Mutabakat",
+        to: "/app/banka-mutabakat",
+        requiredPermissions: ["bank.reconcile.read"],
+        implemented: true,
       },
       {
         label: "Banka Islemleri",
         to: "/app/banka-islemleri",
+        requiredPermissions: ["bank.statements.read"],
+        implemented: true,
       },
     ],
   },
@@ -285,6 +310,64 @@ export const sidebarItems = [
             implemented: true,
           },
         ],
+      },
+    ],
+  },
+  {
+    type: "section",
+    title: "Odeme Islemleri",
+    icon: "bank",
+    matchPrefix: "/app/odeme-batchleri",
+    items: [
+      {
+        label: "Odeme Batchleri",
+        to: "/app/odeme-batchleri",
+        requiredPermissions: ["payments.batch.read"],
+        implemented: true,
+      },
+    ],
+  },
+  {
+    type: "section",
+    title: "Bordro Islemleri",
+    icon: "company",
+    matchPrefix: "/app/payroll",
+    items: [
+      {
+        label: "Bordro Runlari",
+        to: "/app/payroll-runs",
+        requiredPermissions: ["payroll.runs.read"],
+        implemented: true,
+      },
+      {
+        label: "Bordro Import",
+        to: "/app/payroll-runs/import",
+        requiredPermissions: ["payroll.runs.import"],
+        implemented: true,
+      },
+      {
+        label: "Bordro Mappingleri",
+        to: "/app/payroll-mappings",
+        requiredPermissions: ["payroll.mappings.read"],
+        implemented: true,
+      },
+      {
+        label: "Bordro Liabilities",
+        to: "/app/payroll-liabilities",
+        requiredPermissions: ["payroll.liabilities.read"],
+        implemented: true,
+      },
+      {
+        label: "Bordro Beneficiaries",
+        to: "/app/payroll-beneficiaries",
+        requiredPermissions: ["payroll.beneficiary.read"],
+        implemented: true,
+      },
+      {
+        label: "Bordro Kapanis Kontrolleri",
+        to: "/app/payroll-close-controls",
+        requiredPermissions: ["payroll.close.read"],
+        implemented: true,
       },
     ],
   },
@@ -456,6 +539,12 @@ export const sidebarItems = [
         label: "RBAC Denetim Loglari",
         to: "/app/ayarlar/rbac/audit-logs",
         requiredPermissions: AUDIT_LOGS_PAGE_PERMISSIONS,
+        implemented: true,
+      },
+      {
+        label: "Hassas Veri Denetim Kayitlari",
+        to: "/app/ayarlar/rbac/sensitive-data-audit",
+        requiredPermissions: SENSITIVE_DATA_AUDIT_PAGE_PERMISSIONS,
         implemented: true,
       },
       {

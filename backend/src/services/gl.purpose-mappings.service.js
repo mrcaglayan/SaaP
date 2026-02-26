@@ -1,11 +1,29 @@
 import { query } from "../db.js";
 import { badRequest, parsePositiveInt } from "../routes/_utils.js";
 
-const CARI_PURPOSE_CODES = Object.freeze([
+const CARI_REQUIRED_PURPOSE_CODES = Object.freeze([
   "CARI_AR_CONTROL",
   "CARI_AR_OFFSET",
   "CARI_AP_CONTROL",
   "CARI_AP_OFFSET",
+]);
+const CARI_CONTEXT_PURPOSE_CODES = Object.freeze([
+  "CARI_AR_CONTROL_CASH",
+  "CARI_AR_OFFSET_CASH",
+  "CARI_AP_CONTROL_CASH",
+  "CARI_AP_OFFSET_CASH",
+  "CARI_AR_CONTROL_MANUAL",
+  "CARI_AR_OFFSET_MANUAL",
+  "CARI_AP_CONTROL_MANUAL",
+  "CARI_AP_OFFSET_MANUAL",
+  "CARI_AR_CONTROL_ON_ACCOUNT",
+  "CARI_AR_OFFSET_ON_ACCOUNT",
+  "CARI_AP_CONTROL_ON_ACCOUNT",
+  "CARI_AP_OFFSET_ON_ACCOUNT",
+]);
+const CARI_PURPOSE_CODES = Object.freeze([
+  ...CARI_REQUIRED_PURPOSE_CODES,
+  ...CARI_CONTEXT_PURPOSE_CODES,
 ]);
 const CARI_PURPOSE_CODE_SET = new Set(CARI_PURPOSE_CODES);
 const SHAREHOLDER_PURPOSE_PREFIX = "SHAREHOLDER_";
@@ -250,4 +268,3 @@ export async function upsertPurposeMapping({
     validForCariPosting: true,
   };
 }
-

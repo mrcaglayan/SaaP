@@ -1,41 +1,70 @@
-# 04-BANKS_AND_PAYROLLS_ESM
+﻿# 04-BANKS_AND_PAYROLLS_ESM
 
 Unified Bank + Payroll roadmap with ESM-oriented code snippets and repository-safe migration numbering.
-# Migration Renumbering Map
+# Implementation Baseline
 
-This document uses collision-free migration numbering for this repository.
 Base repository currently has migrations through `m030`.
-New roadmap migration IDs start from `m031` and are unique across Bank + Payroll + Hardening streams.
+This roadmap starts new migration keys from `m031_*` and follows repository-native ESM conventions.
+Migration snippets should use `key`, `description`, and `async up(connection)` with `connection.execute(...)`.
 
-1. `m027_bank_accounts_foundation` -> `m031_bank_accounts_foundation`
-2. `m028_bank_statement_imports` -> `m032_bank_statement_imports`
-3. `m029_bank_reconciliation_core` -> `m033_bank_reconciliation_core`
-4. `m030_payment_batches_core` -> `m034_payment_batches_core`
-5. `m021_bank_foundation` -> `m035_bank_foundation`
-6. `m022_bank_statement_imports` -> `m036_bank_statement_imports`
-7. `m023_bank_reconciliation` -> `m037_bank_reconciliation`
-8. `m024_payment_batches` -> `m038_payment_batches`
-9. `m025_payroll_import_foundation` -> `m039_payroll_import_foundation`
-10. `m026_payroll_accrual_posting` -> `m040_payroll_accrual_posting`
-11. `m027_payroll_liabilities_payment_prep` -> `m041_payroll_liabilities_payment_prep`
-12. `m028_payroll_payment_settlement_sync` -> `m042_payroll_payment_settlement_sync`
-13. `m029_payroll_corrections_reversals` -> `m043_payroll_corrections_reversals`
-14. `m030_payroll_partial_settlement_and_manual_override` -> `m044_payroll_partial_settlement_and_manual_override`
-15. `m031_bank_connectivity_adapters` -> `m045_bank_connectivity_adapters`
-16. `m032_bank_payment_exports_and_acks` -> `m046_bank_payment_exports_and_acks`
-17. `m033_bank_reconciliation_rules_and_exceptions` -> `m047_bank_reconciliation_rules_and_exceptions`
-18. `m034_bank_recon_autopost_templates` -> `m048_bank_recon_autopost_templates`
-19. `m035_bank_returns_and_recon_differences` -> `m049_bank_returns_and_recon_differences`
-20. `m036_bank_governance_approvals_sod` -> `m050_bank_governance_approvals_sod`
-21. `m031_payroll_beneficiary_snapshots` -> `m051_payroll_beneficiary_snapshots`
-22. `m032_payroll_close_controls` -> `m052_payroll_close_controls`
-23. `m033_payroll_provider_adapters` -> `m053_payroll_provider_adapters`
-24. `m034_sensitive_data_security` -> `m054_sensitive_data_security`
-25. `m035_job_engine` -> `m055_job_engine`
-26. `m036_performance_indexes` -> `m056_performance_indexes`
-27. `m037_approval_policy_engine` -> `m057_approval_policy_engine`
-28. `m038_exception_workbench` -> `m058_exception_workbench`
-29. `m039_data_retention_archival` -> `m059_data_retention_archival`
+## Start Here (Execution Guide)
+
+Use this file as an implementation roadmap, but not every snippet is equally authoritative.
+
+Follow this order:
+
+1. Read `Bank Adoption Baseline` first (repo compatibility rules).
+2. Use `Recommended Implementation Order (After Adoption)` for the first bank PRs.
+3. Implement one PR at a time from the full `# PR-*` sections.
+4. Treat later `H*` sections as cross-cutting follow-ups after core Bank/Payroll flows are stable.
+
+Working rule:
+
+- Adoption/baseline sections define repo conventions.
+- `# PR-*` sections define execution steps and acceptance criteria.
+- Chat-style lines (for example, `Perfect - here is ...`) are historical drafting noise and can be ignored.
+
+## Canonical Conventions (Resolve Ambiguities Before Coding)
+
+This file contains mixed drafts. Use these conventions consistently when implementing:
+
+1. Module format: ESM only (`import` / `export default`)
+2. Migration keys: continue from `m031_*` onward
+3. Frontend routes: `/app/...` only (no parallel `/bank/...`)
+4. Backend route files: prefer `*.routes.js` naming for new modules
+5. Scope safety: bank/payroll domain tables must be tenant-scoped and legal-entity-scoped unless explicitly tenant-global
+6. Permissions: use one permission naming style per module and keep it consistent in routes, seed, frontend guards, and sidebar
+
+Permission naming note (important):
+
+- This file shows both `bank.account.*` and `bank.accounts.*` in different places.
+- Pick one style before PR-B01 and use it everywhere in implementation.
+- Recommended for consistency with the detailed PR snippets: `bank.accounts.*` (plural).
+
+## Execution Tracker (Update As You Implement)
+
+- [x] PR-B01 Bank Foundation (implemented)
+- [x] PR-B02 Statement Import Foundation (implemented)
+- [x] PR-B03 Reconciliation Core (implemented)
+- [x] PR-B04 Generic Payment Batch Engine (implemented)
+- [x] PR-P01 Payroll Import Foundation (implemented)
+- [x] PR-P02 Payroll Accrual Posting + Component Mapping (implemented)
+- [x] PR-P03 Payroll Liability Breakdown + Payment Batch Prep (implemented)
+- [x] PR-P04 Payroll Payment Settlement Sync (implemented)
+- [x] PR-P05 Payroll Corrections (implemented)
+- [x] PR-P06 Partial Settlement + Manual Override (implemented)
+- [ ] PR-B05 Bank Connectivity Adapter
+- [ ] PR-B06 Payment File Export + Bank Ack Import 
+- [ ] PR-B07 Reconciliation Rules + Exception Queue
+- [ ] PR-B08-A Auto-Posting Templates
+- [ ] PR-B08-B Returns / Rejections / FX Difference
+- [ ] PR-B09 Bank Approvals / SoD / Thresholds
+- [x] PR-P07 Beneficiary Bank Master + Immutable Snapshots (implemented)
+- [x] PR-P08 Payroll Close Controls + Locks (implemented)
+- [x] PR-P09 Provider-Specific Payroll Adapters (implemented)
+- [ ] PR-H01..PR-H09 Cross-cutting hardening and release gates (in progress)
+- [x] PR-H01 Sensitive Data Security (implemented)
+- [x] PR-H02 Jobs + Retry Engine (implemented)
 
 ---
 ## Roadmap Content
@@ -57,8 +86,8 @@ Hard incompatibilities:
 
 1. Migration numbering conflict
 - Bank doc starts at `m021_*`.
-- This repo already has `m021..m026`.
-- Bank must start from `m027_*`.
+- This repo already has `m001..m030`.
+- Bank/Payroll roadmap migrations must start from `m031_*`.
 
 2. Module format mismatch
 - Bank doc examples are mostly CommonJS (`module.exports`).
@@ -69,7 +98,7 @@ Hard incompatibilities:
 - All Bank entities must be tenant-scoped and legal-entity-scoped where relevant.
 
 4. Frontend auth API mismatch
-- Bank doc uses `RequirePermission permission="..."`.
+- Use `RequirePermission anyOf={[...]} / allOf={[...]}` for frontend route guards.
 - This repo uses `RequirePermission` with `anyOf`/`allOf`.
 
 5. Frontend route convention mismatch
@@ -129,7 +158,7 @@ Original intent: bank master data + strict GL link.
 Repo-native adoption:
 
 - Migration file:
-  - `backend/src/migrations/m031_bank_accounts_foundation.js`
+  - `backend/src/migrations/m031_bank_foundation.js`
 - Suggested table:
   - `bank_accounts`
   - Required columns: `id`, `tenant_id`, `legal_entity_id`, `code`, `name`, `currency_code`, `gl_account_id`, `is_active`, `created_by_user_id`, timestamps.
@@ -147,9 +176,8 @@ Repo-native adoption:
 - Mount:
   - `app.use("/api/v1/bank/accounts", requireAuth, bankAccountsRoutes);`
 - Permissions to add:
-  - `bank.account.read`
-  - `bank.account.upsert`
-  - `bank.account.activate`
+  - `bank.accounts.read`
+  - `bank.accounts.write` (use for create/update/activate/deactivate in v1)
 - Frontend:
   - `frontend/src/api/bankAccounts.js`
   - `frontend/src/pages/bank/BankAccountsPage.jsx`
@@ -185,7 +213,7 @@ Original intent: queue, suggestions, match/unmatch/ignore, audit.
 Repo-native adoption:
 
 - Migration file:
-  - `backend/src/migrations/m033_bank_reconciliation_core.js`
+  - `backend/src/migrations/m033_bank_reconciliation.js`
 - Tables:
   - `bank_reconciliation_matches`
   - `bank_reconciliation_audit`
@@ -205,7 +233,7 @@ Original intent: reusable payment batch with approval/export/post.
 Repo-native adoption:
 
 - Migration file:
-  - `backend/src/migrations/m034_payment_batches_core.js`
+  - `backend/src/migrations/m034_payment_batches.js`
 - Tables:
   - `payment_batches`
   - `payment_batch_lines`
@@ -268,7 +296,7 @@ Example target after bank stabilizes:
 
 Before coding PR-B01:
 
-1. Confirm migration number `m027_*` is reserved.
+1. Confirm migration number `m031_*` is reserved.
 2. Confirm permission codes and role seed mapping are finalized in design.
 3. Confirm canonical frontend route (`/app/banka-tanimla`) for Bank Accounts page.
 4. Confirm Bank smoke script name and npm alias.
@@ -295,7 +323,7 @@ Before coding PR-B01:
 
     ### Backend
 
-    * `backend/src/migrations/m035_bank_foundation.js`
+    * `backend/src/migrations/m031_bank_foundation.js`
     * `backend/src/routes/bank.accounts.js`
     * `backend/src/routes/bank.accounts.validators.js`
     * `backend/src/services/bank.accounts.service.js`
@@ -328,18 +356,18 @@ Before coding PR-B01:
 
     # Concrete skeletons
 
-    ## 1) Migration — `backend/src/migrations/m035_bank_foundation.js`
+    ## 1) Migration — `backend/src/migrations/m031_bank_foundation.js`
 
     > Assumes MySQL 8 + your migration style (`up/down` with `db.query` or similar). Adjust helper names to your project’s migration runner.
 
     ```js
-    // backend/src/migrations/m035_bank_foundation.js
+    // backend/src/migrations/m031_bank_foundation.js
 
     export default {
-    id: "m035_bank_foundation",
-
-    async up(db) {
-        await db.query(`
+    key: "m031_bank_foundation",
+    description: "m031_bank_foundation",
+    async up(connection) {
+        await connection.execute(`
         CREATE TABLE IF NOT EXISTS bank_accounts (
             id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
             code VARCHAR(50) NOT NULL,
@@ -366,8 +394,8 @@ Before coding PR-B01:
         `);
     },
 
-    async down(db) {
-        await db.query(`DROP TABLE IF EXISTS bank_accounts;`);
+    async down(connection) {
+        await connection.execute(`DROP TABLE IF EXISTS bank_accounts;`);
     },
     };
     ```
@@ -631,11 +659,12 @@ Before coding PR-B01:
     import express from "express";
     import { validateCreateBankAccount,
     validateUpdateBankAccount,
-    validateIdParam, } from "./bank.accounts.validators";
-    import service from "../services/bank.accounts.service";
+    validateIdParam, } from "./bank.accounts.validators.js";
+    import service from "../services/bank.accounts.service.js";
     // Replace these with your project helpers:
-    import { requireAuth, requirePermission } from "../auth/guards";
-    import { getDb } from "../db";
+    import { requireAuth } from "../middleware/auth.js";
+    import { requirePermission } from "../middleware/rbac.js";
+    import { query } from "../db.js";
     const router = express.Router();
 
     // GET /api/v1/bank/accounts
@@ -645,7 +674,7 @@ Before coding PR-B01:
     requirePermission("bank.accounts.read"),
     async (req, res, next) => {
         try {
-        const db = getDb(req);
+        const db = { query }; // adapt to your service signature
         const includeInactive = req.query.include_inactive !== "0";
         const rows = await service.listBankAccounts(db, { includeInactive });
         res.json({ items: rows });
@@ -662,7 +691,7 @@ Before coding PR-B01:
     requirePermission("bank.accounts.read"),
     async (req, res, next) => {
         try {
-        const db = getDb(req);
+        const db = { query }; // adapt to your service signature
         const { id } = validateIdParam(req.params);
         const row = await service.getBankAccountById(db, id);
         if (!row) return res.status(404).json({ error: "Not found" });
@@ -680,7 +709,7 @@ Before coding PR-B01:
     requirePermission("bank.accounts.write"),
     async (req, res, next) => {
         try {
-        const db = getDb(req);
+        const db = { query }; // adapt to your service signature
         const payload = validateCreateBankAccount(req.body);
         const userId = req.user?.id ?? null;
         const created = await service.createBankAccount(db, payload, userId);
@@ -698,7 +727,7 @@ Before coding PR-B01:
     requirePermission("bank.accounts.write"),
     async (req, res, next) => {
         try {
-        const db = getDb(req);
+        const db = { query }; // adapt to your service signature
         const { id } = validateIdParam(req.params);
         const patch = validateUpdateBankAccount(req.body);
         const updated = await service.updateBankAccount(db, id, patch);
@@ -716,7 +745,7 @@ Before coding PR-B01:
     requirePermission("bank.accounts.write"),
     async (req, res, next) => {
         try {
-        const db = getDb(req);
+        const db = { query }; // adapt to your service signature
         const { id } = validateIdParam(req.params);
         const row = await service.setBankAccountActive(db, id, true);
         res.json(row);
@@ -733,7 +762,7 @@ Before coding PR-B01:
     requirePermission("bank.accounts.write"),
     async (req, res, next) => {
         try {
-        const db = getDb(req);
+        const db = { query }; // adapt to your service signature
         const { id } = validateIdParam(req.params);
         const row = await service.setBankAccountActive(db, id, false);
         res.json(row);
@@ -754,7 +783,7 @@ Before coding PR-B01:
 
     ```js
     // backend/src/index.js
-    import bankAccountsRoutes from "./routes/bank.accounts";
+    import bankAccountsRoutes from "./routes/bank.accounts.js";
     // ...
     app.use("/api/v1/bank", bankAccountsRoutes);
     ```
@@ -767,10 +796,10 @@ Before coding PR-B01:
 
     ```js
     // backend/src/migrations/index.js
-    import m035_bank_foundation from "./m035_bank_foundation";
+    import m031_bank_foundation from "./m031_bank_foundation.js";
     export default [
     // ...
-    m035_bank_foundation,
+    m031_bank_foundation,
     ];
     ```
 
@@ -862,7 +891,7 @@ Before coding PR-B01:
     ```js
     // frontend/src/api/bankAccounts.js
 
-    import { apiFetch } from "./client"; // adapt to your actual client helper
+    import { apiFetch } from "./client.js"; // adapt to your actual client helper
 
     export function listBankAccounts(params = {}) {
     const q = new URLSearchParams();
@@ -919,7 +948,7 @@ Before coding PR-B01:
     createBankAccount,
     activateBankAccount,
     deactivateBankAccount,
-    } from "../../api/bankAccounts";
+    } from "../../api/bankAccounts.js";
 
     const emptyForm = {
     code: "",
@@ -1112,13 +1141,13 @@ Before coding PR-B01:
 
     ```jsx
     // frontend/src/App.jsx
-    import BankAccountsPage from "./pages/bank/BankAccountsPage";
+    import BankAccountsPage from "./pages/bank/BankAccountsPage.js";
 
     // ...
     <Route
-    path="/bank/accounts"
+    path="/app/banka-tanimla"
     element={
-        <RequirePermission permission="bank.accounts.read">
+        <RequirePermission anyOf={["bank.accounts.read"]}>
         <BankAccountsPage />
         </RequirePermission>
     }
@@ -1140,8 +1169,8 @@ Before coding PR-B01:
         {
         key: "bank-accounts",
         label: "Bank Accounts",
-        to: "/bank/accounts",
-        permission: "bank.accounts.read",
+        to: "/app/banka-tanimla",
+        requiredPermissions: ["bank.accounts.read"],
         },
     ],
     }
@@ -1271,7 +1300,7 @@ Perfect — here’s **PR-B02 in the same concrete format**.
 
     ### Backend
 
-    * `backend/src/migrations/m036_bank_statement_imports.js`
+    * `backend/src/migrations/m032_bank_statement_imports.js`
     * `backend/src/routes/bank.statements.js`
     * `backend/src/routes/bank.statements.validators.js`
     * `backend/src/services/bank.statements.service.js`
@@ -1306,16 +1335,16 @@ Perfect — here’s **PR-B02 in the same concrete format**.
 
     # Concrete skeletons
 
-    ## 1) Migration — `backend/src/migrations/m036_bank_statement_imports.js`
+    ## 1) Migration — `backend/src/migrations/m032_bank_statement_imports.js`
 
     ```js
-    // backend/src/migrations/m036_bank_statement_imports.js
+    // backend/src/migrations/m032_bank_statement_imports.js
 
     export default {
-    id: "m036_bank_statement_imports",
-
-    async up(db) {
-        await db.query(`
+    key: "m032_bank_statement_imports",
+    description: "m032_bank_statement_imports",
+    async up(connection) {
+        await connection.execute(`
         CREATE TABLE IF NOT EXISTS bank_statement_imports (
             id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
             bank_account_id BIGINT UNSIGNED NOT NULL,
@@ -1344,7 +1373,7 @@ Perfect — here’s **PR-B02 in the same concrete format**.
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
         `);
 
-        await db.query(`
+        await connection.execute(`
         CREATE TABLE IF NOT EXISTS bank_statement_lines (
             id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
             import_id BIGINT UNSIGNED NOT NULL,
@@ -1378,9 +1407,9 @@ Perfect — here’s **PR-B02 in the same concrete format**.
         `);
     },
 
-    async down(db) {
-        await db.query(`DROP TABLE IF EXISTS bank_statement_lines;`);
-        await db.query(`DROP TABLE IF EXISTS bank_statement_imports;`);
+    async down(connection) {
+        await connection.execute(`DROP TABLE IF EXISTS bank_statement_lines;`);
+        await connection.execute(`DROP TABLE IF EXISTS bank_statement_imports;`);
     },
     };
     ```
@@ -1598,7 +1627,7 @@ Perfect — here’s **PR-B02 in the same concrete format**.
     // backend/src/services/bank.statements.service.js
 
     import crypto from "crypto";
-    import { parseStatementCsv } from "./bank.parsers.csv";
+    import { parseStatementCsv } from "./bank.parsers.csv.js";
     function sha256(input) {
     return crypto.createHash("sha256").update(input).digest("hex");
     }
@@ -1879,11 +1908,12 @@ Perfect — here’s **PR-B02 in the same concrete format**.
     import { validateImportRequest,
     validateIdParam,
     validateListLinesQuery,
-    validateListImportsQuery, } from "./bank.statements.validators";
-    import service from "../services/bank.statements.service";
+    validateListImportsQuery, } from "./bank.statements.validators.js";
+    import service from "../services/bank.statements.service.js";
     // Replace with your project helpers
-    import { requireAuth, requirePermission } from "../auth/guards";
-    import { getDb } from "../db";
+    import { requireAuth } from "../middleware/auth.js";
+    import { requirePermission } from "../middleware/rbac.js";
+    import { query } from "../db.js";
     const router = express.Router();
     const upload = multer({ storage: multer.memoryStorage() });
 
@@ -1895,7 +1925,7 @@ Perfect — here’s **PR-B02 in the same concrete format**.
     upload.single("file"),
     async (req, res, next) => {
         try {
-        const db = getDb(req);
+        const db = { query }; // adapt to your service signature
         const payload = validateImportRequest(req);
         const userId = req.user?.id ?? null;
         const result = await service.importStatementCsv(db, payload, userId);
@@ -1913,7 +1943,7 @@ Perfect — here’s **PR-B02 in the same concrete format**.
     requirePermission("bank.statements.read"),
     async (req, res, next) => {
         try {
-        const db = getDb(req);
+        const db = { query }; // adapt to your service signature
         const q = validateListImportsQuery(req.query);
         const items = await service.listImports(db, q);
         res.json({ items });
@@ -1930,7 +1960,7 @@ Perfect — here’s **PR-B02 in the same concrete format**.
     requirePermission("bank.statements.read"),
     async (req, res, next) => {
         try {
-        const db = getDb(req);
+        const db = { query }; // adapt to your service signature
         const { id } = validateIdParam(req.params);
         const row = await service.getImportById(db, id);
         if (!row) return res.status(404).json({ error: "Not found" });
@@ -1948,7 +1978,7 @@ Perfect — here’s **PR-B02 in the same concrete format**.
     requirePermission("bank.statements.read"),
     async (req, res, next) => {
         try {
-        const db = getDb(req);
+        const db = { query }; // adapt to your service signature
         const q = validateListLinesQuery(req.query);
         const items = await service.listStatementLines(db, q);
         res.json({ items });
@@ -1965,7 +1995,7 @@ Perfect — here’s **PR-B02 in the same concrete format**.
     requirePermission("bank.statements.read"),
     async (req, res, next) => {
         try {
-        const db = getDb(req);
+        const db = { query }; // adapt to your service signature
         const { id } = validateIdParam(req.params);
         const row = await service.getStatementLineById(db, id);
         if (!row) return res.status(404).json({ error: "Not found" });
@@ -1985,7 +2015,7 @@ Perfect — here’s **PR-B02 in the same concrete format**.
 
     ```js
     // backend/src/index.js
-    import bankStatementsRoutes from "./routes/bank.statements";
+    import bankStatementsRoutes from "./routes/bank.statements.js";
     // ...
     app.use("/api/v1/bank", bankStatementsRoutes);
     ```
@@ -1996,10 +2026,10 @@ Perfect — here’s **PR-B02 in the same concrete format**.
 
     ```js
     // backend/src/migrations/index.js
-    import m036_bank_statement_imports from "./m036_bank_statement_imports";
+    import m032_bank_statement_imports from "./m032_bank_statement_imports.js";
     export default [
     // ...
-    m036_bank_statement_imports,
+    m032_bank_statement_imports,
     ];
     ```
 
@@ -2087,7 +2117,7 @@ Perfect — here’s **PR-B02 in the same concrete format**.
     ```js
     // frontend/src/api/bankStatements.js
 
-    import { apiFetch } from "./client"; // adapt to your actual helper
+    import { apiFetch } from "./client.js"; // adapt to your actual helper
 
     export function importBankStatementCsv({ bank_account_id, file, csv_text }) {
     // Supports multipart file upload or raw csv_text fallback
@@ -2144,7 +2174,7 @@ Perfect — here’s **PR-B02 in the same concrete format**.
     // frontend/src/pages/bank/BankStatementImportPage.jsx
 
     import { useState } from "react";
-    import { importBankStatementCsv } from "../../api/bankStatements";
+    import { importBankStatementCsv } from "../../api/bankStatements.js";
 
     export default function BankStatementImportPage() {
     const [bankAccountId, setBankAccountId] = useState("");
@@ -2231,7 +2261,7 @@ Perfect — here’s **PR-B02 in the same concrete format**.
     // frontend/src/pages/bank/BankStatementQueuePage.jsx
 
     import { useEffect, useState } from "react";
-    import { listBankStatementLines } from "../../api/bankStatements";
+    import { listBankStatementLines } from "../../api/bankStatements.js";
 
     export default function BankStatementQueuePage() {
     const [items, setItems] = useState([]);
@@ -2329,23 +2359,23 @@ Perfect — here’s **PR-B02 in the same concrete format**.
 
     ```jsx
     // frontend/src/App.jsx
-    import BankStatementImportPage from "./pages/bank/BankStatementImportPage";
-    import BankStatementQueuePage from "./pages/bank/BankStatementQueuePage";
+    import BankStatementImportPage from "./pages/bank/BankStatementImportPage.js";
+    import BankStatementQueuePage from "./pages/bank/BankStatementQueuePage.js";
 
     // ...
     <Route
-    path="/bank/statements/import"
+    path="/app/banka-ekstre-ice-aktar"
     element={
-        <RequirePermission permission="bank.statements.import">
+        <RequirePermission anyOf={["bank.statements.import"]}>
         <BankStatementImportPage />
         </RequirePermission>
     }
     />
 
     <Route
-    path="/bank/statements/queue"
+    path="/app/banka-ekstre-kuyrugu"
     element={
-        <RequirePermission permission="bank.statements.read">
+        <RequirePermission anyOf={["bank.statements.read"]}>
         <BankStatementQueuePage />
         </RequirePermission>
     }
@@ -2368,14 +2398,14 @@ Perfect — here’s **PR-B02 in the same concrete format**.
         {
         key: "bank-statements-import",
         label: "Statement Import",
-        to: "/bank/statements/import",
-        permission: "bank.statements.import",
+        to: "/app/banka-ekstre-ice-aktar",
+        requiredPermissions: ["bank.statements.import"],
         },
         {
         key: "bank-statements-queue",
         label: "Statement Queue",
-        to: "/bank/statements/queue",
-        permission: "bank.statements.read",
+        to: "/app/banka-ekstre-kuyrugu",
+        requiredPermissions: ["bank.statements.read"],
         },
     ],
     }
@@ -2487,7 +2517,7 @@ Perfect — here’s **PR-B03 in the same concrete format**.
 
     ### Backend
 
-    * `backend/src/migrations/m037_bank_reconciliation.js`
+    * `backend/src/migrations/m033_bank_reconciliation.js`
     * `backend/src/routes/bank.reconciliation.js`
     * `backend/src/routes/bank.reconciliation.validators.js`
     * `backend/src/services/bank.reconciliation.service.js`
@@ -2520,16 +2550,16 @@ Perfect — here’s **PR-B03 in the same concrete format**.
 
     # Concrete skeletons
 
-    ## 1) Migration — `backend/src/migrations/m037_bank_reconciliation.js`
+    ## 1) Migration — `backend/src/migrations/m033_bank_reconciliation.js`
 
     ```js
-    // backend/src/migrations/m037_bank_reconciliation.js
+    // backend/src/migrations/m033_bank_reconciliation.js
 
     export default {
-    id: "m037_bank_reconciliation",
-
-    async up(db) {
-        await db.query(`
+    key: "m033_bank_reconciliation",
+    description: "m033_bank_reconciliation",
+    async up(connection) {
+        await connection.execute(`
         CREATE TABLE IF NOT EXISTS bank_reconciliation_matches (
             id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
             statement_line_id BIGINT UNSIGNED NOT NULL,
@@ -2555,7 +2585,7 @@ Perfect — here’s **PR-B03 in the same concrete format**.
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
         `);
 
-        await db.query(`
+        await connection.execute(`
         CREATE TABLE IF NOT EXISTS bank_reconciliation_audit (
             id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
             statement_line_id BIGINT UNSIGNED NOT NULL,
@@ -2574,9 +2604,9 @@ Perfect — here’s **PR-B03 in the same concrete format**.
         `);
     },
 
-    async down(db) {
-        await db.query(`DROP TABLE IF EXISTS bank_reconciliation_audit;`);
-        await db.query(`DROP TABLE IF EXISTS bank_reconciliation_matches;`);
+    async down(connection) {
+        await connection.execute(`DROP TABLE IF EXISTS bank_reconciliation_audit;`);
+        await connection.execute(`DROP TABLE IF EXISTS bank_reconciliation_matches;`);
     },
     };
     ```
@@ -3118,11 +3148,12 @@ Perfect — here’s **PR-B03 in the same concrete format**.
     validateAuditQuery,
     validateMatchBody,
     validateUnmatchBody,
-    validateIgnoreBody, } from "./bank.reconciliation.validators";
-    import service from "../services/bank.reconciliation.service";
+    validateIgnoreBody, } from "./bank.reconciliation.validators.js";
+    import service from "../services/bank.reconciliation.service.js";
     // Replace with your actual helpers
-    import { requireAuth, requirePermission } from "../auth/guards";
-    import { getDb } from "../db";
+    import { requireAuth } from "../middleware/auth.js";
+    import { requirePermission } from "../middleware/rbac.js";
+    import { query } from "../db.js";
     const router = express.Router();
 
     // GET /api/v1/bank/reconciliation/queue
@@ -3132,7 +3163,7 @@ Perfect — here’s **PR-B03 in the same concrete format**.
     requirePermission("bank.reconcile.read"),
     async (req, res, next) => {
         try {
-        const db = getDb(req);
+        const db = { query }; // adapt to your service signature
         const q = validateQueueQuery(req.query);
         const items = await service.listReconciliationQueue(db, q);
         res.json({ items });
@@ -3149,7 +3180,7 @@ Perfect — here’s **PR-B03 in the same concrete format**.
     requirePermission("bank.reconcile.read"),
     async (req, res, next) => {
         try {
-        const db = getDb(req);
+        const db = { query }; // adapt to your service signature
         const { lineId } = validateLineIdParam(req.params);
         const userId = req.user?.id ?? null;
         const result = await service.getSuggestionsForLine(db, lineId, userId);
@@ -3167,7 +3198,7 @@ Perfect — here’s **PR-B03 in the same concrete format**.
     requirePermission("bank.reconcile.write"),
     async (req, res, next) => {
         try {
-        const db = getDb(req);
+        const db = { query }; // adapt to your service signature
         const { lineId } = validateLineIdParam(req.params);
         const body = validateMatchBody(req.body);
         const userId = req.user?.id ?? null;
@@ -3186,7 +3217,7 @@ Perfect — here’s **PR-B03 in the same concrete format**.
     requirePermission("bank.reconcile.write"),
     async (req, res, next) => {
         try {
-        const db = getDb(req);
+        const db = { query }; // adapt to your service signature
         const { lineId } = validateLineIdParam(req.params);
         const body = validateUnmatchBody(req.body);
         const userId = req.user?.id ?? null;
@@ -3205,7 +3236,7 @@ Perfect — here’s **PR-B03 in the same concrete format**.
     requirePermission("bank.reconcile.write"),
     async (req, res, next) => {
         try {
-        const db = getDb(req);
+        const db = { query }; // adapt to your service signature
         const { lineId } = validateLineIdParam(req.params);
         const body = validateIgnoreBody(req.body);
         const userId = req.user?.id ?? null;
@@ -3224,7 +3255,7 @@ Perfect — here’s **PR-B03 in the same concrete format**.
     requirePermission("bank.reconcile.read"),
     async (req, res, next) => {
         try {
-        const db = getDb(req);
+        const db = { query }; // adapt to your service signature
         const q = validateAuditQuery(req.query);
         const items = await service.listReconciliationAudit(db, q);
         res.json({ items });
@@ -3243,7 +3274,7 @@ Perfect — here’s **PR-B03 in the same concrete format**.
 
     ```js
     // backend/src/index.js
-    import bankReconciliationRoutes from "./routes/bank.reconciliation";
+    import bankReconciliationRoutes from "./routes/bank.reconciliation.js";
     // ...
     app.use("/api/v1/bank", bankReconciliationRoutes);
     ```
@@ -3254,10 +3285,10 @@ Perfect — here’s **PR-B03 in the same concrete format**.
 
     ```js
     // backend/src/migrations/index.js
-    import m037_bank_reconciliation from "./m037_bank_reconciliation";
+    import m033_bank_reconciliation from "./m033_bank_reconciliation.js";
     export default [
     // ...
-    m037_bank_reconciliation,
+    m033_bank_reconciliation,
     ];
     ```
 
@@ -3348,7 +3379,7 @@ Perfect — here’s **PR-B03 in the same concrete format**.
     ```js
     // frontend/src/api/bankReconciliation.js
 
-    import { apiFetch } from "./client"; // adapt to your helper
+    import { apiFetch } from "./client.js"; // adapt to your helper
 
     export function listReconciliationQueue(params = {}) {
     const q = new URLSearchParams();
@@ -3415,7 +3446,7 @@ Perfect — here’s **PR-B03 in the same concrete format**.
     unmatchReconciliationLine,
     ignoreReconciliationLine,
     listReconciliationAudit,
-    } from "../../api/bankReconciliation";
+    } from "../../api/bankReconciliation.js";
 
     export default function BankReconciliationPage() {
     const [items, setItems] = useState([]);
@@ -3638,13 +3669,13 @@ Perfect — here’s **PR-B03 in the same concrete format**.
 
     ```jsx
     // frontend/src/App.jsx
-    import BankReconciliationPage from "./pages/bank/BankReconciliationPage";
+    import BankReconciliationPage from "./pages/bank/BankReconciliationPage.js";
 
     // ...
     <Route
-    path="/bank/reconciliation"
+    path="/app/banka-mutabakat"
     element={
-        <RequirePermission permission="bank.reconcile.read">
+        <RequirePermission anyOf={["bank.reconcile.read"]}>
         <BankReconciliationPage />
         </RequirePermission>
     }
@@ -3662,8 +3693,8 @@ Perfect — here’s **PR-B03 in the same concrete format**.
     {
     key: "bank-reconciliation",
     label: "Reconciliation",
-    to: "/bank/reconciliation",
-    permission: "bank.reconcile.read",
+    to: "/app/banka-mutabakat",
+    requiredPermissions: ["bank.reconcile.read"],
     }
     ```
 
@@ -3817,7 +3848,7 @@ Perfect — here’s **PR-B04** in the same concrete format.
 
     ### Backend
 
-    * `backend/src/migrations/m038_payment_batches.js`
+    * `backend/src/migrations/m034_payment_batches.js`
     * `backend/src/routes/payments.js`
     * `backend/src/routes/payments.validators.js`
     * `backend/src/services/payments.service.js`
@@ -3851,18 +3882,18 @@ Perfect — here’s **PR-B04** in the same concrete format.
 
     # Concrete skeletons
 
-    ## 1) Migration — `backend/src/migrations/m038_payment_batches.js`
+    ## 1) Migration — `backend/src/migrations/m034_payment_batches.js`
 
     > This is intentionally generic. `source_type/source_id` let Payroll/AP hook in later.
 
     ```js
-    // backend/src/migrations/m038_payment_batches.js
+    // backend/src/migrations/m034_payment_batches.js
 
     export default {
-    id: "m038_payment_batches",
-
-    async up(db) {
-        await db.query(`
+    key: "m034_payment_batches",
+    description: "m034_payment_batches",
+    async up(connection) {
+        await connection.execute(`
         CREATE TABLE IF NOT EXISTS payment_batches (
             id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
             batch_no VARCHAR(50) NOT NULL,
@@ -3898,7 +3929,7 @@ Perfect — here’s **PR-B04** in the same concrete format.
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
         `);
 
-        await db.query(`
+        await connection.execute(`
         CREATE TABLE IF NOT EXISTS payment_batch_lines (
             id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
             batch_id BIGINT UNSIGNED NOT NULL,
@@ -3932,7 +3963,7 @@ Perfect — here’s **PR-B04** in the same concrete format.
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
         `);
 
-        await db.query(`
+        await connection.execute(`
         CREATE TABLE IF NOT EXISTS payment_batch_audit (
             id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
             batch_id BIGINT UNSIGNED NOT NULL,
@@ -3950,10 +3981,10 @@ Perfect — here’s **PR-B04** in the same concrete format.
         `);
     },
 
-    async down(db) {
-        await db.query(`DROP TABLE IF EXISTS payment_batch_audit;`);
-        await db.query(`DROP TABLE IF EXISTS payment_batch_lines;`);
-        await db.query(`DROP TABLE IF EXISTS payment_batches;`);
+    async down(connection) {
+        await connection.execute(`DROP TABLE IF EXISTS payment_batch_audit;`);
+        await connection.execute(`DROP TABLE IF EXISTS payment_batch_lines;`);
+        await connection.execute(`DROP TABLE IF EXISTS payment_batches;`);
     },
     };
     ```
@@ -4626,11 +4657,12 @@ Perfect — here’s **PR-B04** in the same concrete format.
     validateApproveBody,
     validateExportBody,
     validatePostBody,
-    validateCancelBody, } from "./payments.validators";
-    import service from "../services/payments.service";
+    validateCancelBody, } from "./payments.validators.js";
+    import service from "../services/payments.service.js";
     // Replace with your project helpers
-    import { requireAuth, requirePermission } from "../auth/guards";
-    import { getDb } from "../db";
+    import { requireAuth } from "../middleware/auth.js";
+    import { requirePermission } from "../middleware/rbac.js";
+    import { query } from "../db.js";
     const router = express.Router();
 
     // GET /api/v1/payments/batches
@@ -4640,7 +4672,7 @@ Perfect — here’s **PR-B04** in the same concrete format.
     requirePermission("payments.batch.read"),
     async (req, res, next) => {
         try {
-        const db = getDb(req);
+        const db = { query }; // adapt to your service signature
         const q = validateListBatchesQuery(req.query);
         const items = await service.listBatches(db, q);
         res.json({ items });
@@ -4657,7 +4689,7 @@ Perfect — here’s **PR-B04** in the same concrete format.
     requirePermission("payments.batch.read"),
     async (req, res, next) => {
         try {
-        const db = getDb(req);
+        const db = { query }; // adapt to your service signature
         const { id } = validateIdParam(req.params);
         const row = await service.getBatchById(db, id);
         if (!row) return res.status(404).json({ error: "Not found" });
@@ -4676,7 +4708,7 @@ Perfect — here’s **PR-B04** in the same concrete format.
     requirePermission("payments.batch.create"),
     async (req, res, next) => {
         try {
-        const db = getDb(req);
+        const db = { query }; // adapt to your service signature
         const body = validateCreateBatch(req.body);
         const userId = req.user?.id ?? null;
         const row = await service.createBatch(db, body, userId);
@@ -4694,7 +4726,7 @@ Perfect — here’s **PR-B04** in the same concrete format.
     requirePermission("payments.batch.approve"),
     async (req, res, next) => {
         try {
-        const db = getDb(req);
+        const db = { query }; // adapt to your service signature
         const { id } = validateIdParam(req.params);
         const body = validateApproveBody(req.body);
         const userId = req.user?.id ?? null;
@@ -4713,7 +4745,7 @@ Perfect — here’s **PR-B04** in the same concrete format.
     requirePermission("payments.batch.export"),
     async (req, res, next) => {
         try {
-        const db = getDb(req);
+        const db = { query }; // adapt to your service signature
         const { id } = validateIdParam(req.params);
         const body = validateExportBody(req.body);
         const userId = req.user?.id ?? null;
@@ -4732,7 +4764,7 @@ Perfect — here’s **PR-B04** in the same concrete format.
     requirePermission("payments.batch.post"),
     async (req, res, next) => {
         try {
-        const db = getDb(req);
+        const db = { query }; // adapt to your service signature
         const { id } = validateIdParam(req.params);
         const body = validatePostBody(req.body);
         const userId = req.user?.id ?? null;
@@ -4751,7 +4783,7 @@ Perfect — here’s **PR-B04** in the same concrete format.
     requirePermission("payments.batch.create"),
     async (req, res, next) => {
         try {
-        const db = getDb(req);
+        const db = { query }; // adapt to your service signature
         const { id } = validateIdParam(req.params);
         const body = validateCancelBody(req.body);
         const userId = req.user?.id ?? null;
@@ -4772,7 +4804,7 @@ Perfect — here’s **PR-B04** in the same concrete format.
 
     ```js
     // backend/src/index.js
-    import paymentsRoutes from "./routes/payments";
+    import paymentsRoutes from "./routes/payments.js";
     // ...
     app.use("/api/v1/payments", paymentsRoutes);
     ```
@@ -4783,10 +4815,10 @@ Perfect — here’s **PR-B04** in the same concrete format.
 
     ```js
     // backend/src/migrations/index.js
-    import m038_payment_batches from "./m038_payment_batches";
+    import m034_payment_batches from "./m034_payment_batches.js";
     export default [
     // ...
-    m038_payment_batches,
+    m034_payment_batches,
     ];
     ```
 
@@ -4885,7 +4917,7 @@ Perfect — here’s **PR-B04** in the same concrete format.
     ```js
     // frontend/src/api/payments.js
 
-    import { apiFetch } from "./client"; // adapt
+    import { apiFetch } from "./client.js"; // adapt
 
     export function listPaymentBatches(params = {}) {
     const q = new URLSearchParams();
@@ -4946,7 +4978,7 @@ Perfect — here’s **PR-B04** in the same concrete format.
 
     import { useEffect, useState } from "react";
     import { Link } from "react-router-dom";
-    import { listPaymentBatches } from "../../api/payments";
+    import { listPaymentBatches } from "../../api/payments.js";
 
     export default function PaymentBatchListPage() {
     const [items, setItems] = useState([]);
@@ -5036,7 +5068,7 @@ Perfect — here’s **PR-B04** in the same concrete format.
     exportPaymentBatch,
     postPaymentBatch,
     cancelPaymentBatch,
-    } from "../../api/payments";
+    } from "../../api/payments.js";
 
     export default function PaymentBatchDetailPage() {
     const { id } = useParams();
@@ -5163,14 +5195,14 @@ Perfect — here’s **PR-B04** in the same concrete format.
 
     ```jsx
     // frontend/src/App.jsx
-    import PaymentBatchListPage from "./pages/payments/PaymentBatchListPage";
-    import PaymentBatchDetailPage from "./pages/payments/PaymentBatchDetailPage";
+    import PaymentBatchListPage from "./pages/payments/PaymentBatchListPage.js";
+    import PaymentBatchDetailPage from "./pages/payments/PaymentBatchDetailPage.js";
 
     // ...
     <Route
     path="/payments/batches"
     element={
-        <RequirePermission permission="payments.batch.read">
+        <RequirePermission anyOf={["payments.batch.read"]}>
         <PaymentBatchListPage />
         </RequirePermission>
     }
@@ -5179,7 +5211,7 @@ Perfect — here’s **PR-B04** in the same concrete format.
     <Route
     path="/payments/batches/:id"
     element={
-        <RequirePermission permission="payments.batch.read">
+        <RequirePermission anyOf={["payments.batch.read"]}>
         <PaymentBatchDetailPage />
         </RequirePermission>
     }
@@ -5202,7 +5234,7 @@ Perfect — here’s **PR-B04** in the same concrete format.
         key: "payment-batches",
         label: "Payment Batches",
         to: "/payments/batches",
-        permission: "payments.batch.read",
+        requiredPermissions: ["payments.batch.read"],
         },
     ],
     }
@@ -5434,10 +5466,10 @@ Perfect — here’s **PR-B04** in the same concrete format.
     // backend/src/migrations/m039_payroll_import_foundation.js
 
     export default {
-    id: "m039_payroll_import_foundation",
-
-    async up(db) {
-        await db.query(`
+    key: "m039_payroll_import_foundation",
+    description: "m039_payroll_import_foundation",
+    async up(connection) {
+        await connection.execute(`
         CREATE TABLE IF NOT EXISTS payroll_runs (
             id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
             run_no VARCHAR(50) NOT NULL,
@@ -5485,7 +5517,7 @@ Perfect — here’s **PR-B04** in the same concrete format.
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
         `);
 
-        await db.query(`
+        await connection.execute(`
         CREATE TABLE IF NOT EXISTS payroll_run_lines (
             id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
             run_id BIGINT UNSIGNED NOT NULL,
@@ -5526,7 +5558,7 @@ Perfect — here’s **PR-B04** in the same concrete format.
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
         `);
 
-        await db.query(`
+        await connection.execute(`
         CREATE TABLE IF NOT EXISTS payroll_run_audit (
             id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
             run_id BIGINT UNSIGNED NOT NULL,
@@ -5546,10 +5578,10 @@ Perfect — here’s **PR-B04** in the same concrete format.
         `);
     },
 
-    async down(db) {
-        await db.query(`DROP TABLE IF EXISTS payroll_run_audit;`);
-        await db.query(`DROP TABLE IF EXISTS payroll_run_lines;`);
-        await db.query(`DROP TABLE IF EXISTS payroll_runs;`);
+    async down(connection) {
+        await connection.execute(`DROP TABLE IF EXISTS payroll_run_audit;`);
+        await connection.execute(`DROP TABLE IF EXISTS payroll_run_lines;`);
+        await connection.execute(`DROP TABLE IF EXISTS payroll_runs;`);
     },
     };
     ```
@@ -5801,7 +5833,7 @@ Perfect — here’s **PR-B04** in the same concrete format.
     // backend/src/services/payroll.runs.service.js
 
     import crypto from "crypto";
-    import { parsePayrollCsv } from "./payroll.parsers.csv";
+    import { parsePayrollCsv } from "./payroll.parsers.csv.js";
     function sha256(v) {
     return crypto.createHash("sha256").update(String(v)).digest("hex");
     }
@@ -6176,11 +6208,12 @@ Perfect — here’s **PR-B04** in the same concrete format.
     import { validateImportRequest,
     validateIdParam,
     validateListRunsQuery,
-    validateListRunLinesQuery, } from "./payroll.runs.validators";
-    import service from "../services/payroll.runs.service";
+    validateListRunLinesQuery, } from "./payroll.runs.validators.js";
+    import service from "../services/payroll.runs.service.js";
     // Replace with your project helpers
-    import { requireAuth, requirePermission } from "../auth/guards";
-    import { getDb } from "../db";
+    import { requireAuth } from "../middleware/auth.js";
+    import { requirePermission } from "../middleware/rbac.js";
+    import { query } from "../db.js";
     const router = express.Router();
     const upload = multer({ storage: multer.memoryStorage() });
 
@@ -6192,7 +6225,7 @@ Perfect — here’s **PR-B04** in the same concrete format.
     upload.single("file"),
     async (req, res, next) => {
         try {
-        const db = getDb(req);
+        const db = { query }; // adapt to your service signature
         const payload = validateImportRequest(req);
         const userId = req.user?.id ?? null;
         const row = await service.importPayrollRunCsv(db, payload, userId);
@@ -6210,7 +6243,7 @@ Perfect — here’s **PR-B04** in the same concrete format.
     requirePermission("payroll.runs.read"),
     async (req, res, next) => {
         try {
-        const db = getDb(req);
+        const db = { query }; // adapt to your service signature
         const q = validateListRunsQuery(req.query);
         const items = await service.listRuns(db, q);
         res.json({ items });
@@ -6227,7 +6260,7 @@ Perfect — here’s **PR-B04** in the same concrete format.
     requirePermission("payroll.runs.read"),
     async (req, res, next) => {
         try {
-        const db = getDb(req);
+        const db = { query }; // adapt to your service signature
         const { id } = validateIdParam(req.params);
 
         const run = await service.getRunById(db, id);
@@ -6252,7 +6285,7 @@ Perfect — here’s **PR-B04** in the same concrete format.
     requirePermission("payroll.runs.read"),
     async (req, res, next) => {
         try {
-        const db = getDb(req);
+        const db = { query }; // adapt to your service signature
         const { id } = validateIdParam(req.params);
         const q = validateListRunLinesQuery(req.query);
 
@@ -6276,7 +6309,7 @@ Perfect — here’s **PR-B04** in the same concrete format.
 
     ```js
     // backend/src/index.js
-    import payrollRunsRoutes from "./routes/payroll.runs";
+    import payrollRunsRoutes from "./routes/payroll.runs.js";
     // ...
     app.use("/api/v1/payroll", payrollRunsRoutes);
     ```
@@ -6287,7 +6320,7 @@ Perfect — here’s **PR-B04** in the same concrete format.
 
     ```js
     // backend/src/migrations/index.js
-    import m039_payroll_import_foundation from "./m039_payroll_import_foundation";
+    import m039_payroll_import_foundation from "./m039_payroll_import_foundation.js";
     export default [
     // ...
     m039_payroll_import_foundation,
@@ -6370,7 +6403,7 @@ Perfect — here’s **PR-B04** in the same concrete format.
     ```js
     // frontend/src/api/payrollRuns.js
 
-    import { apiFetch } from "./client"; // adapt to your helper
+    import { apiFetch } from "./client.js"; // adapt to your helper
 
     export function importPayrollRun({ file, csv_text, ...meta }) {
     if (file) {
@@ -6423,7 +6456,7 @@ Perfect — here’s **PR-B04** in the same concrete format.
     // frontend/src/pages/payroll/PayrollRunImportPage.jsx
 
     import { useState } from "react";
-    import { importPayrollRun } from "../../api/payrollRuns";
+    import { importPayrollRun } from "../../api/payrollRuns.js";
 
     export default function PayrollRunImportPage() {
     const [form, setForm] = useState({
@@ -6551,7 +6584,7 @@ Perfect — here’s **PR-B04** in the same concrete format.
 
     import { useEffect, useState } from "react";
     import { Link } from "react-router-dom";
-    import { listPayrollRuns } from "../../api/payrollRuns";
+    import { listPayrollRuns } from "../../api/payrollRuns.js";
 
     export default function PayrollRunsPage() {
     const [items, setItems] = useState([]);
@@ -6647,7 +6680,7 @@ Perfect — here’s **PR-B04** in the same concrete format.
 
     import { useEffect, useState } from "react";
     import { useParams } from "react-router-dom";
-    import { getPayrollRun } from "../../api/payrollRuns";
+    import { getPayrollRun } from "../../api/payrollRuns.js";
 
     export default function PayrollRunDetailPage() {
     const { id } = useParams();
@@ -6752,15 +6785,15 @@ Perfect — here’s **PR-B04** in the same concrete format.
 
     ```jsx
     // frontend/src/App.jsx
-    import PayrollRunImportPage from "./pages/payroll/PayrollRunImportPage";
-    import PayrollRunsPage from "./pages/payroll/PayrollRunsPage";
-    import PayrollRunDetailPage from "./pages/payroll/PayrollRunDetailPage";
+    import PayrollRunImportPage from "./pages/payroll/PayrollRunImportPage.js";
+    import PayrollRunsPage from "./pages/payroll/PayrollRunsPage.js";
+    import PayrollRunDetailPage from "./pages/payroll/PayrollRunDetailPage.js";
 
     // ...
     <Route
     path="/payroll/runs"
     element={
-        <RequirePermission permission="payroll.runs.read">
+        <RequirePermission anyOf={["payroll.runs.read"]}>
         <PayrollRunsPage />
         </RequirePermission>
     }
@@ -6769,7 +6802,7 @@ Perfect — here’s **PR-B04** in the same concrete format.
     <Route
     path="/payroll/runs/import"
     element={
-        <RequirePermission permission="payroll.runs.import">
+        <RequirePermission anyOf={["payroll.runs.import"]}>
         <PayrollRunImportPage />
         </RequirePermission>
     }
@@ -6778,7 +6811,7 @@ Perfect — here’s **PR-B04** in the same concrete format.
     <Route
     path="/payroll/runs/:id"
     element={
-        <RequirePermission permission="payroll.runs.read">
+        <RequirePermission anyOf={["payroll.runs.read"]}>
         <PayrollRunDetailPage />
         </RequirePermission>
     }
@@ -6799,13 +6832,13 @@ Perfect — here’s **PR-B04** in the same concrete format.
         key: "payroll-runs",
         label: "Payroll Runs",
         to: "/payroll/runs",
-        permission: "payroll.runs.read",
+        requiredPermissions: ["payroll.runs.read"],
         },
         {
         key: "payroll-import",
         label: "Payroll Import",
         to: "/payroll/runs/import",
-        permission: "payroll.runs.import",
+        requiredPermissions: ["payroll.runs.import"],
         },
     ],
     }
@@ -6966,11 +6999,11 @@ Perfect — here’s **PR-P02** in the same concrete format.
     // backend/src/migrations/m040_payroll_accrual_posting.js
 
     export default {
-    id: "m040_payroll_accrual_posting",
-
-    async up(db) {
+    key: "m040_payroll_accrual_posting",
+    description: "m040_payroll_accrual_posting",
+    async up(connection) {
         // Effective-dated mapping table
-        await db.query(`
+        await connection.execute(`
         CREATE TABLE IF NOT EXISTS payroll_component_gl_mappings (
             id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
             entity_code VARCHAR(50) NOT NULL,
@@ -6997,7 +7030,7 @@ Perfect — here’s **PR-P02** in the same concrete format.
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
         `);
 
-        await db.query(`
+        await connection.execute(`
         CREATE TABLE IF NOT EXISTS payroll_component_gl_mapping_audit (
             id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
             mapping_id BIGINT UNSIGNED NULL,
@@ -7012,7 +7045,7 @@ Perfect — here’s **PR-P02** in the same concrete format.
         `);
 
         // Extend payroll_runs with accrual posting metadata
-        await db.query(`
+        await connection.execute(`
         ALTER TABLE payroll_runs
             ADD COLUMN reviewed_by BIGINT UNSIGNED NULL AFTER imported_by,
             ADD COLUMN reviewed_at DATETIME NULL AFTER imported_at,
@@ -7023,16 +7056,16 @@ Perfect — here’s **PR-P02** in the same concrete format.
             ADD COLUMN accrual_posted_at DATETIME NULL AFTER accrual_posted_by;
         `).catch(() => {}); // safe re-run during dev
 
-        await db.query(`
+        await connection.execute(`
         ALTER TABLE payroll_runs
             ADD KEY idx_payroll_runs_accrual_je (accrual_journal_entry_id)
         `).catch(() => {});
     },
 
-    async down(db) {
+    async down(connection) {
         // Keep ALTER TABLE down simple/safe for dev environments
-        await db.query(`DROP TABLE IF EXISTS payroll_component_gl_mapping_audit;`);
-        await db.query(`DROP TABLE IF EXISTS payroll_component_gl_mappings;`);
+        await connection.execute(`DROP TABLE IF EXISTS payroll_component_gl_mapping_audit;`);
+        await connection.execute(`DROP TABLE IF EXISTS payroll_component_gl_mappings;`);
         // (Optional) drop added payroll_runs columns if you maintain strict down migrations
     },
     };
@@ -7397,7 +7430,7 @@ Perfect — here’s **PR-P02** in the same concrete format.
     ```js
     // backend/src/services/payroll.accruals.service.js
 
-    import { EXPECTED_SIDE_BY_COMPONENT } from "./payroll.mappings.service";
+    import { EXPECTED_SIDE_BY_COMPONENT } from "./payroll.mappings.service.js";
     const COMPONENT_BUILDERS = [
     { code: "BASE_SALARY_EXPENSE", field: "base_salary", side: "DEBIT", label: "Base Salary Expense" },
     { code: "OVERTIME_EXPENSE", field: "overtime_pay", side: "DEBIT", label: "Overtime Expense" },
@@ -7754,11 +7787,12 @@ Perfect — here’s **PR-P02** in the same concrete format.
     // backend/src/routes/payroll.mappings.js
 
     import express from "express";
-    import { validateListMappingsQuery, validateUpsertMapping } from "./payroll.mappings.validators";
-    import service from "../services/payroll.mappings.service";
+    import { validateListMappingsQuery, validateUpsertMapping } from "./payroll.mappings.validators.js";
+    import service from "../services/payroll.mappings.service.js";
     // replace with your actual helpers
-    import { requireAuth, requirePermission } from "../auth/guards";
-    import { getDb } from "../db";
+    import { requireAuth } from "../middleware/auth.js";
+    import { requirePermission } from "../middleware/rbac.js";
+    import { query } from "../db.js";
     const router = express.Router();
 
     // GET /api/v1/payroll/mappings
@@ -7768,7 +7802,7 @@ Perfect — here’s **PR-P02** in the same concrete format.
     requirePermission("payroll.mappings.read"),
     async (req, res, next) => {
         try {
-        const db = getDb(req);
+        const db = { query }; // adapt to your service signature
         const q = validateListMappingsQuery(req.query);
         const items = await service.listMappings(db, q);
         res.json({ items });
@@ -7785,7 +7819,7 @@ Perfect — here’s **PR-P02** in the same concrete format.
     requirePermission("payroll.mappings.write"),
     async (req, res, next) => {
         try {
-        const db = getDb(req);
+        const db = { query }; // adapt to your service signature
         const body = validateUpsertMapping(req.body);
         const userId = req.user?.id ?? null;
         const row = await service.upsertMapping(db, body, userId);
@@ -7809,11 +7843,12 @@ Perfect — here’s **PR-P02** in the same concrete format.
     import express from "express";
     import { validateRunIdParam,
     validateReviewBody,
-    validateFinalizeBody, } from "./payroll.accruals.validators";
-    import service from "../services/payroll.accruals.service";
+    validateFinalizeBody, } from "./payroll.accruals.validators.js";
+    import service from "../services/payroll.accruals.service.js";
     // replace with your actual helpers
-    import { requireAuth, requirePermission } from "../auth/guards";
-    import { getDb } from "../db";
+    import { requireAuth } from "../middleware/auth.js";
+    import { requirePermission } from "../middleware/rbac.js";
+    import { query } from "../db.js";
     const router = express.Router();
 
     // GET /api/v1/payroll/runs/:id/accrual-preview
@@ -7823,7 +7858,7 @@ Perfect — here’s **PR-P02** in the same concrete format.
     requirePermission("payroll.runs.read"),
     async (req, res, next) => {
         try {
-        const db = getDb(req);
+        const db = { query }; // adapt to your service signature
         const { id } = validateRunIdParam(req.params);
         const result = await service.buildAccrualPreview(db, id);
         res.json(result);
@@ -7840,7 +7875,7 @@ Perfect — here’s **PR-P02** in the same concrete format.
     requirePermission("payroll.runs.review"),
     async (req, res, next) => {
         try {
-        const db = getDb(req);
+        const db = { query }; // adapt to your service signature
         const { id } = validateRunIdParam(req.params);
         const body = validateReviewBody(req.body);
         const userId = req.user?.id ?? null;
@@ -7859,7 +7894,7 @@ Perfect — here’s **PR-P02** in the same concrete format.
     requirePermission("payroll.runs.finalize"),
     async (req, res, next) => {
         try {
-        const db = getDb(req);
+        const db = { query }; // adapt to your service signature
         const { id } = validateRunIdParam(req.params);
         const body = validateFinalizeBody(req.body);
         const userId = req.user?.id ?? null;
@@ -7880,8 +7915,8 @@ Perfect — here’s **PR-P02** in the same concrete format.
 
     ```js
     // backend/src/index.js
-    import payrollMappingsRoutes from "./routes/payroll.mappings";
-    import payrollAccrualsRoutes from "./routes/payroll.accruals";
+    import payrollMappingsRoutes from "./routes/payroll.mappings.js";
+    import payrollAccrualsRoutes from "./routes/payroll.accruals.js";
     // ...
     app.use("/api/v1/payroll", payrollMappingsRoutes);
     app.use("/api/v1/payroll", payrollAccrualsRoutes);
@@ -7893,7 +7928,7 @@ Perfect — here’s **PR-P02** in the same concrete format.
 
     ```js
     // backend/src/migrations/index.js
-    import m040_payroll_accrual_posting from "./m040_payroll_accrual_posting";
+    import m040_payroll_accrual_posting from "./m040_payroll_accrual_posting.js";
     export default [
     // ...
     m040_payroll_accrual_posting,
@@ -7991,7 +8026,7 @@ Perfect — here’s **PR-P02** in the same concrete format.
     ```js
     // frontend/src/api/payrollMappings.js
 
-    import { apiFetch } from "./client"; // adapt to your helper
+    import { apiFetch } from "./client.js"; // adapt to your helper
 
     export function listPayrollMappings(params = {}) {
     const q = new URLSearchParams();
@@ -8020,7 +8055,7 @@ Perfect — here’s **PR-P02** in the same concrete format.
     // frontend/src/pages/payroll/PayrollComponentMappingsPage.jsx
 
     import { useEffect, useState } from "react";
-    import { listPayrollMappings, upsertPayrollMapping } from "../../api/payrollMappings";
+    import { listPayrollMappings, upsertPayrollMapping } from "../../api/payrollMappings.js";
 
     const COMPONENTS = [
     "BASE_SALARY_EXPENSE",
@@ -8211,7 +8246,7 @@ Perfect — here’s **PR-P02** in the same concrete format.
     getPayrollRunAccrualPreview,
     reviewPayrollRun,
     finalizePayrollRun,
-    } from "../../api/payrollRuns";
+    } from "../../api/payrollRuns.js";
 
     // inside component state
     const [preview, setPreview] = useState(null);
@@ -8339,13 +8374,13 @@ Perfect — here’s **PR-P02** in the same concrete format.
 
     ```jsx
     // frontend/src/App.jsx
-    import PayrollComponentMappingsPage from "./pages/payroll/PayrollComponentMappingsPage";
+    import PayrollComponentMappingsPage from "./pages/payroll/PayrollComponentMappingsPage.js";
 
     // ...
     <Route
     path="/payroll/mappings"
     element={
-        <RequirePermission permission="payroll.mappings.read">
+        <RequirePermission anyOf={["payroll.mappings.read"]}>
         <PayrollComponentMappingsPage />
         </RequirePermission>
     }
@@ -8363,7 +8398,7 @@ Perfect — here’s **PR-P02** in the same concrete format.
     key: "payroll-mappings",
     label: "Payroll Mappings",
     to: "/payroll/mappings",
-    permission: "payroll.mappings.read",
+    requiredPermissions: ["payroll.mappings.read"],
     }
     ```
 
@@ -8583,10 +8618,10 @@ Perfect — here’s **PR-P03** in the same concrete format.
     // backend/src/migrations/m041_payroll_liabilities_payment_prep.js
 
     export default {
-    id: "m041_payroll_liabilities_payment_prep",
-
-    async up(db) {
-        await db.query(`
+    key: "m041_payroll_liabilities_payment_prep",
+    description: "m041_payroll_liabilities_payment_prep",
+    async up(connection) {
+        await connection.execute(`
         CREATE TABLE IF NOT EXISTS payroll_run_liabilities (
             id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
             run_id BIGINT UNSIGNED NOT NULL,
@@ -8643,7 +8678,7 @@ Perfect — here’s **PR-P03** in the same concrete format.
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
         `);
 
-        await db.query(`
+        await connection.execute(`
         CREATE TABLE IF NOT EXISTS payroll_liability_payment_links (
             id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
             payroll_liability_id BIGINT UNSIGNED NOT NULL,
@@ -8674,7 +8709,7 @@ Perfect — here’s **PR-P03** in the same concrete format.
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
         `);
 
-        await db.query(`
+        await connection.execute(`
         CREATE TABLE IF NOT EXISTS payroll_liability_audit (
             id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
             run_id BIGINT UNSIGNED NOT NULL,
@@ -8699,22 +8734,22 @@ Perfect — here’s **PR-P03** in the same concrete format.
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
         `);
 
-        await db.query(`
+        await connection.execute(`
         ALTER TABLE payroll_runs
             ADD COLUMN liabilities_built_by BIGINT UNSIGNED NULL AFTER accrual_posted_at,
             ADD COLUMN liabilities_built_at DATETIME NULL AFTER liabilities_built_by
         `).catch(() => {});
 
-        await db.query(`
+        await connection.execute(`
         ALTER TABLE payroll_runs
             ADD KEY idx_payroll_runs_liabilities_built_at (liabilities_built_at)
         `).catch(() => {});
     },
 
-    async down(db) {
-        await db.query(`DROP TABLE IF EXISTS payroll_liability_audit;`);
-        await db.query(`DROP TABLE IF EXISTS payroll_liability_payment_links;`);
-        await db.query(`DROP TABLE IF EXISTS payroll_run_liabilities;`);
+    async down(connection) {
+        await connection.execute(`DROP TABLE IF EXISTS payroll_liability_audit;`);
+        await connection.execute(`DROP TABLE IF EXISTS payroll_liability_payment_links;`);
+        await connection.execute(`DROP TABLE IF EXISTS payroll_run_liabilities;`);
     },
     };
     ```
@@ -8804,7 +8839,7 @@ Perfect — here’s **PR-P03** in the same concrete format.
     ```js
     // backend/src/services/payroll.liabilities.service.js
 
-    import paymentsService from "./payments.service";
+    import paymentsService from "./payments.service.js";
     const LIABILITY_COMPONENT_MAP = {
     NET_PAY: { payable_component_code: "PAYROLL_NET_PAYABLE", beneficiary_type: "EMPLOYEE" },
     EMPLOYEE_TAX: { payable_component_code: "EMPLOYEE_TAX_PAYABLE", beneficiary_type: "TAX_AUTHORITY" },
@@ -9367,11 +9402,12 @@ Perfect — here’s **PR-P03** in the same concrete format.
     validateBuildLiabilitiesBody,
     validateListPayrollLiabilitiesQuery,
     validatePaymentBatchPreviewQuery,
-    validateCreatePaymentBatchBody, } from "./payroll.liabilities.validators";
-    import service from "../services/payroll.liabilities.service";
+    validateCreatePaymentBatchBody, } from "./payroll.liabilities.validators.js";
+    import service from "../services/payroll.liabilities.service.js";
     // replace with your actual helpers
-    import { requireAuth, requirePermission } from "../auth/guards";
-    import { getDb } from "../db";
+    import { requireAuth } from "../middleware/auth.js";
+    import { requirePermission } from "../middleware/rbac.js";
+    import { query } from "../db.js";
     const router = express.Router();
 
     // GET /api/v1/payroll/liabilities
@@ -9381,7 +9417,7 @@ Perfect — here’s **PR-P03** in the same concrete format.
     requirePermission("payroll.liabilities.read"),
     async (req, res, next) => {
         try {
-        const db = getDb(req);
+        const db = { query }; // adapt to your service signature
         const q = validateListPayrollLiabilitiesQuery(req.query);
         const items = await service.listPayrollLiabilities(db, q);
         res.json({ items });
@@ -9398,7 +9434,7 @@ Perfect — here’s **PR-P03** in the same concrete format.
     requirePermission("payroll.liabilities.build"),
     async (req, res, next) => {
         try {
-        const db = getDb(req);
+        const db = { query }; // adapt to your service signature
         const { id } = validateRunIdParam(req.params);
         const body = validateBuildLiabilitiesBody(req.body);
         const userId = req.user?.id ?? null;
@@ -9417,7 +9453,7 @@ Perfect — here’s **PR-P03** in the same concrete format.
     requirePermission("payroll.liabilities.read"),
     async (req, res, next) => {
         try {
-        const db = getDb(req);
+        const db = { query }; // adapt to your service signature
         const { id } = validateRunIdParam(req.params);
         const [items, summary, audit] = await Promise.all([
             service.listRunLiabilities(db, id),
@@ -9438,7 +9474,7 @@ Perfect — here’s **PR-P03** in the same concrete format.
     requirePermission("payroll.liabilities.read"),
     async (req, res, next) => {
         try {
-        const db = getDb(req);
+        const db = { query }; // adapt to your service signature
         const { id } = validateRunIdParam(req.params);
         const q = validatePaymentBatchPreviewQuery(req.query);
         const result = await service.buildPaymentBatchPreview(db, id, q.scope);
@@ -9456,7 +9492,7 @@ Perfect — here’s **PR-P03** in the same concrete format.
     requirePermission("payroll.payment.prepare"),
     async (req, res, next) => {
         try {
-        const db = getDb(req);
+        const db = { query }; // adapt to your service signature
         const { id } = validateRunIdParam(req.params);
         const body = validateCreatePaymentBatchBody(req.body);
         const userId = req.user?.id ?? null;
@@ -9477,7 +9513,7 @@ Perfect — here’s **PR-P03** in the same concrete format.
 
     ```js
     // backend/src/index.js
-    import payrollLiabilitiesRoutes from "./routes/payroll.liabilities";
+    import payrollLiabilitiesRoutes from "./routes/payroll.liabilities.js";
     // ...
     app.use("/api/v1/payroll", payrollLiabilitiesRoutes);
     ```
@@ -9488,7 +9524,7 @@ Perfect — here’s **PR-P03** in the same concrete format.
 
     ```js
     // backend/src/migrations/index.js
-    import m041_payroll_liabilities_payment_prep from "./m041_payroll_liabilities_payment_prep";
+    import m041_payroll_liabilities_payment_prep from "./m041_payroll_liabilities_payment_prep.js";
     export default [
     // ...
     m041_payroll_liabilities_payment_prep,
@@ -9585,7 +9621,7 @@ Perfect — here’s **PR-P03** in the same concrete format.
     ```js
     // frontend/src/api/payrollLiabilities.js
 
-    import { apiFetch } from "./client"; // adapt
+    import { apiFetch } from "./client.js"; // adapt
 
     export function listPayrollLiabilities(params = {}) {
     const q = new URLSearchParams();
@@ -9640,7 +9676,7 @@ Perfect — here’s **PR-P03** in the same concrete format.
     getPayrollRunLiabilities,
     getPayrollRunPaymentBatchPreview,
     createPayrollRunPaymentBatch,
-    } from "../../api/payrollLiabilities";
+    } from "../../api/payrollLiabilities.js";
 
     export default function PayrollLiabilitiesPage() {
     const { id: runIdParam } = useParams();
@@ -9923,13 +9959,13 @@ Perfect — here’s **PR-P03** in the same concrete format.
 
     ```jsx
     // frontend/src/App.jsx
-    import PayrollLiabilitiesPage from "./pages/payroll/PayrollLiabilitiesPage";
+    import PayrollLiabilitiesPage from "./pages/payroll/PayrollLiabilitiesPage.js";
 
     // ...
     <Route
     path="/payroll/liabilities"
     element={
-        <RequirePermission permission="payroll.liabilities.read">
+        <RequirePermission anyOf={["payroll.liabilities.read"]}>
         <PayrollLiabilitiesPage />
         </RequirePermission>
     }
@@ -9938,7 +9974,7 @@ Perfect — here’s **PR-P03** in the same concrete format.
     <Route
     path="/payroll/runs/:id/liabilities"
     element={
-        <RequirePermission permission="payroll.liabilities.read">
+        <RequirePermission anyOf={["payroll.liabilities.read"]}>
         <PayrollLiabilitiesPage />
         </RequirePermission>
     }
@@ -9956,7 +9992,7 @@ Perfect — here’s **PR-P03** in the same concrete format.
     key: "payroll-liabilities",
     label: "Payroll Liabilities",
     to: "/payroll/liabilities",
-    permission: "payroll.liabilities.read",
+    requiredPermissions: ["payroll.liabilities.read"],
     }
     ```
 
@@ -10180,11 +10216,11 @@ Perfect — here’s **PR-P04** in the same format, and I’ll keep the **fronte
     // backend/src/migrations/m042_payroll_payment_settlement_sync.js
 
     export default {
-    id: "m042_payroll_payment_settlement_sync",
-
-    async up(db) {
+    key: "m042_payroll_payment_settlement_sync",
+    description: "m042_payroll_payment_settlement_sync",
+    async up(connection) {
         // Settlement evidence table (audit-grade, idempotent)
-        await db.query(`
+        await connection.execute(`
         CREATE TABLE IF NOT EXISTS payroll_liability_settlements (
             id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
             settlement_key VARCHAR(190) NOT NULL, -- deterministic for idempotent sync apply
@@ -10232,7 +10268,7 @@ Perfect — here’s **PR-P04** in the same format, and I’ll keep the **fronte
         `);
 
         // Extend links with sync status
-        await db.query(`
+        await connection.execute(`
         ALTER TABLE payroll_liability_payment_links
             ADD COLUMN settled_amount DECIMAL(18,2) NOT NULL DEFAULT 0 AFTER allocated_amount,
             ADD COLUMN settled_at DATETIME NULL AFTER settled_amount,
@@ -10241,14 +10277,14 @@ Perfect — here’s **PR-P04** in the same format, and I’ll keep the **fronte
             ADD COLUMN sync_note VARCHAR(255) NULL AFTER last_sync_at
         `).catch(() => {});
 
-        await db.query(`
+        await connection.execute(`
         ALTER TABLE payroll_liability_payment_links
             ADD KEY idx_plinks_settled_at (settled_at),
             ADD KEY idx_plinks_last_sync_at (last_sync_at)
         `).catch(() => {});
 
         // Optional convenience columns on liabilities
-        await db.query(`
+        await connection.execute(`
         ALTER TABLE payroll_run_liabilities
             ADD COLUMN paid_payment_batch_id BIGINT UNSIGNED NULL AFTER paid_at,
             ADD COLUMN paid_payment_batch_line_id BIGINT UNSIGNED NULL AFTER paid_payment_batch_id,
@@ -10256,15 +10292,15 @@ Perfect — here’s **PR-P04** in the same format, and I’ll keep the **fronte
         `).catch(() => {});
 
         // Payroll run sync timestamps
-        await db.query(`
+        await connection.execute(`
         ALTER TABLE payroll_runs
             ADD COLUMN payment_sync_last_preview_at DATETIME NULL AFTER liabilities_built_at,
             ADD COLUMN payment_sync_last_applied_at DATETIME NULL AFTER payment_sync_last_preview_at
         `).catch(() => {});
     },
 
-    async down(db) {
-        await db.query(`DROP TABLE IF EXISTS payroll_liability_settlements;`);
+    async down(connection) {
+        await connection.execute(`DROP TABLE IF EXISTS payroll_liability_settlements;`);
         // (Optional strict down for ALTER columns omitted for dev simplicity)
     },
     };
@@ -10724,11 +10760,12 @@ Perfect — here’s **PR-P04** in the same format, and I’ll keep the **fronte
     import express from "express";
     import { validateRunIdParam,
     validateSyncPreviewQuery,
-    validateSyncApplyBody, } from "./payroll.paymentSync.validators";
-    import service from "../services/payroll.paymentSync.service";
+    validateSyncApplyBody, } from "./payroll.paymentSync.validators.js";
+    import service from "../services/payroll.paymentSync.service.js";
     // replace with your actual helpers
-    import { requireAuth, requirePermission } from "../auth/guards";
-    import { getDb } from "../db";
+    import { requireAuth } from "../middleware/auth.js";
+    import { requirePermission } from "../middleware/rbac.js";
+    import { query } from "../db.js";
     const router = express.Router();
 
     // GET /api/v1/payroll/runs/:id/payment-sync-preview
@@ -10738,7 +10775,7 @@ Perfect — here’s **PR-P04** in the same format, and I’ll keep the **fronte
     requirePermission("payroll.payment.sync.read"),
     async (req, res, next) => {
         try {
-        const db = getDb(req);
+        const db = { query }; // adapt to your service signature
         const { id } = validateRunIdParam(req.params);
         const q = validateSyncPreviewQuery(req.query);
         const result = await service.buildRunPaymentSyncPreview(db, id, q);
@@ -10756,7 +10793,7 @@ Perfect — here’s **PR-P04** in the same format, and I’ll keep the **fronte
     requirePermission("payroll.payment.sync.apply"),
     async (req, res, next) => {
         try {
-        const db = getDb(req);
+        const db = { query }; // adapt to your service signature
         const { id } = validateRunIdParam(req.params);
         const body = validateSyncApplyBody(req.body);
         const userId = req.user?.id ?? null;
@@ -10777,7 +10814,7 @@ Perfect — here’s **PR-P04** in the same format, and I’ll keep the **fronte
 
     ```js
     // backend/src/index.js
-    import payrollPaymentSyncRoutes from "./routes/payroll.paymentSync";
+    import payrollPaymentSyncRoutes from "./routes/payroll.paymentSync.js";
     // ...
     app.use("/api/v1/payroll", payrollPaymentSyncRoutes);
     ```
@@ -10788,7 +10825,7 @@ Perfect — here’s **PR-P04** in the same format, and I’ll keep the **fronte
 
     ```js
     // backend/src/migrations/index.js
-    import m042_payroll_payment_settlement_sync from "./m042_payroll_payment_settlement_sync";
+    import m042_payroll_payment_settlement_sync from "./m042_payroll_payment_settlement_sync.js";
     export default [
     // ...
     m042_payroll_payment_settlement_sync,
@@ -10878,7 +10915,7 @@ Perfect — here’s **PR-P04** in the same format, and I’ll keep the **fronte
     ```js
     // frontend/src/api/payrollPaymentSync.js
 
-    import { apiFetch } from "./client"; // adapt
+    import { apiFetch } from "./client.js"; // adapt
 
     export function getPayrollPaymentSyncPreview(runId, params = {}) {
     const q = new URLSearchParams();
@@ -10902,7 +10939,7 @@ Perfect — here’s **PR-P04** in the same format, and I’ll keep the **fronte
     ### Add imports
 
     ```jsx
-    import { getPayrollPaymentSyncPreview, applyPayrollPaymentSync } from "../../api/payrollPaymentSync";
+    import { getPayrollPaymentSyncPreview, applyPayrollPaymentSync } from "../../api/payrollPaymentSync.js";
     ```
 
     ### Add state
@@ -11180,9 +11217,9 @@ P05 only adds the correction **framework + controls**.
 // backend/src/migrations/m043_payroll_corrections_reversals.js
 
 export default {
-  id: "m043_payroll_corrections_reversals",
-
-  async up(db) {
+  key: "m043_payroll_corrections_reversals",
+  description: "m043_payroll_corrections_reversals",
+  async up(connection) {
     // Extend payroll_runs with correction metadata
     await db
       .query(
@@ -11210,7 +11247,7 @@ export default {
       .catch(() => {});
 
     // Correction relationship / workflow table
-    await db.query(`
+    await connection.execute(`
       CREATE TABLE IF NOT EXISTS payroll_run_corrections (
         id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
         original_run_id BIGINT UNSIGNED NULL,         -- null for standalone off-cycle if desired
@@ -11252,8 +11289,8 @@ export default {
       .catch(() => {});
   },
 
-  async down(db) {
-    await db.query(`DROP TABLE IF EXISTS payroll_run_corrections;`);
+  async down(connection) {
+    await connection.execute(`DROP TABLE IF EXISTS payroll_run_corrections;`);
     // (Optional strict down for ALTER columns omitted for dev simplicity)
   },
 };
@@ -11948,11 +11985,12 @@ export default {
 import express from "express";
 import { validateRunIdParam,
   validateReverseRunBody,
-  validateCreateCorrectionShellBody, } from "./payroll.corrections.validators";
-import service from "../services/payroll.corrections.service";
+  validateCreateCorrectionShellBody, } from "./payroll.corrections.validators.js";
+import service from "../services/payroll.corrections.service.js";
 // replace with your actual helpers
-import { requireAuth, requirePermission } from "../auth/guards";
-import { getDb } from "../db";
+import { requireAuth } from "../middleware/auth.js";
+import { requirePermission } from "../middleware/rbac.js";
+import { query } from "../db.js";
 const router = express.Router();
 
 // GET /api/v1/payroll/runs/:id/corrections
@@ -11962,7 +12000,7 @@ router.get(
   requirePermission("payroll.corrections.read"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const { id } = validateRunIdParam(req.params);
       const items = await service.listCorrectionsForRun(db, id);
       res.json({ items });
@@ -11979,7 +12017,7 @@ router.post(
   requirePermission("payroll.corrections.reverse"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const { id } = validateRunIdParam(req.params);
       const body = validateReverseRunBody(req.body);
       const userId = req.user?.id ?? null;
@@ -11998,7 +12036,7 @@ router.post(
   requirePermission("payroll.corrections.create"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const body = validateCreateCorrectionShellBody(req.body);
       const userId = req.user?.id ?? null;
       const result = await service.createCorrectionShell(db, body, userId);
@@ -12018,7 +12056,7 @@ export default router;
 
 ```js
 // backend/src/index.js
-import payrollCorrectionsRoutes from "./routes/payroll.corrections";
+import payrollCorrectionsRoutes from "./routes/payroll.corrections.js";
 // ...
 app.use("/api/v1/payroll", payrollCorrectionsRoutes);
 ```
@@ -12029,7 +12067,7 @@ app.use("/api/v1/payroll", payrollCorrectionsRoutes);
 
 ```js
 // backend/src/migrations/index.js
-import m043_payroll_corrections_reversals from "./m043_payroll_corrections_reversals";
+import m043_payroll_corrections_reversals from "./m043_payroll_corrections_reversals.js";
 export default [
   // ...
   m043_payroll_corrections_reversals,
@@ -12202,7 +12240,7 @@ main().catch((err) => {
 ```js
 // frontend/src/api/payrollCorrections.js
 
-import { apiFetch } from "./client"; // adapt
+import { apiFetch } from "./client.js"; // adapt
 
 export function listPayrollRunCorrections(runId) {
   return apiFetch(`/api/v1/payroll/runs/${runId}/corrections`);
@@ -12234,7 +12272,7 @@ import {
   listPayrollRunCorrections,
   reversePayrollRun,
   createPayrollCorrectionShell,
-} from "../../api/payrollCorrections";
+} from "../../api/payrollCorrections.js";
 ```
 
 ### Add state
@@ -12525,9 +12563,9 @@ This keeps it consistent with the existing `payroll_liability_settlements` table
 // backend/src/migrations/m044_payroll_partial_settlement_and_manual_override.js
 
 export default {
-  id: "m044_payroll_partial_settlement_and_manual_override",
-
-  async up(db) {
+  key: "m044_payroll_partial_settlement_and_manual_override",
+  description: "m044_payroll_partial_settlement_and_manual_override",
+  async up(connection) {
     // Add cumulative settlement tracking on liabilities
     await db
       .query(
@@ -12561,7 +12599,7 @@ export default {
       .catch(() => {});
 
     // Manual settlement override request workflow table
-    await db.query(`
+    await connection.execute(`
       CREATE TABLE IF NOT EXISTS payroll_liability_override_requests (
         id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
         payroll_liability_id BIGINT UNSIGNED NOT NULL,
@@ -12613,8 +12651,8 @@ export default {
     `);
   },
 
-  async down(db) {
-    await db.query(`DROP TABLE IF EXISTS payroll_liability_override_requests;`);
+  async down(connection) {
+    await connection.execute(`DROP TABLE IF EXISTS payroll_liability_override_requests;`);
     // Optional strict down for ALTER columns omitted for dev simplicity
   },
 };
@@ -13207,11 +13245,12 @@ import { validateLiabilityIdParam,
   validateOverrideRequestIdParam,
   validateCreateOverrideRequestBody,
   validateApproveApplyOverrideBody,
-  validateRejectOverrideBody, } from "./payroll.settlementOverrides.validators";
-import service from "../services/payroll.settlementOverrides.service";
+  validateRejectOverrideBody, } from "./payroll.settlementOverrides.validators.js";
+import service from "../services/payroll.settlementOverrides.service.js";
 // replace with your actual helpers
-import { requireAuth, requirePermission } from "../auth/guards";
-import { getDb } from "../db";
+import { requireAuth } from "../middleware/auth.js";
+import { requirePermission } from "../middleware/rbac.js";
+import { query } from "../db.js";
 const router = express.Router();
 
 // GET /api/v1/payroll/liabilities/:id/manual-settlement-requests
@@ -13221,7 +13260,7 @@ router.get(
   requirePermission("payroll.settlement.override.read"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const { id } = validateLiabilityIdParam(req.params);
       const items = await service.listManualSettlementRequestsForLiability(
         db,
@@ -13241,7 +13280,7 @@ router.post(
   requirePermission("payroll.settlement.override.request"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const { id } = validateLiabilityIdParam(req.params);
       const body = validateCreateOverrideRequestBody(req.body);
       const userId = req.user?.id ?? null;
@@ -13265,7 +13304,7 @@ router.post(
   requirePermission("payroll.settlement.override.approve"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const { id } = validateOverrideRequestIdParam(req.params);
       const body = validateApproveApplyOverrideBody(req.body);
       const userId = req.user?.id ?? null;
@@ -13289,7 +13328,7 @@ router.post(
   requirePermission("payroll.settlement.override.approve"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const { id } = validateOverrideRequestIdParam(req.params);
       const body = validateRejectOverrideBody(req.body);
       const userId = req.user?.id ?? null;
@@ -13587,7 +13626,7 @@ COALESCE(SUM(outstanding_amount),0) AS total_outstanding
 
 ```js
 // backend/src/index.js
-import payrollSettlementOverridesRoutes from "./routes/payroll.settlementOverrides";
+import payrollSettlementOverridesRoutes from "./routes/payroll.settlementOverrides.js";
 // ...
 app.use("/api/v1/payroll", payrollSettlementOverridesRoutes);
 ```
@@ -13598,7 +13637,7 @@ app.use("/api/v1/payroll", payrollSettlementOverridesRoutes);
 
 ```js
 // backend/src/migrations/index.js
-import m044_payroll_partial_settlement_and_manual_override from "./m044_payroll_partial_settlement_and_manual_override";
+import m044_payroll_partial_settlement_and_manual_override from "./m044_payroll_partial_settlement_and_manual_override.js";
 export default [
   // ...
   m044_payroll_partial_settlement_and_manual_override,
@@ -13714,7 +13753,7 @@ main().catch((err) => {
 ```js
 // frontend/src/api/payrollSettlementOverrides.js
 
-import { apiFetch } from "./client"; // adapt
+import { apiFetch } from "./client.js"; // adapt
 
 export function listPayrollManualSettlementRequests(liabilityId) {
   return apiFetch(
@@ -13768,7 +13807,7 @@ import {
   createPayrollManualSettlementRequest,
   approveApplyPayrollManualSettlementRequest,
   rejectPayrollManualSettlementRequest,
-} from "../../api/payrollSettlementOverrides";
+} from "../../api/payrollSettlementOverrides.js";
 ```
 
 ### Extend displayed liability fields (important)
@@ -14055,10 +14094,10 @@ That keeps your reconciliation and audit behavior consistent.
 // backend/src/migrations/m045_bank_connectivity_adapters.js
 
 export default {
-  id: "m045_bank_connectivity_adapters",
-
-  async up(db) {
-    await db.query(`
+  key: "m045_bank_connectivity_adapters",
+  description: "m045_bank_connectivity_adapters",
+  async up(connection) {
+    await connection.execute(`
       CREATE TABLE IF NOT EXISTS bank_connectors (
         id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
         connector_code VARCHAR(50) NOT NULL,           -- internal unique code (e.g. KBLBANK_MAIN)
@@ -14097,7 +14136,7 @@ export default {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     `);
 
-    await db.query(`
+    await connection.execute(`
       CREATE TABLE IF NOT EXISTS bank_connector_account_links (
         id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
         bank_connector_id BIGINT UNSIGNED NOT NULL,
@@ -14122,7 +14161,7 @@ export default {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     `);
 
-    await db.query(`
+    await connection.execute(`
       CREATE TABLE IF NOT EXISTS bank_connector_sync_runs (
         id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
         bank_connector_id BIGINT UNSIGNED NOT NULL,
@@ -14163,7 +14202,7 @@ export default {
     `);
 
     // Optional helper table for import traceability into B02 batches (adapt if B02 already has connector fields)
-    await db.query(`
+    await connection.execute(`
       CREATE TABLE IF NOT EXISTS bank_connector_sync_run_imports (
         id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
         bank_connector_sync_run_id BIGINT UNSIGNED NOT NULL,
@@ -14184,11 +14223,11 @@ export default {
     `);
   },
 
-  async down(db) {
-    await db.query(`DROP TABLE IF EXISTS bank_connector_sync_run_imports;`);
-    await db.query(`DROP TABLE IF EXISTS bank_connector_sync_runs;`);
-    await db.query(`DROP TABLE IF EXISTS bank_connector_account_links;`);
-    await db.query(`DROP TABLE IF EXISTS bank_connectors;`);
+  async down(connection) {
+    await connection.execute(`DROP TABLE IF EXISTS bank_connector_sync_run_imports;`);
+    await connection.execute(`DROP TABLE IF EXISTS bank_connector_sync_runs;`);
+    await connection.execute(`DROP TABLE IF EXISTS bank_connector_account_links;`);
+    await connection.execute(`DROP TABLE IF EXISTS bank_connectors;`);
   },
 };
 ```
@@ -14328,7 +14367,7 @@ export default {
 ```js id="0gzdes"
 // backend/src/services/bankConnectorAdapters/index.js
 
-import mockOpenBankingAdapter from "./mockOpenBanking.adapter";
+import mockOpenBankingAdapter from "./mockOpenBanking.adapter.js";
 function getBankConnectorAdapter(providerCode) {
   switch (String(providerCode || "").toUpperCase()) {
     case "MOCK_OB":
@@ -14447,7 +14486,7 @@ export default {
 ```js id="yo17x3"
 // backend/src/services/bank.connectors.service.js
 
-import { getBankConnectorAdapter } from "./bankConnectorAdapters";
+import { getBankConnectorAdapter } from "./bankConnectorAdapters.js";
 // IMPORTANT: replace with your real encryption helper / KMS / vault integration
 function encryptConnectorCredentials(credentialsObj = {}) {
   const json = JSON.stringify(credentialsObj || {});
@@ -14667,7 +14706,7 @@ async function testBankConnectorConnection(db, connectorId) {
  */
 function getB02ImportFn() {
   // adapt file path/name to your actual B02 service
-  import svc from "./bankStatementImports.service";
+  import svc from "./bankStatementImports.service.js";
   if (typeof svc.importNormalizedBankStatementLines !== "function") {
     const err = new Error(
       "B02 importNormalizedBankStatementLines() export not found",
@@ -15011,11 +15050,12 @@ import { validateConnectorIdParam,
   validateCreateConnectorBody,
   validateUpdateConnectorBody,
   validateAccountLinkBody,
-  validateSyncTriggerBody, } from "./bank.connectors.validators";
-import service from "../services/bank.connectors.service";
+  validateSyncTriggerBody, } from "./bank.connectors.validators.js";
+import service from "../services/bank.connectors.service.js";
 // replace with your actual helpers
-import { requireAuth, requirePermission } from "../auth/guards";
-import { getDb } from "../db";
+import { requireAuth } from "../middleware/auth.js";
+import { requirePermission } from "../middleware/rbac.js";
+import { query } from "../db.js";
 const router = express.Router();
 
 // GET /api/v1/bank/connectors
@@ -15025,7 +15065,7 @@ router.get(
   requirePermission("bank.connectors.read"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const items = await service.listBankConnectors(db);
       res.json({ items });
     } catch (err) {
@@ -15041,7 +15081,7 @@ router.post(
   requirePermission("bank.connectors.create"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const body = validateCreateConnectorBody(req.body);
       const result = await service.createBankConnector(
         db,
@@ -15062,7 +15102,7 @@ router.patch(
   requirePermission("bank.connectors.update"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const { id } = validateConnectorIdParam(req.params);
       const body = validateUpdateConnectorBody(req.body);
       const result = await service.updateBankConnector(
@@ -15085,7 +15125,7 @@ router.post(
   requirePermission("bank.connectors.test"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const { id } = validateConnectorIdParam(req.params);
       const result = await service.testBankConnectorConnection(db, id);
       res.json(result);
@@ -15102,7 +15142,7 @@ router.put(
   requirePermission("bank.connectors.accountlink.manage"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const { id } = validateConnectorIdParam(req.params);
       const body = validateAccountLinkBody(req.body);
       const items = await service.upsertBankConnectorAccountLink(
@@ -15125,7 +15165,7 @@ router.get(
   requirePermission("bank.connectors.read"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const { id } = validateConnectorIdParam(req.params);
       const items = await service.listConnectorSyncRuns(db, id);
       res.json({ items });
@@ -15142,7 +15182,7 @@ router.post(
   requirePermission("bank.connectors.sync"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const { id } = validateConnectorIdParam(req.params);
       const body = validateSyncTriggerBody(req.body);
       const result = await service.runConnectorStatementSync(
@@ -15233,7 +15273,7 @@ export default {
 
 ```js id="0iunwx"
 // backend/src/index.js
-import bankConnectorRoutes from "./routes/bank.connectors";
+import bankConnectorRoutes from "./routes/bank.connectors.js";
 // ...
 app.use("/api/v1/bank", bankConnectorRoutes);
 ```
@@ -15244,7 +15284,7 @@ app.use("/api/v1/bank", bankConnectorRoutes);
 
 ```js id="jlwm2j"
 // backend/src/migrations/index.js
-import m045_bank_connectivity_adapters from "./m045_bank_connectivity_adapters";
+import m045_bank_connectivity_adapters from "./m045_bank_connectivity_adapters.js";
 export default [
   // ...
   m045_bank_connectivity_adapters,
@@ -15294,8 +15334,8 @@ Also document that B05 sync ultimately writes into the same B02 statement import
 
 async function main() {
   // adapt to your app bootstrap/db getter
-  import { getDbPool } from "../src/db";
-  import { syncDueBankConnectors, } from "../src/services/bank.connectors.service";
+  import { getDbPool } from "../src/db.js";
+  import { syncDueBankConnectors, } from "../src/services/bank.connectors.service.js";
   const db = getDbPool();
   const results = await syncDueBankConnectors(db, null);
 
@@ -15373,7 +15413,7 @@ main().catch((err) => {
 ```js id="ul7k2m"
 // frontend/src/api/bankConnectors.js
 
-import { apiFetch } from "./client"; // adapt
+import { apiFetch } from "./client.js"; // adapt
 
 export function listBankConnectors() {
   return apiFetch("/api/v1/bank/connectors");
@@ -15433,7 +15473,7 @@ import {
   listBankConnectorSyncRuns,
   upsertBankConnectorAccountLink,
   updateBankConnector,
-} from "../../api/bankConnectors";
+} from "../../api/bankConnectors.js";
 ```
 
 ### Add state
@@ -15706,9 +15746,9 @@ Flow remains:
 // backend/src/migrations/m046_bank_payment_exports_and_acks.js
 
 export default {
-  id: "m046_bank_payment_exports_and_acks",
-
-  async up(db) {
+  key: "m046_bank_payment_exports_and_acks",
+  description: "m046_bank_payment_exports_and_acks",
+  async up(connection) {
     // Batch-level export/ack tracking
     await db
       .query(
@@ -15758,7 +15798,7 @@ export default {
       .catch(() => {});
 
     // Export runs
-    await db.query(`
+    await connection.execute(`
       CREATE TABLE IF NOT EXISTS bank_payment_batch_exports (
         id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
         payment_batch_id BIGINT UNSIGNED NOT NULL,
@@ -15787,7 +15827,7 @@ export default {
     `);
 
     // Export line snapshots (freeze refs used by bank)
-    await db.query(`
+    await connection.execute(`
       CREATE TABLE IF NOT EXISTS bank_payment_batch_export_lines (
         id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
         bank_payment_batch_export_id BIGINT UNSIGNED NOT NULL,
@@ -15812,7 +15852,7 @@ export default {
     `);
 
     // Ack imports
-    await db.query(`
+    await connection.execute(`
       CREATE TABLE IF NOT EXISTS bank_payment_ack_imports (
         id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
         payment_batch_id BIGINT UNSIGNED NOT NULL,
@@ -15845,7 +15885,7 @@ export default {
     `);
 
     // Ack rows (traceability + idempotency)
-    await db.query(`
+    await connection.execute(`
       CREATE TABLE IF NOT EXISTS bank_payment_ack_import_lines (
         id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
         bank_payment_ack_import_id BIGINT UNSIGNED NOT NULL,
@@ -15873,11 +15913,11 @@ export default {
     `);
   },
 
-  async down(db) {
-    await db.query(`DROP TABLE IF EXISTS bank_payment_ack_import_lines;`);
-    await db.query(`DROP TABLE IF EXISTS bank_payment_ack_imports;`);
-    await db.query(`DROP TABLE IF EXISTS bank_payment_batch_export_lines;`);
-    await db.query(`DROP TABLE IF EXISTS bank_payment_batch_exports;`);
+  async down(connection) {
+    await connection.execute(`DROP TABLE IF EXISTS bank_payment_ack_import_lines;`);
+    await connection.execute(`DROP TABLE IF EXISTS bank_payment_ack_imports;`);
+    await connection.execute(`DROP TABLE IF EXISTS bank_payment_batch_export_lines;`);
+    await connection.execute(`DROP TABLE IF EXISTS bank_payment_batch_exports;`);
     // Optional strict down for ALTER columns omitted for dev simplicity
   },
 };
@@ -15947,7 +15987,7 @@ export default {
 ```js
 // backend/src/services/bankPaymentFileFormats/index.js
 
-import genericCsvV1 from "./genericCsvV1.format";
+import genericCsvV1 from "./genericCsvV1.format.js";
 function getBankPaymentFileFormat(formatCode) {
   switch (String(formatCode || "").toUpperCase()) {
     case "GENERIC_CSV_V1":
@@ -16119,7 +16159,7 @@ export default {
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
-import { getBankPaymentFileFormat } from "./bankPaymentFileFormats";
+import { getBankPaymentFileFormat } from "./bankPaymentFileFormats.js";
 function sha256(text) {
   return crypto
     .createHash("sha256")
@@ -16711,11 +16751,12 @@ export default {
 import express from "express";
 import { validateBatchIdParam,
   validateExportBatchBody,
-  validateImportAckBody, } from "./bank.paymentFiles.validators";
-import service from "../services/bank.paymentFiles.service";
+  validateImportAckBody, } from "./bank.paymentFiles.validators.js";
+import service from "../services/bank.paymentFiles.service.js";
 // replace with your actual helpers
-import { requireAuth, requirePermission } from "../auth/guards";
-import { getDb } from "../db";
+import { requireAuth } from "../middleware/auth.js";
+import { requirePermission } from "../middleware/rbac.js";
+import { query } from "../db.js";
 const router = express.Router();
 
 // GET /api/v1/bank/payment-batches/:id/exports
@@ -16725,7 +16766,7 @@ router.get(
   requirePermission("bank.payments.export.read"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const { id } = validateBatchIdParam(req.params);
       const items = await service.listBatchExports(db, id);
       res.json({ items });
@@ -16742,7 +16783,7 @@ router.post(
   requirePermission("bank.payments.export.create"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const { id } = validateBatchIdParam(req.params);
       const body = validateExportBatchBody(req.body);
       const result = await service.exportPaymentBatchFile(
@@ -16765,7 +16806,7 @@ router.get(
   requirePermission("bank.payments.ack.read"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const { id } = validateBatchIdParam(req.params);
       const items = await service.listBatchAckImports(db, id);
       res.json({ items });
@@ -16782,7 +16823,7 @@ router.post(
   requirePermission("bank.payments.ack.import"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const { id } = validateBatchIdParam(req.params);
       const body = validateImportAckBody(req.body);
       const result = await service.importPaymentBatchAck(
@@ -16846,7 +16887,7 @@ This helps P04 and ops users see progress before B03 reconciliation.
 
 ```js
 // backend/src/index.js
-import bankPaymentFilesRoutes from "./routes/bank.paymentFiles";
+import bankPaymentFilesRoutes from "./routes/bank.paymentFiles.js";
 // ...
 app.use("/api/v1/bank", bankPaymentFilesRoutes);
 ```
@@ -16857,7 +16898,7 @@ app.use("/api/v1/bank", bankPaymentFilesRoutes);
 
 ```js
 // backend/src/migrations/index.js
-import m046_bank_payment_exports_and_acks from "./m046_bank_payment_exports_and_acks";
+import m046_bank_payment_exports_and_acks from "./m046_bank_payment_exports_and_acks.js";
 export default [
   // ...
   m046_bank_payment_exports_and_acks,
@@ -16976,7 +17017,7 @@ main().catch((err) => {
 ```js
 // frontend/src/api/bankPaymentFiles.js
 
-import { apiFetch } from "./client"; // adapt
+import { apiFetch } from "./client.js"; // adapt
 
 export function listPaymentBatchExports(batchId) {
   return apiFetch(`/api/v1/bank/payment-batches/${batchId}/exports`);
@@ -17013,7 +17054,7 @@ import {
   exportPaymentBatchFile,
   listPaymentBatchAckImports,
   importPaymentBatchAck,
-} from "../../api/bankPaymentFiles";
+} from "../../api/bankPaymentFiles.js";
 ```
 
 ### Add state
@@ -17320,9 +17361,9 @@ If a statement line is reconciled later, linked OPEN/ASSIGNED exception is auto-
 // backend/src/migrations/m047_bank_reconciliation_rules_and_exceptions.js
 
 export default {
-  id: "m047_bank_reconciliation_rules_and_exceptions",
-
-  async up(db) {
+  key: "m047_bank_reconciliation_rules_and_exceptions",
+  description: "m047_bank_reconciliation_rules_and_exceptions",
+  async up(connection) {
     // Add reconciliation metadata to statement lines (adapt table name if different in B02/B03)
     await db
       .query(
@@ -17345,7 +17386,7 @@ export default {
       .catch(() => {});
 
     // Reconciliation rules master
-    await db.query(`
+    await connection.execute(`
       CREATE TABLE IF NOT EXISTS bank_reconciliation_rules (
         id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
         rule_code VARCHAR(50) NOT NULL,
@@ -17379,7 +17420,7 @@ export default {
     `);
 
     // Auto-run logs (preview/apply)
-    await db.query(`
+    await connection.execute(`
       CREATE TABLE IF NOT EXISTS bank_reconciliation_auto_runs (
         id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
         run_request_id VARCHAR(190) NULL,
@@ -17458,7 +17499,7 @@ export default {
       });
 
     // Exception event audit
-    await db.query(`
+    await connection.execute(`
       CREATE TABLE IF NOT EXISTS bank_reconciliation_exception_events (
         id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
         bank_reconciliation_exception_id BIGINT UNSIGNED NOT NULL,
@@ -17477,13 +17518,13 @@ export default {
     `);
   },
 
-  async down(db) {
-    await db.query(
+  async down(connection) {
+    await connection.execute(
       `DROP TABLE IF EXISTS bank_reconciliation_exception_events;`,
     );
-    await db.query(`DROP TABLE IF EXISTS bank_reconciliation_exceptions;`);
-    await db.query(`DROP TABLE IF EXISTS bank_reconciliation_auto_runs;`);
-    await db.query(`DROP TABLE IF EXISTS bank_reconciliation_rules;`);
+    await connection.execute(`DROP TABLE IF EXISTS bank_reconciliation_exceptions;`);
+    await connection.execute(`DROP TABLE IF EXISTS bank_reconciliation_auto_runs;`);
+    await connection.execute(`DROP TABLE IF EXISTS bank_reconciliation_rules;`);
     // Optional strict down for ALTER columns omitted for dev simplicity
   },
 };
@@ -18019,10 +18060,10 @@ export default {
 ```js id="6t81nm"
 // backend/src/services/bank.reconciliationEngine.service.js
 
-import { writeExceptionEvent, } from "./bank.reconciliationExceptions.service";
+import { writeExceptionEvent, } from "./bank.reconciliationExceptions.service.js";
 // IMPORTANT: patch B03 to export this helper (see patch section below)
 async function getB03ReconcileHelper() {
-  const svc = (await import("./bank.reconciliation.service")).default; // adapt to your B03 service path
+  const svc = (await import("./bank.reconciliation.service.js")).default; // adapt to your B03 service path
   if (typeof svc.reconcileStatementLineToPaymentBatchLine !== "function") {
     const err = new Error(
       "B03 reconcile helper export missing: reconcileStatementLineToPaymentBatchLine",
@@ -18615,16 +18656,17 @@ export default {
 // backend/src/routes/bank.reconciliationRules.js
 
 import express from "express";
-import rulesService from "../services/bank.reconciliationRules.service";
-import engineService from "../services/bank.reconciliationEngine.service";
+import rulesService from "../services/bank.reconciliationRules.service.js";
+import engineService from "../services/bank.reconciliationEngine.service.js";
 import { validateRuleIdParam,
   validateCreateRuleBody,
   validateUpdateRuleBody,
   validateAutoPreviewBody,
-  validateAutoApplyBody, } from "./bank.reconciliationRules.validators";
+  validateAutoApplyBody, } from "./bank.reconciliationRules.validators.js";
 // replace with your actual helpers
-import { requireAuth, requirePermission } from "../auth/guards";
-import { getDb } from "../db";
+import { requireAuth } from "../middleware/auth.js";
+import { requirePermission } from "../middleware/rbac.js";
+import { query } from "../db.js";
 const router = express.Router();
 
 // GET /api/v1/bank/reconciliation/rules
@@ -18634,7 +18676,7 @@ router.get(
   requirePermission("bank.recon.rules.read"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const items = await rulesService.listReconciliationRules(db);
       res.json({ items });
     } catch (err) {
@@ -18650,7 +18692,7 @@ router.post(
   requirePermission("bank.recon.rules.create"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const body = validateCreateRuleBody(req.body);
       const item = await rulesService.createReconciliationRule(
         db,
@@ -18671,7 +18713,7 @@ router.patch(
   requirePermission("bank.recon.rules.update"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const { id } = validateRuleIdParam(req.params);
       const body = validateUpdateRuleBody(req.body);
       const item = await rulesService.updateReconciliationRule(
@@ -18694,7 +18736,7 @@ router.post(
   requirePermission("bank.recon.auto.run"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const body = validateAutoPreviewBody(req.body);
       const result = await engineService.previewAutoReconciliation(
         db,
@@ -18715,7 +18757,7 @@ router.post(
   requirePermission("bank.recon.auto.run"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const body = validateAutoApplyBody(req.body);
       const result = await engineService.applyAutoReconciliation(
         db,
@@ -18740,16 +18782,17 @@ export default router;
 // backend/src/routes/bank.reconciliationExceptions.js
 
 import express from "express";
-import exService from "../services/bank.reconciliationExceptions.service";
-import engineService from "../services/bank.reconciliationEngine.service";
+import exService from "../services/bank.reconciliationExceptions.service.js";
+import engineService from "../services/bank.reconciliationEngine.service.js";
 import { validateExceptionIdParam,
   validateListExceptionsQuery,
   validateAssignBody,
   validateResolveBody,
-  validateIgnoreBody, } from "./bank.reconciliationExceptions.validators";
+  validateIgnoreBody, } from "./bank.reconciliationExceptions.validators.js";
 // replace with your actual helpers
-import { requireAuth, requirePermission } from "../auth/guards";
-import { getDb } from "../db";
+import { requireAuth } from "../middleware/auth.js";
+import { requirePermission } from "../middleware/rbac.js";
+import { query } from "../db.js";
 const router = express.Router();
 
 // GET /api/v1/bank/reconciliation/exceptions
@@ -18759,7 +18802,7 @@ router.get(
   requirePermission("bank.recon.exceptions.read"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const q = validateListExceptionsQuery(req.query);
       const items = await exService.listReconciliationExceptions(db, q);
       res.json({ items });
@@ -18776,7 +18819,7 @@ router.post(
   requirePermission("bank.recon.exceptions.assign"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const { id } = validateExceptionIdParam(req.params);
       const body = validateAssignBody(req.body);
       const item = await exService.assignReconciliationException(
@@ -18799,7 +18842,7 @@ router.post(
   requirePermission("bank.recon.exceptions.resolve"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const { id } = validateExceptionIdParam(req.params);
       const body = validateResolveBody(req.body);
       const item = await exService.resolveReconciliationException(
@@ -18822,7 +18865,7 @@ router.post(
   requirePermission("bank.recon.exceptions.resolve"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const { id } = validateExceptionIdParam(req.params);
       const body = validateIgnoreBody(req.body);
       const item = await exService.ignoreReconciliationException(
@@ -18845,7 +18888,7 @@ router.post(
   requirePermission("bank.recon.exceptions.retry"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const { id } = validateExceptionIdParam(req.params);
       const result = await engineService.retryReconciliationException(
         db,
@@ -19035,8 +19078,8 @@ This helps UI show whether a line was matched manually or by rule.
 
 ```js id="uu8rkr"
 // backend/src/index.js
-import bankReconciliationRulesRoutes from "./routes/bank.reconciliationRules";
-import bankReconciliationExceptionsRoutes from "./routes/bank.reconciliationExceptions";
+import bankReconciliationRulesRoutes from "./routes/bank.reconciliationRules.js";
+import bankReconciliationExceptionsRoutes from "./routes/bank.reconciliationExceptions.js";
 // ...
 app.use("/api/v1/bank", bankReconciliationRulesRoutes);
 app.use("/api/v1/bank", bankReconciliationExceptionsRoutes);
@@ -19048,7 +19091,7 @@ app.use("/api/v1/bank", bankReconciliationExceptionsRoutes);
 
 ```js id="mqc1jn"
 // backend/src/migrations/index.js
-import m047_bank_reconciliation_rules_and_exceptions from "./m047_bank_reconciliation_rules_and_exceptions";
+import m047_bank_reconciliation_rules_and_exceptions from "./m047_bank_reconciliation_rules_and_exceptions.js";
 export default [
   // ...
   m047_bank_reconciliation_rules_and_exceptions,
@@ -19179,7 +19222,7 @@ main().catch((err) => {
 ```js id="m8a0ty"
 // frontend/src/api/bankReconciliationAutomation.js
 
-import { apiFetch } from "./client"; // adapt
+import { apiFetch } from "./client.js"; // adapt
 
 export function listBankReconciliationRules() {
   return apiFetch("/api/v1/bank/reconciliation/rules");
@@ -19279,7 +19322,7 @@ import {
   assignBankReconciliationException,
   resolveBankReconciliationException,
   retryBankReconciliationException,
-} from "../../api/bankReconciliationAutomation";
+} from "../../api/bankReconciliationAutomation.js";
 ```
 
 ### Add state
@@ -19649,11 +19692,11 @@ Auto-posting alone is not enough. The statement line must be reconciled to the G
 // backend/src/migrations/m048_bank_recon_autopost_templates.js
 
 export default {
-  id: "m048_bank_recon_autopost_templates",
-
-  async up(db) {
+  key: "m048_bank_recon_autopost_templates",
+  description: "m048_bank_recon_autopost_templates",
+  async up(connection) {
     // Template master
-    await db.query(`
+    await connection.execute(`
       CREATE TABLE IF NOT EXISTS bank_reconciliation_posting_templates (
         id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
         template_code VARCHAR(50) NOT NULL,
@@ -19699,7 +19742,7 @@ export default {
     `);
 
     // Auto-posting traceability + idempotency
-    await db.query(`
+    await connection.execute(`
       CREATE TABLE IF NOT EXISTS bank_reconciliation_auto_postings (
         id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
         bank_statement_line_id BIGINT UNSIGNED NOT NULL,
@@ -19757,9 +19800,9 @@ export default {
       .catch(() => {});
   },
 
-  async down(db) {
-    await db.query(`DROP TABLE IF EXISTS bank_reconciliation_auto_postings;`);
-    await db.query(
+  async down(connection) {
+    await connection.execute(`DROP TABLE IF EXISTS bank_reconciliation_auto_postings;`);
+    await connection.execute(
       `DROP TABLE IF EXISTS bank_reconciliation_posting_templates;`,
     );
     // Optional strict down for ALTER columns omitted
@@ -20157,7 +20200,7 @@ function validateTemplateAppliesToLine(template, line) {
 
 // IMPORTANT: adapt to your real GL service export
 function getGlCreateAndPostHelper() {
-  import svc from "./gl.journals.service";
+  import svc from "./gl.journals.service.js";
   if (typeof svc.createAndPostSystemJournal !== "function") {
     const err = new Error(
       "GL helper export missing: createAndPostSystemJournal",
@@ -20407,14 +20450,15 @@ export default {
 // backend/src/routes/bank.reconciliationPostingTemplates.js
 
 import express from "express";
-import svc from "../services/bank.reconciliationPostingTemplates.service";
-import autoPostSvc from "../services/bank.reconciliationAutoPosting.service";
+import svc from "../services/bank.reconciliationPostingTemplates.service.js";
+import autoPostSvc from "../services/bank.reconciliationAutoPosting.service.js";
 import { validateTemplateIdParam,
   validateCreateTemplateBody,
-  validateUpdateTemplateBody, } from "./bank.reconciliationPostingTemplates.validators";
+  validateUpdateTemplateBody, } from "./bank.reconciliationPostingTemplates.validators.js";
 // replace with your actual helpers
-import { requireAuth, requirePermission } from "../auth/guards";
-import { getDb } from "../db";
+import { requireAuth } from "../middleware/auth.js";
+import { requirePermission } from "../middleware/rbac.js";
+import { query } from "../db.js";
 const router = express.Router();
 
 // GET /api/v1/bank/reconciliation/posting-templates
@@ -20424,7 +20468,7 @@ router.get(
   requirePermission("bank.recon.postTemplates.read"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const items = await svc.listPostingTemplates(db);
       res.json({ items });
     } catch (err) {
@@ -20440,7 +20484,7 @@ router.post(
   requirePermission("bank.recon.postTemplates.create"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const body = validateCreateTemplateBody(req.body);
       const item = await svc.createPostingTemplate(
         db,
@@ -20461,7 +20505,7 @@ router.patch(
   requirePermission("bank.recon.postTemplates.update"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const { id } = validateTemplateIdParam(req.params);
       const body = validateUpdateTemplateBody(req.body);
       const item = await svc.updatePostingTemplate(
@@ -20485,7 +20529,7 @@ router.post(
   requirePermission("bank.recon.postTemplates.read"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const { id } = validateTemplateIdParam(req.params);
       const statementLineId = Number(req.body?.bank_statement_line_id);
       if (!Number.isInteger(statementLineId) || statementLineId <= 0) {
@@ -20517,7 +20561,7 @@ export default router;
 // patch snippet near top of B07 engine service
 
 function getB03ReconcileGlHelper() {
-  import svc from "./bank.reconciliation.service";
+  import svc from "./bank.reconciliation.service.js";
   if (typeof svc.reconcileStatementLineToGlJournalEntry !== "function") {
     const err = new Error(
       "B03 reconcile GL helper export missing: reconcileStatementLineToGlJournalEntry",
@@ -20529,7 +20573,7 @@ function getB03ReconcileGlHelper() {
 }
 
 async function getB08AutoPostService() {
-  return (await import("./bank.reconciliationAutoPosting.service")).default;
+  return (await import("./bank.reconciliationAutoPosting.service.js")).default;
 }
 ```
 
@@ -20787,7 +20831,7 @@ export default {
 
 ```js id="b08idx"
 // backend/src/index.js
-import bankReconciliationPostingTemplatesRoutes from "./routes/bank.reconciliationPostingTemplates";
+import bankReconciliationPostingTemplatesRoutes from "./routes/bank.reconciliationPostingTemplates.js";
 // ...
 app.use("/api/v1/bank", bankReconciliationPostingTemplatesRoutes);
 ```
@@ -20798,7 +20842,7 @@ app.use("/api/v1/bank", bankReconciliationPostingTemplatesRoutes);
 
 ```js id="b08migidx"
 // backend/src/migrations/index.js
-import m048_bank_recon_autopost_templates from "./m048_bank_recon_autopost_templates";
+import m048_bank_recon_autopost_templates from "./m048_bank_recon_autopost_templates.js";
 export default [
   // ...
   m048_bank_recon_autopost_templates,
@@ -20917,7 +20961,7 @@ main().catch((err) => {
 ```js id="b08feapi"
 // frontend/src/api/bankReconciliationPostingTemplates.js
 
-import { apiFetch } from "./client"; // adapt
+import { apiFetch } from "./client.js"; // adapt
 
 export function listBankReconciliationPostingTemplates() {
   return apiFetch("/api/v1/bank/reconciliation/posting-templates");
@@ -20965,7 +21009,7 @@ import {
   listBankReconciliationPostingTemplates,
   createBankReconciliationPostingTemplate,
   previewBankReconciliationPostingTemplate,
-} from "../../api/bankReconciliationPostingTemplates";
+} from "../../api/bankReconciliationPostingTemplates.js";
 ```
 
 ### Add state
@@ -21286,9 +21330,9 @@ Even if a difference journal is posted, the bank statement line is still reconci
 // backend/src/migrations/m049_bank_returns_and_recon_differences.js
 
 export default {
-  id: "m049_bank_returns_and_recon_differences",
-
-  async up(db) {
+  key: "m049_bank_returns_and_recon_differences",
+  description: "m049_bank_returns_and_recon_differences",
+  async up(connection) {
     // Extend payment batch line execution tracking (B04/B06)
     await db
       .query(
@@ -21333,7 +21377,7 @@ export default {
       .catch(() => {});
 
     // Return/rejection event log (bank-side trace)
-    await db.query(`
+    await connection.execute(`
       CREATE TABLE IF NOT EXISTS bank_payment_return_events (
         id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
         event_request_id VARCHAR(190) NULL,
@@ -21374,7 +21418,7 @@ export default {
     `);
 
     // Difference profiles (fee/FX) for matched-payment amount deltas
-    await db.query(`
+    await connection.execute(`
       CREATE TABLE IF NOT EXISTS bank_reconciliation_difference_profiles (
         id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
         profile_code VARCHAR(50) NOT NULL,
@@ -21416,7 +21460,7 @@ export default {
     `);
 
     // Difference adjustment trace (idempotent per statement line)
-    await db.query(`
+    await connection.execute(`
       CREATE TABLE IF NOT EXISTS bank_reconciliation_difference_adjustments (
         id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
         bank_statement_line_id BIGINT UNSIGNED NOT NULL,
@@ -21455,14 +21499,14 @@ export default {
     `);
   },
 
-  async down(db) {
-    await db.query(
+  async down(connection) {
+    await connection.execute(
       `DROP TABLE IF EXISTS bank_reconciliation_difference_adjustments;`,
     );
-    await db.query(
+    await connection.execute(
       `DROP TABLE IF EXISTS bank_reconciliation_difference_profiles;`,
     );
-    await db.query(`DROP TABLE IF EXISTS bank_payment_return_events;`);
+    await connection.execute(`DROP TABLE IF EXISTS bank_payment_return_events;`);
     // Optional strict down for ALTER columns omitted
   },
 };
@@ -22091,7 +22135,7 @@ function isEffective(profile, bookingDate) {
 }
 
 function getGlCreateAndPostHelper() {
-  import svc from "./gl.journals.service";
+  import svc from "./gl.journals.service.js";
   if (typeof svc.createAndPostSystemJournal !== "function") {
     const err = new Error(
       "GL helper export missing: createAndPostSystemJournal",
@@ -22381,14 +22425,15 @@ export default {
 // backend/src/routes/bank.paymentReturns.js
 
 import express from "express";
-import svc from "../services/bank.paymentReturns.service";
+import svc from "../services/bank.paymentReturns.service.js";
 import { validateReturnEventIdParam,
   validateListReturnEventsQuery,
   validateCreateManualReturnBody,
-  validateIgnoreReturnEventBody, } from "./bank.paymentReturns.validators";
+  validateIgnoreReturnEventBody, } from "./bank.paymentReturns.validators.js";
 // replace with your actual helpers
-import { requireAuth, requirePermission } from "../auth/guards";
-import { getDb } from "../db";
+import { requireAuth } from "../middleware/auth.js";
+import { requirePermission } from "../middleware/rbac.js";
+import { query } from "../db.js";
 const router = express.Router();
 
 // GET /api/v1/bank/payment-returns
@@ -22398,7 +22443,7 @@ router.get(
   requirePermission("bank.returns.read"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const q = validateListReturnEventsQuery(req.query);
       const items = await svc.listPaymentReturnEvents(db, q);
       res.json({ items });
@@ -22415,7 +22460,7 @@ router.post(
   requirePermission("bank.returns.create"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const body = validateCreateManualReturnBody(req.body);
       const result = await svc.createPaymentReturnEvent(
         db,
@@ -22436,7 +22481,7 @@ router.post(
   requirePermission("bank.returns.review"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const { id } = validateReturnEventIdParam(req.params);
       const body = validateIgnoreReturnEventBody(req.body);
       const item = await svc.ignorePaymentReturnEvent(
@@ -22463,13 +22508,14 @@ export default router;
 // backend/src/routes/bank.reconciliationDifferenceProfiles.js
 
 import express from "express";
-import svc from "../services/bank.reconciliationDifferenceProfiles.service";
+import svc from "../services/bank.reconciliationDifferenceProfiles.service.js";
 import { validateProfileIdParam,
   validateCreateDifferenceProfileBody,
-  validateUpdateDifferenceProfileBody, } from "./bank.reconciliationDifferenceProfiles.validators";
+  validateUpdateDifferenceProfileBody, } from "./bank.reconciliationDifferenceProfiles.validators.js";
 // replace with your actual helpers
-import { requireAuth, requirePermission } from "../auth/guards";
-import { getDb } from "../db";
+import { requireAuth } from "../middleware/auth.js";
+import { requirePermission } from "../middleware/rbac.js";
+import { query } from "../db.js";
 const router = express.Router();
 
 // GET /api/v1/bank/reconciliation/difference-profiles
@@ -22479,7 +22525,7 @@ router.get(
   requirePermission("bank.recon.diffProfiles.read"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const items = await svc.listDifferenceProfiles(db);
       res.json({ items });
     } catch (err) {
@@ -22495,7 +22541,7 @@ router.post(
   requirePermission("bank.recon.diffProfiles.create"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const body = validateCreateDifferenceProfileBody(req.body);
       const item = await svc.createDifferenceProfile(
         db,
@@ -22516,7 +22562,7 @@ router.patch(
   requirePermission("bank.recon.diffProfiles.update"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const { id } = validateProfileIdParam(req.params);
       const body = validateUpdateDifferenceProfileBody(req.body);
       const item = await svc.updateDifferenceProfile(
@@ -22547,11 +22593,11 @@ export default router;
 // patch snippet near top of B07 engine service
 
 async function getPaymentReturnsService() {
-  return (await import("./bank.paymentReturns.service")).default;
+  return (await import("./bank.paymentReturns.service.js")).default;
 }
 
 async function getReconciliationDifferencesService() {
-  return (await import("./bank.reconciliationDifferences.service")).default;
+  return (await import("./bank.reconciliationDifferences.service.js")).default;
 }
 ```
 
@@ -22824,8 +22870,8 @@ This keeps Payment Batch detail operational after B08-B.
 
 ```js id="b08bidx"
 // backend/src/index.js
-import bankPaymentReturnsRoutes from "./routes/bank.paymentReturns";
-import bankReconciliationDifferenceProfilesRoutes from "./routes/bank.reconciliationDifferenceProfiles";
+import bankPaymentReturnsRoutes from "./routes/bank.paymentReturns.js";
+import bankReconciliationDifferenceProfilesRoutes from "./routes/bank.reconciliationDifferenceProfiles.js";
 // ...
 app.use("/api/v1/bank", bankPaymentReturnsRoutes);
 app.use("/api/v1/bank", bankReconciliationDifferenceProfilesRoutes);
@@ -22837,7 +22883,7 @@ app.use("/api/v1/bank", bankReconciliationDifferenceProfilesRoutes);
 
 ```js id="b08bmigidx"
 // backend/src/migrations/index.js
-import m049_bank_returns_and_recon_differences from "./m049_bank_returns_and_recon_differences";
+import m049_bank_returns_and_recon_differences from "./m049_bank_returns_and_recon_differences.js";
 export default [
   // ...
   m049_bank_returns_and_recon_differences,
@@ -22970,7 +23016,7 @@ main().catch((err) => {
 ```js id="b08bfeapi1"
 // frontend/src/api/bankPaymentReturns.js
 
-import { apiFetch } from "./client"; // adapt
+import { apiFetch } from "./client.js"; // adapt
 
 export function listBankPaymentReturns(params = {}) {
   const qs = new URLSearchParams();
@@ -23004,7 +23050,7 @@ export function ignoreBankPaymentReturn(returnEventId, payload = {}) {
 ```js id="b08bfeapi2"
 // frontend/src/api/bankReconciliationDifferenceProfiles.js
 
-import { apiFetch } from "./client"; // adapt
+import { apiFetch } from "./client.js"; // adapt
 
 export function listBankReconciliationDifferenceProfiles() {
   return apiFetch("/api/v1/bank/reconciliation/difference-profiles");
@@ -23039,12 +23085,12 @@ import {
   listBankPaymentReturns,
   createBankPaymentReturn,
   ignoreBankPaymentReturn,
-} from "../../api/bankPaymentReturns";
+} from "../../api/bankPaymentReturns.js";
 
 import {
   listBankReconciliationDifferenceProfiles,
   createBankReconciliationDifferenceProfile,
-} from "../../api/bankReconciliationDifferenceProfiles";
+} from "../../api/bankReconciliationDifferenceProfiles.js";
 ```
 
 ### Add state
@@ -23434,11 +23480,11 @@ For governed config (rules/templates/profiles):
 // backend/src/migrations/m050_bank_governance_approvals_sod.js
 
 export default {
-  id: "m050_bank_governance_approvals_sod",
-
-  async up(db) {
+  key: "m050_bank_governance_approvals_sod",
+  description: "m050_bank_governance_approvals_sod",
+  async up(connection) {
     // Approval policies (thresholds + SoD rules)
-    await db.query(`
+    await connection.execute(`
       CREATE TABLE IF NOT EXISTS bank_approval_policies (
         id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
         policy_code VARCHAR(50) NOT NULL,
@@ -23477,7 +23523,7 @@ export default {
     `);
 
     // Approval requests (generic execution queue + audit shell)
-    await db.query(`
+    await connection.execute(`
       CREATE TABLE IF NOT EXISTS bank_approval_requests (
         id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
         request_code VARCHAR(80) NOT NULL,
@@ -23527,7 +23573,7 @@ export default {
     `);
 
     // Approval decisions / votes
-    await db.query(`
+    await connection.execute(`
       CREATE TABLE IF NOT EXISTS bank_approval_request_decisions (
         id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
         bank_approval_request_id BIGINT UNSIGNED NOT NULL,
@@ -23615,10 +23661,10 @@ export default {
       .catch(() => {});
   },
 
-  async down(db) {
-    await db.query(`DROP TABLE IF EXISTS bank_approval_request_decisions;`);
-    await db.query(`DROP TABLE IF EXISTS bank_approval_requests;`);
-    await db.query(`DROP TABLE IF EXISTS bank_approval_policies;`);
+  async down(connection) {
+    await connection.execute(`DROP TABLE IF EXISTS bank_approval_request_decisions;`);
+    await connection.execute(`DROP TABLE IF EXISTS bank_approval_requests;`);
+    await connection.execute(`DROP TABLE IF EXISTS bank_approval_policies;`);
     // Optional strict down for ALTER columns omitted
   },
 };
@@ -24065,7 +24111,7 @@ export default {
 ```js
 // backend/src/services/bank.approvals.service.js
 
-import { evaluateApprovalNeed } from "./bank.governance.service";
+import { evaluateApprovalNeed } from "./bank.governance.service.js";
 function amount2(n) {
   return n == null ? null : Number(Number(n).toFixed(2));
 }
@@ -24450,13 +24496,14 @@ export default {
 // backend/src/routes/bank.approvalPolicies.js
 
 import express from "express";
-import svc from "../services/bank.approvalPolicies.service";
+import svc from "../services/bank.approvalPolicies.service.js";
 import { validatePolicyIdParam,
   validateCreatePolicyBody,
-  validateUpdatePolicyBody, } from "./bank.approvalPolicies.validators";
+  validateUpdatePolicyBody, } from "./bank.approvalPolicies.validators.js";
 // replace with your actual helpers
-import { requireAuth, requirePermission } from "../auth/guards";
-import { getDb } from "../db";
+import { requireAuth } from "../middleware/auth.js";
+import { requirePermission } from "../middleware/rbac.js";
+import { query } from "../db.js";
 const router = express.Router();
 
 router.get(
@@ -24465,7 +24512,7 @@ router.get(
   requirePermission("bank.approvals.policies.read"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const items = await svc.listApprovalPolicies(db);
       res.json({ items });
     } catch (err) {
@@ -24480,7 +24527,7 @@ router.post(
   requirePermission("bank.approvals.policies.create"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const body = validateCreatePolicyBody(req.body);
       const item = await svc.createApprovalPolicy(
         db,
@@ -24500,7 +24547,7 @@ router.patch(
   requirePermission("bank.approvals.policies.update"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const { id } = validatePolicyIdParam(req.params);
       const body = validateUpdatePolicyBody(req.body);
       const item = await svc.updateApprovalPolicy(
@@ -24527,26 +24574,32 @@ export default router;
 // backend/src/routes/bank.approvalRequests.js
 
 import express from "express";
-import svc from "../services/bank.approvals.service";
+import svc from "../services/bank.approvals.service.js";
 import { validateApprovalRequestIdParam,
   validateListApprovalRequestsQuery,
   validateSubmitApprovalRequestBody,
-  validateDecisionBody, } from "./bank.approvalRequests.validators";
+  validateDecisionBody, } from "./bank.approvalRequests.validators.js";
 // replace with your actual helpers
-import { requireAuth,
-  requirePermission,
-  hasPermission, } from "../auth/guards";
-import { getDb } from "../db";
+import { requireAuth } from "../middleware/auth.js";
+import { requirePermission } from "../middleware/rbac.js";
+// TODO: wire this to your existing RBAC permission resolver/context.
+const hasPermission = async (req, permCode) => {
+  const assigned = Array.isArray(req.user?.permissions)
+    ? req.user.permissions
+    : [];
+  return assigned.includes(permCode);
+};
+import { query } from "../db.js";
 const router = express.Router();
 
 // IMPORTANT: execution resolver should dispatch to business services
 function getExecutionResolver() {
-  import bankPaymentBatches from "../services/bank.paymentBatches.service";
-  import reconRules from "../services/bank.reconciliationRules.service";
-  import postTemplates from "../services/bank.reconciliationPostingTemplates.service";
-  import diffProfiles from "../services/bank.reconciliationDifferenceProfiles.service";
-  import paymentReturns from "../services/bank.paymentReturns.service";
-  import reconExceptions from "../services/bank.reconciliationExceptions.service";
+  import bankPaymentBatches from "../services/bank.paymentBatches.service.js";
+  import reconRules from "../services/bank.reconciliationRules.service.js";
+  import postTemplates from "../services/bank.reconciliationPostingTemplates.service.js";
+  import diffProfiles from "../services/bank.reconciliationDifferenceProfiles.service.js";
+  import paymentReturns from "../services/bank.paymentReturns.service.js";
+  import reconExceptions from "../services/bank.reconciliationExceptions.service.js";
   return async function executionResolver(db, req, policy, approverUserId) {
     const target = JSON.parse(req.target_snapshot_json || "{}");
     const payload = JSON.parse(req.action_payload_json || "null");
@@ -24635,7 +24688,7 @@ router.get(
   requirePermission("bank.approvals.requests.read"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const q = validateListApprovalRequestsQuery(req.query);
       const items = await svc.listApprovalRequests(db, q, req.user?.id ?? null);
       res.json({ items });
@@ -24652,7 +24705,7 @@ router.post(
   requirePermission("bank.approvals.requests.submit"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const body = validateSubmitApprovalRequestBody(req.body);
 
       // generic snapshot builder fallback
@@ -24683,7 +24736,7 @@ router.post(
   requirePermission("bank.approvals.requests.approve"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const { id } = validateApprovalRequestIdParam(req.params);
       const body = validateDecisionBody(req.body);
 
@@ -24707,7 +24760,7 @@ router.post(
   requirePermission("bank.approvals.requests.reject"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const { id } = validateApprovalRequestIdParam(req.params);
       const body = validateDecisionBody(req.body);
 
@@ -24736,8 +24789,8 @@ export default router;
 ```js
 // patch snippet in export/release service methods
 
-import { evaluateApprovalNeed } from "./bank.governance.service";
-import approvalsSvc from "./bank.approvals.service";
+import { evaluateApprovalNeed } from "./bank.governance.service.js";
+import approvalsSvc from "./bank.approvals.service.js";
 // inside export/release flow before execution:
 const gov = await evaluateApprovalNeed(db, {
   target_type: "PAYMENT_BATCH",
@@ -24845,8 +24898,8 @@ Apply same pattern to:
 ```js
 // patch snippet in createPostingTemplate / updatePostingTemplate
 
-import approvalsSvc from "./bank.approvals.service";
-import { evaluateApprovalNeed } from "./bank.governance.service";
+import approvalsSvc from "./bank.approvals.service.js";
+import { evaluateApprovalNeed } from "./bank.governance.service.js";
 // after insert/update of template row:
 const template = await getPostingTemplate(db, templateId);
 
@@ -24949,8 +25002,8 @@ export default {
 ```js
 // patch snippet in manual return create endpoint path (source_type='MANUAL')
 
-import { evaluateApprovalNeed } from "./bank.governance.service";
-import approvalsSvc from "./bank.approvals.service";
+import { evaluateApprovalNeed } from "./bank.governance.service.js";
+import approvalsSvc from "./bank.approvals.service.js";
 // before createPaymentReturnEvent execution for MANUAL:
 const gov = await evaluateApprovalNeed(db, {
   target_type: "MANUAL_RETURN",
@@ -25038,8 +25091,8 @@ export default {
 ```js
 // patch snippet (conceptual) in bank.reconciliationExceptions.service.js
 
-import { evaluateApprovalNeed } from "./bank.governance.service";
-import approvalsSvc from "./bank.approvals.service";
+import { evaluateApprovalNeed } from "./bank.governance.service.js";
+import approvalsSvc from "./bank.approvals.service.js";
 async function requestOrExecuteExceptionOverride(db, body, userId) {
   const ex = await getException(db, body.exception_id);
 
@@ -25108,8 +25161,8 @@ export default {
 
 ```js
 // backend/src/index.js
-import bankApprovalPoliciesRoutes from "./routes/bank.approvalPolicies";
-import bankApprovalRequestsRoutes from "./routes/bank.approvalRequests";
+import bankApprovalPoliciesRoutes from "./routes/bank.approvalPolicies.js";
+import bankApprovalRequestsRoutes from "./routes/bank.approvalRequests.js";
 // ...
 app.use("/api/v1/bank", bankApprovalPoliciesRoutes);
 app.use("/api/v1/bank", bankApprovalRequestsRoutes);
@@ -25121,7 +25174,7 @@ app.use("/api/v1/bank", bankApprovalRequestsRoutes);
 
 ```js
 // backend/src/migrations/index.js
-import m050_bank_governance_approvals_sod from "./m050_bank_governance_approvals_sod";
+import m050_bank_governance_approvals_sod from "./m050_bank_governance_approvals_sod.js";
 export default [
   // ...
   m050_bank_governance_approvals_sod,
@@ -25282,7 +25335,7 @@ main().catch((err) => {
 ```js
 // frontend/src/api/bankApprovalPolicies.js
 
-import { apiFetch } from "./client"; // adapt
+import { apiFetch } from "./client.js"; // adapt
 
 export function listBankApprovalPolicies() {
   return apiFetch("/api/v1/bank/approvals/policies");
@@ -25310,7 +25363,7 @@ export function updateBankApprovalPolicy(policyId, payload) {
 ```js
 // frontend/src/api/bankApprovalRequests.js
 
-import { apiFetch } from "./client"; // adapt
+import { apiFetch } from "./client.js"; // adapt
 
 export function listBankApprovalRequests(params = {}) {
   const qs = new URLSearchParams();
@@ -25400,7 +25453,7 @@ import {
   listBankApprovalRequests,
   approveBankApprovalRequest,
   rejectBankApprovalRequest,
-} from "../../api/bankApprovalRequests";
+} from "../../api/bankApprovalRequests.js";
 
 const [approvalQueue, setApprovalQueue] = useState([]);
 const [approvalQueueErr, setApprovalQueueErr] = useState("");
@@ -25676,11 +25729,11 @@ For simplicity:
 // backend/src/migrations/m051_payroll_beneficiary_snapshots.js
 
 export default {
-  id: "m051_payroll_beneficiary_snapshots",
-
-  async up(db) {
+  key: "m051_payroll_beneficiary_snapshots",
+  description: "m051_payroll_beneficiary_snapshots",
+  async up(connection) {
     // Employee beneficiary bank master (effective-dated)
-    await db.query(`
+    await connection.execute(`
       CREATE TABLE IF NOT EXISTS payroll_beneficiary_bank_accounts (
         id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
         employee_id BIGINT UNSIGNED NOT NULL,
@@ -25726,7 +25779,7 @@ export default {
     `);
 
     // Audit trail for master changes
-    await db.query(`
+    await connection.execute(`
       CREATE TABLE IF NOT EXISTS payroll_beneficiary_bank_account_audit (
         id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
         beneficiary_bank_account_id BIGINT UNSIGNED NOT NULL,
@@ -25748,7 +25801,7 @@ export default {
     `);
 
     // Immutable snapshots used by payroll payment links
-    await db.query(`
+    await connection.execute(`
       CREATE TABLE IF NOT EXISTS payroll_beneficiary_bank_snapshots (
         id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
 
@@ -25808,12 +25861,12 @@ export default {
       .catch(() => {});
   },
 
-  async down(db) {
-    await db.query(
+  async down(connection) {
+    await connection.execute(
       `DROP TABLE IF EXISTS payroll_beneficiary_bank_account_audit;`,
     );
-    await db.query(`DROP TABLE IF EXISTS payroll_beneficiary_bank_snapshots;`);
-    await db.query(`DROP TABLE IF EXISTS payroll_beneficiary_bank_accounts;`);
+    await connection.execute(`DROP TABLE IF EXISTS payroll_beneficiary_bank_snapshots;`);
+    await connection.execute(`DROP TABLE IF EXISTS payroll_beneficiary_bank_accounts;`);
     // Optional strict down for ALTER on payroll_liability_payment_links omitted
   },
 };
@@ -26449,15 +26502,16 @@ export default {
 // backend/src/routes/payroll.beneficiaries.js
 
 import express from "express";
-import svc from "../services/payroll.beneficiaries.service";
+import svc from "../services/payroll.beneficiaries.service.js";
 import { validateEmployeeIdParam,
   validateBeneficiaryAccountIdParam,
   validateCreateBeneficiaryAccountBody,
   validateUpdateBeneficiaryAccountBody,
-  validateSetPrimaryBody, } from "./payroll.beneficiaries.validators";
+  validateSetPrimaryBody, } from "./payroll.beneficiaries.validators.js";
 // replace with your actual helpers
-import { requireAuth, requirePermission } from "../auth/guards";
-import { getDb } from "../db";
+import { requireAuth } from "../middleware/auth.js";
+import { requirePermission } from "../middleware/rbac.js";
+import { query } from "../db.js";
 const router = express.Router();
 
 // GET /api/v1/payroll/employees/:employeeId/beneficiary-bank-accounts
@@ -26467,7 +26521,7 @@ router.get(
   requirePermission("payroll.beneficiary.read"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const { employeeId } = validateEmployeeIdParam(req.params);
       const items = await svc.listEmployeeBeneficiaryBankAccounts(
         db,
@@ -26487,7 +26541,7 @@ router.post(
   requirePermission("payroll.beneficiary.write"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const { employeeId } = validateEmployeeIdParam(req.params);
       const body = validateCreateBeneficiaryAccountBody(req.body);
       const item = await svc.createEmployeeBeneficiaryBankAccount(
@@ -26510,7 +26564,7 @@ router.patch(
   requirePermission("payroll.beneficiary.write"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const { id } = validateBeneficiaryAccountIdParam(req.params);
       const body = validateUpdateBeneficiaryAccountBody(req.body);
       const item = await svc.updateBeneficiaryBankAccount(
@@ -26533,7 +26587,7 @@ router.post(
   requirePermission("payroll.beneficiary.set_primary"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const { id } = validateBeneficiaryAccountIdParam(req.params);
       const body = validateSetPrimaryBody(req.body);
       const item = await svc.setPrimaryBeneficiaryBankAccount(
@@ -26556,7 +26610,7 @@ router.get(
   requirePermission("payroll.beneficiary.snapshot.read"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const id = Number(req.params.id);
       if (!Number.isInteger(id) || id <= 0)
         throw new Error("id must be positive integer");
@@ -26584,7 +26638,7 @@ export default router;
 ```js
 // patch snippet in backend/src/services/payroll.payments.service.js
 
-import payrollBeneficiariesSvc from "./payroll.beneficiaries.service";
+import payrollBeneficiariesSvc from "./payroll.beneficiaries.service.js";
 // ...inside your existing "create payment links / batch from liabilities" flow:
 
 // After INSERT payroll_liability_payment_links ... get linkId
@@ -26733,7 +26787,7 @@ And expose a simple derived flag in response mapping:
 
 ```js
 // backend/src/index.js
-import payrollBeneficiariesRoutes from "./routes/payroll.beneficiaries";
+import payrollBeneficiariesRoutes from "./routes/payroll.beneficiaries.js";
 // ...
 app.use("/api/v1/payroll", payrollBeneficiariesRoutes);
 ```
@@ -26744,7 +26798,7 @@ app.use("/api/v1/payroll", payrollBeneficiariesRoutes);
 
 ```js
 // backend/src/migrations/index.js
-import m051_payroll_beneficiary_snapshots from "./m051_payroll_beneficiary_snapshots";
+import m051_payroll_beneficiary_snapshots from "./m051_payroll_beneficiary_snapshots.js";
 export default [
   // ...
   m051_payroll_beneficiary_snapshots,
@@ -26858,7 +26912,7 @@ main().catch((err) => {
 ```js
 // frontend/src/api/payrollBeneficiaries.js
 
-import { apiFetch } from "./client"; // adapt to your app
+import { apiFetch } from "./client.js"; // adapt to your app
 
 export function listEmployeeBeneficiaryBankAccounts(employeeId) {
   return apiFetch(
@@ -26911,7 +26965,7 @@ import {
   listEmployeeBeneficiaryBankAccounts,
   createEmployeeBeneficiaryBankAccount,
   setPrimaryBeneficiaryBankAccount,
-} from "../../api/payrollBeneficiaries";
+} from "../../api/payrollBeneficiaries.js";
 ```
 
 ### Minimal state
@@ -27003,7 +27057,7 @@ async function onSetPrimary(accountId, employeeId) {
 ### Optional snapshot detail viewer
 
 ```jsx
-import { getPayrollLiabilityBeneficiarySnapshot } from "../../api/payrollBeneficiaries";
+import { getPayrollLiabilityBeneficiarySnapshot } from "../../api/payrollBeneficiaries.js";
 
 async function onViewBeneficiarySnapshot(liabilityId) {
   const res = await getPayrollLiabilityBeneficiarySnapshot(liabilityId);
@@ -27225,11 +27279,11 @@ Reopen does **not** delete history — it creates audit trail and unlocks period
 // backend/src/migrations/m052_payroll_close_controls.js
 
 export default {
-  id: "m052_payroll_close_controls",
-
-  async up(db) {
+  key: "m052_payroll_close_controls",
+  description: "m052_payroll_close_controls",
+  async up(connection) {
     // One close record per entity+period (can reopen/reclose by status transitions)
-    await db.query(`
+    await connection.execute(`
       CREATE TABLE IF NOT EXISTS payroll_period_closes (
         id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
 
@@ -27285,7 +27339,7 @@ export default {
     `);
 
     // Computed checklist items (refreshable)
-    await db.query(`
+    await connection.execute(`
       CREATE TABLE IF NOT EXISTS payroll_period_close_checks (
         id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
         payroll_period_close_id BIGINT UNSIGNED NOT NULL,
@@ -27316,7 +27370,7 @@ export default {
     `);
 
     // Audit log
-    await db.query(`
+    await connection.execute(`
       CREATE TABLE IF NOT EXISTS payroll_period_close_audit (
         id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
         payroll_period_close_id BIGINT UNSIGNED NOT NULL,
@@ -27340,10 +27394,10 @@ export default {
     `);
   },
 
-  async down(db) {
-    await db.query(`DROP TABLE IF EXISTS payroll_period_close_audit;`);
-    await db.query(`DROP TABLE IF EXISTS payroll_period_close_checks;`);
-    await db.query(`DROP TABLE IF EXISTS payroll_period_closes;`);
+  async down(connection) {
+    await connection.execute(`DROP TABLE IF EXISTS payroll_period_close_audit;`);
+    await connection.execute(`DROP TABLE IF EXISTS payroll_period_close_checks;`);
+    await connection.execute(`DROP TABLE IF EXISTS payroll_period_closes;`);
   },
 };
 ```
@@ -28150,15 +28204,16 @@ export default {
 // backend/src/routes/payroll.close.js
 
 import express from "express";
-import svc from "../services/payroll.close.service";
+import svc from "../services/payroll.close.service.js";
 import { validateCloseIdParam,
   validatePrepareCloseBody,
   validateRequestCloseBody,
   validateApproveCloseBody,
-  validateReopenBody, } from "./payroll.close.validators";
+  validateReopenBody, } from "./payroll.close.validators.js";
 // replace with your actual helpers
-import { requireAuth, requirePermission } from "../auth/guards";
-import { getDb } from "../db";
+import { requireAuth } from "../middleware/auth.js";
+import { requirePermission } from "../middleware/rbac.js";
+import { query } from "../db.js";
 const router = express.Router();
 
 // GET /api/v1/payroll/period-closes
@@ -28168,7 +28223,7 @@ router.get(
   requirePermission("payroll.close.read"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const entity_id = req.query.entity_id
         ? Number(req.query.entity_id)
         : null;
@@ -28190,7 +28245,7 @@ router.get(
   requirePermission("payroll.close.read"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const { id } = validateCloseIdParam(req.params);
       const item = await svc.getPayrollPeriodCloseDetail(db, id);
       res.json(item);
@@ -28207,7 +28262,7 @@ router.post(
   requirePermission("payroll.close.prepare"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const body = validatePrepareCloseBody(req.body);
       const result = await svc.preparePayrollPeriodClose(
         db,
@@ -28228,7 +28283,7 @@ router.post(
   requirePermission("payroll.close.request"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const { id } = validateCloseIdParam(req.params);
       const body = validateRequestCloseBody(req.body);
       const result = await svc.requestPayrollPeriodClose(
@@ -28251,7 +28306,7 @@ router.post(
   requirePermission("payroll.close.approve"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const { id } = validateCloseIdParam(req.params);
       const body = validateApproveCloseBody(req.body);
       const result = await svc.approveAndClosePayrollPeriod(
@@ -28274,7 +28329,7 @@ router.post(
   requirePermission("payroll.close.reopen"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const { id } = validateCloseIdParam(req.params);
       const body = validateReopenBody(req.body);
       const result = await svc.reopenPayrollPeriod(
@@ -28303,7 +28358,7 @@ Block reversal and off-cycle create when period is closed+locked.
 
 ```js
 // patch snippet at top
-import payrollCloseSvc from "./payroll.close.service";
+import payrollCloseSvc from "./payroll.close.service.js";
 // In reversePayrollRun(...) after sourceRun loaded:
 await payrollCloseSvc.assertPayrollPeriodActionAllowed(q, {
   entityId: sourceRun.entity_id,
@@ -28327,7 +28382,7 @@ Block retro edits/finalize when period is closed+locked.
 
 ```js
 // patch snippet at top
-import payrollCloseSvc from "./payroll.close.service";
+import payrollCloseSvc from "./payroll.close.service.js";
 // In createRetroBatch(...)
 await payrollCloseSvc.assertPayrollPeriodActionAllowed(db, {
   entityId: body.entity_id,
@@ -28363,7 +28418,7 @@ Block manual override request/approve/reject if period closed and `lock_manual_s
 
 ```js
 // patch snippet at top
-import payrollCloseSvc from "./payroll.close.service";
+import payrollCloseSvc from "./payroll.close.service.js";
 // In createManualSettlementRequest(...) after liab resolved
 const [runRows] = await db.query(
   `SELECT entity_id, period_start, period_end FROM payroll_runs WHERE id=? LIMIT 1`,
@@ -28406,7 +28461,7 @@ If you enable `lock_payment_prep`, block creating new payment links/batches for 
 
 ```js
 // patch snippet at top
-import payrollCloseSvc from "./payroll.close.service";
+import payrollCloseSvc from "./payroll.close.service.js";
 // in createPayrollPaymentBatchFromRun(...) after run loaded
 await payrollCloseSvc.assertPayrollPeriodActionAllowed(q, {
   entityId: run.entity_id,
@@ -28422,7 +28477,7 @@ await payrollCloseSvc.assertPayrollPeriodActionAllowed(q, {
 
 ```js
 // backend/src/index.js
-import payrollCloseRoutes from "./routes/payroll.close";
+import payrollCloseRoutes from "./routes/payroll.close.js";
 // ...
 app.use("/api/v1/payroll", payrollCloseRoutes);
 ```
@@ -28433,7 +28488,7 @@ app.use("/api/v1/payroll", payrollCloseRoutes);
 
 ```js
 // backend/src/migrations/index.js
-import m052_payroll_close_controls from "./m052_payroll_close_controls";
+import m052_payroll_close_controls from "./m052_payroll_close_controls.js";
 export default [
   // ...
   m052_payroll_close_controls,
@@ -28573,7 +28628,7 @@ main().catch((err) => {
 ```js
 // frontend/src/api/payrollClose.js
 
-import { apiFetch } from "./client"; // adapt to your app
+import { apiFetch } from "./client.js"; // adapt to your app
 
 export function listPayrollPeriodCloses(params = {}) {
   const qs = new URLSearchParams();
@@ -28649,7 +28704,7 @@ import {
   approvePayrollPeriodClose,
   reopenPayrollPeriodClose,
   getPayrollPeriodClose,
-} from "../../api/payrollClose";
+} from "../../api/payrollClose.js";
 
 const [closeDetail, setCloseDetail] = useState(null);
 const [closeErr, setCloseErr] = useState("");
@@ -28957,11 +29012,11 @@ If payroll period is closed and `lock_run_changes=1`, importing payroll results 
 // backend/src/migrations/m053_payroll_provider_adapters.js
 
 export default {
-  id: "m053_payroll_provider_adapters",
-
-  async up(db) {
+  key: "m053_payroll_provider_adapters",
+  description: "m053_payroll_provider_adapters",
+  async up(connection) {
     // Entity-level provider connection/config
-    await db.query(`
+    await connection.execute(`
       CREATE TABLE IF NOT EXISTS payroll_provider_connections (
         id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
         entity_id BIGINT UNSIGNED NOT NULL,
@@ -28989,7 +29044,7 @@ export default {
     `);
 
     // External employee mapping (provider employee -> internal employee)
-    await db.query(`
+    await connection.execute(`
       CREATE TABLE IF NOT EXISTS payroll_employee_provider_refs (
         id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
         entity_id BIGINT UNSIGNED NOT NULL,
@@ -29017,7 +29072,7 @@ export default {
     `);
 
     // Import job (preview/apply lifecycle)
-    await db.query(`
+    await connection.execute(`
       CREATE TABLE IF NOT EXISTS payroll_provider_import_jobs (
         id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
         entity_id BIGINT UNSIGNED NOT NULL,
@@ -29076,7 +29131,7 @@ export default {
     `);
 
     // Audit trail for import lifecycle
-    await db.query(`
+    await connection.execute(`
       CREATE TABLE IF NOT EXISTS payroll_provider_import_audit (
         id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
         payroll_provider_import_job_id BIGINT UNSIGNED NOT NULL,
@@ -29124,11 +29179,11 @@ export default {
       .catch(() => {});
   },
 
-  async down(db) {
-    await db.query(`DROP TABLE IF EXISTS payroll_provider_import_audit;`);
-    await db.query(`DROP TABLE IF EXISTS payroll_provider_import_jobs;`);
-    await db.query(`DROP TABLE IF EXISTS payroll_employee_provider_refs;`);
-    await db.query(`DROP TABLE IF EXISTS payroll_provider_connections;`);
+  async down(connection) {
+    await connection.execute(`DROP TABLE IF EXISTS payroll_provider_import_audit;`);
+    await connection.execute(`DROP TABLE IF EXISTS payroll_provider_import_jobs;`);
+    await connection.execute(`DROP TABLE IF EXISTS payroll_employee_provider_refs;`);
+    await connection.execute(`DROP TABLE IF EXISTS payroll_provider_connections;`);
     // optional strict ALTER down omitted
   },
 };
@@ -29279,15 +29334,15 @@ export default {
 ```js
 // backend/src/services/payroll.providers.registry.js
 
-import GenericCsvAdapter from "./payroll.providers.adapters/genericCsv.adapter";
-import GenericJsonAdapter from "./payroll.providers.adapters/genericJson.adapter";
+import GenericCsvAdapter from "./payroll.providers.adapters/genericCsv.adapter.js";
+import GenericJsonAdapter from "./payroll.providers.adapters/genericJson.adapter.js";
 const ADAPTERS = {
   GENERIC_CSV: GenericCsvAdapter,
   GENERIC_JSON: GenericJsonAdapter,
 
   // future examples:
-  // ADP: (await import("./payroll.providers.adapters/adp.adapter")).default,
-  // SAP_PAYROLL: (await import("./payroll.providers.adapters/sapPayroll.adapter")).default,
+  // ADP: (await import("./payroll.providers.adapters/adp.adapter.js")).default,
+  // SAP_PAYROLL: (await import("./payroll.providers.adapters/sapPayroll.adapter.js")).default,
 };
 
 function getPayrollProviderAdapter(
@@ -29395,7 +29450,7 @@ export default BasePayrollProviderAdapter;
 ```js
 // backend/src/services/payroll.providers.adapters/genericJson.adapter.js
 
-import Base from "./base.adapter";
+import Base from "./base.adapter.js";
 function amount2(n) {
   return Number(Number(n || 0).toFixed(2));
 }
@@ -29472,7 +29527,7 @@ export default GenericJsonAdapter;
 ```js
 // backend/src/services/payroll.providers.adapters/genericCsv.adapter.js
 
-import Base from "./base.adapter";
+import Base from "./base.adapter.js";
 /**
  * Minimal CSV parser for v1 (simple comma-separated, no quoted commas handling).
  * For production, replace with a robust CSV parser library.
@@ -29574,12 +29629,12 @@ export default GenericCsvAdapter;
 
 import crypto from "crypto";
 import { getPayrollProviderAdapter,
-  listSupportedPayrollProviders, } from "./payroll.providers.registry";
-import payrollCloseSvc from "./payroll.close.service";
-import payrollRunsSvc from "./payroll.runs.service";
-import payrollLiabilitiesSvc from "./payroll.liabilities.service";
+  listSupportedPayrollProviders, } from "./payroll.providers.registry.js";
+import payrollCloseSvc from "./payroll.close.service.js";
+import payrollRunsSvc from "./payroll.runs.service.js";
+import payrollLiabilitiesSvc from "./payroll.liabilities.service.js";
 // Optional later:
-// import payrollPostingSvc from "./payroll.posting.service";
+// import payrollPostingSvc from "./payroll.posting.service.js";
 
 function sha256(v) {
   return crypto
@@ -30237,17 +30292,18 @@ export default {
 // backend/src/routes/payroll.providers.js
 
 import express from "express";
-import svc from "../services/payroll.providers.service";
+import svc from "../services/payroll.providers.service.js";
 import { validateConnectionIdParam,
   validateImportJobIdParam,
   validateCreateConnectionBody,
   validateUpdateConnectionBody,
   validatePreviewImportBody,
   validateApplyImportBody,
-  validateCreateEmployeeProviderRefBody, } from "./payroll.providers.validators";
+  validateCreateEmployeeProviderRefBody, } from "./payroll.providers.validators.js";
 // replace with your actual helpers
-import { requireAuth, requirePermission } from "../auth/guards";
-import { getDb } from "../db";
+import { requireAuth } from "../middleware/auth.js";
+import { requirePermission } from "../middleware/rbac.js";
+import { query } from "../db.js";
 const router = express.Router();
 
 // GET /api/v1/payroll/providers
@@ -30271,7 +30327,7 @@ router.get(
   requirePermission("payroll.provider.read"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const entity_id = req.query.entity_id
         ? Number(req.query.entity_id)
         : null;
@@ -30290,7 +30346,7 @@ router.post(
   requirePermission("payroll.provider.write"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const body = validateCreateConnectionBody(req.body);
       const item = await svc.createProviderConnection(
         db,
@@ -30311,7 +30367,7 @@ router.patch(
   requirePermission("payroll.provider.write"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const { id } = validateConnectionIdParam(req.params);
       const body = validateUpdateConnectionBody(req.body);
       const item = await svc.updateProviderConnection(
@@ -30334,7 +30390,7 @@ router.post(
   requirePermission("payroll.provider.mapping.write"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const body = validateCreateEmployeeProviderRefBody(req.body);
       const result = await svc.createEmployeeProviderRef(
         db,
@@ -30355,7 +30411,7 @@ router.get(
   requirePermission("payroll.provider.mapping.read"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const entity_id = Number(req.query.entity_id);
       if (!Number.isInteger(entity_id) || entity_id <= 0)
         throw new Error("entity_id is required");
@@ -30380,7 +30436,7 @@ router.post(
   requirePermission("payroll.provider.import.preview"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const body = validatePreviewImportBody(req.body);
       const result = await svc.previewProviderImport(
         db,
@@ -30401,7 +30457,7 @@ router.get(
   requirePermission("payroll.provider.import.read"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const { id } = validateImportJobIdParam(req.params);
       const item = await svc.getProviderImportJobDetail(db, id);
       res.json(item);
@@ -30418,7 +30474,7 @@ router.post(
   requirePermission("payroll.provider.import.apply"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const { id } = validateImportJobIdParam(req.params);
       const body = validateApplyImportBody(req.body);
       const result = await svc.applyProviderImport(
@@ -30605,7 +30661,7 @@ export default {
 
 ```js
 // backend/src/index.js
-import payrollProvidersRoutes from "./routes/payroll.providers";
+import payrollProvidersRoutes from "./routes/payroll.providers.js";
 // ...
 app.use("/api/v1/payroll", payrollProvidersRoutes);
 ```
@@ -30616,7 +30672,7 @@ app.use("/api/v1/payroll", payrollProvidersRoutes);
 
 ```js
 // backend/src/migrations/index.js
-import m053_payroll_provider_adapters from "./m053_payroll_provider_adapters";
+import m053_payroll_provider_adapters from "./m053_payroll_provider_adapters.js";
 export default [
   // ...
   m053_payroll_provider_adapters,
@@ -30749,7 +30805,7 @@ main().catch((err) => {
 ```js
 // frontend/src/api/payrollProviders.js
 
-import { apiFetch } from "./client"; // adapt to your app
+import { apiFetch } from "./client.js"; // adapt to your app
 
 export function listPayrollProviders() {
   return apiFetch("/api/v1/payroll/providers");
@@ -30810,7 +30866,7 @@ import {
   previewPayrollProviderImport,
   applyPayrollProviderImport,
   getPayrollProviderImportJob,
-} from "../../api/payrollProviders";
+} from "../../api/payrollProviders.js";
 
 const [connections, setConnections] = useState([]);
 const [previewJob, setPreviewJob] = useState(null);
@@ -31131,9 +31187,9 @@ Do not break existing records:
 // backend/src/migrations/m054_sensitive_data_security.js
 
 export default {
-  id: "m054_sensitive_data_security",
-
-  async up(db) {
+  key: "m054_sensitive_data_security",
+  description: "m054_sensitive_data_security",
+  async up(connection) {
     // ---- Payroll provider connections (P09) ----
     // Keep old secrets_json for transition; add encrypted envelope columns.
     await db
@@ -31217,7 +31273,7 @@ export default {
       .catch(() => {});
 
     // ---- Generic audit for sensitive data lifecycle ----
-    await db.query(`
+    await connection.execute(`
       CREATE TABLE IF NOT EXISTS sensitive_data_audit (
         id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
         module_code VARCHAR(40) NOT NULL,       -- PAYROLL, BANK
@@ -31239,8 +31295,8 @@ export default {
     `);
   },
 
-  async down(db) {
-    await db.query(`DROP TABLE IF EXISTS sensitive_data_audit;`);
+  async down(connection) {
+    await connection.execute(`DROP TABLE IF EXISTS sensitive_data_audit;`);
     // Strict down for ALTERs intentionally omitted for dev safety
   },
 };
@@ -31497,8 +31553,8 @@ export default {
 import { encryptJson,
   decryptJson,
   serializeEnvelope,
-  parseEnvelopeText, } from "../utils/cryptoEnvelope";
-import { redactObject, redactRawPayloadText } from "../utils/redaction";
+  parseEnvelopeText, } from "../utils/cryptoEnvelope.js";
+import { redactObject, redactRawPayloadText } from "../utils/redaction.js";
 ```
 
 ---
@@ -31888,7 +31944,7 @@ Export it.
 ### Add import
 
 ```js
-import { validateRetentionActionBody, } from "./payroll.providers.validators";
+import { validateRetentionActionBody, } from "./payroll.providers.validators.js";
 ```
 
 ### Add routes
@@ -31901,7 +31957,7 @@ router.post(
   requirePermission("payroll.provider.import.retention.manage"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const { id } = validateImportJobIdParam(req.params);
       const body = validateRetentionActionBody(req.body);
       const item = await svc.maskPayrollProviderImportRawPayload(
@@ -31924,7 +31980,7 @@ router.post(
   requirePermission("payroll.provider.import.retention.manage"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const { id } = validateImportJobIdParam(req.params);
       const body = validateRetentionActionBody(req.body);
       const item = await svc.purgePayrollProviderImportRawPayload(
@@ -31955,8 +32011,8 @@ In your bank provider connection / export profile service:
 import { encryptJson,
   decryptJson,
   serializeEnvelope,
-  parseEnvelopeText, } from "../utils/cryptoEnvelope";
-import { redactObject } from "../utils/redaction";
+  parseEnvelopeText, } from "../utils/cryptoEnvelope.js";
+import { redactObject } from "../utils/redaction.js";
 // write:
 const env = body.secrets_json ? encryptJson(body.secrets_json) : null;
 row.secrets_encrypted_json = serializeEnvelope(env);
@@ -32010,7 +32066,7 @@ And write `sensitive_data_audit` rows with:
 
 ```js
 // backend/src/index.js
-import { assertEncryptionConfigured } from "./utils/cryptoEnvelope";
+import { assertEncryptionConfigured } from "./utils/cryptoEnvelope.js";
 // Before app.listen(...)
 assertEncryptionConfigured();
 ```
@@ -32036,7 +32092,7 @@ if (process.env.NODE_ENV !== "production") {
 
 ```js
 // backend/src/migrations/index.js
-import m054_sensitive_data_security from "./m054_sensitive_data_security";
+import m054_sensitive_data_security from "./m054_sensitive_data_security.js";
 export default [
   // ...
   m054_sensitive_data_security,
@@ -32341,10 +32397,10 @@ Use H01 redaction helpers when writing job error payloads / logs.
 // backend/src/migrations/m055_job_engine.js
 
 export default {
-  id: "m055_job_engine",
-
-  async up(db) {
-    await db.query(`
+  key: "m055_job_engine",
+  description: "m055_job_engine",
+  async up(connection) {
+    await connection.execute(`
       CREATE TABLE IF NOT EXISTS app_jobs (
         id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
 
@@ -32392,7 +32448,7 @@ export default {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     `);
 
-    await db.query(`
+    await connection.execute(`
       CREATE TABLE IF NOT EXISTS app_job_attempts (
         id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
         app_job_id BIGINT UNSIGNED NOT NULL,
@@ -32422,9 +32478,9 @@ export default {
     `);
   },
 
-  async down(db) {
-    await db.query(`DROP TABLE IF EXISTS app_job_attempts;`);
-    await db.query(`DROP TABLE IF EXISTS app_jobs;`);
+  async down(connection) {
+    await connection.execute(`DROP TABLE IF EXISTS app_job_attempts;`);
+    await connection.execute(`DROP TABLE IF EXISTS app_jobs;`);
   },
 };
 ```
@@ -32436,10 +32492,10 @@ export default {
 ```js id="8sp6o9"
 // backend/src/services/jobHandlers/index.js
 
-import bankFeedPullHandler from "./bankFeedPull.handler";
-import bankWebhookProcessHandler from "./bankWebhookProcess.handler";
-import paymentSyncRetryHandler from "./paymentSyncRetry.handler";
-import payrollImportApplyHandler from "./payrollImportApply.handler";
+import bankFeedPullHandler from "./bankFeedPull.handler.js";
+import bankWebhookProcessHandler from "./bankWebhookProcess.handler.js";
+import paymentSyncRetryHandler from "./paymentSyncRetry.handler.js";
+import payrollImportApplyHandler from "./payrollImportApply.handler.js";
 const HANDLERS = {
   BANK_FEED_PULL: bankFeedPullHandler,
   BANK_WEBHOOK_PROCESS: bankWebhookProcessHandler,
@@ -32476,7 +32532,7 @@ export default {
 // backend/src/services/jobHandlers/bankFeedPull.handler.js
 
 // Adapt to your actual B05 service:
-import bankProvidersSvc from "../bank.providers.service";
+import bankProvidersSvc from "../bank.providers.service.js";
 export default {
   /**
    * payload example:
@@ -32515,7 +32571,7 @@ export default {
 // backend/src/services/jobHandlers/bankWebhookProcess.handler.js
 
 // Adapt to your actual webhook service:
-import bankWebhooksSvc from "../bank.webhooks.service";
+import bankWebhooksSvc from "../bank.webhooks.service.js";
 export default {
   /**
    * payload example:
@@ -32547,7 +32603,7 @@ export default {
 // backend/src/services/jobHandlers/paymentSyncRetry.handler.js
 
 // Adapt to your actual B07/P04 sync service name:
-import paymentSyncSvc from "../bank.reconciliation.service";
+import paymentSyncSvc from "../bank.reconciliation.service.js";
 export default {
   /**
    * payload example:
@@ -32581,7 +32637,7 @@ export default {
 ```js id="m1wt4h"
 // backend/src/services/jobHandlers/payrollImportApply.handler.js
 
-import payrollProvidersSvc from "../payroll.providers.service";
+import payrollProvidersSvc from "../payroll.providers.service.js";
 export default {
   /**
    * payload example:
@@ -32624,8 +32680,8 @@ export default {
 // backend/src/services/jobs.service.js
 
 import crypto from "crypto";
-import { getJobHandler } from "./jobHandlers";
-import { redactObject } from "../utils/redaction";
+import { getJobHandler } from "./jobHandlers.js";
+import { redactObject } from "../utils/redaction.js";
 function hashPayload(obj) {
   return crypto
     .createHash("sha256")
@@ -33114,10 +33170,11 @@ export default {
 // backend/src/routes/jobs.admin.js
 
 import express from "express";
-import jobsSvc from "../services/jobs.service";
+import jobsSvc from "../services/jobs.service.js";
 // replace with your actual helpers
-import { requireAuth, requirePermission } from "../auth/guards";
-import { getDb } from "../db";
+import { requireAuth } from "../middleware/auth.js";
+import { requirePermission } from "../middleware/rbac.js";
+import { query } from "../db.js";
 const router = express.Router();
 
 function parsePositiveInt(v, field) {
@@ -33134,7 +33191,7 @@ router.get(
   requirePermission("ops.jobs.read"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const items = await jobsSvc.listJobs(db, {
         status: req.query.status,
         module_code: req.query.module_code,
@@ -33155,7 +33212,7 @@ router.get(
   requirePermission("ops.jobs.read"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const id = parsePositiveInt(req.params.id, "id");
       const item = await jobsSvc.getJob(db, id);
       res.json(item);
@@ -33172,7 +33229,7 @@ router.post(
   requirePermission("ops.jobs.manage"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const id = parsePositiveInt(req.params.id, "id");
       const item = await jobsSvc.cancelJob(db, id, req.user?.id ?? null);
       res.json({ item });
@@ -33189,7 +33246,7 @@ router.post(
   requirePermission("ops.jobs.manage"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const id = parsePositiveInt(req.params.id, "id");
       const item = await jobsSvc.requeueJob(db, id, req.user?.id ?? null);
       res.json({ item });
@@ -33206,7 +33263,7 @@ router.post(
   requirePermission("ops.jobs.run"),
   async (req, res, next) => {
     try {
-      const db = getDb(req);
+      const db = { query }; // adapt to your service signature
       const workerId = `http-${req.user?.id || "system"}`;
       const queueNames = Array.isArray(req.body?.queue_names)
         ? req.body.queue_names
@@ -33238,8 +33295,8 @@ export default router;
  */
 
 import os from "os";
-import jobsSvc from "../src/services/jobs.service";
-import { createDbPool } from "../src/db"; // adapt if needed
+import jobsSvc from "../src/services/jobs.service.js";
+import { createDbPool } from "../src/db.js"; // adapt if needed
 
 async function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -33295,7 +33352,7 @@ main().catch((err) => {
 ### Add import
 
 ```js id="y9vk4y"
-import jobsSvc from "./jobs.service";
+import jobsSvc from "./jobs.service.js";
 ```
 
 ### Add helper
@@ -33357,7 +33414,7 @@ export default {
 
 ```js id="g8ncbs"
 // in bank.providers.service.js (or your B05 feed service)
-import jobsSvc from "./jobs.service";
+import jobsSvc from "./jobs.service.js";
 async function enqueueBankFeedPull(db, payload, userId = null) {
   return jobsSvc.enqueueJob(
     db,
@@ -33443,7 +33500,7 @@ async function enqueuePaymentSyncRetry(db, paymentBatchId, userId = null) {
 
 ```js id="hqb38x"
 // backend/src/index.js
-import jobsAdminRoutes from "./routes/jobs.admin";
+import jobsAdminRoutes from "./routes/jobs.admin.js";
 // ...
 app.use("/api/v1/jobs", jobsAdminRoutes);
 ```
@@ -33453,7 +33510,7 @@ app.use("/api/v1/jobs", jobsAdminRoutes);
 ```js id="u7xdiw"
 // Optional: don't do this in production API process unless you want a single-node simple setup
 if (process.env.JOBS_INLINE_WORKER === "1") {
-  import jobsSvc from "./services/jobs.service";
+  import jobsSvc from "./services/jobs.service.js";
   const workerId = `inline-api:${process.pid}`;
   setInterval(() => {
     jobsSvc
@@ -33471,7 +33528,7 @@ if (process.env.JOBS_INLINE_WORKER === "1") {
 
 ```js id="vx7d4b"
 // backend/src/migrations/index.js
-import m055_job_engine from "./m055_job_engine";
+import m055_job_engine from "./m055_job_engine.js";
 export default [
   // ...
   m055_job_engine,

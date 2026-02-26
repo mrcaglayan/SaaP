@@ -21,6 +21,36 @@ const DISTINCT_PURPOSE_PAIRS = Object.freeze([
     label: "CARI_AP_CONTROL and CARI_AP_OFFSET",
   }),
   Object.freeze({
+    left: "CARI_AR_CONTROL_CASH",
+    right: "CARI_AR_OFFSET_CASH",
+    label: "CARI_AR_CONTROL_CASH and CARI_AR_OFFSET_CASH",
+  }),
+  Object.freeze({
+    left: "CARI_AP_CONTROL_CASH",
+    right: "CARI_AP_OFFSET_CASH",
+    label: "CARI_AP_CONTROL_CASH and CARI_AP_OFFSET_CASH",
+  }),
+  Object.freeze({
+    left: "CARI_AR_CONTROL_MANUAL",
+    right: "CARI_AR_OFFSET_MANUAL",
+    label: "CARI_AR_CONTROL_MANUAL and CARI_AR_OFFSET_MANUAL",
+  }),
+  Object.freeze({
+    left: "CARI_AP_CONTROL_MANUAL",
+    right: "CARI_AP_OFFSET_MANUAL",
+    label: "CARI_AP_CONTROL_MANUAL and CARI_AP_OFFSET_MANUAL",
+  }),
+  Object.freeze({
+    left: "CARI_AR_CONTROL_ON_ACCOUNT",
+    right: "CARI_AR_OFFSET_ON_ACCOUNT",
+    label: "CARI_AR_CONTROL_ON_ACCOUNT and CARI_AR_OFFSET_ON_ACCOUNT",
+  }),
+  Object.freeze({
+    left: "CARI_AP_CONTROL_ON_ACCOUNT",
+    right: "CARI_AP_OFFSET_ON_ACCOUNT",
+    label: "CARI_AP_CONTROL_ON_ACCOUNT and CARI_AP_OFFSET_ON_ACCOUNT",
+  }),
+  Object.freeze({
     left: "SHAREHOLDER_CAPITAL_CREDIT_PARENT",
     right: "SHAREHOLDER_COMMITMENT_DEBIT_PARENT",
     label:
@@ -430,4 +460,3 @@ export async function applyPolicyPack({
     };
   });
 }
-

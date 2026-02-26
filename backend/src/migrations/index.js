@@ -28,6 +28,21 @@ import migration027CariCashIntegrationFoundation from "./m027_cari_cash_integrat
 import migration028ContractBillingGeneration from "./m028_contract_billing_generation.js";
 import migration029CashTransitWorkflow from "./m029_cash_transit_workflow.js";
 import migration030LegalEntityPolicyPacks from "./m030_legal_entity_policy_packs.js";
+import migration031BankFoundation from "./m031_bank_foundation.js";
+import migration032BankStatementImports from "./m032_bank_statement_imports.js";
+import migration033BankReconciliation from "./m033_bank_reconciliation.js";
+import migration034PaymentBatches from "./m034_payment_batches.js";
+import migration039PayrollImportFoundation from "./m039_payroll_import_foundation.js";
+import migration040PayrollAccrualPosting from "./m040_payroll_accrual_posting.js";
+import migration041PayrollLiabilitiesPaymentPrep from "./m041_payroll_liabilities_payment_prep.js";
+import migration042PayrollPaymentSettlementSync from "./m042_payroll_payment_settlement_sync.js";
+import migration043PayrollCorrectionsReversals from "./m043_payroll_corrections_reversals.js";
+import migration044PayrollPartialSettlementAndManualOverride from "./m044_payroll_partial_settlement_and_manual_override.js";
+import migration045PayrollBeneficiarySnapshots from "./m045_payroll_beneficiary_snapshots.js";
+import migration046PayrollCloseControls from "./m046_payroll_close_controls.js";
+import migration047PayrollProviderAdapters from "./m047_payroll_provider_adapters.js";
+import migration054SensitiveDataSecurity from "./m054_sensitive_data_security.js";
+import migration055JobEngine from "./m055_job_engine.js";
 
 const migrations = [
   migration001GlobalMultiEntity,
@@ -60,6 +75,21 @@ const migrations = [
   migration028ContractBillingGeneration,
   migration029CashTransitWorkflow,
   migration030LegalEntityPolicyPacks,
+  migration031BankFoundation,
+  migration032BankStatementImports,
+  migration033BankReconciliation,
+  migration034PaymentBatches,
+  migration039PayrollImportFoundation,
+  migration040PayrollAccrualPosting,
+  migration041PayrollLiabilitiesPaymentPrep,
+  migration042PayrollPaymentSettlementSync,
+  migration043PayrollCorrectionsReversals,
+  migration044PayrollPartialSettlementAndManualOverride,
+  migration045PayrollBeneficiarySnapshots,
+  migration046PayrollCloseControls,
+  migration047PayrollProviderAdapters,
+  migration054SensitiveDataSecurity,
+  migration055JobEngine,
 ];
 
 export default migrations;
