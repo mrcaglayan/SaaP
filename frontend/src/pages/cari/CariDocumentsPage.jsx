@@ -9,7 +9,9 @@ import {
   updateCariDocument,
 } from "../../api/cariDocuments.js";
 import { getCariCounterpartyStatementReport } from "../../api/cariReports.js";
+import { Link } from "react-router-dom";
 import { useAuth } from "../../auth/useAuth.js";
+import { useModuleReadiness } from "../../readiness/useModuleReadiness.js";
 import {
   buildDocumentListQuery,
   buildDocumentMutationPayload,
@@ -38,6 +40,11 @@ const DEFAULT_FILTERS = {
 
 function todayIsoDate() {
   return new Date().toISOString().slice(0, 10);
+}
+
+function toPositiveInt(value) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
 function createInitialDraftForm() {
@@ -76,8 +83,32 @@ function isPosted(row) {
   return String(row?.status || "").toUpperCase() === "POSTED";
 }
 
+function formatReadinessReason(reason) {
+  switch (String(reason || "").trim().toUpperCase()) {
+    case "ACCOUNT_NOT_FOUND":
+      return "Mapped account no longer exists.";
+    case "ACCOUNT_INACTIVE":
+      return "Mapped account is inactive.";
+    case "ACCOUNT_NOT_POSTABLE":
+      return "Mapped account is not postable.";
+    case "ACCOUNT_SCOPE_NOT_LEGAL_ENTITY":
+      return "Mapped account is not in a legal-entity chart.";
+    case "ACCOUNT_LEGAL_ENTITY_MISMATCH":
+      return "Mapped account belongs to a different legal entity.";
+    case "PURPOSES_MUST_MAP_TO_DIFFERENT_ACCOUNTS":
+      return "Control and offset must map to different accounts.";
+    case "MAPPED_ACCOUNT_ID_INVALID":
+      return "Mapped account id is invalid.";
+    case "ACCOUNT_TENANT_MISMATCH":
+      return "Mapped account belongs to a different tenant.";
+    default:
+      return String(reason || "Invalid mapping.");
+  }
+}
+
 export default function CariDocumentsPage() {
   const { hasPermission } = useAuth();
+  const { getModuleRow } = useModuleReadiness();
   const canRead = hasPermission("cari.doc.read");
   const canCreate = hasPermission("cari.doc.create");
   const canUpdate = hasPermission("cari.doc.update");
@@ -127,8 +158,20 @@ export default function CariDocumentsPage() {
     [rows, selectedDocumentId]
   );
   const selectedSnapshot = selectedDetail || selectedRow;
+  const selectedDocumentLegalEntityId = toPositiveInt(
+    selectedSnapshot?.legalEntityId || selectedSnapshot?.legal_entity_id
+  );
+  const selectedCariPostingReadiness = getModuleRow(
+    "cariPosting",
+    selectedDocumentLegalEntityId
+  );
+  const cariPostingNotReady = Boolean(
+    selectedCariPostingReadiness && !selectedCariPostingReadiness.ready
+  );
   const canEditOrCancelSelected = Boolean(selectedSnapshot && isDraft(selectedSnapshot) && canUpdate);
-  const canPostSelected = Boolean(selectedSnapshot && isDraft(selectedSnapshot) && canPost);
+  const canPostSelected = Boolean(
+    selectedSnapshot && isDraft(selectedSnapshot) && canPost && !cariPostingNotReady
+  );
   const canReverseSelected = Boolean(selectedSnapshot && isPosted(selectedSnapshot) && canReverse);
 
   async function loadDocuments(nextFilters = filters) {
@@ -322,6 +365,12 @@ export default function CariDocumentsPage() {
   }
 
   async function handlePostDraft() {
+    if (cariPostingNotReady) {
+      setPostError(
+        "Setup incomplete for selected legal entity. Configure CARI purpose mappings in GL Setup first."
+      );
+      return;
+    }
     if (!selectedDocumentId || !canPostSelected) {
       setPostError("Only DRAFT documents can be posted with cari.doc.post permission.");
       return;
@@ -517,6 +566,46 @@ export default function CariDocumentsPage() {
 
               <div className="rounded-lg border border-slate-200 p-4">
                 <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-700">Post / Reverse</h3>
+                {cariPostingNotReady ? (
+                  <div className="mt-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                    <p className="font-semibold">Setup incomplete (CARI posting)</p>
+                    <p className="mt-1">
+                      Posting is disabled for legalEntityId={selectedDocumentLegalEntityId}.
+                    </p>
+                    {Array.isArray(selectedCariPostingReadiness?.missingPurposeCodes) &&
+                    selectedCariPostingReadiness.missingPurposeCodes.length > 0 ? (
+                      <p className="mt-1">
+                        Missing purpose codes:{" "}
+                        {selectedCariPostingReadiness.missingPurposeCodes.join(", ")}
+                      </p>
+                    ) : null}
+                    {Array.isArray(selectedCariPostingReadiness?.invalidMappings) &&
+                    selectedCariPostingReadiness.invalidMappings.length > 0 ? (
+                      <ul className="mt-2 list-disc pl-5">
+                        {selectedCariPostingReadiness.invalidMappings.map((row, index) => (
+                          <li key={`cari-readiness-invalid-${index}`}>
+                            {String(row?.purposeCode || "-")}:{" "}
+                            {formatReadinessReason(row?.reason)}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <Link
+                        to="/app/ayarlar/hesap-plani-ayarlari#manual-purpose-mappings"
+                        className="rounded border border-amber-300 bg-white px-2.5 py-1 text-xs font-semibold text-amber-900"
+                      >
+                        Fix manually
+                      </Link>
+                      <Link
+                        to="/app/ayarlar/hesap-plani-ayarlari#template-wizard"
+                        className="rounded border border-amber-300 bg-white px-2.5 py-1 text-xs font-semibold text-amber-900"
+                      >
+                        Use template
+                      </Link>
+                    </div>
+                  </div>
+                ) : null}
                 <label className="mt-2 flex items-center gap-2 text-sm text-slate-700"><input type="checkbox" checked={postForm.useFxOverride} onChange={(event) => setPostForm((prev) => ({ ...prev, useFxOverride: event.target.checked }))} disabled={!canPostSelected || postSaving} />useFxOverride</label>
                 <input type="text" className="mt-2 w-full rounded-md border border-slate-300 px-3 py-2 text-sm" placeholder="fxOverrideReason" value={postForm.fxOverrideReason} onChange={(event) => setPostForm((prev) => ({ ...prev, fxOverrideReason: event.target.value }))} disabled={!canPostSelected || postSaving} />
                 {postForm.useFxOverride && !canFxOverride ? <p className="mt-2 text-sm text-amber-700">You cannot post with FX override. Missing permission: `cari.fx.override`.</p> : null}

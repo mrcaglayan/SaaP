@@ -24,6 +24,7 @@ import {
 import { listAccounts } from "../../api/glAdmin.js";
 import { useAuth } from "../../auth/useAuth.js";
 import { useI18n } from "../../i18n/useI18n.js";
+import { useModuleReadiness } from "../../readiness/useModuleReadiness.js";
 import TenantReadinessChecklist from "../../readiness/TenantReadinessChecklist.jsx";
 
 const UNIT_TYPES = ["BRANCH", "PLANT", "STORE", "DEPARTMENT", "OTHER"];
@@ -108,9 +109,52 @@ function getShareholderStatusLabel(value, l) {
   }
 }
 
+function formatShareholderReadinessReason(reason, l) {
+  switch (String(reason || "").trim().toUpperCase()) {
+    case "ACCOUNT_NOT_FOUND":
+      return l("Mapped account no longer exists.", "Eslenen hesap artik mevcut degil.");
+    case "ACCOUNT_INACTIVE":
+      return l("Mapped account is inactive.", "Eslenen hesap aktif degil.");
+    case "ACCOUNT_TYPE_NOT_EQUITY":
+      return l("Mapped account must be EQUITY.", "Eslenen hesap EQUITY olmalidir.");
+    case "ACCOUNT_MUST_BE_NON_POSTABLE":
+      return l(
+        "Mapped account must be non-postable parent.",
+        "Eslenen hesap post edilemeyen parent olmali."
+      );
+    case "ACCOUNT_NORMAL_SIDE_MISMATCH":
+      return l(
+        "Mapped account has invalid normal side.",
+        "Eslenen hesap normal bakiye yonu gecersiz."
+      );
+    case "PURPOSES_MUST_MAP_TO_DIFFERENT_ACCOUNTS":
+      return l(
+        "Shareholder parent purposes must map to different accounts.",
+        "Ortak parent amaclari farkli hesaplara eslenmeli."
+      );
+    case "ACCOUNT_SCOPE_NOT_LEGAL_ENTITY":
+      return l(
+        "Mapped account is not in a legal-entity chart.",
+        "Eslenen hesap legal entity hesap planinda degil."
+      );
+    case "ACCOUNT_LEGAL_ENTITY_MISMATCH":
+      return l(
+        "Mapped account belongs to a different legal entity.",
+        "Eslenen hesap farkli bir legal entity'e ait."
+      );
+    case "MAPPED_ACCOUNT_ID_INVALID":
+      return l("Mapped account id is invalid.", "Eslenen hesap id gecersiz.");
+    case "ACCOUNT_TENANT_MISMATCH":
+      return l("Mapped account belongs to another tenant.", "Eslenen hesap baska tenant'a ait.");
+    default:
+      return String(reason || "-");
+  }
+}
+
 export default function OrganizationManagementPage() {
   const { hasPermission } = useAuth();
   const { language } = useI18n();
+  const { getModuleRow, refreshLegalEntity } = useModuleReadiness();
   const isTr = language === "tr";
   const l = useCallback((en, tr) => (isTr ? tr : en), [isTr]);
   const canReadOrgTree = hasPermission("org.tree.read");
@@ -915,6 +959,14 @@ export default function OrganizationManagementPage() {
       ) || null,
     [legalEntities, selectedShareholderLegalEntityId]
   );
+  const selectedShareholderCommitmentReadiness = getModuleRow(
+    "shareholderCommitment",
+    selectedShareholderLegalEntityId
+  );
+  const shareholderCommitmentModuleNotReady = Boolean(
+    selectedShareholderCommitmentReadiness &&
+      !selectedShareholderCommitmentReadiness.ready
+  );
   const shareholderSetupSteps = useMemo(() => {
     const queueCount = pendingBatchCommitmentShareholders.length;
     const previewReady =
@@ -1474,7 +1526,7 @@ export default function OrganizationManagementPage() {
           "Ortak parent hesap eslesmesi kaydedildi."
         )
       );
-      await loadCoreData();
+      await Promise.all([loadCoreData(), refreshLegalEntity(legalEntityId)]);
     } catch (err) {
       setError(
         err?.response?.data?.message ||
@@ -1588,6 +1640,15 @@ export default function OrganizationManagementPage() {
   }
 
   async function handlePreviewBatchCommitmentJournal() {
+    if (shareholderCommitmentModuleNotReady) {
+      setError(
+        l(
+          "Shareholder commitment module setup is incomplete. Complete mappings in GL setup first.",
+          "Ortak taahhut modul kurulumu eksik. Once GL ayarlarinda eslemeleri tamamlayin."
+        )
+      );
+      return;
+    }
     const legalEntityId = toNumber(shareholderForm.legalEntityId);
     if (!legalEntityId) {
       setError(
@@ -1635,6 +1696,15 @@ export default function OrganizationManagementPage() {
 
   async function handleCreateBatchCommitmentJournal() {
     if (batchCommitmentSaving) {
+      return;
+    }
+    if (shareholderCommitmentModuleNotReady) {
+      setError(
+        l(
+          "Shareholder commitment module setup is incomplete. Complete mappings in GL setup first.",
+          "Ortak taahhut modul kurulumu eksik. Once GL ayarlarinda eslemeleri tamamlayin."
+        )
+      );
       return;
     }
 
@@ -2687,6 +2757,79 @@ export default function OrganizationManagementPage() {
                   {nextShareholderSetupStep.label}
                 </div>
               ) : null}
+              {selectedShareholderCommitmentReadiness ? (
+                <div
+                  className={`mt-2 rounded border px-2 py-2 text-xs ${
+                    selectedShareholderCommitmentReadiness.ready
+                      ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+                      : "border-amber-200 bg-amber-50 text-amber-900"
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-semibold">
+                      {l(
+                        "Module readiness: shareholder commitment",
+                        "Modul hazirligi: ortak taahhut"
+                      )}
+                    </span>
+                    <span
+                      className={`rounded px-2 py-0.5 font-semibold ${
+                        selectedShareholderCommitmentReadiness.ready
+                          ? "bg-emerald-100 text-emerald-700"
+                          : "bg-amber-100 text-amber-800"
+                      }`}
+                    >
+                      {selectedShareholderCommitmentReadiness.ready
+                        ? l("READY", "HAZIR")
+                        : l("NOT READY", "HAZIR DEGIL")}
+                    </span>
+                  </div>
+                  {!selectedShareholderCommitmentReadiness.ready ? (
+                    <>
+                      {Array.isArray(
+                        selectedShareholderCommitmentReadiness.missingPurposeCodes
+                      ) &&
+                      selectedShareholderCommitmentReadiness.missingPurposeCodes.length > 0 ? (
+                        <p className="mt-1">
+                          {l("Missing purpose codes:", "Eksik amac kodlari:")}{" "}
+                          {selectedShareholderCommitmentReadiness.missingPurposeCodes.join(
+                            ", "
+                          )}
+                        </p>
+                      ) : null}
+                      {Array.isArray(
+                        selectedShareholderCommitmentReadiness.invalidMappings
+                      ) &&
+                      selectedShareholderCommitmentReadiness.invalidMappings.length > 0 ? (
+                        <ul className="mt-1 list-disc space-y-0.5 pl-4">
+                          {selectedShareholderCommitmentReadiness.invalidMappings.map(
+                            (row, index) => (
+                              <li key={`shareholder-readiness-invalid-${index}`}>
+                                {String(row?.purposeCode || "-")}:{" "}
+                                {formatShareholderReadinessReason(row?.reason, l)}
+                              </li>
+                            )
+                          )}
+                        </ul>
+                      ) : null}
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        <Link
+                          to="/app/ayarlar/hesap-plani-ayarlari#manual-purpose-mappings"
+                          className="rounded border border-amber-300 bg-white px-2.5 py-1 font-semibold text-amber-900"
+                        >
+                          {l("Fix manually", "Elle duzelt")}
+                        </Link>
+                        <Link
+                          to="/app/ayarlar/hesap-plani-ayarlari#template-wizard"
+                          className="rounded border border-amber-300 bg-white px-2.5 py-1 font-semibold text-amber-900"
+                        >
+                          {l("Use template", "Sablon kullan")}
+                        </Link>
+                      </div>
+                    </>
+                  ) : null}
+                </div>
+              ) : null}
               <div className="mt-2 flex flex-wrap gap-2">
                 <button
                   type="button"
@@ -2744,7 +2887,10 @@ export default function OrganizationManagementPage() {
                     setBatchCommitmentModalOpen(true);
                     await handlePreviewBatchCommitmentJournal();
                   }}
-                  disabled={pendingBatchCommitmentShareholders.length === 0}
+                  disabled={
+                    pendingBatchCommitmentShareholders.length === 0 ||
+                    shareholderCommitmentModuleNotReady
+                  }
                   className="rounded border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 disabled:opacity-50"
                 >
                   {l("Toplu fis onizle", "Toplu fis onizle")}
@@ -2920,7 +3066,8 @@ export default function OrganizationManagementPage() {
                     setBatchCommitmentModalOpen(true);
                     await handlePreviewBatchCommitmentJournal();
                   }}
-                  className="rounded border border-indigo-300 bg-white px-2.5 py-1 font-semibold text-indigo-900"
+                  disabled={shareholderCommitmentModuleNotReady}
+                  className="rounded border border-indigo-300 bg-white px-2.5 py-1 font-semibold text-indigo-900 disabled:opacity-50"
                 >
                   {l(
                     "Create one batch commitment journal",
@@ -3785,7 +3932,11 @@ export default function OrganizationManagementPage() {
                 <button
                   type="button"
                   onClick={handlePreviewBatchCommitmentJournal}
-                  disabled={batchPreviewLoading || batchCommitmentSaving}
+                  disabled={
+                    batchPreviewLoading ||
+                    batchCommitmentSaving ||
+                    shareholderCommitmentModuleNotReady
+                  }
                   className="rounded border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 disabled:opacity-60"
                 >
                   {batchPreviewLoading
@@ -3969,7 +4120,8 @@ export default function OrganizationManagementPage() {
                   batchCommitmentSaving ||
                   batchPreviewLoading ||
                   batchPreviewHasBlockingErrors ||
-                  batchPreviewIncludedRows.length === 0
+                  batchPreviewIncludedRows.length === 0 ||
+                  shareholderCommitmentModuleNotReady
                 }
                 className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
               >

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import {
   applyCariSettlement,
   attachCariBankReference,
@@ -15,6 +16,7 @@ import { listLegalEntities } from "../../api/orgAdmin.js";
 import { getCariOpenItemsReport } from "../../api/cariReports.js";
 import { extractCariReplayAndRisks } from "../../api/cariCommon.js";
 import { useAuth } from "../../auth/useAuth.js";
+import { useModuleReadiness } from "../../readiness/useModuleReadiness.js";
 import {
   buildAutoAllocatePreview,
   buildSettlementApplyPayload,
@@ -67,6 +69,29 @@ function normalizeUiError(error, fallback) {
   const message = String(error?.message || error?.response?.data?.message || fallback || "Request failed");
   const requestId = String(error?.requestId || error?.response?.data?.requestId || "").trim();
   return requestId ? `${message} (requestId: ${requestId})` : message;
+}
+
+function formatReadinessReason(reason) {
+  switch (String(reason || "").trim().toUpperCase()) {
+    case "ACCOUNT_NOT_FOUND":
+      return "Mapped account no longer exists.";
+    case "ACCOUNT_INACTIVE":
+      return "Mapped account is inactive.";
+    case "ACCOUNT_NOT_POSTABLE":
+      return "Mapped account is not postable.";
+    case "ACCOUNT_SCOPE_NOT_LEGAL_ENTITY":
+      return "Mapped account is not in a legal-entity chart.";
+    case "ACCOUNT_LEGAL_ENTITY_MISMATCH":
+      return "Mapped account belongs to a different legal entity.";
+    case "PURPOSES_MUST_MAP_TO_DIFFERENT_ACCOUNTS":
+      return "Control and offset must map to different accounts.";
+    case "MAPPED_ACCOUNT_ID_INVALID":
+      return "Mapped account id is invalid.";
+    case "ACCOUNT_TENANT_MISMATCH":
+      return "Mapped account belongs to a different tenant.";
+    default:
+      return String(reason || "Invalid mapping.");
+  }
 }
 
 function formatAmount(value) {
@@ -200,6 +225,7 @@ function buildReverseDefaultForm() {
 
 export default function CariSettlementsPage() {
   const { hasPermission } = useAuth();
+  const { getModuleRow } = useModuleReadiness();
   const canApply = hasPermission("cari.settlement.apply");
   const canReverse = hasPermission("cari.settlement.reverse");
   const canBankAttach = hasPermission("cari.bank.attach");
@@ -259,6 +285,18 @@ export default function CariSettlementsPage() {
   const [bankApplyMessage, setBankApplyMessage] = useState("");
   const [bankApplyResult, setBankApplyResult] = useState(null);
   const [bankApplyFollowUpRisks, setBankApplyFollowUpRisks] = useState([]);
+
+  const applyLegalEntityId = toPositiveInt(applyForm.legalEntityId);
+  const applyCariReadiness = getModuleRow("cariPosting", applyLegalEntityId);
+  const applyCariNotReady = Boolean(applyCariReadiness && !applyCariReadiness.ready);
+  const bankApplyLegalEntityId = toPositiveInt(bankApplyForm.legalEntityId);
+  const bankApplyCariReadiness = getModuleRow(
+    "cariPosting",
+    bankApplyLegalEntityId
+  );
+  const bankApplyCariNotReady = Boolean(
+    bankApplyCariReadiness && !bankApplyCariReadiness.ready
+  );
 
   const previewRows = useMemo(
     () => buildAutoAllocatePreview(openItems, Number(applyForm.incomingAmountTxn || 0)),
@@ -619,6 +657,12 @@ export default function CariSettlementsPage() {
       setApplyError("Missing permission: cari.settlement.apply");
       return;
     }
+    if (applyCariNotReady) {
+      setApplyError(
+        "Setup incomplete for selected legal entity. Configure CARI purpose mappings in GL Setup first."
+      );
+      return;
+    }
 
     if (form.autoAllocate && !form.direction) {
       setApplyError("Direction is required for auto-allocation.");
@@ -829,6 +873,12 @@ export default function CariSettlementsPage() {
     setBankApplyFollowUpRisks([]);
     if (!canBankApply) {
       setBankApplyError("Missing permission: cari.bank.apply");
+      return;
+    }
+    if (bankApplyCariNotReady) {
+      setBankApplyError(
+        "Setup incomplete for selected legal entity. Configure CARI purpose mappings in GL Setup first."
+      );
       return;
     }
 
@@ -1052,6 +1102,44 @@ export default function CariSettlementsPage() {
         {!canApply ? (
           <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
             Missing permission: `cari.settlement.apply`
+          </div>
+        ) : null}
+        {applyCariNotReady ? (
+          <div className="mt-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+            <p className="font-semibold">Setup incomplete (CARI posting)</p>
+            <p className="mt-1">
+              Settlement apply is disabled for legalEntityId={applyLegalEntityId || "-"}.
+            </p>
+            {Array.isArray(applyCariReadiness?.missingPurposeCodes) &&
+            applyCariReadiness.missingPurposeCodes.length > 0 ? (
+              <p className="mt-1">
+                Missing purpose codes: {applyCariReadiness.missingPurposeCodes.join(", ")}
+              </p>
+            ) : null}
+            {Array.isArray(applyCariReadiness?.invalidMappings) &&
+            applyCariReadiness.invalidMappings.length > 0 ? (
+              <ul className="mt-2 list-disc pl-5">
+                {applyCariReadiness.invalidMappings.map((row, index) => (
+                  <li key={`apply-cari-invalid-${index}`}>
+                    {String(row?.purposeCode || "-")}: {formatReadinessReason(row?.reason)}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+            <div className="mt-2 flex flex-wrap gap-2">
+              <Link
+                to="/app/ayarlar/hesap-plani-ayarlari#manual-purpose-mappings"
+                className="rounded border border-amber-300 bg-white px-2.5 py-1 text-xs font-semibold text-amber-900"
+              >
+                Fix manually
+              </Link>
+              <Link
+                to="/app/ayarlar/hesap-plani-ayarlari#template-wizard"
+                className="rounded border border-amber-300 bg-white px-2.5 py-1 text-xs font-semibold text-amber-900"
+              >
+                Use template
+              </Link>
+            </div>
           </div>
         ) : null}
         {applyError ? (
@@ -1367,7 +1455,12 @@ export default function CariSettlementsPage() {
             <button
               type="submit"
               className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
-              disabled={!canApply || applySubmitting || autoAllocateBlocked}
+              disabled={
+                !canApply ||
+                applySubmitting ||
+                autoAllocateBlocked ||
+                applyCariNotReady
+              }
             >
               {applySubmitting ? "Applying..." : "Apply Settlement"}
             </button>
@@ -1737,6 +1830,45 @@ export default function CariSettlementsPage() {
             Missing permission: `cari.bank.apply`
           </div>
         ) : null}
+        {bankApplyCariNotReady ? (
+          <div className="mt-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+            <p className="font-semibold">Setup incomplete (CARI posting)</p>
+            <p className="mt-1">
+              Bank apply is disabled for legalEntityId={bankApplyLegalEntityId || "-"}.
+            </p>
+            {Array.isArray(bankApplyCariReadiness?.missingPurposeCodes) &&
+            bankApplyCariReadiness.missingPurposeCodes.length > 0 ? (
+              <p className="mt-1">
+                Missing purpose codes:{" "}
+                {bankApplyCariReadiness.missingPurposeCodes.join(", ")}
+              </p>
+            ) : null}
+            {Array.isArray(bankApplyCariReadiness?.invalidMappings) &&
+            bankApplyCariReadiness.invalidMappings.length > 0 ? (
+              <ul className="mt-2 list-disc pl-5">
+                {bankApplyCariReadiness.invalidMappings.map((row, index) => (
+                  <li key={`bank-apply-cari-invalid-${index}`}>
+                    {String(row?.purposeCode || "-")}: {formatReadinessReason(row?.reason)}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+            <div className="mt-2 flex flex-wrap gap-2">
+              <Link
+                to="/app/ayarlar/hesap-plani-ayarlari#manual-purpose-mappings"
+                className="rounded border border-amber-300 bg-white px-2.5 py-1 text-xs font-semibold text-amber-900"
+              >
+                Fix manually
+              </Link>
+              <Link
+                to="/app/ayarlar/hesap-plani-ayarlari#template-wizard"
+                className="rounded border border-amber-300 bg-white px-2.5 py-1 text-xs font-semibold text-amber-900"
+              >
+                Use template
+              </Link>
+            </div>
+          </div>
+        ) : null}
         {bankApplyError ? (
           <div className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
             {bankApplyError}
@@ -1935,7 +2067,7 @@ export default function CariSettlementsPage() {
             <button
               type="submit"
               className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
-              disabled={!canBankApply || bankApplySubmitting}
+              disabled={!canBankApply || bankApplySubmitting || bankApplyCariNotReady}
             >
               {bankApplySubmitting ? "Applying..." : "Apply Bank Settlement"}
             </button>

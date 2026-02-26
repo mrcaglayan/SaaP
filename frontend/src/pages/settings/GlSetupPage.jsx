@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   listAccounts,
   listBooks,
@@ -8,9 +8,25 @@ import {
   upsertBook,
   upsertCoa,
 } from "../../api/glAdmin.js";
-import { listFiscalCalendars, listLegalEntities } from "../../api/orgAdmin.js";
+import {
+  listCountries,
+  listFiscalCalendars,
+  listLegalEntities,
+  listShareholderJournalConfigs,
+  upsertShareholderJournalConfig,
+} from "../../api/orgAdmin.js";
+import {
+  listJournalPurposeAccounts,
+  upsertJournalPurposeAccount,
+} from "../../api/glPurposeMappings.js";
+import {
+  applyPolicyPack,
+  listPolicyPacks,
+  resolvePolicyPack,
+} from "../../api/policyPacks.js";
 import { useAuth } from "../../auth/useAuth.js";
 import { useI18n } from "../../i18n/useI18n.js";
+import { useModuleReadiness } from "../../readiness/useModuleReadiness.js";
 import TenantReadinessChecklist from "../../readiness/TenantReadinessChecklist.jsx";
 
 const BOOK_TYPES = ["LOCAL", "GROUP"];
@@ -208,12 +224,19 @@ const TURKISH_DEFAULT_COA_ACCOUNTS = [
     accountType: "LIABILITY",
     normalSide: "CREDIT",
   },
-  { code: "500", name: "Sermaye", accountType: "EQUITY", normalSide: "CREDIT" },
+  {
+    code: "500",
+    name: "Sermaye",
+    accountType: "EQUITY",
+    normalSide: "CREDIT",
+    allowPosting: false,
+  },
   {
     code: "501",
     name: "Odenmemis Sermaye (-)",
     accountType: "EQUITY",
     normalSide: "DEBIT",
+    allowPosting: false,
   },
   {
     code: "520",
@@ -379,10 +402,66 @@ const TURKISH_DEFAULT_COA_ACCOUNTS = [
   { code: "770", name: "Genel Yonetim Giderleri", accountType: "EXPENSE", normalSide: "DEBIT" },
   { code: "780", name: "Finansman Giderleri", accountType: "EXPENSE", normalSide: "DEBIT" },
 ];
+const USA_DEFAULT_COA_ACCOUNTS = [
+  { code: "1000", name: "Cash and Cash Equivalents", accountType: "ASSET", normalSide: "DEBIT" },
+  { code: "1100", name: "Accounts Receivable", accountType: "ASSET", normalSide: "DEBIT" },
+  { code: "1200", name: "Inventory", accountType: "ASSET", normalSide: "DEBIT" },
+  { code: "1300", name: "Prepaid Expenses", accountType: "ASSET", normalSide: "DEBIT" },
+  { code: "1500", name: "Property Plant and Equipment", accountType: "ASSET", normalSide: "DEBIT" },
+  { code: "1590", name: "Accumulated Depreciation", accountType: "ASSET", normalSide: "CREDIT" },
+  { code: "2000", name: "Accounts Payable", accountType: "LIABILITY", normalSide: "CREDIT" },
+  { code: "2100", name: "Accrued Expenses", accountType: "LIABILITY", normalSide: "CREDIT" },
+  { code: "2200", name: "Taxes Payable", accountType: "LIABILITY", normalSide: "CREDIT" },
+  { code: "2300", name: "Deferred Revenue", accountType: "LIABILITY", normalSide: "CREDIT" },
+  { code: "3000", name: "Retained Earnings", accountType: "EQUITY", normalSide: "CREDIT" },
+  {
+    code: "3100",
+    name: "Capital Stock Parent",
+    accountType: "EQUITY",
+    normalSide: "CREDIT",
+    allowPosting: false,
+  },
+  { code: "3101", name: "Common Stock Class A", accountType: "EQUITY", normalSide: "CREDIT" },
+  {
+    code: "3110",
+    name: "Capital Commitment Parent",
+    accountType: "EQUITY",
+    normalSide: "DEBIT",
+    allowPosting: false,
+  },
+  {
+    code: "3111",
+    name: "Capital Commitment Receivable",
+    accountType: "EQUITY",
+    normalSide: "DEBIT",
+  },
+  { code: "4000", name: "Sales Revenue", accountType: "REVENUE", normalSide: "CREDIT" },
+  { code: "4100", name: "Service Revenue", accountType: "REVENUE", normalSide: "CREDIT" },
+  { code: "5000", name: "Cost of Goods Sold", accountType: "EXPENSE", normalSide: "DEBIT" },
+  { code: "6100", name: "Operating Expenses", accountType: "EXPENSE", normalSide: "DEBIT" },
+  { code: "6200", name: "General and Administrative Expense", accountType: "EXPENSE", normalSide: "DEBIT" },
+  { code: "7000", name: "Interest Expense", accountType: "EXPENSE", normalSide: "DEBIT" },
+];
+const CARI_REQUIRED_PURPOSE_CODES = Object.freeze([
+  "CARI_AR_CONTROL",
+  "CARI_AR_OFFSET",
+  "CARI_AP_CONTROL",
+  "CARI_AP_OFFSET",
+]);
+const SHAREHOLDER_REQUIRED_PURPOSE_CODES = Object.freeze([
+  "SHAREHOLDER_CAPITAL_CREDIT_PARENT",
+  "SHAREHOLDER_COMMITMENT_DEBIT_PARENT",
+]);
 
 function toPositiveInt(value) {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function toUpper(value) {
+  return String(value || "")
+    .trim()
+    .toUpperCase();
 }
 
 function toBoolean(value) {
@@ -399,9 +478,37 @@ function toBoolean(value) {
   return false;
 }
 
+function toQueryMapByPurpose(rows) {
+  const byPurpose = {};
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const purposeCode = toUpper(row?.purposeCode || row?.purpose_code);
+    if (!purposeCode) {
+      continue;
+    }
+    byPurpose[purposeCode] = row;
+  }
+  return byPurpose;
+}
+
+function buildAccountLabel(account) {
+  const code = String(account?.code || "").trim();
+  const name = String(account?.name || "").trim();
+  const accountType = String(account?.account_type || account?.accountType || "")
+    .trim()
+    .toUpperCase();
+  const posting = toBoolean(account?.allow_posting ?? account?.allowPosting)
+    ? "Post"
+    : "No Post";
+  if (!code && !name) {
+    return String(account?.id || "");
+  }
+  return `${code} - ${name} (${accountType || "N/A"}, ${posting})`;
+}
+
 export default function GlSetupPage() {
   const { hasPermission } = useAuth();
   const { language } = useI18n();
+  const { getModuleRow, refreshLegalEntity } = useModuleReadiness();
   const isTr = language === "tr";
   const l = (en, tr) => (isTr ? tr : en);
   const canReadLegalEntities = hasPermission("org.tree.read");
@@ -413,6 +520,7 @@ export default function GlSetupPage() {
   const canUpsertCoas = hasPermission("gl.coa.upsert");
   const canUpsertAccounts = hasPermission("gl.account.upsert");
   const canUpsertMappings = hasPermission("gl.account_mapping.upsert");
+  const canUpsertShareholderParentMappings = hasPermission("org.legal_entity.upsert");
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState("");
@@ -421,10 +529,12 @@ export default function GlSetupPage() {
   const [updatingAccountId, setUpdatingAccountId] = useState(null);
 
   const [legalEntities, setLegalEntities] = useState([]);
+  const [countries, setCountries] = useState([]);
   const [calendars, setCalendars] = useState([]);
   const [books, setBooks] = useState([]);
   const [coas, setCoas] = useState([]);
   const [accounts, setAccounts] = useState([]);
+  const [policyPacks, setPolicyPacks] = useState([]);
 
   const [bookForm, setBookForm] = useState({
     legalEntityId: "",
@@ -454,8 +564,99 @@ export default function GlSetupPage() {
     targetAccountId: "",
     mappingType: "LOCAL_TO_GROUP",
   });
+  const [templateWizardForm, setTemplateWizardForm] = useState({
+    legalEntityId: "",
+    packId: "",
+    mode: "MERGE",
+  });
+  const [templatePreviewRows, setTemplatePreviewRows] = useState([]);
+  const [templateOverridesByPurpose, setTemplateOverridesByPurpose] = useState({});
+  const [templateApplyResult, setTemplateApplyResult] = useState(null);
+  const [manualMappingsForm, setManualMappingsForm] = useState({
+    legalEntityId: "",
+    capitalCreditParentAccountId: "",
+    commitmentDebitParentAccountId: "",
+  });
+  const [manualCariMappingsByPurpose, setManualCariMappingsByPurpose] = useState({});
+  const [loadingManualMappings, setLoadingManualMappings] = useState(false);
   const parentAccountIds = new Set(
     accounts.map((row) => toPositiveInt(row.parent_account_id)).filter(Boolean)
+  );
+  const countryIso2ById = useMemo(() => {
+    const byId = new Map();
+    for (const country of countries) {
+      const id = toPositiveInt(country?.id);
+      const iso2 = toUpper(country?.iso2);
+      if (!id || !iso2) {
+        continue;
+      }
+      byId.set(id, iso2);
+    }
+    return byId;
+  }, [countries]);
+  const accountsByLegalEntityId = useMemo(() => {
+    const byEntity = new Map();
+    for (const account of accounts) {
+      const legalEntityId = toPositiveInt(account?.legal_entity_id);
+      if (!legalEntityId) {
+        continue;
+      }
+      if (!byEntity.has(legalEntityId)) {
+        byEntity.set(legalEntityId, []);
+      }
+      byEntity.get(legalEntityId).push(account);
+    }
+    for (const rows of byEntity.values()) {
+      rows.sort((left, right) =>
+        String(left?.code || "").localeCompare(String(right?.code || ""))
+      );
+    }
+    return byEntity;
+  }, [accounts]);
+  const selectedTemplateLegalEntityId = toPositiveInt(templateWizardForm.legalEntityId);
+  const selectedManualLegalEntityId = toPositiveInt(manualMappingsForm.legalEntityId);
+  const selectedTemplateEntity = legalEntities.find(
+    (entity) => toPositiveInt(entity?.id) === selectedTemplateLegalEntityId
+  );
+  const selectedTemplateEntityCountryIso2 = toUpper(
+    countryIso2ById.get(toPositiveInt(selectedTemplateEntity?.country_id))
+  );
+  const availableTemplatePacks = useMemo(() => {
+    if (!selectedTemplateEntityCountryIso2) {
+      return policyPacks;
+    }
+    const filtered = policyPacks.filter(
+      (pack) => toUpper(pack?.countryIso2) === selectedTemplateEntityCountryIso2
+    );
+    return filtered.length > 0 ? filtered : policyPacks;
+  }, [policyPacks, selectedTemplateEntityCountryIso2]);
+  const templatePackIdSet = useMemo(
+    () => new Set(availableTemplatePacks.map((pack) => String(pack?.packId || "").trim())),
+    [availableTemplatePacks]
+  );
+  const templateEntityAccounts =
+    accountsByLegalEntityId.get(selectedTemplateLegalEntityId) || [];
+  const templateOverrideAccountOptions = templateEntityAccounts.filter((account) =>
+    toBoolean(account?.is_active)
+  );
+  const manualEntityAccounts =
+    accountsByLegalEntityId.get(selectedManualLegalEntityId) || [];
+  const manualCariAccountOptions = manualEntityAccounts.filter(
+    (account) => toBoolean(account?.is_active) && toBoolean(account?.allow_posting)
+  );
+  const manualShareholderAccountOptions = manualEntityAccounts.filter(
+    (account) =>
+      toBoolean(account?.is_active) &&
+      !toBoolean(account?.allow_posting) &&
+      toUpper(account?.account_type) === "EQUITY"
+  );
+  const selectedManualCariReadiness = getModuleRow(
+    "cariPosting",
+    selectedManualLegalEntityId
+  );
+  const selectedManualShareholderReadiness = getModuleRow(
+    "shareholderCommitment",
+    selectedManualLegalEntityId
   );
 
   async function loadData() {
@@ -464,10 +665,12 @@ export default function GlSetupPage() {
 
     const updates = {
       legalEntities,
+      countries,
       calendars,
       books,
       coas,
       accounts,
+      policyPacks,
     };
 
     try {
@@ -477,6 +680,16 @@ export default function GlSetupPage() {
         tasks.push(
           listLegalEntities().then((response) => {
             updates.legalEntities = response?.rows || [];
+          })
+        );
+        tasks.push(
+          listCountries().then((response) => {
+            updates.countries = response?.rows || [];
+          })
+        );
+        tasks.push(
+          listPolicyPacks().then((response) => {
+            updates.policyPacks = response?.rows || [];
           })
         );
       }
@@ -516,10 +729,12 @@ export default function GlSetupPage() {
       await Promise.all(tasks);
 
       setLegalEntities(updates.legalEntities);
+      setCountries(updates.countries);
       setCalendars(updates.calendars);
       setBooks(updates.books);
       setCoas(updates.coas);
       setAccounts(updates.accounts);
+      setPolicyPacks(updates.policyPacks);
 
       setBookForm((prev) => ({
         ...prev,
@@ -541,6 +756,17 @@ export default function GlSetupPage() {
         targetAccountId:
           prev.targetAccountId || String(updates.accounts[1]?.id || updates.accounts[0]?.id || ""),
       }));
+      setTemplateWizardForm((prev) => ({
+        ...prev,
+        legalEntityId:
+          prev.legalEntityId || String(updates.legalEntities[0]?.id || ""),
+        packId: prev.packId || String(updates.policyPacks[0]?.packId || ""),
+      }));
+      setManualMappingsForm((prev) => ({
+        ...prev,
+        legalEntityId:
+          prev.legalEntityId || String(updates.legalEntities[0]?.id || ""),
+      }));
     } catch (err) {
       setError(err?.response?.data?.message || l("Failed to load GL setup data.", "GL kurulum verileri yuklenemedi."));
     } finally {
@@ -558,6 +784,417 @@ export default function GlSetupPage() {
     canReadCoas,
     canReadAccounts,
   ]);
+
+  useEffect(() => {
+    const currentPackId = String(templateWizardForm.packId || "").trim();
+    if (currentPackId && templatePackIdSet.has(currentPackId)) {
+      return;
+    }
+    const fallbackPackId = String(availableTemplatePacks[0]?.packId || "").trim();
+    if (!fallbackPackId || fallbackPackId === currentPackId) {
+      return;
+    }
+    setTemplateWizardForm((prev) => ({
+      ...prev,
+      packId: fallbackPackId,
+    }));
+  }, [availableTemplatePacks, templatePackIdSet, templateWizardForm.packId]);
+
+  useEffect(() => {
+    setTemplatePreviewRows([]);
+    setTemplateOverridesByPurpose({});
+    setTemplateApplyResult(null);
+  }, [templateWizardForm.legalEntityId, templateWizardForm.packId]);
+
+  async function loadManualMappings(legalEntityIdInput) {
+    const legalEntityId = toPositiveInt(
+      legalEntityIdInput ?? manualMappingsForm.legalEntityId
+    );
+    if (!legalEntityId || !canReadLegalEntities || !canReadAccounts) {
+      setManualCariMappingsByPurpose({});
+      setManualMappingsForm((prev) => ({
+        ...prev,
+        capitalCreditParentAccountId: "",
+        commitmentDebitParentAccountId: "",
+      }));
+      return;
+    }
+
+    setLoadingManualMappings(true);
+    try {
+      const [cariResponse, shareholderResponse] = await Promise.all([
+        listJournalPurposeAccounts({ legalEntityId }),
+        listShareholderJournalConfigs({ legalEntityId }),
+      ]);
+
+      setManualCariMappingsByPurpose(toQueryMapByPurpose(cariResponse?.rows || []));
+      const shareholderRows = Array.isArray(shareholderResponse?.rows)
+        ? shareholderResponse.rows
+        : [];
+      const shareholderRow =
+        shareholderRows.find(
+          (row) => toPositiveInt(row?.legal_entity_id) === legalEntityId
+        ) || null;
+
+      setManualMappingsForm((prev) => ({
+        ...prev,
+        legalEntityId: String(legalEntityId),
+        capitalCreditParentAccountId: String(
+          toPositiveInt(shareholderRow?.capital_credit_parent_account_id) || ""
+        ),
+        commitmentDebitParentAccountId: String(
+          toPositiveInt(shareholderRow?.commitment_debit_parent_account_id) || ""
+        ),
+      }));
+    } catch (err) {
+      setError(
+        err?.response?.data?.message ||
+          l(
+            "Failed to load manual purpose mappings.",
+            "Manuel amac eslemeleri yuklenemedi."
+          )
+      );
+    } finally {
+      setLoadingManualMappings(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!selectedManualLegalEntityId) {
+      return;
+    }
+    loadManualMappings(selectedManualLegalEntityId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedManualLegalEntityId, canReadLegalEntities, canReadAccounts]);
+
+  function getPurposeReadinessStatus(readinessRow, purposeCode) {
+    if (!readinessRow) {
+      return {
+        label: l("Unknown", "Bilinmiyor"),
+        className: "bg-slate-100 text-slate-700",
+        detail: "",
+      };
+    }
+
+    const normalizedPurposeCode = toUpper(purposeCode);
+    const missingPurposeCodes = new Set(
+      (readinessRow?.missingPurposeCodes || []).map((code) => toUpper(code))
+    );
+    if (missingPurposeCodes.has(normalizedPurposeCode)) {
+      return {
+        label: l("Missing", "Eksik"),
+        className: "bg-rose-100 text-rose-700",
+        detail: "",
+      };
+    }
+
+    const invalid = (readinessRow?.invalidMappings || []).filter(
+      (row) => toUpper(row?.purposeCode) === normalizedPurposeCode
+    );
+    if (invalid.length > 0) {
+      const reasons = Array.from(
+        new Set(invalid.map((row) => toUpper(row?.reason)).filter(Boolean))
+      );
+      return {
+        label: l("Invalid", "Gecersiz"),
+        className: "bg-amber-100 text-amber-800",
+        detail: reasons.join(", "),
+      };
+    }
+
+    return {
+      label: l("OK", "Tamam"),
+      className: "bg-emerald-100 text-emerald-700",
+      detail: "",
+    };
+  }
+
+  function handleTemplateOverrideChange(purposeCode, nextAccountId) {
+    const normalizedPurposeCode = toUpper(purposeCode);
+    if (!normalizedPurposeCode) {
+      return;
+    }
+    setTemplateOverridesByPurpose((prev) => ({
+      ...prev,
+      [normalizedPurposeCode]: nextAccountId,
+    }));
+  }
+
+  async function handleTemplatePreview() {
+    if (!canReadLegalEntities) {
+      setError(l("Missing permission: org.tree.read", "Eksik yetki: org.tree.read"));
+      return;
+    }
+
+    const legalEntityId = toPositiveInt(templateWizardForm.legalEntityId);
+    const packId = String(templateWizardForm.packId || "").trim();
+    if (!legalEntityId || !packId) {
+      setError(
+        l(
+          "Select legal entity and policy pack first.",
+          "Once legal entity ve politika paketi secin."
+        )
+      );
+      return;
+    }
+
+    setSaving("policy-pack-resolve");
+    setError("");
+    setMessage("");
+    setTemplateApplyResult(null);
+    try {
+      const response = await resolvePolicyPack(packId, { legalEntityId });
+      const rows = Array.isArray(response?.rows) ? response.rows : [];
+      setTemplatePreviewRows(rows);
+      setTemplateOverridesByPurpose({});
+      setMessage(
+        l(
+          "Template preview prepared. Review rows and confirm apply to write mappings.",
+          "Sablon onizlemesi hazirlandi. Satirlari kontrol edin ve yazmak icin onaylayin."
+        )
+      );
+    } catch (err) {
+      setError(
+        err?.response?.data?.message ||
+          l("Failed to resolve policy pack.", "Politika paketi onizlemesi alinamadi.")
+      );
+    } finally {
+      setSaving("");
+    }
+  }
+
+  async function handleTemplateApply() {
+    if (!canUpsertAccounts) {
+      setError(l("Missing permission: gl.account.upsert", "Eksik yetki: gl.account.upsert"));
+      return;
+    }
+
+    const legalEntityId = toPositiveInt(templateWizardForm.legalEntityId);
+    const packId = String(templateWizardForm.packId || "").trim();
+    if (!legalEntityId || !packId) {
+      setError(
+        l(
+          "Select legal entity and policy pack first.",
+          "Once legal entity ve politika paketi secin."
+        )
+      );
+      return;
+    }
+    if (templatePreviewRows.length === 0) {
+      setError(
+        l(
+          "Run template preview before confirm apply.",
+          "Onaylamadan once sablon onizlemesi calistirin."
+        )
+      );
+      return;
+    }
+
+    const rows = [];
+    for (const previewRow of templatePreviewRows) {
+      const purposeCode = toUpper(previewRow?.purposeCode);
+      if (!purposeCode) {
+        continue;
+      }
+      const resolvedAccountId = toPositiveInt(previewRow?.accountId);
+      const overrideAccountId = toPositiveInt(
+        templateOverridesByPurpose[purposeCode]
+      );
+      const effectiveAccountId = previewRow?.missing
+        ? overrideAccountId
+        : resolvedAccountId;
+      if (!effectiveAccountId) {
+        setError(
+          l(
+            `Select account override for missing purpose ${purposeCode} before apply.`,
+            `Uygulamadan once eksik ${purposeCode} amaci icin hesap secin.`
+          )
+        );
+        return;
+      }
+      rows.push({
+        purposeCode,
+        accountId: effectiveAccountId,
+      });
+    }
+
+    setSaving("policy-pack-apply");
+    setError("");
+    setMessage("");
+    try {
+      const response = await applyPolicyPack(packId, {
+        legalEntityId,
+        mode: toUpper(templateWizardForm.mode || "MERGE"),
+        rows,
+      });
+      setTemplateApplyResult({
+        packId: String(response?.packId || packId),
+        mode: String(response?.mode || templateWizardForm.mode || "MERGE"),
+        appliedAt: response?.metadata?.appliedAt || null,
+      });
+      setMessage(
+        l(
+          "Template applied successfully. Module readiness refreshed.",
+          "Sablon basariyla uygulandi. Modul hazirlik bilgisi yenilendi."
+        )
+      );
+      await Promise.all([
+        refreshLegalEntity(legalEntityId),
+        loadManualMappings(legalEntityId),
+      ]);
+    } catch (err) {
+      setError(
+        err?.response?.data?.message ||
+          l("Failed to apply policy pack.", "Politika paketi uygulanamadi.")
+      );
+    } finally {
+      setSaving("");
+    }
+  }
+
+  function handleManualCariPurposeAccountChange(purposeCode, nextAccountId) {
+    const normalizedPurposeCode = toUpper(purposeCode);
+    if (!normalizedPurposeCode) {
+      return;
+    }
+    setManualCariMappingsByPurpose((prev) => ({
+      ...prev,
+      [normalizedPurposeCode]: {
+        ...(prev[normalizedPurposeCode] || {}),
+        purposeCode: normalizedPurposeCode,
+        accountId: nextAccountId,
+      },
+    }));
+  }
+
+  async function handleSaveManualCariMappings() {
+    if (!canUpsertAccounts) {
+      setError(l("Missing permission: gl.account.upsert", "Eksik yetki: gl.account.upsert"));
+      return;
+    }
+
+    const legalEntityId = selectedManualLegalEntityId;
+    if (!legalEntityId) {
+      setError(l("Select legal entity first.", "Once legal entity secin."));
+      return;
+    }
+
+    const payloadRows = [];
+    for (const purposeCode of CARI_REQUIRED_PURPOSE_CODES) {
+      const accountId = toPositiveInt(
+        manualCariMappingsByPurpose[purposeCode]?.accountId
+      );
+      if (!accountId) {
+        setError(
+          l(
+            `Select account for ${purposeCode} before saving.`,
+            `Kaydetmeden once ${purposeCode} icin hesap secin.`
+          )
+        );
+        return;
+      }
+      payloadRows.push({ purposeCode, accountId });
+    }
+
+    setSaving("manual-cari-purpose-mappings");
+    setError("");
+    setMessage("");
+    try {
+      for (const row of payloadRows) {
+        // eslint-disable-next-line no-await-in-loop
+        await upsertJournalPurposeAccount({
+          legalEntityId,
+          purposeCode: row.purposeCode,
+          accountId: row.accountId,
+        });
+      }
+
+      setMessage(
+        l(
+          "Manual CARI purpose mappings saved.",
+          "Manuel CARI amac eslemeleri kaydedildi."
+        )
+      );
+      await Promise.all([refreshLegalEntity(legalEntityId), loadManualMappings(legalEntityId)]);
+    } catch (err) {
+      setError(
+        err?.response?.data?.message ||
+          l(
+            "Failed to save manual CARI purpose mappings.",
+            "Manuel CARI amac eslemeleri kaydedilemedi."
+          )
+      );
+    } finally {
+      setSaving("");
+    }
+  }
+
+  async function handleSaveManualShareholderMappings() {
+    if (!canUpsertShareholderParentMappings) {
+      setError(
+        l(
+          "Missing permission: org.legal_entity.upsert",
+          "Eksik yetki: org.legal_entity.upsert"
+        )
+      );
+      return;
+    }
+
+    const legalEntityId = selectedManualLegalEntityId;
+    const capitalCreditParentAccountId = toPositiveInt(
+      manualMappingsForm.capitalCreditParentAccountId
+    );
+    const commitmentDebitParentAccountId = toPositiveInt(
+      manualMappingsForm.commitmentDebitParentAccountId
+    );
+
+    if (!legalEntityId || !capitalCreditParentAccountId || !commitmentDebitParentAccountId) {
+      setError(
+        l(
+          "Both shareholder parent accounts are required.",
+          "Iki ortak parent hesap secimi zorunludur."
+        )
+      );
+      return;
+    }
+    if (capitalCreditParentAccountId === commitmentDebitParentAccountId) {
+      setError(
+        l(
+          "Shareholder parent accounts must be different.",
+          "Ortak parent hesaplari farkli olmali."
+        )
+      );
+      return;
+    }
+
+    setSaving("manual-shareholder-purpose-mappings");
+    setError("");
+    setMessage("");
+    try {
+      await upsertShareholderJournalConfig({
+        legalEntityId,
+        capitalCreditParentAccountId,
+        commitmentDebitParentAccountId,
+      });
+      setMessage(
+        l(
+          "Manual shareholder parent mappings saved.",
+          "Manuel ortak parent eslemeleri kaydedildi."
+        )
+      );
+      await Promise.all([refreshLegalEntity(legalEntityId), loadManualMappings(legalEntityId)]);
+    } catch (err) {
+      setError(
+        err?.response?.data?.message ||
+          l(
+            "Failed to save shareholder parent mappings.",
+            "Ortak parent eslemeleri kaydedilemedi."
+          )
+      );
+    } finally {
+      setSaving("");
+    }
+  }
 
   async function handleBookSubmit(event) {
     event.preventDefault();
@@ -731,7 +1368,13 @@ export default function GlSetupPage() {
     }
   }
 
-  async function handleLoadTurkishDefaultAccounts() {
+  async function loadDefaultCoaAccounts({
+    accountsToLoad,
+    savingKey,
+    confirmMessage,
+    successMessage,
+    failureMessage,
+  }) {
     if (!canUpsertAccounts) {
       setError(l("Missing permission: gl.account.upsert", "Eksik yetki: gl.account.upsert"));
       return;
@@ -741,59 +1384,82 @@ export default function GlSetupPage() {
     if (!coaId) {
       setError(
         l(
-          "Select a CoA first, then click Load Turkish Default CoA.",
-          "Once bir hesap plani secin, sonra Varsayilan Turk Hesap Planini Yukle butonuna basin."
+          "Select a CoA first, then run default account loader.",
+          "Once bir hesap plani secin, sonra varsayilan hesap yukleyiciyi calistirin."
         )
       );
       return;
     }
 
-    const confirmed = window.confirm(
-      l(
-        `Load ${TURKISH_DEFAULT_COA_ACCOUNTS.length} Turkish default accounts into selected CoA?`,
-        `Secili hesap planina ${TURKISH_DEFAULT_COA_ACCOUNTS.length} adet varsayilan Turk hesap plani hesabi yuklensin mi?`
-      )
-    );
-    if (!confirmed) {
+    if (!window.confirm(confirmMessage)) {
       return;
     }
 
-    setSaving("turkish-default-accounts");
+    setSaving(savingKey);
     setError("");
     setMessage("");
 
     try {
       let processed = 0;
-      for (const account of TURKISH_DEFAULT_COA_ACCOUNTS) {
+      for (const account of accountsToLoad) {
+        // Keep explicit non-postable defaults intact instead of forcing posting=true.
         await upsertAccount({
           coaId,
           code: account.code,
           name: account.name,
           accountType: account.accountType,
           normalSide: account.normalSide,
-          allowPosting: true,
+          allowPosting: account.allowPosting ?? true,
         });
         processed += 1;
       }
-
-      setMessage(
-        l(
-          `Turkish default CoA loaded. Processed ${processed} accounts.`,
-          `Varsayilan Turk hesap plani yuklendi. ${processed} hesap isleme alindi.`
-        )
-      );
+      setMessage(successMessage(processed));
       await loadData();
     } catch (err) {
-      setError(
-        err?.response?.data?.message ||
-          l(
-            "Failed to load Turkish default CoA accounts.",
-            "Varsayilan Turk hesap plani hesaplari yuklenemedi."
-          )
-      );
+      setError(err?.response?.data?.message || failureMessage);
     } finally {
       setSaving("");
     }
+  }
+
+  async function handleLoadTurkishDefaultAccounts() {
+    await loadDefaultCoaAccounts({
+      accountsToLoad: TURKISH_DEFAULT_COA_ACCOUNTS,
+      savingKey: "turkish-default-accounts",
+      confirmMessage: l(
+        `Load ${TURKISH_DEFAULT_COA_ACCOUNTS.length} Turkish default accounts into selected CoA?`,
+        `Secili hesap planina ${TURKISH_DEFAULT_COA_ACCOUNTS.length} adet varsayilan Turk hesap plani hesabi yuklensin mi?`
+      ),
+      successMessage: (processed) =>
+        l(
+          `Turkish default CoA loaded. Processed ${processed} accounts.`,
+          `Varsayilan Turk hesap plani yuklendi. ${processed} hesap isleme alindi.`
+        ),
+      failureMessage: l(
+        "Failed to load Turkish default CoA accounts.",
+        "Varsayilan Turk hesap plani hesaplari yuklenemedi."
+      ),
+    });
+  }
+
+  async function handleLoadUsaDefaultAccounts() {
+    await loadDefaultCoaAccounts({
+      accountsToLoad: USA_DEFAULT_COA_ACCOUNTS,
+      savingKey: "usa-default-accounts",
+      confirmMessage: l(
+        `Load ${USA_DEFAULT_COA_ACCOUNTS.length} USA default accounts into selected CoA?`,
+        `Secili hesap planina ${USA_DEFAULT_COA_ACCOUNTS.length} adet varsayilan ABD hesap plani hesabi yuklensin mi?`
+      ),
+      successMessage: (processed) =>
+        l(
+          `USA default CoA loaded. Processed ${processed} accounts.`,
+          `Varsayilan ABD hesap plani yuklendi. ${processed} hesap isleme alindi.`
+        ),
+      failureMessage: l(
+        "Failed to load USA default CoA accounts.",
+        "Varsayilan ABD hesap plani hesaplari yuklenemedi."
+      ),
+    });
   }
 
   async function handleMappingSubmit(event) {
@@ -862,6 +1528,442 @@ export default function GlSetupPage() {
           {message}
         </div>
       )}
+
+      <section
+        id="template-wizard"
+        className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-4"
+      >
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 className="text-sm font-semibold text-emerald-900">
+              {l("Recommended: Template Wizard", "Onerilen: Sablon Sihirbazi")}
+            </h2>
+            <p className="mt-1 text-xs text-emerald-800">
+              {l(
+                "Preview first (no write), then confirm apply to write selected purpose mappings.",
+                "Once onizleme yapin (yazmaz), sonra secili amac eslemelerini yazmak icin onaylayin."
+              )}
+            </p>
+          </div>
+          <span className="rounded-full border border-emerald-300 bg-white px-2 py-1 text-[11px] font-semibold text-emerald-800">
+            {l("No silent writes", "Sessiz yazim yok")}
+          </span>
+        </div>
+
+        <div className="grid gap-2 md:grid-cols-4">
+          <select
+            value={templateWizardForm.legalEntityId}
+            onChange={(event) =>
+              setTemplateWizardForm((prev) => ({
+                ...prev,
+                legalEntityId: event.target.value,
+              }))
+            }
+            className="rounded-lg border border-emerald-300 bg-white px-3 py-2 text-sm"
+          >
+            <option value="">{l("Select legal entity", "Legal entity secin")}</option>
+            {legalEntities.map((entity) => (
+              <option key={entity.id} value={entity.id}>
+                {entity.code} - {entity.name}
+              </option>
+            ))}
+          </select>
+
+          <select
+            value={templateWizardForm.packId}
+            onChange={(event) =>
+              setTemplateWizardForm((prev) => ({
+                ...prev,
+                packId: event.target.value,
+              }))
+            }
+            className="rounded-lg border border-emerald-300 bg-white px-3 py-2 text-sm"
+          >
+            <option value="">{l("Select policy pack", "Politika paketi secin")}</option>
+            {availableTemplatePacks.map((pack) => (
+              <option key={pack.packId} value={pack.packId}>
+                {pack.packId} - {pack.label} ({pack.countryIso2})
+              </option>
+            ))}
+          </select>
+
+          <select
+            value={templateWizardForm.mode}
+            onChange={(event) =>
+              setTemplateWizardForm((prev) => ({
+                ...prev,
+                mode: event.target.value,
+              }))
+            }
+            className="rounded-lg border border-emerald-300 bg-white px-3 py-2 text-sm"
+          >
+            <option value="MERGE">MERGE</option>
+            <option value="OVERWRITE">OVERWRITE</option>
+          </select>
+
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={handleTemplatePreview}
+              disabled={saving === "policy-pack-resolve"}
+              className="rounded-lg border border-emerald-400 bg-white px-3 py-2 text-sm font-semibold text-emerald-800 disabled:opacity-60"
+            >
+              {saving === "policy-pack-resolve"
+                ? l("Previewing...", "Onizleniyor...")
+                : l("Preview template", "Sablonu onizle")}
+            </button>
+            <button
+              type="button"
+              onClick={handleTemplateApply}
+              disabled={
+                saving === "policy-pack-apply" || templatePreviewRows.length === 0
+              }
+              className="rounded-lg bg-emerald-700 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60"
+            >
+              {saving === "policy-pack-apply"
+                ? l("Applying...", "Uygulaniyor...")
+                : l("Confirm apply", "Uygulamayi onayla")}
+            </button>
+          </div>
+        </div>
+
+        {templateApplyResult ? (
+          <div className="mt-3 rounded-lg border border-emerald-300 bg-white px-3 py-2 text-xs text-emerald-900">
+            {l("Applied pack", "Uygulanan paket")}: {templateApplyResult.packId} |{" "}
+            {l("Mode", "Mod")}: {templateApplyResult.mode} |{" "}
+            {l("Applied at", "Uygulama zamani")}:{" "}
+            {templateApplyResult.appliedAt || l("n/a", "yok")}
+          </div>
+        ) : null}
+
+        {templatePreviewRows.length > 0 ? (
+          <div className="mt-3 overflow-x-auto rounded-lg border border-emerald-200 bg-white">
+            <table className="min-w-full text-sm">
+              <thead className="bg-emerald-50 text-left text-emerald-900">
+                <tr>
+                  <th className="px-3 py-2">{l("Purpose code", "Amac kodu")}</th>
+                  <th className="px-3 py-2">{l("Module", "Modul")}</th>
+                  <th className="px-3 py-2">{l("Proposed account", "Onerilen hesap")}</th>
+                  <th className="px-3 py-2">{l("Status", "Durum")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {templatePreviewRows.map((row) => {
+                  const purposeCode = toUpper(row?.purposeCode);
+                  const missing = Boolean(row?.missing);
+                  const overrideValue = String(
+                    templateOverridesByPurpose[purposeCode] || ""
+                  );
+                  return (
+                    <tr key={purposeCode} className="border-t border-slate-100">
+                      <td className="px-3 py-2 align-top font-medium text-slate-800">
+                        {purposeCode}
+                      </td>
+                      <td className="px-3 py-2 align-top">
+                        {String(row?.moduleKey || "-")}
+                      </td>
+                      <td className="px-3 py-2 align-top">
+                        {!missing ? (
+                          <div className="text-slate-800">
+                            {String(row?.accountCode || "")}{" "}
+                            <span className="text-xs text-slate-500">
+                              (#{toPositiveInt(row?.accountId) || "-"})
+                            </span>
+                          </div>
+                        ) : (
+                          <div className="space-y-1">
+                            <div className="text-xs text-rose-700">
+                              {l("Missing reason", "Eksik nedeni")}:{" "}
+                              {String(row?.reason || "no_match")}
+                            </div>
+                            <select
+                              value={overrideValue}
+                              onChange={(event) =>
+                                handleTemplateOverrideChange(
+                                  purposeCode,
+                                  event.target.value
+                                )
+                              }
+                              className="w-full rounded-lg border border-slate-300 px-2 py-1.5 text-xs"
+                            >
+                              <option value="">
+                                {l("Select override account", "Override hesap secin")}
+                              </option>
+                              {templateOverrideAccountOptions.map((account) => (
+                                <option key={account.id} value={account.id}>
+                                  {buildAccountLabel(account)}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 align-top">
+                        {!missing ? (
+                          <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">
+                            {String(row?.confidence || "HIGH")}
+                          </span>
+                        ) : (
+                          <span className="rounded-full bg-rose-100 px-2 py-0.5 text-xs font-semibold text-rose-700">
+                            {l("Missing", "Eksik")}
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="mt-3 text-xs text-emerald-900">
+            {l(
+              "No preview rows yet. Select legal entity + pack and run preview.",
+              "Henuz onizleme satiri yok. Legal entity + paket secip onizleme calistirin."
+            )}
+          </p>
+        )}
+      </section>
+
+      <section
+        id="manual-purpose-mappings"
+        className="rounded-xl border border-slate-200 bg-white p-4"
+      >
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 className="text-sm font-semibold text-slate-800">
+              {l(
+                "Advanced: Manual Purpose Mappings",
+                "Gelismis: Manuel Amac Eslemeleri"
+              )}
+            </h2>
+            <p className="mt-1 text-xs text-slate-600">
+              {l(
+                "Manual path is fully supported without templates.",
+                "Manuel yol, sablon kullanmadan tamamen desteklenir."
+              )}
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <select
+              value={manualMappingsForm.legalEntityId}
+              onChange={(event) =>
+                setManualMappingsForm((prev) => ({
+                  ...prev,
+                  legalEntityId: event.target.value,
+                }))
+              }
+              className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+            >
+              <option value="">{l("Select legal entity", "Legal entity secin")}</option>
+              {legalEntities.map((entity) => (
+                <option key={entity.id} value={entity.id}>
+                  {entity.code} - {entity.name}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={() => loadManualMappings(selectedManualLegalEntityId)}
+              disabled={loadingManualMappings || !selectedManualLegalEntityId}
+              className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 disabled:opacity-60"
+            >
+              {loadingManualMappings ? l("Loading...", "Yukleniyor...") : l("Reload", "Yenile")}
+            </button>
+          </div>
+        </div>
+
+        <div className="mb-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
+          {l("Required CARI purpose codes:", "Zorunlu CARI amac kodlari:")}{" "}
+          {CARI_REQUIRED_PURPOSE_CODES.join(", ")} <br />
+          {l(
+            "Required shareholder parent purpose codes:",
+            "Zorunlu ortak parent amac kodlari:"
+          )}{" "}
+          {SHAREHOLDER_REQUIRED_PURPOSE_CODES.join(", ")}
+        </div>
+
+        <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-600">
+          {l("CARI mappings", "CARI eslemeleri")}
+        </h3>
+        <div className="overflow-x-auto rounded-lg border border-slate-200">
+          <table className="min-w-full text-sm">
+            <thead className="bg-slate-50 text-left text-slate-600">
+              <tr>
+                <th className="px-3 py-2">{l("Purpose code", "Amac kodu")}</th>
+                <th className="px-3 py-2">{l("Account", "Hesap")}</th>
+                <th className="px-3 py-2">{l("Readiness", "Hazirlik")}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {CARI_REQUIRED_PURPOSE_CODES.map((purposeCode) => {
+                const row = manualCariMappingsByPurpose[purposeCode] || null;
+                const selectedAccountId = String(toPositiveInt(row?.accountId) || "");
+                const readinessStatus = getPurposeReadinessStatus(
+                  selectedManualCariReadiness,
+                  purposeCode
+                );
+                return (
+                  <tr key={purposeCode} className="border-t border-slate-100">
+                    <td className="px-3 py-2 font-medium text-slate-800">{purposeCode}</td>
+                    <td className="px-3 py-2">
+                      <select
+                        value={selectedAccountId}
+                        onChange={(event) =>
+                          handleManualCariPurposeAccountChange(
+                            purposeCode,
+                            event.target.value
+                          )
+                        }
+                        className="w-full rounded-lg border border-slate-300 px-2 py-1.5 text-xs"
+                      >
+                        <option value="">{l("Select account", "Hesap secin")}</option>
+                        {manualCariAccountOptions.map((account) => (
+                          <option key={account.id} value={account.id}>
+                            {buildAccountLabel(account)}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
+                    <td className="px-3 py-2">
+                      <span
+                        className={`rounded-full px-2 py-0.5 text-xs font-semibold ${readinessStatus.className}`}
+                      >
+                        {readinessStatus.label}
+                      </span>
+                      {readinessStatus.detail ? (
+                        <p className="mt-1 text-[11px] text-slate-500">
+                          {readinessStatus.detail}
+                        </p>
+                      ) : null}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        <div className="mt-2">
+          <button
+            type="button"
+            onClick={handleSaveManualCariMappings}
+            disabled={saving === "manual-cari-purpose-mappings" || !selectedManualLegalEntityId}
+            className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60"
+          >
+            {saving === "manual-cari-purpose-mappings"
+              ? l("Saving CARI mappings...", "CARI eslemeleri kaydediliyor...")
+              : l("Save CARI mappings", "CARI eslemelerini kaydet")}
+          </button>
+        </div>
+
+        <h3 className="mb-2 mt-4 text-xs font-semibold uppercase tracking-wide text-slate-600">
+          {l("Shareholder parent mappings", "Ortak parent eslemeleri")}
+        </h3>
+        <div className="grid gap-2 md:grid-cols-2">
+          <div className="rounded-lg border border-slate-200 p-3">
+            <label className="mb-1 block text-xs font-semibold text-slate-700">
+              SHAREHOLDER_CAPITAL_CREDIT_PARENT
+            </label>
+            <select
+              value={manualMappingsForm.capitalCreditParentAccountId}
+              onChange={(event) =>
+                setManualMappingsForm((prev) => ({
+                  ...prev,
+                  capitalCreditParentAccountId: event.target.value,
+                }))
+              }
+              className="w-full rounded-lg border border-slate-300 px-2 py-1.5 text-xs"
+            >
+              <option value="">{l("Select account", "Hesap secin")}</option>
+              {manualShareholderAccountOptions.map((account) => (
+                <option key={account.id} value={account.id}>
+                  {buildAccountLabel(account)}
+                </option>
+              ))}
+            </select>
+            {(() => {
+              const status = getPurposeReadinessStatus(
+                selectedManualShareholderReadiness,
+                "SHAREHOLDER_CAPITAL_CREDIT_PARENT"
+              );
+              return (
+                <div className="mt-2">
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-xs font-semibold ${status.className}`}
+                  >
+                    {status.label}
+                  </span>
+                  {status.detail ? (
+                    <p className="mt-1 text-[11px] text-slate-500">{status.detail}</p>
+                  ) : null}
+                </div>
+              );
+            })()}
+          </div>
+
+          <div className="rounded-lg border border-slate-200 p-3">
+            <label className="mb-1 block text-xs font-semibold text-slate-700">
+              SHAREHOLDER_COMMITMENT_DEBIT_PARENT
+            </label>
+            <select
+              value={manualMappingsForm.commitmentDebitParentAccountId}
+              onChange={(event) =>
+                setManualMappingsForm((prev) => ({
+                  ...prev,
+                  commitmentDebitParentAccountId: event.target.value,
+                }))
+              }
+              className="w-full rounded-lg border border-slate-300 px-2 py-1.5 text-xs"
+            >
+              <option value="">{l("Select account", "Hesap secin")}</option>
+              {manualShareholderAccountOptions.map((account) => (
+                <option key={account.id} value={account.id}>
+                  {buildAccountLabel(account)}
+                </option>
+              ))}
+            </select>
+            {(() => {
+              const status = getPurposeReadinessStatus(
+                selectedManualShareholderReadiness,
+                "SHAREHOLDER_COMMITMENT_DEBIT_PARENT"
+              );
+              return (
+                <div className="mt-2">
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-xs font-semibold ${status.className}`}
+                  >
+                    {status.label}
+                  </span>
+                  {status.detail ? (
+                    <p className="mt-1 text-[11px] text-slate-500">{status.detail}</p>
+                  ) : null}
+                </div>
+              );
+            })()}
+          </div>
+        </div>
+        <div className="mt-2">
+          <button
+            type="button"
+            onClick={handleSaveManualShareholderMappings}
+            disabled={
+              saving === "manual-shareholder-purpose-mappings" ||
+              !selectedManualLegalEntityId
+            }
+            className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60"
+          >
+            {saving === "manual-shareholder-purpose-mappings"
+              ? l(
+                  "Saving shareholder parents...",
+                  "Ortak parent eslemeleri kaydediliyor..."
+                )
+              : l(
+                  "Save shareholder parent mappings",
+                  "Ortak parent eslemelerini kaydet"
+                )}
+          </button>
+        </div>
+      </section>
 
       <div className="grid gap-4 xl:grid-cols-2">
         <section className="rounded-xl border border-slate-200 bg-white p-4">
@@ -1079,16 +2181,28 @@ export default function GlSetupPage() {
         <section className="rounded-xl border border-slate-200 bg-white p-4">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-sm font-semibold text-slate-700">{l("Accounts", "Hesaplar")}</h2>
-            <button
-              type="button"
-              onClick={handleLoadTurkishDefaultAccounts}
-              disabled={saving === "turkish-default-accounts" || !canUpsertAccounts}
-              className="rounded-lg border border-cyan-300 bg-cyan-50 px-3 py-1.5 text-xs font-semibold text-cyan-800 disabled:opacity-60"
-            >
-              {saving === "turkish-default-accounts"
-                ? l("Loading Turkish CoA...", "Turk hesap plani yukleniyor...")
-                : l("Load Turkish Default CoA", "Varsayilan Turk Hesap Planini Yukle")}
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={handleLoadTurkishDefaultAccounts}
+                disabled={saving === "turkish-default-accounts" || !canUpsertAccounts}
+                className="rounded-lg border border-cyan-300 bg-cyan-50 px-3 py-1.5 text-xs font-semibold text-cyan-800 disabled:opacity-60"
+              >
+                {saving === "turkish-default-accounts"
+                  ? l("Loading Turkish CoA...", "Turk hesap plani yukleniyor...")
+                  : l("Load Turkish Default CoA", "Varsayilan Turk Hesap Planini Yukle")}
+              </button>
+              <button
+                type="button"
+                onClick={handleLoadUsaDefaultAccounts}
+                disabled={saving === "usa-default-accounts" || !canUpsertAccounts}
+                className="rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-800 disabled:opacity-60"
+              >
+                {saving === "usa-default-accounts"
+                  ? l("Loading USA CoA...", "ABD hesap plani yukleniyor...")
+                  : l("Load USA defaults", "Varsayilan ABD Hesap Planini Yukle")}
+              </button>
+            </div>
           </div>
           <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
             {l(

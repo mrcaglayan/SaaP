@@ -14,6 +14,7 @@ import {
 } from "../api/orgAdmin.js";
 import { useAuth } from "../auth/useAuth.js";
 import { useI18n } from "../i18n/useI18n.js";
+import { useModuleReadiness } from "../readiness/useModuleReadiness.js";
 
 function toPositiveInt(value) {
   const parsed = Number(value);
@@ -49,8 +50,37 @@ function createLine() {
   };
 }
 
+function formatShareholderReadinessReason(reason, l) {
+  switch (String(reason || "").trim().toUpperCase()) {
+    case "ACCOUNT_NOT_FOUND":
+      return l("Mapped account no longer exists.", "Eslenen hesap artik mevcut degil.");
+    case "ACCOUNT_INACTIVE":
+      return l("Mapped account is inactive.", "Eslenen hesap aktif degil.");
+    case "ACCOUNT_TYPE_NOT_EQUITY":
+      return l("Mapped account must be EQUITY.", "Eslenen hesap EQUITY olmalidir.");
+    case "ACCOUNT_MUST_BE_NON_POSTABLE":
+      return l(
+        "Mapped account must be non-postable parent.",
+        "Eslenen hesap post edilemeyen parent olmali."
+      );
+    case "ACCOUNT_NORMAL_SIDE_MISMATCH":
+      return l(
+        "Mapped account has invalid normal side.",
+        "Eslenen hesap normal bakiye yonu gecersiz."
+      );
+    case "PURPOSES_MUST_MAP_TO_DIFFERENT_ACCOUNTS":
+      return l(
+        "Shareholder parent purposes must map to different accounts.",
+        "Ortak parent amaclari farkli hesaplara eslenmeli."
+      );
+    default:
+      return String(reason || "-");
+  }
+}
+
 export default function AcilisFisiOlustur() {
   const { hasPermission } = useAuth();
+  const { getModuleRow } = useModuleReadiness();
   const { language } = useI18n();
   const isTr = language === "tr";
   const l = useCallback((en, tr) => (isTr ? tr : en), [isTr]);
@@ -91,6 +121,14 @@ export default function AcilisFisiOlustur() {
 
   const selectedLegalEntityId = toPositiveInt(form.legalEntityId);
   const selectedBookId = toPositiveInt(form.bookId);
+  const selectedShareholderCommitmentReadiness = getModuleRow(
+    "shareholderCommitment",
+    selectedLegalEntityId
+  );
+  const shareholderCommitmentModuleNotReady = Boolean(
+    selectedShareholderCommitmentReadiness &&
+      !selectedShareholderCommitmentReadiness.ready
+  );
   const unitsById = useMemo(() => {
     const map = new Map();
     for (const unit of operatingUnits) {
@@ -376,6 +414,9 @@ export default function AcilisFisiOlustur() {
     () => commitmentSetupChecks.filter((check) => !check.ready),
     [commitmentSetupChecks]
   );
+  const hasCommitmentSetupWarning =
+    missingCommitmentSetupChecks.length > 0 ||
+    shareholderCommitmentModuleNotReady;
 
   const isBalanced =
     Math.abs(totals.debit - totals.credit) < 0.0001 && totals.debit > 0;
@@ -636,7 +677,36 @@ export default function AcilisFisiOlustur() {
               </div>
             ))}
           </div>
-          {missingCommitmentSetupChecks.length > 0 ? (
+          {selectedShareholderCommitmentReadiness ? (
+            <div
+              className={`mt-2 rounded-lg border px-3 py-2 text-xs ${
+                selectedShareholderCommitmentReadiness.ready
+                  ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                  : "border-amber-200 bg-amber-50 text-amber-900"
+              }`}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-semibold">
+                  {l(
+                    "Module readiness: shareholder commitment",
+                    "Modul hazirligi: ortak taahhut"
+                  )}
+                </span>
+                <span
+                  className={`rounded px-2 py-0.5 font-semibold ${
+                    selectedShareholderCommitmentReadiness.ready
+                      ? "bg-emerald-100 text-emerald-700"
+                      : "bg-amber-100 text-amber-800"
+                  }`}
+                >
+                  {selectedShareholderCommitmentReadiness.ready
+                    ? l("READY", "HAZIR")
+                    : l("NOT READY", "HAZIR DEGIL")}
+                </span>
+              </div>
+            </div>
+          ) : null}
+          {hasCommitmentSetupWarning ? (
             <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
               <div className="font-semibold">
                 {l(
@@ -644,6 +714,36 @@ export default function AcilisFisiOlustur() {
                   "Sistem uyarisi: otomatik sermaye taahhut yevmiye akisi icin kurulum eksik."
                 )}
               </div>
+              {shareholderCommitmentModuleNotReady ? (
+                <div className="mt-2 space-y-1">
+                  {Array.isArray(
+                    selectedShareholderCommitmentReadiness?.missingPurposeCodes
+                  ) &&
+                  selectedShareholderCommitmentReadiness.missingPurposeCodes.length > 0 ? (
+                    <div>
+                      {l("Missing purpose codes:", "Eksik amac kodlari:")}{" "}
+                      {selectedShareholderCommitmentReadiness.missingPurposeCodes.join(
+                        ", "
+                      )}
+                    </div>
+                  ) : null}
+                  {Array.isArray(
+                    selectedShareholderCommitmentReadiness?.invalidMappings
+                  ) &&
+                  selectedShareholderCommitmentReadiness.invalidMappings.length > 0 ? (
+                    <ul className="list-disc space-y-0.5 pl-4">
+                      {selectedShareholderCommitmentReadiness.invalidMappings.map(
+                        (row, index) => (
+                          <li key={`opening-readiness-invalid-${index}`}>
+                            {String(row?.purposeCode || "-")}:{" "}
+                            {formatShareholderReadinessReason(row?.reason, l)}
+                          </li>
+                        )
+                      )}
+                    </ul>
+                  ) : null}
+                </div>
+              ) : null}
               <div className="mt-2 flex flex-wrap gap-2">
                 <Link
                   to="/app/ayarlar/organizasyon-yonetimi"
