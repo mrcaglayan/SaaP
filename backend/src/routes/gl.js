@@ -31,6 +31,7 @@ import { registerGlWriteCoreRoutes } from "./gl.write.routes.js";
 import { registerGlWriteJournalRoutes } from "./gl.write.journal.routes.js";
 import { registerGlReclassificationRoutes } from "./gl.reclass.routes.js";
 import { registerGlPeriodClosingRoutes } from "./gl.period-closing.routes.js";
+import { registerGlPurposeMappingsRoutes } from "./gl.purpose-mappings.routes.js";
 
 const router = express.Router();
 const CLOSE_RUN_STATUSES = new Set(["IN_PROGRESS", "COMPLETED", "FAILED", "REOPENED"]);
@@ -2047,6 +2048,7 @@ async function validateJournalLineScope(req, tenantId, legalEntityId, line, inde
 
 registerGlReadCoreRoutes(router);
 registerGlWriteCoreRoutes(router);
+registerGlPurposeMappingsRoutes(router);
 registerGlReadJournalRoutes(router, {
   resolveScopeFromBookId,
   resolveScopeFromJournalId,

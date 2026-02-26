@@ -12,5 +12,5 @@ since all been implemented check if there is anything that suggested something l
  we can apply that skipped ones "
 
 
-now start implementing from the first step, don't forget the global rules. 
+now start implementing the next step  from -1PU_setup.md, don't forget the global rules.  
 read the file all first then start implementing cuz you might find some useful notes. 
