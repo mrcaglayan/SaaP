@@ -21,6 +21,7 @@ const SENSITIVE_DATA_AUDIT_PAGE_PERMISSIONS = [
   "security.sensitive_data.audit.read",
 ];
 const OPS_DASHBOARD_PAGE_PERMISSIONS = ["ops.dashboard.read"];
+const OPS_EXCEPTION_WORKBENCH_PAGE_PERMISSIONS = ["ops.exceptions.read"];
 const COMPANY_SETTINGS_PAGE_PERMISSIONS = ["onboarding.company.setup"];
 const ORG_SETTINGS_PAGE_PERMISSIONS = ["org.tree.read", "org.fiscal_calendar.read"];
 const GL_SETUP_PAGE_PERMISSIONS = [
@@ -561,6 +562,12 @@ export const sidebarItems = [
         label: "Operasyon Dashboard",
         to: "/app/ayarlar/operasyon-dashboard",
         requiredPermissions: OPS_DASHBOARD_PAGE_PERMISSIONS,
+        implemented: true,
+      },
+      {
+        label: "Exception Workbench",
+        to: "/app/ayarlar/exception-workbench",
+        requiredPermissions: OPS_EXCEPTION_WORKBENCH_PAGE_PERMISSIONS,
         implemented: true,
       },
       {

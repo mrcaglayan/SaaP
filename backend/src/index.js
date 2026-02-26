@@ -11,6 +11,7 @@ import securitySensitiveDataAuditRoutes from "./routes/security.sensitiveDataAud
 import approvalPoliciesRoutes from "./routes/approvalPolicies.routes.js";
 import jobsAdminRoutes from "./routes/jobs.admin.routes.js";
 import opsDashboardRoutes from "./routes/ops.dashboard.routes.js";
+import exceptionsWorkbenchRoutes from "./routes/exceptions.workbench.routes.js";
 import glRoutes from "./routes/gl.js";
 import fxRoutes from "./routes/fx.js";
 import intercompanyRoutes from "./routes/intercompany.js";
@@ -180,6 +181,7 @@ app.use("/api/v1/security", requireAuth, securitySensitiveDataAuditRoutes);
 app.use("/api/v1/approvals", requireAuth, approvalPoliciesRoutes);
 app.use("/api/v1/jobs", requireAuth, jobsAdminRoutes);
 app.use("/api/v1/ops", requireAuth, opsDashboardRoutes);
+app.use("/api/v1/exceptions", requireAuth, exceptionsWorkbenchRoutes);
 app.use("/api/v1/gl", requireAuth, glRoutes);
 app.use("/api/v1/fx", requireAuth, fxRoutes);
 app.use("/api/v1/intercompany", requireAuth, intercompanyRoutes);

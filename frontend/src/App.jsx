@@ -21,6 +21,7 @@ import ScopeAssignmentsPage from "./pages/security/ScopeAssignmentsPage";
 import RbacAuditLogsPage from "./pages/security/RbacAuditLogsPage";
 import SensitiveDataAuditPage from "./pages/security/SensitiveDataAuditPage.jsx";
 import OpsDashboardPage from "./pages/OpsDashboardPage.jsx";
+import ExceptionsWorkbenchPage from "./pages/ExceptionsWorkbenchPage.jsx";
 import IntercompanyReconciliationPage from "./pages/IntercompanyReconciliationPage";
 import ConsolidationReportsPage from "./pages/ConsolidationReportsPage";
 import ProviderBootstrapPage from "./pages/ProviderBootstrapPage";
@@ -371,6 +372,11 @@ const implementedRoutes = [
     appPath: "/app/ayarlar/operasyon-dashboard",
     childPath: "ayarlar/operasyon-dashboard",
     element: <OpsDashboardPage />,
+  },
+  {
+    appPath: "/app/ayarlar/exception-workbench",
+    childPath: "ayarlar/exception-workbench",
+    element: <ExceptionsWorkbenchPage />,
   },
   {
     appPath: "/app/donem-sonu-islemler/aylik/intercompany-mutabakat",
