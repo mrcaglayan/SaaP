@@ -50,6 +50,7 @@ export function parsePayrollLiabilityListFilters(req) {
   );
   const scope = normalizeScope(req.query?.scope, "scope", null);
   const q = normalizeText(req.query?.q, "q", 120);
+  const cursor = normalizeText(req.query?.cursor, "cursor", 1200) || null;
   const pagination = parsePagination(req.query, { limit: 200, offset: 0, maxLimit: 500 });
 
   return {
@@ -60,6 +61,7 @@ export function parsePayrollLiabilityListFilters(req) {
     liabilityType,
     scope,
     q,
+    cursor,
     limit: pagination.limit,
     offset: pagination.offset,
   };

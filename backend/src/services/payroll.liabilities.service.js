@@ -1,5 +1,10 @@
 import { query, withTransaction } from "../db.js";
 import { badRequest, parsePositiveInt } from "../routes/_utils.js";
+import {
+  decodeCursorToken,
+  encodeCursorToken,
+  requireCursorId,
+} from "../utils/cursorPagination.js";
 import { createPaymentBatch } from "./payments.service.js";
 import { findApplicablePayrollComponentMapping } from "./payroll.mappings.service.js";
 import { assertPayrollPeriodActionAllowed } from "./payroll.close.service.js";
@@ -816,16 +821,29 @@ export async function listPayrollLiabilityRows({
     params.push(like, like, like, like);
   }
 
-  const whereSql = conditions.join(" AND ");
+  const baseConditions = [...conditions];
+  const baseParams = [...params];
+  const cursorToken = filters.cursor || null;
+  const cursor = decodeCursorToken(cursorToken);
+  const pageConditions = [...baseConditions];
+  const pageParams = [...baseParams];
+  if (cursorToken) {
+    const cursorId = requireCursorId(cursor, "id");
+    pageConditions.push("l.id < ?");
+    pageParams.push(cursorId);
+  }
+  const whereSql = pageConditions.join(" AND ");
+  const countWhereSql = baseConditions.join(" AND ");
   const countResult = await query(
-    `SELECT COUNT(*) AS total FROM payroll_run_liabilities l WHERE ${whereSql}`,
-    params
+    `SELECT COUNT(*) AS total FROM payroll_run_liabilities l WHERE ${countWhereSql}`,
+    baseParams
   );
   const total = Number(countResult.rows?.[0]?.total || 0);
 
   const safeLimit = Number.isInteger(filters.limit) && filters.limit > 0 ? filters.limit : 200;
   const safeOffset =
     Number.isInteger(filters.offset) && filters.offset >= 0 ? filters.offset : 0;
+  const effectiveOffset = cursorToken ? 0 : safeOffset;
 
   const listResult = await query(
     `SELECT
@@ -856,12 +874,21 @@ export async function listPayrollLiabilityRows({
       )
      WHERE ${whereSql}
      ORDER BY l.id DESC
-     LIMIT ${safeLimit} OFFSET ${safeOffset}`,
-    params
+     LIMIT ${safeLimit} OFFSET ${effectiveOffset}`,
+    pageParams
   );
 
+  const rawRows = listResult.rows || [];
+  const lastRow = rawRows.length > 0 ? rawRows[rawRows.length - 1] : null;
+  const nextCursor =
+    cursorToken || safeOffset === 0
+      ? rawRows.length === safeLimit && lastRow
+        ? encodeCursorToken({ id: parsePositiveInt(lastRow.id) })
+        : null
+      : null;
+
   return {
-    rows: (listResult.rows || []).map((row) => ({
+    rows: rawRows.map((row) => ({
       ...row,
       beneficiary_snapshot_status: row.beneficiary_snapshot_status || null,
       beneficiary_ready_for_payment: Boolean(
@@ -871,7 +898,9 @@ export async function listPayrollLiabilityRows({
     })),
     total,
     limit: filters.limit,
-    offset: filters.offset,
+    offset: cursorToken ? 0 : filters.offset,
+    pageMode: cursorToken ? "CURSOR" : "OFFSET",
+    nextCursor,
   };
 }
 

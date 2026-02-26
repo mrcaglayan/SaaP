@@ -50,6 +50,7 @@ export function parseReconciliationQueueFilters(req) {
     QUEUE_STATUS_VALUES
   );
   const q = normalizeText(req.query?.q, "q", 120) || null;
+  const cursor = normalizeText(req.query?.cursor, "cursor", 1200) || null;
   const pagination = parsePagination(req.query, { limit: 100, offset: 0, maxLimit: 500 });
 
   return {
@@ -58,6 +59,7 @@ export function parseReconciliationQueueFilters(req) {
     bankAccountId,
     reconStatus,
     q,
+    cursor,
     limit: pagination.limit,
     offset: pagination.offset,
   };

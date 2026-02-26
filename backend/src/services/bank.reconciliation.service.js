@@ -1,5 +1,12 @@
 import { query, withTransaction } from "../db.js";
 import { badRequest, parsePositiveInt } from "../routes/_utils.js";
+import {
+  decodeCursorToken,
+  encodeCursorToken,
+  requireCursorDateOnly,
+  requireCursorId,
+  toCursorDateOnly,
+} from "../utils/cursorPagination.js";
 import { autoResolveOpenReconciliationExceptionsForLine } from "./bank.reconciliationExceptions.service.js";
 
 const MATCH_EPSILON = 0.005;
@@ -380,12 +387,25 @@ export async function listReconciliationQueueRows({
     params.push(like, like);
   }
 
-  const whereSql = conditions.join(" AND ");
+  const baseConditions = [...conditions];
+  const baseParams = [...params];
+  const cursorToken = filters.cursor || null;
+  const cursor = decodeCursorToken(cursorToken);
+  const pageConditions = [...baseConditions];
+  const pageParams = [...baseParams];
+  if (cursorToken) {
+    const cursorTxnDate = requireCursorDateOnly(cursor, "txnDate");
+    const cursorId = requireCursorId(cursor, "id");
+    pageConditions.push("(l.txn_date < ? OR (l.txn_date = ? AND l.id < ?))");
+    pageParams.push(cursorTxnDate, cursorTxnDate, cursorId);
+  }
+  const whereSql = pageConditions.join(" AND ");
+  const countWhereSql = baseConditions.join(" AND ");
   const countResult = await query(
     `SELECT COUNT(*) AS total
      FROM bank_statement_lines l
-     WHERE ${whereSql}`,
-    params
+     WHERE ${countWhereSql}`,
+    baseParams
   );
   const total = Number(countResult.rows?.[0]?.total || 0);
 
@@ -393,6 +413,7 @@ export async function listReconciliationQueueRows({
     Number.isInteger(filters.limit) && filters.limit > 0 ? filters.limit : 100;
   const safeOffset =
     Number.isInteger(filters.offset) && filters.offset >= 0 ? filters.offset : 0;
+  const effectiveOffset = cursorToken ? 0 : safeOffset;
 
   const listResult = await query(
     `SELECT
@@ -449,15 +470,29 @@ export async function listReconciliationQueueRows({
       AND m.statement_line_id = l.id
      WHERE ${whereSql}
      ORDER BY l.txn_date DESC, l.id DESC
-     LIMIT ${safeLimit} OFFSET ${safeOffset}`,
-    [tenantId, ...params]
+     LIMIT ${safeLimit} OFFSET ${effectiveOffset}`,
+    [tenantId, ...pageParams]
   );
 
+  const rows = listResult.rows || [];
+  const lastRow = rows.length > 0 ? rows[rows.length - 1] : null;
+  const nextCursor =
+    cursorToken || safeOffset === 0
+      ? rows.length === safeLimit && lastRow
+        ? encodeCursorToken({
+            txnDate: toCursorDateOnly(lastRow.txn_date),
+            id: parsePositiveInt(lastRow.id),
+          })
+        : null
+      : null;
+
   return {
-    rows: listResult.rows || [],
+    rows,
     total,
     limit: filters.limit,
-    offset: filters.offset,
+    offset: cursorToken ? 0 : filters.offset,
+    pageMode: cursorToken ? "CURSOR" : "OFFSET",
+    nextCursor,
   };
 }
 

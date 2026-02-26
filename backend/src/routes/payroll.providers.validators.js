@@ -254,6 +254,7 @@ export function parsePayrollProviderImportJobListInput(req) {
     if (raw === undefined || raw === null || raw === "") return null;
     return parseDateOnly(raw, "payrollPeriod");
   })();
+  const cursor = normalizeText(req.query?.cursor, "cursor", 1200) || null;
   const pagination = parsePagination(req.query, { limit: 100, offset: 0, maxLimit: 300 });
   return {
     tenantId,
@@ -261,6 +262,7 @@ export function parsePayrollProviderImportJobListInput(req) {
     providerCode,
     status,
     payrollPeriod,
+    cursor,
     limit: pagination.limit,
     offset: pagination.offset,
   };

@@ -72,6 +72,7 @@ export function parseBankStatementImportReadFilters(req) {
   const legalEntityId = optionalPositiveInt(req.query?.legalEntityId, "legalEntityId");
   const bankAccountId = optionalPositiveInt(req.query?.bankAccountId, "bankAccountId");
   const status = normalizeEnumOrNull(req.query?.status, "status", ["IMPORTED", "FAILED"]);
+  const cursor = normalizeText(req.query?.cursor, "cursor", 1200) || null;
   const pagination = parsePagination(req.query, { limit: 100, offset: 0, maxLimit: 300 });
 
   return {
@@ -79,6 +80,7 @@ export function parseBankStatementImportReadFilters(req) {
     legalEntityId,
     bankAccountId,
     status,
+    cursor,
     limit: pagination.limit,
     offset: pagination.offset,
   };
@@ -90,6 +92,7 @@ export function parseBankStatementLineReadFilters(req) {
   const bankAccountId = optionalPositiveInt(req.query?.bankAccountId, "bankAccountId");
   const importId = optionalPositiveInt(req.query?.importId, "importId");
   const reconStatus = normalizeEnumOrNull(req.query?.reconStatus, "reconStatus", RECON_STATUS_VALUES);
+  const cursor = normalizeText(req.query?.cursor, "cursor", 1200) || null;
   const pagination = parsePagination(req.query, { limit: 200, offset: 0, maxLimit: 500 });
 
   return {
@@ -98,6 +101,7 @@ export function parseBankStatementLineReadFilters(req) {
     bankAccountId,
     importId,
     reconStatus,
+    cursor,
     limit: pagination.limit,
     offset: pagination.offset,
   };

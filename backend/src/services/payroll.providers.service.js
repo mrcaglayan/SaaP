@@ -3,6 +3,13 @@ import { query, withTransaction } from "../db.js";
 import { assertCurrencyExists, assertLegalEntityBelongsToTenant } from "../tenantGuards.js";
 import { badRequest, parsePositiveInt } from "../routes/_utils.js";
 import {
+  decodeCursorToken,
+  encodeCursorToken,
+  requireCursorDateTime,
+  requireCursorId,
+  toCursorDateTime,
+} from "../utils/cursorPagination.js";
+import {
   getPayrollProviderAdapter,
   listSupportedPayrollProviderAdapters,
 } from "./payroll.providers.registry.js";
@@ -367,6 +374,7 @@ export async function listPayrollProviderConnections({
   const total = Number(countRes.rows?.[0]?.total || 0);
   const safeLimit = Number.isInteger(filters.limit) && filters.limit > 0 ? filters.limit : 100;
   const safeOffset = Number.isInteger(filters.offset) && filters.offset >= 0 ? filters.offset : 0;
+  const effectiveOffset = cursorToken ? 0 : safeOffset;
   const listRes = await query(
     `SELECT c.*, le.code AS legal_entity_code, le.name AS legal_entity_name
      FROM payroll_provider_connections c
@@ -1005,10 +1013,24 @@ export async function listPayrollProviderImportJobs({
     params.push(filters.payrollPeriod);
   }
 
-  const whereSql = conditions.join(" AND ");
+  const baseConditions = [...conditions];
+  const baseParams = [...params];
+  const cursorToken = filters.cursor || null;
+  const cursor = decodeCursorToken(cursorToken);
+  const pageConditions = [...baseConditions];
+  const pageParams = [...baseParams];
+  if (cursorToken) {
+    const cursorRequestedAt = requireCursorDateTime(cursor, "requestedAt");
+    const cursorId = requireCursorId(cursor, "id");
+    pageConditions.push("(j.requested_at < ? OR (j.requested_at = ? AND j.id < ?))");
+    pageParams.push(cursorRequestedAt, cursorRequestedAt, cursorId);
+  }
+
+  const whereSql = pageConditions.join(" AND ");
+  const countWhereSql = baseConditions.join(" AND ");
   const countRes = await query(
-    `SELECT COUNT(*) AS total FROM payroll_provider_import_jobs j WHERE ${whereSql}`,
-    params
+    `SELECT COUNT(*) AS total FROM payroll_provider_import_jobs j WHERE ${countWhereSql}`,
+    baseParams
   );
   const total = Number(countRes.rows?.[0]?.total || 0);
   const safeLimit = Number.isInteger(filters.limit) && filters.limit > 0 ? filters.limit : 100;
@@ -1026,14 +1048,27 @@ export async function listPayrollProviderImportJobs({
      JOIN legal_entities le ON le.tenant_id = j.tenant_id AND le.id = j.legal_entity_id
      WHERE ${whereSql}
      ORDER BY j.requested_at DESC, j.id DESC
-     LIMIT ${safeLimit} OFFSET ${safeOffset}`,
-    params
+     LIMIT ${safeLimit} OFFSET ${effectiveOffset}`,
+    pageParams
   );
+  const rawRows = listRes.rows || [];
+  const lastRow = rawRows.length > 0 ? rawRows[rawRows.length - 1] : null;
+  const nextCursor =
+    cursorToken || safeOffset === 0
+      ? rawRows.length === safeLimit && lastRow
+        ? encodeCursorToken({
+            requestedAt: toCursorDateTime(lastRow.requested_at),
+            id: parsePositiveInt(lastRow.id),
+          })
+        : null
+      : null;
   return {
-    rows: (listRes.rows || []).map((row) => mapJob(row)),
+    rows: rawRows.map((row) => mapJob(row)),
     total,
     limit: filters.limit,
-    offset: filters.offset,
+    offset: cursorToken ? 0 : filters.offset,
+    pageMode: cursorToken ? "CURSOR" : "OFFSET",
+    nextCursor,
   };
 }
 

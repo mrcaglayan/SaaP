@@ -1,6 +1,15 @@
 import crypto from "node:crypto";
 import { query, withTransaction } from "../db.js";
 import { badRequest, parsePositiveInt } from "../routes/_utils.js";
+import {
+  decodeCursorToken,
+  encodeCursorToken,
+  requireCursorDateOnly,
+  requireCursorDateTime,
+  requireCursorId,
+  toCursorDateOnly,
+  toCursorDateTime,
+} from "../utils/cursorPagination.js";
 import { parseStatementCsv } from "./bank.parsers.csv.js";
 
 function parseDbBoolean(value) {
@@ -831,13 +840,26 @@ export async function listBankStatementImportRows({
     params.push(status);
   }
 
-  const whereSql = conditions.join(" AND ");
+  const baseConditions = [...conditions];
+  const baseParams = [...params];
+  const cursorToken = filters.cursor || null;
+  const cursor = decodeCursorToken(cursorToken);
+  const pageConditions = [...baseConditions];
+  const pageParams = [...baseParams];
+  if (cursorToken) {
+    const cursorImportedAt = requireCursorDateTime(cursor, "importedAt");
+    const cursorId = requireCursorId(cursor, "id");
+    pageConditions.push("(i.imported_at < ? OR (i.imported_at = ? AND i.id < ?))");
+    pageParams.push(cursorImportedAt, cursorImportedAt, cursorId);
+  }
+  const whereSql = pageConditions.join(" AND ");
+  const countWhereSql = baseConditions.join(" AND ");
 
   const countResult = await query(
     `SELECT COUNT(*) AS total
      FROM bank_statement_imports i
-     WHERE ${whereSql}`,
-    params
+     WHERE ${countWhereSql}`,
+    baseParams
   );
   const total = Number(countResult.rows?.[0]?.total || 0);
 
@@ -845,6 +867,7 @@ export async function listBankStatementImportRows({
     Number.isInteger(filters.limit) && filters.limit > 0 ? filters.limit : 100;
   const safeOffset =
     Number.isInteger(filters.offset) && filters.offset >= 0 ? filters.offset : 0;
+  const effectiveOffset = cursorToken ? 0 : safeOffset;
 
   const listResult = await query(
     `SELECT
@@ -881,15 +904,29 @@ export async function listBankStatementImportRows({
       AND le.tenant_id = i.tenant_id
      WHERE ${whereSql}
      ORDER BY i.imported_at DESC, i.id DESC
-     LIMIT ${safeLimit} OFFSET ${safeOffset}`,
-    params
+     LIMIT ${safeLimit} OFFSET ${effectiveOffset}`,
+    pageParams
   );
 
+  const rows = listResult.rows || [];
+  const lastRow = rows.length > 0 ? rows[rows.length - 1] : null;
+  const nextCursor =
+    cursorToken || safeOffset === 0
+      ? rows.length === safeLimit && lastRow
+        ? encodeCursorToken({
+            importedAt: toCursorDateTime(lastRow.imported_at),
+            id: parsePositiveInt(lastRow.id),
+          })
+        : null
+      : null;
+
   return {
-    rows: listResult.rows || [],
+    rows,
     total,
     limit: filters.limit,
-    offset: filters.offset,
+    offset: cursorToken ? 0 : filters.offset,
+    pageMode: cursorToken ? "CURSOR" : "OFFSET",
+    nextCursor,
   };
 }
 
@@ -972,13 +1009,26 @@ export async function listBankStatementLineRows({
     params.push(normalizeUpperText(filters.reconStatus));
   }
 
-  const whereSql = conditions.join(" AND ");
+  const baseConditions = [...conditions];
+  const baseParams = [...params];
+  const cursorToken = filters.cursor || null;
+  const cursor = decodeCursorToken(cursorToken);
+  const pageConditions = [...baseConditions];
+  const pageParams = [...baseParams];
+  if (cursorToken) {
+    const cursorTxnDate = requireCursorDateOnly(cursor, "txnDate");
+    const cursorId = requireCursorId(cursor, "id");
+    pageConditions.push("(l.txn_date < ? OR (l.txn_date = ? AND l.id < ?))");
+    pageParams.push(cursorTxnDate, cursorTxnDate, cursorId);
+  }
+  const whereSql = pageConditions.join(" AND ");
+  const countWhereSql = baseConditions.join(" AND ");
 
   const countResult = await query(
     `SELECT COUNT(*) AS total
      FROM bank_statement_lines l
-     WHERE ${whereSql}`,
-    params
+     WHERE ${countWhereSql}`,
+    baseParams
   );
   const total = Number(countResult.rows?.[0]?.total || 0);
 
@@ -986,6 +1036,7 @@ export async function listBankStatementLineRows({
     Number.isInteger(filters.limit) && filters.limit > 0 ? filters.limit : 200;
   const safeOffset =
     Number.isInteger(filters.offset) && filters.offset >= 0 ? filters.offset : 0;
+  const effectiveOffset = cursorToken ? 0 : safeOffset;
 
   const listResult = await query(
     `SELECT
@@ -1026,15 +1077,29 @@ export async function listBankStatementLineRows({
       AND le.tenant_id = l.tenant_id
      WHERE ${whereSql}
      ORDER BY l.txn_date DESC, l.id DESC
-     LIMIT ${safeLimit} OFFSET ${safeOffset}`,
-    params
+     LIMIT ${safeLimit} OFFSET ${effectiveOffset}`,
+    pageParams
   );
 
+  const rows = listResult.rows || [];
+  const lastRow = rows.length > 0 ? rows[rows.length - 1] : null;
+  const nextCursor =
+    cursorToken || safeOffset === 0
+      ? rows.length === safeLimit && lastRow
+        ? encodeCursorToken({
+            txnDate: toCursorDateOnly(lastRow.txn_date),
+            id: parsePositiveInt(lastRow.id),
+          })
+        : null
+      : null;
+
   return {
-    rows: listResult.rows || [],
+    rows,
     total,
     limit: filters.limit,
-    offset: filters.offset,
+    offset: cursorToken ? 0 : filters.offset,
+    pageMode: cursorToken ? "CURSOR" : "OFFSET",
+    nextCursor,
   };
 }
 

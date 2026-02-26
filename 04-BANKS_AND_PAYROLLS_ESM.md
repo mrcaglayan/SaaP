@@ -65,6 +65,7 @@ Permission naming note (important):
 - [ ] PR-H01..PR-H09 Cross-cutting hardening and release gates (in progress)
 - [x] PR-H01 Sensitive Data Security (implemented)
 - [x] PR-H02 Jobs + Retry Engine (implemented)
+- [x] PR-H03 Performance + Indexing + Pagination Hardening (implemented)
 
 ---
 ## Roadmap Content

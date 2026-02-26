@@ -1,5 +1,12 @@
 import { query, withTransaction } from "../db.js";
 import { badRequest, parsePositiveInt } from "../routes/_utils.js";
+import {
+  decodeCursorToken,
+  encodeCursorToken,
+  requireCursorDateTime,
+  requireCursorId,
+  toCursorDateTime,
+} from "../utils/cursorPagination.js";
 import { evaluateBankApprovalNeed } from "./bank.governance.service.js";
 import { submitBankApprovalRequest } from "./bank.approvals.service.js";
 
@@ -27,6 +34,16 @@ function hydrateExceptionRow(row) {
 
 function toPositiveIntOrNull(value) {
   return parsePositiveInt(value) || null;
+}
+
+function exceptionStatusSortRank(status) {
+  const normalized = String(status || "")
+    .trim()
+    .toUpperCase();
+  if (normalized === "OPEN") return 0;
+  if (normalized === "ASSIGNED") return 1;
+  if (normalized === "IGNORED") return 2;
+  return 3;
 }
 
 async function getExceptionRowById({ tenantId, exceptionId, runQuery = query }) {
@@ -336,7 +353,43 @@ export async function listReconciliationExceptionRows({
     params.push(like, like, like, like, like);
   }
 
-  const whereSql = conditions.join(" AND ");
+  const statusSortExpr =
+    "CASE e.status WHEN 'OPEN' THEN 0 WHEN 'ASSIGNED' THEN 1 WHEN 'IGNORED' THEN 2 ELSE 3 END";
+  const baseConditions = [...conditions];
+  const baseParams = [...params];
+  const cursorToken = filters.cursor || null;
+  const cursor = decodeCursorToken(cursorToken);
+  const pageConditions = [...baseConditions];
+  const pageParams = [...baseParams];
+  if (cursorToken) {
+    const cursorStatusRankRaw = Number(cursor?.statusRank);
+    const cursorStatusRank =
+      Number.isInteger(cursorStatusRankRaw) && cursorStatusRankRaw >= 0 && cursorStatusRankRaw <= 3
+        ? cursorStatusRankRaw
+        : null;
+    if (cursorStatusRank === null) {
+      throw badRequest("cursor is invalid");
+    }
+    const cursorUpdatedAt = requireCursorDateTime(cursor, "updatedAt");
+    const cursorId = requireCursorId(cursor, "id");
+    pageConditions.push(
+      `(
+        ${statusSortExpr} > ?
+        OR (${statusSortExpr} = ? AND e.updated_at < ?)
+        OR (${statusSortExpr} = ? AND e.updated_at = ? AND e.id < ?)
+      )`
+    );
+    pageParams.push(
+      cursorStatusRank,
+      cursorStatusRank,
+      cursorUpdatedAt,
+      cursorStatusRank,
+      cursorUpdatedAt,
+      cursorId
+    );
+  }
+  const whereSql = pageConditions.join(" AND ");
+  const countWhereSql = baseConditions.join(" AND ");
   const countResult = await query(
     `SELECT COUNT(*) AS total
      FROM bank_reconciliation_exceptions e
@@ -348,13 +401,14 @@ export async function listReconciliationExceptionRows({
        ON ba.tenant_id = e.tenant_id
       AND ba.legal_entity_id = e.legal_entity_id
       AND ba.id = e.bank_account_id
-     WHERE ${whereSql}`,
-    params
+     WHERE ${countWhereSql}`,
+    baseParams
   );
   const total = Number(countResult.rows?.[0]?.total || 0);
 
   const safeLimit = Number.isInteger(filters.limit) && filters.limit > 0 ? filters.limit : 100;
   const safeOffset = Number.isInteger(filters.offset) && filters.offset >= 0 ? filters.offset : 0;
+  const effectiveOffset = cursorToken ? 0 : safeOffset;
 
   const listResult = await query(
     `SELECT
@@ -379,18 +433,33 @@ export async function listReconciliationExceptionRows({
       AND ba.id = e.bank_account_id
      WHERE ${whereSql}
      ORDER BY
-       CASE e.status WHEN 'OPEN' THEN 0 WHEN 'ASSIGNED' THEN 1 WHEN 'IGNORED' THEN 2 ELSE 3 END ASC,
+       ${statusSortExpr} ASC,
        e.updated_at DESC,
        e.id DESC
-     LIMIT ${safeLimit} OFFSET ${safeOffset}`,
-    params
+     LIMIT ${safeLimit} OFFSET ${effectiveOffset}`,
+    pageParams
   );
 
+  const rawRows = listResult.rows || [];
+  const lastRow = rawRows.length > 0 ? rawRows[rawRows.length - 1] : null;
+  const nextCursor =
+    cursorToken || safeOffset === 0
+      ? rawRows.length === safeLimit && lastRow
+        ? encodeCursorToken({
+            statusRank: exceptionStatusSortRank(lastRow.status),
+            updatedAt: toCursorDateTime(lastRow.updated_at),
+            id: parsePositiveInt(lastRow.id),
+          })
+        : null
+      : null;
+
   return {
-    rows: (listResult.rows || []).map(hydrateExceptionRow),
+    rows: rawRows.map(hydrateExceptionRow),
     total,
     limit: filters.limit,
-    offset: filters.offset,
+    offset: cursorToken ? 0 : filters.offset,
+    pageMode: cursorToken ? "CURSOR" : "OFFSET",
+    nextCursor,
   };
 }
 
