@@ -33,6 +33,7 @@
     "test:cash-exceptions": "node scripts/test-cash-exceptions.js",
     "test:bank:prb02": "node scripts/test-bank-prb02-statement-import.js",
     "test:bank:prb03": "node scripts/test-bank-prb03-reconciliation.js",
+    "test:bank:prb07": "node scripts/test-bank-prb07-reconciliation-rules-and-exceptions.js",
     "test:bank:prb06": "node scripts/test-bank-prb06-payment-file-and-ack.js",
     "test:payments:prb04": "node scripts/test-payments-prb04-batches.js",
     "test:payroll:prp01": "node scripts/test-payroll-prp01-import.js",

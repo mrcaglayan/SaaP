@@ -1,5 +1,6 @@
 import { query, withTransaction } from "../db.js";
 import { badRequest, parsePositiveInt } from "../routes/_utils.js";
+import { autoResolveOpenReconciliationExceptionsForLine } from "./bank.reconciliationExceptions.service.js";
 
 const MATCH_EPSILON = 0.005;
 const SUGGESTION_LIMIT = 20;
@@ -79,6 +80,9 @@ async function getStatementLineCore({ tenantId, lineId, runQuery = query }) {
         l.currency_code,
         l.balance_after,
         l.recon_status,
+        l.reconciliation_method,
+        l.reconciliation_rule_id,
+        l.reconciliation_confidence,
         l.raw_row_json,
         l.created_at,
         ba.code AS bank_account_code,
@@ -113,6 +117,8 @@ async function getActiveMatchesForLine({ tenantId, lineId, runQuery = query }) {
         m.match_type,
         m.matched_entity_type,
         m.matched_entity_id,
+        m.reconciliation_rule_id,
+        m.reconciliation_confidence,
         m.matched_amount,
         m.status,
         m.notes,
@@ -397,6 +403,9 @@ export async function listReconciliationQueueRows({
         l.currency_code,
         l.balance_after,
         l.recon_status,
+        l.reconciliation_method,
+        l.reconciliation_rule_id,
+        l.reconciliation_confidence,
         l.created_at,
         ba.code AS bank_account_code,
         ba.name AS bank_account_name,
@@ -559,6 +568,17 @@ export async function matchReconciliationLine({
       runQuery: tx.query,
     });
 
+    const reconciliationRuleId = parsePositiveInt(matchInput.reconciliationRuleId);
+    const reconciliationConfidence =
+      matchInput.reconciliationConfidence === undefined ||
+      matchInput.reconciliationConfidence === null ||
+      matchInput.reconciliationConfidence === ""
+        ? null
+        : Number(Number(matchInput.reconciliationConfidence).toFixed(2));
+    const reconciliationMethod = matchInput.reconciliationMethod
+      ? normalizeUpperText(matchInput.reconciliationMethod)
+      : null;
+
     const insertResult = await tx.query(
       `INSERT INTO bank_reconciliation_matches (
           tenant_id,
@@ -567,12 +587,14 @@ export async function matchReconciliationLine({
           match_type,
           matched_entity_type,
           matched_entity_id,
+          reconciliation_rule_id,
+          reconciliation_confidence,
           matched_amount,
           status,
           notes,
           matched_by_user_id
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?)`,
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?)`,
       [
         tenantId,
         line.legal_entity_id,
@@ -580,11 +602,31 @@ export async function matchReconciliationLine({
         matchInput.matchType || "MANUAL",
         matchInput.matchedEntityType,
         matchInput.matchedEntityId,
+        reconciliationRuleId || null,
+        reconciliationConfidence,
         toAmount(matchInput.matchedAmount),
         matchInput.notes || null,
         userId,
       ]
     );
+
+    if (reconciliationMethod || reconciliationRuleId || reconciliationConfidence !== null) {
+      await tx.query(
+        `UPDATE bank_statement_lines
+         SET reconciliation_method = ?,
+             reconciliation_rule_id = ?,
+             reconciliation_confidence = ?
+         WHERE tenant_id = ?
+           AND id = ?`,
+        [
+          reconciliationMethod || null,
+          reconciliationRuleId || null,
+          reconciliationConfidence,
+          tenantId,
+          lineId,
+        ]
+      );
+    }
 
     const matchId = parsePositiveInt(insertResult.rows?.insertId);
     await writeReconciliationAudit({
@@ -598,6 +640,9 @@ export async function matchReconciliationLine({
         matchedEntityType: matchInput.matchedEntityType,
         matchedEntityId: matchInput.matchedEntityId,
         matchedAmount: toAmount(matchInput.matchedAmount),
+        reconciliationMethod: reconciliationMethod || null,
+        reconciliationRuleId: reconciliationRuleId || null,
+        reconciliationConfidence,
         notes: matchInput.notes || null,
       },
       userId,
@@ -610,6 +655,15 @@ export async function matchReconciliationLine({
       userId,
       runQuery: tx.query,
     });
+    if (normalizeUpperText(updatedLine?.recon_status) === "MATCHED") {
+      await autoResolveOpenReconciliationExceptionsForLine({
+        tenantId,
+        legalEntityId: line.legal_entity_id,
+        statementLineId: lineId,
+        userId,
+        runQuery: tx.query,
+      });
+    }
     const matches = await getActiveMatchesForLine({ tenantId, lineId, runQuery: tx.query });
 
     return {

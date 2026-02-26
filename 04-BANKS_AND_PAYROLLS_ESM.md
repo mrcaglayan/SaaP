@@ -55,7 +55,7 @@ Permission naming note (important):
 - [x] PR-P06 Partial Settlement + Manual Override (implemented)
 - [ ] PR-B05 Bank Connectivity Adapter
 - [x] PR-B06 Payment File Export + Bank Ack Import (implemented)
-- [ ] PR-B07 Reconciliation Rules + Exception Queue
+- [x] PR-B07 Reconciliation Rules + Exception Queue (implemented)
 - [ ] PR-B08-A Auto-Posting Templates
 - [ ] PR-B08-B Returns / Rejections / FX Difference
 - [ ] PR-B09 Bank Approvals / SoD / Thresholds

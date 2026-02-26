@@ -8,6 +8,15 @@ import {
   matchReconciliationLine,
   unmatchReconciliationLine,
 } from "../../api/bankReconciliation.js";
+import {
+  applyReconciliationAutoRun,
+  assignReconciliationException,
+  ignoreReconciliationExceptionItem,
+  listReconciliationExceptions,
+  previewReconciliationAutoRun,
+  resolveReconciliationException,
+  retryReconciliationException,
+} from "../../api/bankReconciliationAutomation.js";
 import { useAuth } from "../../auth/useAuth.js";
 
 function toPositiveInt(value) {
@@ -53,12 +62,19 @@ export default function BankReconciliationPage() {
   const canRead = hasPermission("bank.reconcile.read");
   const canWrite = hasPermission("bank.reconcile.write");
   const canReadBanks = hasPermission("bank.accounts.read");
+  const canAutoRun = hasPermission("bank.reconcile.auto.run");
+  const canReadExceptions = hasPermission("bank.reconcile.exceptions.read");
+  const canWriteExceptions = hasPermission("bank.reconcile.exceptions.write");
 
   const [bankAccounts, setBankAccounts] = useState([]);
   const [filters, setFilters] = useState({
     bankAccountId: "",
     reconStatus: "",
     q: "",
+  });
+  const [autoFilters, setAutoFilters] = useState({
+    dateFrom: "",
+    dateTo: "",
   });
   const [queueRows, setQueueRows] = useState([]);
   const [queueTotal, setQueueTotal] = useState(0);
@@ -67,6 +83,13 @@ export default function BankReconciliationPage() {
   const [selectedMatches, setSelectedMatches] = useState([]);
   const [suggestions, setSuggestions] = useState([]);
   const [auditRows, setAuditRows] = useState([]);
+  const [autoPreviewRows, setAutoPreviewRows] = useState([]);
+  const [autoPreviewSummary, setAutoPreviewSummary] = useState(null);
+  const [autoRunBusy, setAutoRunBusy] = useState(false);
+  const [exceptions, setExceptions] = useState([]);
+  const [exceptionsTotal, setExceptionsTotal] = useState(0);
+  const [loadingExceptions, setLoadingExceptions] = useState(false);
+  const [exceptionStatusFilter, setExceptionStatusFilter] = useState("OPEN");
   const [loadingQueue, setLoadingQueue] = useState(false);
   const [loadingDetails, setLoadingDetails] = useState(false);
   const [actionBusy, setActionBusy] = useState(false);
@@ -137,6 +160,34 @@ export default function BankReconciliationPage() {
     }
   }
 
+  async function loadExceptions() {
+    if (!canReadExceptions) {
+      setExceptions([]);
+      setExceptionsTotal(0);
+      return [];
+    }
+    setLoadingExceptions(true);
+    try {
+      const res = await listReconciliationExceptions({
+        limit: 100,
+        offset: 0,
+        bankAccountId: toPositiveInt(filters.bankAccountId) || undefined,
+        status: exceptionStatusFilter || undefined,
+      });
+      const rows = res?.rows || [];
+      setExceptions(rows);
+      setExceptionsTotal(Number(res?.total || 0));
+      return rows;
+    } catch (err) {
+      setExceptions([]);
+      setExceptionsTotal(0);
+      setError(err?.response?.data?.message || "Failed to load B07 exception queue");
+      return [];
+    } finally {
+      setLoadingExceptions(false);
+    }
+  }
+
   async function loadLineDetails(lineId, queueLineFallback = null) {
     const parsedLineId = toPositiveInt(lineId);
     if (!parsedLineId || !canRead) {
@@ -175,6 +226,130 @@ export default function BankReconciliationPage() {
     const updatedQueueLine =
       rows.find((row) => String(row?.id || "") === String(lineId || "")) || null;
     await loadLineDetails(lineId, updatedQueueLine);
+    await loadExceptions();
+  }
+
+  async function handleAutoPreview() {
+    if (!canAutoRun || autoRunBusy) return;
+    setAutoRunBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      const res = await previewReconciliationAutoRun({
+        bankAccountId: toPositiveInt(filters.bankAccountId) || undefined,
+        dateFrom: autoFilters.dateFrom || undefined,
+        dateTo: autoFilters.dateTo || undefined,
+        limit: 100,
+      });
+      setAutoPreviewRows(res?.rows || []);
+      setAutoPreviewSummary(res?.summary || null);
+      setMessage("B07 automation preview generated");
+    } catch (err) {
+      setError(err?.response?.data?.message || "B07 auto-preview failed");
+    } finally {
+      setAutoRunBusy(false);
+    }
+  }
+
+  async function handleAutoApply() {
+    if (!canAutoRun || autoRunBusy) return;
+    if (!window.confirm("Run B07 auto-apply on current filters?")) return;
+    setAutoRunBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      const res = await applyReconciliationAutoRun({
+        bankAccountId: toPositiveInt(filters.bankAccountId) || undefined,
+        dateFrom: autoFilters.dateFrom || undefined,
+        dateTo: autoFilters.dateTo || undefined,
+        limit: 100,
+        runRequestId: `b07-${Date.now()}`,
+      });
+      setAutoPreviewRows(res?.rows || []);
+      setAutoPreviewSummary(res?.summary || null);
+        const refreshedQueue = await loadQueue({ preserveSelection: true });
+        await loadExceptions();
+        if (selectedLineId) {
+          const queueLine =
+            refreshedQueue.find((row) => String(row?.id || "") === String(selectedLineId || "")) ||
+            null;
+          await loadLineDetails(selectedLineId, queueLine);
+        }
+      setMessage(
+        `B07 auto-apply completed${res?.replay ? " (replay)" : ""}: reconciled ${
+          res?.summary?.reconciledCount ?? 0
+        }, exceptions ${res?.summary?.exceptionCount ?? 0}`
+      );
+    } catch (err) {
+      setError(err?.response?.data?.message || "B07 auto-apply failed");
+    } finally {
+      setAutoRunBusy(false);
+    }
+  }
+
+  async function handleAssignExceptionToMe(exceptionId) {
+    if (!canWriteExceptions) return;
+    setActionBusy(true);
+    setError("");
+    try {
+      await assignReconciliationException(exceptionId, {});
+      await loadExceptions();
+      setMessage("Exception assigned");
+    } catch (err) {
+      setError(err?.response?.data?.message || "Exception assign failed");
+    } finally {
+      setActionBusy(false);
+    }
+  }
+
+  async function handleResolveException(exceptionId) {
+    if (!canWriteExceptions) return;
+    const resolutionNote = window.prompt("Resolution note (optional):", "") || "";
+    setActionBusy(true);
+    setError("");
+    try {
+      await resolveReconciliationException(exceptionId, {
+        resolutionCode: "RESOLVED_MANUALLY",
+        resolutionNote,
+      });
+      await loadExceptions();
+      setMessage("Exception resolved");
+    } catch (err) {
+      setError(err?.response?.data?.message || "Exception resolve failed");
+    } finally {
+      setActionBusy(false);
+    }
+  }
+
+  async function handleIgnoreExceptionItem(exceptionId) {
+    if (!canWriteExceptions) return;
+    const resolutionNote = window.prompt("Ignore note (optional):", "") || "";
+    setActionBusy(true);
+    setError("");
+    try {
+      await ignoreReconciliationExceptionItem(exceptionId, { resolutionNote });
+      await loadExceptions();
+      setMessage("Exception ignored");
+    } catch (err) {
+      setError(err?.response?.data?.message || "Exception ignore failed");
+    } finally {
+      setActionBusy(false);
+    }
+  }
+
+  async function handleRetryExceptionItem(exceptionId) {
+    if (!canWriteExceptions) return;
+    setActionBusy(true);
+    setError("");
+    try {
+      await retryReconciliationException(exceptionId, {});
+      await loadExceptions();
+      setMessage("Exception reopened for retry");
+    } catch (err) {
+      setError(err?.response?.data?.message || "Exception retry failed");
+    } finally {
+      setActionBusy(false);
+    }
   }
 
   async function handleMatchSuggestion(suggestion) {
@@ -253,6 +428,11 @@ export default function BankReconciliationPage() {
   }, [canRead]);
 
   useEffect(() => {
+    loadExceptions();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canReadExceptions, exceptionStatusFilter, filters.bankAccountId]);
+
+  useEffect(() => {
     loadBankLookups();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canReadBanks]);
@@ -311,6 +491,7 @@ export default function BankReconciliationPage() {
           onSubmit={(event) => {
             event.preventDefault();
             loadQueue({ preserveSelection: false });
+            loadExceptions();
           }}
           className="grid gap-3 lg:grid-cols-[2fr_1fr_1fr_auto]"
         >
@@ -379,6 +560,101 @@ export default function BankReconciliationPage() {
             </button>
           </div>
         </form>
+      </section>
+
+      <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="mb-3 flex items-center justify-between">
+          <div>
+            <h2 className="text-sm font-semibold text-slate-900">B07 Automation</h2>
+            <p className="text-xs text-slate-500">
+              Deterministic rule preview/apply on top of B03 reconciliation core.
+            </p>
+          </div>
+          {!canAutoRun ? (
+            <span className="text-xs text-slate-500">Missing: bank.reconcile.auto.run</span>
+          ) : null}
+        </div>
+        <div className="grid gap-3 lg:grid-cols-[1fr_1fr_auto]">
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-700">Date From</label>
+            <input
+              type="date"
+              value={autoFilters.dateFrom}
+              onChange={(e) => setAutoFilters((p) => ({ ...p, dateFrom: e.target.value }))}
+              className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-700">Date To</label>
+            <input
+              type="date"
+              value={autoFilters.dateTo}
+              onChange={(e) => setAutoFilters((p) => ({ ...p, dateTo: e.target.value }))}
+              className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+            />
+          </div>
+          <div className="flex items-end gap-2">
+            <button
+              type="button"
+              onClick={handleAutoPreview}
+              disabled={!canAutoRun || autoRunBusy}
+              className="rounded border border-slate-300 px-3 py-2 text-sm text-slate-700 disabled:opacity-50"
+            >
+              {autoRunBusy ? "..." : "Preview"}
+            </button>
+            <button
+              type="button"
+              onClick={handleAutoApply}
+              disabled={!canAutoRun || autoRunBusy}
+              className="rounded bg-slate-900 px-3 py-2 text-sm font-medium text-white disabled:opacity-50"
+            >
+              {autoRunBusy ? "..." : "Apply"}
+            </button>
+          </div>
+        </div>
+        {autoPreviewSummary ? (
+          <div className="mt-3 rounded border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700">
+            scanned {autoPreviewSummary.scannedCount || 0} | matched{" "}
+            {autoPreviewSummary.matchedCount || 0} | reconciled{" "}
+            {autoPreviewSummary.reconciledCount || 0} | exceptions{" "}
+            {autoPreviewSummary.exceptionCount || 0} | rules{" "}
+            {autoPreviewSummary.rulesEvaluated || 0}
+          </div>
+        ) : null}
+        <div className="mt-3 max-h-48 overflow-auto">
+          <table className="min-w-full text-left text-xs">
+            <thead className="bg-slate-50 text-slate-600">
+              <tr>
+                <th className="px-2 py-2">Line</th>
+                <th className="px-2 py-2">Outcome</th>
+                <th className="px-2 py-2">Rule</th>
+                <th className="px-2 py-2">Target</th>
+              </tr>
+            </thead>
+            <tbody>
+              {autoPreviewRows.length === 0 ? (
+                <tr>
+                  <td className="px-2 py-2 text-slate-500" colSpan={4}>
+                    No B07 preview rows yet.
+                  </td>
+                </tr>
+              ) : (
+                autoPreviewRows.slice(0, 50).map((row) => (
+                  <tr key={`b07-preview-${row.statementLineId}`} className="border-t">
+                    <td className="px-2 py-2">
+                      #{row.statementLineId} {formatDate(row.txnDate)}
+                    </td>
+                    <td className="px-2 py-2">{row.outcome}</td>
+                    <td className="px-2 py-2">{row.rule?.ruleCode || "-"}</td>
+                    <td className="px-2 py-2">
+                      {row.target?.entityType ? `${row.target.entityType}/${row.target.entityId}` : "-"}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
       </section>
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1.4fr)]">
@@ -472,6 +748,14 @@ export default function BankReconciliationPage() {
                   <strong>Status:</strong> {selectedLine.recon_status}
                 </div>
                 <div>
+                  <strong>B07 Meta:</strong>{" "}
+                  {selectedLine.reconciliation_method || selectedLine.reconciliation_rule_id
+                    ? `${selectedLine.reconciliation_method || "-"} / rule ${
+                        selectedLine.reconciliation_rule_id || "-"
+                      } / conf ${selectedLine.reconciliation_confidence ?? "-"}`
+                    : "-"}
+                </div>
+                <div>
                   <strong>Bank:</strong> {selectedLine.bank_account_code || "-"}
                 </div>
               </div>
@@ -500,6 +784,14 @@ export default function BankReconciliationPage() {
                         <div>
                           Amount: {formatAmount(row.matched_amount)} | Type: {row.match_type}
                         </div>
+                        {(row.reconciliation_rule_id ||
+                          (row.reconciliation_confidence !== undefined &&
+                            row.reconciliation_confidence !== null)) && (
+                          <div className="text-slate-500">
+                            Rule: {row.reconciliation_rule_id || "-"} | Confidence:{" "}
+                            {row.reconciliation_confidence ?? "-"}
+                          </div>
+                        )}
                         <div className="text-slate-500">
                           {row.notes || "-"} | {formatDateTime(row.matched_at)}
                         </div>
@@ -575,6 +867,133 @@ export default function BankReconciliationPage() {
           )}
         </section>
       </div>
+
+      <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="mb-3 flex items-center justify-between">
+          <div>
+            <h2 className="text-sm font-semibold text-slate-900">B07 Exception Queue</h2>
+            <p className="text-xs text-slate-500">
+              Unmatched / ambiguous / policy-blocked automation results.
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <select
+              value={exceptionStatusFilter}
+              onChange={(e) => setExceptionStatusFilter(e.target.value)}
+              className="rounded border border-slate-300 px-2 py-1 text-xs"
+              disabled={!canReadExceptions}
+            >
+              <option value="">ALL</option>
+              <option value="OPEN">OPEN</option>
+              <option value="ASSIGNED">ASSIGNED</option>
+              <option value="RESOLVED">RESOLVED</option>
+              <option value="IGNORED">IGNORED</option>
+            </select>
+            <button
+              type="button"
+              onClick={() => loadExceptions()}
+              className="rounded border border-slate-300 px-2 py-1 text-xs text-slate-700"
+              disabled={!canReadExceptions || loadingExceptions}
+            >
+              {loadingExceptions ? "..." : "Refresh"}
+            </button>
+          </div>
+        </div>
+        {!canReadExceptions ? (
+          <div className="text-xs text-slate-500">Missing permission: bank.reconcile.exceptions.read</div>
+        ) : (
+          <div className="max-h-72 overflow-auto">
+            <table className="min-w-full text-left text-xs">
+              <thead className="sticky top-0 bg-slate-50 text-slate-600">
+                <tr>
+                  <th className="px-2 py-2">ID</th>
+                  <th className="px-2 py-2">Line</th>
+                  <th className="px-2 py-2">Reason</th>
+                  <th className="px-2 py-2">Status</th>
+                  <th className="px-2 py-2">Rule</th>
+                  <th className="px-2 py-2">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {exceptions.length === 0 ? (
+                  <tr>
+                    <td className="px-2 py-2 text-slate-500" colSpan={6}>
+                      {loadingExceptions
+                        ? "Loading exceptions..."
+                        : `No exception rows (${exceptionsTotal} total).`}
+                    </td>
+                  </tr>
+                ) : (
+                  exceptions.map((row) => (
+                    <tr key={row.id} className="border-t">
+                      <td className="px-2 py-2">#{row.id}</td>
+                      <td className="px-2 py-2">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedLineId(String(row.statement_line_id))}
+                          className="text-left text-slate-700 underline-offset-2 hover:underline"
+                        >
+                          #{row.statement_line_id}
+                        </button>
+                        <div className="text-[11px] text-slate-500">
+                          {formatDate(row.txn_date)} | {formatAmount(row.statement_amount)}
+                        </div>
+                      </td>
+                      <td className="px-2 py-2">
+                        <div>{row.reason_code}</div>
+                        <div className="max-w-[260px] truncate text-[11px] text-slate-500" title={row.reason_message}>
+                          {row.reason_message || "-"}
+                        </div>
+                      </td>
+                      <td className="px-2 py-2">
+                        <div>{row.status}</div>
+                        <div className="text-[11px] text-slate-500">{row.severity}</div>
+                      </td>
+                      <td className="px-2 py-2">{row.matched_rule_id || "-"}</td>
+                      <td className="px-2 py-2">
+                        <div className="flex flex-wrap gap-1">
+                          <button
+                            type="button"
+                            onClick={() => handleAssignExceptionToMe(row.id)}
+                            disabled={!canWriteExceptions || actionBusy}
+                            className="rounded border border-slate-300 px-2 py-1 text-[11px] text-slate-700 disabled:opacity-50"
+                          >
+                            Assign
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleResolveException(row.id)}
+                            disabled={!canWriteExceptions || actionBusy}
+                            className="rounded border border-slate-300 px-2 py-1 text-[11px] text-slate-700 disabled:opacity-50"
+                          >
+                            Resolve
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleIgnoreExceptionItem(row.id)}
+                            disabled={!canWriteExceptions || actionBusy}
+                            className="rounded border border-slate-300 px-2 py-1 text-[11px] text-slate-700 disabled:opacity-50"
+                          >
+                            Ignore
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleRetryExceptionItem(row.id)}
+                            disabled={!canWriteExceptions || actionBusy}
+                            className="rounded border border-slate-300 px-2 py-1 text-[11px] text-slate-700 disabled:opacity-50"
+                          >
+                            Retry
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
     </div>
   );
 }
