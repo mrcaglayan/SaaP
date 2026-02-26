@@ -83,6 +83,12 @@ async function getStatementLineCore({ tenantId, lineId, runQuery = query }) {
         l.reconciliation_method,
         l.reconciliation_rule_id,
         l.reconciliation_confidence,
+        l.auto_post_template_id,
+        l.auto_post_journal_entry_id,
+        l.reconciliation_difference_type,
+        l.reconciliation_difference_amount,
+        l.reconciliation_difference_profile_id,
+        l.reconciliation_difference_journal_entry_id,
         l.raw_row_json,
         l.created_at,
         ba.code AS bank_account_code,
@@ -406,6 +412,12 @@ export async function listReconciliationQueueRows({
         l.reconciliation_method,
         l.reconciliation_rule_id,
         l.reconciliation_confidence,
+        l.auto_post_template_id,
+        l.auto_post_journal_entry_id,
+        l.reconciliation_difference_type,
+        l.reconciliation_difference_amount,
+        l.reconciliation_difference_profile_id,
+        l.reconciliation_difference_journal_entry_id,
         l.created_at,
         ba.code AS bank_account_code,
         ba.name AS bank_account_name,
@@ -671,6 +683,93 @@ export async function matchReconciliationLine({
       matches,
     };
   });
+}
+
+export async function reconcileStatementLineToJournal({
+  req,
+  tenantId,
+  lineId,
+  journalEntryId,
+  userId,
+  notes = null,
+  reconciliationMethod = "RULE_AUTO_POST",
+  reconciliationRuleId = null,
+  reconciliationConfidence = null,
+  assertScopeAccess,
+}) {
+  const parsedLineId = parsePositiveInt(lineId);
+  const parsedJournalEntryId = parsePositiveInt(journalEntryId);
+  if (!parsedLineId || !parsedJournalEntryId) {
+    throw badRequest("lineId and journalEntryId are required");
+  }
+
+  const line = await getStatementLineCore({ tenantId, lineId: parsedLineId });
+  if (!line) {
+    throw badRequest("Statement line not found");
+  }
+  if (req && typeof assertScopeAccess === "function") {
+    assertScopeAccess(req, "legal_entity", line.legal_entity_id, "lineId");
+  }
+
+  const activeMatches = await getActiveMatchesForLine({ tenantId, lineId: parsedLineId });
+  const existingJournalMatch = activeMatches.find(
+    (row) =>
+      normalizeUpperText(row?.status) === "ACTIVE" &&
+      normalizeUpperText(row?.matched_entity_type) === "JOURNAL" &&
+      parsePositiveInt(row?.matched_entity_id) === parsedJournalEntryId
+  );
+
+  if (existingJournalMatch) {
+    return {
+      idempotent: true,
+      line,
+      matches: activeMatches,
+      matchedAmount: toAmount(existingJournalMatch.matched_amount),
+    };
+  }
+
+  const activeMatchedTotal = activeMatches.reduce(
+    (sum, row) => sum + toAmount(row?.matched_amount || 0),
+    0
+  );
+  const remaining = Number(
+    Math.max(0, absAmount(line.amount) - absAmount(activeMatchedTotal)).toFixed(6)
+  );
+  if (remaining <= MATCH_EPSILON) {
+    return {
+      idempotent: true,
+      line,
+      matches: activeMatches,
+      matchedAmount: 0,
+    };
+  }
+
+  const result = await matchReconciliationLine({
+    req,
+    tenantId,
+    lineId: parsedLineId,
+    matchInput: {
+      matchType: "AUTO_RULE",
+      matchedEntityType: "JOURNAL",
+      matchedEntityId: parsedJournalEntryId,
+      matchedAmount: remaining,
+      notes: notes || `Auto-post journal reconciliation JE#${parsedJournalEntryId}`,
+      reconciliationMethod,
+      reconciliationRuleId: parsePositiveInt(reconciliationRuleId) || null,
+      reconciliationConfidence:
+        reconciliationConfidence === null || reconciliationConfidence === undefined
+          ? null
+          : Number(Number(reconciliationConfidence).toFixed(2)),
+    },
+    userId,
+    assertScopeAccess: assertScopeAccess || (() => {}),
+  });
+
+  return {
+    idempotent: false,
+    matchedAmount: remaining,
+    ...result,
+  };
 }
 
 export async function unmatchReconciliationLine({

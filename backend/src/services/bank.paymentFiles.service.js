@@ -6,6 +6,7 @@ import {
   getPaymentBatchDetailByIdForTenant,
 } from "./payments.service.js";
 import { getBankPaymentFileFormat } from "./bankPaymentFileFormats/index.js";
+import { ingestReturnEventsFromAckImportTx } from "./bank.paymentReturns.service.js";
 
 function up(value) {
   return String(value || "")
@@ -406,6 +407,14 @@ export async function exportPaymentBatchFile({
         userId,
       ]
     );
+
+    await ingestReturnEventsFromAckImportTx({
+      tenantId,
+      legalEntityId: batch.legal_entity_id,
+      ackImportId,
+      userId,
+      runQuery: tx.query,
+    });
   });
 
   const row = await getPaymentBatchDetailByIdForTenant({ req, tenantId, batchId, assertScopeAccess });

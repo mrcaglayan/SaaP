@@ -37,6 +37,8 @@
     "test:bank:prb03": "node scripts/test-bank-prb03-reconciliation.js",
     "test:bank:prb07": "node scripts/test-bank-prb07-reconciliation-rules-and-exceptions.js",
     "test:bank:prb06": "node scripts/test-bank-prb06-payment-file-and-ack.js",
+    "test:bank:prb08a": "node scripts/test-bank-prb08a-autopost-templates.js",
+    "test:bank:prb08b": "node scripts/test-bank-prb08b-returns-rejections-fx.js",
     "test:payments:prb04": "node scripts/test-payments-prb04-batches.js",
     "test:payroll:prp01": "node scripts/test-payroll-prp01-import.js",
     "test:payroll:prp02": "node scripts/test-payroll-prp02-accrual-posting.js",

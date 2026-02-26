@@ -3,6 +3,15 @@ import { badRequest, parsePositiveInt } from "../routes/_utils.js";
 import { listActiveRulesForAutomation } from "./bank.reconciliationRules.service.js";
 import { upsertReconciliationException } from "./bank.reconciliationExceptions.service.js";
 import { matchReconciliationLine } from "./bank.reconciliation.service.js";
+import { autoPostTemplateAndReconcileStatementLine } from "./bank.reconciliationAutoPosting.service.js";
+import {
+  findPaymentLineCandidatesForReturnAutomation,
+  processPaymentReturnFromStatementLine,
+} from "./bank.paymentReturns.service.js";
+import {
+  autoMatchPaymentLineWithDifferenceAndReconcile,
+  findPaymentLineCandidatesForDifferenceAutomation,
+} from "./bank.reconciliationDifferences.service.js";
 import { resolveBankAccountScope } from "./bank.accounts.service.js";
 
 const AMOUNT_EPSILON = 0.01;
@@ -100,10 +109,45 @@ function targetSummary(t) {
   return {
     entityType: t.entityType,
     entityId: t.entityId,
+    paymentBatchId: t.paymentBatchId || null,
+    differenceProfileId: t.differenceProfileId || null,
+    differenceAmountAbs:
+      t.differenceAmountAbs === null || t.differenceAmountAbs === undefined
+        ? null
+        : toAmount(t.differenceAmountAbs),
     amount: toAmount(t.amount),
     displayRef: t.displayRef || null,
     displayText: t.displayText || null,
   };
+}
+
+function getAutoPostTemplateTargetFromRule(rule, line) {
+  const payload = rule?.action_payload_json || {};
+  const templateId = parsePositiveInt(
+    payload.postingTemplateId ??
+      payload.posting_template_id ??
+      payload.templateId ??
+      payload.template_id
+  );
+  if (!templateId) return null;
+  return {
+    entityType: "POSTING_TEMPLATE",
+    entityId: templateId,
+    amount: remainingAmountAbs(line),
+    displayRef: payload.templateCode || payload.template_code || `B08TPL#${templateId}`,
+    displayText: payload.templateName || payload.template_name || "Auto-post template",
+    date: line?.txn_date || null,
+  };
+}
+
+function getDifferenceProfileIdFromRule(rule) {
+  const payload = rule?.action_payload_json || {};
+  return parsePositiveInt(
+    payload.differenceProfileId ??
+      payload.difference_profile_id ??
+      payload.profileId ??
+      payload.profile_id
+  );
 }
 
 function confidenceScore({ rule, line, target, exactRef = false }) {
@@ -345,6 +389,13 @@ async function journalCandidates({ tenantId, line, rule }) {
 
 async function candidatesForRule({ tenantId, line, rule }) {
   const mt = u(rule.match_type);
+  const action = u(rule.action_type);
+  if (action === "PROCESS_PAYMENT_RETURN") {
+    return findPaymentLineCandidatesForReturnAutomation({ tenantId, line, rule });
+  }
+  if (action === "AUTO_MATCH_PAYMENT_LINE_WITH_DIFFERENCE") {
+    return findPaymentLineCandidatesForDifferenceAutomation({ tenantId, line, rule });
+  }
   if (mt === "PAYMENT_BY_BANK_REFERENCE" || mt === "PAYMENT_BY_TEXT_AND_AMOUNT") {
     return paymentBatchCandidates({ tenantId, line, rule });
   }
@@ -367,6 +418,99 @@ async function evaluateLine({ tenantId, line, rules }) {
     const action = u(rule.action_type);
     if (action === "QUEUE_EXCEPTION") {
       return { line, outcome: "RULE_QUEUE_EXCEPTION", reasonCode: "RULE_QUEUE_EXCEPTION", reasonMessage: "Rule requested queue", rule, candidates: [], target: null, confidence: null };
+    }
+    if (action === "AUTO_POST_TEMPLATE") {
+      const target = getAutoPostTemplateTargetFromRule(rule, line);
+      if (!target) {
+        return {
+          line,
+          outcome: "POLICY_BLOCKED",
+          reasonCode: "POLICY_BLOCKED",
+          reasonMessage: "AUTO_POST_TEMPLATE requires actionPayload.postingTemplateId",
+          rule,
+          candidates: [],
+          target: null,
+          confidence: null,
+        };
+      }
+      return {
+        line,
+        outcome: "AUTO_POST_READY",
+        reasonCode: null,
+        reasonMessage: null,
+        rule,
+        candidates: [],
+        target,
+        confidence: 95,
+      };
+    }
+    if (action === "PROCESS_PAYMENT_RETURN") {
+      const candidates = await candidatesForRule({ tenantId, line, rule });
+      if (!candidates.length) continue;
+      if (candidates.length > 1) {
+        return {
+          line,
+          outcome: "AMBIGUOUS_TARGET",
+          reasonCode: "AMBIGUOUS_TARGET",
+          reasonMessage: `Return rule found ${candidates.length} payment line candidates`,
+          rule,
+          candidates,
+          target: null,
+          confidence: null,
+        };
+      }
+      const target = candidates[0];
+      return {
+        line,
+        outcome: "AUTO_RETURN_READY",
+        reasonCode: null,
+        reasonMessage: null,
+        rule,
+        candidates,
+        target,
+        confidence: Number(target.confidence ?? 85),
+      };
+    }
+    if (action === "AUTO_MATCH_PAYMENT_LINE_WITH_DIFFERENCE") {
+      const differenceProfileId = getDifferenceProfileIdFromRule(rule);
+      if (!differenceProfileId) {
+        return {
+          line,
+          outcome: "POLICY_BLOCKED",
+          reasonCode: "POLICY_BLOCKED",
+          reasonMessage:
+            "AUTO_MATCH_PAYMENT_LINE_WITH_DIFFERENCE requires actionPayload.differenceProfileId",
+          rule,
+          candidates: [],
+          target: null,
+          confidence: null,
+        };
+      }
+      const candidates = await candidatesForRule({ tenantId, line, rule });
+      if (!candidates.length) continue;
+      if (candidates.length > 1) {
+        return {
+          line,
+          outcome: "AMBIGUOUS_TARGET",
+          reasonCode: "AMBIGUOUS_TARGET",
+          reasonMessage: `Difference rule found ${candidates.length} payment line candidates`,
+          rule,
+          candidates,
+          target: null,
+          confidence: null,
+        };
+      }
+      const target = { ...candidates[0], differenceProfileId };
+      return {
+        line,
+        outcome: "AUTO_DIFF_READY",
+        reasonCode: null,
+        reasonMessage: null,
+        rule,
+        candidates: [target],
+        target,
+        confidence: Number(target.confidence ?? 85),
+      };
     }
     const candidates = await candidatesForRule({ tenantId, line, rule });
     if (!candidates.length) continue;
@@ -415,8 +559,17 @@ function evalRow(e) {
 function summarize(rows, mode) {
   const s = { scannedCount: rows.length, matchedCount: 0, reconciledCount: 0, exceptionCount: 0, skippedCount: 0, errorCount: 0 };
   for (const row of rows) {
-    if (row.outcome === "AUTO_MATCH_READY") s.matchedCount += 1;
-    if (mode === "APPLY" && row.outcome === "RECONCILED") s.reconciledCount += 1;
+    if (["AUTO_MATCH_READY", "AUTO_POST_READY", "AUTO_RETURN_READY", "AUTO_DIFF_READY"].includes(row.outcome)) {
+      s.matchedCount += 1;
+    }
+    if (
+      mode === "APPLY" &&
+      ["RECONCILED", "AUTO_POSTED_RECONCILED", "RETURN_PROCESSED_RECONCILED", "DIFFERENCE_RECONCILED"].includes(
+        row.outcome
+      )
+    ) {
+      s.reconciledCount += 1;
+    }
     if (["NO_RULE_MATCH", "AMBIGUOUS_TARGET", "POLICY_BLOCKED", "APPLY_ERROR", "RULE_QUEUE_EXCEPTION"].includes(row.outcome)) s.exceptionCount += 1;
     if (row.outcome === "SKIPPED") s.skippedCount += 1;
     if (row.outcome === "ERROR") s.errorCount += 1;
@@ -600,6 +753,149 @@ export async function applyBankReconciliationAutoRun({
           evaluation.outcome = "APPLY_ERROR";
           evaluation.reasonCode = "APPLY_ERROR";
           evaluation.reasonMessage = err?.message || "Auto apply failed";
+          status = "PARTIAL";
+        }
+      }
+
+      if (evaluation.outcome === "AUTO_POST_READY" && evaluation.target) {
+        try {
+          const autoPostResult = await autoPostTemplateAndReconcileStatementLine({
+            req,
+            tenantId,
+            lineId: line.id,
+            templateId: evaluation.target.entityId,
+            userId: filters.userId || null,
+            ruleId: parsePositiveInt(evaluation.rule?.id) || null,
+            confidence:
+              evaluation.confidence === null || evaluation.confidence === undefined
+                ? null
+                : Number(Number(evaluation.confidence).toFixed(2)),
+            assertScopeAccess,
+          });
+          rows.push({
+            ...evalRow(evaluation),
+            outcome: "AUTO_POSTED_RECONCILED",
+            reconStatus: autoPostResult?.line?.recon_status || "MATCHED",
+            target: {
+              entityType: "JOURNAL",
+              entityId: parsePositiveInt(autoPostResult?.journal?.id) || null,
+              amount: remainingAmountAbs(line),
+              displayRef: autoPostResult?.journal?.journal_no || null,
+              displayText: evaluation.target?.displayText || "Auto-posted journal",
+            },
+            candidateCount: 0,
+            candidateSample: [],
+            exceptionId: null,
+            autoPosting: {
+              id: parsePositiveInt(autoPostResult?.auto_posting?.id) || null,
+              templateId: parsePositiveInt(autoPostResult?.template?.id) || evaluation.target.entityId,
+              journalId: parsePositiveInt(autoPostResult?.journal?.id) || null,
+              idempotent: Boolean(autoPostResult?.idempotent),
+              reconciliationIdempotent: Boolean(autoPostResult?.reconciliation?.idempotent),
+            },
+          });
+          continue;
+        } catch (err) {
+          evaluation.outcome = "APPLY_ERROR";
+          evaluation.reasonCode = "APPLY_ERROR";
+          evaluation.reasonMessage = err?.message || "Auto-post apply failed";
+          status = "PARTIAL";
+        }
+      }
+
+      if (evaluation.outcome === "AUTO_RETURN_READY" && evaluation.target) {
+        try {
+          const returnResult = await processPaymentReturnFromStatementLine({
+            req,
+            tenantId,
+            lineId: line.id,
+            userId: filters.userId || null,
+            input: {
+              paymentBatchLineId: evaluation.target.entityId,
+              eventType:
+                evaluation.rule?.action_payload_json?.eventType ??
+                evaluation.rule?.action_payload_json?.event_type ??
+                "PAYMENT_RETURNED",
+              reasonCode:
+                evaluation.rule?.action_payload_json?.reasonCode ??
+                evaluation.rule?.action_payload_json?.reason_code ??
+                null,
+              reasonMessage:
+                evaluation.rule?.action_payload_json?.reasonMessage ??
+                evaluation.rule?.action_payload_json?.reason_message ??
+                null,
+            },
+            ruleId: parsePositiveInt(evaluation.rule?.id) || null,
+            confidence:
+              evaluation.confidence === null || evaluation.confidence === undefined
+                ? null
+                : Number(Number(evaluation.confidence).toFixed(2)),
+            assertScopeAccess,
+          });
+          rows.push({
+            ...evalRow(evaluation),
+            outcome: "RETURN_PROCESSED_RECONCILED",
+            reconStatus: returnResult?.reconciliation?.line?.recon_status || "MATCHED",
+            target: {
+              entityType: "PAYMENT_BATCH",
+              entityId: parsePositiveInt(returnResult?.paymentBatchId) || null,
+              paymentBatchId: parsePositiveInt(returnResult?.paymentBatchId) || null,
+              amount: remainingAmountAbs(line),
+              displayRef: evaluation.target?.displayRef || null,
+              displayText: evaluation.target?.displayText || "B08-B return",
+            },
+            returnProcessing: {
+              paymentBatchLineId: parsePositiveInt(returnResult?.paymentBatchLineId) || null,
+              eventId: parsePositiveInt(returnResult?.returnEvent?.id) || null,
+              eventIdempotent: Boolean(returnResult?.returnEventIdempotent),
+            },
+            exceptionId: null,
+          });
+          continue;
+        } catch (err) {
+          evaluation.outcome = "APPLY_ERROR";
+          evaluation.reasonCode = "APPLY_ERROR";
+          evaluation.reasonMessage = err?.message || "B08-B return processing failed";
+          status = "PARTIAL";
+        }
+      }
+
+      if (evaluation.outcome === "AUTO_DIFF_READY" && evaluation.target) {
+        try {
+          const diffResult = await autoMatchPaymentLineWithDifferenceAndReconcile({
+            req,
+            tenantId,
+            lineId: line.id,
+            paymentBatchLineId: evaluation.target.entityId,
+            differenceProfileId: evaluation.target.differenceProfileId,
+            userId: filters.userId || null,
+            ruleId: parsePositiveInt(evaluation.rule?.id) || null,
+            confidence:
+              evaluation.confidence === null || evaluation.confidence === undefined
+                ? null
+                : Number(Number(evaluation.confidence).toFixed(2)),
+            assertScopeAccess,
+          });
+          rows.push({
+            ...evalRow(evaluation),
+            outcome: "DIFFERENCE_RECONCILED",
+            reconStatus: diffResult?.statementLine?.recon_status || "MATCHED",
+            difference: diffResult?.difference || null,
+            differenceAdjustment: {
+              id: parsePositiveInt(diffResult?.adjustment?.id) || null,
+              journalEntryId:
+                parsePositiveInt(diffResult?.adjustment?.journal_entry_id) ||
+                parsePositiveInt(diffResult?.journal?.id) ||
+                null,
+              idempotent: Boolean(diffResult?.idempotent),
+            },
+            exceptionId: null,
+          });
+          continue;
+        } catch (err) {
+          evaluation.outcome = "APPLY_ERROR";
+          evaluation.reasonCode = "APPLY_ERROR";
+          evaluation.reasonMessage = err?.message || "B08-B difference auto-match failed";
           status = "PARTIAL";
         }
       }

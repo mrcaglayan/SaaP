@@ -17,6 +17,21 @@ import {
   resolveReconciliationException,
   retryReconciliationException,
 } from "../../api/bankReconciliationAutomation.js";
+import {
+  createReconciliationPostingTemplate,
+  listReconciliationPostingTemplates,
+  updateReconciliationPostingTemplate,
+} from "../../api/bankReconciliationPostingTemplates.js";
+import {
+  createReconciliationDifferenceProfile,
+  listReconciliationDifferenceProfiles,
+  updateReconciliationDifferenceProfile,
+} from "../../api/bankReconciliationDifferenceProfiles.js";
+import {
+  createBankPaymentReturn,
+  ignoreBankPaymentReturn,
+  listBankPaymentReturns,
+} from "../../api/bankPaymentReturns.js";
 import { useAuth } from "../../auth/useAuth.js";
 
 function toPositiveInt(value) {
@@ -57,12 +72,103 @@ function formatAmount(value) {
   });
 }
 
+const EMPTY_B08_TEMPLATE_FORM = {
+  id: "",
+  scopeType: "LEGAL_ENTITY",
+  legalEntityId: "",
+  bankAccountId: "",
+  templateCode: "",
+  templateName: "",
+  status: "ACTIVE",
+  entryKind: "BANK_MISC",
+  directionPolicy: "BOTH",
+  counterAccountId: "",
+  descriptionMode: "USE_STATEMENT_TEXT",
+  fixedDescription: "",
+  descriptionPrefix: "",
+};
+
+const EMPTY_B08B_DIFF_PROFILE_FORM = {
+  id: "",
+  scopeType: "LEGAL_ENTITY",
+  legalEntityId: "",
+  bankAccountId: "",
+  profileCode: "",
+  profileName: "",
+  status: "ACTIVE",
+  differenceType: "FEE",
+  directionPolicy: "BOTH",
+  maxAbsDifference: "0",
+  expenseAccountId: "",
+  fxGainAccountId: "",
+  fxLossAccountId: "",
+  currencyCode: "",
+  descriptionPrefix: "",
+};
+
+const EMPTY_B08B_RETURN_FORM = {
+  paymentBatchLineId: "",
+  bankStatementLineId: "",
+  eventType: "PAYMENT_RETURNED",
+  amount: "",
+  currencyCode: "",
+  reasonCode: "",
+  reasonMessage: "",
+};
+
+function mapB08TemplateRowToForm(row) {
+  return {
+    id: String(row?.id || ""),
+    scopeType: String(row?.scope_type || "LEGAL_ENTITY"),
+    legalEntityId: String(row?.legal_entity_id || ""),
+    bankAccountId: String(row?.bank_account_id || ""),
+    templateCode: String(row?.template_code || ""),
+    templateName: String(row?.template_name || ""),
+    status: String(row?.status || "ACTIVE"),
+    entryKind: String(row?.entry_kind || "BANK_MISC"),
+    directionPolicy: String(row?.direction_policy || "BOTH"),
+    counterAccountId: String(row?.counter_account_id || ""),
+    descriptionMode: String(row?.description_mode || "USE_STATEMENT_TEXT"),
+    fixedDescription: String(row?.fixed_description || ""),
+    descriptionPrefix: String(row?.description_prefix || ""),
+  };
+}
+
+function mapB08BDiffProfileRowToForm(row) {
+  return {
+    id: String(row?.id || ""),
+    scopeType: String(row?.scope_type || "LEGAL_ENTITY"),
+    legalEntityId: String(row?.legal_entity_id || ""),
+    bankAccountId: String(row?.bank_account_id || ""),
+    profileCode: String(row?.profile_code || ""),
+    profileName: String(row?.profile_name || ""),
+    status: String(row?.status || "ACTIVE"),
+    differenceType: String(row?.difference_type || "FEE"),
+    directionPolicy: String(row?.direction_policy || "BOTH"),
+    maxAbsDifference:
+      row?.max_abs_difference === null || row?.max_abs_difference === undefined
+        ? "0"
+        : String(row.max_abs_difference),
+    expenseAccountId: String(row?.expense_account_id || ""),
+    fxGainAccountId: String(row?.fx_gain_account_id || ""),
+    fxLossAccountId: String(row?.fx_loss_account_id || ""),
+    currencyCode: String(row?.currency_code || ""),
+    descriptionPrefix: String(row?.description_prefix || ""),
+  };
+}
+
 export default function BankReconciliationPage() {
   const { hasPermission } = useAuth();
   const canRead = hasPermission("bank.reconcile.read");
   const canWrite = hasPermission("bank.reconcile.write");
   const canReadBanks = hasPermission("bank.accounts.read");
   const canAutoRun = hasPermission("bank.reconcile.auto.run");
+  const canReadTemplates = hasPermission("bank.reconcile.templates.read");
+  const canWriteTemplates = hasPermission("bank.reconcile.templates.write");
+  const canReadDiffProfiles = hasPermission("bank.reconcile.diffprofiles.read");
+  const canWriteDiffProfiles = hasPermission("bank.reconcile.diffprofiles.write");
+  const canReadReturnEvents = hasPermission("bank.payments.returns.read");
+  const canWriteReturnEvents = hasPermission("bank.payments.returns.write");
   const canReadExceptions = hasPermission("bank.reconcile.exceptions.read");
   const canWriteExceptions = hasPermission("bank.reconcile.exceptions.write");
 
@@ -88,6 +194,21 @@ export default function BankReconciliationPage() {
   const [autoRunBusy, setAutoRunBusy] = useState(false);
   const [exceptions, setExceptions] = useState([]);
   const [exceptionsTotal, setExceptionsTotal] = useState(0);
+  const [postingTemplates, setPostingTemplates] = useState([]);
+  const [templateTotal, setTemplateTotal] = useState(0);
+  const [loadingTemplates, setLoadingTemplates] = useState(false);
+  const [templateSaving, setTemplateSaving] = useState(false);
+  const [templateForm, setTemplateForm] = useState(EMPTY_B08_TEMPLATE_FORM);
+  const [differenceProfiles, setDifferenceProfiles] = useState([]);
+  const [differenceProfileTotal, setDifferenceProfileTotal] = useState(0);
+  const [loadingDifferenceProfiles, setLoadingDifferenceProfiles] = useState(false);
+  const [differenceProfileSaving, setDifferenceProfileSaving] = useState(false);
+  const [differenceProfileForm, setDifferenceProfileForm] = useState(EMPTY_B08B_DIFF_PROFILE_FORM);
+  const [returnEvents, setReturnEvents] = useState([]);
+  const [returnEventsTotal, setReturnEventsTotal] = useState(0);
+  const [loadingReturnEvents, setLoadingReturnEvents] = useState(false);
+  const [returnSaving, setReturnSaving] = useState(false);
+  const [returnForm, setReturnForm] = useState(EMPTY_B08B_RETURN_FORM);
   const [loadingExceptions, setLoadingExceptions] = useState(false);
   const [exceptionStatusFilter, setExceptionStatusFilter] = useState("OPEN");
   const [loadingQueue, setLoadingQueue] = useState(false);
@@ -95,6 +216,10 @@ export default function BankReconciliationPage() {
   const [actionBusy, setActionBusy] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const [templateError, setTemplateError] = useState("");
+  const [templateMessage, setTemplateMessage] = useState("");
+  const [b08bError, setB08bError] = useState("");
+  const [b08bMessage, setB08bMessage] = useState("");
   const [lookupWarning, setLookupWarning] = useState("");
 
   const bankOptions = useMemo(
@@ -185,6 +310,307 @@ export default function BankReconciliationPage() {
       return [];
     } finally {
       setLoadingExceptions(false);
+    }
+  }
+
+  async function loadPostingTemplates() {
+    if (!canReadTemplates) {
+      setPostingTemplates([]);
+      setTemplateTotal(0);
+      return [];
+    }
+    setLoadingTemplates(true);
+    setTemplateError("");
+    try {
+      const res = await listReconciliationPostingTemplates({
+        limit: 100,
+        offset: 0,
+        bankAccountId: toPositiveInt(filters.bankAccountId) || undefined,
+      });
+      const rows = res?.rows || [];
+      setPostingTemplates(rows);
+      setTemplateTotal(Number(res?.total || 0));
+      return rows;
+    } catch (err) {
+      setPostingTemplates([]);
+      setTemplateTotal(0);
+      setTemplateError(err?.response?.data?.message || "Failed to load B08 templates");
+      return [];
+    } finally {
+      setLoadingTemplates(false);
+    }
+  }
+
+  function resetTemplateForm({ preserveScope = true } = {}) {
+    setTemplateForm((prev) => ({
+      ...EMPTY_B08_TEMPLATE_FORM,
+      legalEntityId: preserveScope ? prev.legalEntityId : "",
+      bankAccountId: preserveScope ? prev.bankAccountId : "",
+    }));
+  }
+
+  function startEditTemplate(row) {
+    setTemplateError("");
+    setTemplateMessage("");
+    setTemplateForm(mapB08TemplateRowToForm(row));
+  }
+
+  function buildTemplatePayloadFromForm() {
+    const scopeType = String(templateForm.scopeType || "LEGAL_ENTITY").toUpperCase();
+    const bankAccountId = toPositiveInt(templateForm.bankAccountId);
+    let legalEntityId = toPositiveInt(templateForm.legalEntityId);
+
+    if (bankAccountId) {
+      const selectedBank = bankAccounts.find((row) => toPositiveInt(row?.id) === bankAccountId);
+      if (selectedBank?.legal_entity_id) {
+        legalEntityId = toPositiveInt(selectedBank.legal_entity_id);
+      }
+    }
+
+    const payload = {
+      scopeType,
+      legalEntityId: legalEntityId || undefined,
+      bankAccountId: scopeType === "BANK_ACCOUNT" ? bankAccountId || undefined : undefined,
+      templateCode: String(templateForm.templateCode || "").trim().toUpperCase(),
+      templateName: String(templateForm.templateName || "").trim(),
+      status: String(templateForm.status || "ACTIVE").trim().toUpperCase(),
+      entryKind: String(templateForm.entryKind || "BANK_MISC").trim().toUpperCase(),
+      directionPolicy: String(templateForm.directionPolicy || "BOTH").trim().toUpperCase(),
+      counterAccountId: toPositiveInt(templateForm.counterAccountId) || undefined,
+      descriptionMode: String(templateForm.descriptionMode || "USE_STATEMENT_TEXT").trim().toUpperCase(),
+      fixedDescription: String(templateForm.fixedDescription || "").trim() || undefined,
+      descriptionPrefix: String(templateForm.descriptionPrefix || "").trim() || undefined,
+    };
+
+    if (!payload.templateCode) throw new Error("templateCode is required");
+    if (!payload.templateName) throw new Error("templateName is required");
+    if (!payload.counterAccountId) throw new Error("counterAccountId is required");
+    if (scopeType === "BANK_ACCOUNT" && !payload.bankAccountId) {
+      throw new Error("bankAccountId is required for BANK_ACCOUNT scope");
+    }
+    if (!payload.legalEntityId) {
+      throw new Error("legalEntityId is required (select a bank account or enter legalEntityId)");
+    }
+
+    return payload;
+  }
+
+  async function handleSaveTemplate(event) {
+    event.preventDefault();
+    if (!canWriteTemplates || templateSaving) return;
+    setTemplateSaving(true);
+    setTemplateError("");
+    setTemplateMessage("");
+    try {
+      const payload = buildTemplatePayloadFromForm();
+      if (templateForm.id) {
+        await updateReconciliationPostingTemplate(templateForm.id, payload);
+        setTemplateMessage("B08 template updated");
+      } else {
+        await createReconciliationPostingTemplate(payload);
+        setTemplateMessage("B08 template created");
+      }
+      resetTemplateForm({ preserveScope: true });
+      await loadPostingTemplates();
+    } catch (err) {
+      setTemplateError(err?.response?.data?.message || err?.message || "Template save failed");
+    } finally {
+      setTemplateSaving(false);
+    }
+  }
+
+  async function loadDifferenceProfiles() {
+    if (!canReadDiffProfiles) {
+      setDifferenceProfiles([]);
+      setDifferenceProfileTotal(0);
+      return [];
+    }
+    setLoadingDifferenceProfiles(true);
+    setB08bError("");
+    try {
+      const res = await listReconciliationDifferenceProfiles({
+        limit: 100,
+        offset: 0,
+        bankAccountId: toPositiveInt(filters.bankAccountId) || undefined,
+      });
+      const rows = res?.rows || [];
+      setDifferenceProfiles(rows);
+      setDifferenceProfileTotal(Number(res?.total || 0));
+      return rows;
+    } catch (err) {
+      setDifferenceProfiles([]);
+      setDifferenceProfileTotal(0);
+      setB08bError(err?.response?.data?.message || "Failed to load B08-B difference profiles");
+      return [];
+    } finally {
+      setLoadingDifferenceProfiles(false);
+    }
+  }
+
+  function resetDifferenceProfileForm({ preserveScope = true } = {}) {
+    setDifferenceProfileForm((prev) => ({
+      ...EMPTY_B08B_DIFF_PROFILE_FORM,
+      legalEntityId: preserveScope ? prev.legalEntityId : "",
+      bankAccountId: preserveScope ? prev.bankAccountId : "",
+      differenceType: prev.differenceType || "FEE",
+    }));
+  }
+
+  function startEditDifferenceProfile(row) {
+    setB08bError("");
+    setB08bMessage("");
+    setDifferenceProfileForm(mapB08BDiffProfileRowToForm(row));
+  }
+
+  function buildDifferenceProfilePayloadFromForm() {
+    const scopeType = String(differenceProfileForm.scopeType || "LEGAL_ENTITY").trim().toUpperCase();
+    const bankAccountId = toPositiveInt(differenceProfileForm.bankAccountId) || undefined;
+    let legalEntityId = toPositiveInt(differenceProfileForm.legalEntityId) || undefined;
+    if (bankAccountId) {
+      const selectedBank = bankAccounts.find((row) => toPositiveInt(row?.id) === bankAccountId);
+      if (selectedBank?.legal_entity_id) {
+        legalEntityId = toPositiveInt(selectedBank.legal_entity_id) || legalEntityId;
+      }
+    }
+    const differenceType = String(differenceProfileForm.differenceType || "FEE").trim().toUpperCase();
+    const payload = {
+      scopeType,
+      legalEntityId,
+      bankAccountId: scopeType === "BANK_ACCOUNT" ? bankAccountId : undefined,
+      profileCode: String(differenceProfileForm.profileCode || "").trim().toUpperCase(),
+      profileName: String(differenceProfileForm.profileName || "").trim(),
+      status: String(differenceProfileForm.status || "ACTIVE").trim().toUpperCase(),
+      differenceType,
+      directionPolicy: String(differenceProfileForm.directionPolicy || "BOTH").trim().toUpperCase(),
+      maxAbsDifference:
+        differenceProfileForm.maxAbsDifference === ""
+          ? 0
+          : Number(differenceProfileForm.maxAbsDifference),
+      expenseAccountId: toPositiveInt(differenceProfileForm.expenseAccountId) || undefined,
+      fxGainAccountId: toPositiveInt(differenceProfileForm.fxGainAccountId) || undefined,
+      fxLossAccountId: toPositiveInt(differenceProfileForm.fxLossAccountId) || undefined,
+      currencyCode: String(differenceProfileForm.currencyCode || "").trim().toUpperCase() || undefined,
+      descriptionPrefix: String(differenceProfileForm.descriptionPrefix || "").trim() || undefined,
+    };
+
+    if (!payload.profileCode && !differenceProfileForm.id) {
+      throw new Error("profileCode is required");
+    }
+    if (!payload.profileName) throw new Error("profileName is required");
+    if (!(Number.isFinite(payload.maxAbsDifference) && payload.maxAbsDifference >= 0)) {
+      throw new Error("maxAbsDifference must be >= 0");
+    }
+    if (!payload.legalEntityId) {
+      throw new Error("legalEntityId is required (or select bank account)");
+    }
+    if (differenceType === "FEE" && !payload.expenseAccountId) {
+      throw new Error("expenseAccountId is required for FEE profile");
+    }
+    if (differenceType === "FX" && (!payload.fxGainAccountId || !payload.fxLossAccountId)) {
+      throw new Error("fxGainAccountId and fxLossAccountId are required for FX profile");
+    }
+    return payload;
+  }
+
+  async function handleSaveDifferenceProfile(event) {
+    event.preventDefault();
+    if (!canWriteDiffProfiles || differenceProfileSaving) return;
+    setDifferenceProfileSaving(true);
+    setB08bError("");
+    setB08bMessage("");
+    try {
+      const payload = buildDifferenceProfilePayloadFromForm();
+      if (differenceProfileForm.id) {
+        await updateReconciliationDifferenceProfile(differenceProfileForm.id, payload);
+        setB08bMessage("B08-B difference profile updated");
+      } else {
+        await createReconciliationDifferenceProfile(payload);
+        setB08bMessage("B08-B difference profile created");
+      }
+      resetDifferenceProfileForm({ preserveScope: true });
+      await loadDifferenceProfiles();
+    } catch (err) {
+      setB08bError(err?.response?.data?.message || err?.message || "Difference profile save failed");
+    } finally {
+      setDifferenceProfileSaving(false);
+    }
+  }
+
+  async function loadReturnEvents() {
+    if (!canReadReturnEvents) {
+      setReturnEvents([]);
+      setReturnEventsTotal(0);
+      return [];
+    }
+    setLoadingReturnEvents(true);
+    setB08bError("");
+    try {
+      const res = await listBankPaymentReturns({
+        limit: 50,
+        offset: 0,
+        bankAccountId: toPositiveInt(filters.bankAccountId) || undefined,
+        bankStatementLineId: toPositiveInt(selectedLineId) || undefined,
+      });
+      const rows = res?.rows || [];
+      setReturnEvents(rows);
+      setReturnEventsTotal(Number(res?.total || 0));
+      return rows;
+    } catch (err) {
+      setReturnEvents([]);
+      setReturnEventsTotal(0);
+      setB08bError(err?.response?.data?.message || "Failed to load B08-B return events");
+      return [];
+    } finally {
+      setLoadingReturnEvents(false);
+    }
+  }
+
+  async function handleCreateManualReturnEvent(event) {
+    event.preventDefault();
+    if (!canWriteReturnEvents || returnSaving) return;
+    setReturnSaving(true);
+    setB08bError("");
+    setB08bMessage("");
+    try {
+      const payload = {
+        paymentBatchLineId: toPositiveInt(returnForm.paymentBatchLineId),
+        bankStatementLineId: toPositiveInt(returnForm.bankStatementLineId) || undefined,
+        eventType: String(returnForm.eventType || "PAYMENT_RETURNED").trim().toUpperCase(),
+        amount: Number(returnForm.amount),
+        currencyCode: String(returnForm.currencyCode || "").trim().toUpperCase(),
+        reasonCode: String(returnForm.reasonCode || "").trim().toUpperCase() || undefined,
+        reasonMessage: String(returnForm.reasonMessage || "").trim() || undefined,
+      };
+      if (!payload.paymentBatchLineId) throw new Error("paymentBatchLineId is required");
+      if (!(Number.isFinite(payload.amount) && payload.amount > 0)) throw new Error("amount must be > 0");
+      if (!payload.currencyCode) throw new Error("currencyCode is required");
+
+      await createBankPaymentReturn(payload);
+      setB08bMessage("B08-B return event created");
+      await Promise.all([
+        loadReturnEvents(),
+        returnForm.bankStatementLineId ? refreshAfterAction(returnForm.bankStatementLineId) : Promise.resolve(),
+      ]);
+    } catch (err) {
+      setB08bError(err?.response?.data?.message || err?.message || "Return event create failed");
+    } finally {
+      setReturnSaving(false);
+    }
+  }
+
+  async function handleIgnoreReturnEventItem(eventId) {
+    if (!canWriteReturnEvents || actionBusy) return;
+    const note = window.prompt("Ignore reason (optional):", "") || "";
+    setActionBusy(true);
+    setB08bError("");
+    try {
+      await ignoreBankPaymentReturn(eventId, { reasonMessage: note || undefined });
+      setB08bMessage("B08-B return event ignored");
+      await loadReturnEvents();
+    } catch (err) {
+      setB08bError(err?.response?.data?.message || "Return event ignore failed");
+    } finally {
+      setActionBusy(false);
     }
   }
 
@@ -433,6 +859,21 @@ export default function BankReconciliationPage() {
   }, [canReadExceptions, exceptionStatusFilter, filters.bankAccountId]);
 
   useEffect(() => {
+    loadPostingTemplates();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canReadTemplates, filters.bankAccountId]);
+
+  useEffect(() => {
+    loadDifferenceProfiles();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canReadDiffProfiles, filters.bankAccountId]);
+
+  useEffect(() => {
+    loadReturnEvents();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canReadReturnEvents, filters.bankAccountId, selectedLineId]);
+
+  useEffect(() => {
     loadBankLookups();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canReadBanks]);
@@ -450,6 +891,19 @@ export default function BankReconciliationPage() {
     loadLineDetails(selectedLineId, queueLine);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedLineId]);
+
+  useEffect(() => {
+    if (!selectedLine) return;
+    setReturnForm((prev) => ({
+      ...prev,
+      bankStatementLineId: String(selectedLine.id || ""),
+      amount:
+        prev.amount && String(prev.bankStatementLineId || "") === String(selectedLine.id || "")
+          ? prev.amount
+          : String(Math.abs(Number(selectedLine.amount || 0)) || ""),
+      currencyCode: prev.currencyCode || String(selectedLine.currency_code || ""),
+    }));
+  }, [selectedLine]);
 
   return (
     <div className="space-y-6">
@@ -657,6 +1111,833 @@ export default function BankReconciliationPage() {
         </div>
       </section>
 
+      <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="mb-3 flex items-start justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-semibold text-slate-900">B08 Auto-Posting Templates</h2>
+            <p className="text-xs text-slate-500">
+              Bank fees/charges/interest templates used by B07 rule action{" "}
+              <code>AUTO_POST_TEMPLATE</code>. Rule <code>actionPayload</code> should include{" "}
+              <code>postingTemplateId</code>.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => loadPostingTemplates()}
+            className="rounded border border-slate-300 px-2 py-1 text-xs text-slate-700 disabled:opacity-50"
+            disabled={!canReadTemplates || loadingTemplates}
+          >
+            {loadingTemplates ? "..." : "Refresh"}
+          </button>
+        </div>
+
+        {!canReadTemplates ? (
+          <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+            Missing permission: <code>bank.reconcile.templates.read</code>
+          </div>
+        ) : null}
+
+        {templateError ? (
+          <div className="mb-3 rounded border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800">
+            {templateError}
+          </div>
+        ) : null}
+        {templateMessage ? (
+          <div className="mb-3 rounded border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+            {templateMessage}
+          </div>
+        ) : null}
+
+        <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.35fr)]">
+          <form onSubmit={handleSaveTemplate} className="space-y-3 rounded border border-slate-200 p-3">
+            <div className="flex items-center justify-between">
+              <div className="text-sm font-medium text-slate-900">
+                {templateForm.id ? `Edit Template #${templateForm.id}` : "New Template"}
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  resetTemplateForm({ preserveScope: true });
+                  setTemplateError("");
+                  setTemplateMessage("");
+                }}
+                className="rounded border border-slate-300 px-2 py-1 text-xs text-slate-700"
+                disabled={templateSaving}
+              >
+                Clear
+              </button>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-700">Scope</label>
+                <select
+                  value={templateForm.scopeType}
+                  onChange={(e) =>
+                    setTemplateForm((p) => ({
+                      ...p,
+                      scopeType: e.target.value,
+                      bankAccountId: e.target.value === "BANK_ACCOUNT" ? p.bankAccountId : "",
+                    }))
+                  }
+                  className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                  disabled={!canWriteTemplates || templateSaving}
+                >
+                  <option value="LEGAL_ENTITY">LEGAL_ENTITY</option>
+                  <option value="BANK_ACCOUNT">BANK_ACCOUNT</option>
+                  <option value="GLOBAL">GLOBAL (LE-anchored)</option>
+                </select>
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-700">Status</label>
+                <select
+                  value={templateForm.status}
+                  onChange={(e) => setTemplateForm((p) => ({ ...p, status: e.target.value }))}
+                  className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                  disabled={!canWriteTemplates || templateSaving}
+                >
+                  <option value="ACTIVE">ACTIVE</option>
+                  <option value="PAUSED">PAUSED</option>
+                  <option value="DISABLED">DISABLED</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-700">Bank Account (optional / required for BANK_ACCOUNT scope)</label>
+                <select
+                  value={templateForm.bankAccountId}
+                  onChange={(e) => {
+                    const nextBankAccountId = e.target.value;
+                    const selected = bankAccounts.find(
+                      (row) => String(row?.id || "") === String(nextBankAccountId || "")
+                    );
+                    setTemplateForm((p) => ({
+                      ...p,
+                      bankAccountId: nextBankAccountId,
+                      legalEntityId: selected?.legal_entity_id ? String(selected.legal_entity_id) : p.legalEntityId,
+                    }));
+                  }}
+                  className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                  disabled={!canWriteTemplates || templateSaving || !canReadBanks}
+                >
+                  <option value="">(none)</option>
+                  {bankOptions.map((row) => (
+                    <option key={`b08-tpl-bank-${row.id}`} value={row.id}>
+                      {row.code} - {row.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-700">Legal Entity Id</label>
+                <input
+                  type="number"
+                  min="1"
+                  value={templateForm.legalEntityId}
+                  onChange={(e) => setTemplateForm((p) => ({ ...p, legalEntityId: e.target.value }))}
+                  className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                  placeholder="Required in this repo (v1)"
+                  disabled={!canWriteTemplates || templateSaving}
+                />
+              </div>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-700">Template Code</label>
+                <input
+                  value={templateForm.templateCode}
+                  onChange={(e) => setTemplateForm((p) => ({ ...p, templateCode: e.target.value }))}
+                  className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                  placeholder="BANK_FEE_TRY"
+                  disabled={!canWriteTemplates || templateSaving || Boolean(templateForm.id)}
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-700">Template Name</label>
+                <input
+                  value={templateForm.templateName}
+                  onChange={(e) => setTemplateForm((p) => ({ ...p, templateName: e.target.value }))}
+                  className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                  placeholder="Bank Fee Expense"
+                  disabled={!canWriteTemplates || templateSaving}
+                />
+              </div>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-700">Entry Kind</label>
+                <input
+                  value={templateForm.entryKind}
+                  onChange={(e) => setTemplateForm((p) => ({ ...p, entryKind: e.target.value }))}
+                  className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                  placeholder="BANK_MISC"
+                  disabled={!canWriteTemplates || templateSaving}
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-700">Direction</label>
+                <select
+                  value={templateForm.directionPolicy}
+                  onChange={(e) => setTemplateForm((p) => ({ ...p, directionPolicy: e.target.value }))}
+                  className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                  disabled={!canWriteTemplates || templateSaving}
+                >
+                  <option value="BOTH">BOTH</option>
+                  <option value="OUTFLOW_ONLY">OUTFLOW_ONLY</option>
+                  <option value="INFLOW_ONLY">INFLOW_ONLY</option>
+                </select>
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-700">Counter GL Account Id</label>
+                <input
+                  type="number"
+                  min="1"
+                  value={templateForm.counterAccountId}
+                  onChange={(e) => setTemplateForm((p) => ({ ...p, counterAccountId: e.target.value }))}
+                  className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                  placeholder="e.g. 770 leaf account id"
+                  disabled={!canWriteTemplates || templateSaving}
+                />
+              </div>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-[1fr_2fr]">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-700">Description Mode</label>
+                <select
+                  value={templateForm.descriptionMode}
+                  onChange={(e) => setTemplateForm((p) => ({ ...p, descriptionMode: e.target.value }))}
+                  className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                  disabled={!canWriteTemplates || templateSaving}
+                >
+                  <option value="USE_STATEMENT_TEXT">USE_STATEMENT_TEXT</option>
+                  <option value="FIXED_TEXT">FIXED_TEXT</option>
+                  <option value="PREFIXED">PREFIXED</option>
+                </select>
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-700">
+                  {templateForm.descriptionMode === "FIXED_TEXT"
+                    ? "Fixed Description"
+                    : templateForm.descriptionMode === "PREFIXED"
+                      ? "Description Prefix"
+                      : "Optional Text Override"}
+                </label>
+                <input
+                  value={
+                    templateForm.descriptionMode === "PREFIXED"
+                      ? templateForm.descriptionPrefix
+                      : templateForm.fixedDescription
+                  }
+                  onChange={(e) =>
+                    setTemplateForm((p) =>
+                      p.descriptionMode === "PREFIXED"
+                        ? { ...p, descriptionPrefix: e.target.value }
+                        : { ...p, fixedDescription: e.target.value }
+                    )
+                  }
+                  className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                  placeholder={
+                    templateForm.descriptionMode === "USE_STATEMENT_TEXT"
+                      ? "Leave empty"
+                      : templateForm.descriptionMode === "FIXED_TEXT"
+                        ? "Bank service fee"
+                        : "Bank Fee:"
+                  }
+                  disabled={!canWriteTemplates || templateSaving}
+                />
+              </div>
+            </div>
+
+            {!canWriteTemplates ? (
+              <div className="rounded border border-slate-200 bg-slate-50 px-2 py-2 text-xs text-slate-600">
+                Read-only: <code>bank.reconcile.templates.write</code> missing.
+              </div>
+            ) : null}
+
+            <button
+              type="submit"
+              disabled={!canWriteTemplates || templateSaving}
+              className="w-full rounded bg-slate-900 px-3 py-2 text-sm font-medium text-white disabled:opacity-50"
+            >
+              {templateSaving ? "Saving..." : templateForm.id ? "Update Template" : "Create Template"}
+            </button>
+          </form>
+
+          <div className="rounded border border-slate-200 p-3">
+            <div className="mb-2 flex items-center justify-between">
+              <div className="text-sm font-medium text-slate-900">
+                Templates ({loadingTemplates ? "..." : `${postingTemplates.length} / ${templateTotal}`})
+              </div>
+              <div className="text-xs text-slate-500">
+                Filtered by selected bank account if set
+              </div>
+            </div>
+            <div className="max-h-80 overflow-auto">
+              <table className="min-w-full text-left text-xs">
+                <thead className="sticky top-0 bg-slate-50 text-slate-600">
+                  <tr>
+                    <th className="px-2 py-2">Code</th>
+                    <th className="px-2 py-2">Scope</th>
+                    <th className="px-2 py-2">Counter</th>
+                    <th className="px-2 py-2">Dir</th>
+                    <th className="px-2 py-2">Status</th>
+                    <th className="px-2 py-2">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {postingTemplates.length === 0 ? (
+                    <tr>
+                      <td className="px-2 py-2 text-slate-500" colSpan={6}>
+                        {loadingTemplates ? "Loading..." : "No B08 templates."}
+                      </td>
+                    </tr>
+                  ) : (
+                    postingTemplates.map((row) => (
+                      <tr key={`b08-template-${row.id}`} className="border-t">
+                        <td className="px-2 py-2">
+                          <div className="font-medium text-slate-900">{row.template_code}</div>
+                          <div className="max-w-[220px] truncate text-slate-500" title={row.template_name}>
+                            {row.template_name}
+                          </div>
+                        </td>
+                        <td className="px-2 py-2">
+                          <div>{row.scope_type}</div>
+                          <div className="text-slate-500">
+                            {row.bank_account_code || row.legal_entity_code || "-"}
+                          </div>
+                        </td>
+                        <td className="px-2 py-2">
+                          {row.counter_account_code || row.counter_account_id || "-"}
+                          {row.counter_account_name ? (
+                            <div className="max-w-[180px] truncate text-slate-500" title={row.counter_account_name}>
+                              {row.counter_account_name}
+                            </div>
+                          ) : null}
+                        </td>
+                        <td className="px-2 py-2">{row.direction_policy}</td>
+                        <td className="px-2 py-2">{row.status}</td>
+                        <td className="px-2 py-2">
+                          <button
+                            type="button"
+                            onClick={() => startEditTemplate(row)}
+                            disabled={!canReadTemplates}
+                            className="rounded border border-slate-300 px-2 py-1 text-[11px] text-slate-700 disabled:opacity-50"
+                          >
+                            Edit
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="mb-3 flex items-start justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-semibold text-slate-900">B08-B Returns / Differences</h2>
+            <p className="text-xs text-slate-500">
+              Difference profiles for B07 action <code>AUTO_MATCH_PAYMENT_LINE_WITH_DIFFERENCE</code> and
+              manual bank return/rejection events.
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                loadDifferenceProfiles();
+                loadReturnEvents();
+              }}
+              className="rounded border border-slate-300 px-2 py-1 text-xs text-slate-700 disabled:opacity-50"
+              disabled={loadingDifferenceProfiles || loadingReturnEvents}
+            >
+              {loadingDifferenceProfiles || loadingReturnEvents ? "..." : "Refresh"}
+            </button>
+          </div>
+        </div>
+
+        {b08bError ? (
+          <div className="mb-3 rounded border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800">
+            {b08bError}
+          </div>
+        ) : null}
+        {b08bMessage ? (
+          <div className="mb-3 rounded border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+            {b08bMessage}
+          </div>
+        ) : null}
+
+        <div className="grid gap-4 xl:grid-cols-2">
+          <div className="rounded border border-slate-200 p-3">
+            <div className="mb-2 flex items-center justify-between">
+              <div className="text-sm font-medium text-slate-900">
+                Difference Profiles ({loadingDifferenceProfiles ? "..." : `${differenceProfiles.length} / ${differenceProfileTotal}`})
+              </div>
+              {!canReadDiffProfiles ? (
+                <span className="text-xs text-slate-500">Missing: bank.reconcile.diffprofiles.read</span>
+              ) : null}
+            </div>
+
+            {canReadDiffProfiles ? (
+              <div className="max-h-48 overflow-auto">
+                <table className="min-w-full text-left text-xs">
+                  <thead className="sticky top-0 bg-slate-50 text-slate-600">
+                    <tr>
+                      <th className="px-2 py-2">Code</th>
+                      <th className="px-2 py-2">Type</th>
+                      <th className="px-2 py-2">Max Diff</th>
+                      <th className="px-2 py-2">Scope</th>
+                      <th className="px-2 py-2">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {differenceProfiles.length === 0 ? (
+                      <tr>
+                        <td className="px-2 py-2 text-slate-500" colSpan={5}>
+                          {loadingDifferenceProfiles ? "Loading..." : "No B08-B difference profiles."}
+                        </td>
+                      </tr>
+                    ) : (
+                      differenceProfiles.map((row) => (
+                        <tr key={`b08b-dp-${row.id}`} className="border-t">
+                          <td className="px-2 py-2">
+                            <div className="font-medium text-slate-900">{row.profile_code}</div>
+                            <div className="max-w-[180px] truncate text-slate-500" title={row.profile_name}>
+                              {row.profile_name}
+                            </div>
+                          </td>
+                          <td className="px-2 py-2">
+                            {row.difference_type}
+                            <div className="text-slate-500">{row.status}</div>
+                          </td>
+                          <td className="px-2 py-2">{formatAmount(row.max_abs_difference)}</td>
+                          <td className="px-2 py-2">
+                            <div>{row.scope_type}</div>
+                            <div className="text-slate-500">{row.bank_account_code || row.legal_entity_code || "-"}</div>
+                          </td>
+                          <td className="px-2 py-2">
+                            <button
+                              type="button"
+                              onClick={() => startEditDifferenceProfile(row)}
+                              className="rounded border border-slate-300 px-2 py-1 text-[11px] text-slate-700"
+                              disabled={!canReadDiffProfiles}
+                            >
+                              Edit
+                            </button>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            ) : null}
+
+            <form onSubmit={handleSaveDifferenceProfile} className="mt-3 space-y-3 rounded border border-slate-200 p-3">
+              <div className="flex items-center justify-between">
+                <div className="text-sm font-medium text-slate-900">
+                  {differenceProfileForm.id ? `Edit Profile #${differenceProfileForm.id}` : "New Difference Profile"}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => resetDifferenceProfileForm({ preserveScope: true })}
+                  className="rounded border border-slate-300 px-2 py-1 text-xs text-slate-700"
+                >
+                  Clear
+                </button>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-slate-700">Scope</label>
+                  <select
+                    value={differenceProfileForm.scopeType}
+                    onChange={(e) =>
+                      setDifferenceProfileForm((p) => ({
+                        ...p,
+                        scopeType: e.target.value,
+                        bankAccountId: e.target.value === "BANK_ACCOUNT" ? p.bankAccountId : "",
+                      }))
+                    }
+                    className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                    disabled={!canWriteDiffProfiles || differenceProfileSaving}
+                  >
+                    <option value="LEGAL_ENTITY">LEGAL_ENTITY</option>
+                    <option value="BANK_ACCOUNT">BANK_ACCOUNT</option>
+                    <option value="GLOBAL">GLOBAL (LE-anchored)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-slate-700">Status</label>
+                  <select
+                    value={differenceProfileForm.status}
+                    onChange={(e) => setDifferenceProfileForm((p) => ({ ...p, status: e.target.value }))}
+                    className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                    disabled={!canWriteDiffProfiles || differenceProfileSaving}
+                  >
+                    <option value="ACTIVE">ACTIVE</option>
+                    <option value="PAUSED">PAUSED</option>
+                    <option value="DISABLED">DISABLED</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-slate-700">Bank Account</label>
+                  <select
+                    value={differenceProfileForm.bankAccountId}
+                    onChange={(e) => {
+                      const nextBankAccountId = e.target.value;
+                      const selected = bankAccounts.find((row) => String(row?.id || "") === String(nextBankAccountId || ""));
+                      setDifferenceProfileForm((p) => ({
+                        ...p,
+                        bankAccountId: nextBankAccountId,
+                        legalEntityId: selected?.legal_entity_id ? String(selected.legal_entity_id) : p.legalEntityId,
+                      }));
+                    }}
+                    className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                    disabled={!canWriteDiffProfiles || differenceProfileSaving || !canReadBanks}
+                  >
+                    <option value="">(none)</option>
+                    {bankOptions.map((row) => (
+                      <option key={`b08b-dp-bank-${row.id}`} value={row.id}>
+                        {row.code} - {row.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-slate-700">Legal Entity Id</label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={differenceProfileForm.legalEntityId}
+                    onChange={(e) => setDifferenceProfileForm((p) => ({ ...p, legalEntityId: e.target.value }))}
+                    className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                    disabled={!canWriteDiffProfiles || differenceProfileSaving}
+                  />
+                </div>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-slate-700">Profile Code</label>
+                  <input
+                    value={differenceProfileForm.profileCode}
+                    onChange={(e) => setDifferenceProfileForm((p) => ({ ...p, profileCode: e.target.value }))}
+                    className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                    disabled={!canWriteDiffProfiles || differenceProfileSaving || Boolean(differenceProfileForm.id)}
+                    placeholder="FX_DIFF_TRY"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-slate-700">Profile Name</label>
+                  <input
+                    value={differenceProfileForm.profileName}
+                    onChange={(e) => setDifferenceProfileForm((p) => ({ ...p, profileName: e.target.value }))}
+                    className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                    disabled={!canWriteDiffProfiles || differenceProfileSaving}
+                  />
+                </div>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-4">
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-slate-700">Type</label>
+                  <select
+                    value={differenceProfileForm.differenceType}
+                    onChange={(e) => setDifferenceProfileForm((p) => ({ ...p, differenceType: e.target.value }))}
+                    className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                    disabled={!canWriteDiffProfiles || differenceProfileSaving}
+                  >
+                    <option value="FEE">FEE</option>
+                    <option value="FX">FX</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-slate-700">Direction</label>
+                  <select
+                    value={differenceProfileForm.directionPolicy}
+                    onChange={(e) => setDifferenceProfileForm((p) => ({ ...p, directionPolicy: e.target.value }))}
+                    className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                    disabled={!canWriteDiffProfiles || differenceProfileSaving}
+                  >
+                    <option value="BOTH">BOTH</option>
+                    <option value="INCREASE_ONLY">INCREASE_ONLY</option>
+                    <option value="DECREASE_ONLY">DECREASE_ONLY</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-slate-700">Max Diff</label>
+                  <input
+                    value={differenceProfileForm.maxAbsDifference}
+                    onChange={(e) => setDifferenceProfileForm((p) => ({ ...p, maxAbsDifference: e.target.value }))}
+                    className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                    disabled={!canWriteDiffProfiles || differenceProfileSaving}
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-slate-700">Currency (opt.)</label>
+                  <input
+                    value={differenceProfileForm.currencyCode}
+                    onChange={(e) => setDifferenceProfileForm((p) => ({ ...p, currencyCode: e.target.value }))}
+                    className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                    disabled={!canWriteDiffProfiles || differenceProfileSaving}
+                    placeholder="TRY"
+                  />
+                </div>
+              </div>
+
+              {differenceProfileForm.differenceType === "FEE" ? (
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-slate-700">Expense GL Account Id</label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={differenceProfileForm.expenseAccountId}
+                    onChange={(e) => setDifferenceProfileForm((p) => ({ ...p, expenseAccountId: e.target.value }))}
+                    className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                    disabled={!canWriteDiffProfiles || differenceProfileSaving}
+                  />
+                </div>
+              ) : (
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-slate-700">FX Gain GL Account Id</label>
+                    <input
+                      type="number"
+                      min="1"
+                      value={differenceProfileForm.fxGainAccountId}
+                      onChange={(e) => setDifferenceProfileForm((p) => ({ ...p, fxGainAccountId: e.target.value }))}
+                      className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                      disabled={!canWriteDiffProfiles || differenceProfileSaving}
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-slate-700">FX Loss GL Account Id</label>
+                    <input
+                      type="number"
+                      min="1"
+                      value={differenceProfileForm.fxLossAccountId}
+                      onChange={(e) => setDifferenceProfileForm((p) => ({ ...p, fxLossAccountId: e.target.value }))}
+                      className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                      disabled={!canWriteDiffProfiles || differenceProfileSaving}
+                    />
+                  </div>
+                </div>
+              )}
+
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-700">Description Prefix (opt.)</label>
+                <input
+                  value={differenceProfileForm.descriptionPrefix}
+                  onChange={(e) => setDifferenceProfileForm((p) => ({ ...p, descriptionPrefix: e.target.value }))}
+                  className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                  disabled={!canWriteDiffProfiles || differenceProfileSaving}
+                  placeholder="Bank FX diff"
+                />
+              </div>
+
+              {!canWriteDiffProfiles ? (
+                <div className="rounded border border-slate-200 bg-slate-50 px-2 py-2 text-xs text-slate-600">
+                  Read-only: <code>bank.reconcile.diffprofiles.write</code> missing.
+                </div>
+              ) : null}
+
+              <button
+                type="submit"
+                disabled={!canWriteDiffProfiles || differenceProfileSaving}
+                className="w-full rounded bg-slate-900 px-3 py-2 text-sm font-medium text-white disabled:opacity-50"
+              >
+                {differenceProfileSaving
+                  ? "Saving..."
+                  : differenceProfileForm.id
+                    ? "Update Difference Profile"
+                    : "Create Difference Profile"}
+              </button>
+            </form>
+          </div>
+
+          <div className="rounded border border-slate-200 p-3">
+            <div className="mb-2 flex items-center justify-between">
+              <div className="text-sm font-medium text-slate-900">
+                Return Events ({loadingReturnEvents ? "..." : `${returnEvents.length} / ${returnEventsTotal}`})
+              </div>
+              {!canReadReturnEvents ? (
+                <span className="text-xs text-slate-500">Missing: bank.payments.returns.read</span>
+              ) : (
+                <span className="text-xs text-slate-500">Filtered by selected bank / line</span>
+              )}
+            </div>
+
+            {canReadReturnEvents ? (
+              <div className="max-h-52 overflow-auto">
+                <table className="min-w-full text-left text-xs">
+                  <thead className="sticky top-0 bg-slate-50 text-slate-600">
+                    <tr>
+                      <th className="px-2 py-2">Event</th>
+                      <th className="px-2 py-2">Payment Line</th>
+                      <th className="px-2 py-2">Amount</th>
+                      <th className="px-2 py-2">Status</th>
+                      <th className="px-2 py-2">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {returnEvents.length === 0 ? (
+                      <tr>
+                        <td className="px-2 py-2 text-slate-500" colSpan={5}>
+                          {loadingReturnEvents ? "Loading..." : "No B08-B return events."}
+                        </td>
+                      </tr>
+                    ) : (
+                      returnEvents.map((row) => (
+                        <tr key={`b08b-ret-${row.id}`} className="border-t">
+                          <td className="px-2 py-2">
+                            <div className="font-medium text-slate-900">{row.event_type}</div>
+                            <div className="text-slate-500">{row.source_type} / #{row.id}</div>
+                            <div className="max-w-[180px] truncate text-slate-500" title={row.reason_message || ""}>
+                              {row.reason_code || row.reason_message || "-"}
+                            </div>
+                          </td>
+                          <td className="px-2 py-2">
+                            <div>Batch {row.batch_no || row.payment_batch_id}</div>
+                            <div className="text-slate-500">Line {row.payment_batch_line_no || row.payment_batch_line_id}</div>
+                          </td>
+                          <td className="px-2 py-2">
+                            {formatAmount(row.amount)} {row.currency_code}
+                          </td>
+                          <td className="px-2 py-2">
+                            <div>{row.event_status}</div>
+                            <div className="text-slate-500">{row.return_status || "-"}</div>
+                          </td>
+                          <td className="px-2 py-2">
+                            <button
+                              type="button"
+                              onClick={() => handleIgnoreReturnEventItem(row.id)}
+                              disabled={!canWriteReturnEvents || actionBusy || row.event_status === "IGNORED"}
+                              className="rounded border border-slate-300 px-2 py-1 text-[11px] text-slate-700 disabled:opacity-50"
+                            >
+                              Ignore
+                            </button>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            ) : null}
+
+            <form onSubmit={handleCreateManualReturnEvent} className="mt-3 space-y-3 rounded border border-slate-200 p-3">
+              <div className="text-sm font-medium text-slate-900">Manual Return / Rejection Event</div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-slate-700">Payment Batch Line Id</label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={returnForm.paymentBatchLineId}
+                    onChange={(e) => setReturnForm((p) => ({ ...p, paymentBatchLineId: e.target.value }))}
+                    className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                    disabled={!canWriteReturnEvents || returnSaving}
+                    placeholder="Required"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-slate-700">Statement Line Id (opt.)</label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={returnForm.bankStatementLineId}
+                    onChange={(e) => setReturnForm((p) => ({ ...p, bankStatementLineId: e.target.value }))}
+                    className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                    disabled={!canWriteReturnEvents || returnSaving}
+                    placeholder={selectedLine ? `Selected: ${selectedLine.id}` : ""}
+                  />
+                </div>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-3">
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-slate-700">Event Type</label>
+                  <select
+                    value={returnForm.eventType}
+                    onChange={(e) => setReturnForm((p) => ({ ...p, eventType: e.target.value }))}
+                    className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                    disabled={!canWriteReturnEvents || returnSaving}
+                  >
+                    <option value="PAYMENT_RETURNED">PAYMENT_RETURNED</option>
+                    <option value="PAYMENT_REJECTED">PAYMENT_REJECTED</option>
+                    <option value="PAYMENT_REVERSAL">PAYMENT_REVERSAL</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-slate-700">Amount</label>
+                  <input
+                    value={returnForm.amount}
+                    onChange={(e) => setReturnForm((p) => ({ ...p, amount: e.target.value }))}
+                    className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                    disabled={!canWriteReturnEvents || returnSaving}
+                    placeholder="e.g. 100.00"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-slate-700">Currency</label>
+                  <input
+                    value={returnForm.currencyCode}
+                    onChange={(e) => setReturnForm((p) => ({ ...p, currencyCode: e.target.value }))}
+                    className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                    disabled={!canWriteReturnEvents || returnSaving}
+                    placeholder="TRY"
+                  />
+                </div>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-slate-700">Reason Code (opt.)</label>
+                  <input
+                    value={returnForm.reasonCode}
+                    onChange={(e) => setReturnForm((p) => ({ ...p, reasonCode: e.target.value }))}
+                    className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                    disabled={!canWriteReturnEvents || returnSaving}
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-slate-700">Reason Message (opt.)</label>
+                  <input
+                    value={returnForm.reasonMessage}
+                    onChange={(e) => setReturnForm((p) => ({ ...p, reasonMessage: e.target.value }))}
+                    className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                    disabled={!canWriteReturnEvents || returnSaving}
+                  />
+                </div>
+              </div>
+              {!canWriteReturnEvents ? (
+                <div className="rounded border border-slate-200 bg-slate-50 px-2 py-2 text-xs text-slate-600">
+                  Read-only: <code>bank.payments.returns.write</code> missing.
+                </div>
+              ) : null}
+              <button
+                type="submit"
+                disabled={!canWriteReturnEvents || returnSaving}
+                className="w-full rounded bg-slate-900 px-3 py-2 text-sm font-medium text-white disabled:opacity-50"
+              >
+                {returnSaving ? "Saving..." : "Create Return Event"}
+              </button>
+            </form>
+          </div>
+        </div>
+      </section>
+
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1.4fr)]">
         <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
           <div className="mb-3 flex items-center justify-between">
@@ -753,6 +2034,25 @@ export default function BankReconciliationPage() {
                     ? `${selectedLine.reconciliation_method || "-"} / rule ${
                         selectedLine.reconciliation_rule_id || "-"
                       } / conf ${selectedLine.reconciliation_confidence ?? "-"}`
+                    : "-"}
+                </div>
+                <div>
+                  <strong>B08 Auto-Post:</strong>{" "}
+                  {selectedLine.auto_post_template_id || selectedLine.auto_post_journal_entry_id
+                    ? `tpl ${selectedLine.auto_post_template_id || "-"} / JE ${
+                        selectedLine.auto_post_journal_entry_id || "-"
+                      }`
+                    : "-"}
+                </div>
+                <div>
+                  <strong>B08-B Diff:</strong>{" "}
+                  {selectedLine.reconciliation_difference_type ||
+                  selectedLine.reconciliation_difference_journal_entry_id
+                    ? `${selectedLine.reconciliation_difference_type || "-"} / amt ${
+                        selectedLine.reconciliation_difference_amount ?? "-"
+                      } / profile ${selectedLine.reconciliation_difference_profile_id || "-"} / JE ${
+                        selectedLine.reconciliation_difference_journal_entry_id || "-"
+                      }`
                     : "-"}
                 </div>
                 <div>
