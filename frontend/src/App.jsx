@@ -39,6 +39,7 @@ import FutureYearRevenuePage from "./pages/revenue/FutureYearRevenuePage.jsx";
 import { collectSidebarLinks, sidebarItems } from "./layouts/sidebarConfig.js";
 import TenantReadinessProvider from "./readiness/TenantReadinessProvider.jsx";
 import RequireTenantReadiness from "./readiness/RequireTenantReadiness.jsx";
+import ModuleReadinessProvider from "./readiness/ModuleReadinessProvider.jsx";
 import RequireProviderAuth from "./provider/RequireProviderAuth.jsx";
 
 function toRoutePath(value) {
@@ -376,9 +377,11 @@ export default function App() {
         element={
           <RequireAuth>
             <TenantReadinessProvider>
-              <RequireTenantReadiness>
-                <AppLayout />
-              </RequireTenantReadiness>
+              <ModuleReadinessProvider>
+                <RequireTenantReadiness>
+                  <AppLayout />
+                </RequireTenantReadiness>
+              </ModuleReadinessProvider>
             </TenantReadinessProvider>
           </RequireAuth>
         }
