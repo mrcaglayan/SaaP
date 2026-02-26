@@ -94,6 +94,88 @@ function isImportChecksumDuplicate(err) {
   return keyName.includes("uk_bank_stmt_imports_checksum");
 }
 
+function normalizeDateOnlyText(value, field) {
+  const text = String(value || "").trim();
+  if (!text) {
+    throw badRequest(`${field} is required`);
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+    throw badRequest(`${field} must be YYYY-MM-DD`);
+  }
+  const parsed = new Date(`${text}T00:00:00.000Z`);
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== text) {
+    throw badRequest(`${field} must be a valid date`);
+  }
+  return text;
+}
+
+function normalizeOptionalDateOnlyText(value, field) {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+  return normalizeDateOnlyText(value, field);
+}
+
+function normalizeNormalizedStatementLine(line, lineNo) {
+  if (!line || typeof line !== "object") {
+    throw badRequest(`Line ${lineNo} is invalid`);
+  }
+  const txnDate = normalizeDateOnlyText(line.txn_date ?? line.booking_date, `Line ${lineNo} txn_date`);
+  const valueDate = normalizeOptionalDateOnlyText(
+    line.value_date ?? line.valueDate,
+    `Line ${lineNo} value_date`
+  );
+  const description = String(line.description || "").trim();
+  if (!description) {
+    throw badRequest(`Line ${lineNo} description is required`);
+  }
+  if (description.length > 500) {
+    throw badRequest(`Line ${lineNo} description cannot exceed 500 characters`);
+  }
+  const referenceNoRaw =
+    line.reference_no ??
+    line.reference ??
+    line.external_txn_id ??
+    null;
+  const referenceNo = referenceNoRaw === null ? null : String(referenceNoRaw).trim() || null;
+  if (referenceNo && referenceNo.length > 255) {
+    throw badRequest(`Line ${lineNo} reference_no cannot exceed 255 characters`);
+  }
+
+  const amount = Number(line.amount);
+  if (!Number.isFinite(amount) || amount === 0) {
+    throw badRequest(`Line ${lineNo} amount must be a non-zero number`);
+  }
+  const currencyCode = normalizeUpperText(line.currency_code ?? line.currencyCode);
+  if (!currencyCode || currencyCode.length !== 3) {
+    throw badRequest(`Line ${lineNo} currency_code must be a 3-letter code`);
+  }
+
+  let balanceAfter = null;
+  if (line.balance_after !== undefined && line.balance_after !== null && line.balance_after !== "") {
+    const parsedBalance = Number(line.balance_after);
+    if (!Number.isFinite(parsedBalance)) {
+      throw badRequest(`Line ${lineNo} balance_after must be numeric`);
+    }
+    balanceAfter = Number(parsedBalance.toFixed(6));
+  }
+
+  return {
+    line_no: lineNo,
+    txn_date: txnDate,
+    value_date: valueDate,
+    description,
+    reference_no: referenceNo,
+    amount: Number(amount.toFixed(6)),
+    currency_code: currencyCode,
+    balance_after: balanceAfter,
+    raw_row_json: {
+      source: "B05_CONNECTOR",
+      ...line,
+    },
+  };
+}
+
 async function findBankAccountScopeById({ tenantId, bankAccountId, runQuery = query }) {
   const result = await runQuery(
     `SELECT id, legal_entity_id
@@ -516,6 +598,199 @@ export async function importBankStatementCsv({
   }
 }
 
+export async function importNormalizedBankStatementLines({
+  payload,
+}) {
+  const tenantId = parsePositiveInt(payload?.tenantId);
+  const bankAccountId = parsePositiveInt(payload?.bankAccountId);
+  if (!tenantId || !bankAccountId) {
+    throw badRequest("tenantId and bankAccountId are required");
+  }
+
+  const bankAccount = await findBankAccountForImport({ tenantId, bankAccountId });
+  if (!bankAccount) {
+    throw badRequest("bankAccountId not found");
+  }
+  if (!parseDbBoolean(bankAccount.is_active)) {
+    throw badRequest("Selected bank account is not active");
+  }
+
+  const sourceLines = Array.isArray(payload?.lines) ? payload.lines : [];
+  if (sourceLines.length === 0) {
+    throw badRequest("lines must contain at least one row");
+  }
+
+  const normalizedLines = sourceLines.map((line, index) =>
+    normalizeNormalizedStatementLine(line, index + 1)
+  );
+
+  const mismatchedCurrency = normalizedLines.find(
+    (row) => normalizeUpperText(row.currency_code) !== normalizeUpperText(bankAccount.currency_code)
+  );
+  if (mismatchedCurrency) {
+    throw badRequest(
+      `Statement currency mismatch. Bank account currency=${bankAccount.currency_code}, row currency=${mismatchedCurrency.currency_code}`
+    );
+  }
+
+  const sourceRef = String(payload?.sourceRef || payload?.source_ref || "").trim();
+  const sourceFilename = String(payload?.sourceFilename || payload?.source_filename || "").trim();
+  const importSource = normalizeUpperText(payload?.importSource || payload?.import_source || "API");
+  const userId = parsePositiveInt(payload?.userId ?? payload?.user_id);
+  const sourceMeta = payload?.sourceMeta ?? payload?.source_meta ?? {};
+
+  const periodDates = normalizedLines.map((row) => row.txn_date).sort();
+  const periodStart = periodDates[0] || null;
+  const periodEnd = periodDates[periodDates.length - 1] || null;
+
+  const checksumSeed = {
+    sourceRef: sourceRef || null,
+    importSource,
+    bankAccountId,
+    lineHashesPreview: normalizedLines.map((row) =>
+      buildStatementLineHash(bankAccountId, row)
+    ),
+  };
+  const fileChecksum = sha256(safeJson(checksumSeed) || "");
+
+  try {
+    const importRow = await withTransaction(async (tx) => {
+      const importInsert = await tx.query(
+        `INSERT INTO bank_statement_imports (
+            tenant_id,
+            legal_entity_id,
+            bank_account_id,
+            import_source,
+            original_filename,
+            file_checksum,
+            period_start,
+            period_end,
+            status,
+            raw_meta_json,
+            imported_by_user_id
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'IMPORTED', ?, ?)`,
+        [
+          tenantId,
+          bankAccount.legal_entity_id,
+          bankAccountId,
+          importSource,
+          sourceFilename || `${importSource.toLowerCase()}-normalized`,
+          fileChecksum,
+          periodStart,
+          periodEnd,
+          safeJson({
+            parser: "normalized-v1",
+            source_ref: sourceRef || null,
+            source_meta: sourceMeta || {},
+            totalRowsParsed: normalizedLines.length,
+          }),
+          userId || null,
+        ]
+      );
+      const importId = parsePositiveInt(importInsert.rows?.insertId);
+      if (!importId) {
+        throw new Error("Failed to create normalized bank statement import");
+      }
+
+      let inserted = 0;
+      let duplicates = 0;
+      for (const row of normalizedLines) {
+        const lineHash = buildStatementLineHash(bankAccountId, row);
+        try {
+          await tx.query(
+            `INSERT INTO bank_statement_lines (
+                tenant_id,
+                legal_entity_id,
+                import_id,
+                bank_account_id,
+                line_no,
+                txn_date,
+                value_date,
+                description,
+                reference_no,
+                amount,
+                currency_code,
+                balance_after,
+                line_hash,
+                recon_status,
+                raw_row_json
+              )
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'UNMATCHED', ?)`,
+            [
+              tenantId,
+              bankAccount.legal_entity_id,
+              importId,
+              bankAccountId,
+              row.line_no,
+              row.txn_date,
+              row.value_date,
+              row.description,
+              row.reference_no,
+              Number(row.amount).toFixed(6),
+              row.currency_code,
+              row.balance_after === null ? null : Number(row.balance_after).toFixed(6),
+              lineHash,
+              safeJson(row.raw_row_json),
+            ]
+          );
+          inserted += 1;
+        } catch (err) {
+          if (isLineHashDuplicate(err)) {
+            duplicates += 1;
+            continue;
+          }
+          throw err;
+        }
+      }
+
+      await tx.query(
+        `UPDATE bank_statement_imports
+         SET line_count_total = ?,
+             line_count_inserted = ?,
+             line_count_duplicates = ?,
+             raw_meta_json = ?
+         WHERE tenant_id = ?
+           AND id = ?`,
+        [
+          normalizedLines.length,
+          inserted,
+          duplicates,
+          safeJson({
+            parser: "normalized-v1",
+            source_ref: sourceRef || null,
+            source_meta: sourceMeta || {},
+            totalRowsParsed: normalizedLines.length,
+            inserted,
+            duplicates,
+            bankAccountCode: bankAccount.code,
+            bankAccountCurrency: bankAccount.currency_code,
+          }),
+          tenantId,
+          importId,
+        ]
+      );
+
+      return findBankStatementImportById({ tenantId, importId, runQuery: tx.query });
+    });
+
+    return {
+      import_id: parsePositiveInt(importRow?.id),
+      import_ref:
+        sourceRef ||
+        `B02NORM-${parsePositiveInt(importRow?.id) || "UNKNOWN"}`,
+      imported_count: Number(importRow?.line_count_inserted || 0),
+      duplicate_count: Number(importRow?.line_count_duplicates || 0),
+      import_row: importRow || null,
+    };
+  } catch (err) {
+    if (isImportChecksumDuplicate(err)) {
+      throw conflictError("This normalized statement batch was already imported for the selected bank account");
+    }
+    throw err;
+  }
+}
+
 export async function listBankStatementImportRows({
   req,
   tenantId,
@@ -776,4 +1051,3 @@ export async function getBankStatementLineByIdForTenant({
   assertScopeAccess(req, "legal_entity", row.legal_entity_id, "lineId");
   return row;
 }
-

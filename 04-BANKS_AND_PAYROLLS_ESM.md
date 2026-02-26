@@ -53,7 +53,7 @@ Permission naming note (important):
 - [x] PR-P04 Payroll Payment Settlement Sync (implemented)
 - [x] PR-P05 Payroll Corrections (implemented)
 - [x] PR-P06 Partial Settlement + Manual Override (implemented)
-- [ ] PR-B05 Bank Connectivity Adapter
+- [x] PR-B05 Bank Connectivity Adapter (implemented)
 - [x] PR-B06 Payment File Export + Bank Ack Import (implemented)
 - [x] PR-B07 Reconciliation Rules + Exception Queue (implemented)
 - [ ] PR-B08-A Auto-Posting Templates
