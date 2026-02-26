@@ -19,6 +19,7 @@ function hydratePolicy(row) {
   if (!row) return null;
   return {
     ...row,
+    module_code: u(row.module_code || "BANK"),
     min_amount: toAmount(row.min_amount),
     max_amount: toAmount(row.max_amount),
     maker_checker_required: parseDbBoolean(row.maker_checker_required),
@@ -79,6 +80,7 @@ export function snapshotBankApprovalPolicy(policy) {
   if (!policy) return null;
   return {
     id: parsePositiveInt(policy.id),
+    module_code: u(policy.module_code || "BANK"),
     policy_code: policy.policy_code || null,
     policy_name: policy.policy_name || null,
     status: u(policy.status),
@@ -103,6 +105,7 @@ export function snapshotBankApprovalPolicy(policy) {
 
 export async function evaluateBankApprovalNeed({
   tenantId,
+  moduleCode = "BANK",
   targetType,
   actionType,
   legalEntityId = null,
@@ -117,12 +120,13 @@ export async function evaluateBankApprovalNeed({
     `SELECT *
      FROM bank_approval_policies
      WHERE tenant_id = ?
+       AND COALESCE(module_code, 'BANK') = ?
        AND status = 'ACTIVE'
        AND target_type = ?
        AND action_type = ?
        AND (effective_from IS NULL OR effective_from <= ?)
        AND (effective_to IS NULL OR effective_to >= ?)`,
-    [tenantId, u(targetType), u(actionType), evalDate, evalDate]
+    [tenantId, u(moduleCode || "BANK"), u(targetType), u(actionType), evalDate, evalDate]
   );
 
   const candidates = (res.rows || [])

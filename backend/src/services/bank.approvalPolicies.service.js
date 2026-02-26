@@ -19,6 +19,7 @@ function hydrate(row) {
   if (!row) return null;
   return {
     ...row,
+    module_code: u(row.module_code || "BANK"),
     min_amount: toAmount(row.min_amount),
     max_amount: toAmount(row.max_amount),
     maker_checker_required: parseDbBoolean(row.maker_checker_required),
@@ -194,6 +195,10 @@ export async function listBankApprovalPolicies({
     where.push("p.status = ?");
     params.push(filters.status);
   }
+  if (filters.moduleCode) {
+    where.push("COALESCE(p.module_code, 'BANK') = ?");
+    params.push(u(filters.moduleCode));
+  }
   if (filters.targetType) {
     where.push("p.target_type = ?");
     params.push(filters.targetType);
@@ -286,6 +291,7 @@ export async function createBankApprovalPolicy({
         tenant_id,
         policy_code,
         policy_name,
+        module_code,
         status,
         target_type,
         action_type,
@@ -308,6 +314,7 @@ export async function createBankApprovalPolicy({
       input.tenantId,
       input.policyCode,
       input.policyName,
+      u(input.moduleCode || "BANK"),
       input.status,
       input.targetType,
       input.actionType,
@@ -351,6 +358,7 @@ export async function updateBankApprovalPolicy({
   const merged = {
     ...current,
     ...input,
+    moduleCode: input.moduleCode !== undefined ? input.moduleCode : current.module_code,
     scopeType: input.scopeType ?? current.scope_type,
     legalEntityId:
       input.legalEntityId !== undefined ? input.legalEntityId : current.legal_entity_id,
@@ -386,6 +394,7 @@ export async function updateBankApprovalPolicy({
   await query(
     `UPDATE bank_approval_policies
      SET policy_name = ?,
+         module_code = ?,
          status = ?,
          scope_type = ?,
          legal_entity_id = ?,
@@ -404,6 +413,7 @@ export async function updateBankApprovalPolicy({
        AND id = ?`,
     [
       input.policyName !== undefined ? input.policyName : current.policy_name,
+      input.moduleCode !== undefined ? u(input.moduleCode || "BANK") : u(current.module_code || "BANK"),
       input.status !== undefined ? input.status : current.status,
       ctx.scopeType,
       ctx.legalEntityId,

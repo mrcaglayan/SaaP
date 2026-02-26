@@ -78,6 +78,7 @@ const HTTP_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE"]);
 const TAG_DESCRIPTION_MAP = new Map([
   ["Org", "Organization hierarchy and fiscal structure management."],
   ["Security", "Role and permission assignment APIs."],
+  ["Approvals", "Unified approval policy and approval request engine endpoints (Bank + Payroll)."],
   ["GL", "General ledger setup and journal workflows."],
   ["FX", "Foreign exchange rate management."],
   ["Cari", "Cari (AR/AP) documents, settlements, bank links, and reporting endpoints."],
@@ -190,6 +191,9 @@ function inferTagFromPath(endpointPath) {
   }
   if (normalizedPath.startsWith("/api/v1/security") || normalizedPath.startsWith("/api/v1/rbac")) {
     return "Security";
+  }
+  if (normalizedPath.startsWith("/api/v1/approvals")) {
+    return "Approvals";
   }
   if (normalizedPath.startsWith("/api/v1/gl")) {
     return "GL";

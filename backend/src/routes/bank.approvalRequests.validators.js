@@ -22,6 +22,9 @@ export function parseBankApprovalRequestsListInput(req) {
   return {
     tenantId,
     ...pagination,
+    moduleCode: req.query?.moduleCode || req.query?.module_code
+      ? normalizeCode(req.query?.moduleCode ?? req.query?.module_code, "moduleCode", 20)
+      : null,
     requestStatus: req.query?.requestStatus
       ? normalizeCode(req.query.requestStatus, "requestStatus", 20)
       : null,
@@ -42,6 +45,7 @@ export function parseBankApprovalRequestSubmitInput(req) {
   return {
     tenantId,
     userId,
+    moduleCode: normalizeCode(body.moduleCode ?? body.module_code ?? "BANK", "moduleCode", 20),
     requestKey: normalizeText(body.requestKey ?? body.request_key, "requestKey", 190),
     targetType: normalizeCode(body.targetType ?? body.target_type, "targetType", 40),
     targetId: optionalPositiveInt(body.targetId ?? body.target_id, "targetId"),

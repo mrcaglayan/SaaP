@@ -22,6 +22,7 @@ import {
   serializeEnvelope,
 } from "../utils/cryptoEnvelope.js";
 import { redactObject, redactRawPayloadText } from "../utils/redaction.js";
+import { evaluateApprovalNeed, submitApprovalRequest } from "./approvalPolicies.service.js";
 
 function up(value) {
   return String(value || "")
@@ -77,6 +78,10 @@ function forbidden(message) {
   const err = new Error(message);
   err.status = 403;
   return err;
+}
+
+function noopScopeAccess() {
+  return true;
 }
 
 function isDup(err) {
@@ -199,6 +204,21 @@ function mapJob(row, { includeRaw = false } = {}) {
 function mapAudit(row) {
   if (!row) return null;
   return { ...row, payload_json: parseJsonMaybe(row.payload_json) };
+}
+
+function deriveImportApprovalThreshold(job) {
+  const preview = parseJsonMaybe(job?.preview_summary_json) || {};
+  const candidates = [
+    preview.total_net_pay,
+    preview.total_gross_pay,
+    preview.total_amount,
+    preview.total_payroll_amount,
+  ];
+  for (const candidate of candidates) {
+    const amt = toAmount(candidate);
+    if (amt > 0) return amt;
+  }
+  return null;
 }
 
 function assertLeScope(req, assertScopeAccess, legalEntityId, label = "legalEntityId") {
@@ -1347,6 +1367,8 @@ export async function applyPayrollProviderImport({
   importJobId,
   input,
   assertScopeAccess,
+  skipUnifiedApprovalGate = false,
+  approvalRequestId = null,
 }) {
   if (input.applyIdempotencyKey) {
     const idemRes = await query(
@@ -1362,6 +1384,60 @@ export async function applyPayrollProviderImport({
     }
     if (idem && parsePositiveInt(idem.id) === importJobId && up(idem.status) === "APPLIED") {
       return getPayrollProviderImportJobDetail({ req, tenantId, importJobId, assertScopeAccess });
+    }
+  }
+
+  if (!skipUnifiedApprovalGate) {
+    const previewJob = await requireJob({ tenantId, importJobId });
+    assertLeScope(req, assertScopeAccess, previewJob.legal_entity_id, "importJobId");
+    if (!["APPLIED"].includes(up(previewJob.status))) {
+      const gov = await evaluateApprovalNeed({
+        moduleCode: "PAYROLL",
+        tenantId,
+        targetType: "PAYROLL_PROVIDER_IMPORT",
+        actionType: "APPLY",
+        legalEntityId: parsePositiveInt(previewJob.legal_entity_id),
+        thresholdAmount: deriveImportApprovalThreshold(previewJob),
+        currencyCode: up(previewJob.currency_code),
+      });
+      if (gov?.approval_required || gov?.approvalRequired) {
+        const submitRes = await submitApprovalRequest({
+          tenantId,
+          userId,
+          requestInput: {
+            moduleCode: "PAYROLL",
+            requestKey: `PRP09:IMPORT_APPLY:${tenantId}:${importJobId}`,
+            targetType: "PAYROLL_PROVIDER_IMPORT",
+            targetId: importJobId,
+            actionType: "APPLY",
+            legalEntityId: parsePositiveInt(previewJob.legal_entity_id),
+            thresholdAmount: deriveImportApprovalThreshold(previewJob),
+            currencyCode: up(previewJob.currency_code),
+            actionPayload: {
+              importJobId,
+              note: input.note || null,
+              allowSameUserApply: Boolean(input.allowSameUserApply),
+            },
+            targetSnapshot: {
+              module_code: "PAYROLL",
+              target_type: "PAYROLL_PROVIDER_IMPORT",
+              target_id: importJobId,
+              legal_entity_id: parsePositiveInt(previewJob.legal_entity_id),
+              provider_code: up(previewJob.provider_code),
+              payroll_period: toDateOnly(previewJob.payroll_period),
+              status: up(previewJob.status),
+              threshold_amount: deriveImportApprovalThreshold(previewJob),
+              currency_code: up(previewJob.currency_code),
+            },
+          },
+        });
+        return {
+          approval_required: true,
+          approval_request: submitRes?.item || null,
+          idempotent: Boolean(submitRes?.idempotent),
+          job: mapJob(previewJob),
+        };
+      }
     }
   }
 
@@ -1408,7 +1484,10 @@ export async function applyPayrollProviderImport({
       legalEntityId: job.legal_entity_id,
       importJobId,
       action: "APPLY_STARTED",
-      payload: { allow_same_user_apply: Boolean(input.allowSameUserApply) },
+      payload: {
+        allow_same_user_apply: Boolean(input.allowSameUserApply),
+        approval_request_id: parsePositiveInt(approvalRequestId) || null,
+      },
       note: input.note || "Applying payroll provider import",
       userId,
       runQuery: tx.query,
@@ -1496,7 +1575,11 @@ export async function applyPayrollProviderImport({
         legalEntityId: locked.legal_entity_id,
         importJobId,
         action: "APPLIED",
-        payload: { payroll_run_id: runId, line_count: applyRows.length },
+        payload: {
+          payroll_run_id: runId,
+          line_count: applyRows.length,
+          approval_request_id: parsePositiveInt(approvalRequestId) || null,
+        },
         note: input.note || "Applied payroll provider import",
         userId,
         runQuery: tx.query,
@@ -1508,6 +1591,34 @@ export async function applyPayrollProviderImport({
   }
 
   return getPayrollProviderImportJobDetail({ req, tenantId, importJobId, assertScopeAccess });
+}
+
+export async function executeApprovedPayrollProviderImportApply({
+  tenantId,
+  approvalRequestId,
+  approvedByUserId,
+  payload = {},
+}) {
+  const importJobId = parsePositiveInt(payload?.importJobId ?? payload?.import_job_id);
+  if (!importJobId) {
+    throw badRequest("Approved payroll provider import payload is missing importJobId");
+  }
+  return applyPayrollProviderImport({
+    req: null,
+    tenantId,
+    userId: parsePositiveInt(approvedByUserId) || null,
+    importJobId,
+    input: {
+      applyIdempotencyKey:
+        String((payload?.applyIdempotencyKey ?? payload?.apply_idempotency_key) || "").trim() ||
+        `H04:${approvalRequestId}|PAYROLL_PROVIDER_IMPORT_APPLY`,
+      note: String(payload?.note || "").trim() || "Approved payroll provider import apply",
+      allowSameUserApply: Boolean(payload?.allowSameUserApply ?? payload?.allow_same_user_apply),
+    },
+    assertScopeAccess: noopScopeAccess,
+    skipUnifiedApprovalGate: true,
+    approvalRequestId,
+  });
 }
 
 export default {
@@ -1527,4 +1638,5 @@ export default {
   purgePayrollProviderImportRawPayload,
   enqueuePayrollProviderImportApplyJob,
   applyPayrollProviderImport,
+  executeApprovedPayrollProviderImportApply,
 };

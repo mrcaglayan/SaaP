@@ -57,6 +57,7 @@ function hydrateApprovalRequestRow(row) {
   if (!row) return null;
   return {
     ...row,
+    module_code: u(row.module_code || "BANK"),
     threshold_amount: toAmount(row.threshold_amount),
     target_snapshot_json: parseJson(row.target_snapshot_json, {}),
     action_payload_json: parseJson(row.action_payload_json, null),
@@ -261,6 +262,7 @@ async function markExecutionInProgress({ tenantId, requestId }) {
 }
 
 async function executeApprovalAction({ requestRow, approvedByUserId }) {
+  const moduleCode = u(requestRow.module_code || "BANK");
   const targetType = u(requestRow.target_type);
   const actionType = u(requestRow.action_type);
   const payload = parseJson(requestRow.action_payload_json, {}) || {};
@@ -328,7 +330,47 @@ async function executeApprovalAction({ requestRow, approvedByUserId }) {
     });
   }
 
-  throw conflict(`No B09 execution resolver for ${targetType}/${actionType}`);
+  if (moduleCode === "PAYROLL" && targetType === "PAYROLL_MANUAL_SETTLEMENT_OVERRIDE" && actionType === "APPLY") {
+    const mod = await import("./payroll.settlementOverrides.service.js");
+    return mod.executeApprovedPayrollManualSettlementOverride({
+      tenantId,
+      approvalRequestId: requestId,
+      approvedByUserId,
+      payload,
+    });
+  }
+
+  if (moduleCode === "PAYROLL" && targetType === "PAYROLL_PERIOD_CLOSE" && actionType === "APPROVE_CLOSE") {
+    const mod = await import("./payroll.close.service.js");
+    return mod.executeApprovedPayrollPeriodClose({
+      tenantId,
+      approvalRequestId: requestId,
+      approvedByUserId,
+      payload,
+    });
+  }
+
+  if (moduleCode === "PAYROLL" && targetType === "PAYROLL_PERIOD_CLOSE" && actionType === "REOPEN") {
+    const mod = await import("./payroll.close.service.js");
+    return mod.executeApprovedPayrollPeriodReopen({
+      tenantId,
+      approvalRequestId: requestId,
+      approvedByUserId,
+      payload,
+    });
+  }
+
+  if (moduleCode === "PAYROLL" && targetType === "PAYROLL_PROVIDER_IMPORT" && actionType === "APPLY") {
+    const mod = await import("./payroll.providers.service.js");
+    return mod.executeApprovedPayrollProviderImportApply({
+      tenantId,
+      approvalRequestId: requestId,
+      approvedByUserId,
+      payload,
+    });
+  }
+
+  throw conflict(`No approval execution resolver for ${moduleCode}/${targetType}/${actionType}`);
 }
 
 function inferRequestScopeFromInput({ legalEntityId = null, bankAccountId = null } = {}) {
@@ -338,6 +380,7 @@ function inferRequestScopeFromInput({ legalEntityId = null, bankAccountId = null
 
 async function resolvePolicyForSubmission({
   tenantId,
+  moduleCode = "BANK",
   policyCode = null,
   targetType,
   actionType,
@@ -362,6 +405,7 @@ async function resolvePolicyForSubmission({
   }
   return evaluateBankApprovalNeed({
     tenantId,
+    moduleCode,
     targetType,
     actionType,
     legalEntityId,
@@ -399,6 +443,10 @@ export async function listBankApprovalRequestRows({
   if (filters.requestStatus) {
     where.push("r.request_status = ?");
     params.push(filters.requestStatus);
+  }
+  if (filters.moduleCode) {
+    where.push("COALESCE(r.module_code, 'BANK') = ?");
+    params.push(u(filters.moduleCode));
   }
   if (filters.targetType) {
     where.push("r.target_type = ?");
@@ -514,6 +562,7 @@ export async function submitBankApprovalRequest({
     policyOverride ||
     (await resolvePolicyForSubmission({
       tenantId,
+      moduleCode: requestInput.moduleCode || "BANK",
       policyCode: requestInput.policyCode || null,
       targetType: requestInput.targetType,
       actionType: requestInput.actionType,
@@ -559,6 +608,7 @@ export async function submitBankApprovalRequest({
     const ins = await runQuery(
       `INSERT INTO bank_approval_requests (
           tenant_id,
+          module_code,
           request_code,
           request_key,
           policy_id,
@@ -579,9 +629,10 @@ export async function submitBankApprovalRequest({
           target_snapshot_json,
           action_payload_json,
           policy_snapshot_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING', 'NOT_EXECUTED', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', 'NOT_EXECUTED', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         tenantId,
+        u(requestInput.moduleCode || "BANK"),
         requestCode,
         requestKey,
         parsePositiveInt(policy.id),
@@ -644,17 +695,20 @@ export async function submitBankApprovalRequestFromRoute({
     userId,
     requestInput: {
       ...input,
+      moduleCode: input.moduleCode || "BANK",
       legalEntityId,
       bankAccountId: input.bankAccountId || null,
       thresholdAmount: input.thresholdAmount ?? null,
       currencyCode: input.currencyCode || null,
       targetSnapshot: input.targetSnapshot || {
+        module_code: input.moduleCode || "BANK",
         target_type: input.targetType,
         target_id: input.targetId || null,
       },
     },
     snapshotBuilder: async () =>
       input.targetSnapshot || {
+        module_code: input.moduleCode || "BANK",
         target_type: input.targetType,
         target_id: input.targetId || null,
       },

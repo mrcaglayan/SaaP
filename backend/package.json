@@ -53,6 +53,7 @@
     "test:hardening:prh01": "node scripts/test-hardening-prh01-sensitive-data.js",
     "test:hardening:prh02": "node scripts/test-hardening-prh02-job-engine.js",
     "test:hardening:prh03": "node scripts/test-hardening-prh03-query-performance.js",
+    "test:hardening:prh04": "node scripts/test-hardening-prh04-approval-policies.js",
     "test:cari-pr01": "node scripts/test-cari-pr01-schema-and-constraints.js",
     "test:cari-pr02": "node scripts/test-cari-pr02-rbac-seed-and-guards.js",
     "test:cari-pr03": "node scripts/test-cari-pr03-counterparty-master.js",

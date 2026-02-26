@@ -15,6 +15,7 @@ import { badRequest } from "./_utils.js";
 
 const POLICY_STATUS = ["ACTIVE", "PAUSED", "DISABLED"];
 const SCOPE_TYPES = ["GLOBAL", "LEGAL_ENTITY", "BANK_ACCOUNT"];
+const MODULE_CODES = ["BANK", "PAYROLL"];
 
 function normalizeOptionalEnum(value, label, allowedValues) {
   if (value === undefined || value === null || value === "") return null;
@@ -39,6 +40,7 @@ export function parseBankApprovalPoliciesListInput(req) {
   return {
     tenantId,
     ...pagination,
+    moduleCode: normalizeOptionalEnum(req.query?.moduleCode ?? req.query?.module_code, "moduleCode", MODULE_CODES),
     status: normalizeOptionalEnum(req.query?.status, "status", POLICY_STATUS),
     targetType: req.query?.targetType ? normalizeCode(req.query.targetType, "targetType", 40) : null,
     actionType: req.query?.actionType ? normalizeCode(req.query.actionType, "actionType", 40) : null,
@@ -70,6 +72,7 @@ export function parseBankApprovalPolicyCreateInput(req) {
     policyName: normalizeText(body.policyName ?? body.policy_name, "policyName", 190, {
       required: true,
     }),
+    moduleCode: normalizeEnum(body.moduleCode ?? body.module_code ?? "BANK", "moduleCode", MODULE_CODES),
     status: normalizeEnum(body.status || "ACTIVE", "status", POLICY_STATUS),
     targetType: normalizeCode(body.targetType ?? body.target_type, "targetType", 40),
     actionType: normalizeCode(body.actionType ?? body.action_type, "actionType", 40),
@@ -126,6 +129,10 @@ export function parseBankApprovalPolicyUpdateInput(req) {
     policyName:
       body.policyName !== undefined || body.policy_name !== undefined
         ? normalizeText(body.policyName ?? body.policy_name, "policyName", 190, { required: true })
+        : undefined,
+    moduleCode:
+      body.moduleCode !== undefined || body.module_code !== undefined
+        ? normalizeEnum(body.moduleCode ?? body.module_code, "moduleCode", MODULE_CODES)
         : undefined,
     status:
       body.status !== undefined ? normalizeEnum(body.status, "status", POLICY_STATUS) : undefined,

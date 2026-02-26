@@ -1,6 +1,7 @@
 import { query, withTransaction } from "../db.js";
 import { badRequest, parsePositiveInt } from "../routes/_utils.js";
 import { assertPayrollPeriodActionAllowed } from "./payroll.close.service.js";
+import { evaluateApprovalNeed, submitApprovalRequest } from "./approvalPolicies.service.js";
 
 const EPSILON = 0.000001;
 
@@ -36,6 +37,10 @@ function makeConflict(message) {
   const err = new Error(message);
   err.status = 409;
   return err;
+}
+
+function noopScopeAccess() {
+  return true;
 }
 
 async function writeLiabilityAudit({
@@ -563,7 +568,69 @@ export async function approveApplyPayrollManualSettlementRequest({
   userId,
   decisionNote = null,
   assertScopeAccess,
+  skipUnifiedApprovalGate = false,
+  approvalRequestId = null,
 }) {
+  if (!skipUnifiedApprovalGate) {
+    const previewRequestRow = await getOverrideRequestById({ tenantId, requestId });
+    if (!previewRequestRow) throw makeNotFound("Manual settlement override request not found");
+
+    const legalEntityId = parsePositiveInt(previewRequestRow.legal_entity_id);
+    assertScopeAccess(req, "legal_entity", legalEntityId, "requestId");
+
+    const requestStatus = normalizeUpperText(previewRequestRow.status);
+    if (requestStatus === "REQUESTED") {
+      const gov = await evaluateApprovalNeed({
+        moduleCode: "PAYROLL",
+        tenantId,
+        targetType: "PAYROLL_MANUAL_SETTLEMENT_OVERRIDE",
+        actionType: "APPLY",
+        legalEntityId,
+        thresholdAmount: toAmount(previewRequestRow.requested_amount),
+        currencyCode: normalizeUpperText(previewRequestRow.currency_code),
+      });
+
+      if (gov?.approval_required || gov?.approvalRequired) {
+        const submitRes = await submitApprovalRequest({
+          tenantId,
+          userId,
+          requestInput: {
+            moduleCode: "PAYROLL",
+            requestKey: `PRP06:OVERRIDE_APPLY:${tenantId}:${requestId}`,
+            targetType: "PAYROLL_MANUAL_SETTLEMENT_OVERRIDE",
+            targetId: requestId,
+            actionType: "APPLY",
+            legalEntityId,
+            thresholdAmount: toAmount(previewRequestRow.requested_amount),
+            currencyCode: normalizeUpperText(previewRequestRow.currency_code),
+            actionPayload: {
+              requestId,
+              decisionNote: decisionNote || null,
+            },
+            targetSnapshot: {
+              module_code: "PAYROLL",
+              target_type: "PAYROLL_MANUAL_SETTLEMENT_OVERRIDE",
+              target_id: requestId,
+              legal_entity_id: legalEntityId,
+              run_id: parsePositiveInt(previewRequestRow.run_id) || null,
+              payroll_liability_id: parsePositiveInt(previewRequestRow.payroll_liability_id) || null,
+              requested_amount: toAmount(previewRequestRow.requested_amount),
+              currency_code: normalizeUpperText(previewRequestRow.currency_code),
+              status: requestStatus,
+            },
+          },
+        });
+
+        return {
+          request: previewRequestRow,
+          approval_required: true,
+          approval_request: submitRes?.item || null,
+          idempotent: Boolean(submitRes?.idempotent),
+        };
+      }
+    }
+  }
+
   return withTransaction(async (tx) => {
     const requestRow = await getOverrideRequestForUpdateTx({
       tenantId,
@@ -680,6 +747,7 @@ export async function approveApplyPayrollManualSettlementRequest({
           reason: requestRow.reason || null,
           externalRef: requestRow.external_ref || null,
           requestId,
+          approvalRequestId: parsePositiveInt(approvalRequestId) || null,
           deltaAmount: state.deltaAmount,
           decisionNote: decisionNote || null,
         }),
@@ -768,6 +836,7 @@ export async function approveApplyPayrollManualSettlementRequest({
       payload: {
         requestId,
         settlementId: parsePositiveInt(settlement?.id) || null,
+        approvalRequestId: parsePositiveInt(approvalRequestId) || null,
         deltaAmount: state.deltaAmount,
         totalSettled: state.newLiabilitySettled,
         outstandingAmount: state.liabilityOutstanding,
@@ -784,6 +853,30 @@ export async function approveApplyPayrollManualSettlementRequest({
       settlement,
       idempotent: false,
     };
+  });
+}
+
+export async function executeApprovedPayrollManualSettlementOverride({
+  tenantId,
+  approvalRequestId,
+  approvedByUserId,
+  payload = {},
+}) {
+  const requestId = parsePositiveInt(payload?.requestId ?? payload?.request_id);
+  if (!requestId) {
+    throw badRequest("Approved payroll manual settlement override payload is missing requestId");
+  }
+  return approveApplyPayrollManualSettlementRequest({
+    req: null,
+    tenantId,
+    requestId,
+    userId: parsePositiveInt(approvedByUserId) || null,
+    decisionNote:
+      String((payload?.decisionNote ?? payload?.decision_note) || "").trim() ||
+      "Approved via unified approval engine",
+    assertScopeAccess: noopScopeAccess,
+    skipUnifiedApprovalGate: true,
+    approvalRequestId,
   });
 }
 

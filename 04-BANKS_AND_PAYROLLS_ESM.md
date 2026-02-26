@@ -66,6 +66,7 @@ Permission naming note (important):
 - [x] PR-H01 Sensitive Data Security (implemented)
 - [x] PR-H02 Jobs + Retry Engine (implemented)
 - [x] PR-H03 Performance + Indexing + Pagination Hardening (implemented)
+- [x] PR-H04 Unified Approval Policy Engine (Thresholds, SoD, Multi-step) (implemented)
 
 ---
 ## Roadmap Content

@@ -1,5 +1,6 @@
 import { query, withTransaction } from "../db.js";
 import { badRequest, parsePositiveInt } from "../routes/_utils.js";
+import { evaluateApprovalNeed, submitApprovalRequest } from "./approvalPolicies.service.js";
 
 const CLOSE_STATUS_VALUES = new Set(["DRAFT", "READY", "REQUESTED", "CLOSED", "REOPENED"]);
 
@@ -52,6 +53,10 @@ function makeConflict(message) {
   const err = new Error(message);
   err.status = 409;
   return err;
+}
+
+function noopScopeAccess() {
+  return true;
 }
 
 async function getPeriodCloseScopeRow({ tenantId, closeId, runQuery = query }) {
@@ -703,7 +708,61 @@ export async function approveAndClosePayrollPeriod({
   note = null,
   closeIdempotencyKey = null,
   assertScopeAccess,
+  skipUnifiedApprovalGate = false,
+  approvalRequestId = null,
 }) {
+  if (!skipUnifiedApprovalGate) {
+    const previewClose = await getPeriodCloseById({ tenantId, closeId });
+    if (!previewClose) throw makeNotFound("Payroll period close not found");
+    const legalEntityId = parsePositiveInt(previewClose.legal_entity_id);
+    assertScopeAccess(req, "legal_entity", legalEntityId, "closeId");
+
+    const currentStatus = normalizeUpperText(previewClose.status);
+    if (currentStatus === "REQUESTED") {
+      const gov = await evaluateApprovalNeed({
+        moduleCode: "PAYROLL",
+        tenantId,
+        targetType: "PAYROLL_PERIOD_CLOSE",
+        actionType: "APPROVE_CLOSE",
+        legalEntityId,
+      });
+      if (gov?.approval_required || gov?.approvalRequired) {
+        const submitRes = await submitApprovalRequest({
+          tenantId,
+          userId,
+          requestInput: {
+            moduleCode: "PAYROLL",
+            requestKey: `PRP08:APPROVE_CLOSE:${tenantId}:${closeId}`,
+            targetType: "PAYROLL_PERIOD_CLOSE",
+            targetId: closeId,
+            actionType: "APPROVE_CLOSE",
+            legalEntityId,
+            actionPayload: {
+              closeId,
+              note: note || null,
+              closeIdempotencyKey: closeIdempotencyKey || null,
+            },
+            targetSnapshot: {
+              module_code: "PAYROLL",
+              target_type: "PAYROLL_PERIOD_CLOSE",
+              target_id: closeId,
+              legal_entity_id: legalEntityId,
+              period_start: toDateOnly(previewClose.period_start),
+              period_end: toDateOnly(previewClose.period_end),
+              status: currentStatus,
+            },
+          },
+        });
+        return {
+          close: mapCloseRow(previewClose),
+          approval_required: true,
+          approval_request: submitRes?.item || null,
+          idempotent: Boolean(submitRes?.idempotent),
+        };
+      }
+    }
+  }
+
   await withTransaction(async (tx) => {
     const close = await getPeriodCloseById({ tenantId, closeId, runQuery: tx.query, forUpdate: true });
     if (!close) throw makeNotFound("Payroll period close not found");
@@ -773,6 +832,7 @@ export async function approveAndClosePayrollPeriod({
       note: note || null,
       payload: {
         close_idempotency_key: closeIdempotencyKey || null,
+        approval_request_id: parsePositiveInt(approvalRequestId) || null,
         lock_flags: {
           lock_run_changes: Boolean(Number(close.lock_run_changes || 0)),
           lock_manual_settlements: Boolean(Number(close.lock_manual_settlements || 0)),
@@ -794,7 +854,59 @@ export async function reopenPayrollPeriodClose({
   closeId,
   reason,
   assertScopeAccess,
+  skipUnifiedApprovalGate = false,
+  approvalRequestId = null,
 }) {
+  if (!skipUnifiedApprovalGate) {
+    const previewClose = await getPeriodCloseById({ tenantId, closeId });
+    if (!previewClose) throw makeNotFound("Payroll period close not found");
+    const legalEntityId = parsePositiveInt(previewClose.legal_entity_id);
+    assertScopeAccess(req, "legal_entity", legalEntityId, "closeId");
+    const currentStatus = normalizeUpperText(previewClose.status);
+    if (currentStatus === "CLOSED") {
+      const gov = await evaluateApprovalNeed({
+        moduleCode: "PAYROLL",
+        tenantId,
+        targetType: "PAYROLL_PERIOD_CLOSE",
+        actionType: "REOPEN",
+        legalEntityId,
+      });
+      if (gov?.approval_required || gov?.approvalRequired) {
+        const submitRes = await submitApprovalRequest({
+          tenantId,
+          userId,
+          requestInput: {
+            moduleCode: "PAYROLL",
+            requestKey: `PRP08:REOPEN:${tenantId}:${closeId}`,
+            targetType: "PAYROLL_PERIOD_CLOSE",
+            targetId: closeId,
+            actionType: "REOPEN",
+            legalEntityId,
+            actionPayload: {
+              closeId,
+              reason,
+            },
+            targetSnapshot: {
+              module_code: "PAYROLL",
+              target_type: "PAYROLL_PERIOD_CLOSE",
+              target_id: closeId,
+              legal_entity_id: legalEntityId,
+              period_start: toDateOnly(previewClose.period_start),
+              period_end: toDateOnly(previewClose.period_end),
+              status: currentStatus,
+            },
+          },
+        });
+        return {
+          close: mapCloseRow(previewClose),
+          approval_required: true,
+          approval_request: submitRes?.item || null,
+          idempotent: Boolean(submitRes?.idempotent),
+        };
+      }
+    }
+  }
+
   await withTransaction(async (tx) => {
     const close = await getPeriodCloseById({ tenantId, closeId, runQuery: tx.query, forUpdate: true });
     if (!close) throw makeNotFound("Payroll period close not found");
@@ -823,7 +935,7 @@ export async function reopenPayrollPeriodClose({
       closeId,
       action: "REOPENED",
       note: reason,
-      payload: { reason },
+      payload: { reason, approval_request_id: parsePositiveInt(approvalRequestId) || null },
       userId,
       runQuery: tx.query,
     });
@@ -890,6 +1002,56 @@ export async function assertPayrollPeriodActionAllowed({
   return { allowed: true, close: mapCloseRow(close) };
 }
 
+export async function executeApprovedPayrollPeriodClose({
+  tenantId,
+  approvalRequestId,
+  approvedByUserId,
+  payload = {},
+}) {
+  const closeId = parsePositiveInt(payload?.closeId ?? payload?.close_id);
+  if (!closeId) {
+    throw badRequest("Approved payroll period close payload is missing closeId");
+  }
+  return approveAndClosePayrollPeriod({
+    req: null,
+    tenantId,
+    userId: parsePositiveInt(approvedByUserId) || null,
+    closeId,
+    note: String(payload?.note || "").trim() || null,
+    closeIdempotencyKey:
+      String((payload?.closeIdempotencyKey ?? payload?.close_idempotency_key) || "").trim() || null,
+    assertScopeAccess: noopScopeAccess,
+    skipUnifiedApprovalGate: true,
+    approvalRequestId,
+  });
+}
+
+export async function executeApprovedPayrollPeriodReopen({
+  tenantId,
+  approvalRequestId,
+  approvedByUserId,
+  payload = {},
+}) {
+  const closeId = parsePositiveInt(payload?.closeId ?? payload?.close_id);
+  if (!closeId) {
+    throw badRequest("Approved payroll period reopen payload is missing closeId");
+  }
+  const reason = String(payload?.reason || "").trim();
+  if (!reason) {
+    throw badRequest("Approved payroll period reopen payload is missing reason");
+  }
+  return reopenPayrollPeriodClose({
+    req: null,
+    tenantId,
+    userId: parsePositiveInt(approvedByUserId) || null,
+    closeId,
+    reason,
+    assertScopeAccess: noopScopeAccess,
+    skipUnifiedApprovalGate: true,
+    approvalRequestId,
+  });
+}
+
 export default {
   resolvePayrollPeriodCloseScope,
   listPayrollPeriodCloseRows,
@@ -898,5 +1060,7 @@ export default {
   requestPayrollPeriodClose,
   approveAndClosePayrollPeriod,
   reopenPayrollPeriodClose,
+  executeApprovedPayrollPeriodClose,
+  executeApprovedPayrollPeriodReopen,
   assertPayrollPeriodActionAllowed,
 };
