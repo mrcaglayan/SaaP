@@ -67,6 +67,7 @@ Permission naming note (important):
 - [x] PR-H02 Jobs + Retry Engine (implemented)
 - [x] PR-H03 Performance + Indexing + Pagination Hardening (implemented)
 - [x] PR-H04 Unified Approval Policy Engine (Thresholds, SoD, Multi-step) (implemented)
+- [x] PR-H05 Operations Dashboard APIs (KPIs, SLAs, Health) (implemented)
 
 ---
 ## Roadmap Content

@@ -92,6 +92,7 @@ const TAG_DESCRIPTION_MAP = new Map([
   ["Payments", "Generic payment batch workflows (create, approve, export, post, cancel)."],
   ["Payroll", "Payroll import runs and payroll subledger workflow endpoints."],
   ["Jobs", "Background jobs, retries, and operational queue management endpoints."],
+  ["Ops", "Operational dashboards for KPI, SLA, and pipeline health summaries."],
   ["Auth", "Session and identity endpoints."],
   ["Provider", "Provider control-plane administration endpoints."],
   ["System", "System health and operational endpoints."],
@@ -182,6 +183,9 @@ function inferTagFromPath(endpointPath) {
   }
   if (normalizedPath.startsWith("/api/v1/jobs")) {
     return "Jobs";
+  }
+  if (normalizedPath.startsWith("/api/v1/ops")) {
+    return "Ops";
   }
   if (normalizedPath.startsWith("/api/v1/payroll")) {
     return "Payroll";

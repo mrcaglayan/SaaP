@@ -20,6 +20,7 @@ const AUDIT_LOGS_PAGE_PERMISSIONS = ["security.audit.read"];
 const SENSITIVE_DATA_AUDIT_PAGE_PERMISSIONS = [
   "security.sensitive_data.audit.read",
 ];
+const OPS_DASHBOARD_PAGE_PERMISSIONS = ["ops.dashboard.read"];
 const COMPANY_SETTINGS_PAGE_PERMISSIONS = ["onboarding.company.setup"];
 const ORG_SETTINGS_PAGE_PERMISSIONS = ["org.tree.read", "org.fiscal_calendar.read"];
 const GL_SETUP_PAGE_PERMISSIONS = [
@@ -554,6 +555,12 @@ export const sidebarItems = [
         label: "Hassas Veri Denetim Kayitlari",
         to: "/app/ayarlar/rbac/sensitive-data-audit",
         requiredPermissions: SENSITIVE_DATA_AUDIT_PAGE_PERMISSIONS,
+        implemented: true,
+      },
+      {
+        label: "Operasyon Dashboard",
+        to: "/app/ayarlar/operasyon-dashboard",
+        requiredPermissions: OPS_DASHBOARD_PAGE_PERMISSIONS,
         implemented: true,
       },
       {
