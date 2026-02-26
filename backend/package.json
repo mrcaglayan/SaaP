@@ -6,9 +6,12 @@
   "scripts": {
     "dev": "nodemon src/index.js",
     "start": "node src/index.js",
+    "db:drop": "node src/dropDb.js",
     "db:init": "node src/initDb.js",
     "db:migrate": "node src/migrate.js",
     "db:migrate:status": "node src/migrate.js status",
+    "db:reset": "npm run db:drop && npm run db:init && npm run db:seed:core && npm run db:seed:provider-admin",
+    "db:reset-tenantli": "npm run db:drop && npm run db:init && npm run db:seed:core && npm run db:seed:provider-admin && npm run db:seed",
     "db:seed:core": "node src/seedCoreCli.js",
     "db:seed:provider-admin": "node src/seedProviderAdmin.js",
     "db:seed": "node src/seed.js",

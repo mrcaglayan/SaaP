@@ -8,6 +8,12 @@ const dbPort = Number(process.env.DB_PORT || 3306);
 const dbUser = process.env.DB_USER || "root";
 const dbPassword = process.env.DB_PASSWORD || "1212";
 const dbName = process.env.DB_NAME || "SaaP";
+const PROTECTED_DATABASE_NAMES = new Set([
+  "mysql",
+  "information_schema",
+  "performance_schema",
+  "sys",
+]);
 
 function escapeIdentifier(name) {
   return String(name).replace(/`/g, "``");
@@ -72,6 +78,28 @@ export async function ensureDatabaseExists() {
 
   const safeDbName = escapeIdentifier(dbName);
   await connection.query(`CREATE DATABASE IF NOT EXISTS \`${safeDbName}\``);
+  await connection.end();
+}
+
+export async function dropDatabaseIfExists() {
+  const normalizedDbName = String(dbName || "").trim();
+  if (!normalizedDbName) {
+    throw new Error("DB_NAME is required to drop the database");
+  }
+
+  if (PROTECTED_DATABASE_NAMES.has(normalizedDbName.toLowerCase())) {
+    throw new Error(`Refusing to drop protected database: ${normalizedDbName}`);
+  }
+
+  const connection = await mysql.createConnection({
+    host: dbHost,
+    port: dbPort,
+    user: dbUser,
+    password: dbPassword,
+  });
+
+  const safeDbName = escapeIdentifier(normalizedDbName);
+  await connection.query(`DROP DATABASE IF EXISTS \`${safeDbName}\``);
   await connection.end();
 }
 

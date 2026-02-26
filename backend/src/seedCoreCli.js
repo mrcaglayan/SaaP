@@ -2,7 +2,13 @@ import { closePool } from "./db.js";
 import { seedCore } from "./seedCore.js";
 
 async function main() {
-  const result = await seedCore();
+  const shouldCreateDefaultTenant =
+    String(process.env.SEED_CORE_CREATE_DEFAULT_TENANT || "").toLowerCase() === "true";
+
+  const result = await seedCore({
+    ensureDefaultTenantIfMissing: shouldCreateDefaultTenant,
+  });
+
   console.log("Core seed completed:", result);
 }
 
