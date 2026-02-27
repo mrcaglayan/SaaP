@@ -6,11 +6,18 @@ import {
   getOpsPayrollCloseStatus,
   getOpsPayrollImportHealth,
 } from "../api/opsDashboard.js";
+import { useWorkingContextDefaults } from "../context/useWorkingContextDefaults.js";
 import { useI18n } from "../i18n/useI18n.js";
 
 function pretty(value) {
   return JSON.stringify(value ?? {}, null, 2);
 }
+
+const OPS_DASHBOARD_CONTEXT_MAPPINGS = [
+  { stateKey: "legalEntityId" },
+  { stateKey: "dateFrom" },
+  { stateKey: "dateTo" },
+];
 
 export default function OpsDashboardPage() {
   const { t } = useI18n();
@@ -32,6 +39,12 @@ export default function OpsDashboardPage() {
     payrollClose: null,
     jobs: null,
   });
+
+  useWorkingContextDefaults(setFilters, OPS_DASHBOARD_CONTEXT_MAPPINGS, [
+    filters.legalEntityId,
+    filters.dateFrom,
+    filters.dateTo,
+  ]);
 
   const queryParams = useMemo(() => {
     const params = {};

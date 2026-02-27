@@ -11,6 +11,7 @@ import {
   listOperatingUnits,
 } from "../../api/orgAdmin.js";
 import { useAuth } from "../../auth/useAuth.js";
+import { useWorkingContextDefaults } from "../../context/useWorkingContextDefaults.js";
 import { useI18n } from "../../i18n/useI18n.js";
 import CashControlModeBanner from "./CashControlModeBanner.jsx";
 
@@ -35,6 +36,18 @@ const EMPTY_FORM = {
   requiresApprovalOverAmount: "",
   status: "ACTIVE",
 };
+
+const CASH_REGISTER_CONTEXT_MAPPINGS = [
+  { stateKey: "legalEntityId" },
+  {
+    stateKey: "operatingUnitId",
+    allowContextValue: (_contextValue, previousState, workingContext) => {
+      const selectedLegalEntityId = String(previousState?.legalEntityId || "").trim();
+      const contextLegalEntityId = String(workingContext?.legalEntityId || "").trim();
+      return !selectedLegalEntityId || selectedLegalEntityId === contextLegalEntityId;
+    },
+  },
+];
 
 function toPositiveInt(value) {
   const parsed = Number(value);
@@ -102,6 +115,11 @@ export default function CashRegistersPage() {
   const [currencies, setCurrencies] = useState([]);
 
   const [form, setForm] = useState(EMPTY_FORM);
+
+  useWorkingContextDefaults(setForm, CASH_REGISTER_CONTEXT_MAPPINGS, [
+    form.legalEntityId,
+    form.operatingUnitId,
+  ]);
 
   const selectedLegalEntityId = toPositiveInt(form.legalEntityId);
 

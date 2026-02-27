@@ -16,6 +16,7 @@ import { listCariCounterparties } from "../../api/cariCounterparty.js";
 import { getCariOpenItemsReport } from "../../api/cariReports.js";
 import { listAccounts } from "../../api/glAdmin.js";
 import { useAuth } from "../../auth/useAuth.js";
+import { useWorkingContextDefaults } from "../../context/useWorkingContextDefaults.js";
 import { useI18n } from "../../i18n/useI18n.js";
 import CashControlModeBanner from "./CashControlModeBanner.jsx";
 
@@ -55,6 +56,11 @@ const SOURCE_DOC_TYPES = [
 const CARI_SETTLEMENT_LINKED_TXN_TYPES = new Set(["RECEIPT", "PAYOUT"]);
 const CASH_REGISTER_SETUP_PATH = "/app/kasa-tanimlari";
 const CASH_SESSION_SETUP_PATH = "/app/kasa-oturumlari";
+
+const CASH_TRANSACTION_FILTER_CONTEXT_MAPPINGS = [
+  { stateKey: "bookDateFrom", contextKey: "dateFrom" },
+  { stateKey: "bookDateTo", contextKey: "dateTo" },
+];
 
 function toPositiveInt(value) {
   const parsed = Number(value);
@@ -453,6 +459,11 @@ export default function CashTransactionsPage() {
   const [applyOpenItems, setApplyOpenItems] = useState([]);
   const [applyOpenItemsLoading, setApplyOpenItemsLoading] = useState(false);
   const [applyOpenItemsError, setApplyOpenItemsError] = useState("");
+
+  useWorkingContextDefaults(setFilters, CASH_TRANSACTION_FILTER_CONTEXT_MAPPINGS, [
+    filters.bookDateFrom,
+    filters.bookDateTo,
+  ]);
 
   const registerOptions = useMemo(
     () =>

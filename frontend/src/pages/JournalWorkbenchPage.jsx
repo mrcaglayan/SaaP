@@ -23,6 +23,7 @@ import {
   listOperatingUnits,
 } from "../api/orgAdmin.js";
 import { useAuth } from "../auth/useAuth.js";
+import { useWorkingContextDefaults } from "../context/useWorkingContextDefaults.js";
 import { useI18n } from "../i18n/useI18n.js";
 
 const JOURNAL_SOURCE_TYPES = [
@@ -269,6 +270,48 @@ export default function JournalWorkbenchPage() {
     selectedEntityIntercompanyEnabled &&
     selectedEntityPartnerRequired &&
     String(journal.sourceType || "").toUpperCase() === "INTERCOMPANY";
+
+  const journalContextMappings = useMemo(
+    () => [
+      { stateKey: "legalEntityId" },
+      {
+        stateKey: "fiscalPeriodId",
+        allowContextValue: (contextValue) => hasId(periods, Number(contextValue)),
+      },
+    ],
+    [periods]
+  );
+
+  const historyContextMappings = useMemo(
+    () => [
+      { stateKey: "legalEntityId" },
+      {
+        stateKey: "fiscalPeriodId",
+        allowContextValue: (contextValue) => hasId(historyPeriods, Number(contextValue)),
+      },
+    ],
+    [historyPeriods]
+  );
+
+  const complianceContextMappings = useMemo(() => [{ stateKey: "legalEntityId" }], []);
+
+  useWorkingContextDefaults(
+    setJournal,
+    journalContextMappings,
+    [journal.legalEntityId, journal.fiscalPeriodId, periods]
+  );
+
+  useWorkingContextDefaults(
+    setHistoryFilters,
+    historyContextMappings,
+    [historyFilters.legalEntityId, historyFilters.fiscalPeriodId, historyPeriods]
+  );
+
+  useWorkingContextDefaults(
+    setComplianceFilters,
+    complianceContextMappings,
+    [complianceFilters.legalEntityId]
+  );
 
   useEffect(() => {
     let cancelled = false;

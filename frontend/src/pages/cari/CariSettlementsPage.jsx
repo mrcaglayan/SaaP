@@ -16,6 +16,7 @@ import { listLegalEntities } from "../../api/orgAdmin.js";
 import { getCariOpenItemsReport } from "../../api/cariReports.js";
 import { extractCariReplayAndRisks } from "../../api/cariCommon.js";
 import { useAuth } from "../../auth/useAuth.js";
+import { useWorkingContextDefaults } from "../../context/useWorkingContextDefaults.js";
 import { useModuleReadiness } from "../../readiness/useModuleReadiness.js";
 import {
   buildAutoAllocatePreview,
@@ -223,6 +224,11 @@ function buildReverseDefaultForm() {
   };
 }
 
+const SETTLEMENT_PREVIEW_CONTEXT_MAPPINGS = [{ stateKey: "legalEntityId" }];
+const SETTLEMENT_APPLY_CONTEXT_MAPPINGS = [{ stateKey: "legalEntityId" }];
+const SETTLEMENT_BANK_ATTACH_CONTEXT_MAPPINGS = [{ stateKey: "legalEntityId" }];
+const SETTLEMENT_BANK_APPLY_CONTEXT_MAPPINGS = [{ stateKey: "legalEntityId" }];
+
 export default function CariSettlementsPage() {
   const { hasPermission } = useAuth();
   const { getModuleRow } = useModuleReadiness();
@@ -285,6 +291,19 @@ export default function CariSettlementsPage() {
   const [bankApplyMessage, setBankApplyMessage] = useState("");
   const [bankApplyResult, setBankApplyResult] = useState(null);
   const [bankApplyFollowUpRisks, setBankApplyFollowUpRisks] = useState([]);
+
+  useWorkingContextDefaults(setPreviewFilters, SETTLEMENT_PREVIEW_CONTEXT_MAPPINGS, [
+    previewFilters.legalEntityId,
+  ]);
+  useWorkingContextDefaults(setApplyForm, SETTLEMENT_APPLY_CONTEXT_MAPPINGS, [
+    applyForm.legalEntityId,
+  ]);
+  useWorkingContextDefaults(setBankAttachForm, SETTLEMENT_BANK_ATTACH_CONTEXT_MAPPINGS, [
+    bankAttachForm.legalEntityId,
+  ]);
+  useWorkingContextDefaults(setBankApplyForm, SETTLEMENT_BANK_APPLY_CONTEXT_MAPPINGS, [
+    bankApplyForm.legalEntityId,
+  ]);
 
   const applyLegalEntityId = toPositiveInt(applyForm.legalEntityId);
   const applyCariReadiness = getModuleRow("cariPosting", applyLegalEntityId);

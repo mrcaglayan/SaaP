@@ -9,6 +9,7 @@ import {
   resolveExceptionWorkbench,
 } from "../api/exceptionsWorkbench.js";
 import { useAuth } from "../auth/useAuth.js";
+import { useWorkingContextDefaults } from "../context/useWorkingContextDefaults.js";
 import { useI18n } from "../i18n/useI18n.js";
 
 function formatDateTime(value) {
@@ -22,6 +23,8 @@ function normalizeText(value, fallback = "") {
   const text = String(value || "").trim();
   return text || fallback;
 }
+
+const EXCEPTIONS_CONTEXT_MAPPINGS = [{ stateKey: "legalEntityId" }];
 
 export default function ExceptionsWorkbenchPage() {
   const { hasPermission } = useAuth();
@@ -38,6 +41,9 @@ export default function ExceptionsWorkbenchPage() {
     refresh: true,
     days: "180",
   });
+  useWorkingContextDefaults(setFilters, EXCEPTIONS_CONTEXT_MAPPINGS, [
+    filters.legalEntityId,
+  ]);
   const [rows, setRows] = useState([]);
   const [summary, setSummary] = useState({ by_status: {}, by_module: {}, by_severity: {} });
   const [total, setTotal] = useState(0);

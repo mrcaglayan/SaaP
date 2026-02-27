@@ -14,7 +14,7 @@ Tag legend: `(hot: yes)` means likely touches conflict-prone files (`AppLayout.j
 
 ### UX + Product Flow (ordered)
 - [x] PR-UX01 Working Context Provider (LE/OU/Period) - header + provider foundations (implemented, hot: yes)
-- [ ] PR-UX02 Apply Working Context defaults on existing pages/forms (not started, hot: no)
+- [x] PR-UX02 Apply Working Context defaults on existing pages/forms (implemented, hot: no)
 - [ ] PR-UX03 Persist filters/table prefs in local storage hooks (not started, hot: low)
 - [ ] PR-UX04 Server-side user context preferences (`/me/preferences`, migration `m067_*`) (not started)
 - [ ] PR-UX05 Permissions visible in sidebar (disabled + reason, not hidden) (not started, hot: yes)
@@ -98,5 +98,5 @@ Intentional not-yet-implemented placeholders (Stock, Fixed Assets, generic Repor
   smoke: `backend/scripts/test-ux-prcore05-error-envelope.js`
 
 ## Immediate Next Step
-- Continue with `PR-UX02` -> `PR-UX03` -> `PR-CORE05`.
+- Continue with `PR-UX03` -> `PR-CORE05`.
 - After each merged PR, update this tracker line from `[ ]` to `[x]` with a short `(implemented)` note.

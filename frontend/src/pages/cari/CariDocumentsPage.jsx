@@ -11,6 +11,7 @@ import {
 import { getCariCounterpartyStatementReport } from "../../api/cariReports.js";
 import { Link } from "react-router-dom";
 import { useAuth } from "../../auth/useAuth.js";
+import { useWorkingContextDefaults } from "../../context/useWorkingContextDefaults.js";
 import { useModuleReadiness } from "../../readiness/useModuleReadiness.js";
 import {
   buildDocumentListQuery,
@@ -37,6 +38,14 @@ const DEFAULT_FILTERS = {
   limit: 100,
   offset: 0,
 };
+
+const DOCUMENT_FILTER_CONTEXT_MAPPINGS = [
+  { stateKey: "legalEntityId" },
+  { stateKey: "dateFrom" },
+  { stateKey: "dateTo" },
+];
+
+const DOCUMENT_CREATE_CONTEXT_MAPPINGS = [{ stateKey: "legalEntityId" }];
 
 function todayIsoDate() {
   return new Date().toISOString().slice(0, 10);
@@ -152,6 +161,15 @@ export default function CariDocumentsPage() {
   const [linkedCashRows, setLinkedCashRows] = useState([]);
   const [linkedCashLoading, setLinkedCashLoading] = useState(false);
   const [linkedCashError, setLinkedCashError] = useState("");
+
+  useWorkingContextDefaults(setFilters, DOCUMENT_FILTER_CONTEXT_MAPPINGS, [
+    filters.legalEntityId,
+    filters.dateFrom,
+    filters.dateTo,
+  ]);
+  useWorkingContextDefaults(setCreateForm, DOCUMENT_CREATE_CONTEXT_MAPPINGS, [
+    createForm.legalEntityId,
+  ]);
 
   const selectedRow = useMemo(
     () => rows.find((row) => Number(row?.id || 0) === Number(selectedDocumentId || 0)) || null,
