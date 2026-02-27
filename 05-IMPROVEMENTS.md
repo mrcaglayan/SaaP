@@ -16,7 +16,7 @@ Tag legend: `(hot: yes)` means likely touches conflict-prone files (`AppLayout.j
 - [x] PR-UX01 Working Context Provider (LE/OU/Period) - header + provider foundations (implemented, hot: yes)
 - [x] PR-UX02 Apply Working Context defaults on existing pages/forms (implemented, hot: no)
 - [x] PR-UX03 Persist filters/table prefs in local storage hooks (implemented: filter persistence + reusable hooks; advanced table prefs remain in UX24, hot: low)
-- [ ] PR-UX04 Server-side user context preferences (`/me/preferences`, migration `m067_*`) (not started)
+- [x] PR-UX04 Server-side user context preferences (`/me/preferences`, migration `m067_*`) (implemented: `user_preferences` + `GET/PUT /me/preferences` + `WorkingContextProvider` server hydrate/sync)
 - [ ] PR-UX05 Permissions visible in sidebar (disabled + reason, not hidden) (not started, hot: yes)
 
 - [ ] PR-UX06 Upgrade `Dashboard.jsx` into actionable finance console (not started)
@@ -24,8 +24,8 @@ Tag legend: `(hot: yes)` means likely touches conflict-prone files (`AppLayout.j
 - [ ] PR-UX08 Add `sla_due_at` + urgency sort (severity already exists in DB/API) (not started)
 - [ ] PR-UX09 Exception bulk actions (preferred: backend bulk endpoints; fallback: FE batching with concurrency control) (not started)
 
-- [x] PR-CORE05 Extend existing backend error envelope + FE centralized toasts/handling (`message` + `requestId` already exists) (implemented)
-- [ ] PR-CORE01 Standardize pagination contracts across modules (partial foundation exists)
+- [x] PR-CORE05 Extend existing backend error envelope + FE centralized toasts/handling (`message` + `requestId` already exists) (implemented: API error toasts + shared app toast channel; core cash/journal/exceptions success messages now toastified)
+- [x] PR-CORE01 Standardize pagination contracts across modules (implemented: shared `backend/src/utils/pagination.js` + applied to Cari Documents, Cash Transactions/Transit, Exceptions Workbench)
 
 - [ ] PR-UX10 Shared `Combobox` component (new `frontend/src/components`) (not started)
 - [ ] PR-UX11 Counterparty typeahead in Cari Documents/Settlements (not started)
@@ -81,7 +81,7 @@ Intentional not-yet-implemented placeholders (Stock, Fixed Assets, generic Repor
 - [ ] RS-DEP-01 Payment term write API for UX13-B (`POST /api/v1/cari/payment-terms` + permission + frontend client)
 - [ ] RS-DEP-02 Source-linking contract for UX19 Related Panel:
   choose minimal contract (`journal_source_links` table OR `source_ref_type` + `source_ref_id` on journals), write links during posting, then ship UI
-- [ ] RS-DEP-03 Global frontend error/toast strategy required by CORE05 (`frontend/src/api/client.js` interceptor + UI surface)
+- [x] RS-DEP-03 Global frontend error/toast strategy required by CORE05 (`frontend/src/api/client.js` interceptor + UI surface) (implemented)
 
 ## Working Rules While Executing
 - Keep additive migrations only, no destructive changes.
@@ -94,9 +94,13 @@ Intentional not-yet-implemented placeholders (Stock, Fixed Assets, generic Repor
   smoke: `backend/scripts/test-ux-prux02-context-defaults.js` (or FE e2e equivalent)
 - [x] PR-UX03 acceptance: filters survive refresh/navigation; reset clears state + storage
   smoke: `backend/scripts/test-ux-prux03-persisted-filters.js` (or FE e2e equivalent)
+- [x] PR-UX04 acceptance: working context is restored from server preferences across devices while preserving localStorage fallback
+  smoke: `backend/scripts/test-ux-prux04-me-preferences.js` (to add)
 - [x] PR-CORE05 acceptance: standardized user-facing error handling + copyable requestId/details
   smoke: `backend/scripts/test-ux-prcore05-error-envelope.js`
+- [x] PR-CORE01 acceptance: key list endpoints return consistent `rows + total + limit + offset` with `pagination` metadata
+  smoke: `backend/scripts/test-ux-prcore01-pagination-contracts.js` (to add)
 
 ## Immediate Next Step
-- Continue with `PR-CORE01`.
+- Continue with `PR-UX05`.
 - After each merged PR, update this tracker line from `[ ]` to `[x]` with a short `(implemented)` note.

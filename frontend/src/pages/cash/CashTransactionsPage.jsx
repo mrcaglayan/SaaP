@@ -18,6 +18,7 @@ import { listAccounts } from "../../api/glAdmin.js";
 import { useAuth } from "../../auth/useAuth.js";
 import { useWorkingContextDefaults } from "../../context/useWorkingContextDefaults.js";
 import { usePersistedFilters } from "../../hooks/usePersistedFilters.js";
+import { useToastMessage } from "../../hooks/useToastMessage.js";
 import { useI18n } from "../../i18n/useI18n.js";
 import CashControlModeBanner from "./CashControlModeBanner.jsx";
 
@@ -442,7 +443,7 @@ export default function CashTransactionsPage() {
   const [actionSaving, setActionSaving] = useState(false);
   const [error, setError] = useState("");
   const [errorRequestId, setErrorRequestId] = useState(null);
-  const [message, setMessage] = useState("");
+  const [message, setMessage] = useToastMessage("", { toastType: "success" });
   const [infoMessage, setInfoMessage] = useState("");
   const [lookupWarning, setLookupWarning] = useState("");
 

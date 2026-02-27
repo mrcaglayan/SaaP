@@ -5,6 +5,10 @@ import {
   assertLegalEntityBelongsToTenant,
 } from "../tenantGuards.js";
 import { badRequest, parsePositiveInt } from "../routes/_utils.js";
+import {
+  buildOffsetPaginationResult,
+  resolveOffsetPagination,
+} from "../utils/pagination.js";
 
 const DRAFT_STATUS = "DRAFT";
 const CANCELLED_STATUS = "CANCELLED";
@@ -1205,10 +1209,11 @@ export async function listCariDocuments({
   );
   const total = Number(totalResult.rows?.[0]?.row_count || 0);
 
-  const safeLimit =
-    Number.isInteger(filters.limit) && filters.limit > 0 ? filters.limit : 100;
-  const safeOffset =
-    Number.isInteger(filters.offset) && filters.offset >= 0 ? filters.offset : 0;
+  const pagination = resolveOffsetPagination(filters, {
+    defaultLimit: 100,
+    defaultOffset: 0,
+    maxLimit: 300,
+  });
 
   const rowsResult = await query(
     `SELECT
@@ -1222,16 +1227,16 @@ export async function listCariDocuments({
       AND pt.id = d.payment_term_id
      WHERE ${whereSql}
      ORDER BY d.id DESC
-     LIMIT ${safeLimit} OFFSET ${safeOffset}`,
+     LIMIT ${pagination.limit} OFFSET ${pagination.offset}`,
     params
   );
 
-  return {
+  return buildOffsetPaginationResult({
     rows: (rowsResult.rows || []).map(mapDocumentRow),
     total,
-    limit: safeLimit,
-    offset: safeOffset,
-  };
+    limit: pagination.limit,
+    offset: pagination.offset,
+  });
 }
 
 export async function getCariDocumentByIdForTenant({

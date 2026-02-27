@@ -1,14 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { subscribeApiError } from "../api/client.js";
+import { subscribeToast } from "../toast/toastBus.js";
 
 const MAX_TOASTS = 5;
 
 function toSignature(payload) {
   return [
+    payload?.source ?? "",
+    payload?.type ?? "",
+    payload?.dedupeKey ?? "",
     payload?.status ?? "",
     payload?.code ?? "",
     payload?.requestId ?? "",
     payload?.message ?? "",
+    payload?.title ?? "",
   ].join("|");
 }
 
@@ -34,6 +39,65 @@ function isServerError(status) {
   return Number.isInteger(parsed) && parsed >= 500;
 }
 
+function getTypeMeta(type) {
+  const normalized = String(type || "").toLowerCase();
+  if (normalized === "success") {
+    return {
+      label: "Success",
+      containerClassName: "border-emerald-200 bg-white",
+      headingClassName: "text-emerald-700",
+    };
+  }
+  if (normalized === "warning") {
+    return {
+      label: "Warning",
+      containerClassName: "border-amber-200 bg-white",
+      headingClassName: "text-amber-700",
+    };
+  }
+  if (normalized === "info") {
+    return {
+      label: "Info",
+      containerClassName: "border-sky-200 bg-white",
+      headingClassName: "text-sky-700",
+    };
+  }
+  return {
+    label: "Error",
+    containerClassName: "border-rose-200 bg-white",
+    headingClassName: "text-rose-700",
+  };
+}
+
+function createToastId(prefix = "toast") {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function resolveDurationMs(payload) {
+  const configured = Number(payload?.durationMs);
+  if (Number.isFinite(configured) && configured > 0) {
+    return configured;
+  }
+  const type = String(payload?.type || "").toLowerCase();
+  if (type === "error") {
+    return isServerError(payload?.status) ? 12000 : 9000;
+  }
+  if (type === "warning") {
+    return 7000;
+  }
+  return 4500;
+}
+
+function canCopyDetails(toast) {
+  return Boolean(
+    toast?.source === "api" ||
+      toast?.requestId ||
+      toast?.code ||
+      toast?.status ||
+      toast?.details
+  );
+}
+
 export default function ApiErrorToasts() {
   const [toasts, setToasts] = useState([]);
   const [copiedToastId, setCopiedToastId] = useState("");
@@ -50,14 +114,23 @@ export default function ApiErrorToasts() {
 
   useEffect(() => {
     const timeoutMap = timeoutMapRef.current;
-    const unsubscribe = subscribeApiError((payload) => {
-      const id = `api-toast-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    function queueToast(payload, idPrefix) {
+      const message = String(payload?.message || "").trim();
+      if (!message) {
+        return;
+      }
+      const id = createToastId(idPrefix);
+      const type = String(payload?.type || "info").toLowerCase();
+      const source = String(payload?.source || "app").toLowerCase();
       const signature = toSignature(payload);
       const nextToast = {
         id,
         at: Date.now(),
+        type,
+        source,
+        title: String(payload?.title || "").trim() || null,
         status: payload?.status || null,
-        message: String(payload?.message || "Request failed."),
+        message,
         code: payload?.code || null,
         requestId: payload?.requestId || null,
         details: payload?.details ?? null,
@@ -73,15 +146,30 @@ export default function ApiErrorToasts() {
         return [nextToast, ...previous].slice(0, MAX_TOASTS);
       });
 
-      const timeoutMs = isServerError(payload?.status) ? 12000 : 9000;
       const timeoutId = window.setTimeout(() => {
         dismissToast(id);
-      }, timeoutMs);
+      }, resolveDurationMs(payload));
       timeoutMap.set(id, timeoutId);
+    }
+
+    const unsubscribeApi = subscribeApiError((payload) => {
+      queueToast(
+        {
+          ...payload,
+          type: "error",
+          source: "api",
+          title: "API Error",
+        },
+        "api-toast"
+      );
+    });
+    const unsubscribeApp = subscribeToast((payload) => {
+      queueToast(payload, "app-toast");
     });
 
     return () => {
-      unsubscribe();
+      unsubscribeApi();
+      unsubscribeApp();
       for (const timeoutId of timeoutMap.values()) {
         window.clearTimeout(timeoutId);
       }
@@ -112,9 +200,11 @@ export default function ApiErrorToasts() {
       {toasts.map((toast) => (
         <div
           key={toast.id}
-          className="pointer-events-auto rounded-lg border border-rose-200 bg-white p-3 shadow-lg"
+          className={`pointer-events-auto rounded-lg border p-3 shadow-lg ${getTypeMeta(toast.type).containerClassName}`}
         >
-          <p className="text-sm font-semibold text-rose-700">API Error</p>
+          <p className={`text-sm font-semibold ${getTypeMeta(toast.type).headingClassName}`}>
+            {toast.title || getTypeMeta(toast.type).label}
+          </p>
           <p className="mt-1 text-sm text-slate-800">{toast.message}</p>
           <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-600">
             {toast.status ? <span>Status: {toast.status}</span> : null}
@@ -122,13 +212,15 @@ export default function ApiErrorToasts() {
             {toast.requestId ? <span>Request ID: {toast.requestId}</span> : null}
           </div>
           <div className="mt-3 flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => handleCopy(toast)}
-              className="rounded border border-slate-300 px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-            >
-              {copiedToastId === toast.id ? "Copied" : "Copy details"}
-            </button>
+            {canCopyDetails(toast) ? (
+              <button
+                type="button"
+                onClick={() => handleCopy(toast)}
+                className="rounded border border-slate-300 px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                {copiedToastId === toast.id ? "Copied" : "Copy details"}
+              </button>
+            ) : null}
             <button
               type="button"
               onClick={() => dismissToast(toast.id)}

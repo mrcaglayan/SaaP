@@ -12,6 +12,7 @@ import {
 } from "../../api/orgAdmin.js";
 import { useAuth } from "../../auth/useAuth.js";
 import { useWorkingContextDefaults } from "../../context/useWorkingContextDefaults.js";
+import { useToastMessage } from "../../hooks/useToastMessage.js";
 import { useI18n } from "../../i18n/useI18n.js";
 import CashControlModeBanner from "./CashControlModeBanner.jsx";
 
@@ -105,7 +106,7 @@ export default function CashRegistersPage() {
   const [saving, setSaving] = useState(false);
   const [updatingStatusId, setUpdatingStatusId] = useState(null);
   const [error, setError] = useState("");
-  const [message, setMessage] = useState("");
+  const [message, setMessage] = useToastMessage("", { toastType: "success" });
   const [lookupWarning, setLookupWarning] = useState("");
 
   const [rows, setRows] = useState([]);

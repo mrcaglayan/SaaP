@@ -6,6 +6,7 @@ import {
   openCashSession,
 } from "../../api/cashAdmin.js";
 import { useAuth } from "../../auth/useAuth.js";
+import { useToastMessage } from "../../hooks/useToastMessage.js";
 import { useI18n } from "../../i18n/useI18n.js";
 import CashControlModeBanner from "./CashControlModeBanner.jsx";
 
@@ -136,7 +137,7 @@ export default function CashSessionsPage() {
   const [closing, setClosing] = useState(false);
   const [error, setError] = useState("");
   const [errorRequestId, setErrorRequestId] = useState(null);
-  const [message, setMessage] = useState("");
+  const [message, setMessage] = useToastMessage("", { toastType: "success" });
 
   const [registers, setRegisters] = useState([]);
   const [sessionRows, setSessionRows] = useState([]);

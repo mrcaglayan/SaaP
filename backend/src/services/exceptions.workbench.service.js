@@ -1,5 +1,9 @@
 import { query, withTransaction } from "../db.js";
 import { badRequest, parsePositiveInt } from "../routes/_utils.js";
+import {
+  buildOffsetPaginationResult,
+  resolveOffsetPagination,
+} from "../utils/pagination.js";
 
 function u(value) {
   return String(value || "").trim().toUpperCase();
@@ -786,19 +790,18 @@ export async function listExceptionWorkbenchRows({
   );
   const total = toInt(countRes.rows?.[0]?.total, 0);
 
-  const safeLimit = Number.isInteger(Number(filters.limit))
-    ? Math.min(500, Math.max(1, Number(filters.limit)))
-    : 100;
-  const safeOffset = Number.isInteger(Number(filters.offset))
-    ? Math.max(0, Number(filters.offset))
-    : 0;
+  const pagination = resolveOffsetPagination(filters, {
+    defaultLimit: 100,
+    defaultOffset: 0,
+    maxLimit: 500,
+  });
 
   const listRes = await query(
     `SELECT ew.*
      FROM exception_workbench ew
      WHERE ${whereSql}
      ORDER BY ${buildListOrdering(filters.sortBy)}
-     LIMIT ${safeLimit} OFFSET ${safeOffset}`,
+     LIMIT ${pagination.limit} OFFSET ${pagination.offset}`,
     params
   );
 
@@ -825,19 +828,21 @@ export async function listExceptionWorkbenchRows({
   );
 
   const rows = (listRes.rows || []).map(hydrateWorkbenchRow);
-  return {
+  return buildOffsetPaginationResult({
     rows,
     total,
-    limit: safeLimit,
-    offset: safeOffset,
-    summary: {
-      by_status: Object.fromEntries((summaryStatusRes.rows || []).map((row) => [row.status, toInt(row.total, 0)])),
-      by_module: Object.fromEntries((summaryModuleRes.rows || []).map((row) => [row.module_code, toInt(row.total, 0)])),
-      by_severity: Object.fromEntries((summarySeverityRes.rows || []).map((row) => [row.severity, toInt(row.total, 0)])),
+    limit: pagination.limit,
+    offset: pagination.offset,
+    extra: {
+      summary: {
+        by_status: Object.fromEntries((summaryStatusRes.rows || []).map((row) => [row.status, toInt(row.total, 0)])),
+        by_module: Object.fromEntries((summaryModuleRes.rows || []).map((row) => [row.module_code, toInt(row.total, 0)])),
+        by_severity: Object.fromEntries((summarySeverityRes.rows || []).map((row) => [row.severity, toInt(row.total, 0)])),
+      },
+      refreshed: shouldRefresh,
+      refresh: refreshSummary,
     },
-    refreshed: shouldRefresh,
-    refresh: refreshSummary,
-  };
+  });
 }
 
 export async function getExceptionWorkbenchById({

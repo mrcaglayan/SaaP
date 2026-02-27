@@ -11,6 +11,7 @@ import {
 import { useAuth } from "../auth/useAuth.js";
 import { useWorkingContextDefaults } from "../context/useWorkingContextDefaults.js";
 import { usePersistedFilters } from "../hooks/usePersistedFilters.js";
+import { useToastMessage } from "../hooks/useToastMessage.js";
 import { useI18n } from "../i18n/useI18n.js";
 
 function formatDateTime(value) {
@@ -56,7 +57,7 @@ export default function ExceptionsWorkbenchPage() {
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
-  const [message, setMessage] = useState("");
+  const [message, setMessage] = useToastMessage("", { toastType: "success" });
   const [selected, setSelected] = useState(null);
   const [selectedAudit, setSelectedAudit] = useState([]);
   const [resolutionNote, setResolutionNote] = useState("");

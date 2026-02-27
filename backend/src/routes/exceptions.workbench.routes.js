@@ -1,6 +1,7 @@
 import express from "express";
 import { assertScopeAccess, buildScopeFilter, requirePermission } from "../middleware/rbac.js";
 import { asyncHandler, badRequest, parsePositiveInt, resolveTenantId } from "./_utils.js";
+import { resolveOffsetPagination } from "../utils/pagination.js";
 import {
   claimExceptionWorkbench,
   getExceptionWorkbenchById,
@@ -44,14 +45,16 @@ function parseDateMaybe(value, label) {
 
 function parseListFilters(req) {
   const tenantId = requireTenantIdFromReq(req);
-  const limit = parsePositiveIntMaybe(req.query?.limit, "limit") || 100;
-  const offsetRaw = req.query?.offset;
-  const offset = offsetRaw === undefined || offsetRaw === null || offsetRaw === "" ? 0 : Number(offsetRaw);
-  if (!Number.isInteger(offset) || offset < 0) throw badRequest("offset must be a non-negative integer");
+  const pagination = resolveOffsetPagination(req.query, {
+    defaultLimit: 100,
+    defaultOffset: 0,
+    maxLimit: 500,
+    strict: true,
+  });
   return {
     tenantId,
-    limit: Math.min(500, limit),
-    offset,
+    limit: pagination.limit,
+    offset: pagination.offset,
     refresh: parseBool(req.query?.refresh, true),
     dateFrom: parseDateMaybe(req.query?.dateFrom ?? req.query?.date_from, "dateFrom"),
     dateTo: parseDateMaybe(req.query?.dateTo ?? req.query?.date_to, "dateTo"),

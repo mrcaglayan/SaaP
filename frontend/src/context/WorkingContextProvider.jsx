@@ -5,6 +5,7 @@ import {
   listLegalEntities,
   listOperatingUnits,
 } from "../api/orgAdmin.js";
+import { getMePreferences, updateMePreferences } from "../api/me.js";
 import { useAuth } from "../auth/useAuth.js";
 import {
   DEFAULT_WORKING_CONTEXT,
@@ -131,6 +132,8 @@ function parseErrorMessage(err, fallback) {
   return String(err?.response?.data?.message || err?.message || fallback);
 }
 
+const WORKING_CONTEXT_SYNC_DEBOUNCE_MS = 600;
+
 export default function WorkingContextProvider({ children }) {
   const { isAuthed } = useAuth();
 
@@ -146,6 +149,9 @@ export default function WorkingContextProvider({ children }) {
   const [loadingFiscalPeriods, setLoadingFiscalPeriods] = useState(false);
   const [error, setError] = useState("");
   const hydratedRef = useRef(false);
+  const [preferencesHydrated, setPreferencesHydrated] = useState(false);
+  const preferenceSyncTimerRef = useRef(null);
+  const lastSyncedContextRef = useRef("");
   const [refreshToken, setRefreshToken] = useState(0);
 
   const setWorkingContext = useCallback(
@@ -196,6 +202,10 @@ export default function WorkingContextProvider({ children }) {
 
   useEffect(() => {
     if (!isAuthed) {
+      if (preferenceSyncTimerRef.current) {
+        window.clearTimeout(preferenceSyncTimerRef.current);
+        preferenceSyncTimerRef.current = null;
+      }
       hydratedRef.current = false;
       setWorkingContextState(DEFAULT_WORKING_CONTEXT);
       setLegalEntities([]);
@@ -203,6 +213,8 @@ export default function WorkingContextProvider({ children }) {
       setFiscalCalendars([]);
       setFiscalPeriods([]);
       setError("");
+      setPreferencesHydrated(false);
+      lastSyncedContextRef.current = "";
       return;
     }
 
@@ -213,9 +225,79 @@ export default function WorkingContextProvider({ children }) {
   }, [isAuthed]);
 
   useEffect(() => {
+    if (!isAuthed) return undefined;
+
+    let active = true;
+    async function hydrateServerPreferences() {
+      try {
+        const response = await getMePreferences();
+        if (!active) return;
+
+        const serverContext = response?.preferences?.workingContext;
+        if (
+          serverContext &&
+          typeof serverContext === "object" &&
+          !Array.isArray(serverContext)
+        ) {
+          const normalized = normalizeWorkingContext(serverContext);
+          setWorkingContextState(normalized);
+          lastSyncedContextRef.current = JSON.stringify(normalized);
+        }
+      } catch {
+        // Keep local fallback when preferences endpoint is unavailable.
+      } finally {
+        if (active) {
+          setPreferencesHydrated(true);
+        }
+      }
+    }
+
+    hydrateServerPreferences();
+    return () => {
+      active = false;
+    };
+  }, [isAuthed]);
+
+  useEffect(() => {
     if (!isAuthed) return;
     writeStoredWorkingContext(workingContext);
   }, [isAuthed, workingContext]);
+
+  useEffect(() => {
+    if (!isAuthed || !preferencesHydrated) return undefined;
+
+    const normalized = normalizeWorkingContext(workingContext);
+    const serialized = JSON.stringify(normalized);
+    if (serialized === lastSyncedContextRef.current) {
+      return undefined;
+    }
+
+    if (preferenceSyncTimerRef.current) {
+      window.clearTimeout(preferenceSyncTimerRef.current);
+      preferenceSyncTimerRef.current = null;
+    }
+
+    const timeoutId = window.setTimeout(async () => {
+      try {
+        await updateMePreferences({ workingContext: normalized });
+        lastSyncedContextRef.current = serialized;
+      } catch {
+        // Ignore transient sync failures; local context remains available.
+      } finally {
+        if (preferenceSyncTimerRef.current === timeoutId) {
+          preferenceSyncTimerRef.current = null;
+        }
+      }
+    }, WORKING_CONTEXT_SYNC_DEBOUNCE_MS);
+
+    preferenceSyncTimerRef.current = timeoutId;
+    return () => {
+      window.clearTimeout(timeoutId);
+      if (preferenceSyncTimerRef.current === timeoutId) {
+        preferenceSyncTimerRef.current = null;
+      }
+    };
+  }, [isAuthed, preferencesHydrated, workingContext]);
 
   useEffect(() => {
     if (!isAuthed) return undefined;

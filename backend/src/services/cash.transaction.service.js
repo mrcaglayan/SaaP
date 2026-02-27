@@ -2,6 +2,10 @@ import { query, withTransaction } from "../db.js";
 import { assertAccountBelongsToTenant } from "../tenantGuards.js";
 import { badRequest, parsePositiveInt } from "../routes/_utils.js";
 import {
+  buildOffsetPaginationResult,
+  resolveOffsetPagination,
+} from "../utils/pagination.js";
+import {
   cancelCashTransaction,
   countCashTransitTransfers,
   countCashTransactions,
@@ -683,20 +687,25 @@ export async function listCashTransitTransferRows({
   }
 
   const whereSql = conditions.join(" AND ");
+  const pagination = resolveOffsetPagination(filters, {
+    defaultLimit: 50,
+    defaultOffset: 0,
+    maxLimit: 200,
+  });
   const total = await countCashTransitTransfers({ whereSql, params });
   const rows = await listCashTransitTransfers({
     whereSql,
     params,
-    limit: filters.limit,
-    offset: filters.offset,
+    limit: pagination.limit,
+    offset: pagination.offset,
   });
 
-  return {
+  return buildOffsetPaginationResult({
     rows,
     total,
-    limit: filters.limit,
-    offset: filters.offset,
-  };
+    limit: pagination.limit,
+    offset: pagination.offset,
+  });
 }
 
 export async function listCashTransactionRows({
@@ -755,20 +764,25 @@ export async function listCashTransactionRows({
   }
 
   const whereSql = conditions.join(" AND ");
+  const pagination = resolveOffsetPagination(filters, {
+    defaultLimit: 50,
+    defaultOffset: 0,
+    maxLimit: 200,
+  });
   const total = await countCashTransactions({ whereSql, params });
   const rows = await listCashTransactions({
     whereSql,
     params,
-    limit: filters.limit,
-    offset: filters.offset,
+    limit: pagination.limit,
+    offset: pagination.offset,
   });
 
-  return {
+  return buildOffsetPaginationResult({
     rows,
     total,
-    limit: filters.limit,
-    offset: filters.offset,
-  };
+    limit: pagination.limit,
+    offset: pagination.offset,
+  });
 }
 
 export async function getCashTransactionByIdForTenant({
