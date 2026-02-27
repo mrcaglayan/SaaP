@@ -17,6 +17,7 @@ import { getCariOpenItemsReport } from "../../api/cariReports.js";
 import { listAccounts } from "../../api/glAdmin.js";
 import { useAuth } from "../../auth/useAuth.js";
 import { useWorkingContextDefaults } from "../../context/useWorkingContextDefaults.js";
+import { usePersistedFilters } from "../../hooks/usePersistedFilters.js";
 import { useI18n } from "../../i18n/useI18n.js";
 import CashControlModeBanner from "./CashControlModeBanner.jsx";
 
@@ -61,6 +62,7 @@ const CASH_TRANSACTION_FILTER_CONTEXT_MAPPINGS = [
   { stateKey: "bookDateFrom", contextKey: "dateFrom" },
   { stateKey: "bookDateTo", contextKey: "dateTo" },
 ];
+const CASH_TRANSACTION_FILTERS_STORAGE_SCOPE = "cash-transactions.filters";
 
 function toPositiveInt(value) {
   const parsed = Number(value);
@@ -448,8 +450,10 @@ export default function CashTransactionsPage() {
   const [registers, setRegisters] = useState([]);
   const [openSessions, setOpenSessions] = useState([]);
   const [accounts, setAccounts] = useState([]);
-
-  const [filters, setFilters] = useState(buildInitialFilters(presetTxnType));
+  const [filters, setFilters, resetFilters] = usePersistedFilters(
+    CASH_TRANSACTION_FILTERS_STORAGE_SCOPE,
+    () => buildInitialFilters(presetTxnType)
+  );
   const [form, setForm] = useState(buildInitialForm(presetTxnType));
   const [actionForm, setActionForm] = useState(null);
   const [counterpartyQuery, setCounterpartyQuery] = useState("");
@@ -760,7 +764,6 @@ export default function CashTransactionsPage() {
   }
 
   useEffect(() => {
-    setFilters(buildInitialFilters(presetTxnType));
     setForm(buildInitialForm(presetTxnType));
     setActionForm(null);
     setCounterpartyQuery("");
@@ -768,7 +771,7 @@ export default function CashTransactionsPage() {
   }, [presetTxnType]);
 
   useEffect(() => {
-    loadPageData(buildInitialFilters(presetTxnType));
+    loadPageData(filters);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canRead, presetTxnType, canReadAccounts]);
 
@@ -1732,8 +1735,7 @@ export default function CashTransactionsPage() {
             <button
               type="button"
               onClick={() => {
-                const reset = buildInitialFilters(presetTxnType);
-                setFilters(reset);
+                const reset = resetFilters(buildInitialFilters(presetTxnType));
                 loadPageData(reset);
               }}
               disabled={loading}

@@ -15,7 +15,7 @@ Tag legend: `(hot: yes)` means likely touches conflict-prone files (`AppLayout.j
 ### UX + Product Flow (ordered)
 - [x] PR-UX01 Working Context Provider (LE/OU/Period) - header + provider foundations (implemented, hot: yes)
 - [x] PR-UX02 Apply Working Context defaults on existing pages/forms (implemented, hot: no)
-- [ ] PR-UX03 Persist filters/table prefs in local storage hooks (not started, hot: low)
+- [x] PR-UX03 Persist filters/table prefs in local storage hooks (implemented: filter persistence + reusable hooks; advanced table prefs remain in UX24, hot: low)
 - [ ] PR-UX04 Server-side user context preferences (`/me/preferences`, migration `m067_*`) (not started)
 - [ ] PR-UX05 Permissions visible in sidebar (disabled + reason, not hidden) (not started, hot: yes)
 
@@ -24,7 +24,7 @@ Tag legend: `(hot: yes)` means likely touches conflict-prone files (`AppLayout.j
 - [ ] PR-UX08 Add `sla_due_at` + urgency sort (severity already exists in DB/API) (not started)
 - [ ] PR-UX09 Exception bulk actions (preferred: backend bulk endpoints; fallback: FE batching with concurrency control) (not started)
 
-- [ ] PR-CORE05 Extend existing backend error envelope + FE centralized toasts/handling (`message` + `requestId` already exists) (partial foundation exists)
+- [x] PR-CORE05 Extend existing backend error envelope + FE centralized toasts/handling (`message` + `requestId` already exists) (implemented)
 - [ ] PR-CORE01 Standardize pagination contracts across modules (partial foundation exists)
 
 - [ ] PR-UX10 Shared `Combobox` component (new `frontend/src/components`) (not started)
@@ -92,11 +92,11 @@ Intentional not-yet-implemented placeholders (Stock, Fixed Assets, generic Repor
 ## Acceptance + Smoke Placeholders
 - [ ] PR-UX02 acceptance: context defaults are applied only to empty fields; user-entered values are never overwritten
   smoke: `backend/scripts/test-ux-prux02-context-defaults.js` (or FE e2e equivalent)
-- [ ] PR-UX03 acceptance: filters survive refresh/navigation; reset clears state + storage
+- [x] PR-UX03 acceptance: filters survive refresh/navigation; reset clears state + storage
   smoke: `backend/scripts/test-ux-prux03-persisted-filters.js` (or FE e2e equivalent)
-- [ ] PR-CORE05 acceptance: standardized user-facing error handling + copyable requestId/details
+- [x] PR-CORE05 acceptance: standardized user-facing error handling + copyable requestId/details
   smoke: `backend/scripts/test-ux-prcore05-error-envelope.js`
 
 ## Immediate Next Step
-- Continue with `PR-UX03` -> `PR-CORE05`.
+- Continue with `PR-CORE01`.
 - After each merged PR, update this tracker line from `[ ]` to `[x]` with a short `(implemented)` note.

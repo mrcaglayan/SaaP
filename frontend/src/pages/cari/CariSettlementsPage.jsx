@@ -17,6 +17,7 @@ import { getCariOpenItemsReport } from "../../api/cariReports.js";
 import { extractCariReplayAndRisks } from "../../api/cariCommon.js";
 import { useAuth } from "../../auth/useAuth.js";
 import { useWorkingContextDefaults } from "../../context/useWorkingContextDefaults.js";
+import { usePersistedFilters } from "../../hooks/usePersistedFilters.js";
 import { useModuleReadiness } from "../../readiness/useModuleReadiness.js";
 import {
   buildAutoAllocatePreview,
@@ -224,10 +225,20 @@ function buildReverseDefaultForm() {
   };
 }
 
+function buildPreviewDefaultFilters() {
+  return {
+    legalEntityId: "",
+    counterpartyId: "",
+    asOfDate: todayIsoDate(),
+    direction: "",
+  };
+}
+
 const SETTLEMENT_PREVIEW_CONTEXT_MAPPINGS = [{ stateKey: "legalEntityId" }];
 const SETTLEMENT_APPLY_CONTEXT_MAPPINGS = [{ stateKey: "legalEntityId" }];
 const SETTLEMENT_BANK_ATTACH_CONTEXT_MAPPINGS = [{ stateKey: "legalEntityId" }];
 const SETTLEMENT_BANK_APPLY_CONTEXT_MAPPINGS = [{ stateKey: "legalEntityId" }];
+const SETTLEMENT_PREVIEW_FILTERS_STORAGE_SCOPE = "cari-settlements.preview";
 
 export default function CariSettlementsPage() {
   const { hasPermission } = useAuth();
@@ -244,12 +255,10 @@ export default function CariSettlementsPage() {
   const canReadCashSessions = hasPermission("cash.session.read");
   const canReadGlAccounts = hasPermission("gl.account.read");
 
-  const [previewFilters, setPreviewFilters] = useState({
-    legalEntityId: "",
-    counterpartyId: "",
-    asOfDate: todayIsoDate(),
-    direction: "",
-  });
+  const [previewFilters, setPreviewFilters] = usePersistedFilters(
+    SETTLEMENT_PREVIEW_FILTERS_STORAGE_SCOPE,
+    () => buildPreviewDefaultFilters()
+  );
   const [openItems, setOpenItems] = useState([]);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState("");

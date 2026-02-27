@@ -12,6 +12,7 @@ import { getCariCounterpartyStatementReport } from "../../api/cariReports.js";
 import { Link } from "react-router-dom";
 import { useAuth } from "../../auth/useAuth.js";
 import { useWorkingContextDefaults } from "../../context/useWorkingContextDefaults.js";
+import { usePersistedFilters } from "../../hooks/usePersistedFilters.js";
 import { useModuleReadiness } from "../../readiness/useModuleReadiness.js";
 import {
   buildDocumentListQuery,
@@ -46,6 +47,7 @@ const DOCUMENT_FILTER_CONTEXT_MAPPINGS = [
 ];
 
 const DOCUMENT_CREATE_CONTEXT_MAPPINGS = [{ stateKey: "legalEntityId" }];
+const DOCUMENT_FILTERS_STORAGE_SCOPE = "cari-documents.list";
 
 function todayIsoDate() {
   return new Date().toISOString().slice(0, 10);
@@ -126,7 +128,10 @@ export default function CariDocumentsPage() {
   const canFxOverride = hasPermission("cari.fx.override");
   const canReadReports = hasPermission("cari.report.read");
 
-  const [filters, setFilters] = useState(DEFAULT_FILTERS);
+  const [filters, setFilters, resetFilters] = usePersistedFilters(
+    DOCUMENT_FILTERS_STORAGE_SCOPE,
+    () => ({ ...DEFAULT_FILTERS })
+  );
   const [rows, setRows] = useState([]);
   const [totalRows, setTotalRows] = useState(0);
   const [listLoading, setListLoading] = useState(false);
@@ -474,7 +479,7 @@ export default function CariDocumentsPage() {
         </div>
         <div className="mt-3 flex gap-2">
           <button type="button" className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white" onClick={() => loadDocuments(filters)} disabled={listLoading}>{listLoading ? "Loading..." : "Refresh List"}</button>
-          <button type="button" className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700" onClick={() => setFilters(DEFAULT_FILTERS)} disabled={listLoading}>Reset Filters</button>
+          <button type="button" className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700" onClick={resetFilters} disabled={listLoading}>Reset Filters</button>
         </div>
       </section>
 

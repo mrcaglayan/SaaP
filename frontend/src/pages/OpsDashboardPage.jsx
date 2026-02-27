@@ -7,6 +7,7 @@ import {
   getOpsPayrollImportHealth,
 } from "../api/opsDashboard.js";
 import { useWorkingContextDefaults } from "../context/useWorkingContextDefaults.js";
+import { usePersistedFilters } from "../hooks/usePersistedFilters.js";
 import { useI18n } from "../i18n/useI18n.js";
 
 function pretty(value) {
@@ -18,18 +19,23 @@ const OPS_DASHBOARD_CONTEXT_MAPPINGS = [
   { stateKey: "dateFrom" },
   { stateKey: "dateTo" },
 ];
+const OPS_DASHBOARD_FILTERS_STORAGE_SCOPE = "ops-dashboard.filters";
+const OPS_DASHBOARD_DEFAULT_FILTERS = {
+  legalEntityId: "",
+  bankAccountId: "",
+  dateFrom: "",
+  dateTo: "",
+  days: "30",
+  moduleCode: "",
+  queueName: "",
+};
 
 export default function OpsDashboardPage() {
   const { t } = useI18n();
-  const [filters, setFilters] = useState({
-    legalEntityId: "",
-    bankAccountId: "",
-    dateFrom: "",
-    dateTo: "",
-    days: "30",
-    moduleCode: "",
-    queueName: "",
-  });
+  const [filters, setFilters, resetFilters] = usePersistedFilters(
+    OPS_DASHBOARD_FILTERS_STORAGE_SCOPE,
+    () => ({ ...OPS_DASHBOARD_DEFAULT_FILTERS })
+  );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [data, setData] = useState({
@@ -188,6 +194,14 @@ export default function OpsDashboardPage() {
               {loading
                 ? t("opsDashboard.actions.refreshing", "Refreshing...")
                 : t("opsDashboard.actions.refresh", "Refresh")}
+            </button>
+            <button
+              type="button"
+              className="ml-2 rounded border px-3 py-1 text-sm"
+              onClick={resetFilters}
+              disabled={loading}
+            >
+              {t("opsDashboard.actions.reset", "Reset")}
             </button>
           </div>
         </div>

@@ -10,6 +10,7 @@ import {
 } from "../api/exceptionsWorkbench.js";
 import { useAuth } from "../auth/useAuth.js";
 import { useWorkingContextDefaults } from "../context/useWorkingContextDefaults.js";
+import { usePersistedFilters } from "../hooks/usePersistedFilters.js";
 import { useI18n } from "../i18n/useI18n.js";
 
 function formatDateTime(value) {
@@ -25,6 +26,16 @@ function normalizeText(value, fallback = "") {
 }
 
 const EXCEPTIONS_CONTEXT_MAPPINGS = [{ stateKey: "legalEntityId" }];
+const EXCEPTIONS_FILTERS_STORAGE_SCOPE = "exceptions-workbench.filters";
+const EXCEPTIONS_DEFAULT_FILTERS = {
+  moduleCode: "",
+  status: "OPEN",
+  severity: "",
+  legalEntityId: "",
+  q: "",
+  refresh: true,
+  days: "180",
+};
 
 export default function ExceptionsWorkbenchPage() {
   const { hasPermission } = useAuth();
@@ -32,15 +43,10 @@ export default function ExceptionsWorkbenchPage() {
   const canRead = hasPermission("ops.exceptions.read");
   const canManage = hasPermission("ops.exceptions.manage");
 
-  const [filters, setFilters] = useState({
-    moduleCode: "",
-    status: "OPEN",
-    severity: "",
-    legalEntityId: "",
-    q: "",
-    refresh: true,
-    days: "180",
-  });
+  const [filters, setFilters, resetFilters] = usePersistedFilters(
+    EXCEPTIONS_FILTERS_STORAGE_SCOPE,
+    () => ({ ...EXCEPTIONS_DEFAULT_FILTERS })
+  );
   useWorkingContextDefaults(setFilters, EXCEPTIONS_CONTEXT_MAPPINGS, [
     filters.legalEntityId,
   ]);
@@ -276,6 +282,14 @@ export default function ExceptionsWorkbenchPage() {
               <div className="flex items-end gap-2">
                 <button type="button" className="rounded border px-3 py-1 text-sm" onClick={load} disabled={loading}>
                   {loading ? t("exceptionsWorkbench.actions.loading", "Loading...") : t("exceptionsWorkbench.actions.applyFilters", "Apply Filters")}
+                </button>
+                <button
+                  type="button"
+                  className="rounded border px-3 py-1 text-sm"
+                  onClick={resetFilters}
+                  disabled={loading}
+                >
+                  {t("exceptionsWorkbench.actions.resetFilters", "Reset")}
                 </button>
                 <button
                   type="button"

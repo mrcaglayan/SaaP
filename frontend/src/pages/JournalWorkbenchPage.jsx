@@ -24,6 +24,7 @@ import {
 } from "../api/orgAdmin.js";
 import { useAuth } from "../auth/useAuth.js";
 import { useWorkingContextDefaults } from "../context/useWorkingContextDefaults.js";
+import { usePersistedFilters } from "../hooks/usePersistedFilters.js";
 import { useI18n } from "../i18n/useI18n.js";
 
 const JOURNAL_SOURCE_TYPES = [
@@ -35,6 +36,22 @@ const JOURNAL_SOURCE_TYPES = [
 ];
 const JOURNAL_STATUSES = ["DRAFT", "POSTED", "REVERSED"];
 const PERIOD_STATUSES = ["OPEN", "SOFT_CLOSED", "HARD_CLOSED"];
+const JOURNAL_HISTORY_FILTERS_STORAGE_SCOPE = "journal-workbench.history";
+const JOURNAL_COMPLIANCE_FILTERS_STORAGE_SCOPE = "journal-workbench.compliance";
+const JOURNAL_HISTORY_DEFAULT_FILTERS = {
+  legalEntityId: "",
+  bookId: "",
+  fiscalPeriodId: "",
+  status: "",
+  limit: "50",
+  offset: "0",
+};
+const JOURNAL_COMPLIANCE_DEFAULT_FILTERS = {
+  legalEntityId: "",
+  fiscalPeriodId: "",
+  includeDraft: true,
+  limit: "200",
+};
 
 function toInt(value) {
   const parsed = Number(value);
@@ -158,14 +175,10 @@ export default function JournalWorkbenchPage() {
   });
   const [periodCloseRuns, setPeriodCloseRuns] = useState([]);
 
-  const [historyFilters, setHistoryFilters] = useState({
-    legalEntityId: "",
-    bookId: "",
-    fiscalPeriodId: "",
-    status: "",
-    limit: "50",
-    offset: "0",
-  });
+  const [historyFilters, setHistoryFilters, resetHistoryFilters] = usePersistedFilters(
+    JOURNAL_HISTORY_FILTERS_STORAGE_SCOPE,
+    () => ({ ...JOURNAL_HISTORY_DEFAULT_FILTERS })
+  );
   const [historyPeriods, setHistoryPeriods] = useState([]);
   const [loadingHistoryPeriods, setLoadingHistoryPeriods] = useState(false);
   const [historyRows, setHistoryRows] = useState([]);
@@ -174,12 +187,10 @@ export default function JournalWorkbenchPage() {
   const [selectedJournal, setSelectedJournal] = useState(null);
   const [complianceRows, setComplianceRows] = useState([]);
   const [complianceSummary, setComplianceSummary] = useState(null);
-  const [complianceFilters, setComplianceFilters] = useState({
-    legalEntityId: "",
-    fiscalPeriodId: "",
-    includeDraft: true,
-    limit: "200",
-  });
+  const [complianceFilters, setComplianceFilters, resetComplianceFilters] = usePersistedFilters(
+    JOURNAL_COMPLIANCE_FILTERS_STORAGE_SCOPE,
+    () => ({ ...JOURNAL_COMPLIANCE_DEFAULT_FILTERS })
+  );
 
   const selectedLegalEntityId = toInt(journal.legalEntityId);
   const selectedBookId = toInt(journal.bookId);
@@ -1869,6 +1880,17 @@ export default function JournalWorkbenchPage() {
           >
             {l("Apply Filters", "Filtreleri Uygula")}
           </button>
+          <button
+            type="button"
+            disabled={loadingHistory || !canReadJournals}
+            onClick={() => {
+              const reset = resetHistoryFilters({ ...JOURNAL_HISTORY_DEFAULT_FILTERS });
+              void fetchJournalHistory(reset);
+            }}
+            className="rounded border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 disabled:opacity-60"
+          >
+            {l("Reset", "Sifirla")}
+          </button>
         </form>
 
         <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
@@ -2054,6 +2076,19 @@ export default function JournalWorkbenchPage() {
                 className="rounded bg-slate-900 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60"
               >
                 {l("Apply", "Uygula")}
+              </button>
+              <button
+                type="button"
+                disabled={saving === "complianceAudit"}
+                onClick={() => {
+                  const reset = resetComplianceFilters({
+                    ...JOURNAL_COMPLIANCE_DEFAULT_FILTERS,
+                  });
+                  void loadComplianceIssues(reset);
+                }}
+                className="rounded border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 disabled:opacity-60"
+              >
+                {l("Reset", "Sifirla")}
               </button>
             </form>
 
