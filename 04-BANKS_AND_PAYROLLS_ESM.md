@@ -34202,7 +34202,7 @@ Reference context docs:
 - [x] PR-I03 Bank Connector Provider Pack (real adapters beyond `MOCK_OB`) (implemented)
 - [x] PR-I04 Secrets Backfill + Re-Encryption Job (legacy plaintext -> encrypted envelope) (implemented)
 - [x] PR-I05 Retention Scheduler (true `SCHEDULED` policy execution loop) (implemented)
-- [ ] PR-I06 Contracts/Periods Integration with Bank + Payroll flows (future-year accrual chain)
+- [x] PR-I06 Contracts/Periods Integration with Bank + Payroll flows (future-year accrual chain) (implemented)
 - [ ] PR-I07 Unified Final Gate (core + contracts/revenue + bank/payroll in one orchestrator)
 
 ---
@@ -34363,6 +34363,19 @@ Reference:
 Acceptance:
 
 - End-to-end test covers contract-period accrual -> payment prep -> settlement/reconciliation -> close checks.
+
+Implementation notes:
+
+- Added integration chain script:
+  - `backend/scripts/test-integration-pri06-contracts-periods-bank-payroll.js`
+  - runs strict staged chain:
+    - contracts period/revrec generation: `test-contracts-pr22-revrec-generation.js`
+    - accrual lifecycle settle/reverse: `test-revenue-pr17c.js`
+    - payroll payment prep from liabilities: `test-payroll-prp03-liabilities-payment-prep.js`
+    - settlement/reconciliation evidence sync: `test-payroll-prp04-payment-settlement-sync.js`
+    - payroll close controls/checklist/locks: `test-payroll-prp08-close-controls-checklist-locks.js`
+- Added npm alias:
+  - `npm run test:integration:pri06`
 
 ---
 

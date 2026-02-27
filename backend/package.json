@@ -40,6 +40,7 @@
     "test:bank:pri03": "node scripts/test-bank-pri03-provider-pack.js",
     "test:integration:pri04": "node scripts/test-integration-pri04-secrets-backfill-reencrypt.js",
     "test:integration:pri05": "node scripts/test-integration-pri05-retention-scheduler.js",
+    "test:integration:pri06": "node scripts/test-integration-pri06-contracts-periods-bank-payroll.js",
     "test:bank:prb03": "node scripts/test-bank-prb03-reconciliation.js",
     "test:bank:prb07": "node scripts/test-bank-prb07-reconciliation-rules-and-exceptions.js",
     "test:bank:prb06": "node scripts/test-bank-prb06-payment-file-and-ack.js",
