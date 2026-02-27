@@ -34203,7 +34203,7 @@ Reference context docs:
 - [x] PR-I04 Secrets Backfill + Re-Encryption Job (legacy plaintext -> encrypted envelope) (implemented)
 - [x] PR-I05 Retention Scheduler (true `SCHEDULED` policy execution loop) (implemented)
 - [x] PR-I06 Contracts/Periods Integration with Bank + Payroll flows (future-year accrual chain) (implemented)
-- [ ] PR-I07 Unified Final Gate (core + contracts/revenue + bank/payroll in one orchestrator)
+- [x] PR-I07 Unified Final Gate (core + contracts/revenue + bank/payroll in one orchestrator) (implemented)
 
 ---
 
@@ -34394,4 +34394,28 @@ Acceptance:
 
 - Unified gate can run all chains with optional skip flags per module family.
 - Failure output remains stage-specific and actionable.
+
+Implementation notes:
+
+- Upgraded `backend/scripts/test-release-gate.js` to a staged orchestrator with explicit stage IDs:
+  - `CORE` -> `test:release-gate:core`
+  - `CONTRACTS_REVENUE` -> `test:contracts-revenue-gate`
+  - `BANK_PAYROLL` -> `test:e2e:bank-payroll`
+  - `INTEGRATION_PRI06` -> `test:integration:pri06`
+- Added optional gate controls:
+  - family skip flags:
+    - `RELEASE_GATE_SKIP_CORE`
+    - `RELEASE_GATE_SKIP_CONTRACTS_REVENUE`
+    - `RELEASE_GATE_SKIP_BANK_PAYROLL`
+    - `RELEASE_GATE_SKIP_INTEGRATION_PRI06`
+  - stage selection flags:
+    - `RELEASE_GATE_ONLY_STAGES` (CSV)
+    - `RELEASE_GATE_SKIP_STAGES` (CSV)
+    - `RELEASE_GATE_DRY_RUN`
+- Improved failure diagnostics:
+  - failed stage ID + script are printed explicitly
+  - actionable rerun hint uses `RELEASE_GATE_ONLY_STAGES=<STAGE_ID>`
+  - final summary prints per-stage duration/status.
+- Updated CI workflow:
+  - `.github/workflows/backend-release-gate.yml` now exposes `workflow_dispatch` inputs mapped to unified gate env flags.
 
