@@ -45,4 +45,5 @@ Workflow: `.github/workflows/bank-payroll-release-gate.yml`
 ## Current Status
 
 - H08 release-gate framework is wired and runnable.
-- Several underlying PR smoke scripts are still placeholders and should be upgraded to full assertions for final H08 completion.
+- `test:bank:prb09` and `test:payroll:prp08` now run real service-level assertions (SoD/maker-checker, idempotency, lock enforcement).
+- Several remaining stage scripts are still placeholders and should be upgraded to full assertions before marking H08 complete.
