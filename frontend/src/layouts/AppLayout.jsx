@@ -4,6 +4,7 @@ import { useAuth } from "../auth/useAuth.js";
 import LanguageSwitcher from "../i18n/LanguageSwitcher.jsx";
 import { useI18n } from "../i18n/useI18n.js";
 import { useTenantReadiness } from "../readiness/useTenantReadiness.js";
+import { toastError, toastSuccess } from "../toast/toastBus.js";
 import SidebarSection from "./SidebarSection.jsx";
 import { sidebarItems } from "./sidebarConfig.js";
 import WorkingContextBar from "./WorkingContextBar.jsx";
@@ -404,7 +405,7 @@ function findActiveTopSectionKey(items, pathname, hash) {
 
 function hasRequiredPermissions(item, hasAnyPermission) {
   const requiredPermissions = Array.isArray(item?.requiredPermissions)
-    ? item.requiredPermissions
+    ? item.requiredPermissions.map((value) => String(value || "").trim()).filter(Boolean)
     : [];
 
   if (requiredPermissions.length === 0) {
@@ -414,10 +415,11 @@ function hasRequiredPermissions(item, hasAnyPermission) {
   return hasAnyPermission(requiredPermissions);
 }
 
-function filterSidebarItemsByPermissions(
+function annotateSidebarItemsWithAccess(
   items,
   hasAnyPermission,
-  includeUnimplemented
+  includeUnimplemented,
+  t
 ) {
   if (!Array.isArray(items)) {
     return [];
@@ -425,22 +427,33 @@ function filterSidebarItemsByPermissions(
 
   const visible = [];
   for (const item of items) {
-    if (!hasRequiredPermissions(item, hasAnyPermission)) {
-      continue;
-    }
+    const requiredPermissions = Array.isArray(item?.requiredPermissions)
+      ? item.requiredPermissions.map((value) => String(value || "").trim()).filter(Boolean)
+      : [];
+    const hasAccess = hasRequiredPermissions(item, hasAnyPermission);
+    const lockedReason =
+      !hasAccess && requiredPermissions.length > 0
+        ? `${t("layout.permissionRequired", "Permission required")}: ${requiredPermissions.join(", ")}`
+        : "";
 
     if (!isSectionItem(item)) {
       if (!includeUnimplemented && item.implemented !== true) {
         continue;
       }
-      visible.push(item);
+      visible.push({
+        ...item,
+        requiredPermissions,
+        isLocked: !hasAccess,
+        lockedReason,
+      });
       continue;
     }
 
-    const children = filterSidebarItemsByPermissions(
+    const children = annotateSidebarItemsWithAccess(
       item.items,
       hasAnyPermission,
-      includeUnimplemented
+      includeUnimplemented,
+      t
     );
     if (children.length === 0) {
       continue;
@@ -448,6 +461,9 @@ function filterSidebarItemsByPermissions(
 
     visible.push({
       ...item,
+      requiredPermissions,
+      isLocked: !hasAccess,
+      lockedReason,
       items: children,
     });
   }
@@ -506,12 +522,13 @@ export default function AppLayout() {
 
   const visibleSidebarItems = useMemo(
     () =>
-      filterSidebarItemsByPermissions(
+      annotateSidebarItemsWithAccess(
         sidebarItems,
         hasAnyPermission,
-        canViewUnimplementedModules
+        canViewUnimplementedModules,
+        t
       ),
-    [hasAnyPermission, canViewUnimplementedModules]
+    [hasAnyPermission, canViewUnimplementedModules, t]
   );
   const readinessChip = useMemo(
     () =>
@@ -526,6 +543,36 @@ export default function AppLayout() {
     closeMobileSidebar();
     navigate("/login", { replace: true });
   };
+
+  async function handleCopyAccessRequest(item) {
+    const requiredPermissions = Array.isArray(item?.requiredPermissions)
+      ? item.requiredPermissions
+      : [];
+    if (requiredPermissions.length === 0) {
+      return;
+    }
+
+    const label = getItemDisplayText(item, "label") || getItemDisplayText(item, "title") || item?.to || "Route";
+    const text = [
+      "Access request",
+      `User: ${user?.email || user?.name || "-"}`,
+      `Route: ${label}`,
+      `Path: ${item?.to || "-"}`,
+      `Required permissions: ${requiredPermissions.join(", ")}`,
+    ].join("\n");
+
+    if (!navigator?.clipboard?.writeText) {
+      toastError(t("layout.copyAccessRequestUnsupported", "Clipboard is not available in this browser."));
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(text);
+      toastSuccess(t("layout.copyAccessRequestSuccess", "Access request copied."));
+    } catch {
+      toastError(t("layout.copyAccessRequestFailed", "Failed to copy access request."));
+    }
+  }
 
   useEffect(() => {
     if (!readinessMenuOpen) return undefined;
@@ -593,32 +640,61 @@ export default function AppLayout() {
           key={subItem.to || `${subItem.label}-${depth}-${index}`}
           className="border-l-2 border-gray-300"
         >
-          <NavLink
-            to={subItem.to}
-            end={subItem.end}
-            className={() =>
-              subLinkClass(
-                isSidebarEntryActive(subItem, location.pathname, location.hash),
-                depth > 0
-              )
-            }
-            onClick={closeMobileSidebar}
-          >
-            <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center text-[#143c62]">
-              {renderSidebarIcon(subItem, {
-                svgClass: "h-4 w-4",
-                emojiClass: "text-[15px]",
-              })}
-            </span>
-            <span className="flex min-w-0 flex-1 items-start justify-between gap-2">
-              <span className="whitespace-normal break-words leading-5">{getItemDisplayText(subItem, "label")}</span>
-              {subItem.implemented !== true && (
-                <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full border border-slate-300 px-1 text-[9px] font-semibold uppercase leading-none text-slate-500">
-                  S
+          {subItem.isLocked ? (
+            <div
+              className={`flex w-full items-start gap-2 rounded-sm border border-amber-200 bg-amber-50/70 text-sm font-medium text-amber-900 ${
+                depth > 0 ? "pl-2 pr-2 py-2" : "pl-2 pr-2 py-1.5"
+              }`}
+              title={subItem.lockedReason || t("layout.lockedMenu", "Access restricted")}
+              aria-disabled="true"
+            >
+              <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center text-amber-800">
+                {renderSidebarIcon(subItem, {
+                  svgClass: "h-4 w-4",
+                  emojiClass: "text-[15px]",
+                })}
+              </span>
+              <span className="flex min-w-0 flex-1 items-start justify-between gap-2">
+                <span className="whitespace-normal break-words leading-5">
+                  {getItemDisplayText(subItem, "label")}
                 </span>
-              )}
-            </span>
-          </NavLink>
+                <button
+                  type="button"
+                  onClick={() => handleCopyAccessRequest(subItem)}
+                  className="shrink-0 rounded border border-amber-300 bg-white px-1.5 py-0.5 text-[10px] font-semibold text-amber-900 hover:bg-amber-100"
+                >
+                  {t("layout.copyAccessRequest", "Copy request")}
+                </button>
+              </span>
+            </div>
+          ) : (
+            <NavLink
+              to={subItem.to}
+              end={subItem.end}
+              className={() =>
+                subLinkClass(
+                  isSidebarEntryActive(subItem, location.pathname, location.hash),
+                  depth > 0
+                )
+              }
+              onClick={closeMobileSidebar}
+            >
+              <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center text-[#143c62]">
+                {renderSidebarIcon(subItem, {
+                  svgClass: "h-4 w-4",
+                  emojiClass: "text-[15px]",
+                })}
+              </span>
+              <span className="flex min-w-0 flex-1 items-start justify-between gap-2">
+                <span className="whitespace-normal break-words leading-5">{getItemDisplayText(subItem, "label")}</span>
+                {subItem.implemented !== true && (
+                  <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full border border-slate-300 px-1 text-[9px] font-semibold uppercase leading-none text-slate-500">
+                    S
+                  </span>
+                )}
+              </span>
+            </NavLink>
+          )}
         </div>
       );
     });
@@ -681,6 +757,42 @@ export default function AppLayout() {
           >
             {visibleSidebarItems.map((item) => {
               if (item.type === "link") {
+                if (item.isLocked) {
+                  return (
+                    <div
+                      key={item.to}
+                      title={item.lockedReason || t("layout.lockedMenu", "Access restricted")}
+                      className={`group flex items-center text-sm font-semibold transition-colors ${
+                        collapsed
+                          ? "mx-1 h-10 w-[calc(100%-0.5rem)] justify-center rounded-lg border border-amber-300 bg-amber-50/80 p-0 text-amber-900"
+                          : "w-full gap-2 rounded-lg border border-amber-300 bg-amber-50/80 pl-4 pr-2 py-1.5 text-amber-900"
+                      }`}
+                      aria-disabled="true"
+                    >
+                      <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center text-amber-800">
+                        {renderSidebarIcon(item, {
+                          svgClass: "h-4 w-4",
+                          emojiClass: "text-[18px]",
+                        })}
+                      </span>
+                      {!collapsed && (
+                        <span className="min-w-0 flex-1 truncate whitespace-nowrap leading-5">
+                          {getItemDisplayText(item, "label")}
+                        </span>
+                      )}
+                      {!collapsed && (
+                        <button
+                          type="button"
+                          onClick={() => handleCopyAccessRequest(item)}
+                          className="ml-auto rounded border border-amber-300 bg-white px-1.5 py-0.5 text-[10px] font-semibold text-amber-900 hover:bg-amber-100"
+                        >
+                          {t("layout.copyAccessRequest", "Copy request")}
+                        </button>
+                      )}
+                    </div>
+                  );
+                }
+
                 return (
                   <NavLink
                     key={item.to}

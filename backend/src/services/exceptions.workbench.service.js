@@ -28,6 +28,40 @@ function parseJson(value, fallback = null) {
   }
 }
 
+const SLA_HOURS_BY_SEVERITY = Object.freeze({
+  CRITICAL: 4,
+  HIGH: 24,
+  MEDIUM: 72,
+  LOW: 120,
+});
+
+function parseDateTime(value) {
+  if (!value) return null;
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value;
+  }
+  const parsed = new Date(String(value));
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed;
+}
+
+function addHours(date, hours) {
+  const next = new Date(date.getTime());
+  next.setTime(next.getTime() + Number(hours || 0) * 60 * 60 * 1000);
+  return next;
+}
+
+function formatSqlDateTime(date) {
+  return date.toISOString().slice(0, 19).replace("T", " ");
+}
+
+function computeSlaDueAt({ severity, anchorAt }) {
+  const normalizedSeverity = u(severity);
+  const hours = SLA_HOURS_BY_SEVERITY[normalizedSeverity] ?? SLA_HOURS_BY_SEVERITY.MEDIUM;
+  const anchorDate = parseDateTime(anchorAt) || new Date();
+  return formatSqlDateTime(addHours(anchorDate, hours));
+}
+
 function parseIsoDate(value, label = "date") {
   if (!value) return null;
   const raw = String(value).trim();
@@ -190,6 +224,26 @@ function buildListOrdering(sortBy = "priority") {
   if (key === "UPDATED_DESC") {
     return "ew.updated_at DESC, ew.id DESC";
   }
+  if (key === "URGENCY" || key === "URGENCY_ASC") {
+    return `CASE
+              WHEN ew.status IN ('RESOLVED', 'IGNORED') THEN 1
+              ELSE 0
+            END ASC,
+            CASE
+              WHEN ew.sla_due_at IS NULL THEN 1
+              ELSE 0
+            END ASC,
+            ew.sla_due_at ASC,
+            CASE ew.severity
+              WHEN 'CRITICAL' THEN 0
+              WHEN 'HIGH' THEN 1
+              WHEN 'MEDIUM' THEN 2
+              WHEN 'LOW' THEN 3
+              ELSE 4
+            END ASC,
+            ew.last_seen_at DESC,
+            ew.id DESC`;
+  }
   return `CASE ew.status
             WHEN 'OPEN' THEN 0
             WHEN 'IN_REVIEW' THEN 1
@@ -221,13 +275,14 @@ async function upsertExceptionRow({ runQuery, item }) {
         source_ref_id,
         source_status_code,
         severity,
+        sla_due_at,
         status,
         owner_user_id,
         title,
         description,
         payload_json,
         last_seen_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
       ON DUPLICATE KEY UPDATE
         legal_entity_id = VALUES(legal_entity_id),
         module_code = VALUES(module_code),
@@ -237,6 +292,7 @@ async function upsertExceptionRow({ runQuery, item }) {
         source_ref_id = VALUES(source_ref_id),
         source_status_code = VALUES(source_status_code),
         severity = VALUES(severity),
+        sla_due_at = COALESCE(VALUES(sla_due_at), exception_workbench.sla_due_at),
         title = VALUES(title),
         description = VALUES(description),
         payload_json = VALUES(payload_json),
@@ -270,6 +326,7 @@ async function upsertExceptionRow({ runQuery, item }) {
       item.source_ref_id || null,
       item.source_status_code || null,
       item.severity,
+      item.sla_due_at || null,
       item.status,
       item.owner_user_id || null,
       item.title,
@@ -324,31 +381,38 @@ async function collectBankReconciliationExceptionItems({
     params
   );
 
-  return (res.rows || []).map((row) => ({
-    tenant_id: parsePositiveInt(row.tenant_id),
-    legal_entity_id: parsePositiveInt(row.legal_entity_id),
-    module_code: "BANK",
-    exception_type: "BANK_RECON_EXCEPTION",
-    source_type: "BANK_RECON_EXCEPTION",
-    source_key: `BANK:RECON_EXCEPTION:${row.id}`,
-    source_ref: row.reason_code || `LINE:${row.statement_line_id}`,
-    source_ref_id: parsePositiveInt(row.id),
-    source_status_code: u(row.source_status),
-    severity: mapBankReconExceptionSeverity(row.source_severity),
-    status: mapBankReconExceptionStatus(row.source_status),
-    owner_user_id: parsePositiveInt(row.assigned_to_user_id) || null,
-    title: `Bank reconciliation exception: ${row.reason_code || "UNSPECIFIED"}`,
-    description: row.reason_message || null,
-    payload_json: {
-      statement_line_id: parsePositiveInt(row.statement_line_id) || null,
-      bank_account_id: parsePositiveInt(row.bank_account_id) || null,
-      occurrence_count: toInt(row.occurrence_count, 1),
-      suggested_action_type: row.suggested_action_type || null,
-      suggested_payload_json: parseJson(row.suggested_payload_json, null),
-      first_seen_at: row.first_seen_at || null,
-      last_seen_at: row.last_seen_at || null,
-    },
-  }));
+  return (res.rows || []).map((row) => {
+    const severity = mapBankReconExceptionSeverity(row.source_severity);
+    return {
+      tenant_id: parsePositiveInt(row.tenant_id),
+      legal_entity_id: parsePositiveInt(row.legal_entity_id),
+      module_code: "BANK",
+      exception_type: "BANK_RECON_EXCEPTION",
+      source_type: "BANK_RECON_EXCEPTION",
+      source_key: `BANK:RECON_EXCEPTION:${row.id}`,
+      source_ref: row.reason_code || `LINE:${row.statement_line_id}`,
+      source_ref_id: parsePositiveInt(row.id),
+      source_status_code: u(row.source_status),
+      severity,
+      sla_due_at: computeSlaDueAt({
+        severity,
+        anchorAt: row.first_seen_at || row.last_seen_at,
+      }),
+      status: mapBankReconExceptionStatus(row.source_status),
+      owner_user_id: parsePositiveInt(row.assigned_to_user_id) || null,
+      title: `Bank reconciliation exception: ${row.reason_code || "UNSPECIFIED"}`,
+      description: row.reason_message || null,
+      payload_json: {
+        statement_line_id: parsePositiveInt(row.statement_line_id) || null,
+        bank_account_id: parsePositiveInt(row.bank_account_id) || null,
+        occurrence_count: toInt(row.occurrence_count, 1),
+        suggested_action_type: row.suggested_action_type || null,
+        suggested_payload_json: parseJson(row.suggested_payload_json, null),
+        first_seen_at: row.first_seen_at || null,
+        last_seen_at: row.last_seen_at || null,
+      },
+    };
+  });
 }
 
 async function collectBankPaymentReturnItems({
@@ -399,36 +463,43 @@ async function collectBankPaymentReturnItems({
     params
   );
 
-  return (res.rows || []).map((row) => ({
-    tenant_id: parsePositiveInt(row.tenant_id),
-    legal_entity_id: parsePositiveInt(row.legal_entity_id),
-    module_code: "BANK",
-    exception_type: "BANK_PAYMENT_RETURN",
-    source_type: "BANK_PAYMENT_RETURN_EVENT",
-    source_key: `BANK:PAYMENT_RETURN_EVENT:${row.id}`,
-    source_ref: row.source_ref || row.reason_code || null,
-    source_ref_id: parsePositiveInt(row.id),
-    source_status_code: u(row.event_status),
-    severity: mapBankReturnSeverity(row.event_type, row.reason_code),
-    status: mapBankReturnStatus(row.event_status),
-    owner_user_id: null,
-    title: `Bank payment return: ${u(row.event_type || "RETURN_EVENT")}`,
-    description: row.reason_message || null,
-    payload_json: {
-      payment_batch_id: parsePositiveInt(row.payment_batch_id) || null,
-      payment_batch_line_id: parsePositiveInt(row.payment_batch_line_id) || null,
-      bank_statement_line_id: parsePositiveInt(row.bank_statement_line_id) || null,
-      payment_batch_ack_import_id: parsePositiveInt(row.payment_batch_ack_import_id) || null,
-      payment_batch_ack_import_line_id: parsePositiveInt(row.payment_batch_ack_import_line_id) || null,
-      event_type: u(row.event_type),
-      event_status: u(row.event_status),
-      amount: Number(row.amount || 0),
-      currency_code: row.currency_code || null,
-      source_type: row.source_type || null,
-      created_at: row.created_at || null,
-      updated_at: row.updated_at || null,
-    },
-  }));
+  return (res.rows || []).map((row) => {
+    const severity = mapBankReturnSeverity(row.event_type, row.reason_code);
+    return {
+      tenant_id: parsePositiveInt(row.tenant_id),
+      legal_entity_id: parsePositiveInt(row.legal_entity_id),
+      module_code: "BANK",
+      exception_type: "BANK_PAYMENT_RETURN",
+      source_type: "BANK_PAYMENT_RETURN_EVENT",
+      source_key: `BANK:PAYMENT_RETURN_EVENT:${row.id}`,
+      source_ref: row.source_ref || row.reason_code || null,
+      source_ref_id: parsePositiveInt(row.id),
+      source_status_code: u(row.event_status),
+      severity,
+      sla_due_at: computeSlaDueAt({
+        severity,
+        anchorAt: row.created_at || row.updated_at,
+      }),
+      status: mapBankReturnStatus(row.event_status),
+      owner_user_id: null,
+      title: `Bank payment return: ${u(row.event_type || "RETURN_EVENT")}`,
+      description: row.reason_message || null,
+      payload_json: {
+        payment_batch_id: parsePositiveInt(row.payment_batch_id) || null,
+        payment_batch_line_id: parsePositiveInt(row.payment_batch_line_id) || null,
+        bank_statement_line_id: parsePositiveInt(row.bank_statement_line_id) || null,
+        payment_batch_ack_import_id: parsePositiveInt(row.payment_batch_ack_import_id) || null,
+        payment_batch_ack_import_line_id: parsePositiveInt(row.payment_batch_ack_import_line_id) || null,
+        event_type: u(row.event_type),
+        event_status: u(row.event_status),
+        amount: Number(row.amount || 0),
+        currency_code: row.currency_code || null,
+        source_type: row.source_type || null,
+        created_at: row.created_at || null,
+        updated_at: row.updated_at || null,
+      },
+    };
+  });
 }
 
 async function collectPayrollImportExceptionItems({
@@ -475,6 +546,7 @@ async function collectPayrollImportExceptionItems({
 
   return (res.rows || []).map((row) => {
     const sourceStatus = u(row.source_status);
+    const severity = mapPayrollImportSeverity(sourceStatus);
     const errorCount =
       (Array.isArray(parseJson(row.validation_errors_json, []))
         ? parseJson(row.validation_errors_json, []).length
@@ -492,7 +564,11 @@ async function collectPayrollImportExceptionItems({
       source_ref: row.provider_code || null,
       source_ref_id: parsePositiveInt(row.id),
       source_status_code: sourceStatus,
-      severity: mapPayrollImportSeverity(sourceStatus),
+      severity,
+      sla_due_at: computeSlaDueAt({
+        severity,
+        anchorAt: row.requested_at || row.applied_at,
+      }),
       status: mapPayrollImportStatus(sourceStatus),
       owner_user_id: null,
       title: `Payroll provider import ${sourceStatus}: ${row.provider_code || "UNKNOWN"}`,
@@ -562,6 +638,7 @@ async function collectPayrollCloseCheckItems({
 
   return (res.rows || []).map((row) => {
     const checkStatus = u(row.check_status);
+    const severity = mapPayrollCheckSeverity(row.severity, checkStatus);
     const periodRange = `${row.period_start || "?"}..${row.period_end || "?"}`;
     return {
       tenant_id: parsePositiveInt(row.tenant_id),
@@ -573,7 +650,11 @@ async function collectPayrollCloseCheckItems({
       source_ref: periodRange,
       source_ref_id: parsePositiveInt(row.period_close_id),
       source_status_code: checkStatus,
-      severity: mapPayrollCheckSeverity(row.severity, checkStatus),
+      severity,
+      sla_due_at: computeSlaDueAt({
+        severity,
+        anchorAt: row.updated_at,
+      }),
       status: mapPayrollCloseCheckStatus(checkStatus),
       owner_user_id: null,
       title: `Payroll close check: ${row.check_code}`,

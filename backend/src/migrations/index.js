@@ -55,6 +55,7 @@ import migration064ExceptionWorkbench from "./m064_exception_workbench.js";
 import migration065DataRetentionArchival from "./m065_data_retention_archival.js";
 import migration066BankReconAutopostTaxModes from "./m066_bank_recon_autopost_tax_modes.js";
 import migration067UserPreferences from "./m067_user_preferences.js";
+import migration068ExceptionWorkbenchSlaDueAt from "./m068_exception_workbench_sla_due_at.js";
 
 const migrations = [
   migration001GlobalMultiEntity,
@@ -114,6 +115,7 @@ const migrations = [
   migration065DataRetentionArchival,
   migration066BankReconAutopostTaxModes,
   migration067UserPreferences,
+  migration068ExceptionWorkbenchSlaDueAt,
 ];
 
 export default migrations;

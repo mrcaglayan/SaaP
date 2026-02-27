@@ -5,7 +5,7 @@ Execution tracker for the post-`04-BANKS_AND_PAYROLLS_ESM.md` improvement wave.
 Format intentionally matches your checklist style so we can mark items as we ship.
 
 ## Baseline Notes (Repo Reality)
-- Latest migration is `m066_*`; next new migration must start from `m067_*`.
+- Latest migration is `m068_*`; next new migration must start from `m069_*`.
 - Current auth/profile route style is `/me` and `/auth/*`.
 - `Exceptions Workbench`, `Jobs`, `Retention`, and much of idempotency are already implemented and should be treated as extension/hardening work, not net-new foundations.
 
@@ -17,11 +17,11 @@ Tag legend: `(hot: yes)` means likely touches conflict-prone files (`AppLayout.j
 - [x] PR-UX02 Apply Working Context defaults on existing pages/forms (implemented, hot: no)
 - [x] PR-UX03 Persist filters/table prefs in local storage hooks (implemented: filter persistence + reusable hooks; advanced table prefs remain in UX24, hot: low)
 - [x] PR-UX04 Server-side user context preferences (`/me/preferences`, migration `m067_*`) (implemented: `user_preferences` + `GET/PUT /me/preferences` + `WorkingContextProvider` server hydrate/sync)
-- [ ] PR-UX05 Permissions visible in sidebar (disabled + reason, not hidden) (not started, hot: yes)
+- [x] PR-UX05 Permissions visible in sidebar (disabled + reason, not hidden) (implemented: permission-locked items are shown with reason + copy access request action, hot: yes)
 
-- [ ] PR-UX06 Upgrade `Dashboard.jsx` into actionable finance console (not started)
-- [ ] PR-UX07 Exception queue tabs + queue counts (backend already returns `summary.by_status`; mostly FE work) (not started)
-- [ ] PR-UX08 Add `sla_due_at` + urgency sort (severity already exists in DB/API) (not started)
+- [x] PR-UX06 Upgrade `Dashboard.jsx` into actionable finance console (implemented: KPI cards + queue links + readiness + scoped refresh, hot: no)
+- [x] PR-UX07 Exception queue tabs + queue counts (implemented: tabs `All/Needs Review/Approval/Stuck/Mine/Resolved` + counts from `summary.by_status` with supplemental `stuck/mine` counters, hot: no)
+- [x] PR-UX08 Add `sla_due_at` + urgency sort (implemented: migration `m068_*` + backend SLA enrichment + urgency ordering + FE sort selector/SLA badges, hot: no)
 - [ ] PR-UX09 Exception bulk actions (preferred: backend bulk endpoints; fallback: FE batching with concurrency control) (not started)
 
 - [x] PR-CORE05 Extend existing backend error envelope + FE centralized toasts/handling (`message` + `requestId` already exists) (implemented: API error toasts + shared app toast channel; core cash/journal/exceptions success messages now toastified)
@@ -96,11 +96,19 @@ Intentional not-yet-implemented placeholders (Stock, Fixed Assets, generic Repor
   smoke: `backend/scripts/test-ux-prux03-persisted-filters.js` (or FE e2e equivalent)
 - [x] PR-UX04 acceptance: working context is restored from server preferences across devices while preserving localStorage fallback
   smoke: `backend/scripts/test-ux-prux04-me-preferences.js` (to add)
+- [x] PR-UX05 acceptance: sidebar keeps permission-gated items visible as disabled with lock reason and copy-access-request action
+  smoke: `backend/scripts/test-ux-prux05-sidebar-permissions-visible.js` (to add)
+- [x] PR-UX06 acceptance: dashboard presents actionable queues (`To Post`, `To Settle`, `Exceptions`, `Period Close Blockers`) and links with scoped refresh
+  smoke: `backend/scripts/test-ux-prux06-finance-console.js` (to add)
+- [x] PR-UX07 acceptance: exception queue tabs drive filters and show queue counts without backend schema changes
+  smoke: `backend/scripts/test-ux-prux07-exception-queues.js` (to add)
+- [x] PR-UX08 acceptance: exceptions expose `sla_due_at` and support urgency-first ordering in workbench UI
+  smoke: `backend/scripts/test-ux-prux08-exception-sla-urgency.js` (to add)
 - [x] PR-CORE05 acceptance: standardized user-facing error handling + copyable requestId/details
   smoke: `backend/scripts/test-ux-prcore05-error-envelope.js`
 - [x] PR-CORE01 acceptance: key list endpoints return consistent `rows + total + limit + offset` with `pagination` metadata
   smoke: `backend/scripts/test-ux-prcore01-pagination-contracts.js` (to add)
 
 ## Immediate Next Step
-- Continue with `PR-UX05`.
+- Continue with `PR-UX09`.
 - After each merged PR, update this tracker line from `[ ]` to `[x]` with a short `(implemented)` note.
