@@ -34201,7 +34201,7 @@ Reference context docs:
 - [x] PR-I02 Bank Route Alias + UX Compatibility (`/app/banka-hesaplari` -> `/app/banka-tanimla`) (implemented)
 - [x] PR-I03 Bank Connector Provider Pack (real adapters beyond `MOCK_OB`) (implemented)
 - [x] PR-I04 Secrets Backfill + Re-Encryption Job (legacy plaintext -> encrypted envelope) (implemented)
-- [ ] PR-I05 Retention Scheduler (true `SCHEDULED` policy execution loop)
+- [x] PR-I05 Retention Scheduler (true `SCHEDULED` policy execution loop) (implemented)
 - [ ] PR-I06 Contracts/Periods Integration with Bank + Payroll flows (future-year accrual chain)
 - [ ] PR-I07 Unified Final Gate (core + contracts/revenue + bank/payroll in one orchestrator)
 
@@ -34320,6 +34320,26 @@ Acceptance:
 
 - Due policies are enqueued without manual API trigger.
 - Idempotency and run-history integrity preserved.
+
+Implementation notes:
+
+- Added retention scheduler service:
+  - `backend/src/services/retentionScheduler.service.js`
+  - scans active policies, evaluates due windows from `config_json`, enqueues `DATA_RETENTION_RUN`
+- Added scheduler scripts:
+  - one-shot tick: `npm run job:retention:schedule-due`
+  - polling loop: `npm run jobs:retention:scheduler`
+  - files:
+    - `backend/scripts/retention-schedule-due-policies.js`
+    - `backend/scripts/run-retention-scheduler.js`
+- Extended `DATA_RETENTION_RUN` handler to honor payload `trigger_mode` (defaults to `JOB`):
+  - scheduled enqueues now produce retention runs with `trigger_mode='SCHEDULED'`
+  - file: `backend/src/services/jobHandlers/dataRetentionRun.handler.js`
+- Added PR-I05 integration smoke:
+  - `npm run test:integration:pri05`
+  - file: `backend/scripts/test-integration-pri05-retention-scheduler.js`
+- Added ops/env documentation:
+  - `docs/specs/retention-scheduler.md`
 
 ---
 

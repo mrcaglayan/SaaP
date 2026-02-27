@@ -13,6 +13,14 @@ function noopScopeAccess() {
   return true;
 }
 
+function normalizeTriggerMode(value, fallback = "JOB") {
+  const mode = String(value || fallback)
+    .trim()
+    .toUpperCase();
+  if (["MANUAL", "SCHEDULED", "JOB"].includes(mode)) return mode;
+  return fallback;
+}
+
 const dataRetentionRunHandler = {
   async run({ job, payload }) {
     const tenantId = parsePositiveInt(job?.tenant_id ?? payload?.tenant_id);
@@ -22,6 +30,7 @@ const dataRetentionRunHandler = {
       (payload?.run_idempotency_key ?? payload?.runIdempotencyKey) || ""
     ).trim();
     const runIdempotencyKey = runIdempotencyKeyRaw ? runIdempotencyKeyRaw.slice(0, 190) : null;
+    const triggerMode = normalizeTriggerMode(payload?.trigger_mode ?? payload?.triggerMode, "JOB");
 
     if (!tenantId) {
       throw badJobPayload("tenant_id is required for DATA_RETENTION_RUN", "JOB_RETENTION_MISSING_TENANT");
@@ -36,7 +45,7 @@ const dataRetentionRunHandler = {
       userId: actingUserId,
       policyId,
       input: {
-        triggerMode: "JOB",
+        triggerMode,
         runIdempotencyKey: runIdempotencyKey || (job?.id ? `JOB:${job.id}` : null),
       },
       assertScopeAccess: noopScopeAccess,
