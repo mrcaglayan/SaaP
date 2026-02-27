@@ -54,6 +54,9 @@ Workflow: `.github/workflows/bank-payroll-release-gate.yml`
 - `test:bank:prb09` and `test:payroll:prp08` now run real service-level assertions (SoD/maker-checker, idempotency, lock enforcement).
 - `test:hardening:prh02` now runs real service-level assertions (job enqueue idempotency, worker run success/failure lifecycle, attempt history integrity, requeue/cancel admin actions, PAYROLL_IMPORT_APPLY handler integration).
 - `test:hardening:prh04` now runs real service-level assertions (unified PAYROLL policy matching by threshold, request idempotency, maker-checker + multi-approver flow, auto-execute on final approval, reject path, scope denial checks).
+- `test:hardening:prh05` now runs real service-level assertions (ops dashboard KPI aggregations for bank reconciliation, payment batch health, payroll import/close health, jobs/attempt SLAs, plus legal-entity scope-denial checks).
+- `test:hardening:prh06` now runs real service-level assertions (multi-source BANK/PAYROLL workbench refresh normalization, queue summary integrity, claim/resolve/reopen transitions with audit trail, and source-table immutability checks).
+- `test:hardening:prh07` now runs real service-level assertions (retention policy create/manual execution/idempotent replay, `DATA_RETENTION_RUN` job-handler execution path, payroll close snapshot export idempotency + stable hashes, and non-destructive core payroll row checks).
 - `test:payroll:prp01` now runs real service-level assertions (import/list/detail/line reads, duplicate checksum conflict, CSV validation failures, scope-permission denial).
 - `test:payroll:prp02` now runs real service-level assertions (accrual preview missing mappings, effective-dated component mappings, review/finalize lifecycle, idempotent finalize, journal/audit integrity).
 - `test:payroll:prp03` now runs real service-level assertions (liability build lifecycle, NET/STATUTORY/ALL payment prep previews, beneficiary setup gate, payment batch preparation/linking, snapshot capture readiness).
@@ -62,4 +65,4 @@ Workflow: `.github/workflows/bank-payroll-release-gate.yml`
 - `test:payroll:prp06` now runs real service-level assertions (partial settlement classification/apply, manual override request/reject/approve maker-checker controls, idempotent replays, closed-period manual-settlement lock enforcement, permission denial checks).
 - `test:payroll:prp07` now runs real service-level assertions (beneficiary master setup/list, primary switching with single-primary enforcement, immutable snapshot export behavior, new snapshot capture after master switch, missing-beneficiary blocking, permission denial checks).
 - `test:payroll:prp09` now runs real service-level assertions (provider adapter registry, connection/ref setup, preview mapping/idempotency, apply maker-checker/idempotency, closed-period import-apply lock gating, scope-permission denial checks).
-- Several remaining stage scripts are still placeholders and should be upgraded to full assertions before marking H08 complete.
+- All stage scripts in `bank-flow`, `payroll-flow`, and `cross-flow` now run real service-level assertions, and `test:e2e:bank-payroll` passes end-to-end.

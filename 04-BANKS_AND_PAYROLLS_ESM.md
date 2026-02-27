@@ -70,7 +70,7 @@ Permission naming note (important):
 - [x] PR-H05 Operations Dashboard APIs (KPIs, SLAs, Health) (implemented)
 - [x] PR-H06 Unified Exception Workbench (Bank + Payroll Settlement Exceptions) (implemented)
 - [x] PR-H07 Data Retention, Archival, and Export Snapshots (implemented)
-- [ ] PR-H08 Release Gate + End-to-End Regression Pack (Bank + Payroll) (in progress: scaffold + PR-B03/PR-B04/PR-B06/PR-B07/PR-B08-A/PR-B08-B/PR-B09/PR-P01/PR-P02/PR-P03/PR-P04/PR-P05/PR-P06/PR-P07/PR-P08/PR-P09/PR-H02/PR-H04 smoke assertions upgraded; remaining stage scripts still placeholder)
+- [x] PR-H08 Release Gate + End-to-End Regression Pack (Bank + Payroll) (implemented: bank-flow, payroll-flow, and cross-flow release-gate stages pass end-to-end with real smoke assertions)
 
 ---
 ## Roadmap Content
