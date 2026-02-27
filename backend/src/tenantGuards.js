@@ -102,6 +102,8 @@ export async function assertLegalEntityBelongsToTenant(
        id,
        tenant_id,
        group_company_id,
+       code,
+       name,
        country_id,
        functional_currency_code,
        status

@@ -33,7 +33,7 @@ async function getPaymentBatchLineForReturn({ tenantId, paymentBatchLineId, runQ
         l.batch_id,
         l.line_no,
         l.amount,
-        l.currency_code,
+        b.currency_code AS currency_code,
         l.status,
         l.bank_execution_status,
         l.executed_amount,
@@ -718,7 +718,7 @@ async function findPaymentBatchLineCandidatesForStatementReturn({
         pbl.batch_id,
         pbl.line_no,
         pbl.amount,
-        pbl.currency_code,
+        pb.currency_code AS currency_code,
         pbl.bank_reference,
         pbl.external_payment_ref,
         pbl.beneficiary_bank_ref,
@@ -736,7 +736,7 @@ async function findPaymentBatchLineCandidatesForStatementReturn({
        AND pbl.legal_entity_id = ?
        AND pb.bank_account_id = ?
        AND pb.status = 'POSTED'
-       AND pbl.currency_code = ?
+       AND pb.currency_code = ?
      ORDER BY pbl.id DESC
      LIMIT 300`,
     [tenantId, line.legal_entity_id, line.bank_account_id, line.currency_code]

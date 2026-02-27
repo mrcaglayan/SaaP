@@ -25,6 +25,20 @@ function safeJson(value) {
   return JSON.stringify(value ?? null);
 }
 
+function toDateOnly(value) {
+  if (value === undefined || value === null || value === "") return "";
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) return "";
+    return value.toISOString().slice(0, 10);
+  }
+  const text = String(value).trim();
+  if (!text) return "";
+  if (/^\d{4}-\d{2}-\d{2}/.test(text)) return text.slice(0, 10);
+  const parsed = new Date(text);
+  if (!Number.isNaN(parsed.getTime())) return parsed.toISOString().slice(0, 10);
+  return "";
+}
+
 function buildNarration(template, line) {
   const statementText = String(line?.description || line?.reference_no || "").trim();
   const mode = u(template?.description_mode || "USE_STATEMENT_TEXT");
@@ -53,9 +67,9 @@ function validateDirection(template, line) {
 }
 
 function validateTemplateEffective(template, line) {
-  const d = String(line?.txn_date || "").slice(0, 10);
-  const from = String(template?.effective_from || "").slice(0, 10);
-  const to = String(template?.effective_to || "").slice(0, 10);
+  const d = toDateOnly(line?.txn_date);
+  const from = toDateOnly(template?.effective_from);
+  const to = toDateOnly(template?.effective_to);
   if (from && d && d < from) throw badRequest("Template not effective for statement line date");
   if (to && d && d > to) throw badRequest("Template not effective for statement line date");
 }
@@ -133,10 +147,21 @@ async function getJournalById({ tenantId, legalEntityId, journalEntryId, runQuer
 
 async function getCounterAccount({ tenantId, accountId, runQuery = query }) {
   const result = await runQuery(
-    `SELECT id, tenant_id, legal_entity_id, scope, account_type, allow_posting, is_active, code, name
-     FROM accounts
-     WHERE tenant_id = ?
-       AND id = ?
+    `SELECT
+        a.id,
+        c.tenant_id AS tenant_id,
+        c.legal_entity_id AS legal_entity_id,
+        c.scope AS scope,
+        a.account_type,
+        a.allow_posting,
+        a.is_active,
+        a.code,
+        a.name
+     FROM accounts a
+     JOIN charts_of_accounts c
+       ON c.id = a.coa_id
+     WHERE c.tenant_id = ?
+       AND a.id = ?
      LIMIT 1`,
     [tenantId, accountId]
   );
@@ -280,7 +305,7 @@ function buildJournalLinePayloads({ template, line, bankGlAccountId, narration }
 }
 
 async function insertOrReuseAutoPostJournalTx(tx, { tenantId, line, template, userId }) {
-  const postDate = String(line.txn_date || "").slice(0, 10);
+  const postDate = toDateOnly(line.txn_date);
   if (!postDate) throw badRequest("Statement line txn_date is required for auto-posting");
 
   const bankGlAccountId = parsePositiveInt(line.bank_gl_account_id);

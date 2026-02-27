@@ -24,7 +24,17 @@ function safeJson(value) {
 }
 
 function parseDate(value) {
-  return String(value || "").slice(0, 10);
+  if (value === undefined || value === null || value === "") return "";
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) return "";
+    return value.toISOString().slice(0, 10);
+  }
+  const text = String(value).trim();
+  if (!text) return "";
+  if (/^\d{4}-\d{2}-\d{2}/.test(text)) return text.slice(0, 10);
+  const parsed = new Date(text);
+  if (!Number.isNaN(parsed.getTime())) return parsed.toISOString().slice(0, 10);
+  return "";
 }
 
 function parseDbBoolean(value) {
@@ -75,7 +85,8 @@ async function getPaymentLineWithBatch({ tenantId, paymentBatchLineId, runQuery 
         pbl.*,
         pb.batch_no,
         pb.status AS batch_status,
-        pb.bank_account_id
+        pb.bank_account_id,
+        pb.currency_code AS currency_code
      FROM payment_batch_lines pbl
      JOIN payment_batches pb
        ON pb.tenant_id = pbl.tenant_id
@@ -531,7 +542,7 @@ export async function autoMatchPaymentLineWithDifferenceAndReconcile({
             matchedEntityId: paymentLine.batch_id,
             matchedAmount: actualAmountAbs,
             notes: `B08-B exact payment line match via payment batch ${paymentLine.batch_no || paymentLine.batch_id}`,
-            reconciliationMethod: "RULE_DIFFERENCE_EXACT",
+            reconciliationMethod: "RULE_DIFF_EXACT",
             reconciliationRuleId: parsePositiveInt(ruleId) || null,
             reconciliationConfidence:
               confidence === null || confidence === undefined
@@ -583,7 +594,7 @@ export async function autoMatchPaymentLineWithDifferenceAndReconcile({
             matchedEntityId: paymentLine.batch_id,
             matchedAmount: paymentMatchAmount,
             notes: `B08-B payment component via payment line #${paymentLine.id}`,
-            reconciliationMethod: "RULE_DIFFERENCE_PAYMENT_COMPONENT",
+            reconciliationMethod: "RULE_DIFF_PAY",
             reconciliationRuleId: parsePositiveInt(ruleId) || null,
             reconciliationConfidence:
               confidence === null || confidence === undefined
@@ -611,7 +622,7 @@ export async function autoMatchPaymentLineWithDifferenceAndReconcile({
     journalEntryId: adj.journalEntryId,
     userId,
     notes: `B08-B difference component via profile ${profile.profile_code || profile.id}`,
-    reconciliationMethod: "RULE_DIFFERENCE_ADJUSTMENT",
+    reconciliationMethod: "RULE_DIFF_ADJ",
     reconciliationRuleId: parsePositiveInt(ruleId) || null,
     reconciliationConfidence:
       confidence === null || confidence === undefined ? null : Number(Number(confidence).toFixed(2)),
@@ -672,7 +683,7 @@ export async function findPaymentLineCandidatesForDifferenceAutomation({
         pbl.amount,
         pbl.exported_amount,
         pbl.executed_amount,
-        pbl.currency_code,
+        pb.currency_code AS currency_code,
         pbl.bank_reference,
         pbl.external_payment_ref,
         pbl.beneficiary_bank_ref,
@@ -694,7 +705,7 @@ export async function findPaymentLineCandidatesForDifferenceAutomation({
        AND pbl.legal_entity_id = ?
        AND pb.bank_account_id = ?
        AND pb.status = 'POSTED'
-       AND pbl.currency_code = ?
+       AND pb.currency_code = ?
        AND (pb.posted_at IS NULL OR DATE(pb.posted_at) BETWEEN DATE_SUB(?, INTERVAL ${safeLag} DAY) AND DATE_ADD(?, INTERVAL ${safeLag} DAY))
      ORDER BY pbl.id DESC
      LIMIT 300`,

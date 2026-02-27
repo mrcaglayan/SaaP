@@ -45,5 +45,13 @@ Workflow: `.github/workflows/bank-payroll-release-gate.yml`
 ## Current Status
 
 - H08 release-gate framework is wired and runnable.
+- `test:bank:prb03` now runs real service-level assertions (queue/suggestions/match-unmatch/ignore/audit transitions).
+- `test:payments:prb04` now runs real service-level assertions (create/idempotency/approve/export/post/audit).
+- `test:bank:prb06` now runs real service-level assertions (wrapper export, ack import statuses, idempotency, over-ack guard).
+- `test:bank:prb07` now runs real service-level assertions (rule CRUD, preview/apply automation, exception lifecycle, idempotent replay).
+- `test:bank:prb08a` now runs real service-level assertions (posting template CRUD, AUTO_POST_TEMPLATE apply path, journal/trace/match idempotency).
+- `test:bank:prb08b` now runs real service-level assertions (return processing, manual rejection handling, FX difference adjustment/reconciliation, idempotent apply replay).
 - `test:bank:prb09` and `test:payroll:prp08` now run real service-level assertions (SoD/maker-checker, idempotency, lock enforcement).
+- `test:payroll:prp01` now runs real service-level assertions (import/list/detail/line reads, duplicate checksum conflict, CSV validation failures, scope-permission denial).
+- `test:payroll:prp02` now runs real service-level assertions (accrual preview missing mappings, effective-dated component mappings, review/finalize lifecycle, idempotent finalize, journal/audit integrity).
 - Several remaining stage scripts are still placeholders and should be upgraded to full assertions before marking H08 complete.
