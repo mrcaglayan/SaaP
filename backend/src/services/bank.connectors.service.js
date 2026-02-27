@@ -59,11 +59,19 @@ function maskConnectorCredentials(row) {
 
 function normalizeConnectorRow(row) {
   if (!row) return null;
+  const encryptedCredentialsText =
+    row?.credentials_encrypted_json === undefined ? null : row.credentials_encrypted_json;
   const normalized = {
     ...row,
     config_json: parseJson(row.config_json, {}),
     ...maskConnectorCredentials(row),
   };
+  Object.defineProperty(normalized, "__credentials_encrypted_json", {
+    value: encryptedCredentialsText,
+    enumerable: false,
+    configurable: false,
+    writable: false,
+  });
   delete normalized.credentials_encrypted_json;
   return normalized;
 }
@@ -161,7 +169,9 @@ async function getBankAccountForLink({ tenantId, bankAccountId, runQuery = query
 }
 
 function decryptConnectorCredentials(row) {
-  const envelope = parseEnvelopeText(row?.credentials_encrypted_json);
+  const envelope = parseEnvelopeText(
+    row?.credentials_encrypted_json ?? row?.__credentials_encrypted_json
+  );
   if (!envelope) return {};
   return decryptJson(envelope);
 }

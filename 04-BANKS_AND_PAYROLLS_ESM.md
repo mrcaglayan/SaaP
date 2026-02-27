@@ -34182,3 +34182,168 @@ Idempotency confirmed
 
 Audit rows confirmed
 
+---
+
+## Follow-Up Integration PR Steps (Post H09)
+
+These are the practical integration PRs that became unblocked after completing PR-B01..B09, PR-P01..P09, and PR-H01..H09.
+
+Reference context docs:
+
+- `01-PR_STEPS CARI.md`
+- `02-PR-STEPS_CONTRACTS_PERIDOTS GELECEK YILLARA AIT GGELİRLER GIDERLER.md`
+- `03-PR_FOLLOW_UPS_OF_CONTRACTS_PERIDOS.md`
+- `05-gelir gider thaakkukları.md`
+
+### Integration tracker
+
+- [x] PR-I01 Main Release Gate Bridge (include bank-payroll gate in `test:release-gate`) (implemented)
+- [x] PR-I02 Bank Route Alias + UX Compatibility (`/app/banka-hesaplari` -> `/app/banka-tanimla`) (implemented)
+- [x] PR-I03 Bank Connector Provider Pack (real adapters beyond `MOCK_OB`) (implemented)
+- [ ] PR-I04 Secrets Backfill + Re-Encryption Job (legacy plaintext -> encrypted envelope)
+- [ ] PR-I05 Retention Scheduler (true `SCHEDULED` policy execution loop)
+- [ ] PR-I06 Contracts/Periods Integration with Bank + Payroll flows (future-year accrual chain)
+- [ ] PR-I07 Unified Final Gate (core + contracts/revenue + bank/payroll in one orchestrator)
+
+---
+
+### PR-I01: Main Release Gate Bridge
+
+Goal:
+
+- Make bank-payroll gate part of the default release-gate orchestrator.
+
+Update:
+
+- `backend/scripts/test-release-gate.js`
+- `backend/package.json`
+
+Acceptance:
+
+- `npm run test:release-gate` executes:
+  - `test:release-gate:core`
+  - `test:contracts-revenue-gate`
+  - `test:e2e:bank-payroll`
+- Add optional skip env (example): `RELEASE_GATE_SKIP_BANK_PAYROLL=1`.
+
+---
+
+### PR-I02: Bank Route Alias + UX Compatibility
+
+Goal:
+
+- Add route alias for naming continuity without changing canonical path.
+
+Update:
+
+- `frontend/src/App.jsx`
+- `frontend/src/layouts/sidebarConfig.js` (only if needed for redirects/legacy menu)
+- `frontend/src/i18n/messages.js` (optional label)
+
+Acceptance:
+
+- `/app/banka-hesaplari` redirects to `/app/banka-tanimla`.
+- Permission behavior remains identical to canonical route.
+
+---
+
+### PR-I03: Bank Connector Provider Pack
+
+Goal:
+
+- Replace single mock bank adapter with pluggable real providers.
+
+Create/Update:
+
+- `backend/src/services/bankConnectorAdapters/*.adapter.js`
+- `backend/src/services/bankConnectorAdapters/index.js`
+- optional provider-specific tests under `backend/scripts/`
+
+Acceptance:
+
+- At least one non-mock adapter is runnable in integration mode.
+- Existing `MOCK_OB` path remains for deterministic test runs.
+
+Implementation notes:
+
+- Added `SANDBOX_OB` HTTP adapter and registry wiring.
+- Added smoke script: `backend/scripts/test-bank-pri03-provider-pack.js` (`npm run test:bank:pri03`).
+
+---
+
+### PR-I04: Secrets Backfill + Re-Encryption Job
+
+Goal:
+
+- Migrate any legacy plaintext secrets to encrypted envelope model.
+
+Create/Update:
+
+- migration/script for one-time backfill
+- optional job handler for rotation/re-encrypt-all
+- audit writes for each migrated secret row
+
+Acceptance:
+
+- No active connector/provider rows rely on plaintext secret columns.
+- Read/write paths remain backward compatible during migration window.
+
+---
+
+### PR-I05: Retention Scheduler
+
+Goal:
+
+- Run retention policies automatically in `SCHEDULED` mode.
+
+Create/Update:
+
+- scheduler loop (cron/polling) that enqueues `DATA_RETENTION_RUN`
+- worker integration docs and env settings
+
+Acceptance:
+
+- Due policies are enqueued without manual API trigger.
+- Idempotency and run-history integrity preserved.
+
+---
+
+### PR-I06: Contracts/Periods Integration with Bank + Payroll
+
+Goal:
+
+- Connect contract-period accrual flows ("gelecek yillara ait gelirler/giderler") to bank/payroll execution evidence.
+
+Scope:
+
+- contract billing/revrec outputs become traceable inputs to payment/reconciliation lifecycle
+- consistent period-close behavior across contracts + payroll + bank evidence
+- explicit link strategy for reversals/corrections across modules
+
+Reference:
+
+- `02-PR-STEPS_CONTRACTS_PERIDOTS GELECEK YILLARA AIT GGELİRLER GIDERLER.md`
+- `03-PR_FOLLOW_UPS_OF_CONTRACTS_PERIDOS.md`
+
+Acceptance:
+
+- End-to-end test covers contract-period accrual -> payment prep -> settlement/reconciliation -> close checks.
+
+---
+
+### PR-I07: Unified Final Gate
+
+Goal:
+
+- Run all major module gates from one top-level command.
+
+Update:
+
+- `backend/scripts/test-release-gate.js`
+- CI workflows
+
+Acceptance:
+
+- Unified gate can run all chains with optional skip flags per module family.
+- Failure output remains stage-specific and actionable.
+

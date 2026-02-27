@@ -15,3 +15,5 @@ since all been implemented check if there is anything that suggested something l
 now start implementing the next step  from 04-BANKS_AND_PAYROLLS_ESM.md, don't forget the global rules.  
 read the file all first then start implementing cuz you might find some useful notes. 
 Execution Tracker (Update As You Implement)
+
+now check the application of banks and payrolls modules is there any points to be needs improvements.

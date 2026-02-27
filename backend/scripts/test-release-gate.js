@@ -2,7 +2,9 @@ import { spawn } from "node:child_process";
 
 const CORE_SCRIPT = "test:release-gate:core";
 const CONTRACTS_REVENUE_SCRIPT = "test:contracts-revenue-gate";
+const BANK_PAYROLL_SCRIPT = "test:e2e:bank-payroll";
 const SKIP_CONTRACTS_REVENUE_ENV = "RELEASE_GATE_SKIP_CONTRACTS_REVENUE";
+const SKIP_BANK_PAYROLL_ENV = "RELEASE_GATE_SKIP_BANK_PAYROLL";
 
 function isTruthy(value) {
   const normalized = String(value ?? "")
@@ -39,6 +41,7 @@ async function runNpmScript(scriptName) {
 
 async function main() {
   const skipContractsRevenue = isTruthy(process.env[SKIP_CONTRACTS_REVENUE_ENV]);
+  const skipBankPayroll = isTruthy(process.env[SKIP_BANK_PAYROLL_ENV]);
 
   console.log("Starting release gate...");
   await runNpmScript(CORE_SCRIPT);
@@ -49,6 +52,12 @@ async function main() {
     );
   } else {
     await runNpmScript(CONTRACTS_REVENUE_SCRIPT);
+  }
+
+  if (skipBankPayroll) {
+    console.log(`Skipping ${BANK_PAYROLL_SCRIPT} because ${SKIP_BANK_PAYROLL_ENV} is set.`);
+  } else {
+    await runNpmScript(BANK_PAYROLL_SCRIPT);
   }
 
   console.log("Release gate passed.");

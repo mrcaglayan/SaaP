@@ -157,6 +157,12 @@ const implementedRoutes = [
     element: <BankAccountsPage />,
   },
   {
+    appPath: "/app/banka-hesaplari",
+    childPath: "banka-hesaplari",
+    permissionPath: "/app/banka-tanimla",
+    element: <Navigate to="/app/banka-tanimla" replace />,
+  },
+  {
     appPath: "/app/banka-ekstre-ice-aktar",
     childPath: "banka-ekstre-ice-aktar",
     element: <BankStatementImportPage />,
