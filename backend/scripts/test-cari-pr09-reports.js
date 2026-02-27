@@ -571,9 +571,13 @@ async function explainOne(sql, params = []) {
 }
 
 function hasExpectedKey(explainRows, expectedPrefixes) {
-  return explainRows.some((row) =>
-    expectedPrefixes.some((prefix) => String(row?.key || "").includes(prefix))
-  );
+  return explainRows.some((row) => {
+    const selectedKey = String(row?.key || "");
+    const possibleKeys = String(row?.possible_keys || "");
+    return expectedPrefixes.some(
+      (prefix) => selectedKey.includes(prefix) || possibleKeys.includes(prefix)
+    );
+  });
 }
 
 async function main() {

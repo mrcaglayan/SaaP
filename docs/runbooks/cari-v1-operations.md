@@ -27,7 +27,9 @@ This runbook defines how to operate Cari v1 AR/AP workflows in production-like e
   - Review settlement apply audit payload (`unappliedConsumed`, `createdUnappliedCashId`).
   - Confirm reversal effects are additive and traceable via linked settlement rows.
 
-## FX Resolution Policy (Exact + Prior-Date Fallback)
+## FX Override Policy
+
+FX resolution baseline (exact + prior-date fallback):
 
 - FX override remains controlled by explicit permission (`cari.fx.override`).
 - Settlement FX resolution order is deterministic:

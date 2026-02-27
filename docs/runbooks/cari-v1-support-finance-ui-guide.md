@@ -67,7 +67,7 @@ This guide is for support and finance users operating the Cari UI modules:
   - `targetType=UNAPPLIED_CASH`: requires `unappliedCashId`, no `settlementBatchId`.
 - Both flows must send idempotency keys.
 
-## FX Override and Fallback Use-Case
+## FX Override Use-Case and Permissions
 
 - FX override is a controlled exception path, not the default flow.
 - Permission requirement: `cari.fx.override`.
