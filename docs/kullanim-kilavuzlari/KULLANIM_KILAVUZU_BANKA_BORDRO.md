@@ -20,6 +20,8 @@ Kapsam:
 - `/app/payroll-runs/:runId/liabilities`
 - `/app/payroll-beneficiaries`
 - `/app/payroll-close-controls`
+- `/app/ayarlar/operasyon-dashboard`
+- `/app/ayarlar/exception-workbench`
 
 Bu kilavuz, kod bilmeyen finans, muhasebe, IK-bordro, hazine ve operasyon ekipleri icin yazildi.
 Amac:
@@ -679,6 +681,149 @@ Secim rehberi:
 `Reopen`
 - Zorunlu duzeltme icin kapanmis donemi geri acar.
 - `reason` zorunludur.
+
+---
+
+## 4.8 Ekran: Operasyon Dashboard (`/app/ayarlar/operasyon-dashboard`)
+
+Bu ekran H05 operasyon saglik ekranidir.
+
+Amac:
+- Banka ve bordro sureclerini tek yerden izlemek
+- Birikmis is, geciken is, hata yogunlugu gibi sinyalleri erken yakalamak
+
+### 4.8.1 Filtreler ve ne zaman hangisi secilir
+
+`Legal entity ID`
+- Tek sirket performansi izlenecekse doldur.
+- Grup geneli izlenecekse bos birak.
+
+`Bank account ID`
+- Tek banka hesabi kaynakli problem araniyorsa doldur.
+- Genel saglik kontrolunde bos birak.
+
+`Date from` / `Date to`
+- Net bir tarih araligi incelemek istiyorsan kullan.
+- Ornek: "Bu ayin 1'i ile 15'i arasi gecikmeler."
+
+`Days fallback`
+- Tarih vermediysen son kac gunun gorulecegini belirler.
+- Oneri: Gunluk takipte `30`, haftalik trend icin `60-90`.
+
+`Jobs module code`
+- Sadece belirli is kuyrugunu incelemek icin (or. BANK, PAYROLL).
+- Genel bakista bos birak.
+
+`Jobs queue name`
+- Tek queue odakli incelemede doldur.
+- Genel bakista bos birak.
+
+### 4.8.2 Kartlar nasil yorumlanir
+
+`Bank Reconciliation Summary`
+- `UNMATCHED` veya acik exception artiyorsa mutabakat birikiyor demektir.
+
+`Bank Payment Batches Health`
+- `awaiting_ack` ve `awaiting_ack_gt_24h` yuksekse banka geri bildirimleri gecikiyor olabilir.
+
+`Payroll Import Health`
+- `failed_jobs` veya `oldest_pending_or_failed_hours` yukseliyorsa bordro import akisinda sorun vardir.
+
+`Payroll Close Status`
+- `requested_gt_24h` artiyorsa kapanis onaylari beklemede birikiyor olabilir.
+
+`Jobs Health`
+- `queued_due_now` ve `retries_due_now` artiyorsa islem kuyruklari yetismiyor olabilir.
+
+Not:
+- Ekranda metrikler JSON bloklari olarak gosterilebilir; bu normaldir.
+- Operasyon yorumu yaparken trend degisimine bak: bugun dunden daha iyi mi daha kotu mu?
+
+### 4.8.3 Pratik kullanim rutini
+
+Gun basi (10 dk):
+1. Filter bos -> genel durum bak.
+2. `awaiting_ack_gt_24h`, `failed_jobs`, `unmatched_open_total` kontrol et.
+3. Kritik birikim varsa ilgili ekip ve ekrana in.
+
+Gun sonu (10 dk):
+1. Ayni filtreyle tekrar bak.
+2. Acilan issue'larin azaldigini teyit et.
+
+---
+
+## 4.9 Ekran: Exception Workbench (`/app/ayarlar/exception-workbench`)
+
+Bu ekran H06 merkezi istisna yonetim ekranidir.
+
+Amac:
+- Banka ve bordro istisnalarini tek kuyrukta toplamak
+- Atama, cozum, ignore ve reopen adimlarini standardize etmek
+- Denetim izi ile kapanis kalitesini artirmak
+
+### 4.9.1 Filtreler ve secim rehberi
+
+`Module`
+- `BANK`: Sadece banka kaynakli istisnalar
+- `PAYROLL`: Sadece bordro kaynakli istisnalar
+
+`Status`
+- `OPEN`: Yeni/acik
+- `IN_REVIEW`: Uzerinde calisiliyor
+- `RESOLVED`: Cozuldu
+- `IGNORED`: Bilincli olarak kapsam disi
+
+`Severity`
+- `CRITICAL`, `HIGH`, `MEDIUM`, `LOW`
+- Gunluk takipte once `CRITICAL/HIGH` filtrele.
+
+`Legal entity ID`
+- Tek sirket sorununu ayirmak icin kullan.
+
+`Search`
+- Baslik, kaynak key, not ile hizli arama.
+
+`Days`
+- Son kac gunun exception kaydi taranacak.
+- Oneri: Operasyonda 30-60, denetim bakisinda 180.
+
+`Auto-refresh sources on list`
+- Aciksa liste cagrilarinda kaynaklar da tazelenir.
+- Hizli manuel analizde kapatip sadece "Apply Filters" kullanabilirsin.
+
+### 4.9.2 Aksiyonlar ve etkileri
+
+`Claim`
+- Istisnayi sorumlu kisiye alir.
+- Operasyonel sahiplik saglar.
+
+`Resolve`
+- Istisnayi cozulmus duruma ceker.
+- Cozum notu girilmesi onerilir.
+
+`Ignore`
+- Istisnayi bilincli sekilde dislar.
+- Neden ignore edildigi nota yazilmalidir.
+
+`Reopen`
+- Yanlis kapatilmis veya tekrar acilan problemde yeniden acilir.
+
+### 4.9.3 Hangi durumda ne secilmeli?
+
+Durum 1: Gercek problem ve cozum var
+- `Claim` -> cozum uygula -> `Resolve`
+
+Durum 2: False-positive veya kapsama disi
+- `Claim` -> neden kaydi -> `Ignore`
+
+Durum 3: Resolve edilmis ama tekrarlandi
+- `Reopen` -> yeni kok neden analizi
+
+### 4.9.4 Kisa operasyon standardi
+
+1. Her `CRITICAL/HIGH` kayit icerisinde bir owner olsun (`Claim`).
+2. `Resolve/Ignore` adiminda not bos birakilmasin.
+3. Haftalik kontrolde uzun suredir acik kalanlar (`OPEN/IN_REVIEW`) raporlansin.
 
 ---
 
