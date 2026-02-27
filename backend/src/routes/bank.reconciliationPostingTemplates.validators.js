@@ -11,7 +11,7 @@ const TEMPLATE_STATUSES = ["ACTIVE", "PAUSED", "DISABLED"];
 const TEMPLATE_SCOPE_TYPES = ["GLOBAL", "LEGAL_ENTITY", "BANK_ACCOUNT"];
 const DIRECTION_POLICIES = ["OUTFLOW_ONLY", "INFLOW_ONLY", "BOTH"];
 const DESCRIPTION_MODES = ["USE_STATEMENT_TEXT", "FIXED_TEXT", "PREFIXED"];
-const TAX_MODES = ["NONE"];
+const TAX_MODES = ["NONE", "INCLUDED"];
 
 function normalizeEnum(value, label, allowed, { required = false, fallback = null } = {}) {
   if (value === undefined || value === null || value === "") {

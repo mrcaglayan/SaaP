@@ -220,12 +220,54 @@ async function resolveBookAndPeriodForPostingTx(tx, { tenantId, legalEntityId, p
   };
 }
 
+function resolveTemplateTaxConfig(template) {
+  const taxMode = u(template?.tax_mode || "NONE");
+  if (taxMode === "NONE") {
+    return {
+      taxMode: "NONE",
+      taxAccountId: null,
+      taxRate: null,
+      taxRateFraction: 0,
+    };
+  }
+  if (taxMode !== "INCLUDED") {
+    throw badRequest(`Unsupported tax_mode for auto-post template: ${taxMode}`);
+  }
+  const taxAccountId = parsePositiveInt(template?.tax_account_id);
+  if (!taxAccountId) {
+    throw badRequest("Template tax_account_id is required when tax_mode=INCLUDED");
+  }
+  const taxRate = Number(template?.tax_rate);
+  if (!Number.isFinite(taxRate) || taxRate <= 0 || taxRate >= 100) {
+    throw badRequest("Template tax_rate must be > 0 and < 100 when tax_mode=INCLUDED");
+  }
+  return {
+    taxMode: "INCLUDED",
+    taxAccountId,
+    taxRate: Number(taxRate.toFixed(4)),
+    taxRateFraction: Number((taxRate / 100).toFixed(8)),
+  };
+}
+
+function splitIncludedTaxAmount(totalAmountAbs, taxRateFraction) {
+  if (taxRateFraction <= 0) {
+    throw badRequest("Tax rate configuration is invalid");
+  }
+  const baseAmount = Number((totalAmountAbs / (1 + taxRateFraction)).toFixed(6));
+  const taxAmount = Number((totalAmountAbs - baseAmount).toFixed(6));
+  if (baseAmount <= 0 || taxAmount <= 0) {
+    throw badRequest("Tax split produced non-positive components");
+  }
+  return {
+    baseAmount,
+    taxAmount,
+  };
+}
+
 function validateTemplateForLine({ template, line }) {
   if (!template) throw badRequest("Posting template not found");
   if (u(template.status) !== "ACTIVE") throw badRequest("Posting template is not ACTIVE");
-  if (u(template.tax_mode || "NONE") !== "NONE") {
-    throw badRequest("Tax modes are not implemented for B08-A v1");
-  }
+  resolveTemplateTaxConfig(template);
 
   validateTemplateEffective(template, line);
   validateDirection(template, line);
@@ -257,8 +299,48 @@ function buildJournalLinePayloads({ template, line, bankGlAccountId, narration }
     throw badRequest("Bank GL or counter account is missing");
   }
 
+  const taxConfig = resolveTemplateTaxConfig(template);
+  let counterAmount = amountAbs;
+  let taxAmount = 0;
+  if (taxConfig.taxMode === "INCLUDED") {
+    const split = splitIncludedTaxAmount(amountAbs, taxConfig.taxRateFraction);
+    counterAmount = split.baseAmount;
+    taxAmount = split.taxAmount;
+  }
+
   if (Number(line.amount) < 0) {
-    // Outflow: Dr counter / Cr bank
+    // Outflow: Dr counter (+ optional Dr tax) / Cr bank
+    if (taxConfig.taxMode === "INCLUDED") {
+      return [
+        {
+          lineNo: 1,
+          accountId: counterAccountId,
+          amountTxn: counterAmount,
+          debitBase: counterAmount,
+          creditBase: 0,
+          description: narration,
+          subledgerReferenceNo: `BANKAUTOP:${line.id}:DR:COUNTER`,
+        },
+        {
+          lineNo: 2,
+          accountId: taxConfig.taxAccountId,
+          amountTxn: taxAmount,
+          debitBase: taxAmount,
+          creditBase: 0,
+          description: narration,
+          subledgerReferenceNo: `BANKAUTOP:${line.id}:DR:TAX`,
+        },
+        {
+          lineNo: 3,
+          accountId: parsedBankGlAccountId,
+          amountTxn: -amountAbs,
+          debitBase: 0,
+          creditBase: amountAbs,
+          description: narration,
+          subledgerReferenceNo: `BANKAUTOP:${line.id}:CR:BANK`,
+        },
+      ];
+    }
     return [
       {
         lineNo: 1,
@@ -281,7 +363,38 @@ function buildJournalLinePayloads({ template, line, bankGlAccountId, narration }
     ];
   }
 
-  // Inflow: Dr bank / Cr counter
+  // Inflow: Dr bank / Cr counter (+ optional Cr tax)
+  if (taxConfig.taxMode === "INCLUDED") {
+    return [
+      {
+        lineNo: 1,
+        accountId: parsedBankGlAccountId,
+        amountTxn: amountAbs,
+        debitBase: amountAbs,
+        creditBase: 0,
+        description: narration,
+        subledgerReferenceNo: `BANKAUTOP:${line.id}:DR:BANK`,
+      },
+      {
+        lineNo: 2,
+        accountId: counterAccountId,
+        amountTxn: -counterAmount,
+        debitBase: 0,
+        creditBase: counterAmount,
+        description: narration,
+        subledgerReferenceNo: `BANKAUTOP:${line.id}:CR:COUNTER`,
+      },
+      {
+        lineNo: 3,
+        accountId: taxConfig.taxAccountId,
+        amountTxn: -taxAmount,
+        debitBase: 0,
+        creditBase: taxAmount,
+        description: narration,
+        subledgerReferenceNo: `BANKAUTOP:${line.id}:CR:TAX`,
+      },
+    ];
+  }
   return [
     {
       lineNo: 1,
@@ -316,14 +429,27 @@ async function insertOrReuseAutoPostJournalTx(tx, { tenantId, line, template, us
     accountId: parsePositiveInt(template.counter_account_id),
     runQuery: tx.query,
   });
-  if (!counterAccount) throw badRequest("Template counter account not found");
-  if (!parseDbBoolean(counterAccount.is_active)) throw badRequest("Template counter account is inactive");
-  if (!parseDbBoolean(counterAccount.allow_posting)) throw badRequest("Template counter account is not postable");
-  if (u(counterAccount.scope) !== "LEGAL_ENTITY") {
-    throw badRequest("Template counter account must be LEGAL_ENTITY scoped");
+  function assertTemplateAccount(account, label) {
+    if (!account) throw badRequest(`${label} not found`);
+    if (!parseDbBoolean(account.is_active)) throw badRequest(`${label} is inactive`);
+    if (!parseDbBoolean(account.allow_posting)) throw badRequest(`${label} is not postable`);
+    if (u(account.scope) !== "LEGAL_ENTITY") {
+      throw badRequest(`${label} must be LEGAL_ENTITY scoped`);
+    }
+    if (parsePositiveInt(account.legal_entity_id) !== parsePositiveInt(line.legal_entity_id)) {
+      throw badRequest(`${label} legal entity mismatch`);
+    }
   }
-  if (parsePositiveInt(counterAccount.legal_entity_id) !== parsePositiveInt(line.legal_entity_id)) {
-    throw badRequest("Template counter account legal entity mismatch");
+  assertTemplateAccount(counterAccount, "Template counter account");
+
+  const taxConfig = resolveTemplateTaxConfig(template);
+  if (taxConfig.taxMode === "INCLUDED") {
+    const taxAccount = await getCounterAccount({
+      tenantId,
+      accountId: taxConfig.taxAccountId,
+      runQuery: tx.query,
+    });
+    assertTemplateAccount(taxAccount, "Template tax account");
   }
 
   const journalContext = await resolveBookAndPeriodForPostingTx(tx, {
@@ -494,6 +620,9 @@ async function ensureAutoPostingTraceTx(tx, { tenantId, line, template, journal,
       safeJson({
         template_code: template.template_code,
         template_name: template.template_name,
+        tax_mode: u(template.tax_mode || "NONE"),
+        tax_account_id: parsePositiveInt(template.tax_account_id) || null,
+        tax_rate: template.tax_rate === null ? null : Number(Number(template.tax_rate).toFixed(4)),
         bank_account_code: line.bank_account_code,
         bank_account_id: line.bank_account_id,
         statement_ref: line.reference_no || null,

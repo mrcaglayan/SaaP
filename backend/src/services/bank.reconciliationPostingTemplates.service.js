@@ -113,6 +113,41 @@ function parseDbBoolean(value) {
   return value === true || value === 1 || value === "1";
 }
 
+function normalizeTaxWriteFields({ taxMode, taxAccountId, taxRate }) {
+  const mode = u(taxMode || "NONE");
+  if (mode === "NONE") {
+    const hasTaxAccount = Boolean(parsePositiveInt(taxAccountId));
+    const hasTaxRate =
+      taxRate !== undefined && taxRate !== null && String(taxRate).trim() !== "";
+    if (hasTaxAccount || hasTaxRate) {
+      throw badRequest("taxAccountId and taxRate must be omitted when taxMode=NONE");
+    }
+    return {
+      taxMode: "NONE",
+      taxAccountId: null,
+      taxRate: null,
+    };
+  }
+
+  if (mode !== "INCLUDED") {
+    throw badRequest("taxMode must be one of NONE, INCLUDED");
+  }
+
+  const parsedTaxAccountId = parsePositiveInt(taxAccountId);
+  if (!parsedTaxAccountId) {
+    throw badRequest("taxAccountId is required when taxMode=INCLUDED");
+  }
+  const parsedTaxRate = Number(taxRate);
+  if (!Number.isFinite(parsedTaxRate) || parsedTaxRate <= 0 || parsedTaxRate >= 100) {
+    throw badRequest("taxRate must be > 0 and < 100 when taxMode=INCLUDED");
+  }
+  return {
+    taxMode: "INCLUDED",
+    taxAccountId: parsedTaxAccountId,
+    taxRate: Number(parsedTaxRate.toFixed(4)),
+  };
+}
+
 function normalizeTemplateScopeForWrite(input, current = null) {
   const next = {
     scopeType: input.scopeType ?? current?.scope_type ?? "LEGAL_ENTITY",
@@ -170,26 +205,37 @@ async function validateTemplateWriteContext({ req, tenantId, input, scope, asser
   if (counterAccountId && !counterAccount) {
     throw badRequest("counterAccountId not found");
   }
-  if (counterAccount) {
-    if (!parseDbBoolean(counterAccount.is_active)) {
-      throw badRequest("Counter GL account is inactive");
+  const taxAccountId = parsePositiveInt(input.taxAccountId ?? input.tax_account_id);
+  const taxAccount = taxAccountId ? await getCounterAccount({ tenantId, accountId: taxAccountId }) : null;
+  if (taxAccountId && !taxAccount) {
+    throw badRequest("taxAccountId not found");
+  }
+
+  function assertTemplateGlAccount(account, { label }) {
+    if (!account) return;
+    if (!parseDbBoolean(account.is_active)) {
+      throw badRequest(`${label} GL account is inactive`);
     }
-    if (!parseDbBoolean(counterAccount.allow_posting)) {
-      throw badRequest("Counter GL account must be postable");
+    if (!parseDbBoolean(account.allow_posting)) {
+      throw badRequest(`${label} GL account must be postable`);
     }
-    if (u(counterAccount.scope) !== "LEGAL_ENTITY") {
-      throw badRequest("Counter GL account must be LEGAL_ENTITY scoped");
+    if (u(account.scope) !== "LEGAL_ENTITY") {
+      throw badRequest(`${label} GL account must be LEGAL_ENTITY scoped`);
     }
-    if (parsePositiveInt(counterAccount.legal_entity_id) !== resolvedLegalEntityId) {
-      throw badRequest("Counter GL account must belong to the selected template legal entity");
+    if (parsePositiveInt(account.legal_entity_id) !== resolvedLegalEntityId) {
+      throw badRequest(`${label} GL account must belong to the selected template legal entity`);
     }
   }
+
+  assertTemplateGlAccount(counterAccount, { label: "Counter" });
+  assertTemplateGlAccount(taxAccount, { label: "Tax" });
 
   return {
     legalEntityId: resolvedLegalEntityId,
     legalEntity,
     bankAccount,
     counterAccount,
+    taxAccount,
   };
 }
 
@@ -304,11 +350,22 @@ export async function createPostingTemplate({
   input,
   assertScopeAccess,
 }) {
-  const scope = normalizeTemplateScopeForWrite(input);
+  const normalizedTax = normalizeTaxWriteFields({
+    taxMode: input.taxMode,
+    taxAccountId: input.taxAccountId,
+    taxRate: input.taxRate,
+  });
+  const normalizedInput = {
+    ...input,
+    taxMode: normalizedTax.taxMode,
+    taxAccountId: normalizedTax.taxAccountId,
+    taxRate: normalizedTax.taxRate,
+  };
+  const scope = normalizeTemplateScopeForWrite(normalizedInput);
   const validated = await validateTemplateWriteContext({
     req,
-    tenantId: input.tenantId,
-    input,
+    tenantId: normalizedInput.tenantId,
+    input: normalizedInput,
     scope,
     assertScopeAccess,
   });
@@ -342,42 +399,42 @@ export async function createPostingTemplate({
         updated_by_user_id
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
-      input.tenantId,
+      normalizedInput.tenantId,
       validated.legalEntityId,
-      input.templateCode,
-      input.templateName,
-      input.status,
+      normalizedInput.templateCode,
+      normalizedInput.templateName,
+      normalizedInput.status,
       scope.scopeType,
       scope.scopeType === "BANK_ACCOUNT" ? scope.bankAccountId : null,
-      input.entryKind,
-      input.directionPolicy,
-      input.counterAccountId,
-      input.taxAccountId || null,
-      input.taxMode || "NONE",
-      input.taxRate === null ? null : input.taxRate,
-      input.currencyCode || null,
-      input.minAmountAbs === null ? null : input.minAmountAbs,
-      input.maxAmountAbs === null ? null : input.maxAmountAbs,
-      input.descriptionMode,
-      input.fixedDescription || null,
-      input.descriptionPrefix || null,
-      u(input.journalSourceCode || "BANK_AUTO_POST"),
-      u(input.journalDocType || "BANK_AUTO"),
-      input.effectiveFrom || null,
-      input.effectiveTo || null,
-      input.userId || null,
-      input.userId || null,
+      normalizedInput.entryKind,
+      normalizedInput.directionPolicy,
+      normalizedInput.counterAccountId,
+      normalizedInput.taxAccountId || null,
+      normalizedInput.taxMode || "NONE",
+      normalizedInput.taxRate === null ? null : normalizedInput.taxRate,
+      normalizedInput.currencyCode || null,
+      normalizedInput.minAmountAbs === null ? null : normalizedInput.minAmountAbs,
+      normalizedInput.maxAmountAbs === null ? null : normalizedInput.maxAmountAbs,
+      normalizedInput.descriptionMode,
+      normalizedInput.fixedDescription || null,
+      normalizedInput.descriptionPrefix || null,
+      u(normalizedInput.journalSourceCode || "BANK_AUTO_POST"),
+      u(normalizedInput.journalDocType || "BANK_AUTO"),
+      normalizedInput.effectiveFrom || null,
+      normalizedInput.effectiveTo || null,
+      normalizedInput.userId || null,
+      normalizedInput.userId || null,
     ]
   );
 
   const created = await getTemplateById({
-    tenantId: input.tenantId,
+    tenantId: normalizedInput.tenantId,
     templateId: parsePositiveInt(insertResult.rows?.insertId),
   });
   return maybeStagePostingTemplateApproval({
     req,
-    tenantId: input.tenantId,
-    userId: input.userId,
+    tenantId: normalizedInput.tenantId,
+    userId: normalizedInput.userId,
     row: created,
     actionType: "CREATE",
     assertScopeAccess,
@@ -395,6 +452,12 @@ export async function updatePostingTemplate({
     assertScopeAccess(req, "legal_entity", current.legal_entity_id, "templateId");
   }
 
+  const normalizedTax = normalizeTaxWriteFields({
+    taxMode: input.taxMode !== undefined ? input.taxMode : current.tax_mode,
+    taxAccountId:
+      input.taxAccountId !== undefined ? input.taxAccountId : current.tax_account_id,
+    taxRate: input.taxRate !== undefined ? input.taxRate : current.tax_rate,
+  });
   const scope = normalizeTemplateScopeForWrite(input, current);
   const validated = await validateTemplateWriteContext({
     req,
@@ -404,6 +467,9 @@ export async function updatePostingTemplate({
       ...input,
       counterAccountId:
         input.counterAccountId !== undefined ? input.counterAccountId : current.counter_account_id,
+      taxMode: normalizedTax.taxMode,
+      taxAccountId: normalizedTax.taxAccountId,
+      taxRate: normalizedTax.taxRate,
     },
     scope,
     assertScopeAccess,
@@ -417,9 +483,9 @@ export async function updatePostingTemplate({
       input.directionPolicy !== undefined ? input.directionPolicy : current.direction_policy,
     counterAccountId:
       input.counterAccountId !== undefined ? input.counterAccountId : current.counter_account_id,
-    taxAccountId: input.taxAccountId !== undefined ? input.taxAccountId : current.tax_account_id,
-    taxMode: input.taxMode !== undefined ? input.taxMode : current.tax_mode,
-    taxRate: input.taxRate !== undefined ? input.taxRate : current.tax_rate,
+    taxAccountId: normalizedTax.taxAccountId,
+    taxMode: normalizedTax.taxMode,
+    taxRate: normalizedTax.taxRate,
     currencyCode:
       input.currencyCode !== undefined ? input.currencyCode : current.currency_code,
     minAmountAbs:

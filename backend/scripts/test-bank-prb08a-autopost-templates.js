@@ -195,6 +195,13 @@ async function createTenantWithB08AFixtures(stamp) {
       VALUES (?, ?, ?, 'EXPENSE', 'DEBIT', TRUE, NULL, TRUE)`,
     [coaId, `PRB08ACNT${stamp}`, `PRB08A Counter GL ${stamp}`]
   );
+  await query(
+    `INSERT INTO accounts (
+        coa_id, code, name, account_type, normal_side, allow_posting, parent_account_id, is_active
+      )
+      VALUES (?, ?, ?, 'ASSET', 'DEBIT', TRUE, NULL, TRUE)`,
+    [coaId, `PRB08ATAX${stamp}`, `PRB08A Tax GL ${stamp}`]
+  );
   const bankGlRows = await query(
     `SELECT id
      FROM accounts
@@ -211,10 +218,20 @@ async function createTenantWithB08AFixtures(stamp) {
      LIMIT 1`,
     [coaId, `PRB08A Counter GL ${stamp}`]
   );
+  const taxGlRows = await query(
+    `SELECT id
+     FROM accounts
+     WHERE coa_id = ?
+       AND name = ?
+     LIMIT 1`,
+    [coaId, `PRB08A Tax GL ${stamp}`]
+  );
   const bankGlAccountId = toNumber(bankGlRows.rows?.[0]?.id);
   const counterGlAccountId = toNumber(counterGlRows.rows?.[0]?.id);
+  const taxGlAccountId = toNumber(taxGlRows.rows?.[0]?.id);
   assert(bankGlAccountId > 0, "Failed to create bank GL account fixture");
   assert(counterGlAccountId > 0, "Failed to create counter GL account fixture");
+  assert(taxGlAccountId > 0, "Failed to create tax GL account fixture");
 
   const passwordHash = await bcrypt.hash("PRB08A#Smoke123", 10);
   await query(
@@ -365,10 +382,12 @@ async function createTenantWithB08AFixtures(stamp) {
     currencyCode,
     userId,
     bankAccountId,
+    importId,
     lineId,
     bookId,
     bankGlAccountId,
     counterGlAccountId,
+    taxGlAccountId,
   };
 }
 
@@ -764,6 +783,148 @@ async function main() {
   assert(
     toNumber(journalCountRows.rows?.[0]?.total) === 1,
     "Idempotent rerun must not create duplicate auto-post journals"
+  );
+
+  const taxLineHash = `PRB08A-LINE-TAX-${stamp}`.padEnd(64, "0").slice(0, 64);
+  await query(
+    `INSERT INTO bank_statement_lines (
+        tenant_id,
+        legal_entity_id,
+        import_id,
+        bank_account_id,
+        line_no,
+        txn_date,
+        value_date,
+        description,
+        reference_no,
+        amount,
+        currency_code,
+        balance_after,
+        line_hash,
+        recon_status,
+        raw_row_json
+      )
+      VALUES (?, ?, ?, ?, 2, '2026-02-13', '2026-02-13', ?, ?, -118.000000, ?, 762.000000, ?, 'UNMATCHED', ?)`,
+    [
+      fixture.tenantId,
+      fixture.legalEntityId,
+      fixture.importId,
+      fixture.bankAccountId,
+      "PRB08A tax-included fee",
+      "PRB08A-TAX-001",
+      fixture.currencyCode,
+      taxLineHash,
+      JSON.stringify({ rowNo: 2 }),
+    ]
+  );
+  const taxLineRows = await query(
+    `SELECT id
+     FROM bank_statement_lines
+     WHERE tenant_id = ?
+       AND legal_entity_id = ?
+       AND import_id = ?
+       AND line_no = 2
+     LIMIT 1`,
+    [fixture.tenantId, fixture.legalEntityId, fixture.importId]
+  );
+  const taxLineId = toNumber(taxLineRows.rows?.[0]?.id);
+  assert(taxLineId > 0, "Failed to create tax-included statement line fixture");
+
+  const taxTemplate = await createPostingTemplate({
+    req: null,
+    input: {
+      tenantId: fixture.tenantId,
+      userId: fixture.userId,
+      templateCode: `PRB08A_TAXTPL_${stamp}`,
+      templateName: "PRB08A tax-included outflow template",
+      status: "ACTIVE",
+      scopeType: "LEGAL_ENTITY",
+      legalEntityId: fixture.legalEntityId,
+      bankAccountId: null,
+      entryKind: "BANK_MISC",
+      directionPolicy: "OUTFLOW_ONLY",
+      counterAccountId: fixture.counterGlAccountId,
+      taxAccountId: fixture.taxGlAccountId,
+      taxMode: "INCLUDED",
+      taxRate: 18,
+      currencyCode: fixture.currencyCode,
+      minAmountAbs: 1,
+      maxAmountAbs: 1000,
+      descriptionMode: "FIXED_TEXT",
+      fixedDescription: "PRB08A TAX INCLUDED",
+      descriptionPrefix: null,
+      journalSourceCode: "BANK_AUTO_POST",
+      journalDocType: "BANK_AUTO",
+      effectiveFrom: null,
+      effectiveTo: null,
+    },
+    assertScopeAccess: noScopeGuard,
+  });
+  const taxTemplateId = toNumber(taxTemplate?.row?.id);
+  assert(taxTemplateId > 0, "Failed to create tax-included posting template");
+
+  const taxAutoPost = await autoPostTemplateAndReconcileStatementLine({
+    req: null,
+    tenantId: fixture.tenantId,
+    lineId: taxLineId,
+    templateId: taxTemplateId,
+    userId: fixture.userId,
+    ruleId: null,
+    confidence: 97,
+    assertScopeAccess: noScopeGuard,
+  });
+  const taxJournalEntryId = toNumber(taxAutoPost?.journal?.id);
+  assert(taxJournalEntryId > 0, "Tax-included auto-post should create a journal entry");
+  assert(taxAutoPost?.idempotent === false, "First tax-included auto-post should not be idempotent");
+
+  const taxAutoLineRows = await query(
+    `SELECT recon_status, auto_post_template_id, auto_post_journal_entry_id
+     FROM bank_statement_lines
+     WHERE tenant_id = ?
+       AND legal_entity_id = ?
+       AND id = ?
+     LIMIT 1`,
+    [fixture.tenantId, fixture.legalEntityId, taxLineId]
+  );
+  const taxAutoLine = taxAutoLineRows.rows?.[0] || null;
+  assert(
+    String(taxAutoLine?.recon_status || "").toUpperCase() === "MATCHED",
+    "Tax-included line should be MATCHED after auto-post+reconcile"
+  );
+  assert(
+    toNumber(taxAutoLine?.auto_post_template_id) === taxTemplateId,
+    "Tax-included line should store matching auto_post_template_id"
+  );
+  assert(
+    toNumber(taxAutoLine?.auto_post_journal_entry_id) === taxJournalEntryId,
+    "Tax-included line should store matching auto_post_journal_entry_id"
+  );
+
+  const taxJournalLines = await query(
+    `SELECT line_no, account_id, debit_base, credit_base
+     FROM journal_lines
+     WHERE journal_entry_id = ?
+     ORDER BY line_no ASC`,
+    [taxJournalEntryId]
+  );
+  assert(taxJournalLines.rows.length === 3, "Tax-included auto-post journal should create 3 lines");
+  assert(
+    toNumber(taxJournalLines.rows?.[0]?.account_id) === fixture.counterGlAccountId &&
+      toAmount(taxJournalLines.rows?.[0]?.debit_base) === 100 &&
+      toAmount(taxJournalLines.rows?.[0]?.credit_base) === 0,
+    "Tax-included line 1 should debit counter account with net amount"
+  );
+  assert(
+    toNumber(taxJournalLines.rows?.[1]?.account_id) === fixture.taxGlAccountId &&
+      toAmount(taxJournalLines.rows?.[1]?.debit_base) === 18 &&
+      toAmount(taxJournalLines.rows?.[1]?.credit_base) === 0,
+    "Tax-included line 2 should debit tax account with tax amount"
+  );
+  assert(
+    toNumber(taxJournalLines.rows?.[2]?.account_id) === fixture.bankGlAccountId &&
+      toAmount(taxJournalLines.rows?.[2]?.debit_base) === 0 &&
+      toAmount(taxJournalLines.rows?.[2]?.credit_base) === 118,
+    "Tax-included line 3 should credit bank account with gross amount"
   );
 
   console.log(

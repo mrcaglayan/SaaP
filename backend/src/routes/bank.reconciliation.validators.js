@@ -156,3 +156,16 @@ export function parseReconciliationIgnoreInput(req) {
     reason: normalizeText(req.body?.reason, "reason", 500),
   };
 }
+
+export function parseReconciliationUnignoreInput(req) {
+  const tenantId = requireTenantId(req);
+  const userId = requireUserId(req);
+  const lineId = parseReconciliationLineIdParam(req);
+
+  return {
+    tenantId,
+    userId,
+    lineId,
+    reason: normalizeText(req.body?.reason, "reason", 500),
+  };
+}

@@ -7,6 +7,7 @@ import {
   listReconciliationAuditRows,
   listReconciliationQueueRows,
   matchReconciliationLine,
+  unignoreReconciliationLine,
   unmatchReconciliationLine,
 } from "../src/services/bank.reconciliation.service.js";
 
@@ -678,6 +679,50 @@ async function main() {
   });
   assert((queueIgnored.rows || []).length === 1, "Queue IGNORED filter should return the ignored line");
 
+  const unignored = await unignoreReconciliationLine({
+    req: null,
+    tenantId: fixture.tenantId,
+    lineId: fixture.lineId,
+    unignoreInput: { reason: "re-open for matching" },
+    userId: fixture.userId,
+    assertScopeAccess: noScopeGuard,
+  });
+  assert(
+    String(unignored?.line?.recon_status || "").toUpperCase() === "UNMATCHED",
+    "Unignore should move line back to UNMATCHED when no active matches exist"
+  );
+
+  const rematchAfterUnignore = await matchReconciliationLine({
+    req: null,
+    tenantId: fixture.tenantId,
+    lineId: fixture.lineId,
+    matchInput: {
+      matchType: "MANUAL",
+      matchedEntityType: "JOURNAL",
+      matchedEntityId: fixture.journalId,
+      matchedAmount: 10,
+      notes: "match after unignore",
+    },
+    userId: fixture.userId,
+    assertScopeAccess: noScopeGuard,
+  });
+  assert(
+    String(rematchAfterUnignore?.line?.recon_status || "").toUpperCase() === "PARTIAL",
+    "Line should be matchable again after unignore"
+  );
+
+  await unmatchReconciliationLine({
+    req: null,
+    tenantId: fixture.tenantId,
+    lineId: fixture.lineId,
+    unmatchInput: {
+      matchId: null,
+      notes: "cleanup rematch after unignore",
+    },
+    userId: fixture.userId,
+    assertScopeAccess: noScopeGuard,
+  });
+
   const audit = await listReconciliationAuditRows({
     req: null,
     tenantId: fixture.tenantId,
@@ -693,7 +738,14 @@ async function main() {
     assertScopeAccess: noScopeGuard,
   });
   const actionSet = new Set((audit.rows || []).map((row) => String(row?.action || "").toUpperCase()));
-  for (const requiredAction of ["SUGGESTED", "MATCHED", "UNMATCHED", "IGNORE", "AUTO_STATUS"]) {
+  for (const requiredAction of [
+    "SUGGESTED",
+    "MATCHED",
+    "UNMATCHED",
+    "IGNORE",
+    "UNIGNORE",
+    "AUTO_STATUS",
+  ]) {
     assert(actionSet.has(requiredAction), `Audit should contain action ${requiredAction}`);
   }
 

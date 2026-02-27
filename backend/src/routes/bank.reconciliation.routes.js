@@ -10,6 +10,7 @@ import {
   listReconciliationAuditRows,
   listReconciliationQueueRows,
   matchReconciliationLine,
+  unignoreReconciliationLine,
   unmatchReconciliationLine,
 } from "../services/bank.reconciliation.service.js";
 import {
@@ -18,6 +19,7 @@ import {
   parseReconciliationLineIdParam,
   parseReconciliationMatchInput,
   parseReconciliationQueueFilters,
+  parseReconciliationUnignoreInput,
   parseReconciliationUnmatchInput,
 } from "./bank.reconciliation.validators.js";
 
@@ -155,6 +157,30 @@ router.post(
       tenantId: payload.tenantId,
       lineId: payload.lineId,
       ignoreInput: payload,
+      userId: payload.userId,
+      assertScopeAccess,
+    });
+    return res.json({
+      tenantId: payload.tenantId,
+      ...result,
+    });
+  })
+);
+
+router.post(
+  "/queue/:lineId/unignore",
+  requirePermission("bank.reconcile.write", {
+    resolveScope: async (req, tenantId) => {
+      return resolveBankStatementLineScope(req.params?.lineId, tenantId);
+    },
+  }),
+  asyncHandler(async (req, res) => {
+    const payload = parseReconciliationUnignoreInput(req);
+    const result = await unignoreReconciliationLine({
+      req,
+      tenantId: payload.tenantId,
+      lineId: payload.lineId,
+      unignoreInput: payload,
       userId: payload.userId,
       assertScopeAccess,
     });

@@ -53,6 +53,7 @@ import migration062PerformanceIndexesAndPaginationHardening from "./m062_perform
 import migration063ApprovalPolicyEngine from "./m063_approval_policy_engine.js";
 import migration064ExceptionWorkbench from "./m064_exception_workbench.js";
 import migration065DataRetentionArchival from "./m065_data_retention_archival.js";
+import migration066BankReconAutopostTaxModes from "./m066_bank_recon_autopost_tax_modes.js";
 
 const migrations = [
   migration001GlobalMultiEntity,
@@ -110,6 +111,7 @@ const migrations = [
   migration063ApprovalPolicyEngine,
   migration064ExceptionWorkbench,
   migration065DataRetentionArchival,
+  migration066BankReconAutopostTaxModes,
 ];
 
 export default migrations;

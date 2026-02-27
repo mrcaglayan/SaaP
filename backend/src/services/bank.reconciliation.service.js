@@ -293,6 +293,50 @@ async function assertMatchTargetExists({ tenantId, legalEntityId, matchInput, ru
     }
     return row;
   }
+
+  if (matchInput.matchedEntityType === "CASH_TXN") {
+    const result = await runQuery(
+      `SELECT ct.id, ct.status, ct.tenant_id, cr.legal_entity_id
+       FROM cash_transactions ct
+       JOIN cash_registers cr
+         ON cr.id = ct.cash_register_id
+        AND cr.tenant_id = ct.tenant_id
+       WHERE ct.id = ?
+         AND ct.tenant_id = ?
+         AND cr.legal_entity_id = ?
+       LIMIT 1`,
+      [matchInput.matchedEntityId, tenantId, legalEntityId]
+    );
+    const row = result.rows?.[0] || null;
+    if (!row) {
+      throw badRequest("Cash transaction not found for tenant/legal entity");
+    }
+    if (normalizeUpperText(row.status) !== "POSTED") {
+      throw badRequest("Only POSTED cash transactions can be reconciled");
+    }
+    return row;
+  }
+
+  if (matchInput.matchedEntityType === "MANUAL_ADJUSTMENT") {
+    const result = await runQuery(
+      `SELECT id, status, tenant_id, legal_entity_id
+       FROM bank_reconciliation_difference_adjustments
+       WHERE id = ?
+         AND tenant_id = ?
+         AND legal_entity_id = ?
+       LIMIT 1`,
+      [matchInput.matchedEntityId, tenantId, legalEntityId]
+    );
+    const row = result.rows?.[0] || null;
+    if (!row) {
+      throw badRequest("Manual adjustment not found for tenant/legal entity");
+    }
+    if (normalizeUpperText(row.status) !== "POSTED") {
+      throw badRequest("Only POSTED manual adjustments can be reconciled");
+    }
+    return row;
+  }
+
   throw badRequest(`${matchInput.matchedEntityType} matching is not enabled yet`);
 }
 
@@ -924,6 +968,72 @@ export async function ignoreReconciliationLine({
 
     return {
       line: await getStatementLineCore({ tenantId, lineId, runQuery: tx.query }),
+      matches: await getActiveMatchesForLine({ tenantId, lineId, runQuery: tx.query }),
+    };
+  });
+}
+
+export async function unignoreReconciliationLine({
+  req,
+  tenantId,
+  lineId,
+  unignoreInput,
+  userId,
+  assertScopeAccess,
+}) {
+  const line = await getStatementLineCore({ tenantId, lineId });
+  if (!line) {
+    throw badRequest("Statement line not found");
+  }
+  assertScopeAccess(req, "legal_entity", line.legal_entity_id, "lineId");
+
+  if (normalizeUpperText(line.recon_status) !== "IGNORED") {
+    return {
+      line,
+      matches: await getActiveMatchesForLine({ tenantId, lineId }),
+    };
+  }
+
+  return withTransaction(async (tx) => {
+    const matchedTotal = await getActiveMatchedTotalForLine({ tenantId, lineId, runQuery: tx.query });
+    const nextStatus = lineStatusFromMatchedTotal(line.amount, matchedTotal);
+    await tx.query(
+      `UPDATE bank_statement_lines
+       SET recon_status = ?
+       WHERE tenant_id = ?
+         AND id = ?`,
+      [nextStatus, tenantId, lineId]
+    );
+
+    await writeReconciliationAudit({
+      tenantId,
+      legalEntityId: line.legal_entity_id,
+      statementLineId: lineId,
+      action: "UNIGNORE",
+      payload: {
+        reason: unignoreInput.reason || null,
+        from: "IGNORED",
+        to: nextStatus,
+        matchedTotal,
+        targetAmount: absAmount(line.amount),
+      },
+      userId,
+      runQuery: tx.query,
+    });
+
+    const updatedLine = await getStatementLineCore({ tenantId, lineId, runQuery: tx.query });
+    if (normalizeUpperText(updatedLine?.recon_status) === "MATCHED") {
+      await autoResolveOpenReconciliationExceptionsForLine({
+        tenantId,
+        legalEntityId: line.legal_entity_id,
+        statementLineId: lineId,
+        userId,
+        runQuery: tx.query,
+      });
+    }
+
+    return {
+      line: updatedLine,
       matches: await getActiveMatchesForLine({ tenantId, lineId, runQuery: tx.query }),
     };
   });
