@@ -6,12 +6,14 @@ import {
   getOpsPayrollCloseStatus,
   getOpsPayrollImportHealth,
 } from "../api/opsDashboard.js";
+import { useI18n } from "../i18n/useI18n.js";
 
 function pretty(value) {
   return JSON.stringify(value ?? {}, null, 2);
 }
 
 export default function OpsDashboardPage() {
+  const { t } = useI18n();
   const [filters, setFilters] = useState({
     legalEntityId: "",
     bankAccountId: "",
@@ -83,11 +85,13 @@ export default function OpsDashboardPage() {
         jobs,
       });
     } catch (err) {
-      setError(err?.response?.data?.message || "Ops dashboard data could not be loaded");
+      setError(
+        err?.response?.data?.message || t("opsDashboard.messages.loadFailed", "Ops dashboard data could not be loaded")
+      );
     } finally {
       setLoading(false);
     }
-  }, [jobQueryParams, queryParams]);
+  }, [jobQueryParams, queryParams, t]);
 
   useEffect(() => {
     load();
@@ -96,28 +100,28 @@ export default function OpsDashboardPage() {
   return (
     <div className="space-y-4">
       <div className="rounded border bg-white p-4">
-        <h1 className="mb-3 text-lg font-semibold">Ops Dashboard (H05)</h1>
+        <h1 className="mb-3 text-lg font-semibold">{t("opsDashboard.title", "Ops Dashboard (H05)")}</h1>
         <div className="grid gap-3 md:grid-cols-4">
           <label className="text-sm">
-            <div className="mb-1 text-slate-600">Legal entity ID</div>
+            <div className="mb-1 text-slate-600">{t("opsDashboard.filters.legalEntityId", "Legal entity ID")}</div>
             <input
               className="w-full rounded border px-2 py-1"
               value={filters.legalEntityId}
               onChange={(e) => setFilters((s) => ({ ...s, legalEntityId: e.target.value }))}
-              placeholder="optional"
+              placeholder={t("opsDashboard.placeholders.optional", "optional")}
             />
           </label>
           <label className="text-sm">
-            <div className="mb-1 text-slate-600">Bank account ID</div>
+            <div className="mb-1 text-slate-600">{t("opsDashboard.filters.bankAccountId", "Bank account ID")}</div>
             <input
               className="w-full rounded border px-2 py-1"
               value={filters.bankAccountId}
               onChange={(e) => setFilters((s) => ({ ...s, bankAccountId: e.target.value }))}
-              placeholder="optional"
+              placeholder={t("opsDashboard.placeholders.optional", "optional")}
             />
           </label>
           <label className="text-sm">
-            <div className="mb-1 text-slate-600">Date from</div>
+            <div className="mb-1 text-slate-600">{t("opsDashboard.filters.dateFrom", "Date from")}</div>
             <input
               type="date"
               className="w-full rounded border px-2 py-1"
@@ -126,7 +130,7 @@ export default function OpsDashboardPage() {
             />
           </label>
           <label className="text-sm">
-            <div className="mb-1 text-slate-600">Date to</div>
+            <div className="mb-1 text-slate-600">{t("opsDashboard.filters.dateTo", "Date to")}</div>
             <input
               type="date"
               className="w-full rounded border px-2 py-1"
@@ -135,30 +139,30 @@ export default function OpsDashboardPage() {
             />
           </label>
           <label className="text-sm">
-            <div className="mb-1 text-slate-600">Days fallback</div>
+            <div className="mb-1 text-slate-600">{t("opsDashboard.filters.daysFallback", "Days fallback")}</div>
             <input
               className="w-full rounded border px-2 py-1"
               value={filters.days}
               onChange={(e) => setFilters((s) => ({ ...s, days: e.target.value }))}
-              placeholder="30"
+              placeholder={t("opsDashboard.placeholders.days", "30")}
             />
           </label>
           <label className="text-sm">
-            <div className="mb-1 text-slate-600">Jobs module code</div>
+            <div className="mb-1 text-slate-600">{t("opsDashboard.filters.jobsModuleCode", "Jobs module code")}</div>
             <input
               className="w-full rounded border px-2 py-1"
               value={filters.moduleCode}
               onChange={(e) => setFilters((s) => ({ ...s, moduleCode: e.target.value }))}
-              placeholder="optional"
+              placeholder={t("opsDashboard.placeholders.optional", "optional")}
             />
           </label>
           <label className="text-sm">
-            <div className="mb-1 text-slate-600">Jobs queue name</div>
+            <div className="mb-1 text-slate-600">{t("opsDashboard.filters.jobsQueueName", "Jobs queue name")}</div>
             <input
               className="w-full rounded border px-2 py-1"
               value={filters.queueName}
               onChange={(e) => setFilters((s) => ({ ...s, queueName: e.target.value }))}
-              placeholder="optional"
+              placeholder={t("opsDashboard.placeholders.optional", "optional")}
             />
           </label>
           <div className="flex items-end">
@@ -168,7 +172,9 @@ export default function OpsDashboardPage() {
               onClick={load}
               disabled={loading}
             >
-              {loading ? "Refreshing..." : "Refresh"}
+              {loading
+                ? t("opsDashboard.actions.refreshing", "Refreshing...")
+                : t("opsDashboard.actions.refresh", "Refresh")}
             </button>
           </div>
         </div>
@@ -176,30 +182,29 @@ export default function OpsDashboardPage() {
       </div>
 
       <section className="rounded border bg-white p-4">
-        <h2 className="mb-2 font-medium">Bank Reconciliation Summary</h2>
+        <h2 className="mb-2 font-medium">{t("opsDashboard.sections.bankReconciliation", "Bank Reconciliation Summary")}</h2>
         <pre className="overflow-auto rounded bg-slate-50 p-3 text-xs">{pretty(data.bankReconciliation)}</pre>
       </section>
 
       <section className="rounded border bg-white p-4">
-        <h2 className="mb-2 font-medium">Bank Payment Batches Health</h2>
+        <h2 className="mb-2 font-medium">{t("opsDashboard.sections.bankPayments", "Bank Payment Batches Health")}</h2>
         <pre className="overflow-auto rounded bg-slate-50 p-3 text-xs">{pretty(data.bankPayments)}</pre>
       </section>
 
       <section className="rounded border bg-white p-4">
-        <h2 className="mb-2 font-medium">Payroll Import Health</h2>
+        <h2 className="mb-2 font-medium">{t("opsDashboard.sections.payrollImports", "Payroll Import Health")}</h2>
         <pre className="overflow-auto rounded bg-slate-50 p-3 text-xs">{pretty(data.payrollImports)}</pre>
       </section>
 
       <section className="rounded border bg-white p-4">
-        <h2 className="mb-2 font-medium">Payroll Close Status</h2>
+        <h2 className="mb-2 font-medium">{t("opsDashboard.sections.payrollClose", "Payroll Close Status")}</h2>
         <pre className="overflow-auto rounded bg-slate-50 p-3 text-xs">{pretty(data.payrollClose)}</pre>
       </section>
 
       <section className="rounded border bg-white p-4">
-        <h2 className="mb-2 font-medium">Jobs Health</h2>
+        <h2 className="mb-2 font-medium">{t("opsDashboard.sections.jobs", "Jobs Health")}</h2>
         <pre className="overflow-auto rounded bg-slate-50 p-3 text-xs">{pretty(data.jobs)}</pre>
       </section>
     </div>
   );
 }
-

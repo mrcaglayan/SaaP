@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "../../auth/useAuth.js";
+import { useI18n } from "../../i18n/useI18n.js";
 import {
   createExportSnapshot,
   createRetentionPolicy,
@@ -40,6 +41,7 @@ function statusBadge(status) {
 
 export default function RetentionAdminPage() {
   const { hasPermission } = useAuth();
+  const { t } = useI18n();
   const canReadRetention = hasPermission("ops.retention.read");
   const canManageRetention = hasPermission("ops.retention.manage");
   const canReadSnapshots = hasPermission("ops.export_snapshot.read");
@@ -128,7 +130,7 @@ export default function RetentionAdminPage() {
     } catch (err) {
       setPolicies([]);
       setPoliciesTotal(0);
-      setError(err?.response?.data?.message || "Retention policies yuklenemedi");
+      setError(err?.response?.data?.message || t("retentionAdmin.messages.policiesLoadFailed", "Retention policies could not be loaded"));
     } finally {
       setPoliciesLoading(false);
     }
@@ -153,7 +155,7 @@ export default function RetentionAdminPage() {
     } catch (err) {
       setRuns([]);
       setRunsTotal(0);
-      setError(err?.response?.data?.message || "Retention run listesi yuklenemedi");
+      setError(err?.response?.data?.message || t("retentionAdmin.messages.runsLoadFailed", "Retention runs could not be loaded"));
     } finally {
       setRunsLoading(false);
     }
@@ -175,7 +177,7 @@ export default function RetentionAdminPage() {
     } catch (err) {
       setSnapshots([]);
       setSnapshotsTotal(0);
-      setError(err?.response?.data?.message || "Export snapshot listesi yuklenemedi");
+      setError(err?.response?.data?.message || t("retentionAdmin.messages.snapshotsLoadFailed", "Export snapshots could not be loaded"));
     } finally {
       setSnapshotsLoading(false);
     }
@@ -205,7 +207,7 @@ export default function RetentionAdminPage() {
         legalEntityId: asIntOrEmpty(policyForm.legalEntityId) || undefined,
         status: policyForm.status,
       });
-      setMessage("Retention policy created.");
+      setMessage(t("retentionAdmin.messages.policyCreated", "Retention policy created."));
       setPolicyForm((prev) => ({
         ...prev,
         policyCode: "",
@@ -213,7 +215,7 @@ export default function RetentionAdminPage() {
       }));
       await loadPolicies();
     } catch (err) {
-      setError(err?.response?.data?.message || "Retention policy olusturulamadi");
+      setError(err?.response?.data?.message || t("retentionAdmin.messages.policyCreateFailed", "Retention policy could not be created"));
     } finally {
       setCreatingPolicy(false);
     }
@@ -228,10 +230,15 @@ export default function RetentionAdminPage() {
 
     try {
       await updateRetentionPolicy(policy.id, { status: nextStatus });
-      setMessage(`Policy ${policy.policy_code} status updated to ${nextStatus}.`);
+      setMessage(
+        t("retentionAdmin.messages.policyStatusUpdated", "Policy {{code}} status updated to {{status}}.", {
+          code: policy.policy_code,
+          status: nextStatus,
+        })
+      );
       await loadPolicies();
     } catch (err) {
-      setError(err?.response?.data?.message || "Policy status guncellenemedi");
+      setError(err?.response?.data?.message || t("retentionAdmin.messages.policyStatusUpdateFailed", "Policy status could not be updated"));
     } finally {
       setUpdatingPolicyId(null);
     }
@@ -255,14 +262,22 @@ export default function RetentionAdminPage() {
       );
 
       if (asyncMode) {
-        setMessage(`Retention run queued as job #${res?.job?.id || "?"}.`);
+        setMessage(
+          t("retentionAdmin.messages.runQueued", "Retention run queued as job #{{id}}.", {
+            id: res?.job?.id || "?",
+          })
+        );
       } else {
-        setMessage(`Retention run completed (#${res?.row?.id || "?"}).`);
+        setMessage(
+          t("retentionAdmin.messages.runCompleted", "Retention run completed (#{{id}}).", {
+            id: res?.row?.id || "?",
+          })
+        );
       }
       await loadRuns();
       await loadPolicies();
     } catch (err) {
-      setError(err?.response?.data?.message || "Retention run basarisiz");
+      setError(err?.response?.data?.message || t("retentionAdmin.messages.runFailed", "Retention run failed"));
     } finally {
       setRunningPolicyKey("");
     }
@@ -276,7 +291,7 @@ export default function RetentionAdminPage() {
       setSelectedRun(res?.row || null);
     } catch (err) {
       setSelectedRun(null);
-      setError(err?.response?.data?.message || "Retention run detayi yuklenemedi");
+      setError(err?.response?.data?.message || t("retentionAdmin.messages.runDetailLoadFailed", "Retention run detail could not be loaded"));
     }
   }
 
@@ -294,13 +309,17 @@ export default function RetentionAdminPage() {
       });
       setMessage(
         res?.idempotent
-          ? `Snapshot already exists (#${res?.snapshot?.id || "?"}).`
-          : `Snapshot created (#${res?.snapshot?.id || "?"}).`
+          ? t("retentionAdmin.messages.snapshotExists", "Snapshot already exists (#{{id}}).", {
+              id: res?.snapshot?.id || "?",
+            })
+          : t("retentionAdmin.messages.snapshotCreated", "Snapshot created (#{{id}}).", {
+              id: res?.snapshot?.id || "?",
+            })
       );
       await loadSnapshots();
       setSnapshotForm((prev) => ({ ...prev, idempotencyKey: "" }));
     } catch (err) {
-      setError(err?.response?.data?.message || "Export snapshot olusturulamadi");
+      setError(err?.response?.data?.message || t("retentionAdmin.messages.snapshotCreateFailed", "Export snapshot could not be created"));
     } finally {
       setCreatingSnapshot(false);
     }
@@ -314,16 +333,19 @@ export default function RetentionAdminPage() {
       setSelectedSnapshot(res || null);
     } catch (err) {
       setSelectedSnapshot(null);
-      setError(err?.response?.data?.message || "Snapshot detayi yuklenemedi");
+      setError(err?.response?.data?.message || t("retentionAdmin.messages.snapshotDetailLoadFailed", "Snapshot detail could not be loaded"));
     }
   }
 
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-xl font-semibold text-slate-900">Retention and Export Snapshots</h1>
+        <h1 className="text-xl font-semibold text-slate-900">{t("retentionAdmin.title", "Retention and Export Snapshots")}</h1>
         <p className="mt-1 text-sm text-slate-600">
-          PR-H07: policy-driven retention runs and immutable closed-period snapshot hashes.
+          {t(
+            "retentionAdmin.subtitle",
+            "PR-H07: policy-driven retention runs and immutable closed-period snapshot hashes."
+          )}
         </p>
       </div>
 
@@ -338,24 +360,25 @@ export default function RetentionAdminPage() {
 
       {!canReadRetention && !canReadSnapshots ? (
         <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-          Missing permissions: <code>ops.retention.read</code> and/or <code>ops.export_snapshot.read</code>
+          {t("retentionAdmin.messages.missingPermissions", "Missing permissions:")} <code>ops.retention.read</code>{" "}
+          {t("retentionAdmin.messages.andOr", "and/or")} <code>ops.export_snapshot.read</code>
         </div>
       ) : null}
 
       <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-        <h2 className="text-sm font-semibold text-slate-900">Retention Policies</h2>
+        <h2 className="text-sm font-semibold text-slate-900">{t("retentionAdmin.sections.policies", "Retention Policies")}</h2>
 
         <form className="mt-3 grid gap-2 md:grid-cols-4" onSubmit={handleCreatePolicy}>
           <input
             className="rounded border border-slate-300 px-2 py-1.5 text-sm"
-            placeholder="Policy Code"
+            placeholder={t("retentionAdmin.placeholders.policyCode", "Policy Code")}
             value={policyForm.policyCode}
             onChange={(e) => setPolicyForm((s) => ({ ...s, policyCode: e.target.value.toUpperCase() }))}
             required
           />
           <input
             className="rounded border border-slate-300 px-2 py-1.5 text-sm"
-            placeholder="Policy Name"
+            placeholder={t("retentionAdmin.placeholders.policyName", "Policy Name")}
             value={policyForm.policyName}
             onChange={(e) => setPolicyForm((s) => ({ ...s, policyName: e.target.value }))}
             required
@@ -387,7 +410,7 @@ export default function RetentionAdminPage() {
             type="number"
             min={1}
             max={36500}
-            placeholder="Retention Days"
+            placeholder={t("retentionAdmin.placeholders.retentionDays", "Retention Days")}
             value={policyForm.retentionDays}
             onChange={(e) => setPolicyForm((s) => ({ ...s, retentionDays: e.target.value }))}
             required
@@ -396,7 +419,7 @@ export default function RetentionAdminPage() {
             className="rounded border border-slate-300 px-2 py-1.5 text-sm"
             type="number"
             min={1}
-            placeholder="Legal Entity ID (optional)"
+            placeholder={t("retentionAdmin.placeholders.legalEntityOptional", "Legal Entity ID (optional)")}
             value={policyForm.legalEntityId}
             onChange={(e) => setPolicyForm((s) => ({ ...s, legalEntityId: e.target.value }))}
           />
@@ -415,7 +438,9 @@ export default function RetentionAdminPage() {
               disabled={!canManageRetention || creatingPolicy}
               className="rounded border border-slate-300 px-3 py-1.5 text-sm"
             >
-              {creatingPolicy ? "Creating..." : "Create Policy"}
+              {creatingPolicy
+                ? t("retentionAdmin.actions.creating", "Creating...")
+                : t("retentionAdmin.actions.createPolicy", "Create Policy")}
             </button>
           </div>
         </form>
@@ -423,45 +448,49 @@ export default function RetentionAdminPage() {
         <div className="mt-3 grid gap-2 md:grid-cols-5">
           <input
             className="rounded border border-slate-300 px-2 py-1.5 text-sm"
-            placeholder="LE ID"
+            placeholder={t("retentionAdmin.placeholders.leId", "LE ID")}
             value={policyFilters.legalEntityId}
             onChange={(e) => setPolicyFilters((s) => ({ ...s, legalEntityId: e.target.value }))}
           />
           <input
             className="rounded border border-slate-300 px-2 py-1.5 text-sm"
-            placeholder="Dataset"
+            placeholder={t("retentionAdmin.placeholders.dataset", "Dataset")}
             value={policyFilters.datasetCode}
             onChange={(e) => setPolicyFilters((s) => ({ ...s, datasetCode: e.target.value.toUpperCase() }))}
           />
           <input
             className="rounded border border-slate-300 px-2 py-1.5 text-sm"
-            placeholder="Status"
+            placeholder={t("retentionAdmin.placeholders.status", "Status")}
             value={policyFilters.status}
             onChange={(e) => setPolicyFilters((s) => ({ ...s, status: e.target.value.toUpperCase() }))}
           />
           <input
             className="rounded border border-slate-300 px-2 py-1.5 text-sm"
-            placeholder="Search"
+            placeholder={t("retentionAdmin.placeholders.search", "Search")}
             value={policyFilters.q}
             onChange={(e) => setPolicyFilters((s) => ({ ...s, q: e.target.value }))}
           />
           <button type="button" className="rounded border border-slate-300 px-3 py-1.5 text-sm" onClick={loadPolicies}>
-            {policiesLoading ? "Loading..." : "Refresh Policies"}
+            {policiesLoading
+              ? t("retentionAdmin.actions.loading", "Loading...")
+              : t("retentionAdmin.actions.refreshPolicies", "Refresh Policies")}
           </button>
         </div>
 
-        <div className="mt-3 text-xs text-slate-500">Total policies: {policiesTotal}</div>
+        <div className="mt-3 text-xs text-slate-500">
+          {t("retentionAdmin.totals.policies", "Total policies: {{total}}", { total: policiesTotal })}
+        </div>
         <div className="mt-2 overflow-x-auto rounded border border-slate-200">
           <table className="min-w-full text-sm">
             <thead className="bg-slate-50 text-left text-slate-600">
               <tr>
-                <th className="px-3 py-2">Code</th>
-                <th className="px-3 py-2">Dataset/Action</th>
-                <th className="px-3 py-2">LE</th>
-                <th className="px-3 py-2">Days</th>
-                <th className="px-3 py-2">Status</th>
-                <th className="px-3 py-2">Last Run</th>
-                <th className="px-3 py-2">Actions</th>
+                <th className="px-3 py-2">{t("retentionAdmin.table.code", "Code")}</th>
+                <th className="px-3 py-2">{t("retentionAdmin.table.datasetAction", "Dataset/Action")}</th>
+                <th className="px-3 py-2">{t("retentionAdmin.table.le", "LE")}</th>
+                <th className="px-3 py-2">{t("retentionAdmin.table.days", "Days")}</th>
+                <th className="px-3 py-2">{t("retentionAdmin.table.status", "Status")}</th>
+                <th className="px-3 py-2">{t("retentionAdmin.table.lastRun", "Last Run")}</th>
+                <th className="px-3 py-2">{t("retentionAdmin.table.actions", "Actions")}</th>
               </tr>
             </thead>
             <tbody>
@@ -475,7 +504,7 @@ export default function RetentionAdminPage() {
                     <div>{row.dataset_code}</div>
                     <div className="text-slate-500">{row.action_code}</div>
                   </td>
-                  <td className="px-3 py-2 text-xs">{row.legal_entity_id || "TENANT"}</td>
+                  <td className="px-3 py-2 text-xs">{row.legal_entity_id || t("retentionAdmin.labels.tenant", "TENANT")}</td>
                   <td className="px-3 py-2">{row.retention_days}</td>
                   <td className={`px-3 py-2 font-medium ${statusBadge(row.status)}`}>{row.status}</td>
                   <td className="px-3 py-2 text-xs">
@@ -490,7 +519,9 @@ export default function RetentionAdminPage() {
                         disabled={!canManageRetention || updatingPolicyId === row.id}
                         onClick={() => handleTogglePolicyStatus(row)}
                       >
-                        {updatingPolicyId === row.id ? "Updating..." : "Toggle Status"}
+                        {updatingPolicyId === row.id
+                          ? t("retentionAdmin.actions.updating", "Updating...")
+                          : t("retentionAdmin.actions.toggleStatus", "Toggle Status")}
                       </button>
                       <button
                         type="button"
@@ -498,7 +529,7 @@ export default function RetentionAdminPage() {
                         disabled={!canManageRetention || runningPolicyKey === `${row.id}:sync`}
                         onClick={() => handleRunPolicy(row, false)}
                       >
-                        Run Sync
+                        {t("retentionAdmin.actions.runSync", "Run Sync")}
                       </button>
                       <button
                         type="button"
@@ -506,7 +537,7 @@ export default function RetentionAdminPage() {
                         disabled={!canManageRetention || runningPolicyKey === `${row.id}:async`}
                         onClick={() => handleRunPolicy(row, true)}
                       >
-                        Queue Async
+                        {t("retentionAdmin.actions.queueAsync", "Queue Async")}
                       </button>
                     </div>
                   </td>
@@ -518,24 +549,24 @@ export default function RetentionAdminPage() {
       </section>
 
       <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-        <h2 className="text-sm font-semibold text-slate-900">Retention Runs</h2>
+        <h2 className="text-sm font-semibold text-slate-900">{t("retentionAdmin.sections.runs", "Retention Runs")}</h2>
 
         <div className="mt-3 grid gap-2 md:grid-cols-6">
           <input
             className="rounded border border-slate-300 px-2 py-1.5 text-sm"
-            placeholder="LE ID"
+            placeholder={t("retentionAdmin.placeholders.leId", "LE ID")}
             value={runFilters.legalEntityId}
             onChange={(e) => setRunFilters((s) => ({ ...s, legalEntityId: e.target.value }))}
           />
           <input
             className="rounded border border-slate-300 px-2 py-1.5 text-sm"
-            placeholder="Policy ID"
+            placeholder={t("retentionAdmin.placeholders.policyId", "Policy ID")}
             value={runFilters.policyId}
             onChange={(e) => setRunFilters((s) => ({ ...s, policyId: e.target.value }))}
           />
           <input
             className="rounded border border-slate-300 px-2 py-1.5 text-sm"
-            placeholder="Status"
+            placeholder={t("retentionAdmin.placeholders.status", "Status")}
             value={runFilters.status}
             onChange={(e) => setRunFilters((s) => ({ ...s, status: e.target.value.toUpperCase() }))}
           />
@@ -552,21 +583,23 @@ export default function RetentionAdminPage() {
             onChange={(e) => setRunFilters((s) => ({ ...s, dateTo: e.target.value }))}
           />
           <button type="button" className="rounded border border-slate-300 px-3 py-1.5 text-sm" onClick={loadRuns}>
-            {runsLoading ? "Loading..." : "Refresh Runs"}
+            {runsLoading ? t("retentionAdmin.actions.loading", "Loading...") : t("retentionAdmin.actions.refreshRuns", "Refresh Runs")}
           </button>
         </div>
 
-        <div className="mt-3 text-xs text-slate-500">Total runs: {runsTotal}</div>
+        <div className="mt-3 text-xs text-slate-500">
+          {t("retentionAdmin.totals.runs", "Total runs: {{total}}", { total: runsTotal })}
+        </div>
         <div className="mt-2 overflow-x-auto rounded border border-slate-200">
           <table className="min-w-full text-sm">
             <thead className="bg-slate-50 text-left text-slate-600">
               <tr>
-                <th className="px-3 py-2">Run</th>
-                <th className="px-3 py-2">Policy</th>
-                <th className="px-3 py-2">Status</th>
-                <th className="px-3 py-2">Counts</th>
-                <th className="px-3 py-2">Started/Finished</th>
-                <th className="px-3 py-2">Detail</th>
+                <th className="px-3 py-2">{t("retentionAdmin.table.run", "Run")}</th>
+                <th className="px-3 py-2">{t("retentionAdmin.table.policy", "Policy")}</th>
+                <th className="px-3 py-2">{t("retentionAdmin.table.status", "Status")}</th>
+                <th className="px-3 py-2">{t("retentionAdmin.table.counts", "Counts")}</th>
+                <th className="px-3 py-2">{t("retentionAdmin.table.startedFinished", "Started/Finished")}</th>
+                <th className="px-3 py-2">{t("retentionAdmin.table.detail", "Detail")}</th>
               </tr>
             </thead>
             <tbody>
@@ -579,9 +612,12 @@ export default function RetentionAdminPage() {
                   </td>
                   <td className={`px-3 py-2 font-medium ${statusBadge(row.status)}`}>{row.status}</td>
                   <td className="px-3 py-2 text-xs">
-                    <div>scanned: {row.scanned_rows}</div>
-                    <div>affected: {row.affected_rows}</div>
-                    <div>masked/purged/archived: {row.masked_rows}/{row.purged_rows}/{row.archived_rows}</div>
+                    <div>{t("retentionAdmin.labels.scanned", "scanned:")} {row.scanned_rows}</div>
+                    <div>{t("retentionAdmin.labels.affected", "affected:")} {row.affected_rows}</div>
+                    <div>
+                      {t("retentionAdmin.labels.maskedPurgedArchived", "masked/purged/archived:")}{" "}
+                      {row.masked_rows}/{row.purged_rows}/{row.archived_rows}
+                    </div>
                   </td>
                   <td className="px-3 py-2 text-xs">
                     <div>{row.started_at || "-"}</div>
@@ -593,7 +629,7 @@ export default function RetentionAdminPage() {
                       className="rounded border border-slate-300 px-2 py-1 text-xs"
                       onClick={() => handleSelectRun(row.id)}
                     >
-                      View
+                      {t("retentionAdmin.actions.view", "View")}
                     </button>
                   </td>
                 </tr>
@@ -608,21 +644,21 @@ export default function RetentionAdminPage() {
       </section>
 
       <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-        <h2 className="text-sm font-semibold text-slate-900">Period Export Snapshots</h2>
+        <h2 className="text-sm font-semibold text-slate-900">{t("retentionAdmin.sections.snapshots", "Period Export Snapshots")}</h2>
 
         <form className="mt-3 grid gap-2 md:grid-cols-4" onSubmit={handleCreateSnapshot}>
           <input
             className="rounded border border-slate-300 px-2 py-1.5 text-sm"
             type="number"
             min={1}
-            placeholder="Payroll Close ID"
+            placeholder={t("retentionAdmin.placeholders.payrollCloseId", "Payroll Close ID")}
             value={snapshotForm.payrollPeriodCloseId}
             onChange={(e) => setSnapshotForm((s) => ({ ...s, payrollPeriodCloseId: e.target.value }))}
             required
           />
           <input
             className="rounded border border-slate-300 px-2 py-1.5 text-sm"
-            placeholder="Idempotency key (optional)"
+            placeholder={t("retentionAdmin.placeholders.idempotencyKeyOptional", "Idempotency key (optional)")}
             value={snapshotForm.idempotencyKey}
             onChange={(e) => setSnapshotForm((s) => ({ ...s, idempotencyKey: e.target.value }))}
           />
@@ -631,20 +667,22 @@ export default function RetentionAdminPage() {
             disabled={!canCreateSnapshots || creatingSnapshot}
             className="rounded border border-slate-300 px-3 py-1.5 text-sm"
           >
-            {creatingSnapshot ? "Creating..." : "Create Snapshot"}
+            {creatingSnapshot
+              ? t("retentionAdmin.actions.creating", "Creating...")
+              : t("retentionAdmin.actions.createSnapshot", "Create Snapshot")}
           </button>
         </form>
 
         <div className="mt-3 grid gap-2 md:grid-cols-3">
           <input
             className="rounded border border-slate-300 px-2 py-1.5 text-sm"
-            placeholder="LE ID"
+            placeholder={t("retentionAdmin.placeholders.leId", "LE ID")}
             value={snapshotFilters.legalEntityId}
             onChange={(e) => setSnapshotFilters((s) => ({ ...s, legalEntityId: e.target.value }))}
           />
           <input
             className="rounded border border-slate-300 px-2 py-1.5 text-sm"
-            placeholder="Payroll Close ID"
+            placeholder={t("retentionAdmin.placeholders.payrollCloseId", "Payroll Close ID")}
             value={snapshotFilters.payrollPeriodCloseId}
             onChange={(e) => setSnapshotFilters((s) => ({ ...s, payrollPeriodCloseId: e.target.value }))}
           />
@@ -653,20 +691,24 @@ export default function RetentionAdminPage() {
             className="rounded border border-slate-300 px-3 py-1.5 text-sm"
             onClick={loadSnapshots}
           >
-            {snapshotsLoading ? "Loading..." : "Refresh Snapshots"}
+            {snapshotsLoading
+              ? t("retentionAdmin.actions.loading", "Loading...")
+              : t("retentionAdmin.actions.refreshSnapshots", "Refresh Snapshots")}
           </button>
         </div>
 
-        <div className="mt-3 text-xs text-slate-500">Total snapshots: {snapshotsTotal}</div>
+        <div className="mt-3 text-xs text-slate-500">
+          {t("retentionAdmin.totals.snapshots", "Total snapshots: {{total}}", { total: snapshotsTotal })}
+        </div>
         <div className="mt-2 overflow-x-auto rounded border border-slate-200">
           <table className="min-w-full text-sm">
             <thead className="bg-slate-50 text-left text-slate-600">
               <tr>
-                <th className="px-3 py-2">Snapshot</th>
-                <th className="px-3 py-2">LE / Period</th>
-                <th className="px-3 py-2">Close ID</th>
-                <th className="px-3 py-2">Hash</th>
-                <th className="px-3 py-2">Detail</th>
+                <th className="px-3 py-2">{t("retentionAdmin.table.snapshot", "Snapshot")}</th>
+                <th className="px-3 py-2">{t("retentionAdmin.table.lePeriod", "LE / Period")}</th>
+                <th className="px-3 py-2">{t("retentionAdmin.table.closeId", "Close ID")}</th>
+                <th className="px-3 py-2">{t("retentionAdmin.table.hash", "Hash")}</th>
+                <th className="px-3 py-2">{t("retentionAdmin.table.detail", "Detail")}</th>
               </tr>
             </thead>
             <tbody>
@@ -674,7 +716,7 @@ export default function RetentionAdminPage() {
                 <tr key={row.id} className="border-t border-slate-100">
                   <td className={`px-3 py-2 font-medium ${statusBadge(row.status)}`}>#{row.id}</td>
                   <td className="px-3 py-2 text-xs">
-                    <div>LE: {row.legal_entity_id}</div>
+                    <div>{t("retentionAdmin.labels.le", "LE:")} {row.legal_entity_id}</div>
                     <div>{row.period_start} - {row.period_end}</div>
                   </td>
                   <td className="px-3 py-2">{row.payroll_period_close_id || "-"}</td>
@@ -685,7 +727,7 @@ export default function RetentionAdminPage() {
                       className="rounded border border-slate-300 px-2 py-1 text-xs"
                       onClick={() => handleSelectSnapshot(row.id)}
                     >
-                      View
+                      {t("retentionAdmin.actions.view", "View")}
                     </button>
                   </td>
                 </tr>

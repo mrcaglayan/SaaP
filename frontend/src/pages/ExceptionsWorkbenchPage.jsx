@@ -9,6 +9,7 @@ import {
   resolveExceptionWorkbench,
 } from "../api/exceptionsWorkbench.js";
 import { useAuth } from "../auth/useAuth.js";
+import { useI18n } from "../i18n/useI18n.js";
 
 function formatDateTime(value) {
   if (!value) return "-";
@@ -24,6 +25,7 @@ function normalizeText(value, fallback = "") {
 
 export default function ExceptionsWorkbenchPage() {
   const { hasPermission } = useAuth();
+  const { t } = useI18n();
   const canRead = hasPermission("ops.exceptions.read");
   const canManage = hasPermission("ops.exceptions.manage");
 
@@ -84,14 +86,16 @@ export default function ExceptionsWorkbenchPage() {
         }
       }
     } catch (err) {
-      setError(err?.response?.data?.message || "Exception workbench could not be loaded");
+      setError(
+        err?.response?.data?.message || t("exceptionsWorkbench.messages.loadFailed", "Exception workbench could not be loaded")
+      );
       setRows([]);
       setSummary({ by_status: {}, by_module: {}, by_severity: {} });
       setTotal(0);
     } finally {
       setLoading(false);
     }
-  }, [canRead, queryParams, selected?.id]);
+  }, [canRead, queryParams, selected?.id, t]);
 
   useEffect(() => {
     load();
@@ -106,7 +110,9 @@ export default function ExceptionsWorkbenchPage() {
       setSelected(res?.row || null);
       setSelectedAudit(Array.isArray(res?.audit) ? res.audit : []);
     } catch (err) {
-      setError(err?.response?.data?.message || "Exception detail could not be loaded");
+      setError(
+        err?.response?.data?.message || t("exceptionsWorkbench.messages.detailLoadFailed", "Exception detail could not be loaded")
+      );
     } finally {
       setBusy("");
     }
@@ -122,10 +128,10 @@ export default function ExceptionsWorkbenchPage() {
       if (normalizeText(filters.legalEntityId)) payload.legalEntityId = Number(filters.legalEntityId);
       if (normalizeText(filters.days)) payload.days = Number(filters.days);
       await refreshExceptionWorkbench(payload);
-      setMessage("Workbench refreshed.");
+      setMessage(t("exceptionsWorkbench.messages.workbenchRefreshed", "Workbench refreshed."));
       await load();
     } catch (err) {
-      setError(err?.response?.data?.message || "Refresh failed");
+      setError(err?.response?.data?.message || t("exceptionsWorkbench.messages.refreshFailed", "Refresh failed"));
     } finally {
       setBusy("");
     }
@@ -159,9 +165,12 @@ export default function ExceptionsWorkbenchPage() {
       if (selected?.id && Number(selected.id) === Number(exceptionId)) {
         await loadDetail(exceptionId);
       }
-      setMessage(`Action ${action.toUpperCase()} applied.`);
+      setMessage(t("exceptionsWorkbench.messages.actionApplied", "Action {{action}} applied.", { action: action.toUpperCase() }));
     } catch (err) {
-      setError(err?.response?.data?.message || `Action ${action} failed`);
+      setError(
+        err?.response?.data?.message ||
+          t("exceptionsWorkbench.messages.actionFailed", "Action {{action}} failed", { action })
+      );
     } finally {
       setBusy("");
     }
@@ -171,36 +180,38 @@ export default function ExceptionsWorkbenchPage() {
     <div className="space-y-4">
       <section className="rounded border bg-white p-4">
         <div className="mb-2 flex items-center gap-2">
-          <h1 className="text-lg font-semibold">Unified Exception Workbench (H06)</h1>
-          <span className="rounded border px-2 py-0.5 text-xs text-slate-600">Total: {total}</span>
+          <h1 className="text-lg font-semibold">{t("exceptionsWorkbench.title", "Unified Exception Workbench (H06)")}</h1>
+          <span className="rounded border px-2 py-0.5 text-xs text-slate-600">
+            {t("exceptionsWorkbench.total", "Total: {{total}}", { total })}
+          </span>
         </div>
         {!canRead ? (
           <div className="text-sm text-slate-500">
-            Missing permission: <code>ops.exceptions.read</code>
+            {t("exceptionsWorkbench.messages.missingReadPermission", "Missing permission:")} <code>ops.exceptions.read</code>
           </div>
         ) : (
           <>
             <div className="grid gap-2 md:grid-cols-4">
               <label className="text-sm">
-                <div className="mb-1 text-slate-600">Module</div>
+                <div className="mb-1 text-slate-600">{t("exceptionsWorkbench.filters.module", "Module")}</div>
                 <select
                   className="w-full rounded border px-2 py-1"
                   value={filters.moduleCode}
                   onChange={(e) => setFilters((s) => ({ ...s, moduleCode: e.target.value }))}
                 >
-                  <option value="">All</option>
+                  <option value="">{t("exceptionsWorkbench.filters.all", "All")}</option>
                   <option value="BANK">BANK</option>
                   <option value="PAYROLL">PAYROLL</option>
                 </select>
               </label>
               <label className="text-sm">
-                <div className="mb-1 text-slate-600">Status</div>
+                <div className="mb-1 text-slate-600">{t("exceptionsWorkbench.filters.status", "Status")}</div>
                 <select
                   className="w-full rounded border px-2 py-1"
                   value={filters.status}
                   onChange={(e) => setFilters((s) => ({ ...s, status: e.target.value }))}
                 >
-                  <option value="">All</option>
+                  <option value="">{t("exceptionsWorkbench.filters.all", "All")}</option>
                   <option value="OPEN">OPEN</option>
                   <option value="IN_REVIEW">IN_REVIEW</option>
                   <option value="RESOLVED">RESOLVED</option>
@@ -208,13 +219,13 @@ export default function ExceptionsWorkbenchPage() {
                 </select>
               </label>
               <label className="text-sm">
-                <div className="mb-1 text-slate-600">Severity</div>
+                <div className="mb-1 text-slate-600">{t("exceptionsWorkbench.filters.severity", "Severity")}</div>
                 <select
                   className="w-full rounded border px-2 py-1"
                   value={filters.severity}
                   onChange={(e) => setFilters((s) => ({ ...s, severity: e.target.value }))}
                 >
-                  <option value="">All</option>
+                  <option value="">{t("exceptionsWorkbench.filters.all", "All")}</option>
                   <option value="CRITICAL">CRITICAL</option>
                   <option value="HIGH">HIGH</option>
                   <option value="MEDIUM">MEDIUM</option>
@@ -222,30 +233,30 @@ export default function ExceptionsWorkbenchPage() {
                 </select>
               </label>
               <label className="text-sm">
-                <div className="mb-1 text-slate-600">Legal entity ID</div>
+                <div className="mb-1 text-slate-600">{t("exceptionsWorkbench.filters.legalEntityId", "Legal entity ID")}</div>
                 <input
                   className="w-full rounded border px-2 py-1"
                   value={filters.legalEntityId}
                   onChange={(e) => setFilters((s) => ({ ...s, legalEntityId: e.target.value }))}
-                  placeholder="optional"
+                  placeholder={t("exceptionsWorkbench.placeholders.optional", "optional")}
                 />
               </label>
               <label className="text-sm">
-                <div className="mb-1 text-slate-600">Search</div>
+                <div className="mb-1 text-slate-600">{t("exceptionsWorkbench.filters.search", "Search")}</div>
                 <input
                   className="w-full rounded border px-2 py-1"
                   value={filters.q}
                   onChange={(e) => setFilters((s) => ({ ...s, q: e.target.value }))}
-                  placeholder="title/source/note"
+                  placeholder={t("exceptionsWorkbench.placeholders.search", "title/source/note")}
                 />
               </label>
               <label className="text-sm">
-                <div className="mb-1 text-slate-600">Days</div>
+                <div className="mb-1 text-slate-600">{t("exceptionsWorkbench.filters.days", "Days")}</div>
                 <input
                   className="w-full rounded border px-2 py-1"
                   value={filters.days}
                   onChange={(e) => setFilters((s) => ({ ...s, days: e.target.value }))}
-                  placeholder="180"
+                  placeholder={t("exceptionsWorkbench.placeholders.days", "180")}
                 />
               </label>
               <label className="flex items-center gap-2 text-sm">
@@ -254,11 +265,11 @@ export default function ExceptionsWorkbenchPage() {
                   checked={Boolean(filters.refresh)}
                   onChange={(e) => setFilters((s) => ({ ...s, refresh: e.target.checked }))}
                 />
-                Auto-refresh sources on list
+                {t("exceptionsWorkbench.filters.autoRefresh", "Auto-refresh sources on list")}
               </label>
               <div className="flex items-end gap-2">
                 <button type="button" className="rounded border px-3 py-1 text-sm" onClick={load} disabled={loading}>
-                  {loading ? "Loading..." : "Apply Filters"}
+                  {loading ? t("exceptionsWorkbench.actions.loading", "Loading...") : t("exceptionsWorkbench.actions.applyFilters", "Apply Filters")}
                 </button>
                 <button
                   type="button"
@@ -266,21 +277,23 @@ export default function ExceptionsWorkbenchPage() {
                   onClick={handleManualRefresh}
                   disabled={busy === "manual-refresh"}
                 >
-                  {busy === "manual-refresh" ? "Refreshing..." : "Manual Refresh"}
+                  {busy === "manual-refresh"
+                    ? t("exceptionsWorkbench.actions.refreshing", "Refreshing...")
+                    : t("exceptionsWorkbench.actions.manualRefresh", "Manual Refresh")}
                 </button>
               </div>
             </div>
             <div className="mt-3 grid gap-2 text-xs md:grid-cols-3">
               <div className="rounded border bg-slate-50 p-2">
-                <div className="font-medium">By Status</div>
+                <div className="font-medium">{t("exceptionsWorkbench.summary.byStatus", "By Status")}</div>
                 <pre className="mt-1 overflow-auto">{JSON.stringify(summary.by_status || {}, null, 2)}</pre>
               </div>
               <div className="rounded border bg-slate-50 p-2">
-                <div className="font-medium">By Module</div>
+                <div className="font-medium">{t("exceptionsWorkbench.summary.byModule", "By Module")}</div>
                 <pre className="mt-1 overflow-auto">{JSON.stringify(summary.by_module || {}, null, 2)}</pre>
               </div>
               <div className="rounded border bg-slate-50 p-2">
-                <div className="font-medium">By Severity</div>
+                <div className="font-medium">{t("exceptionsWorkbench.summary.bySeverity", "By Severity")}</div>
                 <pre className="mt-1 overflow-auto">{JSON.stringify(summary.by_severity || {}, null, 2)}</pre>
               </div>
             </div>
@@ -292,11 +305,11 @@ export default function ExceptionsWorkbenchPage() {
       {message ? <div className="rounded border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">{message}</div> : null}
 
       <section className="rounded border bg-white p-4">
-        <h2 className="mb-2 font-medium">Exceptions</h2>
+        <h2 className="mb-2 font-medium">{t("exceptionsWorkbench.sections.exceptions", "Exceptions")}</h2>
         {!canRead ? null : loading ? (
-          <div className="text-sm text-slate-500">Loading...</div>
+          <div className="text-sm text-slate-500">{t("exceptionsWorkbench.actions.loading", "Loading...")}</div>
         ) : rows.length === 0 ? (
-          <div className="text-sm text-slate-500">No exceptions found for current filters.</div>
+          <div className="text-sm text-slate-500">{t("exceptionsWorkbench.messages.empty", "No exceptions found for current filters.")}</div>
         ) : (
           <div className="space-y-2">
             {rows.map((row) => (
@@ -307,12 +320,12 @@ export default function ExceptionsWorkbenchPage() {
                   <span className="rounded border px-1 text-xs">{row.status}</span>
                   <span className="rounded border px-1 text-xs">{row.exception_type}</span>
                   <div className="ml-auto text-xs text-slate-500">
-                    last seen: {formatDateTime(row.last_seen_at)}
+                    {t("exceptionsWorkbench.labels.lastSeen", "last seen:")} {formatDateTime(row.last_seen_at)}
                   </div>
                 </div>
                 <div className="mt-1 font-medium">{row.title}</div>
                 <div className="text-xs text-slate-600">
-                  source: {row.source_type} / {row.source_key}
+                  {t("exceptionsWorkbench.labels.source", "source:")} {row.source_type} / {row.source_key}
                 </div>
                 {row.description ? <div className="mt-1 text-xs text-slate-600">{row.description}</div> : null}
                 <div className="mt-2 flex flex-wrap gap-2">
@@ -322,7 +335,7 @@ export default function ExceptionsWorkbenchPage() {
                     onClick={() => loadDetail(row.id)}
                     disabled={busy === `detail-${row.id}`}
                   >
-                    {busy === `detail-${row.id}` ? "Loading..." : "Details"}
+                    {busy === `detail-${row.id}` ? t("exceptionsWorkbench.actions.loading", "Loading...") : t("exceptionsWorkbench.actions.details", "Details")}
                   </button>
                   {canManage ? (
                     <>
@@ -332,7 +345,7 @@ export default function ExceptionsWorkbenchPage() {
                         onClick={() => runAction("claim", row.id)}
                         disabled={busy === `claim-${row.id}`}
                       >
-                        {busy === `claim-${row.id}` ? "..." : "Claim"}
+                        {busy === `claim-${row.id}` ? "..." : t("exceptionsWorkbench.actions.claim", "Claim")}
                       </button>
                       <button
                         type="button"
@@ -340,7 +353,7 @@ export default function ExceptionsWorkbenchPage() {
                         onClick={() => runAction("resolve", row.id)}
                         disabled={busy === `resolve-${row.id}`}
                       >
-                        {busy === `resolve-${row.id}` ? "..." : "Resolve"}
+                        {busy === `resolve-${row.id}` ? "..." : t("exceptionsWorkbench.actions.resolve", "Resolve")}
                       </button>
                       <button
                         type="button"
@@ -348,7 +361,7 @@ export default function ExceptionsWorkbenchPage() {
                         onClick={() => runAction("ignore", row.id)}
                         disabled={busy === `ignore-${row.id}`}
                       >
-                        {busy === `ignore-${row.id}` ? "..." : "Ignore"}
+                        {busy === `ignore-${row.id}` ? "..." : t("exceptionsWorkbench.actions.ignore", "Ignore")}
                       </button>
                       <button
                         type="button"
@@ -356,7 +369,7 @@ export default function ExceptionsWorkbenchPage() {
                         onClick={() => runAction("reopen", row.id)}
                         disabled={busy === `reopen-${row.id}`}
                       >
-                        {busy === `reopen-${row.id}` ? "..." : "Reopen"}
+                        {busy === `reopen-${row.id}` ? "..." : t("exceptionsWorkbench.actions.reopen", "Reopen")}
                       </button>
                     </>
                   ) : null}
@@ -368,25 +381,25 @@ export default function ExceptionsWorkbenchPage() {
       </section>
 
       <section className="rounded border bg-white p-4">
-        <h2 className="mb-2 font-medium">Resolution Note</h2>
+        <h2 className="mb-2 font-medium">{t("exceptionsWorkbench.sections.resolutionNote", "Resolution Note")}</h2>
         <textarea
           className="min-h-[80px] w-full rounded border px-2 py-1 text-sm"
           value={resolutionNote}
           onChange={(e) => setResolutionNote(e.target.value)}
-          placeholder="Used by resolve/ignore/reopen actions"
+          placeholder={t("exceptionsWorkbench.placeholders.resolutionNote", "Used by resolve/ignore/reopen actions")}
         />
       </section>
 
       <section className="rounded border bg-white p-4">
-        <h2 className="mb-2 font-medium">Selected Exception</h2>
+        <h2 className="mb-2 font-medium">{t("exceptionsWorkbench.sections.selectedException", "Selected Exception")}</h2>
         {!selected ? (
-          <div className="text-sm text-slate-500">Select an exception row and click Details.</div>
+          <div className="text-sm text-slate-500">{t("exceptionsWorkbench.messages.selectRow", "Select an exception row and click Details.")}</div>
         ) : (
           <pre className="overflow-auto rounded bg-slate-50 p-3 text-xs">{JSON.stringify(selected, null, 2)}</pre>
         )}
-        <h3 className="mt-3 font-medium">Audit Trail</h3>
+        <h3 className="mt-3 font-medium">{t("exceptionsWorkbench.sections.auditTrail", "Audit Trail")}</h3>
         {selectedAudit.length === 0 ? (
-          <div className="text-sm text-slate-500">No audit entries.</div>
+          <div className="text-sm text-slate-500">{t("exceptionsWorkbench.messages.noAudit", "No audit entries.")}</div>
         ) : (
           <pre className="overflow-auto rounded bg-slate-50 p-3 text-xs">{JSON.stringify(selectedAudit, null, 2)}</pre>
         )}
@@ -394,4 +407,3 @@ export default function ExceptionsWorkbenchPage() {
     </div>
   );
 }
-

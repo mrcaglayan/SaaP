@@ -19,3 +19,6 @@ Execution Tracker (Update As You Implement)
 now check the application of banks and payrolls modules is there any points to be needs improvements.
 
 banka işlemleri ve bordro işlemleri,operation dashboard page,Exception Workbench page,  Retention and Export Snapshots page,  lanuagege toggling not working. can you implement lagnuage toggling translations etc ? 
+
+
+now we have implemented  all steps in 04-BANKS_AND_PAYROLLS_ESM.md, and prepare manual ( kullanım kılavuzu ) for bank and payrol modules, example case usaages, in detail for users who has no coding knowledge. so it should be detailed and explicit explanatory, which options for what which one to choose which one not to chose, and in those cases what happens etc. 
