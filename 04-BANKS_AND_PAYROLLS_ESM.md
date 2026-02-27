@@ -70,6 +70,7 @@ Permission naming note (important):
 - [x] PR-H05 Operations Dashboard APIs (KPIs, SLAs, Health) (implemented)
 - [x] PR-H06 Unified Exception Workbench (Bank + Payroll Settlement Exceptions) (implemented)
 - [x] PR-H07 Data Retention, Archival, and Export Snapshots (implemented)
+- [ ] PR-H08 Release Gate + End-to-End Regression Pack (Bank + Payroll) (in progress: scaffold added)
 
 ---
 ## Roadmap Content

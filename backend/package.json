@@ -57,6 +57,7 @@
     "test:hardening:prh05": "node scripts/test-hardening-prh05-ops-dashboard.js",
     "test:hardening:prh06": "node scripts/test-hardening-prh06-exception-workbench.js",
     "test:hardening:prh07": "node scripts/test-hardening-prh07-retention-archival.js",
+    "test:e2e:bank-payroll": "node scripts/test-e2e-bank-payroll-release-gate.js",
     "test:cari-pr01": "node scripts/test-cari-pr01-schema-and-constraints.js",
     "test:cari-pr02": "node scripts/test-cari-pr02-rbac-seed-and-guards.js",
     "test:cari-pr03": "node scripts/test-cari-pr03-counterparty-master.js",
