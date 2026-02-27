@@ -3,6 +3,7 @@ import bankWebhookProcessHandler from "./bankWebhookProcess.handler.js";
 import dataRetentionRunHandler from "./dataRetentionRun.handler.js";
 import paymentSyncRetryHandler from "./paymentSyncRetry.handler.js";
 import payrollImportApplyHandler from "./payrollImportApply.handler.js";
+import secretsBackfillReencryptHandler from "./secretsBackfillReencrypt.handler.js";
 
 const HANDLERS = {
   BANK_FEED_PULL: bankFeedPullHandler,
@@ -10,6 +11,7 @@ const HANDLERS = {
   DATA_RETENTION_RUN: dataRetentionRunHandler,
   PAYMENT_SYNC_RETRY: paymentSyncRetryHandler,
   PAYROLL_IMPORT_APPLY: payrollImportApplyHandler,
+  SECRETS_BACKFILL_REENCRYPT: secretsBackfillReencryptHandler,
 };
 
 export function getJobHandler(jobType) {

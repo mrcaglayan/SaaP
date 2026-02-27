@@ -34200,7 +34200,7 @@ Reference context docs:
 - [x] PR-I01 Main Release Gate Bridge (include bank-payroll gate in `test:release-gate`) (implemented)
 - [x] PR-I02 Bank Route Alias + UX Compatibility (`/app/banka-hesaplari` -> `/app/banka-tanimla`) (implemented)
 - [x] PR-I03 Bank Connector Provider Pack (real adapters beyond `MOCK_OB`) (implemented)
-- [ ] PR-I04 Secrets Backfill + Re-Encryption Job (legacy plaintext -> encrypted envelope)
+- [x] PR-I04 Secrets Backfill + Re-Encryption Job (legacy plaintext -> encrypted envelope) (implemented)
 - [ ] PR-I05 Retention Scheduler (true `SCHEDULED` policy execution loop)
 - [ ] PR-I06 Contracts/Periods Integration with Bank + Payroll flows (future-year accrual chain)
 - [ ] PR-I07 Unified Final Gate (core + contracts/revenue + bank/payroll in one orchestrator)
@@ -34287,6 +34287,21 @@ Acceptance:
 
 - No active connector/provider rows rely on plaintext secret columns.
 - Read/write paths remain backward compatible during migration window.
+
+Implementation notes:
+
+- Added migration service: `backend/src/services/secretsMigration.service.js`
+  - payroll provider legacy plaintext backfill (`secrets_json` -> encrypted envelope)
+  - provider + bank connector key rotation re-encryption
+  - per-row `sensitive_data_audit` writes
+- Added background job handler: `SECRETS_BACKFILL_REENCRYPT`
+  - `backend/src/services/jobHandlers/secretsBackfillReencrypt.handler.js`
+- Added one-time operational script:
+  - `npm run job:secrets:migrate`
+  - script: `backend/scripts/secrets-backfill-reencrypt.js`
+- Added PR-I04 smoke/integration test:
+  - `npm run test:integration:pri04`
+  - script: `backend/scripts/test-integration-pri04-secrets-backfill-reencrypt.js`
 
 ---
 
