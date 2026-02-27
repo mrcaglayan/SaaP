@@ -22,6 +22,10 @@ const SENSITIVE_DATA_AUDIT_PAGE_PERMISSIONS = [
 ];
 const OPS_DASHBOARD_PAGE_PERMISSIONS = ["ops.dashboard.read"];
 const OPS_EXCEPTION_WORKBENCH_PAGE_PERMISSIONS = ["ops.exceptions.read"];
+const OPS_RETENTION_PAGE_PERMISSIONS = [
+  "ops.retention.read",
+  "ops.export_snapshot.read",
+];
 const COMPANY_SETTINGS_PAGE_PERMISSIONS = ["onboarding.company.setup"];
 const ORG_SETTINGS_PAGE_PERMISSIONS = ["org.tree.read", "org.fiscal_calendar.read"];
 const GL_SETUP_PAGE_PERMISSIONS = [
@@ -568,6 +572,12 @@ export const sidebarItems = [
         label: "Exception Workbench",
         to: "/app/ayarlar/exception-workbench",
         requiredPermissions: OPS_EXCEPTION_WORKBENCH_PAGE_PERMISSIONS,
+        implemented: true,
+      },
+      {
+        label: "Veri Saklama ve Snapshot",
+        to: "/app/ayarlar/veri-saklama-snapshot",
+        requiredPermissions: OPS_RETENTION_PAGE_PERMISSIONS,
         implemented: true,
       },
       {

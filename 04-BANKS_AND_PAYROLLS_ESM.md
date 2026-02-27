@@ -69,6 +69,7 @@ Permission naming note (important):
 - [x] PR-H04 Unified Approval Policy Engine (Thresholds, SoD, Multi-step) (implemented)
 - [x] PR-H05 Operations Dashboard APIs (KPIs, SLAs, Health) (implemented)
 - [x] PR-H06 Unified Exception Workbench (Bank + Payroll Settlement Exceptions) (implemented)
+- [x] PR-H07 Data Retention, Archival, and Export Snapshots (implemented)
 
 ---
 ## Roadmap Content

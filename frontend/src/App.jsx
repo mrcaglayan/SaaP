@@ -22,6 +22,7 @@ import RbacAuditLogsPage from "./pages/security/RbacAuditLogsPage";
 import SensitiveDataAuditPage from "./pages/security/SensitiveDataAuditPage.jsx";
 import OpsDashboardPage from "./pages/OpsDashboardPage.jsx";
 import ExceptionsWorkbenchPage from "./pages/ExceptionsWorkbenchPage.jsx";
+import RetentionAdminPage from "./pages/settings/RetentionAdminPage.jsx";
 import IntercompanyReconciliationPage from "./pages/IntercompanyReconciliationPage";
 import ConsolidationReportsPage from "./pages/ConsolidationReportsPage";
 import ProviderBootstrapPage from "./pages/ProviderBootstrapPage";
@@ -377,6 +378,11 @@ const implementedRoutes = [
     appPath: "/app/ayarlar/exception-workbench",
     childPath: "ayarlar/exception-workbench",
     element: <ExceptionsWorkbenchPage />,
+  },
+  {
+    appPath: "/app/ayarlar/veri-saklama-snapshot",
+    childPath: "ayarlar/veri-saklama-snapshot",
+    element: <RetentionAdminPage />,
   },
   {
     appPath: "/app/donem-sonu-islemler/aylik/intercompany-mutabakat",
