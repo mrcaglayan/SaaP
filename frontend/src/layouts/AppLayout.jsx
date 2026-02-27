@@ -6,6 +6,7 @@ import { useI18n } from "../i18n/useI18n.js";
 import { useTenantReadiness } from "../readiness/useTenantReadiness.js";
 import SidebarSection from "./SidebarSection.jsx";
 import { sidebarItems } from "./sidebarConfig.js";
+import WorkingContextBar from "./WorkingContextBar.jsx";
 
 const MODULE_PREVIEW_ADMIN_PERMISSIONS = [
   "security.role.upsert",
@@ -455,7 +456,7 @@ function filterSidebarItemsByPermissions(
 }
 
 export default function AppLayout() {
-  const { user, logout, hasAnyPermission, hasAllPermissions } = useAuth();
+  const { user, isAuthed, logout, hasAnyPermission, hasAllPermissions } = useAuth();
   const { t } = useI18n();
   const {
     loading: readinessLoading,
@@ -968,6 +969,11 @@ export default function AppLayout() {
             </p>
           </div>
         </div>
+        {isAuthed ? (
+          <div className="border-b border-slate-200 bg-white px-4 py-2">
+            <WorkingContextBar />
+          </div>
+        ) : null}
 
         <div className="flex-1 min-h-0 p-4 md:p-6 overflow-auto">
           <Outlet />
