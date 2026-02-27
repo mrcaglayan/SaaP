@@ -29,13 +29,14 @@ export const BANK_PAYROLL_RELEASE_STAGES = [
   },
   {
     id: "cross-flow",
-    title: "Cross-flow hardening: jobs, approvals, ops, exceptions, retention",
+    title: "Cross-flow hardening: jobs, approvals, ops, exceptions, retention, isolation",
     scripts: [
       "test:hardening:prh02",
       "test:hardening:prh04",
       "test:hardening:prh05",
       "test:hardening:prh06",
       "test:hardening:prh07",
+      "test:hardening:prh09",
     ],
   },
 ];

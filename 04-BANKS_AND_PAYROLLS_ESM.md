@@ -62,7 +62,7 @@ Permission naming note (important):
 - [x] PR-P07 Beneficiary Bank Master + Immutable Snapshots (implemented)
 - [x] PR-P08 Payroll Close Controls + Locks (implemented)
 - [x] PR-P09 Provider-Specific Payroll Adapters (implemented)
-- [ ] PR-H01..PR-H09 Cross-cutting hardening and release gates (in progress)
+- [x] PR-H01..PR-H09 Cross-cutting hardening and release gates (implemented)
 - [x] PR-H01 Sensitive Data Security (implemented)
 - [x] PR-H02 Jobs + Retry Engine (implemented)
 - [x] PR-H03 Performance + Indexing + Pagination Hardening (implemented)
@@ -71,6 +71,7 @@ Permission naming note (important):
 - [x] PR-H06 Unified Exception Workbench (Bank + Payroll Settlement Exceptions) (implemented)
 - [x] PR-H07 Data Retention, Archival, and Export Snapshots (implemented)
 - [x] PR-H08 Release Gate + End-to-End Regression Pack (Bank + Payroll) (implemented: bank-flow, payroll-flow, and cross-flow release-gate stages pass end-to-end with real smoke assertions)
+- [x] PR-H09 Tenant/Entity Isolation Hardening (implemented)
 
 ---
 ## Roadmap Content

@@ -11,7 +11,7 @@ The gate is run by `npm run test:e2e:bank-payroll`.
 | --- | --- | --- |
 | `bank-flow` | Payment batch lifecycle, export/ack, reconciliation, exception queue, approvals | `test:payments:prb04`, `test:bank:prb06`, `test:bank:prb03`, `test:bank:prb07`, `test:bank:prb08a`, `test:bank:prb08b`, `test:bank:prb09` |
 | `payroll-flow` | Provider import -> accrual -> liabilities -> settlement -> corrections -> close | `test:payroll:prp01` .. `test:payroll:prp09` |
-| `cross-flow` | Jobs/retry, approval engine, ops KPIs, unified exceptions, retention/snapshots | `test:hardening:prh02`, `test:hardening:prh04`, `test:hardening:prh05`, `test:hardening:prh06`, `test:hardening:prh07` |
+| `cross-flow` | Jobs/retry, approval engine, ops KPIs, unified exceptions, retention/snapshots, isolation hardening | `test:hardening:prh02`, `test:hardening:prh04`, `test:hardening:prh05`, `test:hardening:prh06`, `test:hardening:prh07`, `test:hardening:prh09` |
 
 ## Failure Contract
 
@@ -57,6 +57,7 @@ Workflow: `.github/workflows/bank-payroll-release-gate.yml`
 - `test:hardening:prh05` now runs real service-level assertions (ops dashboard KPI aggregations for bank reconciliation, payment batch health, payroll import/close health, jobs/attempt SLAs, plus legal-entity scope-denial checks).
 - `test:hardening:prh06` now runs real service-level assertions (multi-source BANK/PAYROLL workbench refresh normalization, queue summary integrity, claim/resolve/reopen transitions with audit trail, and source-table immutability checks).
 - `test:hardening:prh07` now runs real service-level assertions (retention policy create/manual execution/idempotent replay, `DATA_RETENTION_RUN` job-handler execution path, payroll close snapshot export idempotency + stable hashes, and non-destructive core payroll row checks).
+- `test:hardening:prh09` now runs real service-level assertions (strict tenant + legal-entity isolation on bank/payroll/workbench services, entity-bound id validation, and cross-tenant access denial checks).
 - `test:payroll:prp01` now runs real service-level assertions (import/list/detail/line reads, duplicate checksum conflict, CSV validation failures, scope-permission denial).
 - `test:payroll:prp02` now runs real service-level assertions (accrual preview missing mappings, effective-dated component mappings, review/finalize lifecycle, idempotent finalize, journal/audit integrity).
 - `test:payroll:prp03` now runs real service-level assertions (liability build lifecycle, NET/STATUTORY/ALL payment prep previews, beneficiary setup gate, payment batch preparation/linking, snapshot capture readiness).
