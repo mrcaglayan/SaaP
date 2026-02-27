@@ -52,6 +52,7 @@ Workflow: `.github/workflows/bank-payroll-release-gate.yml`
 - `test:bank:prb08a` now runs real service-level assertions (posting template CRUD, AUTO_POST_TEMPLATE apply path, journal/trace/match idempotency).
 - `test:bank:prb08b` now runs real service-level assertions (return processing, manual rejection handling, FX difference adjustment/reconciliation, idempotent apply replay).
 - `test:bank:prb09` and `test:payroll:prp08` now run real service-level assertions (SoD/maker-checker, idempotency, lock enforcement).
+- `test:hardening:prh02` now runs real service-level assertions (job enqueue idempotency, worker run success/failure lifecycle, attempt history integrity, requeue/cancel admin actions, PAYROLL_IMPORT_APPLY handler integration).
 - `test:payroll:prp01` now runs real service-level assertions (import/list/detail/line reads, duplicate checksum conflict, CSV validation failures, scope-permission denial).
 - `test:payroll:prp02` now runs real service-level assertions (accrual preview missing mappings, effective-dated component mappings, review/finalize lifecycle, idempotent finalize, journal/audit integrity).
 - `test:payroll:prp03` now runs real service-level assertions (liability build lifecycle, NET/STATUTORY/ALL payment prep previews, beneficiary setup gate, payment batch preparation/linking, snapshot capture readiness).
