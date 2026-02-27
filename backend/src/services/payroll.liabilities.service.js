@@ -968,7 +968,7 @@ export async function buildPayrollRunLiabilities({
             payable_component_code, payable_gl_account_id, payable_ref,
             amount, settled_amount, outstanding_amount, currency_code, status
          )
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'OPEN')`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'OPEN')`,
         [
           tenantId,
           parsePositiveInt(run.legal_entity_id),

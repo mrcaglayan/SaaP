@@ -22,6 +22,28 @@ function toAmount(value) {
   return Number(parsed.toFixed(6));
 }
 
+function toDateOnly(value) {
+  const pad2 = (n) => String(n).padStart(2, "0");
+  if (!value) {
+    return null;
+  }
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) {
+      return null;
+    }
+    return `${value.getFullYear()}-${pad2(value.getMonth() + 1)}-${pad2(value.getDate())}`;
+  }
+  const asString = String(value);
+  if (/^\d{4}-\d{2}-\d{2}/.test(asString)) {
+    return asString.slice(0, 10);
+  }
+  const parsed = new Date(asString);
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+  return parsed.toISOString().slice(0, 10);
+}
+
 function sha256(value) {
   return crypto.createHash("sha256").update(String(value ?? ""), "utf8").digest("hex");
 }

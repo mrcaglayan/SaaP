@@ -27,6 +27,27 @@ function safeJson(value) {
   return JSON.stringify(value ?? null);
 }
 
+function toDateTimeString(value) {
+  if (!value) return null;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(trimmed)) {
+      return trimmed;
+    }
+    const parsed = new Date(trimmed);
+    if (Number.isNaN(parsed.getTime())) return null;
+    return parsed.toISOString().slice(0, 19).replace("T", " ");
+  }
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) return null;
+    return value.toISOString().slice(0, 19).replace("T", " ");
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.toISOString().slice(0, 19).replace("T", " ");
+}
+
 function makeNotFound(message) {
   const err = new Error(message);
   err.status = 404;
@@ -714,9 +735,9 @@ export async function approveApplyPayrollManualSettlementRequest({
     });
 
     const settlementKey = `PRMANSET|T:${tenantId}|LE:${legalEntityId}|REQ:${requestId}`;
-    const settledAt = String(requestRow.settled_at)
-      .slice(0, 19)
-      .replace("T", " ");
+    const settledAt =
+      toDateTimeString(requestRow.settled_at) ||
+      new Date().toISOString().slice(0, 19).replace("T", " ");
 
     await tx.query(
       `INSERT INTO payroll_liability_settlements (

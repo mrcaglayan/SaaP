@@ -17,11 +17,16 @@ function j(v) {
   return JSON.stringify(v ?? null);
 }
 function d(v) {
+  const pad2 = (n) => String(n).padStart(2, "0");
   if (!v) return null;
-  const s = String(v);
+  if (v instanceof Date) {
+    if (Number.isNaN(v.getTime())) return null;
+    return `${v.getFullYear()}-${pad2(v.getMonth() + 1)}-${pad2(v.getDate())}`;
+  }
+  const s = String(v).trim();
   if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
   const p = new Date(s);
-  return Number.isNaN(p.getTime()) ? null : p.toISOString().slice(0, 10);
+  return Number.isNaN(p.getTime()) ? null : `${p.getFullYear()}-${pad2(p.getMonth() + 1)}-${pad2(p.getDate())}`;
 }
 function t(v) {
   if (!v) return null;

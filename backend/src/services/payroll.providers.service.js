@@ -394,14 +394,14 @@ export async function listPayrollProviderConnections({
   const total = Number(countRes.rows?.[0]?.total || 0);
   const safeLimit = Number.isInteger(filters.limit) && filters.limit > 0 ? filters.limit : 100;
   const safeOffset = Number.isInteger(filters.offset) && filters.offset >= 0 ? filters.offset : 0;
-  const effectiveOffset = cursorToken ? 0 : safeOffset;
+  const effectiveOffset = safeOffset;
   const listRes = await query(
     `SELECT c.*, le.code AS legal_entity_code, le.name AS legal_entity_name
      FROM payroll_provider_connections c
      JOIN legal_entities le ON le.tenant_id = c.tenant_id AND le.id = c.legal_entity_id
      WHERE ${whereSql}
      ORDER BY c.is_default DESC, c.updated_at DESC, c.id DESC
-     LIMIT ${safeLimit} OFFSET ${safeOffset}`,
+     LIMIT ${safeLimit} OFFSET ${effectiveOffset}`,
     params
   );
   return {
@@ -1055,6 +1055,7 @@ export async function listPayrollProviderImportJobs({
   const total = Number(countRes.rows?.[0]?.total || 0);
   const safeLimit = Number.isInteger(filters.limit) && filters.limit > 0 ? filters.limit : 100;
   const safeOffset = Number.isInteger(filters.offset) && filters.offset >= 0 ? filters.offset : 0;
+  const effectiveOffset = cursorToken ? 0 : safeOffset;
   const listRes = await query(
     `SELECT
         j.id, j.tenant_id, j.legal_entity_id, j.payroll_provider_connection_id,
