@@ -56,3 +56,8 @@ export async function markAllMeNotificationsRead() {
   const response = await api.put("/me/notifications/read-all", {});
   return response.data;
 }
+
+export async function listMeFeatures(params = {}) {
+  const response = await api.get(`/me/features${toQueryString(params)}`);
+  return response.data;
+}

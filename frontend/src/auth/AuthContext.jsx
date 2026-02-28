@@ -6,6 +6,7 @@ export function AuthProvider({ children }) {
   const [token, setToken] = useState(null);
   const [user, setUser] = useState(null);
   const [permissions, setPermissions] = useState([]);
+  const [featureCodes, setFeatureCodes] = useState([]);
   const [booting, setBooting] = useState(true);
 
   const isAuthed = Boolean(user);
@@ -14,6 +15,7 @@ export function AuthProvider({ children }) {
     setToken(null);
     setUser(null);
     setPermissions([]);
+    setFeatureCodes([]);
   }, []);
 
   const applyMePayload = useCallback((payload) => {
@@ -24,11 +26,24 @@ export function AuthProvider({ children }) {
     setPermissions(permissionCodes);
   }, []);
 
+  const loadMeFeatures = useCallback(async () => {
+    try {
+      const response = await api.get("/me/features", { skipAuthRedirect: true });
+      const enabledFeatureCodes = Array.isArray(response?.data?.enabledFeatureCodes)
+        ? response.data.enabledFeatureCodes.map((code) => String(code))
+        : [];
+      setFeatureCodes(enabledFeatureCodes);
+    } catch {
+      setFeatureCodes([]);
+    }
+  }, []);
+
   useEffect(() => {
     (async () => {
       try {
         const res = await api.get("/me", { skipAuthRedirect: true });
         applyMePayload(res.data);
+        await loadMeFeatures();
         setToken("cookie-session");
       } catch {
         clearAuthState();
@@ -36,7 +51,7 @@ export function AuthProvider({ children }) {
         setBooting(false);
       }
     })();
-  }, [applyMePayload, clearAuthState]);
+  }, [applyMePayload, clearAuthState, loadMeFeatures]);
 
   useEffect(() => {
     setOnUnauthorized(() => {
@@ -53,8 +68,9 @@ export function AuthProvider({ children }) {
     );
     const me = await api.get("/me", { skipAuthRedirect: true });
     applyMePayload(me.data);
+    await loadMeFeatures();
     setToken("cookie-session");
-  }, [applyMePayload]);
+  }, [applyMePayload, loadMeFeatures]);
 
   const logout = useCallback(async () => {
     try {
@@ -66,6 +82,7 @@ export function AuthProvider({ children }) {
   }, [clearAuthState]);
 
   const permissionSet = useMemo(() => new Set(permissions), [permissions]);
+  const featureSet = useMemo(() => new Set(featureCodes), [featureCodes]);
 
   const hasPermission = useCallback(
     (permissionCode) => {
@@ -102,11 +119,25 @@ export function AuthProvider({ children }) {
     [hasPermission]
   );
 
+  const hasFeature = useCallback(
+    (featureCode) => {
+      const code = String(featureCode || "")
+        .trim()
+        .toUpperCase();
+      if (!code) {
+        return false;
+      }
+      return featureSet.has(code);
+    },
+    [featureSet]
+  );
+
   const value = useMemo(
     () => ({
       token,
       user,
       permissions,
+      featureCodes,
       isAuthed,
       booting,
       login,
@@ -114,11 +145,13 @@ export function AuthProvider({ children }) {
       hasPermission,
       hasAnyPermission,
       hasAllPermissions,
+      hasFeature,
     }),
     [
       token,
       user,
       permissions,
+      featureCodes,
       isAuthed,
       booting,
       login,
@@ -126,6 +159,7 @@ export function AuthProvider({ children }) {
       hasPermission,
       hasAnyPermission,
       hasAllPermissions,
+      hasFeature,
     ]
   );
 

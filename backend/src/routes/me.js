@@ -14,6 +14,7 @@ import {
   markAllUserInAppNotificationsRead,
   markUserInAppNotificationReadById,
 } from "../services/me.notifications.service.js";
+import { listTenantFeatures } from "../services/me.features.service.js";
 
 const router = express.Router();
 
@@ -446,6 +447,33 @@ router.get("/notifications", requireAuth, async (req, res, next) => {
     });
 
     return res.json(result);
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// GET /me/features
+router.get("/features", requireAuth, async (req, res, next) => {
+  try {
+    const userId = req.user.userId;
+    const user = await loadUserById(userId);
+    if (!user) return res.status(404).json({ message: "User not found" });
+    const tenantId = requireTenantIdForPreferences(user);
+    const includeDisabled = parseOptionalBoolean(
+      req.query?.includeDisabled,
+      "includeDisabled"
+    );
+
+    const result = await listTenantFeatures({
+      tenantId,
+      includeDisabled: includeDisabled !== false,
+    });
+
+    return res.json({
+      tenantId,
+      userId: user.id,
+      ...result,
+    });
   } catch (err) {
     return next(err);
   }

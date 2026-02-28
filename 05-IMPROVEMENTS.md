@@ -59,7 +59,7 @@ Tag legend: `(hot: yes)` means likely touches conflict-prone files (`AppLayout.j
 
 - [x] PR-UX32 Invite flow (copy-link, no SMTP dependency) (implemented: migration `m076_user_invites_copy_link_flow` + tenant-safe invite creation API `POST /api/v1/security/invites` + token preview/accept endpoints `GET/POST /auth/invite/:token` + security user assignment copy-link invite UI + `/accept-invite` onboarding page)
 - [x] PR-UX33 Password reset token flow (implemented: migration `m077_password_reset_tokens` + auth reset APIs `POST /auth/password-reset/request`, `GET /auth/password-reset/:token`, `POST /auth/password-reset/:token/complete` + login forgot-password navigation + copy-link reset request page + token-driven reset page)
-- [ ] PR-UX34 Tenant feature flags (`tenant_features` + `/me/features`) (not started)
+- [x] PR-UX34 Tenant feature flags (`tenant_features` + `/me/features`) (implemented: migration `m078_tenant_feature_flags` + tenant feature service + `GET /me/features` endpoint + frontend `/me/features` client + auth context feature hydration with `hasFeature`)
 - [ ] PR-UX35 Usage + audit export endpoints/UI (not started)
 
 - [ ] PR-CORE02 Idempotency standardization for remaining risky endpoints (partial foundation exists)
@@ -157,11 +157,13 @@ Intentional not-yet-implemented placeholders (Stock, Fixed Assets, generic Repor
   smoke: `backend/scripts/test-ux-prux32-invite-flow-copy-link.js`
 - [x] PR-UX33 acceptance: users can request a password reset token link without SMTP, open `/reset-password?token=...`, pass token validation, and set a new password through token-complete endpoint flow
   smoke: `backend/scripts/test-ux-prux33-password-reset-token-flow.js`
+- [x] PR-UX34 acceptance: tenant feature flags are persisted in `tenant_features` and authenticated clients can resolve effective tenant features from `/me/features` for runtime feature gating
+  smoke: `backend/scripts/test-ux-prux34-tenant-feature-flags.js`
 - [x] PR-CORE05 acceptance: standardized user-facing error handling + copyable requestId/details
   smoke: `backend/scripts/test-ux-prcore05-error-envelope.js`
 - [x] PR-CORE01 acceptance: key list endpoints return consistent `rows + total + limit + offset` with `pagination` metadata
   smoke: `backend/scripts/test-ux-prcore01-pagination-contracts.js` (to add)
 
 ## Immediate Next Step
-- Proceed with `PR-UX34` (Tenant feature flags (`tenant_features` + `/me/features`)).
+- Proceed with `PR-UX35` (Usage + audit export endpoints/UI).
 - After each merged PR, update this tracker line from `[ ]` to `[x]` with a short `(implemented)` note.
