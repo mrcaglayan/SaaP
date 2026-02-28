@@ -34,6 +34,7 @@ import {
   getLifecycleStatusMeta,
 } from "../../lifecycle/lifecycleRules.js";
 import { useModuleReadiness } from "../../readiness/useModuleReadiness.js";
+import { exportRowsAsCsv } from "../../utils/csvExport.js";
 import {
   buildDocumentListQuery,
   buildDocumentMutationPayload,
@@ -74,9 +75,51 @@ const DOCUMENT_FILTER_CONTEXT_MAPPINGS = [
 
 const DOCUMENT_CREATE_CONTEXT_MAPPINGS = [{ stateKey: "legalEntityId" }];
 const DOCUMENT_FILTERS_STORAGE_SCOPE = "cari-documents.list";
+const DOCUMENT_EXPORT_COLUMNS = [
+  { header: "ID", value: (row) => row?.id },
+  { header: "Document No", value: (row) => firstDefinedRowValue(row, "documentNo", "document_no") },
+  { header: "Legal Entity ID", value: (row) => firstDefinedRowValue(row, "legalEntityId", "legal_entity_id") },
+  { header: "Counterparty ID", value: (row) => firstDefinedRowValue(row, "counterpartyId", "counterparty_id") },
+  {
+    header: "Counterparty Code",
+    value: (row) => firstDefinedRowValue(row, "counterpartyCodeSnapshot", "counterparty_code_snapshot"),
+  },
+  {
+    header: "Counterparty Name",
+    value: (row) => firstDefinedRowValue(row, "counterpartyNameSnapshot", "counterparty_name_snapshot"),
+  },
+  { header: "Direction", value: (row) => row?.direction },
+  { header: "Document Type", value: (row) => firstDefinedRowValue(row, "documentType", "document_type") },
+  { header: "Status", value: (row) => row?.status },
+  { header: "Document Date", value: (row) => firstDefinedRowValue(row, "documentDate", "document_date") },
+  { header: "Due Date", value: (row) => firstDefinedRowValue(row, "dueDateSnapshot", "due_date_snapshot") },
+  { header: "Amount Txn", value: (row) => firstDefinedRowValue(row, "amountTxn", "amount_txn") },
+  { header: "Amount Base", value: (row) => firstDefinedRowValue(row, "amountBase", "amount_base") },
+  { header: "Currency", value: (row) => firstDefinedRowValue(row, "currencyCodeSnapshot", "currency_code_snapshot") },
+  { header: "FX Rate", value: (row) => firstDefinedRowValue(row, "fxRateSnapshot", "fx_rate_snapshot") },
+  {
+    header: "Posted Journal Entry ID",
+    value: (row) => firstDefinedRowValue(row, "postedJournalEntryId", "posted_journal_entry_id"),
+  },
+  {
+    header: "Reversal Of Document ID",
+    value: (row) => firstDefinedRowValue(row, "reversalOfDocumentId", "reversal_of_document_id"),
+  },
+  { header: "Created At", value: (row) => firstDefinedRowValue(row, "createdAt", "created_at") },
+  { header: "Updated At", value: (row) => firstDefinedRowValue(row, "updatedAt", "updated_at") },
+];
 
 function todayIsoDate() {
   return new Date().toISOString().slice(0, 10);
+}
+
+function firstDefinedRowValue(row, ...keys) {
+  for (const key of keys) {
+    if (row?.[key] !== undefined && row?.[key] !== null) {
+      return row[key];
+    }
+  }
+  return "";
 }
 
 function toPositiveInt(value) {
@@ -1205,6 +1248,18 @@ export default function CariDocumentsPage() {
     }
   }
 
+  function handleExportDocumentListCsv() {
+    setListError("");
+    const exported = exportRowsAsCsv({
+      rows,
+      columns: DOCUMENT_EXPORT_COLUMNS,
+      fileName: `cari-documents-${todayIsoDate()}.csv`,
+    });
+    if (!exported) {
+      setListError("CSV export is only available in browser sessions.");
+    }
+  }
+
   if (!canRead) {
     return (
       <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
@@ -1251,6 +1306,14 @@ export default function CariDocumentsPage() {
         <div className="mt-3 flex gap-2">
           <button type="button" className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white" onClick={() => loadDocuments(filters)} disabled={listLoading}>{listLoading ? "Loading..." : "Refresh List"}</button>
           <button type="button" className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700" onClick={resetFilters} disabled={listLoading}>Reset Filters</button>
+          <button
+            type="button"
+            className="rounded-md border border-emerald-300 px-4 py-2 text-sm font-medium text-emerald-700 disabled:opacity-60"
+            onClick={handleExportDocumentListCsv}
+            disabled={listLoading || rows.length === 0}
+          >
+            Export CSV
+          </button>
         </div>
       </section>
 

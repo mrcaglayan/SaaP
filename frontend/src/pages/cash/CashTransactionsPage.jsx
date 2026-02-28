@@ -26,6 +26,7 @@ import {
   getLifecycleAllowedActions,
   getLifecycleStatusMeta,
 } from "../../lifecycle/lifecycleRules.js";
+import { exportRowsAsCsv } from "../../utils/csvExport.js";
 import CashControlModeBanner from "./CashControlModeBanner.jsx";
 
 const MANUAL_TXN_TYPES = [
@@ -70,10 +71,61 @@ const CASH_TRANSACTION_FILTER_CONTEXT_MAPPINGS = [
   { stateKey: "bookDateTo", contextKey: "dateTo" },
 ];
 const CASH_TRANSACTION_FILTERS_STORAGE_SCOPE = "cash-transactions.filters";
+const CASH_TRANSACTION_EXPORT_COLUMNS = [
+  { header: "ID", value: (row) => row?.id },
+  { header: "Transaction No", value: (row) => firstDefinedRowValue(row, "txn_no", "txnNo") },
+  { header: "Transaction Type", value: (row) => firstDefinedRowValue(row, "txn_type", "txnType") },
+  { header: "Status", value: (row) => row?.status },
+  { header: "Register ID", value: (row) => firstDefinedRowValue(row, "cash_register_id", "cashRegisterId") },
+  { header: "Register Code", value: (row) => firstDefinedRowValue(row, "cash_register_code", "cashRegisterCode") },
+  { header: "Register Name", value: (row) => firstDefinedRowValue(row, "cash_register_name", "cashRegisterName") },
+  { header: "Session ID", value: (row) => firstDefinedRowValue(row, "cash_session_id", "cashSessionId") },
+  { header: "Book Date", value: (row) => firstDefinedRowValue(row, "book_date", "bookDate") },
+  { header: "Amount", value: (row) => row?.amount },
+  { header: "Currency", value: (row) => firstDefinedRowValue(row, "currency_code", "currencyCode") },
+  { header: "Counterparty Type", value: (row) => firstDefinedRowValue(row, "counterparty_type", "counterpartyType") },
+  { header: "Counterparty ID", value: (row) => firstDefinedRowValue(row, "counterparty_id", "counterpartyId") },
+  { header: "Counter Account ID", value: (row) => firstDefinedRowValue(row, "counter_account_id", "counterAccountId") },
+  { header: "Counter Account Code", value: (row) => firstDefinedRowValue(row, "counter_account_code", "counterAccountCode") },
+  { header: "Counter Register ID", value: (row) => firstDefinedRowValue(row, "counter_cash_register_id", "counterCashRegisterId") },
+  {
+    header: "Transit Transfer ID",
+    value: (row) => firstDefinedRowValue(row, "cash_transit_transfer_id", "cashTransitTransferId"),
+  },
+  {
+    header: "Transit Status",
+    value: (row) => firstDefinedRowValue(row, "cash_transit_status", "cashTransitStatus"),
+  },
+  {
+    header: "Linked Settlement Batch ID",
+    value: (row) =>
+      firstDefinedRowValue(row, "linked_cari_settlement_batch_id", "linkedCariSettlementBatchId"),
+  },
+  {
+    header: "Linked Unapplied Cash ID",
+    value: (row) =>
+      firstDefinedRowValue(row, "linked_cari_unapplied_cash_id", "linkedCariUnappliedCashId"),
+  },
+  {
+    header: "Posted Journal Entry ID",
+    value: (row) => firstDefinedRowValue(row, "posted_journal_entry_id", "postedJournalEntryId"),
+  },
+  { header: "Override Reason", value: (row) => firstDefinedRowValue(row, "override_reason", "overrideReason") },
+  { header: "Created At", value: (row) => firstDefinedRowValue(row, "created_at", "createdAt") },
+];
 
 function toPositiveInt(value) {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function firstDefinedRowValue(row, ...keys) {
+  for (const key of keys) {
+    if (row?.[key] !== undefined && row?.[key] !== null) {
+      return row[key];
+    }
+  }
+  return "";
 }
 
 function toOptionalNumber(value) {
@@ -800,6 +852,30 @@ export default function CashTransactionsPage() {
     () => [...rows].sort((a, b) => Number(b?.id || 0) - Number(a?.id || 0)),
     [rows]
   );
+
+  function handleExportTransactionsCsv() {
+    setError("");
+    setErrorRequestId(null);
+    const exported = exportRowsAsCsv({
+      rows: transactionRows,
+      columns: CASH_TRANSACTION_EXPORT_COLUMNS,
+      fileName: `cash-transactions-${todayIsoDate()}.csv`,
+    });
+    if (!exported) {
+      setError(
+        t(
+          "cashTransactions.errors.csvExportUnavailable",
+          "CSV export is only available in browser sessions."
+        )
+      );
+      return;
+    }
+    setMessage(
+      t("cashTransactions.messages.exportedCsv", "CSV export ready ({{count}} rows).", {
+        count: transactionRows.length,
+      })
+    );
+  }
 
   function toListQuery(nextFilters) {
     return {
@@ -1887,6 +1963,14 @@ export default function CashTransactionsPage() {
               {loading
                 ? t("cashTransactions.actions.loading")
                 : t("cashTransactions.actions.refresh")}
+            </button>
+            <button
+              type="button"
+              onClick={handleExportTransactionsCsv}
+              disabled={loading || transactionRows.length === 0}
+              className="rounded-lg border border-emerald-300 px-3 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-50 disabled:opacity-60"
+            >
+              {t("cashTransactions.actions.exportCsv", "Export CSV")}
             </button>
           </div>
         </form>
