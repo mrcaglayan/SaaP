@@ -59,6 +59,7 @@ import migration068ExceptionWorkbenchSlaDueAt from "./m068_exception_workbench_s
 import migration069JournalSourceLinks from "./m069_journal_source_links.js";
 import migration070EvidenceStorageFoundation from "./m070_evidence_storage_foundation.js";
 import migration071EvidenceStorageCompression from "./m071_evidence_storage_compression.js";
+import migration072UserSavedViews from "./m072_user_saved_views.js";
 
 const migrations = [
   migration001GlobalMultiEntity,
@@ -122,6 +123,7 @@ const migrations = [
   migration069JournalSourceLinks,
   migration070EvidenceStorageFoundation,
   migration071EvidenceStorageCompression,
+  migration072UserSavedViews,
 ];
 
 export default migrations;

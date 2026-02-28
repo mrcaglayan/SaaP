@@ -1,8 +1,14 @@
 import express from "express";
 import { query } from "../db.js";
 import { requireAuth } from "../middleware/auth.js";
-import { badRequest } from "./_utils.js";
+import { badRequest, parsePositiveInt } from "./_utils.js";
 import { getUserPreferences, saveUserPreferences } from "../services/me.service.js";
+import {
+  createUserSavedView,
+  deleteUserSavedView,
+  listUserSavedViews,
+  updateUserSavedView,
+} from "../services/me.saved-views.service.js";
 
 const router = express.Router();
 
@@ -95,6 +101,98 @@ function parsePreferencesPatch(req) {
   return { workingContext };
 }
 
+function parseModuleCode(value, { required = false } = {}) {
+  const normalized = String(value || "")
+    .trim()
+    .toUpperCase();
+  if (!normalized) {
+    if (required) {
+      throw badRequest("moduleCode is required");
+    }
+    return "";
+  }
+  if (!/^[A-Z0-9][A-Z0-9._:-]{1,79}$/.test(normalized)) {
+    throw badRequest(
+      "moduleCode must be 2-80 chars and contain only A-Z, 0-9, ., _, :, -"
+    );
+  }
+  return normalized;
+}
+
+function parseSavedViewName(value, { required = false } = {}) {
+  const normalized = String(value || "").trim();
+  if (!normalized) {
+    if (required) {
+      throw badRequest("name is required");
+    }
+    return "";
+  }
+  if (normalized.length > 120) {
+    throw badRequest("name cannot exceed 120 characters");
+  }
+  return normalized;
+}
+
+function parseSavedViewDefinition(value, { required = false } = {}) {
+  if (value === undefined) {
+    if (required) {
+      throw badRequest("definition is required");
+    }
+    return undefined;
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw badRequest("definition must be an object");
+  }
+  return value;
+}
+
+function parseOptionalBoolean(value, fieldName) {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === true || value === false) {
+    return value;
+  }
+  const normalized = String(value).trim().toLowerCase();
+  if (normalized === "1" || normalized === "true") {
+    return true;
+  }
+  if (normalized === "0" || normalized === "false") {
+    return false;
+  }
+  throw badRequest(`${fieldName} must be boolean`);
+}
+
+function parseCreateSavedViewPayload(req) {
+  const body = req.body || {};
+  return {
+    moduleCode: parseModuleCode(body.moduleCode, { required: true }),
+    name: parseSavedViewName(body.name, { required: true }),
+    definition: parseSavedViewDefinition(body.definition, { required: true }),
+    isDefault: Boolean(parseOptionalBoolean(body.isDefault, "isDefault")),
+  };
+}
+
+function parseUpdateSavedViewPayload(req) {
+  const body = req.body || {};
+  const hasName = Object.prototype.hasOwnProperty.call(body, "name");
+  const hasDefinition = Object.prototype.hasOwnProperty.call(body, "definition");
+  const hasIsDefault = Object.prototype.hasOwnProperty.call(body, "isDefault");
+  if (!hasName && !hasDefinition && !hasIsDefault) {
+    throw badRequest("At least one saved view field is required");
+  }
+
+  return {
+    name: hasName ? parseSavedViewName(body.name, { required: true }) : undefined,
+    definition: hasDefinition
+      ? parseSavedViewDefinition(body.definition, { required: true })
+      : undefined,
+    isDefault: hasIsDefault
+      ? parseOptionalBoolean(body.isDefault, "isDefault")
+      : undefined,
+  };
+}
+
 // GET /me
 router.get("/", requireAuth, async (req, res, next) => {
   try {
@@ -156,6 +254,114 @@ router.put("/preferences", requireAuth, async (req, res, next) => {
       userId: user.id,
       preferences,
     });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// GET /me/saved-views
+router.get("/saved-views", requireAuth, async (req, res, next) => {
+  try {
+    const userId = req.user.userId;
+    const user = await loadUserById(userId);
+    if (!user) return res.status(404).json({ message: "User not found" });
+    const tenantId = requireTenantIdForPreferences(user);
+    const moduleCode = parseModuleCode(req.query?.moduleCode, { required: false });
+
+    const rows = await listUserSavedViews({
+      tenantId,
+      userId: user.id,
+      moduleCode: moduleCode || undefined,
+    });
+
+    return res.json({
+      rows,
+      total: rows.length,
+    });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// POST /me/saved-views
+router.post("/saved-views", requireAuth, async (req, res, next) => {
+  try {
+    const userId = req.user.userId;
+    const user = await loadUserById(userId);
+    if (!user) return res.status(404).json({ message: "User not found" });
+    const tenantId = requireTenantIdForPreferences(user);
+    const payload = parseCreateSavedViewPayload(req);
+
+    const row = await createUserSavedView({
+      tenantId,
+      userId: user.id,
+      moduleCode: payload.moduleCode,
+      name: payload.name,
+      definition: payload.definition,
+      isDefault: payload.isDefault,
+    });
+
+    return res.status(201).json({ row });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// PUT /me/saved-views/:savedViewId
+router.put("/saved-views/:savedViewId", requireAuth, async (req, res, next) => {
+  try {
+    const userId = req.user.userId;
+    const user = await loadUserById(userId);
+    if (!user) return res.status(404).json({ message: "User not found" });
+    const tenantId = requireTenantIdForPreferences(user);
+    const savedViewId = parsePositiveInt(req.params.savedViewId);
+    if (!savedViewId) {
+      throw badRequest("savedViewId is invalid");
+    }
+    const patch = parseUpdateSavedViewPayload(req);
+
+    const row = await updateUserSavedView({
+      tenantId,
+      userId: user.id,
+      savedViewId,
+      name: patch.name,
+      definition: patch.definition,
+      isDefault: patch.isDefault,
+    });
+
+    if (!row) {
+      return res.status(404).json({ message: "Saved view not found" });
+    }
+
+    return res.json({ row });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// DELETE /me/saved-views/:savedViewId
+router.delete("/saved-views/:savedViewId", requireAuth, async (req, res, next) => {
+  try {
+    const userId = req.user.userId;
+    const user = await loadUserById(userId);
+    if (!user) return res.status(404).json({ message: "User not found" });
+    const tenantId = requireTenantIdForPreferences(user);
+    const savedViewId = parsePositiveInt(req.params.savedViewId);
+    if (!savedViewId) {
+      throw badRequest("savedViewId is invalid");
+    }
+
+    const deleted = await deleteUserSavedView({
+      tenantId,
+      userId: user.id,
+      savedViewId,
+    });
+
+    if (!deleted) {
+      return res.status(404).json({ message: "Saved view not found" });
+    }
+
+    return res.json({ deleted: true });
   } catch (err) {
     return next(err);
   }
