@@ -1,9 +1,13 @@
-import { query } from "../db.js";
+import { query, withTransaction } from "../db.js";
 import { badRequest, parsePositiveInt } from "../routes/_utils.js";
 
 const SOURCE_REF_TYPE_CARI_DOCUMENT = "CARI_DOCUMENT";
 const STATUS_ACTIVE = "ACTIVE";
 const STATUS_DELETED = "DELETED";
+const NOTIFICATION_STATUS_UNREAD = "UNREAD";
+const NOTIFICATION_TYPE_INTERNAL_COMMENT_MENTION = "INTERNAL_COMMENT_MENTION";
+const MENTION_EMAIL_REGEX =
+  /(^|[\s(])@([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})(?=$|[\s),.;:!?])/gi;
 
 function normalizeText(value, label, maxLength, { required = false } = {}) {
   const normalized = String(value ?? "").trim();
@@ -46,6 +50,86 @@ function mapInternalCommentRow(row) {
     updatedAt: row.updated_at ?? null,
     deletedAt: row.deleted_at ?? null,
   };
+}
+
+function normalizeEmail(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase();
+}
+
+function extractMentionEmailsFromBody(value) {
+  const body = String(value || "");
+  const mentionEmails = new Set();
+  MENTION_EMAIL_REGEX.lastIndex = 0;
+  let match;
+  while ((match = MENTION_EMAIL_REGEX.exec(body)) !== null) {
+    const email = normalizeEmail(match[2]);
+    if (email) {
+      mentionEmails.add(email);
+    }
+  }
+  return Array.from(mentionEmails);
+}
+
+function toPreviewText(value, maxLength = 280) {
+  const normalized = String(value || "")
+    .trim()
+    .replace(/\s+/g, " ");
+  if (!normalized) {
+    return "";
+  }
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+  return `${normalized.slice(0, maxLength - 1).trimEnd()}...`;
+}
+
+function buildMentionNotificationTitle(actorLabel) {
+  const normalizedActor = String(actorLabel || "").trim();
+  if (normalizedActor) {
+    return `${normalizedActor} mentioned you in an internal comment`;
+  }
+  return "You were mentioned in an internal comment";
+}
+
+async function findTenantUserById({
+  tenantId,
+  userId,
+  runQuery = query,
+}) {
+  const result = await runQuery(
+    `SELECT id, email, name
+     FROM users
+     WHERE tenant_id = ?
+       AND id = ?
+     LIMIT 1`,
+    [tenantId, userId]
+  );
+  return result.rows?.[0] || null;
+}
+
+async function findTenantUsersByEmails({
+  tenantId,
+  emails,
+  runQuery = query,
+}) {
+  const normalizedEmails = Array.isArray(emails)
+    ? Array.from(new Set(emails.map(normalizeEmail).filter(Boolean)))
+    : [];
+  if (normalizedEmails.length === 0) {
+    return [];
+  }
+  const placeholders = normalizedEmails.map(() => "?").join(", ");
+  const result = await runQuery(
+    `SELECT id, email, name
+     FROM users
+     WHERE tenant_id = ?
+       AND status = 'ACTIVE'
+       AND LOWER(email) IN (${placeholders})`,
+    [tenantId, ...normalizedEmails]
+  );
+  return result.rows || [];
 }
 
 async function findCariDocumentRow({ tenantId, documentId, runQuery = query }) {
@@ -181,54 +265,144 @@ export async function createCariDocumentInternalComment({
   const documentId = parsePositiveInt(input?.documentId);
   const userId = parsePositiveInt(input?.userId ?? req?.user?.userId);
   const body = normalizeText(input?.body, "body", 2000, { required: true });
+  const mentionEmails = extractMentionEmailsFromBody(body);
 
   if (!userId) {
     throw badRequest("Authenticated user is required");
   }
 
-  const scope = await assertCariDocumentScope({
-    req,
-    tenantId,
-    documentId,
-    assertScopeAccess,
+  const row = await withTransaction(async (tx) => {
+    const scope = await assertCariDocumentScope({
+      req,
+      tenantId,
+      documentId,
+      assertScopeAccess,
+      runQuery: tx.query,
+    });
+
+    const insertResult = await tx.query(
+      `INSERT INTO internal_comments (
+         tenant_id,
+         legal_entity_id,
+         source_ref_type,
+         source_ref_id,
+         body,
+         status,
+         created_by_user_id
+       )
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [
+        scope.tenantId,
+        scope.legalEntityId,
+        SOURCE_REF_TYPE_CARI_DOCUMENT,
+        scope.documentId,
+        body,
+        STATUS_ACTIVE,
+        userId,
+      ]
+    );
+
+    const commentId = parsePositiveInt(insertResult.rows?.insertId);
+    if (!commentId) {
+      throw new Error("Internal comment record could not be created");
+    }
+
+    if (mentionEmails.length > 0) {
+      const actorUser = await findTenantUserById({
+        tenantId: scope.tenantId,
+        userId,
+        runQuery: tx.query,
+      });
+      const actorLabel =
+        String(actorUser?.name || "").trim() ||
+        String(actorUser?.email || "").trim() ||
+        `User #${userId}`;
+      const mentionedUsers = await findTenantUsersByEmails({
+        tenantId: scope.tenantId,
+        emails: mentionEmails,
+        runQuery: tx.query,
+      });
+      const mentionedUserByEmail = new Map(
+        mentionedUsers.map((row) => [normalizeEmail(row?.email), row])
+      );
+      const notificationTitle = buildMentionNotificationTitle(actorLabel);
+      const previewText = toPreviewText(body, 320);
+      const notificationBody = previewText ? `Comment: ${previewText}` : null;
+
+      for (const email of mentionEmails) {
+        const mentionedUser = mentionedUserByEmail.get(email);
+        const mentionedUserId = parsePositiveInt(mentionedUser?.id);
+        if (!mentionedUserId || mentionedUserId === userId) {
+          continue;
+        }
+
+        const mentionToken = `@${email}`;
+        await tx.query(
+          `INSERT INTO internal_comment_mentions (
+             tenant_id,
+             internal_comment_id,
+             mentioned_user_id,
+             mention_token
+           )
+           VALUES (?, ?, ?, ?)
+           ON DUPLICATE KEY UPDATE
+             mention_token = VALUES(mention_token)`,
+          [scope.tenantId, commentId, mentionedUserId, mentionToken]
+        );
+
+        const payload = {
+          version: 1,
+          internalCommentId: commentId,
+          mentionToken,
+          actorUserId: userId,
+          actorUserName: actorUser?.name || null,
+          actorUserEmail: actorUser?.email || null,
+          sourceRefType: SOURCE_REF_TYPE_CARI_DOCUMENT,
+          sourceRefId: scope.documentId,
+        };
+
+        await tx.query(
+          `INSERT INTO in_app_notifications (
+             tenant_id,
+             user_id,
+             notification_type,
+             title,
+             body,
+             status,
+             source_ref_type,
+             source_ref_id,
+             source_event_id,
+             payload_json
+           )
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS JSON))`,
+          [
+            scope.tenantId,
+            mentionedUserId,
+            NOTIFICATION_TYPE_INTERNAL_COMMENT_MENTION,
+            notificationTitle,
+            notificationBody,
+            NOTIFICATION_STATUS_UNREAD,
+            SOURCE_REF_TYPE_CARI_DOCUMENT,
+            scope.documentId,
+            commentId,
+            JSON.stringify(payload),
+          ]
+        );
+      }
+    }
+
+    const created = await findCariDocumentInternalCommentById({
+      tenantId: scope.tenantId,
+      legalEntityId: scope.legalEntityId,
+      documentId: scope.documentId,
+      commentId,
+      runQuery: tx.query,
+    });
+    if (!created) {
+      throw new Error("Internal comment record readback failed");
+    }
+    return created;
   });
-
-  const insertResult = await query(
-    `INSERT INTO internal_comments (
-       tenant_id,
-       legal_entity_id,
-       source_ref_type,
-       source_ref_id,
-       body,
-       status,
-       created_by_user_id
-     )
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [
-      scope.tenantId,
-      scope.legalEntityId,
-      SOURCE_REF_TYPE_CARI_DOCUMENT,
-      scope.documentId,
-      body,
-      STATUS_ACTIVE,
-      userId,
-    ]
-  );
-
-  const commentId = parsePositiveInt(insertResult.rows?.insertId);
-  if (!commentId) {
-    throw new Error("Internal comment record could not be created");
-  }
-
-  const row = await findCariDocumentInternalCommentById({
-    tenantId: scope.tenantId,
-    legalEntityId: scope.legalEntityId,
-    documentId: scope.documentId,
-    commentId,
-  });
-  if (!row) {
-    throw new Error("Internal comment record readback failed");
-  }
 
   return mapInternalCommentRow(row);
 }

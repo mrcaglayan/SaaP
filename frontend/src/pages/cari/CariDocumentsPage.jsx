@@ -11,8 +11,10 @@ import {
   listCariDocumentComments,
   listCariDocumentEvidence,
   listCariDocuments,
+  getCariDocumentOpsStatus,
   postCariDocument,
   reverseCariDocument,
+  upsertCariDocumentOpsStatus,
   uploadCariDocumentEvidenceContent,
   updateCariDocument,
 } from "../../api/cariDocuments.js";
@@ -616,6 +618,16 @@ export default function CariDocumentsPage() {
   const [internalCommentsMessage, setInternalCommentsMessage] = useState("");
   const [internalCommentBody, setInternalCommentBody] = useState("");
   const [internalCommentSaving, setInternalCommentSaving] = useState(false);
+  const [opsStatusRow, setOpsStatusRow] = useState(null);
+  const [opsStatusLoading, setOpsStatusLoading] = useState(false);
+  const [opsStatusError, setOpsStatusError] = useState("");
+  const [opsStatusMessage, setOpsStatusMessage] = useState("");
+  const [opsStatusSaving, setOpsStatusSaving] = useState(false);
+  const [opsStatusForm, setOpsStatusForm] = useState({
+    opsStatus: "OK",
+    blockedReason: "",
+    note: "",
+  });
   const [evidenceRows, setEvidenceRows] = useState([]);
   const [evidenceLoading, setEvidenceLoading] = useState(false);
   const [evidenceError, setEvidenceError] = useState("");
@@ -804,6 +816,7 @@ export default function CariDocumentsPage() {
   const canReverseSelected = Boolean(selectedSnapshot && isPosted(selectedSnapshot) && canReverse);
   const canAttachEvidence = Boolean(selectedSnapshot && canUpdate);
   const canWriteInternalComments = Boolean(selectedSnapshot && canUpdate);
+  const canWriteOpsStatus = Boolean(selectedSnapshot && canUpdate);
   const selectedDocumentLifecycleMeta = useMemo(
     () => getLifecycleStatusMeta("cariDocument", selectedSnapshot?.status),
     [selectedSnapshot?.status]
@@ -1378,6 +1391,55 @@ export default function CariDocumentsPage() {
 
   useEffect(() => {
     const documentId = selectedDocumentNumericId;
+    setOpsStatusError("");
+    setOpsStatusMessage("");
+    setOpsStatusRow(null);
+    setOpsStatusForm({
+      opsStatus: "OK",
+      blockedReason: "",
+      note: "",
+    });
+
+    if (!canRead || !documentId) {
+      setOpsStatusLoading(false);
+      return;
+    }
+
+    let active = true;
+    async function loadOpsStatus() {
+      setOpsStatusLoading(true);
+      try {
+        const response = await getCariDocumentOpsStatus(documentId);
+        if (!active) {
+          return;
+        }
+        const row = response?.row || null;
+        setOpsStatusRow(row);
+        setOpsStatusForm({
+          opsStatus: String(row?.opsStatus || "OK").trim().toUpperCase() || "OK",
+          blockedReason: String(row?.blockedReason || ""),
+          note: String(row?.note || ""),
+        });
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+        setOpsStatusError(normalizeApiError(error, "Failed to load ops status note."));
+      } finally {
+        if (active) {
+          setOpsStatusLoading(false);
+        }
+      }
+    }
+
+    loadOpsStatus();
+    return () => {
+      active = false;
+    };
+  }, [canRead, selectedDocumentNumericId]);
+
+  useEffect(() => {
+    const documentId = selectedDocumentNumericId;
     setInternalCommentsError("");
     setInternalCommentsMessage("");
     setInternalCommentBody("");
@@ -1466,6 +1528,53 @@ export default function CariDocumentsPage() {
     }
     setDocumentListPage(documentListTotalPages);
   }, [documentListPage, documentListTotalPages]);
+
+  async function handleSaveOpsStatus(event) {
+    event.preventDefault();
+    const documentId = selectedDocumentNumericId;
+    if (!documentId || !canWriteOpsStatus) {
+      setOpsStatusError(
+        "Ops status update requires selected document and permission: cari.doc.update."
+      );
+      return;
+    }
+
+    const opsStatus = String(opsStatusForm?.opsStatus || "").trim().toUpperCase();
+    const blockedReason = String(opsStatusForm?.blockedReason || "").trim();
+    const note = String(opsStatusForm?.note || "").trim();
+
+    if (!["OK", "AT_RISK", "BLOCKED"].includes(opsStatus)) {
+      setOpsStatusError("opsStatus must be OK, AT_RISK, or BLOCKED.");
+      return;
+    }
+    if (opsStatus === "BLOCKED" && !blockedReason) {
+      setOpsStatusError("blockedReason is required when opsStatus=BLOCKED.");
+      return;
+    }
+
+    setOpsStatusSaving(true);
+    setOpsStatusError("");
+    setOpsStatusMessage("");
+    try {
+      const response = await upsertCariDocumentOpsStatus(documentId, {
+        opsStatus,
+        blockedReason: blockedReason || null,
+        note: note || null,
+      });
+      const row = response?.row || null;
+      setOpsStatusRow(row);
+      setOpsStatusForm({
+        opsStatus: String(row?.opsStatus || "OK").trim().toUpperCase() || "OK",
+        blockedReason: String(row?.blockedReason || ""),
+        note: String(row?.note || ""),
+      });
+      setOpsStatusMessage("Ops status note updated.");
+    } catch (error) {
+      setOpsStatusError(normalizeApiError(error, "Failed to update ops status note."));
+    } finally {
+      setOpsStatusSaving(false);
+    }
+  }
 
   async function refreshInternalComments(documentId) {
     const response = await listCariDocumentComments(documentId);
@@ -2839,6 +2948,86 @@ export default function CariDocumentsPage() {
                   </div>
 
                   <div>
+                    <p className="font-semibold text-slate-700">Ops status note / blocked reason</p>
+                    {opsStatusError ? (
+                      <p className="mt-1 text-rose-700">{opsStatusError}</p>
+                    ) : null}
+                    {opsStatusMessage ? (
+                      <p className="mt-1 text-emerald-700">{opsStatusMessage}</p>
+                    ) : null}
+                    {opsStatusLoading ? (
+                      <p className="mt-1 text-slate-600">Loading ops status...</p>
+                    ) : null}
+                    {!opsStatusLoading ? (
+                      <p className="mt-1 text-slate-600">
+                        Current: {opsStatusRow?.opsStatus || "OK"}{" "}
+                        {opsStatusRow?.updatedAt ? `(updated ${formatDateTime(opsStatusRow.updatedAt)})` : ""}
+                      </p>
+                    ) : null}
+
+                    {canWriteOpsStatus ? (
+                      <form
+                        onSubmit={handleSaveOpsStatus}
+                        className="mt-2 space-y-2 rounded border border-slate-200 bg-white p-2"
+                      >
+                        <label className="block text-[11px] font-semibold uppercase tracking-wide text-slate-600">
+                          Ops Status
+                          <select
+                            className="mt-1 w-full rounded border border-slate-300 px-2 py-1 text-xs font-normal"
+                            value={opsStatusForm.opsStatus}
+                            onChange={(event) =>
+                              setOpsStatusForm((prev) => ({
+                                ...prev,
+                                opsStatus: String(event.target.value || "").trim().toUpperCase(),
+                              }))
+                            }
+                            disabled={opsStatusSaving}
+                          >
+                            <option value="OK">OK</option>
+                            <option value="AT_RISK">AT_RISK</option>
+                            <option value="BLOCKED">BLOCKED</option>
+                          </select>
+                        </label>
+                        <input
+                          type="text"
+                          className="w-full rounded border border-slate-300 px-2 py-1 text-xs"
+                          placeholder="Blocked reason (required when status=BLOCKED)"
+                          value={opsStatusForm.blockedReason}
+                          onChange={(event) =>
+                            setOpsStatusForm((prev) => ({
+                              ...prev,
+                              blockedReason: event.target.value,
+                            }))
+                          }
+                          disabled={opsStatusSaving}
+                        />
+                        <textarea
+                          className="w-full rounded border border-slate-300 px-2 py-1 text-xs"
+                          placeholder="Ops note (optional)"
+                          rows={3}
+                          value={opsStatusForm.note}
+                          onChange={(event) =>
+                            setOpsStatusForm((prev) => ({
+                              ...prev,
+                              note: event.target.value,
+                            }))
+                          }
+                          disabled={opsStatusSaving}
+                        />
+                        <button
+                          type="submit"
+                          className="rounded border border-slate-300 bg-slate-50 px-2 py-1 text-[11px] font-semibold text-slate-700 disabled:opacity-60"
+                          disabled={opsStatusSaving}
+                        >
+                          {opsStatusSaving ? "Saving..." : "Save Ops Status"}
+                        </button>
+                      </form>
+                    ) : (
+                      <p className="mt-1 text-slate-500">Missing permission: cari.doc.update</p>
+                    )}
+                  </div>
+
+                  <div>
                     <p className="font-semibold text-slate-700">Internal comments</p>
                     {internalCommentsError ? (
                       <p className="mt-1 text-rose-700">{internalCommentsError}</p>
@@ -2857,7 +3046,7 @@ export default function CariDocumentsPage() {
                       >
                         <textarea
                           className="w-full rounded border border-slate-300 px-2 py-1 text-xs"
-                          placeholder="Add internal comment..."
+                          placeholder="Add internal comment... Use @email to mention."
                           rows={3}
                           value={internalCommentBody}
                           onChange={(event) => {
@@ -2874,6 +3063,10 @@ export default function CariDocumentsPage() {
                         >
                           {internalCommentSaving ? "Adding..." : "Add Comment"}
                         </button>
+                        <p className="text-[11px] text-slate-500">
+                          Mention teammates with <span className="font-mono">@email</span> to
+                          send in-app notifications.
+                        </p>
                       </form>
                     ) : (
                       <p className="mt-1 text-slate-500">Missing permission: cari.doc.update</p>

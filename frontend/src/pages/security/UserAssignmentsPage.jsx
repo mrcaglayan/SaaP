@@ -4,7 +4,7 @@ import {
   listGroupCompanies,
   listLegalEntities,
   listOperatingUnits,
-  createSecurityUser,
+  createSecurityInvite,
   createRoleAssignment,
   deleteRoleAssignment,
   listRoleAssignments,
@@ -34,9 +34,8 @@ export default function UserAssignmentsPage() {
   const [userForm, setUserForm] = useState({
     name: "",
     email: "",
-    password: "",
-    status: "ACTIVE",
   });
+  const [inviteLink, setInviteLink] = useState("");
   const [form, setForm] = useState({
     userId: "",
     roleId: "",
@@ -155,24 +154,23 @@ export default function UserAssignmentsPage() {
     setSaving(true);
     setError("");
     setMessage("");
+    setInviteLink("");
     try {
-      const response = await createSecurityUser({
+      const response = await createSecurityInvite({
         name: userForm.name.trim(),
         email: userForm.email.trim(),
-        password: userForm.password,
-        status: userForm.status,
       });
 
-      const createdUserId = Number(response?.id || 0);
+      const createdUserId = Number(response?.invite?.userId || 0);
       if (createdUserId > 0) {
         setForm((prev) => ({ ...prev, userId: String(createdUserId) }));
       }
       setUserForm({
         name: "",
         email: "",
-        password: "",
-        status: "ACTIVE",
       });
+      const createdInviteLink = String(response?.invite?.inviteUrl || "");
+      setInviteLink(createdInviteLink);
       setMessage(t("userAssignments.userCreateSuccess"));
       await loadData();
     } catch (err) {
@@ -261,7 +259,7 @@ export default function UserAssignmentsPage() {
         <h2 className="mb-3 text-sm font-semibold text-slate-700">
           {t("userAssignments.createUser.title")}
         </h2>
-        <form onSubmit={handleCreateUser} className="grid gap-3 md:grid-cols-5">
+        <form onSubmit={handleCreateUser} className="grid gap-3 md:grid-cols-3">
           <input
             type="text"
             value={userForm.name}
@@ -282,29 +280,6 @@ export default function UserAssignmentsPage() {
             placeholder={t("userAssignments.createUser.email")}
             required
           />
-          <input
-            type="password"
-            minLength={8}
-            value={userForm.password}
-            onChange={(event) =>
-              setUserForm((prev) => ({ ...prev, password: event.target.value }))
-            }
-            className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-            placeholder={t("userAssignments.createUser.password")}
-            required
-          />
-          <select
-            value={userForm.status}
-            onChange={(event) =>
-              setUserForm((prev) => ({ ...prev, status: event.target.value }))
-            }
-            className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-          >
-            <option value="ACTIVE">{t("userAssignments.createUser.statusActive")}</option>
-            <option value="DISABLED">
-              {t("userAssignments.createUser.statusDisabled")}
-            </option>
-          </select>
           <button
             type="submit"
             disabled={saving || !canUpsertAssignments}
@@ -315,6 +290,30 @@ export default function UserAssignmentsPage() {
               : t("userAssignments.createUser.submit")}
           </button>
         </form>
+        {inviteLink ? (
+          <div className="mt-3 grid gap-2 rounded-lg border border-sky-200 bg-sky-50 p-3">
+            <div className="text-xs font-semibold text-sky-800">
+              {t("userAssignments.createUser.inviteLinkReady")}
+            </div>
+            <div className="break-all rounded-md border border-sky-200 bg-white px-2 py-1 text-xs text-slate-700">
+              {inviteLink}
+            </div>
+            <button
+              type="button"
+              className="w-fit rounded-md border border-sky-300 px-3 py-1 text-xs font-semibold text-sky-800 hover:bg-sky-100"
+              onClick={async () => {
+                try {
+                  await navigator.clipboard.writeText(inviteLink);
+                  setMessage(t("userAssignments.createUser.inviteCopied"));
+                } catch {
+                  setError(t("userAssignments.createUser.inviteCopyFailed"));
+                }
+              }}
+            >
+              {t("userAssignments.createUser.copyInviteLink")}
+            </button>
+          </div>
+        ) : null}
       </section>
 
       <form

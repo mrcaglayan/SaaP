@@ -61,6 +61,10 @@ import migration070EvidenceStorageFoundation from "./m070_evidence_storage_found
 import migration071EvidenceStorageCompression from "./m071_evidence_storage_compression.js";
 import migration072UserSavedViews from "./m072_user_saved_views.js";
 import migration073InternalCommentsV1 from "./m073_internal_comments_v1.js";
+import migration074MentionsAndInAppNotifications from "./m074_mentions_and_in_app_notifications.js";
+import migration075OpsStatusNoteBlockedReason from "./m075_ops_status_note_blocked_reason.js";
+import migration076UserInvitesCopyLinkFlow from "./m076_user_invites_copy_link_flow.js";
+import migration077PasswordResetTokens from "./m077_password_reset_tokens.js";
 
 const migrations = [
   migration001GlobalMultiEntity,
@@ -126,6 +130,10 @@ const migrations = [
   migration071EvidenceStorageCompression,
   migration072UserSavedViews,
   migration073InternalCommentsV1,
+  migration074MentionsAndInAppNotifications,
+  migration075OpsStatusNoteBlockedReason,
+  migration076UserInvitesCopyLinkFlow,
+  migration077PasswordResetTokens,
 ];
 
 export default migrations;

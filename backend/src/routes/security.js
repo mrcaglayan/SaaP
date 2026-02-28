@@ -17,6 +17,7 @@ import {
   parsePositiveInt,
   resolveTenantId,
 } from "./_utils.js";
+import { createInviteForTenantUser } from "../services/userInvites.service.js";
 
 const router = express.Router();
 
@@ -355,6 +356,45 @@ router.post(
       ok: true,
       id: createdUserId,
       tenantId,
+    });
+  })
+);
+
+router.post(
+  "/invites",
+  requirePermission("security.role_assignment.upsert"),
+  asyncHandler(async (req, res) => {
+    const tenantId = resolveTenantId(req);
+    if (!tenantId) {
+      throw badRequest("tenantId is required");
+    }
+    assertRequiredFields(req.body, ["email", "name"]);
+
+    const invite = await createInviteForTenantUser({
+      tenantId,
+      actorUserId: parsePositiveInt(req.user?.userId),
+      email: req.body.email,
+      name: req.body.name,
+    });
+
+    await logRbacAuditEvent(req, {
+      tenantId,
+      targetUserId: invite.userId,
+      action: "user.invite.create",
+      resourceType: "user_invite",
+      resourceId: invite.id,
+      scopeType: "TENANT",
+      scopeId: tenantId,
+      payload: {
+        userId: invite.userId,
+        email: invite.email,
+        expiresAt: invite.expiresAt,
+      },
+    });
+
+    return res.status(201).json({
+      ok: true,
+      invite,
     });
   })
 );

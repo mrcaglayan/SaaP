@@ -12,6 +12,15 @@ import {
   getAuthCookieName,
   getAuthCookieOptions,
 } from "../auth/cookieSession.js";
+import {
+  acceptInviteByToken,
+  getInvitePreviewByToken,
+} from "../services/userInvites.service.js";
+import {
+  completePasswordResetByToken,
+  getPasswordResetPreviewByToken,
+  requestPasswordResetByEmail,
+} from "../services/passwordReset.service.js";
 
 const router = express.Router();
 const AUTH_TOKEN_EXPIRES_IN = String(process.env.AUTH_TOKEN_EXPIRES_IN || "7d");
@@ -111,6 +120,83 @@ router.post("/login", async (req, res, next) => {
 router.post("/logout", (req, res) => {
   res.clearCookie(getAuthCookieName(), getAuthCookieClearOptions());
   return res.json({ ok: true });
+});
+
+// POST /auth/password-reset/request
+router.post("/password-reset/request", async (req, res, next) => {
+  try {
+    const email = String(req.body?.email || "").trim();
+    if (!email) {
+      return res.status(400).json({ message: "email is required" });
+    }
+    const payload = await requestPasswordResetByEmail(email);
+    return res.json(payload);
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// GET /auth/password-reset/:token
+router.get("/password-reset/:token", async (req, res, next) => {
+  try {
+    const token = String(req.params.token || "").trim();
+    const reset = await getPasswordResetPreviewByToken(token);
+    if (!reset) {
+      return res.status(404).json({ message: "Invalid reset token" });
+    }
+    return res.json({
+      ok: true,
+      reset,
+    });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// POST /auth/password-reset/:token/complete
+router.post("/password-reset/:token/complete", async (req, res, next) => {
+  try {
+    const token = String(req.params.token || "").trim();
+    const payload = await completePasswordResetByToken({
+      rawToken: token,
+      password: req.body?.password,
+    });
+    return res.json(payload);
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// GET /auth/invite/:token
+router.get("/invite/:token", async (req, res, next) => {
+  try {
+    const token = String(req.params.token || "").trim();
+    const invite = await getInvitePreviewByToken(token);
+    if (!invite) {
+      return res.status(404).json({ message: "Invalid invite token" });
+    }
+    return res.json({
+      ok: true,
+      invite,
+    });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// POST /auth/invite/:token/accept
+router.post("/invite/:token/accept", async (req, res, next) => {
+  try {
+    const token = String(req.params.token || "").trim();
+    const payload = await acceptInviteByToken({
+      rawToken: token,
+      password: req.body?.password,
+      name: req.body?.name,
+    });
+    return res.json(payload);
+  } catch (err) {
+    return next(err);
+  }
 });
 
 export default router;

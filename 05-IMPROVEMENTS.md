@@ -54,11 +54,11 @@ Tag legend: `(hot: yes)` means likely touches conflict-prone files (`AppLayout.j
 - [x] PR-UX28 Cash transaction templates/presets (implemented: Cash Transactions create section now supports server-side reusable create templates plus quick presets for common transaction patterns)
 
 - [x] PR-UX29 Internal comments v1 (implemented: migration `m073_internal_comments_v1` + CARI document internal comments API (`GET/POST /api/v1/cari/documents/:documentId/comments`) + related-panel comment list/add UI)
-- [ ] PR-UX30 Mentions + in-app notifications (not started)
-- [ ] PR-UX31 Ops status note / blocked reason (not started)
+- [x] PR-UX30 Mentions + in-app notifications (implemented: migration `m074_mentions_and_in_app_notifications` + internal comment `@email` mention parsing with mention-linked in-app notifications + `/me/notifications` list/read/read-all APIs + dashboard in-app notification widget)
+- [x] PR-UX31 Ops status note / blocked reason (implemented: migration `m075_ops_status_note_blocked_reason` + CARI document ops-status API (`GET/PUT /api/v1/cari/documents/:documentId/ops-status`) + related-panel ops status note/blocked reason editor)
 
-- [ ] PR-UX32 Invite flow (copy-link, no SMTP dependency) (not started)
-- [ ] PR-UX33 Password reset token flow (not started)
+- [x] PR-UX32 Invite flow (copy-link, no SMTP dependency) (implemented: migration `m076_user_invites_copy_link_flow` + tenant-safe invite creation API `POST /api/v1/security/invites` + token preview/accept endpoints `GET/POST /auth/invite/:token` + security user assignment copy-link invite UI + `/accept-invite` onboarding page)
+- [x] PR-UX33 Password reset token flow (implemented: migration `m077_password_reset_tokens` + auth reset APIs `POST /auth/password-reset/request`, `GET /auth/password-reset/:token`, `POST /auth/password-reset/:token/complete` + login forgot-password navigation + copy-link reset request page + token-driven reset page)
 - [ ] PR-UX34 Tenant feature flags (`tenant_features` + `/me/features`) (not started)
 - [ ] PR-UX35 Usage + audit export endpoints/UI (not started)
 
@@ -149,11 +149,19 @@ Intentional not-yet-implemented placeholders (Stock, Fixed Assets, generic Repor
   smoke: `backend/scripts/test-ux-prux28-cash-templates-presets.js`
 - [x] PR-UX29 acceptance: selected CARI document related panel exposes internal comments list/add interactions backed by tenant/scope-safe server persistence and permission-aware create controls (`cari.doc.read`/`cari.doc.update`)
   smoke: `backend/scripts/test-ux-prux29-internal-comments-v1.js`
+- [x] PR-UX30 acceptance: internal comments support `@email` mentions that create in-app notifications for mentioned users, users can view unread notifications in-app and mark individual/all notifications read via `/me/notifications`
+  smoke: `backend/scripts/test-ux-prux30-mentions-and-inapp-notifications.js`
+- [x] PR-UX31 acceptance: CARI document detail related panel exposes ops status note controls (`OK/AT_RISK/BLOCKED`) with blocked reason enforcement for `BLOCKED`, persisted through tenant/scope-safe API and permission-aware update controls
+  smoke: `backend/scripts/test-ux-prux31-ops-status-note-blocked-reason.js`
+- [x] PR-UX32 acceptance: admins can generate copyable invite links without SMTP, invitees can open `/accept-invite?token=...` to set password and activate account through token-validated auth endpoint flow
+  smoke: `backend/scripts/test-ux-prux32-invite-flow-copy-link.js`
+- [x] PR-UX33 acceptance: users can request a password reset token link without SMTP, open `/reset-password?token=...`, pass token validation, and set a new password through token-complete endpoint flow
+  smoke: `backend/scripts/test-ux-prux33-password-reset-token-flow.js`
 - [x] PR-CORE05 acceptance: standardized user-facing error handling + copyable requestId/details
   smoke: `backend/scripts/test-ux-prcore05-error-envelope.js`
 - [x] PR-CORE01 acceptance: key list endpoints return consistent `rows + total + limit + offset` with `pagination` metadata
   smoke: `backend/scripts/test-ux-prcore01-pagination-contracts.js` (to add)
 
 ## Immediate Next Step
-- Proceed with `PR-UX30` (Mentions + in-app notifications).
+- Proceed with `PR-UX34` (Tenant feature flags (`tenant_features` + `/me/features`)).
 - After each merged PR, update this tracker line from `[ ]` to `[x]` with a short `(implemented)` note.

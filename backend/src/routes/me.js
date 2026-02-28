@@ -9,6 +9,11 @@ import {
   listUserSavedViews,
   updateUserSavedView,
 } from "../services/me.saved-views.service.js";
+import {
+  listUserInAppNotifications,
+  markAllUserInAppNotificationsRead,
+  markUserInAppNotificationReadById,
+} from "../services/me.notifications.service.js";
 
 const router = express.Router();
 
@@ -161,6 +166,45 @@ function parseOptionalBoolean(value, fieldName) {
     return false;
   }
   throw badRequest(`${fieldName} must be boolean`);
+}
+
+function parseNotificationsStatus(value) {
+  const normalized = String(value || "UNREAD")
+    .trim()
+    .toUpperCase();
+  if (normalized === "UNREAD" || normalized === "READ" || normalized === "ALL") {
+    return normalized;
+  }
+  throw badRequest("status must be UNREAD, READ, or ALL");
+}
+
+function parseNotificationsSourceRefType(value) {
+  const normalized = String(value || "")
+    .trim()
+    .toUpperCase();
+  if (!normalized) {
+    return "";
+  }
+  if (!/^[A-Z0-9][A-Z0-9._:-]{1,59}$/.test(normalized)) {
+    throw badRequest("sourceRefType is invalid");
+  }
+  return normalized;
+}
+
+function parseNotificationsLimit(value, fallback = 25) {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    return fallback;
+  }
+  return Math.min(parsed, 200);
+}
+
+function parseNotificationsOffset(value, fallback = 0) {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    return fallback;
+  }
+  return parsed;
 }
 
 function parseCreateSavedViewPayload(req) {
@@ -362,6 +406,94 @@ router.delete("/saved-views/:savedViewId", requireAuth, async (req, res, next) =
     }
 
     return res.json({ deleted: true });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// GET /me/notifications
+router.get("/notifications", requireAuth, async (req, res, next) => {
+  try {
+    const userId = req.user.userId;
+    const user = await loadUserById(userId);
+    if (!user) return res.status(404).json({ message: "User not found" });
+    const tenantId = requireTenantIdForPreferences(user);
+
+    const status = parseNotificationsStatus(req.query?.status);
+    const sourceRefType = parseNotificationsSourceRefType(req.query?.sourceRefType);
+    const sourceRefIdRaw = req.query?.sourceRefId;
+    const sourceRefId =
+      sourceRefIdRaw === undefined || sourceRefIdRaw === null || sourceRefIdRaw === ""
+        ? undefined
+        : parsePositiveInt(sourceRefIdRaw);
+    if (
+      sourceRefIdRaw !== undefined &&
+      sourceRefIdRaw !== null &&
+      sourceRefIdRaw !== "" &&
+      !sourceRefId
+    ) {
+      throw badRequest("sourceRefId must be a positive integer");
+    }
+
+    const result = await listUserInAppNotifications({
+      tenantId,
+      userId: user.id,
+      status,
+      sourceRefType: sourceRefType || undefined,
+      sourceRefId,
+      limit: parseNotificationsLimit(req.query?.limit),
+      offset: parseNotificationsOffset(req.query?.offset),
+    });
+
+    return res.json(result);
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// PUT /me/notifications/read-all
+router.put("/notifications/read-all", requireAuth, async (req, res, next) => {
+  try {
+    const userId = req.user.userId;
+    const user = await loadUserById(userId);
+    if (!user) return res.status(404).json({ message: "User not found" });
+    const tenantId = requireTenantIdForPreferences(user);
+
+    const updatedCount = await markAllUserInAppNotificationsRead({
+      tenantId,
+      userId: user.id,
+    });
+
+    return res.json({
+      updatedCount,
+    });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// PUT /me/notifications/:notificationId/read
+router.put("/notifications/:notificationId/read", requireAuth, async (req, res, next) => {
+  try {
+    const userId = req.user.userId;
+    const user = await loadUserById(userId);
+    if (!user) return res.status(404).json({ message: "User not found" });
+    const tenantId = requireTenantIdForPreferences(user);
+    const notificationId = parsePositiveInt(req.params.notificationId);
+    if (!notificationId) {
+      throw badRequest("notificationId is invalid");
+    }
+
+    const row = await markUserInAppNotificationReadById({
+      tenantId,
+      userId: user.id,
+      notificationId,
+    });
+    if (!row) {
+      return res.status(404).json({ message: "Notification not found" });
+    }
+
+    return res.json({ row });
   } catch (err) {
     return next(err);
   }

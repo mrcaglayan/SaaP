@@ -41,3 +41,18 @@ export async function deleteMeSavedView(savedViewId) {
   const response = await api.delete(`/me/saved-views/${savedViewId}`);
   return response.data;
 }
+
+export async function listMeNotifications(params = {}) {
+  const response = await api.get(`/me/notifications${toQueryString(params)}`);
+  return response.data;
+}
+
+export async function markMeNotificationRead(notificationId) {
+  const response = await api.put(`/me/notifications/${notificationId}/read`, {});
+  return response.data;
+}
+
+export async function markAllMeNotificationsRead() {
+  const response = await api.put("/me/notifications/read-all", {});
+  return response.data;
+}

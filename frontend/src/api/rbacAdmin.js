@@ -29,6 +29,11 @@ export async function createSecurityUser(payload) {
   return response.data;
 }
 
+export async function createSecurityInvite(payload) {
+  const response = await api.post("/api/v1/security/invites", payload);
+  return response.data;
+}
+
 export async function listRoles(params = {}) {
   const response = await api.get(`/api/v1/security/roles${toQueryString(params)}`);
   return response.data;

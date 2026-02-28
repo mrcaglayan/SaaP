@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Navigate, useLocation, useNavigate } from "react-router-dom";
+import { Link, Navigate, useLocation, useNavigate } from "react-router-dom";
 import AuthLayout from "../layouts/AuthLayout";
 import LanguageSwitcher from "../i18n/LanguageSwitcher.jsx";
 import { useI18n } from "../i18n/useI18n.js";
@@ -83,6 +83,10 @@ export default function LoginPage() {
         >
           {busy ? t("login.signingIn") : t("login.signIn")}
         </button>
+
+        <Link className="text-sm text-sky-700 hover:underline" to="/forgot-password">
+          {t("login.forgotPassword")}
+        </Link>
 
         {providerPanelEnabled ? (
           <button

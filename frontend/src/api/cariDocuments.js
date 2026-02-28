@@ -30,6 +30,14 @@ export async function createCariDocumentComment(documentId, payload = {}) {
   return run(() => api.post(`/api/v1/cari/documents/${documentId}/comments`, payload));
 }
 
+export async function getCariDocumentOpsStatus(documentId) {
+  return run(() => api.get(`/api/v1/cari/documents/${documentId}/ops-status`));
+}
+
+export async function upsertCariDocumentOpsStatus(documentId, payload = {}) {
+  return run(() => api.put(`/api/v1/cari/documents/${documentId}/ops-status`, payload));
+}
+
 export async function listCariDocumentEvidence(documentId) {
   return run(() => api.get(`/api/v1/cari/documents/${documentId}/evidence`));
 }

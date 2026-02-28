@@ -8,6 +8,11 @@ import {
   getOpsPayrollImportHealth,
 } from "../api/opsDashboard.js";
 import { listExceptionWorkbench } from "../api/exceptionsWorkbench.js";
+import {
+  listMeNotifications,
+  markAllMeNotificationsRead,
+  markMeNotificationRead,
+} from "../api/me.js";
 import { useAuth } from "../auth/useAuth.js";
 import { useWorkingContext } from "../context/useWorkingContext.js";
 import { useI18n } from "../i18n/useI18n.js";
@@ -31,6 +36,32 @@ function formatWindowLabel(window) {
     return "";
   }
   return `${dateFrom} - ${dateTo}`;
+}
+
+function formatDateTimeLabel(value) {
+  if (!value) {
+    return "-";
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return String(value);
+  }
+  return parsed.toLocaleString();
+}
+
+function buildNotificationTargetPath(row) {
+  const sourceRefType = String(row?.sourceRefType || "")
+    .trim()
+    .toUpperCase();
+  const sourceRefId = Number(row?.sourceRefId || 0);
+  if (!Number.isInteger(sourceRefId) || sourceRefId <= 0) {
+    return "";
+  }
+
+  if (sourceRefType === "CARI_DOCUMENT") {
+    return `/app/cari-belgeler?documentId=${sourceRefId}`;
+  }
+  return "";
 }
 
 function resolveScopeParams(workingContext) {
@@ -127,6 +158,12 @@ export default function Dashboard() {
     jobs: null,
     exceptions: null,
   });
+  const [notificationsLoading, setNotificationsLoading] = useState(false);
+  const [notificationsError, setNotificationsError] = useState("");
+  const [notificationRows, setNotificationRows] = useState([]);
+  const [notificationsTotal, setNotificationsTotal] = useState(0);
+  const [markingNotificationId, setMarkingNotificationId] = useState(null);
+  const [markAllNotificationsSaving, setMarkAllNotificationsSaving] = useState(false);
 
   const scopeParams = useMemo(
     () => resolveScopeParams(workingContext),
@@ -240,6 +277,73 @@ export default function Dashboard() {
   useEffect(() => {
     load();
   }, [load]);
+
+  const loadNotifications = useCallback(async () => {
+    setNotificationsLoading(true);
+    setNotificationsError("");
+    try {
+      const response = await listMeNotifications({
+        status: "UNREAD",
+        limit: 8,
+        offset: 0,
+      });
+      const rows = Array.isArray(response?.rows) ? response.rows : [];
+      setNotificationRows(rows);
+      setNotificationsTotal(Number(response?.total || rows.length || 0));
+    } catch (err) {
+      setNotificationsError(
+        err?.response?.data?.message ||
+          err?.message ||
+          t("dashboard.notifications.loadFailed", "Notifications could not be loaded.")
+      );
+      setNotificationRows([]);
+      setNotificationsTotal(0);
+    } finally {
+      setNotificationsLoading(false);
+    }
+  }, [t]);
+
+  useEffect(() => {
+    loadNotifications();
+  }, [loadNotifications]);
+
+  async function handleMarkNotificationRead(notificationId) {
+    const parsedId = Number(notificationId);
+    if (!Number.isInteger(parsedId) || parsedId <= 0) {
+      return;
+    }
+    setMarkingNotificationId(parsedId);
+    setNotificationsError("");
+    try {
+      await markMeNotificationRead(parsedId);
+      await loadNotifications();
+    } catch (err) {
+      setNotificationsError(
+        err?.response?.data?.message ||
+          err?.message ||
+          t("dashboard.notifications.markReadFailed", "Notification could not be marked as read.")
+      );
+    } finally {
+      setMarkingNotificationId(null);
+    }
+  }
+
+  async function handleMarkAllNotificationsRead() {
+    setMarkAllNotificationsSaving(true);
+    setNotificationsError("");
+    try {
+      await markAllMeNotificationsRead();
+      await loadNotifications();
+    } catch (err) {
+      setNotificationsError(
+        err?.response?.data?.message ||
+          err?.message ||
+          t("dashboard.notifications.markAllFailed", "Notifications could not be marked as read.")
+      );
+    } finally {
+      setMarkAllNotificationsSaving(false);
+    }
+  }
 
   const moduleReadinessRows = useMemo(() => {
     const modules = moduleReadinessPayload?.modules || {};
@@ -481,6 +585,98 @@ export default function Dashboard() {
             )
           )}
         </div>
+      </section>
+
+      <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <h2 className="text-sm font-semibold uppercase tracking-[0.12em] text-slate-600">
+            {t("dashboard.notifications.title", "Mentions & Notifications")}
+          </h2>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs text-slate-500">
+              {t("dashboard.notifications.unreadCount", "Unread")}:{" "}
+              {formatCount(notificationsTotal)}
+            </span>
+            <button
+              type="button"
+              onClick={loadNotifications}
+              disabled={notificationsLoading}
+              className="rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 disabled:opacity-60"
+            >
+              {notificationsLoading
+                ? t("dashboard.notifications.refreshing", "Refreshing...")
+                : t("dashboard.notifications.refresh", "Refresh")}
+            </button>
+            <button
+              type="button"
+              onClick={handleMarkAllNotificationsRead}
+              disabled={markAllNotificationsSaving || notificationRows.length === 0}
+              className="rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 disabled:opacity-60"
+            >
+              {markAllNotificationsSaving
+                ? t("dashboard.notifications.markingAll", "Marking...")
+                : t("dashboard.notifications.markAllRead", "Mark all read")}
+            </button>
+          </div>
+        </div>
+        {notificationsError ? (
+          <p className="mt-2 text-sm text-amber-700">{notificationsError}</p>
+        ) : null}
+        {notificationsLoading ? (
+          <p className="mt-2 text-sm text-slate-600">
+            {t("dashboard.notifications.loading", "Loading notifications...")}
+          </p>
+        ) : null}
+        {!notificationsLoading && notificationRows.length === 0 ? (
+          <p className="mt-2 text-sm text-slate-600">
+            {t("dashboard.notifications.empty", "No unread notifications.")}
+          </p>
+        ) : null}
+        {!notificationsLoading && notificationRows.length > 0 ? (
+          <ul className="mt-3 space-y-2">
+            {notificationRows.map((row, index) => {
+              const targetPath = buildNotificationTargetPath(row);
+              const isMarking =
+                Number(markingNotificationId || 0) === Number(row?.id || 0);
+              return (
+                <li
+                  key={`dashboard-notification-${row?.id || index}`}
+                  className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2"
+                >
+                  <p className="text-sm font-semibold text-slate-900">
+                    {row?.title || t("dashboard.notifications.defaultTitle", "Notification")}
+                  </p>
+                  {row?.body ? (
+                    <p className="mt-1 text-xs text-slate-700">{row.body}</p>
+                  ) : null}
+                  <p className="mt-1 text-xs text-slate-500">
+                    {formatDateTimeLabel(row?.createdAt)}
+                  </p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {targetPath ? (
+                      <Link
+                        to={targetPath}
+                        className="rounded-md border border-cyan-300 bg-white px-2 py-1 text-xs font-semibold text-cyan-700"
+                      >
+                        {t("dashboard.notifications.openTarget", "Open")}
+                      </Link>
+                    ) : null}
+                    <button
+                      type="button"
+                      onClick={() => handleMarkNotificationRead(row?.id)}
+                      disabled={isMarking}
+                      className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-semibold text-slate-700 disabled:opacity-60"
+                    >
+                      {isMarking
+                        ? t("dashboard.notifications.marking", "Marking...")
+                        : t("dashboard.notifications.markRead", "Mark read")}
+                    </button>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        ) : null}
       </section>
 
       <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">

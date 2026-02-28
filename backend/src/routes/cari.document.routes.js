@@ -3,6 +3,7 @@ import { asyncHandler, parsePositiveInt } from "./_utils.js";
 import { requireTenantId } from "./cash.validators.common.js";
 import cariDocumentEvidenceRoutes from "./cari.document.evidence.routes.js";
 import cariDocumentCommentsRoutes from "./cari.document.comments.routes.js";
+import cariDocumentOpsStatusRoutes from "./cari.document.ops-status.routes.js";
 import {
   assertScopeAccess,
   buildScopeFilter,
@@ -38,6 +39,7 @@ const router = express.Router();
 
 router.use("/:documentId/evidence", cariDocumentEvidenceRoutes);
 router.use("/:documentId/comments", cariDocumentCommentsRoutes);
+router.use("/:documentId/ops-status", cariDocumentOpsStatusRoutes);
 
 function resolveLegalEntityScopeFromQuery(req) {
   const legalEntityId = parsePositiveInt(req.query?.legalEntityId);
