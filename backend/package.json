@@ -89,6 +89,8 @@
     "test:ux:prux32": "node scripts/test-ux-prux32-invite-flow-copy-link.js",
     "test:ux:prux33": "node scripts/test-ux-prux33-password-reset-token-flow.js",
     "test:ux:prux34": "node scripts/test-ux-prux34-tenant-feature-flags.js",
+    "test:ux:prux35": "node scripts/test-ux-prux35-usage-and-audit-export.js",
+    "test:ux:prcore02": "node scripts/test-ux-prcore02-idempotency-standardization.js",
     "test:ux:evidence-compression": "node scripts/test-ux-evidence-compression-storage.js",
     "test:ux:rsdep01": "node scripts/test-ux-rsdep01-payment-term-write-api.js",
     "test:e2e:bank-payroll": "node scripts/test-e2e-bank-payroll-release-gate.js",

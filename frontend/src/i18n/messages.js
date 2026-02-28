@@ -329,6 +329,10 @@ export const messages = {
       actions: {
         refresh: "Yenile",
         refreshing: "Yenileniyor...",
+        exportUsageCsv: "Kullanim CSV Disa Aktar",
+        exportingUsage: "Kullanim disa aktariliyor...",
+        exportAuditCsv: "Denetim CSV Disa Aktar",
+        exportingAudit: "Denetim disa aktariliyor...",
       },
       sections: {
         bankReconciliation: "Banka Mutabakat Ozeti",
@@ -339,6 +343,11 @@ export const messages = {
       },
       messages: {
         loadFailed: "Ops dashboard verisi yuklenemedi",
+        usageExportReady: "Kullanim CSV indirildi: {{fileName}}",
+        usageExportFailed: "Kullanim CSV disa aktarma basarisiz",
+        auditExportReady: "Denetim CSV indirildi: {{fileName}}",
+        auditExportFailed: "Denetim CSV disa aktarma basarisiz",
+        exportUnavailable: "Disa aktarma sadece tarayici oturumlarinda kullanilabilir.",
       },
     },
     exceptionsWorkbench: {
@@ -1828,6 +1837,10 @@ export const messages = {
       actions: {
         refresh: "Refresh",
         refreshing: "Refreshing...",
+        exportUsageCsv: "Export Usage CSV",
+        exportingUsage: "Exporting usage...",
+        exportAuditCsv: "Export Audit CSV",
+        exportingAudit: "Exporting audit...",
       },
       sections: {
         bankReconciliation: "Bank Reconciliation Summary",
@@ -1838,6 +1851,11 @@ export const messages = {
       },
       messages: {
         loadFailed: "Ops dashboard data could not be loaded",
+        usageExportReady: "Usage CSV export downloaded: {{fileName}}",
+        usageExportFailed: "Usage CSV export failed",
+        auditExportReady: "Audit CSV export downloaded: {{fileName}}",
+        auditExportFailed: "Audit CSV export failed",
+        exportUnavailable: "Export is only available in browser sessions.",
       },
     },
     exceptionsWorkbench: {

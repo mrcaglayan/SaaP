@@ -66,6 +66,7 @@ import migration075OpsStatusNoteBlockedReason from "./m075_ops_status_note_block
 import migration076UserInvitesCopyLinkFlow from "./m076_user_invites_copy_link_flow.js";
 import migration077PasswordResetTokens from "./m077_password_reset_tokens.js";
 import migration078TenantFeatureFlags from "./m078_tenant_feature_flags.js";
+import migration079IdempotencyKeys from "./m079_idempotency_keys.js";
 
 const migrations = [
   migration001GlobalMultiEntity,
@@ -136,6 +137,7 @@ const migrations = [
   migration076UserInvitesCopyLinkFlow,
   migration077PasswordResetTokens,
   migration078TenantFeatureFlags,
+  migration079IdempotencyKeys,
 ];
 
 export default migrations;

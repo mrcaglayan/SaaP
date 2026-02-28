@@ -9,6 +9,7 @@ import {
   getOpsPayrollCloseStatus,
   getOpsPayrollImportHealth,
 } from "../services/ops.dashboard.service.js";
+import { buildAuditExportCsv, buildUsageExportCsv } from "../services/ops.exports.service.js";
 
 const router = express.Router();
 
@@ -61,6 +62,13 @@ function parseOpsJobsFilters(req) {
     jobType: req.query?.jobType ?? req.query?.job_type ?? null,
     queueName: req.query?.queueName ?? req.query?.queue_name ?? null,
   };
+}
+
+function parseExportLimit(value) {
+  if (value === undefined || value === null || value === "") return 5000;
+  const parsed = parsePositiveInt(value);
+  if (!parsed) throw badRequest("limit must be a positive integer");
+  return Math.min(parsed, 20000);
 }
 
 function parseOpsPayrollImportFilters(req) {
@@ -158,6 +166,46 @@ router.get(
       filters,
     });
     return res.json({ tenantId: filters.tenantId, ...result });
+  })
+);
+
+router.get(
+  "/exports/usage.csv",
+  requirePermission("ops.dashboard.read"),
+  asyncHandler(async (req, res) => {
+    const filters = parseOpsCommonFilters(req);
+    const payload = await buildUsageExportCsv({
+      tenantId: filters.tenantId,
+      dateFrom: filters.dateFrom,
+      dateTo: filters.dateTo,
+      days: filters.days || 30,
+    });
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${payload.fileName}"`);
+    res.setHeader("X-Export-Row-Count", String(payload.rowCount));
+    return res.status(200).send(payload.csv);
+  })
+);
+
+router.get(
+  "/exports/audit.csv",
+  requirePermission("ops.dashboard.read"),
+  asyncHandler(async (req, res) => {
+    const filters = parseOpsCommonFilters(req);
+    const limit = parseExportLimit(req.query?.limit);
+    const payload = await buildAuditExportCsv({
+      tenantId: filters.tenantId,
+      dateFrom: filters.dateFrom,
+      dateTo: filters.dateTo,
+      days: filters.days || 30,
+      limit,
+    });
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${payload.fileName}"`);
+    res.setHeader("X-Export-Row-Count", String(payload.rowCount));
+    return res.status(200).send(payload.csv);
   })
 );
 

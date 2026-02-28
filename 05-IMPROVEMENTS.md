@@ -60,9 +60,9 @@ Tag legend: `(hot: yes)` means likely touches conflict-prone files (`AppLayout.j
 - [x] PR-UX32 Invite flow (copy-link, no SMTP dependency) (implemented: migration `m076_user_invites_copy_link_flow` + tenant-safe invite creation API `POST /api/v1/security/invites` + token preview/accept endpoints `GET/POST /auth/invite/:token` + security user assignment copy-link invite UI + `/accept-invite` onboarding page)
 - [x] PR-UX33 Password reset token flow (implemented: migration `m077_password_reset_tokens` + auth reset APIs `POST /auth/password-reset/request`, `GET /auth/password-reset/:token`, `POST /auth/password-reset/:token/complete` + login forgot-password navigation + copy-link reset request page + token-driven reset page)
 - [x] PR-UX34 Tenant feature flags (`tenant_features` + `/me/features`) (implemented: migration `m078_tenant_feature_flags` + tenant feature service + `GET /me/features` endpoint + frontend `/me/features` client + auth context feature hydration with `hasFeature`)
-- [ ] PR-UX35 Usage + audit export endpoints/UI (not started)
+- [x] PR-UX35 Usage + audit export endpoints/UI (implemented: ops export service + `GET /api/v1/ops/exports/usage.csv` and `GET /api/v1/ops/exports/audit.csv` endpoints with `ops.dashboard.read` guard + Ops Dashboard usage/audit CSV export UI actions)
 
-- [ ] PR-CORE02 Idempotency standardization for remaining risky endpoints (partial foundation exists)
+- [x] PR-CORE02 Idempotency standardization for remaining risky endpoints (implemented: shared `idempotency_keys` store + reusable idempotency executor/parser + standardized replay contract (`idempotentReplay`) on risky auth/security write endpoints: `POST /auth/password-reset/request`, `POST /auth/password-reset/:token/complete`, `POST /auth/invite/:token/accept`, `POST /api/v1/security/invites`)
 - [ ] PR-CORE03 Optimistic locking (`row_version`) on editable entities (not started)
 - [ ] PR-CORE04 Job progress/retry UX on top of H02 jobs engine (partial foundation exists)
 
@@ -159,11 +159,15 @@ Intentional not-yet-implemented placeholders (Stock, Fixed Assets, generic Repor
   smoke: `backend/scripts/test-ux-prux33-password-reset-token-flow.js`
 - [x] PR-UX34 acceptance: tenant feature flags are persisted in `tenant_features` and authenticated clients can resolve effective tenant features from `/me/features` for runtime feature gating
   smoke: `backend/scripts/test-ux-prux34-tenant-feature-flags.js`
+- [x] PR-UX35 acceptance: ops users can export tenant-scoped usage and audit CSV snapshots from the Ops Dashboard UI through dedicated guarded export endpoints
+  smoke: `backend/scripts/test-ux-prux35-usage-and-audit-export.js`
 - [x] PR-CORE05 acceptance: standardized user-facing error handling + copyable requestId/details
   smoke: `backend/scripts/test-ux-prcore05-error-envelope.js`
 - [x] PR-CORE01 acceptance: key list endpoints return consistent `rows + total + limit + offset` with `pagination` metadata
   smoke: `backend/scripts/test-ux-prcore01-pagination-contracts.js` (to add)
+- [x] PR-CORE02 acceptance: risky write endpoints accept `Idempotency-Key` and return stable replay responses (`idempotentReplay=true`) for repeated same-payload submissions while rejecting payload mismatch reuse
+  smoke: `backend/scripts/test-ux-prcore02-idempotency-standardization.js`
 
 ## Immediate Next Step
-- Proceed with `PR-UX35` (Usage + audit export endpoints/UI).
+- Proceed with `PR-CORE03` (Optimistic locking (`row_version`) on editable entities).
 - After each merged PR, update this tracker line from `[ ]` to `[x]` with a short `(implemented)` note.

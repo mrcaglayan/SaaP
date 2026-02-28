@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  downloadOpsAuditExportCsv,
+  downloadOpsUsageExportCsv,
   getOpsBankPaymentBatchesHealth,
   getOpsBankReconciliationSummary,
   getOpsJobsHealth,
@@ -37,7 +39,10 @@ export default function OpsDashboardPage() {
     () => ({ ...OPS_DASHBOARD_DEFAULT_FILTERS })
   );
   const [loading, setLoading] = useState(false);
+  const [usageExporting, setUsageExporting] = useState(false);
+  const [auditExporting, setAuditExporting] = useState(false);
   const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
   const [data, setData] = useState({
     bankReconciliation: null,
     bankPayments: null,
@@ -86,6 +91,7 @@ export default function OpsDashboardPage() {
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
+    setMessage("");
     try {
       const [bankReconciliation, bankPayments, payrollImports, payrollClose, jobs] =
         await Promise.all([
@@ -115,6 +121,76 @@ export default function OpsDashboardPage() {
   useEffect(() => {
     load();
   }, [load]);
+
+  function downloadBlob({ blob, fileName }) {
+    if (typeof window === "undefined" || !blob) {
+      return false;
+    }
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = fileName || "export.csv";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(url);
+    return true;
+  }
+
+  async function handleUsageExport() {
+    setUsageExporting(true);
+    setError("");
+    setMessage("");
+    try {
+      const payload = await downloadOpsUsageExportCsv(queryParams);
+      const ok = downloadBlob(payload);
+      if (!ok) {
+        setError(t("opsDashboard.messages.exportUnavailable", "Export is only available in browser sessions."));
+        return;
+      }
+      setMessage(
+        t("opsDashboard.messages.usageExportReady", "Usage CSV export downloaded: {{fileName}}", {
+          fileName: payload.fileName,
+        })
+      );
+    } catch (err) {
+      setError(
+        err?.response?.data?.message ||
+          t("opsDashboard.messages.usageExportFailed", "Usage CSV export failed")
+      );
+    } finally {
+      setUsageExporting(false);
+    }
+  }
+
+  async function handleAuditExport() {
+    setAuditExporting(true);
+    setError("");
+    setMessage("");
+    try {
+      const payload = await downloadOpsAuditExportCsv({
+        ...queryParams,
+        limit: 5000,
+      });
+      const ok = downloadBlob(payload);
+      if (!ok) {
+        setError(t("opsDashboard.messages.exportUnavailable", "Export is only available in browser sessions."));
+        return;
+      }
+      setMessage(
+        t("opsDashboard.messages.auditExportReady", "Audit CSV export downloaded: {{fileName}}", {
+          fileName: payload.fileName,
+        })
+      );
+    } catch (err) {
+      setError(
+        err?.response?.data?.message ||
+          t("opsDashboard.messages.auditExportFailed", "Audit CSV export failed")
+      );
+    } finally {
+      setAuditExporting(false);
+    }
+  }
 
   return (
     <div className="space-y-4">
@@ -205,7 +281,30 @@ export default function OpsDashboardPage() {
             </button>
           </div>
         </div>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button
+            type="button"
+            className="rounded border px-3 py-1 text-sm"
+            onClick={handleUsageExport}
+            disabled={loading || usageExporting || auditExporting}
+          >
+            {usageExporting
+              ? t("opsDashboard.actions.exportingUsage", "Exporting usage...")
+              : t("opsDashboard.actions.exportUsageCsv", "Export Usage CSV")}
+          </button>
+          <button
+            type="button"
+            className="rounded border px-3 py-1 text-sm"
+            onClick={handleAuditExport}
+            disabled={loading || usageExporting || auditExporting}
+          >
+            {auditExporting
+              ? t("opsDashboard.actions.exportingAudit", "Exporting audit...")
+              : t("opsDashboard.actions.exportAuditCsv", "Export Audit CSV")}
+          </button>
+        </div>
         {error ? <div className="mt-3 text-sm text-red-600">{error}</div> : null}
+        {message ? <div className="mt-3 text-sm text-emerald-700">{message}</div> : null}
       </div>
 
       <section className="rounded border bg-white p-4">

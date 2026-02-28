@@ -21,6 +21,8 @@ import {
   getPasswordResetPreviewByToken,
   requestPasswordResetByEmail,
 } from "../services/passwordReset.service.js";
+import { parseIdempotencyKey } from "./_utils.js";
+import { executeIdempotentRequest } from "../services/idempotency.service.js";
 
 const router = express.Router();
 const AUTH_TOKEN_EXPIRES_IN = String(process.env.AUTH_TOKEN_EXPIRES_IN || "7d");
@@ -129,8 +131,22 @@ router.post("/password-reset/request", async (req, res, next) => {
     if (!email) {
       return res.status(400).json({ message: "email is required" });
     }
-    const payload = await requestPasswordResetByEmail(email);
-    return res.json(payload);
+    const idempotencyKey = parseIdempotencyKey(req, { required: false });
+    const result = await executeIdempotentRequest({
+      scopeCode: "AUTH_PASSWORD_RESET_REQUEST",
+      idempotencyKey,
+      requestFingerprintInput: {
+        email: email.toLowerCase(),
+      },
+      execute: async () => ({
+        status: 200,
+        payload: await requestPasswordResetByEmail(email),
+      }),
+    });
+    return res.status(result.status).json({
+      ...result.payload,
+      idempotentReplay: Boolean(result.idempotentReplay),
+    });
   } catch (err) {
     return next(err);
   }
@@ -157,11 +173,27 @@ router.get("/password-reset/:token", async (req, res, next) => {
 router.post("/password-reset/:token/complete", async (req, res, next) => {
   try {
     const token = String(req.params.token || "").trim();
-    const payload = await completePasswordResetByToken({
-      rawToken: token,
-      password: req.body?.password,
+    const idempotencyKey = parseIdempotencyKey(req, { required: false });
+    const password = String(req.body?.password || "");
+    const result = await executeIdempotentRequest({
+      scopeCode: "AUTH_PASSWORD_RESET_COMPLETE",
+      idempotencyKey,
+      requestFingerprintInput: {
+        token,
+        password,
+      },
+      execute: async () => ({
+        status: 200,
+        payload: await completePasswordResetByToken({
+          rawToken: token,
+          password,
+        }),
+      }),
     });
-    return res.json(payload);
+    return res.status(result.status).json({
+      ...result.payload,
+      idempotentReplay: Boolean(result.idempotentReplay),
+    });
   } catch (err) {
     return next(err);
   }
@@ -188,12 +220,30 @@ router.get("/invite/:token", async (req, res, next) => {
 router.post("/invite/:token/accept", async (req, res, next) => {
   try {
     const token = String(req.params.token || "").trim();
-    const payload = await acceptInviteByToken({
-      rawToken: token,
-      password: req.body?.password,
-      name: req.body?.name,
+    const password = String(req.body?.password || "");
+    const name = String(req.body?.name || "");
+    const idempotencyKey = parseIdempotencyKey(req, { required: false });
+    const result = await executeIdempotentRequest({
+      scopeCode: "AUTH_INVITE_ACCEPT",
+      idempotencyKey,
+      requestFingerprintInput: {
+        token,
+        password,
+        name,
+      },
+      execute: async () => ({
+        status: 200,
+        payload: await acceptInviteByToken({
+          rawToken: token,
+          password,
+          name,
+        }),
+      }),
     });
-    return res.json(payload);
+    return res.status(result.status).json({
+      ...result.payload,
+      idempotentReplay: Boolean(result.idempotentReplay),
+    });
   } catch (err) {
     return next(err);
   }

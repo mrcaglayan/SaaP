@@ -14,10 +14,12 @@ import {
   asyncHandler,
   assertRequiredFields,
   badRequest,
+  parseIdempotencyKey,
   parsePositiveInt,
   resolveTenantId,
 } from "./_utils.js";
 import { createInviteForTenantUser } from "../services/userInvites.service.js";
+import { executeIdempotentRequest } from "../services/idempotency.service.js";
 
 const router = express.Router();
 
@@ -370,31 +372,53 @@ router.post(
     }
     assertRequiredFields(req.body, ["email", "name"]);
 
-    const invite = await createInviteForTenantUser({
-      tenantId,
-      actorUserId: parsePositiveInt(req.user?.userId),
-      email: req.body.email,
-      name: req.body.name,
-    });
+    const idempotencyKey = parseIdempotencyKey(req, { required: false });
+    const actorUserId = parsePositiveInt(req.user?.userId);
+    const result = await executeIdempotentRequest({
+      scopeCode: `SECURITY_INVITES_TENANT_${tenantId}`,
+      idempotencyKey,
+      requestFingerprintInput: {
+        tenantId,
+        actorUserId,
+        email: String(req.body.email || "").trim().toLowerCase(),
+        name: String(req.body.name || "").trim(),
+      },
+      execute: async () => {
+        const invite = await createInviteForTenantUser({
+          tenantId,
+          actorUserId,
+          email: req.body.email,
+          name: req.body.name,
+        });
 
-    await logRbacAuditEvent(req, {
-      tenantId,
-      targetUserId: invite.userId,
-      action: "user.invite.create",
-      resourceType: "user_invite",
-      resourceId: invite.id,
-      scopeType: "TENANT",
-      scopeId: tenantId,
-      payload: {
-        userId: invite.userId,
-        email: invite.email,
-        expiresAt: invite.expiresAt,
+        await logRbacAuditEvent(req, {
+          tenantId,
+          targetUserId: invite.userId,
+          action: "user.invite.create",
+          resourceType: "user_invite",
+          resourceId: invite.id,
+          scopeType: "TENANT",
+          scopeId: tenantId,
+          payload: {
+            userId: invite.userId,
+            email: invite.email,
+            expiresAt: invite.expiresAt,
+          },
+        });
+
+        return {
+          status: 201,
+          payload: {
+            ok: true,
+            invite,
+          },
+        };
       },
     });
 
-    return res.status(201).json({
-      ok: true,
-      invite,
+    return res.status(result.status).json({
+      ...result.payload,
+      idempotentReplay: Boolean(result.idempotentReplay),
     });
   })
 );

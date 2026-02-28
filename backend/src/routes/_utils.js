@@ -45,3 +45,24 @@ export function notImplemented(res, scope) {
     message: `${scope} is scaffolded but not implemented yet`,
   });
 }
+
+export function parseIdempotencyKey(req, { required = false } = {}) {
+  const headerValue =
+    req?.headers?.["idempotency-key"] ??
+    req?.headers?.["Idempotency-Key"] ??
+    req?.headers?.["x-idempotency-key"];
+  const normalized = String(headerValue || "").trim();
+  if (!normalized) {
+    if (required) {
+      throw badRequest("Idempotency-Key header is required");
+    }
+    return "";
+  }
+  if (normalized.length > 190) {
+    throw badRequest("Idempotency-Key cannot exceed 190 characters");
+  }
+  if (!/^[A-Za-z0-9._:-]+$/.test(normalized)) {
+    throw badRequest("Idempotency-Key contains invalid characters");
+  }
+  return normalized;
+}
