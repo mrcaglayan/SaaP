@@ -856,6 +856,10 @@ export async function listExceptionWorkbenchRows({
     where.push("ew.source_type = ?");
     params.push(u(filters.sourceType));
   }
+  if (filters.sourceRefId) {
+    where.push("ew.source_ref_id = ?");
+    params.push(parsePositiveInt(filters.sourceRefId));
+  }
   if (filters.q) {
     const q = `%${String(filters.q).trim()}%`;
     where.push("(ew.title LIKE ? OR ew.description LIKE ? OR ew.source_ref LIKE ? OR ew.source_key LIKE ?)");

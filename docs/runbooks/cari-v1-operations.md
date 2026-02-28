@@ -45,6 +45,20 @@ FX resolution baseline (exact + prior-date fallback):
   - Validate the expected currency pair rate chain (exact date + prior window) before batch apply windows.
   - Confirm audit/journal evidence captures fallback/override context when used.
 
+## Evidence Storage Config (UX20/UX21)
+
+- CARI evidence binary files are stored on backend local filesystem.
+- Configure base path with `EVIDENCE_STORAGE_ROOT`.
+  - Absolute path: used as-is.
+  - Relative path: resolved from `backend/` root.
+- Default when unset: `backend/storage/evidence`.
+- Upload size limit is controlled by `EVIDENCE_MAX_UPLOAD_BYTES` (default: `15728640`, 15 MB).
+- Compression mode is controlled by `EVIDENCE_STORAGE_COMPRESSION`:
+  - `AUTO` (default): gzip only when stored file becomes smaller
+  - `GZIP`: always gzip at storage time
+  - `NONE`: store raw file bytes
+- Downloads always return original file bytes (compressed storage is transparently decompressed).
+
 ## Reversal Effects on Statements and Aging
 
 - Reversal is additive history, not destructive mutation.

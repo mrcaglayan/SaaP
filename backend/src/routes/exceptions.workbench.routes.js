@@ -67,6 +67,7 @@ function parseListFilters(req) {
     ownerUserId: parsePositiveIntMaybe(req.query?.ownerUserId ?? req.query?.owner_user_id, "ownerUserId"),
     exceptionType: req.query?.exceptionType ?? req.query?.exception_type ?? null,
     sourceType: req.query?.sourceType ?? req.query?.source_type ?? null,
+    sourceRefId: parsePositiveIntMaybe(req.query?.sourceRefId ?? req.query?.source_ref_id, "sourceRefId"),
     q: req.query?.q ?? null,
     sortBy: req.query?.sortBy ?? req.query?.sort_by ?? null,
   };

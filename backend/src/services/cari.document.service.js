@@ -258,6 +258,29 @@ function mapDocumentRow(row) {
   };
 }
 
+function mapOpenItemRow(row) {
+  return {
+    id: parsePositiveInt(row.id),
+    tenantId: parsePositiveInt(row.tenant_id),
+    legalEntityId: parsePositiveInt(row.legal_entity_id),
+    counterpartyId: parsePositiveInt(row.counterparty_id),
+    documentId: parsePositiveInt(row.document_id),
+    itemNo: Number(row.item_no || 0),
+    status: row.status || null,
+    documentDate: toDateOnlyString(row.document_date, "documentDate"),
+    dueDate: toDateOnlyString(row.due_date, "dueDate"),
+    originalAmountTxn: toDecimalNumber(row.original_amount_txn),
+    originalAmountBase: toDecimalNumber(row.original_amount_base),
+    residualAmountTxn: toDecimalNumber(row.residual_amount_txn),
+    residualAmountBase: toDecimalNumber(row.residual_amount_base),
+    settledAmountTxn: toDecimalNumber(row.settled_amount_txn),
+    settledAmountBase: toDecimalNumber(row.settled_amount_base),
+    currencyCode: row.currency_code || null,
+    createdAt: row.created_at || null,
+    updatedAt: row.updated_at || null,
+  };
+}
+
 function assertFrozenTransactionType(direction, documentType) {
   const key = `${direction}:${documentType}`;
   if (!FROZEN_TRANSACTION_KEYS.has(key)) {
@@ -1252,6 +1275,51 @@ export async function getCariDocumentByIdForTenant({
   }
   assertScopeAccess(req, "legal_entity", row.legal_entity_id, "documentId");
   return mapDocumentRow(row);
+}
+
+export async function listCariDocumentOpenItemsByIdForTenant({
+  req,
+  tenantId,
+  documentId,
+  assertScopeAccess,
+}) {
+  const row = await fetchDocumentRow({ tenantId, documentId });
+  if (!row) {
+    throw badRequest("Document not found");
+  }
+
+  const legalEntityId = parsePositiveInt(row.legal_entity_id);
+  assertScopeAccess(req, "legal_entity", legalEntityId, "documentId");
+
+  const result = await query(
+    `SELECT
+        id,
+        tenant_id,
+        legal_entity_id,
+        counterparty_id,
+        document_id,
+        item_no,
+        status,
+        document_date,
+        due_date,
+        original_amount_txn,
+        original_amount_base,
+        residual_amount_txn,
+        residual_amount_base,
+        settled_amount_txn,
+        settled_amount_base,
+        currency_code,
+        created_at,
+        updated_at
+     FROM cari_open_items
+     WHERE tenant_id = ?
+       AND legal_entity_id = ?
+       AND document_id = ?
+     ORDER BY item_no ASC, id ASC`,
+    [tenantId, legalEntityId, documentId]
+  );
+
+  return (result.rows || []).map(mapOpenItemRow);
 }
 
 export async function createCariDraftDocument({

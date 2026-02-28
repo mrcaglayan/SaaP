@@ -1,6 +1,7 @@
 import express from "express";
 import { asyncHandler, parsePositiveInt } from "./_utils.js";
 import { requireTenantId } from "./cash.validators.common.js";
+import cariDocumentEvidenceRoutes from "./cari.document.evidence.routes.js";
 import {
   assertScopeAccess,
   buildScopeFilter,
@@ -19,6 +20,7 @@ import {
   cancelCariDraftDocumentById,
   createCariDraftDocument,
   getCariDocumentByIdForTenant,
+  listCariDocumentOpenItemsByIdForTenant,
   listCariDocuments,
   postCariDocumentById,
   reverseCariPostedDocumentById,
@@ -27,6 +29,8 @@ import {
 } from "../services/cari.document.service.js";
 
 const router = express.Router();
+
+router.use("/:documentId/evidence", cariDocumentEvidenceRoutes);
 
 function resolveLegalEntityScopeFromQuery(req) {
   const legalEntityId = parsePositiveInt(req.query?.legalEntityId);
@@ -102,6 +106,30 @@ router.get(
     return res.json({
       tenantId,
       row,
+    });
+  })
+);
+
+router.get(
+  "/:documentId/open-items",
+  requirePermission("cari.doc.read", {
+    resolveScope: async (req, tenantId) => {
+      return resolveCariDocumentScope(req.params?.documentId, tenantId);
+    },
+  }),
+  asyncHandler(async (req, res) => {
+    const tenantId = requireTenantId(req);
+    const documentId = parseDocumentIdParam(req);
+    const rows = await listCariDocumentOpenItemsByIdForTenant({
+      req,
+      tenantId,
+      documentId,
+      assertScopeAccess,
+    });
+    return res.json({
+      tenantId,
+      documentId,
+      rows,
     });
   })
 );

@@ -5,7 +5,7 @@ Execution tracker for the post-`04-BANKS_AND_PAYROLLS_ESM.md` improvement wave.
 Format intentionally matches your checklist style so we can mark items as we ship.
 
 ## Baseline Notes (Repo Reality)
-- Latest migration is `m068_*`; next new migration must start from `m069_*`.
+- Latest migration is `m071_*`; next new migration must start from `m072_*`.
 - Current auth/profile route style is `/me` and `/auth/*`.
 - `Exceptions Workbench`, `Jobs`, `Retention`, and much of idempotency are already implemented and should be treated as extension/hardening work, not net-new foundations.
 
@@ -39,10 +39,10 @@ Tag legend: `(hot: yes)` means likely touches conflict-prone files (`AppLayout.j
 - [x] PR-UX17 Apply lifecycle UI to Payroll flows (implemented: Payroll Run Detail + Payroll Close Controls now expose lifecycle snapshot, next transitions, and shared `StatusTimeline` using shared lifecycle rules with payroll timestamp/audit event mapping, hot: no)
 
 - [x] PR-UX18 Deep-link support (`documentId/journalId/exceptionId`) (implemented: Cari Documents, Journal Workbench, and Exceptions Workbench now parse deep-link query params, auto-open targeted detail, and keep URL query synced with current selection, hot: no)
-- [ ] PR-UX19 Related panel (GL/open items/exceptions/audit) + source-link strategy (blocked by backend linking design)
+- [x] PR-UX19 Related panel (GL/open items/exceptions/audit) + source-link strategy (implemented: Cari Documents detail now includes related panel sections for linked GL journal + source links, document open items, exception list by `sourceRefId`, and CARI audit trail; backend added `GET /api/v1/cari/documents/:documentId/open-items` and exceptions list `sourceRefId` filter)
 
-- [ ] PR-UX20 Evidence storage foundation (DB + adapter + routes) (not started)
-- [ ] PR-UX21 Evidence uploader UI + attach to Cari Docs (not started)
+- [x] PR-UX20 Evidence storage foundation (DB + adapter + routes) (implemented: migration `m070_evidence_storage_foundation` + local filesystem storage adapter + CARI document evidence routes for metadata create/list, binary upload, download, and soft-delete)
+- [x] PR-UX21 Evidence uploader UI + attach to Cari Docs (implemented: Cari Documents detail related panel now includes evidence attachments UI with list, attach upload, download, and delete actions using PR-UX20 evidence APIs with `cari.doc.update` permission-aware controls)
 - [ ] PR-UX22 Evidence-required policy checks for risky actions (not started)
 
 - [ ] PR-UX23 Shared CSV export helper + list page export actions (not started)
@@ -127,11 +127,17 @@ Intentional not-yet-implemented placeholders (Stock, Fixed Assets, generic Repor
   smoke: `backend/scripts/test-ux-prux17-payroll-lifecycle-ui.js`
 - [x] PR-UX18 acceptance: `documentId`, `journalId`, and `exceptionId` deep links open target detail views on load and selection changes keep URL query in sync for shareable links
   smoke: `backend/scripts/test-ux-prux18-deep-link-support.js`
+- [x] PR-UX19 acceptance: selected CARI document detail surfaces related GL/source links, open items, related exceptions, and audit records through a single related panel with permission-aware loading
+  smoke: `backend/scripts/test-ux-prux19-related-panel.js`
+- [x] PR-UX20 acceptance: evidence storage foundation persists scoped evidence metadata in DB and exposes guarded CARI document evidence APIs for create/list/upload/download/delete via local storage adapter
+  smoke: `backend/scripts/test-ux-prux20-evidence-storage-foundation.js`
+- [x] PR-UX21 acceptance: selected CARI document detail exposes evidence attachments section allowing users to attach files, list existing evidence, download evidence content, and delete evidence through the evidence API foundation with permission-aware uploader controls
+  smoke: `backend/scripts/test-ux-prux21-evidence-uploader-ui.js`
 - [x] PR-CORE05 acceptance: standardized user-facing error handling + copyable requestId/details
   smoke: `backend/scripts/test-ux-prcore05-error-envelope.js`
 - [x] PR-CORE01 acceptance: key list endpoints return consistent `rows + total + limit + offset` with `pagination` metadata
   smoke: `backend/scripts/test-ux-prcore01-pagination-contracts.js` (to add)
 
 ## Immediate Next Step
-- Proceed with `PR-UX19` (Related panel: GL/open items/exceptions/audit) on top of RS-DEP-02 source links.
+- Proceed with `PR-UX22` (Evidence-required policy checks for risky actions).
 - After each merged PR, update this tracker line from `[ ]` to `[x]` with a short `(implemented)` note.

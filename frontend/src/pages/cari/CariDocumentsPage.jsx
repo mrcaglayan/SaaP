@@ -1,11 +1,17 @@
 ﻿import { useEffect, useMemo, useState } from "react";
 import {
   cancelCariDocument,
+  createCariDocumentEvidence,
   createCariDocument,
+  deleteCariDocumentEvidence,
+  downloadCariDocumentEvidence,
   getCariDocument,
+  getCariDocumentOpenItems,
+  listCariDocumentEvidence,
   listCariDocuments,
   postCariDocument,
   reverseCariDocument,
+  uploadCariDocumentEvidenceContent,
   updateCariDocument,
 } from "../../api/cariDocuments.js";
 import {
@@ -13,6 +19,9 @@ import {
   listCariCounterparties,
 } from "../../api/cariCounterparty.js";
 import { getCariCounterpartyStatementReport } from "../../api/cariReports.js";
+import { getJournal } from "../../api/glAdmin.js";
+import { listExceptionWorkbench } from "../../api/exceptionsWorkbench.js";
+import { listCariAudit } from "../../api/cariAudit.js";
 import Combobox from "../../components/Combobox.jsx";
 import StatusTimeline from "../../components/StatusTimeline.jsx";
 import { Link, useSearchParams } from "react-router-dom";
@@ -101,6 +110,33 @@ function formatAmount(value) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return "-";
   return parsed.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 });
+}
+
+function formatDateTime(value) {
+  if (!value) {
+    return "-";
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return String(value);
+  }
+  return parsed.toLocaleString();
+}
+
+function formatFileSize(bytes) {
+  const parsed = Number(bytes);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return "-";
+  }
+  const units = ["B", "KB", "MB", "GB"];
+  let size = parsed;
+  let unitIndex = 0;
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024;
+    unitIndex += 1;
+  }
+  const precision = unitIndex === 0 ? 0 : unitIndex === 1 ? 1 : 2;
+  return `${size.toFixed(precision)} ${units[unitIndex]}`;
 }
 
 function isDraft(row) {
@@ -232,6 +268,9 @@ export default function CariDocumentsPage() {
   const canReadReports = hasPermission("cari.report.read");
   const canReadCards = hasPermission("cari.card.read");
   const canUpsertCards = hasPermission("cari.card.upsert");
+  const canReadGlJournals = hasPermission("gl.journal.read");
+  const canReadExceptions = hasPermission("ops.exceptions.read");
+  const canReadCariAudit = hasPermission("cari.audit.read");
 
   const [filters, setFilters, resetFilters] = usePersistedFilters(
     DOCUMENT_FILTERS_STORAGE_SCOPE,
@@ -285,6 +324,22 @@ export default function CariDocumentsPage() {
   const [linkedCashRows, setLinkedCashRows] = useState([]);
   const [linkedCashLoading, setLinkedCashLoading] = useState(false);
   const [linkedCashError, setLinkedCashError] = useState("");
+  const [relatedLoading, setRelatedLoading] = useState(false);
+  const [relatedError, setRelatedError] = useState("");
+  const [relatedJournal, setRelatedJournal] = useState(null);
+  const [relatedOpenItems, setRelatedOpenItems] = useState([]);
+  const [relatedExceptions, setRelatedExceptions] = useState([]);
+  const [relatedAuditRows, setRelatedAuditRows] = useState([]);
+  const [evidenceRows, setEvidenceRows] = useState([]);
+  const [evidenceLoading, setEvidenceLoading] = useState(false);
+  const [evidenceError, setEvidenceError] = useState("");
+  const [evidenceMessage, setEvidenceMessage] = useState("");
+  const [evidenceNote, setEvidenceNote] = useState("");
+  const [evidenceUploadFile, setEvidenceUploadFile] = useState(null);
+  const [evidenceUploadInputKey, setEvidenceUploadInputKey] = useState(0);
+  const [evidenceUploading, setEvidenceUploading] = useState(false);
+  const [evidenceDeletingId, setEvidenceDeletingId] = useState(null);
+  const [evidenceDownloadingId, setEvidenceDownloadingId] = useState(null);
 
   useWorkingContextDefaults(setFilters, DOCUMENT_FILTER_CONTEXT_MAPPINGS, [
     filters.legalEntityId,
@@ -300,8 +355,12 @@ export default function CariDocumentsPage() {
     [rows, selectedDocumentId]
   );
   const selectedSnapshot = selectedDetail || selectedRow;
+  const selectedDocumentNumericId = toPositiveInt(selectedSnapshot?.id);
   const selectedDocumentLegalEntityId = toPositiveInt(
     selectedSnapshot?.legalEntityId || selectedSnapshot?.legal_entity_id
+  );
+  const selectedPostedJournalEntryId = toPositiveInt(
+    selectedSnapshot?.postedJournalEntryId || selectedSnapshot?.posted_journal_entry_id
   );
   const selectedCariPostingReadiness = getModuleRow(
     "cariPosting",
@@ -315,6 +374,7 @@ export default function CariDocumentsPage() {
     selectedSnapshot && isDraft(selectedSnapshot) && canPost && !cariPostingNotReady
   );
   const canReverseSelected = Boolean(selectedSnapshot && isPosted(selectedSnapshot) && canReverse);
+  const canAttachEvidence = Boolean(selectedSnapshot && canUpdate);
   const selectedDocumentLifecycleMeta = useMemo(
     () => getLifecycleStatusMeta("cariDocument", selectedSnapshot?.status),
     [selectedSnapshot?.status]
@@ -658,6 +718,260 @@ export default function CariDocumentsPage() {
       active = false;
     };
   }, [canReadReports, selectedSnapshot?.counterpartyId, selectedSnapshot?.id, selectedSnapshot?.legalEntityId]);
+
+  useEffect(() => {
+    const documentId = toPositiveInt(selectedSnapshot?.id);
+    const legalEntityId = toPositiveInt(
+      selectedSnapshot?.legalEntityId || selectedSnapshot?.legal_entity_id
+    );
+    if (!canRead || !documentId) {
+      setRelatedJournal(null);
+      setRelatedOpenItems([]);
+      setRelatedExceptions([]);
+      setRelatedAuditRows([]);
+      setRelatedError("");
+      setRelatedLoading(false);
+      return;
+    }
+
+    let active = true;
+    async function loadRelatedPanel() {
+      setRelatedLoading(true);
+      setRelatedError("");
+      let nextJournal = null;
+      let nextOpenItems = [];
+      let nextExceptions = [];
+      let nextAuditRows = [];
+      const errors = [];
+
+      try {
+        const openItemsResponse = await getCariDocumentOpenItems(documentId);
+        nextOpenItems = Array.isArray(openItemsResponse?.rows)
+          ? openItemsResponse.rows
+          : [];
+      } catch (error) {
+        errors.push(normalizeApiError(error, "Related open items failed to load."));
+      }
+
+      if (canReadGlJournals && selectedPostedJournalEntryId) {
+        try {
+          const journalResponse = await getJournal(selectedPostedJournalEntryId);
+          nextJournal = journalResponse?.row || null;
+        } catch (error) {
+          errors.push(normalizeApiError(error, "Related GL journal failed to load."));
+        }
+      }
+
+      if (canReadExceptions) {
+        try {
+          const exceptionResponse = await listExceptionWorkbench({
+            legalEntityId: legalEntityId || undefined,
+            sourceRefId: documentId,
+            refresh: false,
+            limit: 25,
+            offset: 0,
+            sortBy: "URGENCY",
+          });
+          nextExceptions = Array.isArray(exceptionResponse?.rows)
+            ? exceptionResponse.rows
+            : [];
+        } catch (error) {
+          errors.push(normalizeApiError(error, "Related exceptions failed to load."));
+        }
+      }
+
+      if (canReadCariAudit) {
+        try {
+          const auditResponse = await listCariAudit({
+            legalEntityId: legalEntityId || undefined,
+            resourceType: "cari_document",
+            resourceId: String(documentId),
+            includePayload: false,
+            limit: 20,
+            offset: 0,
+          });
+          nextAuditRows = Array.isArray(auditResponse?.rows) ? auditResponse.rows : [];
+        } catch (error) {
+          errors.push(normalizeApiError(error, "Related audit trail failed to load."));
+        }
+      }
+
+      if (!active) {
+        return;
+      }
+      setRelatedJournal(nextJournal);
+      setRelatedOpenItems(nextOpenItems);
+      setRelatedExceptions(nextExceptions);
+      setRelatedAuditRows(nextAuditRows);
+      setRelatedError(errors.join(" "));
+      setRelatedLoading(false);
+    }
+
+    loadRelatedPanel();
+    return () => {
+      active = false;
+    };
+  }, [
+    canRead,
+    canReadCariAudit,
+    canReadExceptions,
+    canReadGlJournals,
+    selectedPostedJournalEntryId,
+    selectedSnapshot?.id,
+    selectedSnapshot?.legalEntityId,
+    selectedSnapshot?.legal_entity_id,
+  ]);
+
+  useEffect(() => {
+    const documentId = selectedDocumentNumericId;
+    setEvidenceMessage("");
+    setEvidenceError("");
+    setEvidenceNote("");
+    setEvidenceUploadFile(null);
+    setEvidenceUploadInputKey((prev) => prev + 1);
+    setEvidenceDeletingId(null);
+    setEvidenceDownloadingId(null);
+
+    if (!canRead || !documentId) {
+      setEvidenceRows([]);
+      setEvidenceLoading(false);
+      return;
+    }
+
+    let active = true;
+    async function loadEvidenceRows() {
+      setEvidenceLoading(true);
+      try {
+        const response = await listCariDocumentEvidence(documentId);
+        if (!active) {
+          return;
+        }
+        setEvidenceRows(Array.isArray(response?.rows) ? response.rows : []);
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+        setEvidenceRows([]);
+        setEvidenceError(normalizeApiError(error, "Failed to load evidence attachments."));
+      } finally {
+        if (active) {
+          setEvidenceLoading(false);
+        }
+      }
+    }
+
+    loadEvidenceRows();
+    return () => {
+      active = false;
+    };
+  }, [canRead, selectedDocumentNumericId]);
+
+  async function refreshEvidenceRows(documentId) {
+    const response = await listCariDocumentEvidence(documentId);
+    setEvidenceRows(Array.isArray(response?.rows) ? response.rows : []);
+  }
+
+  async function handleAttachEvidence(event) {
+    event.preventDefault();
+    const documentId = selectedDocumentNumericId;
+    if (!documentId || !canAttachEvidence) {
+      setEvidenceError(
+        "Evidence attach requires selected document and permission: cari.doc.update."
+      );
+      return;
+    }
+    if (!evidenceUploadFile) {
+      setEvidenceError("Select a file before attaching evidence.");
+      return;
+    }
+
+    setEvidenceUploading(true);
+    setEvidenceError("");
+    setEvidenceMessage("");
+    try {
+      const draftResponse = await createCariDocumentEvidence(documentId, {
+        fileName: evidenceUploadFile.name || "evidence.bin",
+        contentType: evidenceUploadFile.type || undefined,
+        displayName: evidenceUploadFile.name || undefined,
+        note: String(evidenceNote || "").trim() || undefined,
+      });
+      const evidenceId = toPositiveInt(draftResponse?.row?.id);
+      if (!evidenceId) {
+        throw new Error("Evidence create response is missing id.");
+      }
+
+      await uploadCariDocumentEvidenceContent(documentId, evidenceId, evidenceUploadFile, {
+        contentType: evidenceUploadFile.type || "application/octet-stream",
+      });
+
+      await refreshEvidenceRows(documentId);
+      setEvidenceMessage(`Evidence attached. id=${evidenceId}`);
+      setEvidenceNote("");
+      setEvidenceUploadFile(null);
+      setEvidenceUploadInputKey((prev) => prev + 1);
+    } catch (error) {
+      setEvidenceError(normalizeApiError(error, "Failed to attach evidence."));
+    } finally {
+      setEvidenceUploading(false);
+    }
+  }
+
+  async function handleDownloadEvidence(row) {
+    const documentId = selectedDocumentNumericId;
+    const evidenceId = toPositiveInt(row?.id);
+    if (!documentId || !evidenceId) {
+      setEvidenceError("Evidence id is invalid.");
+      return;
+    }
+
+    setEvidenceDownloadingId(evidenceId);
+    setEvidenceError("");
+    try {
+      const response = await downloadCariDocumentEvidence(documentId, evidenceId);
+      const blob = response?.blob;
+      if (!(blob instanceof Blob)) {
+        throw new Error("Evidence download payload is invalid.");
+      }
+      const objectUrl = window.URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = objectUrl;
+      anchor.download =
+        String(response?.fileName || row?.fileName || "").trim() ||
+        `evidence-${evidenceId}.bin`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.URL.revokeObjectURL(objectUrl);
+    } catch (error) {
+      setEvidenceError(normalizeApiError(error, "Failed to download evidence."));
+    } finally {
+      setEvidenceDownloadingId(null);
+    }
+  }
+
+  async function handleDeleteEvidence(evidenceIdRaw) {
+    const documentId = selectedDocumentNumericId;
+    const evidenceId = toPositiveInt(evidenceIdRaw);
+    if (!documentId || !evidenceId || !canAttachEvidence) {
+      setEvidenceError(
+        "Evidence delete requires selected document, valid evidence id, and cari.doc.update permission."
+      );
+      return;
+    }
+
+    setEvidenceDeletingId(evidenceId);
+    setEvidenceError("");
+    setEvidenceMessage("");
+    try {
+      await deleteCariDocumentEvidence(documentId, evidenceId);
+      await refreshEvidenceRows(documentId);
+      setEvidenceMessage(`Evidence deleted. id=${evidenceId}`);
+    } catch (error) {
+      setEvidenceError(normalizeApiError(error, "Failed to delete evidence."));
+    } finally {
+      setEvidenceDeletingId(null);
+    }
+  }
 
   async function handleInlineCreateCounterpartyForCreateForm() {
     setCreateInlineCounterpartyError("");
@@ -1107,6 +1421,220 @@ export default function CariDocumentsPage() {
                   ) : null}
                 </div>
               ) : null}
+              <div className="mt-4 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                <p className="font-semibold text-slate-800">Related Panel (GL / Open Items / Exceptions / Audit)</p>
+                {relatedLoading ? (
+                  <p className="mt-1 text-slate-600">Loading related records...</p>
+                ) : null}
+                {relatedError ? <p className="mt-1 text-rose-700">{relatedError}</p> : null}
+
+                <div className="mt-2 space-y-3 text-xs">
+                  <div>
+                    <p className="font-semibold text-slate-700">GL journal</p>
+                    {!canReadGlJournals ? (
+                      <p className="mt-1 text-slate-500">Missing permission: gl.journal.read</p>
+                    ) : !selectedPostedJournalEntryId ? (
+                      <p className="mt-1 text-slate-600">No posted journal linked yet.</p>
+                    ) : !relatedJournal ? (
+                      <p className="mt-1 text-slate-600">
+                        Linked journal id: {selectedPostedJournalEntryId}
+                      </p>
+                    ) : (
+                      <>
+                        <p className="mt-1 text-slate-700">
+                          id={relatedJournal.id || "-"} | no={relatedJournal.journal_no || "-"} | status=
+                          {relatedJournal.status || "-"}
+                        </p>
+                        <Link
+                          to={`/app/mahsup-islemleri?journalId=${relatedJournal.id}`}
+                          className="mt-1 inline-block rounded border border-slate-300 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700"
+                        >
+                          Open in Journal Workbench
+                        </Link>
+                        {Array.isArray(relatedJournal.source_links) &&
+                        relatedJournal.source_links.length > 0 ? (
+                          <ul className="mt-2 space-y-1">
+                            {relatedJournal.source_links.map((linkRow) => (
+                              <li
+                                key={`journal-source-link-${linkRow.id}`}
+                                className="rounded border border-slate-200 bg-white px-2 py-1"
+                              >
+                                {linkRow.source_ref_type || "-"}#{linkRow.source_ref_id || "-"} (
+                                {linkRow.link_role || "-"})
+                              </li>
+                            ))}
+                          </ul>
+                        ) : null}
+                      </>
+                    )}
+                  </div>
+
+                  <div>
+                    <p className="font-semibold text-slate-700">Open items</p>
+                    {relatedOpenItems.length === 0 ? (
+                      <p className="mt-1 text-slate-600">No open items found for this document.</p>
+                    ) : (
+                      <ul className="mt-2 space-y-1">
+                        {relatedOpenItems.map((row) => (
+                          <li
+                            key={`related-open-item-${row.id}`}
+                            className="rounded border border-slate-200 bg-white px-2 py-1"
+                          >
+                            itemNo={row.itemNo || "-"} | status={row.status || "-"} | residual=
+                            {formatAmount(row.residualAmountTxn)} {row.currencyCode || ""}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+
+                  <div>
+                    <p className="font-semibold text-slate-700">Evidence attachments</p>
+                    {evidenceError ? (
+                      <p className="mt-1 text-rose-700">{evidenceError}</p>
+                    ) : null}
+                    {evidenceMessage ? (
+                      <p className="mt-1 text-emerald-700">{evidenceMessage}</p>
+                    ) : null}
+                    {evidenceLoading ? (
+                      <p className="mt-1 text-slate-600">Loading evidence...</p>
+                    ) : null}
+
+                    {canAttachEvidence ? (
+                      <form onSubmit={handleAttachEvidence} className="mt-2 space-y-2 rounded border border-slate-200 bg-white p-2">
+                        <input
+                          key={evidenceUploadInputKey}
+                          type="file"
+                          className="block w-full text-xs text-slate-700 file:mr-2 file:rounded file:border file:border-slate-300 file:bg-slate-50 file:px-2 file:py-1 file:text-xs file:font-semibold file:text-slate-700"
+                          onChange={(event) => {
+                            setEvidenceError("");
+                            setEvidenceMessage("");
+                            setEvidenceUploadFile(event.target.files?.[0] || null);
+                          }}
+                          disabled={evidenceUploading}
+                        />
+                        <input
+                          type="text"
+                          className="w-full rounded border border-slate-300 px-2 py-1 text-xs"
+                          placeholder="Optional note"
+                          value={evidenceNote}
+                          onChange={(event) => setEvidenceNote(event.target.value)}
+                          disabled={evidenceUploading}
+                        />
+                        <button
+                          type="submit"
+                          className="rounded border border-slate-300 bg-slate-50 px-2 py-1 text-[11px] font-semibold text-slate-700 disabled:opacity-60"
+                          disabled={!evidenceUploadFile || evidenceUploading}
+                        >
+                          {evidenceUploading ? "Uploading..." : "Attach Evidence"}
+                        </button>
+                      </form>
+                    ) : (
+                      <p className="mt-1 text-slate-500">Missing permission: cari.doc.update</p>
+                    )}
+
+                    {!evidenceLoading && evidenceRows.length === 0 ? (
+                      <p className="mt-1 text-slate-600">No evidence attached to this document.</p>
+                    ) : null}
+                    {!evidenceLoading && evidenceRows.length > 0 ? (
+                      <ul className="mt-2 space-y-1">
+                        {evidenceRows.map((row) => {
+                          const rowId = toPositiveInt(row?.id);
+                          const isDownloading = rowId && Number(evidenceDownloadingId) === Number(rowId);
+                          const isDeleting = rowId && Number(evidenceDeletingId) === Number(rowId);
+                          return (
+                            <li
+                              key={`related-evidence-${row.id}`}
+                              className="rounded border border-slate-200 bg-white px-2 py-1"
+                            >
+                              <div className="text-slate-700">
+                                #{row.id} | {row.fileName || "-"} | {formatFileSize(row.fileSizeBytes)} |{" "}
+                                {row.contentType || "-"}
+                              </div>
+                              <div className="text-slate-600">
+                                status={row.status || "-"} | uploaded={formatDateTime(row.uploadedAt)}
+                              </div>
+                              {row.note ? (
+                                <div className="text-slate-500">note={row.note}</div>
+                              ) : null}
+                              <div className="mt-1 flex flex-wrap gap-1">
+                                <button
+                                  type="button"
+                                  className="rounded border border-slate-300 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 disabled:opacity-60"
+                                  onClick={() => handleDownloadEvidence(row)}
+                                  disabled={!rowId || Boolean(isDownloading)}
+                                >
+                                  {isDownloading ? "Downloading..." : "Download"}
+                                </button>
+                                {canAttachEvidence ? (
+                                  <button
+                                    type="button"
+                                    className="rounded border border-rose-300 bg-white px-2 py-1 text-[11px] font-semibold text-rose-700 disabled:opacity-60"
+                                    onClick={() => handleDeleteEvidence(rowId)}
+                                    disabled={!rowId || Boolean(isDeleting)}
+                                  >
+                                    {isDeleting ? "Deleting..." : "Delete"}
+                                  </button>
+                                ) : null}
+                              </div>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    ) : null}
+                  </div>
+
+                  <div>
+                    <p className="font-semibold text-slate-700">Exceptions</p>
+                    {!canReadExceptions ? (
+                      <p className="mt-1 text-slate-500">Missing permission: ops.exceptions.read</p>
+                    ) : relatedExceptions.length === 0 ? (
+                      <p className="mt-1 text-slate-600">No related exceptions for this source id.</p>
+                    ) : (
+                      <ul className="mt-2 space-y-1">
+                        {relatedExceptions.map((row) => (
+                          <li
+                            key={`related-exception-${row.id}`}
+                            className="rounded border border-slate-200 bg-white px-2 py-1"
+                          >
+                            <div>
+                              #{row.id} {row.status || "-"} | {row.severity || "-"}
+                            </div>
+                            <div className="text-slate-600">{row.title || "-"}</div>
+                            <Link
+                              to={`/app/ayarlar/exception-workbench?exceptionId=${row.id}`}
+                              className="mt-1 inline-block rounded border border-slate-300 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700"
+                            >
+                              Open Exception
+                            </Link>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+
+                  <div>
+                    <p className="font-semibold text-slate-700">Audit trail</p>
+                    {!canReadCariAudit ? (
+                      <p className="mt-1 text-slate-500">Missing permission: cari.audit.read</p>
+                    ) : relatedAuditRows.length === 0 ? (
+                      <p className="mt-1 text-slate-600">No audit records found for this document.</p>
+                    ) : (
+                      <ul className="mt-2 space-y-1">
+                        {relatedAuditRows.map((row) => (
+                          <li
+                            key={`related-audit-${row.auditLogId}`}
+                            className="rounded border border-slate-200 bg-white px-2 py-1"
+                          >
+                            {row.action || "-"} | {formatDateTime(row.createdAt)} | actor=
+                            {row.actorEmail || row.actorUserId || "-"}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </div>
+              </div>
               <StatusTimeline
                 className="mt-4"
                 title="Document Lifecycle Timeline"
