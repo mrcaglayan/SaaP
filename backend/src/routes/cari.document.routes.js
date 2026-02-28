@@ -27,6 +27,11 @@ import {
   resolveCariDocumentScope,
   updateCariDraftDocumentById,
 } from "../services/cari.document.service.js";
+import {
+  assertEvidencePolicyForCariDocumentAction,
+  EVIDENCE_POLICY_ACTION_CARI_DOCUMENT_POST,
+  EVIDENCE_POLICY_ACTION_CARI_DOCUMENT_REVERSE,
+} from "../services/evidence.policy.service.js";
 
 const router = express.Router();
 
@@ -211,6 +216,14 @@ router.post(
     if (payload.useFxOverride) {
       await runPermissionMiddleware(requireCariFxOverridePermission, req, res);
     }
+    await assertEvidencePolicyForCariDocumentAction({
+      tenantId: payload.tenantId,
+      documentId: payload.documentId,
+      actionCode: EVIDENCE_POLICY_ACTION_CARI_DOCUMENT_POST,
+      context: {
+        useFxOverride: Boolean(payload.useFxOverride),
+      },
+    });
     const result = await postCariDocumentById({
       req,
       payload,
@@ -233,6 +246,11 @@ router.post(
   }),
   asyncHandler(async (req, res) => {
     const payload = parseDocumentReverseInput(req);
+    await assertEvidencePolicyForCariDocumentAction({
+      tenantId: payload.tenantId,
+      documentId: payload.documentId,
+      actionCode: EVIDENCE_POLICY_ACTION_CARI_DOCUMENT_REVERSE,
+    });
     const result = await reverseCariPostedDocumentById({
       req,
       payload,

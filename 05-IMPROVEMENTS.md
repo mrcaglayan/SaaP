@@ -43,7 +43,7 @@ Tag legend: `(hot: yes)` means likely touches conflict-prone files (`AppLayout.j
 
 - [x] PR-UX20 Evidence storage foundation (DB + adapter + routes) (implemented: migration `m070_evidence_storage_foundation` + local filesystem storage adapter + CARI document evidence routes for metadata create/list, binary upload, download, and soft-delete)
 - [x] PR-UX21 Evidence uploader UI + attach to Cari Docs (implemented: Cari Documents detail related panel now includes evidence attachments UI with list, attach upload, download, and delete actions using PR-UX20 evidence APIs with `cari.doc.update` permission-aware controls)
-- [ ] PR-UX22 Evidence-required policy checks for risky actions (not started)
+- [x] PR-UX22 Evidence-required policy checks for risky actions (implemented: env-driven evidence policy enforcement on CARI document post/reverse; risky mode requires evidence for reverse, FX-override post, and optional high-amount post threshold)
 
 - [ ] PR-UX23 Shared CSV export helper + list page export actions (not started)
 - [ ] PR-UX24 Column chooser + sticky headers + per-page table prefs (not started)
@@ -133,11 +133,13 @@ Intentional not-yet-implemented placeholders (Stock, Fixed Assets, generic Repor
   smoke: `backend/scripts/test-ux-prux20-evidence-storage-foundation.js`
 - [x] PR-UX21 acceptance: selected CARI document detail exposes evidence attachments section allowing users to attach files, list existing evidence, download evidence content, and delete evidence through the evidence API foundation with permission-aware uploader controls
   smoke: `backend/scripts/test-ux-prux21-evidence-uploader-ui.js`
+- [x] PR-UX22 acceptance: risky CARI document actions are blocked with `EVIDENCE_REQUIRED` until at least one active evidence attachment exists according to policy mode/rules
+  smoke: `backend/scripts/test-ux-prux22-evidence-policy-checks.js`
 - [x] PR-CORE05 acceptance: standardized user-facing error handling + copyable requestId/details
   smoke: `backend/scripts/test-ux-prcore05-error-envelope.js`
 - [x] PR-CORE01 acceptance: key list endpoints return consistent `rows + total + limit + offset` with `pagination` metadata
   smoke: `backend/scripts/test-ux-prcore01-pagination-contracts.js` (to add)
 
 ## Immediate Next Step
-- Proceed with `PR-UX22` (Evidence-required policy checks for risky actions).
+- Proceed with `PR-UX23` (Shared CSV export helper + list page export actions).
 - After each merged PR, update this tracker line from `[ ]` to `[x]` with a short `(implemented)` note.

@@ -58,6 +58,13 @@ FX resolution baseline (exact + prior-date fallback):
   - `GZIP`: always gzip at storage time
   - `NONE`: store raw file bytes
 - Downloads always return original file bytes (compressed storage is transparently decompressed).
+- Risk-action evidence policy is controlled by:
+  - `EVIDENCE_POLICY_MODE=OFF|RISKY|ALWAYS`
+  - `EVIDENCE_POLICY_RISKY_POST_AMOUNT_BASE_MIN` (optional threshold rule in `RISKY` mode)
+- In `RISKY` mode, evidence is required for:
+  - CARI document reverse actions
+  - CARI document post actions with FX override
+  - CARI document post actions above configured base-amount threshold (if set)
 
 ## Reversal Effects on Statements and Aging
 
