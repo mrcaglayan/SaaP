@@ -1,36 +1,146 @@
 # 06 - CANONICAL IMPLEMENTATION PLAN (VERBATIM MERGE)
 
-## Section A - Subaccounts Implementation Plan
+## Unified Execution Order (Single Source of Truth)
+Use this order only for implementation planning and tracking:
 
-# 06 - SUBACCOUNTS Implementation Plan (my-app)
+1. PR-F01: Platform prerequisites and feature flags (Platform)
+   Includes: global feature flags, `/me/features` known-flag defaults, readiness placeholders.
+2. PR-F02: Subaccounts schema hardening (`m081`) + bank OU ownership (Bank Foundation)
+   Includes: `bank_accounts.operating_unit_id`, OU validations, bank API/service/UI OU support.
+3. PR-F03: `102` subtree enforcement + post-usage immutability (Bank Controls)
+   Includes: bank GL link under `102`, strict-mode checks, block unsafe bank identity mutation after usage.
+4. PR-F05: Setup Wizard V2 + onboarding account-tree payload (Setup Foundation)
+   Includes: country-first wizard, hierarchical onboarding account payload with parent/child support.
+5. PR-F06: Country pack expansion + onboarding binding (Setup Country Packs)
+   Includes: pack metadata expansion, transactional pack preview/apply in onboarding.
+6. PR-F07: Approval engine extension foundation (`m082`) (Workflow Foundation)
+   Includes: reuse existing approval engine tables/services, add close/consolidation policy support, scoped assignment resolution.
+7. PR-F08: Close/consolidation staged approval gating (Workflow Enforcement)
+   Includes: approve/reject decisions, maker-checker, close/consolidation gate enforcement on reused approval engine.
+8. PR-F10: Country tax engine foundation (`m083`) (Tax Foundation)
+   Includes: tax regimes/codes/rules/mappings schema and tax setup APIs.
+9. PR-F11: Tax runtime engine + CARI integration (Tax Runtime)
+   Includes: tax calculation/resolution engine + CARI document/settlement integration.
+10. PR-F04: One-click bank auto-provision (`102` child + bank account) (Bank UX Automation)
+    Includes: atomic bank + `102` child creation, allocator, idempotent retries.
+11. PR-F09: Workflow UI + readiness wiring (Workflow Operations UX)
+    Includes: workflow setup screens, approval status indicators, readiness wiring.
+12. PR-F12: Canonical consolidation mapping convergence wiring (Consolidation Convergence)
+    Includes: canonical mapping layer + wiring with subaccounts/workflow/tax outputs.
+13. PR-F13: Backfill + rollout + release-gate expansion (Rollout Hardening)
+    Includes: backfill scripts, pilot rollout strategy, runbooks, expanded regression gates.
+14. Tracker Update and Evidence Capture (Governance)
+    Includes: mark `[ ] -> [x]`, add `status/files/smoke/result` for each completed PR.
+15. Pilot Rollout Validation and Sign-off (Go-Live Gate)
+    Includes: pilot tenant validation, regression gate pass, finance/ops sign-off before broad enablement.
 
-## Execution Tracking
-- This is a source/spec file.
-- Execution status is tracked only in 11-PROJECT-FOLLOWING-TRACKER.md.
+## Architecture Decision (Locked Before Coding)
+- Decision ID: `AD-APPROVAL-REUSE-2026-03-01`
+- Status: `LOCKED`
+- We will **reuse the existing approval engine** already in `my-app` (`bank_approval_policies`, `bank_approval_requests`, module-aware extension) for `PR-F07` and `PR-F08`.
+- We will **not** introduce parallel `workflow_*` tables/endpoints as a second approval engine in this implementation wave.
+- `m082` scope is redefined as additive extension/indexing/backfill on existing approval engine, plus close/consolidation integration and UI/readiness wiring.
 
-## Audit Summary (Current State)
+## Master Tracker (Pending vs Implemented)
+Update rule:
+- `[ ]` = pending
+- `[x]` = implemented (merged)
+- After marking `[x]`, add:
+- `status: implemented (YYYY-MM-DD)`
+- `files: ...`
+- `smoke: ...`
+- `result: pass/fail`
 
-### What already aligns
-- `accounts` model already supports hierarchy via `parent_account_id`, with posting control via `allow_posting`.
-- Journal posting already enforces `active + postable + leaf` account usage.
-- `bank_accounts` already maps 1:1 to GL account with unique `(tenant_id, legal_entity_id, gl_account_id)`.
-- Bank account API/UI already enforce legal entity + active + postable + leaf + ASSET account selection.
+- [ ] PR-F01 acceptance: platform prerequisites are in place with known tenant feature codes (`FEATURE_SUBACCOUNTS_V1`, `FEATURE_SETUP_WIZARD_V2`, `FEATURE_CONSOLIDATION_CANONICAL_MAPPING_V1`, `FEATURE_WORKFLOW_CLOSE_CONSOLIDATION_V1`, `FEATURE_TAX_ENGINE_V1`), `/me/features` returns known-but-unconfigured flags as disabled, and readiness exposes non-blocking upcoming placeholders.
+  smoke: `backend/scripts/test-followup-prf01-feature-flags-readiness-placeholders.js`
+- [ ] PR-F02 acceptance: `m081` adds `bank_accounts.operating_unit_id` + required indexes/FKs and bank accounts API/UI support optional OU ownership without breaking existing flows.
+  smoke: `backend/scripts/test-followup-prf02-bank-ou-ownership.js`
+- [ ] PR-F03 acceptance: bank GL link enforcement supports strict `102` subtree policy (feature-flagged) and blocks unsafe bank identity changes after first accounting usage/posting.
+  smoke: `backend/scripts/test-followup-prf03-102-subtree-and-immutability.js`
+- [ ] PR-F04 acceptance: one-click bank provisioning atomically creates `102` child account + bank account with idempotent retry safety and no orphan records on failure.
+  smoke: `backend/scripts/test-followup-prf04-bank-auto-provision-102-child.js`
+- [ ] PR-F05 acceptance: Setup Wizard v2 is country-first and onboarding payload supports hierarchical account tree creation (parent-aware) while preserving backward compatibility for current bootstrap payloads.
+  smoke: `backend/scripts/test-followup-prf05-country-first-wizard-and-account-tree.js`
+- [ ] PR-F06 acceptance: country pack expansion is wired into onboarding so selected pack can be previewed/applied in-flow and seeds starter account-tree + required mapping expectations.
+  smoke: `backend/scripts/test-followup-prf06-onboarding-country-pack-binding.js`
+- [ ] PR-F07 acceptance: `m082` extends existing approval engine for `PERIOD_CLOSE` and `CONSOLIDATION_RUN` (no parallel workflow engine), with scoped policy resolution and validation.
+  smoke: `backend/scripts/test-followup-prf07-workflow-foundation.js`
+- [ ] PR-F08 acceptance: staged approval gating is enforced for period close and consolidation execute/finalize paths (maker-checker + scope checks), returning explicit approval-required errors when not approved.
+  smoke: `backend/scripts/test-followup-prf08-close-consolidation-gating.js`
+- [ ] PR-F09 acceptance: workflow UI indicators + setup screens + readiness wiring are visible and actionable for finance/ops users, without changing unrelated module behavior.
+  smoke: `backend/scripts/test-followup-prf09-workflow-ui-readiness-wiring.js`
+- [ ] PR-F10 acceptance: `m083` tax engine foundation schema and tax setup APIs (`regimes`, `codes`, `rules`, `account mappings`) are implemented with tenant/legal-entity safe constraints.
+  smoke: `backend/scripts/test-followup-prf10-tax-foundation.js`
+- [ ] PR-F11 acceptance: runtime tax engine resolves regime/code/rules and integrates with CARI posting paths, generating deterministic tax journal lines or explicit setup errors when mappings are missing.
+  smoke: `backend/scripts/test-followup-prf11-tax-engine-cari-integration.js`
+- [ ] PR-F12 acceptance: canonical consolidation mapping layer removes same-code coupling across countries and safely converges with subaccounts, approval gating, and tax-posted lines in consolidated reporting.
+  smoke: `backend/scripts/test-followup-prf12-canonical-consolidation-wiring.js`
+- [ ] PR-F13 acceptance: rollout/backfill/release-gate hardening is complete with migration-safe scripts, pilot-flag strategy, runbooks, and expanded regression gates for combined tracks.
+  smoke: `backend/scripts/test-followup-prf13-rollout-backfill-release-gate.js`
 
-### Gaps found against target model
-- No `bank_accounts.operating_unit_id` exists yet in schema/service/API/UI.
-- No explicit enforcement that bank-linked GL account must be under `102` subtree (TDHP control account policy).
-- `iban`/`account_no` uniqueness is not enforced at DB level.
-- Update flow allows changing key identity fields (e.g. `gl_account_id`, `iban`, `currency`) without "has-postings" guardrails.
-- No guided "create bank + auto-create 102 child account" flow.
-- OpenAPI for bank accounts remains generic (`AnyObject`) and does not document strong request/response contract.
+## Mapping Note
+- Section A (`Subaccounts`) contributes mainly to `PR-F02`, `PR-F03`, `PR-F04`.
+- Section B (`Setup Logic`) contributes mainly to `PR-F05`, `PR-F06`, `PR-F12`.
+- Section C (`Approval and Tax`) contributes mainly to `PR-F07`, `PR-F08`, `PR-F09`, `PR-F10`, `PR-F11`, `PR-F13`.
+- Section D (`Follow-ups`) defines dependencies and confirms this final order.
 
-## Implementation Principles
-- Keep `102` as non-postable control account.
-- Each real bank account (IBAN/account no) maps 1:1 to one postable leaf subaccount under `102`.
-- Operating Unit is optional ownership/reporting dimension only (not identity).
-- Do not break existing bank/payments/reconciliation flows; rollout with backward compatibility.
+## Legacy Numbering Map (for sections below)
+Use this map when you see old `PR-1..PR-8` labels in verbatim sections:
 
-## PR Roadmap
+- Section A `PR-1` + `PR-2` -> `PR-F02`
+- Section A `PR-3` + `PR-4` -> `PR-F03`
+- Section A `PR-5` + `PR-6` -> `PR-F04`
+- Section A `PR-7` + `PR-8` -> `PR-F13`
+- Section B `PR-1` + `PR-2` -> `PR-F05`
+- Section B `PR-3` -> `PR-F06`
+- Section B `PR-4` -> `PR-F12`
+- Section B `PR-5` -> covered under `PR-F09`/`PR-F13` hardening
+- Section B `PR-6` -> `PR-F08`
+- Section B `PR-7` -> `PR-F10` + `PR-F11`
+- Section B `PR-8` -> `PR-F13`
+- Section C `PR-A1` -> `PR-F07`
+- Section C `PR-A2` -> `PR-F08`
+- Section C `PR-A3` -> `PR-F09`
+- Section C `PR-T1` -> `PR-F10`
+- Section C `PR-T2` -> `PR-F11`
+- Section C `PR-T3` + `PR-X1` -> `PR-F13`
+
+
+## Unified Combined Steps (One Section)
+All implementation content below is grouped only by unified PR order (PR-F01..PR-F13).
+
+### PR-F01
+## PR-F01: Platform prerequisites and feature flags
+Goal:
+- Create cross-track toggles and guardrails before major behavior changes.
+
+Deliverables:
+- Tenant feature flags:
+  - `feature_subaccounts_v1`
+  - `feature_setup_wizard_v2`
+  - `feature_consolidation_canonical_mapping_v1`
+  - `feature_workflow_close_consolidation_v1`
+  - `feature_tax_engine_v1`
+- Readiness placeholders for new modules (initially warning-only).
+- Detailed implementation checklist: use this canonical file (`06-CANONICAL-IMPLEMENTATION-PLAN.md`) + `07-LINEAR-IMPLEMENTATION-STEPS.md` (legacy `10-PR-F01-IMPLEMENTATION-CHECKLIST.md` removed).
+
+Depends on: none
+Unblocks: all following PRs
+
+
+### PR-F02
+## PR-F02: Subaccounts schema hardening (`m081`) and bank OU ownership
+Goal:
+- Implement `06-SUBACCOUNTS` PR-1/2 foundation.
+
+Deliverables:
+- Migration `m081_*`:
+  - `bank_accounts.operating_unit_id` + indexes/FKs
+  - bank account identity constraints (IBAN/account uniqueness policy)
+- API/service/UI support for optional OU owner.
+
+Depends on: PR-F01
+Unblocks: PR-F03, PR-F04, PR-F12
 
 ## PR-1: Schema Hardening + OU Ownership (m081)
 Goal: Add missing data model fields/constraints safely.
@@ -70,6 +180,20 @@ Acceptance:
 - Create/update/list/get endpoints support OU owner cleanly.
 - Cross-entity OU assignment fails with clear 400 error.
 
+
+### PR-F03
+## PR-F03: 102 subtree enforcement + immutability after posting
+Goal:
+- Complete `06-SUBACCOUNTS` integrity controls.
+
+Deliverables:
+- Enforce bank GL account under configured `102` subtree (flagged rollout).
+- Block critical bank identity mutations once posted/consumed.
+- Add compatibility checks for payments/reconciliation/payroll consumers.
+
+Depends on: PR-F02
+Unblocks: PR-F04, PR-F12
+
 ## PR-3: Enforce 102 Subtree Policy for Bank GL Link
 Goal: Ensure bank accounts only link to valid bank subaccounts.
 
@@ -98,6 +222,20 @@ Changes:
 Acceptance:
 - Mutable before usage, guarded after usage.
 - Error messages state why update is blocked and recommended next action.
+
+
+### PR-F04
+## PR-F04: Bank one-click provisioning (auto-create 102 child + bank account)
+Goal:
+- Complete subaccounts usability path.
+
+Deliverables:
+- Transactional service/API to create `102` child + bank account atomically.
+- Frontend action in Bank Accounts page.
+- Idempotency-safe retry semantics.
+
+Depends on: PR-F03
+Unblocks: PR-F12
 
 ## PR-5: Auto-Create 102 Child + Bank Account (UX/API)
 Goal: Remove manual two-step setup friction.
@@ -129,173 +267,20 @@ Acceptance:
 - User can create/edit/list/filter by OU owner.
 - UX clearly distinguishes identity (`GL/IBAN`) from ownership (`OU`).
 
-## PR-7: Test Coverage for Subaccounts + OU
-Goal: lock behavior and prevent regressions.
 
-Changes:
-- Add/extend backend scripts for:
-  - OU ownership validations,
-  - 102 subtree enforcement,
-  - immutability after first posting,
-  - auto-create transactional rollback.
-- Add frontend smoke tests for Bank Accounts form/list updates.
+### PR-F05
+## PR-F05: Setup Wizard V2 (country-first) + onboarding account tree payload
+Goal:
+- Implement `07-SETUPLOGIC` PR-1/2.
 
-Acceptance:
-- Existing release gate scripts remain green.
-- New scenarios fail before implementation and pass after.
+Deliverables:
+- Wizard flow: Country -> entity -> template -> account tree -> branches.
+- Onboarding payload supports hierarchical account creation (`parentCode`/resolution flow).
+- Keep existing Company bootstrap backward-compatible.
 
-## PR-8: Documentation + Rollout Runbook
-Goal: operationalize safely.
-
-Changes:
-- Update user guide sections for bank account setup.
-- Add migration/backfill runbook:
-  - identify accounts not under `102`,
-  - remediation strategy,
-  - feature-flag rollout order (tenant pilot -> general availability).
-- Update architecture docs with "control account + subledger" pattern.
-
-Acceptance:
-- Finance/ops teams can execute rollout without engineering intervention.
-
-## Suggested Delivery Order
-1. PR-1
-2. PR-2
-3. PR-3
-4. PR-4
-5. PR-6
-6. PR-5
-7. PR-7
-8. PR-8
-
-(Reason: establish schema/validation guardrails first, then UX convenience and rollout artifacts.)
-
-## Notes for This Repo
-- Keep migration key sequence continuous after `m080`.
-- Preserve backward compatibility for current `bank_accounts` consumers (payments/reconciliation/payroll).
-- Avoid changing existing unique constraints unless data audit confirms no collisions.
-
-
-
-## Section B - Setup Logic (Audit + Implementation Plan)
-
-# 07 - SETUPLOGIC (Audit + Implementation Plan)
-
-## Execution Tracking
-- This is a source/spec file.
-- Execution status is tracked only in 11-PROJECT-FOLLOWING-TRACKER.md.
-
-## Scope
-This document audits `my-app` against the requested setup logic and defines how to implement the missing parts.
-
-Requested logic summary:
-- First setup should start from country selection.
-- Show country-relevant chart template.
-- Let user choose parent vs subaccount behavior (parent non-postable).
-- Allow adding subaccounts in wizard and later in settings.
-- Allow custom account definitions (code, name, type, debit/credit nature).
-- Support multinational structure (country HQ + branches).
-- Branch-level control -> regional control -> top/global approval -> consolidation.
-- Consolidate countries with different local account codes into one unified view.
-- Country-specific tax/VAT (KDV/vergi) differences.
-
-## Current Coverage Audit
-
-## 1) First login: choose country
-Status: PARTIAL
-
-What exists:
-- Company onboarding requires `countryIso2` (or `countryId`) per legal entity.
-- Legal entities are country-linked and functional-currency-linked.
-
-Gap:
-- There is no strict "country-first wizard step" that drives all later setup choices automatically.
-
-## 2) Country-specific account list appears automatically
-Status: PARTIAL
-
-What exists:
-- Policy pack infrastructure exists (`TR_UNIFORM_V1`, `AF_STARTER_V1`, `US_GAAP_STARTER_V1`).
-- GL Setup template wizard filters packs by selected legal entity country and supports preview/apply.
-
-Gap:
-- This runs in GL Setup page, not in first onboarding flow.
-- Company bootstrap still uses a flat `DEFAULT_ACCOUNTS` fallback unless custom `defaultAccounts` is passed.
-
-## 3) Parent/subaccount selection + parent non-postable behavior
-Status: MOSTLY COVERED
-
-What exists:
-- `accounts.parent_account_id` supports hierarchy.
-- `allow_posting` supported.
-- Upsert account logic auto-forces parent accounts to non-postable when children exist.
-- Journal posting validates active + postable + leaf account.
-
-Gap:
-- Wizard UX for account tree modeling is missing in first onboarding.
-
-## 4) Add subaccounts in setup wizard and later in settings
-Status: PARTIAL
-
-What exists:
-- Later settings: fully possible in GL Setup (`coaId`, `code`, `name`, `accountType`, `normalSide`, `allowPosting`, `parentAccountId`).
-
-Gap:
-- First setup wizard does not model hierarchical account tree (`parentAccountId` not part of onboarding account payload).
-
-## 5) Custom account create (code/name/type/normal side)
-Status: COVERED (post-setup), PARTIAL (wizard)
-
-What exists:
-- GL Setup supports custom account creation with type and normal side.
-- Onboarding `defaultAccounts` accepts account code/name/type/normalSide/allowPosting.
-
-Gap:
-- Onboarding account payload cannot define parent-child relations cleanly.
-
-## 6) Multinational model (countries, entities, branches)
-Status: COVERED (foundation)
-
-What exists:
-- Group company -> legal entities -> operating units (branches/plants/stores/departments).
-- Scope-aware RBAC supports TENANT/GROUP/COUNTRY/LEGAL_ENTITY/OPERATING_UNIT.
-- Consolidation group + members + runs exist.
-
-Gap:
-- Operating unit hierarchy (region -> branch tree) is not explicit; units are flat under legal entity.
-
-## 7) Branch -> regional -> top approval chain before consolidation
-Status: PARTIAL / MISSING
-
-What exists:
-- Generic approval policy/request engine (mainly bank/payroll-centric usage).
-- Multi-scope RBAC can enforce who can see/do actions by OU/entity/country/group.
-
-Gap:
-- No explicit workflow engine binding branch/regional/global approval stages to close/consolidation lifecycle.
-- Consolidation execution/finalization is permission-based, not staged approval-request-based.
-
-## 8) Consolidate different country CoAs into one unified structure
-Status: PARTIAL
-
-What exists:
-- Consolidation groups and group CoA mappings exist.
-- Consolidation run pipeline, reporting, adjustments, eliminations are implemented.
-
-Gap:
-- Current run logic maps local accounts to group accounts by same account `code` in mapped CoAs.
-- True cross-country different-code normalization (local code A -> canonical purpose -> group code B) is not fully modeled.
-
-## 9) Country-specific tax/VAT/KDV rules
-Status: MISSING (rule engine)
-
-What exists:
-- `tax_id` on legal entities and `tax_code` on journal lines.
-
-Gap:
-- No country tax rule engine, no VAT/KDV calculation packs, no tax posting policy framework per country.
-
-## Implementation Plan (How to Make It)
+Depends on: PR-F01
+Can run parallel with: PR-F02/F03/F04
+Unblocks: PR-F06, PR-F11
 
 ## PR-1: Setup Wizard V2 (country-first flow)
 Goal:
@@ -316,6 +301,19 @@ Changes:
 - Backend resolves parent links after insert in deterministic order.
 - Enforce parent `allowPosting=false`.
 
+
+### PR-F06
+## PR-F06: Country pack expansion and onboarding binding
+Goal:
+- Implement `07-SETUPLOGIC` PR-3.
+
+Deliverables:
+- Pack metadata includes starter account tree + required mappings.
+- Onboarding can preview/apply selected country pack in same transaction.
+
+Depends on: PR-F05
+Unblocks: PR-F11, PR-F12
+
 ## PR-3: Country Pack Expansion (CoA + rules)
 Goal:
 - Make country packs first-class onboarding artifacts.
@@ -327,110 +325,22 @@ Changes:
   - required purpose mappings.
 - Add API endpoint to apply selected pack during company bootstrap transaction.
 
-## PR-4: Canonical Mapping Layer for Consolidation
+
+### PR-F07
+## PR-F07: Approval engine extension + read APIs (`m082`, PR-A1)
 Goal:
-- Remove same-code dependency across countries.
+- Build workflow definition/assignment/runtime data model.
 
-Changes:
-- Add canonical account/purpose mapping table:
-  - local account -> canonical key -> group account.
-- Update consolidation extraction to use mapping table instead of `group_acc.code = local_acc.code` coupling.
-- Provide migration/backfill helpers.
+Deliverables:
+- Migration `m082_*` extending existing approval engine (`bank_approval_policies`, `bank_approval_requests`, related indexes/backfill for close/consolidation usage).
+- Read/setup APIs and validators on top of existing approval engine.
 
-## PR-5: OU Hierarchy + Ownership Model
-Goal:
-- Support regional oversight explicitly.
-
-Changes:
-- Add optional `parent_operating_unit_id` and/or `region_id` model.
-- Add manager assignment table for OU/regional/global responsibility.
-- Add UI for maintaining hierarchy and managers.
-
-## PR-6: Approval Workflow for Close/Consolidation
-Goal:
-- Enforce branch -> regional -> global approvals before consolidation finalization.
-
-Changes:
-- Introduce approval stages for:
-  - period close run,
-  - consolidation run execute/finalize.
-- Bind stages to scope (OU, legal entity, group) and threshold rules.
-- Gate consolidation actions until approval chain is completed.
-
-## PR-7: Country Tax Rule Pack Engine
-Goal:
-- Handle KDV/VAT/tax differences per country.
-
-Changes:
-- Add tax rule definitions by country (rates, account mapping rules, posting behaviors).
-- Add tax validation + computation service for supported modules.
-- Attach tax rules to policy pack / legal entity config.
-
-## PR-8: UX + Test + Rollout Hardening
-Goal:
-- Make implementation operable and safe.
-
-Changes:
-- Update setup/readiness UI and docs to show missing country/tax/mapping prerequisites.
-- Add regression scripts for new wizard flow, consolidation mapping, and approval chain gates.
-- Add rollout runbook for existing tenants (backfill mappings and account trees).
-
-## Recommended Delivery Order
-1. PR-1
-2. PR-2
-3. PR-3
-4. PR-4
-5. PR-5
-6. PR-6
-7. PR-7
-8. PR-8
-
-## Practical Notes for my-app
-- Reuse existing strengths instead of replacing them:
-  - policy pack preview/apply,
-  - GL account hierarchy enforcement,
-  - RBAC scoped permissions,
-  - consolidation run pipeline.
-- Main architectural gap is orchestration:
-  - onboarding should drive country template + hierarchy from day 1,
-  - consolidation should rely on explicit canonical mappings and staged approvals.
-
-
-
-## Section C - Approval and Tax Engine Blueprint
-
-# 08 - APPROVAL AND TAX ENGINE Blueprint (my-app)
-
-## Execution Tracking
-- This is a source/spec file.
-- Execution status is tracked only in 11-PROJECT-FOLLOWING-TRACKER.md.
-
-## Objective
-Close the two critical gaps identified in setup logic:
-1. Explicit branch -> regional -> global approval chain for period close and consolidation.
-2. Country tax/VAT (KDV/vergi) rule engine with posting-safe account mappings.
-
-This blueprint is aligned with current `my-app` patterns:
-- migration-driven schema evolution (`backend/src/migrations/m0xx_*.js`)
-- route validators + services split
-- RBAC scope enforcement (`TENANT`, `GROUP`, `COUNTRY`, `LEGAL_ENTITY`, `OPERATING_UNIT`)
-- journal posting integrity and idempotent APIs.
-
-## Scope Boundaries
-In scope:
-- new approval workflow model for close/consolidation gates
-- new country tax regime and rule model
-- API contracts for setup + execution + readiness checks
-- rollout, feature flags, and regression requirements
-
-Out of scope (first phase):
-- full e-invoice/e-defter integration
-- external tax authority filing
-- arbitrary low-code workflow designer UI
-
-## A) Approval Chain Architecture
+Depends on: PR-F01
+Unblocks: PR-F08, PR-F09, PR-F12
 
 ## A1. Data Model (new tables)
+Decision note: superseded by locked architecture decision (`AD-APPROVAL-REUSE-2026-03-01`) for implementation.
+Implementation must reuse existing approval engine tables instead of creating parallel `workflow_*` tables.
 Proposed migration: `m082_close_consolidation_workflow_approvals.js`
 
 ### `workflow_definitions`
@@ -527,30 +437,6 @@ Indexes:
 - `KEY (workflow_instance_id, step_no)`
 - `UNIQUE (workflow_instance_id, step_no, decision_by_user_id)`
 
-## A2. Runtime Rules
-- Maker-checker: requester cannot approve own step unless `allow_self_approve=true`.
-- Step completes when unique approvers at step >= `min_approver_count`.
-- Instance advances to next step; final step completion sets `status=APPROVED`.
-- Any reject sets `status=REJECTED` and blocks finalize.
-- For close/consolidation, execution/finalization endpoint must assert approved instance exists.
-
-## A3. Integration Points in Existing Code
-### Period close
-- File: `backend/src/routes/gl.period-closing.routes.js`
-- Hook points:
-  - after draft close run creation: create `workflow_instance` (if policy enabled)
-  - before marking run complete/hard close: require workflow approved
-
-### Consolidation
-- File: `backend/src/routes/consolidation.js`
-- Hook points:
-  - run execute/finalize endpoints must check workflow gate
-  - if gate active and not approved, return 409 `APPROVAL_REQUIRED`
-
-### RBAC
-- Reuse existing `assertScopeAccess` for per-step scope validations.
-- Decision actor must hold `required_permission_code` from active step definition.
-
 ## A4. API Contracts
 Base path suggestion: `/api/v1/workflows`
 
@@ -580,6 +466,122 @@ Error contract examples:
 - `APPROVAL_INSTANCE_REJECTED`
 
 ## B) Country Tax/VAT Engine Architecture
+
+
+### PR-F08
+## PR-F08: Close/consolidation gating by staged approvals (PR-A2)
+Goal:
+- Enforce branch->regional->global approval chain.
+
+Deliverables:
+- Integrate workflow checks into:
+  - `gl.period-closing.routes.js`
+  - `consolidation.js`
+- Decision endpoints (`approve/reject`) with maker-checker and scope checks.
+
+Depends on: PR-F07
+Unblocks: PR-F09, PR-F12
+
+## PR-6: Approval Workflow for Close/Consolidation
+Goal:
+- Enforce branch -> regional -> global approvals before consolidation finalization.
+
+Changes:
+- Introduce approval stages for:
+  - period close run,
+  - consolidation run execute/finalize.
+- Bind stages to scope (OU, legal entity, group) and threshold rules.
+- Gate consolidation actions until approval chain is completed.
+
+## A2. Runtime Rules
+- Maker-checker: requester cannot approve own step unless `allow_self_approve=true`.
+- Step completes when unique approvers at step >= `min_approver_count`.
+- Instance advances to next step; final step completion sets `status=APPROVED`.
+- Any reject sets `status=REJECTED` and blocks finalize.
+- For close/consolidation, execution/finalization endpoint must assert approved instance exists.
+
+## A3. Integration Points in Existing Code
+### Period close
+- File: `backend/src/routes/gl.period-closing.routes.js`
+- Hook points:
+  - after draft close run creation: create `workflow_instance` (if policy enabled)
+  - before marking run complete/hard close: require workflow approved
+
+### Consolidation
+- File: `backend/src/routes/consolidation.js`
+- Hook points:
+  - run execute/finalize endpoints must check workflow gate
+  - if gate active and not approved, return 409 `APPROVAL_REQUIRED`
+
+### RBAC
+- Reuse existing `assertScopeAccess` for per-step scope validations.
+- Decision actor must hold `required_permission_code` from active step definition.
+
+
+### PR-F09
+## PR-F09: Workflow UI + readiness integration (PR-A3)
+Goal:
+- Operational visibility and setup usability for approval chains.
+
+Deliverables:
+- UI indicators for pending/current approval step in period close + consolidation pages.
+- Setup pages for workflow definitions/assignments.
+- Readiness checklist integration.
+
+Depends on: PR-F08
+Unblocks: PR-F12
+
+## PR-5: OU Hierarchy + Ownership Model
+Goal:
+- Support regional oversight explicitly.
+
+Changes:
+- Add optional `parent_operating_unit_id` and/or `region_id` model.
+- Add manager assignment table for OU/regional/global responsibility.
+- Add UI for maintaining hierarchy and managers.
+
+## C1. Module readiness additions
+Extend `module-readiness.service.js` with:
+- `closeConsolidationWorkflow` readiness:
+  - workflow assigned
+  - mandatory steps complete
+  - no invalid step permissions
+- `countryTaxEngine` readiness:
+  - active regime exists
+  - minimum required tax codes exist
+  - all required tax purpose mappings exist and reference active posting accounts
+
+## C2. Setup UI additions
+- `GlSetupPage` / new `TaxSetupPage`:
+  - regime/codes/rules/mapping management
+- `ConsolidationReportsPage`:
+  - show approval gate status and current step
+- `TenantReadinessChecklist`:
+  - add links to workflow/tax setup when missing
+
+
+### PR-F10
+## PR-F10: Country tax engine foundation schema + setup APIs (`m083`, PR-T1)
+Goal:
+- Create tax regime/code/rule/mapping foundation.
+
+Deliverables:
+- Migration `m083_*`:
+  - `tax_regimes`, `tax_codes`, `tax_rule_sets`, `tax_account_mappings`
+- Tax setup APIs + validators.
+
+Depends on: PR-F01
+Can run parallel with: PR-F07/F08
+Unblocks: PR-F11, PR-F12
+
+## PR-7: Country Tax Rule Pack Engine
+Goal:
+- Handle KDV/VAT/tax differences per country.
+
+Changes:
+- Add tax rule definitions by country (rates, account mapping rules, posting behaviors).
+- Add tax validation + computation service for supported modules.
+- Attach tax rules to policy pack / legal entity config.
 
 ## B1. Data Model (new tables)
 Proposed migration: `m083_country_tax_engine_foundation.js`
@@ -661,33 +663,6 @@ Constraints:
 - `UNIQUE (tenant_id, legal_entity_id, tax_code_id, tax_purpose_code)`
 - `account_id` must be active, posting, legal-entity scoped
 
-## B2. Runtime Services
-New service suggestion: `backend/src/services/tax.engine.service.js`
-
-Core functions:
-- `resolveTaxRegime(tenantId, legalEntityId, postingDate)`
-- `resolveTaxCodeAndRule(context)`
-- `computeTaxBreakdown({baseAmount, mode, ratePct, recoverability})`
-- `resolveTaxAccounts(tenantId, legalEntityId, taxCodeId)`
-- `buildTaxJournalLines(context)`
-
-Expected output:
-- deterministic tax breakdown lines
-- ready-to-post journal line payloads with `tax_code`
-- validation errors when mapping/rules missing
-
-## B3. Integration Points
-### CARI documents/settlements (phase 1)
-- Files:
-  - `backend/src/services/cari.document.service.js`
-  - `backend/src/services/cari.settlement.service.js`
-- Apply tax engine before final journal line insert.
-
-### Extend later to:
-- `payments.service.js`
-- `bank.reconciliationAutoPosting.service.js`
-- `payroll.*` if statutory taxes are modeled there.
-
 ## B4. API Contracts
 Base path suggestion: `/api/v1/tax`
 
@@ -723,24 +698,129 @@ Error contract examples:
 
 ## C) Readiness and Setup Integration
 
-## C1. Module readiness additions
-Extend `module-readiness.service.js` with:
-- `closeConsolidationWorkflow` readiness:
-  - workflow assigned
-  - mandatory steps complete
-  - no invalid step permissions
-- `countryTaxEngine` readiness:
-  - active regime exists
-  - minimum required tax codes exist
-  - all required tax purpose mappings exist and reference active posting accounts
 
-## C2. Setup UI additions
-- `GlSetupPage` / new `TaxSetupPage`:
-  - regime/codes/rules/mapping management
-- `ConsolidationReportsPage`:
-  - show approval gate status and current step
-- `TenantReadinessChecklist`:
-  - add links to workflow/tax setup when missing
+### PR-F11
+## PR-F11: Tax runtime engine + CARI posting integration (PR-T2)
+Goal:
+- Put tax rules into posting behavior safely.
+
+Deliverables:
+- `tax.engine.service.js` core resolvers/calculators.
+- Integrate first with CARI document/settlement posting.
+- Explicit setup errors when tax mapping/rules missing.
+
+Depends on: PR-F10, PR-F06
+Unblocks: PR-F12
+
+## B2. Runtime Services
+New service suggestion: `backend/src/services/tax.engine.service.js`
+
+Core functions:
+- `resolveTaxRegime(tenantId, legalEntityId, postingDate)`
+- `resolveTaxCodeAndRule(context)`
+- `computeTaxBreakdown({baseAmount, mode, ratePct, recoverability})`
+- `resolveTaxAccounts(tenantId, legalEntityId, taxCodeId)`
+- `buildTaxJournalLines(context)`
+
+Expected output:
+- deterministic tax breakdown lines
+- ready-to-post journal line payloads with `tax_code`
+- validation errors when mapping/rules missing
+
+## B3. Integration Points
+### CARI documents/settlements (phase 1)
+- Files:
+  - `backend/src/services/cari.document.service.js`
+  - `backend/src/services/cari.settlement.service.js`
+- Apply tax engine before final journal line insert.
+
+### Extend later to:
+- `payments.service.js`
+- `bank.reconciliationAutoPosting.service.js`
+- `payroll.*` if statutory taxes are modeled there.
+
+
+### PR-F12
+## PR-F12: Canonical consolidation mapping layer + cross-track wiring
+Goal:
+- Implement `07-SETUPLOGIC` PR-4 and finalize cross-country consolidation consistency.
+
+Deliverables:
+- Canonical mapping table(s) (local account -> canonical key -> group account).
+- Consolidation run logic updated to use canonical mapping (not same-code coupling).
+- Wiring checks:
+  - subaccounts (`F03/F04`) remain compatible,
+  - approval gate (`F08`) required before finalize,
+  - tax-posted lines (`F11`) reconcile in consolidated reports.
+
+Depends on: PR-F06, PR-F08, PR-F11
+Critical wiring milestone: yes
+
+## PR-4: Canonical Mapping Layer for Consolidation
+Goal:
+- Remove same-code dependency across countries.
+
+Changes:
+- Add canonical account/purpose mapping table:
+  - local account -> canonical key -> group account.
+- Update consolidation extraction to use mapping table instead of `group_acc.code = local_acc.code` coupling.
+- Provide migration/backfill helpers.
+
+
+### PR-F13
+## PR-F13: Rollout/backfill/release gate expansion (PR-X1 + hardening)
+Goal:
+- Make all above safely deployable for existing tenants.
+
+Deliverables:
+- Backfill scripts:
+  - workflow defaults
+  - tax regime/code/account mapping seeds
+  - canonical consolidation mapping bootstrap
+- Expanded regression/release gate across Cari/Cash/Contracts/Bank/Payroll/Consolidation/Setup.
+- Runbook updates for finance/ops rollout sequence.
+
+Depends on: PR-F12
+
+---
+
+## PR-7: Test Coverage for Subaccounts + OU
+Goal: lock behavior and prevent regressions.
+
+Changes:
+- Add/extend backend scripts for:
+  - OU ownership validations,
+  - 102 subtree enforcement,
+  - immutability after first posting,
+  - auto-create transactional rollback.
+- Add frontend smoke tests for Bank Accounts form/list updates.
+
+Acceptance:
+- Existing release gate scripts remain green.
+- New scenarios fail before implementation and pass after.
+
+## PR-8: Documentation + Rollout Runbook
+Goal: operationalize safely.
+
+Changes:
+- Update user guide sections for bank account setup.
+- Add migration/backfill runbook:
+  - identify accounts not under `102`,
+  - remediation strategy,
+  - feature-flag rollout order (tenant pilot -> general availability).
+- Update architecture docs with "control account + subledger" pattern.
+
+Acceptance:
+- Finance/ops teams can execute rollout without engineering intervention.
+
+## PR-8: UX + Test + Rollout Hardening
+Goal:
+- Make implementation operable and safe.
+
+Changes:
+- Update setup/readiness UI and docs to show missing country/tax/mapping prerequisites.
+- Add regression scripts for new wizard flow, consolidation mapping, and approval chain gates.
+- Add rollout runbook for existing tenants (backfill mappings and account trees).
 
 ## D) Feature Flags and Rollout
 Add tenant feature flags:
@@ -804,205 +884,8 @@ Cross tests:
 
 
 
-## Section D - Follow-ups PR List (Combined)
 
-# 09 - FOLLOW-UPS PR LIST (00..08 Combined, repo-aware)
-
-## Execution Tracking
-- This is a source/spec file.
-- Execution status is tracked only in 11-PROJECT-FOLLOWING-TRACKER.md.
-
-## Combined Audit Result
-
-## What is already mostly implemented (from 00..05)
-- Cari core + frontend + quality gate chain (`PR-11..15`) and contracts/revenue blocks (`PR-16..28`) are present in code/test scripts.
-- Cash-Cari integration (`PR-17..26`) exists, including transit workflow (`test-cash-pr26-transit-workflow.js`).
-- Bank + Payroll roadmap (`04-*`) is largely implemented (`m031..m080`, PR-B/PR-P/PR-H script coverage present).
-- UX/Hardening roadmap (`05-IMPROVEMENTS.md`) is largely implemented (PR-UX/PR-CORE scripts exist).
-
-## Open work concentrated in 06..08
-Not implemented yet in repo:
-- `m081` Subaccounts hardening + bank OU ownership and strict 102 subtree controls.
-- Setup Wizard V2 / country-first + onboarding account tree payload.
-- Canonical consolidation mapping layer for different local chart codes.
-- Explicit close/consolidation staged workflow approvals (`m082` track).
-- Country tax/VAT engine (`m083` track).
-
----
-
-## Follow-up PR List (with wiring/dependencies)
-
-## PR-F01: Platform prerequisites and feature flags
-Goal:
-- Create cross-track toggles and guardrails before major behavior changes.
-
-Deliverables:
-- Tenant feature flags:
-  - `feature_subaccounts_v1`
-  - `feature_setup_wizard_v2`
-  - `feature_consolidation_canonical_mapping_v1`
-  - `feature_workflow_close_consolidation_v1`
-  - `feature_tax_engine_v1`
-- Readiness placeholders for new modules (initially warning-only).
-- Detailed implementation checklist: `10-PR-F01-IMPLEMENTATION-CHECKLIST.md`
-
-Depends on: none
-Unblocks: all following PRs
-
-## PR-F02: Subaccounts schema hardening (`m081`) and bank OU ownership
-Goal:
-- Implement `06-SUBACCOUNTS` PR-1/2 foundation.
-
-Deliverables:
-- Migration `m081_*`:
-  - `bank_accounts.operating_unit_id` + indexes/FKs
-  - bank account identity constraints (IBAN/account uniqueness policy)
-- API/service/UI support for optional OU owner.
-
-Depends on: PR-F01
-Unblocks: PR-F03, PR-F04, PR-F12
-
-## PR-F03: 102 subtree enforcement + immutability after posting
-Goal:
-- Complete `06-SUBACCOUNTS` integrity controls.
-
-Deliverables:
-- Enforce bank GL account under configured `102` subtree (flagged rollout).
-- Block critical bank identity mutations once posted/consumed.
-- Add compatibility checks for payments/reconciliation/payroll consumers.
-
-Depends on: PR-F02
-Unblocks: PR-F04, PR-F12
-
-## PR-F04: Bank one-click provisioning (auto-create 102 child + bank account)
-Goal:
-- Complete subaccounts usability path.
-
-Deliverables:
-- Transactional service/API to create `102` child + bank account atomically.
-- Frontend action in Bank Accounts page.
-- Idempotency-safe retry semantics.
-
-Depends on: PR-F03
-Unblocks: PR-F12
-
-## PR-F05: Setup Wizard V2 (country-first) + onboarding account tree payload
-Goal:
-- Implement `07-SETUPLOGIC` PR-1/2.
-
-Deliverables:
-- Wizard flow: Country -> entity -> template -> account tree -> branches.
-- Onboarding payload supports hierarchical account creation (`parentCode`/resolution flow).
-- Keep existing Company bootstrap backward-compatible.
-
-Depends on: PR-F01
-Can run parallel with: PR-F02/F03/F04
-Unblocks: PR-F06, PR-F11
-
-## PR-F06: Country pack expansion and onboarding binding
-Goal:
-- Implement `07-SETUPLOGIC` PR-3.
-
-Deliverables:
-- Pack metadata includes starter account tree + required mappings.
-- Onboarding can preview/apply selected country pack in same transaction.
-
-Depends on: PR-F05
-Unblocks: PR-F11, PR-F12
-
-## PR-F07: Approval workflow engine schema + read APIs (`m082`, PR-A1)
-Goal:
-- Build workflow definition/assignment/runtime data model.
-
-Deliverables:
-- Migration `m082_*` (`workflow_definitions`, `workflow_definition_steps`, `workflow_assignments`, `workflow_instances`, `workflow_instance_decisions`).
-- Read/setup APIs and validators.
-
-Depends on: PR-F01
-Unblocks: PR-F08, PR-F09, PR-F12
-
-## PR-F08: Close/consolidation gating by staged approvals (PR-A2)
-Goal:
-- Enforce branch->regional->global approval chain.
-
-Deliverables:
-- Integrate workflow checks into:
-  - `gl.period-closing.routes.js`
-  - `consolidation.js`
-- Decision endpoints (`approve/reject`) with maker-checker and scope checks.
-
-Depends on: PR-F07
-Unblocks: PR-F09, PR-F12
-
-## PR-F09: Workflow UI + readiness integration (PR-A3)
-Goal:
-- Operational visibility and setup usability for approval chains.
-
-Deliverables:
-- UI indicators for pending/current approval step in period close + consolidation pages.
-- Setup pages for workflow definitions/assignments.
-- Readiness checklist integration.
-
-Depends on: PR-F08
-Unblocks: PR-F12
-
-## PR-F10: Country tax engine foundation schema + setup APIs (`m083`, PR-T1)
-Goal:
-- Create tax regime/code/rule/mapping foundation.
-
-Deliverables:
-- Migration `m083_*`:
-  - `tax_regimes`, `tax_codes`, `tax_rule_sets`, `tax_account_mappings`
-- Tax setup APIs + validators.
-
-Depends on: PR-F01
-Can run parallel with: PR-F07/F08
-Unblocks: PR-F11, PR-F12
-
-## PR-F11: Tax runtime engine + CARI posting integration (PR-T2)
-Goal:
-- Put tax rules into posting behavior safely.
-
-Deliverables:
-- `tax.engine.service.js` core resolvers/calculators.
-- Integrate first with CARI document/settlement posting.
-- Explicit setup errors when tax mapping/rules missing.
-
-Depends on: PR-F10, PR-F06
-Unblocks: PR-F12
-
-## PR-F12: Canonical consolidation mapping layer + cross-track wiring
-Goal:
-- Implement `07-SETUPLOGIC` PR-4 and finalize cross-country consolidation consistency.
-
-Deliverables:
-- Canonical mapping table(s) (local account -> canonical key -> group account).
-- Consolidation run logic updated to use canonical mapping (not same-code coupling).
-- Wiring checks:
-  - subaccounts (`F03/F04`) remain compatible,
-  - approval gate (`F08`) required before finalize,
-  - tax-posted lines (`F11`) reconcile in consolidated reports.
-
-Depends on: PR-F06, PR-F08, PR-F11
-Critical wiring milestone: yes
-
-## PR-F13: Rollout/backfill/release gate expansion (PR-X1 + hardening)
-Goal:
-- Make all above safely deployable for existing tenants.
-
-Deliverables:
-- Backfill scripts:
-  - workflow defaults
-  - tax regime/code/account mapping seeds
-  - canonical consolidation mapping bootstrap
-- Expanded regression/release gate across Cari/Cash/Contracts/Bank/Payroll/Consolidation/Setup.
-- Runbook updates for finance/ops rollout sequence.
-
-Depends on: PR-F12
-
----
-
-## Execution Order (recommended)
+## Execution Order (Legacy Section D Recommendation - already normalized in Unified Execution Order above)
 1. PR-F01
 2. PR-F02
 3. PR-F03
@@ -1024,3 +907,6 @@ Notes:
 
 
 
+
+
+check it again you still summarizing things....
