@@ -14,6 +14,7 @@ import {
   parsePositiveInt,
   resolveTenantId,
 } from "./_utils.js";
+import { listJournalSourceLinksByJournalIds } from "../services/journal.source-link.service.js";
 
 export function registerGlReadJournalRoutes(router, deps = {}) {
   const { resolveScopeFromBookId, resolveScopeFromJournalId } = deps;
@@ -51,6 +52,9 @@ export function registerGlReadJournalRoutes(router, deps = {}) {
       const fiscalPeriodId = parsePositiveInt(req.query.fiscalPeriodId);
       const status = req.query.status ? String(req.query.status).toUpperCase() : null;
       const includeLines = String(req.query.includeLines || "").toLowerCase() === "true";
+      const includeSourceLinks =
+        String(req.query.includeSourceLinks || req.query.include_source_links || "").toLowerCase() ===
+        "true";
 
       if (legalEntityId) {
         assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
@@ -124,6 +128,21 @@ export function registerGlReadJournalRoutes(router, deps = {}) {
       );
 
       const rows = rowsResult.rows || [];
+
+      if (includeSourceLinks && rows.length > 0) {
+        const journalIds = rows
+          .map((row) => parsePositiveInt(row.id))
+          .filter((value) => Boolean(value));
+        if (journalIds.length > 0) {
+          const sourceLinksByJournalId = await listJournalSourceLinksByJournalIds({
+            tenantId,
+            journalEntryIds: journalIds,
+          });
+          for (const row of rows) {
+            row.source_links = sourceLinksByJournalId.get(parsePositiveInt(row.id)) || [];
+          }
+        }
+      }
 
       if (includeLines && rows.length > 0) {
         const journalIds = rows
@@ -240,11 +259,17 @@ export function registerGlReadJournalRoutes(router, deps = {}) {
         [journalId]
       );
 
+      const sourceLinksByJournalId = await listJournalSourceLinksByJournalIds({
+        tenantId,
+        journalEntryIds: [journalId],
+      });
+
       return res.json({
         tenantId,
         row: {
           ...journal,
           lines: lineResult.rows || [],
+          source_links: sourceLinksByJournalId.get(journalId) || [],
         },
       });
     })

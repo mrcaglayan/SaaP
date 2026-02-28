@@ -23,6 +23,7 @@ import {
   listOperatingUnits,
 } from "../api/orgAdmin.js";
 import { useAuth } from "../auth/useAuth.js";
+import { useSearchParams } from "react-router-dom";
 import { useWorkingContextDefaults } from "../context/useWorkingContextDefaults.js";
 import { usePersistedFilters } from "../hooks/usePersistedFilters.js";
 import { useToastMessage } from "../hooks/useToastMessage.js";
@@ -97,6 +98,7 @@ function createLine(defaultCurrencyCode = "USD", defaultAccountId = "", defaultU
 }
 
 export default function JournalWorkbenchPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const { hasPermission } = useAuth();
   const { language } = useI18n();
   const isTr = language === "tr";
@@ -267,6 +269,10 @@ export default function JournalWorkbenchPage() {
   const historyPage = Math.floor(historyOffset / historyLimit) + 1;
   const historyHasPrev = historyOffset > 0;
   const historyHasNext = historyOffset + historyRows.length < historyTotal;
+  const deepLinkedJournalIdRaw = String(
+    searchParams.get("journalId") || searchParams.get("journal_id") || ""
+  ).trim();
+  const deepLinkedJournalId = toInt(deepLinkedJournalIdRaw);
 
   const selectedLegalEntity = useMemo(
     () => entities.find((entity) => Number(entity.id) === Number(selectedLegalEntityId)) || null,
@@ -611,7 +617,7 @@ export default function JournalWorkbenchPage() {
     await fetchJournalHistory(nextFilters);
   }
 
-  async function loadJournalDetail(journalId) {
+  const loadJournalDetail = useCallback(async (journalId) => {
     const parsedId = toInt(journalId);
     if (!parsedId || !canReadJournals) return;
     setSaving("journalDetail");
@@ -625,7 +631,63 @@ export default function JournalWorkbenchPage() {
     } finally {
       setSaving("");
     }
-  }
+  }, [canReadJournals, l]);
+
+  useEffect(() => {
+    if (!deepLinkedJournalIdRaw || deepLinkedJournalId) {
+      return;
+    }
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.delete("journalId");
+    nextParams.delete("journal_id");
+    setSearchParams(nextParams, { replace: true });
+  }, [
+    deepLinkedJournalId,
+    deepLinkedJournalIdRaw,
+    searchParams,
+    setSearchParams,
+  ]);
+
+  useEffect(() => {
+    if (!canReadJournals || !deepLinkedJournalId) {
+      return;
+    }
+    if (selectedJournalId === String(deepLinkedJournalId)) {
+      return;
+    }
+    void loadJournalDetail(deepLinkedJournalId);
+  }, [
+    canReadJournals,
+    deepLinkedJournalId,
+    loadJournalDetail,
+    selectedJournalId,
+  ]);
+
+  useEffect(() => {
+    const selectedId = toInt(selectedJournalId);
+    const currentId = toInt(
+      searchParams.get("journalId") || searchParams.get("journal_id")
+    );
+    if (deepLinkedJournalId && !selectedId) {
+      return;
+    }
+    if (selectedId === currentId) {
+      return;
+    }
+    const nextParams = new URLSearchParams(searchParams);
+    if (selectedId) {
+      nextParams.set("journalId", String(selectedId));
+    } else {
+      nextParams.delete("journalId");
+    }
+    nextParams.delete("journal_id");
+    setSearchParams(nextParams, { replace: true });
+  }, [
+    deepLinkedJournalId,
+    searchParams,
+    selectedJournalId,
+    setSearchParams,
+  ]);
 
   function applyEntityFlagSnapshot(snapshot) {
     const entityId = toInt(snapshot?.legal_entity_id);
@@ -2213,4 +2275,3 @@ export default function JournalWorkbenchPage() {
     </div>
   );
 }
-

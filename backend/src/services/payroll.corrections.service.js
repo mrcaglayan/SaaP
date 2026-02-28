@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { query, withTransaction } from "../db.js";
 import { badRequest, parsePositiveInt } from "../routes/_utils.js";
 import { assertPayrollPeriodActionAllowed } from "./payroll.close.service.js";
+import { upsertJournalSourceLinkTx } from "./journal.source-link.service.js";
 
 function u(v) {
   return String(v || "").trim().toUpperCase();
@@ -549,6 +550,28 @@ export async function reversePayrollRunWithCorrection({
       userId,
       reason,
       runQuery: tx.query,
+    });
+    await upsertJournalSourceLinkTx(tx, {
+      tenantId,
+      legalEntityId,
+      journalEntryId: parsePositiveInt(run.accrual_journal_entry_id),
+      sourceRefType: "PAYROLL_RUN",
+      sourceRefId: runId,
+    });
+    await upsertJournalSourceLinkTx(tx, {
+      tenantId,
+      legalEntityId,
+      journalEntryId: reversalJournal.journalEntryId,
+      sourceRefType: "PAYROLL_RUN",
+      sourceRefId: reversalRunId,
+    });
+    await upsertJournalSourceLinkTx(tx, {
+      tenantId,
+      legalEntityId,
+      journalEntryId: reversalJournal.journalEntryId,
+      sourceRefType: "PAYROLL_RUN",
+      sourceRefId: runId,
+      linkRole: "REVERSAL_OF",
     });
 
     const cancelResult = await cancelOpenLiabilitiesForReversalTx({

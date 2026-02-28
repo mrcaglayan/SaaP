@@ -6,6 +6,7 @@ import {
 } from "../tenantGuards.js";
 import { badRequest, parsePositiveInt } from "../routes/_utils.js";
 import { assertRegisterOperationalConfig } from "./cash.register.service.js";
+import { upsertJournalSourceLinkTx } from "./journal.source-link.service.js";
 import {
   findCashRegisterById,
   findCashSessionById,
@@ -3185,6 +3186,23 @@ export async function applyCariSettlement({
       if (!settlementBatchId) {
         throw new Error("Failed to create settlement batch");
       }
+      await upsertJournalSourceLinkTx(tx, {
+        tenantId,
+        legalEntityId,
+        journalEntryId: journalResult.journalEntryId,
+        sourceRefType: "CARI_SETTLEMENT_BATCH",
+        sourceRefId: settlementBatchId,
+      });
+      if (effectiveCashTransactionId) {
+        await upsertJournalSourceLinkTx(tx, {
+          tenantId,
+          legalEntityId,
+          journalEntryId: journalResult.journalEntryId,
+          sourceRefType: "CASH_TRANSACTION",
+          sourceRefId: effectiveCashTransactionId,
+          linkRole: "RELATED_CASH_TXN",
+        });
+      }
 
       const allocationInsertOrder = [...enrichedAllocations].sort((left, right) => {
         const leftDue = toDateOnlyString(left.row.due_date, "dueDate") || "9999-12-31";
@@ -4458,6 +4476,13 @@ export async function reverseCariSettlementById({
         referenceNo: toNullableString(`REV:${original.settlement_no || settlementBatchId}`, 100),
         lines: reversalLines,
       });
+      await upsertJournalSourceLinkTx(tx, {
+        tenantId,
+        legalEntityId: lockedLegalEntityId,
+        journalEntryId: originalJournalEntryId,
+        sourceRefType: "CARI_SETTLEMENT_BATCH",
+        sourceRefId: settlementBatchId,
+      });
 
       const reverseJournalUpdateResult = await tx.query(
         `UPDATE journal_entries
@@ -4533,6 +4558,21 @@ export async function reverseCariSettlementById({
       if (!reversalSettlementBatchId) {
         throw new Error("Reversal settlement batch create failed");
       }
+      await upsertJournalSourceLinkTx(tx, {
+        tenantId,
+        legalEntityId: lockedLegalEntityId,
+        journalEntryId: reversalJournalResult.journalEntryId,
+        sourceRefType: "CARI_SETTLEMENT_BATCH",
+        sourceRefId: reversalSettlementBatchId,
+      });
+      await upsertJournalSourceLinkTx(tx, {
+        tenantId,
+        legalEntityId: lockedLegalEntityId,
+        journalEntryId: reversalJournalResult.journalEntryId,
+        sourceRefType: "CARI_SETTLEMENT_BATCH",
+        sourceRefId: settlementBatchId,
+        linkRole: "REVERSAL_OF",
+      });
 
       await tx.query(
         `UPDATE cari_settlement_batches

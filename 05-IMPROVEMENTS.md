@@ -36,9 +36,9 @@ Tag legend: `(hot: yes)` means likely touches conflict-prone files (`AppLayout.j
 - [x] PR-UX14 Shared lifecycle rules + `StatusTimeline` component (implemented: reusable lifecycle rule registry + transition helpers in `frontend/src/lifecycle/lifecycleRules.js` and generic `frontend/src/components/StatusTimeline.jsx` for timeline rendering, hot: no)
 - [x] PR-UX15 Apply lifecycle UI to Cari Documents (implemented: detail panel now renders lifecycle snapshot + shared `StatusTimeline` built from document status/timestamps via shared lifecycle rules helpers, hot: no)
 - [x] PR-UX16 Apply lifecycle UI to Cash Transactions/Sessions (implemented: cash transactions and cash sessions now expose lifecycle inspection sections with snapshot + shared `StatusTimeline`, backed by shared lifecycle rules and per-row event mapping, hot: no)
-- [ ] PR-UX17 Apply lifecycle UI to Payroll flows (not started)
+- [x] PR-UX17 Apply lifecycle UI to Payroll flows (implemented: Payroll Run Detail + Payroll Close Controls now expose lifecycle snapshot, next transitions, and shared `StatusTimeline` using shared lifecycle rules with payroll timestamp/audit event mapping, hot: no)
 
-- [ ] PR-UX18 Deep-link support (`documentId/journalId/exceptionId`) (not started)
+- [x] PR-UX18 Deep-link support (`documentId/journalId/exceptionId`) (implemented: Cari Documents, Journal Workbench, and Exceptions Workbench now parse deep-link query params, auto-open targeted detail, and keep URL query synced with current selection, hot: no)
 - [ ] PR-UX19 Related panel (GL/open items/exceptions/audit) + source-link strategy (blocked by backend linking design)
 
 - [ ] PR-UX20 Evidence storage foundation (DB + adapter + routes) (not started)
@@ -80,8 +80,8 @@ Intentional not-yet-implemented placeholders (Stock, Fixed Assets, generic Repor
 ## Dependency Follow-ups (Non-placeholder blockers)
 - [x] RS-DEP-01 Payment term write API for UX13-B (`POST /api/v1/cari/payment-terms` + `cari.card.upsert` permission guard + frontend client `createCariPaymentTerm`) (implemented)
   smoke: `backend/scripts/test-ux-rsdep01-payment-term-write-api.js`
-- [ ] RS-DEP-02 Source-linking contract for UX19 Related Panel:
-  choose minimal contract (`journal_source_links` table OR `source_ref_type` + `source_ref_id` on journals), write links during posting, then ship UI
+- [x] RS-DEP-02 Source-linking contract for UX19 Related Panel (implemented: migration `m069_journal_source_links` + shared source-link service + transactional link writes in Cari/Cash/Payroll/Payments posting flows + `source_links` surfaced on GL journal reads)
+  smoke: `backend/scripts/test-ux-rsdep02-source-linking-contract.js`
 - [x] RS-DEP-03 Global frontend error/toast strategy required by CORE05 (`frontend/src/api/client.js` interceptor + UI surface) (implemented)
 
 ## Working Rules While Executing
@@ -123,11 +123,15 @@ Intentional not-yet-implemented placeholders (Stock, Fixed Assets, generic Repor
   smoke: `backend/scripts/test-ux-prux15-cari-documents-lifecycle-ui.js`
 - [x] PR-UX16 acceptance: Cash Transactions and Cash Sessions expose lifecycle snapshot + timeline views using shared rules/timeline component with selectable row/session context
   smoke: `backend/scripts/test-ux-prux16-cash-lifecycle-ui.js`
+- [x] PR-UX17 acceptance: Payroll Run Detail and Payroll Close Controls expose lifecycle snapshot + timeline views using shared rules/timeline component with payroll status timestamp + audit event mapping
+  smoke: `backend/scripts/test-ux-prux17-payroll-lifecycle-ui.js`
+- [x] PR-UX18 acceptance: `documentId`, `journalId`, and `exceptionId` deep links open target detail views on load and selection changes keep URL query in sync for shareable links
+  smoke: `backend/scripts/test-ux-prux18-deep-link-support.js`
 - [x] PR-CORE05 acceptance: standardized user-facing error handling + copyable requestId/details
   smoke: `backend/scripts/test-ux-prcore05-error-envelope.js`
 - [x] PR-CORE01 acceptance: key list endpoints return consistent `rows + total + limit + offset` with `pagination` metadata
   smoke: `backend/scripts/test-ux-prcore01-pagination-contracts.js` (to add)
 
 ## Immediate Next Step
-- Proceed with `PR-UX17`.
+- Proceed with `PR-UX19` (Related panel: GL/open items/exceptions/audit) on top of RS-DEP-02 source links.
 - After each merged PR, update this tracker line from `[ ]` to `[x]` with a short `(implemented)` note.

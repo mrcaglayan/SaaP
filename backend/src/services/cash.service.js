@@ -6,6 +6,7 @@ import {
   toIsoDate,
   validateJournalLineScope,
 } from "../routes/gl.js";
+import { upsertJournalSourceLinkTx } from "./journal.source-link.service.js";
 
 const BALANCE_EPSILON = 0.0001;
 const CASH_TXN_SUBLEDGER_PREFIX = "CASH_TXN:";
@@ -528,6 +529,13 @@ export async function createAndPostCashJournalTx(tx, payload) {
   if (!journalEntryId) {
     throw badRequest("Failed to create posted cash journal");
   }
+  await upsertJournalSourceLinkTx(tx, {
+    tenantId,
+    legalEntityId,
+    journalEntryId,
+    sourceRefType: "CASH_TRANSACTION",
+    sourceRefId: txnId,
+  });
 
   for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i];

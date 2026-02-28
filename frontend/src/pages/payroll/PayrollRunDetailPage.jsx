@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
   finalizePayrollRun,
@@ -12,6 +12,12 @@ import {
   reversePayrollRunWithCorrection,
 } from "../../api/payrollCorrections.js";
 import { useAuth } from "../../auth/useAuth.js";
+import StatusTimeline from "../../components/StatusTimeline.jsx";
+import {
+  buildLifecycleTimelineSteps,
+  getLifecycleAllowedActions,
+  getLifecycleStatusMeta,
+} from "../../lifecycle/lifecycleRules.js";
 
 function formatAmount(value) {
   const parsed = Number(value);
@@ -68,6 +74,70 @@ function sourceLabel(row) {
   return sourceType;
 }
 
+function toPositiveInt(value) {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    return null;
+  }
+  return parsed;
+}
+
+function buildUserActorLabel(userId) {
+  const parsed = toPositiveInt(userId);
+  return parsed ? `User #${parsed}` : null;
+}
+
+function buildPayrollRunLifecycleEvents(run) {
+  if (!run) {
+    return [];
+  }
+
+  const events = [];
+  const source = sourceLabel(run);
+
+  if (run.created_at) {
+    events.push({
+      statusCode: "DRAFT",
+      at: run.created_at,
+      note: run.run_type && run.run_type !== "REGULAR" ? `${run.run_type} shell created.` : "Run shell created.",
+    });
+  }
+  if (run.imported_at) {
+    events.push({
+      statusCode: "IMPORTED",
+      at: run.imported_at,
+      actorName: buildUserActorLabel(run.imported_by_user_id),
+      note: source ? `Imported from ${source}.` : "Payroll file imported.",
+    });
+  }
+  if (run.reviewed_at) {
+    events.push({
+      statusCode: "REVIEWED",
+      at: run.reviewed_at,
+      actorName: buildUserActorLabel(run.reviewed_by_user_id),
+      note: "Run review completed.",
+    });
+  }
+  if (run.finalized_at || run.status === "FINALIZED") {
+    const finalizedNotes = ["Accrual posted and run finalized."];
+    if (Number(run.is_reversed || 0) === 1) {
+      finalizedNotes.push(
+        run.reversed_by_run_id
+          ? `Linked reversal run #${run.reversed_by_run_id}.`
+          : "Linked reversal run exists."
+      );
+    }
+    events.push({
+      statusCode: "FINALIZED",
+      at: run.finalized_at || run.updated_at || run.created_at,
+      actorName: buildUserActorLabel(run.finalized_by_user_id || run.accrual_posted_by_user_id),
+      note: finalizedNotes.join(" "),
+    });
+  }
+
+  return events;
+}
+
 export default function PayrollRunDetailPage() {
   const { runId } = useParams();
   const { hasPermission } = useAuth();
@@ -91,6 +161,23 @@ export default function PayrollRunDetailPage() {
   const [error, setError] = useState("");
   const [previewError, setPreviewError] = useState("");
   const [correctionsError, setCorrectionsError] = useState("");
+
+  const runLifecycleMeta = useMemo(
+    () => getLifecycleStatusMeta("payrollRun", row?.status),
+    [row?.status]
+  );
+  const runLifecycleActions = useMemo(
+    () => getLifecycleAllowedActions("payrollRun", row?.status),
+    [row?.status]
+  );
+  const runLifecycleActionLabels = useMemo(
+    () => runLifecycleActions.map((item) => item.label),
+    [runLifecycleActions]
+  );
+  const runLifecycleTimeline = useMemo(
+    () => buildLifecycleTimelineSteps("payrollRun", row?.status, buildPayrollRunLifecycleEvents(row)),
+    [row]
+  );
 
   async function loadRow() {
     if (!canRead) {
@@ -408,6 +495,43 @@ export default function PayrollRunDetailPage() {
                 <div className="text-xs text-slate-500">Filename</div>
                 <div className="font-medium break-all">{row.original_filename}</div>
               </div>
+            </div>
+          </section>
+
+          <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+            <h2 className="mb-3 text-sm font-semibold text-slate-900">Lifecycle</h2>
+            <div className="grid gap-3 lg:grid-cols-2">
+              <div className="rounded border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-700">
+                  Lifecycle Snapshot
+                </p>
+                <p className="mt-1 text-sm font-semibold text-slate-900">
+                  {`${row.run_no || `#${runId}`} | ${row.status || "-"}`}
+                </p>
+                {runLifecycleMeta?.description ? (
+                  <p className="mt-1 text-sm text-slate-700">{runLifecycleMeta.description}</p>
+                ) : null}
+                {runLifecycleActionLabels.length > 0 ? (
+                  <p className="mt-1 text-xs text-slate-600">
+                    Next allowed transitions: {runLifecycleActionLabels.join(", ")}
+                  </p>
+                ) : (
+                  <p className="mt-1 text-xs text-slate-500">
+                    No further lifecycle transitions are defined from this status.
+                  </p>
+                )}
+                {Number(row.is_reversed || 0) === 1 ? (
+                  <p className="mt-1 text-xs text-violet-700">
+                    Reversal linked: run #{row.reversed_by_run_id || "?"} at{" "}
+                    {formatDateTime(row.reversed_at)}.
+                  </p>
+                ) : null}
+              </div>
+              <StatusTimeline
+                title="Payroll Run Lifecycle Timeline"
+                steps={runLifecycleTimeline}
+                emptyText="No lifecycle history available for this payroll run yet."
+              />
             </div>
           </section>
 

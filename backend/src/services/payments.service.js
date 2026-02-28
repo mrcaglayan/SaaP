@@ -6,6 +6,7 @@ import {
   assertLegalEntityBelongsToTenant,
 } from "../tenantGuards.js";
 import { badRequest, parsePositiveInt } from "../routes/_utils.js";
+import { upsertJournalSourceLinkTx } from "./journal.source-link.service.js";
 
 const ACTIVE_BATCH_STATUSES = ["DRAFT", "APPROVED", "EXPORTED", "POSTED"];
 
@@ -744,6 +745,13 @@ async function createSettlementJournalTx(tx, payload) {
   if (!journalEntryId) {
     throw new Error("Failed to create payment settlement journal");
   }
+  await upsertJournalSourceLinkTx(tx, {
+    tenantId,
+    legalEntityId,
+    journalEntryId,
+    sourceRefType: "PAYMENT_BATCH",
+    sourceRefId: parsePositiveInt(batch.id),
+  });
 
   const lineRefByPaymentLineId = new Map();
   let journalLineNo = 1;
@@ -1394,6 +1402,13 @@ export async function postPaymentBatch({
       normalizeUpperText(current.status) === "POSTED" &&
       parsePositiveInt(current.posted_journal_entry_id)
     ) {
+      await upsertJournalSourceLinkTx(tx, {
+        tenantId,
+        legalEntityId: parsePositiveInt(current.legal_entity_id),
+        journalEntryId: parsePositiveInt(current.posted_journal_entry_id),
+        sourceRefType: "PAYMENT_BATCH",
+        sourceRefId: parsePositiveInt(current.id),
+      });
       return;
     }
 

@@ -10,6 +10,7 @@ import {
   resolveExceptionWorkbench,
 } from "../api/exceptionsWorkbench.js";
 import { useAuth } from "../auth/useAuth.js";
+import { useSearchParams } from "react-router-dom";
 import { useWorkingContextDefaults } from "../context/useWorkingContextDefaults.js";
 import { usePersistedFilters } from "../hooks/usePersistedFilters.js";
 import { useToastMessage } from "../hooks/useToastMessage.js";
@@ -144,6 +145,7 @@ const EXCEPTIONS_DEFAULT_FILTERS = {
 };
 
 export default function ExceptionsWorkbenchPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const { hasPermission, user } = useAuth();
   const { t } = useI18n();
   const canRead = hasPermission("ops.exceptions.read");
@@ -175,6 +177,10 @@ export default function ExceptionsWorkbenchPage() {
   const [selectedAudit, setSelectedAudit] = useState([]);
   const [resolutionNote, setResolutionNote] = useState("");
   const [bulkBusy, setBulkBusy] = useState("");
+  const deepLinkedExceptionIdRaw = String(
+    searchParams.get("exceptionId") || searchParams.get("exception_id") || ""
+  ).trim();
+  const deepLinkedExceptionId = toExceptionId(deepLinkedExceptionIdRaw);
 
   const queryParams = useMemo(() => {
     const params = {
@@ -237,7 +243,12 @@ export default function ExceptionsWorkbenchPage() {
       });
       if (selected?.id) {
         const exists = nextRows.some((r) => Number(r.id) === Number(selected.id));
-        if (!exists) {
+        const selectedId = toExceptionId(selected.id);
+        const pinnedByDeepLink =
+          deepLinkedExceptionId > 0 &&
+          selectedId > 0 &&
+          selectedId === deepLinkedExceptionId;
+        if (!exists && !pinnedByDeepLink) {
           setSelected(null);
           setSelectedAudit([]);
         }
@@ -254,11 +265,34 @@ export default function ExceptionsWorkbenchPage() {
     } finally {
       setLoading(false);
     }
-  }, [canRead, currentUserId, queryParams, queueBaseParams, selected?.id, t]);
+  }, [
+    canRead,
+    currentUserId,
+    deepLinkedExceptionId,
+    queryParams,
+    queueBaseParams,
+    selected?.id,
+    t,
+  ]);
 
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    if (!deepLinkedExceptionIdRaw || deepLinkedExceptionId) {
+      return;
+    }
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.delete("exceptionId");
+    nextParams.delete("exception_id");
+    setSearchParams(nextParams, { replace: true });
+  }, [
+    deepLinkedExceptionId,
+    deepLinkedExceptionIdRaw,
+    searchParams,
+    setSearchParams,
+  ]);
 
   const queueTabs = useMemo(
     () => [
@@ -394,7 +428,7 @@ export default function ExceptionsWorkbenchPage() {
     setSelectedIds([]);
   }
 
-  async function loadDetail(exceptionId) {
+  const loadDetail = useCallback(async (exceptionId) => {
     if (!canRead || !exceptionId) return;
     setBusy(`detail-${exceptionId}`);
     setError("");
@@ -409,7 +443,43 @@ export default function ExceptionsWorkbenchPage() {
     } finally {
       setBusy("");
     }
-  }
+  }, [canRead, t]);
+
+  useEffect(() => {
+    if (!canRead || !deepLinkedExceptionId) {
+      return;
+    }
+    if (toExceptionId(selected?.id) === deepLinkedExceptionId) {
+      return;
+    }
+    void loadDetail(deepLinkedExceptionId);
+  }, [canRead, deepLinkedExceptionId, loadDetail, selected?.id]);
+
+  useEffect(() => {
+    const selectedId = toExceptionId(selected?.id);
+    const currentId = toExceptionId(
+      searchParams.get("exceptionId") || searchParams.get("exception_id")
+    );
+    if (deepLinkedExceptionId && !selectedId) {
+      return;
+    }
+    if (selectedId === currentId) {
+      return;
+    }
+    const nextParams = new URLSearchParams(searchParams);
+    if (selectedId > 0) {
+      nextParams.set("exceptionId", String(selectedId));
+    } else {
+      nextParams.delete("exceptionId");
+    }
+    nextParams.delete("exception_id");
+    setSearchParams(nextParams, { replace: true });
+  }, [
+    deepLinkedExceptionId,
+    searchParams,
+    selected?.id,
+    setSearchParams,
+  ]);
 
   async function handleManualRefresh() {
     if (!canRead) return;

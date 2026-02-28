@@ -15,7 +15,7 @@ import {
 import { getCariCounterpartyStatementReport } from "../../api/cariReports.js";
 import Combobox from "../../components/Combobox.jsx";
 import StatusTimeline from "../../components/StatusTimeline.jsx";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { useAuth } from "../../auth/useAuth.js";
 import { useWorkingContextDefaults } from "../../context/useWorkingContextDefaults.js";
 import { usePersistedFilters } from "../../hooks/usePersistedFilters.js";
@@ -220,6 +220,7 @@ function formatReadinessReason(reason) {
 }
 
 export default function CariDocumentsPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const { hasPermission } = useAuth();
   const { getModuleRow } = useModuleReadiness();
   const canRead = hasPermission("cari.doc.read");
@@ -331,6 +332,10 @@ export default function CariDocumentsPage() {
       ),
     [selectedSnapshot]
   );
+  const deepLinkedDocumentIdRaw = String(
+    searchParams.get("documentId") || searchParams.get("document_id") || ""
+  ).trim();
+  const deepLinkedDocumentId = toPositiveInt(deepLinkedDocumentIdRaw);
   const filterCounterpartyLookupOptions = useMemo(
     () => (filterCounterpartyOptions || []).map(mapCounterpartyLookupOption).filter((row) => row.value),
     [filterCounterpartyOptions]
@@ -398,6 +403,57 @@ export default function CariDocumentsPage() {
       setDetailError(normalizeApiError(error, "Failed to load document detail."));
     }
   }
+
+  useEffect(() => {
+    if (!deepLinkedDocumentIdRaw || deepLinkedDocumentId) {
+      return;
+    }
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.delete("documentId");
+    nextParams.delete("document_id");
+    setSearchParams(nextParams, { replace: true });
+  }, [
+    deepLinkedDocumentId,
+    deepLinkedDocumentIdRaw,
+    searchParams,
+    setSearchParams,
+  ]);
+
+  useEffect(() => {
+    if (!canRead || !deepLinkedDocumentId) {
+      return;
+    }
+    if (Number(selectedDocumentId || 0) === Number(deepLinkedDocumentId)) {
+      return;
+    }
+    setSelectedDocumentId(deepLinkedDocumentId);
+  }, [canRead, deepLinkedDocumentId, selectedDocumentId]);
+
+  useEffect(() => {
+    const selectedId = toPositiveInt(selectedDocumentId);
+    const currentId = toPositiveInt(
+      searchParams.get("documentId") || searchParams.get("document_id")
+    );
+    if (deepLinkedDocumentId && !selectedId) {
+      return;
+    }
+    if (selectedId === currentId) {
+      return;
+    }
+    const nextParams = new URLSearchParams(searchParams);
+    if (selectedId) {
+      nextParams.set("documentId", String(selectedId));
+    } else {
+      nextParams.delete("documentId");
+    }
+    nextParams.delete("document_id");
+    setSearchParams(nextParams, { replace: true });
+  }, [
+    deepLinkedDocumentId,
+    searchParams,
+    selectedDocumentId,
+    setSearchParams,
+  ]);
 
   useEffect(() => {
     loadDocuments(filters);

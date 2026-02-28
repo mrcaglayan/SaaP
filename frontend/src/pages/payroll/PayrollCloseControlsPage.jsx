@@ -9,6 +9,12 @@ import {
   reopenPayrollCloseControl,
   requestPayrollCloseControl,
 } from "../../api/payrollClose.js";
+import StatusTimeline from "../../components/StatusTimeline.jsx";
+import {
+  buildLifecycleTimelineSteps,
+  getLifecycleAllowedActions,
+  getLifecycleStatusMeta,
+} from "../../lifecycle/lifecycleRules.js";
 
 function formatDate(value) {
   if (!value) return "-";
@@ -31,6 +37,86 @@ function statusColor(status) {
   if (s === "READY") return "text-blue-700";
   if (s === "REOPENED") return "text-violet-700";
   return "text-slate-700";
+}
+
+function toPositiveInt(value) {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) return null;
+  return parsed;
+}
+
+function buildUserActorLabel(userId) {
+  const parsed = toPositiveInt(userId);
+  return parsed ? `User #${parsed}` : null;
+}
+
+function normalizeOptionalText(value) {
+  const text = String(value || "").trim();
+  return text || null;
+}
+
+function buildPayrollCloseLifecycleEvents(close, auditRows = []) {
+  if (!close) return [];
+
+  const events = [];
+
+  if (close.created_at) {
+    events.push({
+      statusCode: "DRAFT",
+      at: close.created_at,
+      note: "Close control created.",
+    });
+  }
+  if (close.prepared_at) {
+    events.push({
+      statusCode: "READY",
+      at: close.prepared_at,
+      actorName: buildUserActorLabel(close.prepared_by_user_id),
+      note: normalizeOptionalText(close.prepare_note) || "Checklist prepared.",
+    });
+  }
+  if (close.requested_at) {
+    events.push({
+      statusCode: "REQUESTED",
+      at: close.requested_at,
+      actorName: buildUserActorLabel(close.requested_by_user_id),
+      note: normalizeOptionalText(close.request_note) || "Close requested.",
+    });
+  }
+  if (close.closed_at) {
+    events.push({
+      statusCode: "CLOSED",
+      at: close.closed_at,
+      actorName: buildUserActorLabel(close.closed_by_user_id || close.approved_by_user_id),
+      note: normalizeOptionalText(close.close_note) || "Payroll period closed.",
+    });
+  }
+  if (close.reopened_at) {
+    events.push({
+      statusCode: "REOPENED",
+      at: close.reopened_at,
+      actorName: buildUserActorLabel(close.reopened_by_user_id),
+      note: normalizeOptionalText(close.reopen_reason) || "Payroll period reopened.",
+    });
+  }
+
+  for (const audit of Array.isArray(auditRows) ? auditRows : []) {
+    const action = String(audit?.action || "").trim().toUpperCase();
+    let statusCode = null;
+    if (action === "PREPARED") statusCode = "READY";
+    if (action === "REQUESTED") statusCode = "REQUESTED";
+    if (action === "CLOSED") statusCode = "CLOSED";
+    if (action === "REOPENED") statusCode = "REOPENED";
+    if (!statusCode) continue;
+    events.push({
+      statusCode,
+      at: audit?.acted_at || null,
+      actorName: buildUserActorLabel(audit?.acted_by_user_id),
+      note: normalizeOptionalText(audit?.note),
+    });
+  }
+
+  return events;
 }
 
 function normalizeDateQueryParam(value) {
@@ -120,6 +206,27 @@ export default function PayrollCloseControlsPage() {
           String(check?.status || "").toUpperCase() === "FAIL"
       ),
     [detail]
+  );
+  const selectedCloseLifecycleMeta = useMemo(
+    () => getLifecycleStatusMeta("payrollClose", selectedClose?.status),
+    [selectedClose?.status]
+  );
+  const selectedCloseLifecycleActions = useMemo(
+    () => getLifecycleAllowedActions("payrollClose", selectedClose?.status),
+    [selectedClose?.status]
+  );
+  const selectedCloseLifecycleActionLabels = useMemo(
+    () => selectedCloseLifecycleActions.map((item) => item.label),
+    [selectedCloseLifecycleActions]
+  );
+  const selectedCloseLifecycleTimeline = useMemo(
+    () =>
+      buildLifecycleTimelineSteps(
+        "payrollClose",
+        selectedClose?.status,
+        buildPayrollCloseLifecycleEvents(selectedClose, detail?.audit || [])
+      ),
+    [selectedClose, detail?.audit]
   );
 
   async function loadList(overrideFilters = null) {
@@ -537,6 +644,36 @@ export default function PayrollCloseControlsPage() {
                     </div>
                   ) : null}
                 </div>
+              </div>
+
+              <div className="mt-4 grid gap-3 xl:grid-cols-2">
+                <div className="rounded border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-700">
+                    Lifecycle Snapshot
+                  </p>
+                  <p className="mt-1 text-sm font-semibold text-slate-900">
+                    {`Close #${selectedClose.id} | ${selectedClose.status || "-"}`}
+                  </p>
+                  {selectedCloseLifecycleMeta?.description ? (
+                    <p className="mt-1 text-sm text-slate-700">
+                      {selectedCloseLifecycleMeta.description}
+                    </p>
+                  ) : null}
+                  {selectedCloseLifecycleActionLabels.length > 0 ? (
+                    <p className="mt-1 text-xs text-slate-600">
+                      Next allowed transitions: {selectedCloseLifecycleActionLabels.join(", ")}
+                    </p>
+                  ) : (
+                    <p className="mt-1 text-xs text-slate-500">
+                      No further lifecycle transitions are defined from this status.
+                    </p>
+                  )}
+                </div>
+                <StatusTimeline
+                  title="Payroll Close Lifecycle Timeline"
+                  steps={selectedCloseLifecycleTimeline}
+                  emptyText="No lifecycle history available for this close control yet."
+                />
               </div>
 
               <div className="mt-4 grid gap-4 xl:grid-cols-3">

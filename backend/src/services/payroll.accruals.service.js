@@ -5,6 +5,7 @@ import {
   EXPECTED_SIDE_BY_COMPONENT,
   findApplicablePayrollComponentMapping,
 } from "./payroll.mappings.service.js";
+import { upsertJournalSourceLinkTx } from "./journal.source-link.service.js";
 
 function normalizeUpperText(value) {
   return String(value || "")
@@ -415,6 +416,13 @@ async function createPayrollAccrualJournalTx(tx, {
   });
 
   if (existingJournal?.id) {
+    await upsertJournalSourceLinkTx(tx, {
+      tenantId,
+      legalEntityId,
+      journalEntryId: parsePositiveInt(existingJournal.id),
+      sourceRefType: "PAYROLL_RUN",
+      sourceRefId: parsePositiveInt(run.id),
+    });
     return {
       journalEntryId: parsePositiveInt(existingJournal.id),
       journalNo,
@@ -472,6 +480,13 @@ async function createPayrollAccrualJournalTx(tx, {
   if (!journalEntryId) {
     throw new Error("Failed to create payroll accrual journal");
   }
+  await upsertJournalSourceLinkTx(tx, {
+    tenantId,
+    legalEntityId,
+    journalEntryId,
+    sourceRefType: "PAYROLL_RUN",
+    sourceRefId: parsePositiveInt(run.id),
+  });
 
   let lineNo = 1;
   for (const line of preview.posting_lines || []) {
@@ -634,6 +649,13 @@ export async function finalizePayrollRunAccrual({
     const currentStatus = normalizeUpperText(current.status);
     const currentAccrualJeId = parsePositiveInt(current.accrual_journal_entry_id);
     if (currentStatus === "FINALIZED" && currentAccrualJeId) {
+      await upsertJournalSourceLinkTx(tx, {
+        tenantId,
+        legalEntityId: parsePositiveInt(current.legal_entity_id),
+        journalEntryId: currentAccrualJeId,
+        sourceRefType: "PAYROLL_RUN",
+        sourceRefId: runId,
+      });
       return {
         runId,
         accrualJournalEntryId: currentAccrualJeId,

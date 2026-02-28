@@ -9,6 +9,7 @@ import {
   buildOffsetPaginationResult,
   resolveOffsetPagination,
 } from "../utils/pagination.js";
+import { upsertJournalSourceLinkTx } from "./journal.source-link.service.js";
 
 const DRAFT_STATUS = "DRAFT";
 const CANCELLED_STATUS = "CANCELLED";
@@ -1831,6 +1832,13 @@ export async function postCariDocumentById({
       referenceNo: toNullableString(postedNumbering.documentNo, 100),
       lines: postingLines,
     });
+    await upsertJournalSourceLinkTx(tx, {
+      tenantId,
+      legalEntityId: lockedLegalEntityId,
+      journalEntryId: journalResult.journalEntryId,
+      sourceRefType: "CARI_DOCUMENT",
+      sourceRefId: documentId,
+    });
 
     const paymentTermSnapshot = buildPaymentTermSnapshot(paymentTerm);
     await tx.query(
@@ -2101,6 +2109,13 @@ export async function reverseCariPostedDocumentById({
         referenceNo: toNullableString(`REV:${original.document_no || documentId}`, 100),
         lines: reversalLines,
       });
+      await upsertJournalSourceLinkTx(tx, {
+        tenantId,
+        legalEntityId: lockedLegalEntityId,
+        journalEntryId: originalPostedJournalEntryId,
+        sourceRefType: "CARI_DOCUMENT",
+        sourceRefId: documentId,
+      });
 
       const reverseJournalUpdateResult = await tx.query(
         `UPDATE journal_entries
@@ -2201,6 +2216,21 @@ export async function reverseCariPostedDocumentById({
       if (!reversalDocumentId) {
         throw new Error("Reversal document create failed");
       }
+      await upsertJournalSourceLinkTx(tx, {
+        tenantId,
+        legalEntityId: lockedLegalEntityId,
+        journalEntryId: reversalJournalResult.journalEntryId,
+        sourceRefType: "CARI_DOCUMENT",
+        sourceRefId: reversalDocumentId,
+      });
+      await upsertJournalSourceLinkTx(tx, {
+        tenantId,
+        legalEntityId: lockedLegalEntityId,
+        journalEntryId: reversalJournalResult.journalEntryId,
+        sourceRefType: "CARI_DOCUMENT",
+        sourceRefId: documentId,
+        linkRole: "REVERSAL_OF",
+      });
 
       await tx.query(
         `UPDATE cari_documents
