@@ -53,6 +53,10 @@ export function toOptionalNumber(value) {
 
 export function mapDocumentRowToForm(row) {
   return {
+    rowVersion:
+      row?.rowVersion === null || row?.rowVersion === undefined
+        ? ""
+        : String(row.rowVersion),
     legalEntityId: String(row?.legalEntityId || ""),
     counterpartyId: String(row?.counterpartyId || ""),
     paymentTermId: String(row?.paymentTermId || ""),
@@ -77,6 +81,7 @@ export function mapDocumentRowToForm(row) {
 }
 
 export function buildDocumentMutationPayload(form) {
+  const rowVersion = toPositiveInt(form.rowVersion);
   const legalEntityId = toPositiveInt(form.legalEntityId);
   const counterpartyId = toPositiveInt(form.counterpartyId);
   const paymentTermId = toPositiveInt(form.paymentTermId);
@@ -92,6 +97,7 @@ export function buildDocumentMutationPayload(form) {
     .toUpperCase();
 
   return {
+    rowVersion: rowVersion || undefined,
     legalEntityId,
     counterpartyId,
     paymentTermId,

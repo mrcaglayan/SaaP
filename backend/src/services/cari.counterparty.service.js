@@ -188,7 +188,17 @@ function mapCounterpartyRow(row) {
     notes: row.notes || null,
     createdAt: row.created_at || null,
     updatedAt: row.updated_at || null,
+    rowVersion: Number(row.row_version || 1),
   };
+}
+
+function optimisticLockConflictError(
+  message = "Counterparty was modified by another request."
+) {
+  const err = new Error(message);
+  err.status = 409;
+  err.code = "OPTIMISTIC_LOCK_CONFLICT";
+  return err;
 }
 
 function mapContactRow(row) {
@@ -1348,6 +1358,10 @@ export async function updateCounterpartyById({
     throw badRequest("legalEntityId cannot be changed for existing counterparty");
   }
   const legalEntityId = existingLegalEntityId;
+  const expectedRowVersion = Number(payload.rowVersion || 0);
+  if (!Number.isInteger(expectedRowVersion) || expectedRowVersion <= 0) {
+    throw badRequest("rowVersion is required");
+  }
 
   const currentIsCustomer = parseDbBoolean(existing.is_customer);
   const currentIsVendor = parseDbBoolean(existing.is_vendor);
@@ -1434,9 +1448,11 @@ export async function updateCounterpartyById({
              ar_account_id = ?,
              ap_account_id = ?,
              status = ?,
-             notes = ?
+             notes = ?,
+             row_version = row_version + 1
          WHERE tenant_id = ?
-           AND id = ?`,
+           AND id = ?
+           AND row_version = ?`,
         [
           nextCode,
           nextName,
@@ -1453,8 +1469,16 @@ export async function updateCounterpartyById({
           nextNotes,
           tenantId,
           counterpartyId,
+          expectedRowVersion,
         ]
       );
+      const updateResult = await tx.query(`SELECT ROW_COUNT() AS affected_rows`);
+      const affectedRows = Number(updateResult.rows?.[0]?.affected_rows || 0);
+      if (affectedRows !== 1) {
+        throw optimisticLockConflictError(
+          "Counterparty update conflict: refresh and retry with latest rowVersion."
+        );
+      }
 
       await applyContactMutations({
         tenantId,

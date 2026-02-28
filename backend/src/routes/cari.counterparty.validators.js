@@ -368,6 +368,10 @@ export function parseCounterpartyUpdateInput(req) {
   const tenantId = requireTenantId(req);
   const userId = requireUserId(req);
   const counterpartyId = parseCounterpartyIdParam(req);
+  const rowVersion = optionalPositiveInt(req.body?.rowVersion, "rowVersion");
+  if (!rowVersion) {
+    throw badRequest("rowVersion is required");
+  }
 
   const legalEntityId = optionalPositiveInt(req.body?.legalEntityId, "legalEntityId");
   const code = req.body?.code !== undefined ? normalizeCode(req.body?.code, "code", 60) : null;
@@ -470,6 +474,7 @@ export function parseCounterpartyUpdateInput(req) {
     tenantId,
     userId,
     counterpartyId,
+    rowVersion,
     legalEntityId,
     code,
     name,

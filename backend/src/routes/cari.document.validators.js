@@ -79,6 +79,14 @@ function parseRequiredPositiveIntField(value, label) {
   return parsed;
 }
 
+function parseRequiredRowVersion(value, label = "rowVersion") {
+  const parsed = optionalPositiveInt(value, label);
+  if (!parsed) {
+    throw badRequest(`${label} is required`);
+  }
+  return parsed;
+}
+
 function parseOptionalDecimal(value, label) {
   if (value === undefined) {
     return undefined;
@@ -267,6 +275,7 @@ export function parseDocumentUpdateInput(req) {
   const tenantId = requireTenantId(req);
   const userId = requireUserId(req);
   const documentId = parseDocumentIdParam(req);
+  const rowVersion = parseRequiredRowVersion(req.body?.rowVersion, "rowVersion");
 
   const legalEntityId = parseOptionalPositiveIntField(
     req.body?.legalEntityId,
@@ -333,6 +342,7 @@ export function parseDocumentUpdateInput(req) {
     tenantId,
     userId,
     documentId,
+    rowVersion,
     legalEntityId,
     counterpartyId,
     paymentTermId,

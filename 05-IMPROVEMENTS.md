@@ -63,7 +63,7 @@ Tag legend: `(hot: yes)` means likely touches conflict-prone files (`AppLayout.j
 - [x] PR-UX35 Usage + audit export endpoints/UI (implemented: ops export service + `GET /api/v1/ops/exports/usage.csv` and `GET /api/v1/ops/exports/audit.csv` endpoints with `ops.dashboard.read` guard + Ops Dashboard usage/audit CSV export UI actions)
 
 - [x] PR-CORE02 Idempotency standardization for remaining risky endpoints (implemented: shared `idempotency_keys` store + reusable idempotency executor/parser + standardized replay contract (`idempotentReplay`) on risky auth/security write endpoints: `POST /auth/password-reset/request`, `POST /auth/password-reset/:token/complete`, `POST /auth/invite/:token/accept`, `POST /api/v1/security/invites`)
-- [ ] PR-CORE03 Optimistic locking (`row_version`) on editable entities (not started)
+- [x] PR-CORE03 Optimistic locking (`row_version`) on editable entities (implemented: migration `m080_row_version_optimistic_locking` + optimistic-lock update contract on CARI documents and counterparties using `rowVersion` request field, `row_version` compare-and-increment in SQL, and `409 OPTIMISTIC_LOCK_CONFLICT` on stale writes)
 - [ ] PR-CORE04 Job progress/retry UX on top of H02 jobs engine (partial foundation exists)
 
 ## Follow-up RS Tracker (Improvement Scope Only)
@@ -167,7 +167,9 @@ Intentional not-yet-implemented placeholders (Stock, Fixed Assets, generic Repor
   smoke: `backend/scripts/test-ux-prcore01-pagination-contracts.js` (to add)
 - [x] PR-CORE02 acceptance: risky write endpoints accept `Idempotency-Key` and return stable replay responses (`idempotentReplay=true`) for repeated same-payload submissions while rejecting payload mismatch reuse
   smoke: `backend/scripts/test-ux-prcore02-idempotency-standardization.js`
+- [x] PR-CORE03 acceptance: editable CARI document/counterparty updates require `rowVersion` and enforce compare-and-swap (`WHERE row_version = ?` + increment), returning `409 OPTIMISTIC_LOCK_CONFLICT` on stale updates while frontend update payloads carry latest `rowVersion`
+  smoke: `backend/scripts/test-ux-prcore03-optimistic-locking-row-version.js`
 
 ## Immediate Next Step
-- Proceed with `PR-CORE03` (Optimistic locking (`row_version`) on editable entities).
+- Proceed with `PR-CORE04` (Job progress/retry UX on top of H02 jobs engine).
 - After each merged PR, update this tracker line from `[ ]` to `[x]` with a short `(implemented)` note.

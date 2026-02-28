@@ -143,6 +143,7 @@ export function createEmptyAddress() {
 
 export function buildInitialCounterpartyForm(defaultRole = "CUSTOMER") {
   return {
+    rowVersion: "",
     legalEntityId: "",
     code: "",
     name: "",
@@ -195,6 +196,7 @@ export function mapDetailToCounterpartyForm(row, fallbackRole = "CUSTOMER") {
     : [];
 
   return {
+    rowVersion: String(row.rowVersion || ""),
     legalEntityId: String(row.legalEntityId || ""),
     code: String(row.code || ""),
     name: String(row.name || ""),
@@ -364,6 +366,7 @@ export function buildCounterpartyPayload(form, { mode = "create" } = {}) {
     return payload;
   }
 
+  payload.rowVersion = toPositiveInt(form.rowVersion);
   return payload;
 }
 
@@ -404,6 +407,9 @@ export function mapCounterpartyApiError(err, fallback = "Operation failed.") {
   }
   if (lower.includes("must reference a postable account")) {
     return "Selected account must allow posting.";
+  }
+  if (lower.includes("update conflict")) {
+    return "Record changed by another user. Refresh and retry.";
   }
   if (lower.includes("legalentityid is required")) {
     return "Legal entity is required.";

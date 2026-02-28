@@ -252,10 +252,18 @@ function mapDocumentRow(row) {
     reversalOfDocumentId: parsePositiveInt(row.reversal_of_document_id),
     createdAt: row.created_at || null,
     updatedAt: row.updated_at || null,
+    rowVersion: Number(row.row_version || 1),
     postedAt: row.posted_at || null,
     reversedAt: row.reversed_at || null,
     draftSequenceAssigned: row.sequence_namespace === DRAFT_SEQUENCE_NAMESPACE,
   };
+}
+
+function optimisticLockConflictError(message = "Document was modified by another request.") {
+  const err = new Error(message);
+  err.status = 409;
+  err.code = "OPTIMISTIC_LOCK_CONFLICT";
+  return err;
 }
 
 function mapOpenItemRow(row) {
@@ -1498,6 +1506,10 @@ export async function updateCariDraftDocumentById({
     throw badRequest("legalEntityId cannot be changed for existing documents");
   }
   const legalEntityId = existingLegalEntityId;
+  const expectedRowVersion = Number(payload.rowVersion || 0);
+  if (!Number.isInteger(expectedRowVersion) || expectedRowVersion <= 0) {
+    throw badRequest("rowVersion is required");
+  }
 
   const nextDirection = payload.direction || existing.direction;
   const nextDocumentType = payload.documentType || existing.document_type;
@@ -1607,9 +1619,11 @@ export async function updateCariDraftDocumentById({
            payment_term_snapshot = ?,
            due_date_snapshot = ?,
            currency_code_snapshot = ?,
-           fx_rate_snapshot = ?
+           fx_rate_snapshot = ?,
+           row_version = row_version + 1
        WHERE tenant_id = ?
-         AND id = ?`,
+         AND id = ?
+         AND row_version = ?`,
       [
         nextCounterpartyId,
         nextPaymentTermId,
@@ -1635,8 +1649,18 @@ export async function updateCariDraftDocumentById({
         nextFxRate,
         tenantId,
         documentId,
+        expectedRowVersion,
       ]
     );
+    const updateResult = await tx.query(
+      `SELECT ROW_COUNT() AS affected_rows`
+    );
+    const affectedRows = Number(updateResult.rows?.[0]?.affected_rows || 0);
+    if (affectedRows !== 1) {
+      throw optimisticLockConflictError(
+        "Document update conflict: refresh and retry with latest rowVersion."
+      );
+    }
 
     const row = await fetchDocumentRow({
       tenantId,

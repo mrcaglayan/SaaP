@@ -1858,6 +1858,9 @@ export default function CariDocumentsPage() {
         return;
       }
       const payload = buildDocumentMutationPayload(editForm);
+      if (!payload.rowVersion) {
+        payload.rowVersion = Number(selectedDetail?.rowVersion || 0) || undefined;
+      }
       const response = await updateCariDocument(selectedDocumentId, payload);
       setEditMessage("Draft document updated.");
       setSelectedDetail(response?.row || null);
