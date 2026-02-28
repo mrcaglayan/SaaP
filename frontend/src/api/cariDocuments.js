@@ -22,6 +22,14 @@ export async function getCariDocumentOpenItems(documentId) {
   return run(() => api.get(`/api/v1/cari/documents/${documentId}/open-items`));
 }
 
+export async function listCariDocumentComments(documentId) {
+  return run(() => api.get(`/api/v1/cari/documents/${documentId}/comments`));
+}
+
+export async function createCariDocumentComment(documentId, payload = {}) {
+  return run(() => api.post(`/api/v1/cari/documents/${documentId}/comments`, payload));
+}
+
 export async function listCariDocumentEvidence(documentId) {
   return run(() => api.get(`/api/v1/cari/documents/${documentId}/evidence`));
 }

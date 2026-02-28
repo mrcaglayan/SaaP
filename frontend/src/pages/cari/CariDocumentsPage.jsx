@@ -1,12 +1,14 @@
 ﻿import { useEffect, useMemo, useState } from "react";
 import {
   cancelCariDocument,
+  createCariDocumentComment,
   createCariDocumentEvidence,
   createCariDocument,
   deleteCariDocumentEvidence,
   downloadCariDocumentEvidence,
   getCariDocument,
   getCariDocumentOpenItems,
+  listCariDocumentComments,
   listCariDocumentEvidence,
   listCariDocuments,
   postCariDocument,
@@ -608,6 +610,12 @@ export default function CariDocumentsPage() {
   const [relatedOpenItems, setRelatedOpenItems] = useState([]);
   const [relatedExceptions, setRelatedExceptions] = useState([]);
   const [relatedAuditRows, setRelatedAuditRows] = useState([]);
+  const [internalCommentRows, setInternalCommentRows] = useState([]);
+  const [internalCommentsLoading, setInternalCommentsLoading] = useState(false);
+  const [internalCommentsError, setInternalCommentsError] = useState("");
+  const [internalCommentsMessage, setInternalCommentsMessage] = useState("");
+  const [internalCommentBody, setInternalCommentBody] = useState("");
+  const [internalCommentSaving, setInternalCommentSaving] = useState(false);
   const [evidenceRows, setEvidenceRows] = useState([]);
   const [evidenceLoading, setEvidenceLoading] = useState(false);
   const [evidenceError, setEvidenceError] = useState("");
@@ -795,6 +803,7 @@ export default function CariDocumentsPage() {
   );
   const canReverseSelected = Boolean(selectedSnapshot && isPosted(selectedSnapshot) && canReverse);
   const canAttachEvidence = Boolean(selectedSnapshot && canUpdate);
+  const canWriteInternalComments = Boolean(selectedSnapshot && canUpdate);
   const selectedDocumentLifecycleMeta = useMemo(
     () => getLifecycleStatusMeta("cariDocument", selectedSnapshot?.status),
     [selectedSnapshot?.status]
@@ -1369,6 +1378,46 @@ export default function CariDocumentsPage() {
 
   useEffect(() => {
     const documentId = selectedDocumentNumericId;
+    setInternalCommentsError("");
+    setInternalCommentsMessage("");
+    setInternalCommentBody("");
+
+    if (!canRead || !documentId) {
+      setInternalCommentRows([]);
+      setInternalCommentsLoading(false);
+      return;
+    }
+
+    let active = true;
+    async function loadInternalComments() {
+      setInternalCommentsLoading(true);
+      try {
+        const response = await listCariDocumentComments(documentId);
+        if (!active) {
+          return;
+        }
+        setInternalCommentRows(Array.isArray(response?.rows) ? response.rows : []);
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+        setInternalCommentRows([]);
+        setInternalCommentsError(normalizeApiError(error, "Failed to load internal comments."));
+      } finally {
+        if (active) {
+          setInternalCommentsLoading(false);
+        }
+      }
+    }
+
+    loadInternalComments();
+    return () => {
+      active = false;
+    };
+  }, [canRead, selectedDocumentNumericId]);
+
+  useEffect(() => {
+    const documentId = selectedDocumentNumericId;
     setEvidenceMessage("");
     setEvidenceError("");
     setEvidenceNote("");
@@ -1417,6 +1466,45 @@ export default function CariDocumentsPage() {
     }
     setDocumentListPage(documentListTotalPages);
   }, [documentListPage, documentListTotalPages]);
+
+  async function refreshInternalComments(documentId) {
+    const response = await listCariDocumentComments(documentId);
+    setInternalCommentRows(Array.isArray(response?.rows) ? response.rows : []);
+  }
+
+  async function handleCreateInternalComment(event) {
+    event.preventDefault();
+    const documentId = selectedDocumentNumericId;
+    if (!documentId || !canWriteInternalComments) {
+      setInternalCommentsError(
+        "Internal comment add requires selected document and permission: cari.doc.update."
+      );
+      return;
+    }
+
+    const body = String(internalCommentBody || "").trim();
+    if (!body) {
+      setInternalCommentsError("Comment body is required.");
+      return;
+    }
+
+    setInternalCommentSaving(true);
+    setInternalCommentsError("");
+    setInternalCommentsMessage("");
+    try {
+      const response = await createCariDocumentComment(documentId, { body });
+      await refreshInternalComments(documentId);
+      const commentId = toPositiveInt(response?.row?.id);
+      setInternalCommentBody("");
+      setInternalCommentsMessage(
+        commentId ? `Internal comment added. id=${commentId}` : "Internal comment added."
+      );
+    } catch (error) {
+      setInternalCommentsError(normalizeApiError(error, "Failed to add internal comment."));
+    } finally {
+      setInternalCommentSaving(false);
+    }
+  }
 
   async function refreshEvidenceRows(documentId) {
     const response = await listCariDocumentEvidence(documentId);
@@ -2748,6 +2836,73 @@ export default function CariDocumentsPage() {
                         ))}
                       </ul>
                     )}
+                  </div>
+
+                  <div>
+                    <p className="font-semibold text-slate-700">Internal comments</p>
+                    {internalCommentsError ? (
+                      <p className="mt-1 text-rose-700">{internalCommentsError}</p>
+                    ) : null}
+                    {internalCommentsMessage ? (
+                      <p className="mt-1 text-emerald-700">{internalCommentsMessage}</p>
+                    ) : null}
+                    {internalCommentsLoading ? (
+                      <p className="mt-1 text-slate-600">Loading comments...</p>
+                    ) : null}
+
+                    {canWriteInternalComments ? (
+                      <form
+                        onSubmit={handleCreateInternalComment}
+                        className="mt-2 space-y-2 rounded border border-slate-200 bg-white p-2"
+                      >
+                        <textarea
+                          className="w-full rounded border border-slate-300 px-2 py-1 text-xs"
+                          placeholder="Add internal comment..."
+                          rows={3}
+                          value={internalCommentBody}
+                          onChange={(event) => {
+                            setInternalCommentsError("");
+                            setInternalCommentsMessage("");
+                            setInternalCommentBody(event.target.value);
+                          }}
+                          disabled={internalCommentSaving}
+                        />
+                        <button
+                          type="submit"
+                          className="rounded border border-slate-300 bg-slate-50 px-2 py-1 text-[11px] font-semibold text-slate-700 disabled:opacity-60"
+                          disabled={!String(internalCommentBody || "").trim() || internalCommentSaving}
+                        >
+                          {internalCommentSaving ? "Adding..." : "Add Comment"}
+                        </button>
+                      </form>
+                    ) : (
+                      <p className="mt-1 text-slate-500">Missing permission: cari.doc.update</p>
+                    )}
+
+                    {!internalCommentsLoading && internalCommentRows.length === 0 ? (
+                      <p className="mt-1 text-slate-600">No internal comments yet.</p>
+                    ) : null}
+                    {!internalCommentsLoading && internalCommentRows.length > 0 ? (
+                      <ul className="mt-2 space-y-1">
+                        {internalCommentRows.map((row) => (
+                          <li
+                            key={`related-comment-${row.id}`}
+                            className="rounded border border-slate-200 bg-white px-2 py-1"
+                          >
+                            <div className="whitespace-pre-wrap text-slate-700">
+                              {row.body || "-"}
+                            </div>
+                            <div className="mt-1 text-slate-500">
+                              {formatDateTime(row.createdAt)} | by=
+                              {row.createdByUserName ||
+                                row.createdByUserEmail ||
+                                row.createdByUserId ||
+                                "-"}
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
                   </div>
 
                   <div>

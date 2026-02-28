@@ -43,11 +43,9 @@ const migration073InternalCommentsV1 = {
          CONSTRAINT fk_internal_comments_creator
            FOREIGN KEY (tenant_id, created_by_user_id) REFERENCES users(tenant_id, id),
          CONSTRAINT fk_internal_comments_updater
-           FOREIGN KEY (tenant_id, updated_by_user_id) REFERENCES users(tenant_id, id)
-           ON DELETE SET NULL,
+           FOREIGN KEY (tenant_id, updated_by_user_id) REFERENCES users(tenant_id, id),
          CONSTRAINT fk_internal_comments_deleter
            FOREIGN KEY (tenant_id, deleted_by_user_id) REFERENCES users(tenant_id, id)
-           ON DELETE SET NULL
        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`
     );
   },

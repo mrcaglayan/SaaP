@@ -83,6 +83,7 @@
     "test:ux:prux26": "node scripts/test-ux-prux26-smarter-cari-form-defaults.js",
     "test:ux:prux27": "node scripts/test-ux-prux27-cari-clone-and-recurring-templates.js",
     "test:ux:prux28": "node scripts/test-ux-prux28-cash-templates-presets.js",
+    "test:ux:prux29": "node scripts/test-ux-prux29-internal-comments-v1.js",
     "test:ux:evidence-compression": "node scripts/test-ux-evidence-compression-storage.js",
     "test:ux:rsdep01": "node scripts/test-ux-rsdep01-payment-term-write-api.js",
     "test:e2e:bank-payroll": "node scripts/test-e2e-bank-payroll-release-gate.js",

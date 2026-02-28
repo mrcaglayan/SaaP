@@ -53,7 +53,7 @@ Tag legend: `(hot: yes)` means likely touches conflict-prone files (`AppLayout.j
 - [x] PR-UX27 Cari clone + recurring templates (implemented: Cari Documents create section now supports clone-from-selected-document and recurring draft templates persisted server-side via `/me/saved-views`)
 - [x] PR-UX28 Cash transaction templates/presets (implemented: Cash Transactions create section now supports server-side reusable create templates plus quick presets for common transaction patterns)
 
-- [ ] PR-UX29 Internal comments v1 (not started)
+- [x] PR-UX29 Internal comments v1 (implemented: migration `m073_internal_comments_v1` + CARI document internal comments API (`GET/POST /api/v1/cari/documents/:documentId/comments`) + related-panel comment list/add UI)
 - [ ] PR-UX30 Mentions + in-app notifications (not started)
 - [ ] PR-UX31 Ops status note / blocked reason (not started)
 
@@ -147,11 +147,13 @@ Intentional not-yet-implemented placeholders (Stock, Fixed Assets, generic Repor
   smoke: `backend/scripts/test-ux-prux27-cari-clone-and-recurring-templates.js`
 - [x] PR-UX28 acceptance: Cash Transactions create flow supports apply/save/update/delete/default server-side templates and built-in presets to prefill create form fields while preserving route preset constraints
   smoke: `backend/scripts/test-ux-prux28-cash-templates-presets.js`
+- [x] PR-UX29 acceptance: selected CARI document related panel exposes internal comments list/add interactions backed by tenant/scope-safe server persistence and permission-aware create controls (`cari.doc.read`/`cari.doc.update`)
+  smoke: `backend/scripts/test-ux-prux29-internal-comments-v1.js`
 - [x] PR-CORE05 acceptance: standardized user-facing error handling + copyable requestId/details
   smoke: `backend/scripts/test-ux-prcore05-error-envelope.js`
 - [x] PR-CORE01 acceptance: key list endpoints return consistent `rows + total + limit + offset` with `pagination` metadata
   smoke: `backend/scripts/test-ux-prcore01-pagination-contracts.js` (to add)
 
 ## Immediate Next Step
-- Proceed with `PR-UX29` (Internal comments v1).
+- Proceed with `PR-UX30` (Mentions + in-app notifications).
 - After each merged PR, update this tracker line from `[ ]` to `[x]` with a short `(implemented)` note.
