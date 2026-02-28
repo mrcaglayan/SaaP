@@ -60,6 +60,7 @@ import migration069JournalSourceLinks from "./m069_journal_source_links.js";
 import migration070EvidenceStorageFoundation from "./m070_evidence_storage_foundation.js";
 import migration071EvidenceStorageCompression from "./m071_evidence_storage_compression.js";
 import migration072UserSavedViews from "./m072_user_saved_views.js";
+import migration073InternalCommentsV1 from "./m073_internal_comments_v1.js";
 
 const migrations = [
   migration001GlobalMultiEntity,
@@ -124,6 +125,7 @@ const migrations = [
   migration070EvidenceStorageFoundation,
   migration071EvidenceStorageCompression,
   migration072UserSavedViews,
+  migration073InternalCommentsV1,
 ];
 
 export default migrations;
