@@ -64,7 +64,7 @@ Tag legend: `(hot: yes)` means likely touches conflict-prone files (`AppLayout.j
 
 - [x] PR-CORE02 Idempotency standardization for remaining risky endpoints (implemented: shared `idempotency_keys` store + reusable idempotency executor/parser + standardized replay contract (`idempotentReplay`) on risky auth/security write endpoints: `POST /auth/password-reset/request`, `POST /auth/password-reset/:token/complete`, `POST /auth/invite/:token/accept`, `POST /api/v1/security/invites`)
 - [x] PR-CORE03 Optimistic locking (`row_version`) on editable entities (implemented: migration `m080_row_version_optimistic_locking` + optimistic-lock update contract on CARI documents and counterparties using `rowVersion` request field, `row_version` compare-and-increment in SQL, and `409 OPTIMISTIC_LOCK_CONFLICT` on stale writes)
-- [ ] PR-CORE04 Job progress/retry UX on top of H02 jobs engine (partial foundation exists)
+- [x] PR-CORE04 Job progress/retry UX on top of H02 jobs engine (implemented: Ops Dashboard jobs queue panel with tenant-scoped list filters, attempt/max-attempt progress bars, job detail+attempt drilldown, and permission-aware `run-once`, `requeue`, `cancel` actions wired to existing `/api/v1/jobs` admin endpoints)
 
 ## Follow-up RS Tracker (Improvement Scope Only)
 
@@ -72,10 +72,13 @@ Tag legend: `(hot: yes)` means likely touches conflict-prone files (`AppLayout.j
 Intentional not-yet-implemented placeholders (Stock, Fixed Assets, generic Reports, and period-end placeholder submodules) are excluded from this tracker by request.
 
 ### Wiring follow-ups to prevent misses in implemented modules
-- [ ] RS-WIRE-01 For each improvement PR, enforce same-PR wiring across:
+- [x] RS-WIRE-01 For each improvement PR, enforce same-PR wiring across:
   `App.jsx route`, `sidebarConfig.js` entry, `messages.js` labels, and related API client wiring
-- [ ] RS-WIRE-02 Add a lightweight CI check for new implemented routes so a page cannot ship without sidebar + i18n wiring
-- [ ] RS-WIRE-03 Add release-gate smoke coverage for each newly implemented improvement page before marking `[x]`
+  (implemented: cross-file wiring smoke contract `backend/scripts/test-ux-rswire01-cross-file-wiring.js` validates canonical improvement routes include App route, sidebar link, i18n sidebar label path, and page-level API client imports)
+- [x] RS-WIRE-02 Add a lightweight CI check for new implemented routes so a page cannot ship without sidebar + i18n wiring
+  (implemented: generic CI guard `backend/scripts/test-ux-rswire02-implemented-routes-ci-guard.js` parses canonical `implementedRoutes` in `App.jsx` (excluding `Navigate` aliases/dynamic paths) and fails build if any route misses `sidebarConfig.js` link or TR/EN `messages.sidebar.byPath` labels; wired into `test:release-gate:core`)
+- [x] RS-WIRE-03 Add release-gate smoke coverage for each newly implemented improvement page before marking `[x]`
+  (implemented: baseline-aware guard `backend/scripts/test-ux-rswire03-release-gate-smoke-coverage.js` detects canonical new implemented routes beyond snapshot, requires manifest registration with smoke script + npm script wiring, and runs inside `test:release-gate:core`)
 
 ## Dependency Follow-ups (Non-placeholder blockers)
 - [x] RS-DEP-01 Payment term write API for UX13-B (`POST /api/v1/cari/payment-terms` + `cari.card.upsert` permission guard + frontend client `createCariPaymentTerm`) (implemented)
@@ -91,8 +94,8 @@ Intentional not-yet-implemented placeholders (Stock, Fixed Assets, generic Repor
 - Add smoke/test scripts per PR as done in Bank/Payroll wave.
 
 ## Acceptance + Smoke Placeholders
-- [ ] PR-UX02 acceptance: context defaults are applied only to empty fields; user-entered values are never overwritten
-  smoke: `backend/scripts/test-ux-prux02-context-defaults.js` (or FE e2e equivalent)
+- [x] PR-UX02 acceptance: context defaults are applied only to empty fields; user-entered values are never overwritten
+  smoke: `backend/scripts/test-ux-prux02-context-defaults.js`
 - [x] PR-UX03 acceptance: filters survive refresh/navigation; reset clears state + storage
   smoke: `backend/scripts/test-ux-prux03-persisted-filters.js` (or FE e2e equivalent)
 - [x] PR-UX04 acceptance: working context is restored from server preferences across devices while preserving localStorage fallback
@@ -169,7 +172,9 @@ Intentional not-yet-implemented placeholders (Stock, Fixed Assets, generic Repor
   smoke: `backend/scripts/test-ux-prcore02-idempotency-standardization.js`
 - [x] PR-CORE03 acceptance: editable CARI document/counterparty updates require `rowVersion` and enforce compare-and-swap (`WHERE row_version = ?` + increment), returning `409 OPTIMISTIC_LOCK_CONFLICT` on stale updates while frontend update payloads carry latest `rowVersion`
   smoke: `backend/scripts/test-ux-prcore03-optimistic-locking-row-version.js`
+- [x] PR-CORE04 acceptance: ops users can monitor tenant jobs with progress visibility (`attempt_count/max_attempts`), inspect attempt history, run one job, and trigger retry/cancel actions from UI using existing H02 job admin APIs with permission-aware controls
+  smoke: `backend/scripts/test-ux-prcore04-job-progress-retry-ux.js`
 
 ## Immediate Next Step
-- Proceed with `PR-CORE04` (Job progress/retry UX on top of H02 jobs engine).
+- No unchecked improvement items remain in this tracker; proceed with new improvement-wave planning or targeted hardening follow-ups.
 - After each merged PR, update this tracker line from `[ ]` to `[x]` with a short `(implemented)` note.
