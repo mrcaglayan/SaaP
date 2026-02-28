@@ -15,6 +15,12 @@ import {
 import { listCariCounterparties } from "../../api/cariCounterparty.js";
 import { getCariOpenItemsReport } from "../../api/cariReports.js";
 import { listAccounts } from "../../api/glAdmin.js";
+import {
+  createMeSavedView,
+  deleteMeSavedView,
+  listMeSavedViews,
+  updateMeSavedView,
+} from "../../api/me.js";
 import { useAuth } from "../../auth/useAuth.js";
 import StatusTimeline from "../../components/StatusTimeline.jsx";
 import TablePreferencesPanel from "../../components/TablePreferencesPanel.jsx";
@@ -74,8 +80,62 @@ const CASH_TRANSACTION_FILTER_CONTEXT_MAPPINGS = [
 ];
 const CASH_TRANSACTION_FILTERS_STORAGE_SCOPE = "cash-transactions.filters";
 const CASH_TRANSACTION_TABLE_PREFS_STORAGE_SCOPE = "cash-transactions.list.table";
+const CASH_TRANSACTION_SAVED_VIEW_MODULE_CODE = "CASH_TRANSACTIONS_LIST";
+const CASH_TRANSACTION_TEMPLATE_MODULE_CODE = "CASH_TRANSACTION_CREATE_TEMPLATES";
 const CASH_TRANSACTION_TABLE_DEFAULT_ROWS_PER_PAGE = 50;
 const CASH_TRANSACTION_TABLE_ROWS_PER_PAGE_OPTIONS = [25, 50, 100, 200];
+const CASH_TRANSACTION_PRESET_OPTIONS = [
+  {
+    code: "RECEIPT_STANDARD",
+    label: "Receipt / Customer",
+    patch: {
+      txnType: "RECEIPT",
+      sourceDocType: "AR_RECEIPT",
+      counterpartyType: "CUSTOMER",
+      description: "Customer receipt",
+    },
+  },
+  {
+    code: "PAYOUT_STANDARD",
+    label: "Payout / Vendor",
+    patch: {
+      txnType: "PAYOUT",
+      sourceDocType: "AP_PAYMENT",
+      counterpartyType: "VENDOR",
+      description: "Vendor payout",
+    },
+  },
+  {
+    code: "DEPOSIT_STANDARD",
+    label: "Deposit To Bank",
+    patch: {
+      txnType: "DEPOSIT_TO_BANK",
+      sourceDocType: "BANK_DEPOSIT_SLIP",
+      counterpartyType: "",
+      description: "Deposit to bank",
+    },
+  },
+  {
+    code: "WITHDRAWAL_STANDARD",
+    label: "Withdrawal From Bank",
+    patch: {
+      txnType: "WITHDRAWAL_FROM_BANK",
+      sourceDocType: "BANK_DEPOSIT_SLIP",
+      counterpartyType: "",
+      description: "Withdrawal from bank",
+    },
+  },
+  {
+    code: "TRANSFER_STANDARD",
+    label: "Transfer Out",
+    patch: {
+      txnType: "TRANSFER_OUT",
+      sourceDocType: "OTHER",
+      counterpartyType: "",
+      description: "Inter-register transfer",
+    },
+  },
+];
 const CASH_TRANSACTION_EXPORT_COLUMNS = [
   { header: "ID", value: (row) => row?.id },
   { header: "Transaction No", value: (row) => firstDefinedRowValue(row, "txn_no", "txnNo") },
@@ -131,6 +191,67 @@ function firstDefinedRowValue(row, ...keys) {
     }
   }
   return "";
+}
+
+function normalizeVisibleColumnIds(candidateIds, defaultIds) {
+  const fallback = Array.isArray(defaultIds) ? defaultIds.map(String) : [];
+  const allowedIds = new Set(fallback);
+  const normalized = Array.isArray(candidateIds)
+    ? candidateIds
+        .map((value) => String(value || "").trim())
+        .filter((value, index, all) => value && all.indexOf(value) === index)
+        .filter((value) => allowedIds.has(value))
+    : [];
+  return normalized.length > 0 ? normalized : fallback;
+}
+
+function buildCashTransactionSavedViewDefinition({
+  filters,
+  baseFilters,
+  tablePrefs,
+  columnIds,
+}) {
+  return {
+    version: 1,
+    filters: {
+      ...(baseFilters && typeof baseFilters === "object" ? baseFilters : {}),
+      ...(filters && typeof filters === "object" ? filters : {}),
+    },
+    tablePrefs: {
+      rowsPerPage:
+        toPositiveInt(tablePrefs?.rowsPerPage) ||
+        CASH_TRANSACTION_TABLE_DEFAULT_ROWS_PER_PAGE,
+      stickyHeader: Boolean(tablePrefs?.stickyHeader),
+      visibleColumnIds: normalizeVisibleColumnIds(
+        tablePrefs?.visibleColumnIds,
+        columnIds
+      ),
+    },
+  };
+}
+
+function resolveCashTransactionSavedViewState({ savedView, baseFilters, columnIds }) {
+  const definition =
+    savedView?.definition && typeof savedView.definition === "object"
+      ? savedView.definition
+      : {};
+  const filters = {
+    ...(baseFilters && typeof baseFilters === "object" ? baseFilters : {}),
+    ...(definition.filters && typeof definition.filters === "object"
+      ? definition.filters
+      : {}),
+  };
+  const tablePrefs = {
+    rowsPerPage:
+      toPositiveInt(definition?.tablePrefs?.rowsPerPage) ||
+      CASH_TRANSACTION_TABLE_DEFAULT_ROWS_PER_PAGE,
+    stickyHeader: Boolean(definition?.tablePrefs?.stickyHeader),
+    visibleColumnIds: normalizeVisibleColumnIds(
+      definition?.tablePrefs?.visibleColumnIds,
+      columnIds
+    ),
+  };
+  return { filters, tablePrefs };
 }
 
 function toOptionalNumber(value) {
@@ -279,6 +400,95 @@ function buildInitialFilters(presetTxnType) {
     status: "",
     bookDateFrom: "",
     bookDateTo: "",
+  };
+}
+
+function normalizePositiveIntText(value) {
+  const parsed = toPositiveInt(value);
+  return parsed ? String(parsed) : "";
+}
+
+function normalizeOptionalDecimalText(value) {
+  if (value === undefined || value === null) {
+    return "";
+  }
+  const text = String(value).trim();
+  if (!text) {
+    return "";
+  }
+  const parsed = Number(text);
+  return Number.isFinite(parsed) ? String(parsed) : "";
+}
+
+function buildCashTransactionTemplateSafeForm(input = {}, presetTxnType = null) {
+  const baseline = buildInitialForm(presetTxnType);
+  const candidateTxnType = toUpper(input?.txnType || baseline.txnType);
+  const txnType = presetTxnType
+    ? toUpper(presetTxnType)
+    : MANUAL_TXN_TYPES.includes(candidateTxnType)
+      ? candidateTxnType
+      : baseline.txnType;
+  const isTransfer = txnType === "TRANSFER_IN" || txnType === "TRANSFER_OUT";
+  const requiresCounterAccount = requiresCounterAccountTxnType(txnType);
+  const expectedCounterpartyType = resolveExpectedCounterpartyType(txnType);
+  const nextCounterpartyType = toUpper(input?.counterpartyType || "");
+
+  const next = {
+    registerId: normalizePositiveIntText(input?.registerId),
+    cashSessionId: normalizePositiveIntText(input?.cashSessionId),
+    txnType,
+    txnDatetime: String(input?.txnDatetime || "").trim() || baseline.txnDatetime,
+    bookDate: String(input?.bookDate || "").trim() || baseline.bookDate,
+    amount: normalizeOptionalDecimalText(input?.amount),
+    currencyCode: toUpper(input?.currencyCode || "") || baseline.currencyCode,
+    description: String(input?.description || "").trim(),
+    referenceNo: String(input?.referenceNo || "").trim(),
+    sourceDocType: SOURCE_DOC_TYPES.includes(toUpper(input?.sourceDocType))
+      ? toUpper(input?.sourceDocType)
+      : "",
+    sourceDocId: String(input?.sourceDocId || "").trim(),
+    counterpartyType: COUNTERPARTY_TYPES.includes(nextCounterpartyType)
+      ? nextCounterpartyType
+      : "",
+    counterpartyId: normalizePositiveIntText(input?.counterpartyId),
+    counterAccountId: normalizePositiveIntText(input?.counterAccountId),
+    counterCashRegisterId: normalizePositiveIntText(input?.counterCashRegisterId),
+  };
+
+  if (!isTransfer) {
+    next.counterCashRegisterId = "";
+  }
+  if (!requiresCounterAccount && !isTransfer) {
+    next.counterAccountId = "";
+  }
+  if (expectedCounterpartyType) {
+    if (next.counterpartyType !== expectedCounterpartyType) {
+      next.counterpartyType = expectedCounterpartyType;
+      next.counterpartyId = "";
+    }
+  }
+
+  return { ...baseline, ...next };
+}
+
+function buildCashTransactionTemplateDefinition({ form }) {
+  return {
+    version: 1,
+    createForm: buildCashTransactionTemplateSafeForm(form),
+  };
+}
+
+function resolveCashTransactionTemplateState(savedView, presetTxnType = null) {
+  const definition =
+    savedView?.definition && typeof savedView.definition === "object"
+      ? savedView.definition
+      : {};
+  const createForm =
+    definition?.createForm && typeof definition.createForm === "object"
+      ? definition.createForm
+      : {};
+  return {
+    form: buildCashTransactionTemplateSafeForm(createForm, presetTxnType),
   };
 }
 
@@ -606,6 +816,21 @@ export default function CashTransactionsPage() {
   const [applyOpenItemsLoading, setApplyOpenItemsLoading] = useState(false);
   const [applyOpenItemsError, setApplyOpenItemsError] = useState("");
   const [transactionListPage, setTransactionListPage] = useState(1);
+  const [savedViewsLoading, setSavedViewsLoading] = useState(false);
+  const [savedViewsSaving, setSavedViewsSaving] = useState(false);
+  const [savedViewsError, setSavedViewsError] = useState("");
+  const [savedViewsMessage, setSavedViewsMessage] = useState("");
+  const [savedViews, setSavedViews] = useState([]);
+  const [selectedSavedViewId, setSelectedSavedViewId] = useState("");
+  const [defaultSavedViewHydrated, setDefaultSavedViewHydrated] = useState(false);
+  const [templatesLoading, setTemplatesLoading] = useState(false);
+  const [templatesSaving, setTemplatesSaving] = useState(false);
+  const [templatesError, setTemplatesError] = useState("");
+  const [templatesMessage, setTemplatesMessage] = useState("");
+  const [templates, setTemplates] = useState([]);
+  const [selectedTemplateId, setSelectedTemplateId] = useState("");
+  const [defaultTemplateHydrated, setDefaultTemplateHydrated] = useState(false);
+  const [selectedPresetCode, setSelectedPresetCode] = useState("");
 
   useWorkingContextDefaults(setFilters, CASH_TRANSACTION_FILTER_CONTEXT_MAPPINGS, [
     filters.bookDateFrom,
@@ -898,6 +1123,28 @@ export default function CashTransactionsPage() {
     () => new Set(transactionTablePrefs.visibleColumnIds || []),
     [transactionTablePrefs.visibleColumnIds]
   );
+  const selectedSavedView = useMemo(
+    () =>
+      savedViews.find(
+        (row) => Number(row?.id || 0) === Number(selectedSavedViewId || 0)
+      ) || null,
+    [savedViews, selectedSavedViewId]
+  );
+  const selectedTemplate = useMemo(
+    () =>
+      templates.find((row) => Number(row?.id || 0) === Number(selectedTemplateId || 0)) ||
+      null,
+    [templates, selectedTemplateId]
+  );
+  const availablePresetOptions = useMemo(() => {
+    if (!presetTxnType) {
+      return CASH_TRANSACTION_PRESET_OPTIONS;
+    }
+    const normalizedPresetTxnType = toUpper(presetTxnType);
+    return CASH_TRANSACTION_PRESET_OPTIONS.filter(
+      (row) => toUpper(row?.patch?.txnType) === normalizedPresetTxnType
+    );
+  }, [presetTxnType]);
   const visibleTransactionColumnCount = useMemo(() => {
     const count = transactionTableColumns.reduce(
       (total, column) => total + (transactionVisibleColumnSet.has(column.id) ? 1 : 0),
@@ -1003,6 +1250,444 @@ export default function CashTransactionsPage() {
     setTransactionListPage(1);
   }
 
+  function applyCreateFormSnapshot(nextForm) {
+    const normalized = buildCashTransactionTemplateSafeForm(nextForm, presetTxnType);
+    setForm(normalized);
+    setCounterpartyQuery("");
+  }
+
+  function resetCreateFormWithDefaults() {
+    setForm((previous) => {
+      const baseline = buildInitialForm(presetTxnType);
+      return buildCashTransactionTemplateSafeForm(
+        {
+          ...baseline,
+          registerId: previous?.registerId || "",
+          currencyCode: previous?.currencyCode || "",
+        },
+        presetTxnType
+      );
+    });
+    setCounterpartyQuery("");
+    setSelectedPresetCode("");
+    setTemplatesError("");
+    setTemplatesMessage("");
+  }
+
+  function handleApplyCreatePreset() {
+    const selectedPreset =
+      availablePresetOptions.find((row) => row.code === selectedPresetCode) || null;
+    if (!selectedPreset) {
+      setTemplatesError(
+        t("cashTransactions.templates.errors.selectPreset", "Select a preset first.")
+      );
+      return;
+    }
+    applyCreateFormSnapshot({
+      ...form,
+      ...(selectedPreset.patch || {}),
+    });
+    setTemplatesError("");
+    setTemplatesMessage(
+      t("cashTransactions.templates.messages.presetApplied", "Preset applied: {{name}}", {
+        name: selectedPreset.label || selectedPreset.code,
+      })
+    );
+  }
+
+  async function loadTransactionTemplates(options = {}) {
+    if (!canCreate) {
+      setTemplates([]);
+      setSelectedTemplateId("");
+      setTemplatesLoading(false);
+      return;
+    }
+    const preferredId = toPositiveInt(options.preferredId);
+    setTemplatesLoading(true);
+    setTemplatesError("");
+    try {
+      const response = await listMeSavedViews({
+        moduleCode: CASH_TRANSACTION_TEMPLATE_MODULE_CODE,
+      });
+      const nextRows = Array.isArray(response?.rows) ? response.rows : [];
+      setTemplates(nextRows);
+      setSelectedTemplateId((current) => {
+        const currentId = toPositiveInt(current);
+        if (preferredId && nextRows.some((row) => Number(row?.id) === preferredId)) {
+          return String(preferredId);
+        }
+        if (currentId && nextRows.some((row) => Number(row?.id) === currentId)) {
+          return String(currentId);
+        }
+        return nextRows[0]?.id ? String(nextRows[0].id) : "";
+      });
+    } catch (err) {
+      const errorState = toTransactionErrorState(err, t, "cashTransactions.errors.load");
+      setTemplates([]);
+      setSelectedTemplateId("");
+      setTemplatesError(errorState.message);
+    } finally {
+      setTemplatesLoading(false);
+    }
+  }
+
+  function applyTransactionTemplate(templateRow, options = {}) {
+    const target = templateRow && typeof templateRow === "object" ? templateRow : null;
+    if (!target) {
+      setTemplatesError(
+        t("cashTransactions.templates.errors.selectTemplate", "Select a template first.")
+      );
+      return;
+    }
+    const resolved = resolveCashTransactionTemplateState(target, presetTxnType);
+    applyCreateFormSnapshot(resolved.form);
+    setSelectedTemplateId(String(target.id));
+    if (!options.silent) {
+      setTemplatesError("");
+      setTemplatesMessage(
+        t("cashTransactions.templates.messages.applied", "Template applied: {{name}}", {
+          name: target.name || target.id,
+        })
+      );
+    }
+  }
+
+  async function handleCreateTransactionTemplate() {
+    const rawName = window.prompt(
+      t("cashTransactions.templates.promptName", "Template name"),
+      ""
+    );
+    const name = String(rawName || "").trim();
+    if (!name) {
+      return;
+    }
+    setTemplatesSaving(true);
+    setTemplatesError("");
+    setTemplatesMessage("");
+    try {
+      const response = await createMeSavedView({
+        moduleCode: CASH_TRANSACTION_TEMPLATE_MODULE_CODE,
+        name,
+        definition: buildCashTransactionTemplateDefinition({ form }),
+      });
+      const createdId = toPositiveInt(response?.row?.id);
+      await loadTransactionTemplates({ preferredId: createdId });
+      setTemplatesMessage(
+        t("cashTransactions.templates.messages.created", "Template created: {{name}}", {
+          name,
+        })
+      );
+    } catch (err) {
+      const errorState = toTransactionErrorState(err, t, "cashTransactions.errors.action");
+      setTemplatesError(errorState.message);
+    } finally {
+      setTemplatesSaving(false);
+    }
+  }
+
+  async function handleUpdateTransactionTemplate() {
+    const templateId = toPositiveInt(selectedTemplate?.id);
+    if (!templateId) {
+      setTemplatesError(
+        t("cashTransactions.templates.errors.selectTemplate", "Select a template first.")
+      );
+      return;
+    }
+    setTemplatesSaving(true);
+    setTemplatesError("");
+    setTemplatesMessage("");
+    try {
+      await updateMeSavedView(templateId, {
+        definition: buildCashTransactionTemplateDefinition({ form }),
+      });
+      await loadTransactionTemplates({ preferredId: templateId });
+      setTemplatesMessage(
+        t("cashTransactions.templates.messages.updated", "Template updated: {{name}}", {
+          name: selectedTemplate?.name || templateId,
+        })
+      );
+    } catch (err) {
+      const errorState = toTransactionErrorState(err, t, "cashTransactions.errors.action");
+      setTemplatesError(errorState.message);
+    } finally {
+      setTemplatesSaving(false);
+    }
+  }
+
+  async function handleSetDefaultTransactionTemplate() {
+    const templateId = toPositiveInt(selectedTemplate?.id);
+    if (!templateId) {
+      setTemplatesError(
+        t("cashTransactions.templates.errors.selectTemplate", "Select a template first.")
+      );
+      return;
+    }
+    setTemplatesSaving(true);
+    setTemplatesError("");
+    setTemplatesMessage("");
+    try {
+      await updateMeSavedView(templateId, { isDefault: true });
+      await loadTransactionTemplates({ preferredId: templateId });
+      setTemplatesMessage(
+        t("cashTransactions.templates.messages.setDefault", "Template set as default.")
+      );
+    } catch (err) {
+      const errorState = toTransactionErrorState(err, t, "cashTransactions.errors.action");
+      setTemplatesError(errorState.message);
+    } finally {
+      setTemplatesSaving(false);
+    }
+  }
+
+  async function handleDeleteTransactionTemplate() {
+    const templateId = toPositiveInt(selectedTemplate?.id);
+    if (!templateId) {
+      setTemplatesError(
+        t("cashTransactions.templates.errors.selectTemplate", "Select a template first.")
+      );
+      return;
+    }
+    const confirmed = window.confirm(
+      t(
+        "cashTransactions.templates.confirmDelete",
+        "Delete selected transaction template?"
+      )
+    );
+    if (!confirmed) {
+      return;
+    }
+    setTemplatesSaving(true);
+    setTemplatesError("");
+    setTemplatesMessage("");
+    try {
+      await deleteMeSavedView(templateId);
+      await loadTransactionTemplates();
+      setTemplatesMessage(
+        t("cashTransactions.templates.messages.deleted", "Template deleted.")
+      );
+    } catch (err) {
+      const errorState = toTransactionErrorState(err, t, "cashTransactions.errors.action");
+      setTemplatesError(errorState.message);
+    } finally {
+      setTemplatesSaving(false);
+    }
+  }
+
+  async function loadTransactionSavedViews(options = {}) {
+    if (!canRead) {
+      setSavedViews([]);
+      setSelectedSavedViewId("");
+      setSavedViewsLoading(false);
+      return;
+    }
+    const preferredId = toPositiveInt(options.preferredId);
+    setSavedViewsLoading(true);
+    setSavedViewsError("");
+    try {
+      const response = await listMeSavedViews({
+        moduleCode: CASH_TRANSACTION_SAVED_VIEW_MODULE_CODE,
+      });
+      const nextRows = Array.isArray(response?.rows) ? response.rows : [];
+      setSavedViews(nextRows);
+      setSelectedSavedViewId((current) => {
+        const currentId = toPositiveInt(current);
+        if (preferredId && nextRows.some((row) => Number(row?.id) === preferredId)) {
+          return String(preferredId);
+        }
+        if (currentId && nextRows.some((row) => Number(row?.id) === currentId)) {
+          return String(currentId);
+        }
+        return nextRows[0]?.id ? String(nextRows[0].id) : "";
+      });
+    } catch (err) {
+      const errorState = toTransactionErrorState(
+        err,
+        t,
+        "cashTransactions.errors.load"
+      );
+      setSavedViews([]);
+      setSelectedSavedViewId("");
+      setSavedViewsError(errorState.message);
+    } finally {
+      setSavedViewsLoading(false);
+    }
+  }
+
+  function applyTransactionSavedView(savedView, options = {}) {
+    const target = savedView && typeof savedView === "object" ? savedView : null;
+    if (!target) {
+      setSavedViewsError(
+        t("cashTransactions.savedViews.selectRequired", "Select a saved view first.")
+      );
+      return;
+    }
+    const resolved = resolveCashTransactionSavedViewState({
+      savedView: target,
+      baseFilters: buildInitialFilters(presetTxnType),
+      columnIds: transactionTableColumnIds,
+    });
+    setFilters(resolved.filters);
+    setTransactionTablePrefs((previous) => ({
+      ...previous,
+      ...resolved.tablePrefs,
+    }));
+    setTransactionListPage(1);
+    setSelectedSavedViewId(String(target.id));
+    loadPageData(resolved.filters);
+    if (!options.silent) {
+      setSavedViewsMessage(
+        t("cashTransactions.savedViews.applied", "Saved view applied: {{name}}", {
+          name: target.name || target.id,
+        })
+      );
+      setSavedViewsError("");
+    }
+  }
+
+  async function handleCreateTransactionSavedView() {
+    const rawName = window.prompt(
+      t("cashTransactions.savedViews.promptName", "Saved view name"),
+      ""
+    );
+    const name = String(rawName || "").trim();
+    if (!name) {
+      return;
+    }
+    setSavedViewsSaving(true);
+    setSavedViewsError("");
+    setSavedViewsMessage("");
+    try {
+      const response = await createMeSavedView({
+        moduleCode: CASH_TRANSACTION_SAVED_VIEW_MODULE_CODE,
+        name,
+        definition: buildCashTransactionSavedViewDefinition({
+          filters,
+          baseFilters: buildInitialFilters(presetTxnType),
+          tablePrefs: transactionTablePrefs,
+          columnIds: transactionTableColumnIds,
+        }),
+      });
+      const createdId = toPositiveInt(response?.row?.id);
+      await loadTransactionSavedViews({ preferredId: createdId });
+      setSavedViewsMessage(
+        t("cashTransactions.savedViews.created", "Saved view created: {{name}}", {
+          name,
+        })
+      );
+    } catch (err) {
+      const errorState = toTransactionErrorState(
+        err,
+        t,
+        "cashTransactions.errors.action"
+      );
+      setSavedViewsError(errorState.message);
+    } finally {
+      setSavedViewsSaving(false);
+    }
+  }
+
+  async function handleUpdateTransactionSavedView() {
+    const savedViewId = toPositiveInt(selectedSavedView?.id);
+    if (!savedViewId) {
+      setSavedViewsError(
+        t("cashTransactions.savedViews.selectRequired", "Select a saved view first.")
+      );
+      return;
+    }
+    setSavedViewsSaving(true);
+    setSavedViewsError("");
+    setSavedViewsMessage("");
+    try {
+      await updateMeSavedView(savedViewId, {
+        definition: buildCashTransactionSavedViewDefinition({
+          filters,
+          baseFilters: buildInitialFilters(presetTxnType),
+          tablePrefs: transactionTablePrefs,
+          columnIds: transactionTableColumnIds,
+        }),
+      });
+      await loadTransactionSavedViews({ preferredId: savedViewId });
+      setSavedViewsMessage(
+        t("cashTransactions.savedViews.updated", "Saved view updated: {{name}}", {
+          name: selectedSavedView?.name || savedViewId,
+        })
+      );
+    } catch (err) {
+      const errorState = toTransactionErrorState(
+        err,
+        t,
+        "cashTransactions.errors.action"
+      );
+      setSavedViewsError(errorState.message);
+    } finally {
+      setSavedViewsSaving(false);
+    }
+  }
+
+  async function handleSetDefaultTransactionSavedView() {
+    const savedViewId = toPositiveInt(selectedSavedView?.id);
+    if (!savedViewId) {
+      setSavedViewsError(
+        t("cashTransactions.savedViews.selectRequired", "Select a saved view first.")
+      );
+      return;
+    }
+    setSavedViewsSaving(true);
+    setSavedViewsError("");
+    setSavedViewsMessage("");
+    try {
+      await updateMeSavedView(savedViewId, { isDefault: true });
+      await loadTransactionSavedViews({ preferredId: savedViewId });
+      setSavedViewsMessage(
+        t("cashTransactions.savedViews.setDefault", "Saved view set as default.")
+      );
+    } catch (err) {
+      const errorState = toTransactionErrorState(
+        err,
+        t,
+        "cashTransactions.errors.action"
+      );
+      setSavedViewsError(errorState.message);
+    } finally {
+      setSavedViewsSaving(false);
+    }
+  }
+
+  async function handleDeleteTransactionSavedView() {
+    const savedViewId = toPositiveInt(selectedSavedView?.id);
+    if (!savedViewId) {
+      setSavedViewsError(
+        t("cashTransactions.savedViews.selectRequired", "Select a saved view first.")
+      );
+      return;
+    }
+    const confirmed = window.confirm(
+      t("cashTransactions.savedViews.confirmDelete", "Delete selected saved view?")
+    );
+    if (!confirmed) {
+      return;
+    }
+    setSavedViewsSaving(true);
+    setSavedViewsError("");
+    setSavedViewsMessage("");
+    try {
+      await deleteMeSavedView(savedViewId);
+      await loadTransactionSavedViews();
+      setSavedViewsMessage(
+        t("cashTransactions.savedViews.deleted", "Saved view deleted.")
+      );
+    } catch (err) {
+      const errorState = toTransactionErrorState(
+        err,
+        t,
+        "cashTransactions.errors.action"
+      );
+      setSavedViewsError(errorState.message);
+    } finally {
+      setSavedViewsSaving(false);
+    }
+  }
+
   function toListQuery(nextFilters) {
     return {
       limit: 200,
@@ -1094,12 +1779,75 @@ export default function CashTransactionsPage() {
     setSelectedLifecycleTransactionId(null);
     setCounterpartyQuery("");
     setCounterpartyOptions([]);
+    setSelectedPresetCode("");
+    setTemplatesError("");
+    setTemplatesMessage("");
   }, [presetTxnType]);
 
   useEffect(() => {
     loadPageData(filters);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canRead, presetTxnType, canReadAccounts]);
+
+  useEffect(() => {
+    if (!canRead) {
+      setSavedViews([]);
+      setSelectedSavedViewId("");
+      setDefaultSavedViewHydrated(false);
+      return;
+    }
+    loadTransactionSavedViews();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canRead, presetTxnType]);
+
+  useEffect(() => {
+    if (!canRead || defaultSavedViewHydrated || savedViewsLoading) {
+      return;
+    }
+    const defaultView = savedViews.find((row) => Boolean(row?.isDefault));
+    if (defaultView) {
+      applyTransactionSavedView(defaultView, { silent: true });
+    }
+    setDefaultSavedViewHydrated(true);
+  }, [canRead, defaultSavedViewHydrated, savedViews, savedViewsLoading]);
+
+  useEffect(() => {
+    if (!canCreate) {
+      setTemplates([]);
+      setSelectedTemplateId("");
+      setDefaultTemplateHydrated(false);
+      return;
+    }
+    setDefaultTemplateHydrated(false);
+    loadTransactionTemplates();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canCreate, presetTxnType]);
+
+  useEffect(() => {
+    if (!canCreate || defaultTemplateHydrated || templatesLoading) {
+      return;
+    }
+    const defaultTemplate = templates.find((row) => Boolean(row?.isDefault));
+    if (defaultTemplate) {
+      applyTransactionTemplate(defaultTemplate, { silent: true });
+    }
+    setDefaultTemplateHydrated(true);
+  }, [
+    canCreate,
+    defaultTemplateHydrated,
+    templates,
+    templatesLoading,
+  ]);
+
+  useEffect(() => {
+    if (!selectedPresetCode) {
+      return;
+    }
+    if (availablePresetOptions.some((row) => row.code === selectedPresetCode)) {
+      return;
+    }
+    setSelectedPresetCode("");
+  }, [availablePresetOptions, selectedPresetCode]);
 
   useEffect(() => {
     const selectedId = toPositiveInt(selectedLifecycleTransactionId);
@@ -1532,19 +2280,7 @@ export default function CashTransactionsPage() {
         }
       }
 
-      setForm((prev) => ({
-        ...prev,
-        cashSessionId: "",
-        amount: "",
-        description: "",
-        referenceNo: "",
-        sourceDocType: "",
-        sourceDocId: "",
-        counterpartyType: "",
-        counterpartyId: "",
-        counterAccountId: "",
-        counterCashRegisterId: "",
-      }));
+      resetCreateFormWithDefaults();
       await loadPageData(filters);
     } catch (err) {
       const errorState = toTransactionErrorState(err, t, "cashTransactions.errors.create");
@@ -1957,6 +2693,26 @@ export default function CashTransactionsPage() {
           {counterpartyWarning}
         </div>
       ) : null}
+      {savedViewsError ? (
+        <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+          {savedViewsError}
+        </div>
+      ) : null}
+      {savedViewsMessage ? (
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+          {savedViewsMessage}
+        </div>
+      ) : null}
+      {templatesError ? (
+        <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+          {templatesError}
+        </div>
+      ) : null}
+      {templatesMessage ? (
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+          {templatesMessage}
+        </div>
+      ) : null}
 
       <section className="rounded-xl border border-slate-200 bg-white p-4">
         <h2 className="mb-3 text-sm font-semibold text-slate-700">
@@ -2106,6 +2862,81 @@ export default function CashTransactionsPage() {
               {t("cashTransactions.actions.exportCsv", "Export CSV")}
             </button>
           </div>
+          <div className="md:col-span-3 rounded-md border border-slate-200 bg-slate-50 p-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+              {t("cashTransactions.savedViews.title", "Saved Views (server-side)")}
+            </p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <select
+                className="min-w-[220px] rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm"
+                value={selectedSavedViewId}
+                onChange={(event) => setSelectedSavedViewId(event.target.value)}
+                disabled={savedViewsLoading || savedViewsSaving || savedViews.length === 0}
+              >
+                <option value="">
+                  {t("cashTransactions.savedViews.selectPlaceholder", "Select saved view")}
+                </option>
+                {savedViews.map((row) => (
+                  <option key={`cash-saved-view-${row.id}`} value={row.id}>
+                    {row.name}
+                    {row.isDefault ? " (default)" : ""}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 disabled:opacity-60"
+                onClick={() => applyTransactionSavedView(selectedSavedView)}
+                disabled={!selectedSavedView || savedViewsSaving}
+              >
+                {t("cashTransactions.savedViews.apply", "Apply")}
+              </button>
+              <button
+                type="button"
+                className="rounded-md border border-emerald-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-emerald-700 disabled:opacity-60"
+                onClick={handleCreateTransactionSavedView}
+                disabled={savedViewsSaving}
+              >
+                {t("cashTransactions.savedViews.saveCurrent", "Save Current")}
+              </button>
+              <button
+                type="button"
+                className="rounded-md border border-cyan-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-cyan-700 disabled:opacity-60"
+                onClick={handleUpdateTransactionSavedView}
+                disabled={!selectedSavedView || savedViewsSaving}
+              >
+                {t("cashTransactions.savedViews.update", "Update Selected")}
+              </button>
+              <button
+                type="button"
+                className="rounded-md border border-indigo-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-indigo-700 disabled:opacity-60"
+                onClick={handleSetDefaultTransactionSavedView}
+                disabled={!selectedSavedView || savedViewsSaving}
+              >
+                {t("cashTransactions.savedViews.setDefault", "Set Default")}
+              </button>
+              <button
+                type="button"
+                className="rounded-md border border-rose-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-rose-700 disabled:opacity-60"
+                onClick={handleDeleteTransactionSavedView}
+                disabled={!selectedSavedView || savedViewsSaving}
+              >
+                {t("cashTransactions.savedViews.delete", "Delete")}
+              </button>
+              <button
+                type="button"
+                className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 disabled:opacity-60"
+                onClick={() =>
+                  loadTransactionSavedViews({ preferredId: selectedSavedViewId })
+                }
+                disabled={savedViewsLoading || savedViewsSaving}
+              >
+                {savedViewsLoading
+                  ? t("cashTransactions.actions.loading")
+                  : t("cashTransactions.savedViews.refresh", "Refresh Saved Views")}
+              </button>
+            </div>
+          </div>
         </form>
       </section>
 
@@ -2114,6 +2945,112 @@ export default function CashTransactionsPage() {
           <h2 className="mb-3 text-sm font-semibold text-slate-700">
             {t("cashTransactions.sections.create")}
           </h2>
+          <div className="mb-3 rounded-md border border-slate-200 bg-slate-50 p-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+              {t("cashTransactions.templates.title", "Templates + Presets")}
+            </p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <select
+                className="min-w-[220px] rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm"
+                value={selectedTemplateId}
+                onChange={(event) => setSelectedTemplateId(event.target.value)}
+                disabled={templatesLoading || templatesSaving || templates.length === 0 || creating}
+              >
+                <option value="">
+                  {t("cashTransactions.templates.selectPlaceholder", "Select template")}
+                </option>
+                {templates.map((row) => (
+                  <option key={`cash-create-template-${row.id}`} value={row.id}>
+                    {row.name}
+                    {row.isDefault ? " (default)" : ""}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 disabled:opacity-60"
+                onClick={() => applyTransactionTemplate(selectedTemplate)}
+                disabled={!selectedTemplate || templatesSaving || creating}
+              >
+                {t("cashTransactions.templates.apply", "Apply Template")}
+              </button>
+              <button
+                type="button"
+                className="rounded-md border border-emerald-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-emerald-700 disabled:opacity-60"
+                onClick={handleCreateTransactionTemplate}
+                disabled={templatesSaving || creating}
+              >
+                {t("cashTransactions.templates.saveCurrent", "Save Current")}
+              </button>
+              <button
+                type="button"
+                className="rounded-md border border-cyan-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-cyan-700 disabled:opacity-60"
+                onClick={handleUpdateTransactionTemplate}
+                disabled={!selectedTemplate || templatesSaving || creating}
+              >
+                {t("cashTransactions.templates.update", "Update")}
+              </button>
+              <button
+                type="button"
+                className="rounded-md border border-indigo-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-indigo-700 disabled:opacity-60"
+                onClick={handleSetDefaultTransactionTemplate}
+                disabled={!selectedTemplate || templatesSaving || creating}
+              >
+                {t("cashTransactions.templates.setDefault", "Set Default")}
+              </button>
+              <button
+                type="button"
+                className="rounded-md border border-rose-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-rose-700 disabled:opacity-60"
+                onClick={handleDeleteTransactionTemplate}
+                disabled={!selectedTemplate || templatesSaving || creating}
+              >
+                {t("cashTransactions.templates.delete", "Delete")}
+              </button>
+              <button
+                type="button"
+                className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 disabled:opacity-60"
+                onClick={() => loadTransactionTemplates({ preferredId: selectedTemplateId })}
+                disabled={templatesLoading || templatesSaving || creating}
+              >
+                {templatesLoading
+                  ? t("cashTransactions.actions.loading")
+                  : t("cashTransactions.templates.refresh", "Refresh Templates")}
+              </button>
+            </div>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <select
+                className="min-w-[220px] rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm"
+                value={selectedPresetCode}
+                onChange={(event) => setSelectedPresetCode(event.target.value)}
+                disabled={availablePresetOptions.length === 0 || creating}
+              >
+                <option value="">
+                  {t("cashTransactions.templates.selectPreset", "Select preset")}
+                </option>
+                {availablePresetOptions.map((row) => (
+                  <option key={`cash-create-preset-${row.code}`} value={row.code}>
+                    {row.label}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                className="rounded-md border border-amber-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-amber-800 disabled:opacity-60"
+                onClick={handleApplyCreatePreset}
+                disabled={!selectedPresetCode || creating}
+              >
+                {t("cashTransactions.templates.applyPreset", "Apply Preset")}
+              </button>
+              <button
+                type="button"
+                className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 disabled:opacity-60"
+                onClick={resetCreateFormWithDefaults}
+                disabled={creating}
+              >
+                {t("cashTransactions.actions.resetForm", "Reset Form")}
+              </button>
+            </div>
+          </div>
           <form onSubmit={handleCreateTransaction} className="grid gap-2 md:grid-cols-3">
             {registerOptions.length > 0 ? (
               <select

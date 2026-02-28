@@ -22,6 +22,12 @@ import { getCariCounterpartyStatementReport } from "../../api/cariReports.js";
 import { getJournal } from "../../api/glAdmin.js";
 import { listExceptionWorkbench } from "../../api/exceptionsWorkbench.js";
 import { listCariAudit } from "../../api/cariAudit.js";
+import {
+  createMeSavedView,
+  deleteMeSavedView,
+  listMeSavedViews,
+  updateMeSavedView,
+} from "../../api/me.js";
 import Combobox from "../../components/Combobox.jsx";
 import StatusTimeline from "../../components/StatusTimeline.jsx";
 import TablePreferencesPanel from "../../components/TablePreferencesPanel.jsx";
@@ -75,11 +81,27 @@ const DOCUMENT_FILTER_CONTEXT_MAPPINGS = [
   { stateKey: "dateTo" },
 ];
 
-const DOCUMENT_CREATE_CONTEXT_MAPPINGS = [{ stateKey: "legalEntityId" }];
+const DOCUMENT_CREATE_CONTEXT_MAPPINGS = [
+  { stateKey: "legalEntityId" },
+  {
+    stateKey: "documentDate",
+    contextKey: "dateTo",
+    allowContextValue: (contextValue) => /^\d{4}-\d{2}-\d{2}$/.test(String(contextValue || "").trim()),
+  },
+];
 const DOCUMENT_FILTERS_STORAGE_SCOPE = "cari-documents.list";
 const DOCUMENT_TABLE_PREFS_STORAGE_SCOPE = "cari-documents.list.table";
+const DOCUMENT_SAVED_VIEW_MODULE_CODE = "CARI_DOCUMENTS_LIST";
+const DOCUMENT_DRAFT_TEMPLATE_MODULE_CODE = "CARI_DOCUMENT_DRAFT_TEMPLATES";
 const DOCUMENT_TABLE_DEFAULT_ROWS_PER_PAGE = 50;
 const DOCUMENT_TABLE_ROWS_PER_PAGE_OPTIONS = [25, 50, 100, 200];
+const DOCUMENT_RECURRING_TEMPLATE_CADENCES = [
+  "NONE",
+  "WEEKLY",
+  "MONTHLY",
+  "QUARTERLY",
+  "YEARLY",
+];
 const DOCUMENT_EXPORT_COLUMNS = [
   { header: "ID", value: (row) => row?.id },
   { header: "Document No", value: (row) => firstDefinedRowValue(row, "documentNo", "document_no") },
@@ -130,6 +152,202 @@ function firstDefinedRowValue(row, ...keys) {
 function toPositiveInt(value) {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function normalizeText(value) {
+  return String(value || "").trim();
+}
+
+function normalizeCurrencyCode(value) {
+  return normalizeText(value).toUpperCase();
+}
+
+function normalizePositiveIntText(value) {
+  const parsed = toPositiveInt(value);
+  return parsed ? String(parsed) : "";
+}
+
+function normalizeOptionalDecimalText(value) {
+  const text = normalizeText(value);
+  if (!text) {
+    return "";
+  }
+  const parsed = Number(text);
+  return Number.isFinite(parsed) ? String(parsed) : "";
+}
+
+function normalizeRecurringCadence(value) {
+  const normalized = normalizeText(value).toUpperCase();
+  if (DOCUMENT_RECURRING_TEMPLATE_CADENCES.includes(normalized)) {
+    return normalized;
+  }
+  return "MONTHLY";
+}
+
+function normalizeRecurringInterval(value) {
+  const parsed = toPositiveInt(value);
+  return parsed ? String(parsed) : "1";
+}
+
+function normalizeRecurringAnchorDay(value) {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 31) {
+    return "";
+  }
+  return String(parsed);
+}
+
+function createInitialRecurringTemplateRule() {
+  return {
+    cadence: "MONTHLY",
+    interval: "1",
+    anchorDay: "",
+  };
+}
+
+function buildTemplateSafeDraftForm(input = {}) {
+  const baseline = createInitialDraftForm();
+  const direction = normalizeText(input?.direction).toUpperCase();
+  const documentType = normalizeText(input?.documentType).toUpperCase();
+  const next = {
+    legalEntityId: normalizePositiveIntText(input?.legalEntityId),
+    counterpartyId: normalizePositiveIntText(input?.counterpartyId),
+    paymentTermId: normalizePositiveIntText(input?.paymentTermId),
+    direction: DOCUMENT_DIRECTIONS.includes(direction) ? direction : baseline.direction,
+    documentType: DOCUMENT_TYPES.includes(documentType)
+      ? documentType
+      : baseline.documentType,
+    documentDate: normalizeText(input?.documentDate) || baseline.documentDate,
+    dueDate: normalizeText(input?.dueDate),
+    amountTxn: normalizeOptionalDecimalText(input?.amountTxn),
+    amountBase: normalizeOptionalDecimalText(input?.amountBase),
+    currencyCode: normalizeCurrencyCode(input?.currencyCode) || baseline.currencyCode,
+    fxRate: normalizeOptionalDecimalText(input?.fxRate),
+  };
+  return { ...baseline, ...next };
+}
+
+function buildRecurringTemplateRule(input = {}) {
+  return {
+    cadence: normalizeRecurringCadence(input?.cadence),
+    interval: normalizeRecurringInterval(input?.interval),
+    anchorDay: normalizeRecurringAnchorDay(input?.anchorDay),
+  };
+}
+
+function buildDocumentDraftTemplateDefinition({ form, recurringRule }) {
+  return {
+    version: 1,
+    draftForm: buildTemplateSafeDraftForm(form),
+    recurringRule: buildRecurringTemplateRule(recurringRule),
+  };
+}
+
+function resolveDocumentDraftTemplateState(savedView) {
+  const definition =
+    savedView?.definition && typeof savedView.definition === "object"
+      ? savedView.definition
+      : {};
+  const draftForm = buildTemplateSafeDraftForm(
+    definition?.draftForm && typeof definition.draftForm === "object"
+      ? definition.draftForm
+      : {}
+  );
+  const recurringRule = buildRecurringTemplateRule(
+    definition?.recurringRule && typeof definition.recurringRule === "object"
+      ? definition.recurringRule
+      : {}
+  );
+  return { draftForm, recurringRule };
+}
+
+function buildCloneDraftFormFromRow(row, fallbackForm) {
+  const fallbackDocumentDate = normalizeText(fallbackForm?.documentDate) || todayIsoDate();
+  const sourceForm = {
+    legalEntityId: firstDefinedRowValue(row, "legalEntityId", "legal_entity_id"),
+    counterpartyId: firstDefinedRowValue(row, "counterpartyId", "counterparty_id"),
+    paymentTermId: firstDefinedRowValue(row, "paymentTermId", "payment_term_id"),
+    direction: firstDefinedRowValue(row, "direction"),
+    documentType: firstDefinedRowValue(row, "documentType", "document_type"),
+    documentDate: fallbackDocumentDate,
+    dueDate: firstDefinedRowValue(
+      row,
+      "dueDate",
+      "due_date",
+      "dueDateSnapshot",
+      "due_date_snapshot"
+    ),
+    amountTxn: firstDefinedRowValue(row, "amountTxn", "amount_txn"),
+    amountBase: firstDefinedRowValue(row, "amountBase", "amount_base"),
+    currencyCode: firstDefinedRowValue(
+      row,
+      "currencyCode",
+      "currency_code",
+      "currencyCodeSnapshot",
+      "currency_code_snapshot"
+    ),
+    fxRate: firstDefinedRowValue(row, "fxRate", "fx_rate", "fxRateSnapshot", "fx_rate_snapshot"),
+  };
+  const nextForm = buildTemplateSafeDraftForm(sourceForm);
+  if (!nextForm.dueDate && requiresDueDate(nextForm.documentType)) {
+    nextForm.dueDate = fallbackDocumentDate;
+  }
+  return nextForm;
+}
+
+function normalizeVisibleColumnIds(candidateIds, defaultIds) {
+  const fallback = Array.isArray(defaultIds) ? defaultIds.map(String) : [];
+  const allowedIds = new Set(fallback);
+  const normalized = Array.isArray(candidateIds)
+    ? candidateIds
+        .map((value) => String(value || "").trim())
+        .filter((value, index, all) => value && all.indexOf(value) === index)
+        .filter((value) => allowedIds.has(value))
+    : [];
+  return normalized.length > 0 ? normalized : fallback;
+}
+
+function buildDocumentSavedViewDefinition({ filters, tablePrefs, columnIds }) {
+  return {
+    version: 1,
+    filters: {
+      ...DEFAULT_FILTERS,
+      ...(filters && typeof filters === "object" ? filters : {}),
+    },
+    tablePrefs: {
+      rowsPerPage:
+        toPositiveInt(tablePrefs?.rowsPerPage) || DOCUMENT_TABLE_DEFAULT_ROWS_PER_PAGE,
+      stickyHeader: Boolean(tablePrefs?.stickyHeader),
+      visibleColumnIds: normalizeVisibleColumnIds(
+        tablePrefs?.visibleColumnIds,
+        columnIds
+      ),
+    },
+  };
+}
+
+function resolveDocumentSavedViewState(savedView, columnIds) {
+  const definition =
+    savedView?.definition && typeof savedView.definition === "object"
+      ? savedView.definition
+      : {};
+  const nextFilters = {
+    ...DEFAULT_FILTERS,
+    ...(definition.filters && typeof definition.filters === "object"
+      ? definition.filters
+      : {}),
+  };
+  const tablePrefs = {
+    rowsPerPage:
+      toPositiveInt(definition?.tablePrefs?.rowsPerPage) ||
+      DOCUMENT_TABLE_DEFAULT_ROWS_PER_PAGE,
+    stickyHeader: Boolean(definition?.tablePrefs?.stickyHeader),
+    visibleColumnIds: normalizeVisibleColumnIds(
+      definition?.tablePrefs?.visibleColumnIds,
+      columnIds
+    ),
+  };
+  return { filters: nextFilters, tablePrefs };
 }
 
 function createInitialDraftForm() {
@@ -335,12 +553,24 @@ export default function CariDocumentsPage() {
   const [createSaving, setCreateSaving] = useState(false);
   const [createError, setCreateError] = useState("");
   const [createMessage, setCreateMessage] = useState("");
+  const [createPaymentTermTouched, setCreatePaymentTermTouched] = useState(false);
+  const [createCurrencyTouched, setCreateCurrencyTouched] = useState(false);
   const [createCounterpartyOptions, setCreateCounterpartyOptions] = useState([]);
   const [createCounterpartyLoading, setCreateCounterpartyLoading] = useState(false);
   const [createCounterpartyLookupQuery, setCreateCounterpartyLookupQuery] = useState("");
   const [createInlineCounterpartySaving, setCreateInlineCounterpartySaving] = useState(false);
   const [createInlineCounterpartyError, setCreateInlineCounterpartyError] = useState("");
   const [createInlineCounterpartyMessage, setCreateInlineCounterpartyMessage] = useState("");
+  const [createRecurringRule, setCreateRecurringRule] = useState(() =>
+    createInitialRecurringTemplateRule()
+  );
+  const [draftTemplatesLoading, setDraftTemplatesLoading] = useState(false);
+  const [draftTemplatesSaving, setDraftTemplatesSaving] = useState(false);
+  const [draftTemplatesError, setDraftTemplatesError] = useState("");
+  const [draftTemplatesMessage, setDraftTemplatesMessage] = useState("");
+  const [draftTemplates, setDraftTemplates] = useState([]);
+  const [selectedDraftTemplateId, setSelectedDraftTemplateId] = useState("");
+  const [defaultDraftTemplateHydrated, setDefaultDraftTemplateHydrated] = useState(false);
 
   const [selectedDocumentId, setSelectedDocumentId] = useState(null);
   const [selectedDetail, setSelectedDetail] = useState(null);
@@ -389,6 +619,13 @@ export default function CariDocumentsPage() {
   const [evidenceDeletingId, setEvidenceDeletingId] = useState(null);
   const [evidenceDownloadingId, setEvidenceDownloadingId] = useState(null);
   const [documentListPage, setDocumentListPage] = useState(1);
+  const [savedViewsLoading, setSavedViewsLoading] = useState(false);
+  const [savedViewsSaving, setSavedViewsSaving] = useState(false);
+  const [savedViewsError, setSavedViewsError] = useState("");
+  const [savedViewsMessage, setSavedViewsMessage] = useState("");
+  const [savedViews, setSavedViews] = useState([]);
+  const [selectedSavedViewId, setSelectedSavedViewId] = useState("");
+  const [defaultSavedViewHydrated, setDefaultSavedViewHydrated] = useState(false);
 
   const documentTableColumns = useMemo(
     () => [
@@ -508,6 +745,20 @@ export default function CariDocumentsPage() {
     return rows.slice(startIndex, startIndex + documentRowsPerPage);
   }, [documentListPage, documentRowsPerPage, rows]);
   const documentVisibleColumnCount = Math.max(1, documentVisibleColumns.length);
+  const selectedSavedView = useMemo(
+    () =>
+      savedViews.find(
+        (row) => Number(row?.id || 0) === Number(selectedSavedViewId || 0)
+      ) || null,
+    [savedViews, selectedSavedViewId]
+  );
+  const selectedDraftTemplate = useMemo(
+    () =>
+      draftTemplates.find(
+        (row) => Number(row?.id || 0) === Number(selectedDraftTemplateId || 0)
+      ) || null,
+    [draftTemplates, selectedDraftTemplateId]
+  );
 
   useWorkingContextDefaults(setFilters, DOCUMENT_FILTER_CONTEXT_MAPPINGS, [
     filters.legalEntityId,
@@ -516,6 +767,7 @@ export default function CariDocumentsPage() {
   ]);
   useWorkingContextDefaults(setCreateForm, DOCUMENT_CREATE_CONTEXT_MAPPINGS, [
     createForm.legalEntityId,
+    createForm.documentDate,
   ]);
 
   const selectedRow = useMemo(
@@ -572,6 +824,17 @@ export default function CariDocumentsPage() {
     () => (createCounterpartyOptions || []).map(mapCounterpartyLookupOption).filter((row) => row.value),
     [createCounterpartyOptions]
   );
+  const selectedCreateCounterparty = useMemo(() => {
+    const selectedCounterpartyId = toPositiveInt(createForm.counterpartyId);
+    if (!selectedCounterpartyId) {
+      return null;
+    }
+    return (
+      createCounterpartyOptions.find(
+        (row) => toPositiveInt(row?.id) === selectedCounterpartyId
+      ) || null
+    );
+  }, [createCounterpartyOptions, createForm.counterpartyId]);
   const editCounterpartyLookupOptions = useMemo(
     () => (editCounterpartyOptions || []).map(mapCounterpartyLookupOption).filter((row) => row.value),
     [editCounterpartyOptions]
@@ -592,6 +855,39 @@ export default function CariDocumentsPage() {
       toPositiveInt(editForm.legalEntityId) &&
       editInlineCounterpartyName
   );
+
+  function buildSmartResetDraftForm(previousForm) {
+    const baseline = createInitialDraftForm();
+    return {
+      ...baseline,
+      legalEntityId: normalizeText(previousForm?.legalEntityId) || baseline.legalEntityId,
+      direction: normalizeText(previousForm?.direction) || baseline.direction,
+      documentType: normalizeText(previousForm?.documentType) || baseline.documentType,
+      documentDate: normalizeText(previousForm?.documentDate) || baseline.documentDate,
+      currencyCode: normalizeCurrencyCode(previousForm?.currencyCode) || baseline.currencyCode,
+    };
+  }
+
+  function resetCreateDraftFormWithSmartDefaults() {
+    setCreateForm((previousForm) => buildSmartResetDraftForm(previousForm));
+    setCreatePaymentTermTouched(false);
+    setCreateCurrencyTouched(false);
+    setCreateCounterpartyLookupQuery("");
+    setCreateInlineCounterpartyError("");
+    setCreateInlineCounterpartyMessage("");
+    setDraftTemplatesError("");
+    setDraftTemplatesMessage("");
+  }
+
+  function applyCreateDraftFormSnapshot(nextForm) {
+    const normalized = buildTemplateSafeDraftForm(nextForm);
+    setCreateForm(normalized);
+    setCreatePaymentTermTouched(Boolean(normalizeText(normalized.paymentTermId)));
+    setCreateCurrencyTouched(Boolean(normalizeCurrencyCode(normalized.currencyCode)));
+    setCreateCounterpartyLookupQuery("");
+    setCreateInlineCounterpartyError("");
+    setCreateInlineCounterpartyMessage("");
+  }
 
   async function loadDocuments(nextFilters = filters) {
     if (!canRead) {
@@ -689,6 +985,55 @@ export default function CariDocumentsPage() {
   }, [canRead, filters]);
 
   useEffect(() => {
+    if (!canRead) {
+      setSavedViews([]);
+      setSelectedSavedViewId("");
+      setDefaultSavedViewHydrated(false);
+      return;
+    }
+    loadDocumentSavedViews();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canRead]);
+
+  useEffect(() => {
+    if (!canRead || defaultSavedViewHydrated || savedViewsLoading) {
+      return;
+    }
+    const defaultView = savedViews.find((row) => Boolean(row?.isDefault));
+    if (defaultView) {
+      applyDocumentSavedView(defaultView, { silent: true });
+    }
+    setDefaultSavedViewHydrated(true);
+  }, [canRead, defaultSavedViewHydrated, savedViews, savedViewsLoading]);
+
+  useEffect(() => {
+    if (!canCreate) {
+      setDraftTemplates([]);
+      setSelectedDraftTemplateId("");
+      setDefaultDraftTemplateHydrated(false);
+      return;
+    }
+    loadDocumentDraftTemplates();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canCreate]);
+
+  useEffect(() => {
+    if (!canCreate || defaultDraftTemplateHydrated || draftTemplatesLoading) {
+      return;
+    }
+    const defaultTemplate = draftTemplates.find((row) => Boolean(row?.isDefault));
+    if (defaultTemplate) {
+      applyDocumentDraftTemplate(defaultTemplate, { silent: true });
+    }
+    setDefaultDraftTemplateHydrated(true);
+  }, [
+    canCreate,
+    defaultDraftTemplateHydrated,
+    draftTemplates,
+    draftTemplatesLoading,
+  ]);
+
+  useEffect(() => {
     if (!selectedDocumentId) {
       setSelectedDetail(null);
       return;
@@ -777,6 +1122,38 @@ export default function CariDocumentsPage() {
       active = false;
     };
   }, [canReadCards, createForm.direction, createForm.legalEntityId]);
+
+  useEffect(() => {
+    if (!selectedCreateCounterparty) {
+      return;
+    }
+    const suggestedPaymentTermId = toPositiveInt(
+      selectedCreateCounterparty.defaultPaymentTermId
+    );
+    const suggestedCurrencyCode = normalizeCurrencyCode(
+      selectedCreateCounterparty.defaultCurrencyCode
+    );
+    setCreateForm((previousForm) => {
+      const nextForm = { ...previousForm };
+      const currentPaymentTermId = normalizeText(previousForm.paymentTermId);
+      const currentCurrencyCode = normalizeCurrencyCode(previousForm.currencyCode);
+      let changed = false;
+
+      if (!createPaymentTermTouched && !currentPaymentTermId && suggestedPaymentTermId) {
+        nextForm.paymentTermId = String(suggestedPaymentTermId);
+        changed = true;
+      }
+      if (
+        !createCurrencyTouched &&
+        (!currentCurrencyCode || currentCurrencyCode === "USD") &&
+        suggestedCurrencyCode
+      ) {
+        nextForm.currencyCode = suggestedCurrencyCode;
+        changed = true;
+      }
+      return changed ? nextForm : previousForm;
+    });
+  }, [createCurrencyTouched, createPaymentTermTouched, selectedCreateCounterparty]);
 
   useEffect(() => {
     if (!canReadCards) {
@@ -1258,7 +1635,7 @@ export default function CariDocumentsPage() {
       const payload = buildDocumentMutationPayload(createForm);
       const response = await createCariDocument(payload);
       setCreateMessage(`Draft document created. id=${response?.row?.id || "-"}`);
-      setCreateForm(createInitialDraftForm());
+      resetCreateDraftFormWithSmartDefaults();
       await loadDocuments(filters);
       if (response?.row?.id) setSelectedDocumentId(response.row.id);
     } catch (error) {
@@ -1392,6 +1769,348 @@ export default function CariDocumentsPage() {
     }
   }
 
+  function handleCloneSelectedDocumentToCreateForm() {
+    if (!selectedSnapshot) {
+      setDraftTemplatesError("Select a document first to clone into draft form.");
+      return;
+    }
+    const nextForm = buildCloneDraftFormFromRow(selectedSnapshot, createForm);
+    applyCreateDraftFormSnapshot(nextForm);
+    setDraftTemplatesError("");
+    setDraftTemplatesMessage(
+      `Draft form cloned from document id=${selectedSnapshot?.id || "-"}`
+    );
+  }
+
+  async function loadDocumentDraftTemplates(options = {}) {
+    if (!canCreate) {
+      setDraftTemplates([]);
+      setSelectedDraftTemplateId("");
+      setDraftTemplatesLoading(false);
+      return;
+    }
+    const preferredId = toPositiveInt(options.preferredId);
+    setDraftTemplatesLoading(true);
+    setDraftTemplatesError("");
+    try {
+      const response = await listMeSavedViews({
+        moduleCode: DOCUMENT_DRAFT_TEMPLATE_MODULE_CODE,
+      });
+      const nextRows = Array.isArray(response?.rows) ? response.rows : [];
+      setDraftTemplates(nextRows);
+      setSelectedDraftTemplateId((current) => {
+        const currentId = toPositiveInt(current);
+        if (preferredId && nextRows.some((row) => Number(row?.id) === preferredId)) {
+          return String(preferredId);
+        }
+        if (currentId && nextRows.some((row) => Number(row?.id) === currentId)) {
+          return String(currentId);
+        }
+        return nextRows[0]?.id ? String(nextRows[0].id) : "";
+      });
+    } catch (error) {
+      setDraftTemplates([]);
+      setSelectedDraftTemplateId("");
+      setDraftTemplatesError(normalizeApiError(error, "Failed to load draft templates."));
+    } finally {
+      setDraftTemplatesLoading(false);
+    }
+  }
+
+  function applyDocumentDraftTemplate(templateRow, options = {}) {
+    const targetTemplate = templateRow && typeof templateRow === "object" ? templateRow : null;
+    if (!targetTemplate) {
+      setDraftTemplatesError("Draft template not found.");
+      return;
+    }
+    const resolved = resolveDocumentDraftTemplateState(targetTemplate);
+    applyCreateDraftFormSnapshot(resolved.draftForm);
+    setCreateRecurringRule(resolved.recurringRule);
+    setSelectedDraftTemplateId(String(targetTemplate.id));
+    if (!options.silent) {
+      setDraftTemplatesError("");
+      setDraftTemplatesMessage(
+        `Draft template applied: ${targetTemplate.name || targetTemplate.id}`
+      );
+    }
+  }
+
+  async function handleCreateDocumentDraftTemplate() {
+    const rawName = window.prompt("Recurring template name", "");
+    const name = String(rawName || "").trim();
+    if (!name) {
+      return;
+    }
+    setDraftTemplatesSaving(true);
+    setDraftTemplatesError("");
+    setDraftTemplatesMessage("");
+    try {
+      const response = await createMeSavedView({
+        moduleCode: DOCUMENT_DRAFT_TEMPLATE_MODULE_CODE,
+        name,
+        definition: buildDocumentDraftTemplateDefinition({
+          form: createForm,
+          recurringRule: createRecurringRule,
+        }),
+      });
+      const createdId = toPositiveInt(response?.row?.id);
+      await loadDocumentDraftTemplates({ preferredId: createdId });
+      setDraftTemplatesMessage(`Recurring template created: ${name}`);
+    } catch (error) {
+      setDraftTemplatesError(
+        normalizeApiError(error, "Failed to create recurring draft template.")
+      );
+    } finally {
+      setDraftTemplatesSaving(false);
+    }
+  }
+
+  async function handleUpdateDocumentDraftTemplate() {
+    const templateId = toPositiveInt(selectedDraftTemplate?.id);
+    if (!templateId) {
+      setDraftTemplatesError("Select a recurring template to update.");
+      return;
+    }
+    setDraftTemplatesSaving(true);
+    setDraftTemplatesError("");
+    setDraftTemplatesMessage("");
+    try {
+      await updateMeSavedView(templateId, {
+        definition: buildDocumentDraftTemplateDefinition({
+          form: createForm,
+          recurringRule: createRecurringRule,
+        }),
+      });
+      await loadDocumentDraftTemplates({ preferredId: templateId });
+      setDraftTemplatesMessage(
+        `Recurring template updated: ${
+          selectedDraftTemplate?.name || templateId
+        }`
+      );
+    } catch (error) {
+      setDraftTemplatesError(
+        normalizeApiError(error, "Failed to update recurring draft template.")
+      );
+    } finally {
+      setDraftTemplatesSaving(false);
+    }
+  }
+
+  async function handleSetDefaultDocumentDraftTemplate() {
+    const templateId = toPositiveInt(selectedDraftTemplate?.id);
+    if (!templateId) {
+      setDraftTemplatesError("Select a recurring template to set as default.");
+      return;
+    }
+    setDraftTemplatesSaving(true);
+    setDraftTemplatesError("");
+    setDraftTemplatesMessage("");
+    try {
+      await updateMeSavedView(templateId, { isDefault: true });
+      await loadDocumentDraftTemplates({ preferredId: templateId });
+      setDraftTemplatesMessage("Recurring template set as default.");
+    } catch (error) {
+      setDraftTemplatesError(
+        normalizeApiError(error, "Failed to set recurring draft template as default.")
+      );
+    } finally {
+      setDraftTemplatesSaving(false);
+    }
+  }
+
+  async function handleDeleteDocumentDraftTemplate() {
+    const templateId = toPositiveInt(selectedDraftTemplate?.id);
+    if (!templateId) {
+      setDraftTemplatesError("Select a recurring template to delete.");
+      return;
+    }
+    const confirmed = window.confirm(
+      `Delete recurring template "${selectedDraftTemplate?.name || templateId}"?`
+    );
+    if (!confirmed) {
+      return;
+    }
+    setDraftTemplatesSaving(true);
+    setDraftTemplatesError("");
+    setDraftTemplatesMessage("");
+    try {
+      await deleteMeSavedView(templateId);
+      await loadDocumentDraftTemplates();
+      setDraftTemplatesMessage("Recurring template deleted.");
+    } catch (error) {
+      setDraftTemplatesError(
+        normalizeApiError(error, "Failed to delete recurring draft template.")
+      );
+    } finally {
+      setDraftTemplatesSaving(false);
+    }
+  }
+
+  async function loadDocumentSavedViews(options = {}) {
+    if (!canRead) {
+      setSavedViews([]);
+      setSelectedSavedViewId("");
+      setSavedViewsLoading(false);
+      return;
+    }
+    const preferredId = toPositiveInt(options.preferredId);
+    setSavedViewsLoading(true);
+    setSavedViewsError("");
+    try {
+      const response = await listMeSavedViews({
+        moduleCode: DOCUMENT_SAVED_VIEW_MODULE_CODE,
+      });
+      const nextRows = Array.isArray(response?.rows) ? response.rows : [];
+      setSavedViews(nextRows);
+      setSelectedSavedViewId((current) => {
+        const currentId = toPositiveInt(current);
+        if (preferredId && nextRows.some((row) => Number(row?.id) === preferredId)) {
+          return String(preferredId);
+        }
+        if (currentId && nextRows.some((row) => Number(row?.id) === currentId)) {
+          return String(currentId);
+        }
+        return nextRows[0]?.id ? String(nextRows[0].id) : "";
+      });
+    } catch (error) {
+      setSavedViews([]);
+      setSelectedSavedViewId("");
+      setSavedViewsError(normalizeApiError(error, "Failed to load saved views."));
+    } finally {
+      setSavedViewsLoading(false);
+    }
+  }
+
+  function applyDocumentSavedView(savedView, options = {}) {
+    const targetView = savedView && typeof savedView === "object" ? savedView : null;
+    if (!targetView) {
+      setSavedViewsError("Saved view not found.");
+      return;
+    }
+    const resolvedState = resolveDocumentSavedViewState(
+      targetView,
+      documentTableColumnIds
+    );
+    setFilters(resolvedState.filters);
+    setDocumentTablePrefs((previous) => ({
+      ...previous,
+      ...resolvedState.tablePrefs,
+    }));
+    setDocumentListPage(1);
+    setSelectedSavedViewId(String(targetView.id));
+    if (!options.silent) {
+      setSavedViewsMessage(`Saved view applied: ${targetView.name || targetView.id}`);
+      setSavedViewsError("");
+    }
+  }
+
+  async function handleCreateDocumentSavedView() {
+    const rawName = window.prompt("Saved view name", "");
+    const name = String(rawName || "").trim();
+    if (!name) {
+      return;
+    }
+    setSavedViewsSaving(true);
+    setSavedViewsError("");
+    setSavedViewsMessage("");
+    try {
+      const response = await createMeSavedView({
+        moduleCode: DOCUMENT_SAVED_VIEW_MODULE_CODE,
+        name,
+        definition: buildDocumentSavedViewDefinition({
+          filters,
+          tablePrefs: documentTablePrefs,
+          columnIds: documentTableColumnIds,
+        }),
+      });
+      const createdId = toPositiveInt(response?.row?.id);
+      await loadDocumentSavedViews({ preferredId: createdId });
+      setSavedViewsMessage(`Saved view created: ${name}`);
+    } catch (error) {
+      setSavedViewsError(normalizeApiError(error, "Failed to create saved view."));
+    } finally {
+      setSavedViewsSaving(false);
+    }
+  }
+
+  async function handleUpdateDocumentSavedView() {
+    const savedViewId = toPositiveInt(selectedSavedView?.id);
+    if (!savedViewId) {
+      setSavedViewsError("Select a saved view to update.");
+      return;
+    }
+    setSavedViewsSaving(true);
+    setSavedViewsError("");
+    setSavedViewsMessage("");
+    try {
+      await updateMeSavedView(savedViewId, {
+        definition: buildDocumentSavedViewDefinition({
+          filters,
+          tablePrefs: documentTablePrefs,
+          columnIds: documentTableColumnIds,
+        }),
+      });
+      await loadDocumentSavedViews({ preferredId: savedViewId });
+      setSavedViewsMessage(
+        `Saved view updated: ${selectedSavedView?.name || savedViewId}`
+      );
+    } catch (error) {
+      setSavedViewsError(normalizeApiError(error, "Failed to update saved view."));
+    } finally {
+      setSavedViewsSaving(false);
+    }
+  }
+
+  async function handleSetDefaultDocumentSavedView() {
+    const savedViewId = toPositiveInt(selectedSavedView?.id);
+    if (!savedViewId) {
+      setSavedViewsError("Select a saved view to set as default.");
+      return;
+    }
+    setSavedViewsSaving(true);
+    setSavedViewsError("");
+    setSavedViewsMessage("");
+    try {
+      await updateMeSavedView(savedViewId, { isDefault: true });
+      await loadDocumentSavedViews({ preferredId: savedViewId });
+      setSavedViewsMessage(
+        `Saved view marked as default: ${
+          selectedSavedView?.name || savedViewId
+        }`
+      );
+    } catch (error) {
+      setSavedViewsError(normalizeApiError(error, "Failed to set default saved view."));
+    } finally {
+      setSavedViewsSaving(false);
+    }
+  }
+
+  async function handleDeleteDocumentSavedView() {
+    const savedViewId = toPositiveInt(selectedSavedView?.id);
+    if (!savedViewId) {
+      setSavedViewsError("Select a saved view to delete.");
+      return;
+    }
+    const confirmed = window.confirm(
+      `Delete saved view "${selectedSavedView?.name || savedViewId}"?`
+    );
+    if (!confirmed) {
+      return;
+    }
+    setSavedViewsSaving(true);
+    setSavedViewsError("");
+    setSavedViewsMessage("");
+    try {
+      await deleteMeSavedView(savedViewId);
+      await loadDocumentSavedViews();
+      setSavedViewsMessage("Saved view deleted.");
+    } catch (error) {
+      setSavedViewsError(normalizeApiError(error, "Failed to delete saved view."));
+    } finally {
+      setSavedViewsSaving(false);
+    }
+  }
+
   function handleDocumentTableRowsPerPageChange(value) {
     const nextRowsPerPage = toPositiveInt(value);
     if (!nextRowsPerPage) {
@@ -1504,6 +2223,81 @@ export default function CariDocumentsPage() {
             Export CSV
           </button>
         </div>
+        <div className="mt-3 rounded-md border border-slate-200 bg-slate-50 p-3">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+            Saved Views (server-side)
+          </p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <select
+              className="min-w-[220px] rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm"
+              value={selectedSavedViewId}
+              onChange={(event) => setSelectedSavedViewId(event.target.value)}
+              disabled={savedViewsLoading || savedViewsSaving || savedViews.length === 0}
+            >
+              <option value="">Select saved view</option>
+              {savedViews.map((row) => (
+                <option key={`document-saved-view-${row.id}`} value={row.id}>
+                  {row.name}
+                  {row.isDefault ? " (default)" : ""}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 disabled:opacity-60"
+              onClick={() => applyDocumentSavedView(selectedSavedView)}
+              disabled={!selectedSavedView || savedViewsSaving}
+            >
+              Apply
+            </button>
+            <button
+              type="button"
+              className="rounded-md border border-emerald-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-emerald-700 disabled:opacity-60"
+              onClick={handleCreateDocumentSavedView}
+              disabled={savedViewsSaving}
+            >
+              Save Current
+            </button>
+            <button
+              type="button"
+              className="rounded-md border border-cyan-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-cyan-700 disabled:opacity-60"
+              onClick={handleUpdateDocumentSavedView}
+              disabled={!selectedSavedView || savedViewsSaving}
+            >
+              Update Selected
+            </button>
+            <button
+              type="button"
+              className="rounded-md border border-indigo-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-indigo-700 disabled:opacity-60"
+              onClick={handleSetDefaultDocumentSavedView}
+              disabled={!selectedSavedView || savedViewsSaving}
+            >
+              Set Default
+            </button>
+            <button
+              type="button"
+              className="rounded-md border border-rose-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-rose-700 disabled:opacity-60"
+              onClick={handleDeleteDocumentSavedView}
+              disabled={!selectedSavedView || savedViewsSaving}
+            >
+              Delete
+            </button>
+            <button
+              type="button"
+              className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 disabled:opacity-60"
+              onClick={() => loadDocumentSavedViews({ preferredId: selectedSavedViewId })}
+              disabled={savedViewsLoading || savedViewsSaving}
+            >
+              {savedViewsLoading ? "Loading..." : "Refresh Saved Views"}
+            </button>
+          </div>
+          {savedViewsError ? (
+            <p className="mt-2 text-xs text-rose-700">{savedViewsError}</p>
+          ) : null}
+          {savedViewsMessage ? (
+            <p className="mt-2 text-xs text-emerald-700">{savedViewsMessage}</p>
+          ) : null}
+        </div>
       </section>
 
       {canCreate ? (
@@ -1511,6 +2305,151 @@ export default function CariDocumentsPage() {
           <h2 className="text-lg font-semibold text-slate-900">Create Draft Document</h2>
           {createError ? <div className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{createError}</div> : null}
           {createMessage ? <div className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{createMessage}</div> : null}
+          <div className="mt-3 rounded-md border border-slate-200 bg-slate-50 p-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+              Clone + Recurring Templates
+            </p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <button
+                type="button"
+                className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 disabled:opacity-60"
+                onClick={handleCloneSelectedDocumentToCreateForm}
+                disabled={!selectedSnapshot || createSaving}
+              >
+                Clone Selected Document
+              </button>
+              <select
+                className="min-w-[220px] rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm"
+                value={selectedDraftTemplateId}
+                onChange={(event) => setSelectedDraftTemplateId(event.target.value)}
+                disabled={
+                  draftTemplatesLoading ||
+                  draftTemplatesSaving ||
+                  draftTemplates.length === 0 ||
+                  createSaving
+                }
+              >
+                <option value="">Select recurring template</option>
+                {draftTemplates.map((row) => (
+                  <option key={`document-draft-template-${row.id}`} value={row.id}>
+                    {row.name}
+                    {row.isDefault ? " (default)" : ""}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 disabled:opacity-60"
+                onClick={() => applyDocumentDraftTemplate(selectedDraftTemplate)}
+                disabled={!selectedDraftTemplate || draftTemplatesSaving || createSaving}
+              >
+                Apply Template
+              </button>
+              <button
+                type="button"
+                className="rounded-md border border-emerald-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-emerald-700 disabled:opacity-60"
+                onClick={handleCreateDocumentDraftTemplate}
+                disabled={draftTemplatesSaving || createSaving}
+              >
+                Save Current Template
+              </button>
+              <button
+                type="button"
+                className="rounded-md border border-cyan-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-cyan-700 disabled:opacity-60"
+                onClick={handleUpdateDocumentDraftTemplate}
+                disabled={!selectedDraftTemplate || draftTemplatesSaving || createSaving}
+              >
+                Update Template
+              </button>
+              <button
+                type="button"
+                className="rounded-md border border-indigo-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-indigo-700 disabled:opacity-60"
+                onClick={handleSetDefaultDocumentDraftTemplate}
+                disabled={!selectedDraftTemplate || draftTemplatesSaving || createSaving}
+              >
+                Set Default
+              </button>
+              <button
+                type="button"
+                className="rounded-md border border-rose-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-rose-700 disabled:opacity-60"
+                onClick={handleDeleteDocumentDraftTemplate}
+                disabled={!selectedDraftTemplate || draftTemplatesSaving || createSaving}
+              >
+                Delete
+              </button>
+              <button
+                type="button"
+                className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 disabled:opacity-60"
+                onClick={() =>
+                  loadDocumentDraftTemplates({ preferredId: selectedDraftTemplateId })
+                }
+                disabled={draftTemplatesLoading || draftTemplatesSaving || createSaving}
+              >
+                {draftTemplatesLoading ? "Loading..." : "Refresh Templates"}
+              </button>
+            </div>
+            <div className="mt-3 grid gap-2 md:grid-cols-3">
+              <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                Recurring Cadence
+                <select
+                  className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                  value={createRecurringRule.cadence}
+                  onChange={(event) =>
+                    setCreateRecurringRule((prev) => ({
+                      ...prev,
+                      cadence: normalizeRecurringCadence(event.target.value),
+                    }))
+                  }
+                  disabled={createSaving}
+                >
+                  {DOCUMENT_RECURRING_TEMPLATE_CADENCES.map((cadence) => (
+                    <option key={`create-recurring-cadence-${cadence}`} value={cadence}>
+                      {cadence}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                Repeat Every
+                <input
+                  type="number"
+                  min="1"
+                  className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                  value={createRecurringRule.interval}
+                  onChange={(event) =>
+                    setCreateRecurringRule((prev) => ({
+                      ...prev,
+                      interval: normalizeRecurringInterval(event.target.value),
+                    }))
+                  }
+                  disabled={createSaving}
+                />
+              </label>
+              <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                Anchor Day (optional)
+                <input
+                  type="number"
+                  min="1"
+                  max="31"
+                  className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                  value={createRecurringRule.anchorDay}
+                  onChange={(event) =>
+                    setCreateRecurringRule((prev) => ({
+                      ...prev,
+                      anchorDay: normalizeRecurringAnchorDay(event.target.value),
+                    }))
+                  }
+                  disabled={createSaving}
+                />
+              </label>
+            </div>
+            {draftTemplatesError ? (
+              <p className="mt-2 text-xs text-rose-700">{draftTemplatesError}</p>
+            ) : null}
+            {draftTemplatesMessage ? (
+              <p className="mt-2 text-xs text-emerald-700">{draftTemplatesMessage}</p>
+            ) : null}
+          </div>
           <form className="mt-4 grid gap-3 md:grid-cols-4" onSubmit={handleCreateDraft}>
             <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Legal Entity ID<input type="number" min="1" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={createForm.legalEntityId} onChange={(event) => setCreateForm((prev) => ({ ...prev, legalEntityId: event.target.value }))} required /></label>
             <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Counterparty ID<input type="number" min="1" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={createForm.counterpartyId} onChange={(event) => setCreateForm((prev) => ({ ...prev, counterpartyId: event.target.value }))} required /></label>
@@ -1564,26 +2503,27 @@ export default function CariDocumentsPage() {
                 ) : null}
               </div>
             ) : null}
-            <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Payment Term ID (optional)<input type="number" min="1" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={createForm.paymentTermId} onChange={(event) => setCreateForm((prev) => ({ ...prev, paymentTermId: event.target.value }))} /></label>
+            <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Payment Term ID (optional)<input type="number" min="1" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={createForm.paymentTermId} onChange={(event) => {
+              setCreatePaymentTermTouched(true);
+              setCreateForm((prev) => ({ ...prev, paymentTermId: event.target.value }));
+            }} /></label>
             <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Direction<select className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={createForm.direction} onChange={(event) => setCreateForm((prev) => ({ ...prev, direction: event.target.value }))} required>{DOCUMENT_DIRECTIONS.map((direction) => <option key={`create-direction-${direction}`} value={direction}>{direction}</option>)}</select></label>
             <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Document Type<select className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={createForm.documentType} onChange={(event) => setCreateForm((prev) => ({ ...prev, documentType: event.target.value }))} required>{DOCUMENT_TYPES.map((documentType) => <option key={`create-document-type-${documentType}`} value={documentType}>{documentType}</option>)}</select></label>
             <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Document Date<input type="date" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={createForm.documentDate} onChange={(event) => setCreateForm((prev) => ({ ...prev, documentDate: event.target.value }))} required /></label>
             <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Due Date {requiresDueDate(createForm.documentType) ? "(required for this type)" : "(optional)"}<input type="date" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={createForm.dueDate} onChange={(event) => setCreateForm((prev) => ({ ...prev, dueDate: event.target.value }))} required={requiresDueDate(createForm.documentType)} /></label>
             <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Amount Txn<input type="number" min="0.000001" step="0.000001" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={createForm.amountTxn} onChange={(event) => setCreateForm((prev) => ({ ...prev, amountTxn: event.target.value }))} required /></label>
             <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Amount Base<input type="number" min="0.000001" step="0.000001" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={createForm.amountBase} onChange={(event) => setCreateForm((prev) => ({ ...prev, amountBase: event.target.value }))} required /></label>
-            <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Currency<input type="text" maxLength={3} className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal uppercase" value={createForm.currencyCode} onChange={(event) => setCreateForm((prev) => ({ ...prev, currencyCode: event.target.value }))} required /></label>
+            <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Currency<input type="text" maxLength={3} className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal uppercase" value={createForm.currencyCode} onChange={(event) => {
+              setCreateCurrencyTouched(true);
+              setCreateForm((prev) => ({ ...prev, currencyCode: event.target.value }));
+            }} required /></label>
             <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">FX Rate (optional)<input type="number" min="0.0000000001" step="0.0000000001" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={createForm.fxRate} onChange={(event) => setCreateForm((prev) => ({ ...prev, fxRate: event.target.value }))} /></label>
             <div className="md:col-span-4 flex gap-2">
               <button type="submit" className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white" disabled={createSaving}>{createSaving ? "Creating..." : "Create Draft Document"}</button>
               <button
                 type="button"
                 className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700"
-                onClick={() => {
-                  setCreateForm(createInitialDraftForm());
-                  setCreateCounterpartyLookupQuery("");
-                  setCreateInlineCounterpartyError("");
-                  setCreateInlineCounterpartyMessage("");
-                }}
+                onClick={resetCreateDraftFormWithSmartDefaults}
                 disabled={createSaving}
               >
                 Reset Draft Form

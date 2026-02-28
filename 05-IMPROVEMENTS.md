@@ -47,11 +47,11 @@ Tag legend: `(hot: yes)` means likely touches conflict-prone files (`AppLayout.j
 
 - [x] PR-UX23 Shared CSV export helper + list page export actions (implemented: new shared `frontend/src/utils/csvExport.js` + list export actions on Cari Documents and Cash Transactions pages)
 - [x] PR-UX24 Column chooser + sticky headers + per-page table prefs (implemented: shared persisted table prefs hook + shared table prefs panel + column chooser/sticky header/rows-per-page controls applied to Cari Documents and Cash Transactions list tables)
-- [ ] PR-UX25 Saved Views (server-side, per-user) (not started)
+- [x] PR-UX25 Saved Views (server-side, per-user) (implemented: new `user_saved_views` server persistence with `/me/saved-views` CRUD + Cari Documents and Cash Transactions saved-view UI to store/apply filters + table prefs across devices)
 
-- [ ] PR-UX26 Smarter defaults in Cari forms (not started)
-- [ ] PR-UX27 Cari clone + recurring templates (not started)
-- [ ] PR-UX28 Cash transaction templates/presets (not started)
+- [x] PR-UX26 Smarter defaults in Cari forms (implemented: context-aware date defaults in Cari document/settlement/reverse forms + create-form smart defaults from selected counterparty and working context)
+- [x] PR-UX27 Cari clone + recurring templates (implemented: Cari Documents create section now supports clone-from-selected-document and recurring draft templates persisted server-side via `/me/saved-views`)
+- [x] PR-UX28 Cash transaction templates/presets (implemented: Cash Transactions create section now supports server-side reusable create templates plus quick presets for common transaction patterns)
 
 - [ ] PR-UX29 Internal comments v1 (not started)
 - [ ] PR-UX30 Mentions + in-app notifications (not started)
@@ -139,11 +139,19 @@ Intentional not-yet-implemented placeholders (Stock, Fixed Assets, generic Repor
   smoke: `backend/scripts/test-ux-prux23-shared-csv-export-helper.js`
 - [x] PR-UX24 acceptance: Cari Documents and Cash Transactions list tables expose user-configurable column chooser, sticky header toggle, and persisted rows-per-page preferences via shared table preference hook/panel primitives
   smoke: `backend/scripts/test-ux-prux24-table-prefs-and-sticky-columns.js`
+- [x] PR-UX25 acceptance: users can create/apply/update/delete per-module saved views persisted server-side via `/me/saved-views`, including list filters and table prefs, with optional default view auto-apply on page load
+  smoke: `backend/scripts/test-ux-prux25-saved-views-server-side.js`
+- [x] PR-UX26 acceptance: Cari create/apply forms auto-hydrate smarter defaults from working context (`dateTo`/legalEntity) and selected counterparty defaults (payment term/currency) without overriding user-entered values
+  smoke: `backend/scripts/test-ux-prux26-smarter-cari-form-defaults.js`
+- [x] PR-UX27 acceptance: Cari Documents users can clone the selected document into create-draft form and manage recurring draft templates (save/apply/update/delete/default) persisted server-side for cross-device reuse
+  smoke: `backend/scripts/test-ux-prux27-cari-clone-and-recurring-templates.js`
+- [x] PR-UX28 acceptance: Cash Transactions create flow supports apply/save/update/delete/default server-side templates and built-in presets to prefill create form fields while preserving route preset constraints
+  smoke: `backend/scripts/test-ux-prux28-cash-templates-presets.js`
 - [x] PR-CORE05 acceptance: standardized user-facing error handling + copyable requestId/details
   smoke: `backend/scripts/test-ux-prcore05-error-envelope.js`
 - [x] PR-CORE01 acceptance: key list endpoints return consistent `rows + total + limit + offset` with `pagination` metadata
   smoke: `backend/scripts/test-ux-prcore01-pagination-contracts.js` (to add)
 
 ## Immediate Next Step
-- Proceed with `PR-UX25` (Saved Views (server-side, per-user)).
+- Proceed with `PR-UX29` (Internal comments v1).
 - After each merged PR, update this tracker line from `[ ]` to `[x]` with a short `(implemented)` note.

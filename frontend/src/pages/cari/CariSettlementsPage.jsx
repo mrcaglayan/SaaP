@@ -291,10 +291,22 @@ function buildPreviewDefaultFilters() {
   };
 }
 
-const SETTLEMENT_PREVIEW_CONTEXT_MAPPINGS = [{ stateKey: "legalEntityId" }];
-const SETTLEMENT_APPLY_CONTEXT_MAPPINGS = [{ stateKey: "legalEntityId" }];
+const SETTLEMENT_PREVIEW_CONTEXT_MAPPINGS = [
+  { stateKey: "legalEntityId" },
+  { stateKey: "asOfDate", contextKey: "dateTo" },
+];
+const SETTLEMENT_APPLY_CONTEXT_MAPPINGS = [
+  { stateKey: "legalEntityId" },
+  { stateKey: "settlementDate", contextKey: "dateTo" },
+];
 const SETTLEMENT_BANK_ATTACH_CONTEXT_MAPPINGS = [{ stateKey: "legalEntityId" }];
-const SETTLEMENT_BANK_APPLY_CONTEXT_MAPPINGS = [{ stateKey: "legalEntityId" }];
+const SETTLEMENT_BANK_APPLY_CONTEXT_MAPPINGS = [
+  { stateKey: "legalEntityId" },
+  { stateKey: "settlementDate", contextKey: "dateTo" },
+];
+const SETTLEMENT_REVERSE_CONTEXT_MAPPINGS = [
+  { stateKey: "reversalDate", contextKey: "dateTo" },
+];
 const SETTLEMENT_PREVIEW_FILTERS_STORAGE_SCOPE = "cari-settlements.preview";
 
 export default function CariSettlementsPage() {
@@ -375,15 +387,21 @@ export default function CariSettlementsPage() {
 
   useWorkingContextDefaults(setPreviewFilters, SETTLEMENT_PREVIEW_CONTEXT_MAPPINGS, [
     previewFilters.legalEntityId,
+    previewFilters.asOfDate,
   ]);
   useWorkingContextDefaults(setApplyForm, SETTLEMENT_APPLY_CONTEXT_MAPPINGS, [
     applyForm.legalEntityId,
+    applyForm.settlementDate,
   ]);
   useWorkingContextDefaults(setBankAttachForm, SETTLEMENT_BANK_ATTACH_CONTEXT_MAPPINGS, [
     bankAttachForm.legalEntityId,
   ]);
   useWorkingContextDefaults(setBankApplyForm, SETTLEMENT_BANK_APPLY_CONTEXT_MAPPINGS, [
     bankApplyForm.legalEntityId,
+    bankApplyForm.settlementDate,
+  ]);
+  useWorkingContextDefaults(setReverseForm, SETTLEMENT_REVERSE_CONTEXT_MAPPINGS, [
+    reverseForm.reversalDate,
   ]);
 
   const applyLegalEntityId = toPositiveInt(applyForm.legalEntityId);

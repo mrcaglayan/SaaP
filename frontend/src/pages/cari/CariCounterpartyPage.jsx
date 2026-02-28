@@ -12,6 +12,7 @@ import {
 } from "../../api/cariPaymentTerms.js";
 import { listLegalEntities } from "../../api/orgAdmin.js";
 import { useAuth } from "../../auth/useAuth.js";
+import { useWorkingContextDefaults } from "../../context/useWorkingContextDefaults.js";
 import CounterpartyForm from "./CounterpartyForm.jsx";
 import {
   COUNTERPARTY_LIST_SORT_DIRECTIONS,
@@ -70,6 +71,8 @@ const SORT_DIRECTION_LABELS = {
   asc: "Ascending",
   desc: "Descending",
 };
+
+const COUNTERPARTY_CREATE_CONTEXT_MAPPINGS = [{ stateKey: "legalEntityId" }];
 
 function roleBadgeClass(role) {
   const normalized = String(role || "").toUpperCase();
@@ -207,6 +210,10 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
   const [createAccountsLoading, setCreateAccountsLoading] = useState(false);
   const [createAccountsError, setCreateAccountsError] = useState("");
   const [createAccountLookupQuery, setCreateAccountLookupQuery] = useState("");
+
+  useWorkingContextDefaults(setCreateForm, COUNTERPARTY_CREATE_CONTEXT_MAPPINGS, [
+    createForm.legalEntityId,
+  ]);
 
   const [filters, setFilters] = useState(() =>
     createCounterpartyListFilters(config.roleDefault)
