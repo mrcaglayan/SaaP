@@ -3,6 +3,7 @@ import { assertScopeAccess, buildScopeFilter, requirePermission } from "../middl
 import { asyncHandler, badRequest, parsePositiveInt, resolveTenantId } from "./_utils.js";
 import { resolveOffsetPagination } from "../utils/pagination.js";
 import {
+  bulkActionExceptionWorkbench,
   claimExceptionWorkbench,
   getExceptionWorkbenchById,
   ignoreExceptionWorkbench,
@@ -114,6 +115,59 @@ function parseStatusActionInput(req) {
   };
 }
 
+function parseExceptionIdsArray(value) {
+  const items = Array.isArray(value) ? value : [];
+  if (items.length === 0) {
+    throw badRequest("exceptionIds must be a non-empty array");
+  }
+
+  const parsed = [];
+  for (const item of items) {
+    const id = parsePositiveInt(item);
+    if (!id) {
+      throw badRequest("exceptionIds must contain only positive integers");
+    }
+    if (!parsed.includes(id)) {
+      parsed.push(id);
+    }
+  }
+
+  if (parsed.length > 200) {
+    throw badRequest("exceptionIds supports at most 200 ids per request");
+  }
+
+  return parsed;
+}
+
+function parseBulkActionInput(req) {
+  const tenantId = requireTenantIdFromReq(req);
+  const userId = parsePositiveInt(req.user?.id) || parsePositiveInt(req.user?.userId) || null;
+  if (!userId) throw badRequest("Authenticated user id is required");
+
+  const actionRaw = String(req.body?.action || "").trim().toUpperCase();
+  if (!["CLAIM", "RESOLVE", "IGNORE", "REOPEN"].includes(actionRaw)) {
+    throw badRequest("action must be one of: claim, resolve, ignore, reopen");
+  }
+  const noteRaw = req.body?.note ?? null;
+  const resolutionActionRaw = req.body?.resolutionAction ?? req.body?.resolution_action ?? null;
+  const resolutionNoteRaw = req.body?.resolutionNote ?? req.body?.resolution_note ?? null;
+  const noteText = noteRaw === null ? "" : String(noteRaw).trim();
+  const resolutionActionText = resolutionActionRaw === null ? "" : String(resolutionActionRaw).trim();
+  const resolutionNoteText = resolutionNoteRaw === null ? "" : String(resolutionNoteRaw).trim();
+
+  return {
+    tenantId,
+    userId,
+    action: actionRaw,
+    exceptionIds: parseExceptionIdsArray(req.body?.exceptionIds ?? req.body?.exception_ids),
+    ownerUserId: parsePositiveIntMaybe(req.body?.ownerUserId ?? req.body?.owner_user_id, "ownerUserId"),
+    note: noteText ? noteText.slice(0, 500) : null,
+    resolutionAction: resolutionActionText ? resolutionActionText.slice(0, 80) : null,
+    resolutionNote: resolutionNoteText ? resolutionNoteText.slice(0, 500) : null,
+    continueOnError: parseBool(req.body?.continueOnError ?? req.body?.continue_on_error, true),
+  };
+}
+
 function resolveListScope(req) {
   const legalEntityId = parsePositiveInt(req.query?.legalEntityId ?? req.query?.legal_entity_id);
   if (!legalEntityId) return null;
@@ -161,6 +215,28 @@ router.post(
       tenantId: input.tenantId,
       ...result,
     });
+  })
+);
+
+router.post(
+  "/workbench/bulk-action",
+  requirePermission("ops.exceptions.manage"),
+  asyncHandler(async (req, res) => {
+    const input = parseBulkActionInput(req);
+    const result = await bulkActionExceptionWorkbench({
+      req,
+      tenantId: input.tenantId,
+      action: input.action,
+      exceptionIds: input.exceptionIds,
+      actorUserId: input.userId,
+      ownerUserId: input.ownerUserId,
+      note: input.note,
+      resolutionAction: input.resolutionAction,
+      resolutionNote: input.resolutionNote,
+      continueOnError: input.continueOnError,
+      assertScopeAccess,
+    });
+    return res.json({ tenantId: input.tenantId, ...result });
   })
 );
 

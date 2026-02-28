@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  bulkActionExceptionWorkbench,
   claimExceptionWorkbench,
   getExceptionWorkbenchById,
   ignoreExceptionWorkbench,
@@ -90,6 +91,21 @@ function normalizeText(value, fallback = "") {
   return text || fallback;
 }
 
+function toExceptionId(value) {
+  return toInt(value, 0);
+}
+
+function uniqPositiveIds(values) {
+  const ids = [];
+  for (const value of values || []) {
+    const parsed = toExceptionId(value);
+    if (parsed > 0 && !ids.includes(parsed)) {
+      ids.push(parsed);
+    }
+  }
+  return ids;
+}
+
 function buildQueueBaseParams(filters) {
   const params = {
     limit: 1,
@@ -154,9 +170,11 @@ export default function ExceptionsWorkbenchPage() {
     stuck: 0,
     mine: 0,
   });
+  const [selectedIds, setSelectedIds] = useState([]);
   const [selected, setSelected] = useState(null);
   const [selectedAudit, setSelectedAudit] = useState([]);
   const [resolutionNote, setResolutionNote] = useState("");
+  const [bulkBusy, setBulkBusy] = useState("");
 
   const queryParams = useMemo(() => {
     const params = {
@@ -203,7 +221,12 @@ export default function ExceptionsWorkbenchPage() {
             })
           : Promise.resolve({ total: 0 }),
       ]);
-      setRows(Array.isArray(res?.rows) ? res.rows : []);
+      const nextRows = Array.isArray(res?.rows) ? res.rows : [];
+      setRows(nextRows);
+      setSelectedIds((prev) => {
+        const visibleIdSet = new Set(nextRows.map((row) => toExceptionId(row?.id)).filter((id) => id > 0));
+        return uniqPositiveIds(prev).filter((id) => visibleIdSet.has(id));
+      });
       setSummary(res?.summary || { by_status: {}, by_module: {}, by_severity: {} });
       setTotal(Number(res?.total || 0));
       setQueueCounts({
@@ -213,7 +236,7 @@ export default function ExceptionsWorkbenchPage() {
         mine: toInt(mineQueueRes?.total, 0),
       });
       if (selected?.id) {
-        const exists = (res?.rows || []).some((r) => Number(r.id) === Number(selected.id));
+        const exists = nextRows.some((r) => Number(r.id) === Number(selected.id));
         if (!exists) {
           setSelected(null);
           setSelectedAudit([]);
@@ -224,6 +247,7 @@ export default function ExceptionsWorkbenchPage() {
         err?.response?.data?.message || t("exceptionsWorkbench.messages.loadFailed", "Exception workbench could not be loaded")
       );
       setRows([]);
+      setSelectedIds([]);
       setSummary({ by_status: {}, by_module: {}, by_severity: {} });
       setTotal(0);
       setQueueCounts({ total: 0, byStatus: {}, stuck: 0, mine: 0 });
@@ -271,6 +295,15 @@ export default function ExceptionsWorkbenchPage() {
     ],
     [queueCounts, t]
   );
+  const visibleExceptionIds = useMemo(
+    () => uniqPositiveIds(rows.map((row) => row?.id)),
+    [rows]
+  );
+  const selectedIdSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+  const allVisibleSelected =
+    visibleExceptionIds.length > 0 &&
+    visibleExceptionIds.every((id) => selectedIdSet.has(id));
+  const selectedCount = selectedIds.length;
 
   function applyQueue(queueKey) {
     setFilters((state) => {
@@ -333,6 +366,32 @@ export default function ExceptionsWorkbenchPage() {
         queue: EXCEPTIONS_QUEUE_KEYS.CUSTOM,
       };
     });
+  }
+
+  function toggleRowSelection(exceptionId) {
+    const id = toExceptionId(exceptionId);
+    if (!id) return;
+    setSelectedIds((prev) => {
+      const normalized = uniqPositiveIds(prev);
+      if (normalized.includes(id)) {
+        return normalized.filter((value) => value !== id);
+      }
+      return [...normalized, id];
+    });
+  }
+
+  function toggleSelectVisible() {
+    setSelectedIds((prev) => {
+      const normalized = uniqPositiveIds(prev);
+      if (allVisibleSelected) {
+        return normalized.filter((id) => !visibleExceptionIds.includes(id));
+      }
+      return uniqPositiveIds([...normalized, ...visibleExceptionIds]);
+    });
+  }
+
+  function clearSelection() {
+    setSelectedIds([]);
   }
 
   async function loadDetail(exceptionId) {
@@ -407,6 +466,86 @@ export default function ExceptionsWorkbenchPage() {
       );
     } finally {
       setBusy("");
+    }
+  }
+
+  async function runBulkAction(action) {
+    const ids = uniqPositiveIds(selectedIds);
+    if (!canManage || ids.length === 0) return;
+    setBulkBusy(action);
+    setError("");
+    setMessage("");
+    try {
+      const payload = {
+        action,
+        exceptionIds: ids,
+        continueOnError: true,
+      };
+      if (action === "claim") {
+        const note = normalizeText(resolutionNote);
+        if (note) payload.note = note;
+      } else if (action === "resolve") {
+        payload.resolutionAction = "MANUAL_RESOLVE";
+      } else if (action === "ignore") {
+        payload.resolutionAction = "MANUAL_IGNORE";
+      }
+      const note = normalizeText(resolutionNote);
+      if (note && action !== "claim") {
+        payload.resolutionNote = note;
+      }
+
+      const result = await bulkActionExceptionWorkbench(payload);
+      const requested = toInt(result?.requested, ids.length);
+      const succeeded = toInt(result?.succeeded, 0);
+      const failed = toInt(result?.failed, 0);
+      const failedIds = uniqPositiveIds(
+        Array.isArray(result?.results)
+          ? result.results
+              .filter((entry) => !entry?.ok)
+              .map((entry) => entry?.exception_id)
+          : []
+      );
+      const firstFailure = Array.isArray(result?.results)
+        ? result.results.find((entry) => !entry?.ok)
+        : null;
+
+      await load();
+      if (selected?.id && ids.includes(toExceptionId(selected.id))) {
+        await loadDetail(selected.id);
+      }
+      setResolutionNote("");
+      if (failed > 0) {
+        const fallbackMessage = t(
+          "exceptionsWorkbench.messages.bulkActionPartial",
+          "Bulk action {{action}} finished with partial success ({{succeeded}}/{{total}} succeeded, {{failed}} failed).",
+          {
+            action: action.toUpperCase(),
+            succeeded,
+            failed,
+            total: requested,
+          }
+        );
+        const failureDetail = normalizeText(firstFailure?.message);
+        setError(failureDetail ? `${fallbackMessage} ${failureDetail}` : fallbackMessage);
+        setSelectedIds((prev) => uniqPositiveIds(prev).filter((id) => failedIds.includes(id)));
+      } else {
+        setSelectedIds([]);
+        setMessage(
+          t("exceptionsWorkbench.messages.bulkActionApplied", "Bulk action {{action}} applied to {{count}} exceptions.", {
+            action: action.toUpperCase(),
+            count: succeeded,
+          })
+        );
+      }
+    } catch (err) {
+      setError(
+        err?.response?.data?.message ||
+          t("exceptionsWorkbench.messages.bulkActionFailed", "Bulk action {{action}} failed.", {
+            action: action.toUpperCase(),
+          })
+      );
+    } finally {
+      setBulkBusy("");
     }
   }
 
@@ -601,11 +740,86 @@ export default function ExceptionsWorkbenchPage() {
           <div className="text-sm text-slate-500">{t("exceptionsWorkbench.messages.empty", "No exceptions found for current filters.")}</div>
         ) : (
           <div className="space-y-2">
+            {canManage ? (
+              <div className="flex flex-wrap items-center gap-2 rounded border border-slate-200 bg-slate-50 p-2 text-xs">
+                <label className="flex items-center gap-2 text-slate-700">
+                  <input type="checkbox" checked={allVisibleSelected} onChange={toggleSelectVisible} />
+                  {t("exceptionsWorkbench.bulk.selectVisible", "Select visible")}
+                </label>
+                <span className="rounded border border-slate-300 bg-white px-2 py-1 text-slate-700">
+                  {t("exceptionsWorkbench.bulk.selectedCount", "Selected: {{count}}", {
+                    count: formatCount(selectedCount),
+                  })}
+                </span>
+                <button
+                  type="button"
+                  className="rounded border border-slate-300 bg-white px-2 py-1"
+                  onClick={clearSelection}
+                  disabled={selectedCount === 0 || Boolean(bulkBusy)}
+                >
+                  {t("exceptionsWorkbench.bulk.clearSelection", "Clear")}
+                </button>
+                <button
+                  type="button"
+                  className="rounded border border-slate-300 bg-white px-2 py-1"
+                  onClick={() => runBulkAction("claim")}
+                  disabled={selectedCount === 0 || Boolean(bulkBusy)}
+                >
+                  {bulkBusy === "claim"
+                    ? t("exceptionsWorkbench.actions.loading", "Loading...")
+                    : t("exceptionsWorkbench.bulk.claimSelected", "Claim Selected")}
+                </button>
+                <button
+                  type="button"
+                  className="rounded border border-slate-300 bg-white px-2 py-1"
+                  onClick={() => runBulkAction("resolve")}
+                  disabled={selectedCount === 0 || Boolean(bulkBusy)}
+                >
+                  {bulkBusy === "resolve"
+                    ? t("exceptionsWorkbench.actions.loading", "Loading...")
+                    : t("exceptionsWorkbench.bulk.resolveSelected", "Resolve Selected")}
+                </button>
+                <button
+                  type="button"
+                  className="rounded border border-slate-300 bg-white px-2 py-1"
+                  onClick={() => runBulkAction("ignore")}
+                  disabled={selectedCount === 0 || Boolean(bulkBusy)}
+                >
+                  {bulkBusy === "ignore"
+                    ? t("exceptionsWorkbench.actions.loading", "Loading...")
+                    : t("exceptionsWorkbench.bulk.ignoreSelected", "Ignore Selected")}
+                </button>
+                <button
+                  type="button"
+                  className="rounded border border-slate-300 bg-white px-2 py-1"
+                  onClick={() => runBulkAction("reopen")}
+                  disabled={selectedCount === 0 || Boolean(bulkBusy)}
+                >
+                  {bulkBusy === "reopen"
+                    ? t("exceptionsWorkbench.actions.loading", "Loading...")
+                    : t("exceptionsWorkbench.bulk.reopenSelected", "Reopen Selected")}
+                </button>
+              </div>
+            ) : null}
             {rows.map((row) => {
               const slaBadge = resolveSlaBadge(row);
+              const rowId = toExceptionId(row.id);
+              const isSelected = selectedIdSet.has(rowId);
               return (
                 <div key={row.id} className="rounded border p-3 text-sm">
                   <div className="flex flex-wrap items-center gap-2">
+                    {canManage ? (
+                      <label className="flex items-center gap-1 text-xs text-slate-600">
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => toggleRowSelection(rowId)}
+                          disabled={Boolean(bulkBusy)}
+                          aria-label={t("exceptionsWorkbench.bulk.selectRow", "Select exception row")}
+                        />
+                        {t("exceptionsWorkbench.bulk.select", "Select")}
+                      </label>
+                    ) : null}
                     <span className="rounded border px-1 text-xs">{row.module_code}</span>
                     <span className="rounded border px-1 text-xs">{row.severity}</span>
                     <span className="rounded border px-1 text-xs">{row.status}</span>
@@ -635,7 +849,7 @@ export default function ExceptionsWorkbenchPage() {
                           type="button"
                           className="rounded border px-2 py-1 text-xs"
                           onClick={() => runAction("claim", row.id)}
-                          disabled={busy === `claim-${row.id}`}
+                          disabled={busy === `claim-${row.id}` || Boolean(bulkBusy)}
                         >
                           {busy === `claim-${row.id}` ? "..." : t("exceptionsWorkbench.actions.claim", "Claim")}
                         </button>
@@ -643,7 +857,7 @@ export default function ExceptionsWorkbenchPage() {
                           type="button"
                           className="rounded border px-2 py-1 text-xs"
                           onClick={() => runAction("resolve", row.id)}
-                          disabled={busy === `resolve-${row.id}`}
+                          disabled={busy === `resolve-${row.id}` || Boolean(bulkBusy)}
                         >
                           {busy === `resolve-${row.id}` ? "..." : t("exceptionsWorkbench.actions.resolve", "Resolve")}
                         </button>
@@ -651,7 +865,7 @@ export default function ExceptionsWorkbenchPage() {
                           type="button"
                           className="rounded border px-2 py-1 text-xs"
                           onClick={() => runAction("ignore", row.id)}
-                          disabled={busy === `ignore-${row.id}`}
+                          disabled={busy === `ignore-${row.id}` || Boolean(bulkBusy)}
                         >
                           {busy === `ignore-${row.id}` ? "..." : t("exceptionsWorkbench.actions.ignore", "Ignore")}
                         </button>
@@ -659,7 +873,7 @@ export default function ExceptionsWorkbenchPage() {
                           type="button"
                           className="rounded border px-2 py-1 text-xs"
                           onClick={() => runAction("reopen", row.id)}
-                          disabled={busy === `reopen-${row.id}`}
+                          disabled={busy === `reopen-${row.id}` || Boolean(bulkBusy)}
                         >
                           {busy === `reopen-${row.id}` ? "..." : t("exceptionsWorkbench.actions.reopen", "Reopen")}
                         </button>

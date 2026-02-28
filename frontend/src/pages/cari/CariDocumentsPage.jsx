@@ -8,11 +8,22 @@ import {
   reverseCariDocument,
   updateCariDocument,
 } from "../../api/cariDocuments.js";
+import {
+  createCariCounterparty,
+  listCariCounterparties,
+} from "../../api/cariCounterparty.js";
 import { getCariCounterpartyStatementReport } from "../../api/cariReports.js";
+import Combobox from "../../components/Combobox.jsx";
+import StatusTimeline from "../../components/StatusTimeline.jsx";
 import { Link } from "react-router-dom";
 import { useAuth } from "../../auth/useAuth.js";
 import { useWorkingContextDefaults } from "../../context/useWorkingContextDefaults.js";
 import { usePersistedFilters } from "../../hooks/usePersistedFilters.js";
+import {
+  buildLifecycleTimelineSteps,
+  getLifecycleAllowedActions,
+  getLifecycleStatusMeta,
+} from "../../lifecycle/lifecycleRules.js";
 import { useModuleReadiness } from "../../readiness/useModuleReadiness.js";
 import {
   buildDocumentListQuery,
@@ -24,6 +35,12 @@ import {
   requiresDueDate,
   validateDocumentMutationForm,
 } from "./cariDocumentsUtils.js";
+import {
+  buildInlineCounterpartyCode,
+  normalizeLookupQuery,
+  prependOrReplaceCounterpartyOption,
+  resolveInlineCounterpartyRoleFlags,
+} from "./counterpartyInlineCreate.js";
 
 const DEFAULT_FILTERS = {
   legalEntityId: "",
@@ -94,6 +111,91 @@ function isPosted(row) {
   return String(row?.status || "").toUpperCase() === "POSTED";
 }
 
+function resolveCounterpartyRoleFromDirection(direction) {
+  const normalized = String(direction || "").trim().toUpperCase();
+  if (normalized === "AR") return "CUSTOMER";
+  if (normalized === "AP") return "VENDOR";
+  return undefined;
+}
+
+function mapCounterpartyLookupOption(row) {
+  const id = toPositiveInt(row?.id);
+  const code = String(row?.code || id || "").trim();
+  const name = String(row?.name || "").trim();
+  const counterpartyType = String(row?.counterpartyType || "OTHER")
+    .trim()
+    .toUpperCase();
+  return {
+    value: id ? String(id) : "",
+    label: name ? `${code || id} - ${name}` : String(code || id || "-"),
+    description: counterpartyType || "OTHER",
+  };
+}
+
+function buildDocumentLifecycleEvents(row) {
+  if (!row) {
+    return [];
+  }
+  const status = String(row?.status || "")
+    .trim()
+    .toUpperCase();
+  const createdAt = row?.createdAt || row?.created_at || null;
+  const updatedAt = row?.updatedAt || row?.updated_at || null;
+  const postedAt = row?.postedAt || row?.posted_at || null;
+  const reversedAt = row?.reversedAt || row?.reversed_at || null;
+
+  const events = [];
+  if (createdAt) {
+    events.push({
+      statusCode: "DRAFT",
+      at: createdAt,
+      note: "Draft created.",
+    });
+  }
+  if (postedAt) {
+    events.push({
+      statusCode: "POSTED",
+      at: postedAt,
+      note: "Posted to journal.",
+    });
+  }
+  if (status === "PARTIALLY_SETTLED") {
+    events.push({
+      statusCode: "PARTIALLY_SETTLED",
+      at: updatedAt,
+      note: updatedAt
+        ? "Partially settled (timestamp inferred from updatedAt)."
+        : "Partially settled.",
+    });
+  }
+  if (status === "SETTLED") {
+    events.push({
+      statusCode: "SETTLED",
+      at: updatedAt,
+      note: updatedAt ? "Settled (timestamp inferred from updatedAt)." : "Settled.",
+    });
+  }
+  if (status === "CANCELLED") {
+    events.push({
+      statusCode: "CANCELLED",
+      at: updatedAt || createdAt,
+      note: updatedAt
+        ? "Cancelled (timestamp inferred from updatedAt)."
+        : "Cancelled.",
+    });
+  }
+  if (status === "REVERSED") {
+    events.push({
+      statusCode: "REVERSED",
+      at: reversedAt || updatedAt,
+      note: reversedAt
+        ? "Reversal completed."
+        : "Reversed (timestamp inferred from updatedAt).",
+    });
+  }
+  return events;
+}
+
 function formatReadinessReason(reason) {
   switch (String(reason || "").trim().toUpperCase()) {
     case "ACCOUNT_NOT_FOUND":
@@ -127,6 +229,8 @@ export default function CariDocumentsPage() {
   const canReverse = hasPermission("cari.doc.reverse");
   const canFxOverride = hasPermission("cari.fx.override");
   const canReadReports = hasPermission("cari.report.read");
+  const canReadCards = hasPermission("cari.card.read");
+  const canUpsertCards = hasPermission("cari.card.upsert");
 
   const [filters, setFilters, resetFilters] = usePersistedFilters(
     DOCUMENT_FILTERS_STORAGE_SCOPE,
@@ -136,11 +240,19 @@ export default function CariDocumentsPage() {
   const [totalRows, setTotalRows] = useState(0);
   const [listLoading, setListLoading] = useState(false);
   const [listError, setListError] = useState("");
+  const [filterCounterpartyOptions, setFilterCounterpartyOptions] = useState([]);
+  const [filterCounterpartyLoading, setFilterCounterpartyLoading] = useState(false);
 
   const [createForm, setCreateForm] = useState(() => createInitialDraftForm());
   const [createSaving, setCreateSaving] = useState(false);
   const [createError, setCreateError] = useState("");
   const [createMessage, setCreateMessage] = useState("");
+  const [createCounterpartyOptions, setCreateCounterpartyOptions] = useState([]);
+  const [createCounterpartyLoading, setCreateCounterpartyLoading] = useState(false);
+  const [createCounterpartyLookupQuery, setCreateCounterpartyLookupQuery] = useState("");
+  const [createInlineCounterpartySaving, setCreateInlineCounterpartySaving] = useState(false);
+  const [createInlineCounterpartyError, setCreateInlineCounterpartyError] = useState("");
+  const [createInlineCounterpartyMessage, setCreateInlineCounterpartyMessage] = useState("");
 
   const [selectedDocumentId, setSelectedDocumentId] = useState(null);
   const [selectedDetail, setSelectedDetail] = useState(null);
@@ -150,6 +262,12 @@ export default function CariDocumentsPage() {
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError] = useState("");
   const [editMessage, setEditMessage] = useState("");
+  const [editCounterpartyOptions, setEditCounterpartyOptions] = useState([]);
+  const [editCounterpartyLoading, setEditCounterpartyLoading] = useState(false);
+  const [editCounterpartyLookupQuery, setEditCounterpartyLookupQuery] = useState("");
+  const [editInlineCounterpartySaving, setEditInlineCounterpartySaving] = useState(false);
+  const [editInlineCounterpartyError, setEditInlineCounterpartyError] = useState("");
+  const [editInlineCounterpartyMessage, setEditInlineCounterpartyMessage] = useState("");
   const [cancelSaving, setCancelSaving] = useState(false);
   const [cancelError, setCancelError] = useState("");
 
@@ -196,6 +314,51 @@ export default function CariDocumentsPage() {
     selectedSnapshot && isDraft(selectedSnapshot) && canPost && !cariPostingNotReady
   );
   const canReverseSelected = Boolean(selectedSnapshot && isPosted(selectedSnapshot) && canReverse);
+  const selectedDocumentLifecycleMeta = useMemo(
+    () => getLifecycleStatusMeta("cariDocument", selectedSnapshot?.status),
+    [selectedSnapshot?.status]
+  );
+  const selectedDocumentLifecycleActions = useMemo(
+    () => getLifecycleAllowedActions("cariDocument", selectedSnapshot?.status),
+    [selectedSnapshot?.status]
+  );
+  const selectedDocumentLifecycleTimeline = useMemo(
+    () =>
+      buildLifecycleTimelineSteps(
+        "cariDocument",
+        selectedSnapshot?.status,
+        buildDocumentLifecycleEvents(selectedSnapshot)
+      ),
+    [selectedSnapshot]
+  );
+  const filterCounterpartyLookupOptions = useMemo(
+    () => (filterCounterpartyOptions || []).map(mapCounterpartyLookupOption).filter((row) => row.value),
+    [filterCounterpartyOptions]
+  );
+  const createCounterpartyLookupOptions = useMemo(
+    () => (createCounterpartyOptions || []).map(mapCounterpartyLookupOption).filter((row) => row.value),
+    [createCounterpartyOptions]
+  );
+  const editCounterpartyLookupOptions = useMemo(
+    () => (editCounterpartyOptions || []).map(mapCounterpartyLookupOption).filter((row) => row.value),
+    [editCounterpartyOptions]
+  );
+  const createInlineCounterpartyName = normalizeLookupQuery(createCounterpartyLookupQuery);
+  const editInlineCounterpartyName = normalizeLookupQuery(editCounterpartyLookupQuery);
+  const canInlineCreateCounterpartyInCreateForm = Boolean(
+    canCreate &&
+      canReadCards &&
+      canUpsertCards &&
+      toPositiveInt(createForm.legalEntityId) &&
+      createInlineCounterpartyName
+  );
+  const canInlineCreateCounterpartyInEditForm = Boolean(
+    canEditOrCancelSelected &&
+      canReadCards &&
+      canUpsertCards &&
+      toPositiveInt(editForm.legalEntityId) &&
+      editInlineCounterpartyName
+  );
 
   async function loadDocuments(nextFilters = filters) {
     if (!canRead) {
@@ -249,6 +412,128 @@ export default function CariDocumentsPage() {
     loadDocumentDetail(selectedDocumentId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedDocumentId, canRead]);
+
+  useEffect(() => {
+    if (!canReadCards) {
+      setFilterCounterpartyOptions([]);
+      setFilterCounterpartyLoading(false);
+      return;
+    }
+    const legalEntityId = toPositiveInt(filters.legalEntityId);
+    if (!legalEntityId) {
+      setFilterCounterpartyOptions([]);
+      setFilterCounterpartyLoading(false);
+      return;
+    }
+    const role = resolveCounterpartyRoleFromDirection(filters.direction);
+    let active = true;
+    async function loadFilterCounterparties() {
+      setFilterCounterpartyLoading(true);
+      try {
+        const response = await listCariCounterparties({
+          legalEntityId,
+          role,
+          sortBy: "NAME",
+          sortDir: "ASC",
+          limit: 300,
+          offset: 0,
+        });
+        if (!active) return;
+        setFilterCounterpartyOptions(Array.isArray(response?.rows) ? response.rows : []);
+      } catch {
+        if (!active) return;
+        setFilterCounterpartyOptions([]);
+      } finally {
+        if (active) setFilterCounterpartyLoading(false);
+      }
+    }
+    loadFilterCounterparties();
+    return () => {
+      active = false;
+    };
+  }, [canReadCards, filters.direction, filters.legalEntityId]);
+
+  useEffect(() => {
+    if (!canReadCards) {
+      setCreateCounterpartyOptions([]);
+      setCreateCounterpartyLoading(false);
+      return;
+    }
+    const legalEntityId = toPositiveInt(createForm.legalEntityId);
+    if (!legalEntityId) {
+      setCreateCounterpartyOptions([]);
+      setCreateCounterpartyLoading(false);
+      return;
+    }
+    const role = resolveCounterpartyRoleFromDirection(createForm.direction);
+    let active = true;
+    async function loadCreateCounterparties() {
+      setCreateCounterpartyLoading(true);
+      try {
+        const response = await listCariCounterparties({
+          legalEntityId,
+          role,
+          status: "ACTIVE",
+          sortBy: "NAME",
+          sortDir: "ASC",
+          limit: 300,
+          offset: 0,
+        });
+        if (!active) return;
+        setCreateCounterpartyOptions(Array.isArray(response?.rows) ? response.rows : []);
+      } catch {
+        if (!active) return;
+        setCreateCounterpartyOptions([]);
+      } finally {
+        if (active) setCreateCounterpartyLoading(false);
+      }
+    }
+    loadCreateCounterparties();
+    return () => {
+      active = false;
+    };
+  }, [canReadCards, createForm.direction, createForm.legalEntityId]);
+
+  useEffect(() => {
+    if (!canReadCards) {
+      setEditCounterpartyOptions([]);
+      setEditCounterpartyLoading(false);
+      return;
+    }
+    const legalEntityId = toPositiveInt(editForm.legalEntityId);
+    if (!legalEntityId) {
+      setEditCounterpartyOptions([]);
+      setEditCounterpartyLoading(false);
+      return;
+    }
+    const role = resolveCounterpartyRoleFromDirection(editForm.direction);
+    let active = true;
+    async function loadEditCounterparties() {
+      setEditCounterpartyLoading(true);
+      try {
+        const response = await listCariCounterparties({
+          legalEntityId,
+          role,
+          status: "ACTIVE",
+          sortBy: "NAME",
+          sortDir: "ASC",
+          limit: 300,
+          offset: 0,
+        });
+        if (!active) return;
+        setEditCounterpartyOptions(Array.isArray(response?.rows) ? response.rows : []);
+      } catch {
+        if (!active) return;
+        setEditCounterpartyOptions([]);
+      } finally {
+        if (active) setEditCounterpartyLoading(false);
+      }
+    }
+    loadEditCounterparties();
+    return () => {
+      active = false;
+    };
+  }, [canReadCards, editForm.direction, editForm.legalEntityId]);
 
   useEffect(() => {
     const documentId = Number(selectedSnapshot?.id || 0);
@@ -317,6 +602,102 @@ export default function CariDocumentsPage() {
       active = false;
     };
   }, [canReadReports, selectedSnapshot?.counterpartyId, selectedSnapshot?.id, selectedSnapshot?.legalEntityId]);
+
+  async function handleInlineCreateCounterpartyForCreateForm() {
+    setCreateInlineCounterpartyError("");
+    setCreateInlineCounterpartyMessage("");
+    const legalEntityId = toPositiveInt(createForm.legalEntityId);
+    const name = normalizeLookupQuery(createCounterpartyLookupQuery);
+    if (!canUpsertCards) {
+      setCreateInlineCounterpartyError("Missing permission: cari.card.upsert");
+      return;
+    }
+    if (!legalEntityId) {
+      setCreateInlineCounterpartyError("Select legalEntityId before creating a counterparty.");
+      return;
+    }
+    if (!name) {
+      setCreateInlineCounterpartyError("Type a counterparty name in lookup before creating.");
+      return;
+    }
+
+    setCreateInlineCounterpartySaving(true);
+    try {
+      const payload = {
+        legalEntityId,
+        code: buildInlineCounterpartyCode({ legalEntityId, name }),
+        name,
+        status: "ACTIVE",
+        ...resolveInlineCounterpartyRoleFlags(createForm.direction),
+      };
+      const response = await createCariCounterparty(payload);
+      const row = response?.row || null;
+      const counterpartyId = toPositiveInt(row?.id);
+      if (!counterpartyId) {
+        throw new Error("Counterparty create response is missing row.id.");
+      }
+      setCreateCounterpartyOptions((prev) => prependOrReplaceCounterpartyOption(prev, row));
+      setCreateForm((prev) => ({ ...prev, counterpartyId: String(counterpartyId) }));
+      setCreateCounterpartyLookupQuery("");
+      setCreateInlineCounterpartyMessage(
+        `Counterparty created and selected. counterpartyId=${counterpartyId}`
+      );
+    } catch (error) {
+      setCreateInlineCounterpartyError(
+        normalizeApiError(error, "Failed to create counterparty from lookup.")
+      );
+    } finally {
+      setCreateInlineCounterpartySaving(false);
+    }
+  }
+
+  async function handleInlineCreateCounterpartyForEditForm() {
+    setEditInlineCounterpartyError("");
+    setEditInlineCounterpartyMessage("");
+    const legalEntityId = toPositiveInt(editForm.legalEntityId);
+    const name = normalizeLookupQuery(editCounterpartyLookupQuery);
+    if (!canUpsertCards) {
+      setEditInlineCounterpartyError("Missing permission: cari.card.upsert");
+      return;
+    }
+    if (!legalEntityId) {
+      setEditInlineCounterpartyError("Select legalEntityId before creating a counterparty.");
+      return;
+    }
+    if (!name) {
+      setEditInlineCounterpartyError("Type a counterparty name in lookup before creating.");
+      return;
+    }
+
+    setEditInlineCounterpartySaving(true);
+    try {
+      const payload = {
+        legalEntityId,
+        code: buildInlineCounterpartyCode({ legalEntityId, name }),
+        name,
+        status: "ACTIVE",
+        ...resolveInlineCounterpartyRoleFlags(editForm.direction),
+      };
+      const response = await createCariCounterparty(payload);
+      const row = response?.row || null;
+      const counterpartyId = toPositiveInt(row?.id);
+      if (!counterpartyId) {
+        throw new Error("Counterparty create response is missing row.id.");
+      }
+      setEditCounterpartyOptions((prev) => prependOrReplaceCounterpartyOption(prev, row));
+      setEditForm((prev) => ({ ...prev, counterpartyId: String(counterpartyId) }));
+      setEditCounterpartyLookupQuery("");
+      setEditInlineCounterpartyMessage(
+        `Counterparty created and selected. counterpartyId=${counterpartyId}`
+      );
+    } catch (error) {
+      setEditInlineCounterpartyError(
+        normalizeApiError(error, "Failed to create counterparty from lookup.")
+      );
+    } finally {
+      setEditInlineCounterpartySaving(false);
+    }
+  }
 
   async function handleCreateDraft(event) {
     event.preventDefault();
@@ -470,6 +851,26 @@ export default function CariDocumentsPage() {
         <div className="mt-4 grid gap-3 md:grid-cols-4">
           <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Legal Entity ID<input type="number" min="1" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={filters.legalEntityId} onChange={(event) => setFilters((prev) => ({ ...prev, legalEntityId: event.target.value }))} /></label>
           <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Counterparty ID<input type="number" min="1" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={filters.counterpartyId} onChange={(event) => setFilters((prev) => ({ ...prev, counterpartyId: event.target.value }))} /></label>
+          {canReadCards ? (
+            <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+              Counterparty Lookup
+              <Combobox
+                className="mt-1"
+                value={filters.counterpartyId}
+                options={filterCounterpartyLookupOptions}
+                loading={filterCounterpartyLoading}
+                disabled={!toPositiveInt(filters.legalEntityId)}
+                placeholder={toPositiveInt(filters.legalEntityId) ? "Type code/name" : "Select legal entity first"}
+                noOptionsText={toPositiveInt(filters.legalEntityId) ? "No counterparties found." : "Set legalEntityId to load counterparties."}
+                onChange={(nextValue) =>
+                  setFilters((prev) => ({
+                    ...prev,
+                    counterpartyId: nextValue ? String(nextValue) : "",
+                  }))
+                }
+              />
+            </label>
+          ) : null}
           <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Direction<select className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={filters.direction} onChange={(event) => setFilters((prev) => ({ ...prev, direction: event.target.value }))}><option value="">ALL</option>{DOCUMENT_DIRECTIONS.map((direction) => <option key={`filter-direction-${direction}`} value={direction}>{direction}</option>)}</select></label>
           <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Document Type<select className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={filters.documentType} onChange={(event) => setFilters((prev) => ({ ...prev, documentType: event.target.value }))}><option value="">ALL</option>{DOCUMENT_TYPES.map((documentType) => <option key={`filter-document-type-${documentType}`} value={documentType}>{documentType}</option>)}</select></label>
           <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Status<select className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={filters.status} onChange={(event) => setFilters((prev) => ({ ...prev, status: event.target.value }))}><option value="">ALL</option>{DOCUMENT_STATUSES.map((status) => <option key={`filter-status-${status}`} value={status}>{status}</option>)}</select></label>
@@ -491,6 +892,56 @@ export default function CariDocumentsPage() {
           <form className="mt-4 grid gap-3 md:grid-cols-4" onSubmit={handleCreateDraft}>
             <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Legal Entity ID<input type="number" min="1" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={createForm.legalEntityId} onChange={(event) => setCreateForm((prev) => ({ ...prev, legalEntityId: event.target.value }))} required /></label>
             <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Counterparty ID<input type="number" min="1" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={createForm.counterpartyId} onChange={(event) => setCreateForm((prev) => ({ ...prev, counterpartyId: event.target.value }))} required /></label>
+            {canReadCards ? (
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                <label className="block">
+                  Counterparty Lookup
+                  <Combobox
+                    className="mt-1"
+                    value={createForm.counterpartyId}
+                    options={createCounterpartyLookupOptions}
+                    loading={createCounterpartyLoading}
+                    disabled={!toPositiveInt(createForm.legalEntityId) || createSaving}
+                    placeholder={toPositiveInt(createForm.legalEntityId) ? "Type code/name" : "Select legal entity first"}
+                    noOptionsText={toPositiveInt(createForm.legalEntityId) ? "No counterparties found." : "Set legalEntityId to load counterparties."}
+                    onInputChange={(nextValue, meta) => {
+                      setCreateInlineCounterpartyError("");
+                      setCreateInlineCounterpartyMessage("");
+                      const reason = String(meta?.reason || "").trim().toLowerCase();
+                      if (reason === "select" || reason === "clear") {
+                        setCreateCounterpartyLookupQuery("");
+                        return;
+                      }
+                      setCreateCounterpartyLookupQuery(normalizeLookupQuery(nextValue));
+                    }}
+                    onChange={(nextValue) =>
+                      setCreateForm((prev) => ({
+                        ...prev,
+                        counterpartyId: nextValue ? String(nextValue) : "",
+                      }))
+                    }
+                  />
+                </label>
+                {canUpsertCards ? (
+                  <button
+                    type="button"
+                    className="mt-2 rounded-md border border-slate-300 bg-white px-2.5 py-1 text-[11px] font-semibold normal-case text-slate-700 disabled:opacity-60"
+                    onClick={handleInlineCreateCounterpartyForCreateForm}
+                    disabled={!canInlineCreateCounterpartyInCreateForm || createInlineCounterpartySaving || createSaving}
+                  >
+                    {createInlineCounterpartySaving
+                      ? "Creating counterparty..."
+                      : `Create "${createInlineCounterpartyName || "new counterparty"}"`}
+                  </button>
+                ) : null}
+                {createInlineCounterpartyError ? (
+                  <p className="mt-1 text-[11px] normal-case text-rose-700">{createInlineCounterpartyError}</p>
+                ) : null}
+                {createInlineCounterpartyMessage ? (
+                  <p className="mt-1 text-[11px] normal-case text-emerald-700">{createInlineCounterpartyMessage}</p>
+                ) : null}
+              </div>
+            ) : null}
             <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Payment Term ID (optional)<input type="number" min="1" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={createForm.paymentTermId} onChange={(event) => setCreateForm((prev) => ({ ...prev, paymentTermId: event.target.value }))} /></label>
             <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Direction<select className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={createForm.direction} onChange={(event) => setCreateForm((prev) => ({ ...prev, direction: event.target.value }))} required>{DOCUMENT_DIRECTIONS.map((direction) => <option key={`create-direction-${direction}`} value={direction}>{direction}</option>)}</select></label>
             <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Document Type<select className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={createForm.documentType} onChange={(event) => setCreateForm((prev) => ({ ...prev, documentType: event.target.value }))} required>{DOCUMENT_TYPES.map((documentType) => <option key={`create-document-type-${documentType}`} value={documentType}>{documentType}</option>)}</select></label>
@@ -502,7 +953,19 @@ export default function CariDocumentsPage() {
             <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">FX Rate (optional)<input type="number" min="0.0000000001" step="0.0000000001" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={createForm.fxRate} onChange={(event) => setCreateForm((prev) => ({ ...prev, fxRate: event.target.value }))} /></label>
             <div className="md:col-span-4 flex gap-2">
               <button type="submit" className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white" disabled={createSaving}>{createSaving ? "Creating..." : "Create Draft Document"}</button>
-              <button type="button" className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700" onClick={() => setCreateForm(createInitialDraftForm())} disabled={createSaving}>Reset Draft Form</button>
+              <button
+                type="button"
+                className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700"
+                onClick={() => {
+                  setCreateForm(createInitialDraftForm());
+                  setCreateCounterpartyLookupQuery("");
+                  setCreateInlineCounterpartyError("");
+                  setCreateInlineCounterpartyMessage("");
+                }}
+                disabled={createSaving}
+              >
+                Reset Draft Form
+              </button>
             </div>
           </form>
         </section>
@@ -549,6 +1012,25 @@ export default function CariDocumentsPage() {
                 <dt className="font-semibold text-slate-600">currencyCodeSnapshot</dt><dd>{selectedSnapshot.currencyCodeSnapshot || "-"}</dd>
                 <dt className="font-semibold text-slate-600">fxRateSnapshot</dt><dd>{selectedSnapshot.fxRateSnapshot || "-"}</dd>
               </dl>
+              <div className="mt-4 rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-700">Lifecycle Snapshot</p>
+                <p className="mt-1 text-sm font-semibold text-slate-800">
+                  {selectedDocumentLifecycleMeta?.label || selectedSnapshot.status || "-"}
+                </p>
+                {selectedDocumentLifecycleMeta?.description ? (
+                  <p className="mt-1 text-xs text-slate-600">{selectedDocumentLifecycleMeta.description}</p>
+                ) : null}
+                {selectedDocumentLifecycleActions.length > 0 ? (
+                  <p className="mt-1 text-xs text-slate-600">
+                    Next allowed transitions:{" "}
+                    {selectedDocumentLifecycleActions.map((row) => row.label).join(", ")}
+                  </p>
+                ) : (
+                  <p className="mt-1 text-xs text-slate-500">
+                    No further lifecycle transitions are defined from this status.
+                  </p>
+                )}
+              </div>
               {reverseResult ? <div className="mt-4 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">Reverse linkage: `response.row.id`={reverseResult.reversalDocumentId || "-"}, `response.row.documentNo`={reverseResult.reversalDocumentNo || "-"}, `response.journal.reversalJournalEntryId`={reverseResult.reversalJournalEntryId || "-"}</div> : null}
               {canReadReports ? (
                 <div className="mt-4 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
@@ -569,6 +1051,12 @@ export default function CariDocumentsPage() {
                   ) : null}
                 </div>
               ) : null}
+              <StatusTimeline
+                className="mt-4"
+                title="Document Lifecycle Timeline"
+                steps={selectedDocumentLifecycleTimeline}
+                emptyText="No lifecycle history available for this document yet."
+              />
             </div>
 
             <div className="space-y-4">
@@ -579,6 +1067,56 @@ export default function CariDocumentsPage() {
                 <form className="mt-3 grid gap-2 md:grid-cols-2" onSubmit={handleUpdateDraft}>
                   <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Legal Entity ID<input type="number" min="1" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={editForm.legalEntityId} onChange={(event) => setEditForm((prev) => ({ ...prev, legalEntityId: event.target.value }))} disabled={!canEditOrCancelSelected || editSaving} /></label>
                   <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Counterparty ID<input type="number" min="1" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={editForm.counterpartyId} onChange={(event) => setEditForm((prev) => ({ ...prev, counterpartyId: event.target.value }))} disabled={!canEditOrCancelSelected || editSaving} /></label>
+                  {canReadCards ? (
+                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                      <label className="block">
+                        Counterparty Lookup
+                        <Combobox
+                          className="mt-1"
+                          value={editForm.counterpartyId}
+                          options={editCounterpartyLookupOptions}
+                          loading={editCounterpartyLoading}
+                          disabled={!canEditOrCancelSelected || !toPositiveInt(editForm.legalEntityId) || editSaving}
+                          placeholder={toPositiveInt(editForm.legalEntityId) ? "Type code/name" : "Select legal entity first"}
+                          noOptionsText={toPositiveInt(editForm.legalEntityId) ? "No counterparties found." : "Set legalEntityId to load counterparties."}
+                          onInputChange={(nextValue, meta) => {
+                            setEditInlineCounterpartyError("");
+                            setEditInlineCounterpartyMessage("");
+                            const reason = String(meta?.reason || "").trim().toLowerCase();
+                            if (reason === "select" || reason === "clear") {
+                              setEditCounterpartyLookupQuery("");
+                              return;
+                            }
+                            setEditCounterpartyLookupQuery(normalizeLookupQuery(nextValue));
+                          }}
+                          onChange={(nextValue) =>
+                            setEditForm((prev) => ({
+                              ...prev,
+                              counterpartyId: nextValue ? String(nextValue) : "",
+                            }))
+                          }
+                        />
+                      </label>
+                      {canUpsertCards ? (
+                        <button
+                          type="button"
+                          className="mt-2 rounded-md border border-slate-300 bg-white px-2.5 py-1 text-[11px] font-semibold normal-case text-slate-700 disabled:opacity-60"
+                          onClick={handleInlineCreateCounterpartyForEditForm}
+                          disabled={!canInlineCreateCounterpartyInEditForm || editInlineCounterpartySaving || editSaving}
+                        >
+                          {editInlineCounterpartySaving
+                            ? "Creating counterparty..."
+                            : `Create "${editInlineCounterpartyName || "new counterparty"}"`}
+                        </button>
+                      ) : null}
+                      {editInlineCounterpartyError ? (
+                        <p className="mt-1 text-[11px] normal-case text-rose-700">{editInlineCounterpartyError}</p>
+                      ) : null}
+                      {editInlineCounterpartyMessage ? (
+                        <p className="mt-1 text-[11px] normal-case text-emerald-700">{editInlineCounterpartyMessage}</p>
+                      ) : null}
+                    </div>
+                  ) : null}
                   <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Document Type<select className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={editForm.documentType} onChange={(event) => setEditForm((prev) => ({ ...prev, documentType: event.target.value }))} disabled={!canEditOrCancelSelected || editSaving}>{DOCUMENT_TYPES.map((documentType) => <option key={`edit-document-type-${documentType}`} value={documentType}>{documentType}</option>)}</select></label>
                   <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Due Date<input type="date" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={editForm.dueDate} onChange={(event) => setEditForm((prev) => ({ ...prev, dueDate: event.target.value }))} disabled={!canEditOrCancelSelected || editSaving} required={requiresDueDate(editForm.documentType)} /></label>
                   <button type="submit" className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50" disabled={!canEditOrCancelSelected || editSaving}>{editSaving ? "Saving..." : "Update Draft Document"}</button>

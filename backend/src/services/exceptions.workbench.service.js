@@ -1147,6 +1147,124 @@ export async function reopenExceptionWorkbench({
   });
 }
 
+function normalizeBulkAction(action) {
+  const normalized = u(action);
+  if (["CLAIM", "RESOLVE", "IGNORE", "REOPEN"].includes(normalized)) {
+    return normalized;
+  }
+  throw badRequest("action must be one of: claim, resolve, ignore, reopen");
+}
+
+function toBulkActionErrorResult(exceptionId, error) {
+  return {
+    exception_id: parsePositiveInt(exceptionId) || null,
+    ok: false,
+    status: toInt(error?.status, null),
+    code: error?.code ? String(error.code) : null,
+    message: String(error?.message || "Action failed"),
+  };
+}
+
+export async function bulkActionExceptionWorkbench({
+  req,
+  tenantId,
+  action,
+  exceptionIds = [],
+  actorUserId,
+  ownerUserId = null,
+  note = null,
+  resolutionAction = null,
+  resolutionNote = null,
+  continueOnError = true,
+  assertScopeAccess,
+}) {
+  const normalizedAction = normalizeBulkAction(action);
+  const uniqueIds = Array.from(
+    new Set((Array.isArray(exceptionIds) ? exceptionIds : []).map((value) => parsePositiveInt(value)).filter(Boolean))
+  );
+
+  if (uniqueIds.length === 0) {
+    throw badRequest("exceptionIds must include at least one positive integer id");
+  }
+  if (uniqueIds.length > 200) {
+    throw badRequest("exceptionIds supports at most 200 ids per request");
+  }
+
+  const rows = [];
+  const results = [];
+  let stoppedOnError = false;
+
+  for (const exceptionId of uniqueIds) {
+    try {
+      let row = null;
+      if (normalizedAction === "CLAIM") {
+        row = await claimExceptionWorkbench({
+          req,
+          tenantId,
+          exceptionId,
+          actorUserId,
+          ownerUserId,
+          note,
+          assertScopeAccess,
+        });
+      } else if (normalizedAction === "RESOLVE") {
+        row = await resolveExceptionWorkbench({
+          req,
+          tenantId,
+          exceptionId,
+          actorUserId,
+          resolutionAction: resolutionAction || "MANUAL_RESOLVE",
+          resolutionNote,
+          assertScopeAccess,
+        });
+      } else if (normalizedAction === "IGNORE") {
+        row = await ignoreExceptionWorkbench({
+          req,
+          tenantId,
+          exceptionId,
+          actorUserId,
+          resolutionAction: resolutionAction || "MANUAL_IGNORE",
+          resolutionNote,
+          assertScopeAccess,
+        });
+      } else {
+        row = await reopenExceptionWorkbench({
+          req,
+          tenantId,
+          exceptionId,
+          actorUserId,
+          resolutionNote,
+          assertScopeAccess,
+        });
+      }
+
+      rows.push(row);
+      results.push({
+        exception_id: exceptionId,
+        ok: true,
+        row,
+      });
+    } catch (error) {
+      results.push(toBulkActionErrorResult(exceptionId, error));
+      if (continueOnError === false) {
+        stoppedOnError = true;
+        break;
+      }
+    }
+  }
+
+  const failed = results.filter((item) => !item.ok).length;
+  return {
+    action: normalizedAction,
+    requested: uniqueIds.length,
+    succeeded: rows.length,
+    failed,
+    stopped_on_error: stoppedOnError,
+    rows,
+    results,
+  };
+}
+
 export default {
   resolveExceptionWorkbenchScope,
   refreshExceptionWorkbench,
@@ -1156,4 +1274,5 @@ export default {
   resolveExceptionWorkbench,
   ignoreExceptionWorkbench,
   reopenExceptionWorkbench,
+  bulkActionExceptionWorkbench,
 };

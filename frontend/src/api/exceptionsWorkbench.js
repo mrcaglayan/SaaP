@@ -35,3 +35,7 @@ export async function reopenExceptionWorkbench(exceptionId, payload = {}) {
   return response.data;
 }
 
+export async function bulkActionExceptionWorkbench(payload = {}) {
+  const response = await api.post("/api/v1/exceptions/workbench/bulk-action", payload);
+  return response.data;
+}

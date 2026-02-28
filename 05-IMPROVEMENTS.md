@@ -22,20 +22,20 @@ Tag legend: `(hot: yes)` means likely touches conflict-prone files (`AppLayout.j
 - [x] PR-UX06 Upgrade `Dashboard.jsx` into actionable finance console (implemented: KPI cards + queue links + readiness + scoped refresh, hot: no)
 - [x] PR-UX07 Exception queue tabs + queue counts (implemented: tabs `All/Needs Review/Approval/Stuck/Mine/Resolved` + counts from `summary.by_status` with supplemental `stuck/mine` counters, hot: no)
 - [x] PR-UX08 Add `sla_due_at` + urgency sort (implemented: migration `m068_*` + backend SLA enrichment + urgency ordering + FE sort selector/SLA badges, hot: no)
-- [ ] PR-UX09 Exception bulk actions (preferred: backend bulk endpoints; fallback: FE batching with concurrency control) (not started)
+- [x] PR-UX09 Exception bulk actions (preferred: backend bulk endpoints; fallback: FE batching with concurrency control) (implemented: `POST /api/v1/exceptions/workbench/bulk-action` + multi-select bulk toolbar in workbench UI, hot: no)
 
 - [x] PR-CORE05 Extend existing backend error envelope + FE centralized toasts/handling (`message` + `requestId` already exists) (implemented: API error toasts + shared app toast channel; core cash/journal/exceptions success messages now toastified)
 - [x] PR-CORE01 Standardize pagination contracts across modules (implemented: shared `backend/src/utils/pagination.js` + applied to Cari Documents, Cash Transactions/Transit, Exceptions Workbench)
 
-- [ ] PR-UX10 Shared `Combobox` component (new `frontend/src/components`) (not started)
-- [ ] PR-UX11 Counterparty typeahead in Cari Documents/Settlements (not started)
-- [ ] PR-UX12 GL account lookup with searchable API (`q`) + breadcrumb display (not started)
-- [ ] PR-UX13-A Inline counterparty create from lookups (API exists; not started)
-- [ ] PR-UX13-B Inline payment term create (backend write endpoint required first) (blocked)
+- [x] PR-UX10 Shared `Combobox` component (new `frontend/src/components`) (implemented: reusable accessible combobox with keyboard nav + loading/empty states + custom option rendering, hot: no)
+- [x] PR-UX11 Counterparty typeahead in Cari Documents/Settlements (implemented: shared Combobox wired to Cari Documents filter/create/edit and Cari Settlements apply/bank-apply counterparty selectors, hot: no)
+- [x] PR-UX12 GL account lookup with searchable API (`q`) + breadcrumb display (implemented: `GET /api/v1/gl/accounts` now supports `q` + breadcrumb fields and Cari Counterparty/Cari Settlements account selectors use server-side q lookup with breadcrumb descriptions, hot: no)
+- [x] PR-UX13-A Inline counterparty create from lookups (implemented: inline create action from typed Combobox input in Cari Documents create/edit and Cari Settlements apply/bank-apply lookups; creates counterparty, refreshes local lookup options, auto-selects new `counterpartyId`, hot: no)
+- [x] PR-UX13-B Inline payment term create (implemented: inline create action from typed payment-term lookup text in Counterparty create/edit forms; creates payment term via `POST /api/v1/cari/payment-terms`, refreshes options, auto-selects `defaultPaymentTermId`, hot: no)
 
-- [ ] PR-UX14 Shared lifecycle rules + `StatusTimeline` component (not started)
-- [ ] PR-UX15 Apply lifecycle UI to Cari Documents (not started)
-- [ ] PR-UX16 Apply lifecycle UI to Cash Transactions/Sessions (not started)
+- [x] PR-UX14 Shared lifecycle rules + `StatusTimeline` component (implemented: reusable lifecycle rule registry + transition helpers in `frontend/src/lifecycle/lifecycleRules.js` and generic `frontend/src/components/StatusTimeline.jsx` for timeline rendering, hot: no)
+- [x] PR-UX15 Apply lifecycle UI to Cari Documents (implemented: detail panel now renders lifecycle snapshot + shared `StatusTimeline` built from document status/timestamps via shared lifecycle rules helpers, hot: no)
+- [x] PR-UX16 Apply lifecycle UI to Cash Transactions/Sessions (implemented: cash transactions and cash sessions now expose lifecycle inspection sections with snapshot + shared `StatusTimeline`, backed by shared lifecycle rules and per-row event mapping, hot: no)
 - [ ] PR-UX17 Apply lifecycle UI to Payroll flows (not started)
 
 - [ ] PR-UX18 Deep-link support (`documentId/journalId/exceptionId`) (not started)
@@ -78,7 +78,8 @@ Intentional not-yet-implemented placeholders (Stock, Fixed Assets, generic Repor
 - [ ] RS-WIRE-03 Add release-gate smoke coverage for each newly implemented improvement page before marking `[x]`
 
 ## Dependency Follow-ups (Non-placeholder blockers)
-- [ ] RS-DEP-01 Payment term write API for UX13-B (`POST /api/v1/cari/payment-terms` + permission + frontend client)
+- [x] RS-DEP-01 Payment term write API for UX13-B (`POST /api/v1/cari/payment-terms` + `cari.card.upsert` permission guard + frontend client `createCariPaymentTerm`) (implemented)
+  smoke: `backend/scripts/test-ux-rsdep01-payment-term-write-api.js`
 - [ ] RS-DEP-02 Source-linking contract for UX19 Related Panel:
   choose minimal contract (`journal_source_links` table OR `source_ref_type` + `source_ref_id` on journals), write links during posting, then ship UI
 - [x] RS-DEP-03 Global frontend error/toast strategy required by CORE05 (`frontend/src/api/client.js` interceptor + UI surface) (implemented)
@@ -104,11 +105,29 @@ Intentional not-yet-implemented placeholders (Stock, Fixed Assets, generic Repor
   smoke: `backend/scripts/test-ux-prux07-exception-queues.js` (to add)
 - [x] PR-UX08 acceptance: exceptions expose `sla_due_at` and support urgency-first ordering in workbench UI
   smoke: `backend/scripts/test-ux-prux08-exception-sla-urgency.js` (to add)
+- [x] PR-UX09 acceptance: exception workbench supports multi-select bulk claim/resolve/ignore/reopen with partial-success reporting
+  smoke: `backend/scripts/test-ux-prux09-exception-bulk-actions.js`
+- [x] PR-UX10 acceptance: shared combobox supports reusable typeahead UX with keyboard navigation, a11y roles, and loading/empty rendering hooks
+  smoke: `backend/scripts/test-ux-prux10-shared-combobox.js`
+- [x] PR-UX11 acceptance: Cari Documents and Cari Settlements expose counterparty lookup typeahead controls that drive `counterpartyId` form/filter fields
+  smoke: `backend/scripts/test-ux-prux11-counterparty-typeahead.js`
+- [x] PR-UX12 acceptance: GL account lookups support backend `q` search and show breadcrumb paths in Cari account selector UIs
+  smoke: `backend/scripts/test-ux-prux12-gl-account-lookup-and-breadcrumb.js`
+- [x] PR-UX13-A acceptance: users with `cari.card.upsert` can create counterparties inline from lookup text and continue flow with the new card auto-selected
+  smoke: `backend/scripts/test-ux-prux13a-inline-counterparty-create.js`
+- [x] PR-UX13-B acceptance: users with `cari.card.upsert` can create payment terms inline from counterparty payment-term lookup text and continue flow with the new term auto-selected
+  smoke: `backend/scripts/test-ux-prux13b-inline-payment-term-create.js`
+- [x] PR-UX14 acceptance: shared lifecycle utilities expose canonical statuses/transitions and `StatusTimeline` renders ordered current/done/upcoming states for module reuse
+  smoke: `backend/scripts/test-ux-prux14-lifecycle-rules-and-status-timeline.js`
+- [x] PR-UX15 acceptance: Cari Documents detail view shows lifecycle snapshot + timeline derived from shared rules/events and surfaces next allowed transitions for current status
+  smoke: `backend/scripts/test-ux-prux15-cari-documents-lifecycle-ui.js`
+- [x] PR-UX16 acceptance: Cash Transactions and Cash Sessions expose lifecycle snapshot + timeline views using shared rules/timeline component with selectable row/session context
+  smoke: `backend/scripts/test-ux-prux16-cash-lifecycle-ui.js`
 - [x] PR-CORE05 acceptance: standardized user-facing error handling + copyable requestId/details
   smoke: `backend/scripts/test-ux-prcore05-error-envelope.js`
 - [x] PR-CORE01 acceptance: key list endpoints return consistent `rows + total + limit + offset` with `pagination` metadata
   smoke: `backend/scripts/test-ux-prcore01-pagination-contracts.js` (to add)
 
 ## Immediate Next Step
-- Continue with `PR-UX09`.
+- Proceed with `PR-UX17`.
 - After each merged PR, update this tracker line from `[ ]` to `[x]` with a short `(implemented)` note.

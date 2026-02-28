@@ -306,6 +306,17 @@ export const messages = {
         ignore: "Yok Say",
         reopen: "Tekrar Ac",
       },
+      bulk: {
+        selectVisible: "Gorunenleri sec",
+        selectedCount: "Secili: {{count}}",
+        clearSelection: "Secimi Temizle",
+        claimSelected: "Seciliyi Sahiplen",
+        resolveSelected: "Seciliyi Coz",
+        ignoreSelected: "Seciliyi Yok Say",
+        reopenSelected: "Seciliyi Tekrar Ac",
+        selectRow: "Exception satirini sec",
+        select: "Sec",
+      },
       summary: {
         byStatus: "Duruma Gore",
         byModule: "Module Gore",
@@ -328,6 +339,10 @@ export const messages = {
         refreshFailed: "Yenileme basarisiz",
         actionApplied: "Aksiyon uygulandi: {{action}}.",
         actionFailed: "Aksiyon basarisiz: {{action}}",
+        bulkActionApplied: "Toplu aksiyon uygulandi: {{action}} ({{count}} kayit).",
+        bulkActionPartial:
+          "Toplu aksiyon {{action}} kismi basariyla tamamlandi ({{succeeded}}/{{total}} basarili, {{failed}} hata).",
+        bulkActionFailed: "Toplu aksiyon basarisiz: {{action}}.",
         missingReadPermission: "Eksik yetki:",
         empty: "Mevcut filtreler icin exception bulunamadi.",
         selectRow: "Bir exception satiri secip Detay'a tiklayin.",
@@ -793,6 +808,7 @@ export const messages = {
         close: "Oturum Kapat",
         openSessions: "Acik Oturumlar",
         history: "Oturum Gecmisi",
+        lifecycle: "Oturum Yasam Dongusu",
       },
       actions: {
         open: "Oturum Ac",
@@ -801,6 +817,7 @@ export const messages = {
         loading: "Yukleniyor...",
         saving: "Kaydediliyor...",
         useForClose: "Kapatmak Icin Sec",
+        inspectLifecycle: "Yasam Dongusu",
       },
       form: {
         openingAmountOptional: "Acilis tutari (opsiyonel, varsayilan 0)",
@@ -825,6 +842,22 @@ export const messages = {
         approvedBy: "Onaylayan",
         approvedAt: "Onay Zamani",
         actions: "Islemler",
+      },
+      values: {
+        statusOpen: "Acik",
+        statusClosed: "Kapali",
+      },
+      lifecycle: {
+        snapshotTitle: "Yasam Dongusu Ozeti",
+        selectedSummary: "Secili oturum #{{id}} | Register: {{registerCode}} | Durum: {{status}}",
+        nextTransitions: "Siradaki izinli gecisler: {{actions}}",
+        noTransitions: "Bu durumdan tanimli baska yasam dongusu gecisi yok.",
+        noSelection: "Yasam dongusu detaylarini gormek icin bir oturum secin.",
+        timelineTitle: "Oturum Yasam Dongusu Zaman Cizelgesi",
+        timelineEmpty: "Bu oturum icin yasam dongusu gecmisi bulunamadi.",
+        actionLabels: {
+          close: "Oturumu Kapat",
+        },
       },
       requiredWarning: {
         title: "Session mode REQUIRED ama acik oturum yok",
@@ -897,6 +930,7 @@ export const messages = {
         filters: "Filtreler",
         create: "Yeni Kasa Islemi",
         action: "Secili Islem Aksiyonu",
+        lifecycle: "Islem Yasam Dongusu",
         list: "Kasa Islem Listesi",
       },
       placeholders: {
@@ -961,10 +995,33 @@ export const messages = {
         applyCari: "Cari Uygula",
         submitAction: "Aksiyonu Uygula",
         cancelAction: "Vazgec",
+        inspectLifecycle: "Yasam Dongusu",
         saving: "Kaydediliyor...",
       },
       selectedTransactionSummary:
         "Secili islem #{{id}} | No: {{txnNo}} | Durum: {{status}}",
+      lifecycle: {
+        snapshotTitle: "Yasam Dongusu Ozeti",
+        nextTransitions: "Siradaki izinli gecisler: {{actions}}",
+        noTransitions: "Bu durumdan tanimli baska yasam dongusu gecisi yok.",
+        timelineTitle: "Islem Yasam Dongusu Zaman Cizelgesi",
+        timelineEmpty: "Bu islem icin yasam dongusu gecmisi bulunamadi.",
+        actionLabels: {
+          submit: "Gonder",
+          approve: "Onayla",
+          post: "Post et",
+          cancel: "Iptal et",
+          reverse: "Ters kayit",
+        },
+        events: {
+          draft: "Taslak olusturuldu.",
+          submitted: "Onaya gonderildi.",
+          approved: "Onaylandi.",
+          posted: "Deftere post edildi.",
+          cancelled: "Islem iptal edildi.",
+          reversed: "Ters kayit tamamlandi.",
+        },
+      },
       table: {
         id: "ID",
         txnNo: "Islem No",
@@ -1682,6 +1739,17 @@ export const messages = {
         ignore: "Ignore",
         reopen: "Reopen",
       },
+      bulk: {
+        selectVisible: "Select visible",
+        selectedCount: "Selected: {{count}}",
+        clearSelection: "Clear",
+        claimSelected: "Claim Selected",
+        resolveSelected: "Resolve Selected",
+        ignoreSelected: "Ignore Selected",
+        reopenSelected: "Reopen Selected",
+        selectRow: "Select exception row",
+        select: "Select",
+      },
       summary: {
         byStatus: "By Status",
         byModule: "By Module",
@@ -1704,6 +1772,10 @@ export const messages = {
         refreshFailed: "Refresh failed",
         actionApplied: "Action {{action}} applied.",
         actionFailed: "Action {{action}} failed",
+        bulkActionApplied: "Bulk action {{action}} applied to {{count}} exceptions.",
+        bulkActionPartial:
+          "Bulk action {{action}} finished with partial success ({{succeeded}}/{{total}} succeeded, {{failed}} failed).",
+        bulkActionFailed: "Bulk action {{action}} failed.",
         missingReadPermission: "Missing permission:",
         empty: "No exceptions found for current filters.",
         selectRow: "Select an exception row and click Details.",
@@ -2169,6 +2241,7 @@ export const messages = {
         close: "Close Session",
         openSessions: "Open Sessions",
         history: "Session History",
+        lifecycle: "Session Lifecycle",
       },
       actions: {
         open: "Open Session",
@@ -2177,6 +2250,7 @@ export const messages = {
         loading: "Loading...",
         saving: "Saving...",
         useForClose: "Use For Close",
+        inspectLifecycle: "Lifecycle",
       },
       form: {
         openingAmountOptional: "Opening amount (optional, defaults to 0)",
@@ -2201,6 +2275,22 @@ export const messages = {
         approvedBy: "Approved By",
         approvedAt: "Approved At",
         actions: "Actions",
+      },
+      values: {
+        statusOpen: "Open",
+        statusClosed: "Closed",
+      },
+      lifecycle: {
+        snapshotTitle: "Lifecycle Snapshot",
+        selectedSummary: "Selected session #{{id}} | Register: {{registerCode}} | Status: {{status}}",
+        nextTransitions: "Next allowed transitions: {{actions}}",
+        noTransitions: "No further lifecycle transitions are defined from this status.",
+        noSelection: "Select a session to inspect lifecycle details.",
+        timelineTitle: "Session Lifecycle Timeline",
+        timelineEmpty: "No lifecycle history available for this session yet.",
+        actionLabels: {
+          close: "Close Session",
+        },
       },
       requiredWarning: {
         title: "Session mode REQUIRED but no open session",
@@ -2274,6 +2364,7 @@ export const messages = {
         filters: "Filters",
         create: "Create Cash Transaction",
         action: "Selected Transaction Action",
+        lifecycle: "Transaction Lifecycle",
         list: "Cash Transaction List",
       },
       placeholders: {
@@ -2338,10 +2429,33 @@ export const messages = {
         applyCari: "Apply Cari",
         submitAction: "Apply Action",
         cancelAction: "Dismiss",
+        inspectLifecycle: "Lifecycle",
         saving: "Saving...",
       },
       selectedTransactionSummary:
         "Selected transaction #{{id}} | No: {{txnNo}} | Status: {{status}}",
+      lifecycle: {
+        snapshotTitle: "Lifecycle Snapshot",
+        nextTransitions: "Next allowed transitions: {{actions}}",
+        noTransitions: "No further lifecycle transitions are defined from this status.",
+        timelineTitle: "Transaction Lifecycle Timeline",
+        timelineEmpty: "No lifecycle history available for this transaction yet.",
+        actionLabels: {
+          submit: "Submit",
+          approve: "Approve",
+          post: "Post",
+          cancel: "Cancel",
+          reverse: "Reverse",
+        },
+        events: {
+          draft: "Draft created.",
+          submitted: "Submitted for approval.",
+          approved: "Approved for posting.",
+          posted: "Posted to ledger.",
+          cancelled: "Transaction cancelled.",
+          reversed: "Reversal completed.",
+        },
+      },
       table: {
         id: "ID",
         txnNo: "Transaction No",
