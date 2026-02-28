@@ -20,4 +20,4 @@ and explicit explanatory, which options for what which one to choose which one n
 what happens etc. 
 
 
-let's move to the next step, do it after fully reading analyzing the file of 05-IMPROVEMENTS.md
+let's move to the next step, do it after fully reading analyzing the file of 06-CANONICAL-IMPLEMENTATION-PLAN and marke what is completed what is next after each steps been done. in following style.After each merged PR, update this tracker line from `[ ]` to `[x]` with a short `(implemented)` note.
