@@ -24,10 +24,12 @@ import { listExceptionWorkbench } from "../../api/exceptionsWorkbench.js";
 import { listCariAudit } from "../../api/cariAudit.js";
 import Combobox from "../../components/Combobox.jsx";
 import StatusTimeline from "../../components/StatusTimeline.jsx";
+import TablePreferencesPanel from "../../components/TablePreferencesPanel.jsx";
 import { Link, useSearchParams } from "react-router-dom";
 import { useAuth } from "../../auth/useAuth.js";
 import { useWorkingContextDefaults } from "../../context/useWorkingContextDefaults.js";
 import { usePersistedFilters } from "../../hooks/usePersistedFilters.js";
+import { usePersistedTablePrefs } from "../../hooks/usePersistedTablePrefs.js";
 import {
   buildLifecycleTimelineSteps,
   getLifecycleAllowedActions,
@@ -75,6 +77,9 @@ const DOCUMENT_FILTER_CONTEXT_MAPPINGS = [
 
 const DOCUMENT_CREATE_CONTEXT_MAPPINGS = [{ stateKey: "legalEntityId" }];
 const DOCUMENT_FILTERS_STORAGE_SCOPE = "cari-documents.list";
+const DOCUMENT_TABLE_PREFS_STORAGE_SCOPE = "cari-documents.list.table";
+const DOCUMENT_TABLE_DEFAULT_ROWS_PER_PAGE = 50;
+const DOCUMENT_TABLE_ROWS_PER_PAGE_OPTIONS = [25, 50, 100, 200];
 const DOCUMENT_EXPORT_COLUMNS = [
   { header: "ID", value: (row) => row?.id },
   { header: "Document No", value: (row) => firstDefinedRowValue(row, "documentNo", "document_no") },
@@ -383,6 +388,126 @@ export default function CariDocumentsPage() {
   const [evidenceUploading, setEvidenceUploading] = useState(false);
   const [evidenceDeletingId, setEvidenceDeletingId] = useState(null);
   const [evidenceDownloadingId, setEvidenceDownloadingId] = useState(null);
+  const [documentListPage, setDocumentListPage] = useState(1);
+
+  const documentTableColumns = useMemo(
+    () => [
+      {
+        id: "id",
+        label: "ID",
+        headerClassName: "px-3 py-2",
+        cellClassName: "px-3 py-2 font-mono text-xs",
+        render: (row) => row?.id || "-",
+      },
+      {
+        id: "documentNo",
+        label: "Document No",
+        headerClassName: "px-3 py-2",
+        cellClassName: "px-3 py-2",
+        render: (row) => row?.documentNo || "-",
+      },
+      {
+        id: "direction",
+        label: "Direction",
+        headerClassName: "px-3 py-2",
+        cellClassName: "px-3 py-2",
+        render: (row) => row?.direction || "-",
+      },
+      {
+        id: "documentType",
+        label: "Type",
+        headerClassName: "px-3 py-2",
+        cellClassName: "px-3 py-2",
+        render: (row) => row?.documentType || "-",
+      },
+      {
+        id: "status",
+        label: "Status",
+        headerClassName: "px-3 py-2",
+        cellClassName: "px-3 py-2",
+        render: (row) => row?.status || "-",
+      },
+      {
+        id: "documentDate",
+        label: "Document Date",
+        headerClassName: "px-3 py-2",
+        cellClassName: "px-3 py-2",
+        render: (row) => row?.documentDate || "-",
+      },
+      {
+        id: "amountTxn",
+        label: "Amount Txn",
+        headerClassName: "px-3 py-2",
+        cellClassName: "px-3 py-2",
+        render: (row) => formatAmount(row?.amountTxn),
+      },
+      {
+        id: "postedJournal",
+        label: "Posted Journal",
+        headerClassName: "px-3 py-2",
+        cellClassName: "px-3 py-2",
+        render: (row) => row?.postedJournalEntryId || "-",
+      },
+      {
+        id: "reversalOf",
+        label: "Reversal Of",
+        headerClassName: "px-3 py-2",
+        cellClassName: "px-3 py-2",
+        render: (row) => row?.reversalOfDocumentId || "-",
+      },
+      {
+        id: "action",
+        label: "Action",
+        headerClassName: "px-3 py-2 text-right",
+        cellClassName: "px-3 py-2 text-right",
+        render: (row) => (
+          <button
+            type="button"
+            className="rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-slate-700"
+            onClick={() => setSelectedDocumentId(row?.id)}
+          >
+            View / Actions
+          </button>
+        ),
+      },
+    ],
+    [setSelectedDocumentId]
+  );
+  const documentTableColumnIds = useMemo(
+    () => documentTableColumns.map((column) => column.id),
+    [documentTableColumns]
+  );
+  const [documentTablePrefs, setDocumentTablePrefs, resetDocumentTablePrefs] =
+    usePersistedTablePrefs(
+      DOCUMENT_TABLE_PREFS_STORAGE_SCOPE,
+      {
+        rowsPerPage: DOCUMENT_TABLE_DEFAULT_ROWS_PER_PAGE,
+        stickyHeader: false,
+        visibleColumnIds: documentTableColumnIds,
+      },
+      documentTableColumnIds
+    );
+  const documentVisibleColumns = useMemo(() => {
+    const visibleIds = new Set(documentTablePrefs.visibleColumnIds || []);
+    return documentTableColumns.filter((column) => visibleIds.has(column.id));
+  }, [documentTableColumns, documentTablePrefs.visibleColumnIds]);
+  const documentRowsPerPage = useMemo(
+    () =>
+      toPositiveInt(documentTablePrefs.rowsPerPage) ||
+      DOCUMENT_TABLE_DEFAULT_ROWS_PER_PAGE,
+    [documentTablePrefs.rowsPerPage]
+  );
+  const documentListTotalPages = useMemo(() => {
+    if (!rows.length) {
+      return 1;
+    }
+    return Math.max(1, Math.ceil(rows.length / documentRowsPerPage));
+  }, [documentRowsPerPage, rows.length]);
+  const pagedDocumentRows = useMemo(() => {
+    const startIndex = Math.max(0, (documentListPage - 1) * documentRowsPerPage);
+    return rows.slice(startIndex, startIndex + documentRowsPerPage);
+  }, [documentListPage, documentRowsPerPage, rows]);
+  const documentVisibleColumnCount = Math.max(1, documentVisibleColumns.length);
 
   useWorkingContextDefaults(setFilters, DOCUMENT_FILTER_CONTEXT_MAPPINGS, [
     filters.legalEntityId,
@@ -909,6 +1034,13 @@ export default function CariDocumentsPage() {
     };
   }, [canRead, selectedDocumentNumericId]);
 
+  useEffect(() => {
+    if (documentListPage <= documentListTotalPages) {
+      return;
+    }
+    setDocumentListPage(documentListTotalPages);
+  }, [documentListPage, documentListTotalPages]);
+
   async function refreshEvidenceRows(documentId) {
     const response = await listCariDocumentEvidence(documentId);
     setEvidenceRows(Array.isArray(response?.rows) ? response.rows : []);
@@ -1260,6 +1392,63 @@ export default function CariDocumentsPage() {
     }
   }
 
+  function handleDocumentTableRowsPerPageChange(value) {
+    const nextRowsPerPage = toPositiveInt(value);
+    if (!nextRowsPerPage) {
+      return;
+    }
+    setDocumentTablePrefs((previous) => ({
+      ...previous,
+      rowsPerPage: nextRowsPerPage,
+    }));
+    setDocumentListPage(1);
+  }
+
+  function handleDocumentTableStickyHeaderChange(nextValue) {
+    setDocumentTablePrefs((previous) => ({
+      ...previous,
+      stickyHeader: Boolean(nextValue),
+    }));
+  }
+
+  function handleDocumentTableToggleColumn(columnId) {
+    const normalizedId = String(columnId || "").trim();
+    if (!normalizedId) {
+      return;
+    }
+    setDocumentTablePrefs((previous) => {
+      const currentVisibleIds = Array.isArray(previous?.visibleColumnIds)
+        ? previous.visibleColumnIds
+        : [];
+      const hasColumn = currentVisibleIds.includes(normalizedId);
+      if (hasColumn && currentVisibleIds.length <= 1) {
+        return previous;
+      }
+      return {
+        ...previous,
+        visibleColumnIds: hasColumn
+          ? currentVisibleIds.filter((id) => id !== normalizedId)
+          : [...currentVisibleIds, normalizedId],
+      };
+    });
+  }
+
+  function handleDocumentTableSelectAllColumns() {
+    setDocumentTablePrefs((previous) => ({
+      ...previous,
+      visibleColumnIds: documentTableColumnIds,
+    }));
+  }
+
+  function handleDocumentTableResetPrefs() {
+    resetDocumentTablePrefs({
+      rowsPerPage: DOCUMENT_TABLE_DEFAULT_ROWS_PER_PAGE,
+      stickyHeader: false,
+      visibleColumnIds: documentTableColumnIds,
+    });
+    setDocumentListPage(1);
+  }
+
   if (!canRead) {
     return (
       <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
@@ -1406,24 +1595,94 @@ export default function CariDocumentsPage() {
 
       <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
         <h2 className="text-lg font-semibold text-slate-900">Document List</h2>
-        <p className="mt-1 text-sm text-slate-600">Total rows: {totalRows}</p>
-        <div className="mt-4 overflow-x-auto rounded-lg border border-slate-200">
+        <p className="mt-1 text-sm text-slate-600">
+          Total rows: {totalRows} | Showing {pagedDocumentRows.length} of {rows.length} on page{" "}
+          {documentListPage}/{documentListTotalPages}
+        </p>
+        <TablePreferencesPanel
+          className="mt-3"
+          title="Document table preferences"
+          rowsPerPage={documentRowsPerPage}
+          rowsPerPageOptions={DOCUMENT_TABLE_ROWS_PER_PAGE_OPTIONS}
+          onRowsPerPageChange={handleDocumentTableRowsPerPageChange}
+          stickyHeader={documentTablePrefs.stickyHeader}
+          onStickyHeaderChange={handleDocumentTableStickyHeaderChange}
+          columns={documentTableColumns.map((column) => ({
+            id: column.id,
+            label: column.label,
+          }))}
+          visibleColumnIds={documentTablePrefs.visibleColumnIds}
+          onToggleColumn={handleDocumentTableToggleColumn}
+          onSelectAllColumns={handleDocumentTableSelectAllColumns}
+          onReset={handleDocumentTableResetPrefs}
+        />
+        <div className="mt-4 max-h-[28rem] overflow-auto rounded-lg border border-slate-200">
           <table className="min-w-full text-sm">
-            <thead className="bg-slate-50 text-left text-slate-600">
+            <thead
+              className={`bg-slate-50 text-left text-slate-600 ${
+                documentTablePrefs.stickyHeader ? "sticky top-0 z-10" : ""
+              }`}
+            >
               <tr>
-                <th className="px-3 py-2">ID</th><th className="px-3 py-2">Document No</th><th className="px-3 py-2">Direction</th><th className="px-3 py-2">Type</th><th className="px-3 py-2">Status</th><th className="px-3 py-2">Document Date</th><th className="px-3 py-2">Amount Txn</th><th className="px-3 py-2">Posted Journal</th><th className="px-3 py-2">Reversal Of</th><th className="px-3 py-2 text-right">Action</th>
+                {documentVisibleColumns.map((column) => (
+                  <th
+                    key={`document-list-header-${column.id}`}
+                    className={column.headerClassName || "px-3 py-2"}
+                  >
+                    {column.label}
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
-              {rows.map((row) => (
-                <tr key={`doc-row-${row.id}`} className={`border-t border-slate-100 ${Number(row.id) === Number(selectedDocumentId) ? "bg-cyan-50" : "bg-white"}`}>
-                  <td className="px-3 py-2 font-mono text-xs">{row.id}</td><td className="px-3 py-2">{row.documentNo || "-"}</td><td className="px-3 py-2">{row.direction}</td><td className="px-3 py-2">{row.documentType}</td><td className="px-3 py-2">{row.status}</td><td className="px-3 py-2">{row.documentDate}</td><td className="px-3 py-2">{formatAmount(row.amountTxn)}</td><td className="px-3 py-2">{row.postedJournalEntryId || "-"}</td><td className="px-3 py-2">{row.reversalOfDocumentId || "-"}</td>
-                  <td className="px-3 py-2 text-right"><button type="button" className="rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-slate-700" onClick={() => setSelectedDocumentId(row.id)}>View / Actions</button></td>
+              {pagedDocumentRows.map((row) => (
+                <tr
+                  key={`doc-row-${row.id}`}
+                  className={`border-t border-slate-100 ${
+                    Number(row.id) === Number(selectedDocumentId) ? "bg-cyan-50" : "bg-white"
+                  }`}
+                >
+                  {documentVisibleColumns.map((column) => (
+                    <td
+                      key={`document-list-cell-${row.id}-${column.id}`}
+                      className={column.cellClassName || "px-3 py-2"}
+                    >
+                      {column.render(row)}
+                    </td>
+                  ))}
                 </tr>
               ))}
-              {rows.length === 0 ? <tr><td className="px-3 py-4 text-slate-500" colSpan={10}>{listLoading ? "Loading documents..." : "No documents found for current filters."}</td></tr> : null}
+              {rows.length === 0 ? (
+                <tr>
+                  <td className="px-3 py-4 text-slate-500" colSpan={documentVisibleColumnCount}>
+                    {listLoading ? "Loading documents..." : "No documents found for current filters."}
+                  </td>
+                </tr>
+              ) : null}
             </tbody>
           </table>
+        </div>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 disabled:opacity-60"
+            onClick={() => setDocumentListPage((current) => Math.max(1, current - 1))}
+            disabled={documentListPage <= 1}
+          >
+            Previous
+          </button>
+          <button
+            type="button"
+            className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 disabled:opacity-60"
+            onClick={() =>
+              setDocumentListPage((current) =>
+                Math.min(documentListTotalPages, current + 1)
+              )
+            }
+            disabled={documentListPage >= documentListTotalPages}
+          >
+            Next
+          </button>
         </div>
       </section>
 

@@ -78,6 +78,7 @@
     "test:ux:prux21": "node scripts/test-ux-prux21-evidence-uploader-ui.js",
     "test:ux:prux22": "node scripts/test-ux-prux22-evidence-policy-checks.js",
     "test:ux:prux23": "node scripts/test-ux-prux23-shared-csv-export-helper.js",
+    "test:ux:prux24": "node scripts/test-ux-prux24-table-prefs-and-sticky-columns.js",
     "test:ux:evidence-compression": "node scripts/test-ux-evidence-compression-storage.js",
     "test:ux:rsdep01": "node scripts/test-ux-rsdep01-payment-term-write-api.js",
     "test:e2e:bank-payroll": "node scripts/test-e2e-bank-payroll-release-gate.js",

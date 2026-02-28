@@ -46,7 +46,7 @@ Tag legend: `(hot: yes)` means likely touches conflict-prone files (`AppLayout.j
 - [x] PR-UX22 Evidence-required policy checks for risky actions (implemented: env-driven evidence policy enforcement on CARI document post/reverse; risky mode requires evidence for reverse, FX-override post, and optional high-amount post threshold)
 
 - [x] PR-UX23 Shared CSV export helper + list page export actions (implemented: new shared `frontend/src/utils/csvExport.js` + list export actions on Cari Documents and Cash Transactions pages)
-- [ ] PR-UX24 Column chooser + sticky headers + per-page table prefs (not started)
+- [x] PR-UX24 Column chooser + sticky headers + per-page table prefs (implemented: shared persisted table prefs hook + shared table prefs panel + column chooser/sticky header/rows-per-page controls applied to Cari Documents and Cash Transactions list tables)
 - [ ] PR-UX25 Saved Views (server-side, per-user) (not started)
 
 - [ ] PR-UX26 Smarter defaults in Cari forms (not started)
@@ -137,11 +137,13 @@ Intentional not-yet-implemented placeholders (Stock, Fixed Assets, generic Repor
   smoke: `backend/scripts/test-ux-prux22-evidence-policy-checks.js`
 - [x] PR-UX23 acceptance: Cari Documents and Cash Transactions list views expose CSV export actions that use a shared CSV helper for consistent column serialization and browser download behavior
   smoke: `backend/scripts/test-ux-prux23-shared-csv-export-helper.js`
+- [x] PR-UX24 acceptance: Cari Documents and Cash Transactions list tables expose user-configurable column chooser, sticky header toggle, and persisted rows-per-page preferences via shared table preference hook/panel primitives
+  smoke: `backend/scripts/test-ux-prux24-table-prefs-and-sticky-columns.js`
 - [x] PR-CORE05 acceptance: standardized user-facing error handling + copyable requestId/details
   smoke: `backend/scripts/test-ux-prcore05-error-envelope.js`
 - [x] PR-CORE01 acceptance: key list endpoints return consistent `rows + total + limit + offset` with `pagination` metadata
   smoke: `backend/scripts/test-ux-prcore01-pagination-contracts.js` (to add)
 
 ## Immediate Next Step
-- Proceed with `PR-UX24` (Column chooser + sticky headers + per-page table prefs).
+- Proceed with `PR-UX25` (Saved Views (server-side, per-user)).
 - After each merged PR, update this tracker line from `[ ]` to `[x]` with a short `(implemented)` note.

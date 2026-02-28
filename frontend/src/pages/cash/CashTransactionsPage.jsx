@@ -17,8 +17,10 @@ import { getCariOpenItemsReport } from "../../api/cariReports.js";
 import { listAccounts } from "../../api/glAdmin.js";
 import { useAuth } from "../../auth/useAuth.js";
 import StatusTimeline from "../../components/StatusTimeline.jsx";
+import TablePreferencesPanel from "../../components/TablePreferencesPanel.jsx";
 import { useWorkingContextDefaults } from "../../context/useWorkingContextDefaults.js";
 import { usePersistedFilters } from "../../hooks/usePersistedFilters.js";
+import { usePersistedTablePrefs } from "../../hooks/usePersistedTablePrefs.js";
 import { useToastMessage } from "../../hooks/useToastMessage.js";
 import { useI18n } from "../../i18n/useI18n.js";
 import {
@@ -71,6 +73,9 @@ const CASH_TRANSACTION_FILTER_CONTEXT_MAPPINGS = [
   { stateKey: "bookDateTo", contextKey: "dateTo" },
 ];
 const CASH_TRANSACTION_FILTERS_STORAGE_SCOPE = "cash-transactions.filters";
+const CASH_TRANSACTION_TABLE_PREFS_STORAGE_SCOPE = "cash-transactions.list.table";
+const CASH_TRANSACTION_TABLE_DEFAULT_ROWS_PER_PAGE = 50;
+const CASH_TRANSACTION_TABLE_ROWS_PER_PAGE_OPTIONS = [25, 50, 100, 200];
 const CASH_TRANSACTION_EXPORT_COLUMNS = [
   { header: "ID", value: (row) => row?.id },
   { header: "Transaction No", value: (row) => firstDefinedRowValue(row, "txn_no", "txnNo") },
@@ -600,6 +605,7 @@ export default function CashTransactionsPage() {
   const [applyOpenItems, setApplyOpenItems] = useState([]);
   const [applyOpenItemsLoading, setApplyOpenItemsLoading] = useState(false);
   const [applyOpenItemsError, setApplyOpenItemsError] = useState("");
+  const [transactionListPage, setTransactionListPage] = useState(1);
 
   useWorkingContextDefaults(setFilters, CASH_TRANSACTION_FILTER_CONTEXT_MAPPINGS, [
     filters.bookDateFrom,
@@ -852,6 +858,69 @@ export default function CashTransactionsPage() {
     () => [...rows].sort((a, b) => Number(b?.id || 0) - Number(a?.id || 0)),
     [rows]
   );
+  const transactionTableColumns = useMemo(
+    () => [
+      { id: "id", label: t("cashTransactions.table.id") },
+      { id: "txnNo", label: t("cashTransactions.table.txnNo") },
+      { id: "txnType", label: t("cashTransactions.table.txnType") },
+      { id: "status", label: t("cashTransactions.table.status") },
+      { id: "register", label: t("cashTransactions.table.register") },
+      { id: "session", label: t("cashTransactions.table.session") },
+      { id: "bookDate", label: t("cashTransactions.table.bookDate") },
+      { id: "amount", label: t("cashTransactions.table.amount") },
+      { id: "currency", label: t("cashTransactions.table.currency") },
+      { id: "counterparty", label: t("cashTransactions.table.counterparty") },
+      { id: "counterAccount", label: t("cashTransactions.table.counterAccount") },
+      { id: "counterRegister", label: t("cashTransactions.table.counterRegister") },
+      { id: "links", label: t("cashTransactions.table.links") },
+      { id: "postedJournal", label: t("cashTransactions.table.postedJournal") },
+      { id: "overrideReason", label: t("cashTransactions.table.overrideReason") },
+      { id: "createdAt", label: t("cashTransactions.table.createdAt") },
+      { id: "actions", label: t("cashTransactions.table.actions") },
+    ],
+    [t]
+  );
+  const transactionTableColumnIds = useMemo(
+    () => transactionTableColumns.map((column) => column.id),
+    [transactionTableColumns]
+  );
+  const [transactionTablePrefs, setTransactionTablePrefs, resetTransactionTablePrefs] =
+    usePersistedTablePrefs(
+      CASH_TRANSACTION_TABLE_PREFS_STORAGE_SCOPE,
+      {
+        rowsPerPage: CASH_TRANSACTION_TABLE_DEFAULT_ROWS_PER_PAGE,
+        stickyHeader: false,
+        visibleColumnIds: transactionTableColumnIds,
+      },
+      transactionTableColumnIds
+    );
+  const transactionVisibleColumnSet = useMemo(
+    () => new Set(transactionTablePrefs.visibleColumnIds || []),
+    [transactionTablePrefs.visibleColumnIds]
+  );
+  const visibleTransactionColumnCount = useMemo(() => {
+    const count = transactionTableColumns.reduce(
+      (total, column) => total + (transactionVisibleColumnSet.has(column.id) ? 1 : 0),
+      0
+    );
+    return Math.max(1, count);
+  }, [transactionTableColumns, transactionVisibleColumnSet]);
+  const transactionRowsPerPage = useMemo(
+    () =>
+      toPositiveInt(transactionTablePrefs.rowsPerPage) ||
+      CASH_TRANSACTION_TABLE_DEFAULT_ROWS_PER_PAGE,
+    [transactionTablePrefs.rowsPerPage]
+  );
+  const transactionListTotalPages = useMemo(() => {
+    if (!transactionRows.length) {
+      return 1;
+    }
+    return Math.max(1, Math.ceil(transactionRows.length / transactionRowsPerPage));
+  }, [transactionRows.length, transactionRowsPerPage]);
+  const pagedTransactionRows = useMemo(() => {
+    const startIndex = Math.max(0, (transactionListPage - 1) * transactionRowsPerPage);
+    return transactionRows.slice(startIndex, startIndex + transactionRowsPerPage);
+  }, [transactionListPage, transactionRows, transactionRowsPerPage]);
 
   function handleExportTransactionsCsv() {
     setError("");
@@ -875,6 +944,63 @@ export default function CashTransactionsPage() {
         count: transactionRows.length,
       })
     );
+  }
+
+  function handleTransactionTableRowsPerPageChange(value) {
+    const nextRowsPerPage = toPositiveInt(value);
+    if (!nextRowsPerPage) {
+      return;
+    }
+    setTransactionTablePrefs((previous) => ({
+      ...previous,
+      rowsPerPage: nextRowsPerPage,
+    }));
+    setTransactionListPage(1);
+  }
+
+  function handleTransactionTableStickyHeaderChange(nextValue) {
+    setTransactionTablePrefs((previous) => ({
+      ...previous,
+      stickyHeader: Boolean(nextValue),
+    }));
+  }
+
+  function handleTransactionTableToggleColumn(columnId) {
+    const normalizedId = String(columnId || "").trim();
+    if (!normalizedId) {
+      return;
+    }
+    setTransactionTablePrefs((previous) => {
+      const currentVisibleIds = Array.isArray(previous?.visibleColumnIds)
+        ? previous.visibleColumnIds
+        : [];
+      const hasColumn = currentVisibleIds.includes(normalizedId);
+      if (hasColumn && currentVisibleIds.length <= 1) {
+        return previous;
+      }
+      return {
+        ...previous,
+        visibleColumnIds: hasColumn
+          ? currentVisibleIds.filter((id) => id !== normalizedId)
+          : [...currentVisibleIds, normalizedId],
+      };
+    });
+  }
+
+  function handleTransactionTableSelectAllColumns() {
+    setTransactionTablePrefs((previous) => ({
+      ...previous,
+      visibleColumnIds: transactionTableColumnIds,
+    }));
+  }
+
+  function handleTransactionTableResetPrefs() {
+    resetTransactionTablePrefs({
+      rowsPerPage: CASH_TRANSACTION_TABLE_DEFAULT_ROWS_PER_PAGE,
+      stickyHeader: false,
+      visibleColumnIds: transactionTableColumnIds,
+    });
+    setTransactionListPage(1);
   }
 
   function toListQuery(nextFilters) {
@@ -984,6 +1110,13 @@ export default function CashTransactionsPage() {
       setSelectedLifecycleTransactionId(null);
     }
   }, [rows, selectedLifecycleTransactionId]);
+
+  useEffect(() => {
+    if (transactionListPage <= transactionListTotalPages) {
+      return;
+    }
+    setTransactionListPage(transactionListTotalPages);
+  }, [transactionListPage, transactionListTotalPages]);
 
   useEffect(() => {
     if (!canCreate) {
@@ -2826,32 +2959,95 @@ export default function CashTransactionsPage() {
         <h2 className="mb-3 text-sm font-semibold text-slate-700">
           {t("cashTransactions.sections.list")}
         </h2>
-
-        <div className="overflow-x-auto rounded-lg border border-slate-200">
+        <p className="mb-3 text-xs text-slate-600">
+          {t(
+            "cashTransactions.listSummary",
+            "Showing {{shown}} of {{total}} rows on page {{page}}/{{pages}}.",
+            {
+              shown: pagedTransactionRows.length,
+              total: transactionRows.length,
+              page: transactionListPage,
+              pages: transactionListTotalPages,
+            }
+          )}
+        </p>
+        <TablePreferencesPanel
+          title={t("cashTransactions.tablePreferences.title", "Transaction table preferences")}
+          rowsPerPage={transactionRowsPerPage}
+          rowsPerPageOptions={CASH_TRANSACTION_TABLE_ROWS_PER_PAGE_OPTIONS}
+          onRowsPerPageChange={handleTransactionTableRowsPerPageChange}
+          stickyHeader={transactionTablePrefs.stickyHeader}
+          onStickyHeaderChange={handleTransactionTableStickyHeaderChange}
+          columns={transactionTableColumns}
+          visibleColumnIds={transactionTablePrefs.visibleColumnIds}
+          onToggleColumn={handleTransactionTableToggleColumn}
+          onSelectAllColumns={handleTransactionTableSelectAllColumns}
+          onReset={handleTransactionTableResetPrefs}
+          className="mb-3"
+        />
+        <div className="max-h-[30rem] overflow-auto rounded-lg border border-slate-200">
           <table className="min-w-full text-sm">
-            <thead className="bg-slate-50 text-left text-slate-600">
+            <thead
+              className={`bg-slate-50 text-left text-slate-600 ${
+                transactionTablePrefs.stickyHeader ? "sticky top-0 z-10" : ""
+              }`}
+            >
               <tr>
-                <th className="px-3 py-2">{t("cashTransactions.table.id")}</th>
-                <th className="px-3 py-2">{t("cashTransactions.table.txnNo")}</th>
-                <th className="px-3 py-2">{t("cashTransactions.table.txnType")}</th>
-                <th className="px-3 py-2">{t("cashTransactions.table.status")}</th>
-                <th className="px-3 py-2">{t("cashTransactions.table.register")}</th>
-                <th className="px-3 py-2">{t("cashTransactions.table.session")}</th>
-                <th className="px-3 py-2">{t("cashTransactions.table.bookDate")}</th>
-                <th className="px-3 py-2">{t("cashTransactions.table.amount")}</th>
-                <th className="px-3 py-2">{t("cashTransactions.table.currency")}</th>
-                <th className="px-3 py-2">{t("cashTransactions.table.counterparty")}</th>
-                <th className="px-3 py-2">{t("cashTransactions.table.counterAccount")}</th>
-                <th className="px-3 py-2">{t("cashTransactions.table.counterRegister")}</th>
-                <th className="px-3 py-2">{t("cashTransactions.table.links")}</th>
-                <th className="px-3 py-2">{t("cashTransactions.table.postedJournal")}</th>
-                <th className="px-3 py-2">{t("cashTransactions.table.overrideReason")}</th>
-                <th className="px-3 py-2">{t("cashTransactions.table.createdAt")}</th>
-                <th className="px-3 py-2">{t("cashTransactions.table.actions")}</th>
+                {transactionVisibleColumnSet.has("id") ? (
+                  <th className="px-3 py-2">{t("cashTransactions.table.id")}</th>
+                ) : null}
+                {transactionVisibleColumnSet.has("txnNo") ? (
+                  <th className="px-3 py-2">{t("cashTransactions.table.txnNo")}</th>
+                ) : null}
+                {transactionVisibleColumnSet.has("txnType") ? (
+                  <th className="px-3 py-2">{t("cashTransactions.table.txnType")}</th>
+                ) : null}
+                {transactionVisibleColumnSet.has("status") ? (
+                  <th className="px-3 py-2">{t("cashTransactions.table.status")}</th>
+                ) : null}
+                {transactionVisibleColumnSet.has("register") ? (
+                  <th className="px-3 py-2">{t("cashTransactions.table.register")}</th>
+                ) : null}
+                {transactionVisibleColumnSet.has("session") ? (
+                  <th className="px-3 py-2">{t("cashTransactions.table.session")}</th>
+                ) : null}
+                {transactionVisibleColumnSet.has("bookDate") ? (
+                  <th className="px-3 py-2">{t("cashTransactions.table.bookDate")}</th>
+                ) : null}
+                {transactionVisibleColumnSet.has("amount") ? (
+                  <th className="px-3 py-2">{t("cashTransactions.table.amount")}</th>
+                ) : null}
+                {transactionVisibleColumnSet.has("currency") ? (
+                  <th className="px-3 py-2">{t("cashTransactions.table.currency")}</th>
+                ) : null}
+                {transactionVisibleColumnSet.has("counterparty") ? (
+                  <th className="px-3 py-2">{t("cashTransactions.table.counterparty")}</th>
+                ) : null}
+                {transactionVisibleColumnSet.has("counterAccount") ? (
+                  <th className="px-3 py-2">{t("cashTransactions.table.counterAccount")}</th>
+                ) : null}
+                {transactionVisibleColumnSet.has("counterRegister") ? (
+                  <th className="px-3 py-2">{t("cashTransactions.table.counterRegister")}</th>
+                ) : null}
+                {transactionVisibleColumnSet.has("links") ? (
+                  <th className="px-3 py-2">{t("cashTransactions.table.links")}</th>
+                ) : null}
+                {transactionVisibleColumnSet.has("postedJournal") ? (
+                  <th className="px-3 py-2">{t("cashTransactions.table.postedJournal")}</th>
+                ) : null}
+                {transactionVisibleColumnSet.has("overrideReason") ? (
+                  <th className="px-3 py-2">{t("cashTransactions.table.overrideReason")}</th>
+                ) : null}
+                {transactionVisibleColumnSet.has("createdAt") ? (
+                  <th className="px-3 py-2">{t("cashTransactions.table.createdAt")}</th>
+                ) : null}
+                {transactionVisibleColumnSet.has("actions") ? (
+                  <th className="px-3 py-2">{t("cashTransactions.table.actions")}</th>
+                ) : null}
               </tr>
             </thead>
             <tbody>
-              {transactionRows.map((row) => {
+              {pagedTransactionRows.map((row) => {
                 const rowStatus = toUpper(row.status);
                 const rowStatusLabel = localizeTxnStatus(row.status);
                 const rowIsPosted = rowStatus === "POSTED";
@@ -2864,182 +3060,251 @@ export default function CashTransactionsPage() {
                       rowIsLifecycleSelected ? "bg-cyan-50" : rowIsPosted ? "bg-slate-50/60" : ""
                     }`}
                   >
-                    <td className="px-3 py-2">{row.id}</td>
-                    <td className="px-3 py-2">{row.txn_no || "-"}</td>
-                    <td className="px-3 py-2">{row.txn_type || "-"}</td>
-                    <td className="px-3 py-2">
-                      <span
-                        className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${statusClassName(
-                          row.status
-                        )}`}
-                      >
-                        {rowStatusLabel}
-                      </span>
-                    </td>
-                    <td className="px-3 py-2">
-                      {(row.cash_register_code || row.cash_register_id) + " - " +
-                        (row.cash_register_name || "-")}
-                    </td>
-                    <td className="px-3 py-2">{row.cash_session_id || "-"}</td>
-                    <td className="px-3 py-2">{row.book_date || "-"}</td>
-                    <td className="px-3 py-2">{formatAmount(row.amount)}</td>
-                    <td className="px-3 py-2">{row.currency_code || "-"}</td>
-                    <td className="px-3 py-2">
-                      {toPositiveInt(row.counterparty_id)
-                        ? `${row.counterparty_type || "OTHER"} #${row.counterparty_id}`
-                        : "-"}
-                    </td>
-                    <td className="px-3 py-2">
-                      {row.counter_account_id
-                        ? `${row.counter_account_code || row.counter_account_id} - ${
-                            row.counter_account_name || "-"
-                          }`
-                        : "-"}
-                    </td>
-                    <td className="px-3 py-2">
-                      {row.counter_cash_register_id
-                        ? `${row.counter_cash_register_code || row.counter_cash_register_id} - ${
-                            row.counter_cash_register_name || "-"
-                          }`
-                        : "-"}
-                    </td>
-                    <td className="px-3 py-2">
-                      <div className="flex flex-wrap gap-1">
-                        {toPositiveInt(row.cash_transit_transfer_id) ? (
-                          <span className="inline-flex rounded border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-xs font-semibold text-indigo-700">
-                            {t("cashTransactions.values.transitBadge", {
-                              transferId: row.cash_transit_transfer_id,
-                              status: localizeTransitStatus(row.cash_transit_status),
-                            })}
-                          </span>
-                        ) : null}
-                        {toPositiveInt(row.cash_transit_transfer_out_transaction_id) &&
-                        toPositiveInt(row.cash_transit_transfer_in_transaction_id) ? (
-                          <span className="inline-flex rounded border border-indigo-200 bg-white px-2 py-0.5 text-xs font-semibold text-indigo-700">
-                            {t("cashTransactions.values.transitPairBadge", {
-                              outTxnId: row.cash_transit_transfer_out_transaction_id,
-                              inTxnId: row.cash_transit_transfer_in_transaction_id,
-                            })}
-                          </span>
-                        ) : null}
-                        {toPositiveInt(row.linked_cari_settlement_batch_id || row.linkedCariSettlementBatchId) ? (
-                          <span className="inline-flex rounded border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700">
-                            {t("cashTransactions.values.settlementBadge", {
-                              settlementBatchId:
-                                row.linked_cari_settlement_batch_id || row.linkedCariSettlementBatchId,
-                            })}
-                          </span>
-                        ) : null}
-                        {toPositiveInt(row.linked_cari_unapplied_cash_id || row.linkedCariUnappliedCashId) ? (
-                          <span className="inline-flex rounded border border-cyan-200 bg-cyan-50 px-2 py-0.5 text-xs font-semibold text-cyan-700">
-                            {t("cashTransactions.values.unappliedBadge", {
-                              unappliedCashId:
-                                row.linked_cari_unapplied_cash_id || row.linkedCariUnappliedCashId,
-                            })}
-                          </span>
-                        ) : null}
-                        {!toPositiveInt(row.linked_cari_settlement_batch_id || row.linkedCariSettlementBatchId) &&
-                        !toPositiveInt(row.linked_cari_unapplied_cash_id || row.linkedCariUnappliedCashId) &&
-                        !toPositiveInt(row.cash_transit_transfer_id) ? (
-                          <span className="text-slate-400">-</span>
-                        ) : null}
-                      </div>
-                    </td>
-                    <td className="px-3 py-2">
-                      {row.posted_journal_entry_id || row.postedJournalEntryId || "-"}
-                    </td>
-                    <td className="px-3 py-2">
-                      {row.override_reason || row.overrideReason || "-"}
-                    </td>
-                    <td className="px-3 py-2">{formatDateTime(row.created_at)}</td>
-                    <td className="px-3 py-2">
-                      <div className="flex flex-wrap gap-1">
-                        {canPost && canPostRow(row) ? (
-                          <button
-                            type="button"
-                            onClick={() => openActionForm("post", row)}
-                            className="rounded-md border border-cyan-300 px-2 py-1 text-xs font-semibold text-cyan-700 hover:bg-cyan-50"
-                          >
-                            {t("cashTransactions.actions.preparePost")}
-                          </button>
-                        ) : null}
-                        {canCancel && canCancelRow(row) ? (
-                          <button
-                            type="button"
-                            onClick={() => openActionForm("cancel", row)}
-                            className="rounded-md border border-amber-300 px-2 py-1 text-xs font-semibold text-amber-700 hover:bg-amber-50"
-                          >
-                            {t("cashTransactions.actions.prepareCancel")}
-                          </button>
-                        ) : null}
-                        {canReverse && canReverseRow(row) ? (
-                          <button
-                            type="button"
-                            onClick={() => openActionForm("reverse", row)}
-                            className="rounded-md border border-violet-300 px-2 py-1 text-xs font-semibold text-violet-700 hover:bg-violet-50"
-                          >
-                            {t("cashTransactions.actions.prepareReverse")}
-                          </button>
-                        ) : null}
-                        {canReceiveTransitRow(row) ? (
-                          <button
-                            type="button"
-                            onClick={() => openActionForm("receiveTransit", row)}
-                            className="rounded-md border border-indigo-300 px-2 py-1 text-xs font-semibold text-indigo-700 hover:bg-indigo-50"
-                          >
-                            {t("cashTransactions.actions.receiveTransit")}
-                          </button>
-                        ) : null}
-                        {canApplyCari && canApplyCariRow(row) ? (
-                          <button
-                            type="button"
-                            onClick={() => openActionForm("applyCari", row)}
-                            className="rounded-md border border-emerald-300 px-2 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-50"
-                          >
-                            {t("cashTransactions.actions.applyCari")}
-                          </button>
-                        ) : null}
-                        <button
-                          type="button"
-                          onClick={() => setSelectedLifecycleTransactionId(String(row.id))}
-                          className="rounded-md border border-slate-300 px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                    {transactionVisibleColumnSet.has("id") ? (
+                      <td className="px-3 py-2">{row.id}</td>
+                    ) : null}
+                    {transactionVisibleColumnSet.has("txnNo") ? (
+                      <td className="px-3 py-2">{row.txn_no || "-"}</td>
+                    ) : null}
+                    {transactionVisibleColumnSet.has("txnType") ? (
+                      <td className="px-3 py-2">{row.txn_type || "-"}</td>
+                    ) : null}
+                    {transactionVisibleColumnSet.has("status") ? (
+                      <td className="px-3 py-2">
+                        <span
+                          className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${statusClassName(
+                            row.status
+                          )}`}
                         >
-                          {t("cashTransactions.actions.inspectLifecycle")}
-                        </button>
-                        {toPositiveInt(row.linked_cari_settlement_batch_id || row.linkedCariSettlementBatchId) ||
-                        toPositiveInt(row.linked_cari_unapplied_cash_id || row.linkedCariUnappliedCashId) ? (
-                          <span className="inline-flex rounded bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700">
-                            {t("cashTransactions.values.linked")}
-                          </span>
-                        ) : null}
-                        {!canPostRow(row) &&
-                        !canCancelRow(row) &&
-                        !canReverseRow(row) &&
-                        !canReceiveTransitRow(row) &&
-                        !(canApplyCari && canApplyCariRow(row)) ? (
-                          <span className="text-slate-400">{t("cashTransactions.values.readOnly")}</span>
-                        ) : null}
-                      </div>
-                    </td>
+                          {rowStatusLabel}
+                        </span>
+                      </td>
+                    ) : null}
+                    {transactionVisibleColumnSet.has("register") ? (
+                      <td className="px-3 py-2">
+                        {(row.cash_register_code || row.cash_register_id) + " - " +
+                          (row.cash_register_name || "-")}
+                      </td>
+                    ) : null}
+                    {transactionVisibleColumnSet.has("session") ? (
+                      <td className="px-3 py-2">{row.cash_session_id || "-"}</td>
+                    ) : null}
+                    {transactionVisibleColumnSet.has("bookDate") ? (
+                      <td className="px-3 py-2">{row.book_date || "-"}</td>
+                    ) : null}
+                    {transactionVisibleColumnSet.has("amount") ? (
+                      <td className="px-3 py-2">{formatAmount(row.amount)}</td>
+                    ) : null}
+                    {transactionVisibleColumnSet.has("currency") ? (
+                      <td className="px-3 py-2">{row.currency_code || "-"}</td>
+                    ) : null}
+                    {transactionVisibleColumnSet.has("counterparty") ? (
+                      <td className="px-3 py-2">
+                        {toPositiveInt(row.counterparty_id)
+                          ? `${row.counterparty_type || "OTHER"} #${row.counterparty_id}`
+                          : "-"}
+                      </td>
+                    ) : null}
+                    {transactionVisibleColumnSet.has("counterAccount") ? (
+                      <td className="px-3 py-2">
+                        {row.counter_account_id
+                          ? `${row.counter_account_code || row.counter_account_id} - ${
+                              row.counter_account_name || "-"
+                            }`
+                          : "-"}
+                      </td>
+                    ) : null}
+                    {transactionVisibleColumnSet.has("counterRegister") ? (
+                      <td className="px-3 py-2">
+                        {row.counter_cash_register_id
+                          ? `${row.counter_cash_register_code || row.counter_cash_register_id} - ${
+                              row.counter_cash_register_name || "-"
+                            }`
+                          : "-"}
+                      </td>
+                    ) : null}
+                    {transactionVisibleColumnSet.has("links") ? (
+                      <td className="px-3 py-2">
+                        <div className="flex flex-wrap gap-1">
+                          {toPositiveInt(row.cash_transit_transfer_id) ? (
+                            <span className="inline-flex rounded border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-xs font-semibold text-indigo-700">
+                              {t("cashTransactions.values.transitBadge", {
+                                transferId: row.cash_transit_transfer_id,
+                                status: localizeTransitStatus(row.cash_transit_status),
+                              })}
+                            </span>
+                          ) : null}
+                          {toPositiveInt(row.cash_transit_transfer_out_transaction_id) &&
+                          toPositiveInt(row.cash_transit_transfer_in_transaction_id) ? (
+                            <span className="inline-flex rounded border border-indigo-200 bg-white px-2 py-0.5 text-xs font-semibold text-indigo-700">
+                              {t("cashTransactions.values.transitPairBadge", {
+                                outTxnId: row.cash_transit_transfer_out_transaction_id,
+                                inTxnId: row.cash_transit_transfer_in_transaction_id,
+                              })}
+                            </span>
+                          ) : null}
+                          {toPositiveInt(
+                            row.linked_cari_settlement_batch_id || row.linkedCariSettlementBatchId
+                          ) ? (
+                            <span className="inline-flex rounded border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700">
+                              {t("cashTransactions.values.settlementBadge", {
+                                settlementBatchId:
+                                  row.linked_cari_settlement_batch_id ||
+                                  row.linkedCariSettlementBatchId,
+                              })}
+                            </span>
+                          ) : null}
+                          {toPositiveInt(
+                            row.linked_cari_unapplied_cash_id || row.linkedCariUnappliedCashId
+                          ) ? (
+                            <span className="inline-flex rounded border border-cyan-200 bg-cyan-50 px-2 py-0.5 text-xs font-semibold text-cyan-700">
+                              {t("cashTransactions.values.unappliedBadge", {
+                                unappliedCashId:
+                                  row.linked_cari_unapplied_cash_id || row.linkedCariUnappliedCashId,
+                              })}
+                            </span>
+                          ) : null}
+                          {!toPositiveInt(
+                            row.linked_cari_settlement_batch_id || row.linkedCariSettlementBatchId
+                          ) &&
+                          !toPositiveInt(
+                            row.linked_cari_unapplied_cash_id || row.linkedCariUnappliedCashId
+                          ) &&
+                          !toPositiveInt(row.cash_transit_transfer_id) ? (
+                            <span className="text-slate-400">-</span>
+                          ) : null}
+                        </div>
+                      </td>
+                    ) : null}
+                    {transactionVisibleColumnSet.has("postedJournal") ? (
+                      <td className="px-3 py-2">
+                        {row.posted_journal_entry_id || row.postedJournalEntryId || "-"}
+                      </td>
+                    ) : null}
+                    {transactionVisibleColumnSet.has("overrideReason") ? (
+                      <td className="px-3 py-2">
+                        {row.override_reason || row.overrideReason || "-"}
+                      </td>
+                    ) : null}
+                    {transactionVisibleColumnSet.has("createdAt") ? (
+                      <td className="px-3 py-2">{formatDateTime(row.created_at)}</td>
+                    ) : null}
+                    {transactionVisibleColumnSet.has("actions") ? (
+                      <td className="px-3 py-2">
+                        <div className="flex flex-wrap gap-1">
+                          {canPost && canPostRow(row) ? (
+                            <button
+                              type="button"
+                              onClick={() => openActionForm("post", row)}
+                              className="rounded-md border border-cyan-300 px-2 py-1 text-xs font-semibold text-cyan-700 hover:bg-cyan-50"
+                            >
+                              {t("cashTransactions.actions.preparePost")}
+                            </button>
+                          ) : null}
+                          {canCancel && canCancelRow(row) ? (
+                            <button
+                              type="button"
+                              onClick={() => openActionForm("cancel", row)}
+                              className="rounded-md border border-amber-300 px-2 py-1 text-xs font-semibold text-amber-700 hover:bg-amber-50"
+                            >
+                              {t("cashTransactions.actions.prepareCancel")}
+                            </button>
+                          ) : null}
+                          {canReverse && canReverseRow(row) ? (
+                            <button
+                              type="button"
+                              onClick={() => openActionForm("reverse", row)}
+                              className="rounded-md border border-violet-300 px-2 py-1 text-xs font-semibold text-violet-700 hover:bg-violet-50"
+                            >
+                              {t("cashTransactions.actions.prepareReverse")}
+                            </button>
+                          ) : null}
+                          {canReceiveTransitRow(row) ? (
+                            <button
+                              type="button"
+                              onClick={() => openActionForm("receiveTransit", row)}
+                              className="rounded-md border border-indigo-300 px-2 py-1 text-xs font-semibold text-indigo-700 hover:bg-indigo-50"
+                            >
+                              {t("cashTransactions.actions.receiveTransit")}
+                            </button>
+                          ) : null}
+                          {canApplyCari && canApplyCariRow(row) ? (
+                            <button
+                              type="button"
+                              onClick={() => openActionForm("applyCari", row)}
+                              className="rounded-md border border-emerald-300 px-2 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-50"
+                            >
+                              {t("cashTransactions.actions.applyCari")}
+                            </button>
+                          ) : null}
+                          <button
+                            type="button"
+                            onClick={() => setSelectedLifecycleTransactionId(String(row.id))}
+                            className="rounded-md border border-slate-300 px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                          >
+                            {t("cashTransactions.actions.inspectLifecycle")}
+                          </button>
+                          {toPositiveInt(
+                            row.linked_cari_settlement_batch_id || row.linkedCariSettlementBatchId
+                          ) ||
+                          toPositiveInt(
+                            row.linked_cari_unapplied_cash_id || row.linkedCariUnappliedCashId
+                          ) ? (
+                            <span className="inline-flex rounded bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700">
+                              {t("cashTransactions.values.linked")}
+                            </span>
+                          ) : null}
+                          {!canPostRow(row) &&
+                          !canCancelRow(row) &&
+                          !canReverseRow(row) &&
+                          !canReceiveTransitRow(row) &&
+                          !(canApplyCari && canApplyCariRow(row)) ? (
+                            <span className="text-slate-400">{t("cashTransactions.values.readOnly")}</span>
+                          ) : null}
+                        </div>
+                      </td>
+                    ) : null}
                   </tr>
                 );
               })}
               {loading ? (
                 <tr>
-                  <td colSpan={17} className="px-3 py-3 text-slate-500">
+                  <td colSpan={visibleTransactionColumnCount} className="px-3 py-3 text-slate-500">
                     {t("cashTransactions.loading")}
                   </td>
                 </tr>
               ) : null}
               {!loading && transactionRows.length === 0 ? (
                 <tr>
-                  <td colSpan={17} className="px-3 py-3 text-slate-500">
+                  <td colSpan={visibleTransactionColumnCount} className="px-3 py-3 text-slate-500">
                     {t("cashTransactions.empty")}
                   </td>
                 </tr>
               ) : null}
             </tbody>
           </table>
+        </div>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 disabled:opacity-60"
+            onClick={() => setTransactionListPage((current) => Math.max(1, current - 1))}
+            disabled={transactionListPage <= 1}
+          >
+            {t("cashTransactions.pagination.previous", "Previous")}
+          </button>
+          <button
+            type="button"
+            className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 disabled:opacity-60"
+            onClick={() =>
+              setTransactionListPage((current) =>
+                Math.min(transactionListTotalPages, current + 1)
+              )
+            }
+            disabled={transactionListPage >= transactionListTotalPages}
+          >
+            {t("cashTransactions.pagination.next", "Next")}
+          </button>
         </div>
       </section>
     </div>
