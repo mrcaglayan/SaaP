@@ -71,6 +71,7 @@ import migration080RowVersionOptimisticLocking from "./m080_row_version_optimist
 import migration081BankAccountsSubaccountHardening from "./m081_bank_accounts_subaccount_hardening.js";
 import migration082CloseConsolidationWorkflowApprovals from "./m082_close_consolidation_workflow_approvals.js";
 import migration083CountryTaxEngineFoundation from "./m083_country_tax_engine_foundation.js";
+import migration084ConsolidationCanonicalMappingFoundation from "./m084_consolidation_canonical_mapping_foundation.js";
 
 const migrations = [
   migration001GlobalMultiEntity,
@@ -146,6 +147,7 @@ const migrations = [
   migration081BankAccountsSubaccountHardening,
   migration082CloseConsolidationWorkflowApprovals,
   migration083CountryTaxEngineFoundation,
+  migration084ConsolidationCanonicalMappingFoundation,
 ];
 
 export default migrations;

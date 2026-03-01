@@ -7,6 +7,7 @@ import {
 import { badRequest, parsePositiveInt } from "../routes/_utils.js";
 import { assertRegisterOperationalConfig } from "./cash.register.service.js";
 import { upsertJournalSourceLinkTx } from "./journal.source-link.service.js";
+import { buildCariTaxAugmentation } from "./cari.tax.integration.service.js";
 import {
   findCashRegisterById,
   findCashSessionById,
@@ -1213,7 +1214,7 @@ async function insertPostedJournalWithLinesTx(tx, payload) {
           credit_base,
           tax_code
        )
-       VALUES (?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, NULL)`,
+       VALUES (?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?)`,
       [
         journalEntryId,
         i + 1,
@@ -1224,6 +1225,7 @@ async function insertPostedJournalWithLinesTx(tx, payload) {
         normalizeSignedAmount(line.amountTxn, `line[${i}].amountTxn`),
         normalizeAmount(line.debitBase, `line[${i}].debitBase`, { allowZero: true }),
         normalizeAmount(line.creditBase, `line[${i}].creditBase`, { allowZero: true }),
+        toNullableString(line.taxCode, 40),
       ]
     );
   }
@@ -1279,7 +1281,8 @@ async function fetchPostedJournalWithLines({
        currency_code,
        amount_txn,
        debit_base,
-       credit_base
+       credit_base,
+       tax_code
      FROM journal_lines
      WHERE journal_entry_id = ?
      ORDER BY line_no ASC`,
@@ -2601,6 +2604,7 @@ async function loadSettlementResult({
             currencyCode: line.currency_code,
             description: line.description || null,
             subledgerReferenceNo: line.subledger_reference_no || null,
+            taxCode: line.tax_code || null,
           })),
         }
       : null,
@@ -3103,16 +3107,35 @@ export async function applyCariSettlement({
         runQuery: tx.query,
       });
 
-      const postingLines = buildSettlementPostingLines({
+      const subledgerReferenceNo = `${CARI_SETTLEMENT_REFERENCE_PREFIX}${sequence.settlementNo}`;
+      const postingLines = [
+        ...buildSettlementPostingLines({
+          direction,
+          totalAmountTxn: totalAllocatedTxn,
+          totalAmountBase: totalAllocatedBaseSettlement,
+          controlAccountId: postingAccounts.controlAccountId,
+          offsetAccountId: postingAccounts.offsetAccountId,
+          lineDescription: `Cari settlement ${sequence.settlementNo}`.slice(0, 255),
+          subledgerReferenceNo,
+          currencyCode: settlementCurrencyCode,
+        }),
+      ];
+      const taxAugmentation = await buildCariTaxAugmentation({
+        tenantId,
+        legalEntityId,
+        postingDate: settlementDate,
         direction,
-        totalAmountTxn: totalAllocatedTxn,
-        totalAmountBase: totalAllocatedBaseSettlement,
+        documentType: "SETTLEMENT",
+        baseAmount: totalAllocatedBaseSettlement,
         controlAccountId: postingAccounts.controlAccountId,
-        offsetAccountId: postingAccounts.offsetAccountId,
-        lineDescription: `Cari settlement ${sequence.settlementNo}`.slice(0, 255),
-        subledgerReferenceNo: `${CARI_SETTLEMENT_REFERENCE_PREFIX}${sequence.settlementNo}`,
         currencyCode: settlementCurrencyCode,
+        subledgerReferenceNo,
+        lineDescription: `Cari settlement tax ${sequence.settlementNo}`.slice(0, 255),
+        runQuery: tx.query,
       });
+      if (taxAugmentation.lines.length > 0) {
+        postingLines.push(...taxAugmentation.lines);
+      }
       const journalResult = await insertPostedJournalWithLinesTx(tx, {
         tenantId,
         legalEntityId,
@@ -3531,6 +3554,7 @@ export async function applyCariSettlement({
           postingSourceContext: postingAccounts.sourceContext,
           postingControlPurposeCode: postingAccounts.controlPurposeCode,
           postingOffsetPurposeCode: postingAccounts.offsetPurposeCode,
+          tax: taxAugmentation.summary,
           createdUnappliedCashId,
           followUpRisks: FOLLOW_UP_RISKS,
         },
@@ -4456,6 +4480,7 @@ export async function reverseCariSettlementById({
           : `Reversal of ${original.settlement_no || `SETTLEMENT-${settlementBatchId}`}`,
         subledgerReferenceNo: reversalSubledgerReferenceNo,
         currencyCode: normalizeUpperText(line.currency_code || original.currency_code),
+        taxCode: toNullableString(line.tax_code, 40),
       }));
       ensureBalancedJournalLines(reversalLines);
 

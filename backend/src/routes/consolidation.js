@@ -19,6 +19,13 @@ import {
   resolveTenantId,
 } from "./_utils.js";
 import { evaluateWorkflowApprovalGate } from "../services/workflows.service.js";
+import {
+  listCanonicalAccountMappings,
+  listCanonicalKeys,
+  upsertCanonicalKey,
+  upsertGroupAccountCanonicalMapping,
+  upsertLocalAccountCanonicalMapping,
+} from "../services/consolidation.canonical-mappings.service.js";
 
 const router = express.Router();
 
@@ -1006,6 +1013,200 @@ router.post(
     return res.status(201).json({
       ok: true,
       id: result.rows.insertId || null,
+    });
+  })
+);
+
+router.get(
+  "/groups/:groupId/canonical-keys",
+  requirePermission("consolidation.coa_mapping.read"),
+  asyncHandler(async (req, res) => {
+    const tenantId = resolveTenantId(req);
+    if (!tenantId) {
+      throw badRequest("tenantId is required");
+    }
+
+    const groupId = parsePositiveInt(req.params.groupId);
+    if (!groupId) {
+      throw badRequest("groupId must be a positive integer");
+    }
+    const group = await assertConsolidationGroupBelongsToTenant(tenantId, groupId, "groupId");
+    assertScopeAccess(req, "group", group.group_company_id, "groupCompanyId");
+
+    const rows = await listCanonicalKeys({
+      tenantId,
+      consolidationGroupId: groupId,
+      status: req.query.status,
+    });
+
+    return res.json({
+      tenantId,
+      groupId,
+      rows,
+    });
+  })
+);
+
+router.post(
+  "/groups/:groupId/canonical-keys",
+  requirePermission("consolidation.coa_mapping.upsert"),
+  asyncHandler(async (req, res) => {
+    const tenantId = resolveTenantId(req);
+    if (!tenantId) {
+      throw badRequest("tenantId is required");
+    }
+
+    const groupId = parsePositiveInt(req.params.groupId);
+    if (!groupId) {
+      throw badRequest("groupId must be a positive integer");
+    }
+    const group = await assertConsolidationGroupBelongsToTenant(tenantId, groupId, "groupId");
+    assertScopeAccess(req, "group", group.group_company_id, "groupCompanyId");
+
+    assertRequiredFields(req.body, ["canonicalKey"]);
+    const row = await upsertCanonicalKey({
+      tenantId,
+      consolidationGroupId: groupId,
+      canonicalKey: req.body.canonicalKey,
+      canonicalName: req.body.canonicalName,
+      canonicalType: req.body.canonicalType,
+      purposeCode: req.body.purposeCode,
+      status: req.body.status,
+    });
+
+    return res.status(201).json({
+      ok: true,
+      row,
+    });
+  })
+);
+
+router.get(
+  "/groups/:groupId/canonical-mappings",
+  requirePermission("consolidation.coa_mapping.read"),
+  asyncHandler(async (req, res) => {
+    const tenantId = resolveTenantId(req);
+    if (!tenantId) {
+      throw badRequest("tenantId is required");
+    }
+
+    const groupId = parsePositiveInt(req.params.groupId);
+    if (!groupId) {
+      throw badRequest("groupId must be a positive integer");
+    }
+    const group = await assertConsolidationGroupBelongsToTenant(tenantId, groupId, "groupId");
+    assertScopeAccess(req, "group", group.group_company_id, "groupCompanyId");
+
+    const legalEntityId = parsePositiveInt(req.query.legalEntityId);
+    if (legalEntityId) {
+      await assertLegalEntityBelongsToTenant(tenantId, legalEntityId, "legalEntityId");
+      assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
+    }
+
+    const rows = await listCanonicalAccountMappings({
+      tenantId,
+      consolidationGroupId: groupId,
+      legalEntityId,
+      status: req.query.status,
+    });
+
+    return res.json({
+      tenantId,
+      groupId,
+      legalEntityId: legalEntityId || null,
+      rows,
+    });
+  })
+);
+
+router.post(
+  "/groups/:groupId/canonical-mappings/local",
+  requirePermission("consolidation.coa_mapping.upsert"),
+  asyncHandler(async (req, res) => {
+    const tenantId = resolveTenantId(req);
+    if (!tenantId) {
+      throw badRequest("tenantId is required");
+    }
+
+    const groupId = parsePositiveInt(req.params.groupId);
+    if (!groupId) {
+      throw badRequest("groupId must be a positive integer");
+    }
+    const group = await assertConsolidationGroupBelongsToTenant(tenantId, groupId, "groupId");
+    assertScopeAccess(req, "group", group.group_company_id, "groupCompanyId");
+
+    assertRequiredFields(req.body, ["legalEntityId", "localAccountId"]);
+    const legalEntityId = parsePositiveInt(req.body.legalEntityId);
+    const localAccountId = parsePositiveInt(req.body.localAccountId);
+    if (!legalEntityId || !localAccountId) {
+      throw badRequest("legalEntityId and localAccountId must be positive integers");
+    }
+    await assertLegalEntityBelongsToTenant(tenantId, legalEntityId, "legalEntityId");
+    assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
+    await assertAccountBelongsToTenant(tenantId, localAccountId, "localAccountId");
+
+    const row = await upsertLocalAccountCanonicalMapping({
+      tenantId,
+      consolidationGroupId: groupId,
+      legalEntityId,
+      localAccountId,
+      canonicalKeyId: req.body.canonicalKeyId,
+      canonicalKey: req.body.canonicalKey,
+      canonicalName: req.body.canonicalName,
+      canonicalType: req.body.canonicalType,
+      purposeCode: req.body.purposeCode,
+      status: req.body.status,
+      effectiveFrom: req.body.effectiveFrom,
+      effectiveTo: req.body.effectiveTo,
+    });
+
+    return res.status(201).json({
+      ok: true,
+      row,
+    });
+  })
+);
+
+router.post(
+  "/groups/:groupId/canonical-mappings/group",
+  requirePermission("consolidation.coa_mapping.upsert"),
+  asyncHandler(async (req, res) => {
+    const tenantId = resolveTenantId(req);
+    if (!tenantId) {
+      throw badRequest("tenantId is required");
+    }
+
+    const groupId = parsePositiveInt(req.params.groupId);
+    if (!groupId) {
+      throw badRequest("groupId must be a positive integer");
+    }
+    const group = await assertConsolidationGroupBelongsToTenant(tenantId, groupId, "groupId");
+    assertScopeAccess(req, "group", group.group_company_id, "groupCompanyId");
+
+    assertRequiredFields(req.body, ["groupAccountId"]);
+    const groupAccountId = parsePositiveInt(req.body.groupAccountId);
+    if (!groupAccountId) {
+      throw badRequest("groupAccountId must be a positive integer");
+    }
+    await assertAccountBelongsToTenant(tenantId, groupAccountId, "groupAccountId");
+
+    const row = await upsertGroupAccountCanonicalMapping({
+      tenantId,
+      consolidationGroupId: groupId,
+      groupAccountId,
+      canonicalKeyId: req.body.canonicalKeyId,
+      canonicalKey: req.body.canonicalKey,
+      canonicalName: req.body.canonicalName,
+      canonicalType: req.body.canonicalType,
+      purposeCode: req.body.purposeCode,
+      status: req.body.status,
+      effectiveFrom: req.body.effectiveFrom,
+      effectiveTo: req.body.effectiveTo,
+    });
+
+    return res.status(201).json({
+      ok: true,
+      row,
     });
   })
 );

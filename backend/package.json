@@ -100,6 +100,8 @@
     "test:followup:prf05-workflows-api": "node scripts/test-followup-prf05-workflows-definitions-assignments-api.js",
     "test:followup:prf06-workflow-decisions": "node scripts/test-followup-prf06-workflow-decisions-runtime.js",
     "test:followup:prf07-workflow-gates": "node scripts/test-followup-prf07-workflow-close-consolidation-gates.js",
+    "test:followup:prf12-canonical-mapping": "node scripts/test-followup-prf12-canonical-mapping-foundation.js",
+    "backfill:canonical-mappings": "node scripts/backfill-canonical-consolidation-mappings.js",
     "test:ux:prcore02": "node scripts/test-ux-prcore02-idempotency-standardization.js",
     "test:ux:prcore03": "node scripts/test-ux-prcore03-optimistic-locking-row-version.js",
     "test:ux:prcore04": "node scripts/test-ux-prcore04-job-progress-retry-ux.js",

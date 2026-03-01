@@ -10,6 +10,7 @@ import {
   resolveOffsetPagination,
 } from "../utils/pagination.js";
 import { upsertJournalSourceLinkTx } from "./journal.source-link.service.js";
+import { buildCariTaxAugmentation } from "./cari.tax.integration.service.js";
 
 const DRAFT_STATUS = "DRAFT";
 const CANCELLED_STATUS = "CANCELLED";
@@ -917,7 +918,7 @@ async function insertPostedJournalWithLinesTx(tx, payload) {
           credit_base,
           tax_code
        )
-       VALUES (?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, NULL)`,
+       VALUES (?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?)`,
       [
         journalEntryId,
         i + 1,
@@ -928,6 +929,7 @@ async function insertPostedJournalWithLinesTx(tx, payload) {
         normalizeSignedAmount(line.amountTxn, `line[${i}].amountTxn`),
         normalizeAmount(line.debitBase, `line[${i}].debitBase`, { allowZero: true }),
         normalizeAmount(line.creditBase, `line[${i}].creditBase`, { allowZero: true }),
+        toNullableString(line.taxCode, 40),
       ]
     );
   }
@@ -1888,17 +1890,39 @@ export async function postCariDocumentById({
     const amountBase = normalizeAmount(lockedDocument.amount_base, "amountBase");
     const subledgerReferenceNo = `${CARI_SUBLEDGER_REFERENCE_PREFIX}${documentId}`;
 
-    const postingLines = buildCariPostingLines({
+    const postingLines = [
+      ...buildCariPostingLines({
+        direction,
+        documentType,
+        amountTxn,
+        amountBase,
+        controlAccountId: postingAccounts.controlAccountId,
+        offsetAccountId: postingAccounts.offsetAccountId,
+        lineDescription: `Cari ${direction} ${documentType} ${postedNumbering.documentNo}`,
+        subledgerReferenceNo,
+        currencyCode,
+      }),
+    ];
+    const taxAugmentation = await buildCariTaxAugmentation({
+      tenantId,
+      legalEntityId: lockedLegalEntityId,
+      postingDate: documentDate,
       direction,
       documentType,
-      amountTxn,
-      amountBase,
+      baseAmount: amountBase,
       controlAccountId: postingAccounts.controlAccountId,
-      offsetAccountId: postingAccounts.offsetAccountId,
-      lineDescription: `Cari ${direction} ${documentType} ${postedNumbering.documentNo}`,
-      subledgerReferenceNo,
       currencyCode,
+      subledgerReferenceNo,
+      lineDescription: `Cari tax ${direction} ${documentType} ${postedNumbering.documentNo}`.slice(
+        0,
+        255
+      ),
+      reverseTaxSign: !POSITIVE_SIGN_DOCUMENT_TYPES.has(documentType),
+      runQuery: tx.query,
     });
+    if (taxAugmentation.lines.length > 0) {
+      postingLines.push(...taxAugmentation.lines);
+    }
 
     const journalContext = await resolveBookAndOpenPeriodForDate({
       tenantId,
@@ -2044,6 +2068,7 @@ export async function postCariDocumentById({
         postedJournalEntryId: journalResult.journalEntryId,
         subledgerReferenceNo,
         fxRate: fxPolicy.effectiveFxRate,
+        tax: taxAugmentation.summary,
       },
     });
 
@@ -2080,6 +2105,7 @@ export async function postCariDocumentById({
         totalDebit: journalResult.totalDebit,
         totalCredit: journalResult.totalCredit,
         subledgerReferenceNo,
+        tax: taxAugmentation.summary,
       },
     };
   });
@@ -2181,6 +2207,7 @@ export async function reverseCariPostedDocumentById({
           : `Reversal of ${original.document_no || `DOC-${documentId}`}`,
         subledgerReferenceNo: reversalSubledgerReferenceNo,
         currencyCode: normalizeUpperText(line.currency_code || original.currency_code),
+        taxCode: toNullableString(line.tax_code, 40),
       }));
       ensureBalancedJournalLines(reversalLines);
 
