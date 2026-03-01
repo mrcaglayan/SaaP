@@ -50,6 +50,8 @@ Update rule:
 - `files: ...`
 - `smoke: ...`
 - `result: pass/fail`
+- Tracker line format after merge:
+  - `- [x] PR-F0X acceptance: ... (implemented)`
 
 - [ ] PR-F01 acceptance: platform prerequisites are in place with known tenant feature codes (`FEATURE_SUBACCOUNTS_V1`, `FEATURE_SETUP_WIZARD_V2`, `FEATURE_CONSOLIDATION_CANONICAL_MAPPING_V1`, `FEATURE_WORKFLOW_CLOSE_CONSOLIDATION_V1`, `FEATURE_TAX_ENGINE_V1`), `/me/features` returns known-but-unconfigured flags as disabled, and readiness exposes non-blocking upcoming placeholders.
   smoke: `backend/scripts/test-followup-prf01-feature-flags-readiness-placeholders.js`
@@ -77,6 +79,40 @@ Update rule:
   smoke: `backend/scripts/test-followup-prf12-canonical-consolidation-wiring.js`
 - [ ] PR-F13 acceptance: rollout/backfill/release-gate hardening is complete with migration-safe scripts, pilot-flag strategy, runbooks, and expanded regression gates for combined tracks.
   smoke: `backend/scripts/test-followup-prf13-rollout-backfill-release-gate.js`
+
+## Status Snapshot (Audit Baseline)
+- Audit date: `2026-03-01`
+- Implemented: `0 / 13` (`PR-F01..PR-F13`)
+- Current state: all tracker items remain `[ ]` (pending)
+- Start point: `PR-F01`
+
+## Completion Log (Update After Each Merge)
+- Completed PRs: `none`
+- Current next PR: `PR-F01`
+- After each merged PR:
+  1. Change only that tracker line from `[ ]` to `[x]` and append `(implemented)`.
+  2. Add `status/files/smoke/result` directly under that same line.
+  3. Move `Current next PR` to the next pending item in Unified Execution Order.
+
+Example update:
+- before: `- [ ] PR-F01 acceptance: ...`
+- after: `- [x] PR-F01 acceptance: ... (implemented)`
+  - `status: implemented (YYYY-MM-DD)`
+  - `files: backend/src/services/features.catalog.js, backend/src/services/me.features.service.js, backend/src/routes/onboarding.js, frontend/src/readiness/TenantReadinessChecklist.jsx, frontend/src/i18n/messages.js, backend/scripts/test-followup-prf01-feature-flags-readiness-placeholders.js, backend/package.json`
+  - `smoke: backend/scripts/test-followup-prf01-feature-flags-readiness-placeholders.js`
+  - `result: pass`
+
+## Next Step Now
+1. Execute `PR-F01` end-to-end.
+2. Run smoke: `backend/scripts/test-followup-prf01-feature-flags-readiness-placeholders.js`.
+3. After merge, update the tracker line:
+   - from: `- [ ] PR-F01 acceptance: ...`
+   - to: `- [x] PR-F01 acceptance: ... (implemented)`
+4. Add evidence directly under the PR-F01 tracker line:
+   - `status: implemented (YYYY-MM-DD)`
+   - `files: ...`
+   - `smoke: backend/scripts/test-followup-prf01-feature-flags-readiness-placeholders.js`
+   - `result: pass/fail`
 
 ## Mapping Note
 - Section A (`Subaccounts`) contributes mainly to `PR-F02`, `PR-F03`, `PR-F04`.
