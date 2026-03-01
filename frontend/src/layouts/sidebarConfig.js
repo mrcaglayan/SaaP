@@ -37,6 +37,7 @@ const GL_SETUP_PAGE_PERMISSIONS = [
   "gl.account.upsert",
   "gl.account_mapping.upsert",
 ];
+const WORKFLOW_SETUP_PAGE_PERMISSIONS = ["org.tree.read", "onboarding.company.setup"];
 const RECLASS_PAGE_PERMISSIONS = [
   "org.tree.read",
   "gl.book.read",
@@ -601,6 +602,12 @@ export const sidebarItems = [
         label: "Hesap Plani Ayarlari",
         to: "/app/ayarlar/hesap-plani-ayarlari",
         requiredPermissions: GL_SETUP_PAGE_PERMISSIONS,
+        implemented: true,
+      },
+      {
+        label: "Workflow Kurulumu",
+        to: "/app/ayarlar/workflow-kurulumu",
+        requiredPermissions: WORKFLOW_SETUP_PAGE_PERMISSIONS,
         implemented: true,
       },
       {

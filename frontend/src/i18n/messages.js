@@ -586,6 +586,17 @@ export const messages = {
       refreshRunsLoading: "Yenileniyor...",
       selectedRunSummary:
         "Run #{{id}} | Grup: {{groupCode}} - {{groupName}} | Donem: {{fiscalYear}}-P{{periodNo}} ({{periodName}}) | Durum: {{status}}",
+      workflow: {
+        title: "Workflow onay kapisi durumu",
+        openSetup: "Workflow kurulumunu ac",
+        loading: "Workflow kapi durumu yukleniyor...",
+        loadFailed: "Workflow kapi durumu yuklenemedi.",
+        summary: "Durum: {{status}} | Mevcut adim: {{step}} | Tanim: {{definitionCode}}",
+        none:
+          "Bu run icin henuz workflow instance yok. Kapi aktifse finalize sirasinda olusturulur/kontrol edilir.",
+        missingPermission:
+          "Eksik yetki: org.tree.read (workflow kapi detayini gormek icin gerekli).",
+      },
       bsTotals:
         "Bilanco Varliklar: {{assets}} | Yukumlulukler: {{liabilities}} | Ozkaynak: {{equity}} | Donem Kari: {{earnings}} | Delta: {{delta}}",
       isTotals:
@@ -1490,7 +1501,7 @@ export const messages = {
         consolidationCanonicalMappingV1:
           "Konsolidasyon kanonik esleme (uyari placeholder)",
         workflowCloseConsolidationV1:
-          "Kapanis/konsolidasyon workflow (uyari placeholder)",
+          "Kapanis/konsolidasyon workflow hazirligi",
         taxEngineV1: "Ulke vergi motoru (uyari placeholder)",
       },
       badges: {
@@ -1503,6 +1514,7 @@ export const messages = {
         company: "Sirket Kurulumu",
         org: "Organizasyon Kurulumu",
         gl: "GL Kurulumu",
+        workflow: "Workflow Kurulumu",
       },
       bootstrap: {
         title: "Tek tikla temel kurulum",
@@ -2103,6 +2115,17 @@ export const messages = {
       refreshRunsLoading: "Refreshing...",
       selectedRunSummary:
         "Run #{{id}} | Group: {{groupCode}} - {{groupName}} | Period: {{fiscalYear}}-P{{periodNo}} ({{periodName}}) | Status: {{status}}",
+      workflow: {
+        title: "Workflow approval gate status",
+        openSetup: "Open workflow setup",
+        loading: "Loading workflow gate status...",
+        loadFailed: "Failed to load workflow gate status.",
+        summary: "Status: {{status}} | Current step: {{step}} | Definition: {{definitionCode}}",
+        none:
+          "No workflow instance exists for this run yet. Finalize will create/check it when gate is enabled.",
+        missingPermission:
+          "Missing permission: org.tree.read (required to view workflow gate details).",
+      },
       bsTotals:
         "BS Assets: {{assets}} | Liabilities: {{liabilities}} | Equity: {{equity}} | Current Earnings: {{earnings}} | Delta: {{delta}}",
       isTotals:
@@ -3008,7 +3031,7 @@ export const messages = {
         consolidationCanonicalMappingV1:
           "Consolidation canonical mapping (warning placeholder)",
         workflowCloseConsolidationV1:
-          "Close/consolidation workflow (warning placeholder)",
+          "Close/consolidation workflow readiness",
         taxEngineV1: "Country tax engine (warning placeholder)",
       },
       badges: {
@@ -3021,6 +3044,7 @@ export const messages = {
         company: "Company Setup",
         org: "Org Setup",
         gl: "GL Setup",
+        workflow: "Workflow Setup",
       },
       bootstrap: {
         title: "One-click baseline bootstrap",

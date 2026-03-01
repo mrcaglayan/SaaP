@@ -39,6 +39,7 @@ export default function TenantReadinessChecklist() {
     accounts: "/app/ayarlar/hesap-plani-ayarlari",
     shareholders: "/app/ayarlar/organizasyon-yonetimi",
     shareholderCommitmentConfigs: "/app/ayarlar/organizasyon-yonetimi",
+    workflowCloseConsolidationV1: "/app/ayarlar/workflow-kurulumu",
   };
   const missingStepLinks = Array.from(
     new Map(
@@ -245,6 +246,12 @@ export default function TenantReadinessChecklist() {
               className="rounded border border-slate-300 bg-white px-2.5 py-1.5 font-semibold text-slate-700"
             >
               {t("readinessChecklist.links.gl")}
+            </Link>
+            <Link
+              to="/app/ayarlar/workflow-kurulumu"
+              className="rounded border border-slate-300 bg-white px-2.5 py-1.5 font-semibold text-slate-700"
+            >
+              {t("readinessChecklist.links.workflow", "Workflow Setup")}
             </Link>
           </div>
 

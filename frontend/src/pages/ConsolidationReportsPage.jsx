@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import {
   getConsolidatedBalanceSheet,
   getConsolidatedIncomeStatement,
@@ -8,6 +9,7 @@ import {
   postConsolidationAdjustment,
   postConsolidationElimination,
 } from "../api/glAdmin.js";
+import { listWorkflowInstances } from "../api/workflows.js";
 import { useAuth } from "../auth/useAuth.js";
 import { useI18n } from "../i18n/useI18n.js";
 
@@ -35,6 +37,7 @@ export default function ConsolidationReportsPage() {
   const canReadIncomeStatement = hasPermission(
     "consolidation.report.income_statement.read"
   );
+  const canReadWorkflow = hasPermission("org.tree.read");
   const canPostAdjustment = hasPermission("consolidation.adjustment.post");
   const canPostElimination = hasPermission("consolidation.elimination.post");
 
@@ -53,6 +56,11 @@ export default function ConsolidationReportsPage() {
   const [incomeStatementReport, setIncomeStatementReport] = useState(null);
   const [adjustments, setAdjustments] = useState([]);
   const [eliminations, setEliminations] = useState([]);
+  const [workflowGate, setWorkflowGate] = useState({
+    loading: false,
+    error: "",
+    row: null,
+  });
 
   const selectedRun = useMemo(() => {
     const selectedId = toInt(form.runId);
@@ -61,6 +69,60 @@ export default function ConsolidationReportsPage() {
     }
     return runs.find((row) => Number(row.id) === selectedId) || null;
   }, [form.runId, runs]);
+
+  useEffect(() => {
+    if (!selectedRun || !canReadWorkflow) {
+      setWorkflowGate({
+        loading: false,
+        error: "",
+        row: null,
+      });
+      return;
+    }
+
+    let cancelled = false;
+    async function loadWorkflowGate() {
+      setWorkflowGate((prev) => ({
+        ...prev,
+        loading: true,
+        error: "",
+      }));
+      try {
+        const response = await listWorkflowInstances({
+          processType: "CONSOLIDATION_RUN",
+          targetType: "CONSOLIDATION_RUN",
+          targetId: selectedRun.id,
+          limit: 1,
+        });
+        const row = Array.isArray(response?.rows) ? response.rows[0] || null : null;
+        if (!cancelled) {
+          setWorkflowGate({
+            loading: false,
+            error: "",
+            row,
+          });
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setWorkflowGate({
+            loading: false,
+            error:
+              err?.response?.data?.message ||
+              t(
+                "consolidationReports.workflow.loadFailed",
+                "Failed to load workflow gate status."
+              ),
+            row: null,
+          });
+        }
+      }
+    }
+
+    loadWorkflowGate();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedRun, canReadWorkflow, t]);
 
   async function loadRuns() {
     if (!canReadRun) {
@@ -384,16 +446,77 @@ export default function ConsolidationReportsPage() {
         </div>
 
         {selectedRun && (
-          <div className="rounded border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
-            {t("consolidationReports.selectedRunSummary", {
-              id: selectedRun.id,
-              groupCode: selectedRun.consolidation_group_code || "-",
-              groupName: selectedRun.consolidation_group_name || "-",
-              fiscalYear: selectedRun.fiscal_year || "-",
-              periodNo: formatPeriodNo(selectedRun.period_no),
-              periodName: selectedRun.period_name || "-",
-              status: selectedRun.status || "-",
-            })}
+          <div className="space-y-2">
+            <div className="rounded border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
+              {t("consolidationReports.selectedRunSummary", {
+                id: selectedRun.id,
+                groupCode: selectedRun.consolidation_group_code || "-",
+                groupName: selectedRun.consolidation_group_name || "-",
+                fiscalYear: selectedRun.fiscal_year || "-",
+                periodNo: formatPeriodNo(selectedRun.period_no),
+                periodName: selectedRun.period_name || "-",
+                status: selectedRun.status || "-",
+              })}
+            </div>
+            <div className="rounded border border-cyan-200 bg-cyan-50 px-3 py-2 text-xs text-cyan-900">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="font-semibold">
+                  {t(
+                    "consolidationReports.workflow.title",
+                    "Workflow approval gate status"
+                  )}
+                </span>
+                <Link
+                  to="/app/ayarlar/workflow-kurulumu"
+                  className="rounded border border-cyan-300 bg-white px-2 py-1 font-semibold text-cyan-900"
+                >
+                  {t("consolidationReports.workflow.openSetup", "Open workflow setup")}
+                </Link>
+              </div>
+              {canReadWorkflow ? (
+                <>
+                  {workflowGate.loading ? (
+                    <p className="mt-1">
+                      {t(
+                        "consolidationReports.workflow.loading",
+                        "Loading workflow gate status..."
+                      )}
+                    </p>
+                  ) : null}
+                  {workflowGate.error ? (
+                    <p className="mt-1 text-rose-700">{workflowGate.error}</p>
+                  ) : null}
+                  {!workflowGate.loading && !workflowGate.error && workflowGate.row ? (
+                    <p className="mt-1">
+                      {t(
+                        "consolidationReports.workflow.summary",
+                        "Status: {{status}} | Current step: {{step}} | Definition: {{definitionCode}}",
+                        {
+                          status: workflowGate.row.status || "-",
+                          step: workflowGate.row.currentStepNo || "-",
+                          definitionCode: workflowGate.row.workflowDefinitionCode || "-",
+                        }
+                      )}
+                    </p>
+                  ) : null}
+                  {!workflowGate.loading && !workflowGate.error && !workflowGate.row ? (
+                    <p className="mt-1">
+                      {t(
+                        "consolidationReports.workflow.none",
+                        "No workflow instance exists for this run yet. Finalize will create/check it when gate is enabled."
+                      )}
+                    </p>
+                  ) : null}
+                </>
+              ) : (
+                <p className="mt-1 text-amber-700">
+                  {t(
+                    "consolidationReports.workflow.missingPermission",
+                    "Missing permission: org.tree.read (required to view workflow gate details)."
+                  )}
+                </p>
+              )}
+            </div>
           </div>
         )}
 

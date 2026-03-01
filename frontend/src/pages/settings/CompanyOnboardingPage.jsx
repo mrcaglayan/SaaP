@@ -261,6 +261,13 @@ const starterRows =
 return buildStarterAccountsFromCatalog(starterRows);
 }
 function deriveStarterAccountsFromPolicyPack(policyPack, countryIso2) {
+const starterAccountTree = Array.isArray(policyPack?.starterAccountTree)
+  ? policyPack.starterAccountTree
+  : [];
+if (starterAccountTree.length > 0) {
+  return starterAccountTree.map((row) => createAccountDraft(row));
+}
+
 const byCode = new Map();
 const modules = Array.isArray(policyPack?.modules) ? policyPack.modules : [];
 for (const module of modules) {
@@ -382,6 +389,9 @@ return {
   ...(entity.coaName.trim() ? { coaName: entity.coaName.trim() } : {}),
   ...(entity.bookCode.trim() ? { bookCode: entity.bookCode.trim() } : {}),
   ...(entity.bookName.trim() ? { bookName: entity.bookName.trim() } : {}),
+  ...(entity.policyPackId.trim()
+    ? { policyPackId: entity.policyPackId.trim().toUpperCase() }
+    : {}),
   ...(defaultAccounts.length > 0 ? { defaultAccounts } : {}),
   ...(branches.length > 0 ? { branches } : {}),
 };

@@ -18,6 +18,7 @@ import {
   parsePositiveInt,
   resolveTenantId,
 } from "./_utils.js";
+import { evaluateWorkflowApprovalGate } from "../services/workflows.service.js";
 
 const router = express.Router();
 
@@ -101,6 +102,23 @@ function normalizeDraftPostingStatus(value) {
     throw badRequest("status must be one of ALL, DRAFT, POSTED");
   }
   return status;
+}
+
+function toApprovalGateResponse(req, gate, details = {}) {
+  const errorCode = String(gate?.errorCode || "APPROVAL_REQUIRED").trim().toUpperCase();
+  const defaultMessage =
+    errorCode === "WORKFLOW_NOT_ASSIGNED"
+      ? "Workflow gate is enabled but no assignment was found"
+      : errorCode === "APPROVAL_INSTANCE_REJECTED"
+        ? "Workflow instance is rejected; consolidation finalize is blocked"
+        : "Workflow approval is required before consolidation finalize";
+
+  return {
+    message: String(gate?.message || defaultMessage),
+    code: errorCode,
+    details,
+    requestId: req.requestId || null,
+  };
 }
 
 function assertRunNotLocked(run) {
@@ -2007,10 +2025,34 @@ router.post(
     }
 
     const runId = parsePositiveInt(req.params.runId);
-    if (!runId) {
-      throw badRequest("runId must be a positive integer");
+    const userId = parsePositiveInt(req.user?.userId);
+    if (!runId || !userId) {
+      throw badRequest("runId and authenticated user are required");
     }
-    await requireRun(tenantId, runId);
+    const run = await requireRun(tenantId, runId);
+    const gate = await evaluateWorkflowApprovalGate({
+      tenantId,
+      processType: "CONSOLIDATION_RUN",
+      targetType: "CONSOLIDATION_RUN",
+      targetId: runId,
+      requestedByUserId: userId,
+      scope: {
+        groupCompanyId: parsePositiveInt(run?.group_company_id),
+      },
+      effectiveOn: run?.period_end_date || null,
+    });
+    if (gate.required && !gate.approved) {
+      return res.status(409).json(
+        toApprovalGateResponse(req, gate, {
+          processType: "CONSOLIDATION_RUN",
+          targetType: "CONSOLIDATION_RUN",
+          targetId: runId,
+          consolidationGroupId: parsePositiveInt(run?.consolidation_group_id),
+          assignment: gate.assignment || null,
+          instance: gate.instance || null,
+        })
+      );
+    }
 
     await query(
       `UPDATE consolidation_runs

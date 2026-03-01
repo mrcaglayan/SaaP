@@ -8,6 +8,10 @@ import {
   parsePositiveInt,
   resolveTenantId,
 } from "./_utils.js";
+import { resolvePolicyPack } from "../services/policy-packs.resolve.service.js";
+import { getPolicyPack } from "../services/policy-packs.service.js";
+import { applyPolicyPackTx } from "../services/policy-packs.apply.service.js";
+import { getCloseConsolidationWorkflowReadiness } from "../services/module-readiness.service.js";
 
 const router = express.Router();
 const SHAREHOLDER_CAPITAL_CREDIT_PARENT_PURPOSE =
@@ -98,8 +102,8 @@ const READINESS_DEFINITIONS = [
   },
   {
     key: "workflowCloseConsolidationV1",
-    label: "Workflow close/consolidation placeholder",
-    minimum: 0,
+    label: "Workflow close/consolidation readiness",
+    minimum: 1,
   },
   {
     key: "taxEngineV1",
@@ -214,6 +218,65 @@ function parseBooleanFlag(value, fallback = false, fieldName = "value") {
 function normalizeOptionalCode(value) {
   const normalized = String(value || "").trim().toUpperCase();
   return normalized || null;
+}
+
+function normalizeEntityPolicyPackSelection(entity) {
+  return {
+    policyPackId: normalizeOptionalCode(entity?.policyPackId ?? entity?.policy_pack_id),
+    policyPackMode: normalizeOptionalCode(
+      entity?.policyPackMode ?? entity?.policy_pack_mode
+    ),
+  };
+}
+
+function buildPolicyPackBootstrapApplyPlan(pack, previewRows) {
+  const requiredPurposeCodeSet = new Set(
+    (pack?.requiredPurposeMappings || [])
+      .filter((row) => row?.required === true)
+      .map((row) => normalizeOptionalCode(row?.purposeCode))
+      .filter(Boolean)
+  );
+
+  const seenPurposeCodes = new Set();
+  const applyRows = [];
+  const missingRequiredPurposeCodes = [];
+  let missingOptionalCount = 0;
+
+  for (const row of Array.isArray(previewRows) ? previewRows : []) {
+    const purposeCode = normalizeOptionalCode(row?.purposeCode);
+    if (!purposeCode || seenPurposeCodes.has(purposeCode)) {
+      continue;
+    }
+
+    seenPurposeCodes.add(purposeCode);
+    if (row?.missing) {
+      if (requiredPurposeCodeSet.has(purposeCode)) {
+        missingRequiredPurposeCodes.push(purposeCode);
+      } else {
+        missingOptionalCount += 1;
+      }
+      continue;
+    }
+
+    const accountId = parsePositiveInt(row?.accountId);
+    if (!accountId) {
+      continue;
+    }
+
+    applyRows.push({
+      purposeCode,
+      accountId,
+    });
+  }
+
+  return {
+    applyRows,
+    missingRequiredPurposeCodes: Array.from(
+      new Set(missingRequiredPurposeCodes)
+    ).sort((left, right) => left.localeCompare(right)),
+    missingOptionalCount,
+    requiredPurposeCount: requiredPurposeCodeSet.size,
+  };
 }
 
 function normalizeDefaultAccountRow(row, index) {
@@ -741,6 +804,19 @@ async function buildTenantReadinessSnapshot(tenantId) {
     ),
   ]);
 
+  const workflowModuleReadiness = await getCloseConsolidationWorkflowReadiness(tenantId, null, {
+    runQuery: query,
+  });
+  const workflowRows = Array.isArray(workflowModuleReadiness?.byLegalEntity)
+    ? workflowModuleReadiness.byLegalEntity
+    : [];
+  const workflowReadyCount = workflowRows.filter((row) => Boolean(row?.ready)).length;
+  const workflowMinimum = Math.max(1, workflowRows.length);
+  const workflowMissingLegalEntityIds = workflowRows
+    .filter((row) => !row?.ready)
+    .map((row) => parsePositiveInt(row?.legalEntityId))
+    .filter(Boolean);
+
   const counts = {
     groupCompanies,
     legalEntities,
@@ -752,14 +828,25 @@ async function buildTenantReadinessSnapshot(tenantId) {
     accounts,
     shareholders,
     shareholderCommitmentConfigs,
+    workflowCloseConsolidationV1: workflowReadyCount,
   };
 
   const checks = READINESS_DEFINITIONS.map((definition) => {
+    const isWorkflowReadiness = definition.key === "workflowCloseConsolidationV1";
     const count = Number(counts[definition.key] || 0);
+    const minimum = isWorkflowReadiness ? workflowMinimum : definition.minimum;
     return {
       ...definition,
       count,
-      ready: count >= definition.minimum,
+      minimum,
+      ready: count >= minimum,
+      details: isWorkflowReadiness
+        ? {
+            readyEntityCount: workflowReadyCount,
+            totalEntityCount: workflowRows.length,
+            missingLegalEntityIds: workflowMissingLegalEntityIds,
+          }
+        : null,
     };
   });
 
@@ -1418,12 +1505,20 @@ router.post(
     const legalEntities = Array.isArray(req.body.legalEntities)
       ? req.body.legalEntities
       : [];
+    const actorUserId = parsePositiveInt(req.user?.userId);
+    const selectedPolicyPackCount = legalEntities.reduce((count, entity) => {
+      const { policyPackId } = normalizeEntityPolicyPackSelection(entity);
+      return policyPackId ? count + 1 : count;
+    }, 0);
 
     if (!fiscalYear) {
       throw badRequest("fiscalYear must be a positive integer");
     }
     if (legalEntities.length === 0) {
       throw badRequest("legalEntities must be a non-empty array");
+    }
+    if (selectedPolicyPackCount > 0 && !actorUserId) {
+      throw badRequest("Authenticated user is required when policyPackId is provided");
     }
 
     assertRequiredFields(groupCompany, ["code", "name"]);
@@ -1615,6 +1710,79 @@ router.post(
           tx.query
         );
 
+        const { policyPackId, policyPackMode } =
+          normalizeEntityPolicyPackSelection(entity);
+        let policyPackSummary = null;
+        if (policyPackId) {
+          const pack = getPolicyPack(policyPackId);
+          if (!pack) {
+            throw badRequest(
+              `Unknown policyPackId for legal entity ${String(entity.code).trim()}: ${policyPackId}`
+            );
+          }
+
+          // Resolve first to build a preview, then apply only resolved rows inside
+          // the same company-bootstrap transaction.
+          // eslint-disable-next-line no-await-in-loop
+          const preview = await resolvePolicyPack({
+            tenantId,
+            legalEntityId,
+            packId: pack.packId,
+            runQuery: tx.query,
+          });
+          if (!preview) {
+            throw badRequest(
+              `Policy pack could not be resolved for legal entity ${String(
+                entity.code
+              ).trim()}: ${pack.packId}`
+            );
+          }
+
+          const plan = buildPolicyPackBootstrapApplyPlan(pack, preview.rows || []);
+          if (plan.missingRequiredPurposeCodes.length > 0) {
+            throw badRequest(
+              `Policy pack ${pack.packId} missing required purpose mappings for legal entity ${String(
+                entity.code
+              ).trim()}: ${plan.missingRequiredPurposeCodes.join(", ")}`
+            );
+          }
+          if (plan.applyRows.length === 0) {
+            throw badRequest(
+              `Policy pack ${pack.packId} did not resolve any mappable purpose rows for legal entity ${String(
+                entity.code
+              ).trim()}`
+            );
+          }
+
+          // eslint-disable-next-line no-await-in-loop
+          const applyPayload = await applyPolicyPackTx({
+            tx,
+            tenantId,
+            userId: actorUserId,
+            legalEntityId,
+            packId: pack.packId,
+            mode: policyPackMode || "MERGE",
+            rows: plan.applyRows,
+          });
+          if (!applyPayload) {
+            throw badRequest(
+              `Policy pack could not be applied for legal entity ${String(
+                entity.code
+              ).trim()}: ${pack.packId}`
+            );
+          }
+
+          policyPackSummary = {
+            packId: applyPayload.packId,
+            mode: applyPayload.mode,
+            previewSummary: preview.summary,
+            requiredPurposeCount: plan.requiredPurposeCount,
+            appliedRowCount: applyPayload.rows.length,
+            missingOptionalCount: plan.missingOptionalCount,
+            metadata: applyPayload.metadata,
+          };
+        }
+
         const bookCode = entity.bookCode
           ? String(entity.bookCode).trim()
           : `BOOK-${String(entity.code).trim().toUpperCase()}`;
@@ -1648,6 +1816,7 @@ router.post(
           coaCode,
           coaId,
           branchCount: branches.length,
+          ...(policyPackSummary ? { policyPack: policyPackSummary } : {}),
         });
       }
 
@@ -1689,6 +1858,8 @@ router.post(
 
 export const __testOnboardingInternals = {
   normalizeOnboardingDefaultAccounts,
+  normalizeEntityPolicyPackSelection,
+  buildPolicyPackBootstrapApplyPlan,
 };
 
 export default router;

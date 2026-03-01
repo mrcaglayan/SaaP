@@ -6,6 +6,7 @@ const SETUP_ALLOWLIST = new Set([
   "/app/ayarlar/sirket-ayarlari",
   "/app/ayarlar/organizasyon-yonetimi",
   "/app/ayarlar/hesap-plani-ayarlari",
+  "/app/ayarlar/workflow-kurulumu",
 ]);
 
 export default function RequireTenantReadiness({ children }) {

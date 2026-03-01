@@ -36,6 +36,488 @@ const SHAREHOLDER_DISTINCT_PAIRS = Object.freeze([
   }),
 ]);
 
+const WORKFLOW_REQUIRED_PROCESS_TYPES = Object.freeze([
+  "PERIOD_CLOSE",
+  "CONSOLIDATION_RUN",
+]);
+
+function normalizePermissionCode(value) {
+  return String(value || "").trim();
+}
+
+function normalizeWorkflowProcessType(value) {
+  return toUpper(value);
+}
+
+function inferWorkflowAssignmentScopeType(row) {
+  if (parsePositiveInt(row?.operating_unit_id)) {
+    return "OPERATING_UNIT";
+  }
+  if (parsePositiveInt(row?.legal_entity_id)) {
+    return "LEGAL_ENTITY";
+  }
+  if (parsePositiveInt(row?.group_company_id)) {
+    return "GROUP";
+  }
+  return "TENANT";
+}
+
+function addWorkflowIssue(target, nextIssue) {
+  const reason = toUpper(nextIssue?.reason);
+  const stepNo = parsePositiveInt(nextIssue?.stepNo);
+  if (!reason) {
+    return;
+  }
+  const exists = target.some(
+    (row) => toUpper(row.reason) === reason && parsePositiveInt(row.stepNo) === stepNo
+  );
+  if (exists) {
+    return;
+  }
+  target.push({
+    reason,
+    stepNo: stepNo || null,
+    message: String(nextIssue?.message || ""),
+  });
+}
+
+function evaluateWorkflowDefinitionReadiness({
+  definitionRow,
+  steps,
+  permissionCodeSet,
+}) {
+  const issues = [];
+  const invalidStepPermissions = [];
+  const workflowDefinitionId = parsePositiveInt(
+    definitionRow?.workflow_definition_id ?? definitionRow?.id
+  );
+  const processType = normalizeWorkflowProcessType(
+    definitionRow?.process_type ?? definitionRow?.processType
+  );
+  const stepRows = Array.isArray(steps)
+    ? [...steps].sort((left, right) => Number(left.step_no || 0) - Number(right.step_no || 0))
+    : [];
+
+  if (!toDbBoolean(definitionRow?.definition_is_active ?? definitionRow?.is_active)) {
+    addWorkflowIssue(issues, {
+      reason: "DEFINITION_INACTIVE",
+      message: "Assigned workflow definition is not ACTIVE",
+    });
+  }
+
+  if (stepRows.length === 0) {
+    addWorkflowIssue(issues, {
+      reason: "MISSING_STEPS",
+      message: "Assigned workflow definition has no steps",
+    });
+  }
+
+  let expectedStepNo = 1;
+  let sequenceBroken = false;
+  for (const step of stepRows) {
+    const stepNo = Number(step?.step_no || 0);
+    if (!Number.isInteger(stepNo) || stepNo < 1) {
+      addWorkflowIssue(issues, {
+        reason: "INVALID_STEP_NO",
+        message: "Workflow step_no must be a positive integer",
+      });
+      continue;
+    }
+
+    if (!sequenceBroken && stepNo !== expectedStepNo) {
+      sequenceBroken = true;
+      addWorkflowIssue(issues, {
+        reason: "STEP_SEQUENCE_GAP",
+        stepNo,
+        message: "Workflow steps must be continuous from step 1",
+      });
+    }
+    expectedStepNo = stepNo + 1;
+
+    const minApproverCount = Number(step?.min_approver_count || 0);
+    if (!Number.isInteger(minApproverCount) || minApproverCount < 1) {
+      addWorkflowIssue(issues, {
+        reason: "INVALID_MIN_APPROVER_COUNT",
+        stepNo,
+        message: "Workflow step min_approver_count must be at least 1",
+      });
+    }
+
+    const requiredPermissionCode = normalizePermissionCode(step?.required_permission_code);
+    if (!requiredPermissionCode) {
+      addWorkflowIssue(issues, {
+        reason: "STEP_PERMISSION_MISSING",
+        stepNo,
+        message: "Workflow step required_permission_code is missing",
+      });
+      continue;
+    }
+    if (!permissionCodeSet.has(requiredPermissionCode)) {
+      invalidStepPermissions.push({
+        stepNo,
+        requiredPermissionCode,
+        reason: "PERMISSION_CODE_NOT_FOUND",
+      });
+    }
+  }
+
+  return {
+    workflowDefinitionId,
+    processType,
+    stepCount: stepRows.length,
+    issues,
+    invalidStepPermissions,
+  };
+}
+
+function resolveWorkflowAssignmentPrecedence({
+  assignmentRow,
+  legalEntityId,
+  groupCompanyId,
+}) {
+  const assignmentOperatingUnitEntityId = parsePositiveInt(assignmentRow?.ou_legal_entity_id);
+  const assignmentLegalEntityId = parsePositiveInt(assignmentRow?.legal_entity_id);
+  const assignmentGroupCompanyId = parsePositiveInt(assignmentRow?.group_company_id);
+
+  if (assignmentOperatingUnitEntityId && assignmentOperatingUnitEntityId === legalEntityId) {
+    return 1;
+  }
+  if (assignmentLegalEntityId && assignmentLegalEntityId === legalEntityId) {
+    return 2;
+  }
+  if (
+    assignmentGroupCompanyId &&
+    parsePositiveInt(groupCompanyId) &&
+    assignmentGroupCompanyId === parsePositiveInt(groupCompanyId)
+  ) {
+    return 3;
+  }
+  if (!assignmentOperatingUnitEntityId && !assignmentLegalEntityId && !assignmentGroupCompanyId) {
+    return 4;
+  }
+  return null;
+}
+
+function pickWorkflowAssignmentForProcess({
+  assignmentRows,
+  processType,
+  legalEntityId,
+  groupCompanyId,
+}) {
+  const matchingRows = [];
+  for (const row of assignmentRows) {
+    if (normalizeWorkflowProcessType(row?.process_type) !== normalizeWorkflowProcessType(processType)) {
+      continue;
+    }
+    const precedence = resolveWorkflowAssignmentPrecedence({
+      assignmentRow: row,
+      legalEntityId,
+      groupCompanyId,
+    });
+    if (!precedence) {
+      continue;
+    }
+    matchingRows.push({
+      row,
+      precedence,
+    });
+  }
+
+  matchingRows.sort((left, right) => {
+    if (left.precedence !== right.precedence) {
+      return left.precedence - right.precedence;
+    }
+    return Number(right.row?.id || 0) - Number(left.row?.id || 0);
+  });
+  return matchingRows[0]?.row || null;
+}
+
+async function loadWorkflowReadinessAssignments({
+  tenantId,
+  runQuery = query,
+}) {
+  const effectiveOn = new Date().toISOString().slice(0, 10);
+  const processTypePlaceholders = WORKFLOW_REQUIRED_PROCESS_TYPES.map(() => "?").join(", ");
+  const result = await runQuery(
+    `SELECT
+       wa.*,
+       wd.is_active AS definition_is_active,
+       wd.code AS workflow_definition_code,
+       wd.name AS workflow_definition_name,
+       ou.legal_entity_id AS ou_legal_entity_id
+     FROM workflow_assignments wa
+     JOIN workflow_definitions wd ON wd.id = wa.workflow_definition_id
+     LEFT JOIN operating_units ou ON ou.id = wa.operating_unit_id
+     WHERE wa.tenant_id = ?
+       AND wa.status = 'ACTIVE'
+       AND wa.process_type IN (${processTypePlaceholders})
+       AND wa.effective_from <= ?
+       AND (wa.effective_to IS NULL OR wa.effective_to >= ?)`,
+    [tenantId, ...WORKFLOW_REQUIRED_PROCESS_TYPES, effectiveOn, effectiveOn]
+  );
+  return result.rows || [];
+}
+
+async function loadWorkflowDefinitionStepsByDefinitionId({
+  definitionIds,
+  runQuery = query,
+}) {
+  const normalizedDefinitionIds = (Array.isArray(definitionIds) ? definitionIds : [])
+    .map((value) => parsePositiveInt(value))
+    .filter(Boolean);
+  if (normalizedDefinitionIds.length === 0) {
+    return new Map();
+  }
+
+  const placeholders = normalizedDefinitionIds.map(() => "?").join(", ");
+  const result = await runQuery(
+    `SELECT
+       workflow_definition_id,
+       step_no,
+       required_permission_code,
+       min_approver_count
+     FROM workflow_definition_steps
+     WHERE workflow_definition_id IN (${placeholders})
+     ORDER BY workflow_definition_id ASC, step_no ASC`,
+    normalizedDefinitionIds
+  );
+
+  const stepsByDefinitionId = new Map();
+  for (const row of result.rows || []) {
+    const definitionId = parsePositiveInt(row.workflow_definition_id);
+    if (!definitionId) {
+      continue;
+    }
+    if (!stepsByDefinitionId.has(definitionId)) {
+      stepsByDefinitionId.set(definitionId, []);
+    }
+    stepsByDefinitionId.get(definitionId).push(row);
+  }
+  return stepsByDefinitionId;
+}
+
+async function loadPermissionCodeSet(runQuery = query) {
+  const result = await runQuery(
+    `SELECT code
+     FROM permissions`
+  );
+  const set = new Set();
+  for (const row of result.rows || []) {
+    const code = normalizePermissionCode(row?.code);
+    if (code) {
+      set.add(code);
+    }
+  }
+  return set;
+}
+
+async function loadLegalEntitiesWithGroupCompany({
+  tenantId,
+  legalEntityIds,
+  runQuery = query,
+}) {
+  const normalizedIds = (Array.isArray(legalEntityIds) ? legalEntityIds : [])
+    .map((value) => parsePositiveInt(value))
+    .filter(Boolean);
+  if (normalizedIds.length === 0) {
+    return new Map();
+  }
+  const placeholders = normalizedIds.map(() => "?").join(", ");
+  const result = await runQuery(
+    `SELECT id, group_company_id
+     FROM legal_entities
+     WHERE tenant_id = ?
+       AND id IN (${placeholders})`,
+    [tenantId, ...normalizedIds]
+  );
+  const map = new Map();
+  for (const row of result.rows || []) {
+    const legalEntityId = parsePositiveInt(row.id);
+    if (!legalEntityId) {
+      continue;
+    }
+    map.set(legalEntityId, {
+      legalEntityId,
+      groupCompanyId: parsePositiveInt(row.group_company_id) || null,
+    });
+  }
+  return map;
+}
+
+export async function getCloseConsolidationWorkflowReadiness(
+  tenantId,
+  legalEntityId = null,
+  { runQuery = query } = {}
+) {
+  const legalEntityIds = await resolveTargetLegalEntityIds({
+    tenantId,
+    legalEntityId,
+    runQuery,
+  });
+  if (legalEntityIds.length === 0) {
+    return {
+      moduleKey: "closeConsolidationWorkflow",
+      byLegalEntity: [],
+    };
+  }
+
+  let legalEntityScopeMap = new Map();
+  let assignmentRows = [];
+  let permissionCodeSet = new Set();
+  let stepsByDefinitionId = new Map();
+  try {
+    [legalEntityScopeMap, assignmentRows, permissionCodeSet] = await Promise.all([
+      loadLegalEntitiesWithGroupCompany({
+        tenantId,
+        legalEntityIds,
+        runQuery,
+      }),
+      loadWorkflowReadinessAssignments({
+        tenantId,
+        runQuery,
+      }),
+      loadPermissionCodeSet(runQuery),
+    ]);
+
+    const workflowDefinitionIds = Array.from(
+      new Set(
+        assignmentRows
+          .map((row) => parsePositiveInt(row.workflow_definition_id))
+          .filter(Boolean)
+      )
+    );
+    stepsByDefinitionId = await loadWorkflowDefinitionStepsByDefinitionId({
+      definitionIds: workflowDefinitionIds,
+      runQuery,
+    });
+  } catch (err) {
+    if (!isMissingTableError(err)) {
+      throw err;
+    }
+    return {
+      moduleKey: "closeConsolidationWorkflow",
+      byLegalEntity: legalEntityIds.map((entityId) => ({
+        legalEntityId: entityId,
+        ready: false,
+        requiredProcessTypes: [...WORKFLOW_REQUIRED_PROCESS_TYPES],
+        missingProcessTypes: [...WORKFLOW_REQUIRED_PROCESS_TYPES],
+        resolvedAssignments: [],
+        invalidDefinitions: [
+          {
+            processType: "PERIOD_CLOSE",
+            assignmentId: null,
+            workflowDefinitionId: null,
+            issues: [
+              {
+                reason: "WORKFLOW_TABLES_MISSING",
+                stepNo: null,
+                message: "Workflow approval tables are not migrated yet",
+              },
+            ],
+          },
+        ],
+        invalidStepPermissions: [],
+      })),
+    };
+  }
+
+  const definitionValidationById = new Map();
+  for (const assignmentRow of assignmentRows) {
+    const workflowDefinitionId = parsePositiveInt(assignmentRow.workflow_definition_id);
+    if (!workflowDefinitionId || definitionValidationById.has(workflowDefinitionId)) {
+      continue;
+    }
+    const definitionReadiness = evaluateWorkflowDefinitionReadiness({
+      definitionRow: assignmentRow,
+      steps: stepsByDefinitionId.get(workflowDefinitionId) || [],
+      permissionCodeSet,
+    });
+    definitionValidationById.set(workflowDefinitionId, definitionReadiness);
+  }
+
+  const byLegalEntity = legalEntityIds.map((entityId) => {
+    const legalEntityScope = legalEntityScopeMap.get(entityId) || {
+      legalEntityId: entityId,
+      groupCompanyId: null,
+    };
+
+    const resolvedAssignments = [];
+    const missingProcessTypes = [];
+    const invalidDefinitions = [];
+    const invalidStepPermissions = [];
+
+    for (const processType of WORKFLOW_REQUIRED_PROCESS_TYPES) {
+      const assignmentRow = pickWorkflowAssignmentForProcess({
+        assignmentRows,
+        processType,
+        legalEntityId: legalEntityScope.legalEntityId,
+        groupCompanyId: legalEntityScope.groupCompanyId,
+      });
+
+      if (!assignmentRow) {
+        missingProcessTypes.push(processType);
+        continue;
+      }
+
+      const assignmentId = parsePositiveInt(assignmentRow.id);
+      const workflowDefinitionId = parsePositiveInt(assignmentRow.workflow_definition_id);
+      const definitionReadiness = definitionValidationById.get(workflowDefinitionId) || null;
+      const scopeType = inferWorkflowAssignmentScopeType(assignmentRow);
+
+      resolvedAssignments.push({
+        processType,
+        assignmentId: assignmentId || null,
+        workflowDefinitionId: workflowDefinitionId || null,
+        workflowDefinitionCode: String(assignmentRow.workflow_definition_code || ""),
+        scopeType,
+        scopeId:
+          parsePositiveInt(assignmentRow.operating_unit_id) ||
+          parsePositiveInt(assignmentRow.legal_entity_id) ||
+          parsePositiveInt(assignmentRow.group_company_id) ||
+          null,
+      });
+
+      if (definitionReadiness?.issues?.length > 0) {
+        invalidDefinitions.push({
+          processType,
+          assignmentId: assignmentId || null,
+          workflowDefinitionId: workflowDefinitionId || null,
+          issues: definitionReadiness.issues,
+        });
+      }
+
+      for (const invalidPermission of definitionReadiness?.invalidStepPermissions || []) {
+        invalidStepPermissions.push({
+          processType,
+          assignmentId: assignmentId || null,
+          workflowDefinitionId: workflowDefinitionId || null,
+          stepNo: Number(invalidPermission.stepNo || 0) || null,
+          requiredPermissionCode: String(invalidPermission.requiredPermissionCode || ""),
+          reason: toUpper(invalidPermission.reason),
+        });
+      }
+    }
+
+    return {
+      legalEntityId: legalEntityScope.legalEntityId,
+      ready:
+        missingProcessTypes.length === 0 &&
+        invalidDefinitions.length === 0 &&
+        invalidStepPermissions.length === 0,
+      requiredProcessTypes: [...WORKFLOW_REQUIRED_PROCESS_TYPES],
+      missingProcessTypes,
+      resolvedAssignments,
+      invalidDefinitions,
+      invalidStepPermissions,
+    };
+  });
+
+  return {
+    moduleKey: "closeConsolidationWorkflow",
+    byLegalEntity,
+  };
+}
+
 function toUpper(value) {
   return String(value || "")
     .trim()
@@ -44,6 +526,10 @@ function toUpper(value) {
 
 function toDbBoolean(value) {
   return value === true || Number(value) === 1;
+}
+
+function isMissingTableError(err) {
+  return Number(err?.errno) === 1146;
 }
 
 function addInvalidMapping(invalidMappings, nextRow) {
@@ -495,13 +981,21 @@ export async function getModuleReadiness(
   }
 
   const normalizedLegalEntityId = parsePositiveInt(legalEntityId);
-  const [cariPosting, shareholderCommitment] = await Promise.all([
+  const [cariPosting, shareholderCommitment, closeConsolidationWorkflow] =
+    await Promise.all([
     getCariPostingReadiness(normalizedTenantId, normalizedLegalEntityId, {
       runQuery,
     }),
     getShareholderCommitmentReadiness(normalizedTenantId, normalizedLegalEntityId, {
       runQuery,
     }),
+    getCloseConsolidationWorkflowReadiness(
+      normalizedTenantId,
+      normalizedLegalEntityId,
+      {
+        runQuery,
+      }
+    ),
   ]);
 
   return {
@@ -513,6 +1007,9 @@ export async function getModuleReadiness(
       },
       shareholderCommitment: {
         byLegalEntity: shareholderCommitment.byLegalEntity,
+      },
+      closeConsolidationWorkflow: {
+        byLegalEntity: closeConsolidationWorkflow.byLegalEntity,
       },
     },
   };

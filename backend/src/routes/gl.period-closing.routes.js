@@ -7,11 +7,13 @@ import {
 import {
   assertBookBelongsToTenant,
   assertFiscalPeriodBelongsToCalendar,
+  assertLegalEntityBelongsToTenant,
 } from "../tenantGuards.js";
 import {
   closePeriodStatus,
   listPeriodCloseRuns,
 } from "../services/gl.period-closing.service.js";
+import { evaluateWorkflowApprovalGate } from "../services/workflows.service.js";
 import {
   parsePeriodCloseRunFilters,
   parsePeriodStatusCloseInput,
@@ -101,6 +103,22 @@ export function registerGlPeriodClosingRoutes(router, deps = {}) {
     throw new Error("registerGlPeriodClosingRoutes requires writeAuditLog");
   }
 
+  function toApprovalGateResponse(req, gate, details = {}) {
+    const errorCode = String(gate?.errorCode || "APPROVAL_REQUIRED").trim().toUpperCase();
+    const defaultMessage =
+      errorCode === "WORKFLOW_NOT_ASSIGNED"
+        ? "Workflow gate is enabled but no assignment was found"
+        : errorCode === "APPROVAL_INSTANCE_REJECTED"
+          ? "Workflow instance is rejected; period close is blocked"
+          : "Workflow approval is required before period close can complete";
+    return {
+      message: String(gate?.message || defaultMessage),
+      code: errorCode,
+      details,
+      requestId: req.requestId || null,
+    };
+  }
+
   router.get(
     "/period-closing/runs",
     requirePermission("gl.period.close", {
@@ -157,6 +175,10 @@ export function registerGlPeriodClosingRoutes(router, deps = {}) {
       if (legalEntityId) {
         assertScopeAccess(req, "legal_entity", legalEntityId, "bookId");
       }
+      const legalEntity = legalEntityId
+        ? await assertLegalEntityBelongsToTenant(tenantId, legalEntityId, "book legalEntity")
+        : null;
+      const groupCompanyId = parsePositiveInt(legalEntity?.group_company_id);
 
       await assertFiscalPeriodBelongsToCalendar(
         parsePositiveInt(book.calendar_id),
@@ -312,8 +334,48 @@ export function registerGlPeriodClosingRoutes(router, deps = {}) {
 
         let runId = parsePositiveInt(existingRun?.id);
         const existingStatus = String(existingRun?.status || "").toUpperCase();
+        const loadRunPayloadById = async (targetRunId) => {
+          const runResult = await tx.query(
+            `SELECT
+               r.*,
+               b.code AS book_code,
+               b.name AS book_name,
+               fp.fiscal_year,
+               fp.period_no,
+               fp.period_name
+             FROM period_close_runs r
+             JOIN books b ON b.id = r.book_id
+             JOIN fiscal_periods fp ON fp.id = r.fiscal_period_id
+             WHERE r.id = ?
+             LIMIT 1`,
+            [targetRunId]
+          );
+          return mapPeriodCloseRunRow(runResult.rows?.[0] || null);
+        };
+
         if (existingRun && existingStatus === "IN_PROGRESS") {
-          throw badRequest("A close run is already in progress for this period hash");
+          const gate = await evaluateWorkflowApprovalGate({
+            tenantId,
+            processType: "PERIOD_CLOSE",
+            targetType: "PERIOD_CLOSE_RUN",
+            targetId: runId,
+            requestedByUserId: userId,
+            scope: {
+              legalEntityId,
+              groupCompanyId,
+            },
+            effectiveOn: currentPeriod.end_date,
+            runQuery: tx.query,
+          });
+          if (gate.required && !gate.approved) {
+            return {
+              approvalRequired: true,
+              previousStatus: currentStatus,
+              gate,
+              run: await loadRunPayloadById(runId),
+            };
+          }
+          // Resume/overwrite the same run hash after approval state is satisfied.
         }
 
         if (runId) {
@@ -395,6 +457,28 @@ export function registerGlPeriodClosingRoutes(router, deps = {}) {
 
         if (!runId) {
           throw badRequest("Failed to initialize period close run");
+        }
+
+        const gate = await evaluateWorkflowApprovalGate({
+          tenantId,
+          processType: "PERIOD_CLOSE",
+          targetType: "PERIOD_CLOSE_RUN",
+          targetId: runId,
+          requestedByUserId: userId,
+          scope: {
+            legalEntityId,
+            groupCompanyId,
+          },
+          effectiveOn: currentPeriod.end_date,
+          runQuery: tx.query,
+        });
+        if (gate.required && !gate.approved) {
+          return {
+            approvalRequired: true,
+            previousStatus: currentStatus,
+            gate,
+            run: await loadRunPayloadById(runId),
+          };
         }
 
         const balances = await getPostedPeriodAccountBalances(
@@ -700,6 +784,24 @@ export function registerGlPeriodClosingRoutes(router, deps = {}) {
           yearEndLineCount: yearEndLines.length,
         };
       });
+
+      if (closeResult?.approvalRequired) {
+        return res
+          .status(409)
+          .json(
+            toApprovalGateResponse(req, closeResult.gate, {
+              processType: "PERIOD_CLOSE",
+              targetType: "PERIOD_CLOSE_RUN",
+              targetId: parsePositiveInt(closeResult?.run?.id),
+              bookId,
+              fiscalPeriodId,
+              closeStatus,
+              run: closeResult.run || null,
+              assignment: closeResult.gate?.assignment || null,
+              instance: closeResult.gate?.instance || null,
+            })
+          );
+      }
 
       return res.status(closeResult.idempotent ? 200 : 201).json({
         ok: true,

@@ -10,6 +10,326 @@ const SHAREHOLDER_REQUIRED_PURPOSE_CODES = Object.freeze([
   "SHAREHOLDER_COMMITMENT_DEBIT_PARENT",
 ]);
 
+const STARTER_ACCOUNT_TREES_BY_PACK_ID = Object.freeze({
+  TR_UNIFORM_V1: Object.freeze([
+    Object.freeze({
+      code: "100",
+      name: "Current Assets",
+      accountType: "ASSET",
+      normalSide: "DEBIT",
+      allowPosting: false,
+    }),
+    Object.freeze({
+      code: "102",
+      name: "Banks",
+      parentCode: "100",
+      accountType: "ASSET",
+      normalSide: "DEBIT",
+      allowPosting: true,
+    }),
+    Object.freeze({
+      code: "120",
+      name: "Trade Receivables",
+      parentCode: "100",
+      accountType: "ASSET",
+      normalSide: "DEBIT",
+      allowPosting: true,
+    }),
+    Object.freeze({
+      code: "159",
+      name: "Advances Given for Orders",
+      parentCode: "100",
+      accountType: "ASSET",
+      normalSide: "DEBIT",
+      allowPosting: true,
+    }),
+    Object.freeze({
+      code: "300",
+      name: "Current Liabilities",
+      accountType: "LIABILITY",
+      normalSide: "CREDIT",
+      allowPosting: false,
+    }),
+    Object.freeze({
+      code: "320",
+      name: "Trade Payables",
+      parentCode: "300",
+      accountType: "LIABILITY",
+      normalSide: "CREDIT",
+      allowPosting: true,
+    }),
+    Object.freeze({
+      code: "340",
+      name: "Customer Advances Received",
+      parentCode: "300",
+      accountType: "LIABILITY",
+      normalSide: "CREDIT",
+      allowPosting: true,
+    }),
+    Object.freeze({
+      code: "500",
+      name: "Capital",
+      accountType: "EQUITY",
+      normalSide: "CREDIT",
+      allowPosting: false,
+    }),
+    Object.freeze({
+      code: "501",
+      name: "Unpaid Capital Commitments",
+      accountType: "EQUITY",
+      normalSide: "DEBIT",
+      allowPosting: false,
+    }),
+    Object.freeze({
+      code: "600",
+      name: "Domestic Sales",
+      accountType: "REVENUE",
+      normalSide: "CREDIT",
+      allowPosting: true,
+    }),
+    Object.freeze({
+      code: "770",
+      name: "General Administrative Expenses",
+      accountType: "EXPENSE",
+      normalSide: "DEBIT",
+      allowPosting: true,
+    }),
+  ]),
+  AF_STARTER_V1: Object.freeze([
+    Object.freeze({
+      code: "1000",
+      name: "Current Assets",
+      accountType: "ASSET",
+      normalSide: "DEBIT",
+      allowPosting: false,
+    }),
+    Object.freeze({
+      code: "1100",
+      name: "Accounts Receivable",
+      parentCode: "1000",
+      accountType: "ASSET",
+      normalSide: "DEBIT",
+      allowPosting: true,
+    }),
+    Object.freeze({
+      code: "1150",
+      name: "Cash and Bank",
+      parentCode: "1000",
+      accountType: "ASSET",
+      normalSide: "DEBIT",
+      allowPosting: true,
+    }),
+    Object.freeze({
+      code: "2000",
+      name: "Accounts Payable",
+      accountType: "LIABILITY",
+      normalSide: "CREDIT",
+      allowPosting: true,
+    }),
+    Object.freeze({
+      code: "3100",
+      name: "Share Capital",
+      accountType: "EQUITY",
+      normalSide: "CREDIT",
+      allowPosting: false,
+    }),
+    Object.freeze({
+      code: "3110",
+      name: "Shareholder Commitment Receivable",
+      accountType: "EQUITY",
+      normalSide: "DEBIT",
+      allowPosting: false,
+    }),
+    Object.freeze({
+      code: "4000",
+      name: "Sales Revenue",
+      accountType: "REVENUE",
+      normalSide: "CREDIT",
+      allowPosting: true,
+    }),
+    Object.freeze({
+      code: "5000",
+      name: "Operating Expenses",
+      accountType: "EXPENSE",
+      normalSide: "DEBIT",
+      allowPosting: true,
+    }),
+  ]),
+  US_GAAP_STARTER_V1: Object.freeze([
+    Object.freeze({
+      code: "1000",
+      name: "Current Assets",
+      accountType: "ASSET",
+      normalSide: "DEBIT",
+      allowPosting: false,
+    }),
+    Object.freeze({
+      code: "1100",
+      name: "Accounts Receivable",
+      parentCode: "1000",
+      accountType: "ASSET",
+      normalSide: "DEBIT",
+      allowPosting: true,
+    }),
+    Object.freeze({
+      code: "1150",
+      name: "Cash and Bank",
+      parentCode: "1000",
+      accountType: "ASSET",
+      normalSide: "DEBIT",
+      allowPosting: true,
+    }),
+    Object.freeze({
+      code: "2000",
+      name: "Accounts Payable",
+      accountType: "LIABILITY",
+      normalSide: "CREDIT",
+      allowPosting: true,
+    }),
+    Object.freeze({
+      code: "3100",
+      name: "Common Stock",
+      accountType: "EQUITY",
+      normalSide: "CREDIT",
+      allowPosting: false,
+    }),
+    Object.freeze({
+      code: "3110",
+      name: "Stock Subscription Receivable",
+      accountType: "EQUITY",
+      normalSide: "DEBIT",
+      allowPosting: false,
+    }),
+    Object.freeze({
+      code: "4000",
+      name: "Sales Revenue",
+      accountType: "REVENUE",
+      normalSide: "CREDIT",
+      allowPosting: true,
+    }),
+    Object.freeze({
+      code: "5000",
+      name: "Operating Expenses",
+      accountType: "EXPENSE",
+      normalSide: "DEBIT",
+      allowPosting: true,
+    }),
+  ]),
+});
+
+function toUpper(value) {
+  return String(value || "")
+    .trim()
+    .toUpperCase();
+}
+
+function normalizeStarterAccountTreeRows(rows = []) {
+  return (Array.isArray(rows) ? rows : []).map((row) => ({
+    code: toUpper(row?.code),
+    ...(toUpper(row?.parentCode) ? { parentCode: toUpper(row.parentCode) } : {}),
+    name: String(row?.name || "").trim(),
+    accountType: toUpper(row?.accountType),
+    normalSide: toUpper(row?.normalSide),
+    allowPosting: row?.allowPosting === undefined ? true : Boolean(row.allowPosting),
+  }));
+}
+
+function buildRequiredParentAccounts(starterAccountTree = []) {
+  const treeRows = normalizeStarterAccountTreeRows(starterAccountTree);
+  const byCode = new Map(treeRows.map((row) => [row.code, row]));
+  const parentCodeSet = new Set(
+    treeRows.map((row) => toUpper(row.parentCode)).filter(Boolean)
+  );
+  const nonPostableSet = new Set(
+    treeRows.filter((row) => row.allowPosting === false).map((row) => row.code)
+  );
+  const requiredCodes = new Set([...parentCodeSet, ...nonPostableSet]);
+
+  return Array.from(requiredCodes)
+    .map((code) => {
+      const row = byCode.get(code);
+      if (!row) {
+        return null;
+      }
+      return {
+        code: row.code,
+        name: row.name,
+        accountType: row.accountType,
+        normalSide: row.normalSide,
+        allowPosting: false,
+        reason: parentCodeSet.has(code)
+          ? "required_parent_for_tree"
+          : "required_non_postable_control",
+      };
+    })
+    .filter(Boolean)
+    .sort((left, right) => left.code.localeCompare(right.code));
+}
+
+function buildRequiredPurposeMappings(modules = [], starterAccountTree = []) {
+  const requiredPurposeCodeSet = new Set();
+  for (const module of modules || []) {
+    for (const purposeCode of module?.requiredPurposeCodes || []) {
+      requiredPurposeCodeSet.add(toUpper(purposeCode));
+    }
+  }
+
+  const starterByCode = new Map(
+    normalizeStarterAccountTreeRows(starterAccountTree).map((row) => [row.code, row])
+  );
+  const byPurposeCode = new Map();
+
+  for (const module of modules || []) {
+    const moduleKey = String(module?.moduleKey || "").trim();
+    for (const target of module?.purposeTargets || []) {
+      const purposeCode = toUpper(target?.purposeCode);
+      if (!purposeCode || byPurposeCode.has(purposeCode)) {
+        continue;
+      }
+
+      const recommendedCode = toUpper(
+        target?.suggestCreate?.code || target?.match?.codeExact?.[0]
+      );
+      const treeRow = starterByCode.get(recommendedCode);
+
+      byPurposeCode.set(purposeCode, {
+        moduleKey,
+        purposeCode,
+        required: requiredPurposeCodeSet.has(purposeCode),
+        recommendedCode: recommendedCode || null,
+        ...(target?.suggestCreate?.name
+          ? { recommendedName: String(target.suggestCreate.name).trim() }
+          : {}),
+        ...(treeRow?.parentCode ? { recommendedParentCode: treeRow.parentCode } : {}),
+      });
+    }
+  }
+
+  return Array.from(byPurposeCode.values()).sort((left, right) => {
+    if (left.required !== right.required) {
+      return left.required ? -1 : 1;
+    }
+    if (left.moduleKey !== right.moduleKey) {
+      return String(left.moduleKey).localeCompare(String(right.moduleKey));
+    }
+    return String(left.purposeCode).localeCompare(String(right.purposeCode));
+  });
+}
+
+function buildPackExpansion(pack) {
+  const starterAccountTree = normalizeStarterAccountTreeRows(
+    STARTER_ACCOUNT_TREES_BY_PACK_ID[toUpper(pack?.packId)] || []
+  );
+  return {
+    starterAccountTree,
+    requiredParentAccounts: buildRequiredParentAccounts(starterAccountTree),
+    requiredPurposeMappings: buildRequiredPurposeMappings(
+      pack?.modules || [],
+      starterAccountTree
+    ),
+  };
+}
+
 const PACKS = Object.freeze([
   Object.freeze({
     packId: "TR_UNIFORM_V1",
@@ -614,16 +934,28 @@ const PACKS = Object.freeze([
   }),
 ]);
 
+const PACKS_WITH_EXPANSION = Object.freeze(
+  PACKS.map((pack) =>
+    Object.freeze({
+      ...pack,
+      ...buildPackExpansion(pack),
+    })
+  )
+);
+
 function deepClone(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
 export function listPolicyPacks() {
-  return PACKS.map((pack) => ({
+  return PACKS_WITH_EXPANSION.map((pack) => ({
     packId: pack.packId,
     countryIso2: pack.countryIso2,
     label: pack.label,
     locked: true,
+    starterAccountTreeCount: (pack.starterAccountTree || []).length,
+    requiredParentAccountCount: (pack.requiredParentAccounts || []).length,
+    requiredPurposeMappingCount: (pack.requiredPurposeMappings || []).length,
   }));
 }
 
@@ -633,7 +965,7 @@ export function getPolicyPack(packId) {
     return null;
   }
 
-  const pack = PACKS.find((row) => row.packId === normalizedPackId);
+  const pack = PACKS_WITH_EXPANSION.find((row) => row.packId === normalizedPackId);
   if (!pack) {
     return null;
   }

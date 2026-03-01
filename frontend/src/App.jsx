@@ -13,6 +13,7 @@ import AcilisFisiOlustur from "./pages/AcilisFisiOlustur";
 import JournalWorkbenchPage from "./pages/JournalWorkbenchPage";
 import CompanyOnboardingPage from "./pages/settings/CompanyOnboardingPage";
 import GlSetupPage from "./pages/settings/GlSetupPage";
+import WorkflowSetupPage from "./pages/settings/WorkflowSetupPage.jsx";
 import GlReclassificationPage from "./pages/settings/GlReclassificationPage.jsx";
 import HesapPlaniOlustur from "./pages/settings/HesapPlaniOlustur";
 import OrganizationManagementPage from "./pages/settings/OrganizationManagementPage";
@@ -327,6 +328,11 @@ const implementedRoutes = [
     appPath: "/app/ayarlar/hesap-plani-ayarlari",
     childPath: "ayarlar/hesap-plani-ayarlari",
     element: <GlSetupPage />,
+  },
+  {
+    appPath: "/app/ayarlar/workflow-kurulumu",
+    childPath: "ayarlar/workflow-kurulumu",
+    element: <WorkflowSetupPage />,
   },
   {
     appPath: "/app/ayarlar/hesap-yeniden-siniflandirma",

@@ -333,7 +333,7 @@ async function insertApplyMetadata({
   };
 }
 
-export async function applyPolicyPack({
+function prepareApplyPolicyPackInput({
   tenantId,
   userId,
   legalEntityId,
@@ -370,93 +370,173 @@ export async function applyPolicyPack({
   assertRowsBelongToPack(normalizedRows, purposeDefinitionByCode, pack.packId);
   const managedPurposeCodes = Array.from(purposeDefinitionByCode.keys());
 
-  return withTransaction(async (tx) => {
-    const existingByPurpose = await loadExistingManagedMappings(
+  return {
+    normalizedTenantId,
+    normalizedUserId,
+    normalizedLegalEntityId,
+    normalizedMode,
+    normalizedRows,
+    pack,
+    purposeDefinitionByCode,
+    managedPurposeCodes,
+  };
+}
+
+async function applyPolicyPackWithTx({
+  tx,
+  normalizedTenantId,
+  normalizedUserId,
+  normalizedLegalEntityId,
+  normalizedMode,
+  normalizedRows,
+  pack,
+  purposeDefinitionByCode,
+  managedPurposeCodes,
+}) {
+  const existingByPurpose = await loadExistingManagedMappings(
+    tx,
+    normalizedTenantId,
+    normalizedLegalEntityId,
+    managedPurposeCodes
+  );
+
+  const providedByPurpose = new Map();
+  const validatedRows = [];
+  for (let i = 0; i < normalizedRows.length; i += 1) {
+    const row = normalizedRows[i];
+    const fieldLabel = `rows[${i}].accountId`;
+    const definition = purposeDefinitionByCode.get(row.purposeCode);
+    const accountRow = await loadAccountValidationRow(
       tx,
       normalizedTenantId,
       normalizedLegalEntityId,
-      managedPurposeCodes
+      row.accountId,
+      fieldLabel
     );
 
-    const providedByPurpose = new Map();
-    const validatedRows = [];
-    for (let i = 0; i < normalizedRows.length; i += 1) {
-      const row = normalizedRows[i];
-      const fieldLabel = `rows[${i}].accountId`;
-      const definition = purposeDefinitionByCode.get(row.purposeCode);
-      const accountRow = await loadAccountValidationRow(
+    if (definition?.moduleKey === "shareholderCommitment") {
+      await validateShareholderPurposeRow({
         tx,
-        normalizedTenantId,
-        normalizedLegalEntityId,
-        row.accountId,
-        fieldLabel
-      );
-
-      if (definition?.moduleKey === "shareholderCommitment") {
-        await validateShareholderPurposeRow({
-          tx,
-          tenantId: normalizedTenantId,
-          legalEntityId: normalizedLegalEntityId,
-          purposeCode: row.purposeCode,
-          accountId: row.accountId,
-          fieldLabel,
-        });
-      } else {
-        validateCariPurposeRow({
-          accountRow,
-          definition,
-          fieldLabel,
-        });
-      }
-
-      providedByPurpose.set(row.purposeCode, row.accountId);
-      validatedRows.push({
+        tenantId: normalizedTenantId,
+        legalEntityId: normalizedLegalEntityId,
         purposeCode: row.purposeCode,
         accountId: row.accountId,
+        fieldLabel,
+      });
+    } else {
+      validateCariPurposeRow({
+        accountRow,
+        definition,
+        fieldLabel,
       });
     }
 
-    const effectiveByPurpose = buildEffectiveMapping({
-      mode: normalizedMode,
-      existingByPurpose,
-      providedByPurpose,
+    providedByPurpose.set(row.purposeCode, row.accountId);
+    validatedRows.push({
+      purposeCode: row.purposeCode,
+      accountId: row.accountId,
     });
-    assertDistinctPurposePairs(effectiveByPurpose);
+  }
 
-    if (normalizedMode === "OVERWRITE") {
-      await deleteManagedMappingsForOverwrite({
-        tx,
-        tenantId: normalizedTenantId,
-        legalEntityId: normalizedLegalEntityId,
-        managedPurposeCodes,
-      });
-    }
+  const effectiveByPurpose = buildEffectiveMapping({
+    mode: normalizedMode,
+    existingByPurpose,
+    providedByPurpose,
+  });
+  assertDistinctPurposePairs(effectiveByPurpose);
 
-    for (const row of validatedRows) {
-      await upsertJournalPurposeAccountTx(tx, {
-        tenantId: normalizedTenantId,
-        legalEntityId: normalizedLegalEntityId,
-        purposeCode: row.purposeCode,
-        accountId: row.accountId,
-      });
-    }
-
-    const metadata = await insertApplyMetadata({
+  if (normalizedMode === "OVERWRITE") {
+    await deleteManagedMappingsForOverwrite({
       tx,
       tenantId: normalizedTenantId,
       legalEntityId: normalizedLegalEntityId,
-      packId: pack.packId,
-      mode: normalizedMode,
-      rows: validatedRows,
-      userId: normalizedUserId,
+      managedPurposeCodes,
     });
+  }
 
-    return {
-      packId: pack.packId,
+  for (const row of validatedRows) {
+    await upsertJournalPurposeAccountTx(tx, {
+      tenantId: normalizedTenantId,
       legalEntityId: normalizedLegalEntityId,
-      mode: normalizedMode,
-      rows: validatedRows,
-      metadata,
-    };
+      purposeCode: row.purposeCode,
+      accountId: row.accountId,
+    });
+  }
+
+  const metadata = await insertApplyMetadata({
+    tx,
+    tenantId: normalizedTenantId,
+    legalEntityId: normalizedLegalEntityId,
+    packId: pack.packId,
+    mode: normalizedMode,
+    rows: validatedRows,
+    userId: normalizedUserId,
+  });
+
+  return {
+    packId: pack.packId,
+    legalEntityId: normalizedLegalEntityId,
+    mode: normalizedMode,
+    rows: validatedRows,
+    metadata,
+  };
+}
+
+export async function applyPolicyPackTx({
+  tx,
+  tenantId,
+  userId,
+  legalEntityId,
+  packId,
+  mode,
+  rows,
+}) {
+  if (!tx || typeof tx.query !== "function") {
+    throw badRequest("tx.query is required");
+  }
+
+  const prepared = prepareApplyPolicyPackInput({
+    tenantId,
+    userId,
+    legalEntityId,
+    packId,
+    mode,
+    rows,
+  });
+  if (!prepared) {
+    return null;
+  }
+
+  return applyPolicyPackWithTx({
+    tx,
+    ...prepared,
+  });
+}
+
+export async function applyPolicyPack({
+  tenantId,
+  userId,
+  legalEntityId,
+  packId,
+  mode,
+  rows,
+}) {
+  const prepared = prepareApplyPolicyPackInput({
+    tenantId,
+    userId,
+    legalEntityId,
+    packId,
+    mode,
+    rows,
+  });
+  if (!prepared) {
+    return null;
+  }
+
+  return withTransaction(async (tx) => {
+    return applyPolicyPackWithTx({
+      tx,
+      ...prepared,
+    });
   });
 }
