@@ -6,6 +6,13 @@ import {
   assertCurrencyExists,
   assertLegalEntityBelongsToTenant,
 } from "../tenantGuards.js";
+import {
+  buildTaxJournalLines as buildTaxJournalLinesFromEngine,
+  computeTaxBreakdown as computeTaxBreakdownFromEngine,
+  resolveTaxAccounts as resolveTaxAccountsFromEngine,
+  resolveTaxCodeAndRule,
+  resolveTaxRegime as resolveTaxRegimeFromEngine,
+} from "./tax.engine.service.js";
 function u(value) {
   return String(value || "")
     .trim()
@@ -1652,151 +1659,69 @@ export async function previewTaxComputation({
   ) {
     throw badRequest("countryId must match legalEntityId country");
   }
-  const regimeRow = await resolvePreviewRegime({
+  const regimeRow = await resolveTaxRegimeFromEngine({
     tenantId,
-    countryId: resolvedCountryId,
     legalEntityId: parsePositiveInt(input.legalEntityId),
     postingDate: input.postingDate,
+    countryId: resolvedCountryId,
     runQuery,
   });
-  if (!regimeRow) {
-    throw notFound(
-      "Active tax regime not found for selected country/legal entity/posting date",
-      "TAX_REGIME_NOT_FOUND"
-    );
-  }
-  let taxCodeRow = await resolvePreviewTaxCode({
+
+  const resolved = await resolveTaxCodeAndRule({
     tenantId,
-    regimeId: regimeRow.id,
-    taxCodeId: input.taxCodeId,
-    taxCode: input.taxCode,
-    runQuery,
-  });
-  if (taxCodeRow && u(taxCodeRow.status) !== "ACTIVE") {
-    throw conflict("Selected tax code is not ACTIVE", "TAX_CODE_NOT_ACTIVE");
-  }
-  const ruleRow = await resolvePreviewRule({
-    tenantId,
-    regimeId: regimeRow.id,
+    legalEntityId: parsePositiveInt(input.legalEntityId),
     postingDate: input.postingDate,
+    regimeId: parsePositiveInt(regimeRow.id),
+    countryId: resolvedCountryId,
     moduleCode: input.moduleCode,
     documentType: input.documentType,
     counterpartyType: input.counterpartyType,
-    taxCodeId: taxCodeRow ? parsePositiveInt(taxCodeRow.id) : null,
+    taxCodeId: input.taxCodeId,
+    taxCode: input.taxCode,
+    calculationMode: input.calculationMode,
+    recoverability: input.recoverability,
+    recoverablePct: input.recoverablePct,
     runQuery,
   });
-  if (!ruleRow) {
-    throw notFound(
-      "Active tax rule not found for selected module/context/date",
-      "TAX_RULE_NOT_FOUND"
-    );
-  }
-  if (!taxCodeRow) {
-    taxCodeRow = await resolvePreviewTaxCode({
-      tenantId,
-      regimeId: regimeRow.id,
-      taxCodeId: parsePositiveInt(ruleRow.tax_code_id),
-      taxCode: null,
-      runQuery,
-    });
-  }
-  if (!taxCodeRow || u(taxCodeRow.status) !== "ACTIVE") {
-    throw conflict("Resolved tax code is missing or inactive", "TAX_CODE_NOT_ACTIVE");
-  }
-  const config = resolveComputationConfigFromFormula({
-    taxCodeRow,
-    taxRuleRow: ruleRow,
-    previewInput: input,
-  });
-  const breakdown = computeTaxBreakdown({
+
+  const breakdown = computeTaxBreakdownFromEngine({
     baseAmount: input.baseAmount,
-    ratePct: config.ratePct,
-    calculationMode: config.calculationMode,
-    recoverability: config.recoverability,
-    recoverablePct: config.recoverablePct,
+    mode: resolved.computation.calculationMode,
+    ratePct: resolved.computation.ratePct,
+    recoverability: resolved.computation.recoverability,
+    recoverablePct: resolved.computation.recoverablePct,
   });
-  const taxPurposeCode =
-    input.taxPurposeCode ||
-    resolveDefaultTaxPurposeCode({
-      taxKind: taxCodeRow.tax_kind,
-      direction: input.direction,
-    });
-  if (!taxPurposeCode) {
-    throw badRequest(
-      "taxPurposeCode is required for selected tax kind; auto-derivation only supports VAT/WITHHOLDING"
-    );
-  }
-  const mappingRow = await resolvePreviewMapping({
+
+  const resolvedAccounts = await resolveTaxAccountsFromEngine({
     tenantId,
-    regimeId: parsePositiveInt(regimeRow.id),
     legalEntityId: parsePositiveInt(input.legalEntityId),
-    taxCodeId: parsePositiveInt(taxCodeRow.id),
-    taxPurposeCode,
+    taxCodeId: parsePositiveInt(resolved.taxCodeRow.id),
+    taxRegimeId: parsePositiveInt(regimeRow.id),
+    taxPurposeCode: input.taxPurposeCode,
+    direction: input.direction,
     runQuery,
   });
-  if (!mappingRow) {
-    throw conflict(
-      "Missing ACTIVE tax account mapping for legalEntity + taxCode + taxPurposeCode",
-      "TAX_ACCOUNT_MAPPING_MISSING"
-    );
-  }
-  if (!toDbBoolean(mappingRow.account_is_active)) {
-    throw conflict(
-      "Tax account mapping references inactive account",
-      "TAX_ACCOUNT_MAPPING_MISSING"
-    );
-  }
-  if (!toDbBoolean(mappingRow.account_allow_posting)) {
-    throw conflict(
-      "Tax account mapping references non-posting account",
-      "TAX_ACCOUNT_MAPPING_MISSING"
-    );
-  }
-  if (u(mappingRow.account_scope) !== "LEGAL_ENTITY") {
-    throw conflict(
-      "Tax account mapping references non-LEGAL_ENTITY account scope",
-      "TAX_ACCOUNT_MAPPING_MISSING"
-    );
-  }
-  if (
-    parsePositiveInt(mappingRow.account_legal_entity_id) !== parsePositiveInt(input.legalEntityId)
-  ) {
-    throw conflict(
-      "Tax account mapping account scope legal entity mismatch",
-      "TAX_ACCOUNT_MAPPING_MISSING"
-    );
-  }
-  const direction = u(input.direction || "PURCHASE");
-  const taxAmount = Number(breakdown.taxAmount || 0);
-  const journalLine = {
-    accountId: parsePositiveInt(mappingRow.account_id),
-    accountCode: mappingRow.account_code || null,
-    accountName: mappingRow.account_name || null,
-    taxCode: String(taxCodeRow.code || ""),
-    taxPurposeCode: u(taxPurposeCode),
+
+  const journalLines = buildTaxJournalLinesFromEngine({
+    breakdown,
+    taxCode: String(resolved.taxCodeRow.code || ""),
+    taxPurposeCode: resolvedAccounts.taxPurposeCode,
+    mappingRow: resolvedAccounts.mappingRow,
+    direction: input.direction,
     currencyCode: input.currencyCode || regimeRow.currency_code || null,
-    amountTxn: direction === "SALE" ? Number((taxAmount * -1).toFixed(6)) : taxAmount,
-    debitBase: direction === "SALE" ? 0 : taxAmount,
-    creditBase: direction === "SALE" ? taxAmount : 0,
-    description:
-      direction === "SALE"
-        ? `Tax preview (${taxCodeRow.code}) output`
-        : `Tax preview (${taxCodeRow.code}) input`,
-  };
+  });
+
   return {
     regime: mapTaxRegimeRow(regimeRow),
-    taxCode: mapTaxCodeRow(taxCodeRow),
-    rule: mapTaxRuleRow(ruleRow),
+    taxCode: mapTaxCodeRow(resolved.taxCodeRow),
+    rule: mapTaxRuleRow(resolved.taxRuleRow),
     mapping: {
-      taxPurposeCode: u(taxPurposeCode),
-      ...mapTaxAccountMappingRow(mappingRow),
+      taxPurposeCode: u(resolvedAccounts.taxPurposeCode),
+      ...mapTaxAccountMappingRow(resolvedAccounts.mappingRow),
     },
-    formula: {
-      type: config.formulaType,
-      source: safeParseJson(ruleRow.formula_json),
-    },
+    formula: resolved.formula,
     breakdown,
-    journalLines: [journalLine],
+    journalLines,
   };
 }
 export default {
