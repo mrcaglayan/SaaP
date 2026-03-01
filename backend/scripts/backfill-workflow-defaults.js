@@ -6,12 +6,28 @@ const PROCESS_DEFAULTS = Object.freeze([
     definitionCode: "WF_STD_PERIOD_CLOSE_V1",
     definitionName: "Standard Period Close Approval Chain",
     requiredPermissionCode: "gl.period.close",
+    steps: Object.freeze([
+      Object.freeze({
+        stageScopeType: "LEGAL_ENTITY",
+        escalationAfterHours: 24,
+      }),
+      Object.freeze({
+        stageScopeType: "GROUP",
+        escalationAfterHours: 48,
+      }),
+    ]),
   },
   {
     processType: "CONSOLIDATION_RUN",
     definitionCode: "WF_STD_CONSOLIDATION_RUN_V1",
     definitionName: "Standard Consolidation Run Approval Chain",
     requiredPermissionCode: "consolidation.run.finalize",
+    steps: Object.freeze([
+      Object.freeze({
+        stageScopeType: "GROUP",
+        escalationAfterHours: 24,
+      }),
+    ]),
   },
 ]);
 
@@ -222,11 +238,18 @@ async function upsertDefinitionAndStepsTx(tx, { tenantId, createdByUserId, confi
     [workflowDefinitionId]
   );
 
-  const steps = [
-    { stepNo: 1, stageScopeType: "OPERATING_UNIT", escalationAfterHours: 24 },
-    { stepNo: 2, stageScopeType: "LEGAL_ENTITY", escalationAfterHours: 48 },
-    { stepNo: 3, stageScopeType: "GROUP", escalationAfterHours: 72 },
-  ];
+  const steps = (config.steps || []).map((step, index) => ({
+    stepNo: index + 1,
+    stageScopeType: String(step?.stageScopeType || "")
+      .trim()
+      .toUpperCase(),
+    escalationAfterHours: parsePositiveIntOrNull(step?.escalationAfterHours),
+    minApproverCount: parsePositiveIntOrNull(step?.minApproverCount) || 1,
+    allowSelfApprove: Boolean(step?.allowSelfApprove),
+  }));
+  if (steps.length <= 0) {
+    throw new Error(`No workflow steps configured for ${config.definitionCode}`);
+  }
 
   for (const step of steps) {
     // eslint-disable-next-line no-await-in-loop
@@ -240,12 +263,14 @@ async function upsertDefinitionAndStepsTx(tx, { tenantId, createdByUserId, confi
           allow_self_approve,
           escalation_after_hours
        )
-       VALUES (?, ?, ?, ?, 1, FALSE, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [
         workflowDefinitionId,
         step.stepNo,
         step.stageScopeType,
         config.requiredPermissionCode,
+        step.minApproverCount,
+        step.allowSelfApprove ? 1 : 0,
         step.escalationAfterHours,
       ]
     );

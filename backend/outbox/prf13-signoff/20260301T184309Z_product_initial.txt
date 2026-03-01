@@ -1,0 +1,16 @@
+Subject: PR-F13 GA Sign-Off Request (Product Owner) - Decision Needed
+
+Technical rollout status for PR-F13 is complete for pilot tenants 1 and 2.
+All technical gates passed on 2026-03-01, including:
+- test:followup:prf13-release-gate
+- test:release-gate (FOLLOWUP_PRF13 only)
+- test:followup:prf13-operational-smoke (tenants 1,2)
+
+Please record your decision in 13-PR-F13-GA-SIGNOFF-RECORD.md under "Product Owner Sign-Off":
+- APPROVED or REJECTED
+- approver name
+- UTC timestamp
+- scope confirmation
+- risk exceptions (if any)
+
+After your decision is captured, GA decision will be updated in 12-PR-F13-PILOT-GA-SWITCH-PLAN.md.

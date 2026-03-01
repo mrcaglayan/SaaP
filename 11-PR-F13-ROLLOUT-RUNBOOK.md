@@ -21,8 +21,8 @@ This runbook covers:
 - Pilot tenant list (tenant IDs)
 - Owner list:
   - Engineering on-call
-  - Finance operations approver
-  - Product owner sign-off
+  - Finance operations approver (team mode) or solo owner
+  - Product owner sign-off (team mode) or solo owner
 
 ---
 
@@ -95,6 +95,28 @@ WHERE tenant_id = ?
   );
 ```
 
+## 2.1 Pilot Feature Rollout Automation
+Use scripted dry-run/apply to avoid manual feature-toggle mistakes.
+
+Dry-run by phase:
+```powershell
+cd backend
+npm run rollout:prf13-pilot -- --tenantIds <TENANT_ID_1,TENANT_ID_2> --phase A
+npm run rollout:prf13-pilot -- --tenantIds <TENANT_ID_1,TENANT_ID_2> --phase B
+npm run rollout:prf13-pilot -- --tenantIds <TENANT_ID_1,TENANT_ID_2> --phase C
+```
+
+Apply by phase:
+```powershell
+cd backend
+npm run rollout:prf13-pilot -- --tenantIds <TENANT_ID_1,TENANT_ID_2> --phase A --apply
+npm run rollout:prf13-pilot -- --tenantIds <TENANT_ID_1,TENANT_ID_2> --phase B --apply
+npm run rollout:prf13-pilot -- --tenantIds <TENANT_ID_1,TENANT_ID_2> --phase C --apply
+```
+
+The script validates readiness signals for workflow, tax, and canonical mapping before writes.
+Use `--force` only for controlled exception windows with explicit sign-off.
+
 ---
 
 ## 3. Tenant Backfill Sequence
@@ -105,6 +127,10 @@ Recommended order per tenant:
 2. Tax regimes and tax codes
 3. Tax account mappings
 4. Canonical consolidation mappings
+
+Workflow default note:
+- Period close default approval chain is scope-aware: `LEGAL_ENTITY -> GROUP`.
+- Consolidation run default approval chain is scope-aware: `GROUP`.
 
 Dry-run commands (PowerShell):
 ```powershell
@@ -152,11 +178,18 @@ $env:RELEASE_GATE_ONLY_STAGES='FOLLOWUP_PRF13'; npm run test:release-gate
 
 Mandatory coverage in this stage includes:
 - Workflow regression checks
+- Runtime operational smoke (workflow-gated period close + consolidation + tax pipeline)
 - Tax engine regression checks
 - Setup wizard regression checks
 - Canonical mapping wiring checks
 - Cross-track idempotency checks
 - Backfill script checks
+
+Optional standalone operational smoke command:
+```powershell
+cd backend
+npm run test:followup:prf13-operational-smoke -- --tenantIds <TENANT_ID_1,TENANT_ID_2>
+```
 
 ---
 
@@ -169,8 +202,8 @@ Mandatory coverage in this stage includes:
 - [ ] Readiness checks reviewed with finance operations
 - [ ] Pilot close/consolidation/tax end-to-end smoke completed
 - [ ] No blocking reconciliation/posting errors in pilot period
-- [ ] Product + finance sign-off collected
-- [ ] General availability enablement plan approved
+- [ ] Product + finance sign-off collected (team mode) or solo-owner self-approval recorded in `13-PR-F13-GA-SIGNOFF-RECORD.md`
+- [ ] General availability enablement plan approved by responsible owner
 
 ---
 
@@ -187,7 +220,21 @@ Notes:
 
 ---
 
-## 7. Evidence Template
+## 7. GA Switch Planning
+Use `12-PR-F13-PILOT-GA-SWITCH-PLAN.md` to track:
+- pilot phase progression (A -> B -> C)
+- readiness and regression evidence
+- close + consolidation + tax validation outcomes
+- final GA go/no-go approvals
+
+Use `13-PR-F13-GA-SIGNOFF-RECORD.md` to capture:
+- finance operations decision (or solo-owner equivalent)
+- product owner decision (or solo-owner equivalent)
+- final GO/NO-GO approval audit trail
+
+---
+
+## 8. Evidence Template
 Record per tenant:
 - Tenant ID
 - Migration window timestamp
@@ -196,4 +243,3 @@ Record per tenant:
 - Feature flags enabled (phase and timestamp)
 - Validation command outputs (`test:followup:prf13-release-gate`, `test:release-gate`)
 - Final approver/sign-off
-

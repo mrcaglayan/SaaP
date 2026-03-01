@@ -1,0 +1,11 @@
+Subject: Reminder #1 - PR-F13 GA Sign-Off Pending
+
+This is a reminder that PR-F13 sign-off is still pending.
+Please record your decision in 13-PR-F13-GA-SIGNOFF-RECORD.md.
+
+Required fields:
+- APPROVED or REJECTED
+- approver name
+- UTC timestamp
+- scope confirmation
+- risk exceptions (if any)
