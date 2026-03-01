@@ -31,6 +31,10 @@ const router = express.Router();
 
 const VALID_FX_RATE_TYPES = new Set(["SPOT", "AVERAGE", "CLOSING"]);
 const BALANCE_EPSILON = 0.0001;
+const FEATURE_SUBACCOUNTS_V1 = "FEATURE_SUBACCOUNTS_V1";
+const FEATURE_WORKFLOW_CLOSE_CONSOLIDATION_V1 =
+  "FEATURE_WORKFLOW_CLOSE_CONSOLIDATION_V1";
+const FEATURE_TAX_ENGINE_V1 = "FEATURE_TAX_ENGINE_V1";
 
 function normalizeRateType(value) {
   const rateType = String(value || "CLOSING").toUpperCase();
@@ -144,6 +148,904 @@ function ownershipFactor(consolidationMethod, ownershipPct) {
     return 1;
   }
   return safePct;
+}
+
+function toDbBoolean(value) {
+  return value === true || value === 1 || value === "1";
+}
+
+function isMissingTableError(err) {
+  return Number(err?.errno) === 1146;
+}
+
+function normalizeConsolidationStatus(value) {
+  return String(value || "").trim().toUpperCase();
+}
+
+async function isTenantFeatureEnabled({
+  tenantId,
+  featureCode,
+  runQuery = query,
+}) {
+  try {
+    const result = await runQuery(
+      `SELECT is_enabled
+       FROM tenant_features
+       WHERE tenant_id = ?
+         AND feature_code = ?
+       LIMIT 1`,
+      [parsePositiveInt(tenantId), String(featureCode || "").trim().toUpperCase()]
+    );
+    return toDbBoolean(result.rows?.[0]?.is_enabled);
+  } catch (err) {
+    if (isMissingTableError(err)) {
+      return false;
+    }
+    throw err;
+  }
+}
+
+async function evaluateSubaccountsCompatibility({
+  tenantId,
+  runId,
+  run,
+  runQuery = query,
+}) {
+  const consolidationGroupId = parsePositiveInt(run?.consolidation_group_id);
+  const periodStartDate = toIsoDate(run?.period_start_date, "periodStartDate");
+  const periodEndDate = toIsoDate(run?.period_end_date, "periodEndDate");
+  const runStatus = normalizeConsolidationStatus(run?.status);
+  const shouldCheckRunEntryPairs = ["COMPLETED", "LOCKED"].includes(runStatus);
+  const featureEnabled = await isTenantFeatureEnabled({
+    tenantId,
+    featureCode: FEATURE_SUBACCOUNTS_V1,
+    runQuery,
+  });
+
+  try {
+    const totalsResult = await runQuery(
+      `SELECT COUNT(DISTINCT ba.id) AS total_bank_account_count
+       FROM consolidation_group_members cgm
+       JOIN bank_accounts ba
+         ON ba.tenant_id = ?
+        AND ba.legal_entity_id = cgm.legal_entity_id
+        AND ba.is_active = TRUE
+       WHERE cgm.consolidation_group_id = ?
+         AND cgm.effective_from <= ?
+         AND (cgm.effective_to IS NULL OR cgm.effective_to >= ?)`,
+      [tenantId, consolidationGroupId, periodEndDate, periodStartDate]
+    );
+
+    const missingCanonicalResult = await runQuery(
+      `SELECT COUNT(DISTINCT ba.id) AS missing_count
+       FROM consolidation_group_members cgm
+       JOIN bank_accounts ba
+         ON ba.tenant_id = ?
+        AND ba.legal_entity_id = cgm.legal_entity_id
+        AND ba.is_active = TRUE
+       LEFT JOIN consolidation_canonical_local_account_mappings clm
+         ON clm.tenant_id = ba.tenant_id
+        AND clm.consolidation_group_id = cgm.consolidation_group_id
+        AND clm.legal_entity_id = ba.legal_entity_id
+        AND clm.local_account_id = ba.gl_account_id
+        AND clm.status = 'ACTIVE'
+        AND clm.effective_from <= ?
+        AND (clm.effective_to IS NULL OR clm.effective_to >= ?)
+       LEFT JOIN consolidation_canonical_keys cck
+         ON cck.id = clm.canonical_key_id
+        AND cck.tenant_id = clm.tenant_id
+        AND cck.consolidation_group_id = clm.consolidation_group_id
+        AND cck.status = 'ACTIVE'
+       LEFT JOIN consolidation_canonical_group_account_mappings ccgm
+         ON ccgm.tenant_id = clm.tenant_id
+        AND ccgm.consolidation_group_id = clm.consolidation_group_id
+        AND ccgm.canonical_key_id = clm.canonical_key_id
+        AND ccgm.status = 'ACTIVE'
+        AND ccgm.effective_from <= ?
+        AND (ccgm.effective_to IS NULL OR ccgm.effective_to >= ?)
+       WHERE cgm.consolidation_group_id = ?
+         AND cgm.effective_from <= ?
+         AND (cgm.effective_to IS NULL OR cgm.effective_to >= ?)
+         AND (clm.id IS NULL OR cck.id IS NULL OR ccgm.id IS NULL)`,
+      [
+        tenantId,
+        periodEndDate,
+        periodStartDate,
+        periodEndDate,
+        periodStartDate,
+        consolidationGroupId,
+        periodEndDate,
+        periodStartDate,
+      ]
+    );
+
+    const missingCanonicalSampleResult = await runQuery(
+      `SELECT
+         ba.id AS bank_account_id,
+         ba.code AS bank_account_code,
+         ba.name AS bank_account_name,
+         ba.legal_entity_id,
+         le.code AS legal_entity_code,
+         local_acc.id AS local_account_id,
+         local_acc.code AS local_account_code,
+         local_acc.name AS local_account_name
+       FROM consolidation_group_members cgm
+       JOIN bank_accounts ba
+         ON ba.tenant_id = ?
+        AND ba.legal_entity_id = cgm.legal_entity_id
+        AND ba.is_active = TRUE
+       JOIN accounts local_acc ON local_acc.id = ba.gl_account_id
+       LEFT JOIN legal_entities le ON le.id = ba.legal_entity_id
+       LEFT JOIN consolidation_canonical_local_account_mappings clm
+         ON clm.tenant_id = ba.tenant_id
+        AND clm.consolidation_group_id = cgm.consolidation_group_id
+        AND clm.legal_entity_id = ba.legal_entity_id
+        AND clm.local_account_id = ba.gl_account_id
+        AND clm.status = 'ACTIVE'
+        AND clm.effective_from <= ?
+        AND (clm.effective_to IS NULL OR clm.effective_to >= ?)
+       LEFT JOIN consolidation_canonical_keys cck
+         ON cck.id = clm.canonical_key_id
+        AND cck.tenant_id = clm.tenant_id
+        AND cck.consolidation_group_id = clm.consolidation_group_id
+        AND cck.status = 'ACTIVE'
+       LEFT JOIN consolidation_canonical_group_account_mappings ccgm
+         ON ccgm.tenant_id = clm.tenant_id
+        AND ccgm.consolidation_group_id = clm.consolidation_group_id
+        AND ccgm.canonical_key_id = clm.canonical_key_id
+        AND ccgm.status = 'ACTIVE'
+        AND ccgm.effective_from <= ?
+        AND (ccgm.effective_to IS NULL OR ccgm.effective_to >= ?)
+       WHERE cgm.consolidation_group_id = ?
+         AND cgm.effective_from <= ?
+         AND (cgm.effective_to IS NULL OR cgm.effective_to >= ?)
+         AND (clm.id IS NULL OR cck.id IS NULL OR ccgm.id IS NULL)
+       ORDER BY ba.code ASC, ba.id ASC
+       LIMIT 5`,
+      [
+        tenantId,
+        periodEndDate,
+        periodStartDate,
+        periodEndDate,
+        periodStartDate,
+        consolidationGroupId,
+        periodEndDate,
+        periodStartDate,
+      ]
+    );
+
+    let missingRunEntryPairCount = null;
+    let missingRunEntryPairSamples = [];
+    if (shouldCheckRunEntryPairs) {
+      const missingPairsResult = await runQuery(
+        `SELECT COUNT(*) AS missing_count
+         FROM (
+           SELECT DISTINCT
+             ba.legal_entity_id,
+             ccgm.group_account_id
+           FROM consolidation_group_members cgm
+           JOIN bank_accounts ba
+             ON ba.tenant_id = ?
+            AND ba.legal_entity_id = cgm.legal_entity_id
+            AND ba.is_active = TRUE
+           JOIN consolidation_canonical_local_account_mappings clm
+             ON clm.tenant_id = ba.tenant_id
+            AND clm.consolidation_group_id = cgm.consolidation_group_id
+            AND clm.legal_entity_id = ba.legal_entity_id
+            AND clm.local_account_id = ba.gl_account_id
+            AND clm.status = 'ACTIVE'
+            AND clm.effective_from <= ?
+            AND (clm.effective_to IS NULL OR clm.effective_to >= ?)
+           JOIN consolidation_canonical_keys cck
+             ON cck.id = clm.canonical_key_id
+            AND cck.tenant_id = clm.tenant_id
+            AND cck.consolidation_group_id = clm.consolidation_group_id
+            AND cck.status = 'ACTIVE'
+           JOIN consolidation_canonical_group_account_mappings ccgm
+             ON ccgm.tenant_id = clm.tenant_id
+            AND ccgm.consolidation_group_id = clm.consolidation_group_id
+            AND ccgm.canonical_key_id = clm.canonical_key_id
+            AND ccgm.status = 'ACTIVE'
+            AND ccgm.effective_from <= ?
+            AND (ccgm.effective_to IS NULL OR ccgm.effective_to >= ?)
+           WHERE cgm.consolidation_group_id = ?
+             AND cgm.effective_from <= ?
+             AND (cgm.effective_to IS NULL OR cgm.effective_to >= ?)
+         ) mapped_pairs
+         LEFT JOIN consolidation_run_entries cre
+           ON cre.consolidation_run_id = ?
+          AND cre.legal_entity_id = mapped_pairs.legal_entity_id
+          AND cre.group_account_id = mapped_pairs.group_account_id
+         WHERE cre.id IS NULL`,
+        [
+          tenantId,
+          periodEndDate,
+          periodStartDate,
+          periodEndDate,
+          periodStartDate,
+          consolidationGroupId,
+          periodEndDate,
+          periodStartDate,
+          runId,
+        ]
+      );
+      missingRunEntryPairCount = Number(missingPairsResult.rows?.[0]?.missing_count || 0);
+
+      if (missingRunEntryPairCount > 0) {
+        const missingPairsSampleResult = await runQuery(
+          `SELECT
+             mapped_pairs.legal_entity_id,
+             le.code AS legal_entity_code,
+             mapped_pairs.group_account_id,
+             ga.code AS group_account_code
+           FROM (
+             SELECT DISTINCT
+               ba.legal_entity_id,
+               ccgm.group_account_id
+             FROM consolidation_group_members cgm
+             JOIN bank_accounts ba
+               ON ba.tenant_id = ?
+              AND ba.legal_entity_id = cgm.legal_entity_id
+              AND ba.is_active = TRUE
+             JOIN consolidation_canonical_local_account_mappings clm
+               ON clm.tenant_id = ba.tenant_id
+              AND clm.consolidation_group_id = cgm.consolidation_group_id
+              AND clm.legal_entity_id = ba.legal_entity_id
+              AND clm.local_account_id = ba.gl_account_id
+              AND clm.status = 'ACTIVE'
+              AND clm.effective_from <= ?
+              AND (clm.effective_to IS NULL OR clm.effective_to >= ?)
+             JOIN consolidation_canonical_keys cck
+               ON cck.id = clm.canonical_key_id
+              AND cck.tenant_id = clm.tenant_id
+              AND cck.consolidation_group_id = clm.consolidation_group_id
+              AND cck.status = 'ACTIVE'
+             JOIN consolidation_canonical_group_account_mappings ccgm
+               ON ccgm.tenant_id = clm.tenant_id
+              AND ccgm.consolidation_group_id = clm.consolidation_group_id
+              AND ccgm.canonical_key_id = clm.canonical_key_id
+              AND ccgm.status = 'ACTIVE'
+              AND ccgm.effective_from <= ?
+              AND (ccgm.effective_to IS NULL OR ccgm.effective_to >= ?)
+             WHERE cgm.consolidation_group_id = ?
+               AND cgm.effective_from <= ?
+               AND (cgm.effective_to IS NULL OR cgm.effective_to >= ?)
+           ) mapped_pairs
+           LEFT JOIN consolidation_run_entries cre
+             ON cre.consolidation_run_id = ?
+            AND cre.legal_entity_id = mapped_pairs.legal_entity_id
+            AND cre.group_account_id = mapped_pairs.group_account_id
+           LEFT JOIN legal_entities le ON le.id = mapped_pairs.legal_entity_id
+           LEFT JOIN accounts ga ON ga.id = mapped_pairs.group_account_id
+           WHERE cre.id IS NULL
+           ORDER BY le.code ASC, ga.code ASC
+           LIMIT 5`,
+          [
+            tenantId,
+            periodEndDate,
+            periodStartDate,
+            periodEndDate,
+            periodStartDate,
+            consolidationGroupId,
+            periodEndDate,
+            periodStartDate,
+            runId,
+          ]
+        );
+        missingRunEntryPairSamples = (missingPairsSampleResult.rows || []).map((row) => ({
+          legalEntityId: parsePositiveInt(row.legal_entity_id),
+          legalEntityCode: row.legal_entity_code || null,
+          groupAccountId: parsePositiveInt(row.group_account_id),
+          groupAccountCode: row.group_account_code || null,
+        }));
+      }
+    }
+
+    const totalBankAccounts = Number(totalsResult.rows?.[0]?.total_bank_account_count || 0);
+    const missingCanonicalMappingCount = Number(
+      missingCanonicalResult.rows?.[0]?.missing_count || 0
+    );
+    const mappingOk = missingCanonicalMappingCount === 0;
+    const runOutputOk =
+      missingRunEntryPairCount === null ? true : Number(missingRunEntryPairCount) === 0;
+    const ok = mappingOk && runOutputOk;
+
+    return {
+      ok,
+      featureEnabled,
+      totalActiveBankAccounts: totalBankAccounts,
+      missingCanonicalMappingCount,
+      missingRunEntryPairCount,
+      checks: {
+        canonicalMappingCoverage: mappingOk,
+        runOutputCoverage: runOutputOk,
+      },
+      samples: {
+        missingCanonicalMappings: (missingCanonicalSampleResult.rows || []).map((row) => ({
+          bankAccountId: parsePositiveInt(row.bank_account_id),
+          bankAccountCode: row.bank_account_code || null,
+          bankAccountName: row.bank_account_name || null,
+          legalEntityId: parsePositiveInt(row.legal_entity_id),
+          legalEntityCode: row.legal_entity_code || null,
+          localAccountId: parsePositiveInt(row.local_account_id),
+          localAccountCode: row.local_account_code || null,
+          localAccountName: row.local_account_name || null,
+        })),
+        missingRunEntryPairs: missingRunEntryPairSamples,
+      },
+      message: ok
+        ? "Subaccounts compatibility check passed for consolidation mappings and run output coverage."
+        : "Subaccounts compatibility check found missing canonical mappings and/or missing consolidation run coverage for bank-linked accounts.",
+    };
+  } catch (err) {
+    if (isMissingTableError(err)) {
+      return {
+        ok: true,
+        featureEnabled,
+        skipped: true,
+        message:
+          "Subaccounts compatibility check skipped because required tables are not available.",
+      };
+    }
+    throw err;
+  }
+}
+
+async function evaluateApprovalGateCompatibility({
+  tenantId,
+  runId,
+  run,
+  runQuery = query,
+}) {
+  const featureEnabled = await isTenantFeatureEnabled({
+    tenantId,
+    featureCode: FEATURE_WORKFLOW_CLOSE_CONSOLIDATION_V1,
+    runQuery,
+  });
+
+  if (!featureEnabled) {
+    return {
+      ok: true,
+      featureEnabled: false,
+      required: false,
+      approved: true,
+      status: "DISABLED",
+      code: null,
+      assignmentId: null,
+      workflowDefinitionId: null,
+      instanceId: null,
+      currentStepNo: null,
+      message: "Workflow approval gate feature is disabled for tenant.",
+    };
+  }
+
+  const periodEndDate = toIsoDate(run?.period_end_date, "periodEndDate");
+  const groupCompanyId = parsePositiveInt(run?.group_company_id) || -1;
+  try {
+    const assignmentResult = await runQuery(
+      `SELECT
+         wa.id,
+         wa.workflow_definition_id
+       FROM workflow_assignments wa
+       WHERE wa.tenant_id = ?
+         AND wa.process_type = 'CONSOLIDATION_RUN'
+         AND wa.status = 'ACTIVE'
+         AND wa.effective_from <= ?
+         AND (wa.effective_to IS NULL OR wa.effective_to >= ?)
+         AND (
+           (wa.group_company_id IS NOT NULL AND wa.group_company_id = ?)
+           OR (
+             wa.group_company_id IS NULL
+             AND wa.legal_entity_id IS NULL
+             AND wa.operating_unit_id IS NULL
+           )
+         )
+       ORDER BY
+         CASE WHEN wa.group_company_id IS NOT NULL THEN 0 ELSE 1 END,
+         wa.id DESC
+       LIMIT 1`,
+      [tenantId, periodEndDate, periodEndDate, groupCompanyId]
+    );
+
+    const assignment = assignmentResult.rows?.[0] || null;
+    if (!assignment) {
+      return {
+        ok: false,
+        featureEnabled: true,
+        required: true,
+        approved: false,
+        status: "MISSING_ASSIGNMENT",
+        code: "WORKFLOW_NOT_ASSIGNED",
+        assignmentId: null,
+        workflowDefinitionId: null,
+        instanceId: null,
+        currentStepNo: null,
+        message:
+          "Workflow gate is enabled but no ACTIVE consolidation workflow assignment was found for scope.",
+      };
+    }
+
+    const instanceResult = await runQuery(
+      `SELECT
+         id,
+         workflow_definition_id,
+         status,
+         current_step_no
+       FROM workflow_instances
+       WHERE tenant_id = ?
+         AND process_type = 'CONSOLIDATION_RUN'
+         AND target_type = 'CONSOLIDATION_RUN'
+         AND target_id = ?
+       ORDER BY id DESC
+       LIMIT 1`,
+      [tenantId, runId]
+    );
+
+    const instance = instanceResult.rows?.[0] || null;
+    if (!instance) {
+      return {
+        ok: false,
+        featureEnabled: true,
+        required: true,
+        approved: false,
+        status: "INSTANCE_MISSING",
+        code: "APPROVAL_REQUIRED",
+        assignmentId: parsePositiveInt(assignment.id),
+        workflowDefinitionId: parsePositiveInt(assignment.workflow_definition_id),
+        instanceId: null,
+        currentStepNo: null,
+        message:
+          "Workflow gate is enabled and assigned, but no workflow instance exists for this consolidation run yet.",
+      };
+    }
+
+    const normalizedStatus = normalizeConsolidationStatus(instance.status);
+    const approved = normalizedStatus === "APPROVED";
+    const code = approved
+      ? null
+      : normalizedStatus === "REJECTED"
+        ? "APPROVAL_INSTANCE_REJECTED"
+        : "APPROVAL_REQUIRED";
+
+    return {
+      ok: approved,
+      featureEnabled: true,
+      required: true,
+      approved,
+      status: normalizedStatus || "PENDING",
+      code,
+      assignmentId: parsePositiveInt(assignment.id),
+      workflowDefinitionId: parsePositiveInt(instance.workflow_definition_id),
+      instanceId: parsePositiveInt(instance.id),
+      currentStepNo: parsePositiveInt(instance.current_step_no),
+      message: approved
+        ? "Workflow gate is approved for consolidation finalization."
+        : "Workflow gate is not yet approved for consolidation finalization.",
+    };
+  } catch (err) {
+    if (isMissingTableError(err)) {
+      return {
+        ok: true,
+        featureEnabled: true,
+        skipped: true,
+        required: false,
+        approved: true,
+        status: "SKIPPED_MISSING_TABLES",
+        code: null,
+        assignmentId: null,
+        workflowDefinitionId: null,
+        instanceId: null,
+        currentStepNo: null,
+        message:
+          "Approval gate compatibility check skipped because workflow tables are not available.",
+      };
+    }
+    throw err;
+  }
+}
+
+async function evaluateTaxPostedLinesCompatibility({
+  tenantId,
+  runId,
+  run,
+  runQuery = query,
+}) {
+  const consolidationGroupId = parsePositiveInt(run?.consolidation_group_id);
+  const fiscalPeriodId = parsePositiveInt(run?.fiscal_period_id);
+  const periodStartDate = toIsoDate(run?.period_start_date, "periodStartDate");
+  const periodEndDate = toIsoDate(run?.period_end_date, "periodEndDate");
+  const runStatus = normalizeConsolidationStatus(run?.status);
+  const shouldCheckRunEntryPairs = ["COMPLETED", "LOCKED"].includes(runStatus);
+  const featureEnabled = await isTenantFeatureEnabled({
+    tenantId,
+    featureCode: FEATURE_TAX_ENGINE_V1,
+    runQuery,
+  });
+
+  try {
+    const totalsResult = await runQuery(
+      `SELECT
+         COUNT(*) AS tax_line_count,
+         COUNT(DISTINCT jl.account_id) AS tax_account_count,
+         SUM(jl.debit_base) AS tax_debit_base_total,
+         SUM(jl.credit_base) AS tax_credit_base_total,
+         SUM(jl.debit_base - jl.credit_base) AS tax_balance_base_total
+       FROM consolidation_group_members cgm
+       JOIN journal_entries je
+         ON je.tenant_id = ?
+        AND je.legal_entity_id = cgm.legal_entity_id
+        AND je.status = 'POSTED'
+        AND je.fiscal_period_id = ?
+       JOIN journal_lines jl
+         ON jl.journal_entry_id = je.id
+        AND jl.tax_code IS NOT NULL
+        AND LENGTH(TRIM(jl.tax_code)) > 0
+       WHERE cgm.consolidation_group_id = ?
+         AND cgm.effective_from <= ?
+         AND (cgm.effective_to IS NULL OR cgm.effective_to >= ?)`,
+      [tenantId, fiscalPeriodId, consolidationGroupId, periodEndDate, periodStartDate]
+    );
+
+    const unmappedResult = await runQuery(
+      `SELECT COUNT(DISTINCT jl.account_id) AS unmapped_tax_account_count
+       FROM consolidation_group_members cgm
+       JOIN journal_entries je
+         ON je.tenant_id = ?
+        AND je.legal_entity_id = cgm.legal_entity_id
+        AND je.status = 'POSTED'
+        AND je.fiscal_period_id = ?
+       JOIN journal_lines jl
+         ON jl.journal_entry_id = je.id
+        AND jl.tax_code IS NOT NULL
+        AND LENGTH(TRIM(jl.tax_code)) > 0
+       JOIN accounts local_acc ON local_acc.id = jl.account_id
+       WHERE cgm.consolidation_group_id = ?
+         AND cgm.effective_from <= ?
+         AND (cgm.effective_to IS NULL OR cgm.effective_to >= ?)
+         AND NOT EXISTS (
+           SELECT 1
+           FROM consolidation_canonical_local_account_mappings clm
+           JOIN consolidation_canonical_keys cck
+             ON cck.id = clm.canonical_key_id
+            AND cck.tenant_id = clm.tenant_id
+            AND cck.consolidation_group_id = clm.consolidation_group_id
+            AND cck.status = 'ACTIVE'
+           JOIN consolidation_canonical_group_account_mappings ccgm
+             ON ccgm.tenant_id = clm.tenant_id
+            AND ccgm.consolidation_group_id = clm.consolidation_group_id
+            AND ccgm.canonical_key_id = clm.canonical_key_id
+            AND ccgm.status = 'ACTIVE'
+            AND ccgm.effective_from <= ?
+            AND (ccgm.effective_to IS NULL OR ccgm.effective_to >= ?)
+           WHERE clm.tenant_id = je.tenant_id
+             AND clm.consolidation_group_id = cgm.consolidation_group_id
+             AND clm.legal_entity_id = je.legal_entity_id
+             AND clm.local_account_id = local_acc.id
+             AND clm.status = 'ACTIVE'
+             AND clm.effective_from <= ?
+             AND (clm.effective_to IS NULL OR clm.effective_to >= ?)
+         )`,
+      [
+        tenantId,
+        fiscalPeriodId,
+        consolidationGroupId,
+        periodEndDate,
+        periodStartDate,
+        periodEndDate,
+        periodStartDate,
+        periodEndDate,
+        periodStartDate,
+      ]
+    );
+
+    const unmappedSampleResult = await runQuery(
+      `SELECT
+         local_acc.id AS local_account_id,
+         local_acc.code AS local_account_code,
+         local_acc.name AS local_account_name,
+         je.legal_entity_id,
+         le.code AS legal_entity_code
+       FROM consolidation_group_members cgm
+       JOIN journal_entries je
+         ON je.tenant_id = ?
+        AND je.legal_entity_id = cgm.legal_entity_id
+        AND je.status = 'POSTED'
+        AND je.fiscal_period_id = ?
+       JOIN journal_lines jl
+         ON jl.journal_entry_id = je.id
+        AND jl.tax_code IS NOT NULL
+        AND LENGTH(TRIM(jl.tax_code)) > 0
+       JOIN accounts local_acc ON local_acc.id = jl.account_id
+       LEFT JOIN legal_entities le ON le.id = je.legal_entity_id
+       WHERE cgm.consolidation_group_id = ?
+         AND cgm.effective_from <= ?
+         AND (cgm.effective_to IS NULL OR cgm.effective_to >= ?)
+         AND NOT EXISTS (
+           SELECT 1
+           FROM consolidation_canonical_local_account_mappings clm
+           JOIN consolidation_canonical_keys cck
+             ON cck.id = clm.canonical_key_id
+            AND cck.tenant_id = clm.tenant_id
+            AND cck.consolidation_group_id = clm.consolidation_group_id
+            AND cck.status = 'ACTIVE'
+           JOIN consolidation_canonical_group_account_mappings ccgm
+             ON ccgm.tenant_id = clm.tenant_id
+            AND ccgm.consolidation_group_id = clm.consolidation_group_id
+            AND ccgm.canonical_key_id = clm.canonical_key_id
+            AND ccgm.status = 'ACTIVE'
+            AND ccgm.effective_from <= ?
+            AND (ccgm.effective_to IS NULL OR ccgm.effective_to >= ?)
+           WHERE clm.tenant_id = je.tenant_id
+             AND clm.consolidation_group_id = cgm.consolidation_group_id
+             AND clm.legal_entity_id = je.legal_entity_id
+             AND clm.local_account_id = local_acc.id
+             AND clm.status = 'ACTIVE'
+             AND clm.effective_from <= ?
+             AND (clm.effective_to IS NULL OR clm.effective_to >= ?)
+         )
+       GROUP BY
+         local_acc.id,
+         local_acc.code,
+         local_acc.name,
+         je.legal_entity_id,
+         le.code
+       ORDER BY local_acc.code ASC
+       LIMIT 5`,
+      [
+        tenantId,
+        fiscalPeriodId,
+        consolidationGroupId,
+        periodEndDate,
+        periodStartDate,
+        periodEndDate,
+        periodStartDate,
+        periodEndDate,
+        periodStartDate,
+      ]
+    );
+
+    let missingRunEntryPairCount = null;
+    let missingRunEntryPairSamples = [];
+    if (shouldCheckRunEntryPairs) {
+      const missingPairsResult = await runQuery(
+        `SELECT COUNT(*) AS missing_count
+         FROM (
+           SELECT DISTINCT
+             je.legal_entity_id,
+             ccgm.group_account_id
+           FROM consolidation_group_members cgm
+           JOIN journal_entries je
+             ON je.tenant_id = ?
+            AND je.legal_entity_id = cgm.legal_entity_id
+            AND je.status = 'POSTED'
+            AND je.fiscal_period_id = ?
+           JOIN journal_lines jl
+             ON jl.journal_entry_id = je.id
+            AND jl.tax_code IS NOT NULL
+            AND LENGTH(TRIM(jl.tax_code)) > 0
+           JOIN consolidation_canonical_local_account_mappings clm
+             ON clm.tenant_id = je.tenant_id
+            AND clm.consolidation_group_id = cgm.consolidation_group_id
+            AND clm.legal_entity_id = je.legal_entity_id
+            AND clm.local_account_id = jl.account_id
+            AND clm.status = 'ACTIVE'
+            AND clm.effective_from <= ?
+            AND (clm.effective_to IS NULL OR clm.effective_to >= ?)
+           JOIN consolidation_canonical_keys cck
+             ON cck.id = clm.canonical_key_id
+            AND cck.tenant_id = clm.tenant_id
+            AND cck.consolidation_group_id = clm.consolidation_group_id
+            AND cck.status = 'ACTIVE'
+           JOIN consolidation_canonical_group_account_mappings ccgm
+             ON ccgm.tenant_id = clm.tenant_id
+            AND ccgm.consolidation_group_id = clm.consolidation_group_id
+            AND ccgm.canonical_key_id = clm.canonical_key_id
+            AND ccgm.status = 'ACTIVE'
+            AND ccgm.effective_from <= ?
+            AND (ccgm.effective_to IS NULL OR ccgm.effective_to >= ?)
+           WHERE cgm.consolidation_group_id = ?
+             AND cgm.effective_from <= ?
+             AND (cgm.effective_to IS NULL OR cgm.effective_to >= ?)
+         ) mapped_pairs
+         LEFT JOIN consolidation_run_entries cre
+           ON cre.consolidation_run_id = ?
+          AND cre.legal_entity_id = mapped_pairs.legal_entity_id
+          AND cre.group_account_id = mapped_pairs.group_account_id
+         WHERE cre.id IS NULL`,
+        [
+          tenantId,
+          fiscalPeriodId,
+          periodEndDate,
+          periodStartDate,
+          periodEndDate,
+          periodStartDate,
+          consolidationGroupId,
+          periodEndDate,
+          periodStartDate,
+          runId,
+        ]
+      );
+      missingRunEntryPairCount = Number(missingPairsResult.rows?.[0]?.missing_count || 0);
+
+      if (missingRunEntryPairCount > 0) {
+        const missingPairsSampleResult = await runQuery(
+          `SELECT
+             mapped_pairs.legal_entity_id,
+             le.code AS legal_entity_code,
+             mapped_pairs.group_account_id,
+             ga.code AS group_account_code
+           FROM (
+             SELECT DISTINCT
+               je.legal_entity_id,
+               ccgm.group_account_id
+             FROM consolidation_group_members cgm
+             JOIN journal_entries je
+               ON je.tenant_id = ?
+              AND je.legal_entity_id = cgm.legal_entity_id
+              AND je.status = 'POSTED'
+              AND je.fiscal_period_id = ?
+             JOIN journal_lines jl
+               ON jl.journal_entry_id = je.id
+              AND jl.tax_code IS NOT NULL
+              AND LENGTH(TRIM(jl.tax_code)) > 0
+             JOIN consolidation_canonical_local_account_mappings clm
+               ON clm.tenant_id = je.tenant_id
+              AND clm.consolidation_group_id = cgm.consolidation_group_id
+              AND clm.legal_entity_id = je.legal_entity_id
+              AND clm.local_account_id = jl.account_id
+              AND clm.status = 'ACTIVE'
+              AND clm.effective_from <= ?
+              AND (clm.effective_to IS NULL OR clm.effective_to >= ?)
+             JOIN consolidation_canonical_keys cck
+               ON cck.id = clm.canonical_key_id
+              AND cck.tenant_id = clm.tenant_id
+              AND cck.consolidation_group_id = clm.consolidation_group_id
+              AND cck.status = 'ACTIVE'
+             JOIN consolidation_canonical_group_account_mappings ccgm
+               ON ccgm.tenant_id = clm.tenant_id
+              AND ccgm.consolidation_group_id = clm.consolidation_group_id
+              AND ccgm.canonical_key_id = clm.canonical_key_id
+              AND ccgm.status = 'ACTIVE'
+              AND ccgm.effective_from <= ?
+              AND (ccgm.effective_to IS NULL OR ccgm.effective_to >= ?)
+             WHERE cgm.consolidation_group_id = ?
+               AND cgm.effective_from <= ?
+               AND (cgm.effective_to IS NULL OR cgm.effective_to >= ?)
+           ) mapped_pairs
+           LEFT JOIN consolidation_run_entries cre
+             ON cre.consolidation_run_id = ?
+            AND cre.legal_entity_id = mapped_pairs.legal_entity_id
+            AND cre.group_account_id = mapped_pairs.group_account_id
+           LEFT JOIN legal_entities le ON le.id = mapped_pairs.legal_entity_id
+           LEFT JOIN accounts ga ON ga.id = mapped_pairs.group_account_id
+           WHERE cre.id IS NULL
+           ORDER BY le.code ASC, ga.code ASC
+           LIMIT 5`,
+          [
+            tenantId,
+            fiscalPeriodId,
+            periodEndDate,
+            periodStartDate,
+            periodEndDate,
+            periodStartDate,
+            consolidationGroupId,
+            periodEndDate,
+            periodStartDate,
+            runId,
+          ]
+        );
+        missingRunEntryPairSamples = (missingPairsSampleResult.rows || []).map((row) => ({
+          legalEntityId: parsePositiveInt(row.legal_entity_id),
+          legalEntityCode: row.legal_entity_code || null,
+          groupAccountId: parsePositiveInt(row.group_account_id),
+          groupAccountCode: row.group_account_code || null,
+        }));
+      }
+    }
+
+    const taxLineCount = Number(totalsResult.rows?.[0]?.tax_line_count || 0);
+    const taxAccountCount = Number(totalsResult.rows?.[0]?.tax_account_count || 0);
+    const unmappedTaxAccountCount = Number(
+      unmappedResult.rows?.[0]?.unmapped_tax_account_count || 0
+    );
+    const mappingOk = unmappedTaxAccountCount === 0;
+    const runOutputOk =
+      missingRunEntryPairCount === null ? true : Number(missingRunEntryPairCount) === 0;
+    const ok = mappingOk && runOutputOk;
+
+    return {
+      ok,
+      featureEnabled,
+      postedTaxLineCount: taxLineCount,
+      postedTaxAccountCount: taxAccountCount,
+      unmappedTaxAccountCount,
+      missingRunEntryPairCount,
+      totals: {
+        localDebitBaseTotal: Number(totalsResult.rows?.[0]?.tax_debit_base_total || 0),
+        localCreditBaseTotal: Number(totalsResult.rows?.[0]?.tax_credit_base_total || 0),
+        localBalanceBaseTotal: Number(totalsResult.rows?.[0]?.tax_balance_base_total || 0),
+      },
+      checks: {
+        canonicalMappingCoverage: mappingOk,
+        runOutputCoverage: runOutputOk,
+      },
+      samples: {
+        unmappedTaxAccounts: (unmappedSampleResult.rows || []).map((row) => ({
+          localAccountId: parsePositiveInt(row.local_account_id),
+          localAccountCode: row.local_account_code || null,
+          localAccountName: row.local_account_name || null,
+          legalEntityId: parsePositiveInt(row.legal_entity_id),
+          legalEntityCode: row.legal_entity_code || null,
+        })),
+        missingRunEntryPairs: missingRunEntryPairSamples,
+      },
+      message: ok
+        ? "Tax-posted lines reconcile through canonical mappings into consolidation output."
+        : "Tax-posted lines have unresolved canonical mappings and/or missing consolidation run coverage.",
+    };
+  } catch (err) {
+    if (isMissingTableError(err)) {
+      return {
+        ok: true,
+        featureEnabled,
+        skipped: true,
+        postedTaxLineCount: 0,
+        postedTaxAccountCount: 0,
+        unmappedTaxAccountCount: 0,
+        missingRunEntryPairCount: null,
+        totals: {
+          localDebitBaseTotal: 0,
+          localCreditBaseTotal: 0,
+          localBalanceBaseTotal: 0,
+        },
+        checks: {
+          canonicalMappingCoverage: true,
+          runOutputCoverage: true,
+        },
+        samples: {
+          unmappedTaxAccounts: [],
+          missingRunEntryPairs: [],
+        },
+        message:
+          "Tax compatibility check skipped because required tables are not available.",
+      };
+    }
+    throw err;
+  }
+}
+
+async function buildCrossTrackCompatibilitySnapshot({
+  tenantId,
+  runId,
+  run,
+  runQuery = query,
+}) {
+  const subaccounts = await evaluateSubaccountsCompatibility({
+    tenantId,
+    runId,
+    run,
+    runQuery,
+  });
+  const approvalGate = await evaluateApprovalGateCompatibility({
+    tenantId,
+    runId,
+    run,
+    runQuery,
+  });
+  const taxPostedLines = await evaluateTaxPostedLinesCompatibility({
+    tenantId,
+    runId,
+    run,
+    runQuery,
+  });
+
+  return {
+    ok: Boolean(subaccounts?.ok) && Boolean(approvalGate?.ok) && Boolean(taxPostedLines?.ok),
+    generatedAt: new Date().toISOString(),
+    subaccounts,
+    approvalGate,
+    taxPostedLines,
+  };
 }
 
 async function getRunWithContext(tenantId, runId) {
@@ -265,37 +1167,184 @@ async function resolveFxRate({
   };
 }
 
+async function assertCanonicalMappingCoverage({
+  tenantId,
+  consolidationGroupId,
+  fiscalPeriodId,
+  legalEntityId,
+  effectiveOn,
+  runQuery = query,
+}) {
+  const uncoveredResult = await runQuery(
+    `SELECT COUNT(DISTINCT local_acc.id) AS uncovered_count
+     FROM journal_entries je
+     JOIN journal_lines jl ON jl.journal_entry_id = je.id
+     JOIN accounts local_acc ON local_acc.id = jl.account_id
+     WHERE je.tenant_id = ?
+       AND je.status = 'POSTED'
+       AND je.fiscal_period_id = ?
+       AND je.legal_entity_id = ?
+       AND NOT EXISTS (
+         SELECT 1
+         FROM consolidation_canonical_local_account_mappings clm
+         JOIN consolidation_canonical_keys cck
+           ON cck.id = clm.canonical_key_id
+          AND cck.tenant_id = clm.tenant_id
+          AND cck.consolidation_group_id = clm.consolidation_group_id
+          AND cck.status = 'ACTIVE'
+         JOIN consolidation_canonical_group_account_mappings ccgm
+           ON ccgm.tenant_id = clm.tenant_id
+          AND ccgm.consolidation_group_id = clm.consolidation_group_id
+          AND ccgm.canonical_key_id = clm.canonical_key_id
+          AND ccgm.status = 'ACTIVE'
+          AND ccgm.effective_from <= ?
+          AND (ccgm.effective_to IS NULL OR ccgm.effective_to >= ?)
+         WHERE clm.tenant_id = je.tenant_id
+           AND clm.consolidation_group_id = ?
+           AND clm.legal_entity_id = je.legal_entity_id
+           AND clm.local_account_id = local_acc.id
+           AND clm.status = 'ACTIVE'
+           AND clm.effective_from <= ?
+           AND (clm.effective_to IS NULL OR clm.effective_to >= ?)
+       )`,
+    [
+      tenantId,
+      fiscalPeriodId,
+      legalEntityId,
+      effectiveOn,
+      effectiveOn,
+      consolidationGroupId,
+      effectiveOn,
+      effectiveOn,
+    ]
+  );
+  const uncoveredCount = Number(uncoveredResult.rows?.[0]?.uncovered_count || 0);
+  if (uncoveredCount <= 0) {
+    return;
+  }
+
+  const sampleResult = await runQuery(
+    `SELECT
+       local_acc.id AS local_account_id,
+       local_acc.code AS local_account_code,
+       local_acc.name AS local_account_name
+     FROM journal_entries je
+     JOIN journal_lines jl ON jl.journal_entry_id = je.id
+     JOIN accounts local_acc ON local_acc.id = jl.account_id
+     WHERE je.tenant_id = ?
+       AND je.status = 'POSTED'
+       AND je.fiscal_period_id = ?
+       AND je.legal_entity_id = ?
+       AND NOT EXISTS (
+         SELECT 1
+         FROM consolidation_canonical_local_account_mappings clm
+         JOIN consolidation_canonical_keys cck
+           ON cck.id = clm.canonical_key_id
+          AND cck.tenant_id = clm.tenant_id
+          AND cck.consolidation_group_id = clm.consolidation_group_id
+          AND cck.status = 'ACTIVE'
+         JOIN consolidation_canonical_group_account_mappings ccgm
+           ON ccgm.tenant_id = clm.tenant_id
+          AND ccgm.consolidation_group_id = clm.consolidation_group_id
+          AND ccgm.canonical_key_id = clm.canonical_key_id
+          AND ccgm.status = 'ACTIVE'
+          AND ccgm.effective_from <= ?
+          AND (ccgm.effective_to IS NULL OR ccgm.effective_to >= ?)
+         WHERE clm.tenant_id = je.tenant_id
+           AND clm.consolidation_group_id = ?
+           AND clm.legal_entity_id = je.legal_entity_id
+           AND clm.local_account_id = local_acc.id
+           AND clm.status = 'ACTIVE'
+           AND clm.effective_from <= ?
+           AND (clm.effective_to IS NULL OR clm.effective_to >= ?)
+       )
+     GROUP BY local_acc.id, local_acc.code, local_acc.name
+     ORDER BY local_acc.code ASC
+     LIMIT 5`,
+    [
+      tenantId,
+      fiscalPeriodId,
+      legalEntityId,
+      effectiveOn,
+      effectiveOn,
+      consolidationGroupId,
+      effectiveOn,
+      effectiveOn,
+    ]
+  );
+  const sampleCodes = (sampleResult.rows || [])
+    .map((row) => String(row.local_account_code || "").trim())
+    .filter(Boolean)
+    .join(", ");
+  throw badRequest(
+    `Canonical consolidation mapping is missing for ${uncoveredCount} posted local account(s) in legalEntityId=${legalEntityId}. Sample codes: ${sampleCodes || "n/a"}`
+  );
+}
+
 async function loadMemberMappedBalances({
   tenantId,
   consolidationGroupId,
   fiscalPeriodId,
   legalEntityId,
+  effectiveOn,
   runQuery = query,
 }) {
+  await assertCanonicalMappingCoverage({
+    tenantId,
+    consolidationGroupId,
+    fiscalPeriodId,
+    legalEntityId,
+    effectiveOn,
+    runQuery,
+  });
+
   const result = await runQuery(
     `SELECT
        je.legal_entity_id,
-       group_acc.id AS group_account_id,
+       ccgm.group_account_id AS group_account_id,
        SUM(jl.debit_base) AS local_debit_base,
        SUM(jl.credit_base) AS local_credit_base,
        SUM(jl.debit_base - jl.credit_base) AS local_balance_base
      FROM journal_entries je
      JOIN journal_lines jl ON jl.journal_entry_id = je.id
      JOIN accounts local_acc ON local_acc.id = jl.account_id
-     JOIN group_coa_mappings gcm ON gcm.tenant_id = je.tenant_id
-       AND gcm.consolidation_group_id = ?
-       AND gcm.legal_entity_id = je.legal_entity_id
-       AND gcm.local_coa_id = local_acc.coa_id
-       AND gcm.status = 'ACTIVE'
-     JOIN accounts group_acc ON group_acc.coa_id = gcm.group_coa_id
-       AND group_acc.code = local_acc.code
+     JOIN consolidation_canonical_local_account_mappings clm
+       ON clm.tenant_id = je.tenant_id
+      AND clm.consolidation_group_id = ?
+      AND clm.legal_entity_id = je.legal_entity_id
+      AND clm.local_account_id = local_acc.id
+      AND clm.status = 'ACTIVE'
+      AND clm.effective_from <= ?
+      AND (clm.effective_to IS NULL OR clm.effective_to >= ?)
+     JOIN consolidation_canonical_keys cck
+       ON cck.id = clm.canonical_key_id
+      AND cck.tenant_id = clm.tenant_id
+      AND cck.consolidation_group_id = clm.consolidation_group_id
+      AND cck.status = 'ACTIVE'
+     JOIN consolidation_canonical_group_account_mappings ccgm
+       ON ccgm.tenant_id = clm.tenant_id
+      AND ccgm.consolidation_group_id = clm.consolidation_group_id
+      AND ccgm.canonical_key_id = clm.canonical_key_id
+      AND ccgm.status = 'ACTIVE'
+      AND ccgm.effective_from <= ?
+      AND (ccgm.effective_to IS NULL OR ccgm.effective_to >= ?)
+     JOIN accounts group_acc ON group_acc.id = ccgm.group_account_id
        AND group_acc.is_active = TRUE
      WHERE je.tenant_id = ?
        AND je.status = 'POSTED'
        AND je.fiscal_period_id = ?
        AND je.legal_entity_id = ?
-     GROUP BY je.legal_entity_id, group_acc.id`,
-    [consolidationGroupId, tenantId, fiscalPeriodId, legalEntityId]
+     GROUP BY je.legal_entity_id, ccgm.group_account_id`,
+    [
+      consolidationGroupId,
+      effectiveOn,
+      effectiveOn,
+      effectiveOn,
+      effectiveOn,
+      tenantId,
+      fiscalPeriodId,
+      legalEntityId,
+    ]
   );
 
   return result.rows || [];
@@ -326,7 +1375,10 @@ async function executeConsolidationRun({
        SET status = 'IN_PROGRESS',
            notes = ?
        WHERE id = ?`,
-      [`Execution started by user ${executedByUserId}`, runId]
+      [
+        `Execution started by user ${executedByUserId}; mapping_mode=CANONICAL`,
+        runId,
+      ]
     );
 
     const memberResult = await tx.query(
@@ -380,6 +1432,7 @@ async function executeConsolidationRun({
         consolidationGroupId,
         fiscalPeriodId,
         legalEntityId,
+        effectiveOn: periodEndDate,
         runQuery: tx.query,
       });
 
@@ -470,10 +1523,10 @@ async function executeConsolidationRun({
       `UPDATE consolidation_runs
        SET status = 'COMPLETED',
            finished_at = CURRENT_TIMESTAMP,
-           notes = ?
+         notes = ?
        WHERE id = ?`,
       [
-        `Execution completed by user ${executedByUserId}; inserted_rows=${inserted}; rate_type=${preferredRateType}`,
+        `Execution completed by user ${executedByUserId}; inserted_rows=${inserted}; rate_type=${preferredRateType}; mapping_mode=CANONICAL`,
         runId,
       ]
     );
@@ -1494,6 +2547,11 @@ router.get(
        WHERE consolidation_run_id = ?`,
       [runId]
     );
+    const compatibility = await buildCrossTrackCompatibilitySnapshot({
+      tenantId,
+      runId,
+      run,
+    });
 
     return res.json({
       tenantId,
@@ -1512,6 +2570,7 @@ router.get(
           ),
         },
       },
+      compatibility,
     });
   })
 );
@@ -2283,7 +3342,7 @@ router.get(
     if (!runId) {
       throw badRequest("runId must be a positive integer");
     }
-    await requireRun(tenantId, runId);
+    const run = await requireRun(tenantId, runId);
 
     const result = await query(
       `SELECT
@@ -2300,9 +3359,15 @@ router.get(
        ORDER BY a.code`,
       [runId]
     );
+    const compatibility = await buildCrossTrackCompatibilitySnapshot({
+      tenantId,
+      runId,
+      run,
+    });
 
     return res.json({
       runId,
+      compatibility,
       rows: result.rows,
     });
   })
@@ -2406,6 +3471,11 @@ router.get(
        WHERE consolidation_run_id = ?`,
       [runId]
     );
+    const compatibility = await buildCrossTrackCompatibilitySnapshot({
+      tenantId,
+      runId,
+      run,
+    });
 
     return res.json({
       runId,
@@ -2435,6 +3505,7 @@ router.get(
           totalsResult.rows[0]?.translated_balance_total || 0
         ),
       },
+      compatibility,
       rows: rowsResult.rows,
     });
   })
@@ -2544,6 +3615,11 @@ router.get(
     const currentPeriodEarnings = revenueTotal - expenseTotal;
     const equationDelta =
       assetsTotal - (liabilitiesTotal + equityTotal + currentPeriodEarnings);
+    const compatibility = await buildCrossTrackCompatibilitySnapshot({
+      tenantId,
+      runId,
+      run,
+    });
 
     return res.json({
       runId,
@@ -2571,6 +3647,7 @@ router.get(
         currentPeriodEarnings,
         equationDelta,
       },
+      compatibility,
       rows: mappedRows,
     });
   })
@@ -2657,6 +3734,11 @@ router.get(
       .filter((row) => row.accountType === "EXPENSE")
       .reduce((sum, row) => sum + Number(row.normalizedFinalBalance || 0), 0);
     const netIncome = revenueTotal - expenseTotal;
+    const compatibility = await buildCrossTrackCompatibilitySnapshot({
+      tenantId,
+      runId,
+      run,
+    });
 
     return res.json({
       runId,
@@ -2682,6 +3764,7 @@ router.get(
         expenseTotal,
         netIncome,
       },
+      compatibility,
       rows: mappedRows,
     });
   })
