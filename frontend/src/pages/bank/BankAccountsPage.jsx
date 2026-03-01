@@ -12,12 +12,13 @@ import {
   testBankConnectorConnection,
 } from "../../api/bankConnectors.js";
 import { listAccounts } from "../../api/glAdmin.js";
-import { listCurrencies, listLegalEntities } from "../../api/orgAdmin.js";
+import { listCurrencies, listLegalEntities, listOperatingUnits } from "../../api/orgAdmin.js";
 import { useAuth } from "../../auth/useAuth.js";
 
 const EMPTY_FORM = {
   id: "",
   legalEntityId: "",
+  operatingUnitId: "",
   code: "",
   name: "",
   currencyCode: "",
@@ -42,6 +43,7 @@ function mapRowToForm(row) {
   return {
     id: String(row?.id || ""),
     legalEntityId: String(row?.legal_entity_id || ""),
+    operatingUnitId: String(row?.operating_unit_id || ""),
     code: String(row?.code || ""),
     name: String(row?.name || ""),
     currencyCode: String(row?.currency_code || "").toUpperCase(),
@@ -66,8 +68,14 @@ export default function BankAccountsPage() {
   const [rows, setRows] = useState([]);
   const [connectorRows, setConnectorRows] = useState([]);
   const [legalEntities, setLegalEntities] = useState([]);
+  const [operatingUnits, setOperatingUnits] = useState([]);
   const [currencies, setCurrencies] = useState([]);
   const [accounts, setAccounts] = useState([]);
+  const [filters, setFilters] = useState({
+    legalEntityId: "",
+    operatingUnitId: "",
+    isActive: "",
+  });
 
   const [form, setForm] = useState(EMPTY_FORM);
   const [loading, setLoading] = useState(false);
@@ -82,6 +90,7 @@ export default function BankAccountsPage() {
   const [lookupWarning, setLookupWarning] = useState("");
 
   const selectedLegalEntityId = toPositiveInt(form.legalEntityId);
+  const selectedFilterLegalEntityId = toPositiveInt(filters.legalEntityId);
 
   const legalEntityOptions = useMemo(
     () =>
@@ -98,6 +107,36 @@ export default function BankAccountsPage() {
       ),
     [currencies]
   );
+
+  const operatingUnitOptions = useMemo(() => {
+    const filtered = operatingUnits.filter((row) => {
+      if (String(row?.status || "").toUpperCase() !== "ACTIVE") {
+        return false;
+      }
+      if (!selectedLegalEntityId) {
+        return true;
+      }
+      return toPositiveInt(row?.legal_entity_id) === selectedLegalEntityId;
+    });
+    return [...filtered].sort((a, b) =>
+      String(a?.code || "").localeCompare(String(b?.code || ""))
+    );
+  }, [operatingUnits, selectedLegalEntityId]);
+
+  const filterOperatingUnitOptions = useMemo(() => {
+    const filtered = operatingUnits.filter((row) => {
+      if (String(row?.status || "").toUpperCase() !== "ACTIVE") {
+        return false;
+      }
+      if (!selectedFilterLegalEntityId) {
+        return true;
+      }
+      return toPositiveInt(row?.legal_entity_id) === selectedFilterLegalEntityId;
+    });
+    return [...filtered].sort((a, b) =>
+      String(a?.code || "").localeCompare(String(b?.code || ""))
+    );
+  }, [operatingUnits, selectedFilterLegalEntityId]);
 
   const glAccountOptions = useMemo(() => {
     const filtered = accounts.filter((row) => {
@@ -144,7 +183,7 @@ export default function BankAccountsPage() {
     }
   }, [currencyOptions, form.currencyCode, form.id]);
 
-  async function loadRows() {
+  async function loadRows(nextFilters = filters) {
     if (!canRead) {
       setRows([]);
       return;
@@ -153,7 +192,16 @@ export default function BankAccountsPage() {
     setLoading(true);
     setError("");
     try {
-      const response = await listBankAccounts({ limit: 200, offset: 0 });
+      const response = await listBankAccounts({
+        limit: 200,
+        offset: 0,
+        legalEntityId: toPositiveInt(nextFilters.legalEntityId) || undefined,
+        operatingUnitId: toPositiveInt(nextFilters.operatingUnitId) || undefined,
+        isActive:
+          nextFilters.isActive === ""
+            ? undefined
+            : nextFilters.isActive === "true",
+      });
       setRows(response?.rows || []);
     } catch (err) {
       setError(err?.response?.data?.message || "Failed to load bank accounts");
@@ -181,7 +229,7 @@ export default function BankAccountsPage() {
   }
 
   async function loadLookups() {
-    if (!canWrite) {
+    if (!canRead && !canWrite) {
       setLookupWarning("");
       return;
     }
@@ -190,17 +238,24 @@ export default function BankAccountsPage() {
 
     if (canReadOrgTree) {
       try {
-        const [leRes, curRes] = await Promise.all([listLegalEntities(), listCurrencies()]);
+        const [leRes, ouRes, curRes] = await Promise.all([
+          listLegalEntities(),
+          listOperatingUnits(),
+          listCurrencies(),
+        ]);
         setLegalEntities(leRes?.rows || []);
+        setOperatingUnits(ouRes?.rows || []);
         setCurrencies(curRes?.rows || []);
       } catch (err) {
         warnings.push(err?.response?.data?.message || "Org/currency lookups could not be loaded");
         setLegalEntities([]);
+        setOperatingUnits([]);
         setCurrencies([]);
       }
     } else {
       warnings.push("Missing permission: org.tree.read (legal entity/currency lookups)");
       setLegalEntities([]);
+      setOperatingUnits([]);
       setCurrencies([]);
     }
 
@@ -231,6 +286,7 @@ export default function BankAccountsPage() {
     setForm((prev) => ({
       ...EMPTY_FORM,
       legalEntityId: prev.legalEntityId && !form.id ? prev.legalEntityId : "",
+      operatingUnitId: "",
       currencyCode: prev.currencyCode && !form.id ? prev.currencyCode : "",
     }));
   }
@@ -243,12 +299,14 @@ export default function BankAccountsPage() {
 
   function buildPayloadFromForm() {
     const legalEntityId = toPositiveInt(form.legalEntityId);
+    const operatingUnitId = toPositiveInt(form.operatingUnitId);
     const glAccountId = toPositiveInt(form.glAccountId);
     if (!legalEntityId || !glAccountId) {
       throw new Error("legalEntityId and glAccountId are required");
     }
     return {
       legalEntityId,
+      operatingUnitId: operatingUnitId || undefined,
       code: String(form.code || "").trim(),
       name: String(form.name || "").trim(),
       currencyCode: String(form.currencyCode || "").trim().toUpperCase(),
@@ -440,6 +498,7 @@ export default function BankAccountsPage() {
                   setForm((prev) => ({
                     ...prev,
                     legalEntityId: event.target.value,
+                    operatingUnitId: "",
                     glAccountId: "",
                   }))
                 }
@@ -499,6 +558,27 @@ export default function BankAccountsPage() {
                 disabled={!canWrite || saving}
                 required
               />
+            </div>
+
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-700">
+                Operating Unit (Optional)
+              </label>
+              <select
+                value={form.operatingUnitId}
+                onChange={(event) =>
+                  setForm((prev) => ({ ...prev, operatingUnitId: event.target.value }))
+                }
+                className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                disabled={!canWrite || saving || !canReadOrgTree}
+              >
+                <option value="">Secin (Opsiyonel)</option>
+                {operatingUnitOptions.map((row) => (
+                  <option key={row.id} value={row.id}>
+                    {row.code} - {row.name}
+                  </option>
+                ))}
+              </select>
             </div>
 
             <div>
@@ -597,14 +677,77 @@ export default function BankAccountsPage() {
         <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
           <div className="mb-3 flex items-center justify-between">
             <h2 className="text-sm font-semibold text-slate-900">Banka Hesaplari</h2>
-            <button
-              type="button"
-              onClick={loadRows}
-              disabled={loading || !canRead}
-              className="rounded border border-slate-300 px-2 py-1 text-xs text-slate-700 disabled:opacity-60"
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => loadRows(filters)}
+                disabled={loading || !canRead}
+                className="rounded border border-slate-300 px-2 py-1 text-xs text-slate-700 disabled:opacity-60"
+              >
+                {loading ? "Yukleniyor..." : "Filtrele"}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const reset = { legalEntityId: "", operatingUnitId: "", isActive: "" };
+                  setFilters(reset);
+                  loadRows(reset);
+                }}
+                disabled={loading || !canRead}
+                className="rounded border border-slate-300 px-2 py-1 text-xs text-slate-700 disabled:opacity-60"
+              >
+                Temizle
+              </button>
+            </div>
+          </div>
+
+          <div className="mb-3 grid gap-2 sm:grid-cols-3">
+            <select
+              value={filters.legalEntityId}
+              onChange={(event) =>
+                setFilters((prev) => ({
+                  ...prev,
+                  legalEntityId: event.target.value,
+                  operatingUnitId: "",
+                }))
+              }
+              className="rounded border border-slate-300 px-2 py-1.5 text-xs"
+              disabled={!canRead || !canReadOrgTree}
             >
-              {loading ? "Yukleniyor..." : "Yenile"}
-            </button>
+              <option value="">Tum Legal Entity</option>
+              {legalEntityOptions.map((row) => (
+                <option key={`filter-le-${row.id}`} value={row.id}>
+                  {row.code} - {row.name}
+                </option>
+              ))}
+            </select>
+
+            <select
+              value={filters.operatingUnitId}
+              onChange={(event) =>
+                setFilters((prev) => ({ ...prev, operatingUnitId: event.target.value }))
+              }
+              className="rounded border border-slate-300 px-2 py-1.5 text-xs"
+              disabled={!canRead || !canReadOrgTree}
+            >
+              <option value="">Tum Operating Unit</option>
+              {filterOperatingUnitOptions.map((row) => (
+                <option key={`filter-ou-${row.id}`} value={row.id}>
+                  {row.code} - {row.name}
+                </option>
+              ))}
+            </select>
+
+            <select
+              value={filters.isActive}
+              onChange={(event) => setFilters((prev) => ({ ...prev, isActive: event.target.value }))}
+              className="rounded border border-slate-300 px-2 py-1.5 text-xs"
+              disabled={!canRead}
+            >
+              <option value="">Tum Durumlar</option>
+              <option value="true">ACTIVE</option>
+              <option value="false">INACTIVE</option>
+            </select>
           </div>
 
           <div className="overflow-x-auto">
@@ -614,6 +757,7 @@ export default function BankAccountsPage() {
                   <th className="px-2 py-2">Code</th>
                   <th className="px-2 py-2">Name</th>
                   <th className="px-2 py-2">LE</th>
+                  <th className="px-2 py-2">OU</th>
                   <th className="px-2 py-2">Currency</th>
                   <th className="px-2 py-2">GL</th>
                   <th className="px-2 py-2">Status</th>
@@ -643,6 +787,13 @@ export default function BankAccountsPage() {
                         {row.legal_entity_name ? (
                           <div className="text-xs text-slate-500">{row.legal_entity_name}</div>
                         ) : null}
+                      </td>
+                      <td className="px-2 py-2 text-slate-700">
+                        {row.operating_unit_id
+                          ? `${row.operating_unit_code || row.operating_unit_id}${
+                              row.operating_unit_name ? ` - ${row.operating_unit_name}` : ""
+                            }`
+                          : "-"}
                       </td>
                       <td className="px-2 py-2 text-slate-700">{row.currency_code}</td>
                       <td className="px-2 py-2 text-slate-700">
@@ -691,7 +842,7 @@ export default function BankAccountsPage() {
                 })}
                 {rows.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="px-2 py-6 text-center text-sm text-slate-500">
+                    <td colSpan={8} className="px-2 py-6 text-center text-sm text-slate-500">
                       {loading ? "Yukleniyor..." : "Banka hesabi bulunamadi."}
                     </td>
                   </tr>

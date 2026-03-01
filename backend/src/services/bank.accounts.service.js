@@ -3,8 +3,11 @@ import {
   assertAccountBelongsToTenant,
   assertCurrencyExists,
   assertLegalEntityBelongsToTenant,
+  assertOperatingUnitBelongsToTenant,
 } from "../tenantGuards.js";
 import { badRequest, parsePositiveInt } from "../routes/_utils.js";
+
+const FEATURE_SUBACCOUNTS_V1 = "FEATURE_SUBACCOUNTS_V1";
 
 function parseDbBoolean(value) {
   return value === true || value === 1 || value === "1";
@@ -29,6 +32,273 @@ function normalizeUpperText(value) {
   return String(value || "")
     .trim()
     .toUpperCase();
+}
+
+function isMissingTableError(err) {
+  return Number(err?.errno) === 1146;
+}
+
+function normalizeIdentityText(value, { compact = false, upper = false } = {}) {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  let normalized = String(value).trim();
+  if (!normalized) {
+    return null;
+  }
+  if (compact) {
+    normalized = normalized.replace(/\s+/g, "");
+  }
+  if (upper) {
+    normalized = normalized.toUpperCase();
+  }
+  return normalized;
+}
+
+function listBankIdentityFieldChanges({ existing, payload }) {
+  const changes = [];
+
+  if (parsePositiveInt(existing.gl_account_id) !== parsePositiveInt(payload.glAccountId)) {
+    changes.push("gl_account_id");
+  }
+
+  if (
+    normalizeIdentityText(existing.currency_code, { upper: true }) !==
+    normalizeIdentityText(payload.currencyCode, { upper: true })
+  ) {
+    changes.push("currency_code");
+  }
+
+  if (
+    normalizeIdentityText(existing.iban, { compact: true, upper: true }) !==
+    normalizeIdentityText(payload.iban, { compact: true, upper: true })
+  ) {
+    changes.push("iban");
+  }
+
+  if (normalizeIdentityText(existing.account_no) !== normalizeIdentityText(payload.accountNo)) {
+    changes.push("account_no");
+  }
+
+  return changes;
+}
+
+async function getBankAccountUsageSummary({
+  tenantId,
+  legalEntityId,
+  bankAccountId,
+  runQuery = query,
+}) {
+  const hasDependentRows = async (sql, params) => {
+    try {
+      const result = await runQuery(sql, params);
+      return Array.isArray(result.rows) && result.rows.length > 0;
+    } catch (err) {
+      if (isMissingTableError(err)) {
+        return false;
+      }
+      throw err;
+    }
+  };
+
+  try {
+    const [
+      hasStatementLines,
+      hasPaymentBatches,
+      hasPaymentBatchLines,
+      hasReconciliationRefs,
+      hasPostedPaymentJournals,
+      hasPostedReconciliationByLineFlags,
+      hasPostedReconciliationAutoPostings,
+      hasPostedReconciliationDifferenceAdjustments,
+    ] = await Promise.all([
+      hasDependentRows(
+        `SELECT 1
+         FROM bank_statement_lines l
+         WHERE l.tenant_id = ?
+           AND l.legal_entity_id = ?
+           AND l.bank_account_id = ?
+         LIMIT 1`,
+        [tenantId, legalEntityId, bankAccountId]
+      ),
+      hasDependentRows(
+        `SELECT 1
+         FROM payment_batches pb
+         WHERE pb.tenant_id = ?
+           AND pb.legal_entity_id = ?
+           AND pb.bank_account_id = ?
+         LIMIT 1`,
+        [tenantId, legalEntityId, bankAccountId]
+      ),
+      hasDependentRows(
+        `SELECT 1
+         FROM payment_batch_lines pl
+         JOIN payment_batches pb
+           ON pb.id = pl.batch_id
+          AND pb.tenant_id = pl.tenant_id
+          AND pb.legal_entity_id = pl.legal_entity_id
+         WHERE pb.tenant_id = ?
+           AND pb.legal_entity_id = ?
+           AND pb.bank_account_id = ?
+         LIMIT 1`,
+        [tenantId, legalEntityId, bankAccountId]
+      ),
+      hasDependentRows(
+        `SELECT 1
+         FROM bank_reconciliation_matches m
+         JOIN bank_statement_lines l
+           ON l.id = m.statement_line_id
+          AND l.tenant_id = m.tenant_id
+          AND l.legal_entity_id = m.legal_entity_id
+         WHERE m.tenant_id = ?
+           AND m.legal_entity_id = ?
+           AND l.bank_account_id = ?
+           AND m.status = 'ACTIVE'
+         LIMIT 1`,
+        [tenantId, legalEntityId, bankAccountId]
+      ),
+      hasDependentRows(
+        `SELECT 1
+         FROM payment_batches pb
+         WHERE pb.tenant_id = ?
+           AND pb.legal_entity_id = ?
+           AND pb.bank_account_id = ?
+           AND pb.posted_journal_entry_id IS NOT NULL
+         LIMIT 1`,
+        [tenantId, legalEntityId, bankAccountId]
+      ),
+      hasDependentRows(
+        `SELECT 1
+         FROM bank_statement_lines l
+         WHERE l.tenant_id = ?
+           AND l.legal_entity_id = ?
+           AND l.bank_account_id = ?
+           AND (
+             l.auto_post_journal_entry_id IS NOT NULL
+             OR l.reconciliation_difference_journal_entry_id IS NOT NULL
+           )
+         LIMIT 1`,
+        [tenantId, legalEntityId, bankAccountId]
+      ),
+      hasDependentRows(
+        `SELECT 1
+         FROM bank_reconciliation_auto_postings ap
+         JOIN bank_statement_lines l
+           ON l.id = ap.statement_line_id
+          AND l.tenant_id = ap.tenant_id
+          AND l.legal_entity_id = ap.legal_entity_id
+         WHERE ap.tenant_id = ?
+           AND ap.legal_entity_id = ?
+           AND l.bank_account_id = ?
+           AND ap.status = 'POSTED'
+         LIMIT 1`,
+        [tenantId, legalEntityId, bankAccountId]
+      ),
+      hasDependentRows(
+        `SELECT 1
+         FROM bank_reconciliation_difference_adjustments da
+         JOIN bank_statement_lines l
+           ON l.id = da.bank_statement_line_id
+          AND l.tenant_id = da.tenant_id
+          AND l.legal_entity_id = da.legal_entity_id
+         WHERE da.tenant_id = ?
+           AND da.legal_entity_id = ?
+           AND l.bank_account_id = ?
+           AND da.journal_entry_id IS NOT NULL
+         LIMIT 1`,
+        [tenantId, legalEntityId, bankAccountId]
+      ),
+    ]);
+    const hasPostedReconciliationJournals =
+      hasPostedReconciliationByLineFlags ||
+      hasPostedReconciliationAutoPostings ||
+      hasPostedReconciliationDifferenceAdjustments;
+    const hasPaymentFlows = hasPaymentBatches || hasPaymentBatchLines;
+
+    const usages = [];
+    if (hasStatementLines) {
+      usages.push("statement lines");
+    }
+    if (hasPaymentFlows) {
+      usages.push("payment batches/payment lines");
+    }
+    if (hasReconciliationRefs) {
+      usages.push("reconciliation references");
+    }
+    if (hasPostedPaymentJournals) {
+      usages.push("posted payment journals");
+    }
+    if (hasPostedReconciliationJournals) {
+      usages.push("posted reconciliation journals");
+    }
+
+    return {
+      hasUsage: usages.length > 0,
+      usages,
+    };
+  } catch (err) {
+    if (isMissingTableError(err)) {
+      return { hasUsage: false, usages: [] };
+    }
+    throw err;
+  }
+}
+
+async function isTenantFeatureEnabled({
+  tenantId,
+  featureCode,
+  runQuery = query,
+}) {
+  try {
+    const result = await runQuery(
+      `SELECT is_enabled
+       FROM tenant_features
+       WHERE tenant_id = ?
+         AND feature_code = ?
+       LIMIT 1`,
+      [tenantId, normalizeUpperText(featureCode)]
+    );
+    if (!result.rows?.length) {
+      return false;
+    }
+    return parseDbBoolean(result.rows[0]?.is_enabled);
+  } catch (err) {
+    if (isMissingTableError(err)) {
+      return false;
+    }
+    throw err;
+  }
+}
+
+async function validateBankAccountOperatingUnit({
+  tenantId,
+  legalEntityId,
+  operatingUnitId,
+  label = "operatingUnitId",
+}) {
+  const parsedOperatingUnitId = parsePositiveInt(operatingUnitId);
+  if (!parsedOperatingUnitId) {
+    return null;
+  }
+
+  const operatingUnit = await assertOperatingUnitBelongsToTenant(
+    tenantId,
+    parsedOperatingUnitId,
+    label
+  );
+
+  if (normalizeUpperText(operatingUnit.status) !== "ACTIVE") {
+    throw badRequest(`${label} must reference an ACTIVE operating unit`);
+  }
+  const parsedLegalEntityId = parsePositiveInt(legalEntityId);
+  if (
+    parsedLegalEntityId &&
+    parsePositiveInt(operatingUnit.legal_entity_id) !== parsedLegalEntityId
+  ) {
+    throw badRequest(`${label} must belong to legalEntityId`);
+  }
+
+  return operatingUnit;
 }
 
 async function countChildAccounts({ accountId, runQuery = query }) {
@@ -59,6 +329,7 @@ async function findBankAccountById({ tenantId, bankAccountId, runQuery = query }
         ba.id,
         ba.tenant_id,
         ba.legal_entity_id,
+        ba.operating_unit_id,
         ba.code,
         ba.name,
         ba.currency_code,
@@ -73,6 +344,8 @@ async function findBankAccountById({ tenantId, bankAccountId, runQuery = query }
         ba.updated_at,
         le.code AS legal_entity_code,
         le.name AS legal_entity_name,
+        ou.code AS operating_unit_code,
+        ou.name AS operating_unit_name,
         a.code AS gl_account_code,
         a.name AS gl_account_name,
         a.account_type AS gl_account_type,
@@ -82,6 +355,8 @@ async function findBankAccountById({ tenantId, bankAccountId, runQuery = query }
      JOIN legal_entities le
        ON le.id = ba.legal_entity_id
       AND le.tenant_id = ba.tenant_id
+     LEFT JOIN operating_units ou
+       ON ou.id = ba.operating_unit_id
      JOIN accounts a
        ON a.id = ba.gl_account_id
      WHERE ba.tenant_id = ?
@@ -167,7 +442,110 @@ async function fetchBankLinkableGlAccount({
     throw badRequest(`${label} must reference a leaf account`);
   }
 
+  const strict102Mode = await isTenantFeatureEnabled({
+    tenantId,
+    featureCode: FEATURE_SUBACCOUNTS_V1,
+    runQuery,
+  });
+  if (!strict102Mode) {
+    // Fallback strategy: when strict mode is disabled, keep baseline ASSET+ACTIVE+postable+leaf checks only.
+    return row;
+  }
+
+  const control102 = await findControl102Account({
+    tenantId,
+    legalEntityId,
+    runQuery,
+  });
+  if (!control102) {
+    throw badRequest(
+      "Strict bank policy is enabled (feature_subaccounts_v1), but control account code 102 is missing for legalEntityId. Create account 102 or disable strict mode for this tenant."
+    );
+  }
+
+  const under102 = await isAccountDescendantOf({
+    tenantId,
+    accountId,
+    ancestorAccountId: control102.id,
+    runQuery,
+  });
+  if (!under102) {
+    throw badRequest(
+      `${label} must be a descendant/leaf under control account 102 when strict bank policy is enabled (feature_subaccounts_v1)`
+    );
+  }
+
   return row;
+}
+
+async function findControl102Account({
+  tenantId,
+  legalEntityId,
+  runQuery = query,
+}) {
+  const result = await runQuery(
+    `SELECT
+       a.id,
+       a.code,
+       a.name,
+       a.allow_posting
+     FROM accounts a
+     JOIN charts_of_accounts c ON c.id = a.coa_id
+     WHERE c.tenant_id = ?
+       AND c.scope = 'LEGAL_ENTITY'
+       AND c.legal_entity_id = ?
+       AND a.code = '102'
+     ORDER BY a.id
+     LIMIT 1`,
+    [tenantId, legalEntityId]
+  );
+  return result.rows?.[0] || null;
+}
+
+async function isAccountDescendantOf({
+  tenantId,
+  accountId,
+  ancestorAccountId,
+  runQuery = query,
+}) {
+  const targetId = parsePositiveInt(accountId);
+  const ancestorId = parsePositiveInt(ancestorAccountId);
+  if (!targetId || !ancestorId) {
+    return false;
+  }
+  if (targetId === ancestorId) {
+    return true;
+  }
+
+  const visited = new Set();
+  let currentId = targetId;
+  let depth = 0;
+  while (currentId && depth < 200) {
+    if (visited.has(currentId)) {
+      break;
+    }
+    visited.add(currentId);
+    depth += 1;
+
+    const result = await runQuery(
+      `SELECT a.parent_account_id
+       FROM accounts a
+       JOIN charts_of_accounts c ON c.id = a.coa_id
+       WHERE a.id = ?
+         AND c.tenant_id = ?
+       LIMIT 1`,
+      [currentId, tenantId]
+    );
+    const parentId = parsePositiveInt(result.rows?.[0]?.parent_account_id);
+    if (!parentId) {
+      return false;
+    }
+    if (parentId === ancestorId) {
+      return true;
+    }
+    currentId = parentId;
+  }
+  return false;
 }
 
 async function insertBankAccount({ payload, runQuery = query }) {
@@ -175,6 +553,7 @@ async function insertBankAccount({ payload, runQuery = query }) {
     `INSERT INTO bank_accounts (
         tenant_id,
         legal_entity_id,
+        operating_unit_id,
         code,
         name,
         currency_code,
@@ -186,10 +565,11 @@ async function insertBankAccount({ payload, runQuery = query }) {
         is_active,
         created_by_user_id
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       payload.tenantId,
       payload.legalEntityId,
+      payload.operatingUnitId,
       payload.code,
       payload.name,
       payload.currencyCode,
@@ -212,6 +592,7 @@ async function updateBankAccountRow({ bankAccountId, payload, runQuery = query }
          name = ?,
          currency_code = ?,
          gl_account_id = ?,
+         operating_unit_id = ?,
          bank_name = ?,
          branch_name = ?,
          iban = ?,
@@ -223,6 +604,7 @@ async function updateBankAccountRow({ bankAccountId, payload, runQuery = query }
       payload.name,
       payload.currencyCode,
       payload.glAccountId,
+      payload.operatingUnitId,
       toNullableString(payload.bankName, 255),
       toNullableString(payload.branchName, 255),
       toNullableString(payload.iban, 64),
@@ -270,6 +652,16 @@ export async function listBankAccountRows({
     conditions.push("ba.legal_entity_id = ?");
     params.push(filters.legalEntityId);
   }
+  if (filters.operatingUnitId) {
+    await validateBankAccountOperatingUnit({
+      tenantId,
+      legalEntityId: filters.legalEntityId || null,
+      operatingUnitId: filters.operatingUnitId,
+      label: "operatingUnitId",
+    });
+    conditions.push("ba.operating_unit_id = ?");
+    params.push(filters.operatingUnitId);
+  }
 
   if (filters.isActive !== null) {
     conditions.push("ba.is_active = ?");
@@ -303,6 +695,7 @@ export async function listBankAccountRows({
         ba.id,
         ba.tenant_id,
         ba.legal_entity_id,
+        ba.operating_unit_id,
         ba.code,
         ba.name,
         ba.currency_code,
@@ -317,12 +710,16 @@ export async function listBankAccountRows({
         ba.updated_at,
         le.code AS legal_entity_code,
         le.name AS legal_entity_name,
+        ou.code AS operating_unit_code,
+        ou.name AS operating_unit_name,
         a.code AS gl_account_code,
         a.name AS gl_account_name
      FROM bank_accounts ba
      JOIN legal_entities le
        ON le.id = ba.legal_entity_id
       AND le.tenant_id = ba.tenant_id
+     LEFT JOIN operating_units ou
+       ON ou.id = ba.operating_unit_id
      JOIN accounts a
        ON a.id = ba.gl_account_id
      WHERE ${whereSql}
@@ -361,6 +758,12 @@ export async function createBankAccount({
   await assertLegalEntityBelongsToTenant(payload.tenantId, payload.legalEntityId, "legalEntityId");
   assertScopeAccess(req, "legal_entity", payload.legalEntityId, "legalEntityId");
   await assertCurrencyExists(payload.currencyCode, "currencyCode");
+  await validateBankAccountOperatingUnit({
+    tenantId: payload.tenantId,
+    legalEntityId: payload.legalEntityId,
+    operatingUnitId: payload.operatingUnitId,
+    label: "operatingUnitId",
+  });
 
   await fetchBankLinkableGlAccount({
     tenantId: payload.tenantId,
@@ -414,9 +817,33 @@ export async function updateBankAccountById({
     throw badRequest("legalEntityId cannot be changed for an existing bank account");
   }
 
+  const identityChanges = listBankIdentityFieldChanges({ existing, payload });
+  if (identityChanges.length > 0) {
+    const usage = await getBankAccountUsageSummary({
+      tenantId: payload.tenantId,
+      legalEntityId: payload.legalEntityId,
+      bankAccountId: payload.bankAccountId,
+    });
+    if (usage.hasUsage) {
+      throw badRequest(
+        `Bank account identity is immutable after usage/posting. Blocked fields: ${identityChanges.join(
+          ", "
+        )}. Detected dependencies: ${usage.usages.join(
+          ", "
+        )}. Create a new bank account and migrate future transactions instead of mutating this account.`
+      );
+    }
+  }
+
   await assertLegalEntityBelongsToTenant(payload.tenantId, payload.legalEntityId, "legalEntityId");
   assertScopeAccess(req, "legal_entity", payload.legalEntityId, "legalEntityId");
   await assertCurrencyExists(payload.currencyCode, "currencyCode");
+  await validateBankAccountOperatingUnit({
+    tenantId: payload.tenantId,
+    legalEntityId: payload.legalEntityId,
+    operatingUnitId: payload.operatingUnitId,
+    label: "operatingUnitId",
+  });
 
   await fetchBankLinkableGlAccount({
     tenantId: payload.tenantId,

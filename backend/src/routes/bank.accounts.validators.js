@@ -45,6 +45,7 @@ export function parseBankAccountIdParam(req, label = "bankAccountId") {
 export function parseBankAccountReadFilters(req) {
   const tenantId = requireTenantId(req);
   const legalEntityId = optionalPositiveInt(req.query?.legalEntityId, "legalEntityId");
+  const operatingUnitId = optionalPositiveInt(req.query?.operatingUnitId, "operatingUnitId");
   const isActive = parseOptionalIsActiveFilter(req.query?.isActive);
   const q = normalizeText(req.query?.q, "q", 120);
   const pagination = parsePagination(req.query, { limit: 100, offset: 0, maxLimit: 300 });
@@ -52,6 +53,7 @@ export function parseBankAccountReadFilters(req) {
   return {
     tenantId,
     legalEntityId,
+    operatingUnitId,
     isActive,
     q,
     limit: pagination.limit,
@@ -66,6 +68,7 @@ function parseBankAccountBody(req, { requireIdFromParam = false } = {}) {
 
   const legalEntityId = optionalPositiveInt(req.body?.legalEntityId, "legalEntityId");
   const glAccountId = optionalPositiveInt(req.body?.glAccountId, "glAccountId");
+  const operatingUnitId = optionalPositiveInt(req.body?.operatingUnitId, "operatingUnitId");
   if (!legalEntityId || !glAccountId) {
     throw badRequest("legalEntityId and glAccountId are required");
   }
@@ -84,6 +87,7 @@ function parseBankAccountBody(req, { requireIdFromParam = false } = {}) {
     userId,
     bankAccountId,
     legalEntityId,
+    operatingUnitId,
     code,
     name,
     currencyCode,
