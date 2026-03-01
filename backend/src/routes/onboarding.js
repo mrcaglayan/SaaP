@@ -53,6 +53,14 @@ const DEFAULT_ACCOUNTS = [
     normalSide: "DEBIT",
   },
 ];
+const ACCOUNT_TYPE_VALUES = new Set([
+  "ASSET",
+  "LIABILITY",
+  "EQUITY",
+  "REVENUE",
+  "EXPENSE",
+]);
+const NORMAL_SIDE_VALUES = new Set(["DEBIT", "CREDIT"]);
 
 const READINESS_DEFINITIONS = [
   { key: "groupCompanies", label: "Group companies", minimum: 1 },
@@ -201,6 +209,216 @@ function parseBooleanFlag(value, fallback = false, fieldName = "value") {
   }
 
   throw badRequest(`${fieldName} must be a boolean`);
+}
+
+function normalizeOptionalCode(value) {
+  const normalized = String(value || "").trim().toUpperCase();
+  return normalized || null;
+}
+
+function normalizeDefaultAccountRow(row, index) {
+  if (!row || typeof row !== "object") {
+    throw badRequest(`defaultAccounts[${index}] must be an object`);
+  }
+
+  const code = normalizeOptionalCode(row.code);
+  const name = String(row.name || "").trim();
+  const accountType = String(row.accountType || row.account_type || "")
+    .trim()
+    .toUpperCase();
+  const normalSide = String(row.normalSide || row.normal_side || "")
+    .trim()
+    .toUpperCase();
+  const parentCode = normalizeOptionalCode(row.parentCode ?? row.parent_code);
+  const allowPosting = parseBooleanFlag(
+    row.allowPosting ?? row.allow_posting,
+    true,
+    `defaultAccounts[${index}].allowPosting`
+  );
+
+  if (!code) {
+    throw badRequest(`defaultAccounts[${index}].code is required`);
+  }
+  if (!name) {
+    throw badRequest(`defaultAccounts[${index}].name is required`);
+  }
+  if (!ACCOUNT_TYPE_VALUES.has(accountType)) {
+    throw badRequest(
+      `defaultAccounts[${index}].accountType must be one of: ${Array.from(
+        ACCOUNT_TYPE_VALUES
+      ).join(", ")}`
+    );
+  }
+  if (!NORMAL_SIDE_VALUES.has(normalSide)) {
+    throw badRequest(
+      `defaultAccounts[${index}].normalSide must be one of: ${Array.from(
+        NORMAL_SIDE_VALUES
+      ).join(", ")}`
+    );
+  }
+  if (parentCode && parentCode === code) {
+    throw badRequest(`defaultAccounts[${index}].parentCode cannot equal code`);
+  }
+
+  return {
+    code,
+    name,
+    accountType,
+    normalSide,
+    allowPosting,
+    parentCode,
+  };
+}
+
+function normalizeOnboardingDefaultAccounts(rawAccounts) {
+  if (rawAccounts !== undefined && rawAccounts !== null && !Array.isArray(rawAccounts)) {
+    throw badRequest("defaultAccounts must be an array when provided");
+  }
+
+  const source =
+    Array.isArray(rawAccounts) && rawAccounts.length > 0
+      ? rawAccounts
+      : DEFAULT_ACCOUNTS;
+  const normalizedRows = source.map((row, index) =>
+    normalizeDefaultAccountRow(row, index)
+  );
+  const rowByCode = new Map();
+  for (const row of normalizedRows) {
+    if (rowByCode.has(row.code)) {
+      throw badRequest(`defaultAccounts contains duplicate code: ${row.code}`);
+    }
+    rowByCode.set(row.code, row);
+  }
+
+  const visitStateByCode = new Map();
+  const depthByCode = new Map();
+
+  function resolveDepth(code) {
+    const state = visitStateByCode.get(code);
+    if (state === "visiting") {
+      throw badRequest(`defaultAccounts parentCode cycle detected at ${code}`);
+    }
+    if (state === "visited") {
+      return depthByCode.get(code) || 0;
+    }
+
+    visitStateByCode.set(code, "visiting");
+    const row = rowByCode.get(code);
+    if (!row) {
+      throw badRequest(`defaultAccounts parentCode references unknown code: ${code}`);
+    }
+
+    let depth = 0;
+    if (row.parentCode) {
+      if (!rowByCode.has(row.parentCode)) {
+        throw badRequest(
+          `defaultAccounts parentCode ${row.parentCode} does not exist in payload`
+        );
+      }
+      depth = resolveDepth(row.parentCode) + 1;
+    }
+
+    depthByCode.set(code, depth);
+    visitStateByCode.set(code, "visited");
+    return depth;
+  }
+
+  for (const row of normalizedRows) {
+    resolveDepth(row.code);
+  }
+
+  return normalizedRows.sort((left, right) => {
+    const depthDelta =
+      (depthByCode.get(left.code) || 0) - (depthByCode.get(right.code) || 0);
+    if (depthDelta !== 0) {
+      return depthDelta;
+    }
+    return left.code.localeCompare(right.code);
+  });
+}
+
+async function upsertOnboardingDefaultAccountsForCoa(coaId, rawAccounts, runQuery = query) {
+  const normalizedAccounts = normalizeOnboardingDefaultAccounts(rawAccounts);
+  for (const account of normalizedAccounts) {
+    // eslint-disable-next-line no-await-in-loop
+    await runQuery(
+      `INSERT INTO accounts (
+          coa_id, code, name, account_type, normal_side, allow_posting, parent_account_id
+       )
+       VALUES (?, ?, ?, ?, ?, ?, NULL)
+       ON DUPLICATE KEY UPDATE
+         name = VALUES(name),
+         account_type = VALUES(account_type),
+         normal_side = VALUES(normal_side),
+         allow_posting = VALUES(allow_posting),
+         parent_account_id = NULL`,
+      [
+        coaId,
+        account.code,
+        account.name,
+        account.accountType,
+        account.normalSide,
+        account.allowPosting,
+      ]
+    );
+  }
+
+  if (normalizedAccounts.length === 0) {
+    return 0;
+  }
+
+  const codes = normalizedAccounts.map((account) => account.code);
+  const placeholders = codes.map(() => "?").join(", ");
+  const resolvedAccounts = await runQuery(
+    `SELECT id, code
+     FROM accounts
+     WHERE coa_id = ?
+       AND code IN (${placeholders})`,
+    [coaId, ...codes]
+  );
+  const accountIdByCode = new Map(
+    resolvedAccounts.rows.map((row) => [String(row.code || "").trim().toUpperCase(), row.id])
+  );
+
+  for (const account of normalizedAccounts) {
+    if (!accountIdByCode.has(account.code)) {
+      throw new Error(`Unable to resolve account id for code ${account.code}`);
+    }
+  }
+
+  for (const account of normalizedAccounts) {
+    if (!account.parentCode) {
+      continue;
+    }
+
+    const parentAccountId = parsePositiveInt(accountIdByCode.get(account.parentCode));
+    if (!parentAccountId) {
+      throw badRequest(
+        `defaultAccounts parentCode ${account.parentCode} could not be resolved in CoA`
+      );
+    }
+
+    // eslint-disable-next-line no-await-in-loop
+    await runQuery(
+      `UPDATE accounts
+       SET parent_account_id = ?
+       WHERE coa_id = ?
+         AND code = ?`,
+      [parentAccountId, coaId, account.code]
+    );
+  }
+
+  await runQuery(
+    `UPDATE accounts parent
+     JOIN accounts child ON child.parent_account_id = parent.id
+     SET parent.allow_posting = FALSE
+     WHERE parent.coa_id = ?
+       AND child.coa_id = ?
+       AND parent.allow_posting = TRUE`,
+    [coaId, coaId]
+  );
+
+  return normalizedAccounts.length;
 }
 
 function normalizePaymentTermTemplate(rawTerm, index) {
@@ -1380,34 +1598,10 @@ router.post(
           throw new Error(`Unable to resolve CoA for ${coaCode}`);
         }
 
-        const accounts =
-          Array.isArray(entity.defaultAccounts) && entity.defaultAccounts.length
-            ? entity.defaultAccounts
-            : DEFAULT_ACCOUNTS;
-
-        for (const account of accounts) {
-          assertRequiredFields(account, ["code", "name", "accountType", "normalSide"]);
-          // eslint-disable-next-line no-await-in-loop
-          await tx.query(
-            `INSERT INTO accounts (
-                coa_id, code, name, account_type, normal_side, allow_posting, parent_account_id
-             )
-             VALUES (?, ?, ?, ?, ?, ?, NULL)
-             ON DUPLICATE KEY UPDATE
-               name = VALUES(name),
-               account_type = VALUES(account_type),
-               normal_side = VALUES(normal_side),
-               allow_posting = VALUES(allow_posting)`,
-            [
-              coaId,
-              String(account.code).trim(),
-              String(account.name).trim(),
-              String(account.accountType).toUpperCase(),
-              String(account.normalSide).toUpperCase(),
-              account.allowPosting === undefined ? true : Boolean(account.allowPosting),
-            ]
-          );
-        }
+        // Accept both legacy flat rows and new tree-compatible rows with parentCode.
+        // Parent links are resolved deterministically after account upserts.
+        // eslint-disable-next-line no-await-in-loop
+        await upsertOnboardingDefaultAccountsForCoa(coaId, entity.defaultAccounts, tx.query);
 
         const bookCode = entity.bookCode
           ? String(entity.bookCode).trim()

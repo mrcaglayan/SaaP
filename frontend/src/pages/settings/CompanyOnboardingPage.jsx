@@ -243,6 +243,7 @@ function createAccountDraft(seed = {}) {
 return {
   id: createId("account"),
   code: String(seed.code || "").trim().toUpperCase(),
+  parentCode: toUpper(seed.parentCode ?? seed.parent_code),
   name: String(seed.name || "").trim(),
   accountType: toUpper(seed.accountType) || "ASSET",
   normalSide: toUpper(seed.normalSide) || "DEBIT",
@@ -345,6 +346,9 @@ return rows
   })
   .map((account) => ({
     code: toUpper(account.code),
+    ...(toUpper(account.parentCode ?? account.parent_code)
+      ? { parentCode: toUpper(account.parentCode ?? account.parent_code) }
+      : {}),
     name: String(account.name || "").trim(),
     accountType: toUpper(account.accountType) || "ASSET",
     normalSide: toUpper(account.normalSide) || "DEBIT",
@@ -381,6 +385,70 @@ return {
   ...(defaultAccounts.length > 0 ? { defaultAccounts } : {}),
   ...(branches.length > 0 ? { branches } : {}),
 };
+}
+function validateAccountTreeRows(defaultAccounts, prefix, l) {
+const rows = sanitizeDefaultAccounts(defaultAccounts);
+if (rows.length === 0) {
+  return l(
+    `${prefix}: at least one account row is required in account tree step.`,
+    `${prefix}: hesap agaci adiminda en az bir hesap satiri zorunludur.`
+  );
+}
+const rowByCode = new Map();
+for (const row of rows) {
+  if (rowByCode.has(row.code)) {
+    return l(
+      `${prefix}: duplicate account code detected (${row.code}).`,
+      `${prefix}: yinelenen hesap kodu algilandi (${row.code}).`
+    );
+  }
+  rowByCode.set(row.code, row);
+}
+for (const row of rows) {
+  const parentCode = toUpper(row.parentCode);
+  if (!parentCode) {
+    continue;
+  }
+  if (parentCode === row.code) {
+    return l(
+      `${prefix}: account ${row.code} cannot use itself as parent.`,
+      `${prefix}: ${row.code} hesabi kendisini ust hesap olarak secemez.`
+    );
+  }
+  if (!rowByCode.has(parentCode)) {
+    return l(
+      `${prefix}: parentCode ${parentCode} is missing from account tree rows.`,
+      `${prefix}: parentCode ${parentCode} hesap agaci satirlarinda bulunamadi.`
+    );
+  }
+}
+const visitStateByCode = new Map();
+function hasCycle(code) {
+  const state = visitStateByCode.get(code);
+  if (state === "visiting") {
+    return true;
+  }
+  if (state === "visited") {
+    return false;
+  }
+  visitStateByCode.set(code, "visiting");
+  const row = rowByCode.get(code);
+  const parentCode = toUpper(row?.parentCode);
+  if (parentCode && hasCycle(parentCode)) {
+    return true;
+  }
+  visitStateByCode.set(code, "visited");
+  return false;
+}
+for (const row of rows) {
+  if (hasCycle(row.code)) {
+    return l(
+      `${prefix}: parent-child cycle detected in account tree.`,
+      `${prefix}: hesap agacinda ust-alt iliski dongusu algilandi.`
+    );
+  }
+}
+return "";
 }
 function validateForm(form, l) {
 if (!form.groupCompany.code.trim() || !form.groupCompany.name.trim()) {
@@ -443,12 +511,9 @@ for (let index = 0; index < form.legalEntities.length; index += 1) {
       `Istirak / bagli ortak ${index + 1}: fonksiyonel para birimi zorunludur.`
     );
   }
-  const defaultAccounts = sanitizeDefaultAccounts(entity.defaultAccounts);
-  if (defaultAccounts.length === 0) {
-    return l(
-      `${prefix}: at least one account row is required in account tree step.`,
-      `Istirak / bagli ortak ${index + 1}: hesap agaci adiminda en az bir hesap satiri zorunludur.`
-    );
+  const accountTreeError = validateAccountTreeRows(entity.defaultAccounts, prefix, l);
+  if (accountTreeError) {
+    return accountTreeError;
   }
 }
 return "";
@@ -491,12 +556,10 @@ if (stepKey === "entity") {
 if (stepKey === "accountTree") {
   for (let index = 0; index < form.legalEntities.length; index += 1) {
     const entity = form.legalEntities[index];
-    const defaultAccounts = sanitizeDefaultAccounts(entity.defaultAccounts);
-    if (defaultAccounts.length === 0) {
-      return l(
-        `Legal entity ${index + 1}: account tree must include at least one account.`,
-        `Istirak / bagli ortak ${index + 1}: hesap agacinda en az bir hesap bulunmalidir.`
-      );
+    const prefix = `Legal entity ${index + 1}`;
+    const accountTreeError = validateAccountTreeRows(entity.defaultAccounts, prefix, l);
+    if (accountTreeError) {
+      return accountTreeError;
     }
   }
 }
@@ -684,6 +747,13 @@ function addDefaultAccount(entityId) {
   }));
 }
 function setDefaultAccountField(entityId, accountId, field, value) {
+  const normalizedValue =
+    field === "code" ||
+    field === "parentCode" ||
+    field === "accountType" ||
+    field === "normalSide"
+      ? toUpper(value)
+      : value;
   setForm((prev) => ({
     ...prev,
     legalEntities: prev.legalEntities.map((entity) => {
@@ -693,7 +763,9 @@ function setDefaultAccountField(entityId, accountId, field, value) {
       return {
         ...entity,
         defaultAccounts: (entity.defaultAccounts || []).map((account) =>
-          account.id === accountId ? { ...account, [field]: value } : account
+          account.id === accountId
+            ? { ...account, [field]: normalizedValue }
+            : account
         ),
       };
     }),
@@ -1515,8 +1587,8 @@ return (
           </h2>
           <p className="mb-3 text-xs text-slate-600">
             {l(
-              "Manual override is fully supported. Each row becomes onboarding defaultAccounts.",
-              "Manuel override tamamen desteklenir. Her satir onboarding defaultAccounts olarak gonderilir."
+              "Manual override is fully supported. Use Parent Code to build hierarchy; parent rows will be forced non-postable on backend.",
+              "Manuel override tamamen desteklenir. Hiyerarsi icin Ust Kod kullanin; ust satirlar backend tarafinda post-edilemez yapilir."
             )}
           </p>
           <div className="space-y-3">
@@ -1558,6 +1630,19 @@ return (
                         placeholder={l("Code", "Kod")}
                       />
                       <input
+                        value={account.parentCode || ""}
+                        onChange={(event) =>
+                          setDefaultAccountField(
+                            entity.id,
+                            account.id,
+                            "parentCode",
+                            event.target.value
+                          )
+                        }
+                        className="rounded-lg border border-slate-300 px-2 py-1.5 text-xs md:col-span-2"
+                        placeholder={l("Parent code (optional)", "Ust kod (opsiyonel)")}
+                      />
+                      <input
                         value={account.name}
                         onChange={(event) =>
                           setDefaultAccountField(
@@ -1567,7 +1652,7 @@ return (
                             event.target.value
                           )
                         }
-                        className="rounded-lg border border-slate-300 px-2 py-1.5 text-xs md:col-span-4"
+                        className="rounded-lg border border-slate-300 px-2 py-1.5 text-xs md:col-span-2"
                         placeholder={l("Name", "Ad")}
                       />
                       <select
@@ -1625,7 +1710,7 @@ return (
                         type="button"
                         onClick={() => removeDefaultAccount(entity.id, account.id)}
                         disabled={(entity.defaultAccounts || []).length <= 1}
-                        className="rounded-lg border border-rose-200 px-2 py-1 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-50 md:col-span-1"
+                        className="rounded-lg border border-rose-200 px-2 py-1 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-50 md:col-span-2"
                       >
                         {l("Remove", "Kaldir")}
                       </button>
