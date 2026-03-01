@@ -205,7 +205,7 @@ function mapTaxAccountMappingRow(row) {
     updatedAt: row.updated_at || null,
   };
 }
-+async function getTaxRegimeRowById({ tenantId, regimeId, runQuery = query }) {
+async function getTaxRegimeRowById({ tenantId, regimeId, runQuery = query }) {
   const result = await runQuery(
     `SELECT
        tr.*,
@@ -228,7 +228,7 @@ function mapTaxAccountMappingRow(row) {
   );
   return result.rows?.[0] || null;
 }
-+async function getTaxCodeRowById({ tenantId, codeId, runQuery = query }) {
+async function getTaxCodeRowById({ tenantId, codeId, runQuery = query }) {
   const result = await runQuery(
     `SELECT
        tc.*,
@@ -246,7 +246,7 @@ function mapTaxAccountMappingRow(row) {
   );
   return result.rows?.[0] || null;
 }
-+async function getTaxRuleRowById({ tenantId, ruleId, runQuery = query }) {
+async function getTaxRuleRowById({ tenantId, ruleId, runQuery = query }) {
   const result = await runQuery(
     `SELECT
        trs.*,
@@ -269,7 +269,7 @@ function mapTaxAccountMappingRow(row) {
   );
   return result.rows?.[0] || null;
 }
-+async function getTaxAccountMappingRowById({
+async function getTaxAccountMappingRowById({
   tenantId,
   mappingId,
   runQuery = query,
@@ -303,28 +303,28 @@ function mapTaxAccountMappingRow(row) {
   );
   return result.rows?.[0] || null;
 }
-+async function assertTaxRegimeExists(tenantId, regimeId, runQuery = query) {
+async function assertTaxRegimeExists(tenantId, regimeId, runQuery = query) {
   const row = await getTaxRegimeRowById({ tenantId, regimeId, runQuery });
   if (!row) {
     throw notFound("Tax regime not found", "TAX_REGIME_NOT_FOUND");
   }
   return row;
 }
-+async function assertTaxCodeExists(tenantId, codeId, runQuery = query) {
+async function assertTaxCodeExists(tenantId, codeId, runQuery = query) {
   const row = await getTaxCodeRowById({ tenantId, codeId, runQuery });
   if (!row) {
     throw notFound("Tax code not found");
   }
   return row;
 }
-+async function assertTaxCodeInRegime(tenantId, codeId, regimeId, runQuery = query) {
+async function assertTaxCodeInRegime(tenantId, codeId, regimeId, runQuery = query) {
   const row = await assertTaxCodeExists(tenantId, codeId, runQuery);
   if (parsePositiveInt(row.tax_regime_id) !== parsePositiveInt(regimeId)) {
     throw badRequest("taxCodeId must belong to selected regimeId");
   }
   return row;
 }
-+async function assertAccountEligibleForTaxMapping({
+async function assertAccountEligibleForTaxMapping({
   tenantId,
   legalEntityId,
   accountId,
@@ -501,7 +501,7 @@ function computeTaxBreakdown({
     nonRecoverableTaxAmount: toAmount(nonRecoverableTaxAmount),
   };
 }
-+async function resolvePreviewRegime({
+async function resolvePreviewRegime({
   tenantId,
   countryId,
   legalEntityId,
@@ -536,7 +536,7 @@ function computeTaxBreakdown({
   );
   return result.rows?.[0] || null;
 }
-+async function resolvePreviewTaxCode({
+async function resolvePreviewTaxCode({
   tenantId,
   regimeId,
   taxCodeId,
@@ -569,7 +569,7 @@ function computeTaxBreakdown({
   );
   return result.rows?.[0] || null;
 }
-+async function resolvePreviewRule({
+async function resolvePreviewRule({
   tenantId,
   regimeId,
   postingDate,
@@ -628,7 +628,7 @@ function computeTaxBreakdown({
   );
   return result.rows?.[0] || null;
 }
-+async function resolvePreviewMapping({
+async function resolvePreviewMapping({
   tenantId,
   regimeId,
   legalEntityId,
@@ -661,7 +661,7 @@ function computeTaxBreakdown({
   );
   return result.rows?.[0] || null;
 }
-+async function getTaxRuleByIdForRead(tenantId, ruleId, runQuery = query) {
+async function getTaxRuleByIdForRead(tenantId, ruleId, runQuery = query) {
   const row = await getTaxRuleRowById({ tenantId, ruleId, runQuery });
   if (!row) {
     throw notFound("Tax rule not found");
