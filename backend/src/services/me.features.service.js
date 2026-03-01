@@ -1,4 +1,8 @@
 import { query } from "../db.js";
+import {
+  KNOWN_TENANT_FEATURE_CODES,
+  normalizeFeatureCode,
+} from "./features.catalog.js";
 
 function parseFeatureConfig(value) {
   if (value === undefined || value === null || value === "") {
@@ -12,12 +16,6 @@ function parseFeatureConfig(value) {
   } catch {
     return null;
   }
-}
-
-function normalizeFeatureCode(value) {
-  return String(value || "")
-    .trim()
-    .toUpperCase();
 }
 
 function isMissingTableError(err) {
@@ -54,6 +52,22 @@ export async function listTenantFeatures({ tenantId, includeDisabled = true }) {
       };
     });
 
+    if (includeDisabled) {
+      const seen = new Set(rows.map((row) => row.featureCode));
+      for (const featureCode of KNOWN_TENANT_FEATURE_CODES) {
+        if (seen.has(featureCode)) {
+          continue;
+        }
+        rows.push({
+          featureCode,
+          isEnabled: false,
+          config: null,
+          updatedAt: null,
+        });
+      }
+      rows.sort((a, b) => a.featureCode.localeCompare(b.featureCode));
+    }
+
     const enabledFeatureCodes = rows
       .filter((row) => row.isEnabled)
       .map((row) => row.featureCode);
@@ -75,10 +89,11 @@ export async function listTenantFeatures({ tenantId, includeDisabled = true }) {
     }
     return {
       rows: [],
-      total: 0,
+      total: includeDisabled ? KNOWN_TENANT_FEATURE_CODES.length : 0,
       enabledFeatureCodes: [],
-      flags: {},
+      flags: includeDisabled
+        ? Object.fromEntries(KNOWN_TENANT_FEATURE_CODES.map((code) => [code, false]))
+        : {},
     };
   }
 }
-

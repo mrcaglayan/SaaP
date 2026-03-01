@@ -73,6 +73,31 @@ const READINESS_DEFINITIONS = [
     label: "Shareholder parent account mappings",
     minimum: 1,
   },
+  {
+    key: "subaccountsV1",
+    label: "Subaccounts V1 placeholder",
+    minimum: 0,
+  },
+  {
+    key: "setupWizardV2",
+    label: "Setup Wizard V2 placeholder",
+    minimum: 0,
+  },
+  {
+    key: "consolidationCanonicalMappingV1",
+    label: "Consolidation canonical mapping placeholder",
+    minimum: 0,
+  },
+  {
+    key: "workflowCloseConsolidationV1",
+    label: "Workflow close/consolidation placeholder",
+    minimum: 0,
+  },
+  {
+    key: "taxEngineV1",
+    label: "Country tax engine placeholder",
+    minimum: 0,
+  },
 ];
 
 const PAYMENT_TERM_STATUS_VALUES = new Set(["ACTIVE", "INACTIVE"]);

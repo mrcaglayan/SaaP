@@ -91,6 +91,7 @@
     "test:ux:prux33": "node scripts/test-ux-prux33-password-reset-token-flow.js",
     "test:ux:prux34": "node scripts/test-ux-prux34-tenant-feature-flags.js",
     "test:ux:prux35": "node scripts/test-ux-prux35-usage-and-audit-export.js",
+    "test:followup:prf01-flags": "node scripts/test-followup-prf01-feature-flags.js",
     "test:ux:prcore02": "node scripts/test-ux-prcore02-idempotency-standardization.js",
     "test:ux:prcore03": "node scripts/test-ux-prcore03-optimistic-locking-row-version.js",
     "test:ux:prcore04": "node scripts/test-ux-prcore04-job-progress-retry-ux.js",

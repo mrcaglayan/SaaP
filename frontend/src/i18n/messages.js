@@ -1485,6 +1485,13 @@ export const messages = {
         shareholders: "Ortaklar",
         shareholderCommitmentConfigs:
           "Ortaklik parent hesap eslesmeleri (sermaye/taahhut)",
+        subaccountsV1: "Subaccounts V1 (uyari placeholder)",
+        setupWizardV2: "Setup Wizard V2 (uyari placeholder)",
+        consolidationCanonicalMappingV1:
+          "Konsolidasyon kanonik esleme (uyari placeholder)",
+        workflowCloseConsolidationV1:
+          "Kapanis/konsolidasyon workflow (uyari placeholder)",
+        taxEngineV1: "Ulke vergi motoru (uyari placeholder)",
       },
       badges: {
         ready: "Hazir",
@@ -2996,6 +3003,13 @@ export const messages = {
         accounts: "Accounts",
         shareholders: "Shareholders",
         shareholderCommitmentConfigs: "Shareholder parent account mappings",
+        subaccountsV1: "Subaccounts V1 (warning placeholder)",
+        setupWizardV2: "Setup Wizard V2 (warning placeholder)",
+        consolidationCanonicalMappingV1:
+          "Consolidation canonical mapping (warning placeholder)",
+        workflowCloseConsolidationV1:
+          "Close/consolidation workflow (warning placeholder)",
+        taxEngineV1: "Country tax engine (warning placeholder)",
       },
       badges: {
         ready: "Ready",
