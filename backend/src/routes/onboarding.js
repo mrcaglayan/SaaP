@@ -229,7 +229,12 @@ function normalizeDefaultAccountRow(row, index) {
   const normalSide = String(row.normalSide || row.normal_side || "")
     .trim()
     .toUpperCase();
-  const parentCode = normalizeOptionalCode(row.parentCode ?? row.parent_code);
+  const parentCode = normalizeOptionalCode(
+    row.parentCode ??
+      row.parent_code ??
+      row.parentAccountCode ??
+      row.parent_account_code
+  );
   const allowPosting = parseBooleanFlag(
     row.allowPosting ?? row.allow_posting,
     true,
@@ -1598,10 +1603,17 @@ router.post(
           throw new Error(`Unable to resolve CoA for ${coaCode}`);
         }
 
-        // Accept both legacy flat rows and new tree-compatible rows with parentCode.
+        // Backward-compatible with legacy flat payloads:
+        // - `defaultAccounts` camelCase
+        // - `default_accounts` snake_case
+        // Also supports new tree rows via `parentCode`.
         // Parent links are resolved deterministically after account upserts.
         // eslint-disable-next-line no-await-in-loop
-        await upsertOnboardingDefaultAccountsForCoa(coaId, entity.defaultAccounts, tx.query);
+        await upsertOnboardingDefaultAccountsForCoa(
+          coaId,
+          entity.defaultAccounts ?? entity.default_accounts,
+          tx.query
+        );
 
         const bookCode = entity.bookCode
           ? String(entity.bookCode).trim()
@@ -1674,5 +1686,9 @@ router.post(
     });
   })
 );
+
+export const __testOnboardingInternals = {
+  normalizeOnboardingDefaultAccounts,
+};
 
 export default router;

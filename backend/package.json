@@ -94,6 +94,7 @@
     "test:ux:prux35": "node scripts/test-ux-prux35-usage-and-audit-export.js",
     "test:followup:prf01-flags": "node scripts/test-followup-prf01-feature-flags.js",
     "test:followup:prf01-readiness": "node scripts/test-followup-prf01-readiness-placeholders.js",
+    "test:followup:prf02-onboarding-defaultaccounts": "node scripts/test-followup-prf02-onboarding-defaultaccounts-backward.js",
     "test:ux:prcore02": "node scripts/test-ux-prcore02-idempotency-standardization.js",
     "test:ux:prcore03": "node scripts/test-ux-prcore03-optimistic-locking-row-version.js",
     "test:ux:prcore04": "node scripts/test-ux-prcore04-job-progress-retry-ux.js",
