@@ -1809,7 +1809,13 @@ export default function CashTransactionsPage() {
       applyTransactionSavedView(defaultView, { silent: true });
     }
     setDefaultSavedViewHydrated(true);
-  }, [canRead, defaultSavedViewHydrated, savedViews, savedViewsLoading]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    canRead,
+    defaultSavedViewHydrated,
+    savedViews,
+    savedViewsLoading,
+  ]);
 
   useEffect(() => {
     if (!canCreate) {
@@ -1832,6 +1838,7 @@ export default function CashTransactionsPage() {
       applyTransactionTemplate(defaultTemplate, { silent: true });
     }
     setDefaultTemplateHydrated(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     canCreate,
     defaultTemplateHydrated,

@@ -14,7 +14,7 @@ function toQueryString(params = {}) {
 
 function parseFileNameFromContentDisposition(headerValue, fallback) {
   const raw = String(headerValue || "");
-  const match = raw.match(/filename=\"?([^\";]+)\"?/i);
+  const match = raw.match(/filename="?([^";]+)"?/i);
   if (!match?.[1]) {
     return fallback;
   }

@@ -4,6 +4,7 @@ import {
   createBankAccount,
   deactivateBankAccount,
   listBankAccounts,
+  provisionBankAccount102Child,
   updateBankAccount,
 } from "../../api/bankAccounts.js";
 import {
@@ -37,6 +38,13 @@ function parseDbBoolean(value) {
 function toPositiveInt(value) {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function generateProvisionIdempotencyKey() {
+  if (globalThis.crypto && typeof globalThis.crypto.randomUUID === "function") {
+    return `bank-provision-102-${globalThis.crypto.randomUUID()}`;
+  }
+  return `bank-provision-102-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 function mapRowToForm(row) {
@@ -78,6 +86,8 @@ export default function BankAccountsPage() {
   });
 
   const [form, setForm] = useState(EMPTY_FORM);
+  const [autoProvision102, setAutoProvision102] = useState(false);
+  const [provisionGlAccountName, setProvisionGlAccountName] = useState("");
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [statusBusyId, setStatusBusyId] = useState(null);
@@ -289,20 +299,23 @@ export default function BankAccountsPage() {
       operatingUnitId: "",
       currencyCode: prev.currencyCode && !form.id ? prev.currencyCode : "",
     }));
+    setAutoProvision102(false);
+    setProvisionGlAccountName("");
   }
 
   function startEdit(row) {
     setMessage("");
     setError("");
     setForm(mapRowToForm(row));
+    setAutoProvision102(false);
+    setProvisionGlAccountName("");
   }
 
-  function buildPayloadFromForm() {
+  function buildCommonPayloadFromForm() {
     const legalEntityId = toPositiveInt(form.legalEntityId);
     const operatingUnitId = toPositiveInt(form.operatingUnitId);
-    const glAccountId = toPositiveInt(form.glAccountId);
-    if (!legalEntityId || !glAccountId) {
-      throw new Error("legalEntityId and glAccountId are required");
+    if (!legalEntityId) {
+      throw new Error("legalEntityId is required");
     }
     return {
       legalEntityId,
@@ -310,12 +323,32 @@ export default function BankAccountsPage() {
       code: String(form.code || "").trim(),
       name: String(form.name || "").trim(),
       currencyCode: String(form.currencyCode || "").trim().toUpperCase(),
-      glAccountId,
       bankName: String(form.bankName || "").trim() || null,
       branchName: String(form.branchName || "").trim() || null,
       iban: String(form.iban || "").trim() || null,
       accountNo: String(form.accountNo || "").trim() || null,
       isActive: Boolean(form.isActive),
+    };
+  }
+
+  function buildCreatePayloadFromForm() {
+    const base = buildCommonPayloadFromForm();
+    const glAccountId = toPositiveInt(form.glAccountId);
+    if (!glAccountId) {
+      throw new Error("glAccountId is required");
+    }
+    return {
+      ...base,
+      glAccountId,
+    };
+  }
+
+  function buildProvisionPayloadFromForm() {
+    const base = buildCommonPayloadFromForm();
+    const glAccountName = String(provisionGlAccountName || "").trim();
+    return {
+      ...base,
+      glAccountName: glAccountName || undefined,
     };
   }
 
@@ -330,11 +363,22 @@ export default function BankAccountsPage() {
     setError("");
     setMessage("");
     try {
-      const payload = buildPayloadFromForm();
       if (form.id) {
+        const payload = buildCreatePayloadFromForm();
         await updateBankAccount(form.id, payload);
         setMessage("Bank account updated");
+      } else if (autoProvision102) {
+        const payload = buildProvisionPayloadFromForm();
+        const idempotencyKey = generateProvisionIdempotencyKey();
+        const response = await provisionBankAccount102Child(payload, { idempotencyKey });
+        const provisionedCode = String(response?.glAccount?.code || "").trim();
+        setMessage(
+          provisionedCode
+            ? `Bank account + 102 child created (${provisionedCode})`
+            : "Bank account + 102 child created"
+        );
       } else {
+        const payload = buildCreatePayloadFromForm();
         await createBankAccount(payload);
         setMessage("Bank account created");
       }
@@ -478,7 +522,7 @@ export default function BankAccountsPage() {
             <button
               type="button"
               onClick={() => {
-                setForm(EMPTY_FORM);
+                resetForm();
                 setError("");
                 setMessage("");
               }}
@@ -581,6 +625,44 @@ export default function BankAccountsPage() {
               </select>
             </div>
 
+            {!form.id ? (
+              <div className="rounded-md border border-cyan-200 bg-cyan-50 p-3">
+                <label className="flex items-center gap-2 text-sm font-medium text-cyan-900">
+                  <input
+                    type="checkbox"
+                    checked={autoProvision102}
+                    onChange={(event) => {
+                      const nextChecked = event.target.checked;
+                      setAutoProvision102(nextChecked);
+                      if (nextChecked) {
+                        setForm((prev) => ({ ...prev, glAccountId: "" }));
+                      }
+                    }}
+                    disabled={!canWrite || saving}
+                  />
+                  Auto-create 102 child GL account and link automatically
+                </label>
+                <p className="mt-1 text-xs text-cyan-800">
+                  Uses one-click provisioning (`/provision-102-child`) with deterministic code
+                  allocation under `102` (`102.001`, `102.002`, ...).
+                </p>
+                {autoProvision102 ? (
+                  <div className="mt-2">
+                    <label className="mb-1 block text-xs font-medium text-cyan-900">
+                      Child GL Name (Optional)
+                    </label>
+                    <input
+                      value={provisionGlAccountName}
+                      onChange={(event) => setProvisionGlAccountName(event.target.value)}
+                      className="w-full rounded border border-cyan-300 bg-white px-2 py-1.5 text-sm"
+                      placeholder="If empty, bank account name is used"
+                      disabled={!canWrite || saving}
+                    />
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
             <div>
               <label className="mb-1 block text-xs font-medium text-slate-700">GL Account</label>
               <select
@@ -589,8 +671,8 @@ export default function BankAccountsPage() {
                   setForm((prev) => ({ ...prev, glAccountId: event.target.value }))
                 }
                 className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
-                disabled={!canWrite || saving || !canReadAccounts}
-                required
+                disabled={!canWrite || saving || !canReadAccounts || (!form.id && autoProvision102)}
+                required={form.id || !autoProvision102}
               >
                 <option value="">Secin</option>
                 {glAccountOptions.map((row) => (
@@ -600,7 +682,9 @@ export default function BankAccountsPage() {
                 ))}
               </select>
               <p className="mt-1 text-xs text-slate-500">
-                Only ACTIVE, postable, LEGAL_ENTITY-scoped ASSET accounts are listed.
+                {!form.id && autoProvision102
+                  ? "GL account is generated automatically under control account 102."
+                  : "Only ACTIVE, postable, LEGAL_ENTITY-scoped ASSET accounts are listed. In strict mode, selected account must be under 102 subtree."}
               </p>
             </div>
 
@@ -669,7 +753,13 @@ export default function BankAccountsPage() {
               disabled={!canWrite || saving}
               className="w-full rounded bg-slate-900 px-3 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {saving ? "Kaydediliyor..." : form.id ? "Guncelle" : "Olustur"}
+              {saving
+                ? "Kaydediliyor..."
+                : form.id
+                  ? "Guncelle"
+                  : autoProvision102
+                    ? "Olustur (102 Otomatik)"
+                    : "Olustur"}
             </button>
           </form>
         </section>

@@ -53,8 +53,11 @@ export function buildCsvString(rows = [], columns = [], options = {}) {
 
 export function sanitizeCsvFileName(fileName, fallback = "export") {
   const base = String(fileName || "").trim() || String(fallback || "").trim() || "export";
-  const collapsed = base
-    .replace(/[<>:"/\\|?*\x00-\x1f]/g, "-")
+  const withoutControlChars = Array.from(base, (char) =>
+    char.charCodeAt(0) <= 31 ? "-" : char
+  ).join("");
+  const collapsed = withoutControlChars
+    .replace(/[<>:"/\\|?*]/g, "-")
     .replace(/\s+/g, "-")
     .replace(/-+/g, "-")
     .replace(/^-|-$/g, "");

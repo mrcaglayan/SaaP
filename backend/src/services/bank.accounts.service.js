@@ -8,6 +8,8 @@ import {
 import { badRequest, parsePositiveInt } from "../routes/_utils.js";
 
 const FEATURE_SUBACCOUNTS_V1 = "FEATURE_SUBACCOUNTS_V1";
+const PROVISION_102_CHILD_SUFFIX_WIDTH = 3;
+const PROVISION_102_CHILD_MAX_ATTEMPTS = 500;
 
 function parseDbBoolean(value) {
   return value === true || value === 1 || value === "1";
@@ -32,6 +34,14 @@ function normalizeUpperText(value) {
   return String(value || "")
     .trim()
     .toUpperCase();
+}
+
+function defaultNormalSideForAccountType(accountType) {
+  const normalized = normalizeUpperText(accountType);
+  if (normalized === "ASSET" || normalized === "EXPENSE") {
+    return "DEBIT";
+  }
+  return "CREDIT";
 }
 
 function isMissingTableError(err) {
@@ -502,6 +512,163 @@ async function findControl102Account({
   return result.rows?.[0] || null;
 }
 
+async function lockControl102AccountForProvision({
+  tenantId,
+  legalEntityId,
+  runQuery = query,
+}) {
+  const result = await runQuery(
+    `SELECT
+       a.id,
+       a.coa_id,
+       a.code,
+       a.name,
+       a.account_type,
+       a.normal_side,
+       a.allow_posting,
+       a.is_active
+     FROM accounts a
+     JOIN charts_of_accounts c ON c.id = a.coa_id
+     WHERE c.tenant_id = ?
+       AND c.scope = 'LEGAL_ENTITY'
+       AND c.legal_entity_id = ?
+       AND a.code = '102'
+     ORDER BY a.id
+     LIMIT 1
+     FOR UPDATE`,
+    [tenantId, legalEntityId]
+  );
+  const row = result.rows?.[0] || null;
+  if (!row) {
+    throw badRequest(
+      "Control account code 102 is missing for legalEntityId. Create account 102 before one-click provisioning."
+    );
+  }
+  if (!parseDbBoolean(row.is_active)) {
+    throw badRequest("Control account code 102 must be ACTIVE");
+  }
+  if (normalizeUpperText(row.account_type) !== "ASSET") {
+    throw badRequest("Control account code 102 must be an ASSET account");
+  }
+  return row;
+}
+
+async function listChildCodeSequencesUnderParent({
+  parentAccountId,
+  parentCode,
+  runQuery = query,
+}) {
+  const result = await runQuery(
+    `SELECT code
+     FROM accounts
+     WHERE parent_account_id = ?
+     FOR UPDATE`,
+    [parentAccountId]
+  );
+  const prefix = `${String(parentCode || "").trim()}.`;
+  const sequences = [];
+  for (const row of result.rows || []) {
+    const rawCode = String(row?.code || "").trim();
+    if (!rawCode || !rawCode.startsWith(prefix)) {
+      continue;
+    }
+    const suffix = rawCode.slice(prefix.length);
+    if (!/^\d+$/.test(suffix)) {
+      continue;
+    }
+    const parsed = Number(suffix);
+    if (Number.isInteger(parsed) && parsed > 0) {
+      sequences.push(parsed);
+    }
+  }
+  return sequences;
+}
+
+async function createProvisionedChildAccountUnder102({
+  control102,
+  tenantId,
+  legalEntityId,
+  accountName,
+  runQuery = query,
+}) {
+  const parentAccountId = parsePositiveInt(control102?.id);
+  const coaId = parsePositiveInt(control102?.coa_id);
+  const parentCode = String(control102?.code || "").trim();
+  if (!tenantId || !legalEntityId || !parentAccountId || !coaId || !parentCode) {
+    throw new Error("Invalid 102 control account context for provisioning");
+  }
+
+  const usedSequences = await listChildCodeSequencesUnderParent({
+    parentAccountId,
+    parentCode,
+    runQuery,
+  });
+  const currentMax = usedSequences.length ? Math.max(...usedSequences) : 0;
+  const startingSequence = currentMax + 1;
+
+  for (let attempt = 0; attempt < PROVISION_102_CHILD_MAX_ATTEMPTS; attempt += 1) {
+    const sequence = startingSequence + attempt;
+    const codeSuffix = String(sequence).padStart(PROVISION_102_CHILD_SUFFIX_WIDTH, "0");
+    const childCode = `${parentCode}.${codeSuffix}`;
+    if (childCode.length > 50) {
+      throw badRequest("Generated child account code under 102 exceeds 50 characters");
+    }
+
+    const normalSide =
+      normalizeUpperText(control102?.normal_side) ||
+      defaultNormalSideForAccountType(control102?.account_type);
+    try {
+      const insertResult = await runQuery(
+        `INSERT INTO accounts (
+            coa_id,
+            code,
+            name,
+            account_type,
+            normal_side,
+            allow_posting,
+            parent_account_id,
+            is_active
+          )
+         VALUES (?, ?, ?, ?, ?, TRUE, ?, TRUE)`,
+        [
+          coaId,
+          childCode,
+          accountName,
+          normalizeUpperText(control102?.account_type) || "ASSET",
+          normalSide,
+          parentAccountId,
+        ]
+      );
+      const childAccountId = parsePositiveInt(insertResult.rows?.insertId);
+      if (!childAccountId) {
+        throw new Error("Failed to create 102 child account");
+      }
+
+      // Control account 102 must remain a non-postable header account.
+      await runQuery(
+        `UPDATE accounts
+         SET allow_posting = FALSE
+         WHERE id = ?
+           AND allow_posting = TRUE`,
+        [parentAccountId]
+      );
+
+      return {
+        childAccountId,
+        childAccountCode: childCode,
+        childSequence: sequence,
+      };
+    } catch (err) {
+      if (isDuplicateConstraintError(err)) {
+        continue;
+      }
+      throw err;
+    }
+  }
+
+  throw new Error("Failed to allocate a unique child account code under 102");
+}
+
 async function isAccountDescendantOf({
   tenantId,
   accountId,
@@ -791,6 +958,90 @@ export async function createBankAccount({
       throw new Error("Failed to load created bank account");
     }
     return row;
+  } catch (err) {
+    if (isDuplicateConstraintError(err)) {
+      throw badRequest("Bank account code and GL account link must be unique within legalEntityId");
+    }
+    throw err;
+  }
+}
+
+export async function provisionBankAccountWith102Child({
+  req,
+  payload,
+  assertScopeAccess,
+}) {
+  await assertLegalEntityBelongsToTenant(payload.tenantId, payload.legalEntityId, "legalEntityId");
+  assertScopeAccess(req, "legal_entity", payload.legalEntityId, "legalEntityId");
+  await assertCurrencyExists(payload.currencyCode, "currencyCode");
+  await validateBankAccountOperatingUnit({
+    tenantId: payload.tenantId,
+    legalEntityId: payload.legalEntityId,
+    operatingUnitId: payload.operatingUnitId,
+    label: "operatingUnitId",
+  });
+
+  const normalizedChildAccountName =
+    toNullableString(payload.glAccountName, 255) ||
+    toNullableString(payload.name, 255) ||
+    "Bank account";
+
+  try {
+    return await withTransaction(async (tx) => {
+      const control102 = await lockControl102AccountForProvision({
+        tenantId: payload.tenantId,
+        legalEntityId: payload.legalEntityId,
+        runQuery: tx.query,
+      });
+
+      const allocation = await createProvisionedChildAccountUnder102({
+        control102,
+        tenantId: payload.tenantId,
+        legalEntityId: payload.legalEntityId,
+        accountName: normalizedChildAccountName,
+        runQuery: tx.query,
+      });
+
+      const childAccount = await fetchBankLinkableGlAccount({
+        tenantId: payload.tenantId,
+        legalEntityId: payload.legalEntityId,
+        accountId: allocation.childAccountId,
+        label: "glAccountId",
+        runQuery: tx.query,
+      });
+
+      const insertId = await insertBankAccount({
+        payload: {
+          ...payload,
+          glAccountId: allocation.childAccountId,
+        },
+        runQuery: tx.query,
+      });
+      if (!insertId) {
+        throw new Error("Failed to create provisioned bank account");
+      }
+
+      const row = await findBankAccountById({
+        tenantId: payload.tenantId,
+        bankAccountId: insertId,
+        runQuery: tx.query,
+      });
+      if (!row) {
+        throw new Error("Failed to load provisioned bank account");
+      }
+
+      return {
+        row,
+        glAccount: {
+          id: parsePositiveInt(childAccount.id),
+          code: childAccount.code || allocation.childAccountCode,
+          name: childAccount.name || normalizedChildAccountName,
+          parentAccountId: parsePositiveInt(control102.id),
+          parentAccountCode: control102.code || "102",
+          allocationSequence: allocation.childSequence,
+        },
+      };
+    });
   } catch (err) {
     if (isDuplicateConstraintError(err)) {
       throw badRequest("Bank account code and GL account link must be unique within legalEntityId");

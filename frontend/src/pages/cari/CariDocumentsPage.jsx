@@ -1026,7 +1026,13 @@ export default function CariDocumentsPage() {
       applyDocumentSavedView(defaultView, { silent: true });
     }
     setDefaultSavedViewHydrated(true);
-  }, [canRead, defaultSavedViewHydrated, savedViews, savedViewsLoading]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    canRead,
+    defaultSavedViewHydrated,
+    savedViews,
+    savedViewsLoading,
+  ]);
 
   useEffect(() => {
     if (!canCreate) {
@@ -1048,6 +1054,7 @@ export default function CariDocumentsPage() {
       applyDocumentDraftTemplate(defaultTemplate, { silent: true });
     }
     setDefaultDraftTemplateHydrated(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     canCreate,
     defaultDraftTemplateHydrated,

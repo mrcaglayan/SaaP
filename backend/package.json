@@ -65,6 +65,7 @@
     "test:hardening:prh06": "node scripts/test-hardening-prh06-exception-workbench.js",
     "test:hardening:prh07": "node scripts/test-hardening-prh07-retention-archival.js",
     "test:hardening:prh09": "node scripts/test-hardening-prh09-tenant-entity-isolation.js",
+    "test:hardening:prh10": "node scripts/test-hardening-prh10-bank-provisioning.js",
     "test:ux:prux02": "node scripts/test-ux-prux02-context-defaults.js",
     "test:ux:prux09": "node scripts/test-ux-prux09-exception-bulk-actions.js",
     "test:ux:prux10": "node scripts/test-ux-prux10-shared-combobox.js",

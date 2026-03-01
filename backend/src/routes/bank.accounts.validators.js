@@ -108,6 +108,46 @@ export function parseBankAccountUpdateInput(req) {
   return parseBankAccountBody(req, { requireIdFromParam: true });
 }
 
+export function parseBankAccountProvisionInput(req) {
+  const tenantId = requireTenantId(req);
+  const userId = requireUserId(req);
+  const legalEntityId = optionalPositiveInt(req.body?.legalEntityId, "legalEntityId");
+  if (!legalEntityId) {
+    throw badRequest("legalEntityId is required");
+  }
+
+  const operatingUnitId = optionalPositiveInt(req.body?.operatingUnitId, "operatingUnitId");
+  const code = normalizeCode(req.body?.code, "code", 60);
+  const name = normalizeText(req.body?.name, "name", 255, { required: true });
+  const currencyCode = normalizeCurrencyCode(req.body?.currencyCode, "currencyCode");
+  const bankName = normalizeText(req.body?.bankName, "bankName", 255);
+  const branchName = normalizeText(req.body?.branchName, "branchName", 255);
+  const iban = normalizeOptionalCompactUpperText(req.body?.iban, "iban", 64);
+  const accountNo = normalizeText(req.body?.accountNo, "accountNo", 80);
+  const isActive = parseBooleanFlag(req.body?.isActive, true);
+  const glAccountName = normalizeText(
+    req.body?.glAccountName ?? req.body?.gl_account_name,
+    "glAccountName",
+    255
+  );
+
+  return {
+    tenantId,
+    userId,
+    legalEntityId,
+    operatingUnitId,
+    code,
+    name,
+    currencyCode,
+    bankName,
+    branchName,
+    iban,
+    accountNo,
+    isActive,
+    glAccountName,
+  };
+}
+
 export function parseBankAccountStatusActionInput(req) {
   const tenantId = requireTenantId(req);
   const userId = requireUserId(req);
