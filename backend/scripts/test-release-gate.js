@@ -1,11 +1,13 @@
 import { spawn } from "node:child_process";
 
 const CORE_SCRIPT = "test:release-gate:core";
+const FOLLOWUP_PRF13_SCRIPT = "test:followup:prf13-release-gate";
 const CONTRACTS_REVENUE_SCRIPT = "test:contracts-revenue-gate";
 const BANK_PAYROLL_SCRIPT = "test:e2e:bank-payroll";
 const INTEGRATION_PRI06_SCRIPT = "test:integration:pri06";
 
 const ENV_SKIP_CORE = "RELEASE_GATE_SKIP_CORE";
+const ENV_SKIP_FOLLOWUP_PRF13 = "RELEASE_GATE_SKIP_FOLLOWUP_PRF13";
 const SKIP_CONTRACTS_REVENUE_ENV = "RELEASE_GATE_SKIP_CONTRACTS_REVENUE";
 const SKIP_BANK_PAYROLL_ENV = "RELEASE_GATE_SKIP_BANK_PAYROLL";
 const ENV_SKIP_INTEGRATION_PRI06 = "RELEASE_GATE_SKIP_INTEGRATION_PRI06";
@@ -19,6 +21,12 @@ const RELEASE_GATE_STAGES = Object.freeze([
     title: "Core platform and accounting gates",
     script: CORE_SCRIPT,
     skipEnv: ENV_SKIP_CORE,
+  },
+  {
+    id: "FOLLOWUP_PRF13",
+    title: "Follow-up regression expansion (workflow/tax/setup/canonical/idempotency)",
+    script: FOLLOWUP_PRF13_SCRIPT,
+    skipEnv: ENV_SKIP_FOLLOWUP_PRF13,
   },
   {
     id: "CONTRACTS_REVENUE",
