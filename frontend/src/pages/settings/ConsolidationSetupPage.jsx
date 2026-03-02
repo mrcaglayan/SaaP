@@ -136,6 +136,18 @@ export default function ConsolidationSetupPage() {
     if (!id) return null;
     return groups.find((row) => Number(row.id) === id) || null;
   }, [groups, selectedGroupId]);
+  const selectedGroupCompanyId = useMemo(
+    () => toPositiveInt(selectedGroup?.group_company_id),
+    [selectedGroup?.group_company_id]
+  );
+  const filteredLegalEntities = useMemo(() => {
+    if (!selectedGroupCompanyId) {
+      return legalEntities;
+    }
+    return legalEntities.filter(
+      (row) => Number(row.group_company_id) === selectedGroupCompanyId
+    );
+  }, [legalEntities, selectedGroupCompanyId]);
 
   const groupCoaOptions = useMemo(
     () => coas.filter((row) => String(row.scope || "").toUpperCase() === "GROUP"),
@@ -310,6 +322,35 @@ export default function ConsolidationSetupPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedGroup?.id]);
 
+  useEffect(() => {
+    const fallbackLegalEntityId = String(filteredLegalEntities[0]?.id || "");
+    setMemberForm((prev) => {
+      const current = toPositiveInt(prev.legalEntityId);
+      const isValid =
+        current &&
+        filteredLegalEntities.some((row) => Number(row.id) === Number(current));
+      if (isValid || String(prev.legalEntityId || "") === fallbackLegalEntityId) {
+        return prev;
+      }
+      return { ...prev, legalEntityId: fallbackLegalEntityId };
+    });
+    setMappingForm((prev) => {
+      const current = toPositiveInt(prev.legalEntityId);
+      const isValid =
+        current &&
+        filteredLegalEntities.some((row) => Number(row.id) === Number(current));
+      const sameLegalEntity = String(prev.legalEntityId || "") === fallbackLegalEntityId;
+      if (isValid || (sameLegalEntity && !prev.localCoaId)) {
+        return prev;
+      }
+      return {
+        ...prev,
+        legalEntityId: fallbackLegalEntityId,
+        localCoaId: "",
+      };
+    });
+  }, [filteredLegalEntities]);
+
   async function runAction(key, fn, failText, okText) {
     setSaving(key);
     setError("");
@@ -371,6 +412,15 @@ export default function ConsolidationSetupPage() {
       setError(l("Group, legalEntityId and effectiveFrom are required.", "Grup, legalEntityId ve effectiveFrom zorunludur."));
       return;
     }
+    if (!filteredLegalEntities.some((row) => Number(row.id) === legalEntityId)) {
+      setError(
+        l(
+          "Selected legal entity must belong to selected group company.",
+          "Secilen istirak / bagli ortak secili grup sirketine ait olmalidir."
+        )
+      );
+      return;
+    }
     if (!Number.isFinite(ownershipPct) || ownershipPct < 0) {
       setError(l("ownershipPct must be zero or positive.", "ownershipPct sifir veya pozitif olmalidir."));
       return;
@@ -405,6 +455,15 @@ export default function ConsolidationSetupPage() {
     const localCoaId = toPositiveInt(mappingForm.localCoaId);
     if (!groupId || !legalEntityId || !groupCoaId || !localCoaId) {
       setError(l("Group and mapping IDs are required.", "Grup ve esleme ID alanlari zorunludur."));
+      return;
+    }
+    if (!filteredLegalEntities.some((row) => Number(row.id) === legalEntityId)) {
+      setError(
+        l(
+          "Selected legal entity must belong to selected group company.",
+          "Secilen istirak / bagli ortak secili grup sirketine ait olmalidir."
+        )
+      );
       return;
     }
 
@@ -674,7 +733,7 @@ export default function ConsolidationSetupPage() {
                 required
               />
               <datalist id="legal-entity-options">
-                {legalEntities.map((row) => (
+                {filteredLegalEntities.map((row) => (
                   <option key={row.id} value={row.id}>{row.code} - {row.name}</option>
                 ))}
               </datalist>

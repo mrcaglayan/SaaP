@@ -11,8 +11,11 @@ const UNIT_TYPES = ["BRANCH", "PLANT", "STORE", "DEPARTMENT", "OTHER"];
 const ACCOUNT_TYPES = ["ASSET", "LIABILITY", "EQUITY", "REVENUE", "EXPENSE"];
 const NORMAL_SIDES = ["DEBIT", "CREDIT"];
 const WIZARD_STEPS = Object.freeze([
-Object.freeze({ key: "country", titleEn: "Country", titleTr: "Ulke" }),
-Object.freeze({ key: "entity", titleEn: "Entity", titleTr: "Birim" }),
+Object.freeze({
+  key: "entity",
+  titleEn: "Company + Entities",
+  titleTr: "Sirket + Birimler",
+}),
 Object.freeze({
   key: "template",
   titleEn: "CoA Template",
@@ -529,22 +532,38 @@ for (let index = 0; index < form.legalEntities.length; index += 1) {
 return "";
 }
 function validateWizardStep(form, stepKey, l) {
-if (stepKey === "country") {
-  for (let index = 0; index < form.legalEntities.length; index += 1) {
-    const entity = form.legalEntities[index];
-    if (!entity.countryIso2.trim()) {
-      return l(
-        `Legal entity ${index + 1}: country must be selected before moving to next step.`,
-        `Istirak / bagli ortak ${index + 1}: sonraki adima gecmeden once ulke secilmelidir.`
-      );
-    }
-  }
-}
 if (stepKey === "entity") {
   if (!form.groupCompany.code.trim() || !form.groupCompany.name.trim()) {
     return l(
       "Group company code and name are required.",
       "Grup sirketi kodu ve adi zorunludur."
+    );
+  }
+  if (!form.fiscalCalendar.code.trim() || !form.fiscalCalendar.name.trim()) {
+    return l(
+      "Fiscal calendar code and name are required.",
+      "Mali takvim kodu ve adi zorunludur."
+    );
+  }
+  const yearStartMonth = Number(form.fiscalCalendar.yearStartMonth);
+  const yearStartDay = Number(form.fiscalCalendar.yearStartDay);
+  if (yearStartMonth < 1 || yearStartMonth > 12) {
+    return l(
+      "Fiscal calendar start month must be between 1 and 12.",
+      "Mali takvim baslangic ayi 1 ile 12 arasinda olmali."
+    );
+  }
+  if (yearStartDay < 1 || yearStartDay > 31) {
+    return l(
+      "Fiscal calendar start day must be between 1 and 31.",
+      "Mali takvim baslangic gunu 1 ile 31 arasinda olmali."
+    );
+  }
+  const fiscalYear = Number(form.fiscalYear);
+  if (!Number.isInteger(fiscalYear) || fiscalYear <= 0) {
+    return l(
+      "Fiscal year must be a positive integer.",
+      "Mali yil pozitif bir tam sayi olmali."
     );
   }
   for (let index = 0; index < form.legalEntities.length; index += 1) {
@@ -553,6 +572,12 @@ if (stepKey === "entity") {
       return l(
         `Legal entity ${index + 1}: code and name are required.`,
         `Istirak / bagli ortak ${index + 1}: kod ve ad zorunludur.`
+      );
+    }
+    if (!entity.countryIso2.trim()) {
+      return l(
+        `Legal entity ${index + 1}: country ISO2 is required (e.g. US, TR, DE).`,
+        `Istirak / bagli ortak ${index + 1}: ulke ISO2 zorunludur (orn. US, TR, DE).`
       );
     }
     if (!entity.functionalCurrencyCode.trim()) {
@@ -1057,8 +1082,8 @@ return (
           </h1>
           <p className="mt-1 text-sm text-slate-600">
             {l(
-              "Country -> Entity -> CoA Template -> Account Tree -> Branches",
-              "Ulke -> Birim -> Hesap Plani Sablonu -> Hesap Agaci -> Subeler"
+              "Company + Entities -> CoA Template -> Account Tree -> Branches",
+              "Sirket + Birimler -> Hesap Plani Sablonu -> Hesap Agaci -> Subeler"
             )}
           </p>
         </div>
@@ -1081,7 +1106,7 @@ return (
       </div>
     </div>
     <div className="rounded-2xl border border-slate-200 bg-white p-4">
-      <ol className="grid gap-2 sm:grid-cols-5">
+      <ol className="grid gap-2 sm:grid-cols-4">
         {WIZARD_STEPS.map((step, index) => {
           const isActive = index === activeStepIndex;
           const isCompleted = index < activeStepIndex;
@@ -1128,116 +1153,6 @@ return (
       </div>
     )}
     <form onSubmit={handleSubmit} className="space-y-4">
-      {activeStep.key === "country" ? (
-        <section className="rounded-2xl border border-slate-200 bg-white p-4">
-          <div className="mb-3 flex items-center justify-between gap-2">
-            <h2 className="text-sm font-semibold text-slate-700">
-              {l("Country Selection", "Ulke Secimi")}
-            </h2>
-            <button
-              type="button"
-              onClick={addEntity}
-              className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-            >
-              {l("Add Legal Entity", "Istirak / Bagli Ortak Ekle")}
-            </button>
-          </div>
-          <div className="space-y-3">
-            {form.legalEntities.map((entity, index) => {
-              const countryIso2 = toUpper(entity.countryIso2);
-              const recommendedPack =
-                (policyPacksByCountry.get(countryIso2) || [])[0] || null;
-              return (
-                <article
-                  key={entity.id}
-                  className="rounded-xl border border-slate-200 bg-slate-50/40 p-3"
-                >
-                  <div className="mb-2 flex items-center justify-between gap-2">
-                    <h3 className="text-sm font-semibold text-slate-700">
-                      {l("Entity", "Birim")} {index + 1}
-                    </h3>
-                    <button
-                      type="button"
-                      onClick={() => removeEntity(entity.id)}
-                      disabled={form.legalEntities.length <= 1}
-                      className="rounded-lg border border-rose-200 px-2 py-1 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-50"
-                    >
-                      {l("Remove", "Kaldir")}
-                    </button>
-                  </div>
-                  <div className="grid gap-2 md:grid-cols-3">
-                    <input
-                      value={entity.code}
-                      onChange={(event) =>
-                        setEntityField(entity.id, "code", event.target.value)
-                      }
-                      className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                      placeholder={l(
-                        "Entity code (for preview)",
-                        "Birim kodu (onizleme icin)"
-                      )}
-                    />
-                    <input
-                      value={entity.name}
-                      onChange={(event) =>
-                        setEntityField(entity.id, "name", event.target.value)
-                      }
-                      className="rounded-lg border border-slate-300 px-3 py-2 text-sm md:col-span-2"
-                      placeholder={l(
-                        "Entity name (for preview)",
-                        "Birim adi (onizleme icin)"
-                      )}
-                    />
-                    <select
-                      value={countryIso2}
-                      onChange={(event) =>
-                        setEntityCountry(entity.id, event.target.value)
-                      }
-                      className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                      required
-                    >
-                      <option value="">
-                        {l("Select country", "Ulke secin")}
-                      </option>
-                      {countryOptions.map((row) => {
-                        const iso2 = toUpper(row?.iso2);
-                        return (
-                          <option key={iso2 || row?.id} value={iso2}>
-                            {iso2} - {row?.name || "-"}
-                          </option>
-                        );
-                      })}
-                    </select>
-                    <input
-                      value={countryIso2}
-                      onChange={(event) =>
-                        setEntityCountry(entity.id, event.target.value)
-                      }
-                      maxLength={2}
-                      className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                      placeholder={l(
-                        "Country ISO2 (manual)",
-                        "Ulke ISO2 (manuel)"
-                      )}
-                    />
-                    <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">
-                      {recommendedPack
-                        ? l(
-                            `Recommended pack: ${recommendedPack.packId}`,
-                            `Onerilen paket: ${recommendedPack.packId}`
-                          )
-                        : l(
-                            "No country-specific starter pack found; manual path is available.",
-                            "Ulkeye ozel baslangic paketi bulunamadi; manuel yol kullanilabilir."
-                          )}
-                    </div>
-                  </div>
-                </article>
-              );
-            })}
-          </div>
-        </section>
-      ) : null}
       {activeStep.key === "entity" ? (
         <section className="space-y-4">
           <section className="rounded-2xl border border-slate-200 bg-white p-4">
@@ -1337,11 +1252,15 @@ return (
               </button>
             </div>
             <div className="space-y-3">
-              {form.legalEntities.map((entity, entityIndex) => (
-                <article
-                  key={entity.id}
-                  className="rounded-xl border border-slate-200 bg-slate-50/50 p-4"
-                >
+              {form.legalEntities.map((entity, entityIndex) => {
+                const countryIso2 = toUpper(entity.countryIso2);
+                const recommendedPack =
+                  (policyPacksByCountry.get(countryIso2) || [])[0] || null;
+                return (
+                  <article
+                    key={entity.id}
+                    className="rounded-xl border border-slate-200 bg-slate-50/50 p-4"
+                  >
                   <div className="mb-2 flex items-center justify-between gap-2">
                     <h3 className="text-sm font-semibold text-slate-700">
                       {l("Entity", "Birim")} {entityIndex + 1}
@@ -1382,13 +1301,35 @@ return (
                       className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
                       placeholder={l("Tax ID (optional)", "Vergi No (opsiyonel)")}
                     />
+                    {countryOptions.length > 0 ? (
+                      <select
+                        value={countryIso2}
+                        onChange={(event) =>
+                          setEntityCountry(entity.id, event.target.value)
+                        }
+                        className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                        required
+                      >
+                        <option value="">
+                          {l("Select country", "Ulke secin")}
+                        </option>
+                        {countryOptions.map((row) => {
+                          const iso2 = toUpper(row?.iso2);
+                          return (
+                            <option key={iso2 || row?.id} value={iso2}>
+                              {iso2} - {row?.name || "-"}
+                            </option>
+                          );
+                        })}
+                      </select>
+                    ) : null}
                     <input
-                      value={entity.countryIso2}
+                      value={countryIso2}
                       onChange={(event) =>
                         setEntityCountry(entity.id, event.target.value)
                       }
                       className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                      placeholder={l("Country ISO2 (e.g. US)", "Ulke ISO2 (orn. US)")}
+                      placeholder={l("Country ISO2 (manual)", "Ulke ISO2 (manuel)")}
                       maxLength={2}
                       required
                     />
@@ -1436,6 +1377,17 @@ return (
                         required
                       />
                     )}
+                    <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600 md:col-span-2">
+                      {recommendedPack
+                        ? l(
+                            `Recommended pack: ${recommendedPack.packId}`,
+                            `Onerilen paket: ${recommendedPack.packId}`
+                          )
+                        : l(
+                            "No country-specific starter pack found; manual path is available.",
+                            "Ulkeye ozel baslangic paketi bulunamadi; manuel yol kullanilabilir."
+                          )}
+                    </div>
                   </div>
 
                   <div className="mt-3 flex flex-wrap gap-4">
@@ -1471,8 +1423,9 @@ return (
                       )}
                     </label>
                   </div>
-                </article>
-              ))}
+                  </article>
+                );
+              })}
             </div>
           </section>
         </section>

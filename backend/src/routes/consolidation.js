@@ -162,6 +162,24 @@ function normalizeConsolidationStatus(value) {
   return String(value || "").trim().toUpperCase();
 }
 
+function assertLegalEntityMatchesGroupCompany(
+  legalEntityRow,
+  groupCompanyId,
+  label = "legalEntityId"
+) {
+  const expectedGroupCompanyId = parsePositiveInt(groupCompanyId);
+  if (!expectedGroupCompanyId) {
+    return;
+  }
+
+  const legalEntityGroupCompanyId = parsePositiveInt(legalEntityRow?.group_company_id);
+  if (legalEntityGroupCompanyId !== expectedGroupCompanyId) {
+    throw badRequest(
+      `${label} must belong to selected consolidation group's group company`
+    );
+  }
+}
+
 async function isTenantFeatureEnabled({
   tenantId,
   featureCode,
@@ -1867,7 +1885,16 @@ router.post(
     if (!legalEntityId) {
       throw badRequest("legalEntityId must be a positive integer");
     }
-    await assertLegalEntityBelongsToTenant(tenantId, legalEntityId, "legalEntityId");
+    const legalEntity = await assertLegalEntityBelongsToTenant(
+      tenantId,
+      legalEntityId,
+      "legalEntityId"
+    );
+    assertLegalEntityMatchesGroupCompany(
+      legalEntity,
+      group.group_company_id,
+      "legalEntityId"
+    );
     assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
 
     const consolidationMethod = String(
@@ -1922,7 +1949,16 @@ router.get(
 
     const legalEntityId = parsePositiveInt(req.query.legalEntityId);
     if (legalEntityId) {
-      await assertLegalEntityBelongsToTenant(tenantId, legalEntityId, "legalEntityId");
+      const legalEntity = await assertLegalEntityBelongsToTenant(
+        tenantId,
+        legalEntityId,
+        "legalEntityId"
+      );
+      assertLegalEntityMatchesGroupCompany(
+        legalEntity,
+        group.group_company_id,
+        "legalEntityId"
+      );
       assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
     }
 
@@ -1977,7 +2013,16 @@ router.get(
 
     const legalEntityId = parsePositiveInt(req.query.legalEntityId);
     if (legalEntityId) {
-      await assertLegalEntityBelongsToTenant(tenantId, legalEntityId, "legalEntityId");
+      const legalEntity = await assertLegalEntityBelongsToTenant(
+        tenantId,
+        legalEntityId,
+        "legalEntityId"
+      );
+      assertLegalEntityMatchesGroupCompany(
+        legalEntity,
+        group.group_company_id,
+        "legalEntityId"
+      );
       assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
     }
 
@@ -2038,7 +2083,16 @@ router.post(
       throw badRequest("legalEntityId, groupCoaId and localCoaId must be positive integers");
     }
 
-    await assertLegalEntityBelongsToTenant(tenantId, legalEntityId, "legalEntityId");
+    const legalEntity = await assertLegalEntityBelongsToTenant(
+      tenantId,
+      legalEntityId,
+      "legalEntityId"
+    );
+    assertLegalEntityMatchesGroupCompany(
+      legalEntity,
+      group.group_company_id,
+      "legalEntityId"
+    );
     assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
 
     const groupCoa = await assertCoaBelongsToTenant(tenantId, groupCoaId, "groupCoaId");
@@ -2152,7 +2206,16 @@ router.get(
 
     const legalEntityId = parsePositiveInt(req.query.legalEntityId);
     if (legalEntityId) {
-      await assertLegalEntityBelongsToTenant(tenantId, legalEntityId, "legalEntityId");
+      const legalEntity = await assertLegalEntityBelongsToTenant(
+        tenantId,
+        legalEntityId,
+        "legalEntityId"
+      );
+      assertLegalEntityMatchesGroupCompany(
+        legalEntity,
+        group.group_company_id,
+        "legalEntityId"
+      );
       assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
     }
 
@@ -2194,7 +2257,16 @@ router.post(
     if (!legalEntityId || !localAccountId) {
       throw badRequest("legalEntityId and localAccountId must be positive integers");
     }
-    await assertLegalEntityBelongsToTenant(tenantId, legalEntityId, "legalEntityId");
+    const legalEntity = await assertLegalEntityBelongsToTenant(
+      tenantId,
+      legalEntityId,
+      "legalEntityId"
+    );
+    assertLegalEntityMatchesGroupCompany(
+      legalEntity,
+      group.group_company_id,
+      "legalEntityId"
+    );
     assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
     await assertAccountBelongsToTenant(tenantId, localAccountId, "localAccountId");
 
@@ -2800,7 +2872,7 @@ router.post(
       throw badRequest("runId and authenticated user are required");
     }
     await assertUserBelongsToTenant(tenantId, userId, "userId");
-    await requireRun(tenantId, runId);
+    const run = await requireRun(tenantId, runId);
 
     assertRequiredFields(req.body, ["description", "lines"]);
     const lines = Array.isArray(req.body.lines) ? req.body.lines : [];
@@ -2822,17 +2894,27 @@ router.post(
         line.counterpartyLegalEntityId
       );
       if (legalEntityId) {
-        await assertLegalEntityBelongsToTenant(
+        const legalEntity = await assertLegalEntityBelongsToTenant(
           tenantId,
           legalEntityId,
+          `lines[${i}].legalEntityId`
+        );
+        assertLegalEntityMatchesGroupCompany(
+          legalEntity,
+          run.group_company_id,
           `lines[${i}].legalEntityId`
         );
         assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
       }
       if (counterpartyLegalEntityId) {
-        await assertLegalEntityBelongsToTenant(
+        const counterpartyLegalEntity = await assertLegalEntityBelongsToTenant(
           tenantId,
           counterpartyLegalEntityId,
+          `lines[${i}].counterpartyLegalEntityId`
+        );
+        assertLegalEntityMatchesGroupCompany(
+          counterpartyLegalEntity,
+          run.group_company_id,
           `lines[${i}].counterpartyLegalEntityId`
         );
         assertScopeAccess(
@@ -3122,7 +3204,7 @@ router.post(
       throw badRequest("runId and authenticated user are required");
     }
     await assertUserBelongsToTenant(tenantId, userId, "userId");
-    await requireRun(tenantId, runId);
+    const run = await requireRun(tenantId, runId);
 
     assertRequiredFields(req.body, [
       "accountId",
@@ -3139,7 +3221,16 @@ router.post(
     await assertAccountBelongsToTenant(tenantId, accountId, "accountId");
     const legalEntityId = parsePositiveInt(req.body.legalEntityId);
     if (legalEntityId) {
-      await assertLegalEntityBelongsToTenant(tenantId, legalEntityId, "legalEntityId");
+      const legalEntity = await assertLegalEntityBelongsToTenant(
+        tenantId,
+        legalEntityId,
+        "legalEntityId"
+      );
+      assertLegalEntityMatchesGroupCompany(
+        legalEntity,
+        run.group_company_id,
+        "legalEntityId"
+      );
       assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
     }
 
