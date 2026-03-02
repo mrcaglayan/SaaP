@@ -40,6 +40,7 @@ export default function TenantReadinessChecklist() {
     shareholders: "/app/ayarlar/organizasyon-yonetimi",
     shareholderCommitmentConfigs: "/app/ayarlar/organizasyon-yonetimi",
     workflowCloseConsolidationV1: "/app/ayarlar/workflow-kurulumu",
+    taxEngineV1: "/app/ayarlar/vergi-kurulumu",
   };
   const missingStepLinks = Array.from(
     new Map(

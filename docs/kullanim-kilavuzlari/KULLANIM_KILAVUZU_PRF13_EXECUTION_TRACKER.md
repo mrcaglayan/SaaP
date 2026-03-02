@@ -1,597 +1,346 @@
 # KULLANIM_KILAVUZU_PRF13_EXECUTION_TRACKER.md
 
-## PR-F13 Execution Tracker Kullanım Kilavuzu (Operator Surumu)
+## Uygulanan Follow-Up Adimlari Kullanim Kilavuzu (Son Kullanicilar Icin)
 
-Surum: v2  
+Surum: v3  
 Tarih (UTC): 2026-03-02  
-Kapsam: `10-EXECUTION TRACKER.md` adimlari `#1`-`#53`  
-Hedef kitle: Solo owner / operator / release sorumlusu
+Hedef kitle: Muhasebe, finans, operasyon, urun sahibi (kod bilmeyen kullanicilar)
 
-Bu kilavuz teknik ve operasyon akislarini birlikte anlatir:
-1. PR-F13 kapsaminda ne tamamlandi?
-2. Hangi ekran/komut ne zaman calistirilir?
-3. Neyi yapmazsan ne risk olusur?
-4. Tek kisilik projede (solo mode) bu surec nasil sade kullanilir?
+Bu kilavuz terminal komutu odakli degildir.  
+Bu kilavuz, uygulamada yapilan gelistirmelerin "ekranda nasil kullanilacagini" anlatir.
 
----
-
-## 1) Bu Dokuman Ne Icin Var?
-
-`10-EXECUTION TRACKER.md` cok degerli ama "is kaydi" formatinda.  
-Bu dosya ise ayni kapsami "kullanim kilavuzu" formatinda verir:
-- hangi adim hangi amaca hizmet eder
-- hangi komutlar operasyonel olarak sirayla kullanilir
-- cikti nasil yorumlanir
-- steady-state nasil dogrulanir
-
-Kisa ozet:
-- Tracker = tarihce ve kanit
-- Bu kilavuz = uygulama operasyonu
+Kaynak alinan uygulama planlari:
+1. `06-SUBACCOUNTS.md`
+2. `07-SETUPLOGIC.md`
+3. `08-APPROVAL AND TAX ENGINE.md`
+4. `09-FOLLOW UPS.md`
 
 ---
 
-## 2) PR-F13 Kapsami Tam Olarak Nedir?
+## 1) Bu Kilavuzun Amaci
 
-PR-F13, takipte kapanan `#1-#53` adimlarini tek fazda birlestirir:
+Bu dokumanin amaci su sorulara net cevap vermektir:
+1. Yapilan adimlar uygulamada bana ne kazandiriyor?
+2. Hangi ekrana gidip hangi sirayla islem yapmaliyim?
+3. Bu adimi atlarsam ne risk olusur?
 
-1. F01 temel feature flag/readiness altyapisi
-2. Subaccounts + Bank hardening + 102 alt hesap otomasyonu
-3. Setup Wizard V2 + policy pack transaction-safe bootstrap
-4. Workflow approvals + close/consolidation gate
-5. Tax engine setup/runtime foundation
-6. Canonical consolidation mapping
-7. Backfill + rollout + release gate + operational smoke
-8. GA sign-off otomasyonu ve solo owner closure
+Kisaca:
+- Teknik dokumanlar "nasil gelistirildi" der.
+- Bu kilavuz "nasil kullanilir" der.
 
 ---
 
-## 3) Ilgili Dosyalar Ne Ise Yariyor?
+## 2) Bu Fazda Tamamlanan Ana Isler (Kullanici Diliyle)
 
-| Dosya | Amac | Ne zaman bakilir? |
-|---|---|---|
-| `10-EXECUTION TRACKER.md` | Tum adimlarin durum/evidence kaydi | "Bu adim yapildi mi?" sorusunda |
-| `11-PR-F13-ROLLOUT-RUNBOOK.md` | Rollout sirasi ve rollback kurali | Canliya gecis veya yeni tenant onboarding |
-| `12-PR-F13-PILOT-GA-SWITCH-PLAN.md` | Pilot -> GA faz/kanit tablosu | Faz ilerleme ve gate sonuc takibi |
-| `13-PR-F13-GA-SIGNOFF-RECORD.md` | Sign-off / audit / final karar kaydi | Onay sureci ve ops komut referansi |
+## 2.1 Banka ve subaccount tarafi (06 + 09 icindeki F02/F03/F04)
 
----
+1. Banka hesaplari artik Operating Unit (OU) ile baglanabiliyor.
+2. Banka GL baglantisinda daha siki kurallar var:
+   - 102 agaci disina secim engellenir (ilgili kurulum acikken).
+3. Ilk kullanimdan sonra banka kimlik alanlari korumaya alinmistir:
+   - IBAN, hesap no, para birimi, bagli GL hesap gibi alanlar.
+4. Tek tusla 102 alt hesap + banka hesabi birlikte acilabilir.
 
-## 4) Uygulamada Gercekten Aktif Olanlar (Kodla Dogrulanmis)
+## 2.2 Setup Wizard tarafi (07 + 09 icindeki F05/F06)
 
-### 4.1 UI rotalari
+1. Sirket kurulumu adim adim ve ulke-oncelikli akisa dondu.
+2. Ulkeye gore baslangic hesap agaci/policy pack secimi var.
+3. Account tree artik parent-child mantigina uygun kuruluyor.
+4. Branch/operating unit setup ayni akista yonetilebiliyor.
 
-1. Sirket kurulum: `/app/ayarlar/sirket-ayarlari`
-2. Workflow kurulum: `/app/ayarlar/workflow-kurulumu`
-3. Banka tanim/provision: `/app/banka-tanimla`
-4. Konsolidasyon raporlari: `/app/donem-sonu-islemler/yillik/konsolidasyon-raporlari`
+## 2.3 Approval ve kapanis tarafi (08 + 09 icindeki F07/F08/F09)
 
-### 4.2 API rotalari
+1. Donem kapanisi ve konsolidasyon islemleri onay adimlariyla calisir.
+2. Onay tamamlanmadan final adimlar bloke olur.
+3. Onay akisi setup/readiness ekranlariyla daha gorunur hale geldi.
 
-1. Onboarding: `/api/v1/onboarding/*`
-2. Workflow: `/api/v1/workflows/*`
-3. Tax: `/api/v1/tax/regimes|codes|rules|account-mappings|preview`
-4. Bank accounts: `/api/v1/bank/accounts/*`
-5. Consolidation: `/api/v1/consolidation/*`
+## 2.4 Tax ve mapping tarafi (08 + 09 icindeki F10/F11/F12)
 
-### 4.3 Operasyon komutlari
+1. Ulke bazli tax rejimi, tax kodu ve tax hesap eslestirmesi altyapisi eklendi.
+2. Tax hesaplama davranisi daha tutarli hale getirildi.
+3. Konsolidasyon icin canonical mapping katmani eklendi.
 
-1. `rollout:prf13-pilot`
-2. `backfill:workflow-defaults`
-3. `backfill:tax-regimes`
-4. `backfill:tax-account-mappings`
-5. `backfill:canonical-mappings`
-6. `ops:prf13-signoff-status`
-7. `ops:prf13-signoff-generate-outbox`
-8. `ops:prf13-signoff-log-event`
-9. `test:followup:prf13-release-gate`
-10. `test:followup:prf13-operational-smoke`
+## 2.5 Rollout ve kalite guvencesi (09 icindeki F13)
 
-Not:
-- Bu PR-F13 kapsaminda tax setup API-first ilerliyor.
-- Ayrica bir `TaxSetupPage` route'u bu kapsamda zorunlu degil.
+1. Pilot -> genisleme akisinda kontrol adimlari netlestirildi.
+2. Follow-up kapsaminda release kalite kontrolleri guclendirildi.
+3. Tek kisilik (solo) proje gercegine uygun onay kapanisi modele alindi.
 
 ---
 
-## 5) Tracker Gruplari ve Islevsel Karsiligi
+## 3) Son Kullaniciyi En Cok Etkileyen Davranis Degisiklikleri
 
-| Tracker | Konu | Operator acisindan anlami |
-|---|---|---|
-| `#1-#3` | Feature flags + readiness | Tenant bazli ac/kapa + "hazir mi?" kontrolu |
-| `#4-#14` | Bank/Subaccount hardening | Bank setup hatalarini productiona cikmadan azaltir |
-| `#15-#19` | Setup wizard + policy packs | Company bootstrap standard ve tekrarlanabilir olur |
-| `#20-#24` | Workflow approvals | Period close/consolidation icin onay zinciri zorunlu olur |
-| `#25-#28` | Tax engine | Tax kural/mapping olmadan postlama riski azalir |
-| `#29-#31` | Canonical mapping | Group consolidation mapping standard hale gelir |
-| `#32-#35` | Backfill + rollout + gates | Fazli rollout guvenli sekilde uygulanir |
-| `#36-#53` | Sign-off ops + solo closure | Go/No-Go audit izi ve operasyonel izlenebilirlik saglanir |
+## 3.1 Banka hesabi acarken
+
+Artik:
+1. OU secimi daha anlamli ve filtrelenebilir.
+2. Yanlis legal entity / OU eslesmesi daha erken yakalanir.
+3. 102 altinda olmayan hatali GL baglantisi engellenir (kurulum aciksa).
+
+Sonuc:
+- Daha guvenli ve denetlenebilir banka master kayitlari.
+
+## 3.2 Sirket kurulumu yaparken
+
+Artik:
+1. Ulke secimi kurulumun basina alindi.
+2. Hesap agaci parent-child duzeniyle kurulabiliyor.
+3. Branch setup kurulumun ayrilmaz parcasi.
+
+Sonuc:
+- Sonradan duzeltme ihtiyaci azalir.
+
+## 3.3 Donem kapanisi ve konsolidasyon yaparken
+
+Artik:
+1. Onay adimi atlanamaz.
+2. "Neden finalize olmuyor?" sorusunun cevabi daha net gorunur.
+
+Sonuc:
+- Kapanis hatalari ve yetkisiz gecisler azalir.
+
+## 3.4 Cari/tax etkisi
+
+Artik:
+1. Tax kural ve hesap baglantisi daha sistematik calisir.
+2. Eksik mapping oldugunda risk daha erken gorunur.
+
+Sonuc:
+- Muhasebe kaydi kalitesi artar.
 
 ---
 
-## 6) Baslamadan Once Kontrol Listesi
+## 4) Ekran Bazli Kullanim Rehberi
 
-### 6.1 Teknik hazirlik
+## 4.1 Ayarlar > Sirket Ayarlari
 
-1. Backend calisiyor olmali.
-2. DB baglantisi calismali.
-3. Migration durum komutu hata vermemeli.
-4. En az bir tenant user mevcut olmali (scriptlerde actor icin).
+Amac:
+- Yeni kurulum veya mevcut kurulumun duzgun ilerleyip ilerlemedigini yonetmek.
 
-### 6.2 Operasyon hazirligi
+Tipik kullanim:
+1. Sirket kurulum ekranina gir.
+2. Ulke sec.
+3. Entity bilgilerini gir.
+4. CoA/template secimini tamamla.
+5. Account tree adiminda parent-child yapisini kur.
+6. Branch/OU adiminda sube birimlerini ekle.
+7. Kaydet/uygula.
 
-1. Hangi tenant(lar)da rollout yapilacagi net olmali.
-2. Hangi fazda (A/B/C) oldugun net olmali.
-3. Komut ciktilari kayit altina alinmali (terminal log veya plan dosyasi).
-
-### 6.3 Yetki/rol ozet
-
-Bu PR-F13 akisinda en kritik permission gruplari:
-1. `onboarding.company.setup`
-2. `org.tree.read`
-3. `bank.accounts.read` / `bank.accounts.write`
-4. Workflow step bazli runtime izinler (`required_permission_code`)
+Neye dikkat edilmeli?
+1. Parent hesaplari cocuk hesaba baglamadan once netlestir.
+2. Ayni kodu iki kez acma.
+3. Ulkeye uygun paket secimi yap.
 
 Yapilmazsa ne olur?
-1. UI gorunse bile create/update karar endpointleri 403 donebilir.
-2. Workflow approve/reject aksiyonlari step izinine takilir.
+1. Sonraki asamalarda workflow/tax/mapping hazirliklari eksik kalabilir.
+2. Kapanis ve konsolidasyon adimlarinda bloklar gorulebilir.
 
 ---
 
-## 7) Ana Isletim Akisi (Solo Owner Standardi)
+## 4.2 Ayarlar > Workflow Kurulumu
 
-## 7.1 Hizli durum kontrolu
+Amac:
+- Donem kapanisi ve konsolidasyon icin kim hangi adimda onay verecek belirlemek.
 
-```powershell
-cd backend
-npm run ops:prf13-signoff-status
-```
+Tipik kullanim:
+1. Islem turunu sec (ornek: period close / consolidation).
+2. Onay adimlarini sirayla tanimla.
+3. Scope (entity/group vb.) ve sorumlu kisileri/rolleri ata.
+4. Kaydet.
+5. Test amacli bir akis baslatildiginda adimlarin gorundugunu kontrol et.
 
-Steady-state beklenen:
-1. `finance_decision: APPROVED`
-2. `product_decision: APPROVED`
-3. `pending_roles: none`
-4. `recommended_action: NO_ACTION`
-
-### Bu kontrol ne zaman calistirilir?
-1. Release oncesi
-2. Release sonrasi smoke
-3. Handover oncesi
-
----
-
-## 8) Yeni Tenant veya Yeni Ortamda Sifirdan PR-F13 Akisi
-
-## 8.1 Migration kontrolu
-
-```powershell
-cd backend
-npm run db:migrate:status
-npm run db:migrate
-npm run db:migrate:status
-```
-
-Ne ise yarar?
-- Gerekli PR-F13 migrationlari veritabaninda mevcut mu kontrol eder.
+Neye dikkat edilmeli?
+1. Onay adim sayisi bos birakilmamali.
+2. Yanlis scope secimi tum akis davranisini etkiler.
+3. Bir adimda gerekli rol yoksa surec beklemede kalir.
 
 Yapilmazsa ne olur?
-- Backfill scriptleri tablo bulamama veya constraint hatasi verebilir.
+1. Kapanis/finalize adimlari onay bekledigi icin tamamlanamaz.
 
-## 8.2 Backfill sirasi (onerilen)
+---
 
-```powershell
-cd backend
-npm run backfill:workflow-defaults -- --tenantId <TENANT_ID> --apply
-npm run backfill:tax-regimes -- --tenantId <TENANT_ID> --apply
-npm run backfill:tax-account-mappings -- --tenantId <TENANT_ID> --apply
-npm run backfill:canonical-mappings -- --tenantId <TENANT_ID> --apply
-```
+## 4.3 Banka Islemleri > Banka Tanimla
 
-Neden bu sira?
-1. Workflow defaultlari close/consolidation gate'leri hazırlar.
-2. Tax regimes tax code bagimliligini hazirlar.
-3. Tax account mappings, regime/code altyapisina dayanir.
-4. Canonical mappings group extraction standardini tamamlar.
+Amac:
+- Dogru OU ve dogru GL baglantisiyla banka hesabini acmak.
+
+Iki kullanim yolu:
+1. Normal banka hesabi olusturma
+2. Tek adimda 102 alt hesap + banka hesabi olusturma
+
+### Normal banka hesabi olusturma
+
+1. Legal Entity sec.
+2. Gerekliyse Operating Unit sec.
+3. Banka hesap bilgilerini gir (IBAN, hesap no, para birimi vb.).
+4. Uygun GL hesabi sec.
+5. Kaydet.
+
+### Tek adimda 102 alt hesap + banka hesabi
+
+1. "102 alt hesapla olustur" benzeri hizli akis secenegini kullan.
+2. GL cocuk hesap adi/kodu icin istenen alanlari doldur.
+3. Banka bilgilerini tamamla.
+4. Kaydet.
+
+Neye dikkat edilmeli?
+1. OU, secilen legal entity ile uyumlu olmali.
+2. Ilk kullanimdan sonra kimlik alanlari degistirilemeyebilir.
+3. GL secimi sistem kurallarina uymuyorsa kayit alinmaz.
 
 Yapilmazsa ne olur?
-1. Phase readiness dry-run'da blok gorursun.
-2. Operational smoke testleri eksik setup nedeniyle fail olur.
+1. Yanlis hesap baglantisi muhasebe ve mutabakatta zincir hata uretir.
 
-## 8.3 Fazli feature rollout
+---
 
-```powershell
-cd backend
-npm run rollout:prf13-pilot -- --tenantIds <TENANT_ID> --phase A --apply
-npm run rollout:prf13-pilot -- --tenantIds <TENANT_ID> --phase B --apply
-npm run rollout:prf13-pilot -- --tenantIds <TENANT_ID> --phase C --apply
-```
+## 4.4 Donem Sonu > Kapanis/Konsolidasyon ile ilgili ekranlar
 
-Fazlar:
-1. A: setup wizard + subaccounts + canonical mapping
-2. B: A + workflow close/consolidation
-3. C: B + tax engine
+Amac:
+- Onayli ve denetlenebilir kapanis akisi.
 
-Neden fazli?
-- Bir kerede her seyi acmak yerine, bagimliliklari kontrollu acarsin.
+Tipik kullanim:
+1. Kapanis veya konsolidasyon islemini baslat.
+2. Sistem onay adimi istiyorsa ilgili kisiler onaylar.
+3. Tum adimlar tamamlandiginda finalize edilir.
 
-## 8.4 Gate ve smoke
-
-```powershell
-cd backend
-npm run test:followup:prf13-release-gate
-npm run test:followup:prf13-operational-smoke -- --tenantIds <TENANT_ID_1,TENANT_ID_2>
-$env:RELEASE_GATE_ONLY_STAGES='FOLLOWUP_PRF13'; npm run test:release-gate
-```
-
-Ne ise yarar?
-1. Regression kapsami PASS mi?
-2. Runtime akislar (workflow gate + consolidation + tax) calisiyor mu?
+Neye dikkat edilmeli?
+1. "Onay gerekiyor" uyarisini atlamaya calisma.
+2. Gecikme varsa workflow setup tarafini kontrol et.
 
 Yapilmazsa ne olur?
-- "Flag acildi ama runtime'da patliyor" riski artar.
+1. Kapanis sureci yarida kalir.
+2. Raporlama guvenilirligi duser.
 
 ---
 
-## 9) PR-F13 Komut Referansi (Parametreli)
+## 4.5 Donem Sonu > Yillik > Konsolidasyon Raporlari
 
-## 9.1 `rollout:prf13-pilot`
+Amac:
+- Canonical mapping mantigiyla daha tutarli konsolidasyon ciktilari almak.
 
-Temel:
-```powershell
-cd backend
-npm run rollout:prf13-pilot -- --tenantIds 1,2 --phase A
-```
+Tipik kullanim:
+1. Donem sec.
+2. Raporu calistir.
+3. Beklenmeyen fark varsa mapping ve onay akislarini kontrol et.
 
-Sik parametreler:
-1. `--tenantIds <id1,id2>` zorunlu
-2. `--tenantId <id>` tekrarli eklenebilir
-3. `--phase A|B|C`
-4. `--effectiveOn YYYY-MM-DD`
-5. `--updatedByUserId <id>`
-6. `--apply`
-7. `--force`
-8. `--limit <N>`
-
-Dry-run ve apply farki:
-1. Dry-run: plan basar, yazmaz
-2. Apply: `tenant_features` kayitlarini yazar
-
-## 9.2 `backfill:workflow-defaults`
-
-Ornek:
-```powershell
-cd backend
-npm run backfill:workflow-defaults -- --tenantId 1 --effectiveFrom 2026-03-01 --apply
-```
-
-Parametreler:
-1. `--tenantId`
-2. `--groupCompanyId`
-3. `--createdByUserId`
-4. `--effectiveFrom`
-5. `--limit`
-6. `--apply`
-
-## 9.3 `backfill:tax-regimes`
-
-Ornek:
-```powershell
-cd backend
-npm run backfill:tax-regimes -- --tenantId 1 --effectiveFrom 2026-03-01 --apply
-```
-
-Parametreler:
-1. `--tenantId`
-2. `--countryId`
-3. `--countryIso2`
-4. `--createdByUserId`
-5. `--effectiveFrom`
-6. `--limit`
-7. `--apply`
-
-## 9.4 `backfill:tax-account-mappings`
-
-Ornek:
-```powershell
-cd backend
-npm run backfill:tax-account-mappings -- --tenantId 1 --effectiveOn 2026-03-01 --apply
-```
-
-Parametreler:
-1. `--tenantId`
-2. `--legalEntityId`
-3. `--regimeId`
-4. `--effectiveOn`
-5. `--limit`
-6. `--apply`
-
-## 9.5 `backfill:canonical-mappings`
-
-Ornek:
-```powershell
-cd backend
-npm run backfill:canonical-mappings -- --tenantId 1 --groupId 1 --apply
-```
-
-Parametreler:
-1. `--tenantId`
-2. `--groupId`
-3. `--limit`
-4. `--apply`
+Neye dikkat edilmeli?
+1. Tum gerekli adimlar tamamlanmadan rapor yorumu yapma.
+2. Ozellikle yeni kurulumdan sonra ilk raporda farklar normal olabilir; setup kontrolu gerekir.
 
 ---
 
-## 10) Sign-Off Operasyon Akisi (Detayli)
+## 5) "Ne Zaman Ne Yapmaliyim?" Hizli Is Akislari
 
-Bu bolum `13-PR-F13-GA-SIGNOFF-RECORD.md` ile birlikte calisir.
+## 5.1 Yeni bir sirket/tenant acilisinda
 
-## 10.1 Durum hesaplama
+1. Sirket kurulumunu wizard ile tamamla.
+2. Branch/OU yapisini netlestir.
+3. Gereken banka hesaplarini dogru OU/GL ile tanimla.
+4. Workflow onay adimlarini belirle.
+5. Ilk kapanis denemesinde onay akisinin calistigini kontrol et.
 
-```powershell
-cd backend
-npm run ops:prf13-signoff-status
-```
+## 5.2 Banka hesabini degistirmek isterken
 
-Opsiyonel zaman simulasyonu:
-```powershell
-cd backend
-npm run ops:prf13-signoff-status -- --asOf "2026-03-02 06:31:54 UTC"
-```
+1. Once hesapta gercek islem gecmisi var mi kontrol et.
+2. Kilitli alanlari zorlamadan, gerekiyorsa yeni hesap acma yoluna git.
+3. Eski hesabi status yonetimiyle pasiflestir.
 
-## 10.2 Outbox dosyasi uretme
+## 5.3 Kapanis "takildi" hissi varsa
 
-```powershell
-cd backend
-npm run ops:prf13-signoff-generate-outbox
-```
+1. Islem ekraninda onay bekleme durumunu kontrol et.
+2. Workflow kurulumu ekraninda adim/rol eslesmesini kontrol et.
+3. Eksik adim varsa duzeltip yeniden dene.
 
-Dry-run:
-```powershell
-cd backend
-npm run ops:prf13-signoff-generate-outbox -- --dryRun
-```
+## 5.4 Konsolidasyon sonucunda fark varsa
 
-Opsiyonel:
-1. `--asOf "<UTC timestamp>"`
-2. `--outDir <path>`
-3. `--dryRun`
-
-## 10.3 Olay loglama (audit tablolari icin)
-
-Temel:
-```powershell
-cd backend
-npm run ops:prf13-signoff-log-event -- --event initial_prepared --role both --channel outbox://backend/outbox/prf13-signoff
-```
-
-Sent event ornegi (proof zorunlu):
-```powershell
-cd backend
-npm run ops:prf13-signoff-log-event -- --event initial_sent --role both --channel email --proof "<delivery-proof>"
-```
-
-Parametreler:
-1. `--event` (zorunlu)
-2. `--role` `finance|product|both`
-3. `--channel`
-4. `--proof` (`*_sent` icin zorunlu)
-5. `--actor` (opsiyonel, default `Engineering`)
-6. `--timestamp` (opsiyonel)
-7. `--dryRun`
+1. Mapping hazirligi ve hesap agaci kurulumunu kontrol et.
+2. Ilgili donemde onay sureci tamam mi bak.
+3. Sonra raporu tekrar degerlendir.
 
 ---
 
-## 11) `recommended_action` Degerleri Nasil Okunur?
+## 6) Sik Sorulan Sorular (Kodsuz Cevaplar)
 
-| Aksiyon | Anlam | Operator ne yapar? |
-|---|---|---|
-| `NO_ACTION` | Bekleyen onay yok | Islem gerekmez |
-| `WAIT` | Pencere gelmemis veya zaten gonderilmis | Bekle, tekrar status bak |
-| `SEND_INITIAL_REQUESTS` | Ilk istek zamani geldi, gonderim kaydi yok | Outbox uret + gonder + `initial_sent` logla |
-| `CONFIRM_INITIAL_SEND` | Ilk istek hazir ama sent log yok | `initial_sent` olayini proof ile logla |
-| `SEND_REMINDER_1` | 1. hatirlatma penceresi acik | Outbox uret + gonder + `reminder1_sent` logla |
-| `CONFIRM_REMINDER_1_SEND` | Reminder1 hazir ama sent log yok | `reminder1_sent` logla |
-| `SEND_REMINDER_2_ESCALATE` | 2. hatirlatma/escalation penceresi acik | Outbox uret + gonder + uygun sent log |
-| `CONFIRM_REMINDER_2_ESCALATION_SEND` | Reminder2/escalation hazir ama sent log yok | `reminder2_sent` veya `escalation_sent` logla |
-| `OVERDUE_ESCALATE` | Son tarih gecmis ve hala pending | Escalation uygula + sent logla |
-| `CONFIRM_ESCALATION_SEND` | Escalation hazir ama sent log yok | `escalation_sent` logla |
+## 6.1 "Neden bazi banka alanlarini degistiremiyorum?"
 
-Not:
-- Script, `*_prepared` baglamindan `--role` ve `--channel` degerini `recommended_command` icinde otomatik onerir.
+Cunku hesap artik kullanilmis olabilir.  
+Bu koruma, gecmis kayitlarin guvenilir kalmasi icin var.
 
----
+## 6.2 "Neden kapanis butonu ilerlemiyor?"
 
-## 12) Solo Owner vs Team Mode
+Genellikle onay adimi tamamlanmamistir veya yanlis setup vardir.
 
-## 12.1 Team mode (klasik)
+## 6.3 "Neden yeni kurulumdan sonra birkac yerde eksik uyari var?"
 
-1. Finance approver ayri kisi
-2. Product approver ayri kisi
-3. Dispatch-reminder-escalation kaniti ayrica takip edilir
+Kurulum adimlarinin bir parcasi atlanmis olabilir:
+1. Account tree
+2. Workflow setup
+3. Tax/mapping hazirligi
 
-## 12.2 Solo mode (bu repo durumu)
+## 6.4 "Outbox/reminder dosyalari ne ise yariyor?"
 
-1. Dis onay bagimliligi yok
-2. Finance/Product onayi owner tarafindan self-approval
-3. Final karar `GO` olarak kayda gecilir
-4. Status beklenen: `pending_roles: none`, `NO_ACTION`
+Bunlar teknik calisma dosyasi degil, operasyonel mesaj taslagi ve audit izi amacli dosyalardir.
 
-Neden yine sign-off otomasyonu var?
-- Denetlenebilirlik icin: karar, zaman, olay izi kayitli kalir.
+## 6.5 "Solo app'te niye onay kaydi var?"
+
+Dis ekip zorunlulugu olmasa bile, karar ve gecis adimlarinin kayitli kalmasi sonraki denetim/handover icin faydalidir.
 
 ---
 
-## 13) Outbox Dosyalari Ne Icin Vardi?
+## 7) Ekip Rolleri ve Sorumluluk Onerisi
 
-`backend/outbox/prf13-signoff/*.txt` dosyalari:
-1. Gercek uygulama runtime bagimliligi degil
-2. Operasyonel mesaj artefakti
-3. Reminder/escalation metinlerinin versiyonlu kaniti
+## 7.1 Finans/Muhasebe kullanicisi
 
-Silinir mi?
-1. Audit ihtiyaci yoksa temizlenebilir
-2. Audit gerekiyorsa arsivlenmesi daha dogru
+1. Banka hesap setup kurallarina uyar.
+2. Kapanis onay surecinde adimlarini tamamlar.
+3. Konsolidasyon ciktilarini is mantigiyla kontrol eder.
 
----
+## 7.2 Operasyon sorumlusu
 
-## 14) Ekran Bazli Kisa Kullanim (PR-F13 Ilgili)
+1. Wizard kurulum adimlarinin tam oldugunu teyit eder.
+2. Akis takildiginda ilgili setup ekranina geri doner.
+3. Kayit tutma/disiplin tarafini surdurur.
 
-## 14.1 `/app/ayarlar/sirket-ayarlari`
+## 7.3 Urun/owner (solo dahil)
 
-Ne zaman kullanilir?
-- Yeni legal entity/company bootstrap yaparken.
-
-Neden kritik?
-- Setup Wizard V2 ve policy-pack bootstrap burada.
-
-Yapilmazsa:
-- Sonraki workflow/tax/canonical readiness eksik kalir.
-
-## 14.2 `/app/ayarlar/workflow-kurulumu`
-
-Ne zaman kullanilir?
-- Approval zinciri tanimi/atamasi guncellenirken.
-
-Neden kritik?
-- Period close ve consolidation gate buraya bagli.
-
-Yapilmazsa:
-- Close/finalize endpointleri approval nedeniyle bloklanabilir.
-
-## 14.3 `/app/banka-tanimla`
-
-Ne zaman kullanilir?
-- Bank account master ve 102 child account provisioning yaparken.
-
-Neden kritik?
-- OU/legal entity/durum/GL policy kontrolleri burada devreye girer.
-
-Yapilmazsa:
-- Bank posting ve reconciliation baglantilarinda setup hatalari artar.
-
-## 14.4 `/app/donem-sonu-islemler/yillik/konsolidasyon-raporlari`
-
-Ne zaman kullanilir?
-- Yillik consolidation rapor cikisi ve son kontrol.
-
-Neden kritik?
-- Canonical mapping + workflow gate sonucunu isletimsel olarak dogrular.
-
-Yapilmazsa:
-- GA kararindan once "rapor kalitesi" dogrulamasi eksik kalir.
+1. Hangi moduller bu fazda kapsama girdi net tutar.
+2. Kapsam disi talepleri ayri faza planlar.
+3. Son karar ve kapanis kaydini netlestirir.
 
 ---
 
-## 15) Sik Karsilasilan Durumlar ve Cozum
+## 8) Bu Fazda Kapsama Girmeyen Moduller
 
-## 15.1 `recommended_action: CONFIRM_INITIAL_SEND` ama dosya uretilmiyor
-
-Sebep:
-- Sistem zaten initial mesajin hazir oldugunu goruyor, duplicate outbox uretmiyor.
-
-Cozum:
-1. Gercek gonderim yaptiysan `initial_sent` olayini `--proof` ile logla.
-2. Sonra status tekrar calistir.
-
-## 15.2 `Missing --proof for *_sent events`
-
-Sebep:
-- `*_sent` eventlerinde kanit zorunlu.
-
-Cozum:
-1. `--proof "<message-id veya link>"` ekleyip tekrar calistir.
-
-## 15.3 Rollout apply `BLOCKED_READINESS`
-
-Sebep:
-- Faz gereklilikleri (workflow/tax/canonical) eksik.
-
-Cozum:
-1. Eksik backfill/setup adimini tamamla.
-2. Tekrar dry-run yap.
-3. Gerekirse kontrollu `--force` kullan.
-
-## 15.4 Backfill dry-run PASS ama apply sonucu beklenenden az
-
-Sebep:
-- Kismi scope (tenant/country/legalEntity/regime/group filter) veya eksik actor user.
-
-Cozum:
-1. Script parametrelerini genislet.
-2. Tenant user varligini dogrula.
-3. Limit filtresini kontrol et.
-
-## 15.5 `NO_ACTION` gorunuyor ama outbox klasorunde reminder dosyasi var
-
-Sebep:
-- Dosya varligi gecmiste hazirlanan artefakti gosterir; guncel aksiyon hesaplamasi status scriptinden gelir.
-
-Cozum:
-1. Karari her zaman `ops:prf13-signoff-status` ciktisina gore ver.
-
----
-
-## 16) Operasyon Rutin Onerisi
-
-## 16.1 Release adayi rutini
-
-1. `test:followup:prf13-release-gate`
-2. `RELEASE_GATE_ONLY_STAGES=FOLLOWUP_PRF13` ile release gate
-3. `ops:prf13-signoff-status`
-4. Plan/record dokumanlarinda evidence satiri guncelle
-
-## 16.2 Yeni tenant rutini
-
-1. Migration status
-2. Backfill sirasi
-3. Phase A -> B -> C rollout
-4. Operational smoke
-5. Evidence kaydi
-
-## 16.3 Handover rutini
-
-1. Tracker `Current Next Action` kontrol
-2. GA switch plan karar bolumu kontrol
-3. Sign-off record karar/timestamp kontrol
-4. Status komutu ile steady-state kaniti
-
----
-
-## 17) Evidence Yazma Standarti (Pratik)
-
-Her operasyon satirinda su 5 bilgi olursa sonraki kisi zorlanmaz:
-1. Komut
-2. UTC zaman
-3. Sonuc (`PASS`, `APPLIED`, `WAIT`, vb.)
-4. Etkilenen tenant(lar)
-5. Referans dosya/satir
-
-Ornek:
-```text
-2026-03-02 07:10:00 UTC | tenant=2 | command=rollout:prf13-pilot phase C --apply | result=APPLIED | evidence=12-PR-F13-PILOT-GA-SWITCH-PLAN.md
-```
-
----
-
-## 18) Bu Kilavuzun Kapsami Disindaki Moduller
-
-PR-F13 kapanmis olsa da asagidaki alanlar ayri feature track ister:
+Asagidaki alanlar bu kilavuzdaki uygulanan adimlarin disindadir:
 1. Stok modulu
 2. Demirbas/fixed assets modulu
-3. Genel raporlar bolumundeki placeholder ekranlar
+3. Genel raporlar bolumundeki tum placeholder ekranlar
 
-Neden ayri?
-- Bu moduller PR-F13 tracker adimlari icinde "done scope" olarak tanimlanmadi.
+Bu alanlar icin ayri plan ve ayri kullanim kilavuzu gerekir.
 
 ---
 
-## 19) Hizli Devralma Checklisti (Final)
+## 9) Son Kullanici Icin "Tamamlandi Mi?" Kontrol Listesi
 
-1. `10-EXECUTION TRACKER.md` tum satirlar `DONE` mi?
-2. `12-PR-F13-PILOT-GA-SWITCH-PLAN.md` karar `GO` mu?
-3. `13-PR-F13-GA-SIGNOFF-RECORD.md` finance/product `APPROVED` mi?
-4. `cd backend && npm run ops:prf13-signoff-status` sonucu:
-   - `pending_roles: none`
-   - `recommended_action: NO_ACTION`
-5. Son release adayi icin PR-F13 gate testleri PASS mi?
+Teknik komut bilmeden de su kontrolu yapabilirsin:
 
-Tum cevaplar "evet" ise PR-F13 execution tracker kapsaminda operasyon kapanmistir ve dokumantasyon devralmaya hazirdir.
+1. Sirket kurulum adimlari ekranlarda tamamlandi mi?
+2. Banka hesaplari OU/GL ile dogru acildi mi?
+3. Kapanis/konsolidasyon isleminde onay adimlari calisiyor mu?
+4. Konsolidasyon raporu beklenen mantikta geliyor mu?
+5. Ekibin kullandigi kayit dokumanlarinda "GO" karari var mi?
 
+Tum cevaplar "evet" ise bu fazin kullanimi operasyonel olarak hazirdir.
+
+---
+
+## 10) Teknik Ek Icin Not (Son Kullanicilar Atlayabilir)
+
+Bu kilavuz bilerek kod/terminal adimi icermez.  
+Eger teknik ekip script veya release-gate komutlarina bakacaksa:
+1. `11-PR-F13-ROLLOUT-RUNBOOK.md`
+2. `12-PR-F13-PILOT-GA-SWITCH-PLAN.md`
+3. `13-PR-F13-GA-SIGNOFF-RECORD.md`
+4. `10-EXECUTION TRACKER.md`
+
+Bu dort dokuman teknik operasyon adimlarini zaten detayli tutar.

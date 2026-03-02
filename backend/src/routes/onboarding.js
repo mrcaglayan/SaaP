@@ -107,7 +107,7 @@ const READINESS_DEFINITIONS = [
   },
   {
     key: "taxEngineV1",
-    label: "Country tax engine placeholder",
+    label: "Country tax engine setup (optional)",
     minimum: 0,
   },
 ];

@@ -64,6 +64,10 @@ const CONSOLIDATION_REPORT_PAGE_PERMISSIONS = [
   "consolidation.report.income_statement.read",
 ];
 const FX_RATE_PAGE_PERMISSIONS = ["fx.rate.read", "fx.rate.bulk_upsert"];
+const TAX_SETUP_PAGE_PERMISSIONS = [
+  "org.tree.read",
+  "onboarding.company.setup",
+];
 const CONSOLIDATION_SETUP_PAGE_PERMISSIONS = [
   "consolidation.group.read",
   "consolidation.group.upsert",
@@ -620,6 +624,12 @@ export const sidebarItems = [
         label: "Kur Yonetimi",
         to: "/app/ayarlar/kur-yonetimi",
         requiredPermissions: FX_RATE_PAGE_PERMISSIONS,
+        implemented: true,
+      },
+      {
+        label: "Vergi Kurulumu",
+        to: "/app/ayarlar/vergi-kurulumu",
+        requiredPermissions: TAX_SETUP_PAGE_PERMISSIONS,
         implemented: true,
       },
       {

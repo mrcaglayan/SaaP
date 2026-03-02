@@ -19,6 +19,7 @@ import HesapPlaniOlustur from "./pages/settings/HesapPlaniOlustur";
 import OrganizationManagementPage from "./pages/settings/OrganizationManagementPage";
 import FxRatesPage from "./pages/settings/FxRatesPage";
 import ConsolidationSetupPage from "./pages/settings/ConsolidationSetupPage";
+import TaxSetupPage from "./pages/settings/TaxSetupPage.jsx";
 import RolesPermissionsPage from "./pages/security/RolesPermissionsPage";
 import UserAssignmentsPage from "./pages/security/UserAssignmentsPage";
 import ScopeAssignmentsPage from "./pages/security/ScopeAssignmentsPage";
@@ -353,6 +354,11 @@ const implementedRoutes = [
     appPath: "/app/ayarlar/kur-yonetimi",
     childPath: "ayarlar/kur-yonetimi",
     element: <FxRatesPage />,
+  },
+  {
+    appPath: "/app/ayarlar/vergi-kurulumu",
+    childPath: "ayarlar/vergi-kurulumu",
+    element: <TaxSetupPage />,
   },
   {
     appPath: "/app/ayarlar/konsolidasyon-kurulumu",

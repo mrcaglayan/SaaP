@@ -308,6 +308,7 @@ export const messages = {
         "/app/ayarlar/hesap-yeniden-siniflandirma":
           "Hesap Yeniden Siniflandirma",
         "/app/ayarlar/kur-yonetimi": "Kur Yonetimi",
+        "/app/ayarlar/vergi-kurulumu": "Vergi Kurulumu",
         "/app/ayarlar/konsolidasyon-kurulumu": "Konsolidasyon Kurulumu",
         "/app/ayarlar/stok-ayarlari": "Stok Ayarlari",
         "/app/ayarlar/demirbas-ayarlari": "Demirbas Ayarlari",
@@ -1502,7 +1503,7 @@ export const messages = {
           "Konsolidasyon kanonik esleme (uyari placeholder)",
         workflowCloseConsolidationV1:
           "Kapanis/konsolidasyon workflow hazirligi",
-        taxEngineV1: "Ulke vergi motoru (uyari placeholder)",
+        taxEngineV1: "Ulke vergi motoru kurulumu (opsiyonel)",
       },
       badges: {
         ready: "Hazir",
@@ -1837,6 +1838,7 @@ export const messages = {
         "/app/ayarlar/hesap-yeniden-siniflandirma":
           "GL Reclassification Workbench",
         "/app/ayarlar/kur-yonetimi": "FX Rate Management",
+        "/app/ayarlar/vergi-kurulumu": "Tax Setup",
         "/app/ayarlar/konsolidasyon-kurulumu": "Consolidation Setup",
         "/app/ayarlar/stok-ayarlari": "Stock Settings",
         "/app/ayarlar/demirbas-ayarlari": "Fixed Asset Settings",
@@ -3032,7 +3034,7 @@ export const messages = {
           "Consolidation canonical mapping (warning placeholder)",
         workflowCloseConsolidationV1:
           "Close/consolidation workflow readiness",
-        taxEngineV1: "Country tax engine (warning placeholder)",
+        taxEngineV1: "Country tax engine setup (optional)",
       },
       badges: {
         ready: "Ready",
