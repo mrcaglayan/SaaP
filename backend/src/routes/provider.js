@@ -174,6 +174,77 @@ function normalizeTenantStatus(value) {
   return status;
 }
 
+function normalizeIso2(value, label = "iso2") {
+  const normalized = String(value || "")
+    .trim()
+    .toUpperCase();
+  if (!normalized) {
+    throw badRequest(`${label} is required`);
+  }
+  if (!/^[A-Z]{2}$/.test(normalized)) {
+    throw badRequest(`${label} must be exactly 2 letters`);
+  }
+  return normalized;
+}
+
+function normalizeIso3(value, label = "iso3") {
+  const normalized = String(value || "")
+    .trim()
+    .toUpperCase();
+  if (!normalized) {
+    throw badRequest(`${label} is required`);
+  }
+  if (!/^[A-Z]{3}$/.test(normalized)) {
+    throw badRequest(`${label} must be exactly 3 letters`);
+  }
+  return normalized;
+}
+
+function normalizeCurrencyCode(value, label = "defaultCurrencyCode") {
+  const normalized = String(value || "")
+    .trim()
+    .toUpperCase();
+  if (!normalized) {
+    throw badRequest(`${label} is required`);
+  }
+  if (!/^[A-Z]{3}$/.test(normalized)) {
+    throw badRequest(`${label} must be exactly 3 letters`);
+  }
+  return normalized;
+}
+
+function mapCurrencyRow(row) {
+  return {
+    code: String(row?.code || "").toUpperCase() || null,
+    name: row?.name || null,
+    minorUnits: Number(row?.minor_units || 0),
+  };
+}
+
+function mapCountryRow(row) {
+  return {
+    id: parsePositiveInt(row?.id),
+    iso2: String(row?.iso2 || "").toUpperCase() || null,
+    iso3: String(row?.iso3 || "").toUpperCase() || null,
+    name: row?.name || null,
+    defaultCurrencyCode:
+      String(row?.default_currency_code || "").toUpperCase() || null,
+  };
+}
+
+async function ensureCurrencyExists(currencyCode, label = "defaultCurrencyCode") {
+  const result = await query(
+    `SELECT code
+     FROM currencies
+     WHERE code = ?
+     LIMIT 1`,
+    [currencyCode]
+  );
+  if (!result.rows[0]) {
+    throw badRequest(`${label} not found`);
+  }
+}
+
 async function ensureTenantAdminRole(tx, tenantId) {
   const roleResult = await tx.query(
     `SELECT id
@@ -536,6 +607,186 @@ router.patch(
         createdAt: row?.created_at || null,
         updatedAt: row?.updated_at || null,
       },
+    });
+  })
+);
+
+router.get(
+  "/currencies",
+  requireProviderAuth,
+  asyncHandler(async (req, res) => {
+    await requireProviderAdminRecord(req.providerAdmin.providerAdminId);
+
+    const result = await query(
+      `SELECT code, name, minor_units
+       FROM currencies
+       ORDER BY code`
+    );
+
+    return res.json({
+      rows: (result.rows || []).map((row) => mapCurrencyRow(row)),
+    });
+  })
+);
+
+router.get(
+  "/countries",
+  requireProviderAuth,
+  asyncHandler(async (req, res) => {
+    await requireProviderAdminRecord(req.providerAdmin.providerAdminId);
+
+    const q = req.query.q ? String(req.query.q).trim() : null;
+    const limitRaw = Number(req.query.limit);
+    const offsetRaw = Number(req.query.offset);
+    const limit =
+      Number.isInteger(limitRaw) && limitRaw > 0 ? Math.min(limitRaw, 500) : 100;
+    const offset = Number.isInteger(offsetRaw) && offsetRaw >= 0 ? offsetRaw : 0;
+
+    const conditions = [];
+    const params = [];
+    if (q) {
+      conditions.push(
+        "(c.iso2 LIKE ? OR c.iso3 LIKE ? OR c.name LIKE ? OR c.default_currency_code LIKE ?)"
+      );
+      params.push(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`);
+    }
+
+    const whereClause =
+      conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+
+    const countResult = await query(
+      `SELECT COUNT(*) AS total
+       FROM countries c
+       ${whereClause}`,
+      params
+    );
+    const total = Number(countResult.rows[0]?.total || 0);
+
+    const rowsResult = await query(
+      `SELECT c.id, c.iso2, c.iso3, c.name, c.default_currency_code
+       FROM countries c
+       ${whereClause}
+       ORDER BY c.name, c.id
+       LIMIT ${limit}
+       OFFSET ${offset}`,
+      params
+    );
+
+    return res.json({
+      rows: (rowsResult.rows || []).map((row) => mapCountryRow(row)),
+      total,
+      limit,
+      offset,
+    });
+  })
+);
+
+router.post(
+  "/countries",
+  requireProviderAuth,
+  asyncHandler(async (req, res) => {
+    await requireProviderAdminRecord(req.providerAdmin.providerAdminId);
+    assertRequiredFields(req.body, ["iso2", "iso3", "name", "defaultCurrencyCode"]);
+
+    const iso2 = normalizeIso2(req.body.iso2);
+    const iso3 = normalizeIso3(req.body.iso3);
+    const name = normalizeName(req.body.name, "name", 120);
+    const defaultCurrencyCode = normalizeCurrencyCode(req.body.defaultCurrencyCode);
+
+    const duplicateResult = await query(
+      `SELECT id
+       FROM countries
+       WHERE iso2 = ?
+          OR iso3 = ?
+       LIMIT 1`,
+      [iso2, iso3]
+    );
+    if (duplicateResult.rows[0]) {
+      throw badRequest("Country with same iso2 or iso3 already exists");
+    }
+
+    await ensureCurrencyExists(defaultCurrencyCode);
+
+    const insertResult = await query(
+      `INSERT INTO countries (iso2, iso3, name, default_currency_code)
+       VALUES (?, ?, ?, ?)`,
+      [iso2, iso3, name, defaultCurrencyCode]
+    );
+    const countryId = parsePositiveInt(insertResult.rows.insertId);
+    if (!countryId) {
+      throw new Error("Failed to create country");
+    }
+
+    const createdResult = await query(
+      `SELECT id, iso2, iso3, name, default_currency_code
+       FROM countries
+       WHERE id = ?
+       LIMIT 1`,
+      [countryId]
+    );
+
+    return res.status(201).json({
+      ok: true,
+      row: mapCountryRow(createdResult.rows[0]),
+      createdByProviderAdminId: req.providerAdmin.providerAdminId,
+    });
+  })
+);
+
+router.patch(
+  "/countries/:countryId",
+  requireProviderAuth,
+  asyncHandler(async (req, res) => {
+    await requireProviderAdminRecord(req.providerAdmin.providerAdminId);
+
+    const countryId = parsePositiveInt(req.params.countryId);
+    if (!countryId) {
+      throw badRequest("countryId must be a positive integer");
+    }
+
+    const hasName = req.body?.name !== undefined;
+    const hasDefaultCurrencyCode = req.body?.defaultCurrencyCode !== undefined;
+    if (!hasName && !hasDefaultCurrencyCode) {
+      throw badRequest("At least one of name or defaultCurrencyCode is required");
+    }
+
+    const updates = [];
+    const params = [];
+    if (hasName) {
+      updates.push("name = ?");
+      params.push(normalizeName(req.body.name, "name", 120));
+    }
+
+    if (hasDefaultCurrencyCode) {
+      const code = normalizeCurrencyCode(req.body.defaultCurrencyCode);
+      await ensureCurrencyExists(code);
+      updates.push("default_currency_code = ?");
+      params.push(code);
+    }
+
+    params.push(countryId);
+    const updateResult = await query(
+      `UPDATE countries
+       SET ${updates.join(", ")}
+       WHERE id = ?`,
+      params
+    );
+    if (Number(updateResult.rows.affectedRows || 0) === 0) {
+      throw badRequest("countryId not found");
+    }
+
+    const rowResult = await query(
+      `SELECT id, iso2, iso3, name, default_currency_code
+       FROM countries
+       WHERE id = ?
+       LIMIT 1`,
+      [countryId]
+    );
+
+    return res.json({
+      ok: true,
+      row: mapCountryRow(rowResult.rows[0]),
+      updatedByProviderAdminId: req.providerAdmin.providerAdminId,
     });
   })
 );

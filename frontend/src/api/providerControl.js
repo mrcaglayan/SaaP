@@ -65,3 +65,34 @@ export async function updateProviderTenantStatus(token, tenantId, status) {
   );
   return response.data;
 }
+
+export async function listProviderCurrencies(token) {
+  const response = await providerApi.get("/api/v1/provider/currencies", withAuth(token));
+  return response.data;
+}
+
+export async function listProviderCountries(token, params = {}) {
+  const response = await providerApi.get(
+    `/api/v1/provider/countries${toQueryString(params)}`,
+    withAuth(token)
+  );
+  return response.data;
+}
+
+export async function createProviderCountry(token, payload) {
+  const response = await providerApi.post(
+    "/api/v1/provider/countries",
+    payload,
+    withAuth(token)
+  );
+  return response.data;
+}
+
+export async function updateProviderCountry(token, countryId, payload) {
+  const response = await providerApi.patch(
+    `/api/v1/provider/countries/${countryId}`,
+    payload,
+    withAuth(token)
+  );
+  return response.data;
+}

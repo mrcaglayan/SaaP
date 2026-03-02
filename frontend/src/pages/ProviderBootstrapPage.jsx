@@ -1,7 +1,11 @@
 import { useEffect, useState } from "react";
 import {
+  createProviderCountry,
   createProviderTenant,
+  listProviderCountries,
+  listProviderCurrencies,
   listProviderTenants,
+  updateProviderCountry,
   updateProviderTenantStatus,
 } from "../api/providerControl.js";
 import { useI18n } from "../i18n/useI18n.js";
@@ -17,6 +21,15 @@ function createInitialForm() {
   };
 }
 
+function createInitialCountryForm() {
+  return {
+    iso2: "",
+    iso3: "",
+    name: "",
+    defaultCurrencyCode: "",
+  };
+}
+
 function toTenantStatusLabel(t, status) {
   return t(
     ["providerBootstrap", "statuses", String(status || "").toUpperCase()],
@@ -28,17 +41,32 @@ export default function ProviderBootstrapPage() {
   const { token, providerAdmin, logout, clearSession } = useProviderAuth();
   const { t } = useI18n();
   const [form, setForm] = useState(createInitialForm());
+  const [countryForm, setCountryForm] = useState(createInitialCountryForm());
   const [query, setQuery] = useState("");
+  const [countryQuery, setCountryQuery] = useState("");
   const [loadingTenants, setLoadingTenants] = useState(false);
+  const [loadingCountries, setLoadingCountries] = useState(false);
+  const [loadingCurrencies, setLoadingCurrencies] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [savingCountry, setSavingCountry] = useState(false);
   const [updatingTenantId, setUpdatingTenantId] = useState(null);
+  const [updatingCountryId, setUpdatingCountryId] = useState(null);
+  const [editingCountryId, setEditingCountryId] = useState(null);
+  const [editingCountryName, setEditingCountryName] = useState("");
+  const [editingCountryCurrencyCode, setEditingCountryCurrencyCode] = useState("");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [result, setResult] = useState(null);
   const [tenants, setTenants] = useState([]);
+  const [countries, setCountries] = useState([]);
+  const [currencies, setCurrencies] = useState([]);
 
   function setField(field, value) {
     setForm((prev) => ({ ...prev, [field]: value }));
+  }
+
+  function setCountryField(field, value) {
+    setCountryForm((prev) => ({ ...prev, [field]: value }));
   }
 
   async function loadTenants(search = query) {
@@ -65,8 +93,54 @@ export default function ProviderBootstrapPage() {
     }
   }
 
+  async function loadCurrencies() {
+    if (!token) {
+      return;
+    }
+
+    setLoadingCurrencies(true);
+    setError("");
+    try {
+      const response = await listProviderCurrencies(token);
+      setCurrencies(response?.rows || []);
+    } catch (err) {
+      if (err?.response?.status === 401) {
+        clearSession();
+      }
+      setError(err?.response?.data?.message || t("providerBootstrap.errors.loadCurrencies"));
+    } finally {
+      setLoadingCurrencies(false);
+    }
+  }
+
+  async function loadCountries(search = countryQuery) {
+    if (!token) {
+      return;
+    }
+
+    setLoadingCountries(true);
+    setError("");
+    try {
+      const response = await listProviderCountries(token, {
+        q: search || undefined,
+        limit: 300,
+        offset: 0,
+      });
+      setCountries(response?.rows || []);
+    } catch (err) {
+      if (err?.response?.status === 401) {
+        clearSession();
+      }
+      setError(err?.response?.data?.message || t("providerBootstrap.errors.loadCountries"));
+    } finally {
+      setLoadingCountries(false);
+    }
+  }
+
   useEffect(() => {
     loadTenants();
+    loadCountries();
+    loadCurrencies();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
@@ -128,6 +202,73 @@ export default function ProviderBootstrapPage() {
       );
     } finally {
       setUpdatingTenantId(null);
+    }
+  }
+
+  async function handleCreateCountry(event) {
+    event.preventDefault();
+    if (!token) {
+      return;
+    }
+
+    setSavingCountry(true);
+    setError("");
+    setMessage("");
+    try {
+      await createProviderCountry(token, {
+        iso2: countryForm.iso2.trim().toUpperCase(),
+        iso3: countryForm.iso3.trim().toUpperCase(),
+        name: countryForm.name.trim(),
+        defaultCurrencyCode: countryForm.defaultCurrencyCode.trim().toUpperCase(),
+      });
+      setCountryForm(createInitialCountryForm());
+      setMessage(t("providerBootstrap.messages.countryCreated"));
+      await loadCountries();
+    } catch (err) {
+      if (err?.response?.status === 401) {
+        clearSession();
+      }
+      setError(err?.response?.data?.message || t("providerBootstrap.errors.createCountry"));
+    } finally {
+      setSavingCountry(false);
+    }
+  }
+
+  function handleStartEditCountry(country) {
+    setEditingCountryId(country.id);
+    setEditingCountryName(country.name || "");
+    setEditingCountryCurrencyCode(country.defaultCurrencyCode || "");
+  }
+
+  function handleCancelEditCountry() {
+    setEditingCountryId(null);
+    setEditingCountryName("");
+    setEditingCountryCurrencyCode("");
+  }
+
+  async function handleSaveCountry(countryId) {
+    if (!token) {
+      return;
+    }
+
+    setUpdatingCountryId(countryId);
+    setError("");
+    setMessage("");
+    try {
+      await updateProviderCountry(token, countryId, {
+        name: editingCountryName.trim(),
+        defaultCurrencyCode: editingCountryCurrencyCode.trim().toUpperCase(),
+      });
+      setMessage(t("providerBootstrap.messages.countryUpdated", { id: countryId }));
+      handleCancelEditCountry();
+      await loadCountries();
+    } catch (err) {
+      if (err?.response?.status === 401) {
+        clearSession();
+      }
+      setError(err?.response?.data?.message || t("providerBootstrap.errors.updateCountry"));
+    } finally {
+      setUpdatingCountryId(null);
     }
   }
 
@@ -358,6 +499,221 @@ export default function ProviderBootstrapPage() {
             </div>
           </section>
         </div>
+
+        <section className="rounded-xl border border-slate-200 bg-white p-5">
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <h2 className="text-sm font-semibold text-slate-700">
+                {t("providerBootstrap.countries.title")}
+              </h2>
+              <p className="mt-1 text-xs text-slate-500">
+                {t("providerBootstrap.countries.subtitle")}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                loadCountries();
+                loadCurrencies();
+              }}
+              disabled={loadingCountries || loadingCurrencies}
+              className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 disabled:opacity-60"
+            >
+              {loadingCountries || loadingCurrencies
+                ? t("providerBootstrap.countries.loading")
+                : t("providerBootstrap.countries.refresh")}
+            </button>
+          </div>
+
+          <div className="mt-4 grid gap-4 xl:grid-cols-[1fr_1.5fr]">
+            <section className="rounded-lg border border-slate-200 bg-slate-50/40 p-4">
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                {t("providerBootstrap.countries.create.title")}
+              </h3>
+              <form onSubmit={handleCreateCountry} className="mt-3 grid gap-3">
+                <div className="grid grid-cols-2 gap-2">
+                  <input
+                    value={countryForm.iso2}
+                    onChange={(event) => setCountryField("iso2", event.target.value)}
+                    className="rounded-lg border border-slate-300 px-3 py-2 text-sm uppercase"
+                    placeholder={t("providerBootstrap.countries.create.placeholders.iso2")}
+                    maxLength={2}
+                    required
+                  />
+                  <input
+                    value={countryForm.iso3}
+                    onChange={(event) => setCountryField("iso3", event.target.value)}
+                    className="rounded-lg border border-slate-300 px-3 py-2 text-sm uppercase"
+                    placeholder={t("providerBootstrap.countries.create.placeholders.iso3")}
+                    maxLength={3}
+                    required
+                  />
+                </div>
+                <input
+                  value={countryForm.name}
+                  onChange={(event) => setCountryField("name", event.target.value)}
+                  className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  placeholder={t("providerBootstrap.countries.create.placeholders.name")}
+                  required
+                />
+                <select
+                  value={countryForm.defaultCurrencyCode}
+                  onChange={(event) =>
+                    setCountryField("defaultCurrencyCode", event.target.value)
+                  }
+                  className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  required
+                >
+                  <option value="">
+                    {t("providerBootstrap.countries.create.placeholders.defaultCurrencyCode")}
+                  </option>
+                  {currencies.map((currency) => (
+                    <option key={currency.code} value={currency.code}>
+                      {currency.code} - {currency.name}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="submit"
+                  disabled={savingCountry}
+                  className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+                >
+                  {savingCountry
+                    ? t("providerBootstrap.countries.create.actions.creating")
+                    : t("providerBootstrap.countries.create.actions.create")}
+                </button>
+              </form>
+              <p className="mt-3 text-xs text-slate-500">
+                {t("providerBootstrap.countries.immutableCodesNote")}
+              </p>
+            </section>
+
+            <section>
+              <form
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  loadCountries(countryQuery);
+                }}
+                className="flex gap-2"
+              >
+                <input
+                  value={countryQuery}
+                  onChange={(event) => setCountryQuery(event.target.value)}
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  placeholder={t("providerBootstrap.countries.searchPlaceholder")}
+                />
+                <button
+                  type="submit"
+                  disabled={loadingCountries}
+                  className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60"
+                >
+                  {t("providerBootstrap.countries.search")}
+                </button>
+              </form>
+
+              <div className="mt-3 overflow-x-auto rounded-lg border border-slate-200">
+                <table className="min-w-full text-sm">
+                  <thead className="bg-slate-50 text-left text-slate-600">
+                    <tr>
+                      <th className="px-3 py-2">ID</th>
+                      <th className="px-3 py-2">{t("providerBootstrap.countries.columns.iso2")}</th>
+                      <th className="px-3 py-2">{t("providerBootstrap.countries.columns.iso3")}</th>
+                      <th className="px-3 py-2">{t("providerBootstrap.countries.columns.name")}</th>
+                      <th className="px-3 py-2">
+                        {t("providerBootstrap.countries.columns.defaultCurrencyCode")}
+                      </th>
+                      <th className="px-3 py-2">{t("providerBootstrap.countries.columns.actions")}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {countries.map((country) => {
+                      const isEditing = editingCountryId === country.id;
+                      return (
+                        <tr key={country.id} className="border-t border-slate-100">
+                          <td className="px-3 py-2">{country.id}</td>
+                          <td className="px-3 py-2 font-mono">{country.iso2}</td>
+                          <td className="px-3 py-2 font-mono">{country.iso3}</td>
+                          <td className="px-3 py-2">
+                            {isEditing ? (
+                              <input
+                                value={editingCountryName}
+                                onChange={(event) =>
+                                  setEditingCountryName(event.target.value)
+                                }
+                                className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                              />
+                            ) : (
+                              country.name
+                            )}
+                          </td>
+                          <td className="px-3 py-2">
+                            {isEditing ? (
+                              <select
+                                value={editingCountryCurrencyCode}
+                                onChange={(event) =>
+                                  setEditingCountryCurrencyCode(event.target.value)
+                                }
+                                className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                              >
+                                <option value="">
+                                  {t("providerBootstrap.countries.create.placeholders.defaultCurrencyCode")}
+                                </option>
+                                {currencies.map((currency) => (
+                                  <option key={currency.code} value={currency.code}>
+                                    {currency.code}
+                                  </option>
+                                ))}
+                              </select>
+                            ) : (
+                              <span className="font-mono">{country.defaultCurrencyCode}</span>
+                            )}
+                          </td>
+                          <td className="px-3 py-2">
+                            {isEditing ? (
+                              <div className="flex gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => handleSaveCountry(country.id)}
+                                  disabled={updatingCountryId === country.id}
+                                  className="rounded border border-emerald-300 px-2 py-1 text-xs font-semibold text-emerald-700 disabled:opacity-60"
+                                >
+                                  {t("providerBootstrap.countries.actions.save")}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={handleCancelEditCountry}
+                                  disabled={updatingCountryId === country.id}
+                                  className="rounded border border-slate-300 px-2 py-1 text-xs font-semibold text-slate-700 disabled:opacity-60"
+                                >
+                                  {t("providerBootstrap.countries.actions.cancel")}
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => handleStartEditCountry(country)}
+                                className="rounded border border-slate-300 px-2 py-1 text-xs font-semibold text-slate-700"
+                              >
+                                {t("providerBootstrap.countries.actions.edit")}
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    {countries.length === 0 && !loadingCountries ? (
+                      <tr>
+                        <td colSpan={6} className="px-3 py-3 text-slate-500">
+                          {t("providerBootstrap.countries.empty")}
+                        </td>
+                      </tr>
+                    ) : null}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          </div>
+        </section>
       </div>
     </main>
   );

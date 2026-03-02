@@ -140,10 +140,16 @@ export const messages = {
         loadTenants: "Tenant listesi yuklenemedi.",
         provisionFailed: "Tenant olusturma islemi basarisiz.",
         updateStatus: "Tenant durumu guncellenemedi.",
+        loadCountries: "Ulke listesi yuklenemedi.",
+        loadCurrencies: "Para birimi listesi yuklenemedi.",
+        createCountry: "Ulke olusturma islemi basarisiz.",
+        updateCountry: "Ulke guncellenemedi.",
       },
       messages: {
         created: "Tenant ve ilk yonetici basariyla olusturuldu.",
         statusUpdated: "Tenant #{{id}} durumu {{status}} olarak guncellendi.",
+        countryCreated: "Ulke kaydi olusturuldu.",
+        countryUpdated: "Ulke #{{id}} guncellendi.",
       },
       createTenant: {
         title: "Tenant Olustur",
@@ -183,6 +189,43 @@ export const messages = {
           suspend: "Askida Al",
         },
         empty: "Tenant kaydi bulunamadi.",
+      },
+      countries: {
+        title: "Ulke Master Yonetimi",
+        subtitle:
+          "Tenant UI bu listeyi sadece secim icin kullanir; ulke kodlari provider panelinden yonetilir.",
+        loading: "Yukleniyor...",
+        refresh: "Yenile",
+        searchPlaceholder: "ISO kodu, ad veya para birimine gore ara",
+        search: "Ara",
+        immutableCodesNote:
+          "ISO2/ISO3 kodlari olusturulduktan sonra bu ekranda degistirilmez.",
+        create: {
+          title: "Yeni Ulke Ekle",
+          placeholders: {
+            iso2: "ISO2 (orn. TR)",
+            iso3: "ISO3 (orn. TUR)",
+            name: "Ulke adi",
+            defaultCurrencyCode: "Varsayilan para birimi secin",
+          },
+          actions: {
+            creating: "Olusturuluyor...",
+            create: "Ulke olustur",
+          },
+        },
+        columns: {
+          iso2: "ISO2",
+          iso3: "ISO3",
+          name: "Ad",
+          defaultCurrencyCode: "Varsayilan PB",
+          actions: "Islemler",
+        },
+        actions: {
+          edit: "Duzenle",
+          save: "Kaydet",
+          cancel: "Iptal",
+        },
+        empty: "Ulke kaydi bulunamadi.",
       },
     },
     dashboard: {
@@ -1670,10 +1713,16 @@ export const messages = {
         loadTenants: "Failed to load tenants.",
         provisionFailed: "Tenant provisioning failed.",
         updateStatus: "Failed to update tenant status.",
+        loadCountries: "Failed to load countries.",
+        loadCurrencies: "Failed to load currencies.",
+        createCountry: "Country creation failed.",
+        updateCountry: "Failed to update country.",
       },
       messages: {
         created: "Tenant and first admin were created successfully.",
         statusUpdated: "Tenant #{{id}} status updated to {{status}}.",
+        countryCreated: "Country record created.",
+        countryUpdated: "Country #{{id}} updated.",
       },
       createTenant: {
         title: "Create Tenant",
@@ -1713,6 +1762,43 @@ export const messages = {
           suspend: "Suspend",
         },
         empty: "No tenant records found.",
+      },
+      countries: {
+        title: "Country Master Management",
+        subtitle:
+          "Tenant UI consumes this list as select-only; country codes are managed from provider panel.",
+        loading: "Loading...",
+        refresh: "Refresh",
+        searchPlaceholder: "Search by ISO code, name, or currency",
+        search: "Search",
+        immutableCodesNote:
+          "ISO2/ISO3 codes are immutable on this screen after creation.",
+        create: {
+          title: "Add New Country",
+          placeholders: {
+            iso2: "ISO2 (e.g. TR)",
+            iso3: "ISO3 (e.g. TUR)",
+            name: "Country name",
+            defaultCurrencyCode: "Select default currency",
+          },
+          actions: {
+            creating: "Creating...",
+            create: "Create country",
+          },
+        },
+        columns: {
+          iso2: "ISO2",
+          iso3: "ISO3",
+          name: "Name",
+          defaultCurrencyCode: "Default currency",
+          actions: "Actions",
+        },
+        actions: {
+          edit: "Edit",
+          save: "Save",
+          cancel: "Cancel",
+        },
+        empty: "No country records found.",
       },
     },
     dashboard: {
