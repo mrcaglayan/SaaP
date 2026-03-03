@@ -59,6 +59,7 @@ import CariSettlementsPage from "./pages/cari/CariSettlementsPage.jsx";
 import CariAuditPage from "./pages/cari/CariAuditPage.jsx";
 import ContractsPage from "./pages/contracts/ContractsPage.jsx";
 import FutureYearRevenuePage from "./pages/revenue/FutureYearRevenuePage.jsx";
+import YearEndRevrecChecklistPage from "./pages/YearEndRevrecChecklistPage.jsx";
 import { collectSidebarLinks, sidebarItems } from "./layouts/sidebarConfig.js";
 import TenantReadinessProvider from "./readiness/TenantReadinessProvider.jsx";
 import RequireTenantReadiness from "./readiness/RequireTenantReadiness.jsx";
@@ -409,6 +410,11 @@ const implementedRoutes = [
     appPath: "/app/donem-sonu-islemler/aylik/intercompany-mutabakat",
     childPath: "donem-sonu-islemler/aylik/intercompany-mutabakat",
     element: <IntercompanyReconciliationPage />,
+  },
+  {
+    appPath: "/app/donem-sonu-islemler/yillik/kapanis-islemleri",
+    childPath: "donem-sonu-islemler/yillik/kapanis-islemleri",
+    element: <YearEndRevrecChecklistPage />,
   },
   {
     appPath: "/app/donem-sonu-islemler/yillik/konsolidasyon-raporlari",

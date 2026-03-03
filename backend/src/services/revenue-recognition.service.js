@@ -2504,6 +2504,265 @@ export async function resolveRevenueRunScope(runId, tenantId) {
   };
 }
 
+export async function listRevenueLookupLegalEntities({
+  req,
+  tenantId,
+  filters,
+  buildScopeFilter,
+}) {
+  const params = [tenantId];
+  const conditions = ["le.tenant_id = ?"];
+  conditions.push(buildScopeFilter(req, "legal_entity", "le.id", params));
+
+  if (filters.q) {
+    conditions.push("(le.code LIKE ? OR le.name LIKE ?)");
+    params.push(`%${filters.q}%`, `%${filters.q}%`);
+  }
+
+  const safeLimit = Number.isInteger(filters.limit) && filters.limit > 0 ? filters.limit : 200;
+  const safeOffset =
+    Number.isInteger(filters.offset) && filters.offset >= 0 ? filters.offset : 0;
+  const whereSql = conditions.join(" AND ");
+
+  const totalResult = await query(
+    `SELECT COUNT(*) AS total
+     FROM legal_entities le
+     WHERE ${whereSql}`,
+    params
+  );
+  const total = Number(totalResult.rows?.[0]?.total || 0);
+
+  const listResult = await query(
+    `SELECT
+        le.id,
+        le.code,
+        le.name,
+        le.country_id,
+        le.functional_currency_code,
+        le.status
+     FROM legal_entities le
+     WHERE ${whereSql}
+     ORDER BY le.code ASC, le.id ASC
+     LIMIT ${safeLimit} OFFSET ${safeOffset}`,
+    params
+  );
+
+  return {
+    rows: (listResult.rows || []).map((row) => ({
+      id: parsePositiveInt(row.id),
+      code: String(row.code || "").trim(),
+      name: String(row.name || "").trim(),
+      countryId: parsePositiveInt(row.country_id),
+      functionalCurrencyCode: asUpper(row.functional_currency_code),
+      status: asUpper(row.status),
+    })),
+    total,
+    limit: safeLimit,
+    offset: safeOffset,
+  };
+}
+
+export async function listRevenueLookupFiscalPeriods({
+  req,
+  tenantId,
+  filters,
+  assertScopeAccess,
+}) {
+  assertScopeAccess(req, "legal_entity", filters.legalEntityId, "legalEntityId");
+  await assertLegalEntityExists({
+    tenantId,
+    legalEntityId: filters.legalEntityId,
+  });
+
+  const params = [tenantId, filters.legalEntityId];
+  const conditions = ["b.tenant_id = ?", "b.legal_entity_id = ?"];
+  if (filters.fiscalYear) {
+    conditions.push("fp.fiscal_year = ?");
+    params.push(filters.fiscalYear);
+  }
+  const whereSql = conditions.join(" AND ");
+  const safeLimit = Number.isInteger(filters.limit) && filters.limit > 0 ? filters.limit : 200;
+  const safeOffset =
+    Number.isInteger(filters.offset) && filters.offset >= 0 ? filters.offset : 0;
+
+  const totalResult = await query(
+    `SELECT COUNT(*) AS total
+     FROM (
+       SELECT fp.id
+       FROM books b
+       JOIN fiscal_periods fp ON fp.calendar_id = b.calendar_id
+       WHERE ${whereSql}
+       GROUP BY fp.id
+     ) scoped_periods`,
+    params
+  );
+  const total = Number(totalResult.rows?.[0]?.total || 0);
+
+  const listResult = await query(
+    `SELECT
+        fp.id,
+        fp.calendar_id,
+        fp.fiscal_year,
+        fp.period_no,
+        fp.period_name,
+        fp.start_date,
+        fp.end_date,
+        fp.is_adjustment,
+        COUNT(DISTINCT b.id) AS book_count
+     FROM books b
+     JOIN fiscal_periods fp ON fp.calendar_id = b.calendar_id
+     WHERE ${whereSql}
+     GROUP BY
+       fp.id,
+       fp.calendar_id,
+       fp.fiscal_year,
+       fp.period_no,
+       fp.period_name,
+       fp.start_date,
+       fp.end_date,
+       fp.is_adjustment
+     ORDER BY fp.fiscal_year DESC, fp.period_no DESC, fp.is_adjustment ASC
+     LIMIT ${safeLimit} OFFSET ${safeOffset}`,
+    params
+  );
+
+  return {
+    rows: (listResult.rows || []).map((row) => ({
+      id: parsePositiveInt(row.id),
+      calendarId: parsePositiveInt(row.calendar_id),
+      fiscalYear: Number(row.fiscal_year || 0),
+      periodNo: Number(row.period_no || 0),
+      periodName: String(row.period_name || "").trim(),
+      startDate: toDateOnlyString(row.start_date, "startDate"),
+      endDate: toDateOnlyString(row.end_date, "endDate"),
+      isAdjustment: toBoolean(row.is_adjustment),
+      bookCount: Number(row.book_count || 0),
+    })),
+    total,
+    limit: safeLimit,
+    offset: safeOffset,
+  };
+}
+
+export async function getRevenuePostingMappingSetupStatus({
+  req,
+  tenantId,
+  filters,
+  assertScopeAccess,
+}) {
+  assertScopeAccess(req, "legal_entity", filters.legalEntityId, "legalEntityId");
+  await assertLegalEntityExists({
+    tenantId,
+    legalEntityId: filters.legalEntityId,
+  });
+
+  const requestedFamilies = filters.accountFamily
+    ? [
+        assertPostingFamilySupported(
+          filters.accountFamily,
+          PR17_POSTABLE_FAMILIES,
+          "posting mapping setup check"
+        ),
+      ]
+    : Array.from(PR17_POSTABLE_FAMILIES);
+
+  const requiredPurposeCodes = Array.from(
+    new Set(
+      requestedFamilies.flatMap((family) =>
+        Array.isArray(PURPOSE_CODES_BY_FAMILY[family]) ? PURPOSE_CODES_BY_FAMILY[family] : []
+      )
+    )
+  );
+
+  if (requiredPurposeCodes.length === 0) {
+    return {
+      legalEntityId: filters.legalEntityId,
+      accountFamily: filters.accountFamily || null,
+      ready: true,
+      families: [],
+    };
+  }
+
+  const placeholders = requiredPurposeCodes.map(() => "?").join(", ");
+  const result = await query(
+    `SELECT
+        jpa.purpose_code,
+        a.id AS account_id,
+        a.code AS account_code,
+        a.name AS account_name,
+        a.allow_posting,
+        a.is_active,
+        c.scope AS coa_scope,
+        c.legal_entity_id AS coa_legal_entity_id
+     FROM journal_purpose_accounts jpa
+     LEFT JOIN accounts a ON a.id = jpa.account_id
+     LEFT JOIN charts_of_accounts c ON c.id = a.coa_id
+     WHERE jpa.tenant_id = ?
+       AND jpa.legal_entity_id = ?
+       AND jpa.purpose_code IN (${placeholders})`,
+    [tenantId, filters.legalEntityId, ...requiredPurposeCodes]
+  );
+
+  const mappingByPurpose = new Map(
+    (result.rows || []).map((row) => [asUpper(row.purpose_code), row])
+  );
+
+  const families = requestedFamilies.map((family) => {
+    const familyPurposeCodes = PURPOSE_CODES_BY_FAMILY[family] || [];
+    const purposeMappings = familyPurposeCodes.map((purposeCode) => {
+      const row = mappingByPurpose.get(asUpper(purposeCode));
+      const accountId = parsePositiveInt(row?.account_id);
+      const allowPosting = toBoolean(row?.allow_posting);
+      const isActive = toBoolean(row?.is_active);
+      const coaScope = asUpper(row?.coa_scope);
+      const coaLegalEntityId = parsePositiveInt(row?.coa_legal_entity_id);
+
+      let status = "READY";
+      let issue = null;
+      if (!row || !accountId) {
+        status = "MISSING";
+        issue = "No mapping row found";
+      } else if (!isActive) {
+        status = "INVALID";
+        issue = "Mapped account is inactive";
+      } else if (!allowPosting) {
+        status = "INVALID";
+        issue = "Mapped account does not allow posting";
+      } else if (coaScope !== "LEGAL_ENTITY" || coaLegalEntityId !== filters.legalEntityId) {
+        status = "INVALID";
+        issue = "Mapped account is outside legal-entity chart scope";
+      }
+
+      return {
+        purposeCode,
+        status,
+        issue,
+        accountId: accountId || null,
+        accountCode: String(row?.account_code || "").trim() || null,
+        accountName: String(row?.account_name || "").trim() || null,
+      };
+    });
+
+    const missingPurposeCodes = purposeMappings
+      .filter((mapping) => mapping.status !== "READY")
+      .map((mapping) => mapping.purposeCode);
+
+    return {
+      accountFamily: family,
+      ready: missingPurposeCodes.length === 0,
+      missingPurposeCodes,
+      purposeMappings,
+    };
+  });
+
+  return {
+    legalEntityId: filters.legalEntityId,
+    accountFamily: filters.accountFamily || null,
+    ready: families.every((family) => family.ready),
+    families,
+  };
+}
+
 export async function listRevenueRecognitionSchedules({
   req,
   tenantId,

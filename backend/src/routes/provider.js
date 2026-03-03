@@ -213,6 +213,21 @@ function normalizeCurrencyCode(value, label = "defaultCurrencyCode") {
   return normalized;
 }
 
+function normalizeMinorUnits(value, label = "minorUnits", defaultValue = null) {
+  if (value === undefined || value === null || value === "") {
+    if (defaultValue !== null) {
+      return defaultValue;
+    }
+    throw badRequest(`${label} is required`);
+  }
+
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 0 || parsed > 9) {
+    throw badRequest(`${label} must be an integer between 0 and 9`);
+  }
+  return parsed;
+}
+
 function mapCurrencyRow(row) {
   return {
     code: String(row?.code || "").toUpperCase() || null,
@@ -625,6 +640,101 @@ router.get(
 
     return res.json({
       rows: (result.rows || []).map((row) => mapCurrencyRow(row)),
+    });
+  })
+);
+
+router.post(
+  "/currencies",
+  requireProviderAuth,
+  asyncHandler(async (req, res) => {
+    await requireProviderAdminRecord(req.providerAdmin.providerAdminId);
+    assertRequiredFields(req.body, ["code", "name"]);
+
+    const code = normalizeCurrencyCode(req.body.code, "code");
+    const name = normalizeName(req.body.name, "name", 100);
+    const minorUnits = normalizeMinorUnits(req.body.minorUnits, "minorUnits", 2);
+
+    const duplicateResult = await query(
+      `SELECT code
+       FROM currencies
+       WHERE code = ?
+       LIMIT 1`,
+      [code]
+    );
+    if (duplicateResult.rows[0]) {
+      throw badRequest("Currency code already exists");
+    }
+
+    await query(
+      `INSERT INTO currencies (code, name, minor_units)
+       VALUES (?, ?, ?)`,
+      [code, name, minorUnits]
+    );
+
+    const createdResult = await query(
+      `SELECT code, name, minor_units
+       FROM currencies
+       WHERE code = ?
+       LIMIT 1`,
+      [code]
+    );
+
+    return res.status(201).json({
+      ok: true,
+      row: mapCurrencyRow(createdResult.rows[0]),
+      createdByProviderAdminId: req.providerAdmin.providerAdminId,
+    });
+  })
+);
+
+router.patch(
+  "/currencies/:currencyCode",
+  requireProviderAuth,
+  asyncHandler(async (req, res) => {
+    await requireProviderAdminRecord(req.providerAdmin.providerAdminId);
+
+    const currencyCode = normalizeCurrencyCode(req.params.currencyCode, "currencyCode");
+    const hasName = req.body?.name !== undefined;
+    const hasMinorUnits = req.body?.minorUnits !== undefined;
+    if (!hasName && !hasMinorUnits) {
+      throw badRequest("At least one of name or minorUnits is required");
+    }
+
+    const updates = [];
+    const params = [];
+    if (hasName) {
+      updates.push("name = ?");
+      params.push(normalizeName(req.body.name, "name", 100));
+    }
+    if (hasMinorUnits) {
+      updates.push("minor_units = ?");
+      params.push(normalizeMinorUnits(req.body.minorUnits, "minorUnits"));
+    }
+
+    params.push(currencyCode);
+    const updateResult = await query(
+      `UPDATE currencies
+       SET ${updates.join(", ")}
+       WHERE code = ?`,
+      params
+    );
+    if (Number(updateResult.rows.affectedRows || 0) === 0) {
+      throw badRequest("currencyCode not found");
+    }
+
+    const rowResult = await query(
+      `SELECT code, name, minor_units
+       FROM currencies
+       WHERE code = ?
+       LIMIT 1`,
+      [currencyCode]
+    );
+
+    return res.json({
+      ok: true,
+      row: mapCurrencyRow(rowResult.rows[0]),
+      updatedByProviderAdminId: req.providerAdmin.providerAdminId,
     });
   })
 );

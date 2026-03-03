@@ -30,8 +30,10 @@ export function resolveCounterpartyAccountPickerGates(permissionCodes = []) {
     : [];
   const codeSet = new Set(codes);
   const canReadGlAccounts = codeSet.has("gl.account.read");
+  const canUpsertGlAccounts = codeSet.has("gl.account.upsert");
   return {
     canReadGlAccounts,
+    canUpsertGlAccounts,
     shouldFetchGlAccounts: canReadGlAccounts,
     showAccountPickers: canReadGlAccounts,
   };

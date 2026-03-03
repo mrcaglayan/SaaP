@@ -24,12 +24,13 @@ function parseDbBoolean(value) {
   return value === true || value === 1 || value === "1";
 }
 
-export function assertRegisterOperationalConfig(
+export async function assertRegisterOperationalConfig(
   register,
   {
     requireActive = true,
     requireCashControlledAccount = true,
     label = "Cash register",
+    runQuery,
   } = {}
 ) {
   if (!register) {
@@ -46,7 +47,12 @@ export function assertRegisterOperationalConfig(
   if (!parseDbBoolean(register.account_allow_posting)) {
     throw badRequest("Cash register account must allow posting");
   }
-  if (parsePositiveInt(register.account_parent_account_id)) {
+  const accountId = parsePositiveInt(register.account_id);
+  if (!accountId) {
+    throw badRequest("Cash register account configuration is invalid");
+  }
+  const children = await countChildAccounts({ accountId, runQuery });
+  if (children > 0) {
     throw badRequest("Cash register account must be a leaf account");
   }
 

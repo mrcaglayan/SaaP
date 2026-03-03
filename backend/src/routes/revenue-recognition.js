@@ -4,6 +4,9 @@ import { assertScopeAccess, buildScopeFilter, requirePermission } from "../middl
 import {
   parseRevenueAccrualActionInput,
   parseRevenueAccrualGenerateInput,
+  parseRevenueLookupFiscalPeriodFilters,
+  parseRevenueLookupLegalEntityFilters,
+  parseRevenuePostingMappingSetupFilters,
   parseRevenueReportFilters,
   parseRevenueRunActionInput,
   parseRevenueRunCreateInput,
@@ -15,10 +18,13 @@ import {
   generateRevenueAccrual,
   createRevenueRecognitionRun,
   generateRevenueRecognitionSchedule,
+  getRevenuePostingMappingSetupStatus,
   getRevenueAccrualSplitReport,
   getRevenueDeferredRevenueSplitReport,
   getRevenueFutureYearRollforwardReport,
   getRevenuePrepaidExpenseSplitReport,
+  listRevenueLookupFiscalPeriods,
+  listRevenueLookupLegalEntities,
   listRevenueRecognitionRuns,
   listRevenueRecognitionSchedules,
   postRevenueRecognitionRun,
@@ -45,6 +51,65 @@ function resolveLegalEntityScopeFromBody(req) {
   }
   return { scopeType: "LEGAL_ENTITY", scopeId: legalEntityId };
 }
+
+router.get(
+  "/lookups/legal-entities",
+  requirePermission("revenue.schedule.read"),
+  asyncHandler(async (req, res) => {
+    const filters = parseRevenueLookupLegalEntityFilters(req);
+    const result = await listRevenueLookupLegalEntities({
+      req,
+      tenantId: filters.tenantId,
+      filters,
+      buildScopeFilter,
+    });
+    return res.json({
+      tenantId: filters.tenantId,
+      ...result,
+    });
+  })
+);
+
+router.get(
+  "/lookups/fiscal-periods",
+  requirePermission("revenue.schedule.read", {
+    resolveScope: async (req) => resolveLegalEntityScopeFromQuery(req),
+  }),
+  asyncHandler(async (req, res) => {
+    const filters = parseRevenueLookupFiscalPeriodFilters(req);
+    const result = await listRevenueLookupFiscalPeriods({
+      req,
+      tenantId: filters.tenantId,
+      filters,
+      assertScopeAccess,
+    });
+    return res.json({
+      tenantId: filters.tenantId,
+      ...result,
+    });
+  })
+);
+
+router.get(
+  "/setup/posting-mappings",
+  requirePermission("revenue.schedule.read", {
+    resolveScope: async (req) => resolveLegalEntityScopeFromQuery(req),
+  }),
+  asyncHandler(async (req, res) => {
+    const filters = parseRevenuePostingMappingSetupFilters(req);
+    const result = await getRevenuePostingMappingSetupStatus({
+      req,
+      tenantId: filters.tenantId,
+      filters,
+      assertScopeAccess,
+    });
+
+    return res.json({
+      tenantId: filters.tenantId,
+      ...result,
+    });
+  })
+);
 
 router.get(
   "/schedules",

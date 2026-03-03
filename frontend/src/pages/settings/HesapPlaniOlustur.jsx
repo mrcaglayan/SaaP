@@ -1,9 +1,7 @@
-import { useI18n } from "../../i18n/useI18n.js";
+import GlSetupPage from "./GlSetupPage";
 
 function HesapPlaniOlustur() {
-  const { t } = useI18n();
-
-  return <div>{t("chartOfAccountsCreate.title")}</div>;
+  return <GlSetupPage mode="accounts" />;
 }
 
 export default HesapPlaniOlustur;

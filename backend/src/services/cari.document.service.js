@@ -718,11 +718,103 @@ async function resolveCounterpartyControlAccountOverride({
   };
 }
 
+async function resolveCariOffsetAccountOverride({
+  tenantId,
+  legalEntityId,
+  offsetAccountId = null,
+  offsetAccountCode = null,
+  runQuery = query,
+}) {
+  const normalizedOffsetAccountId = parsePositiveInt(offsetAccountId);
+  const normalizedOffsetAccountCode = String(offsetAccountCode || "").trim();
+
+  if (!normalizedOffsetAccountId && !normalizedOffsetAccountCode) {
+    return null;
+  }
+  if (normalizedOffsetAccountId && normalizedOffsetAccountCode) {
+    throw badRequest("Provide either offsetAccountId or offsetAccountCode, not both");
+  }
+
+  let account = null;
+  if (normalizedOffsetAccountId) {
+    await assertAccountBelongsToTenant(tenantId, normalizedOffsetAccountId, "offsetAccountId", {
+      runQuery,
+    });
+
+    const result = await runQuery(
+      `SELECT
+          a.id,
+          a.code,
+          a.is_active,
+          a.allow_posting,
+          c.scope AS coa_scope,
+          c.legal_entity_id AS coa_legal_entity_id
+       FROM accounts a
+       JOIN charts_of_accounts c ON c.id = a.coa_id
+       WHERE a.id = ?
+         AND c.tenant_id = ?
+       LIMIT 1`,
+      [normalizedOffsetAccountId, tenantId]
+    );
+    account = result.rows?.[0] || null;
+    if (!account) {
+      throw badRequest("offsetAccountId not found for tenant");
+    }
+  } else {
+    const result = await runQuery(
+      `SELECT
+          a.id,
+          a.code,
+          a.is_active,
+          a.allow_posting,
+          c.scope AS coa_scope,
+          c.legal_entity_id AS coa_legal_entity_id
+       FROM accounts a
+       JOIN charts_of_accounts c ON c.id = a.coa_id
+       WHERE c.tenant_id = ?
+         AND c.scope = 'LEGAL_ENTITY'
+         AND c.legal_entity_id = ?
+         AND UPPER(a.code) = UPPER(?)
+       ORDER BY a.id ASC
+       LIMIT 2`,
+      [tenantId, legalEntityId, normalizedOffsetAccountCode]
+    );
+    const rows = result.rows || [];
+    if (rows.length === 0) {
+      throw badRequest("offsetAccountCode not found in legalEntity chart");
+    }
+    if (rows.length > 1) {
+      throw badRequest("offsetAccountCode is ambiguous for legalEntity");
+    }
+    account = rows[0];
+  }
+
+  if (normalizeUpperText(account.coa_scope) !== "LEGAL_ENTITY") {
+    throw badRequest("Offset account override must belong to a LEGAL_ENTITY chart");
+  }
+  if (parsePositiveInt(account.coa_legal_entity_id) !== parsePositiveInt(legalEntityId)) {
+    throw badRequest("Offset account override must belong to legalEntityId");
+  }
+  if (!(account.is_active === true || Number(account.is_active) === 1)) {
+    throw badRequest("Offset account override must reference an ACTIVE account");
+  }
+  if (!(account.allow_posting === true || Number(account.allow_posting) === 1)) {
+    throw badRequest("Offset account override must reference a postable account");
+  }
+
+  return {
+    id: parsePositiveInt(account.id),
+    code: String(account.code || ""),
+  };
+}
+
 async function resolveCariPostingAccounts({
   tenantId,
   legalEntityId,
   direction,
   counterpartyRow = null,
+  offsetAccountId = null,
+  offsetAccountCode = null,
   runQuery = query,
 }) {
   const purposeDefinition = CARI_POSTING_PURPOSES[normalizeUpperText(direction)];
@@ -761,10 +853,10 @@ async function resolveCariPostingAccounts({
   );
 
   const control = byPurpose.get(purposeDefinition.control);
-  const offset = byPurpose.get(purposeDefinition.offset);
-  if (!control?.id || !offset?.id) {
+  const mappedOffset = byPurpose.get(purposeDefinition.offset);
+  if (!control?.id) {
     throw badRequest(
-      `Setup required: configure journal_purpose_accounts for ${purposeDefinition.control} and ${purposeDefinition.offset}`
+      `Setup required: configure journal_purpose_accounts for ${purposeDefinition.control}`
     );
   }
 
@@ -782,15 +874,34 @@ async function resolveCariPostingAccounts({
       }
     : control;
 
-  if (effectiveControl.id === offset.id) {
+  const overrideOffset = await resolveCariOffsetAccountOverride({
+    tenantId,
+    legalEntityId,
+    offsetAccountId,
+    offsetAccountCode,
+    runQuery,
+  });
+  const effectiveOffset = overrideOffset?.id
+    ? {
+        id: overrideOffset.id,
+        code: overrideOffset.code || null,
+      }
+    : mappedOffset;
+  if (!effectiveOffset?.id) {
+    throw badRequest(
+      `Setup required: configure journal_purpose_accounts for ${purposeDefinition.offset} or provide offsetAccountId/offsetAccountCode`
+    );
+  }
+
+  if (effectiveControl.id === effectiveOffset.id) {
     throw badRequest("Cari control and offset accounts must be different");
   }
 
   return {
     controlAccountId: effectiveControl.id,
-    offsetAccountId: offset.id,
+    offsetAccountId: effectiveOffset.id,
     controlAccountCode: effectiveControl.code || null,
-    offsetAccountCode: offset.code || null,
+    offsetAccountCode: effectiveOffset.code || null,
   };
 }
 
@@ -1883,6 +1994,8 @@ export async function postCariDocumentById({
       legalEntityId: lockedLegalEntityId,
       direction,
       counterpartyRow: counterparty,
+      offsetAccountId: payload.offsetAccountId,
+      offsetAccountCode: payload.offsetAccountCode,
       runQuery: tx.query,
     });
 
@@ -2067,6 +2180,11 @@ export async function postCariDocumentById({
         documentNo: row.document_no,
         postedJournalEntryId: journalResult.journalEntryId,
         subledgerReferenceNo,
+        controlAccountCode: postingAccounts.controlAccountCode || null,
+        offsetAccountCode: postingAccounts.offsetAccountCode || null,
+        offsetAccountOverrideProvided: Boolean(
+          payload.offsetAccountId || String(payload.offsetAccountCode || "").trim()
+        ),
         fxRate: fxPolicy.effectiveFxRate,
         tax: taxAugmentation.summary,
       },

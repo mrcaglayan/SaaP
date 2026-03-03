@@ -1004,13 +1004,15 @@ export async function initiateCashTransitTransfer({
         throw badRequest("targetRegisterId not found for tenant");
       }
 
-      assertRegisterOperationalConfig(sourceRegister, {
+      await assertRegisterOperationalConfig(sourceRegister, {
         requireActive: true,
         requireCashControlledAccount: true,
+        runQuery: tx.query,
       });
-      assertRegisterOperationalConfig(targetRegister, {
+      await assertRegisterOperationalConfig(targetRegister, {
         requireActive: true,
         requireCashControlledAccount: true,
+        runQuery: tx.query,
       });
 
       assertScopeAccess(req, "legal_entity", sourceRegister.legal_entity_id, "registerId");
@@ -1261,9 +1263,10 @@ export async function receiveCashTransitTransferById({
       if (!targetRegister) {
         throw badRequest("Target register not found for transit transfer");
       }
-      assertRegisterOperationalConfig(targetRegister, {
+      await assertRegisterOperationalConfig(targetRegister, {
         requireActive: true,
         requireCashControlledAccount: true,
+        runQuery: tx.query,
       });
 
       const receiveTxnIdempotencyKey = buildDerivedIdempotencyKey(
@@ -1482,7 +1485,7 @@ export async function createCashTransaction({
   if (!register) {
     throw badRequest("registerId not found for tenant");
   }
-  assertRegisterOperationalConfig(register, {
+  await assertRegisterOperationalConfig(register, {
     requireActive: true,
     requireCashControlledAccount: true,
   });

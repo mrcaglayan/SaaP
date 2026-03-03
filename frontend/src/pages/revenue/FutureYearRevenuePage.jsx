@@ -5,7 +5,10 @@ import {
   getRevenueAccrualSplitReport,
   getRevenueDeferredRevenueSplitReport,
   getRevenueFutureYearRollforwardReport,
+  getRevenuePostingMappingSetup,
   getRevenuePrepaidExpenseSplitReport,
+  listRevenueLookupFiscalPeriods,
+  listRevenueLookupLegalEntities,
   listRevenueRecognitionRuns,
   listRevenueRecognitionSchedules,
   postRevenueRecognitionRun,
@@ -52,6 +55,69 @@ function findAccrualFamilyRow(report, family) {
   return rows.find((row) => String(row?.accountFamily || "").toUpperCase() === family) || null;
 }
 
+function toUpper(value) {
+  return String(value || "")
+    .trim()
+    .toUpperCase();
+}
+
+function toPositiveInt(value) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function buildLegalEntityLabel(row) {
+  const code = String(row?.code || "").trim();
+  const name = String(row?.name || "").trim();
+  if (code && name) {
+    return `${code} - ${name}`;
+  }
+  return code || name || String(row?.id || "");
+}
+
+function buildFiscalPeriodLabel(row) {
+  const fiscalYear = Number(row?.fiscalYear || 0);
+  const periodNo = Number(row?.periodNo || 0);
+  const periodName = String(row?.periodName || "").trim();
+  const periodCode =
+    fiscalYear > 0 && periodNo > 0 ? `${fiscalYear}-P${String(periodNo).padStart(2, "0")}` : "";
+  const dateWindow =
+    row?.startDate && row?.endDate ? `${row.startDate}..${row.endDate}` : row?.startDate || row?.endDate || "";
+  return [periodCode, periodName, dateWindow].filter(Boolean).join(" | ") || String(row?.id || "");
+}
+
+function buildPostingSetupKey(legalEntityId, accountFamily) {
+  const parsedLegalEntityId = toPositiveInt(legalEntityId);
+  const normalizedFamily = toUpper(accountFamily);
+  if (!parsedLegalEntityId || !normalizedFamily) {
+    return "";
+  }
+  return `${parsedLegalEntityId}:${normalizedFamily}`;
+}
+
+function collectMissingPurposeCodes(setupStatus) {
+  const codes = new Set();
+  for (const familyRow of setupStatus?.families || []) {
+    for (const code of familyRow?.missingPurposeCodes || []) {
+      if (code) {
+        codes.add(String(code));
+      }
+    }
+  }
+  return Array.from(codes.values());
+}
+
+function buildPostingSetupErrorMessage(setupStatus) {
+  if (!setupStatus || setupStatus.ready) {
+    return "";
+  }
+  const missingCodes = collectMissingPurposeCodes(setupStatus);
+  if (missingCodes.length === 0) {
+    return "Setup required: posting mappings are incomplete.";
+  }
+  return `Setup required: missing or invalid purpose mappings (${missingCodes.join(", ")}).`;
+}
+
 export default function FutureYearRevenuePage() {
   const { permissions } = useAuth();
   const gates = useMemo(() => resolveRevenueFetchGates(permissions), [permissions]);
@@ -88,6 +154,14 @@ export default function FutureYearRevenuePage() {
   const [deferredSplitReport, setDeferredSplitReport] = useState(null);
   const [accrualSplitReport, setAccrualSplitReport] = useState(null);
   const [prepaidSplitReport, setPrepaidSplitReport] = useState(null);
+  const [lookupLoading, setLookupLoading] = useState(false);
+  const [lookupError, setLookupError] = useState("");
+  const [legalEntityOptions, setLegalEntityOptions] = useState([]);
+  const [fiscalPeriodsByLegalEntityId, setFiscalPeriodsByLegalEntityId] = useState({});
+  const [periodLookupLoadingByEntityId, setPeriodLookupLoadingByEntityId] = useState({});
+  const [postingSetupByKey, setPostingSetupByKey] = useState({});
+  const [postingSetupLoadingByKey, setPostingSetupLoadingByKey] = useState({});
+  const [postingSetupErrorByKey, setPostingSetupErrorByKey] = useState({});
 
   const selectedRun = useMemo(
     () => runRows.find((row) => Number(row?.id || 0) === Number(selectedRunId || 0)) || null,
@@ -104,6 +178,45 @@ export default function FutureYearRevenuePage() {
   const rollforwardSummary = rollforwardReport?.summary || {};
   const accrRevRow = findAccrualFamilyRow(accrualSplitReport, "ACCRUED_REVENUE");
   const accrExpRow = findAccrualFamilyRow(accrualSplitReport, "ACCRUED_EXPENSE");
+
+  const selectedEntityIds = useMemo(() => {
+    const set = new Set();
+    for (const value of [
+      scheduleQuery.legalEntityId,
+      runQuery.legalEntityId,
+      scheduleForm.legalEntityId,
+      runForm.legalEntityId,
+      reportFilters.legalEntityId,
+      selectedRun?.legalEntityId,
+    ]) {
+      const parsed = toPositiveInt(value);
+      if (parsed) {
+        set.add(parsed);
+      }
+    }
+    return Array.from(set.values());
+  }, [
+    scheduleQuery.legalEntityId,
+    runQuery.legalEntityId,
+    scheduleForm.legalEntityId,
+    runForm.legalEntityId,
+    reportFilters.legalEntityId,
+    selectedRun?.legalEntityId,
+  ]);
+
+  const scheduleSetupKey = buildPostingSetupKey(
+    scheduleForm.legalEntityId,
+    scheduleForm.accountFamily
+  );
+  const runSetupKey = buildPostingSetupKey(runForm.legalEntityId, runForm.accountFamily);
+  const scheduleSetupStatus = scheduleSetupKey ? postingSetupByKey[scheduleSetupKey] : null;
+  const runSetupStatus = runSetupKey ? postingSetupByKey[runSetupKey] : null;
+  const scheduleSetupLoading = Boolean(
+    scheduleSetupKey && postingSetupLoadingByKey[scheduleSetupKey]
+  );
+  const runSetupLoading = Boolean(runSetupKey && postingSetupLoadingByKey[runSetupKey]);
+  const scheduleSetupError = scheduleSetupKey ? postingSetupErrorByKey[scheduleSetupKey] || "" : "";
+  const runSetupError = runSetupKey ? postingSetupErrorByKey[runSetupKey] || "" : "";
 
   async function loadSchedules(nextQuery = scheduleQuery) {
     if (!gates.shouldFetchSchedules) {
@@ -147,6 +260,92 @@ export default function FutureYearRevenuePage() {
     }
   }
 
+  function getFiscalPeriodOptions(legalEntityId) {
+    const parsedLegalEntityId = toPositiveInt(legalEntityId);
+    if (!parsedLegalEntityId) {
+      return [];
+    }
+    return fiscalPeriodsByLegalEntityId[String(parsedLegalEntityId)] || [];
+  }
+
+  function isFiscalPeriodLookupLoading(legalEntityId) {
+    const parsedLegalEntityId = toPositiveInt(legalEntityId);
+    if (!parsedLegalEntityId) {
+      return false;
+    }
+    return Boolean(periodLookupLoadingByEntityId[String(parsedLegalEntityId)]);
+  }
+
+  async function ensureFiscalPeriods(legalEntityId) {
+    const parsedLegalEntityId = toPositiveInt(legalEntityId);
+    if (!parsedLegalEntityId) {
+      return [];
+    }
+
+    const mapKey = String(parsedLegalEntityId);
+    const existing = fiscalPeriodsByLegalEntityId[mapKey];
+    if (Array.isArray(existing)) {
+      return existing;
+    }
+    if (periodLookupLoadingByEntityId[mapKey]) {
+      return [];
+    }
+
+    setPeriodLookupLoadingByEntityId((prev) => ({ ...prev, [mapKey]: true }));
+    try {
+      const response = await listRevenueLookupFiscalPeriods({
+        legalEntityId: parsedLegalEntityId,
+        limit: 500,
+        offset: 0,
+      });
+      const rows = Array.isArray(response?.rows) ? response.rows : [];
+      setFiscalPeriodsByLegalEntityId((prev) => ({ ...prev, [mapKey]: rows }));
+      return rows;
+    } catch (error) {
+      setLookupError(normalizeApiError(error, "Failed to load fiscal period lookup."));
+      setFiscalPeriodsByLegalEntityId((prev) => ({ ...prev, [mapKey]: [] }));
+      return [];
+    } finally {
+      setPeriodLookupLoadingByEntityId((prev) => ({ ...prev, [mapKey]: false }));
+    }
+  }
+
+  async function ensurePostingSetup(legalEntityId, accountFamily, forceReload = false) {
+    const parsedLegalEntityId = toPositiveInt(legalEntityId);
+    const normalizedFamily = toUpper(accountFamily);
+    if (!parsedLegalEntityId || !REVENUE_ACCOUNT_FAMILIES.includes(normalizedFamily)) {
+      return null;
+    }
+
+    const key = buildPostingSetupKey(parsedLegalEntityId, normalizedFamily);
+    if (!key) {
+      return null;
+    }
+    if (!forceReload && postingSetupByKey[key]) {
+      return postingSetupByKey[key];
+    }
+    if (postingSetupLoadingByKey[key]) {
+      return postingSetupByKey[key] || null;
+    }
+
+    setPostingSetupLoadingByKey((prev) => ({ ...prev, [key]: true }));
+    setPostingSetupErrorByKey((prev) => ({ ...prev, [key]: "" }));
+    try {
+      const response = await getRevenuePostingMappingSetup({
+        legalEntityId: parsedLegalEntityId,
+        accountFamily: normalizedFamily,
+      });
+      setPostingSetupByKey((prev) => ({ ...prev, [key]: response || null }));
+      return response || null;
+    } catch (error) {
+      const message = normalizeApiError(error, "Failed to check posting setup.");
+      setPostingSetupErrorByKey((prev) => ({ ...prev, [key]: message }));
+      return null;
+    } finally {
+      setPostingSetupLoadingByKey((prev) => ({ ...prev, [key]: false }));
+    }
+  }
+
   useEffect(() => {
     if (!gates.shouldFetchSchedules) {
       setScheduleRows([]);
@@ -167,6 +366,78 @@ export default function FutureYearRevenuePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gates.shouldFetchRuns]);
 
+  useEffect(() => {
+    let active = true;
+    async function loadLegalEntityLookups() {
+      setLookupLoading(true);
+      setLookupError("");
+      try {
+        const response = await listRevenueLookupLegalEntities({
+          limit: 500,
+          offset: 0,
+        });
+        if (!active) {
+          return;
+        }
+        setLegalEntityOptions(Array.isArray(response?.rows) ? response.rows : []);
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+        setLegalEntityOptions([]);
+        setLookupError(normalizeApiError(error, "Failed to load legal entity lookup."));
+      } finally {
+        if (active) {
+          setLookupLoading(false);
+        }
+      }
+    }
+
+    if (
+      gates.canReadSchedules ||
+      gates.canReadRuns ||
+      gates.canReadReports ||
+      gates.canGenerateSchedule ||
+      gates.canCreateRun
+    ) {
+      void loadLegalEntityLookups();
+    }
+
+    return () => {
+      active = false;
+    };
+  }, [
+    gates.canReadSchedules,
+    gates.canReadRuns,
+    gates.canReadReports,
+    gates.canGenerateSchedule,
+    gates.canCreateRun,
+  ]);
+
+  useEffect(() => {
+    for (const legalEntityId of selectedEntityIds) {
+      const key = String(legalEntityId);
+      if (Array.isArray(fiscalPeriodsByLegalEntityId[key])) {
+        continue;
+      }
+      if (periodLookupLoadingByEntityId[key]) {
+        continue;
+      }
+      void ensureFiscalPeriods(legalEntityId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedEntityIds, fiscalPeriodsByLegalEntityId, periodLookupLoadingByEntityId]);
+
+  useEffect(() => {
+    void ensurePostingSetup(scheduleForm.legalEntityId, scheduleForm.accountFamily, false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scheduleForm.legalEntityId, scheduleForm.accountFamily]);
+
+  useEffect(() => {
+    void ensurePostingSetup(runForm.legalEntityId, runForm.accountFamily, false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runForm.legalEntityId, runForm.accountFamily]);
+
   async function handleGenerateSchedule(event) {
     event.preventDefault();
     if (!gates.canGenerateSchedule) {
@@ -181,6 +452,20 @@ export default function FutureYearRevenuePage() {
       const { payload, errors } = validateRevenueScheduleForm(scheduleForm);
       if (errors.length > 0) {
         setSaveError(errors.join(" "));
+        return;
+      }
+      const setupStatus = await ensurePostingSetup(
+        payload.legalEntityId,
+        payload.accountFamily,
+        true
+      );
+      if (!setupStatus) {
+        setSaveError("Could not verify posting mappings. Please retry.");
+        return;
+      }
+      const setupErrorText = buildPostingSetupErrorMessage(setupStatus);
+      if (setupErrorText) {
+        setSaveError(setupErrorText);
         return;
       }
       const response = await generateRevenueRecognitionSchedule(payload);
@@ -209,6 +494,20 @@ export default function FutureYearRevenuePage() {
       const { payload, errors } = validateRevenueRunForm(runForm);
       if (errors.length > 0) {
         setSaveError(errors.join(" "));
+        return;
+      }
+      const setupStatus = await ensurePostingSetup(
+        payload.legalEntityId,
+        payload.accountFamily,
+        true
+      );
+      if (!setupStatus) {
+        setSaveError("Could not verify posting mappings. Please retry.");
+        return;
+      }
+      const setupErrorText = buildPostingSetupErrorMessage(setupStatus);
+      if (setupErrorText) {
+        setSaveError(setupErrorText);
         return;
       }
       const response = await createRevenueRecognitionRun(payload);
@@ -297,6 +596,76 @@ export default function FutureYearRevenuePage() {
     }
   }
 
+  function renderLegalEntityField({
+    value,
+    onChange,
+    placeholder = "legalEntityId",
+    allOptionLabel = "",
+  }) {
+    if (legalEntityOptions.length === 0) {
+      return (
+        <input
+          className="rounded border border-slate-300 px-2 py-1 text-sm"
+          placeholder={placeholder}
+          value={value}
+          onChange={onChange}
+        />
+      );
+    }
+    return (
+      <select
+        className="rounded border border-slate-300 px-2 py-1 text-sm"
+        value={value}
+        onChange={onChange}
+      >
+        <option value="">{allOptionLabel || placeholder}</option>
+        {legalEntityOptions.map((row) => (
+          <option key={`le-${row.id}`} value={String(row.id)}>
+            {buildLegalEntityLabel(row)}
+          </option>
+        ))}
+      </select>
+    );
+  }
+
+  function renderFiscalPeriodField({
+    legalEntityId,
+    value,
+    onChange,
+    placeholder = "fiscalPeriodId",
+    allOptionLabel = "",
+  }) {
+    const options = getFiscalPeriodOptions(legalEntityId);
+    const loading = isFiscalPeriodLookupLoading(legalEntityId);
+    if (!toPositiveInt(legalEntityId) || options.length === 0) {
+      return (
+        <input
+          className="rounded border border-slate-300 px-2 py-1 text-sm"
+          placeholder={loading ? "Loading periods..." : placeholder}
+          value={value}
+          onChange={onChange}
+        />
+      );
+    }
+    return (
+      <select
+        className="rounded border border-slate-300 px-2 py-1 text-sm"
+        value={value}
+        onChange={onChange}
+      >
+        <option value="">{allOptionLabel || placeholder}</option>
+        {options.map((row) => (
+          <option key={`fp-${row.id}`} value={String(row.id)}>
+            {buildFiscalPeriodLabel(row)}
+          </option>
+        ))}
+      </select>
+    );
+  }
+
+  const runActionLegalEntityId = toPositiveInt(selectedRun?.legalEntityId);
+  const runActionPeriodOptions = getFiscalPeriodOptions(runActionLegalEntityId);
+
   return (
     <div className="space-y-4">
       <section className="rounded-xl border border-slate-200 bg-white p-4">
@@ -304,6 +673,10 @@ export default function FutureYearRevenuePage() {
         <p className="mt-1 text-sm text-slate-600">
           Periodization split UI for deferred, accrual, prepaid and rollforward reconciliation.
         </p>
+        {lookupLoading ? (
+          <div className="mt-2 text-sm text-slate-500">Loading legal entity and period lookups...</div>
+        ) : null}
+        {lookupError ? <div className="mt-2 text-sm text-amber-700">{lookupError}</div> : null}
         {saveError ? <div className="mt-2 text-sm text-rose-700">{saveError}</div> : null}
         {saveMessage ? <div className="mt-2 text-sm text-emerald-700">{saveMessage}</div> : null}
       </section>
@@ -316,8 +689,23 @@ export default function FutureYearRevenuePage() {
           <>
             {scheduleError ? <div className="mt-2 text-sm text-rose-700">{scheduleError}</div> : null}
             <div className="mt-2 grid gap-2 md:grid-cols-5">
-              <input className="rounded border border-slate-300 px-2 py-1 text-sm" placeholder="legalEntityId" value={scheduleQuery.legalEntityId} onChange={(event) => setScheduleQuery((prev) => ({ ...prev, legalEntityId: event.target.value }))} />
-              <input className="rounded border border-slate-300 px-2 py-1 text-sm" placeholder="fiscalPeriodId" value={scheduleQuery.fiscalPeriodId} onChange={(event) => setScheduleQuery((prev) => ({ ...prev, fiscalPeriodId: event.target.value }))} />
+              {renderLegalEntityField({
+                value: scheduleQuery.legalEntityId,
+                onChange: (event) =>
+                  setScheduleQuery((prev) => ({
+                    ...prev,
+                    legalEntityId: event.target.value,
+                    fiscalPeriodId: "",
+                  })),
+                allOptionLabel: "ALL ENTITIES",
+              })}
+              {renderFiscalPeriodField({
+                legalEntityId: scheduleQuery.legalEntityId,
+                value: scheduleQuery.fiscalPeriodId,
+                onChange: (event) =>
+                  setScheduleQuery((prev) => ({ ...prev, fiscalPeriodId: event.target.value })),
+                allOptionLabel: "ALL PERIODS",
+              })}
               <select className="rounded border border-slate-300 px-2 py-1 text-sm" value={scheduleQuery.accountFamily} onChange={(event) => setScheduleQuery((prev) => ({ ...prev, accountFamily: event.target.value }))}>
                 <option value="">ALL FAMILIES</option>
                 {REVENUE_ACCOUNT_FAMILIES.map((family) => <option key={family} value={family}>{family}</option>)}
@@ -344,17 +732,44 @@ export default function FutureYearRevenuePage() {
         )}
 
         <form className="mt-3 grid gap-2 md:grid-cols-5" onSubmit={handleGenerateSchedule}>
-          <input className="rounded border border-slate-300 px-2 py-1 text-sm" placeholder="legalEntityId" value={scheduleForm.legalEntityId} onChange={(event) => setScheduleForm((prev) => ({ ...prev, legalEntityId: event.target.value }))} />
-          <input className="rounded border border-slate-300 px-2 py-1 text-sm" placeholder="fiscalPeriodId" value={scheduleForm.fiscalPeriodId} onChange={(event) => setScheduleForm((prev) => ({ ...prev, fiscalPeriodId: event.target.value }))} />
+          {renderLegalEntityField({
+            value: scheduleForm.legalEntityId,
+            onChange: (event) =>
+              setScheduleForm((prev) => ({
+                ...prev,
+                legalEntityId: event.target.value,
+                fiscalPeriodId: "",
+              })),
+            placeholder: "Select legalEntityId",
+          })}
+          {renderFiscalPeriodField({
+            legalEntityId: scheduleForm.legalEntityId,
+            value: scheduleForm.fiscalPeriodId,
+            onChange: (event) =>
+              setScheduleForm((prev) => ({ ...prev, fiscalPeriodId: event.target.value })),
+            placeholder: "Select fiscalPeriodId",
+          })}
           <select className="rounded border border-slate-300 px-2 py-1 text-sm" value={scheduleForm.accountFamily} onChange={(event) => setScheduleForm((prev) => ({ ...prev, accountFamily: event.target.value }))}>{REVENUE_ACCOUNT_FAMILIES.map((family) => <option key={`s-${family}`} value={family}>{family}</option>)}</select>
           <input type="date" className="rounded border border-slate-300 px-2 py-1 text-sm" value={scheduleForm.maturityDate} onChange={(event) => setScheduleForm((prev) => ({ ...prev, maturityDate: event.target.value }))} />
-          <button className="rounded bg-cyan-700 px-3 py-1 text-sm text-white disabled:opacity-60" disabled={!gates.canGenerateSchedule || saveLoading === "generateSchedule"}>{saveLoading === "generateSchedule" ? "Generating..." : "Generate Schedule"}</button>
+          <button className="rounded bg-cyan-700 px-3 py-1 text-sm text-white disabled:opacity-60" disabled={!gates.canGenerateSchedule || saveLoading === "generateSchedule" || scheduleSetupLoading}>{saveLoading === "generateSchedule" ? "Generating..." : "Generate Schedule"}</button>
           <input className="rounded border border-slate-300 px-2 py-1 text-sm" placeholder="amountTxn" value={scheduleForm.amountTxn} onChange={(event) => setScheduleForm((prev) => ({ ...prev, amountTxn: event.target.value }))} />
           <input className="rounded border border-slate-300 px-2 py-1 text-sm" placeholder="amountBase" value={scheduleForm.amountBase} onChange={(event) => setScheduleForm((prev) => ({ ...prev, amountBase: event.target.value }))} />
           <input className="rounded border border-slate-300 px-2 py-1 text-sm" placeholder="currencyCode" value={scheduleForm.currencyCode} onChange={(event) => setScheduleForm((prev) => ({ ...prev, currencyCode: event.target.value }))} />
           <input className="rounded border border-slate-300 px-2 py-1 text-sm" placeholder="fxRate" value={scheduleForm.fxRate} onChange={(event) => setScheduleForm((prev) => ({ ...prev, fxRate: event.target.value }))} />
           <input className="rounded border border-slate-300 px-2 py-1 text-sm" placeholder="sourceEventUid (optional)" value={scheduleForm.sourceEventUid} onChange={(event) => setScheduleForm((prev) => ({ ...prev, sourceEventUid: event.target.value }))} />
         </form>
+        <div className="mt-2 rounded border border-slate-200 bg-slate-50 p-2 text-xs text-slate-700">
+          {scheduleSetupLoading ? "Checking posting mappings..." : null}
+          {!scheduleSetupLoading && scheduleSetupError ? (
+            <div className="text-rose-700">{scheduleSetupError}</div>
+          ) : null}
+          {!scheduleSetupLoading && scheduleSetupStatus?.ready ? (
+            <div className="text-emerald-700">Posting mappings are ready for selected family.</div>
+          ) : null}
+          {!scheduleSetupLoading && scheduleSetupStatus && !scheduleSetupStatus.ready ? (
+            <div className="text-rose-700">{buildPostingSetupErrorMessage(scheduleSetupStatus)}</div>
+          ) : null}
+        </div>
       </section>
 
       <section className="rounded-xl border border-slate-200 bg-white p-4">
@@ -365,8 +780,23 @@ export default function FutureYearRevenuePage() {
           <>
             {runError ? <div className="mt-2 text-sm text-rose-700">{runError}</div> : null}
             <div className="mt-2 grid gap-2 md:grid-cols-5">
-              <input className="rounded border border-slate-300 px-2 py-1 text-sm" placeholder="legalEntityId" value={runQuery.legalEntityId} onChange={(event) => setRunQuery((prev) => ({ ...prev, legalEntityId: event.target.value }))} />
-              <input className="rounded border border-slate-300 px-2 py-1 text-sm" placeholder="fiscalPeriodId" value={runQuery.fiscalPeriodId} onChange={(event) => setRunQuery((prev) => ({ ...prev, fiscalPeriodId: event.target.value }))} />
+              {renderLegalEntityField({
+                value: runQuery.legalEntityId,
+                onChange: (event) =>
+                  setRunQuery((prev) => ({
+                    ...prev,
+                    legalEntityId: event.target.value,
+                    fiscalPeriodId: "",
+                  })),
+                allOptionLabel: "ALL ENTITIES",
+              })}
+              {renderFiscalPeriodField({
+                legalEntityId: runQuery.legalEntityId,
+                value: runQuery.fiscalPeriodId,
+                onChange: (event) =>
+                  setRunQuery((prev) => ({ ...prev, fiscalPeriodId: event.target.value })),
+                allOptionLabel: "ALL PERIODS",
+              })}
               <select className="rounded border border-slate-300 px-2 py-1 text-sm" value={runQuery.accountFamily} onChange={(event) => setRunQuery((prev) => ({ ...prev, accountFamily: event.target.value }))}>
                 <option value="">ALL FAMILIES</option>
                 {REVENUE_ACCOUNT_FAMILIES.map((family) => <option key={`rf-${family}`} value={family}>{family}</option>)}
@@ -393,25 +823,98 @@ export default function FutureYearRevenuePage() {
         )}
 
         <form className="mt-3 grid gap-2 md:grid-cols-5" onSubmit={handleCreateRun}>
-          <input className="rounded border border-slate-300 px-2 py-1 text-sm" placeholder="legalEntityId" value={runForm.legalEntityId} onChange={(event) => setRunForm((prev) => ({ ...prev, legalEntityId: event.target.value }))} />
-          <input className="rounded border border-slate-300 px-2 py-1 text-sm" placeholder="fiscalPeriodId" value={runForm.fiscalPeriodId} onChange={(event) => setRunForm((prev) => ({ ...prev, fiscalPeriodId: event.target.value }))} />
+          {renderLegalEntityField({
+            value: runForm.legalEntityId,
+            onChange: (event) =>
+              setRunForm((prev) => ({
+                ...prev,
+                legalEntityId: event.target.value,
+                fiscalPeriodId: "",
+              })),
+            placeholder: "Select legalEntityId",
+          })}
+          {renderFiscalPeriodField({
+            legalEntityId: runForm.legalEntityId,
+            value: runForm.fiscalPeriodId,
+            onChange: (event) =>
+              setRunForm((prev) => ({ ...prev, fiscalPeriodId: event.target.value })),
+            placeholder: "Select fiscalPeriodId",
+          })}
           <select className="rounded border border-slate-300 px-2 py-1 text-sm" value={runForm.accountFamily} onChange={(event) => setRunForm((prev) => ({ ...prev, accountFamily: event.target.value }))}>{REVENUE_ACCOUNT_FAMILIES.map((family) => <option key={`run-${family}`} value={family}>{family}</option>)}</select>
           <input type="date" className="rounded border border-slate-300 px-2 py-1 text-sm" value={runForm.maturityDate} onChange={(event) => setRunForm((prev) => ({ ...prev, maturityDate: event.target.value }))} />
-          <button className="rounded bg-cyan-700 px-3 py-1 text-sm text-white disabled:opacity-60" disabled={!gates.canCreateRun || saveLoading === "createRun"}>{saveLoading === "createRun" ? "Creating..." : "Create Run"}</button>
+          <button className="rounded bg-cyan-700 px-3 py-1 text-sm text-white disabled:opacity-60" disabled={!gates.canCreateRun || saveLoading === "createRun" || runSetupLoading}>{saveLoading === "createRun" ? "Creating..." : "Create Run"}</button>
           <input className="rounded border border-slate-300 px-2 py-1 text-sm" placeholder="runNo (optional)" value={runForm.runNo} onChange={(event) => setRunForm((prev) => ({ ...prev, runNo: event.target.value }))} />
           <input className="rounded border border-slate-300 px-2 py-1 text-sm" placeholder="sourceRunUid (optional)" value={runForm.sourceRunUid} onChange={(event) => setRunForm((prev) => ({ ...prev, sourceRunUid: event.target.value }))} />
           <input className="rounded border border-slate-300 px-2 py-1 text-sm" placeholder="scheduleId (optional)" value={runForm.scheduleId} onChange={(event) => setRunForm((prev) => ({ ...prev, scheduleId: event.target.value }))} />
           <input className="rounded border border-slate-300 px-2 py-1 text-sm" placeholder="totalAmountTxn" value={runForm.totalAmountTxn} onChange={(event) => setRunForm((prev) => ({ ...prev, totalAmountTxn: event.target.value }))} />
           <input className="rounded border border-slate-300 px-2 py-1 text-sm" placeholder="totalAmountBase" value={runForm.totalAmountBase} onChange={(event) => setRunForm((prev) => ({ ...prev, totalAmountBase: event.target.value }))} />
         </form>
+        <div className="mt-2 rounded border border-slate-200 bg-slate-50 p-2 text-xs text-slate-700">
+          {runSetupLoading ? "Checking posting mappings..." : null}
+          {!runSetupLoading && runSetupError ? <div className="text-rose-700">{runSetupError}</div> : null}
+          {!runSetupLoading && runSetupStatus?.ready ? (
+            <div className="text-emerald-700">Posting mappings are ready for selected family.</div>
+          ) : null}
+          {!runSetupLoading && runSetupStatus && !runSetupStatus.ready ? (
+            <div className="text-rose-700">{buildPostingSetupErrorMessage(runSetupStatus)}</div>
+          ) : null}
+        </div>
 
         <div className="mt-3 rounded border border-slate-200 p-3">
           <div className="text-sm text-slate-700">
             Selected run: {selectedRun ? `#${selectedRun.id} ${selectedRun.status}` : "none"}
           </div>
           <div className="mt-2 grid gap-2 md:grid-cols-4">
-            <input className="rounded border border-slate-300 px-2 py-1 text-sm" placeholder="settlementPeriodId (post)" value={runActionForm.settlementPeriodId} onChange={(event) => setRunActionForm((prev) => ({ ...prev, settlementPeriodId: event.target.value }))} />
-            <input className="rounded border border-slate-300 px-2 py-1 text-sm" placeholder="reversalPeriodId (reverse)" value={runActionForm.reversalPeriodId} onChange={(event) => setRunActionForm((prev) => ({ ...prev, reversalPeriodId: event.target.value }))} />
+            {runActionLegalEntityId && runActionPeriodOptions.length > 0 ? (
+              <select
+                className="rounded border border-slate-300 px-2 py-1 text-sm"
+                value={runActionForm.settlementPeriodId}
+                onChange={(event) =>
+                  setRunActionForm((prev) => ({ ...prev, settlementPeriodId: event.target.value }))
+                }
+              >
+                <option value="">settlementPeriodId (post)</option>
+                {runActionPeriodOptions.map((row) => (
+                  <option key={`settle-${row.id}`} value={String(row.id)}>
+                    {buildFiscalPeriodLabel(row)}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                className="rounded border border-slate-300 px-2 py-1 text-sm"
+                placeholder="settlementPeriodId (post)"
+                value={runActionForm.settlementPeriodId}
+                onChange={(event) =>
+                  setRunActionForm((prev) => ({ ...prev, settlementPeriodId: event.target.value }))
+                }
+              />
+            )}
+            {runActionLegalEntityId && runActionPeriodOptions.length > 0 ? (
+              <select
+                className="rounded border border-slate-300 px-2 py-1 text-sm"
+                value={runActionForm.reversalPeriodId}
+                onChange={(event) =>
+                  setRunActionForm((prev) => ({ ...prev, reversalPeriodId: event.target.value }))
+                }
+              >
+                <option value="">reversalPeriodId (reverse)</option>
+                {runActionPeriodOptions.map((row) => (
+                  <option key={`reverse-${row.id}`} value={String(row.id)}>
+                    {buildFiscalPeriodLabel(row)}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                className="rounded border border-slate-300 px-2 py-1 text-sm"
+                placeholder="reversalPeriodId (reverse)"
+                value={runActionForm.reversalPeriodId}
+                onChange={(event) =>
+                  setRunActionForm((prev) => ({ ...prev, reversalPeriodId: event.target.value }))
+                }
+              />
+            )}
             <input className="rounded border border-slate-300 px-2 py-1 text-sm" placeholder="reverse reason" value={runActionForm.reason} onChange={(event) => setRunActionForm((prev) => ({ ...prev, reason: event.target.value }))} />
             <div className="flex gap-2">
               <button className="rounded bg-emerald-700 px-3 py-1 text-sm text-white disabled:opacity-60" onClick={() => handleRunAction("post")} disabled={!canPostSelectedRun || saveLoading === "post"}>{saveLoading === "post" ? "..." : "Post"}</button>
@@ -430,8 +933,23 @@ export default function FutureYearRevenuePage() {
             {reportsError ? <div className="mt-2 text-sm text-rose-700">{reportsError}</div> : null}
             {reportsMessage ? <div className="mt-2 text-sm text-emerald-700">{reportsMessage}</div> : null}
             <div className="mt-2 grid gap-2 md:grid-cols-5">
-              <input className="rounded border border-slate-300 px-2 py-1 text-sm" placeholder="legalEntityId" value={reportFilters.legalEntityId} onChange={(event) => setReportFilters((prev) => ({ ...prev, legalEntityId: event.target.value }))} />
-              <input className="rounded border border-slate-300 px-2 py-1 text-sm" placeholder="fiscalPeriodId" value={reportFilters.fiscalPeriodId} onChange={(event) => setReportFilters((prev) => ({ ...prev, fiscalPeriodId: event.target.value }))} />
+              {renderLegalEntityField({
+                value: reportFilters.legalEntityId,
+                onChange: (event) =>
+                  setReportFilters((prev) => ({
+                    ...prev,
+                    legalEntityId: event.target.value,
+                    fiscalPeriodId: "",
+                  })),
+                allOptionLabel: "ALL ENTITIES",
+              })}
+              {renderFiscalPeriodField({
+                legalEntityId: reportFilters.legalEntityId,
+                value: reportFilters.fiscalPeriodId,
+                onChange: (event) =>
+                  setReportFilters((prev) => ({ ...prev, fiscalPeriodId: event.target.value })),
+                allOptionLabel: "ALL PERIODS",
+              })}
               <select className="rounded border border-slate-300 px-2 py-1 text-sm" value={reportFilters.accountFamily} onChange={(event) => setReportFilters((prev) => ({ ...prev, accountFamily: event.target.value }))}>
                 <option value="">ALL FAMILIES</option>
                 {REVENUE_ACCOUNT_FAMILIES.map((family) => <option key={`report-${family}`} value={family}>{family}</option>)}
@@ -541,3 +1059,4 @@ export default function FutureYearRevenuePage() {
     </div>
   );
 }
+

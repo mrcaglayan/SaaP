@@ -1,0 +1,72 @@
+1-under which chart of account consolidation will be taken place?
+2-each country will have their own coa.
+3-coa codes will be using sub accounts.
+4-if a parent account has a sub account posting won't be allowed.
+5-parent accounts amount will be the total of sub accounts.
+6-on account ( cari hesaplarda ) gelecek aylara ait gelirler kaydı nasıl yapılacak bunun mantığını daha açık yapmamız lazım. 
+7-aynı şekilde gelecek aylara ait giderler nasıl yapılacak bunun da mantığını tartışmamız  lazım. 
+8-gelecek aylara ait gelir/gider tahakkuku yapılarken gelir ve gider hesapları ya da cari hesaplar dropdown ile seçilmesi lazım.
+9-gelecek aylara ait gelir veya giderler tarihleri itibari ile 1 yıldan uzun olanlar next yıla sarkanlar uzun vadeli hesaplarda yapılması lazım. 
+10-gelecek aylarara ait gelir tahakkuku ve tahakukların kapaması mantığı kesinleştirilmesi lazım. 
+
+
+Implemented.
+
+**What changed**
+- Backend purpose-mapping service now supports scoped modules (`CARI`, `REVREC`) with strict purpose-code validation and upsert/list support for all REVREC deferred/prepaid/accrual mappings.  
+  [gl.purpose-mappings.service.js](C:/Users/Maarif/Desktop/my-app/backend/src/services/gl.purpose-mappings.service.js:4)
+- GL purpose-mapping routes now accept optional `moduleKey` on both GET/POST and return it in response.  
+  [gl.purpose-mappings.routes.js](C:/Users/Maarif/Desktop/my-app/backend/src/routes/gl.purpose-mappings.routes.js:23)
+- GL Setup manual mapping UI now has module switch (`CARI` / `REVREC`), loads both sets, and saves REVREC mappings directly from UI.  
+  [GlSetupPage.jsx](C:/Users/Maarif/Desktop/my-app/frontend/src/pages/settings/GlSetupPage.jsx:479)  
+  [GlSetupPage.jsx](C:/Users/Maarif/Desktop/my-app/frontend/src/pages/settings/GlSetupPage.jsx:1624)  
+  [GlSetupPage.jsx](C:/Users/Maarif/Desktop/my-app/frontend/src/pages/settings/GlSetupPage.jsx:2595)
+- Added year-end reminder block to period-end yearly placeholder pages (380/480, 180/280, 181/281, 381/481 reminders).  
+  [ModulePlaceholderPage.jsx](C:/Users/Maarif/Desktop/my-app/frontend/src/pages/ModulePlaceholderPage.jsx:6)  
+  [messages.js](C:/Users/Maarif/Desktop/my-app/frontend/src/i18n/messages.js:1555)  
+  [messages.js](C:/Users/Maarif/Desktop/my-app/frontend/src/i18n/messages.js:3183)
+
+**Validation run**
+- `node --check backend/src/services/gl.purpose-mappings.service.js`
+- `node --check backend/src/routes/gl.purpose-mappings.routes.js`
+- `npx eslint frontend/src/pages/settings/GlSetupPage.jsx frontend/src/pages/ModulePlaceholderPage.jsx frontend/src/i18n/messages.js`
+
+**Turkish accounting research summary (for your requested logic)**
+- `180/280`, `380/480`, `181/281`, `381/481` are explicitly defined in Tek Düzen and long/short transfers are part of year/period-end control.
+- Practical flow:
+  - Deferred revenue: `480 -> 380` as maturity gets within one year, then recognition to revenue.
+  - Prepaid expense: `280 -> 180`, then amortization to expense.
+  - Accrued revenue: `281 -> 181`, then clear on invoice/realization.
+  - Accrued expense: `481 -> 381`, then clear on invoice/payment.
+
+Sources:
+- Tek Düzen hesap açıklamaları (account definitions incl. 180/280/380/480/181/281/381/481): https://www.alomaliye.com/2000/12/26/tek-duzen-hesap-hesap-plani-aciklamalari/
+- MSUGT archive (full text / framework): https://archive.ismmmo.org.tr/docs/mevzuat/sozlesmeli/sm_smmm/11_sira_nolu_sm_smmm_kanunu_icin_mecburi_meslek_karari_eki_tekduzen_hesap_plani_uygulama_genel_tebligi.htm
+- Dönemsellik kavramı section: https://archive.ismmmo.org.tr/docs/mevzuat/sozlesmeli/sm_smmm/11_sira_nolu_sm_smmm_kanunu_icin_mecburi_meslek_karari_eki_tekduzen_hesap_plani_uygulama_genel_tebligi/5_Bolum/II/1_Donemsellik_Kavrami.htm
+- Example journal patterns (non-authoritative practical examples): https://muhasebebilenler.com/2023/12/06/aylik-gelir-gider-tahakkuku-kayitlari/
+
+If you want, next step is to add a dedicated “Yıl Sonu REVREC Kontrol” checklist page that actively validates these reclass/closure balances before closing.
+
+Implemented.
+
+- Added a real page for `Yılsonu > Kapanış İşlemleri` with:
+  - Legal entity selector + manual `Run checks`
+  - REVREC family readiness checks (`DEFREV`, `PREPAID_EXPENSE`, `ACCRUED_REVENUE`, `ACCRUED_EXPENSE`)
+  - Long/short reclass integrity checks for:
+    - `480/380` (deferred revenue)
+    - `280/180` (prepaid expense)
+    - `281/181` (accrued revenue)
+    - `481/381` (accrued expense)
+  - Blocking missing-purpose list + operational reminders + quick links to GL setup and REVREC module  
+  [YearEndRevrecChecklistPage.jsx](C:/Users/Maarif/Desktop/my-app/frontend/src/pages/YearEndRevrecChecklistPage.jsx:118)  
+  [YearEndRevrecChecklistPage.jsx](C:/Users/Maarif/Desktop/my-app/frontend/src/pages/YearEndRevrecChecklistPage.jsx:165)  
+  [YearEndRevrecChecklistPage.jsx](C:/Users/Maarif/Desktop/my-app/frontend/src/pages/YearEndRevrecChecklistPage.jsx:470)
+
+- Wired the route so this is no longer a placeholder:
+  - `/app/donem-sonu-islemler/yillik/kapanis-islemleri`  
+  [App.jsx](C:/Users/Maarif/Desktop/my-app/frontend/src/App.jsx:415)
+
+Validation:
+- `npx eslint frontend/src/pages/YearEndRevrecChecklistPage.jsx frontend/src/App.jsx` passed.
+
+If you want next, I can add a second tab to this page for actual balance-level controls (reading trial balance for the selected year-end period and checking expected transfer residuals).

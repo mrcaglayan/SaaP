@@ -71,6 +71,24 @@ export async function listProviderCurrencies(token) {
   return response.data;
 }
 
+export async function createProviderCurrency(token, payload) {
+  const response = await providerApi.post(
+    "/api/v1/provider/currencies",
+    payload,
+    withAuth(token)
+  );
+  return response.data;
+}
+
+export async function updateProviderCurrency(token, currencyCode, payload) {
+  const response = await providerApi.patch(
+    `/api/v1/provider/currencies/${encodeURIComponent(currencyCode)}`,
+    payload,
+    withAuth(token)
+  );
+  return response.data;
+}
+
 export async function listProviderCountries(token, params = {}) {
   const response = await providerApi.get(
     `/api/v1/provider/countries${toQueryString(params)}`,

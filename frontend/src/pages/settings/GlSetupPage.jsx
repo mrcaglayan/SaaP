@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, memo, useCallback, useEffect, useMemo, useState } from "react";
 import {
   listAccounts,
   listBooks,
@@ -32,6 +32,7 @@ import TenantReadinessChecklist from "../../readiness/TenantReadinessChecklist.j
 const BOOK_TYPES = ["LOCAL", "GROUP"];
 const COA_SCOPES = ["LEGAL_ENTITY", "GROUP"];
 const ACCOUNT_TYPES = ["ASSET", "LIABILITY", "EQUITY", "REVENUE", "EXPENSE"];
+const UNSPECIFIED_ACCOUNT_TYPE = "UNSPECIFIED";
 const NORMAL_SIDES = ["DEBIT", "CREDIT"];
 const TURKISH_DEFAULT_COA_ACCOUNTS = [
   { code: "100", name: "Kasa", accountType: "ASSET", normalSide: "DEBIT" },
@@ -476,8 +477,31 @@ const CARI_MANUAL_PURPOSE_CODES = Object.freeze([
   ...CARI_REQUIRED_PURPOSE_CODES,
   ...CARI_OPTIONAL_CONTEXT_PURPOSE_CODES,
 ]);
+const PURPOSE_MAPPING_MODULE_KEYS = Object.freeze({
+  CARI: "CARI",
+  REVREC: "REVREC",
+});
+const REVREC_REQUIRED_PURPOSE_CODES = Object.freeze([
+  "DEFREV_SHORT_LIABILITY",
+  "DEFREV_LONG_LIABILITY",
+  "DEFREV_REVENUE",
+  "DEFREV_RECLASS",
+  "PREPAID_EXP_SHORT_ASSET",
+  "PREPAID_EXP_LONG_ASSET",
+  "PREPAID_EXPENSE",
+  "PREPAID_RECLASS",
+  "ACCR_REV_SHORT_ASSET",
+  "ACCR_REV_LONG_ASSET",
+  "ACCR_REV_REVENUE",
+  "ACCR_REV_RECLASS",
+  "ACCR_EXP_SHORT_LIABILITY",
+  "ACCR_EXP_LONG_LIABILITY",
+  "ACCR_EXP_EXPENSE",
+  "ACCR_EXP_RECLASS",
+]);
 const CARI_REQUIRED_PURPOSE_CODE_SET = new Set(CARI_REQUIRED_PURPOSE_CODES);
 const CARI_OPTIONAL_PURPOSE_CODE_SET = new Set(CARI_OPTIONAL_CONTEXT_PURPOSE_CODES);
+const REVREC_REQUIRED_PURPOSE_CODE_SET = new Set(REVREC_REQUIRED_PURPOSE_CODES);
 const CARI_PURPOSE_UI_META = Object.freeze({
   CARI_AR_CONTROL: Object.freeze({
     en: "AR control account (customer balance account).",
@@ -576,6 +600,104 @@ const CARI_PURPOSE_UI_META = Object.freeze({
     exampleTr: "Ornek: satici avans kapama -> Borc 320, Alacak 159",
   }),
 });
+const REVREC_PURPOSE_UI_META = Object.freeze({
+  DEFREV_SHORT_LIABILITY: Object.freeze({
+    en: "Short deferred revenue liability (typically 380).",
+    tr: "Kisa vadeli ertelenmis gelir yukumlulugu (genelde 380).",
+    exampleEn: "Recognition entry credits this balance for short-term deferrals.",
+    exampleTr: "Doneme yayma kaydinda kisa vadeli ertelenmis gelir burada izlenir.",
+  }),
+  DEFREV_LONG_LIABILITY: Object.freeze({
+    en: "Long deferred revenue liability (typically 480).",
+    tr: "Uzun vadeli ertelenmis gelir yukumlulugu (genelde 480).",
+    exampleEn: "Year crossover balances stay here before 480->380 reclass.",
+    exampleTr: "Yila sarkan bakiyeler 480->380 aktarmasi oncesi burada tutulur.",
+  }),
+  DEFREV_REVENUE: Object.freeze({
+    en: "Revenue recognition account (6xx family).",
+    tr: "Gelir tahakkuk kaydinin gelir hesabi (6xx grubu).",
+    exampleEn: "Monthly recognition moves deferred revenue into this account.",
+    exampleTr: "Aylik kayitta ertelenmis gelir bu gelir hesabina aktarilir.",
+  }),
+  DEFREV_RECLASS: Object.freeze({
+    en: "Reclass bridge for long->short deferred revenue.",
+    tr: "Uzun->kisa ertelenmis gelir aktarimi icin reclass purpose code.",
+    exampleEn: "Used by automatic 480->380 reclass journal.",
+    exampleTr: "Otomatik 480->380 aktarma fisinde kullanilir.",
+  }),
+  PREPAID_EXP_SHORT_ASSET: Object.freeze({
+    en: "Short prepaid expense asset (typically 180).",
+    tr: "Kisa vadeli pesin odenmis gider varligi (genelde 180).",
+    exampleEn: "Amortization runs debit expense and credit this account.",
+    exampleTr: "Giderlestirme kayitlari gider borc, bu hesap alacak olur.",
+  }),
+  PREPAID_EXP_LONG_ASSET: Object.freeze({
+    en: "Long prepaid expense asset (typically 280).",
+    tr: "Uzun vadeli pesin odenmis gider varligi (genelde 280).",
+    exampleEn: "Year crossover balances stay here before 280->180 reclass.",
+    exampleTr: "Yila sarkan bakiyeler 280->180 aktarmasi oncesi burada tutulur.",
+  }),
+  PREPAID_EXPENSE: Object.freeze({
+    en: "Expense recognition account (7xx/6xx as policy).",
+    tr: "Gider tahakkuk/giderlestirme hesabi (politikaya gore 7xx/6xx).",
+    exampleEn: "Monthly amortization debits this expense account.",
+    exampleTr: "Aylik giderlestirme kaydi bu gider hesabini borclandirir.",
+  }),
+  PREPAID_RECLASS: Object.freeze({
+    en: "Reclass bridge for long->short prepaid expense.",
+    tr: "Uzun->kisa pesin gider aktarimi icin reclass purpose code.",
+    exampleEn: "Used by automatic 280->180 reclass journal.",
+    exampleTr: "Otomatik 280->180 aktarma fisinde kullanilir.",
+  }),
+  ACCR_REV_SHORT_ASSET: Object.freeze({
+    en: "Short accrued revenue asset (typically 181).",
+    tr: "Kisa vadeli gelir tahakkuku varligi (genelde 181).",
+    exampleEn: "Accrual run debits this account until invoicing/settlement.",
+    exampleTr: "Tahakkuk calistiginda faturalamaya kadar bu hesap borclanir.",
+  }),
+  ACCR_REV_LONG_ASSET: Object.freeze({
+    en: "Long accrued revenue asset (typically 281).",
+    tr: "Uzun vadeli gelir tahakkuku varligi (genelde 281).",
+    exampleEn: "Year crossover balances stay here before 281->181 reclass.",
+    exampleTr: "Yila sarkan bakiyeler 281->181 aktarmasi oncesi burada tutulur.",
+  }),
+  ACCR_REV_REVENUE: Object.freeze({
+    en: "Revenue account for accrued-revenue entries.",
+    tr: "Gelir tahakkuk fislerinin gelir hesabi.",
+    exampleEn: "Accrual journal credits revenue and debits accrued asset.",
+    exampleTr: "Tahakkuk fisinde gelir alacak, tahakkuk varligi borc olur.",
+  }),
+  ACCR_REV_RECLASS: Object.freeze({
+    en: "Reclass bridge for long->short accrued revenue.",
+    tr: "Uzun->kisa gelir tahakkuku aktarimi icin reclass purpose code.",
+    exampleEn: "Used by automatic 281->181 reclass journal.",
+    exampleTr: "Otomatik 281->181 aktarma fisinde kullanilir.",
+  }),
+  ACCR_EXP_SHORT_LIABILITY: Object.freeze({
+    en: "Short accrued expense liability (typically 381).",
+    tr: "Kisa vadeli gider tahakkuku yukumlulugu (genelde 381).",
+    exampleEn: "Accrual run credits this account until invoice/payment.",
+    exampleTr: "Tahakkuk calistiginda fatura/odeme gelene kadar bu hesap alacaklanir.",
+  }),
+  ACCR_EXP_LONG_LIABILITY: Object.freeze({
+    en: "Long accrued expense liability (typically 481).",
+    tr: "Uzun vadeli gider tahakkuku yukumlulugu (genelde 481).",
+    exampleEn: "Year crossover balances stay here before 481->381 reclass.",
+    exampleTr: "Yila sarkan bakiyeler 481->381 aktarmasi oncesi burada tutulur.",
+  }),
+  ACCR_EXP_EXPENSE: Object.freeze({
+    en: "Expense account for accrued-expense entries.",
+    tr: "Gider tahakkuk fislerinin gider hesabi.",
+    exampleEn: "Accrual journal debits expense and credits accrued liability.",
+    exampleTr: "Tahakkuk fisinde gider borc, tahakkuk yukumlulugu alacak olur.",
+  }),
+  ACCR_EXP_RECLASS: Object.freeze({
+    en: "Reclass bridge for long->short accrued expense.",
+    tr: "Uzun->kisa gider tahakkuku aktarimi icin reclass purpose code.",
+    exampleEn: "Used by automatic 481->381 reclass journal.",
+    exampleTr: "Otomatik 481->381 aktarma fisinde kullanilir.",
+  }),
+});
 const SHAREHOLDER_REQUIRED_PURPOSE_CODES = Object.freeze([
   "SHAREHOLDER_CAPITAL_CREDIT_PARENT",
   "SHAREHOLDER_COMMITMENT_DEBIT_PARENT",
@@ -597,6 +719,13 @@ function getCariPurposeUiMeta(purposeCode) {
     .trim()
     .toUpperCase();
   return CARI_PURPOSE_UI_META[normalized] || null;
+}
+
+function getRevrecPurposeUiMeta(purposeCode) {
+  const normalized = String(purposeCode || "")
+    .trim()
+    .toUpperCase();
+  return REVREC_PURPOSE_UI_META[normalized] || null;
 }
 
 function toBoolean(value) {
@@ -640,12 +769,336 @@ function buildAccountLabel(account) {
   return `${code} - ${name} (${accountType || "N/A"}, ${posting})`;
 }
 
-export default function GlSetupPage() {
+function createAccountEditorDraft(seed = {}) {
+  return {
+    accountId: toPositiveInt(seed.accountId) || null,
+    code: toUpper(seed.code),
+    parentCode: toUpper(seed.parentCode),
+    name: String(seed.name || "").trim(),
+    accountType: toUpper(seed.accountType) || "ASSET",
+    normalSide: toUpper(seed.normalSide) || "DEBIT",
+    allowPosting:
+      seed.allowPosting === undefined ? true : Boolean(seed.allowPosting),
+  };
+}
+
+function compareAccountsForTree(left, right) {
+  const leftCode = toUpper(left?.code);
+  const rightCode = toUpper(right?.code);
+  if (leftCode && rightCode && leftCode !== rightCode) {
+    return leftCode.localeCompare(rightCode);
+  }
+  const leftName = String(left?.name || "").trim();
+  const rightName = String(right?.name || "").trim();
+  if (leftName !== rightName) {
+    return leftName.localeCompare(rightName);
+  }
+  return String(left?.id || "").localeCompare(String(right?.id || ""));
+}
+
+function getAccountTreeVisitKey(account) {
+  const accountId = toPositiveInt(account?.id);
+  if (accountId) {
+    return `ID:${accountId}`;
+  }
+  const code = toUpper(account?.code);
+  if (code) {
+    return `CODE:${code}`;
+  }
+  return `ROW:${String(account?.name || "")}`;
+}
+
+function buildPersistedAccountTreeRows(accounts = []) {
+  const rows = Array.isArray(accounts) ? accounts : [];
+  const accountById = new Map();
+  for (const account of rows) {
+    const accountId = toPositiveInt(account?.id);
+    if (accountId && !accountById.has(accountId)) {
+      accountById.set(accountId, account);
+    }
+  }
+
+  const childrenByParentId = new Map();
+  for (const account of rows) {
+    const accountId = toPositiveInt(account?.id);
+    const parentAccountId = toPositiveInt(account?.parent_account_id);
+    if (!accountId || !parentAccountId || parentAccountId === accountId) {
+      continue;
+    }
+    if (!accountById.has(parentAccountId)) {
+      continue;
+    }
+    if (!childrenByParentId.has(parentAccountId)) {
+      childrenByParentId.set(parentAccountId, []);
+    }
+    childrenByParentId.get(parentAccountId).push(account);
+  }
+  for (const children of childrenByParentId.values()) {
+    children.sort(compareAccountsForTree);
+  }
+
+  const roots = rows
+    .filter((account) => {
+      const accountId = toPositiveInt(account?.id);
+      const parentAccountId = toPositiveInt(account?.parent_account_id);
+      if (!accountId || !parentAccountId) {
+        return true;
+      }
+      if (accountId === parentAccountId) {
+        return true;
+      }
+      return !accountById.has(parentAccountId);
+    })
+    .sort(compareAccountsForTree);
+
+  const treeRows = [];
+  const visited = new Set();
+  function walk(account, depth) {
+    const visitKey = getAccountTreeVisitKey(account);
+    if (!visitKey || visited.has(visitKey)) {
+      return;
+    }
+    visited.add(visitKey);
+
+    const accountId = toPositiveInt(account?.id);
+    const children = accountId ? childrenByParentId.get(accountId) || [] : [];
+    treeRows.push({
+      account,
+      depth,
+      childCount: children.length,
+    });
+    for (const child of children) {
+      walk(child, depth + 1);
+    }
+  }
+
+  for (const root of roots) {
+    walk(root, 0);
+  }
+
+  const unresolvedRows = rows
+    .filter((account) => !visited.has(getAccountTreeVisitKey(account)))
+    .sort(compareAccountsForTree);
+  for (const account of unresolvedRows) {
+    walk(account, 0);
+  }
+  return treeRows;
+}
+
+function buildAccountEditorDraftFromAccount(account, accountById) {
+  const parentAccountId = toPositiveInt(
+    account?.parent_account_id ?? account?.parentAccountId
+  );
+  const parentAccount = parentAccountId ? accountById.get(parentAccountId) : null;
+  return createAccountEditorDraft({
+    accountId: account?.id,
+    code: account?.code,
+    parentCode: parentAccount?.code || "",
+    name: account?.name,
+    accountType: account?.account_type ?? account?.accountType,
+    normalSide: account?.normal_side ?? account?.normalSide,
+    allowPosting: account?.allow_posting ?? account?.allowPosting,
+  });
+}
+
+const AccountEditorPanel = memo(function AccountEditorPanel({
+  l,
+  selectedCoaId,
+  selectedCoaKey,
+  accountEditorSeed,
+  accountEditorDraftMode,
+  canUpsertAccounts,
+  saving,
+  selectedTreeAccount,
+  parentCodeDatalistOptionNodes,
+  onSubmit,
+  onStartAddRoot,
+  onStartAddChildUnderSelected,
+  onCancelDraft,
+}) {
+  const [localForm, setLocalForm] = useState(() =>
+    createAccountEditorDraft(accountEditorSeed)
+  );
+
+  useEffect(() => {
+    setLocalForm(createAccountEditorDraft(accountEditorSeed));
+  }, [accountEditorSeed, selectedCoaKey, accountEditorDraftMode]);
+
+  function setLocalEditorField(field, value) {
+    const normalizedValue =
+      field === "code" ||
+      field === "parentCode" ||
+      field === "accountType" ||
+      field === "normalSide"
+        ? toUpper(value)
+        : value;
+    setLocalForm((prev) => ({
+      ...prev,
+      [field]: normalizedValue,
+    }));
+  }
+
+  function handleSubmit(event) {
+    event.preventDefault();
+    onSubmit(localForm);
+  }
+
+  return (
+    <>
+      <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+        {l("Account Editor", "Hesap Duzenleyici")}
+      </h4>
+      <form onSubmit={handleSubmit} className="space-y-2">
+        <div className="rounded-md border border-cyan-200 bg-cyan-50 px-2 py-1 text-xs text-cyan-800">
+          {accountEditorDraftMode
+            ? l(
+                "Draft mode: create a new root/child account, then save.",
+                "Taslak mod: yeni kok/alt hesap olusturup kaydedin."
+              )
+            : l(
+                "Click a row to edit. Use Parent Code for hierarchy.",
+                "Duzenlemek icin satira tiklayin. Hiyerarsi icin Ust Kod kullanin."
+              )}
+        </div>
+        <p className="text-[11px] text-slate-500">
+          {l(
+            "If you change code of an existing account, backend treats it as a new row.",
+            "Mevcut hesap kodunu degistirirseniz backend bunu yeni satir olarak isler."
+          )}
+        </p>
+        <input
+          value={localForm.code}
+          onChange={(event) => setLocalEditorField("code", event.target.value)}
+          className="w-full rounded-lg border border-slate-300 px-2 py-1.5 text-xs"
+          placeholder={l("Code", "Kod")}
+          required
+        />
+        <input
+          list={`gl-parent-code-options-${selectedCoaKey || "none"}`}
+          value={localForm.parentCode}
+          onChange={(event) => setLocalEditorField("parentCode", event.target.value)}
+          className="w-full rounded-lg border border-slate-300 px-2 py-1.5 text-xs"
+          placeholder={l("Parent code (optional)", "Ust kod (opsiyonel)")}
+        />
+        <datalist id={`gl-parent-code-options-${selectedCoaKey || "none"}`}>
+          {parentCodeDatalistOptionNodes}
+        </datalist>
+        <input
+          value={localForm.name}
+          onChange={(event) => setLocalEditorField("name", event.target.value)}
+          className="w-full rounded-lg border border-slate-300 px-2 py-1.5 text-xs"
+          placeholder={l("Name", "Ad")}
+          required
+        />
+        <div className="grid gap-2 sm:grid-cols-2">
+          <select
+            value={localForm.accountType}
+            onChange={(event) => setLocalEditorField("accountType", event.target.value)}
+            className="rounded-lg border border-slate-300 px-2 py-1.5 text-xs"
+          >
+            {ACCOUNT_TYPES.map((accountType) => (
+              <option key={accountType} value={accountType}>
+                {accountType}
+              </option>
+            ))}
+          </select>
+          <select
+            value={localForm.normalSide}
+            onChange={(event) => setLocalEditorField("normalSide", event.target.value)}
+            className="rounded-lg border border-slate-300 px-2 py-1.5 text-xs"
+          >
+            {NORMAL_SIDES.map((normalSide) => (
+              <option key={normalSide} value={normalSide}>
+                {normalSide}
+              </option>
+            ))}
+          </select>
+        </div>
+        <label className="inline-flex items-center gap-2 text-xs text-slate-700">
+          <input
+            type="checkbox"
+            checked={Boolean(localForm.allowPosting)}
+            onChange={(event) =>
+              setLocalEditorField("allowPosting", event.target.checked)
+            }
+          />
+          {l("Allow posting", "Post etmeye izin ver")}
+        </label>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="submit"
+            disabled={saving === "account" || !canUpsertAccounts || !selectedCoaId}
+            className="rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-60"
+          >
+            {saving === "account"
+              ? l("Saving...", "Kaydediliyor...")
+              : l("Save Account", "Hesabi Kaydet")}
+          </button>
+          <button
+            type="button"
+            onClick={onStartAddRoot}
+            disabled={!canUpsertAccounts || !selectedCoaId}
+            className="rounded-lg border border-slate-300 px-2 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+          >
+            {l("New Root", "Yeni Kok")}
+          </button>
+          <button
+            type="button"
+            onClick={onStartAddChildUnderSelected}
+            disabled={!canUpsertAccounts || !selectedCoaId || !selectedTreeAccount}
+            className="rounded-lg border border-cyan-300 px-2 py-1.5 text-xs font-semibold text-cyan-700 hover:bg-cyan-50 disabled:opacity-50"
+          >
+            {l("Add Child Under Selected", "Secili Altina Alt Hesap Ekle")}
+          </button>
+          {accountEditorDraftMode ? (
+            <button
+              type="button"
+              onClick={onCancelDraft}
+              className="rounded-lg border border-amber-300 px-2 py-1.5 text-xs font-semibold text-amber-700 hover:bg-amber-50"
+            >
+              {l("Cancel Draft", "Taslagi Iptal Et")}
+            </button>
+          ) : null}
+        </div>
+      </form>
+    </>
+  );
+});
+
+function buildVisibleTreeRows(treeRows, collapsedAccountIdSet = new Set()) {
+  const rows = Array.isArray(treeRows) ? treeRows : [];
+  const visibleRows = [];
+  const collapsedDepthStack = [];
+
+  for (const row of rows) {
+    while (
+      collapsedDepthStack.length > 0 &&
+      row.depth <= collapsedDepthStack[collapsedDepthStack.length - 1]
+    ) {
+      collapsedDepthStack.pop();
+    }
+    if (collapsedDepthStack.length > 0) {
+      continue;
+    }
+
+    visibleRows.push(row);
+
+    const accountId = toPositiveInt(row?.account?.id);
+    if (row.childCount > 0 && accountId && collapsedAccountIdSet.has(accountId)) {
+      collapsedDepthStack.push(row.depth);
+    }
+  }
+
+  return visibleRows;
+}
+
+export default function GlSetupPage({ mode = "full" } = {}) {
   const { hasPermission } = useAuth();
   const { language } = useI18n();
   const { getModuleRow, refreshLegalEntity } = useModuleReadiness();
+  const accountsOnlyMode = mode === "accounts";
   const isTr = language === "tr";
-  const l = (en, tr) => (isTr ? tr : en);
+  const l = useCallback((en, tr) => (isTr ? tr : en), [isTr]);
   const canReadLegalEntities = hasPermission("org.tree.read");
   const canReadCalendars = hasPermission("org.fiscal_calendar.read");
   const canReadBooks = hasPermission("gl.book.read");
@@ -687,13 +1140,15 @@ export default function GlSetupPage() {
   });
   const [accountForm, setAccountForm] = useState({
     coaId: "",
-    code: "",
-    name: "",
-    accountType: "ASSET",
-    normalSide: "DEBIT",
-    allowPosting: true,
-    parentAccountId: "",
   });
+  const [accountEditorForm, setAccountEditorForm] = useState(
+    createAccountEditorDraft()
+  );
+  const [accountEditorDraftMode, setAccountEditorDraftMode] = useState(false);
+  const [selectedAccountIdByCoaId, setSelectedAccountIdByCoaId] = useState({});
+  const [collapsedAccountIdsByCoaId, setCollapsedAccountIdsByCoaId] = useState({});
+  const [collapsedAccountTypeKeysByCoaId, setCollapsedAccountTypeKeysByCoaId] =
+    useState({});
   const [mappingForm, setMappingForm] = useState({
     sourceAccountId: "",
     targetAccountId: "",
@@ -712,11 +1167,171 @@ export default function GlSetupPage() {
     capitalCreditParentAccountId: "",
     commitmentDebitParentAccountId: "",
   });
+  const [manualPurposeModuleKey, setManualPurposeModuleKey] = useState(
+    PURPOSE_MAPPING_MODULE_KEYS.CARI
+  );
   const [manualCariMappingsByPurpose, setManualCariMappingsByPurpose] = useState({});
+  const [manualRevrecMappingsByPurpose, setManualRevrecMappingsByPurpose] = useState({});
   const [showOptionalCariMappings, setShowOptionalCariMappings] = useState(false);
   const [loadingManualMappings, setLoadingManualMappings] = useState(false);
   const parentAccountIds = new Set(
     accounts.map((row) => toPositiveInt(row.parent_account_id)).filter(Boolean)
+  );
+  const selectedCoaId = toPositiveInt(accountForm.coaId);
+  const selectedCoaKey = String(selectedCoaId || "");
+  const selectedCoaAccounts = useMemo(() => {
+    if (!selectedCoaId) {
+      return [];
+    }
+    const rows = accounts.filter(
+      (account) => toPositiveInt(account?.coa_id) === selectedCoaId
+    );
+    rows.sort(compareAccountsForTree);
+    return rows;
+  }, [accounts, selectedCoaId]);
+  const selectedCoaAccountById = useMemo(() => {
+    const byId = new Map();
+    for (const account of selectedCoaAccounts) {
+      const accountId = toPositiveInt(account?.id);
+      if (!accountId) {
+        continue;
+      }
+      byId.set(accountId, account);
+    }
+    return byId;
+  }, [selectedCoaAccounts]);
+  const selectedCoaAccountByCode = useMemo(() => {
+    const byCode = new Map();
+    for (const account of selectedCoaAccounts) {
+      const code = toUpper(account?.code);
+      if (!code || byCode.has(code)) {
+        continue;
+      }
+      byCode.set(code, account);
+    }
+    return byCode;
+  }, [selectedCoaAccounts]);
+  const selectedCoaParentAccountIds = useMemo(() => {
+    return new Set(
+      selectedCoaAccounts
+        .map((row) => toPositiveInt(row?.parent_account_id))
+        .filter(Boolean)
+    );
+  }, [selectedCoaAccounts]);
+  const selectedCoaTreeRows = useMemo(
+    () => buildPersistedAccountTreeRows(selectedCoaAccounts),
+    [selectedCoaAccounts]
+  );
+  const defaultCollapsedAccountIds = useMemo(
+    () => Array.from(selectedCoaParentAccountIds),
+    [selectedCoaParentAccountIds]
+  );
+  const defaultCollapsedAccountTypeKeys = useMemo(() => {
+    const typeKeys = new Set();
+    for (const account of selectedCoaAccounts) {
+      const accountType = toUpper(account?.account_type) || UNSPECIFIED_ACCOUNT_TYPE;
+      if (!accountType) {
+        continue;
+      }
+      typeKeys.add(accountType);
+    }
+    return Array.from(typeKeys);
+  }, [selectedCoaAccounts]);
+  const collapsedAccountIdSet = useMemo(
+    () =>
+      new Set(
+        (
+          Array.isArray(collapsedAccountIdsByCoaId[selectedCoaKey])
+            ? collapsedAccountIdsByCoaId[selectedCoaKey]
+            : defaultCollapsedAccountIds
+        )
+          .map((value) => toPositiveInt(value))
+          .filter(Boolean)
+      ),
+    [collapsedAccountIdsByCoaId, selectedCoaKey, defaultCollapsedAccountIds]
+  );
+  const collapsedAccountTypeSet = useMemo(
+    () =>
+      new Set(
+        (
+          Array.isArray(collapsedAccountTypeKeysByCoaId[selectedCoaKey])
+            ? collapsedAccountTypeKeysByCoaId[selectedCoaKey]
+            : defaultCollapsedAccountTypeKeys
+        )
+          .map((value) => toUpper(value))
+          .filter(Boolean)
+      ),
+    [
+      collapsedAccountTypeKeysByCoaId,
+      selectedCoaKey,
+      defaultCollapsedAccountTypeKeys,
+    ]
+  );
+  const selectedCoaTreeGroups = useMemo(() => {
+    const rowsByType = new Map();
+    for (const account of selectedCoaAccounts) {
+      const accountType = toUpper(account?.account_type) || UNSPECIFIED_ACCOUNT_TYPE;
+      if (!rowsByType.has(accountType)) {
+        rowsByType.set(accountType, []);
+      }
+      rowsByType.get(accountType).push(account);
+    }
+
+    const knownTypeSet = new Set(ACCOUNT_TYPES);
+    const extraTypes = [...rowsByType.keys()]
+      .filter((type) => !knownTypeSet.has(type))
+      .sort((left, right) => left.localeCompare(right));
+    const orderedTypes = [
+      ...ACCOUNT_TYPES.filter((type) => rowsByType.has(type)),
+      ...extraTypes,
+    ];
+
+    return orderedTypes.map((accountType) => {
+      const treeRows = buildPersistedAccountTreeRows(rowsByType.get(accountType));
+      return {
+        accountType,
+        totalCount: rowsByType.get(accountType)?.length || 0,
+        visibleRows: buildVisibleTreeRows(treeRows, collapsedAccountIdSet),
+      };
+    });
+  }, [selectedCoaAccounts, collapsedAccountIdSet]);
+  const selectedTreeAccountId = toPositiveInt(
+    selectedAccountIdByCoaId[selectedCoaKey]
+  );
+  const selectedTreeAccount =
+    selectedCoaAccounts.find(
+      (account) => toPositiveInt(account?.id) === selectedTreeAccountId
+    ) || null;
+  const selectedFallbackTreeAccount =
+    selectedTreeAccount || selectedCoaTreeRows[0]?.account || null;
+  const selectedCoaParentCodeOptions = useMemo(() => {
+    const rows = selectedCoaAccounts.filter((account) => toUpper(account?.code));
+    rows.sort(compareAccountsForTree);
+    return rows;
+  }, [selectedCoaAccounts]);
+  const selectedCoaParentCodeDatalistOptions = useMemo(() => {
+    return selectedCoaParentCodeOptions
+      .map((account) => {
+        const code = toUpper(account?.code);
+        if (!code) {
+          return null;
+        }
+        return {
+          key: `account-parent-option-${account.id}`,
+          value: code,
+          label: `${code} - ${String(account?.name || "").trim() || "-"}`,
+        };
+      })
+      .filter(Boolean);
+  }, [selectedCoaParentCodeOptions]);
+  const parentCodeDatalistOptionNodes = useMemo(
+    () =>
+      selectedCoaParentCodeDatalistOptions.map((option) => (
+        <option key={option.key} value={option.value}>
+          {option.label}
+        </option>
+      )),
+    [selectedCoaParentCodeDatalistOptions]
   );
   const countryIso2ById = useMemo(() => {
     const byId = new Map();
@@ -794,9 +1409,182 @@ export default function GlSetupPage() {
     "shareholderCommitment",
     selectedManualLegalEntityId
   );
-  const visibleCariPurposeCodes = showOptionalCariMappings
-    ? CARI_MANUAL_PURPOSE_CODES
-    : CARI_REQUIRED_PURPOSE_CODES;
+  const manualPurposeMappingsByPurpose =
+    manualPurposeModuleKey === PURPOSE_MAPPING_MODULE_KEYS.REVREC
+      ? manualRevrecMappingsByPurpose
+      : manualCariMappingsByPurpose;
+  const manualPurposeAccountOptions = manualCariAccountOptions;
+  const visibleManualPurposeCodes =
+    manualPurposeModuleKey === PURPOSE_MAPPING_MODULE_KEYS.REVREC
+      ? REVREC_REQUIRED_PURPOSE_CODES
+      : showOptionalCariMappings
+      ? CARI_MANUAL_PURPOSE_CODES
+      : CARI_REQUIRED_PURPOSE_CODES;
+  const isSavingManualPurposeMappings =
+    saving === "manual-cari-purpose-mappings" ||
+    saving === "manual-revrec-purpose-mappings";
+  const accountTreeTableRows = useMemo(() => {
+    return selectedCoaTreeGroups.map(({ accountType, totalCount, visibleRows }) => {
+      const typeCollapsed = collapsedAccountTypeSet.has(accountType);
+      return (
+        <Fragment key={`account-type-group-${accountType}`}>
+          <tr className="border-t border-slate-200 bg-slate-50">
+            <td colSpan={7} className="px-2 py-1.5">
+              <button
+                type="button"
+                onClick={() => handleToggleAccountTypeGroup(accountType)}
+                className="group inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-2 py-1 text-left shadow-sm transition hover:border-cyan-300 hover:bg-cyan-50"
+              >
+                <span
+                  className={`inline-flex h-4 w-4 items-center justify-center rounded-full border border-slate-200 bg-slate-50 text-slate-600 transition-transform duration-150 ${
+                    typeCollapsed ? "" : "rotate-90"
+                  }`}
+                >
+                  <svg
+                    viewBox="0 0 20 20"
+                    aria-hidden="true"
+                    className="h-2.5 w-2.5 fill-current"
+                  >
+                    <path d="M7 4.5L13.5 10L7 15.5z" />
+                  </svg>
+                </span>
+                <span className="font-semibold text-slate-700">{accountType}</span>
+                <span className="text-[11px] text-slate-500">({totalCount})</span>
+              </button>
+            </td>
+          </tr>
+          {!typeCollapsed
+            ? visibleRows.map(({ account, depth, childCount }) => {
+                const accountId = toPositiveInt(account?.id);
+                const code = toUpper(account?.code);
+                const parentAccountId = toPositiveInt(account?.parent_account_id);
+                const parentCode = toUpper(
+                  selectedCoaAccountById.get(parentAccountId)?.code
+                );
+                const postingAllowed = toBoolean(account?.allow_posting);
+                const hasChildren = selectedCoaParentAccountIds.has(accountId);
+                const rowUpdating = updatingAccountId === accountId;
+                const rowCollapsed =
+                  childCount > 0 && collapsedAccountIdSet.has(accountId);
+                const isSelected =
+                  !accountEditorDraftMode && accountId === selectedTreeAccountId;
+                return (
+                  <tr
+                    key={account.id}
+                    onClick={() => handleSelectTreeAccount(account)}
+                    className={`cursor-pointer border-t border-slate-100 ${
+                      isSelected ? "bg-cyan-50" : "hover:bg-slate-50"
+                    }`}
+                  >
+                    <td className="px-2 py-1.5 font-semibold text-slate-700">
+                      <div
+                        className="flex items-center gap-1"
+                        style={{ paddingLeft: `${Math.max(0, depth) * 16}px` }}
+                      >
+                        {childCount > 0 ? (
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              handleToggleAccountRowCollapse(accountId);
+                            }}
+                            title={
+                              rowCollapsed
+                                ? l("Expand", "Genislet")
+                                : l("Collapse", "Daralt")
+                            }
+                            className={`inline-flex h-4 w-4 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 shadow-sm transition-transform duration-150 hover:border-cyan-300 hover:bg-cyan-50 ${
+                              rowCollapsed ? "" : "rotate-90"
+                            }`}
+                          >
+                            <svg
+                              viewBox="0 0 20 20"
+                              aria-hidden="true"
+                              className="h-2.5 w-2.5 fill-current"
+                            >
+                              <path d="M7 4.5L13.5 10L7 15.5z" />
+                            </svg>
+                          </button>
+                        ) : (
+                          <span className="inline-block w-4 text-center text-[10px] text-slate-300">
+                            *
+                          </span>
+                        )}
+                        <span>{code || "-"}</span>
+                      </div>
+                    </td>
+                    <td className="px-2 py-1.5 text-slate-600">{parentCode || "-"}</td>
+                    <td className="px-2 py-1.5 text-slate-700">
+                      {String(account?.name || "").trim() || "-"}
+                    </td>
+                    <td className="px-2 py-1.5 text-slate-600">
+                      {toUpper(account?.account_type) || "-"}
+                    </td>
+                    <td className="px-2 py-1.5 text-slate-600">
+                      {toUpper(account?.normal_side) || "-"}
+                    </td>
+                    <td className="px-2 py-1.5 text-slate-600">
+                      <label className="inline-flex items-center gap-1">
+                        <input
+                          type="checkbox"
+                          checked={postingAllowed}
+                          disabled={
+                            !canUpsertAccounts ||
+                            rowUpdating ||
+                            (hasChildren && !postingAllowed)
+                          }
+                          onClick={(event) => event.stopPropagation()}
+                          onChange={(event) =>
+                            handleAccountPostingChange(account, event.target.checked)
+                          }
+                        />
+                        <span>{postingAllowed ? l("Yes", "Evet") : l("No", "Hayir")}</span>
+                      </label>
+                    </td>
+                    <td className="px-2 py-1.5">
+                      <div className="flex flex-wrap items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            handleStartAddChildAccount(account);
+                          }}
+                          disabled={!canUpsertAccounts || !code}
+                          className="rounded border border-cyan-200 px-1.5 py-0.5 font-semibold text-cyan-700 hover:bg-cyan-50 disabled:opacity-50"
+                        >
+                          {l("Add Child", "Alt Hesap Ekle")}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            handleSelectTreeAccount(account);
+                          }}
+                          className="rounded border border-slate-200 px-1.5 py-0.5 font-semibold text-slate-700 hover:bg-slate-50"
+                        >
+                          {l("Edit", "Duzenle")}
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })
+            : null}
+        </Fragment>
+      );
+    });
+  }, [
+    selectedCoaTreeGroups,
+    collapsedAccountTypeSet,
+    selectedCoaAccountById,
+    selectedCoaParentAccountIds,
+    updatingAccountId,
+    accountEditorDraftMode,
+    selectedTreeAccountId,
+    collapsedAccountIdSet,
+    canUpsertAccounts,
+    l,
+  ]);
 
   async function loadData() {
     setLoading(true);
@@ -945,12 +1733,49 @@ export default function GlSetupPage() {
     setTemplateApplyResult(null);
   }, [templateWizardForm.legalEntityId, templateWizardForm.packId]);
 
+  useEffect(() => {
+    if (!selectedCoaId) {
+      setAccountEditorDraftMode(false);
+      setAccountEditorForm(createAccountEditorDraft());
+      return;
+    }
+    if (accountEditorDraftMode) {
+      return;
+    }
+    const fallbackAccount = selectedFallbackTreeAccount;
+    if (!fallbackAccount) {
+      setAccountEditorForm(createAccountEditorDraft());
+      return;
+    }
+    const fallbackAccountId = toPositiveInt(fallbackAccount?.id);
+    if (
+      fallbackAccountId &&
+      fallbackAccountId !== toPositiveInt(selectedAccountIdByCoaId[selectedCoaKey])
+    ) {
+      setSelectedAccountIdByCoaId((prev) => ({
+        ...prev,
+        [selectedCoaKey]: fallbackAccountId,
+      }));
+    }
+    setAccountEditorForm(
+      buildAccountEditorDraftFromAccount(fallbackAccount, selectedCoaAccountById)
+    );
+  }, [
+    accountEditorDraftMode,
+    selectedCoaId,
+    selectedCoaKey,
+    selectedFallbackTreeAccount,
+    selectedCoaAccountById,
+    selectedAccountIdByCoaId,
+  ]);
+
   async function loadManualMappings(legalEntityIdInput) {
     const legalEntityId = toPositiveInt(
       legalEntityIdInput ?? manualMappingsForm.legalEntityId
     );
     if (!legalEntityId || !canReadLegalEntities || !canReadAccounts) {
       setManualCariMappingsByPurpose({});
+      setManualRevrecMappingsByPurpose({});
       setManualMappingsForm((prev) => ({
         ...prev,
         capitalCreditParentAccountId: "",
@@ -961,12 +1786,20 @@ export default function GlSetupPage() {
 
     setLoadingManualMappings(true);
     try {
-      const [cariResponse, shareholderResponse] = await Promise.all([
-        listJournalPurposeAccounts({ legalEntityId }),
+      const [cariResponse, revrecResponse, shareholderResponse] = await Promise.all([
+        listJournalPurposeAccounts({
+          legalEntityId,
+          moduleKey: PURPOSE_MAPPING_MODULE_KEYS.CARI,
+        }),
+        listJournalPurposeAccounts({
+          legalEntityId,
+          moduleKey: PURPOSE_MAPPING_MODULE_KEYS.REVREC,
+        }),
         listShareholderJournalConfigs({ legalEntityId }),
       ]);
 
       setManualCariMappingsByPurpose(toQueryMapByPurpose(cariResponse?.rows || []));
+      setManualRevrecMappingsByPurpose(toQueryMapByPurpose(revrecResponse?.rows || []));
       const shareholderRows = Array.isArray(shareholderResponse?.rows)
         ? shareholderResponse.rows
         : [];
@@ -1041,6 +1874,38 @@ export default function GlSetupPage() {
       };
     }
 
+    return {
+      label: l("OK", "Tamam"),
+      className: "bg-emerald-100 text-emerald-700",
+      detail: "",
+    };
+  }
+
+  function getRevrecPurposeMappingStatus(row) {
+    const accountId = toPositiveInt(row?.accountId || row?.account_id);
+    const validForPosting = toBoolean(
+      row?.validForPurposePosting ??
+        row?.valid_for_purpose_posting ??
+        row?.validForCariPosting ??
+        row?.valid_for_cari_posting
+    );
+    if (!accountId) {
+      return {
+        label: l("Missing", "Eksik"),
+        className: "bg-rose-100 text-rose-700",
+        detail: "",
+      };
+    }
+    if (!validForPosting) {
+      return {
+        label: l("Invalid", "Gecersiz"),
+        className: "bg-amber-100 text-amber-800",
+        detail: l(
+          "Account must be active, postable, and in selected legal-entity chart.",
+          "Hesap aktif, postlanabilir ve secili legal-entity hesap planinda olmali."
+        ),
+      };
+    }
     return {
       label: l("OK", "Tamam"),
       className: "bg-emerald-100 text-emerald-700",
@@ -1191,22 +2056,27 @@ export default function GlSetupPage() {
     }
   }
 
-  function handleManualCariPurposeAccountChange(purposeCode, nextAccountId) {
+  function handleManualPurposeAccountChange(purposeCode, nextAccountId) {
     const normalizedPurposeCode = toUpper(purposeCode);
     if (!normalizedPurposeCode) {
       return;
     }
-    setManualCariMappingsByPurpose((prev) => ({
+    const updater = (prev) => ({
       ...prev,
       [normalizedPurposeCode]: {
         ...(prev[normalizedPurposeCode] || {}),
         purposeCode: normalizedPurposeCode,
         accountId: nextAccountId,
       },
-    }));
+    });
+    if (manualPurposeModuleKey === PURPOSE_MAPPING_MODULE_KEYS.REVREC) {
+      setManualRevrecMappingsByPurpose(updater);
+      return;
+    }
+    setManualCariMappingsByPurpose(updater);
   }
 
-  async function handleSaveManualCariMappings() {
+  async function handleSaveManualPurposeMappings() {
     if (!canUpsertAccounts) {
       setError(l("Missing permission: gl.account.upsert", "Eksik yetki: gl.account.upsert"));
       return;
@@ -1218,11 +2088,25 @@ export default function GlSetupPage() {
       return;
     }
 
+    const moduleKey =
+      manualPurposeModuleKey === PURPOSE_MAPPING_MODULE_KEYS.REVREC
+        ? PURPOSE_MAPPING_MODULE_KEYS.REVREC
+        : PURPOSE_MAPPING_MODULE_KEYS.CARI;
+    const isRevrec = moduleKey === PURPOSE_MAPPING_MODULE_KEYS.REVREC;
+    const requiredPurposeCodes = isRevrec
+      ? REVREC_REQUIRED_PURPOSE_CODES
+      : CARI_REQUIRED_PURPOSE_CODES;
+    const optionalPurposeCodes = isRevrec ? [] : CARI_OPTIONAL_CONTEXT_PURPOSE_CODES;
+    const mappingsByPurpose = isRevrec
+      ? manualRevrecMappingsByPurpose
+      : manualCariMappingsByPurpose;
+    const savingKey = isRevrec
+      ? "manual-revrec-purpose-mappings"
+      : "manual-cari-purpose-mappings";
+
     const payloadRows = [];
-    for (const purposeCode of CARI_REQUIRED_PURPOSE_CODES) {
-      const accountId = toPositiveInt(
-        manualCariMappingsByPurpose[purposeCode]?.accountId
-      );
+    for (const purposeCode of requiredPurposeCodes) {
+      const accountId = toPositiveInt(mappingsByPurpose[purposeCode]?.accountId);
       if (!accountId) {
         setError(
           l(
@@ -1234,42 +2118,51 @@ export default function GlSetupPage() {
       }
       payloadRows.push({ purposeCode, accountId });
     }
-    for (const purposeCode of CARI_OPTIONAL_CONTEXT_PURPOSE_CODES) {
-      const accountId = toPositiveInt(
-        manualCariMappingsByPurpose[purposeCode]?.accountId
-      );
+    for (const purposeCode of optionalPurposeCodes) {
+      const accountId = toPositiveInt(mappingsByPurpose[purposeCode]?.accountId);
       if (!accountId) {
         continue;
       }
       payloadRows.push({ purposeCode, accountId });
     }
 
-    setSaving("manual-cari-purpose-mappings");
+    setSaving(savingKey);
     setError("");
     setMessage("");
     try {
       for (const row of payloadRows) {
         await upsertJournalPurposeAccount({
           legalEntityId,
+          moduleKey,
           purposeCode: row.purposeCode,
           accountId: row.accountId,
         });
       }
 
       setMessage(
-        l(
-          "Manual CARI purpose mappings saved.",
-          "Manuel CARI amac eslemeleri kaydedildi."
-        )
+        isRevrec
+          ? l(
+              "Manual REVREC purpose mappings saved.",
+              "Manuel REVREC amac eslemeleri kaydedildi."
+            )
+          : l(
+              "Manual CARI purpose mappings saved.",
+              "Manuel CARI amac eslemeleri kaydedildi."
+            )
       );
       await Promise.all([refreshLegalEntity(legalEntityId), loadManualMappings(legalEntityId)]);
     } catch (err) {
       setError(
         err?.response?.data?.message ||
-          l(
-            "Failed to save manual CARI purpose mappings.",
-            "Manuel CARI amac eslemeleri kaydedilemedi."
-          )
+          (isRevrec
+            ? l(
+                "Failed to save manual REVREC purpose mappings.",
+                "Manuel REVREC amac eslemeleri kaydedilemedi."
+              )
+            : l(
+                "Failed to save manual CARI purpose mappings.",
+                "Manuel CARI amac eslemeleri kaydedilemedi."
+              ))
       );
     } finally {
       setSaving("");
@@ -1412,8 +2305,118 @@ export default function GlSetupPage() {
     }
   }
 
-  async function handleAccountSubmit(event) {
-    event.preventDefault();
+  function handleToggleAccountTypeGroup(accountType) {
+    const normalizedType = toUpper(accountType);
+    if (!selectedCoaKey || !normalizedType) {
+      return;
+    }
+    setCollapsedAccountTypeKeysByCoaId((prev) => {
+      const baseTypeValues = Array.isArray(prev[selectedCoaKey])
+        ? prev[selectedCoaKey]
+        : defaultCollapsedAccountTypeKeys;
+      const nextSet = new Set(
+        baseTypeValues
+          .map((value) => toUpper(value))
+          .filter(Boolean)
+      );
+      if (nextSet.has(normalizedType)) {
+        nextSet.delete(normalizedType);
+      } else {
+        nextSet.add(normalizedType);
+      }
+      return {
+        ...prev,
+        [selectedCoaKey]: Array.from(nextSet),
+      };
+    });
+  }
+
+  function handleToggleAccountRowCollapse(accountId) {
+    const normalizedAccountId = toPositiveInt(accountId);
+    if (!selectedCoaKey || !normalizedAccountId) {
+      return;
+    }
+    setCollapsedAccountIdsByCoaId((prev) => {
+      const baseAccountIds = Array.isArray(prev[selectedCoaKey])
+        ? prev[selectedCoaKey]
+        : defaultCollapsedAccountIds;
+      const nextSet = new Set(
+        baseAccountIds
+          .map((value) => toPositiveInt(value))
+          .filter(Boolean)
+      );
+      if (nextSet.has(normalizedAccountId)) {
+        nextSet.delete(normalizedAccountId);
+      } else {
+        nextSet.add(normalizedAccountId);
+      }
+      return {
+        ...prev,
+        [selectedCoaKey]: Array.from(nextSet),
+      };
+    });
+  }
+
+  function handleSelectTreeAccount(account) {
+    if (!selectedCoaId) {
+      return;
+    }
+    const accountId = toPositiveInt(account?.id);
+    if (!accountId) {
+      return;
+    }
+    setAccountEditorDraftMode(false);
+    setSelectedAccountIdByCoaId((prev) => ({
+      ...prev,
+      [selectedCoaKey]: accountId,
+    }));
+  }
+
+  function handleStartAddRootAccount() {
+    if (!selectedCoaId) {
+      setError(l("Select CoA first.", "Once hesap plani secin."));
+      return;
+    }
+    setError("");
+    setMessage("");
+    setAccountEditorDraftMode(true);
+    setAccountEditorForm(createAccountEditorDraft());
+  }
+
+  function handleStartAddChildAccount(parentAccount) {
+    if (!selectedCoaId) {
+      setError(l("Select CoA first.", "Once hesap plani secin."));
+      return;
+    }
+    const parentAccountId = toPositiveInt(parentAccount?.id);
+    const parentCode = toUpper(parentAccount?.code);
+    if (!parentCode || !parentAccountId) {
+      setError(
+        l(
+          "Select a valid parent account first.",
+          "Once gecerli bir ust hesap secin."
+        )
+      );
+      return;
+    }
+    setError("");
+    setMessage("");
+    setSelectedAccountIdByCoaId((prev) => ({
+      ...prev,
+      [selectedCoaKey]: parentAccountId,
+    }));
+    setAccountEditorDraftMode(true);
+    setAccountEditorForm(
+      createAccountEditorDraft({
+        parentCode,
+        accountType: toUpper(parentAccount?.account_type),
+        normalSide: toUpper(parentAccount?.normal_side),
+        allowPosting: true,
+      })
+    );
+  }
+
+  async function handleAccountSubmit(nextEditorForm) {
     if (!canUpsertAccounts) {
       setError(l("Missing permission: gl.account.upsert", "Eksik yetki: gl.account.upsert"));
       return;
@@ -1425,24 +2428,151 @@ export default function GlSetupPage() {
       return;
     }
 
+    const editorForm = createAccountEditorDraft(nextEditorForm);
+    const code = toUpper(editorForm.code);
+    const name = String(editorForm.name || "").trim();
+    const accountType = toUpper(editorForm.accountType) || "ASSET";
+    const normalSide = toUpper(editorForm.normalSide) || "DEBIT";
+    const parentCode = toUpper(editorForm.parentCode);
+    if (!code || !name) {
+      setError(
+        l(
+          "Account code and name are required.",
+          "Hesap kodu ve adi zorunludur."
+        )
+      );
+      return;
+    }
+    if (parentCode && parentCode === code) {
+      setError(
+        l(
+          "Parent code cannot be same as account code.",
+          "Ust kod, hesap kodu ile ayni olamaz."
+        )
+      );
+      return;
+    }
+
+    const parentAccount = parentCode
+      ? selectedCoaAccountByCode.get(parentCode)
+      : null;
+    if (parentCode && !parentAccount) {
+      setError(
+        l(
+          `Parent code ${parentCode} not found in selected CoA.`,
+          `Secili hesap planinda ${parentCode} parent kodu bulunamadi.`
+        )
+      );
+      return;
+    }
+    const parentAccountId = toPositiveInt(parentAccount?.id);
+    const currentAccountId = toPositiveInt(editorForm.accountId);
+    if (currentAccountId && parentAccountId && currentAccountId === parentAccountId) {
+      setError(
+        l(
+          "Account cannot be parent of itself.",
+          "Hesap kendisini ust hesap secemez."
+        )
+      );
+      return;
+    }
+
+    const currentAccount = currentAccountId
+      ? selectedCoaAccountById.get(currentAccountId)
+      : null;
+    const currentCode = toUpper(currentAccount?.code);
+    if (currentAccount && currentCode && currentCode !== code) {
+      const confirmed = window.confirm(
+        l(
+          `Changing code ${currentCode} -> ${code} creates a new account row. Continue?`,
+          `${currentCode} -> ${code} kod degisikligi yeni bir hesap satiri olusturur. Devam edilsin mi?`
+        )
+      );
+      if (!confirmed) {
+        return;
+      }
+    }
+
     setSaving("account");
     setError("");
     setMessage("");
     try {
-      await upsertAccount({
+      const response = await upsertAccount({
         coaId,
-        code: accountForm.code.trim(),
-        name: accountForm.name.trim(),
-        accountType: accountForm.accountType,
-        normalSide: accountForm.normalSide,
-        allowPosting: Boolean(accountForm.allowPosting),
-        parentAccountId: toPositiveInt(accountForm.parentAccountId) || undefined,
+        code,
+        name,
+        accountType,
+        normalSide,
+        allowPosting: Boolean(editorForm.allowPosting),
+        parentAccountId: parentAccountId || undefined,
       });
-      setAccountForm((prev) => ({ ...prev, code: "", name: "", parentAccountId: "" }));
+      const savedAccountId = toPositiveInt(response?.id);
+      setAccountEditorDraftMode(false);
+      if (savedAccountId) {
+        setSelectedAccountIdByCoaId((prev) => ({
+          ...prev,
+          [selectedCoaKey]: savedAccountId,
+        }));
+      }
       setMessage(l("Account saved.", "Hesap kaydedildi."));
       await loadData();
     } catch (err) {
       setError(err?.response?.data?.message || l("Failed to save account.", "Hesap kaydedilemedi."));
+    } finally {
+      setSaving("");
+    }
+  }
+
+  async function handleSetAllAccountsAllowPosting(nextAllowPosting) {
+    if (!canUpsertAccounts) {
+      setError(l("Missing permission: gl.account.upsert", "Eksik yetki: gl.account.upsert"));
+      return;
+    }
+    if (!selectedCoaId) {
+      setError(l("Select CoA first.", "Once hesap plani secin."));
+      return;
+    }
+    if (selectedCoaAccounts.length === 0) {
+      setError(l("No accounts found.", "Hesap bulunamadi."));
+      return;
+    }
+
+    setSaving("account-posting-bulk");
+    setError("");
+    setMessage("");
+    try {
+      let processed = 0;
+      let enforced = 0;
+      for (const account of selectedCoaAccounts) {
+        const response = await upsertAccount({
+          coaId: selectedCoaId,
+          code: String(account.code || "").trim(),
+          name: String(account.name || "").trim(),
+          accountType: String(account.account_type || "").toUpperCase(),
+          normalSide: String(account.normal_side || "").toUpperCase(),
+          allowPosting: Boolean(nextAllowPosting),
+          parentAccountId: toPositiveInt(account.parent_account_id) || undefined,
+        });
+        processed += 1;
+        if (response?.enforcedNonPosting) {
+          enforced += 1;
+        }
+      }
+      setMessage(
+        l(
+          `Posting updated for ${processed} accounts${enforced > 0 ? ` (${enforced} kept non-posting by rule).` : "."}`,
+          `${processed} hesap icin post secenegi guncellendi${enforced > 0 ? ` (${enforced} hesap kural geregi post-disinda tutuldu).` : "."}`
+        )
+      );
+      await loadData();
+    } catch (err) {
+      setError(
+        err?.response?.data?.message ||
+          l(
+            "Failed to bulk update posting options.",
+            "Toplu post secenegi guncellenemedi."
+          )
+      );
     } finally {
       setSaving("");
     }
@@ -1653,15 +2783,24 @@ export default function GlSetupPage() {
 
   return (
     <div className="space-y-4">
-      <TenantReadinessChecklist />
+      {!accountsOnlyMode ? <TenantReadinessChecklist /> : null}
 
       <div>
-        <h1 className="text-xl font-semibold text-slate-900">{l("GL Setup", "GL Ayarlari")}</h1>
+        <h1 className="text-xl font-semibold text-slate-900">
+          {accountsOnlyMode
+            ? l("Create Chart of Accounts", "Hesap Plani Olustur")
+            : l("GL Setup", "GL Ayarlari")}
+        </h1>
         <p className="mt-1 text-sm text-slate-600">
-          {l(
-            "Manage books, charts of accounts, accounts, and account mappings.",
-            "Defterleri, hesap planlarini, hesaplari ve hesap eslemelerini yonetin."
-          )}
+          {accountsOnlyMode
+            ? l(
+                "Use the larger workspace below to manage account trees and account defaults.",
+                "Asagidaki genis alanda hesap agacini ve varsayilan hesaplari yonetin."
+              )
+            : l(
+                "Manage books, charts of accounts, accounts, and account mappings.",
+                "Defterleri, hesap planlarini, hesaplari ve hesap eslemelerini yonetin."
+              )}
         </p>
       </div>
 
@@ -1676,10 +2815,12 @@ export default function GlSetupPage() {
         </div>
       )}
 
-      <section
-        id="template-wizard"
-        className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-4"
-      >
+      {!accountsOnlyMode ? (
+        <>
+          <section
+            id="template-wizard"
+            className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-4"
+          >
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <div>
             <h2 className="text-sm font-semibold text-emerald-900">
@@ -1870,12 +3011,12 @@ export default function GlSetupPage() {
             )}
           </p>
         )}
-      </section>
+          </section>
 
-      <section
-        id="manual-purpose-mappings"
-        className="rounded-xl border border-slate-200 bg-white p-4"
-      >
+          <section
+            id="manual-purpose-mappings"
+            className="rounded-xl border border-slate-200 bg-white p-4"
+          >
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <div>
             <h2 className="text-sm font-semibold text-slate-800">
@@ -1921,17 +3062,29 @@ export default function GlSetupPage() {
         </div>
 
         <div className="mb-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
-          {l("Required CARI purpose codes:", "Zorunlu CARI amac kodlari:")}{" "}
-          {CARI_REQUIRED_PURPOSE_CODES.join(", ")} <br />
-          {l(
-            "Optional CARI settlement context purpose codes:",
-            "Opsiyonel CARI settlement baglam amac kodlari:"
-          )}{" "}
-          {CARI_OPTIONAL_CONTEXT_PURPOSE_CODES.length}{" "}
-          {l(
-            "(hidden by default; use Show optional button below).",
-            "(varsayilan gizli; asagidaki Opsiyonelleri goster butonunu kullanin)."
-          )}{" "}
+          {l("Purpose mapping module:", "Amac esleme modulu:")}{" "}
+          <span className="font-semibold text-slate-900">{manualPurposeModuleKey}</span>
+          <br />
+          {manualPurposeModuleKey === PURPOSE_MAPPING_MODULE_KEYS.REVREC
+            ? l("Required REVREC purpose codes:", "Zorunlu REVREC amac kodlari:")
+            : l("Required CARI purpose codes:", "Zorunlu CARI amac kodlari:")}{" "}
+          {manualPurposeModuleKey === PURPOSE_MAPPING_MODULE_KEYS.REVREC
+            ? REVREC_REQUIRED_PURPOSE_CODES.join(", ")
+            : CARI_REQUIRED_PURPOSE_CODES.join(", ")}
+          {manualPurposeModuleKey === PURPOSE_MAPPING_MODULE_KEYS.CARI ? (
+            <>
+              <br />
+              {l(
+                "Optional CARI settlement context purpose codes:",
+                "Opsiyonel CARI settlement baglam amac kodlari:"
+              )}{" "}
+              {CARI_OPTIONAL_CONTEXT_PURPOSE_CODES.length}{" "}
+              {l(
+                "(hidden by default; use Show optional button below).",
+                "(varsayilan gizli; asagidaki Opsiyonelleri goster butonunu kullanin)."
+              )}
+            </>
+          ) : null}
           <br />
           {l(
             "Required shareholder parent purpose codes:",
@@ -1941,28 +3094,60 @@ export default function GlSetupPage() {
         </div>
 
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-            {l("CARI mappings", "CARI eslemeleri")}
-          </h3>
-          <button
-            type="button"
-            onClick={() => setShowOptionalCariMappings((prev) => !prev)}
-            className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700"
-          >
-            {showOptionalCariMappings
-              ? l("Hide optional context mappings", "Opsiyonel baglam eslemelerini gizle")
-              : l(
-                  `Show optional context mappings (${CARI_OPTIONAL_CONTEXT_PURPOSE_CODES.length})`,
-                  `Opsiyonel baglam eslemelerini goster (${CARI_OPTIONAL_CONTEXT_PURPOSE_CODES.length})`
-                )}
-          </button>
+          <div className="flex items-center gap-2">
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+              {manualPurposeModuleKey === PURPOSE_MAPPING_MODULE_KEYS.REVREC
+                ? l("REVREC mappings", "REVREC eslemeleri")
+                : l("CARI mappings", "CARI eslemeleri")}
+            </h3>
+            <select
+              value={manualPurposeModuleKey}
+              onChange={(event) => {
+                const nextValue = toUpper(event.target.value);
+                if (
+                  nextValue !== PURPOSE_MAPPING_MODULE_KEYS.CARI &&
+                  nextValue !== PURPOSE_MAPPING_MODULE_KEYS.REVREC
+                ) {
+                  return;
+                }
+                setManualPurposeModuleKey(nextValue);
+              }}
+              className="rounded-lg border border-slate-300 px-2 py-1 text-xs"
+            >
+              <option value={PURPOSE_MAPPING_MODULE_KEYS.CARI}>CARI</option>
+              <option value={PURPOSE_MAPPING_MODULE_KEYS.REVREC}>REVREC</option>
+            </select>
+          </div>
+          {manualPurposeModuleKey === PURPOSE_MAPPING_MODULE_KEYS.CARI ? (
+            <button
+              type="button"
+              onClick={() => setShowOptionalCariMappings((prev) => !prev)}
+              className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700"
+            >
+              {showOptionalCariMappings
+                ? l("Hide optional context mappings", "Opsiyonel baglam eslemelerini gizle")
+                : l(
+                    `Show optional context mappings (${CARI_OPTIONAL_CONTEXT_PURPOSE_CODES.length})`,
+                    `Opsiyonel baglam eslemelerini goster (${CARI_OPTIONAL_CONTEXT_PURPOSE_CODES.length})`
+                  )}
+            </button>
+          ) : null}
         </div>
-        <p className="mb-2 text-xs text-slate-500">
-          {l(
-            "Start with 4 required rows. Optional context rows only override settlement behavior for CASH, MANUAL, or ON_ACCOUNT.",
-            "Ilk olarak 4 zorunlu satiri doldurun. Opsiyonel baglam satirlari sadece CASH, MANUAL veya ON_ACCOUNT settlement davranisini override eder."
-          )}
-        </p>
+        {manualPurposeModuleKey === PURPOSE_MAPPING_MODULE_KEYS.REVREC ? (
+          <p className="mb-2 text-xs text-slate-500">
+            {l(
+              "Map all REVREC purpose codes so deferred/prepaid/accrual postings and long-short reclass entries can run automatically.",
+              "Tum REVREC amac kodlarini esleyin; ertelenmis/pesin/tahakkuk kayitlari ile uzun-kisa vade aktarmalari otomatik calissin."
+            )}
+          </p>
+        ) : (
+          <p className="mb-2 text-xs text-slate-500">
+            {l(
+              "Start with 4 required rows. Optional context rows only override settlement behavior for CASH, MANUAL, or ON_ACCOUNT.",
+              "Ilk olarak 4 zorunlu satiri doldurun. Opsiyonel baglam satirlari sadece CASH, MANUAL veya ON_ACCOUNT settlement davranisini override eder."
+            )}
+          </p>
+        )}
         <div className="overflow-x-auto rounded-lg border border-slate-200">
           <table className="min-w-full text-sm">
             <thead className="bg-slate-50 text-left text-slate-600">
@@ -1973,22 +3158,37 @@ export default function GlSetupPage() {
               </tr>
             </thead>
             <tbody>
-              {visibleCariPurposeCodes.map((purposeCode) => {
-                const row = manualCariMappingsByPurpose[purposeCode] || null;
+              {visibleManualPurposeCodes.map((purposeCode) => {
+                const row = manualPurposeMappingsByPurpose[purposeCode] || null;
                 const selectedAccountId = String(toPositiveInt(row?.accountId) || "");
-                const isRequiredPurpose = CARI_REQUIRED_PURPOSE_CODE_SET.has(purposeCode);
-                const isOptionalPurpose = CARI_OPTIONAL_PURPOSE_CODE_SET.has(purposeCode);
-                const purposeMeta = getCariPurposeUiMeta(purposeCode);
-                const readinessStatus = isRequiredPurpose
-                  ? getPurposeReadinessStatus(selectedManualCariReadiness, purposeCode)
-                  : {
-                      label: l("Optional", "Opsiyonel"),
-                      className: "bg-slate-100 text-slate-700",
-                      detail: l(
-                        "Optional override; if empty fallback uses base mapping.",
-                        "Opsiyonel override; bos ise fallback temel mapping'i kullanir."
-                      ),
-                    };
+                const isRequiredPurpose =
+                  manualPurposeModuleKey === PURPOSE_MAPPING_MODULE_KEYS.REVREC
+                    ? REVREC_REQUIRED_PURPOSE_CODE_SET.has(purposeCode)
+                    : CARI_REQUIRED_PURPOSE_CODE_SET.has(purposeCode);
+                const isOptionalPurpose =
+                  manualPurposeModuleKey === PURPOSE_MAPPING_MODULE_KEYS.CARI &&
+                  CARI_OPTIONAL_PURPOSE_CODE_SET.has(purposeCode);
+                const purposeMeta =
+                  manualPurposeModuleKey === PURPOSE_MAPPING_MODULE_KEYS.REVREC
+                    ? getRevrecPurposeUiMeta(purposeCode)
+                    : getCariPurposeUiMeta(purposeCode);
+                const readinessStatus =
+                  manualPurposeModuleKey === PURPOSE_MAPPING_MODULE_KEYS.REVREC
+                    ? getRevrecPurposeMappingStatus(row)
+                    : isRequiredPurpose
+                    ? getPurposeReadinessStatus(selectedManualCariReadiness, purposeCode)
+                    : {
+                        label: l("Optional", "Opsiyonel"),
+                        className: "bg-slate-100 text-slate-700",
+                        detail: l(
+                          "Optional override; if empty fallback uses base mapping.",
+                          "Opsiyonel override; bos ise fallback temel mapping'i kullanir."
+                        ),
+                      };
+                const optionalTagLabel =
+                  manualPurposeModuleKey === PURPOSE_MAPPING_MODULE_KEYS.REVREC
+                    ? l("Required", "Zorunlu")
+                    : l("Context override", "Baglam override");
                 return (
                   <tr key={purposeCode} className="border-t border-slate-100">
                     <td className="px-3 py-2">
@@ -2005,7 +3205,7 @@ export default function GlSetupPage() {
                       ) : null}
                       {isOptionalPurpose ? (
                         <span className="mt-1 inline-block rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-700">
-                          {l("Context override", "Baglam override")}
+                          {optionalTagLabel}
                         </span>
                       ) : null}
                     </td>
@@ -2013,7 +3213,7 @@ export default function GlSetupPage() {
                       <select
                         value={selectedAccountId}
                         onChange={(event) =>
-                          handleManualCariPurposeAccountChange(
+                          handleManualPurposeAccountChange(
                             purposeCode,
                             event.target.value
                           )
@@ -2021,7 +3221,7 @@ export default function GlSetupPage() {
                         className="w-full rounded-lg border border-slate-300 px-2 py-1.5 text-xs"
                       >
                         <option value="">{l("Select account", "Hesap secin")}</option>
-                        {manualCariAccountOptions.map((account) => (
+                        {manualPurposeAccountOptions.map((account) => (
                           <option key={account.id} value={account.id}>
                             {buildAccountLabel(account)}
                           </option>
@@ -2049,12 +3249,16 @@ export default function GlSetupPage() {
         <div className="mt-2">
           <button
             type="button"
-            onClick={handleSaveManualCariMappings}
-            disabled={saving === "manual-cari-purpose-mappings" || !selectedManualLegalEntityId}
+            onClick={handleSaveManualPurposeMappings}
+            disabled={isSavingManualPurposeMappings || !selectedManualLegalEntityId}
             className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60"
           >
-            {saving === "manual-cari-purpose-mappings"
-              ? l("Saving CARI mappings...", "CARI eslemeleri kaydediliyor...")
+            {isSavingManualPurposeMappings
+              ? manualPurposeModuleKey === PURPOSE_MAPPING_MODULE_KEYS.REVREC
+                ? l("Saving REVREC mappings...", "REVREC eslemeleri kaydediliyor...")
+                : l("Saving CARI mappings...", "CARI eslemeleri kaydediliyor...")
+              : manualPurposeModuleKey === PURPOSE_MAPPING_MODULE_KEYS.REVREC
+              ? l("Save REVREC mappings", "REVREC eslemelerini kaydet")
               : l("Save CARI mappings", "CARI eslemelerini kaydet")}
           </button>
         </div>
@@ -2166,10 +3370,13 @@ export default function GlSetupPage() {
                 )}
           </button>
         </div>
-      </section>
+          </section>
+        </>
+      ) : null}
 
-      <div className="grid gap-4 xl:grid-cols-2">
-        <section className="rounded-xl border border-slate-200 bg-white p-4">
+      <div className={accountsOnlyMode ? "space-y-4" : "grid gap-4 xl:grid-cols-2"}>
+        {!accountsOnlyMode ? (
+          <section className="rounded-xl border border-slate-200 bg-white p-4">
           <h2 className="mb-3 text-sm font-semibold text-slate-700">{l("Books", "Defterler")}</h2>
           <form onSubmit={handleBookSubmit} className="grid gap-2 md:grid-cols-3">
             <select
@@ -2286,9 +3493,11 @@ export default function GlSetupPage() {
               </tbody>
             </table>
           </div>
-        </section>
+          </section>
+        ) : null}
 
-        <section className="rounded-xl border border-slate-200 bg-white p-4">
+        {!accountsOnlyMode ? (
+          <section className="rounded-xl border border-slate-200 bg-white p-4">
           <h2 className="mb-3 text-sm font-semibold text-slate-700">
             {l("Charts of Accounts", "Hesap Planlari")}
           </h2>
@@ -2379,8 +3588,10 @@ export default function GlSetupPage() {
               </tbody>
             </table>
           </div>
-        </section>
+          </section>
+        ) : null}
 
+        {accountsOnlyMode ? (
         <section className="rounded-xl border border-slate-200 bg-white p-4">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-sm font-semibold text-slate-700">{l("Accounts", "Hesaplar")}</h2>
@@ -2413,13 +3624,14 @@ export default function GlSetupPage() {
               "Ipucu: Ortak sermaye taahhut parent eslemesinde (ornegin 500/501), parent ozkaynak hesaplarini Post edilmeye izin ver kapali olarak kaydedin."
             )}
           </div>
-          <form onSubmit={handleAccountSubmit} className="grid gap-2 md:grid-cols-4">
+          <div className="mb-3 grid gap-2 lg:grid-cols-12">
             <select
               value={accountForm.coaId}
-              onChange={(event) =>
-                setAccountForm((prev) => ({ ...prev, coaId: event.target.value }))
-              }
-              className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              onChange={(event) => {
+                setAccountEditorDraftMode(false);
+                setAccountForm((prev) => ({ ...prev, coaId: event.target.value }));
+              }}
+              className="rounded-lg border border-slate-300 px-3 py-2 text-sm lg:col-span-4"
               required
             >
               <option value="">{l("Select CoA", "Hesap plani secin")}</option>
@@ -2429,174 +3641,118 @@ export default function GlSetupPage() {
                 </option>
               ))}
             </select>
-            <input
-              value={accountForm.code}
-              onChange={(event) =>
-                setAccountForm((prev) => ({ ...prev, code: event.target.value }))
-              }
-              className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              placeholder={l("Account code", "Hesap kodu")}
-              required
-            />
-            <input
-              value={accountForm.name}
-              onChange={(event) =>
-                setAccountForm((prev) => ({ ...prev, name: event.target.value }))
-              }
-              className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              placeholder={l("Account name", "Hesap adi")}
-              required
-            />
-            <select
-              value={accountForm.accountType}
-              onChange={(event) =>
-                setAccountForm((prev) => ({
-                  ...prev,
-                  accountType: event.target.value,
-                }))
-              }
-              className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-            >
-              {ACCOUNT_TYPES.map((accountType) => (
-                <option key={accountType} value={accountType}>
-                  {accountType}
-                </option>
-              ))}
-            </select>
-            <select
-              value={accountForm.normalSide}
-              onChange={(event) =>
-                setAccountForm((prev) => ({
-                  ...prev,
-                  normalSide: event.target.value,
-                }))
-              }
-              className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-            >
-              {NORMAL_SIDES.map((normalSide) => (
-                <option key={normalSide} value={normalSide}>
-                  {normalSide}
-                </option>
-              ))}
-            </select>
-            <input
-              type="number"
-              min={1}
-              value={accountForm.parentAccountId}
-              onChange={(event) =>
-                setAccountForm((prev) => ({
-                  ...prev,
-                  parentAccountId: event.target.value,
-                }))
-              }
-              className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              placeholder={l("Parent account ID (optional)", "Ust hesap ID (opsiyonel)")}
-            />
-            <label className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700">
-              <input
-                type="checkbox"
-                checked={accountForm.allowPosting}
-                onChange={(event) =>
-                  setAccountForm((prev) => ({
-                    ...prev,
-                    allowPosting: event.target.checked,
-                  }))
+            <div className="flex flex-wrap items-center justify-end gap-2 lg:col-span-8">
+              <button
+                type="button"
+                onClick={() => handleSetAllAccountsAllowPosting(true)}
+                disabled={
+                  saving === "account-posting-bulk" ||
+                  !canUpsertAccounts ||
+                  !selectedCoaId
                 }
-              />
-              {l("Allow posting", "Post edilmeye izin ver")}
-            </label>
-            <button
-              type="submit"
-              disabled={saving === "account" || !canUpsertAccounts}
-              className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60"
-            >
-              {saving === "account" ? l("Saving...", "Kaydediliyor...") : l("Save Account", "Hesabi Kaydet")}
-            </button>
-          </form>
+                className="rounded-lg border border-emerald-300 px-2 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 disabled:opacity-50"
+              >
+                {l("Select All Post", "Tumunu Post Sec")}
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSetAllAccountsAllowPosting(false)}
+                disabled={
+                  saving === "account-posting-bulk" ||
+                  !canUpsertAccounts ||
+                  !selectedCoaId
+                }
+                className="rounded-lg border border-amber-300 px-2 py-1 text-xs font-semibold text-amber-700 hover:bg-amber-50 disabled:opacity-50"
+              >
+                {l("Unselect All Post", "Tumunu Post Kaldir")}
+              </button>
+              <button
+                type="button"
+                onClick={handleStartAddRootAccount}
+                disabled={!canUpsertAccounts || !selectedCoaId}
+                className="rounded-lg border border-slate-300 px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              >
+                {l("Add Root Account", "Kok Hesap Ekle")}
+              </button>
+            </div>
+          </div>
 
-          <div className="mt-3 overflow-x-auto">
-            <table className="min-w-full text-sm">
-              <thead className="bg-slate-50 text-left text-slate-600">
-                <tr>
-                  <th className="px-3 py-2">ID</th>
-                  <th className="px-3 py-2">CoA</th>
-                  <th className="px-3 py-2">{l("Code", "Kod")}</th>
-                  <th className="px-3 py-2">{l("Name", "Ad")}</th>
-                  <th className="px-3 py-2">{l("Type", "Tur")}</th>
-                  <th className="px-3 py-2">{l("Side", "Yon")}</th>
-                  <th className="px-3 py-2">{l("Posting", "Post")}</th>
-                  <th className="px-3 py-2">{l("Action", "Islem")}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {accounts.map((account) => {
-                  const accountId = toPositiveInt(account.id);
-                  const hasChildren = parentAccountIds.has(accountId);
-                  const rowUpdating = updatingAccountId === accountId;
-                  const postingAllowed = toBoolean(account.allow_posting);
-                  return (
-                    <tr key={account.id} className="border-t border-slate-100">
-                      <td className="px-3 py-2">{account.id}</td>
-                      <td className="px-3 py-2">{account.coa_id}</td>
-                      <td className="px-3 py-2">{account.code}</td>
-                      <td className="px-3 py-2">{account.name}</td>
-                      <td className="px-3 py-2">{account.account_type}</td>
-                      <td className="px-3 py-2">{account.normal_side}</td>
-                      <td className="px-3 py-2">
-                        <div className="flex flex-col gap-1">
-                          <span
-                            className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${
-                              postingAllowed
-                                ? "bg-emerald-100 text-emerald-700"
-                                : "bg-amber-100 text-amber-700"
-                            }`}
-                          >
-                            {postingAllowed
-                              ? l("Leaf (Post)", "Alt hesap (Post)")
-                              : l("Header (No Post)", "Ust hesap (Post yok)")}
-                          </span>
-                          {hasChildren ? (
-                            <span className="text-[11px] text-slate-500">
-                              {l("Has child accounts", "Alt hesabi var")}
-                            </span>
-                          ) : null}
-                        </div>
-                      </td>
-                      <td className="px-3 py-2">
-                        <label className="inline-flex items-center gap-2 text-xs text-slate-700">
-                          <input
-                            type="checkbox"
-                            checked={postingAllowed}
-                            disabled={
-                              !canUpsertAccounts ||
-                              rowUpdating ||
-                              (hasChildren && !postingAllowed)
-                            }
-                            onChange={(event) =>
-                              handleAccountPostingChange(account, event.target.checked)
-                            }
-                          />
-                          {rowUpdating
-                            ? l("Saving...", "Kaydediliyor...")
-                            : l("Allow posting", "Post etmeye izin ver")}
-                        </label>
-                      </td>
+          <div className="grid gap-3 lg:grid-cols-12">
+            <div
+              className={`rounded-lg border border-slate-200 bg-white ${
+                accountsOnlyMode ? "lg:col-span-8" : "lg:col-span-7"
+              }`}
+            >
+              <div className={`${accountsOnlyMode ? "max-h-[68vh]" : "max-h-[420px]"} overflow-auto`}>
+                <table className="min-w-full text-xs">
+                  <thead className="sticky top-0 z-10 bg-slate-100 text-slate-700">
+                    <tr>
+                      <th className="px-2 py-1.5 text-left font-semibold">
+                        {l("Code", "Kod")}
+                      </th>
+                      <th className="px-2 py-1.5 text-left font-semibold">
+                        {l("Parent", "Ust")}
+                      </th>
+                      <th className="px-2 py-1.5 text-left font-semibold">
+                        {l("Name", "Ad")}
+                      </th>
+                      <th className="px-2 py-1.5 text-left font-semibold">
+                        {l("Type", "Tur")}
+                      </th>
+                      <th className="px-2 py-1.5 text-left font-semibold">
+                        {l("Side", "Taraf")}
+                      </th>
+                      <th className="px-2 py-1.5 text-left font-semibold">
+                        {l("Post", "Post")}
+                      </th>
+                      <th className="px-2 py-1.5 text-left font-semibold">
+                        {l("Actions", "Islemler")}
+                      </th>
                     </tr>
-                  );
-                })}
-                {accounts.length === 0 && !loading && (
-                  <tr>
-                    <td colSpan={8} className="px-3 py-3 text-slate-500">
-                      {l("No accounts found.", "Hesap bulunamadi.")}
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
+                  </thead>
+                  <tbody>
+                    {accountTreeTableRows}
+                    {selectedCoaTreeGroups.length === 0 && !loading && (
+                      <tr>
+                        <td colSpan={7} className="px-3 py-3 text-slate-500">
+                          {l("No accounts found for selected CoA.", "Secili hesap plani icin hesap bulunamadi.")}
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div
+              className={`rounded-lg border border-slate-200 bg-white p-3 ${
+                accountsOnlyMode ? "lg:col-span-4" : "lg:col-span-5"
+              }`}
+            >
+              <AccountEditorPanel
+                l={l}
+                selectedCoaId={selectedCoaId}
+                selectedCoaKey={selectedCoaKey}
+                accountEditorSeed={accountEditorForm}
+                accountEditorDraftMode={accountEditorDraftMode}
+                canUpsertAccounts={canUpsertAccounts}
+                saving={saving}
+                selectedTreeAccount={selectedTreeAccount}
+                parentCodeDatalistOptionNodes={parentCodeDatalistOptionNodes}
+                onSubmit={handleAccountSubmit}
+                onStartAddRoot={handleStartAddRootAccount}
+                onStartAddChildUnderSelected={() =>
+                  handleStartAddChildAccount(selectedTreeAccount)
+                }
+                onCancelDraft={() => setAccountEditorDraftMode(false)}
+              />
+            </div>
           </div>
         </section>
+        ) : null}
 
-        <section className="rounded-xl border border-slate-200 bg-white p-4">
+        {!accountsOnlyMode ? (
+          <section className="rounded-xl border border-slate-200 bg-white p-4">
           <h2 className="mb-3 text-sm font-semibold text-slate-700">
             {l("Account Mapping", "Hesap Esleme")}
           </h2>
@@ -2662,9 +3818,9 @@ export default function GlSetupPage() {
               "Backend su an yalnizca esleme upsert islemini saglar. Esleme listeleme henuz acik degildir."
             )}
           </p>
-        </section>
+          </section>
+        ) : null}
       </div>
     </div>
   );
 }
-

@@ -372,6 +372,18 @@ export function parseDocumentPostInput(req) {
   const tenantId = requireTenantId(req);
   const userId = requireUserId(req);
   const documentId = parseDocumentIdParam(req);
+  const offsetAccountId = parseOptionalPositiveIntField(
+    req.body?.offsetAccountId ?? req.body?.offsetGlAccountId,
+    "offsetAccountId"
+  );
+  const offsetAccountCode = parseOptionalShortText(
+    req.body?.offsetAccountCode ?? req.body?.offsetGlAccountCode,
+    "offsetAccountCode",
+    50
+  );
+  if (offsetAccountId && offsetAccountCode) {
+    throw badRequest("Provide either offsetAccountId or offsetAccountCode, not both");
+  }
   const useFxOverride = parseBooleanFlag(
     req.body?.useFxOverride ?? req.body?.overrideFxRate,
     false
@@ -389,6 +401,8 @@ export function parseDocumentPostInput(req) {
     tenantId,
     userId,
     documentId,
+    offsetAccountId: offsetAccountId || null,
+    offsetAccountCode: offsetAccountCode || null,
     useFxOverride,
     fxOverrideReason: fxOverrideReason || null,
   };

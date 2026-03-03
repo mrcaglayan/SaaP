@@ -16,6 +16,24 @@ export async function listRevenueRecognitionSchedules(params = {}) {
   );
 }
 
+export async function listRevenueLookupLegalEntities(params = {}) {
+  return run(() =>
+    api.get(`/api/v1/revenue-recognition/lookups/legal-entities${toCariQueryString(params)}`)
+  );
+}
+
+export async function listRevenueLookupFiscalPeriods(params = {}) {
+  return run(() =>
+    api.get(`/api/v1/revenue-recognition/lookups/fiscal-periods${toCariQueryString(params)}`)
+  );
+}
+
+export async function getRevenuePostingMappingSetup(params = {}) {
+  return run(() =>
+    api.get(`/api/v1/revenue-recognition/setup/posting-mappings${toCariQueryString(params)}`)
+  );
+}
+
 export async function generateRevenueRecognitionSchedule(payload) {
   return run(() => api.post("/api/v1/revenue-recognition/schedules/generate", payload));
 }
@@ -83,4 +101,3 @@ export async function getRevenuePrepaidExpenseSplitReport(params = {}) {
     )
   );
 }
-

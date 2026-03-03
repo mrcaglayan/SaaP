@@ -60,6 +60,7 @@ function toPermissionSet(permissionCodes = []) {
 
 export function resolveContractsPermissionGates(permissionCodes = []) {
   const permissionSet = toPermissionSet(permissionCodes);
+  const canReadLegalEntityPicker = permissionSet.has("org.tree.read");
   const canReadCounterpartyPicker = permissionSet.has("cari.card.read");
   const canReadAccountPicker = permissionSet.has("gl.account.read");
   const canReadDocumentPicker = permissionSet.has("contract.link_document");
@@ -74,9 +75,11 @@ export function resolveContractsPermissionGates(permissionCodes = []) {
     canLinkDocument: permissionSet.has("contract.link_document"),
     canGenerateBilling: permissionSet.has("contract.link_document"),
     canGenerateRevrec: permissionSet.has("revenue.schedule.generate"),
+    canReadLegalEntityPicker,
     canReadCounterpartyPicker,
     canReadAccountPicker,
     canReadDocumentPicker,
+    shouldFetchLegalEntities: canReadLegalEntityPicker,
     shouldFetchCounterparties: canReadCounterpartyPicker,
     shouldFetchAccounts: canReadAccountPicker,
     shouldFetchDocuments: canReadDocumentPicker,
@@ -790,4 +793,3 @@ export function getLifecycleActionStates(status, gates = {}) {
     },
   };
 }
-

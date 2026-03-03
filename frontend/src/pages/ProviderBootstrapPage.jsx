@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
 import {
+  createProviderCurrency,
   createProviderCountry,
   createProviderTenant,
   listProviderCountries,
   listProviderCurrencies,
   listProviderTenants,
+  updateProviderCurrency,
   updateProviderCountry,
   updateProviderTenantStatus,
 } from "../api/providerControl.js";
@@ -30,6 +32,14 @@ function createInitialCountryForm() {
   };
 }
 
+function createInitialCurrencyForm() {
+  return {
+    code: "",
+    name: "",
+    minorUnits: "2",
+  };
+}
+
 function toTenantStatusLabel(t, status) {
   return t(
     ["providerBootstrap", "statuses", String(status || "").toUpperCase()],
@@ -41,16 +51,23 @@ export default function ProviderBootstrapPage() {
   const { token, providerAdmin, logout, clearSession } = useProviderAuth();
   const { t } = useI18n();
   const [form, setForm] = useState(createInitialForm());
+  const [currencyForm, setCurrencyForm] = useState(createInitialCurrencyForm());
   const [countryForm, setCountryForm] = useState(createInitialCountryForm());
   const [query, setQuery] = useState("");
+  const [currencyQuery, setCurrencyQuery] = useState("");
   const [countryQuery, setCountryQuery] = useState("");
   const [loadingTenants, setLoadingTenants] = useState(false);
   const [loadingCountries, setLoadingCountries] = useState(false);
   const [loadingCurrencies, setLoadingCurrencies] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [savingCurrency, setSavingCurrency] = useState(false);
   const [savingCountry, setSavingCountry] = useState(false);
   const [updatingTenantId, setUpdatingTenantId] = useState(null);
+  const [updatingCurrencyCode, setUpdatingCurrencyCode] = useState(null);
   const [updatingCountryId, setUpdatingCountryId] = useState(null);
+  const [editingCurrencyCode, setEditingCurrencyCode] = useState(null);
+  const [editingCurrencyName, setEditingCurrencyName] = useState("");
+  const [editingCurrencyMinorUnits, setEditingCurrencyMinorUnits] = useState("2");
   const [editingCountryId, setEditingCountryId] = useState(null);
   const [editingCountryName, setEditingCountryName] = useState("");
   const [editingCountryCurrencyCode, setEditingCountryCurrencyCode] = useState("");
@@ -63,6 +80,10 @@ export default function ProviderBootstrapPage() {
 
   function setField(field, value) {
     setForm((prev) => ({ ...prev, [field]: value }));
+  }
+
+  function setCurrencyField(field, value) {
+    setCurrencyForm((prev) => ({ ...prev, [field]: value }));
   }
 
   function setCountryField(field, value) {
@@ -205,6 +226,72 @@ export default function ProviderBootstrapPage() {
     }
   }
 
+  async function handleCreateCurrency(event) {
+    event.preventDefault();
+    if (!token) {
+      return;
+    }
+
+    setSavingCurrency(true);
+    setError("");
+    setMessage("");
+    try {
+      await createProviderCurrency(token, {
+        code: currencyForm.code.trim().toUpperCase(),
+        name: currencyForm.name.trim(),
+        minorUnits: Number(currencyForm.minorUnits),
+      });
+      setCurrencyForm(createInitialCurrencyForm());
+      setMessage(t("providerBootstrap.messages.currencyCreated"));
+      await loadCurrencies();
+    } catch (err) {
+      if (err?.response?.status === 401) {
+        clearSession();
+      }
+      setError(err?.response?.data?.message || t("providerBootstrap.errors.createCurrency"));
+    } finally {
+      setSavingCurrency(false);
+    }
+  }
+
+  function handleStartEditCurrency(currency) {
+    setEditingCurrencyCode(currency.code);
+    setEditingCurrencyName(currency.name || "");
+    setEditingCurrencyMinorUnits(String(currency.minorUnits ?? 2));
+  }
+
+  function handleCancelEditCurrency() {
+    setEditingCurrencyCode(null);
+    setEditingCurrencyName("");
+    setEditingCurrencyMinorUnits("2");
+  }
+
+  async function handleSaveCurrency(currencyCode) {
+    if (!token) {
+      return;
+    }
+
+    setUpdatingCurrencyCode(currencyCode);
+    setError("");
+    setMessage("");
+    try {
+      await updateProviderCurrency(token, currencyCode, {
+        name: editingCurrencyName.trim(),
+        minorUnits: Number(editingCurrencyMinorUnits),
+      });
+      setMessage(t("providerBootstrap.messages.currencyUpdated", { code: currencyCode }));
+      handleCancelEditCurrency();
+      await loadCurrencies();
+    } catch (err) {
+      if (err?.response?.status === 401) {
+        clearSession();
+      }
+      setError(err?.response?.data?.message || t("providerBootstrap.errors.updateCurrency"));
+    } finally {
+      setUpdatingCurrencyCode(null);
+    }
+  }
+
   async function handleCreateCountry(event) {
     event.preventDefault();
     if (!token) {
@@ -271,6 +358,18 @@ export default function ProviderBootstrapPage() {
       setUpdatingCountryId(null);
     }
   }
+
+  const normalizedCurrencyQuery = currencyQuery.trim().toUpperCase();
+  const filteredCurrencies = normalizedCurrencyQuery
+    ? currencies.filter((currency) => {
+        const code = String(currency.code || "").toUpperCase();
+        const name = String(currency.name || "").toUpperCase();
+        return (
+          code.includes(normalizedCurrencyQuery) ||
+          name.includes(normalizedCurrencyQuery)
+        );
+      })
+    : currencies;
 
   return (
     <main className="min-h-dvh bg-slate-100 p-4 md:p-6">
@@ -499,6 +598,192 @@ export default function ProviderBootstrapPage() {
             </div>
           </section>
         </div>
+
+        <section className="rounded-xl border border-slate-200 bg-white p-5">
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <h2 className="text-sm font-semibold text-slate-700">
+                {t("providerBootstrap.currencies.title")}
+              </h2>
+              <p className="mt-1 text-xs text-slate-500">
+                {t("providerBootstrap.currencies.subtitle")}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => loadCurrencies()}
+              disabled={loadingCurrencies}
+              className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 disabled:opacity-60"
+            >
+              {loadingCurrencies
+                ? t("providerBootstrap.currencies.loading")
+                : t("providerBootstrap.currencies.refresh")}
+            </button>
+          </div>
+
+          <div className="mt-4 grid gap-4 xl:grid-cols-[1fr_1.5fr]">
+            <section className="rounded-lg border border-slate-200 bg-slate-50/40 p-4">
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                {t("providerBootstrap.currencies.create.title")}
+              </h3>
+              <form onSubmit={handleCreateCurrency} className="mt-3 grid gap-3">
+                <input
+                  value={currencyForm.code}
+                  onChange={(event) => setCurrencyField("code", event.target.value)}
+                  className="rounded-lg border border-slate-300 px-3 py-2 text-sm uppercase"
+                  placeholder={t("providerBootstrap.currencies.create.placeholders.code")}
+                  maxLength={3}
+                  required
+                />
+                <input
+                  value={currencyForm.name}
+                  onChange={(event) => setCurrencyField("name", event.target.value)}
+                  className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  placeholder={t("providerBootstrap.currencies.create.placeholders.name")}
+                  required
+                />
+                <input
+                  type="number"
+                  min={0}
+                  max={9}
+                  step={1}
+                  value={currencyForm.minorUnits}
+                  onChange={(event) =>
+                    setCurrencyField("minorUnits", event.target.value)
+                  }
+                  className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  placeholder={t("providerBootstrap.currencies.create.placeholders.minorUnits")}
+                />
+                <button
+                  type="submit"
+                  disabled={savingCurrency}
+                  className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+                >
+                  {savingCurrency
+                    ? t("providerBootstrap.currencies.create.actions.creating")
+                    : t("providerBootstrap.currencies.create.actions.create")}
+                </button>
+              </form>
+              <p className="mt-3 text-xs text-slate-500">
+                {t("providerBootstrap.currencies.immutableCodeNote")}
+              </p>
+            </section>
+
+            <section>
+              <form
+                onSubmit={(event) => {
+                  event.preventDefault();
+                }}
+                className="flex gap-2"
+              >
+                <input
+                  value={currencyQuery}
+                  onChange={(event) => setCurrencyQuery(event.target.value)}
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  placeholder={t("providerBootstrap.currencies.searchPlaceholder")}
+                />
+              </form>
+
+              <div className="mt-3 overflow-x-auto rounded-lg border border-slate-200">
+                <table className="min-w-full text-sm">
+                  <thead className="bg-slate-50 text-left text-slate-600">
+                    <tr>
+                      <th className="px-3 py-2">
+                        {t("providerBootstrap.currencies.columns.code")}
+                      </th>
+                      <th className="px-3 py-2">
+                        {t("providerBootstrap.currencies.columns.name")}
+                      </th>
+                      <th className="px-3 py-2">
+                        {t("providerBootstrap.currencies.columns.minorUnits")}
+                      </th>
+                      <th className="px-3 py-2">
+                        {t("providerBootstrap.currencies.columns.actions")}
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredCurrencies.map((currency) => {
+                      const isEditing = editingCurrencyCode === currency.code;
+                      return (
+                        <tr key={currency.code} className="border-t border-slate-100">
+                          <td className="px-3 py-2 font-mono">{currency.code}</td>
+                          <td className="px-3 py-2">
+                            {isEditing ? (
+                              <input
+                                value={editingCurrencyName}
+                                onChange={(event) =>
+                                  setEditingCurrencyName(event.target.value)
+                                }
+                                className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                              />
+                            ) : (
+                              currency.name
+                            )}
+                          </td>
+                          <td className="px-3 py-2">
+                            {isEditing ? (
+                              <input
+                                type="number"
+                                min={0}
+                                max={9}
+                                step={1}
+                                value={editingCurrencyMinorUnits}
+                                onChange={(event) =>
+                                  setEditingCurrencyMinorUnits(event.target.value)
+                                }
+                                className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                              />
+                            ) : (
+                              <span className="font-mono">{currency.minorUnits}</span>
+                            )}
+                          </td>
+                          <td className="px-3 py-2">
+                            {isEditing ? (
+                              <div className="flex gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => handleSaveCurrency(currency.code)}
+                                  disabled={updatingCurrencyCode === currency.code}
+                                  className="rounded border border-emerald-300 px-2 py-1 text-xs font-semibold text-emerald-700 disabled:opacity-60"
+                                >
+                                  {t("providerBootstrap.currencies.actions.save")}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={handleCancelEditCurrency}
+                                  disabled={updatingCurrencyCode === currency.code}
+                                  className="rounded border border-slate-300 px-2 py-1 text-xs font-semibold text-slate-700 disabled:opacity-60"
+                                >
+                                  {t("providerBootstrap.currencies.actions.cancel")}
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => handleStartEditCurrency(currency)}
+                                className="rounded border border-slate-300 px-2 py-1 text-xs font-semibold text-slate-700"
+                              >
+                                {t("providerBootstrap.currencies.actions.edit")}
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    {filteredCurrencies.length === 0 && !loadingCurrencies ? (
+                      <tr>
+                        <td colSpan={4} className="px-3 py-3 text-slate-500">
+                          {t("providerBootstrap.currencies.empty")}
+                        </td>
+                      </tr>
+                    ) : null}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          </div>
+        </section>
 
         <section className="rounded-xl border border-slate-200 bg-white p-5">
           <div className="flex flex-wrap items-start justify-between gap-2">

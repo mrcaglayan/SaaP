@@ -67,6 +67,36 @@ function parseDbBoolean(value) {
   return value === true || value === 1 || value === "1";
 }
 
+function parseBreadcrumbCodes(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item || "").trim()).filter(Boolean);
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return [];
+    }
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) {
+        return parsed.map((item) => String(item || "").trim()).filter(Boolean);
+      }
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+function formatAccountOptionLabel(account) {
+  const code = String(account?.code || "").trim();
+  const name = String(account?.name || "").trim();
+  const breadcrumbCodes = parseBreadcrumbCodes(account?.account_breadcrumb_codes);
+  const parentPath = breadcrumbCodes.slice(0, -1).join(" > ");
+  const baseLabel = [code, name].filter(Boolean).join(" - ");
+  return parentPath ? `${parentPath} > ${baseLabel}` : baseLabel;
+}
+
 function mapRowToForm(row) {
   return {
     id: String(row?.id || ""),
@@ -248,7 +278,11 @@ export default function CashRegistersPage() {
 
     if (canReadAccounts) {
       try {
-        const accountRes = await listAccounts({ includeInactive: true, limit: 500 });
+        const accountRes = await listAccounts({
+          includeInactive: true,
+          legalEntityId: selectedLegalEntityId || undefined,
+          limit: 1000,
+        });
         setAccounts(accountRes?.rows || []);
       } catch (err) {
         setAccounts([]);
@@ -272,7 +306,7 @@ export default function CashRegistersPage() {
   useEffect(() => {
     loadLookups();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canUpsertRegisters, canReadOrgTree, canReadAccounts]);
+  }, [canUpsertRegisters, canReadOrgTree, canReadAccounts, selectedLegalEntityId]);
 
   function resetForm() {
     setForm((prev) => ({
@@ -614,7 +648,7 @@ export default function CashRegistersPage() {
                 <option value="">{t("cashRegisters.placeholders.account")}</option>
                 {accountOptions.map((account) => (
                   <option key={account.id} value={account.id}>
-                    {account.code} - {account.name}
+                    {formatAccountOptionLabel(account)}
                   </option>
                 ))}
               </select>
@@ -646,7 +680,7 @@ export default function CashRegistersPage() {
                 <option value="">{t("cashRegisters.placeholders.varianceGainAccount")}</option>
                 {accountOptions.map((account) => (
                   <option key={account.id} value={account.id}>
-                    {account.code} - {account.name}
+                    {formatAccountOptionLabel(account)}
                   </option>
                 ))}
               </select>
@@ -680,7 +714,7 @@ export default function CashRegistersPage() {
                 <option value="">{t("cashRegisters.placeholders.varianceLossAccount")}</option>
                 {accountOptions.map((account) => (
                   <option key={account.id} value={account.id}>
-                    {account.code} - {account.name}
+                    {formatAccountOptionLabel(account)}
                   </option>
                 ))}
               </select>

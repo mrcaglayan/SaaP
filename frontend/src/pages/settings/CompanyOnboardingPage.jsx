@@ -366,6 +366,95 @@ return rows
       account.allowPosting === undefined ? true : Boolean(account.allowPosting),
   }));
 }
+function compareAccountsForTree(left, right) {
+const leftCode = toUpper(left?.code);
+const rightCode = toUpper(right?.code);
+if (leftCode && rightCode && leftCode !== rightCode) {
+  return leftCode.localeCompare(rightCode);
+}
+const leftName = String(left?.name || "").trim();
+const rightName = String(right?.name || "").trim();
+if (leftName !== rightName) {
+  return leftName.localeCompare(rightName);
+}
+return String(left?.id || "").localeCompare(String(right?.id || ""));
+}
+function getAccountTreeVisitKey(account) {
+if (account?.id) {
+  return `ID:${String(account.id)}`;
+}
+const code = toUpper(account?.code);
+if (code) {
+  return `CODE:${code}`;
+}
+return `ROW:${String(account?.name || "")}`;
+}
+function buildAccountTreeRows(defaultAccounts = []) {
+const rows = Array.isArray(defaultAccounts) ? defaultAccounts : [];
+const accountByCode = new Map();
+for (const account of rows) {
+  const code = toUpper(account?.code);
+  if (code && !accountByCode.has(code)) {
+    accountByCode.set(code, account);
+  }
+}
+const childrenByParentCode = new Map();
+for (const account of rows) {
+  const parentCode = toUpper(account?.parentCode ?? account?.parent_code);
+  if (!parentCode) {
+    continue;
+  }
+  if (!childrenByParentCode.has(parentCode)) {
+    childrenByParentCode.set(parentCode, []);
+  }
+  childrenByParentCode.get(parentCode).push(account);
+}
+for (const children of childrenByParentCode.values()) {
+  children.sort(compareAccountsForTree);
+}
+const roots = rows
+  .filter((account) => {
+    const code = toUpper(account?.code);
+    const parentCode = toUpper(account?.parentCode ?? account?.parent_code);
+    if (!parentCode) {
+      return true;
+    }
+    if (parentCode === code) {
+      return true;
+    }
+    return !accountByCode.has(parentCode);
+  })
+  .sort(compareAccountsForTree);
+const treeRows = [];
+const visited = new Set();
+function walk(account, depth) {
+  const visitKey = getAccountTreeVisitKey(account);
+  if (!visitKey || visited.has(visitKey)) {
+    return;
+  }
+  visited.add(visitKey);
+  const code = toUpper(account?.code);
+  const children = code ? childrenByParentCode.get(code) || [] : [];
+  treeRows.push({
+    account,
+    depth,
+    childCount: children.length,
+  });
+  for (const child of children) {
+    walk(child, depth + 1);
+  }
+}
+for (const root of roots) {
+  walk(root, 0);
+}
+const unresolved = rows
+  .filter((account) => !visited.has(getAccountTreeVisitKey(account)))
+  .sort(compareAccountsForTree);
+for (const account of unresolved) {
+  walk(account, 0);
+}
+return treeRows;
+}
 function compactEntityPayload(entity) {
 const branches = (entity.branches || [])
   .filter((branch) => branch.code.trim() && branch.name.trim())
@@ -618,6 +707,8 @@ const [submitting, setSubmitting] = useState(false);
 const [error, setError] = useState("");
 const [message, setMessage] = useState("");
 const [result, setResult] = useState(null);
+const [showAllPolicyPackOptions, setShowAllPolicyPackOptions] = useState(false);
+const [selectedAccountIdByEntityId, setSelectedAccountIdByEntityId] = useState({});
 const activeStep = WIZARD_STEPS[activeStepIndex] || WIZARD_STEPS[0];
 const isLastStep = activeStepIndex >= WIZARD_STEPS.length - 1;
 const entityCount = useMemo(
@@ -657,6 +748,16 @@ const policyPacksByCountry = useMemo(() => {
     map.get(countryIso2).push(row);
   }
   return map;
+}, [policyPacks]);
+const policyPackOptions = useMemo(() => {
+  return [...(policyPacks || [])].sort((left, right) => {
+    const leftCountry = toUpper(left?.countryIso2);
+    const rightCountry = toUpper(right?.countryIso2);
+    if (leftCountry !== rightCountry) {
+      return leftCountry.localeCompare(rightCountry);
+    }
+    return String(left?.packId || "").localeCompare(String(right?.packId || ""));
+  });
 }, [policyPacks]);
 useEffect(() => {
   let active = true;
@@ -737,12 +838,21 @@ function setEntityCountry(entityId, rawIso2) {
         return entity;
       }
       const countryRow = countriesByIso2.get(nextCountryIso2) || null;
+      const previousCountryIso2 = toUpper(entity.countryIso2);
+      const previousRecommendedPackId = String(
+        (policyPacksByCountry.get(previousCountryIso2) || [])[0]?.packId || ""
+      ).trim();
       const recommendedPacks = policyPacksByCountry.get(nextCountryIso2) || [];
       const recommendedPackId = String(recommendedPacks[0]?.packId || "").trim();
+      const shouldAutoSwitchPack =
+        !toUpper(entity.policyPackId) ||
+        toUpper(entity.policyPackId) === toUpper(previousRecommendedPackId);
       return {
         ...entity,
         countryIso2: nextCountryIso2,
-        policyPackId: recommendedPackId || entity.policyPackId || "",
+        policyPackId: shouldAutoSwitchPack
+          ? recommendedPackId || entity.policyPackId || ""
+          : entity.policyPackId,
         functionalCurrencyCode: countryRow?.default_currency_code
           ? toUpper(countryRow.default_currency_code)
           : entity.functionalCurrencyCode,
@@ -770,16 +880,32 @@ function removeEntity(entityId) {
       legalEntities: prev.legalEntities.filter((entity) => entity.id !== entityId),
     };
   });
+  setSelectedAccountIdByEntityId((prev) => {
+    if (!Object.prototype.hasOwnProperty.call(prev, entityId)) {
+      return prev;
+    }
+    const next = { ...prev };
+    delete next[entityId];
+    return next;
+  });
 }
-function addDefaultAccount(entityId) {
+function setSelectedAccount(entityId, accountId) {
+  setSelectedAccountIdByEntityId((prev) => ({
+    ...prev,
+    [entityId]: accountId,
+  }));
+}
+function addDefaultAccount(entityId, parentCode = "") {
+  const nextAccount = createAccountDraft({ parentCode });
   setForm((prev) => ({
     ...prev,
     legalEntities: prev.legalEntities.map((entity) =>
       entity.id === entityId
-        ? { ...entity, defaultAccounts: [...entity.defaultAccounts, createAccountDraft()] }
+        ? { ...entity, defaultAccounts: [...entity.defaultAccounts, nextAccount] }
         : entity
     ),
   }));
+  setSelectedAccount(entityId, nextAccount.id);
 }
 function setDefaultAccountField(entityId, accountId, field, value) {
   const normalizedValue =
@@ -821,6 +947,32 @@ function removeDefaultAccount(entityId, accountId) {
         defaultAccounts: entity.defaultAccounts.filter(
           (account) => account.id !== accountId
         ),
+      };
+    }),
+  }));
+  setSelectedAccountIdByEntityId((prev) => {
+    if (prev?.[entityId] !== accountId) {
+      return prev;
+    }
+    const next = { ...prev };
+    delete next[entityId];
+    return next;
+  });
+}
+function setAllDefaultAccountsAllowPosting(entityId, allowPosting) {
+  const nextValue = Boolean(allowPosting);
+  setForm((prev) => ({
+    ...prev,
+    legalEntities: prev.legalEntities.map((entity) => {
+      if (entity.id !== entityId) {
+        return entity;
+      }
+      return {
+        ...entity,
+        defaultAccounts: (entity.defaultAccounts || []).map((account) => ({
+          ...account,
+          allowPosting: nextValue,
+        })),
       };
     }),
   }));
@@ -1441,11 +1593,92 @@ return (
               "Sihirbaz secilen ulkeye gore bir policy pack onerir; ardindan baslangic hesaplarini uygulayabilir veya manuel devam edebilirsiniz."
             )}
           </p>
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
+            <label className="inline-flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={showAllPolicyPackOptions}
+                onChange={(event) => setShowAllPolicyPackOptions(event.target.checked)}
+              />
+              {l(
+                "Show templates from all countries",
+                "Tum ulke sablonlarini goster"
+              )}
+            </label>
+            <span>
+              {showAllPolicyPackOptions
+                ? l("All templates visible", "Tum sablonlar gorunur")
+                : l(
+                    "Recommended-country templates only",
+                    "Yalnizca onerilen ulke sablonlari"
+                  )}
+            </span>
+          </div>
 
           <div className="space-y-3">
             {form.legalEntities.map((entity, index) => {
               const countryIso2 = toUpper(entity.countryIso2);
               const countryPackRows = policyPacksByCountry.get(countryIso2) || [];
+              const recommendedPack = countryPackRows[0] || null;
+              const selectedPack =
+                policyPackOptions.find(
+                  (row) => toUpper(row?.packId) === toUpper(entity.policyPackId)
+                ) || null;
+              const selectedPackCountryIso2 = toUpper(selectedPack?.countryIso2);
+              const isCrossCountrySelection =
+                Boolean(selectedPack) &&
+                Boolean(countryIso2) &&
+                Boolean(selectedPackCountryIso2) &&
+                selectedPackCountryIso2 !== countryIso2;
+              const selectablePackRows = (() => {
+                const baseRows = showAllPolicyPackOptions
+                  ? [...policyPackOptions]
+                  : [...countryPackRows];
+                if (
+                  !showAllPolicyPackOptions &&
+                  selectedPack &&
+                  !baseRows.some(
+                    (row) => toUpper(row?.packId) === toUpper(selectedPack?.packId)
+                  )
+                ) {
+                  baseRows.push(selectedPack);
+                }
+                return baseRows.sort((left, right) => {
+                  const leftPackId = toUpper(left?.packId);
+                  const rightPackId = toUpper(right?.packId);
+                  const leftCountry = toUpper(left?.countryIso2);
+                  const rightCountry = toUpper(right?.countryIso2);
+                  if (showAllPolicyPackOptions) {
+                    const leftPriority =
+                      leftPackId && leftPackId === toUpper(recommendedPack?.packId)
+                        ? 0
+                        : leftCountry === countryIso2
+                          ? 1
+                          : 2;
+                    const rightPriority =
+                      rightPackId && rightPackId === toUpper(recommendedPack?.packId)
+                        ? 0
+                        : rightCountry === countryIso2
+                          ? 1
+                          : 2;
+                    if (leftPriority !== rightPriority) {
+                      return leftPriority - rightPriority;
+                    }
+                  } else {
+                    const leftPriority = leftCountry === countryIso2 ? 0 : 1;
+                    const rightPriority = rightCountry === countryIso2 ? 0 : 1;
+                    if (leftPriority !== rightPriority) {
+                      return leftPriority - rightPriority;
+                    }
+                  }
+                  if (leftCountry !== rightCountry) {
+                    return leftCountry.localeCompare(rightCountry);
+                  }
+                  return String(left?.packId || "").localeCompare(
+                    String(right?.packId || "")
+                  );
+                });
+              })();
               const isPackBusy = Boolean(packBusyByEntityId[entity.id]);
               return (
                 <article
@@ -1468,9 +1701,9 @@ return (
                       <option value="">
                         {l("Manual path (no policy pack)", "Manuel yol (policy pack yok)")}
                       </option>
-                      {countryPackRows.map((row) => (
+                      {selectablePackRows.map((row) => (
                         <option key={row.packId} value={row.packId}>
-                          {row.packId} - {row.label}
+                          {row.packId} - {row.label} ({toUpper(row.countryIso2) || "--"})
                         </option>
                       ))}
                     </select>
@@ -1486,6 +1719,27 @@ return (
                     </button>
                     <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">
                       {l("Selected country", "Secili ulke")}: {countryIso2 || "-"}
+                    </div>
+                    <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">
+                      {l("Recommended pack", "Onerilen paket")}:{" "}
+                      {recommendedPack?.packId || l("None", "Yok")}
+                    </div>
+                    <div
+                      className={`rounded-lg px-3 py-2 text-xs md:col-span-2 ${
+                        isCrossCountrySelection
+                          ? "border border-amber-200 bg-amber-50 text-amber-800"
+                          : "border border-emerald-200 bg-emerald-50 text-emerald-700"
+                      }`}
+                    >
+                      {isCrossCountrySelection
+                        ? l(
+                            `Selected template (${selectedPack?.packId || "-"}) belongs to ${selectedPackCountryIso2}. Country is ${countryIso2}.`,
+                            `Secilen sablon (${selectedPack?.packId || "-"}) ${selectedPackCountryIso2} ulkesine ait. Birim ulkesi ${countryIso2}.`
+                          )
+                        : l(
+                            "Selected template matches entity country or manual path is active.",
+                            "Secilen sablon birim ulkesiyle uyumlu veya manuel yol aktif."
+                          )}
                     </div>
 
                     <input
@@ -1555,133 +1809,315 @@ return (
             )}
           </p>
           <div className="space-y-3">
-            {form.legalEntities.map((entity, entityIndex) => (
-              <article
-                key={entity.id}
-                className="rounded-xl border border-slate-200 bg-slate-50/40 p-3"
-              >
-                <div className="mb-2 flex items-center justify-between gap-2">
-                  <h3 className="text-sm font-semibold text-slate-700">
-                    {l("Entity", "Birim")} {entityIndex + 1} -{" "}
-                    {entity.code || l("No code", "Kod yok")}
-                  </h3>
-                  <button
-                    type="button"
-                    onClick={() => addDefaultAccount(entity.id)}
-                    className="rounded-lg border border-slate-300 px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-                  >
-                    {l("Add Account", "Hesap Ekle")}
-                  </button>
-                </div>
-                <div className="space-y-2">
-                  {(entity.defaultAccounts || []).map((account) => (
-                    <div
-                      key={account.id}
-                      className="grid gap-2 rounded-lg border border-slate-200 bg-white p-2 md:grid-cols-12"
-                    >
-                      <input
-                        value={account.code}
-                        onChange={(event) =>
-                          setDefaultAccountField(
-                            entity.id,
-                            account.id,
-                            "code",
-                            event.target.value
-                          )
-                        }
-                        className="rounded-lg border border-slate-300 px-2 py-1.5 text-xs md:col-span-2"
-                        placeholder={l("Code", "Kod")}
-                      />
-                      <input
-                        value={account.parentCode || ""}
-                        onChange={(event) =>
-                          setDefaultAccountField(
-                            entity.id,
-                            account.id,
-                            "parentCode",
-                            event.target.value
-                          )
-                        }
-                        className="rounded-lg border border-slate-300 px-2 py-1.5 text-xs md:col-span-2"
-                        placeholder={l("Parent code (optional)", "Ust kod (opsiyonel)")}
-                      />
-                      <input
-                        value={account.name}
-                        onChange={(event) =>
-                          setDefaultAccountField(
-                            entity.id,
-                            account.id,
-                            "name",
-                            event.target.value
-                          )
-                        }
-                        className="rounded-lg border border-slate-300 px-2 py-1.5 text-xs md:col-span-2"
-                        placeholder={l("Name", "Ad")}
-                      />
-                      <select
-                        value={account.accountType}
-                        onChange={(event) =>
-                          setDefaultAccountField(
-                            entity.id,
-                            account.id,
-                            "accountType",
-                            event.target.value
-                          )
-                        }
-                        className="rounded-lg border border-slate-300 px-2 py-1.5 text-xs md:col-span-2"
-                      >
-                        {ACCOUNT_TYPES.map((accountType) => (
-                          <option key={accountType} value={accountType}>
-                            {accountType}
-                          </option>
-                        ))}
-                      </select>
-                      <select
-                        value={account.normalSide}
-                        onChange={(event) =>
-                          setDefaultAccountField(
-                            entity.id,
-                            account.id,
-                            "normalSide",
-                            event.target.value
-                          )
-                        }
-                        className="rounded-lg border border-slate-300 px-2 py-1.5 text-xs md:col-span-2"
-                      >
-                        {NORMAL_SIDES.map((normalSide) => (
-                          <option key={normalSide} value={normalSide}>
-                            {normalSide}
-                          </option>
-                        ))}
-                      </select>
-                      <label className="inline-flex items-center gap-1 text-xs text-slate-700 md:col-span-1">
-                        <input
-                          type="checkbox"
-                          checked={Boolean(account.allowPosting)}
-                          onChange={(event) =>
-                            setDefaultAccountField(
-                              entity.id,
-                              account.id,
-                              "allowPosting",
-                              event.target.checked
-                            )
-                          }
-                        />
-                        {l("Post", "Post")}
-                      </label>
+            {form.legalEntities.map((entity, entityIndex) => {
+              const entityAccounts = Array.isArray(entity.defaultAccounts)
+                ? entity.defaultAccounts
+                : [];
+              const treeRows = buildAccountTreeRows(entityAccounts);
+              const selectedAccountId = selectedAccountIdByEntityId[entity.id];
+              const selectedAccount =
+                entityAccounts.find((account) => account.id === selectedAccountId) ||
+                treeRows[0]?.account ||
+                null;
+              const accountCount = entityAccounts.length;
+              const parentCodeListId = `parent-code-options-${entity.id}`;
+              const parentCodeOptions = [...entityAccounts]
+                .filter((account) => toUpper(account?.code))
+                .sort(compareAccountsForTree);
+              return (
+                <article
+                  key={entity.id}
+                  className="rounded-xl border border-slate-200 bg-slate-50/40 p-3"
+                >
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <h3 className="text-sm font-semibold text-slate-700">
+                      {l("Entity", "Birim")} {entityIndex + 1} -{" "}
+                      {entity.code || l("No code", "Kod yok")}
+                    </h3>
+                    <div className="flex flex-wrap items-center gap-2">
                       <button
                         type="button"
-                        onClick={() => removeDefaultAccount(entity.id, account.id)}
-                        disabled={(entity.defaultAccounts || []).length <= 1}
-                        className="rounded-lg border border-rose-200 px-2 py-1 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-50 md:col-span-2"
+                        onClick={() => setAllDefaultAccountsAllowPosting(entity.id, true)}
+                        className="rounded-lg border border-emerald-300 px-2 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-50"
                       >
-                        {l("Remove", "Kaldir")}
+                        {l("Select All Post", "Tumunu Post Sec")}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setAllDefaultAccountsAllowPosting(entity.id, false)}
+                        className="rounded-lg border border-amber-300 px-2 py-1 text-xs font-semibold text-amber-700 hover:bg-amber-50"
+                      >
+                        {l("Unselect All Post", "Tumunu Post Kaldir")}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => addDefaultAccount(entity.id)}
+                        className="rounded-lg border border-slate-300 px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                      >
+                        {l("Add Root Account", "Kok Hesap Ekle")}
                       </button>
                     </div>
-                  ))}
-                </div>
-              </article>
-            ))}
+                  </div>
+
+                  <div className="grid gap-3 lg:grid-cols-12">
+                    <div className="rounded-lg border border-slate-200 bg-white lg:col-span-7">
+                      <div className="max-h-[420px] overflow-auto">
+                        <table className="min-w-full text-xs">
+                          <thead className="sticky top-0 z-10 bg-slate-100 text-slate-700">
+                            <tr>
+                              <th className="px-2 py-1.5 text-left font-semibold">
+                                {l("Code", "Kod")}
+                              </th>
+                              <th className="px-2 py-1.5 text-left font-semibold">
+                                {l("Parent", "Ust")}
+                              </th>
+                              <th className="px-2 py-1.5 text-left font-semibold">
+                                {l("Name", "Ad")}
+                              </th>
+                              <th className="px-2 py-1.5 text-left font-semibold">
+                                {l("Type", "Tur")}
+                              </th>
+                              <th className="px-2 py-1.5 text-left font-semibold">
+                                {l("Side", "Taraf")}
+                              </th>
+                              <th className="px-2 py-1.5 text-left font-semibold">
+                                {l("Post", "Post")}
+                              </th>
+                              <th className="px-2 py-1.5 text-left font-semibold">
+                                {l("Actions", "Islemler")}
+                              </th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {treeRows.map(({ account, depth, childCount }) => {
+                              const code = toUpper(account?.code);
+                              const parentCode = toUpper(account?.parentCode);
+                              const isSelected = selectedAccount?.id === account.id;
+                              return (
+                                <tr
+                                  key={account.id}
+                                  onClick={() => setSelectedAccount(entity.id, account.id)}
+                                  className={`cursor-pointer border-t border-slate-100 ${
+                                    isSelected ? "bg-cyan-50" : "hover:bg-slate-50"
+                                  }`}
+                                >
+                                  <td className="px-2 py-1.5 font-semibold text-slate-700">
+                                    <div
+                                      className="flex items-center gap-1"
+                                      style={{ paddingLeft: `${Math.max(0, depth) * 16}px` }}
+                                    >
+                                      <span className="text-[10px] text-slate-400">
+                                        {childCount > 0 ? "▸" : "•"}
+                                      </span>
+                                      <span>{code || "-"}</span>
+                                    </div>
+                                  </td>
+                                  <td className="px-2 py-1.5 text-slate-600">
+                                    {parentCode || "-"}
+                                  </td>
+                                  <td className="px-2 py-1.5 text-slate-700">
+                                    {String(account?.name || "").trim() || "-"}
+                                  </td>
+                                  <td className="px-2 py-1.5 text-slate-600">
+                                    {toUpper(account?.accountType) || "-"}
+                                  </td>
+                                  <td className="px-2 py-1.5 text-slate-600">
+                                    {toUpper(account?.normalSide) || "-"}
+                                  </td>
+                                  <td className="px-2 py-1.5 text-slate-600">
+                                    {account?.allowPosting
+                                      ? l("Yes", "Evet")
+                                      : l("No", "Hayir")}
+                                  </td>
+                                  <td className="px-2 py-1.5">
+                                    <div className="flex flex-wrap items-center gap-1">
+                                      <button
+                                        type="button"
+                                        onClick={(event) => {
+                                          event.stopPropagation();
+                                          setSelectedAccount(entity.id, account.id);
+                                          addDefaultAccount(entity.id, code);
+                                        }}
+                                        disabled={!code}
+                                        className="rounded border border-cyan-200 px-1.5 py-0.5 font-semibold text-cyan-700 hover:bg-cyan-50 disabled:opacity-50"
+                                      >
+                                        {l("Add Child", "Alt Hesap Ekle")}
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={(event) => {
+                                          event.stopPropagation();
+                                          removeDefaultAccount(entity.id, account.id);
+                                        }}
+                                        disabled={accountCount <= 1}
+                                        className="rounded border border-rose-200 px-1.5 py-0.5 font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-50"
+                                      >
+                                        {l("Remove", "Kaldir")}
+                                      </button>
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+
+                    <div className="rounded-lg border border-slate-200 bg-white p-3 lg:col-span-5">
+                      <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                        {l("Account Editor", "Hesap Duzenleyici")}
+                      </h4>
+                      {selectedAccount ? (
+                        <div className="space-y-2">
+                          <div className="rounded-md border border-cyan-200 bg-cyan-50 px-2 py-1 text-xs text-cyan-800">
+                            {l(
+                              "Click rows to focus. Add child/edit/remove from this panel.",
+                              "Odaklamak icin satira tiklayin. Bu panelden alt hesap ekleyin/duzenleyin/kaldirin."
+                            )}
+                          </div>
+                          <input
+                            value={selectedAccount.code}
+                            onChange={(event) =>
+                              setDefaultAccountField(
+                                entity.id,
+                                selectedAccount.id,
+                                "code",
+                                event.target.value
+                              )
+                            }
+                            className="w-full rounded-lg border border-slate-300 px-2 py-1.5 text-xs"
+                            placeholder={l("Code", "Kod")}
+                          />
+                          <input
+                            list={parentCodeListId}
+                            value={selectedAccount.parentCode || ""}
+                            onChange={(event) =>
+                              setDefaultAccountField(
+                                entity.id,
+                                selectedAccount.id,
+                                "parentCode",
+                                event.target.value
+                              )
+                            }
+                            className="w-full rounded-lg border border-slate-300 px-2 py-1.5 text-xs"
+                            placeholder={l("Parent code (optional)", "Ust kod (opsiyonel)")}
+                          />
+                          <datalist id={parentCodeListId}>
+                            {parentCodeOptions.map((account) => {
+                              const code = toUpper(account?.code);
+                              if (!code || code === toUpper(selectedAccount.code)) {
+                                return null;
+                              }
+                              return (
+                                <option key={`${entity.id}-${account.id}`} value={code}>
+                                  {code} - {String(account?.name || "").trim() || "-"}
+                                </option>
+                              );
+                            })}
+                          </datalist>
+                          <input
+                            value={selectedAccount.name}
+                            onChange={(event) =>
+                              setDefaultAccountField(
+                                entity.id,
+                                selectedAccount.id,
+                                "name",
+                                event.target.value
+                              )
+                            }
+                            className="w-full rounded-lg border border-slate-300 px-2 py-1.5 text-xs"
+                            placeholder={l("Name", "Ad")}
+                          />
+                          <div className="grid gap-2 sm:grid-cols-2">
+                            <select
+                              value={selectedAccount.accountType}
+                              onChange={(event) =>
+                                setDefaultAccountField(
+                                  entity.id,
+                                  selectedAccount.id,
+                                  "accountType",
+                                  event.target.value
+                                )
+                              }
+                              className="rounded-lg border border-slate-300 px-2 py-1.5 text-xs"
+                            >
+                              {ACCOUNT_TYPES.map((accountType) => (
+                                <option key={accountType} value={accountType}>
+                                  {accountType}
+                                </option>
+                              ))}
+                            </select>
+                            <select
+                              value={selectedAccount.normalSide}
+                              onChange={(event) =>
+                                setDefaultAccountField(
+                                  entity.id,
+                                  selectedAccount.id,
+                                  "normalSide",
+                                  event.target.value
+                                )
+                              }
+                              className="rounded-lg border border-slate-300 px-2 py-1.5 text-xs"
+                            >
+                              {NORMAL_SIDES.map((normalSide) => (
+                                <option key={normalSide} value={normalSide}>
+                                  {normalSide}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <label className="inline-flex items-center gap-2 text-xs text-slate-700">
+                            <input
+                              type="checkbox"
+                              checked={Boolean(selectedAccount.allowPosting)}
+                              onChange={(event) =>
+                                setDefaultAccountField(
+                                  entity.id,
+                                  selectedAccount.id,
+                                  "allowPosting",
+                                  event.target.checked
+                                )
+                              }
+                            />
+                            {l("Allow posting", "Post etmeye izin ver")}
+                          </label>
+                          <div className="flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                addDefaultAccount(entity.id, toUpper(selectedAccount.code))
+                              }
+                              disabled={!toUpper(selectedAccount.code)}
+                              className="rounded-lg border border-cyan-300 px-2 py-1 text-xs font-semibold text-cyan-700 hover:bg-cyan-50 disabled:opacity-50"
+                            >
+                              {l("Add Child Under Selected", "Secili Altina Alt Hesap Ekle")}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                removeDefaultAccount(entity.id, selectedAccount.id)
+                              }
+                              disabled={accountCount <= 1}
+                              className="rounded-lg border border-rose-300 px-2 py-1 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-50"
+                            >
+                              {l("Remove Selected", "Secileni Kaldir")}
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <p className="text-xs text-slate-500">
+                          {l(
+                            "No account row found. Add a root account to continue.",
+                            "Hesap satiri bulunamadi. Devam etmek icin kok hesap ekleyin."
+                          )}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </article>
+              );
+            })}
           </div>
         </section>
       ) : null}

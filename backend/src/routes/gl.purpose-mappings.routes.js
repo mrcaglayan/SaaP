@@ -20,6 +20,13 @@ function parseRequiredLegalEntityId(rawValue, fieldLabel = "legalEntityId") {
   return legalEntityId;
 }
 
+function parseOptionalModuleKey(rawValue) {
+  const moduleKey = String(rawValue || "")
+    .trim()
+    .toUpperCase();
+  return moduleKey || undefined;
+}
+
 export function registerGlPurposeMappingsRoutes(router) {
   router.get(
     "/journal-purpose-accounts",
@@ -38,13 +45,15 @@ export function registerGlPurposeMappingsRoutes(router) {
       }
 
       const legalEntityId = parseRequiredLegalEntityId(req.query?.legalEntityId);
+      const moduleKey = parseOptionalModuleKey(req.query?.moduleKey);
       await assertLegalEntityBelongsToTenant(tenantId, legalEntityId, "legalEntityId");
       assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
 
-      const rows = await listPurposeMappings({ tenantId, legalEntityId });
+      const rows = await listPurposeMappings({ tenantId, legalEntityId, moduleKey });
       return res.json({
         tenantId,
         legalEntityId,
+        moduleKey: moduleKey || "CARI",
         rows,
       });
     })
@@ -69,12 +78,14 @@ export function registerGlPurposeMappingsRoutes(router) {
 
       assertRequiredFields(req.body, ["legalEntityId", "purposeCode", "accountId"]);
       const legalEntityId = parseRequiredLegalEntityId(req.body?.legalEntityId);
+      const moduleKey = parseOptionalModuleKey(req.body?.moduleKey);
       await assertLegalEntityBelongsToTenant(tenantId, legalEntityId, "legalEntityId");
       assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
 
       const row = await upsertPurposeMapping({
         tenantId,
         legalEntityId,
+        moduleKey,
         purposeCode: req.body?.purposeCode,
         accountId: req.body?.accountId,
       });
@@ -82,9 +93,9 @@ export function registerGlPurposeMappingsRoutes(router) {
         ok: true,
         tenantId,
         legalEntityId,
+        moduleKey: moduleKey || row?.moduleKey || "CARI",
         row,
       });
     })
   );
 }
-

@@ -1,6 +1,11 @@
 import { query } from "../db.js";
 import { badRequest, parsePositiveInt } from "../routes/_utils.js";
 
+const PURPOSE_MODULE_KEYS = Object.freeze({
+  CARI: "CARI",
+  REVREC: "REVREC",
+});
+
 const CARI_REQUIRED_PURPOSE_CODES = Object.freeze([
   "CARI_AR_CONTROL",
   "CARI_AR_OFFSET",
@@ -26,6 +31,47 @@ const CARI_PURPOSE_CODES = Object.freeze([
   ...CARI_CONTEXT_PURPOSE_CODES,
 ]);
 const CARI_PURPOSE_CODE_SET = new Set(CARI_PURPOSE_CODES);
+
+const REVREC_PURPOSE_CODES = Object.freeze([
+  "DEFREV_SHORT_LIABILITY",
+  "DEFREV_LONG_LIABILITY",
+  "DEFREV_REVENUE",
+  "DEFREV_RECLASS",
+  "PREPAID_EXP_SHORT_ASSET",
+  "PREPAID_EXP_LONG_ASSET",
+  "PREPAID_EXPENSE",
+  "PREPAID_RECLASS",
+  "ACCR_REV_SHORT_ASSET",
+  "ACCR_REV_LONG_ASSET",
+  "ACCR_REV_REVENUE",
+  "ACCR_REV_RECLASS",
+  "ACCR_EXP_SHORT_LIABILITY",
+  "ACCR_EXP_LONG_LIABILITY",
+  "ACCR_EXP_EXPENSE",
+  "ACCR_EXP_RECLASS",
+]);
+const REVREC_PURPOSE_CODE_SET = new Set(REVREC_PURPOSE_CODES);
+
+const PURPOSE_CODES_BY_MODULE = Object.freeze({
+  [PURPOSE_MODULE_KEYS.CARI]: CARI_PURPOSE_CODES,
+  [PURPOSE_MODULE_KEYS.REVREC]: REVREC_PURPOSE_CODES,
+});
+
+const PURPOSE_CODE_SET_BY_MODULE = Object.freeze({
+  [PURPOSE_MODULE_KEYS.CARI]: CARI_PURPOSE_CODE_SET,
+  [PURPOSE_MODULE_KEYS.REVREC]: REVREC_PURPOSE_CODE_SET,
+});
+
+const PURPOSE_CODE_TO_MODULE = (() => {
+  const byCode = new Map();
+  for (const [moduleKey, purposeCodes] of Object.entries(PURPOSE_CODES_BY_MODULE)) {
+    for (const purposeCode of purposeCodes) {
+      byCode.set(purposeCode, moduleKey);
+    }
+  }
+  return byCode;
+})();
+
 const SHAREHOLDER_PURPOSE_PREFIX = "SHAREHOLDER_";
 const SHAREHOLDER_CONFIG_ENDPOINT = "/api/v1/org/shareholder-journal-config";
 
@@ -43,17 +89,47 @@ function normalizePurposeCode(value) {
   return purposeCode;
 }
 
-function assertPurposeCodeSupportedForCariMapping(purposeCode) {
+function normalizePurposeModuleKey(value, { defaultValue = PURPOSE_MODULE_KEYS.CARI } = {}) {
+  const normalized = String(value || "")
+    .trim()
+    .toUpperCase();
+  if (!normalized) {
+    return defaultValue;
+  }
+  if (normalized === PURPOSE_MODULE_KEYS.CARI || normalized === PURPOSE_MODULE_KEYS.REVREC) {
+    return normalized;
+  }
+  throw badRequest(
+    `moduleKey must be one of: ${Object.values(PURPOSE_MODULE_KEYS).join(", ")}`
+  );
+}
+
+function assertPurposeCodeSupportedForModule(purposeCode, moduleKey) {
   if (purposeCode.startsWith(SHAREHOLDER_PURPOSE_PREFIX)) {
     throw badRequest(
       `Shareholder purpose codes must be configured via ${SHAREHOLDER_CONFIG_ENDPOINT}`
     );
   }
-  if (!CARI_PURPOSE_CODE_SET.has(purposeCode)) {
+  const allowedPurposeCodes = PURPOSE_CODES_BY_MODULE[moduleKey] || [];
+  const allowedPurposeSet = PURPOSE_CODE_SET_BY_MODULE[moduleKey] || new Set();
+  if (!allowedPurposeSet.has(purposeCode)) {
     throw badRequest(
-      `purposeCode must be one of: ${CARI_PURPOSE_CODES.join(", ")}`
+      `purposeCode must be one of (${moduleKey}): ${allowedPurposeCodes.join(", ")}`
     );
   }
+}
+
+function resolvePurposeModuleKeyForUpsert(purposeCode, moduleKeyInput) {
+  const moduleKey = normalizePurposeModuleKey(moduleKeyInput, { defaultValue: "" });
+  if (moduleKey) {
+    assertPurposeCodeSupportedForModule(purposeCode, moduleKey);
+    return moduleKey;
+  }
+  const inferred = PURPOSE_CODE_TO_MODULE.get(purposeCode);
+  if (!inferred) {
+    throw badRequest("purposeCode is not supported for manual mapping");
+  }
+  return inferred;
 }
 
 function mapPurposeMappingRow(row, legalEntityId) {
@@ -69,6 +145,12 @@ function mapPurposeMappingRow(row, legalEntityId) {
   const allowPosting = toDbBoolean(row.allow_posting);
   const accountInLegalEntityChart =
     scope === "LEGAL_ENTITY" && accountLegalEntityId === legalEntityId;
+  const validForPurposePosting =
+    Boolean(accountId) &&
+    Boolean(accountTenantId) &&
+    accountInLegalEntityChart &&
+    isActive &&
+    allowPosting;
 
   return {
     purposeCode: String(row.purpose_code || "").trim().toUpperCase(),
@@ -79,12 +161,8 @@ function mapPurposeMappingRow(row, legalEntityId) {
     normalSide: String(row.normal_side || "").toUpperCase(),
     isActive,
     allowPosting,
-    validForCariPosting:
-      Boolean(accountId) &&
-      Boolean(accountTenantId) &&
-      accountInLegalEntityChart &&
-      isActive &&
-      allowPosting,
+    validForPurposePosting,
+    validForCariPosting: validForPurposePosting,
   };
 }
 
@@ -147,18 +225,24 @@ export function getCariPurposeCodes() {
 export async function listPurposeMappings({
   tenantId,
   legalEntityId,
+  moduleKey = PURPOSE_MODULE_KEYS.CARI,
   runQuery = query,
 }) {
   const normalizedTenantId = parsePositiveInt(tenantId);
   const normalizedLegalEntityId = parsePositiveInt(legalEntityId);
+  const normalizedModuleKey = normalizePurposeModuleKey(moduleKey);
+  const purposeCodes = PURPOSE_CODES_BY_MODULE[normalizedModuleKey] || [];
   if (!normalizedTenantId) {
     throw badRequest("tenantId is required");
   }
   if (!normalizedLegalEntityId) {
     throw badRequest("legalEntityId is required");
   }
+  if (!Array.isArray(purposeCodes) || purposeCodes.length === 0) {
+    return [];
+  }
 
-  const placeholders = CARI_PURPOSE_CODES.map(() => "?").join(", ");
+  const placeholders = purposeCodes.map(() => "?").join(", ");
   const result = await runQuery(
     `SELECT
        jpa.purpose_code,
@@ -176,9 +260,9 @@ export async function listPurposeMappings({
      LEFT JOIN accounts a ON a.id = jpa.account_id
      LEFT JOIN charts_of_accounts c ON c.id = a.coa_id
      WHERE jpa.tenant_id = ?
-       AND jpa.legal_entity_id = ?
+      AND jpa.legal_entity_id = ?
        AND jpa.purpose_code IN (${placeholders})`,
-    [normalizedTenantId, normalizedLegalEntityId, ...CARI_PURPOSE_CODES]
+    [normalizedTenantId, normalizedLegalEntityId, ...purposeCodes]
   );
 
   const byPurposeCode = new Map(
@@ -188,7 +272,7 @@ export async function listPurposeMappings({
     ])
   );
 
-  return CARI_PURPOSE_CODES.map((purposeCode) => {
+  return purposeCodes.map((purposeCode) => {
     const existing = byPurposeCode.get(purposeCode);
     if (existing) {
       return existing;
@@ -202,6 +286,7 @@ export async function listPurposeMappings({
       normalSide: null,
       isActive: false,
       allowPosting: false,
+      validForPurposePosting: false,
       validForCariPosting: false,
     };
   });
@@ -212,12 +297,17 @@ export async function upsertPurposeMapping({
   legalEntityId,
   purposeCode,
   accountId,
+  moduleKey = "",
   runQuery = query,
 }) {
   const normalizedTenantId = parsePositiveInt(tenantId);
   const normalizedLegalEntityId = parsePositiveInt(legalEntityId);
   const normalizedAccountId = parsePositiveInt(accountId);
   const normalizedPurposeCode = normalizePurposeCode(purposeCode);
+  const normalizedModuleKey = resolvePurposeModuleKeyForUpsert(
+    normalizedPurposeCode,
+    moduleKey
+  );
 
   if (!normalizedTenantId) {
     throw badRequest("tenantId is required");
@@ -228,7 +318,6 @@ export async function upsertPurposeMapping({
   if (!normalizedAccountId) {
     throw badRequest("accountId must be a positive integer");
   }
-  assertPurposeCodeSupportedForCariMapping(normalizedPurposeCode);
 
   const accountRow = await loadAccountForPurposeMapping({
     tenantId: normalizedTenantId,
@@ -257,6 +346,7 @@ export async function upsertPurposeMapping({
   );
 
   return {
+    moduleKey: normalizedModuleKey,
     purposeCode: normalizedPurposeCode,
     accountId: normalizedAccountId,
     accountCode: String(accountRow.account_code || ""),
@@ -265,6 +355,7 @@ export async function upsertPurposeMapping({
     normalSide: String(accountRow.normal_side || "").toUpperCase(),
     isActive: true,
     allowPosting: true,
+    validForPurposePosting: true,
     validForCariPosting: true,
   };
 }

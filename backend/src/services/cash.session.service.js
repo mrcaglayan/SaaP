@@ -153,7 +153,7 @@ export async function openCashSession({
   if (!register) {
     throw badRequest("registerId not found for tenant");
   }
-  assertRegisterOperationalConfig(register, {
+  await assertRegisterOperationalConfig(register, {
     requireActive: true,
     requireCashControlledAccount: true,
   });

@@ -1676,10 +1676,11 @@ async function createOrReplaySettlementCashTransaction({
   if (!register) {
     throw badRequest("linkedCashTransaction.registerId not found for tenant");
   }
-  assertRegisterOperationalConfig(register, {
+  await assertRegisterOperationalConfig(register, {
     requireActive: true,
     requireCashControlledAccount: true,
     label: "linkedCashTransaction.registerId",
+    runQuery,
   });
   assertScopeAccess(req, "legal_entity", register.legal_entity_id, "linkedCashTransaction.registerId");
   if (register.operating_unit_id) {

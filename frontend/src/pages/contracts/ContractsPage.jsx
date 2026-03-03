@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { listAccounts } from "../../api/glAdmin.js";
+import Combobox from "../../components/Combobox.jsx";
 import {
   activateContract,
   amendContract,
@@ -20,6 +21,7 @@ import {
   updateContract,
 } from "../../api/contracts.js";
 import { listCariCounterparties } from "../../api/cariCounterparty.js";
+import { listLegalEntities } from "../../api/orgAdmin.js";
 import { useAuth } from "../../auth/useAuth.js";
 import {
   CONTRACT_LINE_STATUSES,
@@ -93,6 +95,18 @@ function clampPercent(value) {
   return parsed;
 }
 
+function mapCounterpartyLookupOption(row) {
+  const id = toPositiveInt(row?.id);
+  const code = String(row?.code || id || "").trim();
+  const name = String(row?.name || "").trim();
+  const counterpartyType = toUpper(row?.counterpartyType || "OTHER");
+  return {
+    value: id ? String(id) : "",
+    label: name ? `${code || id} - ${name}` : String(code || id || "-"),
+    description: counterpartyType || "OTHER",
+  };
+}
+
 function normalizeApiError(error, fallback = "Operation failed.") {
   const message = String(error?.message || error?.response?.data?.message || fallback).trim();
   const requestId = String(error?.requestId || error?.response?.data?.requestId || "").trim();
@@ -156,6 +170,9 @@ export default function ContractsPage() {
   const [linkActionError, setLinkActionError] = useState("");
   const [linkActionMessage, setLinkActionMessage] = useState("");
 
+  const [legalEntityOptions, setLegalEntityOptions] = useState([]);
+  const [legalEntityOptionsError, setLegalEntityOptionsError] = useState("");
+  const [filterCounterpartyOptions, setFilterCounterpartyOptions] = useState([]);
   const [counterpartyOptions, setCounterpartyOptions] = useState([]);
   const [accountOptions, setAccountOptions] = useState([]);
   const [documentPickerRows, setDocumentPickerRows] = useState([]);
@@ -198,6 +215,16 @@ export default function ContractsPage() {
   const canDraftEditSelected = gates.canUpsertContract && selectedStatus === "DRAFT";
   const canAmendSelected =
     gates.canUpsertContract && (selectedStatus === "ACTIVE" || selectedStatus === "SUSPENDED");
+  const selectedFilterLegalEntityId = toPositiveInt(filters.legalEntityId);
+  const selectedContractLegalEntityId = toPositiveInt(contractForm.legalEntityId);
+  const filterCounterpartyLookupOptions = useMemo(
+    () => filterCounterpartyOptions.map((row) => mapCounterpartyLookupOption(row)),
+    [filterCounterpartyOptions]
+  );
+  const contractCounterpartyLookupOptions = useMemo(
+    () => counterpartyOptions.map((row) => mapCounterpartyLookupOption(row)),
+    [counterpartyOptions]
+  );
 
   const deferredAccountOptions = useMemo(
     () => filterAccountsForContractRole(accountOptions, contractForm.contractType, "deferred"),
@@ -265,6 +292,52 @@ export default function ContractsPage() {
   }, [gates.canReadContractsRoute]);
 
   useEffect(() => {
+    let cancelled = false;
+    async function loadLegalEntityOptions() {
+      if (!gates.shouldFetchLegalEntities) {
+        setLegalEntityOptions([]);
+        setLegalEntityOptionsError("Legal entity picker disabled: org.tree.read");
+        return;
+      }
+      setLegalEntityOptionsError("");
+      try {
+        const response = await listLegalEntities({ limit: 500 });
+        if (cancelled) {
+          return;
+        }
+        const rows = Array.isArray(response?.rows) ? response.rows : [];
+        setLegalEntityOptions(rows);
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+        setLegalEntityOptions([]);
+        setLegalEntityOptionsError(normalizeApiError(error, "Failed to load legal entities."));
+      }
+    }
+    loadLegalEntityOptions();
+    return () => {
+      cancelled = true;
+    };
+  }, [gates.shouldFetchLegalEntities]);
+
+  useEffect(() => {
+    if (formMode !== "create") {
+      return;
+    }
+    if (contractForm.legalEntityId) {
+      return;
+    }
+    if (!Array.isArray(legalEntityOptions) || legalEntityOptions.length === 0) {
+      return;
+    }
+    setContractForm((prev) => ({
+      ...prev,
+      legalEntityId: String(legalEntityOptions[0]?.id || ""),
+    }));
+  }, [contractForm.legalEntityId, formMode, legalEntityOptions]);
+
+  useEffect(() => {
     if (!toPositiveInt(selectedContractId)) {
       setSelectedContractDetail(null);
       setDocumentLinks([]);
@@ -301,8 +374,66 @@ export default function ContractsPage() {
   }, [selectedContractId, gates.canReadContractsRoute]);
 
   useEffect(() => {
-    const legalEntityId = toPositiveInt(contractForm.legalEntityId);
-    if (!gates.shouldFetchCounterparties || !legalEntityId) {
+    if (!gates.shouldFetchCounterparties || !selectedFilterLegalEntityId) {
+      setFilterCounterpartyOptions([]);
+      setFilters((prev) =>
+        prev.counterpartyId
+          ? {
+              ...prev,
+              counterpartyId: "",
+            }
+          : prev
+      );
+      return;
+    }
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const role = toUpper(filters.contractType)
+          ? getCounterpartyRoleForContractType(filters.contractType)
+          : undefined;
+        const response = await listCariCounterparties({
+          legalEntityId: selectedFilterLegalEntityId,
+          role,
+          limit: 300,
+          offset: 0,
+        });
+        if (cancelled) {
+          return;
+        }
+        const rows = Array.isArray(response?.rows) ? response.rows : [];
+        setFilterCounterpartyOptions(rows);
+        setFilters((prev) => {
+          const selectedId = toPositiveInt(prev.counterpartyId);
+          if (!selectedId) {
+            return prev;
+          }
+          const stillExists = rows.some((row) => toPositiveInt(row?.id) === selectedId);
+          return stillExists
+            ? prev
+            : {
+                ...prev,
+                counterpartyId: "",
+              };
+        });
+      } catch {
+        if (!cancelled) {
+          setFilterCounterpartyOptions([]);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    filters.contractType,
+    gates.shouldFetchCounterparties,
+    selectedFilterLegalEntityId,
+  ]);
+
+  useEffect(() => {
+    if (!gates.shouldFetchCounterparties || !selectedContractLegalEntityId) {
       setCounterpartyOptions([]);
       return;
     }
@@ -310,14 +441,28 @@ export default function ContractsPage() {
     (async () => {
       try {
         const response = await listCariCounterparties({
-          legalEntityId,
+          legalEntityId: selectedContractLegalEntityId,
           role: getCounterpartyRoleForContractType(contractForm.contractType),
           status: "ACTIVE",
           limit: 100,
           offset: 0,
         });
         if (!cancelled) {
-          setCounterpartyOptions(Array.isArray(response?.rows) ? response.rows : []);
+          const rows = Array.isArray(response?.rows) ? response.rows : [];
+          setCounterpartyOptions(rows);
+          setContractForm((prev) => {
+            const selectedId = toPositiveInt(prev.counterpartyId);
+            if (!selectedId) {
+              return prev;
+            }
+            const stillExists = rows.some((row) => toPositiveInt(row?.id) === selectedId);
+            return stillExists
+              ? prev
+              : {
+                  ...prev,
+                  counterpartyId: "",
+                };
+          });
         }
       } catch {
         if (!cancelled) {
@@ -328,7 +473,7 @@ export default function ContractsPage() {
     return () => {
       cancelled = true;
     };
-  }, [contractForm.contractType, contractForm.legalEntityId, gates.shouldFetchCounterparties]);
+  }, [contractForm.contractType, gates.shouldFetchCounterparties, selectedContractLegalEntityId]);
 
   useEffect(() => {
     const legalEntityId = toPositiveInt(contractForm.legalEntityId);
@@ -985,27 +1130,83 @@ export default function ContractsPage() {
         {!gates.canReadCounterpartyPicker ? (
           <p className="mt-1 text-xs text-amber-700">Picker disabled: cari.card.read</p>
         ) : null}
+        {!gates.canReadLegalEntityPicker ? (
+          <p className="mt-1 text-xs text-amber-700">Picker disabled: org.tree.read</p>
+        ) : null}
         {!gates.canReadAccountPicker ? (
           <p className="mt-1 text-xs text-amber-700">Picker disabled: gl.account.read</p>
         ) : null}
         {!gates.canReadDocumentPicker ? (
           <p className="mt-1 text-xs text-amber-700">Picker disabled: contract.link_document</p>
         ) : null}
+        {legalEntityOptionsError ? (
+          <p className="mt-1 text-xs text-amber-700">{legalEntityOptionsError}</p>
+        ) : null}
 
         {listError ? <div className="mt-2 text-sm text-rose-700">{listError}</div> : null}
         <div className="mt-3 grid gap-2 md:grid-cols-5">
-          <input
-            className="rounded border border-slate-300 px-2 py-1 text-sm"
-            placeholder="legalEntityId"
-            value={filters.legalEntityId}
-            onChange={(event) => setFilters((prev) => ({ ...prev, legalEntityId: event.target.value }))}
-          />
-          <input
-            className="rounded border border-slate-300 px-2 py-1 text-sm"
-            placeholder="counterpartyId"
-            value={filters.counterpartyId}
-            onChange={(event) => setFilters((prev) => ({ ...prev, counterpartyId: event.target.value }))}
-          />
+          {gates.canReadLegalEntityPicker && legalEntityOptions.length > 0 ? (
+            <select
+              className="rounded border border-slate-300 px-2 py-1 text-sm"
+              value={filters.legalEntityId}
+              onChange={(event) =>
+                setFilters((prev) => ({
+                  ...prev,
+                  legalEntityId: event.target.value,
+                  counterpartyId: "",
+                }))
+              }
+            >
+              <option value="">All legal entities</option>
+              {legalEntityOptions.map((row) => (
+                <option key={`filter-entity-${row.id}`} value={String(row.id)}>
+                  {row.code || row.id} - {row.name || "-"}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <input
+              className="rounded border border-slate-300 px-2 py-1 text-sm"
+              placeholder="legalEntityId"
+              value={filters.legalEntityId}
+              onChange={(event) =>
+                setFilters((prev) => ({
+                  ...prev,
+                  legalEntityId: event.target.value,
+                  counterpartyId: "",
+                }))
+              }
+            />
+          )}
+          {gates.canReadCounterpartyPicker ? (
+            <Combobox
+              inputClassName="px-2 py-1 text-sm"
+              value={filters.counterpartyId}
+              options={filterCounterpartyLookupOptions}
+              disabled={!selectedFilterLegalEntityId}
+              placeholder={selectedFilterLegalEntityId ? "Type code/name" : "Select legal entity first"}
+              noOptionsText={
+                selectedFilterLegalEntityId
+                  ? "No counterparties found."
+                  : "Select legal entity first."
+              }
+              onChange={(nextValue) =>
+                setFilters((prev) => ({
+                  ...prev,
+                  counterpartyId: nextValue ? String(nextValue) : "",
+                }))
+              }
+            />
+          ) : (
+            <input
+              className="rounded border border-slate-300 px-2 py-1 text-sm"
+              placeholder="counterpartyId"
+              value={filters.counterpartyId}
+              onChange={(event) =>
+                setFilters((prev) => ({ ...prev, counterpartyId: event.target.value }))
+              }
+            />
+          )}
           <select
             className="rounded border border-slate-300 px-2 py-1 text-sm"
             value={filters.contractType}
@@ -1087,14 +1288,69 @@ export default function ContractsPage() {
 
         <form className="mt-3 space-y-3" onSubmit={handleSubmitContract}>
           <div className="grid gap-2 md:grid-cols-4">
-            <input className="rounded border border-slate-300 px-2 py-1 text-sm" placeholder="legalEntityId" value={contractForm.legalEntityId} onChange={(event) => setContractForm((prev) => ({ ...prev, legalEntityId: event.target.value }))} />
-            {gates.canReadCounterpartyPicker ? (
-              <select className="rounded border border-slate-300 px-2 py-1 text-sm" value={contractForm.counterpartyId} onChange={(event) => setContractForm((prev) => ({ ...prev, counterpartyId: event.target.value }))}>
-                <option value="">counterparty</option>
-                {counterpartyOptions.map((row) => <option key={row.id} value={row.id}>{row.code || row.id} - {row.name || "-"}</option>)}
+            {gates.canReadLegalEntityPicker && legalEntityOptions.length > 0 ? (
+              <select
+                className="rounded border border-slate-300 px-2 py-1 text-sm"
+                value={contractForm.legalEntityId}
+                onChange={(event) =>
+                  setContractForm((prev) => ({
+                    ...prev,
+                    legalEntityId: event.target.value,
+                    counterpartyId: "",
+                  }))
+                }
+              >
+                <option value="">Select legal entity</option>
+                {legalEntityOptions.map((row) => (
+                  <option key={`form-entity-${row.id}`} value={String(row.id)}>
+                    {row.code || row.id} - {row.name || "-"}
+                  </option>
+                ))}
               </select>
             ) : (
-              <input className="rounded border border-slate-300 px-2 py-1 text-sm" placeholder="counterpartyId" value={contractForm.counterpartyId} onChange={(event) => setContractForm((prev) => ({ ...prev, counterpartyId: event.target.value }))} />
+              <input
+                className="rounded border border-slate-300 px-2 py-1 text-sm"
+                placeholder="legalEntityId"
+                value={contractForm.legalEntityId}
+                onChange={(event) =>
+                  setContractForm((prev) => ({
+                    ...prev,
+                    legalEntityId: event.target.value,
+                    counterpartyId: "",
+                  }))
+                }
+              />
+            )}
+            {gates.canReadCounterpartyPicker ? (
+              <Combobox
+                inputClassName="px-2 py-1 text-sm"
+                value={contractForm.counterpartyId}
+                options={contractCounterpartyLookupOptions}
+                disabled={!selectedContractLegalEntityId}
+                placeholder={
+                  selectedContractLegalEntityId ? "Type code/name" : "Select legal entity first"
+                }
+                noOptionsText={
+                  selectedContractLegalEntityId
+                    ? "No counterparties found."
+                    : "Select legal entity first."
+                }
+                onChange={(nextValue) =>
+                  setContractForm((prev) => ({
+                    ...prev,
+                    counterpartyId: nextValue ? String(nextValue) : "",
+                  }))
+                }
+              />
+            ) : (
+              <input
+                className="rounded border border-slate-300 px-2 py-1 text-sm"
+                placeholder="counterpartyId"
+                value={contractForm.counterpartyId}
+                onChange={(event) =>
+                  setContractForm((prev) => ({ ...prev, counterpartyId: event.target.value }))
+                }
+              />
             )}
             <input className="rounded border border-slate-300 px-2 py-1 text-sm" placeholder="contractNo" value={contractForm.contractNo} onChange={(event) => setContractForm((prev) => ({ ...prev, contractNo: event.target.value }))} />
             <select className="rounded border border-slate-300 px-2 py-1 text-sm" value={contractForm.contractType} onChange={(event) => setContractForm((prev) => ({ ...prev, contractType: event.target.value }))}>

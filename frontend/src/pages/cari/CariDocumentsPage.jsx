@@ -23,7 +23,7 @@ import {
   listCariCounterparties,
 } from "../../api/cariCounterparty.js";
 import { getCariCounterpartyStatementReport } from "../../api/cariReports.js";
-import { getJournal } from "../../api/glAdmin.js";
+import { getJournal, listAccounts } from "../../api/glAdmin.js";
 import { listExceptionWorkbench } from "../../api/exceptionsWorkbench.js";
 import { listCariAudit } from "../../api/cariAudit.js";
 import {
@@ -539,6 +539,7 @@ export default function CariDocumentsPage() {
   const canReadCards = hasPermission("cari.card.read");
   const canUpsertCards = hasPermission("cari.card.upsert");
   const canReadGlJournals = hasPermission("gl.journal.read");
+  const canReadGlAccounts = hasPermission("gl.account.read");
   const canReadExceptions = hasPermission("ops.exceptions.read");
   const canReadCariAudit = hasPermission("cari.audit.read");
 
@@ -593,7 +594,14 @@ export default function CariDocumentsPage() {
   const [cancelSaving, setCancelSaving] = useState(false);
   const [cancelError, setCancelError] = useState("");
 
-  const [postForm, setPostForm] = useState({ useFxOverride: false, fxOverrideReason: "" });
+  const [postForm, setPostForm] = useState({
+    useFxOverride: false,
+    fxOverrideReason: "",
+    offsetAccountId: "",
+  });
+  const [postOffsetAccountOptions, setPostOffsetAccountOptions] = useState([]);
+  const [postOffsetAccountsLoading, setPostOffsetAccountsLoading] = useState(false);
+  const [postOffsetAccountsError, setPostOffsetAccountsError] = useState("");
   const [postSaving, setPostSaving] = useState(false);
   const [postError, setPostError] = useState("");
   const [postMessage, setPostMessage] = useState("");
@@ -1397,6 +1405,93 @@ export default function CariDocumentsPage() {
   ]);
 
   useEffect(() => {
+    const legalEntityId = toPositiveInt(
+      selectedSnapshot?.legalEntityId || selectedSnapshot?.legal_entity_id
+    );
+
+    setPostOffsetAccountsError("");
+    if (!canReadGlAccounts || !legalEntityId) {
+      setPostOffsetAccountOptions([]);
+      setPostOffsetAccountsLoading(false);
+      return;
+    }
+
+    let active = true;
+    async function loadPostOffsetAccounts() {
+      setPostOffsetAccountsLoading(true);
+      try {
+        const response = await listAccounts({
+          legalEntityId,
+          includeInactive: false,
+          limit: 1000,
+          offset: 0,
+        });
+        if (!active) {
+          return;
+        }
+        const options = (Array.isArray(response?.rows) ? response.rows : [])
+          .filter((row) => {
+            const isActive = row?.is_active === true || Number(row?.is_active) === 1;
+            const allowPosting =
+              row?.allow_posting === true || Number(row?.allow_posting) === 1;
+            return isActive && allowPosting;
+          })
+          .map((row) => ({
+            id: Number(row?.id || 0),
+            code: String(row?.code || "").trim(),
+            name: String(row?.name || "").trim(),
+            accountType: String(row?.account_type || "").trim().toUpperCase(),
+          }))
+          .filter((row) => row.id > 0 && row.code)
+          .sort((left, right) =>
+            String(left.code || "").localeCompare(String(right.code || ""), undefined, {
+              numeric: true,
+              sensitivity: "base",
+            })
+          );
+
+        setPostOffsetAccountOptions(options);
+        setPostForm((prev) => {
+          if (!prev.offsetAccountId) {
+            return prev;
+          }
+          const exists = options.some(
+            (option) => Number(option.id) === Number(prev.offsetAccountId)
+          );
+          if (exists) {
+            return prev;
+          }
+          return {
+            ...prev,
+            offsetAccountId: "",
+          };
+        });
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+        setPostOffsetAccountOptions([]);
+        setPostOffsetAccountsError(
+          normalizeApiError(error, "Failed to load postable account options.")
+        );
+      } finally {
+        if (active) {
+          setPostOffsetAccountsLoading(false);
+        }
+      }
+    }
+
+    loadPostOffsetAccounts();
+    return () => {
+      active = false;
+    };
+  }, [
+    canReadGlAccounts,
+    selectedSnapshot?.legalEntityId,
+    selectedSnapshot?.legal_entity_id,
+  ]);
+
+  useEffect(() => {
     const documentId = selectedDocumentNumericId;
     setOpsStatusError("");
     setOpsStatusMessage("");
@@ -1444,6 +1539,16 @@ export default function CariDocumentsPage() {
       active = false;
     };
   }, [canRead, selectedDocumentNumericId]);
+
+  useEffect(() => {
+    setPostForm({
+      useFxOverride: false,
+      fxOverrideReason: "",
+      offsetAccountId: "",
+    });
+    setPostError("");
+    setPostMessage("");
+  }, [selectedDocumentNumericId]);
 
   useEffect(() => {
     const documentId = selectedDocumentNumericId;
@@ -1924,6 +2029,7 @@ export default function CariDocumentsPage() {
       const response = await postCariDocument(selectedDocumentId, {
         useFxOverride: Boolean(postForm.useFxOverride),
         fxOverrideReason: postForm.useFxOverride ? String(postForm.fxOverrideReason || "").trim() : null,
+        offsetAccountId: toPositiveInt(postForm.offsetAccountId) || null,
       });
       setPostMessage(`Draft posted. postedJournalEntryId=${response?.row?.postedJournalEntryId || response?.journal?.journalEntryId || "-"}`);
       setSelectedDetail(response?.row || null);
@@ -3370,6 +3476,48 @@ export default function CariDocumentsPage() {
                       </Link>
                     </div>
                   </div>
+                ) : null}
+                <label className="mt-2 block text-xs font-semibold uppercase tracking-wide text-slate-600">
+                  Offset Account (Optional)
+                  <select
+                    className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                    value={postForm.offsetAccountId}
+                    onChange={(event) =>
+                      setPostForm((prev) => ({ ...prev, offsetAccountId: event.target.value }))
+                    }
+                    disabled={
+                      !canPostSelected ||
+                      postSaving ||
+                      postOffsetAccountsLoading ||
+                      !canReadGlAccounts
+                    }
+                  >
+                    <option value="">Use default CARI purpose mapping</option>
+                    {postOffsetAccountOptions.map((row) => (
+                      <option key={`post-offset-account-${row.id}`} value={String(row.id)}>
+                        {row.code} - {row.name} ({row.accountType || "-"})
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {!canReadGlAccounts ? (
+                  <p className="mt-1 text-xs text-amber-700">
+                    Missing permission: `gl.account.read`. Default mapping will be used.
+                  </p>
+                ) : null}
+                {postOffsetAccountsLoading ? (
+                  <p className="mt-1 text-xs text-slate-600">Loading postable account options...</p>
+                ) : null}
+                {postOffsetAccountsError ? (
+                  <p className="mt-1 text-xs text-rose-700">{postOffsetAccountsError}</p>
+                ) : null}
+                {!postOffsetAccountsLoading &&
+                !postOffsetAccountsError &&
+                canReadGlAccounts &&
+                postOffsetAccountOptions.length === 0 ? (
+                  <p className="mt-1 text-xs text-slate-600">
+                    No postable accounts found for selected legal entity.
+                  </p>
                 ) : null}
                 <label className="mt-2 flex items-center gap-2 text-sm text-slate-700"><input type="checkbox" checked={postForm.useFxOverride} onChange={(event) => setPostForm((prev) => ({ ...prev, useFxOverride: event.target.checked }))} disabled={!canPostSelected || postSaving} />useFxOverride</label>
                 <input type="text" className="mt-2 w-full rounded-md border border-slate-300 px-3 py-2 text-sm" placeholder="fxOverrideReason" value={postForm.fxOverrideReason} onChange={(event) => setPostForm((prev) => ({ ...prev, fxOverrideReason: event.target.value }))} disabled={!canPostSelected || postSaving} />

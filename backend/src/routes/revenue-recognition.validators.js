@@ -302,3 +302,55 @@ export function parseRevenueReportFilters(req) {
     offset: pagination.offset,
   };
 }
+
+export function parseRevenueLookupLegalEntityFilters(req) {
+  const tenantId = requireTenantId(req);
+  const q = normalizeText(req.query?.q, "q", 120);
+  const pagination = parsePagination(req.query, {
+    limit: 200,
+    offset: 0,
+    maxLimit: 500,
+  });
+
+  return {
+    tenantId,
+    q,
+    limit: pagination.limit,
+    offset: pagination.offset,
+  };
+}
+
+export function parseRevenueLookupFiscalPeriodFilters(req) {
+  const tenantId = requireTenantId(req);
+  const legalEntityId = parseRequiredPositiveIntField(req.query?.legalEntityId, "legalEntityId");
+  const fiscalYear = optionalPositiveInt(req.query?.fiscalYear, "fiscalYear");
+  const pagination = parsePagination(req.query, {
+    limit: 200,
+    offset: 0,
+    maxLimit: 500,
+  });
+
+  return {
+    tenantId,
+    legalEntityId,
+    fiscalYear,
+    limit: pagination.limit,
+    offset: pagination.offset,
+  };
+}
+
+export function parseRevenuePostingMappingSetupFilters(req) {
+  const tenantId = requireTenantId(req);
+  const legalEntityId = parseRequiredPositiveIntField(req.query?.legalEntityId, "legalEntityId");
+  const accountFamily = parseOptionalEnum(
+    req.query?.accountFamily,
+    "accountFamily",
+    ACCOUNT_FAMILY_VALUES
+  );
+
+  return {
+    tenantId,
+    legalEntityId,
+    accountFamily,
+  };
+}

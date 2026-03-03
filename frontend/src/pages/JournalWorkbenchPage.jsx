@@ -44,7 +44,7 @@ const JOURNAL_HISTORY_DEFAULT_FILTERS = {
   legalEntityId: "",
   bookId: "",
   fiscalPeriodId: "",
-  status: "",
+  status: "DRAFT",
   limit: "50",
   offset: "0",
 };
@@ -79,6 +79,31 @@ function formatAmount(value) {
 
 function hasId(rows, id) {
   return rows.some((row) => Number(row.id) === Number(id));
+}
+
+function isDraftStatus(status) {
+  return String(status || "").trim().toUpperCase() === "DRAFT";
+}
+
+function toJournalSummary(row) {
+  const id = toInt(row?.id);
+  if (!id) return null;
+
+  const lineCountRaw = row?.line_count ?? row?.lineCount;
+  const fallbackLineCount = Array.isArray(row?.lines) ? row.lines.length : 0;
+  const lineCount = Number.isFinite(Number(lineCountRaw))
+    ? Number(lineCountRaw)
+    : fallbackLineCount;
+
+  return {
+    id,
+    journal_no: String(row?.journal_no || row?.journalNo || ""),
+    status: String(row?.status || "").toUpperCase(),
+    entry_date: String(row?.entry_date || row?.entryDate || ""),
+    total_debit_base: Number(row?.total_debit_base ?? row?.totalDebitBase ?? 0),
+    total_credit_base: Number(row?.total_credit_base ?? row?.totalCreditBase ?? 0),
+    line_count: lineCount,
+  };
 }
 
 function createLine(defaultCurrencyCode = "USD", defaultAccountId = "", defaultUnitId = "") {
@@ -121,7 +146,7 @@ export default function JournalWorkbenchPage() {
   const today = new Date().toISOString().slice(0, 10);
 
   const [loadingRefs, setLoadingRefs] = useState(false);
-  const [loadingPeriods, setLoadingPeriods] = useState(false);
+  const [, setLoadingPeriods] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [saving, setSaving] = useState("");
   const [error, setError] = useState("");
@@ -147,8 +172,6 @@ export default function JournalWorkbenchPage() {
   const [createAutoMirror, setCreateAutoMirror] = useState(true);
   const [lines, setLines] = useState([createLine(), createLine()]);
 
-  const [postId, setPostId] = useState("");
-  const [postLinkedMirrors, setPostLinkedMirrors] = useState(false);
   const [reverseForm, setReverseForm] = useState({
     journalId: "",
     reversalPeriodId: "",
@@ -186,6 +209,12 @@ export default function JournalWorkbenchPage() {
   const [loadingHistoryPeriods, setLoadingHistoryPeriods] = useState(false);
   const [historyRows, setHistoryRows] = useState([]);
   const [historyTotal, setHistoryTotal] = useState(0);
+  const [selectedHistoryJournalIds, setSelectedHistoryJournalIds] = useState([]);
+  const [postConfirmState, setPostConfirmState] = useState({
+    open: false,
+    rows: [],
+    postLinkedMirrors: false,
+  });
   const [selectedJournalId, setSelectedJournalId] = useState("");
   const [selectedJournal, setSelectedJournal] = useState(null);
   const [complianceRows, setComplianceRows] = useState([]);
@@ -269,6 +298,22 @@ export default function JournalWorkbenchPage() {
   const historyPage = Math.floor(historyOffset / historyLimit) + 1;
   const historyHasPrev = historyOffset > 0;
   const historyHasNext = historyOffset + historyRows.length < historyTotal;
+  const selectedHistoryIdSet = useMemo(
+    () => new Set(selectedHistoryJournalIds.map((id) => String(id))),
+    [selectedHistoryJournalIds]
+  );
+  const draftHistoryRows = useMemo(
+    () => historyRows.filter((row) => isDraftStatus(row.status)),
+    [historyRows]
+  );
+  const selectedDraftHistoryRows = useMemo(
+    () => draftHistoryRows.filter((row) => selectedHistoryIdSet.has(String(row.id))),
+    [draftHistoryRows, selectedHistoryIdSet]
+  );
+  const allDraftRowsOnPageSelected =
+    draftHistoryRows.length > 0 &&
+    draftHistoryRows.every((row) => selectedHistoryIdSet.has(String(row.id)));
+  const postingBusy = saving === "postJournal";
   const deepLinkedJournalIdRaw = String(
     searchParams.get("journalId") || searchParams.get("journal_id") || ""
   ).trim();
@@ -301,14 +346,8 @@ export default function JournalWorkbenchPage() {
   );
 
   const historyContextMappings = useMemo(
-    () => [
-      { stateKey: "legalEntityId" },
-      {
-        stateKey: "fiscalPeriodId",
-        allowContextValue: (contextValue) => hasId(historyPeriods, Number(contextValue)),
-      },
-    ],
-    [historyPeriods]
+    () => [{ stateKey: "legalEntityId" }],
+    []
   );
 
   const complianceContextMappings = useMemo(() => [{ stateKey: "legalEntityId" }], []);
@@ -332,14 +371,58 @@ export default function JournalWorkbenchPage() {
   );
 
   useEffect(() => {
+    setSelectedHistoryJournalIds((prev) => {
+      const allowedIds = new Set(draftHistoryRows.map((row) => String(row.id)));
+      const next = prev.filter((id) => allowedIds.has(String(id)));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [draftHistoryRows]);
+
+  useEffect(() => {
     let cancelled = false;
-    async function loadRefs() {
-      if (!canReadOrgTree && !canReadBooks && !canReadAccounts) return;
+    async function loadEntities() {
+      if (!canReadOrgTree) {
+        setEntities([]);
+        return;
+      }
+      try {
+        const entityRes = await listLegalEntities();
+        if (cancelled) return;
+        setEntities(entityRes?.rows || []);
+      } catch (err) {
+        if (!cancelled) {
+          setError(err?.response?.data?.message || l("Failed to load references.", "Referanslar yuklenemedi."));
+        }
+      }
+    }
+    loadEntities();
+    return () => {
+      cancelled = true;
+    };
+  }, [canReadOrgTree, l]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadScopedRefs() {
+      if (!canReadOrgTree && !canReadBooks && !canReadAccounts) {
+        setBooks([]);
+        setAccounts([]);
+        setUnits([]);
+        return;
+      }
+
+      // Wait for legal entity selection to avoid initial double-fetch flicker.
+      if (canReadOrgTree && !selectedLegalEntityId) {
+        setBooks([]);
+        setAccounts([]);
+        setUnits([]);
+        return;
+      }
+
       setLoadingRefs(true);
       setError("");
       try {
-        const [entityRes, bookRes, accountRes, unitRes] = await Promise.all([
-          canReadOrgTree ? listLegalEntities() : Promise.resolve({ rows: [] }),
+        const [bookRes, accountRes, unitRes] = await Promise.all([
           canReadBooks
             ? listBooks(selectedLegalEntityId ? { legalEntityId: selectedLegalEntityId } : {})
             : Promise.resolve({ rows: [] }),
@@ -351,14 +434,9 @@ export default function JournalWorkbenchPage() {
             : Promise.resolve({ rows: [] }),
         ]);
         if (cancelled) return;
-        const entityRows = entityRes?.rows || [];
-        const bookRows = bookRes?.rows || [];
-        const accountRows = accountRes?.rows || [];
-        const unitRows = unitRes?.rows || [];
-        setEntities(entityRows);
-        setBooks(bookRows);
-        setAccounts(accountRows);
-        setUnits(unitRows);
+        setBooks(bookRes?.rows || []);
+        setAccounts(accountRes?.rows || []);
+        setUnits(unitRes?.rows || []);
       } catch (err) {
         if (!cancelled) {
           setError(err?.response?.data?.message || l("Failed to load references.", "Referanslar yuklenemedi."));
@@ -367,7 +445,7 @@ export default function JournalWorkbenchPage() {
         if (!cancelled) setLoadingRefs(false);
       }
     }
-    loadRefs();
+    loadScopedRefs();
     return () => {
       cancelled = true;
     };
@@ -617,6 +695,237 @@ export default function JournalWorkbenchPage() {
     await fetchJournalHistory(nextFilters);
   }
 
+  function onToggleHistoryRowSelection(journalId, checked) {
+    const idText = String(journalId || "");
+    setSelectedHistoryJournalIds((prev) => {
+      if (checked) {
+        if (prev.includes(idText)) return prev;
+        return [...prev, idText];
+      }
+      return prev.filter((id) => id !== idText);
+    });
+  }
+
+  function onToggleSelectAllDraftRows(checked) {
+    if (!checked) {
+      setSelectedHistoryJournalIds([]);
+      return;
+    }
+    setSelectedHistoryJournalIds(draftHistoryRows.map((row) => String(row.id)));
+  }
+
+  function openPostConfirm(rows, options = {}) {
+    const uniqueRows = [];
+    const seenIds = new Set();
+    for (const row of rows || []) {
+      const summary = toJournalSummary(row);
+      if (!summary || seenIds.has(summary.id)) {
+        continue;
+      }
+      seenIds.add(summary.id);
+      uniqueRows.push(summary);
+    }
+
+    if (uniqueRows.length === 0) {
+      setError(l("No journal selected for posting.", "Post etmek icin fis secilmedi."));
+      return false;
+    }
+
+    const nonDraftRows = uniqueRows.filter((row) => !isDraftStatus(row.status));
+    if (nonDraftRows.length > 0) {
+      setError(
+        l(
+          `Only DRAFT journals can be posted. Invalid IDs: ${nonDraftRows.map((row) => row.id).join(", ")}`,
+          `Yalnizca DRAFT fisler post edilebilir. Gecersiz ID: ${nonDraftRows.map((row) => row.id).join(", ")}`
+        )
+      );
+      return false;
+    }
+
+    setError("");
+    setPostConfirmState({
+      open: true,
+      rows: uniqueRows,
+      postLinkedMirrors: Boolean(options.postLinkedMirrors ?? false),
+    });
+    return true;
+  }
+
+  function closePostConfirm() {
+    if (saving === "postJournal") return;
+    setPostConfirmState((prev) => ({
+      ...prev,
+      open: false,
+      rows: [],
+    }));
+  }
+
+  async function runPostJournals(journalIds, includeLinkedMirrors) {
+    const ids = [...new Set((journalIds || []).map((id) => toInt(id)).filter(Boolean))];
+    if (ids.length === 0) {
+      setError(l("No journal selected for posting.", "Post etmek icin fis secilmedi."));
+      return;
+    }
+
+    setSaving("postJournal");
+    setError("");
+    setMessage("");
+    try {
+      const postedIdSet = new Set();
+      let failedCount = 0;
+      const failedItems = [];
+      let syncedShareholderCount = 0;
+      let syncedCommitmentAmount = 0;
+
+      for (const journalId of ids) {
+        try {
+          const res = await postJournal(journalId, {
+            postLinkedMirrors: Boolean(includeLinkedMirrors),
+          });
+          if (res?.posted) {
+            const postedIds = Array.isArray(res?.postedJournalIds)
+              ? res.postedJournalIds.filter((id) => toInt(id))
+              : [journalId];
+            postedIds.forEach((id) => postedIdSet.add(Number(id)));
+
+            const commitmentSyncRows = Array.isArray(res?.shareholderCommitmentSync)
+              ? res.shareholderCommitmentSync
+              : [];
+            const appliedCommitmentSyncRows = commitmentSyncRows.filter(
+              (row) => Boolean(row?.applied) && Number(row?.shareholderCount || 0) > 0
+            );
+            syncedShareholderCount += appliedCommitmentSyncRows.reduce(
+              (sum, row) => sum + Number(row?.shareholderCount || 0),
+              0
+            );
+            syncedCommitmentAmount += appliedCommitmentSyncRows.reduce(
+              (sum, row) => sum + Number(row?.totalAmount || 0),
+              0
+            );
+          } else {
+            failedCount += 1;
+            failedItems.push(`#${journalId}`);
+          }
+        } catch (err) {
+          failedCount += 1;
+          failedItems.push(`#${journalId}`);
+          if (failedItems.length <= 3) {
+            const errorMessage = err?.response?.data?.message || err?.message || "Unknown error";
+            failedItems[failedItems.length - 1] = `#${journalId} (${errorMessage})`;
+          }
+        }
+      }
+
+      const postedIds = [...postedIdSet];
+      if (postedIds.length > 0) {
+        const commitmentSyncSuffix =
+          syncedShareholderCount > 0
+            ? l(
+                ` Shareholder commitment sync applied: ${syncedShareholderCount} shareholder(s), ${formatAmount(
+                  syncedCommitmentAmount
+                )}.`,
+                ` Ortak taahhut senkronu uygulandi: ${syncedShareholderCount} ortak, ${formatAmount(
+                  syncedCommitmentAmount
+                )}.`
+              )
+            : "";
+        const partialSuffix =
+          failedCount > 0
+            ? l(
+                ` ${failedCount} journal(s) failed.`,
+                ` ${failedCount} fis post edilemedi.`
+              )
+            : "";
+        setMessage(
+          l(
+            postedIds.length > 1
+              ? `Journals posted: ${postedIds.join(", ")}.${commitmentSyncSuffix}${partialSuffix}`
+              : `Journal posted.${commitmentSyncSuffix}${partialSuffix}`,
+            postedIds.length > 1
+              ? `Fisler post edildi: ${postedIds.join(", ")}.${commitmentSyncSuffix}${partialSuffix}`
+              : `Fis post edildi.${commitmentSyncSuffix}${partialSuffix}`
+          )
+        );
+      } else {
+        setMessage(l("Journal not posted.", "Fis post edilmedi."));
+      }
+
+      if (failedCount > 0) {
+        setError(
+          l(
+            `Failed to post ${failedCount} journal(s). ${failedItems.join("; ")}`,
+            `${failedCount} fis post edilemedi. ${failedItems.join("; ")}`
+          )
+        );
+      }
+
+      if (canReadJournals) {
+        await fetchJournalHistory({ ...historyFilters, offset: "0" });
+        const selectedId = toInt(selectedJournalId);
+        if (selectedId && postedIdSet.has(selectedId)) {
+          await loadJournalDetail(selectedId);
+        }
+      }
+
+      setSelectedHistoryJournalIds((prev) =>
+        prev.filter((id) => !postedIdSet.has(Number(id)))
+      );
+      setPostConfirmState((prev) => ({
+        ...prev,
+        open: false,
+        rows: [],
+      }));
+    } finally {
+      setSaving("");
+    }
+  }
+
+  async function onOpenDraftQueue() {
+    const nextFilters = {
+      ...historyFilters,
+      status: "DRAFT",
+      offset: "0",
+    };
+    setHistoryFilters(nextFilters);
+    setSelectedHistoryJournalIds([]);
+    await fetchJournalHistory(nextFilters);
+  }
+
+  async function onOpenAllStatusesQueue() {
+    const nextFilters = {
+      ...historyFilters,
+      status: "",
+      offset: "0",
+    };
+    setHistoryFilters(nextFilters);
+    setSelectedHistoryJournalIds([]);
+    await fetchJournalHistory(nextFilters);
+  }
+
+  function onOpenSinglePostConfirm(row) {
+    openPostConfirm([row], { postLinkedMirrors: false });
+  }
+
+  function onOpenBulkPostConfirm() {
+    if (selectedDraftHistoryRows.length === 0) {
+      setError(l("Select at least one DRAFT journal.", "En az bir DRAFT fis secin."));
+      return;
+    }
+    openPostConfirm(selectedDraftHistoryRows, {
+      postLinkedMirrors: false,
+    });
+  }
+
+  async function onConfirmPostFromModal() {
+    if (!postConfirmState.open || postConfirmState.rows.length === 0) {
+      return;
+    }
+    await runPostJournals(
+      postConfirmState.rows.map((row) => row.id),
+      postConfirmState.postLinkedMirrors
+    );
+  }
+
   const loadJournalDetail = useCallback(async (journalId) => {
     const parsedId = toInt(journalId);
     if (!parsedId || !canReadJournals) return;
@@ -650,6 +959,11 @@ export default function JournalWorkbenchPage() {
 
   useEffect(() => {
     if (!canReadJournals || !deepLinkedJournalId) {
+      return;
+    }
+    // Avoid ping-pong between URL deep link and an actively selected row
+    // while search params are still catching up.
+    if (selectedJournalId && selectedJournalId !== String(deepLinkedJournalId)) {
       return;
     }
     if (selectedJournalId === String(deepLinkedJournalId)) {
@@ -1077,7 +1391,6 @@ export default function JournalWorkbenchPage() {
       });
 
       const createdId = String(res?.journalEntryId || "");
-      setPostId(createdId);
       setReverseForm((prev) => ({ ...prev, journalId: createdId }));
       const mirrorIds = Array.isArray(res?.mirrorJournalEntryIds)
         ? res.mirrorJournalEntryIds.filter((id) => toInt(id))
@@ -1101,79 +1414,6 @@ export default function JournalWorkbenchPage() {
       }
     } catch (err) {
       setError(err?.response?.data?.message || l("Failed to create journal.", "Fis olusturulamadi."));
-    } finally {
-      setSaving("");
-    }
-  }
-
-  async function onPostJournal(event) {
-    event.preventDefault();
-    if (!canPost) {
-      setError(l("Missing permission: gl.journal.post", "Eksik yetki: gl.journal.post"));
-      return;
-    }
-
-    const journalId = toInt(postId);
-    if (!journalId) {
-      setError(l("journalId is required.", "journalId zorunludur."));
-      return;
-    }
-
-    setSaving("postJournal");
-    setError("");
-    setMessage("");
-    try {
-      const res = await postJournal(journalId, {
-        postLinkedMirrors: Boolean(postLinkedMirrors),
-      });
-      const postedIds = Array.isArray(res?.postedJournalIds)
-        ? res.postedJournalIds.filter((id) => toInt(id))
-        : [];
-      const commitmentSyncRows = Array.isArray(res?.shareholderCommitmentSync)
-        ? res.shareholderCommitmentSync
-        : [];
-      const appliedCommitmentSyncRows = commitmentSyncRows.filter(
-        (row) => Boolean(row?.applied) && Number(row?.shareholderCount || 0) > 0
-      );
-      const syncedShareholderCount = appliedCommitmentSyncRows.reduce(
-        (sum, row) => sum + Number(row?.shareholderCount || 0),
-        0
-      );
-      const syncedCommitmentAmount = appliedCommitmentSyncRows.reduce(
-        (sum, row) => sum + Number(row?.totalAmount || 0),
-        0
-      );
-      const commitmentSyncSuffix =
-        syncedShareholderCount > 0
-          ? l(
-              ` Shareholder commitment sync applied: ${syncedShareholderCount} shareholder(s), ${formatAmount(
-                syncedCommitmentAmount
-              )}.`,
-              ` Ortak taahhut senkronu uygulandi: ${syncedShareholderCount} ortak, ${formatAmount(
-                syncedCommitmentAmount
-              )}.`
-            )
-          : "";
-      setMessage(
-        res?.posted
-          ? l(
-              postedIds.length > 1
-                ? `Journals posted: ${postedIds.join(", ")}.${commitmentSyncSuffix}`
-                : `Journal posted.${commitmentSyncSuffix}`,
-              postedIds.length > 1
-                ? `Fisler post edildi: ${postedIds.join(", ")}.${commitmentSyncSuffix}`
-                : `Fis post edildi.${commitmentSyncSuffix}`
-            )
-          : l("Journal not posted.", "Fis post edilmedi.")
-      );
-      if (canReadJournals) {
-        await fetchJournalHistory();
-        if (selectedJournalId === String(journalId)) {
-          await loadJournalDetail(journalId);
-        }
-      }
-    } catch (err) {
-      setError(err?.response?.data?.message || l("Failed to post journal.", "Fis post edilemedi."));
     } finally {
       setSaving("");
     }
@@ -1447,7 +1687,7 @@ export default function JournalWorkbenchPage() {
         </p>
       </div>
 
-      {(loadingRefs || loadingPeriods) && (
+      {loadingRefs && (
         <div className="text-xs text-slate-500">{l("Loading references...", "Referanslar yukleniyor...")}</div>
       )}
       {error && <div className="rounded border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div>}
@@ -1671,21 +1911,7 @@ export default function JournalWorkbenchPage() {
         </form>
       </section>
 
-      <div className="grid gap-4 xl:grid-cols-2">
-        <form onSubmit={onPostJournal} className="space-y-2 rounded-xl border border-slate-200 bg-white p-4">
-          <h2 className="text-sm font-semibold text-slate-700">{l("Post Journal", "Fisi Post Et")}</h2>
-          <input type="number" min={1} value={postId} onChange={(event) => setPostId(event.target.value)} className="w-full rounded border border-slate-300 px-3 py-2 text-sm" placeholder={l("Journal ID", "Fis ID")} required />
-          <label className="inline-flex items-center gap-2 text-sm text-slate-700">
-            <input
-              type="checkbox"
-              checked={postLinkedMirrors}
-              onChange={(event) => setPostLinkedMirrors(event.target.checked)}
-            />
-            {l("Post linked intercompany mirrors", "Bagli intercompany mirror fisleri de post et")}
-          </label>
-          <button type="submit" disabled={saving === "postJournal" || !canPost} className="rounded bg-cyan-700 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60">{saving === "postJournal" ? l("Posting...", "Post ediliyor...") : l("Post", "Post Et")}</button>
-        </form>
-
+      <div className="grid gap-4">
         <form onSubmit={onReverseJournal} className="space-y-2 rounded-xl border border-slate-200 bg-white p-4">
           <h2 className="text-sm font-semibold text-slate-700">{l("Reverse Journal", "Ters Fis Kaydi")}</h2>
           <input type="number" min={1} value={reverseForm.journalId} onChange={(event) => setReverseForm((prev) => ({ ...prev, journalId: event.target.value }))} className="w-full rounded border border-slate-300 px-3 py-2 text-sm" placeholder={l("Journal ID", "Fis ID")} required />
@@ -1853,14 +2079,44 @@ export default function JournalWorkbenchPage() {
       <section className="rounded-xl border border-slate-200 bg-white p-4">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-sm font-semibold text-slate-700">{l("Journal History", "Fis Gecmisi")}</h2>
-          <button
-            type="button"
-            onClick={() => fetchJournalHistory()}
-            disabled={loadingHistory || !canReadJournals}
-            className="rounded border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 disabled:opacity-60"
-          >
-            {loadingHistory ? l("Loading...", "Yukleniyor...") : l("Load Journals", "Fisleri Yukle")}
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => fetchJournalHistory()}
+              disabled={loadingHistory || !canReadJournals}
+              className="rounded border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 disabled:opacity-60"
+            >
+              {loadingHistory ? l("Loading...", "Yukleniyor...") : l("Load Journals", "Fisleri Yukle")}
+            </button>
+            <button
+              type="button"
+              onClick={onOpenDraftQueue}
+              disabled={loadingHistory || !canReadJournals}
+              className="rounded border border-cyan-300 px-3 py-2 text-xs font-semibold text-cyan-700 disabled:opacity-60"
+            >
+              {l("Draft Queue", "Taslak Kuyrugu")}
+            </button>
+            <button
+              type="button"
+              onClick={onOpenAllStatusesQueue}
+              disabled={loadingHistory || !canReadJournals}
+              className="rounded border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 disabled:opacity-60"
+            >
+              {l("All Statuses", "Tum Durumlar")}
+            </button>
+            <button
+              type="button"
+              onClick={onOpenBulkPostConfirm}
+              disabled={
+                !canPost ||
+                postingBusy ||
+                selectedDraftHistoryRows.length === 0
+              }
+              className="rounded bg-cyan-700 px-3 py-2 text-xs font-semibold text-white disabled:opacity-60"
+            >
+              {l("Post Selected", "Secilenleri Post Et")} ({selectedDraftHistoryRows.length})
+            </button>
+          </div>
         </div>
 
         <form onSubmit={onApplyHistoryFilters} className="grid gap-2 md:grid-cols-6">
@@ -1984,6 +2240,16 @@ export default function JournalWorkbenchPage() {
             <table className="min-w-full text-sm">
               <thead className="bg-slate-50 text-left text-slate-600">
                 <tr>
+                  <th className="px-3 py-2">
+                    <input
+                      type="checkbox"
+                      checked={allDraftRowsOnPageSelected}
+                      onChange={(event) => onToggleSelectAllDraftRows(event.target.checked)}
+                      disabled={draftHistoryRows.length === 0 || postingBusy}
+                      className="h-4 w-4 cursor-pointer rounded border-slate-300"
+                      title={l("Select all draft rows on this page", "Bu sayfadaki tum taslaklari sec")}
+                    />
+                  </th>
                   <th className="px-3 py-2">ID</th>
                   <th className="px-3 py-2">{l("No", "No")}</th>
                   <th className="px-3 py-2">{l("Status", "Durum")}</th>
@@ -1997,6 +2263,19 @@ export default function JournalWorkbenchPage() {
               <tbody>
                 {historyRows.map((row) => (
                   <tr key={row.id} className={`border-t border-slate-100 ${selectedJournalId === String(row.id) ? "bg-cyan-50/50" : ""}`}>
+                    <td className="px-3 py-2">
+                      {isDraftStatus(row.status) ? (
+                        <input
+                          type="checkbox"
+                          checked={selectedHistoryIdSet.has(String(row.id))}
+                          onChange={(event) => onToggleHistoryRowSelection(row.id, event.target.checked)}
+                          disabled={postingBusy}
+                          className="h-4 w-4 cursor-pointer rounded border-slate-300"
+                        />
+                      ) : (
+                        <span className="text-slate-300">-</span>
+                      )}
+                    </td>
                     <td className="px-3 py-2">{row.id}</td>
                     <td className="px-3 py-2">{row.journal_no}</td>
                     <td className="px-3 py-2">{row.status}</td>
@@ -2005,11 +2284,23 @@ export default function JournalWorkbenchPage() {
                     <td className="px-3 py-2">{formatAmount(row.total_credit_base)}</td>
                     <td className="px-3 py-2">{row.line_count}</td>
                     <td className="px-3 py-2">
-                      <button type="button" onClick={() => loadJournalDetail(row.id)} className="rounded border border-slate-300 px-2 py-1 text-xs font-semibold text-slate-700">{l("View", "Goruntule")}</button>
+                      <div className="flex flex-wrap items-center gap-1">
+                        <button type="button" onClick={() => loadJournalDetail(row.id)} className="cursor-pointer rounded border border-slate-300 px-2 py-1 text-xs font-semibold text-slate-700">{l("View", "Goruntule")}</button>
+                        {canPost && isDraftStatus(row.status) ? (
+                          <button
+                            type="button"
+                            onClick={() => onOpenSinglePostConfirm(row)}
+                            disabled={postingBusy}
+                            className="cursor-pointer rounded border border-cyan-300 px-2 py-1 text-xs font-semibold text-cyan-700 disabled:opacity-50"
+                          >
+                            {l("Post", "Post Et")}
+                          </button>
+                        ) : null}
+                      </div>
                     </td>
                   </tr>
                 ))}
-                {historyRows.length === 0 && <tr><td colSpan={8} className="px-3 py-3 text-slate-500">{l("No journal rows loaded.", "Fis satiri yuklenmedi.")}</td></tr>}
+                {historyRows.length === 0 && <tr><td colSpan={9} className="px-3 py-3 text-slate-500">{l("No journal rows loaded.", "Fis satiri yuklenmedi.")}</td></tr>}
               </tbody>
             </table>
           </div>
@@ -2026,6 +2317,18 @@ export default function JournalWorkbenchPage() {
                 <div>{l("Book", "Defter")}: {selectedJournal.book_code}</div>
                 <div>{l("Period", "Donem")}: {selectedJournal.fiscal_year}-P{String(selectedJournal.period_no || "").padStart(2, "0")}</div>
                 <div>{l("Lines", "Satirlar")}: {(selectedJournal.lines || []).length}</div>
+                {canPost && isDraftStatus(selectedJournal.status) ? (
+                  <div className="pt-1">
+                    <button
+                      type="button"
+                      onClick={() => onOpenSinglePostConfirm(selectedJournal)}
+                      disabled={postingBusy}
+                      className="rounded bg-cyan-700 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-60"
+                    >
+                      {l("Post From Detail", "Detaydan Post Et")}
+                    </button>
+                  </div>
+                ) : null}
                 <div className="max-h-52 overflow-auto rounded border border-slate-200">
                   <table className="min-w-full text-[11px]">
                     <thead className="bg-slate-50 text-left text-slate-600"><tr><th className="px-2 py-1.5">#</th><th className="px-2 py-1.5">{l("Account", "Hesap")}</th><th className="px-2 py-1.5">{l("Subledger Ref", "Alt Defter Ref")}</th><th className="px-2 py-1.5">{l("Debit", "Borc")}</th><th className="px-2 py-1.5">{l("Credit", "Alacak")}</th></tr></thead>
@@ -2047,6 +2350,86 @@ export default function JournalWorkbenchPage() {
           </div>
         </div>
       </section>
+
+      {postConfirmState.open ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 px-4">
+          <div className="w-full max-w-3xl rounded-xl border border-slate-200 bg-white p-4 shadow-xl">
+            <h3 className="text-sm font-semibold text-slate-800">
+              {l("Confirm Journal Posting", "Fis Post Islem Onayi")}
+            </h3>
+            <p className="mt-1 text-xs text-rose-700">
+              {l(
+                "Posting is irreversible from this screen. Review journals before confirming.",
+                "Bu ekrandan post islemi geri alinamaz. Onaylamadan once fisleri kontrol edin."
+              )}
+            </p>
+
+            <div className="mt-3 max-h-60 overflow-auto rounded border border-slate-200">
+              <table className="min-w-full text-xs">
+                <thead className="bg-slate-50 text-left text-slate-600">
+                  <tr>
+                    <th className="px-2 py-1.5">ID</th>
+                    <th className="px-2 py-1.5">{l("No", "No")}</th>
+                    <th className="px-2 py-1.5">{l("Status", "Durum")}</th>
+                    <th className="px-2 py-1.5">{l("Date", "Tarih")}</th>
+                    <th className="px-2 py-1.5">{l("Debit", "Borc")}</th>
+                    <th className="px-2 py-1.5">{l("Credit", "Alacak")}</th>
+                    <th className="px-2 py-1.5">{l("Lines", "Satirlar")}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {postConfirmState.rows.map((row) => (
+                    <tr key={row.id} className="border-t border-slate-100">
+                      <td className="px-2 py-1.5">{row.id}</td>
+                      <td className="px-2 py-1.5">{row.journal_no || "-"}</td>
+                      <td className="px-2 py-1.5">{row.status || "-"}</td>
+                      <td className="px-2 py-1.5">{row.entry_date || "-"}</td>
+                      <td className="px-2 py-1.5">{formatAmount(row.total_debit_base)}</td>
+                      <td className="px-2 py-1.5">{formatAmount(row.total_credit_base)}</td>
+                      <td className="px-2 py-1.5">{row.line_count}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <label className="mt-3 inline-flex items-center gap-2 text-sm text-slate-700">
+              <input
+                type="checkbox"
+                checked={postConfirmState.postLinkedMirrors}
+                onChange={(event) =>
+                  setPostConfirmState((prev) => ({
+                    ...prev,
+                    postLinkedMirrors: event.target.checked,
+                  }))
+                }
+              />
+              {l("Post linked intercompany mirrors", "Bagli intercompany mirror fisleri de post et")}
+            </label>
+
+            <div className="mt-4 flex flex-wrap justify-end gap-2">
+              <button
+                type="button"
+                onClick={closePostConfirm}
+                disabled={saving === "postJournal"}
+                className="rounded border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 disabled:opacity-60"
+              >
+                {l("Cancel", "Iptal")}
+              </button>
+              <button
+                type="button"
+                onClick={onConfirmPostFromModal}
+                disabled={saving === "postJournal"}
+                className="rounded bg-cyan-700 px-3 py-2 text-xs font-semibold text-white disabled:opacity-60"
+              >
+                {saving === "postJournal"
+                  ? l("Posting...", "Post ediliyor...")
+                  : l("Confirm & Post", "Onayla ve Post Et")}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       <section className="rounded-xl border border-slate-200 bg-white p-4">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">

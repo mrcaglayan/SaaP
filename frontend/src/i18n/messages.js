@@ -142,12 +142,16 @@ export const messages = {
         updateStatus: "Tenant durumu guncellenemedi.",
         loadCountries: "Ulke listesi yuklenemedi.",
         loadCurrencies: "Para birimi listesi yuklenemedi.",
+        createCurrency: "Para birimi olusturma islemi basarisiz.",
+        updateCurrency: "Para birimi guncellenemedi.",
         createCountry: "Ulke olusturma islemi basarisiz.",
         updateCountry: "Ulke guncellenemedi.",
       },
       messages: {
         created: "Tenant ve ilk yonetici basariyla olusturuldu.",
         statusUpdated: "Tenant #{{id}} durumu {{status}} olarak guncellendi.",
+        currencyCreated: "Para birimi kaydi olusturuldu.",
+        currencyUpdated: "Para birimi {{code}} guncellendi.",
         countryCreated: "Ulke kaydi olusturuldu.",
         countryUpdated: "Ulke #{{id}} guncellendi.",
       },
@@ -189,6 +193,40 @@ export const messages = {
           suspend: "Askida Al",
         },
         empty: "Tenant kaydi bulunamadi.",
+      },
+      currencies: {
+        title: "Para Birimi Master Yonetimi",
+        subtitle:
+          "Ulke varsayilan para birimleri bu listeden secilir.",
+        loading: "Yukleniyor...",
+        refresh: "Yenile",
+        searchPlaceholder: "Kod veya ada gore ara",
+        immutableCodeNote:
+          "Kod (ISO 4217) olusturulduktan sonra bu ekranda degistirilmez.",
+        create: {
+          title: "Yeni Para Birimi Ekle",
+          placeholders: {
+            code: "Kod (orn. USD)",
+            name: "Para birimi adi",
+            minorUnits: "Kurus basamagi (0-9)",
+          },
+          actions: {
+            creating: "Olusturuluyor...",
+            create: "Para birimi olustur",
+          },
+        },
+        columns: {
+          code: "Kod",
+          name: "Ad",
+          minorUnits: "Kurus basamagi",
+          actions: "Islemler",
+        },
+        actions: {
+          edit: "Duzenle",
+          save: "Kaydet",
+          cancel: "Iptal",
+        },
+        empty: "Para birimi kaydi bulunamadi.",
       },
       countries: {
         title: "Ulke Master Yonetimi",
@@ -1514,6 +1552,21 @@ export const messages = {
       description:
         "Bu modul rotasi aktif, ancak tam ekran ve is akisi henuz uygulanmadi.",
       routeLabel: "Rota:",
+      yearEndReminder: {
+        title: "Yil sonu notu (placeholder)",
+        description:
+          "Daha sonra detaylandirilacak kontrol listesi icin iz: uzun/kisa vade aktarmalari ve tahakkuk kapama adimlarini dogrulayin.",
+        reclassDeferredRevenue:
+          "Ertelenmis gelir uzun->kisa aktarimlarini kontrol edin (480 -> 380).",
+        reclassPrepaidExpense:
+          "Pesin gider uzun->kisa aktarimlarini kontrol edin (280 -> 180).",
+        reclassAccruedRevenue:
+          "Gelir tahakkuku uzun->kisa aktarimlarini kontrol edin (281 -> 181).",
+        reclassAccruedExpense:
+          "Gider tahakkuku uzun->kisa aktarimlarini kontrol edin (481 -> 381).",
+        closeAccruals:
+          "Donem sonunda tahakkuk/ertelenmis bakiye kapama ve sonraki doneme acilis kontrollerini planlayin.",
+      },
     },
     readinessChecklist: {
       title: "Kiraci Hazirlik Kontrol Listesi",
@@ -1715,12 +1768,16 @@ export const messages = {
         updateStatus: "Failed to update tenant status.",
         loadCountries: "Failed to load countries.",
         loadCurrencies: "Failed to load currencies.",
+        createCurrency: "Currency creation failed.",
+        updateCurrency: "Failed to update currency.",
         createCountry: "Country creation failed.",
         updateCountry: "Failed to update country.",
       },
       messages: {
         created: "Tenant and first admin were created successfully.",
         statusUpdated: "Tenant #{{id}} status updated to {{status}}.",
+        currencyCreated: "Currency record created.",
+        currencyUpdated: "Currency {{code}} updated.",
         countryCreated: "Country record created.",
         countryUpdated: "Country #{{id}} updated.",
       },
@@ -1762,6 +1819,40 @@ export const messages = {
           suspend: "Suspend",
         },
         empty: "No tenant records found.",
+      },
+      currencies: {
+        title: "Currency Master Management",
+        subtitle:
+          "Country default currencies are selected from this list.",
+        loading: "Loading...",
+        refresh: "Refresh",
+        searchPlaceholder: "Search by code or name",
+        immutableCodeNote:
+          "Code (ISO 4217) is immutable on this screen after creation.",
+        create: {
+          title: "Add New Currency",
+          placeholders: {
+            code: "Code (e.g. USD)",
+            name: "Currency name",
+            minorUnits: "Minor units (0-9)",
+          },
+          actions: {
+            creating: "Creating...",
+            create: "Create currency",
+          },
+        },
+        columns: {
+          code: "Code",
+          name: "Name",
+          minorUnits: "Minor units",
+          actions: "Actions",
+        },
+        actions: {
+          edit: "Edit",
+          save: "Save",
+          cancel: "Cancel",
+        },
+        empty: "No currency records found.",
       },
       countries: {
         title: "Country Master Management",
@@ -3089,6 +3180,21 @@ export const messages = {
       description:
         "This module route is active, but the full screen and workflow are not implemented yet.",
       routeLabel: "Route:",
+      yearEndReminder: {
+        title: "Year-end note (placeholder)",
+        description:
+          "Reminder trail for the future detailed checklist: validate long/short reclass and accrual closing steps.",
+        reclassDeferredRevenue:
+          "Validate deferred revenue long->short reclass (480 -> 380).",
+        reclassPrepaidExpense:
+          "Validate prepaid expense long->short reclass (280 -> 180).",
+        reclassAccruedRevenue:
+          "Validate accrued revenue long->short reclass (281 -> 181).",
+        reclassAccruedExpense:
+          "Validate accrued expense long->short reclass (481 -> 381).",
+        closeAccruals:
+          "Plan period-end accrual/deferred closing and next-period opening checks.",
+      },
     },
     readinessChecklist: {
       title: "Tenant Readiness Checklist",

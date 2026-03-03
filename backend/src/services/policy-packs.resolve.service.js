@@ -74,6 +74,8 @@ function buildResolvedRow({
   purposeCode,
   account,
   matchedCode,
+  strategy = "codeExact",
+  matchedParentCode = null,
 }) {
   return {
     moduleKey,
@@ -83,8 +85,9 @@ function buildResolvedRow({
     accountCode: String(account.code || ""),
     confidence: "HIGH",
     matchedBy: {
-      strategy: "codeExact",
+      strategy: String(strategy || "codeExact"),
       code: String(matchedCode || account.code || ""),
+      ...(matchedParentCode ? { parentCode: String(matchedParentCode) } : {}),
     },
   };
 }
@@ -106,10 +109,77 @@ function buildMissingRow({
   };
 }
 
+function resolveChildFallbackForNonPostableMatch({
+  moduleKey,
+  purposeCode,
+  parentCode,
+  target,
+  accounts,
+}) {
+  const normalizedParentCode = String(parentCode || "").trim();
+  if (!normalizedParentCode) {
+    return null;
+  }
+
+  const childPrefix = `${normalizedParentCode}.`;
+  const suitableChildren = [];
+  for (const account of Array.isArray(accounts) ? accounts : []) {
+    const accountCode = String(account?.code || "").trim();
+    if (!accountCode || !accountCode.startsWith(childPrefix)) {
+      continue;
+    }
+    const suitability = evaluateSuitability(moduleKey, account, target?.rules);
+    if (!suitability.ok) {
+      continue;
+    }
+    suitableChildren.push(account);
+  }
+
+  if (suitableChildren.length === 0) {
+    return null;
+  }
+
+  suitableChildren.sort((left, right) => {
+    const leftCode = String(left?.code || "");
+    const rightCode = String(right?.code || "");
+    if (leftCode !== rightCode) {
+      return leftCode.localeCompare(rightCode);
+    }
+    return parsePositiveInt(left?.id) - parsePositiveInt(right?.id);
+  });
+
+  if (suitableChildren.length > 1) {
+    return buildMissingRow({
+      moduleKey,
+      purposeCode,
+      reason: "ambiguous_child_match",
+      suggestCreate: target?.suggestCreate || null,
+      details: {
+        matchedCode: normalizedParentCode,
+        childCodePrefix: childPrefix,
+        candidateAccountIds: suitableChildren
+          .map((row) => parsePositiveInt(row.id))
+          .filter(Boolean),
+      },
+    });
+  }
+
+  const selectedChild = suitableChildren[0];
+  return buildResolvedRow({
+    moduleKey,
+    purposeCode,
+    account: selectedChild,
+    matchedCode: selectedChild.code,
+    strategy: "postable_child_fallback",
+    matchedParentCode: normalizedParentCode,
+  });
+}
+
 function resolvePurposeTarget({
   moduleKey,
   target,
   accountsByCode,
+  accounts,
 }) {
   const purposeCode = String(target?.purposeCode || "").trim().toUpperCase();
   const codeCandidates = target?.match?.codeExact || [];
@@ -146,6 +216,19 @@ function resolvePurposeTarget({
           account,
           matchedCode: normalizedCode,
         });
+      }
+
+      if (suitability.issues.includes("not_postable")) {
+        const childFallback = resolveChildFallbackForNonPostableMatch({
+          moduleKey,
+          purposeCode,
+          parentCode: normalizedCode,
+          target,
+          accounts,
+        });
+        if (childFallback) {
+          return childFallback;
+        }
       }
 
       return buildMissingRow({
@@ -231,6 +314,7 @@ export async function resolvePolicyPack({
           moduleKey,
           target,
           accountsByCode,
+          accounts,
         })
       );
     }
@@ -248,4 +332,3 @@ export async function resolvePolicyPack({
     },
   };
 }
-

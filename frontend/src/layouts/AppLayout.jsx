@@ -313,14 +313,6 @@ function subLinkClass(isActive, nested = false) {
     }`;
 }
 
-function formatSegmentLabel(segment) {
-  return segment
-    .split("-")
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
-}
-
 function toSidebarTitleKey(value) {
   return String(value || "")
     .trim()
@@ -472,7 +464,7 @@ function annotateSidebarItemsWithAccess(
 }
 
 export default function AppLayout() {
-  const { user, isAuthed, logout, hasAnyPermission, hasAllPermissions } = useAuth();
+  const { user, logout, hasAnyPermission, hasAllPermissions } = useAuth();
   const { t } = useI18n();
   const {
     loading: readinessLoading,
@@ -504,21 +496,6 @@ export default function AppLayout() {
     }
     return t(["sidebar", "byPath", pathKey], fallback);
   }
-
-  const breadcrumbs = useMemo(() => {
-    const segments = location.pathname.split("/").filter(Boolean);
-
-    return segments.map((segment, index) => {
-      const builtPath = `/${segments.slice(0, index + 1).join("/")}`;
-      const explicitLabel = t(["breadcrumbs", "byPath", builtPath], null);
-      const sidebarLabel = t(["sidebar", "byPath", builtPath], null);
-      return {
-        to: builtPath,
-        label: explicitLabel || sidebarLabel || formatSegmentLabel(segment),
-        isLast: index === segments.length - 1,
-      };
-    });
-  }, [location.pathname, t]);
 
   const visibleSidebarItems = useMemo(
     () =>
@@ -717,11 +694,7 @@ export default function AppLayout() {
             collapsed ? "px-2 py-2" : "px-3 py-3"
           }`}
         >
-          <div
-            className={`flex items-center overflow-hidden ${
-              collapsed ? "gap-0" : "gap-2"
-            }`}
-          >
+          <div className={`flex items-center ${collapsed ? "justify-center" : "justify-between"} gap-2`}>
             <button
               type="button"
               onClick={() => setCollapsed((value) => !value)}
@@ -733,18 +706,134 @@ export default function AppLayout() {
                 className="h-4 w-4"
               />
             </button>
-            <div
-              className={`min-w-0 overflow-hidden transition-all duration-200 ease-out ${collapsed ? "max-w-0 opacity-0" : "max-w-[12rem] opacity-100"
-                }`}
-              aria-hidden={collapsed}
-            >
-              <p className="truncate whitespace-nowrap text-[10px] uppercase tracking-[0.2em] text-slate-500">
-                {t("layout.financeConsole")}
-              </p>
-              <h3 className="truncate whitespace-nowrap text-sm font-semibold text-[#143c62]">
-                {t("layout.proSidebar")}
-              </h3>
+            {!collapsed && <LanguageSwitcher />}
+          </div>
+          {!collapsed && (
+            <div className="relative mt-2" ref={readinessMenuRef}>
+              <button
+                type="button"
+                onClick={() =>
+                  setReadinessMenuPathname((currentPathname) =>
+                    currentPathname === location.pathname ? null : location.pathname
+                  )
+                }
+                className={`inline-flex w-full items-center justify-between rounded-full border px-2.5 py-1.5 text-[11px] font-semibold tracking-wide transition-colors ${readinessChip.classes}`}
+                aria-haspopup="menu"
+                aria-expanded={readinessMenuOpen}
+                aria-label={t("layout.readinessChecklist", "Readiness checklist")}
+              >
+                <span>{readinessChip.label}</span>
+                <svg
+                  viewBox="0 0 20 20"
+                  className={`h-3 w-3 transition-transform ${readinessMenuOpen ? "rotate-180" : ""}`}
+                  fill="none"
+                  aria-hidden="true"
+                >
+                  <path
+                    d="M5 7.5L10 12.5l5-5"
+                    stroke="currentColor"
+                    strokeWidth="1.6"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </button>
+
+              {readinessMenuOpen && (
+                <div
+                  className="absolute left-0 top-[calc(100%+0.45rem)] z-50 w-80 max-w-[85vw] rounded-xl border border-slate-200 bg-white p-3 shadow-xl"
+                  role="menu"
+                >
+                  <p className="text-[10px] uppercase tracking-[0.16em] text-slate-500">
+                    {t("layout.readinessChecklist", "Readiness checklist")}
+                  </p>
+
+                  {readinessLoading && (
+                    <p className="mt-2 text-sm text-slate-600">
+                      {t("layout.readinessChecking", "Readiness: Checking")}
+                    </p>
+                  )}
+
+                  {!readinessLoading && readinessError && (
+                    <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-2">
+                      <p className="text-xs font-medium text-amber-900">
+                        {t("layout.readinessError", "Readiness: Error")}
+                      </p>
+                      <p className="mt-1 text-xs text-amber-800">{readinessError}</p>
+                    </div>
+                  )}
+
+                  {!readinessLoading && !readinessError && tenantReady && (
+                    <p className="mt-2 text-sm text-emerald-700">
+                      {t(
+                        "layout.readinessAllSet",
+                        "All required setup items are complete."
+                      )}
+                    </p>
+                  )}
+
+                  {!readinessLoading && !readinessError && !tenantReady && (
+                    <div className="mt-2">
+                      <p className="text-xs font-semibold text-slate-700">
+                        {t("layout.readinessMissingItems", "Missing items")}
+                      </p>
+                      <ul className="mt-2 space-y-1">
+                        {missingChecks.map((check) => (
+                          <li
+                            key={check.key}
+                            className="flex items-center justify-between rounded-md border border-rose-200 bg-rose-50 px-2 py-1.5"
+                          >
+                            <span className="text-xs text-rose-900">
+                              {getReadinessCheckLabel(t, check)}
+                            </span>
+                            <span className="text-[11px] font-semibold text-rose-700">
+                              {check.count}/{check.minimum}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+
+                      <div className="mt-2 grid gap-1">
+                        {TENANT_SETUP_ROUTES.map((route) => (
+                          <Link
+                            key={route.to}
+                            to={route.to}
+                            className="rounded-md border border-slate-200 px-2 py-1 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50"
+                            onClick={closeReadinessMenu}
+                          >
+                            {t(["sidebar", "byPath", route.to], route.fallback)}
+                          </Link>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="mt-3 flex items-center justify-between gap-2 border-t border-slate-200 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        refreshReadiness();
+                      }}
+                      className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-50"
+                    >
+                      {t("layout.readinessRefresh", "Refresh")}
+                    </button>
+                    {!tenantReady && (
+                      <Link
+                        to={TENANT_SETUP_ROUTE}
+                        className="text-xs font-semibold text-cyan-700 hover:text-cyan-800"
+                        onClick={closeReadinessMenu}
+                      >
+                        {t("layout.readinessOpenSetup", "Open setup")}
+                      </Link>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
+          )}
+          <div className={collapsed ? "mt-2" : "mt-2"}>
+            <WorkingContextBar collapsed={collapsed} />
           </div>
         </div>
 
@@ -913,179 +1002,16 @@ export default function AppLayout() {
       </aside>
 
       <main className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
-        <div className="flex items-center justify-between border-b border-slate-200 bg-white/85 px-4 py-3 backdrop-blur">
-          <div className="flex min-w-0 items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setMobileOpen(true)}
-              className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 shadow-sm transition hover:bg-slate-50 md:hidden"
-              aria-label={t("layout.openSidebar")}
-            >
-              <Icon name="menu" className="h-4 w-4" />
-            </button>
-            <div className="min-w-0">
-              <p className="text-[10px] uppercase tracking-[0.18em] text-slate-500">
-                {t("layout.workspace")}
-              </p>
-              <nav
-                aria-label={t("layout.breadcrumbAria")}
-                className="mt-0.5 flex items-center gap-1 overflow-x-auto text-xs text-slate-500"
-              >
-                {breadcrumbs.map((crumb, index) => (
-                  <span
-                    key={crumb.to}
-                    className="inline-flex items-center gap-1 whitespace-nowrap"
-                  >
-                    {crumb.isLast ? (
-                      <span className="font-semibold text-slate-700">{crumb.label}</span>
-                    ) : (
-                      <Link
-                        to={crumb.to}
-                        className="transition-colors hover:text-slate-700"
-                      >
-                        {crumb.label}
-                      </Link>
-                    )}
-                    {index < breadcrumbs.length - 1 && <span>/</span>}
-                  </span>
-                ))}
-              </nav>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="relative" ref={readinessMenuRef}>
-              <button
-                type="button"
-                onClick={() =>
-                  setReadinessMenuPathname((currentPathname) =>
-                    currentPathname === location.pathname ? null : location.pathname
-                  )
-                }
-                className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[11px] font-semibold tracking-wide transition-colors ${readinessChip.classes}`}
-                aria-haspopup="menu"
-                aria-expanded={readinessMenuOpen}
-                aria-label={t("layout.readinessChecklist", "Readiness checklist")}
-              >
-                <span>{readinessChip.label}</span>
-                <svg
-                  viewBox="0 0 20 20"
-                  className={`h-3 w-3 transition-transform ${readinessMenuOpen ? "rotate-180" : ""}`}
-                  fill="none"
-                  aria-hidden="true"
-                >
-                  <path
-                    d="M5 7.5L10 12.5l5-5"
-                    stroke="currentColor"
-                    strokeWidth="1.6"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-              </button>
-
-              {readinessMenuOpen && (
-                <div
-                  className="absolute right-0 top-[calc(100%+0.45rem)] z-50 w-80 max-w-[85vw] rounded-xl border border-slate-200 bg-white p-3 shadow-xl"
-                  role="menu"
-                >
-                  <p className="text-[10px] uppercase tracking-[0.16em] text-slate-500">
-                    {t("layout.readinessChecklist", "Readiness checklist")}
-                  </p>
-
-                  {readinessLoading && (
-                    <p className="mt-2 text-sm text-slate-600">
-                      {t("layout.readinessChecking", "Readiness: Checking")}
-                    </p>
-                  )}
-
-                  {!readinessLoading && readinessError && (
-                    <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-2">
-                      <p className="text-xs font-medium text-amber-900">
-                        {t("layout.readinessError", "Readiness: Error")}
-                      </p>
-                      <p className="mt-1 text-xs text-amber-800">{readinessError}</p>
-                    </div>
-                  )}
-
-                  {!readinessLoading && !readinessError && tenantReady && (
-                    <p className="mt-2 text-sm text-emerald-700">
-                      {t(
-                        "layout.readinessAllSet",
-                        "All required setup items are complete."
-                      )}
-                    </p>
-                  )}
-
-                  {!readinessLoading && !readinessError && !tenantReady && (
-                    <div className="mt-2">
-                      <p className="text-xs font-semibold text-slate-700">
-                        {t("layout.readinessMissingItems", "Missing items")}
-                      </p>
-                      <ul className="mt-2 space-y-1">
-                        {missingChecks.map((check) => (
-                          <li
-                            key={check.key}
-                            className="flex items-center justify-between rounded-md border border-rose-200 bg-rose-50 px-2 py-1.5"
-                          >
-                            <span className="text-xs text-rose-900">
-                              {getReadinessCheckLabel(t, check)}
-                            </span>
-                            <span className="text-[11px] font-semibold text-rose-700">
-                              {check.count}/{check.minimum}
-                            </span>
-                          </li>
-                        ))}
-                      </ul>
-
-                      <div className="mt-2 grid gap-1">
-                        {TENANT_SETUP_ROUTES.map((route) => (
-                          <Link
-                            key={route.to}
-                            to={route.to}
-                            className="rounded-md border border-slate-200 px-2 py-1 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50"
-                            onClick={closeReadinessMenu}
-                          >
-                            {t(["sidebar", "byPath", route.to], route.fallback)}
-                          </Link>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="mt-3 flex items-center justify-between gap-2 border-t border-slate-200 pt-2">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        refreshReadiness();
-                      }}
-                      className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-50"
-                    >
-                      {t("layout.readinessRefresh", "Refresh")}
-                    </button>
-                    {!tenantReady && (
-                      <Link
-                        to={TENANT_SETUP_ROUTE}
-                        className="text-xs font-semibold text-cyan-700 hover:text-cyan-800"
-                        onClick={closeReadinessMenu}
-                      >
-                        {t("layout.readinessOpenSetup", "Open setup")}
-                      </Link>
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
-            <LanguageSwitcher />
-            <p className="truncate text-sm font-medium text-slate-700">
-              {user?.name || t("layout.userFallback")}
-            </p>
-          </div>
+        <div className="pointer-events-none absolute left-3 top-3 z-20 md:hidden">
+          <button
+            type="button"
+            onClick={() => setMobileOpen(true)}
+            className="pointer-events-auto inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 shadow-sm transition hover:bg-slate-50"
+            aria-label={t("layout.openSidebar")}
+          >
+            <Icon name="menu" className="h-4 w-4" />
+          </button>
         </div>
-        {isAuthed ? (
-          <div className="border-b border-slate-200 bg-white px-4 py-2">
-            <WorkingContextBar />
-          </div>
-        ) : null}
 
         <div className="flex-1 min-h-0 p-4 md:p-6 overflow-auto">
           <Outlet />

@@ -155,6 +155,18 @@ export default function CounterpartyForm({
   accountOptionsLoading = false,
   accountOptionsError = "",
   onAccountLookupQueryChange,
+  canInlineCreateArAccount = false,
+  inlineCreateArAccountLabel = "",
+  inlineCreateArAccountSaving = false,
+  onInlineCreateArAccount,
+  inlineCreateArAccountError = "",
+  inlineCreateArAccountMessage = "",
+  canInlineCreateApAccount = false,
+  inlineCreateApAccountLabel = "",
+  inlineCreateApAccountSaving = false,
+  onInlineCreateApAccount,
+  inlineCreateApAccountError = "",
+  inlineCreateApAccountMessage = "",
   onPaymentTermLookupQueryChange,
   canInlineCreatePaymentTerm = false,
   inlineCreatePaymentTermLabel = "",
@@ -649,6 +661,22 @@ export default function CounterpartyForm({
                 }
                 disabled={submitting || !form.legalEntityId || !form.isCustomer}
               />
+              {canInlineCreateArAccount ? (
+                <button
+                  type="button"
+                  className="mt-2 rounded-md border border-slate-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700 disabled:opacity-60"
+                  onClick={onInlineCreateArAccount}
+                  disabled={
+                    inlineCreateArAccountSaving ||
+                    submitting ||
+                    typeof onInlineCreateArAccount !== "function"
+                  }
+                >
+                  {inlineCreateArAccountSaving
+                    ? "Creating AR sub-account..."
+                    : `Create "${inlineCreateArAccountLabel || "new AR sub-account"}"`}
+                </button>
+              ) : null}
               {!form.isCustomer ? (
                 <p className="mt-1 text-xs text-slate-500">
                   Enable Customer role to set AR mapping.
@@ -659,6 +687,12 @@ export default function CounterpartyForm({
               ) : null}
               {accountOptionsError ? (
                 <p className="mt-1 text-xs text-amber-700">{accountOptionsError}</p>
+              ) : null}
+              {inlineCreateArAccountError ? (
+                <p className="mt-1 text-xs text-rose-700">{inlineCreateArAccountError}</p>
+              ) : null}
+              {inlineCreateArAccountMessage ? (
+                <p className="mt-1 text-xs text-emerald-700">{inlineCreateArAccountMessage}</p>
               ) : null}
             </>
           ) : (
@@ -701,6 +735,22 @@ export default function CounterpartyForm({
                 }
                 disabled={submitting || !form.legalEntityId || !form.isVendor}
               />
+              {canInlineCreateApAccount ? (
+                <button
+                  type="button"
+                  className="mt-2 rounded-md border border-slate-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700 disabled:opacity-60"
+                  onClick={onInlineCreateApAccount}
+                  disabled={
+                    inlineCreateApAccountSaving ||
+                    submitting ||
+                    typeof onInlineCreateApAccount !== "function"
+                  }
+                >
+                  {inlineCreateApAccountSaving
+                    ? "Creating AP sub-account..."
+                    : `Create "${inlineCreateApAccountLabel || "new AP sub-account"}"`}
+                </button>
+              ) : null}
               {!form.isVendor ? (
                 <p className="mt-1 text-xs text-slate-500">
                   Enable Vendor role to set AP mapping.
@@ -711,6 +761,12 @@ export default function CounterpartyForm({
               ) : null}
               {accountOptionsError ? (
                 <p className="mt-1 text-xs text-amber-700">{accountOptionsError}</p>
+              ) : null}
+              {inlineCreateApAccountError ? (
+                <p className="mt-1 text-xs text-rose-700">{inlineCreateApAccountError}</p>
+              ) : null}
+              {inlineCreateApAccountMessage ? (
+                <p className="mt-1 text-xs text-emerald-700">{inlineCreateApAccountMessage}</p>
               ) : null}
             </>
           ) : (
