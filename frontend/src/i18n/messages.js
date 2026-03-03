@@ -908,11 +908,31 @@ export const messages = {
       },
       placeholders: {
         legalEntity: "Legal entity secin",
+        sessionMode: "Oturum modu secin",
         operatingUnit: "Operating unit secin (opsiyonel)",
         account: "Hesap secin",
         currencyCode: "Para birimi secin",
         varianceGainAccount: "Fazla fark hesabi secin (opsiyonel)",
         varianceLossAccount: "Eksik fark hesabi secin (opsiyonel)",
+      },
+      accountPicker: {
+        searchPlaceholder: "Hesap kod/adi ara",
+        selectLegalEntityFirst: "Once legal entity secin",
+        noOptions: "Hesap bulunamadi.",
+        searchHelp:
+          "Kod veya ad yazarak arayin. Kod bulunamazsa buradan alt hesap olusturabilirsiniz.",
+        codeNotFoundHint:
+          "{{code}} kodu bulunamadi. Bu kod ile parent altinda yeni hesap olusturabilirsiniz.",
+        parentPlaceholder: "Parent hesap secin",
+        parentNoOptions: "Parent hesap bulunamadi.",
+        childCodePlaceholder: "Yeni alt hesap kodu",
+        childNamePlaceholder: "Yeni alt hesap adi",
+        useTypedCode: "Aranan kodu kullan",
+        useNextCode: "Sonraki alt kodu kullan",
+        createChild: "Alt hesap olustur ve sec",
+        creatingChild: "Alt hesap olusturuluyor...",
+        missingUpsertPermissionHint:
+          "Alt hesap olusturmak icin gl.account.upsert yetkisi gerekir.",
       },
       table: {
         code: "Kod",
@@ -936,6 +956,8 @@ export const messages = {
           "Bu sayfayi kullanmak icin cash.register.read yetkisi gerekir.",
         missingUpsertPermission:
           "Bu islem icin cash.register.upsert yetkisi gerekir.",
+        missingAccountUpsertPermission:
+          "Alt hesap olusturmak icin gl.account.upsert yetkisi gerekir.",
         loadRegisters: "Kasa kayitlari yuklenemedi.",
         loadOrgLookups:
           "Organizasyon lookup verileri yuklenemedi. Gerekirse ID alanlarini manuel doldurun.",
@@ -946,9 +968,18 @@ export const messages = {
         missingAccountLookupPermission:
           "gl.account.read yetkisi olmadan hesap lookup listeleri yuklenmez.",
         requiredCodeName: "Kod ve ad alanlari zorunludur.",
+        requiredSessionMode: "sessionMode zorunludur.",
         requiredEntityAccount: "legalEntityId ve accountId zorunludur.",
         requiredCurrency: "currencyCode zorunludur.",
         invalidAmount: "Tutar alanlarinda gecersiz deger var.",
+        parentAccountRequired: "Alt hesap olusturmak icin parent hesap secin.",
+        childAccountCodeRequired: "Alt hesap kodu zorunludur.",
+        childAccountNameRequired: "Alt hesap adi zorunludur.",
+        childAccountCodeParentConflict:
+          "Alt hesap kodu parent hesap kodu ile ayni olamaz.",
+        childAccountParentCoaMissing:
+          "Secilen parent hesap icin coaId bulunamadi.",
+        createChildAccount: "Alt hesap olusturulamadi.",
         save: "Kasa kaydi kaydedilemedi.",
         statusUpdate: "Kasa kaydi durumu guncellenemedi.",
       },
@@ -956,6 +987,9 @@ export const messages = {
         created: "Kasa kaydi olusturuldu.",
         updated: "Kasa kaydi guncellendi.",
         statusUpdated: "Kasa kaydi {{code}} durumu {{status}} olarak guncellendi.",
+        accountExistsSelected: "{{code}} zaten mevcut. Mevcut hesap secildi.",
+        childAccountCreatedAndSelected:
+          "{{code}} alt hesabi olusturuldu (parent: {{parentCode}}) ve secildi.",
       },
     },
     cashSessions: {
@@ -1108,7 +1142,10 @@ export const messages = {
         allTypes: "Tum islem tipleri",
         allStatuses: "Tum durumlar",
         register: "Register secin",
+        sessionSelectRegisterFirst: "Once register secin",
         sessionOptional: "Oturum (opsiyonel)",
+        sessionRequired: "Oturum (zorunlu)",
+        sessionNotUsed: "Oturum kullanilmiyor (session_mode=NONE)",
         autoOrNone: "Otomatik / yok",
         searchCounterparty: "Muhatap kodu/adi ara",
         selectCounterparty: "Muhatap secin",
@@ -1120,6 +1157,10 @@ export const messages = {
         registerIdManualFallback: "Register listesi yok; register ID girin",
         sessionId: "sessionId",
         cashSessionIdOptional: "cashSessionId (opsiyonel)",
+        cashSessionIdRequiredManualFallback:
+          "Secili register icin OPEN cashSessionId girin (zorunlu)",
+        cashSessionIdSelectRegisterFirst: "Once register secin",
+        cashSessionIdNotUsed: "Secili register session_mode=NONE; cashSessionId gerekmez",
         cashSessionIdManualFallback:
           "Oturum listesi yoksa cashSessionId girin (opsiyonel)",
         amount: "Tutar",
@@ -2534,11 +2575,31 @@ export const messages = {
       },
       placeholders: {
         legalEntity: "Select legal entity",
+        sessionMode: "Select session mode",
         operatingUnit: "Select operating unit (optional)",
         account: "Select account",
         currencyCode: "Select currency",
         varianceGainAccount: "Select variance gain account (optional)",
         varianceLossAccount: "Select variance loss account (optional)",
+      },
+      accountPicker: {
+        searchPlaceholder: "Search account code/name",
+        selectLegalEntityFirst: "Select legal entity first",
+        noOptions: "No accounts found.",
+        searchHelp:
+          "Search by code or name. If a code is missing, create its child account directly here.",
+        codeNotFoundHint:
+          "Code {{code}} was not found. You can create a new child account under a parent.",
+        parentPlaceholder: "Select parent account",
+        parentNoOptions: "No parent accounts found.",
+        childCodePlaceholder: "New child account code",
+        childNamePlaceholder: "New child account name",
+        useTypedCode: "Use typed code",
+        useNextCode: "Use next child code",
+        createChild: "Create child and select",
+        creatingChild: "Creating child account...",
+        missingUpsertPermissionHint:
+          "gl.account.upsert permission is required to create child accounts.",
       },
       table: {
         code: "Code",
@@ -2562,6 +2623,8 @@ export const messages = {
           "cash.register.read permission is required to use this page.",
         missingUpsertPermission:
           "cash.register.upsert permission is required for this action.",
+        missingAccountUpsertPermission:
+          "gl.account.upsert permission is required to create child accounts.",
         loadRegisters: "Failed to load cash registers.",
         loadOrgLookups:
           "Failed to load organization lookups. Fill IDs manually if needed.",
@@ -2572,9 +2635,17 @@ export const messages = {
         missingAccountLookupPermission:
           "Without gl.account.read permission, account lookup lists cannot be loaded.",
         requiredCodeName: "Code and name are required.",
+        requiredSessionMode: "sessionMode is required.",
         requiredEntityAccount: "legalEntityId and accountId are required.",
         requiredCurrency: "currencyCode is required.",
         invalidAmount: "An invalid numeric value exists in amount fields.",
+        parentAccountRequired: "Select a parent account to create a child account.",
+        childAccountCodeRequired: "Child account code is required.",
+        childAccountNameRequired: "Child account name is required.",
+        childAccountCodeParentConflict:
+          "Child account code cannot be the same as the parent account code.",
+        childAccountParentCoaMissing: "coaId could not be resolved for selected parent.",
+        createChildAccount: "Failed to create child account.",
         save: "Failed to save cash register.",
         statusUpdate: "Failed to update cash register status.",
       },
@@ -2582,6 +2653,9 @@ export const messages = {
         created: "Cash register created.",
         updated: "Cash register updated.",
         statusUpdated: "Cash register {{code}} status updated to {{status}}.",
+        accountExistsSelected: "{{code}} already exists. Existing account selected.",
+        childAccountCreatedAndSelected:
+          "Child account {{code}} created under {{parentCode}} and selected.",
       },
     },
     cashSessions: {
@@ -2735,7 +2809,10 @@ export const messages = {
         allTypes: "All transaction types",
         allStatuses: "All statuses",
         register: "Select register",
+        sessionSelectRegisterFirst: "Select register first",
         sessionOptional: "Session (optional)",
+        sessionRequired: "Session (required)",
+        sessionNotUsed: "Session not used (session_mode=NONE)",
         autoOrNone: "Auto / none",
         searchCounterparty: "Search counterparty code/name",
         selectCounterparty: "Select counterparty",
@@ -2747,6 +2824,10 @@ export const messages = {
         registerIdManualFallback: "No register list available; enter register ID",
         sessionId: "sessionId",
         cashSessionIdOptional: "cashSessionId (optional)",
+        cashSessionIdRequiredManualFallback:
+          "Enter OPEN cashSessionId for selected register (required)",
+        cashSessionIdSelectRegisterFirst: "Select register first",
+        cashSessionIdNotUsed: "Selected register has session_mode=NONE; cashSessionId is not needed",
         cashSessionIdManualFallback:
           "If open session list is unavailable, enter cashSessionId (optional)",
         amount: "Amount",

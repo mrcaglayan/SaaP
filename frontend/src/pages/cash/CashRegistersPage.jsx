@@ -4,8 +4,10 @@ import {
   setCashRegisterStatus,
   upsertCashRegister,
 } from "../../api/cashAdmin.js";
-import { listAccounts } from "../../api/glAdmin.js";
+import { listAccounts, upsertAccount } from "../../api/glAdmin.js";
+import Combobox from "../../components/Combobox.jsx";
 import {
+  listCountries,
   listCurrencies,
   listLegalEntities,
   listOperatingUnits,
@@ -25,7 +27,7 @@ const EMPTY_FORM = {
   code: "",
   name: "",
   registerType: "DRAWER",
-  sessionMode: "REQUIRED",
+  sessionMode: "",
   legalEntityId: "",
   operatingUnitId: "",
   accountId: "",
@@ -97,6 +99,156 @@ function formatAccountOptionLabel(account) {
   return parentPath ? `${parentPath} > ${baseLabel}` : baseLabel;
 }
 
+function normalizeAccountCode(value) {
+  return String(value || "").trim().toUpperCase();
+}
+
+function parseChildCodeSequence(code, parentCode) {
+  const normalizedCode = normalizeAccountCode(code);
+  const normalizedParentCode = normalizeAccountCode(parentCode);
+  if (!normalizedCode || !normalizedParentCode) {
+    return null;
+  }
+
+  let suffix = "";
+  if (normalizedCode.startsWith(`${normalizedParentCode}.`)) {
+    suffix = normalizedCode.slice(normalizedParentCode.length + 1);
+  } else if (normalizedCode.startsWith(`${normalizedParentCode}-`)) {
+    suffix = normalizedCode.slice(normalizedParentCode.length + 1);
+  } else if (normalizedCode.startsWith(normalizedParentCode)) {
+    suffix = normalizedCode.slice(normalizedParentCode.length);
+  } else {
+    return null;
+  }
+
+  if (!/^\d+$/.test(suffix)) {
+    return null;
+  }
+  const value = Number(suffix);
+  if (!Number.isInteger(value) || value <= 0) {
+    return null;
+  }
+  return {
+    value,
+    width: suffix.length,
+  };
+}
+
+function buildNextChildAccountCode(rows, parentAccount) {
+  const parentCode = normalizeAccountCode(parentAccount?.code);
+  const parentAccountId = toPositiveInt(parentAccount?.id);
+  if (!parentCode || !parentAccountId) {
+    return "";
+  }
+
+  const normalizedRows = Array.isArray(rows) ? rows : [];
+  const existingCodes = new Set(
+    normalizedRows
+      .map((row) => normalizeAccountCode(row?.code))
+      .filter(Boolean)
+  );
+  const parsedChildren = normalizedRows
+    .filter(
+      (row) =>
+        toPositiveInt(row?.parent_account_id ?? row?.parentAccountId) ===
+        parentAccountId
+    )
+    .map((row) => parseChildCodeSequence(row?.code, parentCode))
+    .filter(Boolean);
+
+  const maxSequence = parsedChildren.reduce(
+    (maxValue, row) => Math.max(maxValue, Number(row?.value || 0)),
+    0
+  );
+  const width = Math.max(
+    2,
+    parsedChildren.reduce(
+      (maxWidth, row) => Math.max(maxWidth, Number(row?.width || 0)),
+      0
+    )
+  );
+
+  let next = Math.max(1, maxSequence + 1);
+  while (next <= 999999) {
+    const candidate = `${parentCode}.${String(next).padStart(width, "0")}`;
+    if (!existingCodes.has(candidate)) {
+      return candidate;
+    }
+    next += 1;
+  }
+  return "";
+}
+
+function resolveSelectedAccountOption(accountOptions, allAccounts, selectedAccountId) {
+  if (!selectedAccountId) {
+    return null;
+  }
+  return (
+    accountOptions.find((row) => toPositiveInt(row?.id) === selectedAccountId) ||
+    allAccounts.find((row) => toPositiveInt(row?.id) === selectedAccountId) ||
+    null
+  );
+}
+
+function buildAccountPickerRows(accountOptions, selectedAccountOption) {
+  if (!selectedAccountOption) {
+    return accountOptions;
+  }
+  const selectedId = toPositiveInt(selectedAccountOption?.id);
+  if (!selectedId) {
+    return accountOptions;
+  }
+  const alreadyPresent = accountOptions.some(
+    (row) => toPositiveInt(row?.id) === selectedId
+  );
+  return alreadyPresent ? accountOptions : [selectedAccountOption, ...accountOptions];
+}
+
+function buildAccountLookupOptions(rows) {
+  return rows.map((row) => ({
+    value: String(row?.id || ""),
+    label: formatAccountOptionLabel(row),
+    description: [normalizeAccountCode(row?.account_type), normalizeAccountCode(row?.normal_side)]
+      .filter(Boolean)
+      .join(" | "),
+  }));
+}
+
+function deriveSearchCodeCandidate(value) {
+  const normalized = normalizeAccountCode(value);
+  if (!normalized || /\s/.test(normalized)) {
+    return "";
+  }
+  return normalized;
+}
+
+function findBestParentAccount(candidateCode, parentAccountOptions) {
+  if (!candidateCode) {
+    return null;
+  }
+  let bestParent = null;
+  for (const row of parentAccountOptions) {
+    const parentCode = normalizeAccountCode(row?.code);
+    if (!parentCode || candidateCode === parentCode) {
+      continue;
+    }
+    const matchesPrefix =
+      candidateCode.startsWith(`${parentCode}.`) ||
+      candidateCode.startsWith(`${parentCode}-`) ||
+      candidateCode.startsWith(parentCode);
+    if (!matchesPrefix) {
+      continue;
+    }
+    if (
+      !bestParent ||
+      parentCode.length > normalizeAccountCode(bestParent?.code).length
+    ) {
+      bestParent = row;
+    }
+  }
+  return bestParent;
+}
+
 function mapRowToForm(row) {
   return {
     id: String(row?.id || ""),
@@ -131,6 +283,7 @@ export default function CashRegistersPage() {
   const canUpsertRegisters = hasPermission("cash.register.upsert");
   const canReadOrgTree = hasPermission("org.tree.read");
   const canReadAccounts = hasPermission("gl.account.read");
+  const canUpsertAccounts = hasPermission("gl.account.upsert");
 
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -141,11 +294,30 @@ export default function CashRegistersPage() {
 
   const [rows, setRows] = useState([]);
   const [legalEntities, setLegalEntities] = useState([]);
+  const [countries, setCountries] = useState([]);
   const [operatingUnits, setOperatingUnits] = useState([]);
   const [accounts, setAccounts] = useState([]);
   const [currencies, setCurrencies] = useState([]);
 
   const [form, setForm] = useState(EMPTY_FORM);
+  const [currencySeedEntityId, setCurrencySeedEntityId] = useState("");
+  const [accountLookupQuery, setAccountLookupQuery] = useState("");
+  const [inlineChildParentAccountId, setInlineChildParentAccountId] = useState("");
+  const [inlineChildCode, setInlineChildCode] = useState("");
+  const [inlineChildName, setInlineChildName] = useState("");
+  const [inlineChildSaving, setInlineChildSaving] = useState(false);
+  const [varianceGainLookupQuery, setVarianceGainLookupQuery] = useState("");
+  const [varianceGainInlineChildParentAccountId, setVarianceGainInlineChildParentAccountId] =
+    useState("");
+  const [varianceGainInlineChildCode, setVarianceGainInlineChildCode] = useState("");
+  const [varianceGainInlineChildName, setVarianceGainInlineChildName] = useState("");
+  const [varianceGainInlineChildSaving, setVarianceGainInlineChildSaving] = useState(false);
+  const [varianceLossLookupQuery, setVarianceLossLookupQuery] = useState("");
+  const [varianceLossInlineChildParentAccountId, setVarianceLossInlineChildParentAccountId] =
+    useState("");
+  const [varianceLossInlineChildCode, setVarianceLossInlineChildCode] = useState("");
+  const [varianceLossInlineChildName, setVarianceLossInlineChildName] = useState("");
+  const [varianceLossInlineChildSaving, setVarianceLossInlineChildSaving] = useState(false);
 
   useWorkingContextDefaults(setForm, CASH_REGISTER_CONTEXT_MAPPINGS, [
     form.legalEntityId,
@@ -161,6 +333,39 @@ export default function CashRegistersPage() {
       ),
     [legalEntities]
   );
+  const selectedLegalEntity = useMemo(
+    () =>
+      legalEntities.find(
+        (row) => toPositiveInt(row?.id) === selectedLegalEntityId
+      ) || null,
+    [legalEntities, selectedLegalEntityId]
+  );
+  const countryDefaultCurrencyCodeById = useMemo(() => {
+    const byId = new Map();
+    for (const row of countries) {
+      const countryId = toPositiveInt(row?.id);
+      const defaultCurrencyCode = String(row?.default_currency_code || "")
+        .trim()
+        .toUpperCase();
+      if (!countryId || !defaultCurrencyCode || byId.has(countryId)) {
+        continue;
+      }
+      byId.set(countryId, defaultCurrencyCode);
+    }
+    return byId;
+  }, [countries]);
+  const selectedLegalEntityCountryDefaultCurrencyCode = useMemo(() => {
+    const countryId = toPositiveInt(selectedLegalEntity?.country_id);
+    if (!countryId) {
+      return "";
+    }
+    return String(countryDefaultCurrencyCodeById.get(countryId) || "");
+  }, [selectedLegalEntity, countryDefaultCurrencyCodeById]);
+  const selectedLegalEntityFunctionalCurrencyCode = String(
+    selectedLegalEntity?.functional_currency_code || ""
+  )
+    .trim()
+    .toUpperCase();
 
   const operatingUnitOptions = useMemo(() => {
     const filtered = operatingUnits.filter((row) => {
@@ -188,6 +393,173 @@ export default function CashRegistersPage() {
       String(a?.code || "").localeCompare(String(b?.code || ""))
     );
   }, [accounts, selectedLegalEntityId]);
+  const selectedAccountId = toPositiveInt(form.accountId);
+  const selectedAccountOption = useMemo(() => {
+    return resolveSelectedAccountOption(accountOptions, accounts, selectedAccountId);
+  }, [accountOptions, accounts, selectedAccountId]);
+  const accountPickerRows = useMemo(() => {
+    return buildAccountPickerRows(accountOptions, selectedAccountOption);
+  }, [accountOptions, selectedAccountOption]);
+  const accountLookupOptions = useMemo(
+    () => buildAccountLookupOptions(accountPickerRows),
+    [accountPickerRows]
+  );
+  const selectedVarianceGainAccountId = toPositiveInt(form.varianceGainAccountId);
+  const selectedVarianceGainAccountOption = useMemo(
+    () =>
+      resolveSelectedAccountOption(
+        accountOptions,
+        accounts,
+        selectedVarianceGainAccountId
+      ),
+    [accountOptions, accounts, selectedVarianceGainAccountId]
+  );
+  const varianceGainAccountPickerRows = useMemo(
+    () => buildAccountPickerRows(accountOptions, selectedVarianceGainAccountOption),
+    [accountOptions, selectedVarianceGainAccountOption]
+  );
+  const varianceGainAccountLookupOptions = useMemo(
+    () => buildAccountLookupOptions(varianceGainAccountPickerRows),
+    [varianceGainAccountPickerRows]
+  );
+  const selectedVarianceLossAccountId = toPositiveInt(form.varianceLossAccountId);
+  const selectedVarianceLossAccountOption = useMemo(
+    () =>
+      resolveSelectedAccountOption(
+        accountOptions,
+        accounts,
+        selectedVarianceLossAccountId
+      ),
+    [accountOptions, accounts, selectedVarianceLossAccountId]
+  );
+  const varianceLossAccountPickerRows = useMemo(
+    () => buildAccountPickerRows(accountOptions, selectedVarianceLossAccountOption),
+    [accountOptions, selectedVarianceLossAccountOption]
+  );
+  const varianceLossAccountLookupOptions = useMemo(
+    () => buildAccountLookupOptions(varianceLossAccountPickerRows),
+    [varianceLossAccountPickerRows]
+  );
+  const parentAccountOptions = useMemo(() => {
+    const filtered = accounts.filter((row) => {
+      if (!parseDbBoolean(row?.is_active)) {
+        return false;
+      }
+      if (!selectedLegalEntityId) {
+        return true;
+      }
+      return toPositiveInt(row?.legal_entity_id) === selectedLegalEntityId;
+    });
+    return [...filtered].sort((a, b) =>
+      String(a?.code || "").localeCompare(String(b?.code || ""))
+    );
+  }, [accounts, selectedLegalEntityId]);
+  const parentAccountLookupOptions = useMemo(
+    () =>
+      parentAccountOptions.map((row) => ({
+        value: String(row?.id || ""),
+        label: formatAccountOptionLabel(row),
+      })),
+    [parentAccountOptions]
+  );
+  const selectedEntityAccountByCode = useMemo(() => {
+    const byCode = new Map();
+    for (const row of accounts) {
+      if (
+        selectedLegalEntityId &&
+        toPositiveInt(row?.legal_entity_id) !== selectedLegalEntityId
+      ) {
+        continue;
+      }
+      const code = normalizeAccountCode(row?.code);
+      if (!code || byCode.has(code)) {
+        continue;
+      }
+      byCode.set(code, row);
+    }
+    return byCode;
+  }, [accounts, selectedLegalEntityId]);
+  const accountSearchCodeCandidate = useMemo(
+    () => deriveSearchCodeCandidate(accountLookupQuery),
+    [accountLookupQuery]
+  );
+  const exactCodeMatchAccount = useMemo(
+    () =>
+      accountSearchCodeCandidate
+        ? selectedEntityAccountByCode.get(accountSearchCodeCandidate) || null
+        : null,
+    [accountSearchCodeCandidate, selectedEntityAccountByCode]
+  );
+  const showInlineChildCreate =
+    Boolean(accountSearchCodeCandidate) && !exactCodeMatchAccount;
+  const varianceGainSearchCodeCandidate = useMemo(
+    () => deriveSearchCodeCandidate(varianceGainLookupQuery),
+    [varianceGainLookupQuery]
+  );
+  const exactVarianceGainCodeMatchAccount = useMemo(
+    () =>
+      varianceGainSearchCodeCandidate
+        ? selectedEntityAccountByCode.get(varianceGainSearchCodeCandidate) || null
+        : null,
+    [varianceGainSearchCodeCandidate, selectedEntityAccountByCode]
+  );
+  const showVarianceGainInlineChildCreate =
+    Boolean(varianceGainSearchCodeCandidate) && !exactVarianceGainCodeMatchAccount;
+  const varianceLossSearchCodeCandidate = useMemo(
+    () => deriveSearchCodeCandidate(varianceLossLookupQuery),
+    [varianceLossLookupQuery]
+  );
+  const exactVarianceLossCodeMatchAccount = useMemo(
+    () =>
+      varianceLossSearchCodeCandidate
+        ? selectedEntityAccountByCode.get(varianceLossSearchCodeCandidate) || null
+        : null,
+    [varianceLossSearchCodeCandidate, selectedEntityAccountByCode]
+  );
+  const showVarianceLossInlineChildCreate =
+    Boolean(varianceLossSearchCodeCandidate) && !exactVarianceLossCodeMatchAccount;
+  const selectedInlineParentAccount = useMemo(() => {
+    const selectedParentId = toPositiveInt(inlineChildParentAccountId);
+    if (!selectedParentId) {
+      return null;
+    }
+    return (
+      parentAccountOptions.find((row) => toPositiveInt(row?.id) === selectedParentId) ||
+      null
+    );
+  }, [inlineChildParentAccountId, parentAccountOptions]);
+  const suggestedNextChildCode = useMemo(
+    () => buildNextChildAccountCode(accounts, selectedInlineParentAccount),
+    [accounts, selectedInlineParentAccount]
+  );
+  const selectedVarianceGainInlineParentAccount = useMemo(() => {
+    const selectedParentId = toPositiveInt(varianceGainInlineChildParentAccountId);
+    if (!selectedParentId) {
+      return null;
+    }
+    return (
+      parentAccountOptions.find((row) => toPositiveInt(row?.id) === selectedParentId) ||
+      null
+    );
+  }, [varianceGainInlineChildParentAccountId, parentAccountOptions]);
+  const suggestedVarianceGainNextChildCode = useMemo(
+    () => buildNextChildAccountCode(accounts, selectedVarianceGainInlineParentAccount),
+    [accounts, selectedVarianceGainInlineParentAccount]
+  );
+  const selectedVarianceLossInlineParentAccount = useMemo(() => {
+    const selectedParentId = toPositiveInt(varianceLossInlineChildParentAccountId);
+    if (!selectedParentId) {
+      return null;
+    }
+    return (
+      parentAccountOptions.find((row) => toPositiveInt(row?.id) === selectedParentId) ||
+      null
+    );
+  }, [varianceLossInlineChildParentAccountId, parentAccountOptions]);
+  const suggestedVarianceLossNextChildCode = useMemo(
+    () => buildNextChildAccountCode(accounts, selectedVarianceLossInlineParentAccount),
+    [accounts, selectedVarianceLossInlineParentAccount]
+  );
 
   const currencyOptions = useMemo(
     () =>
@@ -213,13 +585,174 @@ export default function CashRegistersPage() {
     if (form.id) {
       return;
     }
-    if (!form.currencyCode && currencyOptions.length > 0) {
-      setForm((prev) => ({
-        ...prev,
-        currencyCode: String(currencyOptions[0].code || "").toUpperCase(),
-      }));
+    const selectedEntityKey = String(selectedLegalEntityId || "");
+    if (!selectedEntityKey) {
+      if (!form.currencyCode && currencyOptions.length > 0) {
+        setForm((prev) => ({
+          ...prev,
+          currencyCode: String(currencyOptions[0].code || "").toUpperCase(),
+        }));
+      }
+      return;
     }
-  }, [currencyOptions, form.currencyCode, form.id]);
+
+    const preferredCurrencyCode =
+      selectedLegalEntityCountryDefaultCurrencyCode ||
+      selectedLegalEntityFunctionalCurrencyCode ||
+      String(currencyOptions[0]?.code || "").toUpperCase();
+    if (!preferredCurrencyCode) {
+      return;
+    }
+    if (
+      currencySeedEntityId === selectedEntityKey &&
+      String(form.currencyCode || "").trim().toUpperCase()
+    ) {
+      return;
+    }
+
+    setForm((prev) => ({
+      ...prev,
+      currencyCode: preferredCurrencyCode,
+    }));
+    setCurrencySeedEntityId(selectedEntityKey);
+  }, [
+    currencyOptions,
+    form.currencyCode,
+    form.id,
+    selectedLegalEntityId,
+    selectedLegalEntityCountryDefaultCurrencyCode,
+    selectedLegalEntityFunctionalCurrencyCode,
+    currencySeedEntityId,
+  ]);
+
+  useEffect(() => {
+    setAccountLookupQuery("");
+    setInlineChildParentAccountId("");
+    setInlineChildCode("");
+    setInlineChildName("");
+    setVarianceGainLookupQuery("");
+    setVarianceGainInlineChildParentAccountId("");
+    setVarianceGainInlineChildCode("");
+    setVarianceGainInlineChildName("");
+    setVarianceLossLookupQuery("");
+    setVarianceLossInlineChildParentAccountId("");
+    setVarianceLossInlineChildCode("");
+    setVarianceLossInlineChildName("");
+  }, [form.legalEntityId]);
+
+  useEffect(() => {
+    if (!showInlineChildCreate) {
+      return;
+    }
+    setInlineChildCode((prev) => prev || accountSearchCodeCandidate);
+    setInlineChildName((prev) => prev || String(form.name || "").trim());
+  }, [showInlineChildCreate, accountSearchCodeCandidate, form.name]);
+
+  useEffect(() => {
+    if (!showInlineChildCreate || toPositiveInt(inlineChildParentAccountId)) {
+      return;
+    }
+    const candidateCode = normalizeAccountCode(
+      inlineChildCode || accountSearchCodeCandidate
+    );
+    if (!candidateCode) {
+      return;
+    }
+    let bestParent = null;
+    for (const row of parentAccountOptions) {
+      const parentCode = normalizeAccountCode(row?.code);
+      if (!parentCode || candidateCode === parentCode) {
+        continue;
+      }
+      const matchesPrefix =
+        candidateCode.startsWith(`${parentCode}.`) ||
+        candidateCode.startsWith(`${parentCode}-`) ||
+        candidateCode.startsWith(parentCode);
+      if (!matchesPrefix) {
+        continue;
+      }
+      if (
+        !bestParent ||
+        parentCode.length > normalizeAccountCode(bestParent?.code).length
+      ) {
+        bestParent = row;
+      }
+    }
+    if (toPositiveInt(bestParent?.id)) {
+      setInlineChildParentAccountId(String(bestParent.id));
+    }
+  }, [
+    showInlineChildCreate,
+    inlineChildParentAccountId,
+    inlineChildCode,
+    accountSearchCodeCandidate,
+    parentAccountOptions,
+  ]);
+  useEffect(() => {
+    if (!showVarianceGainInlineChildCreate) {
+      return;
+    }
+    setVarianceGainInlineChildCode((prev) => prev || varianceGainSearchCodeCandidate);
+    setVarianceGainInlineChildName((prev) => prev || String(form.name || "").trim());
+  }, [showVarianceGainInlineChildCreate, varianceGainSearchCodeCandidate, form.name]);
+
+  useEffect(() => {
+    if (
+      !showVarianceGainInlineChildCreate ||
+      toPositiveInt(varianceGainInlineChildParentAccountId)
+    ) {
+      return;
+    }
+    const candidateCode = normalizeAccountCode(
+      varianceGainInlineChildCode || varianceGainSearchCodeCandidate
+    );
+    if (!candidateCode) {
+      return;
+    }
+    const bestParent = findBestParentAccount(candidateCode, parentAccountOptions);
+    if (toPositiveInt(bestParent?.id)) {
+      setVarianceGainInlineChildParentAccountId(String(bestParent.id));
+    }
+  }, [
+    showVarianceGainInlineChildCreate,
+    varianceGainInlineChildParentAccountId,
+    varianceGainInlineChildCode,
+    varianceGainSearchCodeCandidate,
+    parentAccountOptions,
+  ]);
+
+  useEffect(() => {
+    if (!showVarianceLossInlineChildCreate) {
+      return;
+    }
+    setVarianceLossInlineChildCode((prev) => prev || varianceLossSearchCodeCandidate);
+    setVarianceLossInlineChildName((prev) => prev || String(form.name || "").trim());
+  }, [showVarianceLossInlineChildCreate, varianceLossSearchCodeCandidate, form.name]);
+
+  useEffect(() => {
+    if (
+      !showVarianceLossInlineChildCreate ||
+      toPositiveInt(varianceLossInlineChildParentAccountId)
+    ) {
+      return;
+    }
+    const candidateCode = normalizeAccountCode(
+      varianceLossInlineChildCode || varianceLossSearchCodeCandidate
+    );
+    if (!candidateCode) {
+      return;
+    }
+    const bestParent = findBestParentAccount(candidateCode, parentAccountOptions);
+    if (toPositiveInt(bestParent?.id)) {
+      setVarianceLossInlineChildParentAccountId(String(bestParent.id));
+    }
+  }, [
+    showVarianceLossInlineChildCreate,
+    varianceLossInlineChildParentAccountId,
+    varianceLossInlineChildCode,
+    varianceLossSearchCodeCandidate,
+    parentAccountOptions,
+  ]);
 
   async function loadRegisters() {
     if (!canReadRegisters) {
@@ -244,6 +777,7 @@ export default function CashRegistersPage() {
   async function loadLookups() {
     if (!canUpsertRegisters) {
       setLegalEntities([]);
+      setCountries([]);
       setOperatingUnits([]);
       setAccounts([]);
       setCurrencies([]);
@@ -255,16 +789,20 @@ export default function CashRegistersPage() {
 
     if (canReadOrgTree) {
       try {
-        const [legalEntityRes, operatingUnitRes, currencyRes] = await Promise.all([
+        const [legalEntityRes, countryRes, operatingUnitRes, currencyRes] =
+          await Promise.all([
           listLegalEntities(),
+          listCountries(),
           listOperatingUnits(),
           listCurrencies(),
         ]);
         setLegalEntities(legalEntityRes?.rows || []);
+        setCountries(countryRes?.rows || []);
         setOperatingUnits(operatingUnitRes?.rows || []);
         setCurrencies(currencyRes?.rows || []);
       } catch (err) {
         setLegalEntities([]);
+        setCountries([]);
         setOperatingUnits([]);
         setCurrencies([]);
         warnings.push(err?.response?.data?.message || t("cashRegisters.errors.loadOrgLookups"));
@@ -272,6 +810,7 @@ export default function CashRegistersPage() {
     } else {
       warnings.push(t("cashRegisters.errors.missingOrgLookupPermission"));
       setLegalEntities([]);
+      setCountries([]);
       setOperatingUnits([]);
       setCurrencies([]);
     }
@@ -314,16 +853,209 @@ export default function CashRegistersPage() {
       legalEntityId: prev.id
         ? String(legalEntityOptions[0]?.id || "")
         : prev.legalEntityId || String(legalEntityOptions[0]?.id || ""),
-      currencyCode: prev.id
-        ? String(currencyOptions[0]?.code || "")
-        : prev.currencyCode || String(currencyOptions[0]?.code || ""),
+      currencyCode: "",
     }));
+    setCurrencySeedEntityId("");
+    setAccountLookupQuery("");
+    setInlineChildParentAccountId("");
+    setInlineChildCode("");
+    setInlineChildName("");
+    setVarianceGainLookupQuery("");
+    setVarianceGainInlineChildParentAccountId("");
+    setVarianceGainInlineChildCode("");
+    setVarianceGainInlineChildName("");
+    setVarianceLossLookupQuery("");
+    setVarianceLossInlineChildParentAccountId("");
+    setVarianceLossInlineChildCode("");
+    setVarianceLossInlineChildName("");
   }
 
   function handleEdit(row) {
     setForm(mapRowToForm(row));
+    setCurrencySeedEntityId(String(row?.legal_entity_id || ""));
+    setAccountLookupQuery("");
+    setInlineChildParentAccountId("");
+    setInlineChildCode("");
+    setInlineChildName("");
+    setVarianceGainLookupQuery("");
+    setVarianceGainInlineChildParentAccountId("");
+    setVarianceGainInlineChildCode("");
+    setVarianceGainInlineChildName("");
+    setVarianceLossLookupQuery("");
+    setVarianceLossInlineChildParentAccountId("");
+    setVarianceLossInlineChildCode("");
+    setVarianceLossInlineChildName("");
     setError("");
     setMessage("");
+  }
+
+  async function createChildAccountForField({
+    targetField,
+    parentAccountIdValue,
+    inlineCodeValue,
+    fallbackSearchCode,
+    inlineNameValue,
+    setPickerSaving,
+    clearPickerInputs,
+  }) {
+    if (!canUpsertAccounts) {
+      setError(t("cashRegisters.errors.missingAccountUpsertPermission"));
+      return;
+    }
+
+    const legalEntityId = selectedLegalEntityId;
+    if (!legalEntityId) {
+      setError(t("cashRegisters.errors.requiredEntityAccount"));
+      return;
+    }
+
+    const parentAccountId = toPositiveInt(parentAccountIdValue);
+    const parentAccount =
+      parentAccountOptions.find(
+        (row) => toPositiveInt(row?.id) === parentAccountId
+      ) || null;
+    if (!parentAccountId || !parentAccount) {
+      setError(t("cashRegisters.errors.parentAccountRequired"));
+      return;
+    }
+
+    const childCode = normalizeAccountCode(inlineCodeValue || fallbackSearchCode);
+    const childName = String(inlineNameValue || "").trim();
+    if (!childCode) {
+      setError(t("cashRegisters.errors.childAccountCodeRequired"));
+      return;
+    }
+    if (!childName) {
+      setError(t("cashRegisters.errors.childAccountNameRequired"));
+      return;
+    }
+
+    const parentCode = normalizeAccountCode(parentAccount?.code);
+    if (parentCode && childCode === parentCode) {
+      setError(t("cashRegisters.errors.childAccountCodeParentConflict"));
+      return;
+    }
+
+    const existingAccount = selectedEntityAccountByCode.get(childCode) || null;
+    const existingAccountId = toPositiveInt(existingAccount?.id);
+    if (existingAccountId) {
+      setForm((prev) => ({ ...prev, [targetField]: String(existingAccountId) }));
+      setError("");
+      setMessage(
+        t("cashRegisters.messages.accountExistsSelected", {
+          code: childCode,
+        })
+      );
+      return;
+    }
+
+    const coaId = toPositiveInt(parentAccount?.coa_id ?? parentAccount?.coaId);
+    if (!coaId) {
+      setError(t("cashRegisters.errors.childAccountParentCoaMissing"));
+      return;
+    }
+    const accountType =
+      normalizeAccountCode(
+        parentAccount?.account_type ?? parentAccount?.accountType
+      ) || "ASSET";
+    const normalSide =
+      normalizeAccountCode(parentAccount?.normal_side ?? parentAccount?.normalSide) ||
+      "DEBIT";
+
+    setPickerSaving(true);
+    setError("");
+    setMessage("");
+    try {
+      const upsertResponse = await upsertAccount({
+        coaId,
+        code: childCode,
+        name: childName,
+        accountType,
+        normalSide,
+        allowPosting: true,
+        parentAccountId,
+      });
+      const responseId = toPositiveInt(upsertResponse?.id ?? upsertResponse?.row?.id);
+
+      const refreshResponse = await listAccounts({
+        includeInactive: true,
+        legalEntityId: legalEntityId || undefined,
+        limit: 1000,
+      });
+      const refreshedRows = refreshResponse?.rows || [];
+      setAccounts(refreshedRows);
+
+      const resolvedRow =
+        refreshedRows.find((row) => normalizeAccountCode(row?.code) === childCode) ||
+        null;
+      const resolvedId = responseId || toPositiveInt(resolvedRow?.id);
+      if (resolvedId) {
+        setForm((prev) => ({ ...prev, [targetField]: String(resolvedId) }));
+      }
+
+      clearPickerInputs();
+      setMessage(
+        t("cashRegisters.messages.childAccountCreatedAndSelected", {
+          code: childCode,
+          parentCode: parentCode || "-",
+        })
+      );
+    } catch (err) {
+      setError(
+        err?.response?.data?.message ||
+          t("cashRegisters.errors.createChildAccount")
+      );
+    } finally {
+      setPickerSaving(false);
+    }
+  }
+
+  async function handleCreateChildAccountFromPicker() {
+    await createChildAccountForField({
+      targetField: "accountId",
+      parentAccountIdValue: inlineChildParentAccountId,
+      inlineCodeValue: inlineChildCode,
+      fallbackSearchCode: accountSearchCodeCandidate,
+      inlineNameValue: inlineChildName,
+      setPickerSaving: setInlineChildSaving,
+      clearPickerInputs: () => {
+        setAccountLookupQuery("");
+        setInlineChildCode("");
+        setInlineChildName("");
+      },
+    });
+  }
+
+  async function handleCreateVarianceGainChildAccountFromPicker() {
+    await createChildAccountForField({
+      targetField: "varianceGainAccountId",
+      parentAccountIdValue: varianceGainInlineChildParentAccountId,
+      inlineCodeValue: varianceGainInlineChildCode,
+      fallbackSearchCode: varianceGainSearchCodeCandidate,
+      inlineNameValue: varianceGainInlineChildName,
+      setPickerSaving: setVarianceGainInlineChildSaving,
+      clearPickerInputs: () => {
+        setVarianceGainLookupQuery("");
+        setVarianceGainInlineChildCode("");
+        setVarianceGainInlineChildName("");
+      },
+    });
+  }
+
+  async function handleCreateVarianceLossChildAccountFromPicker() {
+    await createChildAccountForField({
+      targetField: "varianceLossAccountId",
+      parentAccountIdValue: varianceLossInlineChildParentAccountId,
+      inlineCodeValue: varianceLossInlineChildCode,
+      fallbackSearchCode: varianceLossSearchCodeCandidate,
+      inlineNameValue: varianceLossInlineChildName,
+      setPickerSaving: setVarianceLossInlineChildSaving,
+      clearPickerInputs: () => {
+        setVarianceLossLookupQuery("");
+        setVarianceLossInlineChildCode("");
+        setVarianceLossInlineChildName("");
+      },
+    });
   }
 
   async function handleSubmit(event) {
@@ -343,6 +1075,10 @@ export default function CashRegistersPage() {
 
     if (!form.code.trim() || !form.name.trim()) {
       setError(t("cashRegisters.errors.requiredCodeName"));
+      return;
+    }
+    if (!String(form.sessionMode || "").trim()) {
+      setError(t("cashRegisters.errors.requiredSessionMode"));
       return;
     }
     if (!legalEntityId || !accountId) {
@@ -429,6 +1165,90 @@ export default function CashRegistersPage() {
     } finally {
       setUpdatingStatusId(null);
     }
+  }
+
+  function renderInlineChildCreatePanel({
+    codeCandidate,
+    parentAccountIdValue,
+    onParentChange,
+    childCodeValue,
+    onChildCodeChange,
+    childNameValue,
+    onChildNameChange,
+    onUseTypedCode,
+    onUseNextCode,
+    suggestedNextCode,
+    hasSelectedParent,
+    onCreateChild,
+    creating,
+  }) {
+    return (
+      <div className="space-y-2 rounded-lg border border-cyan-200 bg-cyan-50 p-2">
+        <p className="text-xs text-cyan-800">
+          {t("cashRegisters.accountPicker.codeNotFoundHint", {
+            code: codeCandidate,
+          })}
+        </p>
+        <Combobox
+          value={parentAccountIdValue || null}
+          options={parentAccountLookupOptions}
+          disabled={saving || creating || !selectedLegalEntityId}
+          placeholder={t("cashRegisters.accountPicker.parentPlaceholder")}
+          noOptionsText={t("cashRegisters.accountPicker.parentNoOptions")}
+          onChange={(nextValue) => onParentChange(nextValue ? String(nextValue) : "")}
+        />
+        <div className="grid gap-2 sm:grid-cols-2">
+          <input
+            value={childCodeValue}
+            onChange={(event) =>
+              onChildCodeChange(normalizeAccountCode(event.target.value))
+            }
+            className="rounded-lg border border-cyan-300 bg-white px-3 py-2 text-xs"
+            placeholder={t("cashRegisters.accountPicker.childCodePlaceholder")}
+            maxLength={60}
+          />
+          <input
+            value={childNameValue}
+            onChange={(event) => onChildNameChange(event.target.value)}
+            className="rounded-lg border border-cyan-300 bg-white px-3 py-2 text-xs"
+            placeholder={t("cashRegisters.accountPicker.childNamePlaceholder")}
+            maxLength={255}
+          />
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={onUseTypedCode}
+            className="rounded border border-cyan-300 bg-white px-2 py-1 text-[11px] font-semibold text-cyan-800 hover:bg-cyan-100"
+          >
+            {t("cashRegisters.accountPicker.useTypedCode")}
+          </button>
+          <button
+            type="button"
+            onClick={onUseNextCode}
+            disabled={!suggestedNextCode || !hasSelectedParent}
+            className="rounded border border-cyan-300 bg-white px-2 py-1 text-[11px] font-semibold text-cyan-800 hover:bg-cyan-100 disabled:opacity-60"
+          >
+            {t("cashRegisters.accountPicker.useNextCode")}
+          </button>
+          <button
+            type="button"
+            onClick={onCreateChild}
+            disabled={creating || saving || !canUpsertAccounts}
+            className="rounded bg-cyan-700 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-cyan-800 disabled:opacity-60"
+          >
+            {creating
+              ? t("cashRegisters.accountPicker.creatingChild")
+              : t("cashRegisters.accountPicker.createChild")}
+          </button>
+        </div>
+        {!canUpsertAccounts ? (
+          <p className="text-[11px] text-amber-700">
+            {t("cashRegisters.accountPicker.missingUpsertPermissionHint")}
+          </p>
+        ) : null}
+      </div>
+    );
   }
 
   if (!canReadRegisters) {
@@ -528,7 +1348,9 @@ export default function CashRegistersPage() {
                 setForm((prev) => ({ ...prev, sessionMode: event.target.value }))
               }
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              required
             >
+              <option value="">{t("cashRegisters.placeholders.sessionMode")}</option>
               {SESSION_MODES.map((value) => (
                 <option key={value} value={value}>
                   {value}
@@ -636,22 +1458,53 @@ export default function CashRegistersPage() {
               />
             )}
 
-            {accountOptions.length > 0 ? (
-              <select
-                value={form.accountId}
-                onChange={(event) =>
-                  setForm((prev) => ({ ...prev, accountId: event.target.value }))
-                }
-                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                required
-              >
-                <option value="">{t("cashRegisters.placeholders.account")}</option>
-                {accountOptions.map((account) => (
-                  <option key={account.id} value={account.id}>
-                    {formatAccountOptionLabel(account)}
-                  </option>
-                ))}
-              </select>
+            {canReadAccounts ? (
+              <div className="space-y-2 md:col-span-2">
+                <Combobox
+                  value={form.accountId || null}
+                  options={accountLookupOptions}
+                  disabled={saving || !canReadAccounts || !selectedLegalEntityId}
+                  placeholder={
+                    selectedLegalEntityId
+                      ? t("cashRegisters.accountPicker.searchPlaceholder")
+                      : t("cashRegisters.accountPicker.selectLegalEntityFirst")
+                  }
+                  noOptionsText={t("cashRegisters.accountPicker.noOptions")}
+                  onInputChange={(nextValue, meta) => {
+                    if (meta?.reason === "input" || meta?.reason === "clear") {
+                      setAccountLookupQuery(nextValue);
+                    }
+                  }}
+                  onChange={(nextValue) => {
+                    setForm((prev) => ({
+                      ...prev,
+                      accountId: nextValue ? String(nextValue) : "",
+                    }));
+                    setAccountLookupQuery("");
+                  }}
+                />
+                <p className="text-[11px] text-slate-500">
+                  {t("cashRegisters.accountPicker.searchHelp")}
+                </p>
+                {showInlineChildCreate ? (
+                  renderInlineChildCreatePanel({
+                    codeCandidate: accountSearchCodeCandidate,
+                    parentAccountIdValue: inlineChildParentAccountId,
+                    onParentChange: setInlineChildParentAccountId,
+                    childCodeValue: inlineChildCode,
+                    onChildCodeChange: setInlineChildCode,
+                    childNameValue: inlineChildName,
+                    onChildNameChange: setInlineChildName,
+                    onUseTypedCode: () =>
+                      setInlineChildCode(accountSearchCodeCandidate),
+                    onUseNextCode: () => setInlineChildCode(suggestedNextChildCode),
+                    suggestedNextCode: suggestedNextChildCode,
+                    hasSelectedParent: Boolean(selectedInlineParentAccount),
+                    onCreateChild: handleCreateChildAccountFromPicker,
+                    creating: inlineChildSaving,
+                  })
+                ) : null}
+              </div>
             ) : (
               <input
                 type="number"
@@ -666,24 +1519,51 @@ export default function CashRegistersPage() {
               />
             )}
 
-            {accountOptions.length > 0 ? (
-              <select
-                value={form.varianceGainAccountId}
-                onChange={(event) =>
-                  setForm((prev) => ({
-                    ...prev,
-                    varianceGainAccountId: event.target.value,
-                  }))
-                }
-                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              >
-                <option value="">{t("cashRegisters.placeholders.varianceGainAccount")}</option>
-                {accountOptions.map((account) => (
-                  <option key={account.id} value={account.id}>
-                    {formatAccountOptionLabel(account)}
-                  </option>
-                ))}
-              </select>
+            {canReadAccounts ? (
+              <div className="space-y-2">
+                <Combobox
+                  value={form.varianceGainAccountId || null}
+                  options={varianceGainAccountLookupOptions}
+                  disabled={saving || !canReadAccounts || !selectedLegalEntityId}
+                  placeholder={
+                    selectedLegalEntityId
+                      ? t("cashRegisters.placeholders.varianceGainAccount")
+                      : t("cashRegisters.accountPicker.selectLegalEntityFirst")
+                  }
+                  noOptionsText={t("cashRegisters.accountPicker.noOptions")}
+                  onInputChange={(nextValue, meta) => {
+                    if (meta?.reason === "input" || meta?.reason === "clear") {
+                      setVarianceGainLookupQuery(nextValue);
+                    }
+                  }}
+                  onChange={(nextValue) => {
+                    setForm((prev) => ({
+                      ...prev,
+                      varianceGainAccountId: nextValue ? String(nextValue) : "",
+                    }));
+                    setVarianceGainLookupQuery("");
+                  }}
+                />
+                {showVarianceGainInlineChildCreate
+                  ? renderInlineChildCreatePanel({
+                      codeCandidate: varianceGainSearchCodeCandidate,
+                      parentAccountIdValue: varianceGainInlineChildParentAccountId,
+                      onParentChange: setVarianceGainInlineChildParentAccountId,
+                      childCodeValue: varianceGainInlineChildCode,
+                      onChildCodeChange: setVarianceGainInlineChildCode,
+                      childNameValue: varianceGainInlineChildName,
+                      onChildNameChange: setVarianceGainInlineChildName,
+                      onUseTypedCode: () =>
+                        setVarianceGainInlineChildCode(varianceGainSearchCodeCandidate),
+                      onUseNextCode: () =>
+                        setVarianceGainInlineChildCode(suggestedVarianceGainNextChildCode),
+                      suggestedNextCode: suggestedVarianceGainNextChildCode,
+                      hasSelectedParent: Boolean(selectedVarianceGainInlineParentAccount),
+                      onCreateChild: handleCreateVarianceGainChildAccountFromPicker,
+                      creating: varianceGainInlineChildSaving,
+                    })
+                  : null}
+              </div>
             ) : (
               <input
                 type="number"
@@ -700,24 +1580,51 @@ export default function CashRegistersPage() {
               />
             )}
 
-            {accountOptions.length > 0 ? (
-              <select
-                value={form.varianceLossAccountId}
-                onChange={(event) =>
-                  setForm((prev) => ({
-                    ...prev,
-                    varianceLossAccountId: event.target.value,
-                  }))
-                }
-                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              >
-                <option value="">{t("cashRegisters.placeholders.varianceLossAccount")}</option>
-                {accountOptions.map((account) => (
-                  <option key={account.id} value={account.id}>
-                    {formatAccountOptionLabel(account)}
-                  </option>
-                ))}
-              </select>
+            {canReadAccounts ? (
+              <div className="space-y-2">
+                <Combobox
+                  value={form.varianceLossAccountId || null}
+                  options={varianceLossAccountLookupOptions}
+                  disabled={saving || !canReadAccounts || !selectedLegalEntityId}
+                  placeholder={
+                    selectedLegalEntityId
+                      ? t("cashRegisters.placeholders.varianceLossAccount")
+                      : t("cashRegisters.accountPicker.selectLegalEntityFirst")
+                  }
+                  noOptionsText={t("cashRegisters.accountPicker.noOptions")}
+                  onInputChange={(nextValue, meta) => {
+                    if (meta?.reason === "input" || meta?.reason === "clear") {
+                      setVarianceLossLookupQuery(nextValue);
+                    }
+                  }}
+                  onChange={(nextValue) => {
+                    setForm((prev) => ({
+                      ...prev,
+                      varianceLossAccountId: nextValue ? String(nextValue) : "",
+                    }));
+                    setVarianceLossLookupQuery("");
+                  }}
+                />
+                {showVarianceLossInlineChildCreate
+                  ? renderInlineChildCreatePanel({
+                      codeCandidate: varianceLossSearchCodeCandidate,
+                      parentAccountIdValue: varianceLossInlineChildParentAccountId,
+                      onParentChange: setVarianceLossInlineChildParentAccountId,
+                      childCodeValue: varianceLossInlineChildCode,
+                      onChildCodeChange: setVarianceLossInlineChildCode,
+                      childNameValue: varianceLossInlineChildName,
+                      onChildNameChange: setVarianceLossInlineChildName,
+                      onUseTypedCode: () =>
+                        setVarianceLossInlineChildCode(varianceLossSearchCodeCandidate),
+                      onUseNextCode: () =>
+                        setVarianceLossInlineChildCode(suggestedVarianceLossNextChildCode),
+                      suggestedNextCode: suggestedVarianceLossNextChildCode,
+                      hasSelectedParent: Boolean(selectedVarianceLossInlineParentAccount),
+                      onCreateChild: handleCreateVarianceLossChildAccountFromPicker,
+                      creating: varianceLossInlineChildSaving,
+                    })
+                  : null}
+              </div>
             ) : (
               <input
                 type="number"

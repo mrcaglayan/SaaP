@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import Combobox from "../components/Combobox.jsx";
 import {
   createJournal,
   listAccounts,
@@ -37,6 +38,38 @@ function hasId(rows, id) {
   return rows.some((row) => Number(row.id) === Number(id));
 }
 
+function toDateOnly(value) {
+  return String(value || "").trim().slice(0, 10);
+}
+
+function isIsoDateOnly(value) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(String(value || ""));
+}
+
+function findPeriodByDate(periods, targetDate) {
+  if (!isIsoDateOnly(targetDate)) {
+    return null;
+  }
+  for (const row of periods || []) {
+    const startDate = toDateOnly(row?.start_date);
+    const endDate = toDateOnly(row?.end_date);
+    if (!isIsoDateOnly(startDate) || !isIsoDateOnly(endDate)) {
+      continue;
+    }
+    if (targetDate >= startDate && targetDate <= endDate) {
+      return row;
+    }
+  }
+  return null;
+}
+
+function formatPeriodLabel(row) {
+  if (!row) {
+    return "";
+  }
+  return `FY${row.fiscal_year} P${String(row.period_no).padStart(2, "0")} - ${row.period_name}`;
+}
+
 function createLine() {
   return {
     id: `line-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -48,34 +81,6 @@ function createLine() {
     debitBase: "0",
     creditBase: "0",
   };
-}
-
-function formatShareholderReadinessReason(reason, l) {
-  switch (String(reason || "").trim().toUpperCase()) {
-    case "ACCOUNT_NOT_FOUND":
-      return l("Mapped account no longer exists.", "Eslenen hesap artik mevcut degil.");
-    case "ACCOUNT_INACTIVE":
-      return l("Mapped account is inactive.", "Eslenen hesap aktif degil.");
-    case "ACCOUNT_TYPE_NOT_EQUITY":
-      return l("Mapped account must be EQUITY.", "Eslenen hesap EQUITY olmalidir.");
-    case "ACCOUNT_MUST_BE_NON_POSTABLE":
-      return l(
-        "Mapped account must be non-postable parent.",
-        "Eslenen hesap post edilemeyen parent olmali."
-      );
-    case "ACCOUNT_NORMAL_SIDE_MISMATCH":
-      return l(
-        "Mapped account has invalid normal side.",
-        "Eslenen hesap normal bakiye yonu gecersiz."
-      );
-    case "PURPOSES_MUST_MAP_TO_DIFFERENT_ACCOUNTS":
-      return l(
-        "Shareholder parent purposes must map to different accounts.",
-        "Ortak parent amaclari farkli hesaplara eslenmeli."
-      );
-    default:
-      return String(reason || "-");
-  }
 }
 
 export default function AcilisFisiOlustur() {
@@ -109,13 +114,12 @@ export default function AcilisFisiOlustur() {
   const [form, setForm] = useState({
     legalEntityId: "",
     bookId: "",
-    fiscalPeriodId: "",
-    entryDate: today,
+    periodDate: "",
     documentDate: today,
     currencyCode: "USD",
     referenceNo: "",
     description: l("Opening entry", "Acilis fisi"),
-    autoPost: true,
+    autoPost: false,
   });
   const [lines, setLines] = useState([createLine(), createLine()]);
 
@@ -125,9 +129,9 @@ export default function AcilisFisiOlustur() {
     "shareholderCommitment",
     selectedLegalEntityId
   );
-  const shareholderCommitmentModuleNotReady = Boolean(
+  const _shareholderCommitmentModuleNotReady = Boolean(
     selectedShareholderCommitmentReadiness &&
-      !selectedShareholderCommitmentReadiness.ready
+    !selectedShareholderCommitmentReadiness.ready
   );
   const unitsById = useMemo(() => {
     const map = new Map();
@@ -159,6 +163,20 @@ export default function AcilisFisiOlustur() {
       return allowPosting && !parentIds.has(accountId);
     });
   }, [accounts]);
+  const postableAccountOptions = useMemo(
+    () =>
+      postableAccounts.map((account) => ({
+        value: String(account.id),
+        label: `${account.code} - ${account.name}`,
+        description: String(account.account_type || "").toUpperCase(),
+      })),
+    [postableAccounts]
+  );
+  const resolvedFiscalPeriod = useMemo(
+    () => findPeriodByDate(periods, toDateOnly(form.periodDate)),
+    [periods, form.periodDate]
+  );
+  const resolvedFiscalPeriodId = toPositiveInt(resolvedFiscalPeriod?.id);
 
   useEffect(() => {
     let cancelled = false;
@@ -181,31 +199,31 @@ export default function AcilisFisiOlustur() {
           canReadOrgTree ? listLegalEntities() : Promise.resolve({ rows: [] }),
           canReadBooks
             ? listBooks(
-                selectedLegalEntityId
-                  ? { legalEntityId: selectedLegalEntityId }
-                  : {}
-              )
+              selectedLegalEntityId
+                ? { legalEntityId: selectedLegalEntityId }
+                : {}
+            )
             : Promise.resolve({ rows: [] }),
           canReadAccounts
             ? listAccounts(
-                selectedLegalEntityId
-                  ? { legalEntityId: selectedLegalEntityId }
-                  : {}
-              )
+              selectedLegalEntityId
+                ? { legalEntityId: selectedLegalEntityId }
+                : {}
+            )
             : Promise.resolve({ rows: [] }),
           canReadOrgTree
             ? listOperatingUnits(
-                selectedLegalEntityId
-                  ? { legalEntityId: selectedLegalEntityId }
-                  : {}
-              )
+              selectedLegalEntityId
+                ? { legalEntityId: selectedLegalEntityId }
+                : {}
+            )
             : Promise.resolve({ rows: [] }),
           canReadOrgTree
             ? listShareholders(
-                selectedLegalEntityId
-                  ? { legalEntityId: selectedLegalEntityId }
-                  : {}
-              )
+              selectedLegalEntityId
+                ? { legalEntityId: selectedLegalEntityId }
+                : {}
+            )
             : Promise.resolve({ rows: [] }),
         ]);
 
@@ -308,21 +326,6 @@ export default function AcilisFisiOlustur() {
     };
   }, [canReadPeriods, books, selectedBookId, l]);
 
-  useEffect(() => {
-    setForm((prev) => {
-      const currentPeriodId = toPositiveInt(prev.fiscalPeriodId);
-      if (currentPeriodId && hasId(periods, currentPeriodId)) {
-        return prev;
-      }
-
-      const latestPeriod = periods[periods.length - 1];
-      return {
-        ...prev,
-        fiscalPeriodId: latestPeriod ? String(latestPeriod.id) : "",
-      };
-    });
-  }, [periods]);
-
   const totals = useMemo(() => {
     return lines.reduce(
       (acc, line) => {
@@ -410,18 +413,20 @@ export default function AcilisFisiOlustur() {
     selectedEntityShareholders.length,
     selectedLegalEntityId,
   ]);
-  const missingCommitmentSetupChecks = useMemo(
+  const _missingCommitmentSetupChecks = useMemo(
     () => commitmentSetupChecks.filter((check) => !check.ready),
     [commitmentSetupChecks]
   );
-  const hasCommitmentSetupWarning =
-    missingCommitmentSetupChecks.length > 0 ||
-    shareholderCommitmentModuleNotReady;
-
   const isBalanced =
     Math.abs(totals.debit - totals.credit) < 0.0001 && totals.debit > 0;
 
-  const canSubmit = canCreateJournal && isBalanced && lines.length >= 2 && !submitting;
+  const canSubmit =
+    canCreateJournal &&
+    isBalanced &&
+    lines.length >= 2 &&
+    !submitting &&
+    Boolean(String(form.periodDate || "").trim()) &&
+    Boolean(resolvedFiscalPeriodId);
 
   function setFormField(field, value) {
     setForm((prev) => ({
@@ -459,9 +464,23 @@ export default function AcilisFisiOlustur() {
 
     const legalEntityId = toPositiveInt(form.legalEntityId);
     const bookId = toPositiveInt(form.bookId);
-    const fiscalPeriodId = toPositiveInt(form.fiscalPeriodId);
-    if (!legalEntityId || !bookId || !fiscalPeriodId) {
-      setError(l("Legal entity, book, and fiscal period are required.", "Istirak / bagli ortak, defter ve mali donem zorunludur."));
+    const fiscalPeriodId = resolvedFiscalPeriodId;
+    const periodDate = String(form.periodDate || "").trim();
+    if (!legalEntityId || !bookId) {
+      setError(l("Legal entity and book are required.", "Istirak / bagli ortak ve defter zorunludur."));
+      return;
+    }
+    if (!periodDate) {
+      setError(l("Period date is required.", "Donem tarihi zorunludur."));
+      return;
+    }
+    if (!fiscalPeriodId) {
+      setError(
+        l(
+          "No fiscal period matches the selected period date.",
+          "Secilen donem tarihine uyan mali donem bulunamadi."
+        )
+      );
       return;
     }
     if (lines.length < 2) {
@@ -576,7 +595,7 @@ export default function AcilisFisiOlustur() {
         legalEntityId,
         bookId,
         fiscalPeriodId,
-        entryDate: form.entryDate,
+        entryDate: periodDate,
         documentDate: form.documentDate,
         currencyCode: String(form.currencyCode || "USD").toUpperCase(),
         sourceType: "MANUAL",
@@ -605,9 +624,9 @@ export default function AcilisFisiOlustur() {
           posted
             ? l("Opening entry created and posted.", "Acilis fisi olusturuldu ve post edildi.")
             : l(
-                "Opening entry created; posting did not complete.",
-                "Acilis fisi olusturuldu; post islemi tamamlanamadi."
-              )
+              "Opening entry created; posting did not complete.",
+              "Acilis fisi olusturuldu; post islemi tamamlanamadi."
+            )
         );
       } else if (form.autoPost && !canPostJournal) {
         setMessage(
@@ -634,480 +653,400 @@ export default function AcilisFisiOlustur() {
   }
 
   return (
-    <div className="space-y-4">
-      <header>
-        <h1 className="text-xl font-semibold text-slate-900">{l("Create Opening Voucher", "Acilis Fisi Olustur")}</h1>
-        <p className="mt-1 text-sm text-slate-600">
-          {l(
-            "Create a balanced opening entry with optional immediate posting.",
-            "Opsiyonel aninda post secenegi ile dengeli bir acilis fisi olusturun."
-          )}
-        </p>
-      </header>
-      {selectedLegalEntityId ? (
-        <section className="rounded-xl border border-slate-200 bg-white p-4">
-          <h2 className="text-sm font-semibold text-slate-700">
-            {l(
-              "Capital Commitment Setup Required List",
-              "Sermaye Taahhut Kurulum Gereklilik Listesi"
-            )}
-          </h2>
-          <p className="mt-1 text-xs text-slate-600">
-            {l(
-              "Used when this opening entry is for shareholder capital commitment (sermaye taahhut kaydi).",
-              "Bu liste, acilis fisini hissedar sermaye taahhut kaydi icin kullandiginizda gecerlidir."
-            )}
-          </p>
-          <div className="mt-2 grid gap-2 md:grid-cols-2">
-            {commitmentSetupChecks.map((check) => (
-              <div
-                key={check.key}
-                className="flex items-center justify-between rounded border border-slate-200 bg-slate-50 px-3 py-2 text-xs"
-              >
-                <span className="text-slate-700">{check.label}</span>
-                <span
-                  className={`rounded px-2 py-0.5 font-semibold ${
-                    check.ready
-                      ? "bg-emerald-100 text-emerald-700"
-                      : "bg-amber-100 text-amber-800"
-                  }`}
-                >
-                  {check.ready ? l("OK", "Tamam") : l("Missing", "Eksik")}
-                </span>
-              </div>
-            ))}
+    <div className="h-full min-h-0 p-4">
+      <div className="flex h-full min-h-0 flex-col gap-3">
+        <header>
+        </header>
+        {!canCreateJournal && (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            {l("Missing permission:", "Eksik yetki:")} <span className="font-mono">gl.journal.create</span>
           </div>
-          {selectedShareholderCommitmentReadiness ? (
-            <div
-              className={`mt-2 rounded-lg border px-3 py-2 text-xs ${
-                selectedShareholderCommitmentReadiness.ready
-                  ? "border-emerald-200 bg-emerald-50 text-emerald-800"
-                  : "border-amber-200 bg-amber-50 text-amber-900"
-              }`}
-            >
-              <div className="flex items-center justify-between gap-2">
-                <span className="font-semibold">
-                  {l(
-                    "Module readiness: shareholder commitment",
-                    "Modul hazirligi: ortak taahhut"
-                  )}
+        )}
+        {error && (
+          <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+            {error}
+          </div>
+        )}
+        {message && (
+          <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+            {message}
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit} className="flex min-h-0 flex-1 flex-col gap-3">
+          <section className="min-h-[180px] shrink-0 basis-1/5 overflow-auto rounded-xl border border-slate-200 bg-white px-4">
+            <div className="grid items-start gap-0.5 md:grid-cols-4">
+              <label className="space-y-0.5">
+                <span className="px-1 text-[10px] text-slate-500">
+                  {l("Legal entity", "Istirak / bagli ortak")}
                 </span>
-                <span
-                  className={`rounded px-2 py-0.5 font-semibold ${
-                    selectedShareholderCommitmentReadiness.ready
-                      ? "bg-emerald-100 text-emerald-700"
-                      : "bg-amber-100 text-amber-800"
-                  }`}
+                <select
+                  value={form.legalEntityId}
+                  onChange={(event) => setFormField("legalEntityId", event.target.value)}
+                  className="h-8 w-full rounded-lg border border-slate-300 px-2.5 text-xs"
+                  required
+                  disabled={!canReadOrgTree || loadingRefs}
                 >
-                  {selectedShareholderCommitmentReadiness.ready
-                    ? l("READY", "HAZIR")
-                    : l("NOT READY", "HAZIR DEGIL")}
+                  <option value="">{l("Select legal entity", "Istirak / bagli ortak secin")}</option>
+                  {legalEntities.map((row) => (
+                    <option key={row.id} value={row.id}>
+                      {row.code} - {row.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="space-y-0.5">
+                <span className="px-1 text-[10px] text-slate-500">
+                  {l("Book", "Defter")}
                 </span>
-              </div>
-            </div>
-          ) : null}
-          {hasCommitmentSetupWarning ? (
-            <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-              <div className="font-semibold">
-                {l(
-                  "System notice: setup is incomplete for automatic capital commitment journal flow.",
-                  "Sistem uyarisi: otomatik sermaye taahhut yevmiye akisi icin kurulum eksik."
-                )}
-              </div>
-              {shareholderCommitmentModuleNotReady ? (
-                <div className="mt-2 space-y-1">
-                  {Array.isArray(
-                    selectedShareholderCommitmentReadiness?.missingPurposeCodes
-                  ) &&
-                  selectedShareholderCommitmentReadiness.missingPurposeCodes.length > 0 ? (
-                    <div>
-                      {l("Missing purpose codes:", "Eksik amac kodlari:")}{" "}
-                      {selectedShareholderCommitmentReadiness.missingPurposeCodes.join(
-                        ", "
-                      )}
-                    </div>
-                  ) : null}
-                  {Array.isArray(
-                    selectedShareholderCommitmentReadiness?.invalidMappings
-                  ) &&
-                  selectedShareholderCommitmentReadiness.invalidMappings.length > 0 ? (
-                    <ul className="list-disc space-y-0.5 pl-4">
-                      {selectedShareholderCommitmentReadiness.invalidMappings.map(
-                        (row, index) => (
-                          <li key={`opening-readiness-invalid-${index}`}>
-                            {String(row?.purposeCode || "-")}:{" "}
-                            {formatShareholderReadinessReason(row?.reason, l)}
-                          </li>
-                        )
-                      )}
-                    </ul>
-                  ) : null}
+                <select
+                  value={form.bookId}
+                  onChange={(event) => setFormField("bookId", event.target.value)}
+                  className="h-8 w-full rounded-lg border border-slate-300 px-2.5 text-xs"
+                  required
+                  disabled={!canReadBooks || loadingRefs}
+                >
+                  <option value="">{l("Select book", "Defter secin")}</option>
+                  {books.map((row) => (
+                    <option key={row.id} value={row.id}>
+                      {row.code} - {row.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <div className="space-y-0.5">
+                <span className="px-1 text-[10px] text-slate-500">
+                  {l("Resolved fiscal period", "Eslesen mali donem")}
+                </span>
+                <div
+                  className="flex h-8 items-center rounded-lg border border-slate-200 bg-slate-50 px-2.5 text-xs text-slate-700"
+                  title={
+                    loadingPeriods
+                      ? l("Loading periods...", "Donemler yukleniyor...")
+                      : resolvedFiscalPeriod
+                        ? formatPeriodLabel(resolvedFiscalPeriod)
+                        : l("Select period date to resolve", "Eslestirmek icin donem tarihi secin")
+                  }
+                >
+                  <span className="block truncate">
+                    {loadingPeriods
+                      ? l("Loading periods...", "Donemler yukleniyor...")
+                      : resolvedFiscalPeriod
+                        ? formatPeriodLabel(resolvedFiscalPeriod)
+                        : l("Select period date to resolve", "Eslestirmek icin donem tarihi secin")}
+                  </span>
                 </div>
-              ) : null}
-              <div className="mt-2 flex flex-wrap gap-2">
-                <Link
-                  to="/app/ayarlar/organizasyon-yonetimi"
-                  className="rounded border border-amber-300 bg-white px-2.5 py-1 font-semibold text-amber-900"
-                >
-                  {l("Open Organization Management", "Organizasyon Yonetimini Ac")}
-                </Link>
-                <Link
-                  to="/app/ayarlar/hesap-plani-ayarlari"
-                  className="rounded border border-amber-300 bg-white px-2.5 py-1 font-semibold text-amber-900"
-                >
-                  {l("Open GL Setup", "GL Ayarlarini Ac")}
-                </Link>
-              </div>
-            </div>
-          ) : (
-            <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
-              {l(
-                "System notice: setup is complete for capital commitment journal entries.",
-                "Sistem bildirimi: sermaye taahhut yevmiye kaydi icin kurulum tamamlandi."
-              )}
-            </div>
-          )}
-        </section>
-      ) : null}
-
-      {!canCreateJournal && (
-        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-          {l("Missing permission:", "Eksik yetki:")} <span className="font-mono">gl.journal.create</span>
-        </div>
-      )}
-      {error && (
-        <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-          {error}
-        </div>
-      )}
-      {message && (
-        <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-          {message}
-        </div>
-      )}
-
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <section className="rounded-xl border border-slate-200 bg-white p-4">
-          <div className="mb-3 flex items-center justify-between gap-3">
-            <h2 className="text-sm font-semibold text-slate-700">{l("Document Header", "Belge Basligi")}</h2>
-            <span className="text-xs text-slate-500">
-              {loadingRefs ? l("Loading references...", "Referanslar yukleniyor...") : l("Ready", "Hazir")}
-            </span>
-          </div>
-
-          <div className="grid gap-2 md:grid-cols-4">
-            <select
-              value={form.legalEntityId}
-              onChange={(event) => setFormField("legalEntityId", event.target.value)}
-              className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              required
-              disabled={!canReadOrgTree || loadingRefs}
-            >
-              <option value="">{l("Select legal entity", "Istirak / bagli ortak secin")}</option>
-              {legalEntities.map((row) => (
-                <option key={row.id} value={row.id}>
-                  {row.code} - {row.name}
-                </option>
-              ))}
-            </select>
-
-            <select
-              value={form.bookId}
-              onChange={(event) => setFormField("bookId", event.target.value)}
-              className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              required
-              disabled={!canReadBooks || loadingRefs}
-            >
-              <option value="">{l("Select book", "Defter secin")}</option>
-              {books.map((row) => (
-                <option key={row.id} value={row.id}>
-                  {row.code} - {row.name}
-                </option>
-              ))}
-            </select>
-
-            <select
-              value={form.fiscalPeriodId}
-              onChange={(event) => setFormField("fiscalPeriodId", event.target.value)}
-              className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              required
-              disabled={!canReadPeriods || loadingPeriods}
-            >
-              <option value="">
-                {loadingPeriods
-                  ? l("Loading periods...", "Donemler yukleniyor...")
-                  : l("Select period", "Donem secin")}
-              </option>
-              {periods.map((row) => (
-                <option key={row.id} value={row.id}>
-                  FY{row.fiscal_year} P{String(row.period_no).padStart(2, "0")} -{" "}
-                  {row.period_name}
-                </option>
-              ))}
-            </select>
-
-            <input
-              value={form.currencyCode}
-              onChange={(event) =>
-                setFormField("currencyCode", event.target.value.toUpperCase())
-              }
-              className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              maxLength={3}
-              placeholder={l("Currency", "Para birimi")}
-              required
-            />
-
-            <input
-              type="date"
-              value={form.entryDate}
-              onChange={(event) => setFormField("entryDate", event.target.value)}
-              className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              required
-            />
-
-            <input
-              type="date"
-              value={form.documentDate}
-              onChange={(event) => setFormField("documentDate", event.target.value)}
-              className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              required
-            />
-
-            <input
-              value={form.referenceNo}
-              onChange={(event) => setFormField("referenceNo", event.target.value)}
-              className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              placeholder={l("Reference no", "Referans no")}
-            />
-
-            <label className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700">
-              <input
-                type="checkbox"
-                checked={form.autoPost}
-                onChange={(event) => setFormField("autoPost", event.target.checked)}
-                disabled={!canPostJournal}
-              />
-              {l("Auto-post", "Otomatik post et")}
-            </label>
-
-            <input
-              value={form.description}
-              onChange={(event) => setFormField("description", event.target.value)}
-              className="rounded-lg border border-slate-300 px-3 py-2 text-sm md:col-span-4"
-              placeholder={l("Description", "Aciklama")}
-            />
-          </div>
-        </section>
-
-        <section className="rounded-xl border border-slate-200 bg-white">
-          <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
-            <h2 className="text-sm font-semibold text-slate-700">{l("Lines", "Satirlar")}</h2>
-            <button
-              type="button"
-              onClick={addLine}
-              className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-            >
-              {l("Add line", "Satir ekle")}
-            </button>
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-sm">
-              <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
-                <tr>
-                  <th className="px-3 py-2">{l("Account", "Hesap")}</th>
-                  <th className="px-3 py-2">{l("Unit", "Birim")}</th>
-                  <th className="px-3 py-2">{l("Subledger Ref", "Alt Defter Ref")}</th>
-                  <th className="px-3 py-2">{l("Counterparty", "Karsi taraf")}</th>
-                  <th className="px-3 py-2">{l("Description", "Aciklama")}</th>
-                  <th className="px-3 py-2">{l("Debit", "Borc")}</th>
-                  <th className="px-3 py-2">{l("Credit", "Alacak")}</th>
-                  <th className="px-3 py-2">{l("Action", "Islem")}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {lines.map((line, index) => (
-                  <tr key={line.id} className="border-t border-slate-100">
-                    <td className="px-3 py-2">
-                      <select
-                        value={line.accountId}
-                        onChange={(event) =>
-                          updateLine(line.id, "accountId", event.target.value)
-                        }
-                        className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs"
-                        required
-                        disabled={!canReadAccounts}
-                      >
-                        <option value="">{l("Select account", "Hesap secin")}</option>
-                        {postableAccounts.map((account) => (
-                          <option key={account.id} value={account.id}>
-                            {account.code} - {account.name}
-                          </option>
-                        ))}
-                      </select>
-                    </td>
-                    <td className="px-3 py-2">
-                      <select
-                        value={line.operatingUnitId}
-                        onChange={(event) =>
-                          updateLine(line.id, "operatingUnitId", event.target.value)
-                        }
-                        className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs"
-                        disabled={!canReadOrgTree}
-                      >
-                        <option value="">{l("Optional", "Opsiyonel")}</option>
-                        {operatingUnits.map((unit) => (
-                          <option key={unit.id} value={unit.id}>
-                            {unit.code} - {unit.name}
-                          </option>
-                        ))}
-                      </select>
-                    </td>
-                    <td className="px-3 py-2">
-                      <input
-                        value={line.subledgerReferenceNo || ""}
-                        onChange={(event) =>
-                          updateLine(line.id, "subledgerReferenceNo", event.target.value)
-                        }
-                        className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs"
-                        placeholder={
-                          (unitsById.get(toPositiveInt(line.operatingUnitId))?.has_subledger ?? false)
-                            ? l("Required", "Zorunlu")
-                            : l("Optional", "Opsiyonel")
-                        }
-                        required={unitsById.get(toPositiveInt(line.operatingUnitId))?.has_subledger ?? false}
-                      />
-                    </td>
-                    <td className="px-3 py-2">
-                      <select
-                        value={line.counterpartyLegalEntityId}
-                        onChange={(event) =>
-                          updateLine(
-                            line.id,
-                            "counterpartyLegalEntityId",
-                            event.target.value
-                          )
-                        }
-                        className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs"
-                        disabled={!canReadOrgTree}
-                      >
-                        <option value="">{l("Optional", "Opsiyonel")}</option>
-                        {legalEntities.map((entity) => (
-                          <option key={entity.id} value={entity.id}>
-                            {entity.code} - {entity.name}
-                          </option>
-                        ))}
-                      </select>
-                    </td>
-                    <td className="px-3 py-2">
-                      <input
-                        value={line.description}
-                        onChange={(event) =>
-                          updateLine(line.id, "description", event.target.value)
-                        }
-                        className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs"
-                        placeholder={l(
-                          `Line ${index + 1} description`,
-                          `Satir ${index + 1} aciklamasi`
-                        )}
-                      />
-                    </td>
-                    <td className="px-3 py-2">
-                      <input
-                        type="number"
-                        min={0}
-                        step="0.01"
-                        value={line.debitBase}
-                        onChange={(event) =>
-                          updateLine(line.id, "debitBase", event.target.value)
-                        }
-                        className="w-full rounded border border-slate-300 px-2 py-1.5 text-right text-xs"
-                        required
-                      />
-                    </td>
-                    <td className="px-3 py-2">
-                      <input
-                        type="number"
-                        min={0}
-                        step="0.01"
-                        value={line.creditBase}
-                        onChange={(event) =>
-                          updateLine(line.id, "creditBase", event.target.value)
-                        }
-                        className="w-full rounded border border-slate-300 px-2 py-1.5 text-right text-xs"
-                        required
-                      />
-                    </td>
-                    <td className="px-3 py-2">
-                      <button
-                        type="button"
-                        onClick={() => removeLine(line.id)}
-                        disabled={lines.length <= 2}
-                        className="rounded border border-rose-200 px-2 py-1 text-xs font-semibold text-rose-700 disabled:opacity-50"
-                      >
-                        {l("Remove", "Kaldir")}
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-              <tfoot>
-                <tr className="border-t border-slate-200 bg-slate-50 text-sm font-semibold text-slate-700">
-                  <td className="px-3 py-2" colSpan={5}>
-                    {l("Totals", "Toplamlar")}
-                  </td>
-                  <td className="px-3 py-2 text-right">{formatAmount(totals.debit)}</td>
-                  <td className="px-3 py-2 text-right">{formatAmount(totals.credit)}</td>
-                  <td className="px-3 py-2 text-xs">
-                    {isBalanced ? (
-                      <span className="rounded bg-emerald-100 px-2 py-0.5 text-emerald-700">
-                        {l("Balanced", "Dengeli")}
-                      </span>
-                    ) : (
-                      <span className="rounded bg-amber-100 px-2 py-0.5 text-amber-700">
-                        {l("Not balanced", "Dengede degil")}
-                      </span>
+                {!loadingPeriods &&
+                  String(form.periodDate || "").trim() &&
+                  !resolvedFiscalPeriod ? (
+                  <div className="px-1 text-xs text-rose-600">
+                    {l(
+                      "No matching fiscal period for selected period date.",
+                      "Secilen donem tarihi icin eslesen mali donem yok."
                     )}
-                  </td>
-                </tr>
-              </tfoot>
-            </table>
-          </div>
-        </section>
+                  </div>
+                ) : null}
+              </div>
 
-        <div className="flex items-center justify-between gap-3">
-          <p className="text-xs text-slate-500">
-            {l("Posting requires", "Post islemi icin")}{" "}
-            <span className="font-mono">gl.journal.post</span> {l("permission.", "yetkisi gerekir.")}
-          </p>
-          <button
-            type="submit"
-            disabled={!canSubmit}
-            className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
-          >
-            {submitting
-              ? l("Saving...", "Kaydediliyor...")
-              : form.autoPost && canPostJournal
-              ? l("Create and Post", "Olustur ve Post Et")
-              : l("Create Draft", "Taslak Olustur")}
-          </button>
-        </div>
-      </form>
+              <label className="space-y-0.5">
+                <span className="px-1 text-[10px] text-slate-500">
+                  {l("Currency", "Para birimi")}
+                </span>
+                <input
+                  value={form.currencyCode}
+                  onChange={(event) =>
+                    setFormField("currencyCode", event.target.value.toUpperCase())
+                  }
+                  className="h-8 w-full rounded-lg border border-slate-300 px-2.5 text-xs"
+                  maxLength={3}
+                  placeholder={l("Currency", "Para birimi")}
+                  required
+                />
+              </label>
 
-      {result && (
-        <section className="rounded-xl border border-slate-200 bg-white p-4 text-sm">
-          <h2 className="mb-2 font-semibold text-slate-800">{l("Last Created Entry", "Son Olusturulan Fis")}</h2>
-          <div className="grid gap-1 text-slate-700">
-            <div>
-              {l("Journal ID:", "Fis ID:")} <span className="font-mono">{result.journalEntryId || "-"}</span>
+              <label className="space-y-0.5">
+                <span className="px-1 text-[10px] text-slate-500">
+                  {l("Period date (donem tarihi)", "Donem tarihi (muhasebe/posting)")}
+                </span>
+                <input
+                  type="date"
+                  value={form.periodDate}
+                  onChange={(event) => setFormField("periodDate", event.target.value)}
+                  className="h-8 w-full rounded-lg border border-slate-300 px-2.5 text-xs"
+                  required
+                />
+              </label>
+
+              <label className="space-y-0.5">
+                <span className="px-1 text-[10px] text-slate-500">
+                  {l("Document date", "Belge tarihi")}
+                </span>
+                <input
+                  type="date"
+                  value={form.documentDate}
+                  onChange={(event) => setFormField("documentDate", event.target.value)}
+                  className="h-8 w-full rounded-lg border border-slate-300 px-2.5 text-xs"
+                  required
+                />
+              </label>
+
+              <label className="space-y-0.5">
+                <span className="px-1 text-[10px] text-slate-500">
+                  {l("Reference no", "Referans no")}
+                </span>
+                <input
+                  value={form.referenceNo}
+                  onChange={(event) => setFormField("referenceNo", event.target.value)}
+                  className="h-8 w-full rounded-lg border border-slate-300 px-2.5 text-xs"
+                  placeholder={l("Reference no", "Referans no")}
+                />
+              </label>
+
+              <label className="space-y-0.5">
+                <span className="px-1 text-[10px] text-slate-500">
+                  {l("Posting behavior", "Post davranisi")}
+                </span>
+                <span className="inline-flex h-8 w-full items-center gap-2 rounded-lg border border-slate-200 px-2.5 text-xs text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={form.autoPost}
+                    onChange={(event) => setFormField("autoPost", event.target.checked)}
+                    disabled={!canPostJournal}
+                  />
+                  {l("Auto-post", "Otomatik post et")}
+                </span>
+              </label>
+
+              <label className="space-y-0.5 md:col-span-4">
+                <span className="px-1 text-[10px] text-slate-500">
+                  {l("Description", "Aciklama")}
+                </span>
+                <input
+                  value={form.description}
+                  onChange={(event) => setFormField("description", event.target.value)}
+                  className="h-8 w-full rounded-lg border border-slate-300 px-2.5 text-xs"
+                  placeholder={l("Description", "Aciklama")}
+                />
+              </label>
             </div>
-            <div>
-              {l("Journal No:", "Fis No:")} <span className="font-mono">{result.journalNo || "-"}</span>
+          </section>
+
+          <div className="min-h-0 basis-4/5 flex-1 overflow-auto rounded-xl border border-slate-200 bg-white">
+            <section className="min-h-0">
+              <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+                <h2 className="text-sm font-semibold text-slate-700">{l("Lines", "Satirlar")}</h2>
+                <button
+                  type="button"
+                  onClick={addLine}
+                  className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  {l("Add line", "Satir ekle")}
+                </button>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="min-w-full text-sm">
+                  <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
+                    <tr>
+                      <th className="px-3 py-2">{l("Account", "Hesap")}</th>
+                      <th className="px-3 py-2">{l("Unit", "Birim")}</th>
+                      <th className="px-3 py-2">{l("Subledger Ref", "Alt Defter Ref")}</th>
+                      <th className="px-3 py-2">{l("Counterparty", "Karsi taraf")}</th>
+                      <th className="px-3 py-2">{l("Description", "Aciklama")}</th>
+                      <th className="px-3 py-2">{l("Debit", "Borc")}</th>
+                      <th className="px-3 py-2">{l("Credit", "Alacak")}</th>
+                      <th className="px-3 py-2">{l("Action", "Islem")}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {lines.map((line, index) => (
+                      <tr key={line.id} className="border-t border-slate-100">
+                        <td className="px-3 py-2">
+                          <Combobox
+                            value={line.accountId || null}
+                            options={postableAccountOptions}
+                            disabled={!canReadAccounts}
+                            clearable={false}
+                            placeholder={l("Search/select account", "Hesap ara/sec")}
+                            noOptionsText={l("No account found.", "Hesap bulunamadi.")}
+                            inputClassName="px-2 py-1.5 pr-14 text-xs"
+                            listClassName="text-xs"
+                            optionClassName="text-xs"
+                            onChange={(nextValue) =>
+                              updateLine(
+                                line.id,
+                                "accountId",
+                                nextValue ? String(nextValue) : ""
+                              )
+                            }
+                          />
+                        </td>
+                        <td className="px-3 py-2">
+                          <select
+                            value={line.operatingUnitId}
+                            onChange={(event) =>
+                              updateLine(line.id, "operatingUnitId", event.target.value)
+                            }
+                            className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs"
+                            disabled={!canReadOrgTree}
+                          >
+                            <option value="">{l("Optional", "Opsiyonel")}</option>
+                            {operatingUnits.map((unit) => (
+                              <option key={unit.id} value={unit.id}>
+                                {unit.code} - {unit.name}
+                              </option>
+                            ))}
+                          </select>
+                        </td>
+                        <td className="px-3 py-2">
+                          <input
+                            value={line.subledgerReferenceNo || ""}
+                            onChange={(event) =>
+                              updateLine(line.id, "subledgerReferenceNo", event.target.value)
+                            }
+                            className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs"
+                            placeholder={
+                              (unitsById.get(toPositiveInt(line.operatingUnitId))?.has_subledger ?? false)
+                                ? l("Required", "Zorunlu")
+                                : l("Optional", "Opsiyonel")
+                            }
+                            required={unitsById.get(toPositiveInt(line.operatingUnitId))?.has_subledger ?? false}
+                          />
+                        </td>
+                        <td className="px-3 py-2">
+                          <select
+                            value={line.counterpartyLegalEntityId}
+                            onChange={(event) =>
+                              updateLine(
+                                line.id,
+                                "counterpartyLegalEntityId",
+                                event.target.value
+                              )
+                            }
+                            className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs"
+                            disabled={!canReadOrgTree}
+                          >
+                            <option value="">{l("Optional", "Opsiyonel")}</option>
+                            {legalEntities.map((entity) => (
+                              <option key={entity.id} value={entity.id}>
+                                {entity.code} - {entity.name}
+                              </option>
+                            ))}
+                          </select>
+                        </td>
+                        <td className="px-3 py-2">
+                          <input
+                            value={line.description}
+                            onChange={(event) =>
+                              updateLine(line.id, "description", event.target.value)
+                            }
+                            className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs"
+                            placeholder={l(
+                              `Line ${index + 1} description`,
+                              `Satir ${index + 1} aciklamasi`
+                            )}
+                          />
+                        </td>
+                        <td className="px-3 py-2">
+                          <input
+                            type="number"
+                            min={0}
+                            step="0.01"
+                            value={line.debitBase}
+                            onChange={(event) =>
+                              updateLine(line.id, "debitBase", event.target.value)
+                            }
+                            className="w-full rounded border border-slate-300 px-2 py-1.5 text-right text-xs"
+                            required
+                          />
+                        </td>
+                        <td className="px-3 py-2">
+                          <input
+                            type="number"
+                            min={0}
+                            step="0.01"
+                            value={line.creditBase}
+                            onChange={(event) =>
+                              updateLine(line.id, "creditBase", event.target.value)
+                            }
+                            className="w-full rounded border border-slate-300 px-2 py-1.5 text-right text-xs"
+                            required
+                          />
+                        </td>
+                        <td className="px-3 py-2">
+                          <button
+                            type="button"
+                            onClick={() => removeLine(line.id)}
+                            disabled={lines.length <= 2}
+                            className="rounded border border-rose-200 px-2 py-1 text-xs font-semibold text-rose-700 disabled:opacity-50"
+                          >
+                            {l("Remove", "Kaldir")}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr className="border-t border-slate-200 bg-slate-50 text-sm font-semibold text-slate-700">
+                      <td className="px-3 py-2" colSpan={5}>
+                        {l("Totals", "Toplamlar")}
+                      </td>
+                      <td className="px-3 py-2 text-right">{formatAmount(totals.debit)}</td>
+                      <td className="px-3 py-2 text-right">{formatAmount(totals.credit)}</td>
+                      <td className="px-3 py-2 text-xs">
+                        {isBalanced ? (
+                          <span className="rounded bg-emerald-100 px-2 py-0.5 text-emerald-700">
+                            {l("Balanced", "Dengeli")}
+                          </span>
+                        ) : (
+                          <span className="rounded bg-amber-100 px-2 py-0.5 text-amber-700">
+                            {l("Not balanced", "Dengede degil")}
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </section>
+
+            <div className="flex items-center justify-between gap-3 border-t border-slate-200 px-4 py-3">
+              <p className="text-xs text-slate-500">
+                {l("Posting requires", "Post islemi icin")}{" "}
+                <span className="font-mono">gl.journal.post</span> {l("permission.", "yetkisi gerekir.")}
+              </p>
+              <button
+                type="submit"
+                disabled={!canSubmit}
+                className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+              >
+                {submitting
+                  ? l("Saving...", "Kaydediliyor...")
+                  : form.autoPost && canPostJournal
+                    ? l("Create and Post", "Olustur ve Post Et")
+                    : l("Create Draft", "Taslak Olustur")}
+              </button>
             </div>
-            <div>{l("Status:", "Durum:")} {result.posted ? "POSTED" : "DRAFT"}</div>
+
+            {result && (
+              <section className="border-t border-slate-200 px-4 py-3 text-sm">
+                <h2 className="mb-2 font-semibold text-slate-800">{l("Last Created Entry", "Son Olusturulan Fis")}</h2>
+                <div className="grid gap-1 text-slate-700">
+                  <div>
+                    {l("Journal ID:", "Fis ID:")} <span className="font-mono">{result.journalEntryId || "-"}</span>
+                  </div>
+                  <div>
+                    {l("Journal No:", "Fis No:")} <span className="font-mono">{result.journalNo || "-"}</span>
+                  </div>
+                  <div>{l("Status:", "Durum:")} {result.posted ? "POSTED" : "DRAFT"}</div>
+                </div>
+              </section>
+            )}
           </div>
-        </section>
-      )}
+        </form>
+      </div>
     </div>
   );
 }

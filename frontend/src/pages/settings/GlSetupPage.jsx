@@ -916,13 +916,15 @@ const AccountEditorPanel = memo(function AccountEditorPanel({
   onStartAddChildUnderSelected,
   onCancelDraft,
 }) {
-  const [localForm, setLocalForm] = useState(() =>
-    createAccountEditorDraft(accountEditorSeed)
+  const seedForm = useMemo(
+    () => createAccountEditorDraft(accountEditorSeed),
+    [accountEditorSeed]
   );
-
-  useEffect(() => {
-    setLocalForm(createAccountEditorDraft(accountEditorSeed));
-  }, [accountEditorSeed, selectedCoaKey, accountEditorDraftMode]);
+  const [localState, setLocalState] = useState(() => ({
+    seedForm,
+    form: seedForm,
+  }));
+  const localForm = localState.seedForm === seedForm ? localState.form : seedForm;
 
   function setLocalEditorField(field, value) {
     const normalizedValue =
@@ -932,10 +934,16 @@ const AccountEditorPanel = memo(function AccountEditorPanel({
       field === "normalSide"
         ? toUpper(value)
         : value;
-    setLocalForm((prev) => ({
-      ...prev,
-      [field]: normalizedValue,
-    }));
+    setLocalState((prev) => {
+      const baseForm = prev.seedForm === seedForm ? prev.form : seedForm;
+      return {
+        seedForm,
+        form: {
+          ...baseForm,
+          [field]: normalizedValue,
+        },
+      };
+    });
   }
 
   function handleSubmit(event) {
@@ -1423,8 +1431,8 @@ export default function GlSetupPage({ mode = "full" } = {}) {
   const isSavingManualPurposeMappings =
     saving === "manual-cari-purpose-mappings" ||
     saving === "manual-revrec-purpose-mappings";
-  const accountTreeTableRows = useMemo(() => {
-    return selectedCoaTreeGroups.map(({ accountType, totalCount, visibleRows }) => {
+  const accountTreeTableRows = selectedCoaTreeGroups.map(
+    ({ accountType, totalCount, visibleRows }) => {
       const typeCollapsed = collapsedAccountTypeSet.has(accountType);
       return (
         <Fragment key={`account-type-group-${accountType}`}>
@@ -1572,19 +1580,8 @@ export default function GlSetupPage({ mode = "full" } = {}) {
             : null}
         </Fragment>
       );
-    });
-  }, [
-    selectedCoaTreeGroups,
-    collapsedAccountTypeSet,
-    selectedCoaAccountById,
-    selectedCoaParentAccountIds,
-    updatingAccountId,
-    accountEditorDraftMode,
-    selectedTreeAccountId,
-    collapsedAccountIdSet,
-    canUpsertAccounts,
-    l,
-  ]);
+    }
+  );
 
   async function loadData() {
     setLoading(true);

@@ -81,6 +81,38 @@ function hasId(rows, id) {
   return rows.some((row) => Number(row.id) === Number(id));
 }
 
+function toDateOnly(value) {
+  return String(value || "").trim().slice(0, 10);
+}
+
+function isIsoDateOnly(value) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(String(value || ""));
+}
+
+function findPeriodByDate(periods, targetDate) {
+  if (!isIsoDateOnly(targetDate)) {
+    return null;
+  }
+  for (const row of periods || []) {
+    const startDate = toDateOnly(row?.start_date);
+    const endDate = toDateOnly(row?.end_date);
+    if (!isIsoDateOnly(startDate) || !isIsoDateOnly(endDate)) {
+      continue;
+    }
+    if (targetDate >= startDate && targetDate <= endDate) {
+      return row;
+    }
+  }
+  return null;
+}
+
+function formatPeriodLabel(row) {
+  if (!row) {
+    return "";
+  }
+  return `FY${row.fiscal_year} P${String(row.period_no).padStart(2, "0")} - ${row.period_name}`;
+}
+
 function isDraftStatus(status) {
   return String(status || "").trim().toUpperCase() === "DRAFT";
 }
@@ -226,6 +258,11 @@ export default function JournalWorkbenchPage() {
 
   const selectedLegalEntityId = toInt(journal.legalEntityId);
   const selectedBookId = toInt(journal.bookId);
+  const resolvedCreatePeriod = useMemo(
+    () => findPeriodByDate(periods, toDateOnly(journal.entryDate)),
+    [periods, journal.entryDate]
+  );
+  const resolvedCreatePeriodId = toInt(resolvedCreatePeriod?.id);
   const unitsById = useMemo(() => {
     const map = new Map();
     for (const unit of units) {
@@ -565,11 +602,6 @@ export default function JournalWorkbenchPage() {
   }, [entities, books, postableAccounts, units]);
 
   useEffect(() => {
-    setJournal((prev) => {
-      const periodId = toInt(prev.fiscalPeriodId);
-      if (periodId && hasId(periods, periodId)) return prev;
-      return { ...prev, fiscalPeriodId: String(periods[0]?.id || prev.fiscalPeriodId || "") };
-    });
     setTbForm((prev) => {
       const periodId = toInt(prev.fiscalPeriodId);
       if (periodId && hasId(periods, periodId)) return prev;
@@ -581,6 +613,19 @@ export default function JournalWorkbenchPage() {
       return { ...prev, periodId: String(periods[0]?.id || prev.periodId || "") };
     });
   }, [periods]);
+
+  useEffect(() => {
+    setJournal((prev) => {
+      const nextPeriodId = resolvedCreatePeriodId ? String(resolvedCreatePeriodId) : "";
+      if (String(prev.fiscalPeriodId || "") === nextPeriodId) {
+        return prev;
+      }
+      return {
+        ...prev,
+        fiscalPeriodId: nextPeriodId,
+      };
+    });
+  }, [resolvedCreatePeriodId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1191,12 +1236,26 @@ export default function JournalWorkbenchPage() {
 
     const legalEntityId = toInt(journal.legalEntityId);
     const bookId = toInt(journal.bookId);
-    const fiscalPeriodId = toInt(journal.fiscalPeriodId);
-    if (!legalEntityId || !bookId || !fiscalPeriodId) {
+    const fiscalPeriodId = resolvedCreatePeriodId;
+    const periodDate = String(journal.entryDate || "").trim();
+    if (!legalEntityId || !bookId) {
       setError(
         l(
-          "legalEntityId, bookId and fiscalPeriodId are required.",
-          "legalEntityId, bookId ve fiscalPeriodId zorunludur."
+          "legalEntityId and bookId are required.",
+          "legalEntityId ve bookId zorunludur."
+        )
+      );
+      return;
+    }
+    if (!periodDate) {
+      setError(l("Period date is required.", "Donem tarihi zorunludur."));
+      return;
+    }
+    if (!fiscalPeriodId) {
+      setError(
+        l(
+          "No fiscal period matches the selected period date.",
+          "Secilen donem tarihine uyan mali donem bulunamadi."
         )
       );
       return;
@@ -1380,7 +1439,7 @@ export default function JournalWorkbenchPage() {
         legalEntityId,
         bookId,
         fiscalPeriodId,
-        entryDate: journal.entryDate,
+        entryDate: periodDate,
         documentDate: journal.documentDate,
         currencyCode: journal.currencyCode.trim().toUpperCase(),
         sourceType: journal.sourceType,
@@ -1696,6 +1755,12 @@ export default function JournalWorkbenchPage() {
       <section className="rounded-xl border border-slate-200 bg-white p-4">
         <h2 className="mb-3 text-sm font-semibold text-slate-700">{l("Create Draft Journal", "Taslak Fis Olustur")}</h2>
         <form onSubmit={onCreateJournal} className="space-y-3">
+          <p className="text-xs text-slate-500">
+            {l(
+              "Period date determines fiscal period automatically for posting. Document date is the source document date for audit/reporting.",
+              "Donem tarihi, posting icin mali donemi otomatik belirler. Belge tarihi ise kaynak belgenin denetim/raporlama tarihidir."
+            )}
+          </p>
           <div className="grid gap-2 md:grid-cols-4">
             {entities.length > 0 ? (
               <select value={journal.legalEntityId} onChange={(event) => setJournal((prev) => ({ ...prev, legalEntityId: event.target.value }))} className="rounded border border-slate-300 px-3 py-2 text-sm" required>
@@ -1721,21 +1786,37 @@ export default function JournalWorkbenchPage() {
             ) : (
               <input type="number" min={1} value={journal.bookId} onChange={(event) => setJournal((prev) => ({ ...prev, bookId: event.target.value }))} className="rounded border border-slate-300 px-3 py-2 text-sm" placeholder={l("Book ID", "Defter ID")} required />
             )}
-            {periods.length > 0 ? (
-              <select value={journal.fiscalPeriodId} onChange={(event) => setJournal((prev) => ({ ...prev, fiscalPeriodId: event.target.value }))} className="rounded border border-slate-300 px-3 py-2 text-sm" required>
-                <option value="">{l("Select fiscal period", "Mali donem secin")}</option>
-                {periods.map((period) => (
-                  <option key={period.id} value={period.id}>
-                    {period.fiscal_year}-P{String(period.period_no).padStart(2, "0")} ({period.period_name})
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <input type="number" min={1} value={journal.fiscalPeriodId} onChange={(event) => setJournal((prev) => ({ ...prev, fiscalPeriodId: event.target.value }))} className="rounded border border-slate-300 px-3 py-2 text-sm" placeholder={l("Fiscal period ID", "Mali donem ID")} required />
-            )}
+            <div className="space-y-1 rounded border border-slate-200 bg-slate-50 px-3 py-2">
+              <span className="px-1 text-[11px] text-slate-500">
+                {l("Resolved fiscal period", "Eslesen mali donem")}
+              </span>
+              <div className="px-1 text-sm text-slate-700">
+                {resolvedCreatePeriod
+                  ? formatPeriodLabel(resolvedCreatePeriod)
+                  : l("Select period date to resolve", "Eslestirmek icin donem tarihi secin")}
+              </div>
+              {String(journal.entryDate || "").trim() && !resolvedCreatePeriod ? (
+                <div className="px-1 text-xs text-rose-600">
+                  {l(
+                    "No matching fiscal period for selected period date.",
+                    "Secilen donem tarihi icin eslesen mali donem yok."
+                  )}
+                </div>
+              ) : null}
+            </div>
             <input value={journal.currencyCode} onChange={(event) => setJournal((prev) => ({ ...prev, currencyCode: event.target.value.toUpperCase() }))} className="rounded border border-slate-300 px-3 py-2 text-sm" placeholder={l("Currency", "Para birimi")} maxLength={3} required />
-            <input type="date" value={journal.entryDate} onChange={(event) => setJournal((prev) => ({ ...prev, entryDate: event.target.value }))} className="rounded border border-slate-300 px-3 py-2 text-sm" required />
-            <input type="date" value={journal.documentDate} onChange={(event) => setJournal((prev) => ({ ...prev, documentDate: event.target.value }))} className="rounded border border-slate-300 px-3 py-2 text-sm" required />
+            <label className="space-y-1">
+              <span className="px-1 text-[11px] text-slate-500">
+                {l("Period date (donem tarihi)", "Donem tarihi (muhasebe/posting)")}
+              </span>
+              <input type="date" value={journal.entryDate} onChange={(event) => setJournal((prev) => ({ ...prev, entryDate: event.target.value }))} className="w-full rounded border border-slate-300 px-3 py-2 text-sm" required />
+            </label>
+            <label className="space-y-1">
+              <span className="px-1 text-[11px] text-slate-500">
+                {l("Document date", "Belge tarihi")}
+              </span>
+              <input type="date" value={journal.documentDate} onChange={(event) => setJournal((prev) => ({ ...prev, documentDate: event.target.value }))} className="w-full rounded border border-slate-300 px-3 py-2 text-sm" required />
+            </label>
             <select value={journal.sourceType} onChange={(event) => setJournal((prev) => ({ ...prev, sourceType: event.target.value }))} className="rounded border border-slate-300 px-3 py-2 text-sm">
               {JOURNAL_SOURCE_TYPES.map((sourceType) => <option key={sourceType} value={sourceType}>{sourceType}</option>)}
             </select>
@@ -1906,7 +1987,7 @@ export default function JournalWorkbenchPage() {
           <div className="flex flex-wrap items-center justify-between gap-2">
             <button type="button" onClick={addLine} className="rounded border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50">{l("Add Line", "Satir Ekle")}</button>
             <div className="text-xs text-slate-700">{l("Debit", "Borc")}: {formatAmount(lineTotals.debit)} | {l("Credit", "Alacak")}: {formatAmount(lineTotals.credit)} | <span className={lineTotals.balanced ? "text-emerald-700" : "text-rose-700"}>{lineTotals.balanced ? l("Balanced", "Dengeli") : l("Not Balanced", "Dengede Degil")}</span></div>
-            <button type="submit" disabled={saving === "createJournal" || !canCreate} className="rounded bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">{saving === "createJournal" ? l("Creating...", "Olusturuluyor...") : l("Create Draft", "Taslak Olustur")}</button>
+            <button type="submit" disabled={saving === "createJournal" || !canCreate || !resolvedCreatePeriodId} className="rounded bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">{saving === "createJournal" ? l("Creating...", "Olusturuluyor...") : l("Create Draft", "Taslak Olustur")}</button>
           </div>
         </form>
       </section>

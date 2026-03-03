@@ -378,7 +378,7 @@ function buildInitialForm(presetTxnType) {
     cashSessionId: "",
     txnType: presetTxnType || "RECEIPT",
     txnDatetime: toDateTimeLocalInput(),
-    bookDate: todayIsoDate(),
+    bookDate: "",
     amount: "",
     currencyCode: "",
     description: "",
@@ -868,15 +868,52 @@ export default function CashTransactionsPage() {
   const selectedIsCrossOuTransfer = useMemo(() => {
     return isCrossOuRegisterPair(selectedRegister, selectedCounterRegister);
   }, [selectedCounterRegister, selectedRegister]);
+  const selectedRegisterId = useMemo(() => toPositiveInt(form.registerId), [form.registerId]);
   const selectedRegisterOpenSessions = useMemo(() => {
-    const registerId = toPositiveInt(form.registerId);
-    if (!registerId) {
+    if (!selectedRegisterId) {
       return [];
     }
     return openSessions.filter(
-      (row) => toPositiveInt(row?.cash_register_id) === registerId
+      (row) => toPositiveInt(row?.cash_register_id) === selectedRegisterId
     );
-  }, [form.registerId, openSessions]);
+  }, [selectedRegisterId, openSessions]);
+  const selectedRegisterSessionMode = toUpper(selectedRegister?.session_mode);
+  const sessionModeRequiresSession = selectedRegisterSessionMode === "REQUIRED";
+  const sessionModeDisablesSession = selectedRegisterSessionMode === "NONE";
+  const createSessionPlaceholder = useMemo(() => {
+    if (!selectedRegisterId) {
+      return t("cashTransactions.placeholders.sessionSelectRegisterFirst");
+    }
+    if (sessionModeDisablesSession) {
+      return t("cashTransactions.placeholders.sessionNotUsed");
+    }
+    if (sessionModeRequiresSession) {
+      return t("cashTransactions.placeholders.sessionRequired");
+    }
+    return t("cashTransactions.placeholders.sessionOptional");
+  }, [
+    selectedRegisterId,
+    sessionModeDisablesSession,
+    sessionModeRequiresSession,
+    t,
+  ]);
+  const createSessionManualPlaceholder = useMemo(() => {
+    if (!selectedRegisterId) {
+      return t("cashTransactions.form.cashSessionIdSelectRegisterFirst");
+    }
+    if (sessionModeDisablesSession) {
+      return t("cashTransactions.form.cashSessionIdNotUsed");
+    }
+    if (sessionModeRequiresSession) {
+      return t("cashTransactions.form.cashSessionIdRequiredManualFallback");
+    }
+    return t("cashTransactions.form.cashSessionIdManualFallback");
+  }, [
+    selectedRegisterId,
+    sessionModeDisablesSession,
+    sessionModeRequiresSession,
+    t,
+  ]);
   const selectedActionRow = useMemo(() => {
     const transactionId = toPositiveInt(actionForm?.transactionId);
     if (!transactionId) {
@@ -914,7 +951,6 @@ export default function CashTransactionsPage() {
     }
     return counterpartyOptions.find((row) => toPositiveInt(row?.id) === counterpartyId) || null;
   }, [counterpartyOptions, form.counterpartyId]);
-  const selectedRegisterId = useMemo(() => toPositiveInt(form.registerId), [form.registerId]);
   const counterpartyPickerReady = canReadCariCards && toPositiveInt(selectedRegister?.legal_entity_id);
   const counterpartyFallbackHint = useMemo(() => {
     if (counterpartyPickerReady) {
@@ -932,11 +968,69 @@ export default function CashTransactionsPage() {
     if (!selectedRegisterId) {
       return t("cashTransactions.warnings.sessionPickerNeedsRegister");
     }
+    if (sessionModeDisablesSession) {
+      return t("cashTransactions.warnings.sessionModeNone");
+    }
     if (selectedRegisterOpenSessions.length === 0) {
+      if (sessionModeRequiresSession) {
+        return t("cashTransactions.warnings.sessionRequiredNoOpen");
+      }
       return t("cashTransactions.warnings.noOpenSessionForRegister");
     }
     return "";
-  }, [selectedRegisterId, selectedRegisterOpenSessions.length, t]);
+  }, [
+    selectedRegisterId,
+    selectedRegisterOpenSessions.length,
+    sessionModeDisablesSession,
+    sessionModeRequiresSession,
+    t,
+  ]);
+
+  useEffect(() => {
+    const currentSessionId = toPositiveInt(form.cashSessionId);
+
+    if (!selectedRegisterId) {
+      if (currentSessionId) {
+        setForm((prev) => ({ ...prev, cashSessionId: "" }));
+      }
+      return;
+    }
+
+    if (sessionModeDisablesSession) {
+      if (currentSessionId) {
+        setForm((prev) => ({ ...prev, cashSessionId: "" }));
+      }
+      return;
+    }
+
+    const hasSelectedOpenSession =
+      currentSessionId &&
+      selectedRegisterOpenSessions.some(
+        (row) => toPositiveInt(row?.id) === currentSessionId
+      );
+    if (hasSelectedOpenSession) {
+      return;
+    }
+
+    if (sessionModeRequiresSession) {
+      const defaultOpenSessionId = toPositiveInt(selectedRegisterOpenSessions[0]?.id);
+      if (defaultOpenSessionId) {
+        setForm((prev) => {
+          const prevSessionId = toPositiveInt(prev.cashSessionId);
+          if (prevSessionId === defaultOpenSessionId) {
+            return prev;
+          }
+          return { ...prev, cashSessionId: String(defaultOpenSessionId) };
+        });
+      }
+    }
+  }, [
+    form.cashSessionId,
+    selectedRegisterId,
+    selectedRegisterOpenSessions,
+    sessionModeDisablesSession,
+    sessionModeRequiresSession,
+  ]);
   const applySelectedTotal = useMemo(() => {
     if (actionForm?.type !== "applyCari") {
       return 0;
@@ -3105,8 +3199,9 @@ export default function CashTransactionsPage() {
                   setForm((prev) => ({ ...prev, cashSessionId: event.target.value }))
                 }
                 className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                disabled={sessionModeDisablesSession}
               >
-                <option value="">{t("cashTransactions.placeholders.sessionOptional")}</option>
+                <option value="">{createSessionPlaceholder}</option>
                 {selectedRegisterOpenSessions.map((session) => (
                   <option key={`form-session-${session.id}`} value={session.id}>
                     {`#${session.id} - ${session.cash_register_code || session.cash_register_id}`}
@@ -3122,7 +3217,8 @@ export default function CashTransactionsPage() {
                     setForm((prev) => ({ ...prev, cashSessionId: event.target.value }))
                   }
                   className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                  placeholder={t("cashTransactions.form.cashSessionIdManualFallback")}
+                  placeholder={createSessionManualPlaceholder}
+                  disabled={sessionModeDisablesSession}
                 />
               )}
             {sessionFallbackHint ? (
