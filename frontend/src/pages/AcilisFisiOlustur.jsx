@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
 import Combobox from "../components/Combobox.jsx";
 import {
   createJournal,
+  getTrialBalance,
   listAccounts,
   listBooks,
   postJournal,
@@ -70,17 +70,26 @@ function formatPeriodLabel(row) {
   return `FY${row.fiscal_year} P${String(row.period_no).padStart(2, "0")} - ${row.period_name}`;
 }
 
-function createLine() {
+function createLine(options = {}) {
+  const { followsFirstUnit = false } = options;
   return {
     id: `line-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     accountId: "",
     operatingUnitId: "",
+    followsFirstUnit: Boolean(followsFirstUnit),
     subledgerReferenceNo: "",
     counterpartyLegalEntityId: "",
     description: "",
     debitBase: "0",
     creditBase: "0",
   };
+}
+
+function sanitizeRefSegment(value, fallback = "GEN") {
+  const normalized = String(value || "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
+  return normalized || fallback;
 }
 
 export default function AcilisFisiOlustur() {
@@ -93,12 +102,15 @@ export default function AcilisFisiOlustur() {
   const canReadBooks = hasPermission("gl.book.read");
   const canReadAccounts = hasPermission("gl.account.read");
   const canReadPeriods = hasPermission("org.fiscal_period.read");
+  const canReadTrialBalance = hasPermission("gl.trial_balance.read");
   const canCreateJournal = hasPermission("gl.journal.create");
   const canPostJournal = hasPermission("gl.journal.post");
+  const canOverrideCashControl = hasPermission("cash.override.post");
 
   const today = new Date().toISOString().slice(0, 10);
   const [loadingRefs, setLoadingRefs] = useState(false);
   const [loadingPeriods, setLoadingPeriods] = useState(false);
+  const [loadingAccountBalances, setLoadingAccountBalances] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
@@ -110,6 +122,7 @@ export default function AcilisFisiOlustur() {
   const [operatingUnits, setOperatingUnits] = useState([]);
   const [shareholders, setShareholders] = useState([]);
   const [periods, setPeriods] = useState([]);
+  const [accountBalanceRows, setAccountBalanceRows] = useState([]);
 
   const [form, setForm] = useState({
     legalEntityId: "",
@@ -120,8 +133,10 @@ export default function AcilisFisiOlustur() {
     referenceNo: "",
     description: l("Opening entry", "Acilis fisi"),
     autoPost: false,
+    overrideCashControl: false,
+    overrideReason: "",
   });
-  const [lines, setLines] = useState([createLine(), createLine()]);
+  const [lines, setLines] = useState([createLine(), createLine({ followsFirstUnit: true })]);
 
   const selectedLegalEntityId = toPositiveInt(form.legalEntityId);
   const selectedBookId = toPositiveInt(form.bookId);
@@ -163,20 +178,81 @@ export default function AcilisFisiOlustur() {
       return allowPosting && !parentIds.has(accountId);
     });
   }, [accounts]);
-  const postableAccountOptions = useMemo(
-    () =>
-      postableAccounts.map((account) => ({
-        value: String(account.id),
-        label: `${account.code} - ${account.name}`,
-        description: String(account.account_type || "").toUpperCase(),
-      })),
-    [postableAccounts]
-  );
   const resolvedFiscalPeriod = useMemo(
     () => findPeriodByDate(periods, toDateOnly(form.periodDate)),
     [periods, form.periodDate]
   );
   const resolvedFiscalPeriodId = toPositiveInt(resolvedFiscalPeriod?.id);
+  const accountBalanceById = useMemo(() => {
+    const map = new Map();
+    for (const row of accountBalanceRows || []) {
+      const accountId = toPositiveInt(row?.account_id);
+      if (!accountId) {
+        continue;
+      }
+      map.set(accountId, Number(row?.balance || 0));
+    }
+    return map;
+  }, [accountBalanceRows]);
+  const postableAccountOptions = useMemo(
+    () =>
+      postableAccounts.map((account) => {
+        const accountId = toPositiveInt(account.id);
+        const hasBalanceContext =
+          Boolean(canReadTrialBalance) &&
+          Boolean(selectedBookId) &&
+          Boolean(resolvedFiscalPeriodId);
+        return {
+          value: String(account.id),
+          label: `${account.code} - ${account.name}`,
+          description: String(account.account_type || "").toUpperCase(),
+          accountType: String(account.account_type || "").toUpperCase(),
+          balance: hasBalanceContext
+            ? Number(accountBalanceById.get(accountId) || 0)
+            : null,
+        };
+      }),
+    [
+      postableAccounts,
+      canReadTrialBalance,
+      selectedBookId,
+      resolvedFiscalPeriodId,
+      accountBalanceById,
+    ]
+  );
+  const renderAccountOption = useCallback(
+    ({ option, isHighlighted, isSelected, disabled }) => {
+      const balanceText =
+        option?.balance === null
+          ? l("Period required", "Donem gerekli")
+          : `${formatAmount(option.balance)} ${String(form.currencyCode || "").toUpperCase()}`;
+      const rowClass = disabled
+        ? "cursor-not-allowed text-slate-400"
+        : isHighlighted
+          ? "bg-cyan-50 text-cyan-900"
+          : isSelected
+            ? "bg-slate-100 text-slate-900"
+            : "text-slate-700 hover:bg-slate-50";
+
+      return (
+        <div className={`rounded px-2 py-1.5 ${rowClass}`}>
+          <div className="flex items-start gap-2">
+            <div className="min-w-0 flex-1">
+              <div className="truncate">{option?.label || "-"}</div>
+              <div className="mt-0.5 truncate text-[10px] text-slate-500">
+                {option?.accountType || l("Account", "Hesap")}
+              </div>
+            </div>
+            <div className="shrink-0 text-right">
+              <div className="text-[11px] font-semibold text-slate-700">{balanceText}</div>
+              <div className="text-[10px] text-slate-500">{l("Balance", "Bakiye")}</div>
+            </div>
+          </div>
+        </div>
+      );
+    },
+    [l, form.currencyCode]
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -326,6 +402,43 @@ export default function AcilisFisiOlustur() {
     };
   }, [canReadPeriods, books, selectedBookId, l]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadAccountBalances() {
+      if (!canReadTrialBalance || !selectedBookId || !resolvedFiscalPeriodId) {
+        setAccountBalanceRows([]);
+        return;
+      }
+
+      setLoadingAccountBalances(true);
+      try {
+        const res = await getTrialBalance({
+          bookId: selectedBookId,
+          fiscalPeriodId: resolvedFiscalPeriodId,
+          includeRollup: false,
+        });
+        if (cancelled) {
+          return;
+        }
+        setAccountBalanceRows(Array.isArray(res?.rows) ? res.rows : []);
+      } catch {
+        if (!cancelled) {
+          setAccountBalanceRows([]);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingAccountBalances(false);
+        }
+      }
+    }
+
+    loadAccountBalances();
+    return () => {
+      cancelled = true;
+    };
+  }, [canReadTrialBalance, selectedBookId, resolvedFiscalPeriodId]);
+
   const totals = useMemo(() => {
     return lines.reduce(
       (acc, line) => {
@@ -427,6 +540,7 @@ export default function AcilisFisiOlustur() {
     !submitting &&
     Boolean(String(form.periodDate || "").trim()) &&
     Boolean(resolvedFiscalPeriodId);
+  const canCopyFirstUnitToAll = Boolean(toPositiveInt(lines[0]?.operatingUnitId));
 
   function setFormField(field, value) {
     setForm((prev) => ({
@@ -436,7 +550,27 @@ export default function AcilisFisiOlustur() {
   }
 
   function addLine() {
-    setLines((prev) => [...prev, createLine()]);
+    setLines((prev) => {
+      const nextLine = createLine();
+      const inheritedOperatingUnitId = String(prev[0]?.operatingUnitId || "");
+      const inheritedUnitId = toPositiveInt(inheritedOperatingUnitId);
+      if (!inheritedUnitId) {
+        return [...prev, nextLine];
+      }
+
+      const inheritedUnit = unitsById.get(inheritedUnitId) || null;
+      const requiresSubledgerReference = Boolean(inheritedUnit?.has_subledger);
+      return [
+        ...prev,
+        {
+          ...nextLine,
+          operatingUnitId: inheritedOperatingUnitId,
+          subledgerReferenceNo: requiresSubledgerReference
+            ? buildSubledgerReferenceNo(nextLine.id, inheritedOperatingUnitId)
+            : "",
+        },
+      ];
+    });
   }
 
   function removeLine(lineId) {
@@ -452,6 +586,178 @@ export default function AcilisFisiOlustur() {
     setLines((prev) =>
       prev.map((line) => (line.id === lineId ? { ...line, [field]: value } : line))
     );
+  }
+
+  function handleDescriptionFillDown(event, index, lineId) {
+    const isFillDown = (event.ctrlKey || event.metaKey) && String(event.key || "").toLowerCase() === "d";
+    if (!isFillDown) {
+      return;
+    }
+    event.preventDefault();
+    if (index <= 0) {
+      return;
+    }
+
+    setLines((prev) => {
+      const sourceDescription = String(prev[index - 1]?.description || "");
+      return prev.map((line) =>
+        line.id === lineId ? { ...line, description: sourceDescription } : line
+      );
+    });
+  }
+
+  function formatInputAmount(value) {
+    const rounded = Math.round(Math.max(0, Number(value || 0)) * 100) / 100;
+    return rounded.toFixed(2);
+  }
+
+  function handleBalanceShortcut(event, lineId, side) {
+    const isBalanceShortcut = event.altKey && String(event.key || "").toLowerCase() === "b";
+    if (!isBalanceShortcut) {
+      return;
+    }
+    event.preventDefault();
+
+    setLines((prev) => {
+      const lineIndex = prev.findIndex((line) => line.id === lineId);
+      if (lineIndex < 0) {
+        return prev;
+      }
+
+      const currentLine = prev[lineIndex];
+      const currentDebit = toAmount(currentLine.debitBase);
+      const currentCredit = toAmount(currentLine.creditBase);
+      const totalDebit = prev.reduce((sum, line) => sum + toAmount(line.debitBase), 0);
+      const totalCredit = prev.reduce((sum, line) => sum + toAmount(line.creditBase), 0);
+      const baseDebit = totalDebit - currentDebit;
+      const baseCredit = totalCredit - currentCredit;
+
+      let nextDebit = 0;
+      let nextCredit = 0;
+
+      if (side === "debit") {
+        nextDebit = Math.max(0, baseCredit - baseDebit);
+      } else {
+        nextCredit = Math.max(0, baseDebit - baseCredit);
+      }
+
+      return prev.map((line) =>
+        line.id === lineId
+          ? {
+            ...line,
+            debitBase: formatInputAmount(nextDebit),
+            creditBase: formatInputAmount(nextCredit),
+          }
+          : line
+      );
+    });
+  }
+
+  function buildSubledgerReferenceNo(lineId, operatingUnitIdRaw) {
+    const operatingUnitId = toPositiveInt(operatingUnitIdRaw);
+    const unit = operatingUnitId ? unitsById.get(operatingUnitId) : null;
+    const unitCode = sanitizeRefSegment(unit?.code, `OU${operatingUnitId || "0"}`);
+    const dateSeed = toDateOnly(form.documentDate || form.periodDate || today).replaceAll("-", "");
+    const lineSeed = sanitizeRefSegment(String(lineId || "").slice(-10), "LINE");
+    return `SLR-${unitCode}-${dateSeed}-${lineSeed}`.slice(0, 100);
+  }
+
+  function applyOperatingUnitSelection(line, lineId, nextOperatingUnitId) {
+    const unitId = toPositiveInt(nextOperatingUnitId);
+    const selectedUnit = unitId ? unitsById.get(unitId) || null : null;
+    const hasSubledger = Boolean(selectedUnit?.has_subledger);
+    const currentSubledgerReferenceNo = String(line.subledgerReferenceNo || "").trim();
+
+    if (!unitId) {
+      return {
+        ...line,
+        operatingUnitId: nextOperatingUnitId,
+        subledgerReferenceNo: "",
+      };
+    }
+
+    if (hasSubledger && !currentSubledgerReferenceNo) {
+      return {
+        ...line,
+        operatingUnitId: nextOperatingUnitId,
+        subledgerReferenceNo: buildSubledgerReferenceNo(lineId, unitId),
+      };
+    }
+
+    return {
+      ...line,
+      operatingUnitId: nextOperatingUnitId,
+    };
+  }
+
+  function handleLineOperatingUnitChange(lineId, nextOperatingUnitId) {
+    setLines((prev) => {
+      const lineIndex = prev.findIndex((line) => line.id === lineId);
+      if (lineIndex < 0) {
+        return prev;
+      }
+
+      const isFirstLine = lineIndex === 0;
+      const next = prev.map((line, index) => {
+        if (line.id !== lineId) {
+          return line;
+        }
+        const updated = applyOperatingUnitSelection(line, lineId, nextOperatingUnitId);
+        if (index === 1 && !isFirstLine) {
+          return {
+            ...updated,
+            followsFirstUnit: false,
+          };
+        }
+        return updated;
+      });
+
+      const secondLine = next[1];
+      if (isFirstLine && secondLine?.followsFirstUnit) {
+        next[1] = applyOperatingUnitSelection(secondLine, secondLine.id, nextOperatingUnitId);
+      }
+
+      return next;
+    });
+  }
+
+  function copyFirstLineOperatingUnitToAll() {
+    setLines((prev) => {
+      const firstOperatingUnitId = String(prev[0]?.operatingUnitId || "");
+      const firstUnitId = toPositiveInt(firstOperatingUnitId);
+      if (!firstUnitId) {
+        return prev;
+      }
+
+      const firstUnit = unitsById.get(firstUnitId) || null;
+      const requiresSubledgerReference = Boolean(firstUnit?.has_subledger);
+      return prev.map((line) => {
+        const currentSubledgerReferenceNo = String(line.subledgerReferenceNo || "").trim();
+        return {
+          ...line,
+          operatingUnitId: firstOperatingUnitId,
+          subledgerReferenceNo: requiresSubledgerReference
+            ? currentSubledgerReferenceNo || buildSubledgerReferenceNo(line.id, firstOperatingUnitId)
+            : "",
+        };
+      });
+    });
+  }
+
+  function formatLineAccountBalance(accountIdRaw) {
+    if (!canReadTrialBalance) {
+      return l("No permission", "Yetki yok");
+    }
+    if (!resolvedFiscalPeriodId) {
+      return l("Select period date", "Donem tarihi secin");
+    }
+    if (loadingAccountBalances) {
+      return l("Loading...", "Yukleniyor...");
+    }
+
+    const accountId = toPositiveInt(accountIdRaw);
+    const balance = accountId ? Number(accountBalanceById.get(accountId) || 0) : 0;
+    return `${formatAmount(balance)} ${String(form.currencyCode || "").toUpperCase()}`;
   }
 
   async function handleSubmit(event) {
@@ -485,6 +791,19 @@ export default function AcilisFisiOlustur() {
     }
     if (lines.length < 2) {
       setError(l("At least two lines are required.", "En az iki satir gereklidir."));
+      return;
+    }
+    if (form.overrideCashControl && !canOverrideCashControl) {
+      setError(l("Missing permission: cash.override.post", "Eksik yetki: cash.override.post"));
+      return;
+    }
+    if (form.overrideCashControl && !String(form.overrideReason || "").trim()) {
+      setError(
+        l(
+          "Override reason is required when cash-control override is enabled.",
+          "Cash-control override acik oldugunda override nedeni zorunludur."
+        )
+      );
       return;
     }
 
@@ -601,6 +920,10 @@ export default function AcilisFisiOlustur() {
         sourceType: "MANUAL",
         referenceNo: form.referenceNo.trim() || undefined,
         description: form.description.trim() || undefined,
+        overrideCashControl: Boolean(form.overrideCashControl),
+        overrideReason: form.overrideCashControl
+          ? String(form.overrideReason || "").trim()
+          : undefined,
         lines: normalizedLines,
       };
 
@@ -639,11 +962,13 @@ export default function AcilisFisiOlustur() {
         setMessage(l("Opening entry created as draft.", "Acilis fisi taslak olarak olusturuldu."));
       }
 
-      setLines([createLine(), createLine()]);
+      setLines([createLine(), createLine({ followsFirstUnit: true })]);
       setForm((prev) => ({
         ...prev,
         referenceNo: "",
         description: l("Opening entry", "Acilis fisi"),
+        overrideCashControl: false,
+        overrideReason: "",
       }));
     } catch (err) {
       setError(err?.response?.data?.message || l("Failed to create opening entry.", "Acilis fisi olusturulamadi."));
@@ -674,7 +999,7 @@ export default function AcilisFisiOlustur() {
         )}
 
         <form onSubmit={handleSubmit} className="flex min-h-0 flex-1 flex-col gap-3">
-          <section className="min-h-[180px] shrink-0 basis-1/5 overflow-auto rounded-xl border border-slate-200 bg-white px-4">
+          <section className="min-h-45 shrink-0 basis-1/5 overflow-auto rounded-xl border border-slate-200 bg-white px-4">
             <div className="grid items-start gap-0.5 md:grid-cols-4">
               <label className="space-y-0.5">
                 <span className="px-1 text-[10px] text-slate-500">
@@ -819,6 +1144,39 @@ export default function AcilisFisiOlustur() {
                 </span>
               </label>
 
+              <label className="space-y-0.5 md:col-span-2">
+                <span className="px-1 text-[10px] text-slate-500">
+                  {l("Cash control override", "Cash control override")}
+                </span>
+                <span className="inline-flex h-8 w-full items-center gap-2 rounded-lg border border-slate-200 px-2.5 text-xs text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={form.overrideCashControl}
+                    onChange={(event) => setFormField("overrideCashControl", event.target.checked)}
+                    disabled={!canOverrideCashControl}
+                  />
+                  {l(
+                    "Allow direct posting to cash-controlled account",
+                    "Cash-controlled hesaba dogrudan post etmeye izin ver"
+                  )}
+                </span>
+              </label>
+
+              {form.overrideCashControl ? (
+                <label className="space-y-0.5 md:col-span-2">
+                  <span className="px-1 text-[10px] text-slate-500">
+                    {l("Override reason (required)", "Override nedeni (zorunlu)")}
+                  </span>
+                  <input
+                    value={form.overrideReason}
+                    onChange={(event) => setFormField("overrideReason", event.target.value)}
+                    className="h-8 w-full rounded-lg border border-slate-300 px-2.5 text-xs"
+                    placeholder={l("Provide override reason", "Override nedeni girin")}
+                    required={form.overrideCashControl}
+                  />
+                </label>
+              ) : null}
+
               <label className="space-y-0.5 md:col-span-4">
                 <span className="px-1 text-[10px] text-slate-500">
                   {l("Description", "Aciklama")}
@@ -833,202 +1191,201 @@ export default function AcilisFisiOlustur() {
             </div>
           </section>
 
-          <div className="min-h-0 basis-4/5 flex-1 overflow-auto rounded-xl border border-slate-200 bg-white">
-            <section className="min-h-0">
+          <div className="min-h-0 basis-4/5 flex flex-1 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white">
+            <section className="min-h-0 flex flex-1 flex-col">
               <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
-                <h2 className="text-sm font-semibold text-slate-700">{l("Lines", "Satirlar")}</h2>
-                <button
-                  type="button"
-                  onClick={addLine}
-                  className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-                >
-                  {l("Add line", "Satir ekle")}
-                </button>
+                <div>
+                  <h2 className="text-sm font-semibold text-slate-700">{l("Lines", "Satirlar")}</h2>
+                  <div className="text-[11px] text-slate-500">
+                    {canReadTrialBalance
+                      ? resolvedFiscalPeriodId
+                        ? loadingAccountBalances
+                          ? l("Account balances loading...", "Hesap bakiyeleri yukleniyor...")
+                          : l("Account balances shown for resolved period", "Hesap bakiyeleri eslesen donem icin gosteriliyor")
+                        : l("Select period date to load balances", "Bakiyeleri gormek icin donem tarihi secin")
+                      : l("Balance preview requires gl.trial_balance.read", "Bakiye onizlemesi icin gl.trial_balance.read gerekir")}
+                  </div>
+                  <div className="text-[11px] text-slate-500">
+                    {l(
+                      "Shortcuts: Ctrl/Cmd+D fill-down description, Alt+B auto-balance focused Debit/Credit cell.",
+                      "Kisayollar: Ctrl/Cmd+D aciklama kopyalar, Alt+B odaktaki Borc/Alacak hucresini otomatik dengeler."
+                    )}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={copyFirstLineOperatingUnitToAll}
+                    disabled={!canCopyFirstUnitToAll || lines.length <= 1}
+                    className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                  >
+                    {l("Copy first unit to all", "Ilk birimi tum satirlara kopyala")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={addLine}
+                    className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                  >
+                    {l("Add line", "Satir ekle")}
+                  </button>
+                </div>
               </div>
 
-              <div className="overflow-x-auto">
-                <table className="min-w-full text-sm">
-                  <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
-                    <tr>
-                      <th className="px-3 py-2">{l("Account", "Hesap")}</th>
-                      <th className="px-3 py-2">{l("Unit", "Birim")}</th>
-                      <th className="px-3 py-2">{l("Subledger Ref", "Alt Defter Ref")}</th>
-                      <th className="px-3 py-2">{l("Counterparty", "Karsi taraf")}</th>
-                      <th className="px-3 py-2">{l("Description", "Aciklama")}</th>
-                      <th className="px-3 py-2">{l("Debit", "Borc")}</th>
-                      <th className="px-3 py-2">{l("Credit", "Alacak")}</th>
-                      <th className="px-3 py-2">{l("Action", "Islem")}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {lines.map((line, index) => (
-                      <tr key={line.id} className="border-t border-slate-100">
-                        <td className="px-3 py-2">
-                          <Combobox
-                            value={line.accountId || null}
-                            options={postableAccountOptions}
-                            disabled={!canReadAccounts}
-                            clearable={false}
-                            placeholder={l("Search/select account", "Hesap ara/sec")}
-                            noOptionsText={l("No account found.", "Hesap bulunamadi.")}
-                            inputClassName="px-2 py-1.5 pr-14 text-xs"
-                            listClassName="text-xs"
-                            optionClassName="text-xs"
-                            onChange={(nextValue) =>
-                              updateLine(
-                                line.id,
-                                "accountId",
-                                nextValue ? String(nextValue) : ""
-                              )
-                            }
-                          />
-                        </td>
+              <div className="min-h-0 flex-1 overflow-auto">
+                <div className="overflow">
+                  <table className="min-w-full text-sm">
+                    <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
+                      <tr>
+                        <th className="px-3 py-2">{l("Account", "Hesap")}</th>
+                        <th className="px-3 py-2">{l("Unit", "Birim")}</th>
+                        <th className="px-3 py-2">{l("Subledger Ref", "Alt Defter Ref")}</th>
+                        <th className="px-3 py-2">{l("Counterparty", "Karsi taraf")}</th>
+                        <th className="px-3 py-2">{l("Description", "Aciklama")}</th>
+                        <th className="px-3 py-2">{l("Debit", "Borc")}</th>
+                        <th className="px-3 py-2">{l("Credit", "Alacak")}</th>
+                        <th className="px-3 py-2">{l("Action", "Islem")}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {lines.map((line, index) => (
+                        <tr key={line.id} className="border-t border-slate-100">
+                          <td className="px-3 py-2">
+                            <Combobox
+                              value={line.accountId || null}
+                              options={postableAccountOptions}
+                              disabled={!canReadAccounts}
+                              clearable={false}
+                              placeholder={l("Search/select account", "Hesap ara/sec")}
+                              noOptionsText={l("No account found.", "Hesap bulunamadi.")}
+                              inputClassName="px-2 py-1.5 pr-14 text-xs"
+                              listClassName="text-xs"
+                              optionClassName="text-xs"
+                              renderOption={renderAccountOption}
+                              onChange={(nextValue) =>
+                                updateLine(
+                                  line.id,
+                                  "accountId",
+                                  nextValue ? String(nextValue) : ""
+                                )
+                              }
+                            />
+                            <div className="mt-1 text-[10px] text-slate-500">
+                              {l("Balance", "Bakiye")}:{" "}
+                              <span className="font-medium text-slate-700">
+                                {formatLineAccountBalance(line.accountId)}
+                              </span>
+                            </div>
+                          </td>
                         <td className="px-3 py-2">
                           <select
                             value={line.operatingUnitId}
-                            onChange={(event) =>
-                              updateLine(line.id, "operatingUnitId", event.target.value)
-                            }
+                            onChange={(event) => handleLineOperatingUnitChange(line.id, event.target.value)}
                             className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs"
                             disabled={!canReadOrgTree}
                           >
-                            <option value="">{l("Optional", "Opsiyonel")}</option>
-                            {operatingUnits.map((unit) => (
-                              <option key={unit.id} value={unit.id}>
-                                {unit.code} - {unit.name}
-                              </option>
-                            ))}
-                          </select>
-                        </td>
-                        <td className="px-3 py-2">
-                          <input
-                            value={line.subledgerReferenceNo || ""}
-                            onChange={(event) =>
-                              updateLine(line.id, "subledgerReferenceNo", event.target.value)
-                            }
-                            className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs"
-                            placeholder={
-                              (unitsById.get(toPositiveInt(line.operatingUnitId))?.has_subledger ?? false)
-                                ? l("Required", "Zorunlu")
-                                : l("Optional", "Opsiyonel")
-                            }
-                            required={unitsById.get(toPositiveInt(line.operatingUnitId))?.has_subledger ?? false}
-                          />
-                        </td>
-                        <td className="px-3 py-2">
-                          <select
-                            value={line.counterpartyLegalEntityId}
-                            onChange={(event) =>
-                              updateLine(
-                                line.id,
-                                "counterpartyLegalEntityId",
-                                event.target.value
-                              )
-                            }
-                            className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs"
-                            disabled={!canReadOrgTree}
-                          >
-                            <option value="">{l("Optional", "Opsiyonel")}</option>
-                            {legalEntities.map((entity) => (
-                              <option key={entity.id} value={entity.id}>
-                                {entity.code} - {entity.name}
-                              </option>
-                            ))}
-                          </select>
-                        </td>
-                        <td className="px-3 py-2">
+                              <option value="">{l("Optional", "Opsiyonel")}</option>
+                              {operatingUnits.map((unit) => (
+                                <option key={unit.id} value={unit.id}>
+                                  {unit.code} - {unit.name}
+                                </option>
+                              ))}
+                            </select>
+                          </td>
+                          <td className="px-3 py-2">
+                            <input
+                              value={line.subledgerReferenceNo || ""}
+                              onChange={(event) =>
+                                updateLine(line.id, "subledgerReferenceNo", event.target.value)
+                              }
+                              className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs"
+                              placeholder={
+                                (unitsById.get(toPositiveInt(line.operatingUnitId))?.has_subledger ?? false)
+                                  ? l("Required", "Zorunlu")
+                                  : l("Optional", "Opsiyonel")
+                              }
+                              required={unitsById.get(toPositiveInt(line.operatingUnitId))?.has_subledger ?? false}
+                            />
+                          </td>
+                          <td className="px-3 py-2">
+                            <select
+                              value={line.counterpartyLegalEntityId}
+                              onChange={(event) =>
+                                updateLine(
+                                  line.id,
+                                  "counterpartyLegalEntityId",
+                                  event.target.value
+                                )
+                              }
+                              className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs"
+                              disabled={!canReadOrgTree}
+                            >
+                              <option value="">{l("Optional", "Opsiyonel")}</option>
+                              {legalEntities.map((entity) => (
+                                <option key={entity.id} value={entity.id}>
+                                  {entity.code} - {entity.name}
+                                </option>
+                              ))}
+                            </select>
+                          </td>
+                          <td className="px-3 py-2">
                           <input
                             value={line.description}
                             onChange={(event) =>
                               updateLine(line.id, "description", event.target.value)
                             }
+                            onKeyDown={(event) => handleDescriptionFillDown(event, index, line.id)}
                             className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs"
                             placeholder={l(
                               `Line ${index + 1} description`,
-                              `Satir ${index + 1} aciklamasi`
-                            )}
-                          />
-                        </td>
-                        <td className="px-3 py-2">
-                          <input
-                            type="number"
-                            min={0}
-                            step="0.01"
-                            value={line.debitBase}
-                            onChange={(event) =>
-                              updateLine(line.id, "debitBase", event.target.value)
-                            }
-                            className="w-full rounded border border-slate-300 px-2 py-1.5 text-right text-xs"
-                            required
-                          />
-                        </td>
-                        <td className="px-3 py-2">
-                          <input
-                            type="number"
-                            min={0}
-                            step="0.01"
-                            value={line.creditBase}
-                            onChange={(event) =>
-                              updateLine(line.id, "creditBase", event.target.value)
-                            }
-                            className="w-full rounded border border-slate-300 px-2 py-1.5 text-right text-xs"
-                            required
-                          />
-                        </td>
-                        <td className="px-3 py-2">
-                          <button
-                            type="button"
-                            onClick={() => removeLine(line.id)}
-                            disabled={lines.length <= 2}
-                            className="rounded border border-rose-200 px-2 py-1 text-xs font-semibold text-rose-700 disabled:opacity-50"
-                          >
-                            {l("Remove", "Kaldir")}
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                  <tfoot>
-                    <tr className="border-t border-slate-200 bg-slate-50 text-sm font-semibold text-slate-700">
-                      <td className="px-3 py-2" colSpan={5}>
-                        {l("Totals", "Toplamlar")}
-                      </td>
-                      <td className="px-3 py-2 text-right">{formatAmount(totals.debit)}</td>
-                      <td className="px-3 py-2 text-right">{formatAmount(totals.credit)}</td>
-                      <td className="px-3 py-2 text-xs">
-                        {isBalanced ? (
-                          <span className="rounded bg-emerald-100 px-2 py-0.5 text-emerald-700">
-                            {l("Balanced", "Dengeli")}
-                          </span>
-                        ) : (
-                          <span className="rounded bg-amber-100 px-2 py-0.5 text-amber-700">
-                            {l("Not balanced", "Dengede degil")}
-                          </span>
-                        )}
-                      </td>
-                    </tr>
-                  </tfoot>
-                </table>
+                                `Satir ${index + 1} aciklamasi`
+                              )}
+                            />
+                          </td>
+                          <td className="px-3 py-2">
+                            <input
+                              type="number"
+                              min={0}
+                              step="0.01"
+                              value={line.debitBase}
+                              onChange={(event) =>
+                                updateLine(line.id, "debitBase", event.target.value)
+                              }
+                              onKeyDown={(event) => handleBalanceShortcut(event, line.id, "debit")}
+                              className="w-full rounded border border-slate-300 px-2 py-1.5 text-right text-xs"
+                              required
+                            />
+                          </td>
+                          <td className="px-3 py-2">
+                            <input
+                              type="number"
+                              min={0}
+                              step="0.01"
+                              value={line.creditBase}
+                              onChange={(event) =>
+                                updateLine(line.id, "creditBase", event.target.value)
+                              }
+                              onKeyDown={(event) => handleBalanceShortcut(event, line.id, "credit")}
+                              className="w-full rounded border border-slate-300 px-2 py-1.5 text-right text-xs"
+                              required
+                            />
+                          </td>
+                          <td className="px-3 py-2">
+                            <button
+                              type="button"
+                              onClick={() => removeLine(line.id)}
+                              disabled={lines.length <= 2}
+                              className="rounded border border-rose-200 px-2 py-1 text-xs font-semibold text-rose-700 disabled:opacity-50"
+                            >
+                              {l("Remove", "Kaldir")}
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </section>
-
-            <div className="flex items-center justify-between gap-3 border-t border-slate-200 px-4 py-3">
-              <p className="text-xs text-slate-500">
-                {l("Posting requires", "Post islemi icin")}{" "}
-                <span className="font-mono">gl.journal.post</span> {l("permission.", "yetkisi gerekir.")}
-              </p>
-              <button
-                type="submit"
-                disabled={!canSubmit}
-                className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
-              >
-                {submitting
-                  ? l("Saving...", "Kaydediliyor...")
-                  : form.autoPost && canPostJournal
-                    ? l("Create and Post", "Olustur ve Post Et")
-                    : l("Create Draft", "Taslak Olustur")}
-              </button>
-            </div>
 
             {result && (
               <section className="border-t border-slate-200 px-4 py-3 text-sm">
@@ -1044,6 +1401,39 @@ export default function AcilisFisiOlustur() {
                 </div>
               </section>
             )}
+            <div className="shrink-0 border-t border-slate-200 bg-slate-50/95 backdrop-blur">
+              <div className="flex items-center justify-end gap-4 px-4 py-2 text-xs font-semibold text-slate-700">
+                <span className="mr-auto">{l("Totals", "Toplamlar")}</span>
+                <span>
+                  {l("Debit", "Borc")}: {formatAmount(totals.debit)}
+                </span>
+                <span>
+                  {l("Credit", "Alacak")}: {formatAmount(totals.credit)}
+                </span>
+                {isBalanced ? (
+                  <span className="rounded bg-emerald-100 px-2 py-0.5 text-emerald-700">
+                    {l("Balanced", "Dengeli")}
+                  </span>
+                ) : (
+                  <span className="rounded bg-amber-100 px-2 py-0.5 text-amber-700">
+                    {l("Not balanced", "Dengede degil")}
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center justify-between gap-3 border-t border-slate-200 bg-white/90 px-4 py-2.5">
+                <button
+                  type="submit"
+                  disabled={!canSubmit}
+                  className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+                >
+                  {submitting
+                    ? l("Saving...", "Kaydediliyor...")
+                    : form.autoPost && canPostJournal
+                      ? l("Create and Post", "Olustur ve Post Et")
+                      : l("Create Draft", "Taslak Olustur")}
+                </button>
+              </div>
+            </div>
           </div>
         </form>
       </div>

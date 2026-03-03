@@ -275,6 +275,13 @@ Book ne ise yarar?
 - Ayni `Legal Entity (Bagli Ortak)` icinde farkli kayit amaclari icin ayri defter acabilirsiniz.
 - En temel kullanim: yerel resmi kayit defteri.
 
+Neden fis ekraninda "Defter (Book)" secimi gorunur?
+- Model, ayni `Legal Entity (Bagli Ortak)` icin birden fazla book destekler (`LOCAL`, `IFRS`, `TAX` gibi).
+- Donem acik/kapali kontrolu book seviyesinde yapilir.
+- Donem cozumleme (period resolution), secilen book'un takvimi (calendar) uzerinden yapilir.
+- Posting metadatasi (journal sequence / context) book'a baglidir.
+- Eger secili entity icin bugun tek book varsa alan kullaniciya redundant gorunebilir; ancak genel modelde teknik olarak gereklidir.
+
 Yapilmazsa:
 - Fis acamazsiniz (fis book ister).
 

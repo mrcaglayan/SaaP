@@ -619,9 +619,8 @@ export default function AppLayout() {
         >
           {subItem.isLocked ? (
             <div
-              className={`flex w-full items-start gap-2 rounded-sm border border-amber-200 bg-amber-50/70 text-sm font-medium text-amber-900 ${
-                depth > 0 ? "pl-2 pr-2 py-2" : "pl-2 pr-2 py-1.5"
-              }`}
+              className={`flex w-full items-start gap-2 rounded-sm border border-amber-200 bg-amber-50/70 text-sm font-medium text-amber-900 ${depth > 0 ? "pl-2 pr-2 py-2" : "pl-2 pr-2 py-1.5"
+                }`}
               title={subItem.lockedReason || t("layout.lockedMenu", "Access restricted")}
               aria-disabled="true"
             >
@@ -632,7 +631,7 @@ export default function AppLayout() {
                 })}
               </span>
               <span className="flex min-w-0 flex-1 items-start justify-between gap-2">
-                <span className="whitespace-normal break-words leading-5">
+                <span className="whitespace-normal wrap-break-word leading-5">
                   {getItemDisplayText(subItem, "label")}
                 </span>
                 <button
@@ -663,7 +662,7 @@ export default function AppLayout() {
                 })}
               </span>
               <span className="flex min-w-0 flex-1 items-start justify-between gap-2">
-                <span className="whitespace-normal break-words leading-5">{getItemDisplayText(subItem, "label")}</span>
+                <span className="whitespace-normal wrap-break-word leading-5">{getItemDisplayText(subItem, "label")}</span>
                 {subItem.implemented !== true && (
                   <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full border border-slate-300 px-1 text-[9px] font-semibold uppercase leading-none text-slate-500">
                     S
@@ -686,13 +685,12 @@ export default function AppLayout() {
       />
 
       <aside
-        className={`absolute inset-y-0 left-0 z-40 flex flex-col border-r border-slate-200 bg-white text-slate-900 shadow-xl transition-all duration-300 md:static md:translate-x-0 lg:rounded-br-3xl ${collapsed ? "w-[52px]" : "w-[229px]"
+        className={`absolute inset-y-0 left-0 z-40 flex flex-col border-r border-slate-200 bg-white text-slate-900 shadow-xl transition-all duration-300 md:static md:translate-x-0 lg:rounded-br-3xl ${collapsed ? "w-13" : "w-57.25"
           } ${mobileOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"}`}
       >
         <div
-          className={`shrink-0 border-b border-slate-200 ${
-            collapsed ? "px-2 py-2" : "px-3 py-3"
-          }`}
+          className={`shrink-0 border-b border-slate-200 ${collapsed ? "px-2 py-2" : "px-3 py-3"
+            }`}
         >
           <div className={`flex items-center ${collapsed ? "justify-center" : "justify-between"} gap-2`}>
             <button
@@ -840,8 +838,8 @@ export default function AppLayout() {
         <div className="flex-1 min-h-0">
           <nav
             className={`h-full space-y-0.5 pl-0 pr-0 py-3 ${collapsed
-                ? "overflow-visible"
-                : "overflow-y-scroll overflow-x-hidden [scrollbar-width:thin] [scrollbar-color:#cbd5e1_transparent] [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-slate-300 hover:[&::-webkit-scrollbar-thumb]:bg-slate-400"
+              ? "overflow-visible"
+              : "overflow-y-scroll overflow-x-hidden [scrollbar-width:thin] [scrollbar-color:#cbd5e1_transparent] [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-slate-300 hover:[&::-webkit-scrollbar-thumb]:bg-slate-400"
               }`}
           >
             {visibleSidebarItems.map((item) => {
@@ -851,11 +849,10 @@ export default function AppLayout() {
                     <div
                       key={item.to}
                       title={item.lockedReason || t("layout.lockedMenu", "Access restricted")}
-                      className={`group flex items-center text-sm font-semibold transition-colors ${
-                        collapsed
-                          ? "mx-1 h-10 w-[calc(100%-0.5rem)] justify-center rounded-lg border border-amber-300 bg-amber-50/80 p-0 text-amber-900"
-                          : "w-full gap-2 rounded-lg border border-amber-300 bg-amber-50/80 pl-4 pr-2 py-1.5 text-amber-900"
-                      }`}
+                      className={`group flex items-center text-sm font-semibold transition-colors ${collapsed
+                        ? "mx-1 h-10 w-[calc(100%-0.5rem)] justify-center rounded-lg border border-amber-300 bg-amber-50/80 p-0 text-amber-900"
+                        : "w-full gap-2 rounded-lg border border-amber-300 bg-amber-50/80 pl-4 pr-2 py-1.5 text-amber-900"
+                        }`}
                       aria-disabled="true"
                     >
                       <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center text-amber-800">
@@ -895,8 +892,8 @@ export default function AppLayout() {
                       <>
                         <span
                           className={`inline-flex h-8 w-8 shrink-0 items-center justify-center transition-colors ${isActive
-                              ? "text-[#143c62]"
-                              : "text-[#143c62]"
+                            ? "text-[#143c62]"
+                            : "text-[#143c62]"
                             }`}
                         >
                           {renderSidebarIcon(item, {
@@ -931,16 +928,16 @@ export default function AppLayout() {
               const isSectionOpen = openTopSectionKey === sectionKey;
 
               return (
-              <SidebarSection
-                key={item.title}
-                title={getItemDisplayText(item, "title")}
-                icon={renderSidebarIcon(item, {
-                  svgClass: "h-5 w-5",
-                  emojiClass: "text-[18px]",
-                })}
-                badge={item.badge}
-                collapsed={collapsed}
-                open={isSectionOpen}
+                <SidebarSection
+                  key={item.title}
+                  title={getItemDisplayText(item, "title")}
+                  icon={renderSidebarIcon(item, {
+                    svgClass: "h-5 w-5",
+                    emojiClass: "text-[18px]",
+                  })}
+                  badge={item.badge}
+                  collapsed={collapsed}
+                  open={isSectionOpen}
                   active={isSectionActive}
                   onToggle={() =>
                     setOpenTopSectionKey((current) =>
@@ -956,18 +953,17 @@ export default function AppLayout() {
         </div>
 
         <div
-          className={`shrink-0 border-t border-slate-200 bg-white overflow-hidden ${
-            collapsed ? "p-1" : "p-3"
-          }`}
+          className={`shrink-0 border-t border-slate-200 bg-white overflow-hidden ${collapsed ? "p-1" : "p-3"
+            }`}
         >
           <div
             className={`mx-auto flex items-center rounded-lg transition-all duration-300 ${collapsed
-                ? "h-10 w-full justify-center gap-0 p-0"
-                : "w-full justify-between gap-3 border border-slate-200 bg-slate-50 px-3 py-2"
+              ? "h-10 w-full justify-center gap-0 p-0"
+              : "w-full justify-between gap-3 border border-slate-200 bg-slate-50 px-3 py-2"
               }`}
           >
             <div
-              className={`min-w-0 transition-all duration-200 ${collapsed ? "max-w-0 overflow-hidden opacity-0" : "max-w-[11rem] opacity-100"
+              className={`min-w-0 transition-all duration-200 ${collapsed ? "max-w-0 overflow-hidden opacity-0" : "max-w-44 opacity-100"
                 }`}
               aria-hidden={collapsed}
             >
@@ -984,8 +980,8 @@ export default function AppLayout() {
               onClick={handleLogout}
               title={collapsed ? t("layout.logout") : undefined}
               className={`inline-flex shrink-0 items-center transition-all duration-200 ${collapsed
-                  ? "h-10 w-full justify-center rounded-lg border border-slate-300 bg-white text-[#143c62] hover:bg-gray-100"
-                  : "gap-1.5 rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-semibold text-[#143c62] hover:bg-gray-100"
+                ? "h-10 w-full justify-center rounded-lg border border-slate-300 bg-white text-[#143c62] hover:bg-gray-100"
+                : "gap-1.5 rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-semibold text-[#143c62] hover:bg-gray-100"
                 }`}
             >
               <Icon name="logout" className={collapsed ? "h-4 w-4" : "h-3.5 w-3.5"} />
@@ -1017,19 +1013,9 @@ export default function AppLayout() {
           <Outlet />
         </div>
 
-        <footer className="border-t border-slate-200 bg-white/70 px-4 py-3 text-xs text-slate-500">
-          <small>
-            &copy; {new Date().getFullYear()} {t("layout.madeWithLoveBy")}{" "}
-            <a
-              target="_blank"
-              rel="noopener noreferrer"
-              href="https://granada.com.gt/es/"
-              className="font-semibold text-slate-700 hover:text-slate-900"
-            >
-              Fabrica Granada
-            </a>
-          </small>
-        </footer>
+        {/* <footer className="border-t border-slate-200 bg-white/70 px-4 py-3 text-xs text-slate-500">
+
+        </footer> */}
       </main>
     </div>
   );

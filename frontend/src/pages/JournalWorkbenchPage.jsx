@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import Combobox from "../components/Combobox.jsx";
 import {
   closePeriod,
   createJournal,
@@ -179,6 +180,7 @@ export default function JournalWorkbenchPage() {
 
   const [loadingRefs, setLoadingRefs] = useState(false);
   const [, setLoadingPeriods] = useState(false);
+  const [loadingCreateAccountBalances, setLoadingCreateAccountBalances] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [saving, setSaving] = useState("");
   const [error, setError] = useState("");
@@ -189,6 +191,7 @@ export default function JournalWorkbenchPage() {
   const [accounts, setAccounts] = useState([]);
   const [units, setUnits] = useState([]);
   const [periods, setPeriods] = useState([]);
+  const [createAccountBalanceRows, setCreateAccountBalanceRows] = useState([]);
 
   const [journal, setJournal] = useState({
     legalEntityId: "",
@@ -263,6 +266,17 @@ export default function JournalWorkbenchPage() {
     [periods, journal.entryDate]
   );
   const resolvedCreatePeriodId = toInt(resolvedCreatePeriod?.id);
+  const createAccountBalanceById = useMemo(() => {
+    const map = new Map();
+    for (const row of createAccountBalanceRows || []) {
+      const accountId = toInt(row?.account_id);
+      if (!accountId) {
+        continue;
+      }
+      map.set(accountId, Number(row?.balance || 0));
+    }
+    return map;
+  }, [createAccountBalanceRows]);
   const unitsById = useMemo(() => {
     const map = new Map();
     for (const unit of units) {
@@ -305,6 +319,65 @@ export default function JournalWorkbenchPage() {
         (account) => String(account.account_type || "").toUpperCase() === "EQUITY"
       ),
     [postableAccounts]
+  );
+  const postableAccountOptions = useMemo(
+    () =>
+      postableAccounts.map((account) => {
+        const accountId = toInt(account.id);
+        const hasBalanceContext =
+          Boolean(canReadTrialBalance) &&
+          Boolean(selectedBookId) &&
+          Boolean(resolvedCreatePeriodId);
+        return {
+          value: String(account.id),
+          label: `${account.code} - ${account.name}`,
+          description: String(account.account_type || "").toUpperCase(),
+          accountType: String(account.account_type || "").toUpperCase(),
+          balance: hasBalanceContext
+            ? Number(createAccountBalanceById.get(accountId) || 0)
+            : null,
+        };
+      }),
+    [
+      postableAccounts,
+      canReadTrialBalance,
+      selectedBookId,
+      resolvedCreatePeriodId,
+      createAccountBalanceById,
+    ]
+  );
+  const renderPostableAccountOption = useCallback(
+    ({ option, isHighlighted, isSelected, disabled }) => {
+      const balanceText =
+        option?.balance === null
+          ? l("Period required", "Donem gerekli")
+          : `${formatAmount(option.balance)} ${String(journal.currencyCode || "").toUpperCase()}`;
+      const rowClass = disabled
+        ? "cursor-not-allowed text-slate-400"
+        : isHighlighted
+          ? "bg-cyan-50 text-cyan-900"
+          : isSelected
+            ? "bg-slate-100 text-slate-900"
+            : "text-slate-700 hover:bg-slate-50";
+
+      return (
+        <div className={`rounded px-2 py-1.5 ${rowClass}`}>
+          <div className="flex items-start gap-2">
+            <div className="min-w-0 flex-1">
+              <div className="truncate">{option?.label || "-"}</div>
+              <div className="mt-0.5 truncate text-[10px] text-slate-500">
+                {option?.accountType || l("Account", "Hesap")}
+              </div>
+            </div>
+            <div className="shrink-0 text-right">
+              <div className="text-[11px] font-semibold text-slate-700">{balanceText}</div>
+              <div className="text-[10px] text-slate-500">{l("Balance", "Bakiye")}</div>
+            </div>
+          </div>
+        </div>
+      );
+    },
+    [journal.currencyCode, l]
   );
 
   const lineTotals = useMemo(() => {
@@ -626,6 +699,41 @@ export default function JournalWorkbenchPage() {
       };
     });
   }, [resolvedCreatePeriodId]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadCreateAccountBalances() {
+      if (!canReadTrialBalance || !selectedBookId || !resolvedCreatePeriodId) {
+        setCreateAccountBalanceRows([]);
+        return;
+      }
+
+      setLoadingCreateAccountBalances(true);
+      try {
+        const res = await getTrialBalance({
+          bookId: selectedBookId,
+          fiscalPeriodId: resolvedCreatePeriodId,
+          includeRollup: false,
+        });
+        if (cancelled) return;
+        setCreateAccountBalanceRows(Array.isArray(res?.rows) ? res.rows : []);
+      } catch {
+        if (!cancelled) {
+          setCreateAccountBalanceRows([]);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingCreateAccountBalances(false);
+        }
+      }
+    }
+
+    loadCreateAccountBalances();
+    return () => {
+      cancelled = true;
+    };
+  }, [canReadTrialBalance, selectedBookId, resolvedCreatePeriodId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1225,6 +1333,22 @@ export default function JournalWorkbenchPage() {
       if (prev.length <= 2) return prev;
       return prev.filter((line) => line.id !== lineId);
     });
+  }
+
+  function formatCreateLineAccountBalance(accountIdRaw) {
+    if (!canReadTrialBalance) {
+      return l("No permission", "Yetki yok");
+    }
+    if (!resolvedCreatePeriodId) {
+      return l("Select period date", "Donem tarihi secin");
+    }
+    if (loadingCreateAccountBalances) {
+      return l("Loading...", "Yukleniyor...");
+    }
+
+    const accountId = toInt(accountIdRaw);
+    const balance = accountId ? Number(createAccountBalanceById.get(accountId) || 0) : 0;
+    return `${formatAmount(balance)} ${String(journal.currencyCode || "").toUpperCase()}`;
   }
 
   async function onCreateJournal(event) {
@@ -1902,11 +2026,34 @@ export default function JournalWorkbenchPage() {
                   <tr key={line.id} className="border-t border-slate-100">
                     <td className="px-2 py-2 text-slate-500">{index + 1}</td>
                     <td className="px-2 py-2">
-                      {postableAccounts.length > 0 ? (
-                        <select value={line.accountId} onChange={(event) => updateLine(line.id, "accountId", event.target.value)} className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs" required>
-                          <option value="">{l("Account", "Hesap")}</option>
-                          {postableAccounts.map((account) => <option key={account.id} value={account.id}>{account.code} - {account.name}</option>)}
-                        </select>
+                      {postableAccountOptions.length > 0 ? (
+                        <>
+                          <Combobox
+                            value={line.accountId || null}
+                            options={postableAccountOptions}
+                            clearable={false}
+                            disabled={!canReadAccounts}
+                            placeholder={l("Search/select account", "Hesap ara/sec")}
+                            noOptionsText={l("No account found.", "Hesap bulunamadi.")}
+                            inputClassName="px-2 py-1.5 pr-14 text-xs"
+                            listClassName="text-xs"
+                            optionClassName="text-xs"
+                            renderOption={renderPostableAccountOption}
+                            onChange={(nextValue) =>
+                              updateLine(
+                                line.id,
+                                "accountId",
+                                nextValue ? String(nextValue) : ""
+                              )
+                            }
+                          />
+                          <div className="mt-1 text-[10px] text-slate-500">
+                            {l("Balance", "Bakiye")}:{" "}
+                            <span className="font-medium text-slate-700">
+                              {formatCreateLineAccountBalance(line.accountId)}
+                            </span>
+                          </div>
+                        </>
                       ) : (
                         <input type="number" min={1} value={line.accountId} onChange={(event) => updateLine(line.id, "accountId", event.target.value)} className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs" placeholder={l("Account ID", "Hesap ID")} required />
                       )}
