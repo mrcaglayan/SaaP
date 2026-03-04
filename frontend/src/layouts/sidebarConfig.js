@@ -140,6 +140,24 @@ export const sidebarItems = [
         implemented: true,
       },
       {
+        label: "Kasa Kur Degisimleri",
+        to: "/app/kasa-kur-degisimleri",
+        requiredPermissions: ["cash.txn.read"],
+        implemented: true,
+      },
+      {
+        label: "Kasa Kur Raporlari",
+        to: "/app/kasa-kur-raporlari",
+        requiredPermissions: ["cash.report.read"],
+        implemented: true,
+      },
+      {
+        label: "Kasa Kur Ops Dashboard",
+        to: "/app/kasa-kur-ops-dashboard",
+        requiredPermissions: ["cash.report.read"],
+        implemented: true,
+      },
+      {
         label: "Kasa Istisnalari",
         to: "/app/kasa-istisnalari",
         requiredPermissions: ["cash.report.read"],

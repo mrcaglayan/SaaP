@@ -26,7 +26,7 @@ import {
   listOperatingUnits,
 } from "../api/orgAdmin.js";
 import { useAuth } from "../auth/useAuth.js";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { useWorkingContextDefaults } from "../context/useWorkingContextDefaults.js";
 import { usePersistedFilters } from "../hooks/usePersistedFilters.js";
 import { useToastMessage } from "../hooks/useToastMessage.js";
@@ -67,6 +67,13 @@ const JOURNAL_REVERSE_SOURCE_DESTINATIONS = Object.freeze({
 const JOURNAL_REVERSE_BLOCK_SOURCE_TYPES = new Set(
   Object.keys(JOURNAL_REVERSE_SOURCE_DESTINATIONS)
 );
+const PERIOD_CLOSE_FX_GATE_REQUIRED_CODE = "CASH_FX_REVALUATION_REQUIRED";
+const PERIOD_CLOSE_FX_GATE_REVERSAL_CODE =
+  "CASH_FX_REVALUATION_REVERSAL_REQUIRED";
+const PERIOD_CLOSE_FX_GATE_CODES = new Set([
+  PERIOD_CLOSE_FX_GATE_REQUIRED_CODE,
+  PERIOD_CLOSE_FX_GATE_REVERSAL_CODE,
+]);
 
 function normalizeSourceRefType(value) {
   return String(value || "")
@@ -126,6 +133,32 @@ function hasId(rows, id) {
 
 function toDateOnly(value) {
   return String(value || "").trim().slice(0, 10);
+}
+
+function normalizeErrorCode(value) {
+  return String(value || "")
+    .trim()
+    .toUpperCase();
+}
+
+function normalizePeriodCloseFxGate(error) {
+  const data = error?.response?.data || {};
+  const code = normalizeErrorCode(data?.code);
+  if (!PERIOD_CLOSE_FX_GATE_CODES.has(code)) {
+    return null;
+  }
+  return {
+    code,
+    message: String(data?.message || error?.message || "Period close is blocked."),
+    details:
+      data?.details && typeof data.details === "object" && !Array.isArray(data.details)
+        ? data.details
+        : {},
+    requestId:
+      data?.requestId ||
+      error?.response?.headers?.["x-request-id"] ||
+      null,
+  };
 }
 
 function isIsoDateOnly(value) {
@@ -232,6 +265,7 @@ export default function JournalWorkbenchPage() {
   const canReverse = hasPermission("gl.journal.reverse");
   const canReadTrialBalance = hasPermission("gl.trial_balance.read");
   const canClosePeriod = hasPermission("gl.period.close");
+  const canOverrideCashFxRevaluation = hasPermission("cash.fx.revaluation.override");
   const canReadIntercompanyFlags = hasPermission("intercompany.flag.read");
   const canUpsertIntercompanyFlags = hasPermission("intercompany.flag.upsert");
   const canUpsertIntercompanyPairs = hasPermission("intercompany.pair.upsert");
@@ -294,9 +328,12 @@ export default function JournalWorkbenchPage() {
     closeStatus: "SOFT_CLOSED",
     retainedEarningsAccountId: "",
     note: "",
+    cashFxRevaluationOverride: false,
+    cashFxRevaluationOverrideReason: "",
     reopenReason: "",
   });
   const [periodCloseRuns, setPeriodCloseRuns] = useState([]);
+  const [periodCloseFxGate, setPeriodCloseFxGate] = useState(null);
 
   const [historyFilters, setHistoryFilters, resetHistoryFilters] = usePersistedFilters(
     JOURNAL_HISTORY_FILTERS_STORAGE_SCOPE,
@@ -540,6 +577,47 @@ export default function JournalWorkbenchPage() {
     () => entities.find((entity) => Number(entity.id) === Number(selectedLegalEntityId)) || null,
     [entities, selectedLegalEntityId]
   );
+  const showPeriodCloseFxOverrideControls = canOverrideCashFxRevaluation;
+  const periodCloseFxGateDetails = useMemo(() => {
+    if (!periodCloseFxGate) {
+      return [];
+    }
+
+    const details = periodCloseFxGate.details || {};
+    if (periodCloseFxGate.code === PERIOD_CLOSE_FX_GATE_REQUIRED_CODE) {
+      return [
+        { label: l("Run Type", "Calisma Turu"), value: details.runType || "-" },
+        {
+          label: l("Period End", "Donem Sonu"),
+          value: toDateOnly(details.periodEndDate) || "-",
+        },
+        {
+          label: l("Foreign Balances", "Yabanci Para Bakiye"),
+          value: String(Number(details.foreignBalanceCount || 0)),
+        },
+      ];
+    }
+
+    return [
+      { label: l("Reason Code", "Neden Kodu"), value: details.reasonCode || "-" },
+      {
+        label: l("Previous Period", "Onceki Donem"),
+        value: details.previousFiscalPeriodId || "-",
+      },
+      {
+        label: l("Previous Run Type", "Onceki Calisma Turu"),
+        value: details.previousRunType || "-",
+      },
+      {
+        label: l("Previous Run", "Onceki Calisma"),
+        value: details.previousRunId ? `#${details.previousRunId}` : "-",
+      },
+      {
+        label: l("Reversal Journal", "Ters Kayit Fisi"),
+        value: details.reversalJournalEntryId ? `#${details.reversalJournalEntryId}` : "-",
+      },
+    ];
+  }, [l, periodCloseFxGate]);
   const selectedEntityIntercompanyEnabled = Boolean(
     selectedLegalEntity?.is_intercompany_enabled ?? true
   );
@@ -550,6 +628,10 @@ export default function JournalWorkbenchPage() {
     selectedEntityIntercompanyEnabled &&
     selectedEntityPartnerRequired &&
     String(journal.sourceType || "").toUpperCase() === "INTERCOMPANY";
+
+  useEffect(() => {
+    setPeriodCloseFxGate(null);
+  }, [periodForm.bookId, periodForm.periodId]);
 
   const journalContextMappings = useMemo(
     () => [
@@ -2131,19 +2213,39 @@ export default function JournalWorkbenchPage() {
       return;
     }
 
+    const requestedCashFxOverride =
+      showPeriodCloseFxOverrideControls &&
+      Boolean(periodCloseForm.cashFxRevaluationOverride);
+    const cashFxOverrideReason = periodCloseForm.cashFxRevaluationOverrideReason.trim();
+    if (requestedCashFxOverride && !cashFxOverrideReason) {
+      setError(
+        l(
+          "cashFxRevaluationOverrideReason is required when FX override is enabled.",
+          "Kur override aciksa cashFxRevaluationOverrideReason zorunludur."
+        )
+      );
+      return;
+    }
+
     setSaving("periodCloseRun");
     setError("");
     setMessage("");
+    setPeriodCloseFxGate(null);
     try {
       const res = await runPeriodClose(bookId, periodId, {
         closeStatus: periodCloseForm.closeStatus,
         retainedEarningsAccountId: retainedEarningsAccountId || undefined,
         note: periodCloseForm.note.trim() || undefined,
+        cashFxRevaluationOverride: requestedCashFxOverride || undefined,
+        cashFxRevaluationOverrideReason: requestedCashFxOverride
+          ? cashFxOverrideReason
+          : undefined,
       });
 
       const runId = res?.run?.id || "-";
       const carryLineCount = Number(res?.carryForwardLineCount || 0);
       const yearEndLineCount = Number(res?.yearEndLineCount || 0);
+      setPeriodCloseFxGate(null);
       setMessage(
         res?.idempotent
           ? l(
@@ -2158,6 +2260,13 @@ export default function JournalWorkbenchPage() {
 
       await onLoadPeriodCloseRuns();
     } catch (err) {
+      const fxGate = normalizePeriodCloseFxGate(err);
+      if (fxGate) {
+        setPeriodCloseFxGate(fxGate);
+        setError("");
+        return;
+      }
+      setPeriodCloseFxGate(null);
       setError(
         err?.response?.data?.message || l("Failed to execute period close run.", "Donem kapanis calismasi baslatilamadi.")
       );
@@ -2640,6 +2749,63 @@ export default function JournalWorkbenchPage() {
             <button type="submit" disabled={saving === "periodStatus" || !canClosePeriod} className="rounded bg-slate-900 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60 md:col-span-2">{saving === "periodStatus" ? l("Saving...", "Kaydediliyor...") : l("Update Status", "Durumu Guncelle")}</button>
           </form>
 
+          {periodCloseFxGate ? (
+            <div className="rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+              <div className="font-semibold">
+                {l("Cash FX close gate blocked this close run.", "Nakit kur kapanis kapisi bu kapanisi engelledi.")}
+              </div>
+              <div className="mt-1 text-xs text-amber-800">{periodCloseFxGate.message}</div>
+              <div className="mt-3 grid gap-2 md:grid-cols-3">
+                {periodCloseFxGateDetails.map((detail) => (
+                  <div
+                    key={`${periodCloseFxGate.code}-${detail.label}`}
+                    className="rounded border border-amber-200 bg-white/70 px-3 py-2"
+                  >
+                    <div className="text-[11px] font-semibold uppercase tracking-wide text-amber-700">
+                      {detail.label}
+                    </div>
+                    <div className="mt-1 text-sm text-slate-800">{detail.value}</div>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2 text-xs font-semibold">
+                <Link
+                  className="rounded border border-cyan-300 bg-white px-2 py-1 text-cyan-800"
+                  to="/app/kasa-kur-raporlari"
+                >
+                  {l("Open Cash FX Reports", "Kasa kur raporlarini ac")}
+                </Link>
+                <Link
+                  className="rounded border border-cyan-300 bg-white px-2 py-1 text-cyan-800"
+                  to="/app/kasa-kur-ops-dashboard"
+                >
+                  {l("Open FX Ops Dashboard", "Kur operasyon panelini ac")}
+                </Link>
+              </div>
+              <div className="mt-3 text-xs text-amber-800">
+                {periodCloseFxGate.code === PERIOD_CLOSE_FX_GATE_REQUIRED_CODE
+                  ? showPeriodCloseFxOverrideControls
+                    ? l(
+                        "If business needs require it, enable the override fields below and provide a reason before rerunning close.",
+                        "Is geregi gerekiyorsa, asagidaki override alanlarini acip neden girerek kapanisi tekrar calistirin."
+                      )
+                    : l(
+                        "Run cash FX revaluation first. Override is restricted to users with cash.fx.revaluation.override.",
+                        "Once nakit kur degerlemesini calistirin. Override yalnizca cash.fx.revaluation.override yetkili kullanicilar icindir."
+                      )
+                  : l(
+                      "This reversal integrity issue must be corrected before close can proceed; override is not available for this gate.",
+                      "Bu ters kayit butunluk sorunu duzeltilmeden kapanis ilerleyemez; bu kapida override kullanilamaz."
+                    )}
+              </div>
+              {periodCloseFxGate.requestId ? (
+                <div className="mt-2 text-[11px] text-amber-700">
+                  requestId: {periodCloseFxGate.requestId}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
           <form onSubmit={onExecutePeriodClose} className="grid gap-2 md:grid-cols-2">
             <select value={periodCloseForm.closeStatus} onChange={(event) => setPeriodCloseForm((prev) => ({ ...prev, closeStatus: event.target.value }))} className="w-full rounded border border-slate-300 px-3 py-2 text-sm">
               {["SOFT_CLOSED", "HARD_CLOSED"].map((status) => (
@@ -2661,6 +2827,41 @@ export default function JournalWorkbenchPage() {
               <input type="number" min={1} value={periodCloseForm.retainedEarningsAccountId} onChange={(event) => setPeriodCloseForm((prev) => ({ ...prev, retainedEarningsAccountId: event.target.value }))} className="w-full rounded border border-slate-300 px-3 py-2 text-sm" placeholder={l("Retained earnings account ID (year-end)", "Gecmis yil kar/zarar hesap ID (yil sonu)")} />
             )}
             <input value={periodCloseForm.note} onChange={(event) => setPeriodCloseForm((prev) => ({ ...prev, note: event.target.value }))} className="w-full rounded border border-slate-300 px-3 py-2 text-sm md:col-span-2" placeholder={l("Auto close note (optional)", "Otomatik kapanis notu (opsiyonel)")} />
+            {showPeriodCloseFxOverrideControls ? (
+              <>
+                <label className="inline-flex items-center gap-2 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 md:col-span-2">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(periodCloseForm.cashFxRevaluationOverride)}
+                    onChange={(event) =>
+                      setPeriodCloseForm((prev) => ({
+                        ...prev,
+                        cashFxRevaluationOverride: event.target.checked,
+                      }))
+                    }
+                  />
+                  {l(
+                    "Allow FX close-gate override for this run",
+                    "Bu calisma icin kur kapanis kapisi override kullan"
+                  )}
+                </label>
+                <textarea
+                  value={periodCloseForm.cashFxRevaluationOverrideReason}
+                  onChange={(event) =>
+                    setPeriodCloseForm((prev) => ({
+                      ...prev,
+                      cashFxRevaluationOverrideReason: event.target.value,
+                    }))
+                  }
+                  disabled={!periodCloseForm.cashFxRevaluationOverride}
+                  className="min-h-[88px] w-full rounded border border-slate-300 px-3 py-2 text-sm md:col-span-2 disabled:bg-slate-50 disabled:text-slate-400"
+                  placeholder={l(
+                    "FX override reason (required when enabled)",
+                    "Kur override nedeni (aktifse zorunlu)"
+                  )}
+                />
+              </>
+            ) : null}
             <div className="flex flex-wrap items-center gap-2 md:col-span-2">
               <button type="submit" disabled={saving === "periodCloseRun" || !canClosePeriod} className="rounded bg-cyan-700 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60">{saving === "periodCloseRun" ? l("Running...", "Calisiyor...") : l("Run Auto Close", "Otomatik Kapanisi Calistir")}</button>
               <button type="button" onClick={onLoadPeriodCloseRuns} disabled={saving === "periodCloseRuns" || !canClosePeriod} className="rounded border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 disabled:opacity-60">{saving === "periodCloseRuns" ? l("Loading...", "Yukleniyor...") : l("Load Close Runs", "Kapanis Calismalarini Yukle")}</button>

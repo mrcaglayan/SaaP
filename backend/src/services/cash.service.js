@@ -136,9 +136,15 @@ function invertLines(lines) {
 
 function buildCashPostingLines(cashTxn) {
   const txnType = asUpper(cashTxn.txn_type);
-  const amount = Number(toAmount(cashTxn.amount).toFixed(6));
-  if (!(amount > 0)) {
+  const amountTxn = Number(toAmount(cashTxn.amount).toFixed(6));
+  const amountBase = Number(
+    toAmount(cashTxn.amount_base ?? cashTxn.amount).toFixed(6)
+  );
+  if (!(amountTxn > 0)) {
     throw badRequest("Cash transaction amount must be > 0 for posting");
+  }
+  if (!(amountBase > 0)) {
+    throw badRequest("Cash transaction amount_base must be > 0 for posting");
   }
 
   const registerAccountId = requireAccountId(
@@ -171,7 +177,7 @@ function buildCashPostingLines(cashTxn) {
       buildBaseLine({
         accountId: registerAccountId,
         operatingUnitId: cashTxn.operating_unit_id,
-        debitBase: amount,
+        debitBase: amountBase,
         creditBase: 0,
         description: lineDescription,
         subledgerReferenceNo,
@@ -180,7 +186,7 @@ function buildCashPostingLines(cashTxn) {
         accountId: requireAccountId(counterAccountId, "counterAccountId"),
         operatingUnitId: cashTxn.operating_unit_id,
         debitBase: 0,
-        creditBase: amount,
+        creditBase: amountBase,
         description: lineDescription,
         subledgerReferenceNo,
       }),
@@ -194,7 +200,7 @@ function buildCashPostingLines(cashTxn) {
       buildBaseLine({
         accountId: requireAccountId(counterAccountId, "counterAccountId"),
         operatingUnitId: cashTxn.operating_unit_id,
-        debitBase: amount,
+        debitBase: amountBase,
         creditBase: 0,
         description: lineDescription,
         subledgerReferenceNo,
@@ -203,7 +209,7 @@ function buildCashPostingLines(cashTxn) {
         accountId: registerAccountId,
         operatingUnitId: cashTxn.operating_unit_id,
         debitBase: 0,
-        creditBase: amount,
+        creditBase: amountBase,
         description: lineDescription,
         subledgerReferenceNo,
       }),
@@ -230,7 +236,7 @@ function buildCashPostingLines(cashTxn) {
         buildBaseLine({
           accountId: registerAccountId,
           operatingUnitId: cashTxn.operating_unit_id,
-          debitBase: amount,
+          debitBase: amountBase,
           creditBase: 0,
           description: lineDescription,
           subledgerReferenceNo,
@@ -239,7 +245,7 @@ function buildCashPostingLines(cashTxn) {
           accountId: resolvedCounterAccountId,
           operatingUnitId: cashTxn.operating_unit_id,
           debitBase: 0,
-          creditBase: amount,
+          creditBase: amountBase,
           description: lineDescription,
           subledgerReferenceNo,
         }),
@@ -250,7 +256,7 @@ function buildCashPostingLines(cashTxn) {
         buildBaseLine({
           accountId: resolvedCounterAccountId,
           operatingUnitId: cashTxn.operating_unit_id,
-          debitBase: amount,
+          debitBase: amountBase,
           creditBase: 0,
           description: lineDescription,
           subledgerReferenceNo,
@@ -259,7 +265,7 @@ function buildCashPostingLines(cashTxn) {
           accountId: registerAccountId,
           operatingUnitId: cashTxn.operating_unit_id,
           debitBase: 0,
-          creditBase: amount,
+          creditBase: amountBase,
           description: lineDescription,
           subledgerReferenceNo,
         }),
@@ -275,7 +281,7 @@ function buildCashPostingLines(cashTxn) {
             "counterCashRegisterId account"
           ),
           operatingUnitId: cashTxn.counter_cash_register_operating_unit_id,
-          debitBase: amount,
+          debitBase: amountBase,
           creditBase: 0,
           description: lineDescription,
           subledgerReferenceNo,
@@ -284,7 +290,7 @@ function buildCashPostingLines(cashTxn) {
           accountId: registerAccountId,
           operatingUnitId: cashTxn.operating_unit_id,
           debitBase: 0,
-          creditBase: amount,
+          creditBase: amountBase,
           description: lineDescription,
           subledgerReferenceNo,
         }),
@@ -297,7 +303,7 @@ function buildCashPostingLines(cashTxn) {
             "counterAccountId (CASH_IN_TRANSIT)"
           ),
           operatingUnitId: cashTxn.operating_unit_id,
-          debitBase: amount,
+          debitBase: amountBase,
           creditBase: 0,
           description: lineDescription,
           subledgerReferenceNo,
@@ -306,7 +312,7 @@ function buildCashPostingLines(cashTxn) {
           accountId: registerAccountId,
           operatingUnitId: cashTxn.operating_unit_id,
           debitBase: 0,
-          creditBase: amount,
+          creditBase: amountBase,
           description: lineDescription,
           subledgerReferenceNo,
         }),
@@ -319,7 +325,7 @@ function buildCashPostingLines(cashTxn) {
         buildBaseLine({
           accountId: registerAccountId,
           operatingUnitId: cashTxn.operating_unit_id,
-          debitBase: amount,
+          debitBase: amountBase,
           creditBase: 0,
           description: lineDescription,
           subledgerReferenceNo,
@@ -331,7 +337,7 @@ function buildCashPostingLines(cashTxn) {
           ),
           operatingUnitId: cashTxn.counter_cash_register_operating_unit_id,
           debitBase: 0,
-          creditBase: amount,
+          creditBase: amountBase,
           description: lineDescription,
           subledgerReferenceNo,
         }),
@@ -341,7 +347,7 @@ function buildCashPostingLines(cashTxn) {
         buildBaseLine({
           accountId: registerAccountId,
           operatingUnitId: cashTxn.operating_unit_id,
-          debitBase: amount,
+          debitBase: amountBase,
           creditBase: 0,
           description: lineDescription,
           subledgerReferenceNo,
@@ -353,7 +359,7 @@ function buildCashPostingLines(cashTxn) {
           ),
           operatingUnitId: cashTxn.operating_unit_id,
           debitBase: 0,
-          creditBase: amount,
+          creditBase: amountBase,
           description: lineDescription,
           subledgerReferenceNo,
         }),
@@ -458,12 +464,6 @@ export async function createAndPostCashJournalTx(tx, payload) {
     legalEntityId,
     bookDate,
   });
-  const bookBaseCurrencyCode = asUpper(journalContext.book?.base_currency_code);
-  if (bookBaseCurrencyCode && bookBaseCurrencyCode !== currencyCode) {
-    throw badRequest(
-      `cashTransaction.currency_code (${currencyCode}) must match book base currency (${bookBaseCurrencyCode})`
-    );
-  }
 
   const lines = buildCashPostingLines(cashTxn);
   for (let i = 0; i < lines.length; i += 1) {
@@ -485,6 +485,10 @@ export async function createAndPostCashJournalTx(tx, payload) {
   const postingReference = `${CASH_TXN_SUBLEDGER_PREFIX}${txnId}`;
   const effectiveReferenceNo = referenceNo || postingReference;
   const effectiveDescription = entryDescription || `Cash ${asUpper(cashTxn.txn_type)} ${cashTxn.txn_no}`;
+  const txnAmountMagnitude = Number(toAmount(cashTxn.amount).toFixed(6));
+  if (!(txnAmountMagnitude > 0)) {
+    throw badRequest("Cash transaction amount must be > 0 for journal_lines.amount_txn");
+  }
 
   const journalResult = await tx.query(
     `INSERT INTO journal_entries (
@@ -541,7 +545,12 @@ export async function createAndPostCashJournalTx(tx, payload) {
     const line = lines[i];
     const debitBase = Number(toAmount(line.debitBase).toFixed(6));
     const creditBase = Number(toAmount(line.creditBase).toFixed(6));
-    const amountTxn = Number((debitBase - creditBase).toFixed(6));
+    const isDebitLine = debitBase > 0 && creditBase === 0;
+    const isCreditLine = creditBase > 0 && debitBase === 0;
+    if (!isDebitLine && !isCreditLine) {
+      throw badRequest("Cash posting line must have exactly one non-zero base side");
+    }
+    const amountTxn = Number((isDebitLine ? txnAmountMagnitude : -txnAmountMagnitude).toFixed(6));
 
     // eslint-disable-next-line no-await-in-loop
     await tx.query(

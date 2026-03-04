@@ -37,6 +37,7 @@ import {
 } from "./cash.queries.js";
 import { assertRegisterOperationalConfig } from "./cash.register.service.js";
 import { createAndPostCashJournalTx } from "./cash.service.js";
+import { applyCashFxPositionForPostedTransactionTx } from "./cash.fx.position.service.js";
 import {
   CARI_SETTLEMENT_FOLLOW_UP_RISKS,
   applyCariSettlement,
@@ -61,6 +62,11 @@ const TRANSIT_STATUS_IN_TRANSIT = "IN_TRANSIT";
 const TRANSIT_STATUS_RECEIVED = "RECEIVED";
 const TRANSIT_STATUS_CANCELED = "CANCELED";
 const TRANSIT_STATUS_REVERSED = "REVERSED";
+const AMOUNT_EPSILON = 0.000001;
+const FX_RATE_EPSILON = 0.0000000001;
+const FX_RATE_TYPE_SPOT = "SPOT";
+const FX_FALLBACK_MODE_EXACT_ONLY = "EXACT_ONLY";
+const FX_FALLBACK_MODE_PRIOR_DATE = "PRIOR_DATE";
 
 function nowMysqlDateTime() {
   return new Date().toISOString().slice(0, 19).replace("T", " ");
@@ -92,6 +98,262 @@ function normalizeCurrency(value) {
   return String(value || "")
     .trim()
     .toUpperCase();
+}
+
+function normalizeOptionalPositiveDecimal(value, label) {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw badRequest(`${label} must be a numeric value greater than 0`);
+  }
+  return Number(parsed.toFixed(10));
+}
+
+function normalizeOptionalNonNegativeInt(value, label) {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw badRequest(`${label} must be a non-negative integer`);
+  }
+  return parsed;
+}
+
+function normalizeCashFxFallbackMode(value) {
+  const normalized = asUpper(value || FX_FALLBACK_MODE_EXACT_ONLY);
+  if (
+    normalized !== FX_FALLBACK_MODE_EXACT_ONLY &&
+    normalized !== FX_FALLBACK_MODE_PRIOR_DATE
+  ) {
+    throw badRequest("fxFallbackMode must be EXACT_ONLY or PRIOR_DATE");
+  }
+  return normalized;
+}
+
+function normalizeCashFxFallbackMaxDays(value, fallbackMode) {
+  const normalized = normalizeOptionalNonNegativeInt(value, "fxFallbackMaxDays");
+  if (normalized !== null && fallbackMode !== FX_FALLBACK_MODE_PRIOR_DATE) {
+    throw badRequest("fxFallbackMaxDays is only supported when fxFallbackMode=PRIOR_DATE");
+  }
+  return normalized;
+}
+
+function amountsAreClose(left, right, epsilon = AMOUNT_EPSILON) {
+  return Math.abs(Number(left || 0) - Number(right || 0)) <= epsilon;
+}
+
+async function resolveBookBaseCurrencyCodeForLegalEntity({
+  tenantId,
+  legalEntityId,
+  runQuery = query,
+}) {
+  const result = await runQuery(
+    `SELECT base_currency_code
+     FROM books
+     WHERE tenant_id = ?
+       AND legal_entity_id = ?
+     ORDER BY
+       CASE WHEN book_type = 'LOCAL' THEN 0 ELSE 1 END,
+       id ASC
+     LIMIT 1`,
+    [tenantId, legalEntityId]
+  );
+  const baseCurrencyCode = normalizeCurrency(result.rows?.[0]?.base_currency_code);
+  if (!baseCurrencyCode || baseCurrencyCode.length !== 3) {
+    throw badRequest("Book base currency is not configured for register legal entity");
+  }
+  return baseCurrencyCode;
+}
+
+async function resolveCashTransactionFxPolicy({
+  tenantId,
+  bookDate,
+  transactionCurrencyCode,
+  baseCurrencyCode,
+  amountTxn,
+  amountBase,
+  providedFxRate,
+  providedFxRateSource,
+  providedFxRateDate,
+  fxFallbackMode,
+  fxFallbackMaxDays,
+  runQuery = query,
+}) {
+  const normalizedBookDate = toDateOnly(bookDate, "bookDate");
+  const transactionCurrency = normalizeCurrency(transactionCurrencyCode);
+  const baseCurrency = normalizeCurrency(baseCurrencyCode);
+  const normalizedAmountTxn = normalizePositiveAmount(amountTxn, "amount");
+  const normalizedAmountBase =
+    amountBase === undefined || amountBase === null || amountBase === ""
+      ? null
+      : normalizePositiveAmount(amountBase, "amountBase");
+  const normalizedProvidedFxRate = normalizeOptionalPositiveDecimal(providedFxRate, "fxRate");
+  const normalizedProvidedFxRateSource =
+    String(providedFxRateSource || "").trim().slice(0, 40) || null;
+  const normalizedProvidedFxRateDate = providedFxRateDate
+    ? toDateOnly(providedFxRateDate, "fxRateDate")
+    : normalizedBookDate;
+  const normalizedFallbackMode = normalizeCashFxFallbackMode(fxFallbackMode);
+  const normalizedFallbackMaxDays = normalizeCashFxFallbackMaxDays(
+    fxFallbackMaxDays,
+    normalizedFallbackMode
+  );
+
+  if (!transactionCurrency || transactionCurrency.length !== 3) {
+    throw badRequest("currencyCode must be a valid 3-letter code");
+  }
+  if (!baseCurrency || baseCurrency.length !== 3) {
+    throw badRequest("Base currency must be a valid 3-letter code");
+  }
+
+  if (transactionCurrency === baseCurrency) {
+    if (
+      normalizedProvidedFxRate !== null &&
+      Math.abs(normalizedProvidedFxRate - 1) > FX_RATE_EPSILON
+    ) {
+      throw badRequest("fxRate must be 1 when transaction currency equals book base currency");
+    }
+    if (
+      normalizedAmountBase !== null &&
+      !amountsAreClose(normalizedAmountBase, normalizedAmountTxn)
+    ) {
+      throw badRequest(
+        "amountBase must equal amount when transaction currency equals book base currency"
+      );
+    }
+
+    return {
+      amountBase: normalizedAmountTxn,
+      fxRate: 1,
+      fxRateSource: normalizedProvidedFxRateSource || "PARITY",
+      fxRateDate: normalizedProvidedFxRateDate,
+      fxFallbackMode: fxFallbackMode ? normalizedFallbackMode : null,
+      fxFallbackMaxDays: fxFallbackMode ? normalizedFallbackMaxDays : null,
+    };
+  }
+
+  if (normalizedProvidedFxRate !== null && normalizedAmountBase !== null) {
+    const expectedBase = Number((normalizedAmountTxn * normalizedProvidedFxRate).toFixed(6));
+    if (!amountsAreClose(expectedBase, normalizedAmountBase)) {
+      throw badRequest("amountBase must equal amount * fxRate");
+    }
+    return {
+      amountBase: normalizedAmountBase,
+      fxRate: normalizedProvidedFxRate,
+      fxRateSource: normalizedProvidedFxRateSource || "REQUEST",
+      fxRateDate: normalizedProvidedFxRateDate,
+      fxFallbackMode: normalizedFallbackMode,
+      fxFallbackMaxDays: normalizedFallbackMaxDays,
+    };
+  }
+
+  if (normalizedProvidedFxRate !== null) {
+    return {
+      amountBase: Number((normalizedAmountTxn * normalizedProvidedFxRate).toFixed(6)),
+      fxRate: normalizedProvidedFxRate,
+      fxRateSource: normalizedProvidedFxRateSource || "REQUEST",
+      fxRateDate: normalizedProvidedFxRateDate,
+      fxFallbackMode: normalizedFallbackMode,
+      fxFallbackMaxDays: normalizedFallbackMaxDays,
+    };
+  }
+
+  if (normalizedAmountBase !== null) {
+    return {
+      amountBase: normalizedAmountBase,
+      fxRate: Number((normalizedAmountBase / normalizedAmountTxn).toFixed(10)),
+      fxRateSource: normalizedProvidedFxRateSource || "DERIVED_FROM_AMOUNT_BASE",
+      fxRateDate: normalizedProvidedFxRateDate,
+      fxFallbackMode: normalizedFallbackMode,
+      fxFallbackMaxDays: normalizedFallbackMaxDays,
+    };
+  }
+
+  const exactResult = await runQuery(
+    `SELECT rate, rate_date
+     FROM fx_rates
+     WHERE tenant_id = ?
+       AND rate_date = ?
+       AND from_currency_code = ?
+       AND to_currency_code = ?
+       AND rate_type = ?
+     ORDER BY id DESC
+     LIMIT 1`,
+    [
+      tenantId,
+      normalizedProvidedFxRateDate,
+      transactionCurrency,
+      baseCurrency,
+      FX_RATE_TYPE_SPOT,
+    ]
+  );
+  const exactRow = exactResult.rows?.[0] || null;
+  const exactRate = normalizeOptionalPositiveDecimal(exactRow?.rate, "fxRates.rate");
+  if (exactRate !== null) {
+    return {
+      amountBase: Number((normalizedAmountTxn * exactRate).toFixed(6)),
+      fxRate: exactRate,
+      fxRateSource: "FX_TABLE_EXACT_SPOT",
+      fxRateDate: toDateOnly(exactRow?.rate_date || normalizedProvidedFxRateDate, "fxRateDate"),
+      fxFallbackMode: normalizedFallbackMode,
+      fxFallbackMaxDays: normalizedFallbackMaxDays,
+    };
+  }
+
+  if (normalizedFallbackMode === FX_FALLBACK_MODE_PRIOR_DATE) {
+    const fallbackParams = [
+      tenantId,
+      transactionCurrency,
+      baseCurrency,
+      FX_RATE_TYPE_SPOT,
+      normalizedProvidedFxRateDate,
+    ];
+    const fallbackExtraClause = normalizedFallbackMaxDays === null
+      ? ""
+      : "AND DATEDIFF(?, rate_date) <= ?";
+    if (normalizedFallbackMaxDays !== null) {
+      fallbackParams.push(normalizedProvidedFxRateDate, normalizedFallbackMaxDays);
+    }
+
+    const fallbackResult = await runQuery(
+      `SELECT rate, rate_date
+       FROM fx_rates
+       WHERE tenant_id = ?
+         AND from_currency_code = ?
+         AND to_currency_code = ?
+         AND rate_type = ?
+         AND rate_date < ?
+         ${fallbackExtraClause}
+       ORDER BY rate_date DESC, id DESC
+       LIMIT 1`,
+      fallbackParams
+    );
+    const fallbackRow = fallbackResult.rows?.[0] || null;
+    const fallbackRate = normalizeOptionalPositiveDecimal(fallbackRow?.rate, "fxRates.rate");
+    if (fallbackRate !== null) {
+      return {
+        amountBase: Number((normalizedAmountTxn * fallbackRate).toFixed(6)),
+        fxRate: fallbackRate,
+        fxRateSource: "FX_TABLE_PRIOR_SPOT",
+        fxRateDate: toDateOnly(fallbackRow?.rate_date, "fxRateDate"),
+        fxFallbackMode: normalizedFallbackMode,
+        fxFallbackMaxDays: normalizedFallbackMaxDays,
+      };
+    }
+
+    throw badRequest(
+      normalizedFallbackMaxDays === null
+        ? "fxRate is required because no exact-date SPOT FX rate exists and no prior SPOT FX rate was found"
+        : "fxRate is required because no exact-date SPOT FX rate exists and no prior SPOT FX rate was found within fxFallbackMaxDays"
+    );
+  }
+
+  throw badRequest(
+    "fxRate is required because no exact-date SPOT FX rate exists for bookDate and currency pair"
+  );
 }
 
 async function resolveSessionForCreate({
@@ -250,11 +512,28 @@ function normalizePositiveAmount(value, label) {
 }
 
 function toDateOnly(value, label) {
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) {
+      throw badRequest(`${label} must be YYYY-MM-DD`);
+    }
+    const year = value.getFullYear();
+    const month = String(value.getMonth() + 1).padStart(2, "0");
+    const day = String(value.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  }
+
   const raw = String(value || "").trim();
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+  if (/^\d{4}-\d{2}-\d{2}(?:\b|T)/.test(raw)) {
+    return raw.slice(0, 10);
+  }
+  if (!raw) {
     throw badRequest(`${label} must be YYYY-MM-DD`);
   }
-  return raw;
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) {
+    throw badRequest(`${label} must be YYYY-MM-DD`);
+  }
+  return parsed.toISOString().slice(0, 10);
 }
 
 function parseDuplicateKeyError(err, constraintName = null) {
@@ -880,6 +1159,25 @@ async function createTransferCashTransactionTx({
     requestedSessionId,
     runQuery: tx.query,
   });
+  const bookBaseCurrencyCode = await resolveBookBaseCurrencyCodeForLegalEntity({
+    tenantId,
+    legalEntityId: parsePositiveInt(register.legal_entity_id),
+    runQuery: tx.query,
+  });
+  const fxPolicy = await resolveCashTransactionFxPolicy({
+    tenantId,
+    bookDate,
+    transactionCurrencyCode: currencyCode,
+    baseCurrencyCode: bookBaseCurrencyCode,
+    amountTxn: amount,
+    amountBase: null,
+    providedFxRate: null,
+    providedFxRateSource: null,
+    providedFxRateDate: null,
+    fxFallbackMode: null,
+    fxFallbackMaxDays: null,
+    runQuery: tx.query,
+  });
   const txnNo = await generateCashTxnNoForLegalEntityYearTx({
     tenantId,
     legalEntityId: register.legal_entity_id,
@@ -899,7 +1197,13 @@ async function createTransferCashTransactionTx({
       txnDatetime,
       bookDate,
       amount: normalizeMoney(amount),
+      amountBase: normalizeMoney(fxPolicy.amountBase),
       currencyCode,
+      fxRate: Number(fxPolicy.fxRate).toFixed(10),
+      fxRateSource: fxPolicy.fxRateSource,
+      fxRateDate: fxPolicy.fxRateDate,
+      fxFallbackMode: fxPolicy.fxFallbackMode,
+      fxFallbackMaxDays: fxPolicy.fxFallbackMaxDays,
       description,
       referenceNo,
       sourceDocType: null,
@@ -1671,6 +1975,25 @@ export async function createCashTransaction({
         requestedSessionId: payload.cashSessionId,
         runQuery: tx.query,
       });
+      const bookBaseCurrencyCode = await resolveBookBaseCurrencyCodeForLegalEntity({
+        tenantId: payload.tenantId,
+        legalEntityId: parsePositiveInt(register.legal_entity_id),
+        runQuery: tx.query,
+      });
+      const fxPolicy = await resolveCashTransactionFxPolicy({
+        tenantId: payload.tenantId,
+        bookDate: payload.bookDate,
+        transactionCurrencyCode: payload.currencyCode,
+        baseCurrencyCode: bookBaseCurrencyCode,
+        amountTxn: payload.amount,
+        amountBase: payload.amountBase,
+        providedFxRate: payload.fxRate,
+        providedFxRateSource: payload.fxRateSource,
+        providedFxRateDate: payload.fxRateDate,
+        fxFallbackMode: payload.fxFallbackMode,
+        fxFallbackMaxDays: payload.fxFallbackMaxDays,
+        runQuery: tx.query,
+      });
 
       const txnNo = await generateCashTxnNoForLegalEntityYearTx({
         tenantId: payload.tenantId,
@@ -1691,7 +2014,13 @@ export async function createCashTransaction({
           txnDatetime: payload.txnDatetime,
           bookDate: payload.bookDate,
           amount: normalizeMoney(payload.amount),
+          amountBase: normalizeMoney(fxPolicy.amountBase),
           currencyCode: payload.currencyCode,
+          fxRate: Number(fxPolicy.fxRate).toFixed(10),
+          fxRateSource: fxPolicy.fxRateSource,
+          fxRateDate: fxPolicy.fxRateDate,
+          fxFallbackMode: fxPolicy.fxFallbackMode,
+          fxFallbackMaxDays: fxPolicy.fxFallbackMaxDays,
           description: payload.description,
           referenceNo: payload.referenceNo,
           sourceDocType: payload.sourceDocType,
@@ -1843,7 +2172,12 @@ async function createOrReplayCariUnappliedForCashTransaction({
   const settlementDate = toDateOnly(payload.settlementDate || cashTxn.book_date, "settlementDate");
   const integrationEventUid = payload.integrationEventUid || payload.idempotencyKey;
   const amountTxn = normalizePositiveAmount(cashTxn.amount, "cashTransaction.amount");
-  const amountBase = amountTxn;
+  const amountBase = normalizePositiveAmount(
+    cashTxn.amount_base === undefined || cashTxn.amount_base === null
+      ? amountTxn
+      : cashTxn.amount_base,
+    "cashTransaction.amountBase"
+  );
 
   const existingLinkedUnappliedId = parsePositiveInt(cashTxn.linked_cari_unapplied_cash_id);
   if (existingLinkedUnappliedId) {
@@ -2326,6 +2660,12 @@ export async function postCashTransactionById({
     }
 
     if (asUpper(row.status) === "POSTED") {
+      await applyCashFxPositionForPostedTransactionTx({
+        tenantId: payload.tenantId,
+        cashTransactionId: payload.transactionId,
+        cashTransactionRow: row,
+        runQuery: tx.query,
+      });
       return {
         row,
         idempotentReplay: true,
@@ -2399,6 +2739,14 @@ export async function postCashTransactionById({
       transactionId: payload.transactionId,
       runQuery: tx.query,
     });
+    if (saved) {
+      await applyCashFxPositionForPostedTransactionTx({
+        tenantId: payload.tenantId,
+        cashTransactionId: payload.transactionId,
+        cashTransactionRow: saved,
+        runQuery: tx.query,
+      });
+    }
 
     return {
       row: saved,
@@ -2457,6 +2805,12 @@ export async function reverseCashTransactionById({
     });
 
     if (asUpper(original.status) === "REVERSED" && existingReversal) {
+      await applyCashFxPositionForPostedTransactionTx({
+        tenantId: payload.tenantId,
+        cashTransactionId: parsePositiveInt(existingReversal.id),
+        cashTransactionRow: existingReversal,
+        runQuery: tx.query,
+      });
       return {
         original,
         reversal: existingReversal,
@@ -2498,7 +2852,23 @@ export async function reverseCashTransactionById({
           txnDatetime: nowMysqlDateTime(),
           bookDate: reversalBookDate,
           amount: normalizeMoney(original.amount),
+          amountBase: normalizeMoney(
+            original.amount_base === null || original.amount_base === undefined
+              ? original.amount
+              : original.amount_base
+          ),
           currencyCode: original.currency_code,
+          fxRate:
+            original.fx_rate === null || original.fx_rate === undefined
+              ? Number(1).toFixed(10)
+              : Number(original.fx_rate).toFixed(10),
+          fxRateSource: original.fx_rate_source || "PARITY",
+          fxRateDate: original.fx_rate_date || reversalBookDate,
+          fxFallbackMode: original.fx_fallback_mode || null,
+          fxFallbackMaxDays:
+            original.fx_fallback_max_days === undefined
+              ? null
+              : original.fx_fallback_max_days,
           description: `Reversal of ${original.txn_no}: ${payload.reverseReason}`,
           referenceNo: original.reference_no,
           sourceDocType: original.source_doc_type,
@@ -2564,6 +2934,14 @@ export async function reverseCashTransactionById({
       reversal = await findCashTransactionById({
         tenantId: payload.tenantId,
         transactionId: parsePositiveInt(reversal.id),
+        runQuery: tx.query,
+      });
+    }
+    if (reversal) {
+      await applyCashFxPositionForPostedTransactionTx({
+        tenantId: payload.tenantId,
+        cashTransactionId: parsePositiveInt(reversal.id),
+        cashTransactionRow: reversal,
         runQuery: tx.query,
       });
     }

@@ -6,11 +6,13 @@ import {
   getCariArAgingReport,
   getCariCounterpartyStatementReport,
   getCariOpenItemsReport,
+  getCariSettlementRealizedFxReport,
 } from "../../api/cariReports.js";
 import { useAuth } from "../../auth/useAuth.js";
 import {
   buildCariReportQuery,
   reconcileOpenItemsSummary,
+  reconcileSettlementRealizedFxSummary,
   reconcileStatementSummary,
   REPORT_TABS,
   ROLE_FILTER_OPTIONS,
@@ -55,12 +57,19 @@ const TAB_CONFIG = [
   { id: REPORT_TABS.AP_AGING, label: "AP Aging" },
   { id: REPORT_TABS.OPEN_ITEMS, label: "Open Items" },
   { id: REPORT_TABS.STATEMENT, label: "Counterparty Statement" },
+  {
+    id: REPORT_TABS.SETTLEMENT_REALIZED_FX,
+    label: "Settlement Realized FX",
+  },
 ];
 
 const DEFAULT_FILTERS = {
   asOfDate: todayIsoDate(),
+  periodFrom: "",
+  periodTo: "",
   legalEntityId: "",
   counterpartyId: "",
+  currencyCode: "",
   role: "",
   status: "OPEN",
   limit: 200,
@@ -93,6 +102,35 @@ function renderSummaryCards(summary) {
   );
 }
 
+function renderSettlementRealizedFxSummaryCards(summary, reconcile) {
+  if (!summary || !reconcile) {
+    return null;
+  }
+
+  const cards = [
+    ["Settlements", Number(summary.settlementCount || 0)],
+    ["Distinct Counterparties", Number(summary.distinctCounterpartyCount || 0)],
+    ["Distinct Currencies", Number(summary.distinctCurrencyCount || 0)],
+    ["Realized FX Net (Base)", formatAmount(summary.realizedFxNetBase)],
+    ["Realized FX Gain (Rows)", formatAmount(reconcile.rowsRealizedFxGainBase)],
+    ["Realized FX Loss (Rows)", formatAmount(reconcile.rowsRealizedFxLossBase)],
+  ];
+
+  return (
+    <section className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
+      {cards.map(([label, value]) => (
+        <article
+          key={`settlement-realized-fx-summary-${label}`}
+          className="rounded-xl border border-slate-200 bg-white p-3"
+        >
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p>
+          <p className="mt-1 text-lg font-semibold text-slate-900">{value ?? "-"}</p>
+        </article>
+      ))}
+    </section>
+  );
+}
+
 export default function CariReportsPage() {
   const { hasPermission } = useAuth();
   const canReadReports = hasPermission("cari.report.read");
@@ -114,6 +152,10 @@ export default function CariReportsPage() {
   );
   const statementReconcile = useMemo(
     () => reconcileStatementSummary(reportData),
+    [reportData]
+  );
+  const settlementRealizedFxReconcile = useMemo(
+    () => reconcileSettlementRealizedFxSummary(reportData),
     [reportData]
   );
 
@@ -163,6 +205,8 @@ export default function CariReportsPage() {
         payload = await getCariApAgingReport(queryParams);
       } else if (nextTab === REPORT_TABS.OPEN_ITEMS) {
         payload = await getCariOpenItemsReport(queryParams);
+      } else if (nextTab === REPORT_TABS.SETTLEMENT_REALIZED_FX) {
+        payload = await getCariSettlementRealizedFxReport(queryParams);
       } else {
         payload = await getCariCounterpartyStatementReport(queryParams);
       }
@@ -198,7 +242,7 @@ export default function CariReportsPage() {
       <section className="rounded-xl border border-slate-200 bg-white p-4">
         <h1 className="text-xl font-semibold text-slate-900">Cari Reports</h1>
         <p className="mt-1 text-sm text-slate-600">
-          AR/AP aging, open-items, and counterparty statement with as-of logic.
+          AR/AP aging, open-items, statement, and settlement realized FX reporting.
         </p>
 
         {lookupWarning ? (
@@ -214,15 +258,28 @@ export default function CariReportsPage() {
 
         <div className="mt-4 grid gap-2 md:grid-cols-6">
           <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-            As-Of Date
-            <input
-              type="date"
-              className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-normal"
-              value={filters.asOfDate}
-              onChange={(event) =>
-                setFilters((prev) => ({ ...prev, asOfDate: event.target.value }))
-              }
-            />
+            {activeTab === REPORT_TABS.SETTLEMENT_REALIZED_FX
+              ? "Period From"
+              : "As-Of Date"}
+            {activeTab === REPORT_TABS.SETTLEMENT_REALIZED_FX ? (
+              <input
+                type="date"
+                className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-normal"
+                value={filters.periodFrom}
+                onChange={(event) =>
+                  setFilters((prev) => ({ ...prev, periodFrom: event.target.value }))
+                }
+              />
+            ) : (
+              <input
+                type="date"
+                className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-normal"
+                value={filters.asOfDate}
+                onChange={(event) =>
+                  setFilters((prev) => ({ ...prev, asOfDate: event.target.value }))
+                }
+              />
+            )}
           </label>
 
           <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
@@ -287,35 +344,72 @@ export default function CariReportsPage() {
             )}
           </label>
 
-          <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-            Customer / Vendor
-            <select
-              className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-normal"
-              value={filters.role}
-              onChange={(event) => setFilters((prev) => ({ ...prev, role: event.target.value }))}
-            >
-              {ROLE_FILTER_OPTIONS.map((option) => (
-                <option key={`cari-reports-role-${option || "ALL"}`} value={option}>
-                  {option || "ALL"}
-                </option>
-              ))}
-            </select>
-          </label>
+          {activeTab === REPORT_TABS.SETTLEMENT_REALIZED_FX ? (
+            <>
+              <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                Period To
+                <input
+                  type="date"
+                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-normal"
+                  value={filters.periodTo}
+                  onChange={(event) =>
+                    setFilters((prev) => ({ ...prev, periodTo: event.target.value }))
+                  }
+                />
+              </label>
 
-          <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-            Status
-            <select
-              className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-normal"
-              value={filters.status}
-              onChange={(event) => setFilters((prev) => ({ ...prev, status: event.target.value }))}
-            >
-              {STATUS_FILTER_OPTIONS.map((option) => (
-                <option key={`cari-reports-status-${option}`} value={option}>
-                  {option}
-                </option>
-              ))}
-            </select>
-          </label>
+              <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                Currency
+                <input
+                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-normal uppercase"
+                  value={filters.currencyCode}
+                  onChange={(event) =>
+                    setFilters((prev) => ({
+                      ...prev,
+                      currencyCode: String(event.target.value || "").toUpperCase().slice(0, 3),
+                    }))
+                  }
+                  placeholder="USD"
+                />
+              </label>
+            </>
+          ) : (
+            <>
+              <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                Customer / Vendor
+                <select
+                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-normal"
+                  value={filters.role}
+                  onChange={(event) =>
+                    setFilters((prev) => ({ ...prev, role: event.target.value }))
+                  }
+                >
+                  {ROLE_FILTER_OPTIONS.map((option) => (
+                    <option key={`cari-reports-role-${option || "ALL"}`} value={option}>
+                      {option || "ALL"}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                Status
+                <select
+                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-normal"
+                  value={filters.status}
+                  onChange={(event) =>
+                    setFilters((prev) => ({ ...prev, status: event.target.value }))
+                  }
+                >
+                  {STATUS_FILTER_OPTIONS.map((option) => (
+                    <option key={`cari-reports-status-${option}`} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </>
+          )}
 
           <div className="flex flex-col justify-end gap-2">
             <button
@@ -384,7 +478,28 @@ export default function CariReportsPage() {
         </div>
       ) : null}
 
-      {renderSummaryCards(reportData?.summary)}
+      {activeTab === REPORT_TABS.SETTLEMENT_REALIZED_FX && reportData ? (
+        <div
+          className={`rounded-lg border px-3 py-2 text-sm ${
+            settlementRealizedFxReconcile.rowsCoverFullResult
+              ? settlementRealizedFxReconcile.matches
+                ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                : "border-amber-200 bg-amber-50 text-amber-800"
+              : "border-sky-200 bg-sky-50 text-sky-800"
+          }`}
+        >
+          {settlementRealizedFxReconcile.rowsCoverFullResult
+            ? `Settlement FX summary reconcile (summary vs rows): settlements diff=${settlementRealizedFxReconcile.settlementCountDiff}, allocated txn diff=${settlementRealizedFxReconcile.allocatedTxnDiff}, allocated base diff=${settlementRealizedFxReconcile.allocatedBaseDiff}, FX net diff=${settlementRealizedFxReconcile.realizedFxNetBaseDiff}`
+            : `Settlement FX loaded rows ${settlementRealizedFxReconcile.visibleGroupedRows}/${settlementRealizedFxReconcile.totalGroupedRows}. Gain/loss cards below are based on visible grouped rows.`}
+        </div>
+      ) : null}
+
+      {activeTab === REPORT_TABS.SETTLEMENT_REALIZED_FX
+        ? renderSettlementRealizedFxSummaryCards(
+            reportData?.summary,
+            settlementRealizedFxReconcile
+          )
+        : renderSummaryCards(reportData?.summary)}
 
       {(activeTab === REPORT_TABS.AR_AGING || activeTab === REPORT_TABS.AP_AGING) && reportData ? (
         <section className="rounded-xl border border-slate-200 bg-white p-4">
@@ -498,6 +613,64 @@ export default function CariReportsPage() {
             </div>
           </section>
         </>
+      ) : null}
+
+      {activeTab === REPORT_TABS.SETTLEMENT_REALIZED_FX && reportData ? (
+        <section className="rounded-xl border border-slate-200 bg-white p-4">
+          <h2 className="text-sm font-semibold text-slate-700">Settlement Realized FX Rows</h2>
+          <div className="mt-3 overflow-x-auto rounded-lg border border-slate-200">
+            <table className="min-w-full text-sm">
+              <thead className="bg-slate-50 text-left text-slate-600">
+                <tr>
+                  <th className="px-3 py-2">Period</th>
+                  <th className="px-3 py-2">Legal Entity</th>
+                  <th className="px-3 py-2">Counterparty</th>
+                  <th className="px-3 py-2">Type</th>
+                  <th className="px-3 py-2">Currency</th>
+                  <th className="px-3 py-2">Settlements</th>
+                  <th className="px-3 py-2">Allocated Txn</th>
+                  <th className="px-3 py-2">Allocated Base</th>
+                  <th className="px-3 py-2">Realized FX Net</th>
+                  <th className="px-3 py-2">Realized FX Gain</th>
+                  <th className="px-3 py-2">Realized FX Loss</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(reportData.rows || []).map((row, index) => (
+                  <tr
+                    key={`settlement-realized-fx-row-${row.period || "na"}-${row.legalEntityId || "na"}-${row.counterpartyId || "na"}-${row.currencyCode || "na"}-${index}`}
+                    className="border-t border-slate-100"
+                  >
+                    <td className="px-3 py-2">{row.period || "-"}</td>
+                    <td className="px-3 py-2">
+                      {row.legalEntityCode || row.legalEntityId || "-"}
+                      {row.legalEntityName ? ` - ${row.legalEntityName}` : ""}
+                    </td>
+                    <td className="px-3 py-2">
+                      {row.counterpartyCode || row.counterpartyId || "-"}
+                      {row.counterpartyName ? ` - ${row.counterpartyName}` : ""}
+                    </td>
+                    <td className="px-3 py-2">{row.counterpartyType || "-"}</td>
+                    <td className="px-3 py-2">{row.currencyCode || "-"}</td>
+                    <td className="px-3 py-2">{Number(row.settlementCount || 0)}</td>
+                    <td className="px-3 py-2">{formatAmount(row.totalAllocatedTxn)}</td>
+                    <td className="px-3 py-2">{formatAmount(row.totalAllocatedBase)}</td>
+                    <td className="px-3 py-2">{formatAmount(row.realizedFxNetBase)}</td>
+                    <td className="px-3 py-2">{formatAmount(row.realizedFxGainBase)}</td>
+                    <td className="px-3 py-2">{formatAmount(row.realizedFxLossBase)}</td>
+                  </tr>
+                ))}
+                {(reportData.rows || []).length === 0 ? (
+                  <tr>
+                    <td colSpan={11} className="px-3 py-3 text-slate-500">
+                      No settlement realized FX rows.
+                    </td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
+          </div>
+        </section>
       ) : null}
 
       {activeTab === REPORT_TABS.STATEMENT && reportData ? (

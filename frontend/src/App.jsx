@@ -37,6 +37,9 @@ import CashRegistersPage from "./pages/cash/CashRegistersPage.jsx";
 import CashSessionsPage from "./pages/cash/CashSessionsPage.jsx";
 import CashTransactionsPage from "./pages/cash/CashTransactionsPage.jsx";
 import CashTransitTransfersPage from "./pages/cash/CashTransitTransfersPage.jsx";
+import CashExchangesPage from "./pages/cash/CashExchangesPage.jsx";
+import CashFxReportsPage from "./pages/cash/CashFxReportsPage.jsx";
+import CashFxOpsDashboardPage from "./pages/cash/CashFxOpsDashboardPage.jsx";
 import CashExceptionsPage from "./pages/cash/CashExceptionsPage.jsx";
 import BankAccountsPage from "./pages/bank/BankAccountsPage.jsx";
 import BankStatementImportPage from "./pages/bank/BankStatementImportPage.jsx";
@@ -93,9 +96,20 @@ for (const link of rawSidebarLinks) {
   const nextPermissions = Array.isArray(link.requiredPermissions)
     ? link.requiredPermissions
     : [];
+  const existingFeatureCodes = Array.isArray(existing.requiredFeatureCodes)
+    ? existing.requiredFeatureCodes
+    : [];
+  const nextFeatureCodes = Array.isArray(link.requiredFeatureCodes)
+    ? link.requiredFeatureCodes
+    : [];
   if (nextPermissions.length > 0) {
     existing.requiredPermissions = Array.from(
       new Set([...existingPermissions, ...nextPermissions])
+    );
+  }
+  if (nextFeatureCodes.length > 0) {
+    existing.requiredFeatureCodes = Array.from(
+      new Set([...existingFeatureCodes, ...nextFeatureCodes])
     );
   }
 }
@@ -145,6 +159,21 @@ const implementedRoutes = [
     appPath: "/app/kasa-transit-transferleri",
     childPath: "kasa-transit-transferleri",
     element: <CashTransitTransfersPage />,
+  },
+  {
+    appPath: "/app/kasa-kur-degisimleri",
+    childPath: "kasa-kur-degisimleri",
+    element: <CashExchangesPage />,
+  },
+  {
+    appPath: "/app/kasa-kur-raporlari",
+    childPath: "kasa-kur-raporlari",
+    element: <CashFxReportsPage />,
+  },
+  {
+    appPath: "/app/kasa-kur-ops-dashboard",
+    childPath: "kasa-kur-ops-dashboard",
+    element: <CashFxOpsDashboardPage />,
   },
   {
     appPath: "/app/cash-transit-transfers",
@@ -441,18 +470,25 @@ for (const route of implementedRoutes) {
   const aliasPermissions = Array.isArray(aliasLink?.requiredPermissions)
     ? aliasLink.requiredPermissions
     : [];
+  const baseFeatureCodes = Array.isArray(baseLink.requiredFeatureCodes)
+    ? baseLink.requiredFeatureCodes
+    : [];
+  const aliasFeatureCodes = Array.isArray(aliasLink?.requiredFeatureCodes)
+    ? aliasLink.requiredFeatureCodes
+    : [];
   const mergedPermissions = Array.from(
     new Set([...aliasPermissions, ...basePermissions])
   );
-  if (mergedPermissions.length === 0) {
-    continue;
-  }
+  const mergedFeatureCodes = Array.from(
+    new Set([...aliasFeatureCodes, ...baseFeatureCodes])
+  );
 
   sidebarLinkByPath.set(route.appPath, {
     ...(aliasLink || baseLink),
     to: route.appPath,
     routePath: route.appPath,
     requiredPermissions: mergedPermissions,
+    requiredFeatureCodes: mergedFeatureCodes,
   });
 }
 
@@ -466,8 +502,17 @@ const allPlaceholderRoutes = sidebarRouteLinks.filter(
     link.routePath.startsWith("/app/") && !implementedPaths.has(link.routePath)
 );
 
-function withPermissionGuard(pathForPermissions, element) {
-  const requiredPermissions = sidebarLinkByPath.get(pathForPermissions)?.requiredPermissions;
+function withPermissionGuard(pathForPermissions, element, hasAnyFeature) {
+  const linkConfig = sidebarLinkByPath.get(pathForPermissions) || {};
+  const requiredPermissions = linkConfig?.requiredPermissions;
+  const requiredFeatureCodes = Array.isArray(linkConfig?.requiredFeatureCodes)
+    ? linkConfig.requiredFeatureCodes
+    : [];
+  const isFeatureEnabled =
+    requiredFeatureCodes.length === 0 || hasAnyFeature(requiredFeatureCodes);
+  if (!isFeatureEnabled) {
+    return <Navigate to="/app" replace />;
+  }
   if (!Array.isArray(requiredPermissions) || requiredPermissions.length === 0) {
     return element;
   }
@@ -482,7 +527,7 @@ function toChildPath(appPath) {
 }
 
 export default function App() {
-  const { hasAllPermissions } = useAuth();
+  const { hasAllPermissions, hasAnyFeature } = useAuth();
   const canViewUnimplementedModules = hasAllPermissions(
     MODULE_PREVIEW_ADMIN_PERMISSIONS
   );
@@ -544,7 +589,7 @@ export default function App() {
           <Route
             key={route.appPath}
             path={route.childPath}
-            element={withPermissionGuard(route.appPath, route.element)}
+            element={withPermissionGuard(route.appPath, route.element, hasAnyFeature)}
           />
         ))}
 
@@ -554,10 +599,8 @@ export default function App() {
             path={toChildPath(link.routePath)}
             element={withPermissionGuard(
               link.routePath,
-              <ModulePlaceholderPage
-                title={link.label || "Module"}
-                path={link.routePath}
-              />
+              <ModulePlaceholderPage title={link.label || "Module"} path={link.routePath} />,
+              hasAnyFeature
             )}
           />
         ))}

@@ -6,9 +6,11 @@ import {
 } from "../tenantGuards.js";
 import { badRequest, parsePositiveInt } from "../routes/_utils.js";
 import { assertRegisterOperationalConfig } from "./cash.register.service.js";
+import { applyCashFxPositionForPostedTransactionTx } from "./cash.fx.position.service.js";
 import { autoRemapCariPurposeMappingsForLegalEntity } from "./cari.purpose-mapping-autofix.service.js";
 import { upsertJournalSourceLinkTx } from "./journal.source-link.service.js";
 import { buildCariTaxAugmentation } from "./cari.tax.integration.service.js";
+import { recordCariSettlementCurrencyMismatchException } from "./cash.fx.ops.service.js";
 import {
   findCashRegisterById,
   findCashSessionById,
@@ -109,6 +111,38 @@ function normalizeUpperText(value) {
   return String(value || "")
     .trim()
     .toUpperCase();
+}
+
+async function recordSettlementCurrencyMismatchSafe({
+  tenantId,
+  legalEntityId,
+  settlementCurrencyCode,
+  registerId,
+  registerCode = null,
+  registerCurrencyCode,
+  counterpartyId = null,
+  counterpartyType = null,
+  settlementIdempotencyKey = null,
+  cashTransactionId = null,
+  runQuery = query,
+}) {
+  try {
+    await recordCariSettlementCurrencyMismatchException({
+      tenantId,
+      legalEntityId,
+      settlementCurrencyCode,
+      registerId,
+      registerCode,
+      registerCurrencyCode,
+      counterpartyId,
+      counterpartyType,
+      settlementIdempotencyKey,
+      cashTransactionId,
+      runQuery,
+    });
+  } catch {
+    // Best-effort exception capture; preserve primary validation error semantics.
+  }
 }
 
 function normalizePaymentChannel(value) {
@@ -544,7 +578,17 @@ function mapSettlementBatchRow(row) {
     status: row.status,
     totalAllocatedTxn: toDecimalNumber(row.total_allocated_txn),
     totalAllocatedBase: toDecimalNumber(row.total_allocated_base),
+    realizedFxNetBase: toDecimalNumber(row.realized_fx_net_base),
     currencyCode: row.currency_code,
+    settlementFxRate: toDecimalNumber(row.settlement_fx_rate),
+    settlementFxSource: row.settlement_fx_source || null,
+    settlementFxRateDate: toDateOnlyString(row.settlement_fx_rate_date, "settlementFxRateDate"),
+    settlementFxFallbackMode: row.settlement_fx_fallback_mode || null,
+    settlementFxFallbackMaxDays:
+      row.settlement_fx_fallback_max_days === null ||
+      row.settlement_fx_fallback_max_days === undefined
+        ? null
+        : Number(row.settlement_fx_fallback_max_days),
     postedJournalEntryId: parsePositiveInt(row.posted_journal_entry_id),
     reversalOfSettlementBatchId: parsePositiveInt(row.reversal_of_settlement_batch_id),
     bankStatementLineId: parsePositiveInt(row.bank_statement_line_id),
@@ -1324,7 +1368,13 @@ async function fetchSettlementBatchRow({
        status,
        total_allocated_txn,
        total_allocated_base,
+       realized_fx_net_base,
        currency_code,
+       settlement_fx_rate,
+       settlement_fx_source,
+       settlement_fx_rate_date,
+       settlement_fx_fallback_mode,
+       settlement_fx_fallback_max_days,
        posted_journal_entry_id,
        reversal_of_settlement_batch_id,
        bank_statement_line_id,
@@ -1702,7 +1752,22 @@ async function createOrReplaySettlementCashTransaction({
     throw badRequest("linkedCashTransaction.registerId must belong to legalEntityId");
   }
   if (normalizeUpperText(register.currency_code) !== normalizeUpperText(currencyCode)) {
-    throw badRequest("linkedCashTransaction.registerId currency must match settlement currencyCode");
+    await recordSettlementCurrencyMismatchSafe({
+      tenantId,
+      legalEntityId,
+      settlementCurrencyCode: currencyCode,
+      registerId: parsePositiveInt(register.id),
+      registerCode: register.code || null,
+      registerCurrencyCode: register.currency_code,
+      counterpartyId,
+      counterpartyType,
+      settlementIdempotencyKey,
+      cashTransactionId: null,
+      runQuery,
+    });
+    throw badRequest(
+      "linkedCashTransaction.registerId currency must match settlement currencyCode. Exchange first, then settle."
+    );
   }
   if (Number(register.max_txn_amount || 0) > 0 && Number(amountTxn) > Number(register.max_txn_amount)) {
     throw badRequest("incomingAmountTxn exceeds linkedCashTransaction.registerId max_txn_amount");
@@ -1924,7 +1989,13 @@ async function fetchSettlementBatchRowByBankAttachIdempotency({
        status,
        total_allocated_txn,
        total_allocated_base,
+       realized_fx_net_base,
        currency_code,
+       settlement_fx_rate,
+       settlement_fx_source,
+       settlement_fx_rate_date,
+       settlement_fx_fallback_mode,
+       settlement_fx_fallback_max_days,
        posted_journal_entry_id,
        reversal_of_settlement_batch_id,
        bank_statement_line_id,
@@ -2943,13 +3014,38 @@ export async function applyCariSettlement({
           throw badRequest("cashTransactionId counterparty does not match counterpartyId");
         }
         if (normalizeUpperText(linkedCashTransaction.currency_code) !== settlementCurrencyCode) {
-          throw badRequest("cashTransactionId currency must match settlement currencyCode");
+          await recordSettlementCurrencyMismatchSafe({
+            tenantId,
+            legalEntityId,
+            settlementCurrencyCode,
+            registerId: parsePositiveInt(linkedCashTransaction.cash_register_id),
+            registerCode: null,
+            registerCurrencyCode: linkedCashTransaction.currency_code,
+            counterpartyId,
+            counterpartyType: direction === "AR" ? "CUSTOMER" : "VENDOR",
+            settlementIdempotencyKey: idempotencyKey,
+            cashTransactionId: parsePositiveInt(linkedCashTransaction.id),
+            runQuery: tx.query,
+          });
+          throw badRequest(
+            "cashTransactionId currency must match settlement currencyCode. Exchange first, then settle."
+          );
         }
         const linkedBatchOnCash = parsePositiveInt(
           linkedCashTransaction.linked_cari_settlement_batch_id
         );
         if (linkedBatchOnCash) {
           throw badRequest("cashTransactionId is already linked to a settlement batch");
+        }
+        if (
+          normalizeUpperText(linkedCashTransaction.status) === "POSTED" &&
+          parsePositiveInt(linkedCashTransaction.posted_journal_entry_id)
+        ) {
+          await applyCashFxPositionForPostedTransactionTx({
+            tenantId,
+            cashTransactionId: parsePositiveInt(linkedCashTransaction.id),
+            runQuery: tx.query,
+          });
         }
       }
 
@@ -3195,7 +3291,13 @@ export async function applyCariSettlement({
             status,
             total_allocated_txn,
             total_allocated_base,
+            realized_fx_net_base,
             currency_code,
+            settlement_fx_rate,
+            settlement_fx_source,
+            settlement_fx_rate_date,
+            settlement_fx_fallback_mode,
+            settlement_fx_fallback_max_days,
             posted_journal_entry_id,
             reversal_of_settlement_batch_id,
             bank_statement_line_id,
@@ -3209,7 +3311,7 @@ export async function applyCariSettlement({
             integration_event_uid,
             posted_at
          )
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
         [
           tenantId,
           legalEntityId,
@@ -3223,7 +3325,13 @@ export async function applyCariSettlement({
           SETTLEMENT_STATUS_POSTED,
           totalAllocatedTxn,
           totalAllocatedBaseHistorical,
+          realizedFxNetBase,
           settlementCurrencyCode,
+          fxPolicy.settlementFxRate,
+          fxPolicy.source,
+          fxPolicy.rateDate,
+          fxPolicy.fallbackMode,
+          fxPolicy.fallbackMaxDays,
           postedJournalEntryId,
           bankStatementLineId,
           bankTransactionRef,
@@ -4571,6 +4679,11 @@ export async function reverseCariSettlementById({
         settlementDate: reversalDate,
         runQuery: tx.query,
       });
+      const originalSettlementFxRate = toDecimalNumber(original.settlement_fx_rate);
+      const reversalRealizedFxNetBase =
+        original.realized_fx_net_base === null || original.realized_fx_net_base === undefined
+          ? null
+          : roundAmount(0 - Number(original.realized_fx_net_base || 0));
       const reversalInsert = await tx.query(
         `INSERT INTO cari_settlement_batches (
             tenant_id,
@@ -4584,7 +4697,13 @@ export async function reverseCariSettlementById({
             status,
             total_allocated_txn,
             total_allocated_base,
+            realized_fx_net_base,
             currency_code,
+            settlement_fx_rate,
+            settlement_fx_source,
+            settlement_fx_rate_date,
+            settlement_fx_fallback_mode,
+            settlement_fx_fallback_max_days,
             posted_journal_entry_id,
             reversal_of_settlement_batch_id,
             bank_statement_line_id,
@@ -4594,7 +4713,7 @@ export async function reverseCariSettlementById({
             posted_at,
             reversed_at
          )
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
         [
           tenantId,
           lockedLegalEntityId,
@@ -4607,7 +4726,15 @@ export async function reverseCariSettlementById({
           SETTLEMENT_STATUS_REVERSED,
           normalizeAmount(original.total_allocated_txn, "totalAllocatedTxn"),
           normalizeAmount(original.total_allocated_base, "totalAllocatedBase"),
+          reversalRealizedFxNetBase,
           normalizeUpperText(original.currency_code),
+          originalSettlementFxRate,
+          toNullableString(original.settlement_fx_source, 40),
+          toDateOnlyString(original.settlement_fx_rate_date, "settlementFxRateDate"),
+          toNullableString(original.settlement_fx_fallback_mode, 20),
+          original.settlement_fx_fallback_max_days === undefined
+            ? null
+            : original.settlement_fx_fallback_max_days,
           parsePositiveInt(reversalJournalResult?.journalEntryId) || null,
           settlementBatchId,
         ]

@@ -68,6 +68,102 @@ This plan keeps current architecture patterns (route -> validator -> service, id
 
 ---
 
+## 3.1) Execution Tracker (Canonical Style)
+
+Use this section as the single source of implementation status for EX and EXF tracks.
+
+Update rule:
+- `[ ]` = pending
+- `[x]` = implemented
+- After each merged PR, update this tracker line from `[ ]` to `[x]` with a short `(implemented)` note.
+- Keep exactly one current `Next PR`.
+
+### Tracker Lines
+
+- [x] PR-EX01 acceptance: cash transaction schema is dual-amount/FX-ready (`amount_base`, FX metadata), existing rows backfilled safely, and old base-currency behavior remains compatible. (implemented)
+  status: `implemented (2026-03-04)`
+  files: `backend/src/migrations/m090_cash_fx_dual_amount_foundation.js`, `backend/src/migrations/index.js`, `backend/src/services/cash.queries.js`, `backend/src/routes/cash.transaction.validators.js`, `backend/src/services/cash.transaction.service.js`, `backend/scripts/test-cash-ex01-schema-backfill.js`, `backend/package.json`
+  smoke: `backend/scripts/test-cash-ex01-schema-backfill.js`
+  result: `pass`
+  regression: `npm run test:cash-characterization` -> `pass`
+- [x] PR-EX02 acceptance: foreign-currency cash posting writes correct `amount_txn` and base debit/credit without forcing `currency_code == book base`, and reversals are exact. (implemented)
+  status: `implemented (2026-03-04)`
+  files: `backend/src/services/cash.service.js`, `backend/src/services/cash.transaction.service.js`, `backend/scripts/test-cash-ex02-foreign-currency-posting.js`, `backend/scripts/test-cash-ex01-schema-backfill.js`, `backend/package.json`
+  smoke: `backend/scripts/test-cash-ex02-foreign-currency-posting.js`
+  result: `pass`
+  regression: `npm run test:cash-characterization && npm run test:cash:ex01` -> `pass`
+- [x] PR-EX03 acceptance: explicit cross-currency cash exchange batches are idempotent, post safely, and support deterministic reversal. (implemented)
+  status: `implemented (2026-03-04)`
+  files: `backend/src/migrations/m091_cash_exchange_batches.js`, `backend/src/migrations/index.js`, `backend/src/services/cash.exchange.service.js`, `backend/src/routes/cash.exchange.validators.js`, `backend/src/routes/cash.exchange.routes.js`, `backend/src/index.js`, `backend/scripts/test-cash-ex03-exchange-workflow.js`, `backend/package.json`
+  smoke: `backend/scripts/test-cash-ex03-exchange-workflow.js`
+  result: `pass`
+  regression: `npm run test:cash:ex02 && npm run test:cash:ex01 && npm run test:cash-characterization` -> `pass`
+- [x] PR-EX04 acceptance: settlement can use foreign cash when currency matches, mismatches require exchange-first, and settlement FX fields are persisted (not only audit JSON). (implemented)
+  status: `implemented (2026-03-04)`
+  files: `backend/src/migrations/m092_cari_settlement_fx_reporting_columns.js`, `backend/src/migrations/index.js`, `backend/src/services/cari.settlement.service.js`, `backend/src/routes/cari.js`, `backend/src/services/cari.report.service.js`, `frontend/src/pages/cari/CariSettlementsPage.jsx`, `backend/scripts/test-cari-ex04-settlement-foreign-cash-usage.js`, `backend/scripts/test-cari-ex04-settlement-fx-persistence.js`, `backend/scripts/test-cari-ex04-frontend-settlement-currency-flow.js`, `backend/package.json`
+  smoke: `backend/scripts/test-cari-ex04-settlement-foreign-cash-usage.js`, `backend/scripts/test-cari-ex04-settlement-fx-persistence.js`, `backend/scripts/test-cari-ex04-frontend-settlement-currency-flow.js`
+  result: `pass`
+  regression: `npm run test:cari:ex04 && npm run test:cari:ex04-frontend` -> `pass`
+- [x] PR-EX05 acceptance: month-end/year-end foreign-cash revaluation runs post correctly, close-gates enforce required runs, and job reruns are idempotent. (implemented)
+  status: `implemented (2026-03-04)`
+  files: `backend/src/migrations/m093_cash_fx_revaluation_runs.js`, `backend/src/migrations/index.js`, `backend/src/services/cash.fx.revaluation.service.js`, `backend/src/services/cash.fx.revaluation.scheduler.service.js`, `backend/src/services/jobHandlers/cashFxRevaluationRun.handler.js`, `backend/src/services/jobHandlers/index.js`, `backend/src/routes/gl.period-closing.routes.js`, `backend/src/seedCore.js`, `backend/scripts/cash-fx-revaluation-schedule-due.js`, `backend/scripts/run-cash-fx-revaluation-scheduler.js`, `backend/scripts/test-cash-ex05-month-end-revaluation.js`, `backend/scripts/test-cash-ex05-year-end-revaluation-and-close-gate.js`, `backend/scripts/test-cash-ex05-revaluation-job-idempotency.js`, `backend/package.json`
+  smoke: `backend/scripts/test-cash-ex05-month-end-revaluation.js`, `backend/scripts/test-cash-ex05-year-end-revaluation-and-close-gate.js`, `backend/scripts/test-cash-ex05-revaluation-job-idempotency.js`
+  result: `pass`
+  regression: `npm run test:cash:ex05` -> `pass`
+- [x] PR-EX06 acceptance: exchange/revaluation/reporting runbooks and release-gate chain are complete and finance/support reporting is operational. (implemented)
+  status: `implemented (2026-03-04)`
+  files: `backend/src/routes/cash.report.routes.js`, `backend/src/routes/cash.report.validators.js`, `backend/src/services/cash.report.service.js`, `backend/src/routes/cari.report.validators.js`, `backend/src/services/cari.report.service.js`, `backend/src/routes/cari.js`, `backend/src/index.js`, `backend/scripts/test-cash-ex06-release-gate.js`, `backend/package.json`, `docs/runbooks/cash-fx-exchange-operations.md`
+  smoke: `backend/scripts/test-cash-ex06-release-gate.js`
+  result: `pass`
+  regression: `npm run test:cash-fx-release-gate` -> `pass`
+- [x] PR-EXF01 acceptance: foreign-currency lot tracking and realized FX on disposal are implemented with deterministic reversal. (implemented)
+  status: `implemented (2026-03-04)`
+  files: `backend/src/migrations/m094_cash_fx_position_lots.js`, `backend/src/migrations/index.js`, `backend/src/services/cash.fx.position.service.js`, `backend/src/services/cash.transaction.service.js`, `backend/src/services/cash.exchange.service.js`, `backend/src/services/cari.settlement.service.js`, `backend/scripts/test-cash-exf01-position-lots-realized-fx.js`, `backend/package.json`
+  smoke: `backend/scripts/test-cash-exf01-position-lots-realized-fx.js`
+  result: `pass`
+  regression: `npm run test:cash:exf01 && npm run test:cash:ex03 && npm run test:cash:ex02` -> `pass`
+- [x] PR-EXF02 acceptance: revaluation reversal automation and close/reopen integrity checks prevent duplicate or inconsistent FX entries. (implemented)
+  status: `implemented (2026-03-04)`
+  files: `backend/src/migrations/m095_cash_fx_revaluation_reversal_hardening.js`, `backend/src/migrations/index.js`, `backend/src/services/cash.fx.revaluation.service.js`, `backend/src/routes/gl.period-closing.routes.js`, `backend/scripts/test-cash-exf02-revaluation-reversal-automation.js`, `backend/scripts/test-cash-exf02-close-reopen-integrity.js`, `backend/package.json`
+  smoke: `backend/scripts/test-cash-exf02-revaluation-reversal-automation.js`, `backend/scripts/test-cash-exf02-close-reopen-integrity.js`
+  result: `pass`
+  regression: `npm run test:cash:exf02` -> `pass`
+- [x] PR-EXF03 acceptance: exchange fees/spread are accounted separately from principal and realized FX, and reporting reflects that split. (implemented)
+  status: `implemented (2026-03-04)`
+  files: `backend/src/migrations/m096_cash_exchange_fee_spread_accounting.js`, `backend/src/migrations/index.js`, `backend/src/services/cash.exchange.service.js`, `backend/src/routes/cash.exchange.validators.js`, `backend/src/routes/cash.exchange.routes.js`, `backend/src/services/cash.report.service.js`, `backend/scripts/test-cash-exf03-exchange-fee-and-spread.js`, `backend/package.json`
+  smoke: `backend/scripts/test-cash-exf03-exchange-fee-and-spread.js`
+  result: `pass`
+  regression: `npm run test:cash:exf03 && npm run test:cash:ex03 && npm run test:cash:exf01` -> `pass`
+- [x] PR-EXF04 acceptance: FX ops dashboard + exception actions surface missing rates, failed jobs, and out-of-policy conditions with full auditability. (implemented)
+  status: `implemented (2026-03-04)`
+  files: `backend/src/migrations/m097_exception_workbench_cash_module.js`, `backend/src/migrations/index.js`, `backend/src/services/cash.fx.ops.service.js`, `backend/src/routes/cash.report.routes.js`, `backend/src/routes/cash.report.validators.js`, `backend/src/services/cari.settlement.service.js`, `backend/scripts/test-cash-exf04-fx-ops-dashboard.js`, `backend/scripts/test-cash-exf04-fx-exception-actions.js`, `backend/package.json`
+  smoke: `backend/scripts/test-cash-exf04-fx-ops-dashboard.js`, `backend/scripts/test-cash-exf04-fx-exception-actions.js`
+  result: `pass`
+  regression: `npm run test:cash:exf04` -> `pass`
+- [x] PR-EXF05 acceptance: historical backfill is idempotent/reconcilable and pilot->GA rollout hardening is fully documented and test-backed. (implemented)
+  status: `implemented (2026-03-04)`
+  files: `backend/src/services/cash.fx.backfill.service.js`, `backend/src/services/cash.fx.rollout.service.js`, `backend/src/services/features.catalog.js`, `backend/scripts/cash-fx-seed-missing-metadata.js`, `backend/scripts/cash-fx-backfill-position-lots.js`, `backend/scripts/cash-fx-reconcile-lots-vs-gl.js`, `backend/scripts/cash-fx-rollout-exf05.js`, `backend/scripts/test-cash-exf05-backfill-and-rollout.js`, `backend/scripts/test-cash-fx-full-release-gate.js`, `backend/package.json`, `docs/runbooks/cash-fx-exchange-operations.md`
+  smoke: `backend/scripts/test-cash-exf05-backfill-and-rollout.js`
+  result: `pass`
+  regression: `npm run test:cash-fx-full-release-gate` -> `pass`
+
+### Status Snapshot
+
+- Implemented: `11 / 11`
+- Completed PRs: `PR-EX01, PR-EX02, PR-EX03, PR-EX04, PR-EX05, PR-EX06, PR-EXF01, PR-EXF02, PR-EXF03, PR-EXF04, PR-EXF05`
+- Next PR: `none (EX + EXF tracker complete)`
+
+### Progress Update Template (Use After Each Merge)
+
+- before: `- [ ] PR-EX0X acceptance: ...`
+- after: `- [x] PR-EX0X acceptance: ... (implemented)`
+  - status: `implemented (YYYY-MM-DD)`
+  - files: `path1, path2, ...`
+  - smoke: `script-name`
+  - result: `pass/fail`
+
+---
+
 ## PR-EX01: Cash Multi-Currency Schema Foundation
 
 ### Goal

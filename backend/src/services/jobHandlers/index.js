@@ -1,5 +1,6 @@
 import bankFeedPullHandler from "./bankFeedPull.handler.js";
 import bankWebhookProcessHandler from "./bankWebhookProcess.handler.js";
+import cashFxRevaluationRunHandler from "./cashFxRevaluationRun.handler.js";
 import dataRetentionRunHandler from "./dataRetentionRun.handler.js";
 import paymentSyncRetryHandler from "./paymentSyncRetry.handler.js";
 import payrollImportApplyHandler from "./payrollImportApply.handler.js";
@@ -8,6 +9,7 @@ import secretsBackfillReencryptHandler from "./secretsBackfillReencrypt.handler.
 const HANDLERS = {
   BANK_FEED_PULL: bankFeedPullHandler,
   BANK_WEBHOOK_PROCESS: bankWebhookProcessHandler,
+  CASH_FX_REVALUATION_RUN: cashFxRevaluationRunHandler,
   DATA_RETENTION_RUN: dataRetentionRunHandler,
   PAYMENT_SYNC_RETRY: paymentSyncRetryHandler,
   PAYROLL_IMPORT_APPLY: payrollImportApplyHandler,

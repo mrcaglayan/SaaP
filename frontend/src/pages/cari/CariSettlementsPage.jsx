@@ -2311,7 +2311,7 @@ export default function CariSettlementsPage() {
               toUpper(selectedLinkedRegister.currency_code) !== toUpper(applyForm.currencyCode) ? (
                 <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 md:col-span-4">
                   Register currency ({selectedLinkedRegister.currency_code}) differs from settlement
-                  currency ({toUpper(applyForm.currencyCode)}). Cash creation will fail unless they match.
+                  currency ({toUpper(applyForm.currencyCode)}). Exchange first, then settle.
                 </div>
               ) : null}
             </>

@@ -12,6 +12,42 @@ function toQueryString(params = {}) {
   return query ? `?${query}` : "";
 }
 
+function parseCashApiError(error) {
+  const status = Number(error?.response?.status || error?.status || 0) || null;
+  const data = error?.response?.data || error?.data || {};
+  const message = String(data?.message || error?.message || "Request failed");
+  const requestId = data?.requestId || error?.requestId || null;
+
+  // Keep compatibility for pages expecting Axios-like error shape.
+  const response = {
+    status,
+    data: {
+      ...data,
+      message,
+      requestId,
+    },
+  };
+
+  return {
+    status,
+    message,
+    requestId,
+    isValidation: status === 400,
+    isPermission: status === 401 || status === 403,
+    response,
+    originalError: error,
+  };
+}
+
+async function run(requestFn) {
+  try {
+    const response = await requestFn();
+    return response.data;
+  } catch (error) {
+    throw parseCashApiError(error);
+  }
+}
+
 export async function listCashRegisters(params = {}) {
   const response = await api.get(`/api/v1/cash/registers${toQueryString(params)}`);
   return response.data;
@@ -146,4 +182,60 @@ export async function getCashConfig() {
 export async function listCashExceptions(params = {}) {
   const response = await api.get(`/api/v1/cash/exceptions${toQueryString(params)}`);
   return response.data;
+}
+
+export async function listCashExchangeBatches(params = {}) {
+  return run(() => api.get(`/api/v1/cash/exchanges${toQueryString(params)}`));
+}
+
+export async function getCashExchangeBatch(exchangeBatchId, params = {}) {
+  return run(() =>
+    api.get(`/api/v1/cash/exchanges/${exchangeBatchId}${toQueryString(params)}`)
+  );
+}
+
+export async function createCashExchangeBatch(payload) {
+  return run(() => api.post("/api/v1/cash/exchanges", payload));
+}
+
+export async function reverseCashExchangeBatch(exchangeBatchId, payload) {
+  return run(() =>
+    api.post(`/api/v1/cash/exchanges/${exchangeBatchId}/reverse`, payload)
+  );
+}
+
+export async function getCashExchangeHistoryReport(params = {}) {
+  return run(() =>
+    api.get(`/api/v1/cash/reports/exchange-history${toQueryString(params)}`)
+  );
+}
+
+export async function getForeignCashBalancesReport(params = {}) {
+  return run(() =>
+    api.get(`/api/v1/cash/reports/foreign-balances${toQueryString(params)}`)
+  );
+}
+
+export async function getCashFxRevaluationRunsReport(params = {}) {
+  return run(() =>
+    api.get(`/api/v1/cash/reports/revaluation-runs${toQueryString(params)}`)
+  );
+}
+
+export async function getCashFxOpsDashboard(params = {}) {
+  return run(() =>
+    api.get(`/api/v1/cash/reports/fx-ops-dashboard${toQueryString(params)}`)
+  );
+}
+
+export async function rerunCashFxOpsExceptionJob(exceptionId, payload = {}) {
+  return run(() =>
+    api.post(`/api/v1/cash/reports/fx-ops-exceptions/${exceptionId}/rerun-job`, payload)
+  );
+}
+
+export async function overrideCashFxOpsException(exceptionId, payload) {
+  return run(() =>
+    api.post(`/api/v1/cash/reports/fx-ops-exceptions/${exceptionId}/override`, payload)
+  );
 }

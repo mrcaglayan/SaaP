@@ -14,6 +14,7 @@ import {
   listPeriodCloseRuns,
 } from "../services/gl.period-closing.service.js";
 import { evaluateWorkflowApprovalGate } from "../services/workflows.service.js";
+import { evaluateCashFxRevaluationCloseGate } from "../services/cash.fx.revaluation.service.js";
 import {
   parsePeriodCloseRunFilters,
   parsePeriodStatusCloseInput,
@@ -119,6 +120,47 @@ export function registerGlPeriodClosingRoutes(router, deps = {}) {
     };
   }
 
+  function toBoolean(value, fallback = false) {
+    if (value === undefined || value === null || value === "") {
+      return fallback;
+    }
+    if (typeof value === "boolean") {
+      return value;
+    }
+    const normalized = String(value).trim().toLowerCase();
+    if (["1", "true", "yes", "on"].includes(normalized)) return true;
+    if (["0", "false", "no", "off"].includes(normalized)) return false;
+    return fallback;
+  }
+
+  function forbidden(message) {
+    const err = new Error(message);
+    err.status = 403;
+    return err;
+  }
+
+  async function userHasPermissionCode({
+    tenantId,
+    userId,
+    permissionCode,
+    runQuery = query,
+  }) {
+    const result = await runQuery(
+      `SELECT 1
+       FROM user_role_scopes urs
+       JOIN roles r ON r.id = urs.role_id
+       JOIN role_permissions rp ON rp.role_id = r.id
+       JOIN permissions p ON p.id = rp.permission_id
+       WHERE urs.tenant_id = ?
+         AND urs.user_id = ?
+         AND urs.effect = 'ALLOW'
+         AND p.code = ?
+       LIMIT 1`,
+      [tenantId, userId, String(permissionCode || "").trim()]
+    );
+    return Array.isArray(result.rows) && result.rows.length > 0;
+  }
+
   router.get(
     "/period-closing/runs",
     requirePermission("gl.period.close", {
@@ -205,6 +247,77 @@ export function registerGlPeriodClosingRoutes(router, deps = {}) {
 
       const closeStatus = normalizeCloseTargetStatus(req.body?.closeStatus);
       const note = req.body?.note ? String(req.body.note) : null;
+      const closeGateRunType = isYearEnd ? "YEAR_END" : "MONTH_END";
+      const cashFxGate = await evaluateCashFxRevaluationCloseGate({
+        tenantId,
+        bookId,
+        fiscalPeriodId,
+        runType: closeGateRunType,
+        periodEndDate: String(currentPeriod.end_date),
+      });
+      const cashFxReversalIntegrity = cashFxGate?.reversalIntegrity || null;
+      let cashFxOverrideApplied = false;
+      let cashFxOverrideReason = null;
+
+      if (cashFxGate.required && !cashFxGate.satisfied) {
+        const requestedOverride = toBoolean(req.body?.cashFxRevaluationOverride, false);
+        cashFxOverrideReason = req.body?.cashFxRevaluationOverrideReason
+          ? String(req.body.cashFxRevaluationOverrideReason).trim()
+          : null;
+
+        if (!requestedOverride) {
+          return res.status(409).json({
+            message:
+              "Cash FX revaluation is required before period close. Run cash FX revaluation for this period or use override with dedicated permission.",
+            code: "CASH_FX_REVALUATION_REQUIRED",
+            details: {
+              bookId,
+              fiscalPeriodId,
+              runType: closeGateRunType,
+              periodEndDate: String(currentPeriod.end_date),
+              foreignBalanceCount: Number(cashFxGate.foreignBalanceCount || 0),
+            },
+            requestId: req.requestId || null,
+          });
+        }
+
+        if (!cashFxOverrideReason) {
+          throw badRequest(
+            "cashFxRevaluationOverrideReason is required when cashFxRevaluationOverride=true"
+          );
+        }
+
+        const canOverrideGate = await userHasPermissionCode({
+          tenantId,
+          userId,
+          permissionCode: "cash.fx.revaluation.override",
+        });
+        if (!canOverrideGate) {
+          throw forbidden("Missing permission: cash.fx.revaluation.override");
+        }
+        cashFxOverrideApplied = true;
+      }
+
+      if (cashFxReversalIntegrity && !cashFxReversalIntegrity.satisfied) {
+        return res.status(409).json({
+          message:
+            "Cash FX revaluation reversal integrity check failed. Ensure previous-period reversal is posted exactly once in this period before closing.",
+          code: "CASH_FX_REVALUATION_REVERSAL_REQUIRED",
+          details: {
+            bookId,
+            fiscalPeriodId,
+            reasonCode: cashFxReversalIntegrity.reasonCode || null,
+            previousFiscalPeriodId:
+              parsePositiveInt(cashFxReversalIntegrity.previousFiscalPeriodId) || null,
+            previousRunType: cashFxReversalIntegrity.previousRunType || null,
+            previousRunId:
+              parsePositiveInt(cashFxReversalIntegrity.previousRun?.id) || null,
+            reversalJournalEntryId:
+              parsePositiveInt(cashFxReversalIntegrity.reversalJournalEntryId) || null,
+          },
+          requestId: req.requestId || null,
+        });
+      }
 
       const retainedEarningsAccountIdRaw =
         req.body?.retainedEarningsAccountId === undefined ||
@@ -499,7 +612,8 @@ export function registerGlPeriodClosingRoutes(router, deps = {}) {
           accountCodeById.set(accountId, String(row.account_code || `ACC-${accountId}`));
 
           const accountType = String(row.account_type || "").toUpperCase();
-          if (!["REVENUE", "EXPENSE"].includes(accountType)) {
+          const isPnlAccount = ["REVENUE", "EXPENSE"].includes(accountType);
+          if (!isYearEnd || !isPnlAccount) {
             carryForwardBalanceByAccountId.set(accountId, Number(row.closing_balance || 0));
           }
         }
@@ -713,6 +827,29 @@ export function registerGlPeriodClosingRoutes(router, deps = {}) {
           carryForwardLineCount: carryForwardLines.length,
           yearEndLineCount: yearEndLines.length,
           sourceFingerprint,
+          cashFxGate: {
+            runType: closeGateRunType,
+            required: Boolean(cashFxGate.required),
+            satisfied: Boolean(cashFxGate.satisfied),
+            reasonCode: cashFxGate.reasonCode || null,
+            foreignBalanceCount: Number(cashFxGate.foreignBalanceCount || 0),
+            overrideApplied: Boolean(cashFxOverrideApplied),
+            overrideReason: cashFxOverrideReason || null,
+            reversalIntegrity: cashFxReversalIntegrity
+              ? {
+                  required: Boolean(cashFxReversalIntegrity.required),
+                  satisfied: Boolean(cashFxReversalIntegrity.satisfied),
+                  reasonCode: cashFxReversalIntegrity.reasonCode || null,
+                  previousFiscalPeriodId:
+                    parsePositiveInt(cashFxReversalIntegrity.previousFiscalPeriodId) || null,
+                  previousRunType: cashFxReversalIntegrity.previousRunType || null,
+                  previousRunId:
+                    parsePositiveInt(cashFxReversalIntegrity.previousRun?.id) || null,
+                  reversalJournalEntryId:
+                    parsePositiveInt(cashFxReversalIntegrity.reversalJournalEntryId) || null,
+                }
+              : null,
+          },
         };
 
         await tx.query(
@@ -757,6 +894,29 @@ export function registerGlPeriodClosingRoutes(router, deps = {}) {
             carryForwardLineCount: carryForwardLines.length,
             yearEndLineCount: yearEndLines.length,
             sourceFingerprint,
+            cashFxGate: {
+              runType: closeGateRunType,
+              required: Boolean(cashFxGate.required),
+              satisfied: Boolean(cashFxGate.satisfied),
+              reasonCode: cashFxGate.reasonCode || null,
+              foreignBalanceCount: Number(cashFxGate.foreignBalanceCount || 0),
+              overrideApplied: Boolean(cashFxOverrideApplied),
+              overrideReason: cashFxOverrideReason || null,
+              reversalIntegrity: cashFxReversalIntegrity
+                ? {
+                    required: Boolean(cashFxReversalIntegrity.required),
+                    satisfied: Boolean(cashFxReversalIntegrity.satisfied),
+                    reasonCode: cashFxReversalIntegrity.reasonCode || null,
+                    previousFiscalPeriodId:
+                      parsePositiveInt(cashFxReversalIntegrity.previousFiscalPeriodId) || null,
+                    previousRunType: cashFxReversalIntegrity.previousRunType || null,
+                    previousRunId:
+                      parsePositiveInt(cashFxReversalIntegrity.previousRun?.id) || null,
+                    reversalJournalEntryId:
+                      parsePositiveInt(cashFxReversalIntegrity.reversalJournalEntryId) || null,
+                  }
+                : null,
+            },
           },
         });
 
@@ -862,6 +1022,9 @@ export function registerGlPeriodClosingRoutes(router, deps = {}) {
           fiscalPeriodId,
           tx.query
         );
+        if (currentStatus === "HARD_CLOSED") {
+          throw badRequest("Period is HARD_CLOSED and cannot be reopened.");
+        }
 
         const runResult = await tx.query(
           `SELECT *

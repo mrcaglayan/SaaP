@@ -46,6 +46,7 @@ const INTEGRATION_LINK_STATUSES = [
   "PARTIALLY_LINKED",
   "FAILED",
 ];
+const FX_FALLBACK_MODE_VALUES = ["EXACT_ONLY", "PRIOR_DATE"];
 
 export function parseCashTransitTransferIdParam(req) {
   const transitTransferId = parsePositiveInt(req.params?.transitTransferId);
@@ -160,7 +161,21 @@ export function parseCashTransactionCreateInput(req) {
     new Date().toISOString().slice(0, 10)
   );
   const amount = parseAmount(req.body?.amount, "amount", { required: true });
+  const amountBase = parseAmount(req.body?.amountBase, "amountBase", { required: false });
   const currencyCode = normalizeCurrencyCode(req.body?.currencyCode, "currencyCode");
+  const fxRate = parseOptionalPositiveDecimal(req.body?.fxRate, "fxRate");
+  const fxRateSource = normalizeText(req.body?.fxRateSource, "fxRateSource", 40);
+  const fxRateDate = parseOptionalDateOnly(req.body?.fxRateDate, "fxRateDate");
+  const fxFallbackModeRaw = String(req.body?.fxFallbackMode || "")
+    .trim()
+    .toUpperCase();
+  const fxFallbackMode = fxFallbackModeRaw
+    ? normalizeEnum(fxFallbackModeRaw, "fxFallbackMode", FX_FALLBACK_MODE_VALUES)
+    : null;
+  const fxFallbackMaxDays = parseOptionalNonNegativeInt(
+    req.body?.fxFallbackMaxDays,
+    "fxFallbackMaxDays"
+  );
   const description = normalizeText(req.body?.description, "description", 500);
   const referenceNo = normalizeText(req.body?.referenceNo, "referenceNo", 100);
   const sourceDocTypeRaw = String(req.body?.sourceDocType || "")
@@ -215,6 +230,13 @@ export function parseCashTransactionCreateInput(req) {
       "integrationLinkStatus cannot be UNLINKED when linkedCariSettlementBatchId or linkedCariUnappliedCashId is provided"
     );
   }
+  if (
+    fxFallbackMaxDays !== null &&
+    fxFallbackMode &&
+    fxFallbackMode !== "PRIOR_DATE"
+  ) {
+    throw badRequest("fxFallbackMaxDays is only supported when fxFallbackMode=PRIOR_DATE");
+  }
 
   return {
     tenantId,
@@ -225,7 +247,13 @@ export function parseCashTransactionCreateInput(req) {
     txnDatetime,
     bookDate,
     amount,
+    amountBase,
     currencyCode,
+    fxRate,
+    fxRateSource,
+    fxRateDate,
+    fxFallbackMode,
+    fxFallbackMaxDays,
     description,
     referenceNo,
     sourceDocType,
@@ -306,6 +334,24 @@ function parseOptionalPositiveDecimal(value, label) {
     throw badRequest(`${label} must be a numeric value greater than 0`);
   }
   return Number(parsed.toFixed(10));
+}
+
+function parseOptionalNonNegativeInt(value, label) {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw badRequest(`${label} must be a non-negative integer`);
+  }
+  return parsed;
+}
+
+function parseOptionalDateOnly(value, label) {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+  return parseDateOnly(value, label);
 }
 
 function parseCariApplications(value) {

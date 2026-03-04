@@ -423,9 +423,22 @@ function hasRequiredPermissions(item, hasAnyPermission) {
   return hasAnyPermission(requiredPermissions);
 }
 
+function hasRequiredFeatures(item, hasAnyFeature) {
+  const requiredFeatureCodes = Array.isArray(item?.requiredFeatureCodes)
+    ? item.requiredFeatureCodes
+        .map((value) => String(value || "").trim().toUpperCase())
+        .filter(Boolean)
+    : [];
+  if (requiredFeatureCodes.length === 0) {
+    return true;
+  }
+  return hasAnyFeature(requiredFeatureCodes);
+}
+
 function annotateSidebarItemsWithAccess(
   items,
   hasAnyPermission,
+  hasAnyFeature,
   includeUnimplemented,
   t
 ) {
@@ -438,11 +451,21 @@ function annotateSidebarItemsWithAccess(
     const requiredPermissions = Array.isArray(item?.requiredPermissions)
       ? item.requiredPermissions.map((value) => String(value || "").trim()).filter(Boolean)
       : [];
+    const requiredFeatureCodes = Array.isArray(item?.requiredFeatureCodes)
+      ? item.requiredFeatureCodes
+          .map((value) => String(value || "").trim().toUpperCase())
+          .filter(Boolean)
+      : [];
     const hasAccess = hasRequiredPermissions(item, hasAnyPermission);
+    const hasFeatureAccess = hasRequiredFeatures(item, hasAnyFeature);
     const lockedReason =
       !hasAccess && requiredPermissions.length > 0
         ? `${t("layout.permissionRequired", "Permission required")}: ${requiredPermissions.join(", ")}`
         : "";
+
+    if (!hasFeatureAccess) {
+      continue;
+    }
 
     if (!isSectionItem(item)) {
       if (!includeUnimplemented && item.implemented !== true) {
@@ -451,6 +474,7 @@ function annotateSidebarItemsWithAccess(
       visible.push({
         ...item,
         requiredPermissions,
+        requiredFeatureCodes,
         isLocked: !hasAccess,
         lockedReason,
       });
@@ -460,6 +484,7 @@ function annotateSidebarItemsWithAccess(
     const children = annotateSidebarItemsWithAccess(
       item.items,
       hasAnyPermission,
+      hasAnyFeature,
       includeUnimplemented,
       t
     );
@@ -470,6 +495,7 @@ function annotateSidebarItemsWithAccess(
     visible.push({
       ...item,
       requiredPermissions,
+      requiredFeatureCodes,
       isLocked: !hasAccess,
       lockedReason,
       items: children,
@@ -480,7 +506,8 @@ function annotateSidebarItemsWithAccess(
 }
 
 export default function AppLayout() {
-  const { user, logout, hasAnyPermission, hasAllPermissions } = useAuth();
+  const { user, logout, hasAnyPermission, hasAnyFeature, hasAllPermissions } =
+    useAuth();
   const { t } = useI18n();
   const {
     loading: readinessLoading,
@@ -518,10 +545,11 @@ export default function AppLayout() {
       annotateSidebarItemsWithAccess(
         sidebarItems,
         hasAnyPermission,
+        hasAnyFeature,
         canViewUnimplementedModules,
         t
       ),
-    [hasAnyPermission, canViewUnimplementedModules, t]
+    [hasAnyFeature, hasAnyPermission, canViewUnimplementedModules, t]
   );
   const readinessChip = useMemo(
     () =>

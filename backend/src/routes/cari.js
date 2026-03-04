@@ -13,6 +13,7 @@ import {
   parseCounterpartyStatementFilters,
   parseGenericAgingReportFilters,
   parseOpenItemsReportFilters,
+  parseSettlementRealizedFxReportFilters,
 } from "./cari.report.validators.js";
 import {
   parseBankApplyInput,
@@ -31,6 +32,7 @@ import {
   getCariAgingReport,
   getCariCounterpartyStatementReport,
   getCariOpenItemsReport,
+  getCariSettlementRealizedFxReport,
 } from "../services/cari.report.service.js";
 import { getCariAuditTrail } from "../services/cari.audit.service.js";
 import {
@@ -101,9 +103,17 @@ function buildSettlementApplyResponse(tenantId, result) {
     ...(result.applyAuditPayload || {}),
     ...(result.metrics || {}),
   };
+  const rowFxRate =
+    result?.row?.settlementFxRate === undefined || result?.row?.settlementFxRate === null
+      ? null
+      : Number(result.row.settlementFxRate);
+  const rowRealizedFx =
+    result?.row?.realizedFxNetBase === undefined || result?.row?.realizedFxNetBase === null
+      ? null
+      : Number(result.row.realizedFxNetBase);
   const realizedGainLossBase =
     metrics.realizedFxNetBase === undefined || metrics.realizedFxNetBase === null
-      ? null
+      ? rowRealizedFx
       : Number(metrics.realizedFxNetBase);
   const unappliedConsumed = Array.isArray(metrics.unappliedConsumed)
     ? metrics.unappliedConsumed
@@ -118,16 +128,17 @@ function buildSettlementApplyResponse(tenantId, result) {
     fx: {
       settlementFxRate:
         metrics.settlementFxRate === undefined || metrics.settlementFxRate === null
-          ? null
+          ? rowFxRate
           : Number(metrics.settlementFxRate),
-      settlementFxSource: metrics.settlementFxSource || null,
-      settlementFxFallbackMode: metrics.settlementFxFallbackMode || null,
+      settlementFxSource: metrics.settlementFxSource || result?.row?.settlementFxSource || null,
+      settlementFxFallbackMode:
+        metrics.settlementFxFallbackMode || result?.row?.settlementFxFallbackMode || null,
       settlementFxFallbackMaxDays:
         metrics.settlementFxFallbackMaxDays === undefined ||
         metrics.settlementFxFallbackMaxDays === null
-          ? null
+          ? result?.row?.settlementFxFallbackMaxDays || null
           : Number(metrics.settlementFxFallbackMaxDays),
-      fxRateDate: metrics.fxRateDate || null,
+      fxRateDate: metrics.fxRateDate || result?.row?.settlementFxRateDate || null,
       realizedGainLossBase,
     },
     unapplied: {
@@ -315,6 +326,26 @@ router.get(
   asyncHandler(async (req, res) => {
     const filters = parseCounterpartyStatementFilters(req);
     const result = await getCariCounterpartyStatementReport({
+      req,
+      filters,
+      buildScopeFilter,
+      assertScopeAccess,
+    });
+    return res.json({
+      tenantId: filters.tenantId,
+      ...result,
+    });
+  })
+);
+
+router.get(
+  "/reports/settlement-realized-fx",
+  requirePermission("cari.report.read", {
+    resolveScope: (req) => resolveCariScope(req),
+  }),
+  asyncHandler(async (req, res) => {
+    const filters = parseSettlementRealizedFxReportFilters(req);
+    const result = await getCariSettlementRealizedFxReport({
       req,
       filters,
       buildScopeFilter,

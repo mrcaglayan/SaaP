@@ -92,6 +92,16 @@ function normalizeText(value, fallback = "") {
   return text || fallback;
 }
 
+const EXCEPTION_MODULE_CODES = new Set(["BANK", "PAYROLL", "CASH"]);
+
+function normalizeModuleCode(value) {
+  const normalized = normalizeText(value).toUpperCase();
+  if (!normalized) {
+    return "";
+  }
+  return EXCEPTION_MODULE_CODES.has(normalized) ? normalized : "";
+}
+
 function toExceptionId(value) {
   return toInt(value, 0);
 }
@@ -177,6 +187,10 @@ export default function ExceptionsWorkbenchPage() {
   const [selectedAudit, setSelectedAudit] = useState([]);
   const [resolutionNote, setResolutionNote] = useState("");
   const [bulkBusy, setBulkBusy] = useState("");
+  const deepLinkedModuleCodeRaw = String(
+    searchParams.get("moduleCode") || searchParams.get("module_code") || ""
+  ).trim();
+  const deepLinkedModuleCode = normalizeModuleCode(deepLinkedModuleCodeRaw);
   const deepLinkedExceptionIdRaw = String(
     searchParams.get("exceptionId") || searchParams.get("exception_id") || ""
   ).trim();
@@ -278,6 +292,37 @@ export default function ExceptionsWorkbenchPage() {
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    if (!deepLinkedModuleCodeRaw || deepLinkedModuleCode) {
+      return;
+    }
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.delete("moduleCode");
+    nextParams.delete("module_code");
+    setSearchParams(nextParams, { replace: true });
+  }, [
+    deepLinkedModuleCode,
+    deepLinkedModuleCodeRaw,
+    searchParams,
+    setSearchParams,
+  ]);
+
+  useEffect(() => {
+    if (!deepLinkedModuleCode) {
+      return;
+    }
+    setFilters((state) => {
+      if (normalizeModuleCode(state?.moduleCode) === deepLinkedModuleCode) {
+        return state;
+      }
+      return {
+        ...state,
+        queue: EXCEPTIONS_QUEUE_KEYS.CUSTOM,
+        moduleCode: deepLinkedModuleCode,
+      };
+    });
+  }, [deepLinkedModuleCode, setFilters]);
 
   useEffect(() => {
     if (!deepLinkedExceptionIdRaw || deepLinkedExceptionId) {
@@ -667,6 +712,7 @@ export default function ExceptionsWorkbenchPage() {
                   <option value="">{t("exceptionsWorkbench.filters.all", "All")}</option>
                   <option value="BANK">BANK</option>
                   <option value="PAYROLL">PAYROLL</option>
+                  <option value="CASH">CASH</option>
                 </select>
               </label>
               <label className="text-sm">

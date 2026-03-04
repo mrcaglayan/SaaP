@@ -77,6 +77,14 @@ import migration086CariPurposeMappingLeafAutofix from "./m086_cari_purpose_mappi
 import migration087CariSettlementBatchStatusCheckCashLinked from "./m087_cari_settlement_batch_status_check_cash_linked.js";
 import migration088CariSettlementBatchStatusCheckCleanup from "./m088_cari_settlement_batch_status_check_cleanup.js";
 import migration089CariSettlementBatchStatusCheckFinalCleanup from "./m089_cari_settlement_batch_status_check_final_cleanup.js";
+import migration090CashFxDualAmountFoundation from "./m090_cash_fx_dual_amount_foundation.js";
+import migration091CashExchangeBatches from "./m091_cash_exchange_batches.js";
+import migration092CariSettlementFxReportingColumns from "./m092_cari_settlement_fx_reporting_columns.js";
+import migration093CashFxRevaluationRuns from "./m093_cash_fx_revaluation_runs.js";
+import migration094CashFxPositionLots from "./m094_cash_fx_position_lots.js";
+import migration095CashFxRevaluationReversalHardening from "./m095_cash_fx_revaluation_reversal_hardening.js";
+import migration096CashExchangeFeeSpreadAccounting from "./m096_cash_exchange_fee_spread_accounting.js";
+import migration097ExceptionWorkbenchCashModule from "./m097_exception_workbench_cash_module.js";
 
 const migrations = [
   migration001GlobalMultiEntity,
@@ -158,6 +166,14 @@ const migrations = [
   migration087CariSettlementBatchStatusCheckCashLinked,
   migration088CariSettlementBatchStatusCheckCleanup,
   migration089CariSettlementBatchStatusCheckFinalCleanup,
+  migration090CashFxDualAmountFoundation,
+  migration091CashExchangeBatches,
+  migration092CariSettlementFxReportingColumns,
+  migration093CashFxRevaluationRuns,
+  migration094CashFxPositionLots,
+  migration095CashFxRevaluationReversalHardening,
+  migration096CashExchangeFeeSpreadAccounting,
+  migration097ExceptionWorkbenchCashModule,
 ];
 
 export default migrations;

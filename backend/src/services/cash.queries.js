@@ -102,7 +102,13 @@ const CASH_TXN_BASE_SELECT = `
     ct.txn_datetime,
     ct.book_date,
     ct.amount,
+    ct.amount_base,
     ct.currency_code,
+    ct.fx_rate,
+    ct.fx_rate_source,
+    ct.fx_rate_date,
+    ct.fx_fallback_mode,
+    ct.fx_fallback_max_days,
     ct.description,
     ct.reference_no,
     ct.source_doc_type,
@@ -1090,7 +1096,13 @@ export async function insertCashTransaction({ payload, runQuery = query }) {
        txn_datetime,
        book_date,
        amount,
+       amount_base,
        currency_code,
+       fx_rate,
+       fx_rate_source,
+       fx_rate_date,
+       fx_fallback_mode,
+       fx_fallback_max_days,
        description,
         reference_no,
         source_doc_type,
@@ -1114,7 +1126,7 @@ export async function insertCashTransaction({ payload, runQuery = query }) {
         posted_by_user_id,
         posted_at
       ) VALUES (
-        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
       )`,
     [
       payload.tenantId,
@@ -1126,7 +1138,15 @@ export async function insertCashTransaction({ payload, runQuery = query }) {
       payload.txnDatetime,
       payload.bookDate,
       payload.amount,
+      payload.amountBase === undefined || payload.amountBase === null
+        ? payload.amount
+        : payload.amountBase,
       payload.currencyCode,
+      payload.fxRate === undefined || payload.fxRate === null ? 1 : payload.fxRate,
+      payload.fxRateSource || "PARITY",
+      payload.fxRateDate || payload.bookDate,
+      payload.fxFallbackMode || null,
+      payload.fxFallbackMaxDays === undefined ? null : payload.fxFallbackMaxDays,
       payload.description,
       payload.referenceNo,
       payload.sourceDocType,

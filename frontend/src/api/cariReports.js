@@ -29,3 +29,9 @@ export async function getCariOpenItemsReport(params = {}) {
 export async function getCariCounterpartyStatementReport(params = {}) {
   return run(() => api.get(`/api/v1/cari/reports/statement${toCariQueryString(params)}`));
 }
+
+export async function getCariSettlementRealizedFxReport(params = {}) {
+  return run(() =>
+    api.get(`/api/v1/cari/reports/settlement-realized-fx${toCariQueryString(params)}`)
+  );
+}

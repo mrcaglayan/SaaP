@@ -2,6 +2,12 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, setOnUnauthorized } from "../api/client";
 import { AuthContext } from "./authContext.js";
 
+function normalizeFeatureCode(value) {
+  return String(value || "")
+    .trim()
+    .toUpperCase();
+}
+
 export function AuthProvider({ children }) {
   const [token, setToken] = useState(null);
   const [user, setUser] = useState(null);
@@ -30,7 +36,9 @@ export function AuthProvider({ children }) {
     try {
       const response = await api.get("/me/features", { skipAuthRedirect: true });
       const enabledFeatureCodes = Array.isArray(response?.data?.enabledFeatureCodes)
-        ? response.data.enabledFeatureCodes.map((code) => String(code))
+        ? response.data.enabledFeatureCodes
+            .map((code) => normalizeFeatureCode(code))
+            .filter(Boolean)
         : [];
       setFeatureCodes(enabledFeatureCodes);
     } catch {
@@ -121,15 +129,23 @@ export function AuthProvider({ children }) {
 
   const hasFeature = useCallback(
     (featureCode) => {
-      const code = String(featureCode || "")
-        .trim()
-        .toUpperCase();
+      const code = normalizeFeatureCode(featureCode);
       if (!code) {
         return false;
       }
       return featureSet.has(code);
     },
     [featureSet]
+  );
+
+  const hasAnyFeature = useCallback(
+    (featureCodesToCheck) => {
+      if (!Array.isArray(featureCodesToCheck) || featureCodesToCheck.length === 0) {
+        return true;
+      }
+      return featureCodesToCheck.some((featureCode) => hasFeature(featureCode));
+    },
+    [hasFeature]
   );
 
   const value = useMemo(
@@ -146,6 +162,7 @@ export function AuthProvider({ children }) {
       hasAnyPermission,
       hasAllPermissions,
       hasFeature,
+      hasAnyFeature,
     }),
     [
       token,
@@ -160,6 +177,7 @@ export function AuthProvider({ children }) {
       hasAnyPermission,
       hasAllPermissions,
       hasFeature,
+      hasAnyFeature,
     ]
   );
 

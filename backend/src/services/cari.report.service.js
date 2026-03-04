@@ -945,7 +945,13 @@ async function loadStatementSettlementRows({
        b.status,
        b.total_allocated_txn,
        b.total_allocated_base,
+       b.realized_fx_net_base,
        b.currency_code,
+       b.settlement_fx_rate,
+       b.settlement_fx_source,
+       b.settlement_fx_rate_date,
+       b.settlement_fx_fallback_mode,
+       b.settlement_fx_fallback_max_days,
        b.posted_journal_entry_id,
        b.reversal_of_settlement_batch_id,
        b.bank_statement_line_id,
@@ -1014,7 +1020,19 @@ async function loadStatementSettlementRows({
       statusCurrent: row.status || null,
       totalAllocatedTxn: roundAmount(row.total_allocated_txn),
       totalAllocatedBase: roundAmount(row.total_allocated_base),
+      realizedFxNetBase:
+        row.realized_fx_net_base === null ? null : roundAmount(row.realized_fx_net_base),
       currencyCode: row.currency_code || null,
+      settlementFxRate:
+        row.settlement_fx_rate === null ? null : toNumber(row.settlement_fx_rate),
+      settlementFxSource: row.settlement_fx_source || null,
+      settlementFxRateDate: toDateOnlyString(row.settlement_fx_rate_date),
+      settlementFxFallbackMode: row.settlement_fx_fallback_mode || null,
+      settlementFxFallbackMaxDays:
+        row.settlement_fx_fallback_max_days === null ||
+        row.settlement_fx_fallback_max_days === undefined
+          ? null
+          : Number(row.settlement_fx_fallback_max_days),
       postedJournalEntryId: parsePositiveInt(row.posted_journal_entry_id),
       reversalOfSettlementBatchId: parsePositiveInt(row.reversal_of_settlement_batch_id),
       reversalOfSettlementNo: row.reversal_of_settlement_no || null,
@@ -1936,5 +1954,187 @@ export async function getCariCounterpartyStatementReport({
       summary: unappliedSummary,
       rows: filters.includeDetails ? unappliedRows : [],
     },
+  };
+}
+
+export async function getCariSettlementRealizedFxReport({
+  req,
+  filters,
+  buildScopeFilter,
+  assertScopeAccess,
+}) {
+  const params = [filters.tenantId];
+  const conditions = ["b.tenant_id = ?", "b.status <> 'DRAFT'"];
+
+  if (typeof buildScopeFilter === "function") {
+    conditions.push(buildScopeFilter(req, "legal_entity", "b.legal_entity_id", params));
+  }
+
+  if (filters.legalEntityId) {
+    if (typeof assertScopeAccess === "function") {
+      assertScopeAccess(req, "legal_entity", filters.legalEntityId, "legalEntityId");
+    }
+    conditions.push("b.legal_entity_id = ?");
+    params.push(filters.legalEntityId);
+  }
+
+  if (filters.counterpartyId) {
+    conditions.push("b.counterparty_id = ?");
+    params.push(filters.counterpartyId);
+  }
+
+  appendRoleCondition({
+    conditions,
+    params,
+    role: filters.role,
+    customerFlagColumn: "cp.is_customer",
+    vendorFlagColumn: "cp.is_vendor",
+  });
+
+  if (filters.currencyCode) {
+    conditions.push("UPPER(b.currency_code) = ?");
+    params.push(normalizeUpperText(filters.currencyCode));
+  }
+
+  if (filters.periodFrom) {
+    conditions.push("b.settlement_date >= ?");
+    params.push(filters.periodFrom);
+  }
+
+  if (filters.periodTo) {
+    conditions.push("b.settlement_date <= ?");
+    params.push(filters.periodTo);
+  }
+
+  const whereSql = conditions.join(" AND ");
+  const groupedSql = `SELECT
+      DATE_FORMAT(b.settlement_date, '%Y-%m') AS period_key,
+      b.legal_entity_id,
+      le.code AS legal_entity_code,
+      le.name AS legal_entity_name,
+      b.counterparty_id,
+      cp.code AS counterparty_code,
+      cp.name AS counterparty_name,
+      cp.is_customer,
+      cp.is_vendor,
+      UPPER(b.currency_code) AS currency_code,
+      COUNT(*) AS settlement_count,
+      COALESCE(SUM(b.total_allocated_txn), 0) AS total_allocated_txn,
+      COALESCE(SUM(b.total_allocated_base), 0) AS total_allocated_base,
+      COALESCE(SUM(COALESCE(b.realized_fx_net_base, 0)), 0) AS realized_fx_net_base,
+      COALESCE(
+        SUM(
+          CASE
+            WHEN COALESCE(b.realized_fx_net_base, 0) > 0 THEN COALESCE(b.realized_fx_net_base, 0)
+            ELSE 0
+          END
+        ),
+        0
+      ) AS realized_fx_gain_base,
+      COALESCE(
+        SUM(
+          CASE
+            WHEN COALESCE(b.realized_fx_net_base, 0) < 0 THEN ABS(COALESCE(b.realized_fx_net_base, 0))
+            ELSE 0
+          END
+        ),
+        0
+      ) AS realized_fx_loss_base
+    FROM cari_settlement_batches b
+    LEFT JOIN counterparties cp
+      ON cp.tenant_id = b.tenant_id
+     AND cp.legal_entity_id = b.legal_entity_id
+     AND cp.id = b.counterparty_id
+    LEFT JOIN legal_entities le
+      ON le.tenant_id = b.tenant_id
+     AND le.id = b.legal_entity_id
+    WHERE ${whereSql}
+    GROUP BY
+      DATE_FORMAT(b.settlement_date, '%Y-%m'),
+      b.legal_entity_id,
+      le.code,
+      le.name,
+      b.counterparty_id,
+      cp.code,
+      cp.name,
+      cp.is_customer,
+      cp.is_vendor,
+      UPPER(b.currency_code)`;
+
+  const countResult = await query(
+    `SELECT COUNT(*) AS total
+     FROM (${groupedSql}) grouped`,
+    params
+  );
+  const total = Number(countResult.rows?.[0]?.total || 0);
+
+  const rowsResult = await query(
+    `SELECT *
+     FROM (${groupedSql}) grouped
+     ORDER BY grouped.period_key DESC, grouped.legal_entity_id ASC, grouped.counterparty_id ASC
+     LIMIT ${Number(filters.limit || 200)}
+     OFFSET ${Number(filters.offset || 0)}`,
+    params
+  );
+
+  const rows = (rowsResult.rows || []).map((row) => {
+    const isCustomer = parseDbBoolean(row.is_customer);
+    const isVendor = parseDbBoolean(row.is_vendor);
+    return {
+      period: row.period_key || null,
+      legalEntityId: parsePositiveInt(row.legal_entity_id),
+      legalEntityCode: row.legal_entity_code || null,
+      legalEntityName: row.legal_entity_name || null,
+      counterpartyId: parsePositiveInt(row.counterparty_id),
+      counterpartyCode: row.counterparty_code || null,
+      counterpartyName: row.counterparty_name || null,
+      counterpartyType: deriveCounterpartyType({ isCustomer, isVendor }),
+      currencyCode: row.currency_code || null,
+      settlementCount: Number(row.settlement_count || 0),
+      totalAllocatedTxn: roundAmount(row.total_allocated_txn),
+      totalAllocatedBase: roundAmount(row.total_allocated_base),
+      realizedFxNetBase: roundAmount(row.realized_fx_net_base),
+      realizedFxGainBase: roundAmount(row.realized_fx_gain_base),
+      realizedFxLossBase: roundAmount(row.realized_fx_loss_base),
+    };
+  });
+
+  const summaryResult = await query(
+    `SELECT
+       COUNT(*) AS settlement_count,
+       COALESCE(SUM(b.total_allocated_txn), 0) AS total_allocated_txn,
+       COALESCE(SUM(b.total_allocated_base), 0) AS total_allocated_base,
+       COALESCE(SUM(COALESCE(b.realized_fx_net_base, 0)), 0) AS realized_fx_net_base,
+       COALESCE(COUNT(DISTINCT b.counterparty_id), 0) AS distinct_counterparty_count,
+       COALESCE(COUNT(DISTINCT UPPER(b.currency_code)), 0) AS distinct_currency_count
+     FROM cari_settlement_batches b
+     LEFT JOIN counterparties cp
+       ON cp.tenant_id = b.tenant_id
+      AND cp.legal_entity_id = b.legal_entity_id
+      AND cp.id = b.counterparty_id
+     WHERE ${whereSql}`,
+    params
+  );
+  const summaryRow = summaryResult.rows?.[0] || {};
+
+  return {
+    legalEntityId: filters.legalEntityId || null,
+    counterpartyId: filters.counterpartyId || null,
+    role: filters.role || null,
+    currencyCode: filters.currencyCode || null,
+    periodFrom: filters.periodFrom || null,
+    periodTo: filters.periodTo || null,
+    total,
+    limit: Number(filters.limit || 200),
+    offset: Number(filters.offset || 0),
+    summary: {
+      settlementCount: Number(summaryRow.settlement_count || 0),
+      distinctCounterpartyCount: Number(summaryRow.distinct_counterparty_count || 0),
+      distinctCurrencyCount: Number(summaryRow.distinct_currency_count || 0),
+      totalAllocatedTxn: roundAmount(summaryRow.total_allocated_txn),
+      totalAllocatedBase: roundAmount(summaryRow.total_allocated_base),
+      realizedFxNetBase: roundAmount(summaryRow.realized_fx_net_base),
+    },
+    rows: filters.includeDetails ? rows : [],
   };
 }

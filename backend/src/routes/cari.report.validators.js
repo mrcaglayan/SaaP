@@ -71,6 +71,24 @@ function parseOptionalDateTimeFilter(value, label) {
   return parsed.toISOString().slice(0, 19).replace("T", " ");
 }
 
+function parseOptionalDateOnlyFilter(value, label) {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+  return parseDateOnly(value, label);
+}
+
+function parseOptionalCurrencyFilter(value, label = "currencyCode") {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+  const normalized = String(value).trim().toUpperCase();
+  if (!/^[A-Z]{3}$/.test(normalized)) {
+    throw badRequest(`${label} must be a 3-letter currency code`);
+  }
+  return normalized;
+}
+
 function parsePositivePagination(query, defaults = {}) {
   const pagination = parsePagination(query, defaults);
   return {
@@ -182,6 +200,43 @@ export function parseCariAuditFilters(req) {
     createdFrom,
     createdTo,
     includePayload,
+    ...pagination,
+  };
+}
+
+export function parseSettlementRealizedFxReportFilters(req) {
+  const tenantId = requireTenantId(req);
+  const legalEntityId = optionalPositiveInt(req.query?.legalEntityId, "legalEntityId");
+  const counterpartyId = optionalPositiveInt(req.query?.counterpartyId, "counterpartyId");
+  const role = parseOptionalRoleFilter(req.query?.role || req.query?.customerVendor);
+  const currencyCode = parseOptionalCurrencyFilter(req.query?.currencyCode, "currencyCode");
+  const periodFrom = parseOptionalDateOnlyFilter(
+    req.query?.periodFrom || req.query?.dateFrom,
+    "periodFrom"
+  );
+  const periodTo = parseOptionalDateOnlyFilter(
+    req.query?.periodTo || req.query?.dateTo,
+    "periodTo"
+  );
+  if (periodFrom && periodTo && periodFrom > periodTo) {
+    throw badRequest("periodFrom must be <= periodTo");
+  }
+  const includeDetails = parseBooleanFlag(req.query?.includeDetails, true);
+  const pagination = parsePositivePagination(req.query, {
+    limit: 200,
+    offset: 0,
+    maxLimit: 1_000,
+  });
+
+  return {
+    tenantId,
+    legalEntityId,
+    counterpartyId,
+    role,
+    currencyCode,
+    periodFrom,
+    periodTo,
+    includeDetails,
     ...pagination,
   };
 }
