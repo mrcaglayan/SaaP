@@ -1,4 +1,34 @@
 {
-  "entries": []
+  "entries": [
+    {
+      "routePath": "/app/ayarlar/vergi-kurulumu",
+      "smokeScriptPath": "backend/scripts/test-followup-prf13-tax-engine-regression.js",
+      "packageScriptName": "test:followup:prf13-tax-engine"
+    },
+    {
+      "routePath": "/app/ayarlar/workflow-kurulumu",
+      "smokeScriptPath": "backend/scripts/test-followup-prf13-setup-wizard-regression.js",
+      "packageScriptName": "test:followup:prf13-setup-wizard"
+    },
+    {
+      "routePath": "/app/donem-sonu-islemler/yillik/kapanis-islemleri",
+      "smokeScriptPath": "backend/scripts/test-period-close-process.js",
+      "packageScriptName": "test:period-close"
+    },
+    {
+      "routePath": "/app/kasa-kur-degisimleri",
+      "smokeScriptPath": "backend/scripts/test-cash-exf03-exchange-fee-and-spread.js",
+      "packageScriptName": "test:cash:exf03"
+    },
+    {
+      "routePath": "/app/kasa-kur-ops-dashboard",
+      "smokeScriptPath": "backend/scripts/test-cash-exf04-fx-ops-dashboard.js",
+      "packageScriptName": "test:cash:exf04"
+    },
+    {
+      "routePath": "/app/kasa-kur-raporlari",
+      "smokeScriptPath": "backend/scripts/test-cash-exf01-position-lots-realized-fx.js",
+      "packageScriptName": "test:cash:exf01"
+    }
+  ]
 }
-
