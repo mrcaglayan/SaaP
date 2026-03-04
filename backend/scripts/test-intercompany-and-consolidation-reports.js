@@ -202,6 +202,50 @@ async function createAccount({
   return accountId;
 }
 
+async function upsertCanonicalAccountMapping({
+  token,
+  consolidationGroupId,
+  legalEntityId,
+  localAccountId,
+  groupAccountId,
+  localAccountCode,
+  effectiveFrom,
+}) {
+  const canonicalKey = `ACC_CODE:${String(localAccountCode || "").trim().toUpperCase()}`;
+  const canonicalName = `Canonical ${String(localAccountCode || "").trim()}`;
+
+  await apiRequest({
+    token,
+    method: "POST",
+    path: `/api/v1/consolidation/groups/${consolidationGroupId}/canonical-mappings/local`,
+    body: {
+      legalEntityId,
+      localAccountId,
+      canonicalKey,
+      canonicalName,
+      canonicalType: "ACCOUNT",
+      status: "ACTIVE",
+      effectiveFrom,
+    },
+    expectedStatus: 201,
+  });
+
+  await apiRequest({
+    token,
+    method: "POST",
+    path: `/api/v1/consolidation/groups/${consolidationGroupId}/canonical-mappings/group`,
+    body: {
+      groupAccountId,
+      canonicalKey,
+      canonicalName,
+      canonicalType: "ACCOUNT",
+      status: "ACTIVE",
+      effectiveFrom,
+    },
+    expectedStatus: 201,
+  });
+}
+
 async function createAndPostJournal({
   token,
   legalEntityId,
@@ -678,6 +722,44 @@ async function bootstrapScenario(token) {
       status: "ACTIVE",
     },
     expectedStatus: 201,
+  });
+
+  const canonicalEffectiveFrom = `${fiscalYear}-01-01`;
+  await upsertCanonicalAccountMapping({
+    token,
+    consolidationGroupId,
+    legalEntityId: legalEntityAId,
+    localAccountId: accountARAId,
+    groupAccountId: groupARId,
+    localAccountCode: "1100",
+    effectiveFrom: canonicalEffectiveFrom,
+  });
+  await upsertCanonicalAccountMapping({
+    token,
+    consolidationGroupId,
+    legalEntityId: legalEntityAId,
+    localAccountId: accountRevAId,
+    groupAccountId: groupRevId,
+    localAccountCode: "4000",
+    effectiveFrom: canonicalEffectiveFrom,
+  });
+  await upsertCanonicalAccountMapping({
+    token,
+    consolidationGroupId,
+    legalEntityId: legalEntityBId,
+    localAccountId: accountAPBId,
+    groupAccountId: groupAPId,
+    localAccountCode: "2100",
+    effectiveFrom: canonicalEffectiveFrom,
+  });
+  await upsertCanonicalAccountMapping({
+    token,
+    consolidationGroupId,
+    legalEntityId: legalEntityBId,
+    localAccountId: accountExpBId,
+    groupAccountId: groupExpId,
+    localAccountCode: "5000",
+    effectiveFrom: canonicalEffectiveFrom,
   });
 
   const runResult = await apiRequest({
