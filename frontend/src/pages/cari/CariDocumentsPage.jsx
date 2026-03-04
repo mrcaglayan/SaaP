@@ -233,6 +233,7 @@ function buildInitialPostForm(snapshot = null) {
     useFxOverride: false,
     fxOverrideReason: "",
     offsetAccountId: "",
+    showAllOffsetAccounts: false,
     usePostingLines: false,
     postingLines: [
       createPostingLineDraft({
@@ -934,6 +935,21 @@ export default function CariDocumentsPage() {
   const selectedOffsetAccountType = resolveOffsetAccountTypeByDirection(
     selectedDocumentDirection
   );
+  const filteredPostOffsetAccountOptions = useMemo(() => {
+    const sourceOptions = Array.isArray(postOffsetAccountOptions)
+      ? postOffsetAccountOptions
+      : [];
+    if (postForm.showAllOffsetAccounts || !selectedOffsetAccountType) {
+      return sourceOptions;
+    }
+    return sourceOptions.filter(
+      (row) => String(row?.accountType || "").toUpperCase() === selectedOffsetAccountType
+    );
+  }, [
+    postForm.showAllOffsetAccounts,
+    postOffsetAccountOptions,
+    selectedOffsetAccountType,
+  ]);
   const selectedDocumentNumericId = toPositiveInt(selectedSnapshot?.id);
   const selectedDocumentLegalEntityId = toPositiveInt(
     selectedSnapshot?.legalEntityId || selectedSnapshot?.legal_entity_id
@@ -1870,9 +1886,6 @@ export default function CariDocumentsPage() {
     const legalEntityId = toPositiveInt(
       selectedSnapshot?.legalEntityId || selectedSnapshot?.legal_entity_id
     );
-    const offsetAccountType = resolveOffsetAccountTypeByDirection(
-      selectedSnapshot?.direction || selectedSnapshot?.documentDirection
-    );
 
     setPostOffsetAccountsError("");
     if (!canReadGlAccounts || !legalEntityId) {
@@ -1907,12 +1920,7 @@ export default function CariDocumentsPage() {
             name: String(row?.name || "").trim(),
             accountType: String(row?.account_type || "").trim().toUpperCase(),
           }))
-          .filter(
-            (row) =>
-              row.id > 0 &&
-              row.code &&
-              (!offsetAccountType || row.accountType === offsetAccountType)
-          )
+          .filter((row) => row.id > 0 && row.code)
           .sort((left, right) =>
             String(left.code || "").localeCompare(String(right.code || ""), undefined, {
               numeric: true,
@@ -1921,49 +1929,6 @@ export default function CariDocumentsPage() {
           );
 
         setPostOffsetAccountOptions(options);
-        setPostForm((prev) => {
-          let changed = false;
-          let nextOffsetAccountId = prev.offsetAccountId;
-          if (nextOffsetAccountId) {
-            const exists = options.some(
-              (option) => Number(option.id) === Number(nextOffsetAccountId)
-            );
-            if (!exists) {
-              nextOffsetAccountId = "";
-              changed = true;
-            }
-          }
-
-          const existingLines = Array.isArray(prev.postingLines)
-            ? prev.postingLines
-            : [];
-          const nextPostingLines = existingLines.map((line) => {
-            const currentOffsetAccountId = normalizePositiveIntText(line?.offsetAccountId);
-            if (!currentOffsetAccountId) {
-              return line;
-            }
-            const exists = options.some(
-              (option) => Number(option.id) === Number(currentOffsetAccountId)
-            );
-            if (exists) {
-              return line;
-            }
-            changed = true;
-            return {
-              ...line,
-              offsetAccountId: "",
-            };
-          });
-
-          if (!changed) {
-            return prev;
-          }
-          return {
-            ...prev,
-            offsetAccountId: nextOffsetAccountId,
-            postingLines: nextPostingLines,
-          };
-        });
       } catch (error) {
         if (!active) {
           return;
@@ -1985,11 +1950,54 @@ export default function CariDocumentsPage() {
     };
   }, [
     canReadGlAccounts,
-    selectedSnapshot?.direction,
-    selectedSnapshot?.documentDirection,
     selectedSnapshot?.legalEntityId,
     selectedSnapshot?.legal_entity_id,
   ]);
+
+  useEffect(() => {
+    const availableOptionIds = new Set(
+      filteredPostOffsetAccountOptions
+        .map((row) => Number(row?.id || 0))
+        .filter((id) => Number.isInteger(id) && id > 0)
+    );
+    setPostForm((prev) => {
+      let changed = false;
+      let nextOffsetAccountId = prev.offsetAccountId;
+      if (nextOffsetAccountId) {
+        const exists = availableOptionIds.has(Number(nextOffsetAccountId));
+        if (!exists) {
+          nextOffsetAccountId = "";
+          changed = true;
+        }
+      }
+
+      const existingLines = Array.isArray(prev.postingLines) ? prev.postingLines : [];
+      const nextPostingLines = existingLines.map((line) => {
+        const currentOffsetAccountId = normalizePositiveIntText(line?.offsetAccountId);
+        if (!currentOffsetAccountId) {
+          return line;
+        }
+        const exists = availableOptionIds.has(Number(currentOffsetAccountId));
+        if (exists) {
+          return line;
+        }
+        changed = true;
+        return {
+          ...line,
+          offsetAccountId: "",
+        };
+      });
+
+      if (!changed) {
+        return prev;
+      }
+      return {
+        ...prev,
+        offsetAccountId: nextOffsetAccountId,
+        postingLines: nextPostingLines,
+      };
+    });
+  }, [filteredPostOffsetAccountOptions]);
 
   useEffect(() => {
     const documentId = selectedDocumentNumericId;
@@ -4175,17 +4183,31 @@ export default function CariDocumentsPage() {
                     }
                   >
                     <option value="">Use default CARI purpose mapping</option>
-                    {postOffsetAccountOptions.map((row) => (
+                    {filteredPostOffsetAccountOptions.map((row) => (
                       <option key={`post-offset-account-${row.id}`} value={String(row.id)}>
                         {row.code} - {row.name} ({row.accountType || "-"})
                       </option>
                     ))}
                   </select>
                 </label>
+                <label className="mt-2 flex items-center gap-2 text-sm text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(postForm.showAllOffsetAccounts)}
+                    onChange={(event) =>
+                      setPostForm((prev) => ({
+                        ...prev,
+                        showAllOffsetAccounts: event.target.checked,
+                      }))
+                    }
+                    disabled={!canPostSelected || postSaving || !canReadGlAccounts}
+                  />
+                  Show all account types
+                </label>
                 <p className="mt-1 text-xs text-slate-600">
                   Applied when a posting line does not choose its own offset account.
                 </p>
-                {selectedOffsetAccountType ? (
+                {selectedOffsetAccountType && !postForm.showAllOffsetAccounts ? (
                   <p className="mt-1 text-xs text-slate-600">
                     Filtered by direction={selectedDocumentDirection}: showing only{" "}
                     {selectedOffsetAccountType} accounts.
@@ -4205,9 +4227,9 @@ export default function CariDocumentsPage() {
                 {!postOffsetAccountsLoading &&
                 !postOffsetAccountsError &&
                 canReadGlAccounts &&
-                postOffsetAccountOptions.length === 0 ? (
+                filteredPostOffsetAccountOptions.length === 0 ? (
                   <p className="mt-1 text-xs text-slate-600">
-                    {selectedOffsetAccountType
+                    {selectedOffsetAccountType && !postForm.showAllOffsetAccounts
                       ? `No postable ${selectedOffsetAccountType} accounts found for selected legal entity.`
                       : "No postable accounts found for selected legal entity."}
                   </p>
@@ -4325,7 +4347,7 @@ export default function CariDocumentsPage() {
                                   }
                                 >
                                   <option value="">Use default offset for this post</option>
-                                  {postOffsetAccountOptions.map((row) => (
+                                  {filteredPostOffsetAccountOptions.map((row) => (
                                     <option
                                       key={`post-line-offset-account-${line.rowId}-${row.id}`}
                                       value={String(row.id)}
