@@ -487,6 +487,25 @@ function resolveCounterpartyRoleFromDirection(direction) {
   return undefined;
 }
 
+function normalizeDirection(value) {
+  const normalized = String(value || "").trim().toUpperCase();
+  if (normalized === "AR" || normalized === "AP") {
+    return normalized;
+  }
+  return "";
+}
+
+function resolveOffsetAccountTypeByDirection(direction) {
+  const normalized = normalizeDirection(direction);
+  if (normalized === "AR") {
+    return "REVENUE";
+  }
+  if (normalized === "AP") {
+    return "EXPENSE";
+  }
+  return "";
+}
+
 function mapCounterpartyLookupOption(row) {
   const id = toPositiveInt(row?.id);
   const code = String(row?.code || id || "").trim();
@@ -909,6 +928,12 @@ export default function CariDocumentsPage() {
     [rows, selectedDocumentId]
   );
   const selectedSnapshot = selectedDetail || selectedRow;
+  const selectedDocumentDirection = normalizeDirection(
+    selectedSnapshot?.direction || selectedSnapshot?.documentDirection
+  );
+  const selectedOffsetAccountType = resolveOffsetAccountTypeByDirection(
+    selectedDocumentDirection
+  );
   const selectedDocumentNumericId = toPositiveInt(selectedSnapshot?.id);
   const selectedDocumentLegalEntityId = toPositiveInt(
     selectedSnapshot?.legalEntityId || selectedSnapshot?.legal_entity_id
@@ -1845,6 +1870,9 @@ export default function CariDocumentsPage() {
     const legalEntityId = toPositiveInt(
       selectedSnapshot?.legalEntityId || selectedSnapshot?.legal_entity_id
     );
+    const offsetAccountType = resolveOffsetAccountTypeByDirection(
+      selectedSnapshot?.direction || selectedSnapshot?.documentDirection
+    );
 
     setPostOffsetAccountsError("");
     if (!canReadGlAccounts || !legalEntityId) {
@@ -1879,7 +1907,12 @@ export default function CariDocumentsPage() {
             name: String(row?.name || "").trim(),
             accountType: String(row?.account_type || "").trim().toUpperCase(),
           }))
-          .filter((row) => row.id > 0 && row.code)
+          .filter(
+            (row) =>
+              row.id > 0 &&
+              row.code &&
+              (!offsetAccountType || row.accountType === offsetAccountType)
+          )
           .sort((left, right) =>
             String(left.code || "").localeCompare(String(right.code || ""), undefined, {
               numeric: true,
@@ -1952,6 +1985,8 @@ export default function CariDocumentsPage() {
     };
   }, [
     canReadGlAccounts,
+    selectedSnapshot?.direction,
+    selectedSnapshot?.documentDirection,
     selectedSnapshot?.legalEntityId,
     selectedSnapshot?.legal_entity_id,
   ]);
@@ -4150,6 +4185,12 @@ export default function CariDocumentsPage() {
                 <p className="mt-1 text-xs text-slate-600">
                   Applied when a posting line does not choose its own offset account.
                 </p>
+                {selectedOffsetAccountType ? (
+                  <p className="mt-1 text-xs text-slate-600">
+                    Filtered by direction={selectedDocumentDirection}: showing only{" "}
+                    {selectedOffsetAccountType} accounts.
+                  </p>
+                ) : null}
                 {!canReadGlAccounts ? (
                   <p className="mt-1 text-xs text-amber-700">
                     Missing permission: `gl.account.read`. Default mapping will be used.
@@ -4166,7 +4207,9 @@ export default function CariDocumentsPage() {
                 canReadGlAccounts &&
                 postOffsetAccountOptions.length === 0 ? (
                   <p className="mt-1 text-xs text-slate-600">
-                    No postable accounts found for selected legal entity.
+                    {selectedOffsetAccountType
+                      ? `No postable ${selectedOffsetAccountType} accounts found for selected legal entity.`
+                      : "No postable accounts found for selected legal entity."}
                   </p>
                 ) : null}
                 <label className="mt-2 flex items-center gap-2 text-sm text-slate-700">

@@ -72,6 +72,17 @@ function resolveCounterpartyRoleFromDirection(direction) {
   return undefined;
 }
 
+function resolveCounterpartySettlementAccountId(counterparty, direction) {
+  const normalizedDirection = toUpper(direction);
+  if (normalizedDirection === "AP") {
+    return toPositiveInt(counterparty?.apAccountId || counterparty?.ap_account_id);
+  }
+  if (normalizedDirection === "AR") {
+    return toPositiveInt(counterparty?.arAccountId || counterparty?.ar_account_id);
+  }
+  return null;
+}
+
 function mapCounterpartyLookupOption(row) {
   const id = toPositiveInt(row?.id);
   const code = String(row?.code || id || "").trim();
@@ -467,6 +478,48 @@ export default function CariSettlementsPage() {
     () => (counterpartyOptions || []).map(mapCounterpartyLookupOption).filter((row) => row.value),
     [counterpartyOptions]
   );
+  const selectedApplyCounterparty = useMemo(() => {
+    const counterpartyId = toPositiveInt(applyForm.counterpartyId);
+    if (!counterpartyId) {
+      return null;
+    }
+    return (
+      (counterpartyOptions || []).find((row) => toPositiveInt(row?.id) === counterpartyId) || null
+    );
+  }, [applyForm.counterpartyId, counterpartyOptions]);
+  const selectedApplyCounterpartyAccountId = useMemo(
+    () => resolveCounterpartySettlementAccountId(selectedApplyCounterparty, applyForm.direction),
+    [selectedApplyCounterparty, applyForm.direction]
+  );
+  const linkedCashCounterpartyAccountWarning = useMemo(() => {
+    if (
+      !linkedCashForm.createLinkedCashTransaction ||
+      toUpper(linkedCashForm.paymentChannel) !== "CASH"
+    ) {
+      return "";
+    }
+    if (!toPositiveInt(applyForm.counterpartyId) || !selectedApplyCounterparty) {
+      return "";
+    }
+    if (selectedApplyCounterpartyAccountId) {
+      return "";
+    }
+    const normalizedDirection = toUpper(applyForm.direction);
+    if (normalizedDirection === "AP") {
+      return "Selected vendor has no AP account configured. Set AP account on counterparty card or choose counterAccount manually.";
+    }
+    if (normalizedDirection === "AR") {
+      return "Selected customer has no AR account configured. Set AR account on counterparty card or choose counterAccount manually.";
+    }
+    return "Selected counterparty has no default AR/AP account configured for current direction.";
+  }, [
+    linkedCashForm.createLinkedCashTransaction,
+    linkedCashForm.paymentChannel,
+    applyForm.counterpartyId,
+    applyForm.direction,
+    selectedApplyCounterparty,
+    selectedApplyCounterpartyAccountId,
+  ]);
   const bankApplyCounterpartyLookupOptions = useMemo(
     () =>
       (bankApplyCounterpartyOptions || [])
@@ -803,6 +856,32 @@ export default function CariSettlementsPage() {
     linkedCashForm.createLinkedCashTransaction,
     linkedCashForm.registerId,
     linkedRegisterOptions,
+  ]);
+
+  useEffect(() => {
+    if (
+      !linkedCashForm.createLinkedCashTransaction ||
+      toUpper(linkedCashForm.paymentChannel) !== "CASH"
+    ) {
+      return;
+    }
+    if (!selectedApplyCounterpartyAccountId) {
+      return;
+    }
+    setLinkedCashForm((prev) => {
+      const currentAccountId = toPositiveInt(prev.counterAccountId);
+      if (currentAccountId === selectedApplyCounterpartyAccountId) {
+        return prev;
+      }
+      return {
+        ...prev,
+        counterAccountId: String(selectedApplyCounterpartyAccountId),
+      };
+    });
+  }, [
+    linkedCashForm.createLinkedCashTransaction,
+    linkedCashForm.paymentChannel,
+    selectedApplyCounterpartyAccountId,
   ]);
 
   useEffect(() => {
@@ -1793,6 +1872,11 @@ export default function CariSettlementsPage() {
                     />
                     {linkedCashAccountError ? (
                       <p className="mt-1 text-xs text-amber-700">{linkedCashAccountError}</p>
+                    ) : null}
+                    {linkedCashCounterpartyAccountWarning ? (
+                      <p className="mt-1 text-xs text-amber-700">
+                        {linkedCashCounterpartyAccountWarning}
+                      </p>
                     ) : null}
                   </>
                 ) : (

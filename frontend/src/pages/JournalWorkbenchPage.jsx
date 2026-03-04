@@ -57,6 +57,41 @@ const JOURNAL_COMPLIANCE_DEFAULT_FILTERS = {
   includeDraft: true,
   limit: "200",
 };
+const JOURNAL_REVERSE_SOURCE_DESTINATIONS = Object.freeze({
+  CARI_DOCUMENT: "/app/cari-belgeler",
+  CARI_SETTLEMENT_BATCH: "/app/cari-settlements",
+  CASH_TRANSACTION: "/app/kasa-islemleri",
+  PAYMENT_BATCH: "/app/odeme-batchleri",
+  PAYROLL_RUN: "/app/payroll-runs",
+});
+const JOURNAL_REVERSE_BLOCK_SOURCE_TYPES = new Set(
+  Object.keys(JOURNAL_REVERSE_SOURCE_DESTINATIONS)
+);
+
+function normalizeSourceRefType(value) {
+  return String(value || "")
+    .trim()
+    .toUpperCase();
+}
+
+function parsePositiveIntOrNull(value) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function resolveReverseBlockedSourceLinks(sourceLinks = []) {
+  return (Array.isArray(sourceLinks) ? sourceLinks : [])
+    .map((row) => ({
+      sourceRefType: normalizeSourceRefType(row?.source_ref_type || row?.sourceRefType),
+      sourceRefId: parsePositiveIntOrNull(row?.source_ref_id || row?.sourceRefId),
+    }))
+    .filter(
+      (row) =>
+        row.sourceRefType &&
+        row.sourceRefId &&
+        JOURNAL_REVERSE_BLOCK_SOURCE_TYPES.has(row.sourceRefType)
+    );
+}
 
 function toInt(value) {
   const parsed = Number(value);
@@ -458,6 +493,48 @@ export default function JournalWorkbenchPage() {
     searchParams.get("journalId") || searchParams.get("journal_id") || ""
   ).trim();
   const deepLinkedJournalId = toInt(deepLinkedJournalIdRaw);
+  const selectedJournalReverseBlockedSourceLinks = useMemo(
+    () => resolveReverseBlockedSourceLinks(selectedJournal?.source_links),
+    [selectedJournal]
+  );
+  const isReverseBlockedForSelectedJournal = useMemo(() => {
+    const selectedId = toInt(selectedJournal?.id);
+    const reverseJournalId = toInt(reverseForm.journalId);
+    if (!selectedId || !reverseJournalId || selectedId !== reverseJournalId) {
+      return false;
+    }
+    return selectedJournalReverseBlockedSourceLinks.length > 0;
+  }, [reverseForm.journalId, selectedJournal, selectedJournalReverseBlockedSourceLinks]);
+  const reverseBlockedMessage = useMemo(() => {
+    if (!isReverseBlockedForSelectedJournal) {
+      return "";
+    }
+    const linkTokens = selectedJournalReverseBlockedSourceLinks.map(
+      (row) => `${row.sourceRefType}:${row.sourceRefId}`
+    );
+    const destinationPaths = Array.from(
+      new Set(
+        selectedJournalReverseBlockedSourceLinks
+          .map((row) => JOURNAL_REVERSE_SOURCE_DESTINATIONS[row.sourceRefType] || null)
+          .filter(Boolean)
+      )
+    );
+    const destinationSuffix =
+      destinationPaths.length > 0
+        ? l(
+            ` Open from: ${destinationPaths.join(", ")}.`,
+            ` Su ekranlardan tersleyin: ${destinationPaths.join(", ")}.`
+          )
+        : "";
+    return l(
+      `This journal is linked to subledger record(s) [${linkTokens.join(", ")}]. Reverse from source module, not from Journal Workbench.${destinationSuffix}`,
+      `Bu fis alt-defter kayit(lar)ina bagli [${linkTokens.join(", ")}]. Ters kaydi Mahsup ekranindan degil, ilgili kaynak modulden yapin.${destinationSuffix}`
+    );
+  }, [
+    isReverseBlockedForSelectedJournal,
+    selectedJournalReverseBlockedSourceLinks,
+    l,
+  ]);
 
   const selectedLegalEntity = useMemo(
     () => entities.find((entity) => Number(entity.id) === Number(selectedLegalEntityId)) || null,
@@ -1879,6 +1956,16 @@ export default function JournalWorkbenchPage() {
       setError(l("journalId is required.", "journalId zorunludur."));
       return;
     }
+    if (isReverseBlockedForSelectedJournal) {
+      setError(
+        reverseBlockedMessage ||
+          l(
+            "Selected journal is linked to a source module. Reverse from source module.",
+            "Secili fis bir kaynak module bagli. Ters kaydi kaynak modulden yapin."
+          )
+      );
+      return;
+    }
 
     const reversalPeriodId = toOptionalInt(reverseForm.reversalPeriodId);
     if (reverseForm.reversalPeriodId && !reversalPeriodId) {
@@ -2473,7 +2560,10 @@ export default function JournalWorkbenchPage() {
           )}
           <label className="inline-flex items-center gap-2 text-sm text-slate-700"><input type="checkbox" checked={reverseForm.autoPost} onChange={(event) => setReverseForm((prev) => ({ ...prev, autoPost: event.target.checked }))} />{l("Auto-post reversal", "Ters kaydi otomatik post et")}</label>
           <input value={reverseForm.reason} onChange={(event) => setReverseForm((prev) => ({ ...prev, reason: event.target.value }))} className="w-full rounded border border-slate-300 px-3 py-2 text-sm" placeholder={l("Reason (optional)", "Neden (opsiyonel)")} />
-          <button type="submit" disabled={saving === "reverseJournal" || !canReverse} className="rounded bg-slate-900 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60">{saving === "reverseJournal" ? l("Reversing...", "Ters kayit yapiliyor...") : l("Reverse", "Ters Kayit")}</button>
+          {isReverseBlockedForSelectedJournal ? (
+            <p className="text-xs text-amber-700">{reverseBlockedMessage}</p>
+          ) : null}
+          <button type="submit" disabled={saving === "reverseJournal" || !canReverse || isReverseBlockedForSelectedJournal} className="rounded bg-slate-900 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60">{saving === "reverseJournal" ? l("Reversing...", "Ters kayit yapiliyor...") : l("Reverse", "Ters Kayit")}</button>
         </form>
       </div>
 
@@ -2881,6 +2971,27 @@ export default function JournalWorkbenchPage() {
                 <div>{l("Book", "Defter")}: {selectedJournal.book_code}</div>
                 <div>{l("Period", "Donem")}: {selectedJournal.fiscal_year}-P{String(selectedJournal.period_no || "").padStart(2, "0")}</div>
                 <div>{l("Lines", "Satirlar")}: {(selectedJournal.lines || []).length}</div>
+                {Array.isArray(selectedJournal.source_links) &&
+                selectedJournal.source_links.length > 0 ? (
+                  <div>
+                    {l("Source Links", "Kaynak Baglantilari")}:{" "}
+                    {selectedJournal.source_links
+                      .map((row) => {
+                        const sourceRefType = normalizeSourceRefType(
+                          row?.source_ref_type || row?.sourceRefType
+                        );
+                        const sourceRefId = parsePositiveIntOrNull(
+                          row?.source_ref_id || row?.sourceRefId
+                        );
+                        if (!sourceRefType || !sourceRefId) {
+                          return null;
+                        }
+                        return `${sourceRefType}:${sourceRefId}`;
+                      })
+                      .filter(Boolean)
+                      .join(", ") || "-"}
+                  </div>
+                ) : null}
                 {String(selectedJournal.status || "").toUpperCase() === "CANCELLED" && selectedJournal.cancel_reason ? (
                   <div>{l("Cancel Reason", "Iptal Nedeni")}: {selectedJournal.cancel_reason}</div>
                 ) : null}

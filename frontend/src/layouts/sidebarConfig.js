@@ -106,78 +106,64 @@ export const sidebarItems = [
   },
   {
     type: "section",
+    title: "Kasa",
+    icon: "vault",
+    items: [
+      {
+        label: "Kasa Oturumlari",
+        to: "/app/kasa-oturumlari",
+        requiredPermissions: ["cash.register.read"],
+        implemented: true,
+      },
+      {
+        label: "Tediye",
+        to: "/app/tediye-islemleri",
+        requiredPermissions: ["cash.txn.read"],
+        implemented: true,
+      },
+      {
+        label: "Tahsilat",
+        to: "/app/tahsilat-islemleri",
+        requiredPermissions: ["cash.txn.read"],
+        implemented: true,
+      },
+      {
+        label: "Kasa Tanimlari",
+        to: "/app/kasa-tanimlari",
+        requiredPermissions: ["cash.register.read"],
+        implemented: true,
+      },
+      {
+        label: "Kasa Transit Transferleri",
+        to: "/app/kasa-transit-transferleri",
+        requiredPermissions: ["cash.txn.read"],
+        implemented: true,
+      },
+      {
+        label: "Kasa Istisnalari",
+        to: "/app/kasa-istisnalari",
+        requiredPermissions: ["cash.report.read"],
+        implemented: true,
+      },
+      {
+        label: "Kasa Islemleri",
+        to: "/app/kasa-islemleri",
+        requiredPermissions: ["cash.txn.read"],
+        implemented: true,
+      },
+    ],
+  },
+  {
+    type: "section",
     title: "Yevmiye Kayitlari",
     icon: "journal",
     matchPrefix: "/app/yevmiye-kayitlari",
     items: [
       {
-        type: "section",
-        title: "Kasa Hazirlik ve Oturum",
-        icon: "settings",
-        items: [
-          {
-            label: "Kasa Tanimlari",
-            to: "/app/kasa-tanimlari",
-            requiredPermissions: ["cash.register.read"],
-            implemented: true,
-          },
-          {
-            label: "Kasa Oturumlari",
-            to: "/app/kasa-oturumlari",
-            requiredPermissions: ["cash.register.read"],
-            implemented: true,
-          },
-        ],
-      },
-      {
-        type: "section",
-        title: "Gunluk Nakit Islemleri",
-        icon: "journal",
-        items: [
-          {
-            label: "Kasa Islemleri",
-            to: "/app/kasa-islemleri",
-            requiredPermissions: ["cash.txn.read"],
-            implemented: true,
-          },
-          {
-            label: "Kasa Transit Transferleri",
-            to: "/app/kasa-transit-transferleri",
-            requiredPermissions: ["cash.txn.read"],
-            implemented: true,
-          },
-          {
-            label: "Tahsilat",
-            to: "/app/tahsilat-islemleri",
-            requiredPermissions: ["cash.txn.read"],
-            implemented: true,
-          },
-          {
-            label: "Tediye",
-            to: "/app/tediye-islemleri",
-            requiredPermissions: ["cash.txn.read"],
-            implemented: true,
-          },
-        ],
-      },
-      {
-        type: "section",
-        title: "Kontrol ve Mahsup",
-        icon: "report",
-        items: [
-          {
-            label: "Kasa Istisnalari",
-            to: "/app/kasa-istisnalari",
-            requiredPermissions: ["cash.report.read"],
-            implemented: true,
-          },
-          {
-            label: "Mahsup",
-            to: "/app/mahsup-islemleri",
-            requiredPermissions: JOURNAL_PAGE_PERMISSIONS,
-            implemented: true,
-          },
-        ],
+        label: "Mahsup",
+        to: "/app/mahsup-islemleri",
+        requiredPermissions: JOURNAL_PAGE_PERMISSIONS,
+        implemented: true,
       },
     ],
   },

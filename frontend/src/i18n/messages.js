@@ -283,6 +283,7 @@ export const messages = {
     sidebar: {
       titles: {
         "donem-islemleri": "Donem Islemleri",
+        kasa: "Kasa",
         "yevmiye-kayitlari": "Yevmiye Kayitlari",
         "kasa-hazirlik-ve-oturum": "Kasa Hazirlik ve Oturum",
         "gunluk-nakit-islemleri": "Gunluk Nakit Islemleri",
@@ -1950,6 +1951,7 @@ export const messages = {
     sidebar: {
       titles: {
         "donem-islemleri": "Period Operations",
+        kasa: "Cash",
         "yevmiye-kayitlari": "Journal Entries",
         "kasa-hazirlik-ve-oturum": "Cash Setup and Sessions",
         "gunluk-nakit-islemleri": "Daily Cash Operations",

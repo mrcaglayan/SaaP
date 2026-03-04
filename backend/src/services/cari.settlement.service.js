@@ -3100,64 +3100,86 @@ export async function applyCariSettlement({
         sourceModule: integrationMetadata.sourceModule,
         unappliedConsumedCount: unappliedConsumePlan.length,
       });
-      const postingAccounts = await resolveSettlementPostingAccounts({
-        tenantId,
-        legalEntityId,
-        direction,
+      const isDirectCashLinkedSettlement =
+        postingSourceContext === SETTLEMENT_POSTING_SOURCE_CONTEXT.CASH_LINKED;
+      let postingAccounts = {
         sourceContext: postingSourceContext,
-        counterpartyRow: counterparty,
-        runQuery: tx.query,
-      });
-      const journalContext = await resolveBookAndOpenPeriodForDate({
-        tenantId,
-        legalEntityId,
-        targetDate: settlementDate,
-        runQuery: tx.query,
-      });
+        direction: normalizeUpperText(direction),
+        controlAccountId: null,
+        offsetAccountId: null,
+        controlAccountCode: null,
+        offsetAccountCode: null,
+        controlPurposeCode: null,
+        offsetPurposeCode: null,
+      };
+      let taxAugmentation = {
+        lines: [],
+        summary: null,
+      };
+      let journalResult = null;
+      let postedJournalEntryId = null;
 
-      const subledgerReferenceNo = `${CARI_SETTLEMENT_REFERENCE_PREFIX}${sequence.settlementNo}`;
-      const postingLines = [
-        ...buildSettlementPostingLines({
+      if (!isDirectCashLinkedSettlement) {
+        postingAccounts = await resolveSettlementPostingAccounts({
+          tenantId,
+          legalEntityId,
           direction,
-          totalAmountTxn: totalAllocatedTxn,
-          totalAmountBase: totalAllocatedBaseSettlement,
+          sourceContext: postingSourceContext,
+          counterpartyRow: counterparty,
+          runQuery: tx.query,
+        });
+        const journalContext = await resolveBookAndOpenPeriodForDate({
+          tenantId,
+          legalEntityId,
+          targetDate: settlementDate,
+          runQuery: tx.query,
+        });
+
+        const subledgerReferenceNo = `${CARI_SETTLEMENT_REFERENCE_PREFIX}${sequence.settlementNo}`;
+        const postingLines = [
+          ...buildSettlementPostingLines({
+            direction,
+            totalAmountTxn: totalAllocatedTxn,
+            totalAmountBase: totalAllocatedBaseSettlement,
+            controlAccountId: postingAccounts.controlAccountId,
+            offsetAccountId: postingAccounts.offsetAccountId,
+            lineDescription: `Cari settlement ${sequence.settlementNo}`.slice(0, 255),
+            subledgerReferenceNo,
+            currencyCode: settlementCurrencyCode,
+          }),
+        ];
+        taxAugmentation = await buildCariTaxAugmentation({
+          tenantId,
+          legalEntityId,
+          postingDate: settlementDate,
+          direction,
+          documentType: "SETTLEMENT",
+          baseAmount: totalAllocatedBaseSettlement,
           controlAccountId: postingAccounts.controlAccountId,
-          offsetAccountId: postingAccounts.offsetAccountId,
-          lineDescription: `Cari settlement ${sequence.settlementNo}`.slice(0, 255),
-          subledgerReferenceNo,
           currencyCode: settlementCurrencyCode,
-        }),
-      ];
-      const taxAugmentation = await buildCariTaxAugmentation({
-        tenantId,
-        legalEntityId,
-        postingDate: settlementDate,
-        direction,
-        documentType: "SETTLEMENT",
-        baseAmount: totalAllocatedBaseSettlement,
-        controlAccountId: postingAccounts.controlAccountId,
-        currencyCode: settlementCurrencyCode,
-        subledgerReferenceNo,
-        lineDescription: `Cari settlement tax ${sequence.settlementNo}`.slice(0, 255),
-        runQuery: tx.query,
-      });
-      if (taxAugmentation.lines.length > 0) {
-        postingLines.push(...taxAugmentation.lines);
+          subledgerReferenceNo,
+          lineDescription: `Cari settlement tax ${sequence.settlementNo}`.slice(0, 255),
+          runQuery: tx.query,
+        });
+        if (taxAugmentation.lines.length > 0) {
+          postingLines.push(...taxAugmentation.lines);
+        }
+        journalResult = await insertPostedJournalWithLinesTx(tx, {
+          tenantId,
+          legalEntityId,
+          bookId: journalContext.bookId,
+          fiscalPeriodId: journalContext.fiscalPeriodId,
+          userId: payload.userId,
+          journalNo: buildCariJournalNo("CARI-SETTLE", sequence.sequenceNo),
+          entryDate: settlementDate,
+          documentDate: settlementDate,
+          currencyCode: settlementCurrencyCode,
+          description: `Cari settlement apply ${sequence.settlementNo}`.slice(0, 500),
+          referenceNo: toNullableString(sequence.settlementNo, 100),
+          lines: postingLines,
+        });
+        postedJournalEntryId = parsePositiveInt(journalResult?.journalEntryId);
       }
-      const journalResult = await insertPostedJournalWithLinesTx(tx, {
-        tenantId,
-        legalEntityId,
-        bookId: journalContext.bookId,
-        fiscalPeriodId: journalContext.fiscalPeriodId,
-        userId: payload.userId,
-        journalNo: buildCariJournalNo("CARI-SETTLE", sequence.sequenceNo),
-        entryDate: settlementDate,
-        documentDate: settlementDate,
-        currencyCode: settlementCurrencyCode,
-        description: `Cari settlement apply ${sequence.settlementNo}`.slice(0, 500),
-        referenceNo: toNullableString(sequence.settlementNo, 100),
-        lines: postingLines,
-      });
 
       const settlementInsert = await tx.query(
         `INSERT INTO cari_settlement_batches (
@@ -3202,7 +3224,7 @@ export async function applyCariSettlement({
           totalAllocatedTxn,
           totalAllocatedBaseHistorical,
           settlementCurrencyCode,
-          journalResult.journalEntryId,
+          postedJournalEntryId,
           bankStatementLineId,
           bankTransactionRef,
           bankApplyIdempotencyKey,
@@ -3217,22 +3239,24 @@ export async function applyCariSettlement({
       if (!settlementBatchId) {
         throw new Error("Failed to create settlement batch");
       }
-      await upsertJournalSourceLinkTx(tx, {
-        tenantId,
-        legalEntityId,
-        journalEntryId: journalResult.journalEntryId,
-        sourceRefType: "CARI_SETTLEMENT_BATCH",
-        sourceRefId: settlementBatchId,
-      });
-      if (effectiveCashTransactionId) {
+      if (postedJournalEntryId) {
         await upsertJournalSourceLinkTx(tx, {
           tenantId,
           legalEntityId,
-          journalEntryId: journalResult.journalEntryId,
-          sourceRefType: "CASH_TRANSACTION",
-          sourceRefId: effectiveCashTransactionId,
-          linkRole: "RELATED_CASH_TXN",
+          journalEntryId: postedJournalEntryId,
+          sourceRefType: "CARI_SETTLEMENT_BATCH",
+          sourceRefId: settlementBatchId,
         });
+        if (effectiveCashTransactionId) {
+          await upsertJournalSourceLinkTx(tx, {
+            tenantId,
+            legalEntityId,
+            journalEntryId: postedJournalEntryId,
+            sourceRefType: "CASH_TRANSACTION",
+            sourceRefId: effectiveCashTransactionId,
+            linkRole: "RELATED_CASH_TXN",
+          });
+        }
       }
 
       const allocationInsertOrder = [...enrichedAllocations].sort((left, right) => {
@@ -4148,9 +4172,7 @@ export async function reverseCariSettlementById({
           );
         }
       }
-      if (!originalJournalEntryId) {
-        throw badRequest("Settlement posted journal linkage is missing");
-      }
+      const hasSettlementJournal = Boolean(originalJournalEntryId);
 
       const existingReversalBatchId = await findReversalSettlementBatchId({
         tenantId,
@@ -4449,95 +4471,98 @@ export async function reverseCariSettlementById({
         }
       }
 
-      const originalJournalWithLines = await fetchPostedJournalWithLines({
-        tenantId,
-        journalEntryId: originalJournalEntryId,
-        runQuery: tx.query,
-      });
-      const originalJournal = originalJournalWithLines?.journal || null;
-      const originalJournalLines = originalJournalWithLines?.lines || [];
-      if (!originalJournal) {
-        throw badRequest("Original settlement posted journal not found");
-      }
-      if (normalizeUpperText(originalJournal.status) !== "POSTED") {
-        throw badRequest("Only POSTED journals can be reversed");
-      }
-      if (parsePositiveInt(originalJournal.reversal_journal_entry_id)) {
-        throw badRequest("Settlement journal is already reversed");
-      }
-      if (!originalJournalLines.length) {
-        throw badRequest("Original settlement journal has no lines to reverse");
-      }
-
-      const reversalPeriodContext = await resolveBookAndOpenPeriodForDate({
-        tenantId,
-        legalEntityId: lockedLegalEntityId,
-        targetDate: reversalDate,
-        preferredBookId: parsePositiveInt(originalJournal.book_id),
-        runQuery: tx.query,
-      });
-
-      const reversalSubledgerReferenceNo = `${CARI_SETTLEMENT_REVERSE_REFERENCE_PREFIX}${settlementBatchId}`;
-      const reversalLines = originalJournalLines.map((line) => ({
-        accountId: parsePositiveInt(line.account_id),
-        debitBase: Number(line.credit_base || 0),
-        creditBase: Number(line.debit_base || 0),
-        amountTxn: roundAmount(Number(line.amount_txn || 0) * -1),
-        description: line.description
-          ? String(line.description).slice(0, 255)
-          : `Reversal of ${original.settlement_no || `SETTLEMENT-${settlementBatchId}`}`,
-        subledgerReferenceNo: reversalSubledgerReferenceNo,
-        currencyCode: normalizeUpperText(line.currency_code || original.currency_code),
-        taxCode: toNullableString(line.tax_code, 40),
-      }));
-      ensureBalancedJournalLines(reversalLines);
-
-      const reversalJournalResult = await insertPostedJournalWithLinesTx(tx, {
-        tenantId,
-        legalEntityId: lockedLegalEntityId,
-        bookId: reversalPeriodContext.bookId,
-        fiscalPeriodId: reversalPeriodContext.fiscalPeriodId,
-        userId: payload.userId,
-        journalNo: buildCariJournalNo("CARI-SET-REV", settlementBatchId),
-        entryDate: reversalDate,
-        documentDate: reversalDate,
-        currencyCode: normalizeUpperText(original.currency_code),
-        description: `Reversal of ${original.settlement_no || `SETTLEMENT-${settlementBatchId}`}`.slice(
-          0,
-          500
-        ),
-        referenceNo: toNullableString(`REV:${original.settlement_no || settlementBatchId}`, 100),
-        lines: reversalLines,
-      });
-      await upsertJournalSourceLinkTx(tx, {
-        tenantId,
-        legalEntityId: lockedLegalEntityId,
-        journalEntryId: originalJournalEntryId,
-        sourceRefType: "CARI_SETTLEMENT_BATCH",
-        sourceRefId: settlementBatchId,
-      });
-
-      const reverseJournalUpdateResult = await tx.query(
-        `UPDATE journal_entries
-         SET status = 'REVERSED',
-             reversed_by_user_id = ?,
-             reversed_at = CURRENT_TIMESTAMP,
-             reversal_journal_entry_id = ?,
-             reverse_reason = ?
-         WHERE tenant_id = ?
-           AND id = ?
-           AND status = 'POSTED'
-           AND reversal_journal_entry_id IS NULL`,
-        [
-          payload.userId,
-          reversalJournalResult.journalEntryId,
-          reason,
+      let reversalJournalResult = null;
+      if (hasSettlementJournal) {
+        const originalJournalWithLines = await fetchPostedJournalWithLines({
           tenantId,
-          originalJournalEntryId,
-        ]
-      );
-      if (Number(reverseJournalUpdateResult.rows?.affectedRows || 0) === 0) {
-        throw badRequest("Settlement journal is already reversed");
+          journalEntryId: originalJournalEntryId,
+          runQuery: tx.query,
+        });
+        const originalJournal = originalJournalWithLines?.journal || null;
+        const originalJournalLines = originalJournalWithLines?.lines || [];
+        if (!originalJournal) {
+          throw badRequest("Original settlement posted journal not found");
+        }
+        if (normalizeUpperText(originalJournal.status) !== "POSTED") {
+          throw badRequest("Only POSTED journals can be reversed");
+        }
+        if (parsePositiveInt(originalJournal.reversal_journal_entry_id)) {
+          throw badRequest("Settlement journal is already reversed");
+        }
+        if (!originalJournalLines.length) {
+          throw badRequest("Original settlement journal has no lines to reverse");
+        }
+
+        const reversalPeriodContext = await resolveBookAndOpenPeriodForDate({
+          tenantId,
+          legalEntityId: lockedLegalEntityId,
+          targetDate: reversalDate,
+          preferredBookId: parsePositiveInt(originalJournal.book_id),
+          runQuery: tx.query,
+        });
+
+        const reversalSubledgerReferenceNo = `${CARI_SETTLEMENT_REVERSE_REFERENCE_PREFIX}${settlementBatchId}`;
+        const reversalLines = originalJournalLines.map((line) => ({
+          accountId: parsePositiveInt(line.account_id),
+          debitBase: Number(line.credit_base || 0),
+          creditBase: Number(line.debit_base || 0),
+          amountTxn: roundAmount(Number(line.amount_txn || 0) * -1),
+          description: line.description
+            ? String(line.description).slice(0, 255)
+            : `Reversal of ${original.settlement_no || `SETTLEMENT-${settlementBatchId}`}`,
+          subledgerReferenceNo: reversalSubledgerReferenceNo,
+          currencyCode: normalizeUpperText(line.currency_code || original.currency_code),
+          taxCode: toNullableString(line.tax_code, 40),
+        }));
+        ensureBalancedJournalLines(reversalLines);
+
+        reversalJournalResult = await insertPostedJournalWithLinesTx(tx, {
+          tenantId,
+          legalEntityId: lockedLegalEntityId,
+          bookId: reversalPeriodContext.bookId,
+          fiscalPeriodId: reversalPeriodContext.fiscalPeriodId,
+          userId: payload.userId,
+          journalNo: buildCariJournalNo("CARI-SET-REV", settlementBatchId),
+          entryDate: reversalDate,
+          documentDate: reversalDate,
+          currencyCode: normalizeUpperText(original.currency_code),
+          description: `Reversal of ${original.settlement_no || `SETTLEMENT-${settlementBatchId}`}`.slice(
+            0,
+            500
+          ),
+          referenceNo: toNullableString(`REV:${original.settlement_no || settlementBatchId}`, 100),
+          lines: reversalLines,
+        });
+        await upsertJournalSourceLinkTx(tx, {
+          tenantId,
+          legalEntityId: lockedLegalEntityId,
+          journalEntryId: originalJournalEntryId,
+          sourceRefType: "CARI_SETTLEMENT_BATCH",
+          sourceRefId: settlementBatchId,
+        });
+
+        const reverseJournalUpdateResult = await tx.query(
+          `UPDATE journal_entries
+           SET status = 'REVERSED',
+               reversed_by_user_id = ?,
+               reversed_at = CURRENT_TIMESTAMP,
+               reversal_journal_entry_id = ?,
+               reverse_reason = ?
+           WHERE tenant_id = ?
+             AND id = ?
+             AND status = 'POSTED'
+             AND reversal_journal_entry_id IS NULL`,
+          [
+            payload.userId,
+            reversalJournalResult.journalEntryId,
+            reason,
+            tenantId,
+            originalJournalEntryId,
+          ]
+        );
+        if (Number(reverseJournalUpdateResult.rows?.affectedRows || 0) === 0) {
+          throw badRequest("Settlement journal is already reversed");
+        }
       }
 
       const reversalSequence = await reserveSettlementSequence({
@@ -4583,7 +4608,7 @@ export async function reverseCariSettlementById({
           normalizeAmount(original.total_allocated_txn, "totalAllocatedTxn"),
           normalizeAmount(original.total_allocated_base, "totalAllocatedBase"),
           normalizeUpperText(original.currency_code),
-          reversalJournalResult.journalEntryId,
+          parsePositiveInt(reversalJournalResult?.journalEntryId) || null,
           settlementBatchId,
         ]
       );
@@ -4591,21 +4616,25 @@ export async function reverseCariSettlementById({
       if (!reversalSettlementBatchId) {
         throw new Error("Reversal settlement batch create failed");
       }
-      await upsertJournalSourceLinkTx(tx, {
-        tenantId,
-        legalEntityId: lockedLegalEntityId,
-        journalEntryId: reversalJournalResult.journalEntryId,
-        sourceRefType: "CARI_SETTLEMENT_BATCH",
-        sourceRefId: reversalSettlementBatchId,
-      });
-      await upsertJournalSourceLinkTx(tx, {
-        tenantId,
-        legalEntityId: lockedLegalEntityId,
-        journalEntryId: reversalJournalResult.journalEntryId,
-        sourceRefType: "CARI_SETTLEMENT_BATCH",
-        sourceRefId: settlementBatchId,
-        linkRole: "REVERSAL_OF",
-      });
+      const reversalPostedJournalEntryId =
+        parsePositiveInt(reversalJournalResult?.journalEntryId) || null;
+      if (reversalPostedJournalEntryId) {
+        await upsertJournalSourceLinkTx(tx, {
+          tenantId,
+          legalEntityId: lockedLegalEntityId,
+          journalEntryId: reversalPostedJournalEntryId,
+          sourceRefType: "CARI_SETTLEMENT_BATCH",
+          sourceRefId: reversalSettlementBatchId,
+        });
+        await upsertJournalSourceLinkTx(tx, {
+          tenantId,
+          legalEntityId: lockedLegalEntityId,
+          journalEntryId: reversalPostedJournalEntryId,
+          sourceRefType: "CARI_SETTLEMENT_BATCH",
+          sourceRefId: settlementBatchId,
+          linkRole: "REVERSAL_OF",
+        });
+      }
 
       await tx.query(
         `UPDATE cari_settlement_batches
@@ -4629,7 +4658,7 @@ export async function reverseCariSettlementById({
           originalSettlementBatchId: settlementBatchId,
           reversalSettlementBatchId,
           originalPostedJournalEntryId: originalJournalEntryId,
-          reversalPostedJournalEntryId: reversalJournalResult.journalEntryId,
+          reversalPostedJournalEntryId,
           followUpRisks: FOLLOW_UP_RISKS,
         },
       });

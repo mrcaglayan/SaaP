@@ -14,6 +14,16 @@ import {
 } from "./_utils.js";
 
 const CASH_CONTROL_MODES = new Set(["OFF", "WARN", "ENFORCE"]);
+const JOURNAL_REVERSE_SOURCE_DESTINATIONS = Object.freeze({
+  CARI_DOCUMENT: "/app/cari-belgeler",
+  CARI_SETTLEMENT_BATCH: "/app/cari-settlements",
+  CASH_TRANSACTION: "/app/kasa-islemleri",
+  PAYMENT_BATCH: "/app/odeme-batchleri",
+  PAYROLL_RUN: "/app/payroll-runs",
+});
+const JOURNAL_REVERSE_BLOCK_SOURCE_TYPES = new Set(
+  Object.keys(JOURNAL_REVERSE_SOURCE_DESTINATIONS)
+);
 
 function normalizeCashControlMode(value) {
   const normalized = String(value || "ENFORCE").trim().toUpperCase();
@@ -32,6 +42,70 @@ function collectLineAccountIds(lines) {
     }
   }
   return Array.from(ids);
+}
+
+function normalizeUpperText(value) {
+  return String(value || "")
+    .trim()
+    .toUpperCase();
+}
+
+async function loadJournalSourceLinksForJournalId({
+  tenantId,
+  journalId,
+  runQuery = query,
+}) {
+  const parsedTenantId = parsePositiveInt(tenantId);
+  const parsedJournalId = parsePositiveInt(journalId);
+  if (!parsedTenantId || !parsedJournalId) {
+    return [];
+  }
+
+  const result = await runQuery(
+    `SELECT source_ref_type, source_ref_id
+     FROM journal_source_links
+     WHERE tenant_id = ?
+       AND journal_entry_id = ?
+     ORDER BY id ASC`,
+    [parsedTenantId, parsedJournalId]
+  );
+
+  return Array.isArray(result.rows) ? result.rows : [];
+}
+
+function buildSubledgerReverseBlockedMessage(links = []) {
+  const normalizedLinks = (Array.isArray(links) ? links : [])
+    .map((row) => ({
+      sourceRefType: normalizeUpperText(row?.source_ref_type || row?.sourceRefType),
+      sourceRefId: parsePositiveInt(row?.source_ref_id || row?.sourceRefId),
+    }))
+    .filter(
+      (row) =>
+        row.sourceRefType &&
+        row.sourceRefId &&
+        JOURNAL_REVERSE_BLOCK_SOURCE_TYPES.has(row.sourceRefType)
+    );
+
+  if (normalizedLinks.length === 0) {
+    return "Journal is linked to a source module. Reverse from source module.";
+  }
+
+  const linkTokens = normalizedLinks.map(
+    (row) => `${row.sourceRefType}:${row.sourceRefId}`
+  );
+  const routeHints = Array.from(
+    new Set(
+      normalizedLinks
+        .map((row) => JOURNAL_REVERSE_SOURCE_DESTINATIONS[row.sourceRefType] || null)
+        .filter(Boolean)
+    )
+  );
+
+  const routeHintText =
+    routeHints.length > 0
+      ? ` Open from: ${routeHints.join(", ")}.`
+      : "";
+  return `Journal is linked to subledger record(s) [${linkTokens.join(", ")}]. Reverse from source module instead of GL journal reverse.${routeHintText}`;
 }
 
 async function loadCashControlledAccounts({
@@ -1177,6 +1251,18 @@ export function registerGlWriteJournalRoutes(router, deps = {}) {
       }
       if (parsePositiveInt(original.reversal_journal_entry_id)) {
         throw badRequest("Journal is already reversed");
+      }
+      const sourceLinks = await loadJournalSourceLinksForJournalId({
+        tenantId,
+        journalId,
+      });
+      const blockingSourceLinks = sourceLinks.filter((row) =>
+        JOURNAL_REVERSE_BLOCK_SOURCE_TYPES.has(
+          normalizeUpperText(row?.source_ref_type || row?.sourceRefType)
+        )
+      );
+      if (blockingSourceLinks.length > 0) {
+        throw badRequest(buildSubledgerReverseBlockedMessage(blockingSourceLinks));
       }
 
       const reversalPeriodId =

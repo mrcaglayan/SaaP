@@ -110,6 +110,21 @@ function Icon({ name, className = "h-4 w-4" }) {
           />
         </svg>
       );
+    case "vault":
+      return (
+        <svg viewBox="0 0 20 20" className={className} fill="none" aria-hidden="true">
+          <rect x="2.4" y="2.4" width="15.2" height="15.2" rx="3.1" fill="#0B1220" />
+          <rect x="3.2" y="3.2" width="13.6" height="13.6" rx="2.5" fill="#1D4ED8" />
+          <rect x="4" y="4.2" width="12" height="11.4" rx="2" fill="#60A5FA" fillOpacity="0.28" />
+          <path d="M4.8 6.2h10.4" stroke="#93C5FD" strokeWidth="1.1" strokeLinecap="round" />
+          <circle cx="10" cy="10.6" r="3.4" fill="#22D3EE" />
+          <circle cx="10" cy="10.6" r="2.35" fill="#0F172A" />
+          <circle cx="10" cy="10.6" r="0.85" fill="#F59E0B" />
+          <path d="M10 9.05v1.55m0 0h1.25" stroke="#F8FAFC" strokeWidth="1.15" strokeLinecap="round" />
+          <circle cx="6.2" cy="7.25" r="0.72" fill="#FDE68A" />
+          <circle cx="13.8" cy="7.25" r="0.72" fill="#FDE68A" />
+        </svg>
+      );
     case "company":
       return (
         <svg viewBox="0 0 20 20" className={className} fill="none" aria-hidden="true">
@@ -222,6 +237,7 @@ const BUILTIN_ICON_NAMES = new Set([
   "spark",
   "journal",
   "bank",
+  "vault",
   "company",
   "box",
   "inventory",
