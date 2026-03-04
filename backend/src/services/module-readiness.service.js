@@ -1,5 +1,6 @@
 import { query } from "../db.js";
 import { badRequest, parsePositiveInt } from "../routes/_utils.js";
+import { autoRemapCariPurposeMappingsForLegalEntity } from "./cari.purpose-mapping-autofix.service.js";
 
 const CARI_REQUIRED_PURPOSE_CODES = Object.freeze([
   "CARI_AR_CONTROL",
@@ -28,6 +29,20 @@ const CARI_DISTINCT_PAIRS = Object.freeze([
     right: "CARI_AP_OFFSET",
   }),
 ]);
+
+const CARI_EXPECTED_ACCOUNT_TYPE = Object.freeze({
+  CARI_AR_CONTROL: "ASSET",
+  CARI_AR_OFFSET: "REVENUE",
+  CARI_AP_CONTROL: "LIABILITY",
+  CARI_AP_OFFSET: "EXPENSE",
+});
+
+const CARI_EXPECTED_NORMAL_SIDE = Object.freeze({
+  CARI_AR_CONTROL: "DEBIT",
+  CARI_AR_OFFSET: "CREDIT",
+  CARI_AP_CONTROL: "CREDIT",
+  CARI_AP_OFFSET: "DEBIT",
+});
 
 const SHAREHOLDER_DISTINCT_PAIRS = Object.freeze([
   Object.freeze({
@@ -743,6 +758,34 @@ function evaluateCariPurposeRow({
     });
   }
 
+  const expectedAccountType = CARI_EXPECTED_ACCOUNT_TYPE[purposeCode];
+  if (accountExists && expectedAccountType && toUpper(row?.account_type) !== expectedAccountType) {
+    invalids.push({
+      purposeCode,
+      reason: "ACCOUNT_TYPE_MISMATCH",
+      accountId: accountId || null,
+      accountCode: accountCode || null,
+      details: {
+        expectedAccountType,
+        actualAccountType: toUpper(row?.account_type) || null,
+      },
+    });
+  }
+
+  const expectedNormalSide = CARI_EXPECTED_NORMAL_SIDE[purposeCode];
+  if (accountExists && expectedNormalSide && toUpper(row?.normal_side) !== expectedNormalSide) {
+    invalids.push({
+      purposeCode,
+      reason: "ACCOUNT_NORMAL_SIDE_MISMATCH",
+      accountId: accountId || null,
+      accountCode: accountCode || null,
+      details: {
+        expectedNormalSide,
+        actualNormalSide: toUpper(row?.normal_side) || null,
+      },
+    });
+  }
+
   return invalids;
 }
 
@@ -916,6 +959,17 @@ export async function getCariPostingReadiness(
     legalEntityId,
     runQuery,
   });
+
+  for (const entityId of legalEntityIds) {
+    // Self-heal stale mappings (e.g. parent account became non-postable after child creation).
+    // eslint-disable-next-line no-await-in-loop
+    await autoRemapCariPurposeMappingsForLegalEntity({
+      tenantId,
+      legalEntityId: entityId,
+      runQuery,
+    });
+  }
+
   const purposeMapByLegalEntity = await loadPurposeMappingsByLegalEntity({
     tenantId,
     legalEntityIds,

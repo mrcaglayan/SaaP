@@ -204,7 +204,8 @@ async function loadJournal(tenantId, journalId) {
     `SELECT id, tenant_id, legal_entity_id, book_id, fiscal_period_id, journal_no, source_type, status,
             entry_date, document_date, currency_code, description, reference_no,
             total_debit_base, total_credit_base, created_by_user_id, posted_by_user_id,
-            posted_at, reversed_by_user_id, reversed_at, reverse_reason,
+            posted_at, reversed_by_user_id, reversed_at, cancelled_by_user_id, cancelled_at,
+            reverse_reason, cancel_reason,
             reversal_journal_entry_id, intercompany_source_journal_entry_id, created_at, updated_at
      FROM journal_entries
      WHERE id = ?

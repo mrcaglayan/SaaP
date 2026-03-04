@@ -6,6 +6,7 @@ import {
 } from "../tenantGuards.js";
 import { badRequest, parsePositiveInt } from "../routes/_utils.js";
 import { assertRegisterOperationalConfig } from "./cash.register.service.js";
+import { autoRemapCariPurposeMappingsForLegalEntity } from "./cari.purpose-mapping-autofix.service.js";
 import { upsertJournalSourceLinkTx } from "./journal.source-link.service.js";
 import { buildCariTaxAugmentation } from "./cari.tax.integration.service.js";
 import {
@@ -939,6 +940,12 @@ async function resolveSettlementPostingAccounts({
       ...purposeCandidates.offsetCandidates.map((entry) => normalizeUpperText(entry)),
     ])
   );
+  await autoRemapCariPurposeMappingsForLegalEntity({
+    tenantId,
+    legalEntityId,
+    purposeCodes: requestedPurposes,
+    runQuery,
+  });
   const placeholders = requestedPurposes.map(() => "?").join(", ");
   const result = await runQuery(
     `SELECT

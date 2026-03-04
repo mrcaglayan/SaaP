@@ -59,8 +59,8 @@ export function registerGlReadJournalRoutes(router, deps = {}) {
       if (legalEntityId) {
         assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
       }
-      if (status && !["DRAFT", "POSTED", "REVERSED"].includes(status)) {
-        throw badRequest("status must be one of DRAFT, POSTED, REVERSED");
+      if (status && !["DRAFT", "POSTED", "REVERSED", "CANCELLED"].includes(status)) {
+        throw badRequest("status must be one of DRAFT, POSTED, REVERSED, CANCELLED");
       }
 
       const limitRaw = Number(req.query.limit);
@@ -107,6 +107,7 @@ export function registerGlReadJournalRoutes(router, deps = {}) {
            je.total_debit_base, je.total_credit_base,
            je.created_by_user_id, je.posted_by_user_id, je.posted_at,
            je.reversed_by_user_id, je.reversed_at, je.reverse_reason,
+           je.cancelled_by_user_id, je.cancelled_at, je.cancel_reason,
            je.reversal_journal_entry_id, je.intercompany_source_journal_entry_id, je.created_at, je.updated_at,
            le.code AS legal_entity_code, le.name AS legal_entity_name,
            b.code AS book_code, b.name AS book_name,
@@ -220,6 +221,7 @@ export function registerGlReadJournalRoutes(router, deps = {}) {
            je.total_debit_base, je.total_credit_base,
            je.created_by_user_id, je.posted_by_user_id, je.posted_at,
            je.reversed_by_user_id, je.reversed_at, je.reverse_reason,
+           je.cancelled_by_user_id, je.cancelled_at, je.cancel_reason,
            je.reversal_journal_entry_id, je.intercompany_source_journal_entry_id, je.created_at, je.updated_at,
            le.code AS legal_entity_code, le.name AS legal_entity_name,
            b.code AS book_code, b.name AS book_name,

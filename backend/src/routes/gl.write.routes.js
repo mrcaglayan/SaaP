@@ -1,5 +1,6 @@
 import { query } from "../db.js";
 import { assertScopeAccess, requirePermission } from "../middleware/rbac.js";
+import { autoRemapCariPurposeMappingsForLegalEntity } from "../services/cari.purpose-mapping-autofix.service.js";
 import {
   assertAccountBelongsToTenant,
   assertCoaBelongsToTenant,
@@ -253,6 +254,14 @@ export function registerGlWriteCoreRoutes(router) {
              AND allow_posting = TRUE`,
           [savedAccountId]
         );
+      }
+
+      if (coaLegalEntityId && (parentAccountId || Boolean(saved?.has_children))) {
+        await autoRemapCariPurposeMappingsForLegalEntity({
+          tenantId,
+          legalEntityId: coaLegalEntityId,
+          runQuery: query,
+        });
       }
 
       const effectiveAllowPosting =

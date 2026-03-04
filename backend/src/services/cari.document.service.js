@@ -9,6 +9,7 @@ import {
   buildOffsetPaginationResult,
   resolveOffsetPagination,
 } from "../utils/pagination.js";
+import { autoRemapCariPurposeMappingsForLegalEntity } from "./cari.purpose-mapping-autofix.service.js";
 import { upsertJournalSourceLinkTx } from "./journal.source-link.service.js";
 import { buildCariTaxAugmentation } from "./cari.tax.integration.service.js";
 
@@ -822,6 +823,13 @@ async function resolveCariPostingAccounts({
     throw badRequest("direction must be AR or AP");
   }
 
+  await autoRemapCariPurposeMappingsForLegalEntity({
+    tenantId,
+    legalEntityId,
+    purposeCodes: [purposeDefinition.control, purposeDefinition.offset],
+    runQuery,
+  });
+
   const requestedPurposes = [purposeDefinition.control, purposeDefinition.offset];
   const placeholders = requestedPurposes.map(() => "?").join(", ");
   const result = await runQuery(
@@ -964,6 +972,23 @@ function buildCariPostingLines({
   }
   ensureBalancedJournalLines(lines);
   return lines;
+}
+
+function summarizePostingLineDescription({
+  baseDescription,
+  lineDescription,
+  lineIndex,
+  lineCount,
+}) {
+  const normalizedBase = toNullableString(baseDescription, 255) || "Cari posting line";
+  const normalizedLineDescription = toNullableString(lineDescription, 255);
+  if (normalizedLineDescription) {
+    return `${normalizedBase} | ${normalizedLineDescription}`.slice(0, 255);
+  }
+  if (Number(lineCount || 0) > 1) {
+    return `${normalizedBase} [Line ${Number(lineIndex) + 1}]`.slice(0, 255);
+  }
+  return normalizedBase;
 }
 
 async function insertPostedJournalWithLinesTx(tx, payload) {
@@ -2002,20 +2027,166 @@ export async function postCariDocumentById({
     const amountTxn = normalizeAmount(lockedDocument.amount_txn, "amountTxn");
     const amountBase = normalizeAmount(lockedDocument.amount_base, "amountBase");
     const subledgerReferenceNo = `${CARI_SUBLEDGER_REFERENCE_PREFIX}${documentId}`;
+    const defaultLineDescription = `Cari ${direction} ${documentType} ${postedNumbering.documentNo}`;
+    const postingLineRows = Array.isArray(payload.postingLines)
+      ? payload.postingLines
+      : null;
+    const postingLineSummary = [];
+    const postingLines = [];
+    let postingLinesUseLineLevelOffsets = false;
+    if (postingLineRows?.length) {
+      let postingLinesTotalTxn = 0;
+      let postingLinesTotalBase = 0;
+      let controlDebitTotalBase = 0;
+      let controlCreditTotalBase = 0;
+      let controlTotalTxn = 0;
+      const resolvedControlAccountId = parsePositiveInt(
+        postingAccounts.controlAccountId
+      );
 
-    const postingLines = [
-      ...buildCariPostingLines({
-        direction,
-        documentType,
+      for (let index = 0; index < postingLineRows.length; index += 1) {
+        const line = postingLineRows[index] || {};
+        const lineAmountTxn = normalizeAmount(
+          line.amountTxn,
+          `postingLines[${index}].amountTxn`
+        );
+        const lineAmountBase = normalizeAmount(
+          line.amountBase,
+          `postingLines[${index}].amountBase`
+        );
+        const lineHasOffsetOverride =
+          parsePositiveInt(line.offsetAccountId) ||
+          String(line.offsetAccountCode || "").trim();
+
+        let linePostingAccounts = postingAccounts;
+        if (lineHasOffsetOverride) {
+          // Per-line offset override keeps the same control account but allows expense split.
+          // eslint-disable-next-line no-await-in-loop
+          linePostingAccounts = await resolveCariPostingAccounts({
+            tenantId,
+            legalEntityId: lockedLegalEntityId,
+            direction,
+            counterpartyRow: counterparty,
+            offsetAccountId: line.offsetAccountId,
+            offsetAccountCode: line.offsetAccountCode,
+            runQuery: tx.query,
+          });
+          postingLinesUseLineLevelOffsets = true;
+        }
+
+        if (
+          parsePositiveInt(linePostingAccounts.controlAccountId) !==
+          parsePositiveInt(postingAccounts.controlAccountId)
+        ) {
+          throw badRequest(
+            `postingLines[${index}] resolved a different control account; check counterparty or mapping setup`
+          );
+        }
+
+        postingLinesTotalTxn = Number(
+          (postingLinesTotalTxn + lineAmountTxn).toFixed(AMOUNT_PRECISION_SCALE)
+        );
+        postingLinesTotalBase = Number(
+          (postingLinesTotalBase + lineAmountBase).toFixed(AMOUNT_PRECISION_SCALE)
+        );
+
+        const lineDescription = summarizePostingLineDescription({
+          baseDescription: defaultLineDescription,
+          lineDescription: line.description,
+          lineIndex: index,
+          lineCount: postingLineRows.length,
+        });
+        postingLineSummary.push({
+          lineNo: index + 1,
+          amountTxn: lineAmountTxn,
+          amountBase: lineAmountBase,
+          offsetAccountId: linePostingAccounts.offsetAccountId,
+          offsetAccountCode: linePostingAccounts.offsetAccountCode || null,
+          description: toNullableString(line.description, 255),
+        });
+        const splitLines = buildCariPostingLines({
+          direction,
+          documentType,
+          amountTxn: lineAmountTxn,
+          amountBase: lineAmountBase,
+          controlAccountId: postingAccounts.controlAccountId,
+          offsetAccountId: linePostingAccounts.offsetAccountId,
+          lineDescription,
+          subledgerReferenceNo,
+          currencyCode,
+        });
+        const controlLine = splitLines.find(
+          (entry) => parsePositiveInt(entry.accountId) === resolvedControlAccountId
+        );
+        const offsetLine = splitLines.find(
+          (entry) =>
+            parsePositiveInt(entry.accountId) ===
+            parsePositiveInt(linePostingAccounts.offsetAccountId)
+        );
+        if (!controlLine || !offsetLine) {
+          throw badRequest(
+            `postingLines[${index}] could not resolve control/offset posting split`
+          );
+        }
+        controlDebitTotalBase = Number(
+          (
+            controlDebitTotalBase + Number(controlLine.debitBase || 0)
+          ).toFixed(AMOUNT_PRECISION_SCALE)
+        );
+        controlCreditTotalBase = Number(
+          (
+            controlCreditTotalBase + Number(controlLine.creditBase || 0)
+          ).toFixed(AMOUNT_PRECISION_SCALE)
+        );
+        controlTotalTxn = Number(
+          (
+            controlTotalTxn + Number(controlLine.amountTxn || 0)
+          ).toFixed(AMOUNT_PRECISION_SCALE)
+        );
+        postingLines.push(offsetLine);
+      }
+
+      if (
+        !amountsAreEqual(postingLinesTotalTxn, amountTxn, AMOUNT_BALANCE_EPSILON) ||
+        !amountsAreEqual(postingLinesTotalBase, amountBase, AMOUNT_BALANCE_EPSILON)
+      ) {
+        throw badRequest("postingLines totals must equal draft amountTxn and amountBase");
+      }
+      if (!resolvedControlAccountId) {
+        throw badRequest("Posting control account is invalid");
+      }
+      postingLines.push({
+        accountId: resolvedControlAccountId,
+        debitBase: controlDebitTotalBase,
+        creditBase: controlCreditTotalBase,
+        amountTxn: controlTotalTxn,
+        description: toNullableString(defaultLineDescription, 255),
+        subledgerReferenceNo: toNullableString(subledgerReferenceNo, 100),
+        currencyCode: normalizeUpperText(currencyCode),
+      });
+    } else {
+      postingLineSummary.push({
+        lineNo: 1,
         amountTxn,
         amountBase,
-        controlAccountId: postingAccounts.controlAccountId,
         offsetAccountId: postingAccounts.offsetAccountId,
-        lineDescription: `Cari ${direction} ${documentType} ${postedNumbering.documentNo}`,
-        subledgerReferenceNo,
-        currencyCode,
-      }),
-    ];
+        offsetAccountCode: postingAccounts.offsetAccountCode || null,
+        description: null,
+      });
+      postingLines.push(
+        ...buildCariPostingLines({
+          direction,
+          documentType,
+          amountTxn,
+          amountBase,
+          controlAccountId: postingAccounts.controlAccountId,
+          offsetAccountId: postingAccounts.offsetAccountId,
+          lineDescription: defaultLineDescription,
+          subledgerReferenceNo,
+          currencyCode,
+        })
+      );
+    }
     const taxAugmentation = await buildCariTaxAugmentation({
       tenantId,
       legalEntityId: lockedLegalEntityId,
@@ -2183,8 +2354,12 @@ export async function postCariDocumentById({
         controlAccountCode: postingAccounts.controlAccountCode || null,
         offsetAccountCode: postingAccounts.offsetAccountCode || null,
         offsetAccountOverrideProvided: Boolean(
-          payload.offsetAccountId || String(payload.offsetAccountCode || "").trim()
+          payload.offsetAccountId ||
+            String(payload.offsetAccountCode || "").trim() ||
+            postingLinesUseLineLevelOffsets
         ),
+        postingLines: postingLineSummary,
+        postingLinesUseLineLevelOffsets,
         fxRate: fxPolicy.effectiveFxRate,
         tax: taxAugmentation.summary,
       },

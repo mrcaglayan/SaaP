@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Combobox from "../components/Combobox.jsx";
 import {
   closePeriod,
+  cancelJournalDraft,
   createJournal,
   getJournal,
   listIntercompanyComplianceIssues,
@@ -16,6 +17,7 @@ import {
   reopenPeriodClose,
   reverseJournal,
   runPeriodClose,
+  updateJournalDraft,
   updateIntercompanyEntityFlags,
 } from "../api/glAdmin.js";
 import {
@@ -37,7 +39,7 @@ const JOURNAL_SOURCE_TYPES = [
   "ELIMINATION",
   "ADJUSTMENT",
 ];
-const JOURNAL_STATUSES = ["DRAFT", "POSTED", "REVERSED"];
+const JOURNAL_STATUSES = ["DRAFT", "POSTED", "REVERSED", "CANCELLED"];
 const PERIOD_STATUSES = ["OPEN", "SOFT_CLOSED", "HARD_CLOSED"];
 const JOURNAL_HISTORY_FILTERS_STORAGE_SCOPE = "journal-workbench.history";
 const JOURNAL_COMPLIANCE_FILTERS_STORAGE_SCOPE = "journal-workbench.compliance";
@@ -69,6 +71,11 @@ function toOptionalInt(value) {
 function toAmount(value) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function formatInputAmount(value) {
+  const rounded = Math.round(Math.max(0, Number(value || 0)) * 10000) / 10000;
+  return String(rounded);
 }
 
 function formatAmount(value) {
@@ -155,6 +162,22 @@ function createLine(defaultCurrencyCode = "USD", defaultAccountId = "", defaultU
   };
 }
 
+function mapJournalLineToEditorLine(line, fallbackCurrencyCode = "USD") {
+  return {
+    id: `line-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    accountId: String(line?.account_id || ""),
+    operatingUnitId: String(line?.operating_unit_id || ""),
+    subledgerReferenceNo: String(line?.subledger_reference_no || ""),
+    counterpartyLegalEntityId: String(line?.counterparty_legal_entity_id || ""),
+    description: String(line?.description || ""),
+    currencyCode: String(line?.currency_code || fallbackCurrencyCode || "USD").toUpperCase(),
+    amountTxn: String(Number(line?.amount_txn || 0)),
+    debitBase: String(Number(line?.debit_base || 0)),
+    creditBase: String(Number(line?.credit_base || 0)),
+    taxCode: String(line?.tax_code || ""),
+  };
+}
+
 export default function JournalWorkbenchPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const { hasPermission } = useAuth();
@@ -168,6 +191,8 @@ export default function JournalWorkbenchPage() {
   const canReadPeriods = hasPermission("org.fiscal_period.read");
   const canReadJournals = hasPermission("gl.journal.read");
   const canCreate = hasPermission("gl.journal.create");
+  const canUpdateDraft = hasPermission("gl.journal.update");
+  const canCancelDraft = hasPermission("gl.journal.cancel");
   const canPost = hasPermission("gl.journal.post");
   const canReverse = hasPermission("gl.journal.reverse");
   const canReadTrialBalance = hasPermission("gl.trial_balance.read");
@@ -206,6 +231,8 @@ export default function JournalWorkbenchPage() {
   });
   const [createAutoMirror, setCreateAutoMirror] = useState(true);
   const [lines, setLines] = useState([createLine(), createLine()]);
+  const [createLineAmountFocusById, setCreateLineAmountFocusById] = useState({});
+  const [editingDraftId, setEditingDraftId] = useState("");
 
   const [reverseForm, setReverseForm] = useState({
     journalId: "",
@@ -423,7 +450,10 @@ export default function JournalWorkbenchPage() {
   const allDraftRowsOnPageSelected =
     draftHistoryRows.length > 0 &&
     draftHistoryRows.every((row) => selectedHistoryIdSet.has(String(row.id)));
+  const editingDraftJournalId = toInt(editingDraftId);
+  const isEditMode = Boolean(editingDraftJournalId);
   const postingBusy = saving === "postJournal";
+  const cancelBusy = saving === "cancelJournalDraft";
   const deepLinkedJournalIdRaw = String(
     searchParams.get("journalId") || searchParams.get("journal_id") || ""
   ).trim();
@@ -1317,6 +1347,68 @@ export default function JournalWorkbenchPage() {
     );
   }
 
+  function resolveCreateLineBalanceAmount(accountIdRaw) {
+    if (
+      !canReadTrialBalance ||
+      !selectedBookId ||
+      !resolvedCreatePeriodId ||
+      loadingCreateAccountBalances
+    ) {
+      return null;
+    }
+    const accountId = toInt(accountIdRaw);
+    if (!accountId) {
+      return null;
+    }
+    const balance = Number(createAccountBalanceById.get(accountId) || 0);
+    return Number.isFinite(balance) ? balance : null;
+  }
+
+  function resolveCreateLineApplySide(lineId, preferredSide = "") {
+    const normalizedPreferredSide = String(preferredSide || "").trim().toLowerCase();
+    if (normalizedPreferredSide === "debit" || normalizedPreferredSide === "credit") {
+      return normalizedPreferredSide;
+    }
+    const focusedSide = String(createLineAmountFocusById[lineId] || "")
+      .trim()
+      .toLowerCase();
+    if (focusedSide === "debit" || focusedSide === "credit") {
+      return focusedSide;
+    }
+    return "debit";
+  }
+
+  function applyCreateLineBalance(lineId, preferredSide = "") {
+    const side = resolveCreateLineApplySide(lineId, preferredSide);
+    setLines((prev) =>
+      prev.map((line) => {
+        if (line.id !== lineId) {
+          return line;
+        }
+        const balance = resolveCreateLineBalanceAmount(line.accountId);
+        if (balance === null) {
+          return line;
+        }
+        const absolute = Math.abs(balance);
+        return {
+          ...line,
+          debitBase: formatInputAmount(side === "debit" ? absolute : 0),
+          creditBase: formatInputAmount(side === "credit" ? absolute : 0),
+        };
+      })
+    );
+  }
+
+  function handleCreateLineBalanceShortcut(event, lineId, side) {
+    const isApplyShortcut =
+      event.altKey && String(event.key || "").toLowerCase() === "k";
+    if (!isApplyShortcut) {
+      return;
+    }
+    event.preventDefault();
+    applyCreateLineBalance(lineId, side);
+  }
+
   function addLine() {
     setLines((prev) => [
       ...prev,
@@ -1351,10 +1443,149 @@ export default function JournalWorkbenchPage() {
     return `${formatAmount(balance)} ${String(journal.currencyCode || "").toUpperCase()}`;
   }
 
+  function exitEditMode() {
+    setEditingDraftId("");
+  }
+
+  function hydrateEditorFromDraft(draftRow) {
+    const draftId = toInt(draftRow?.id);
+    if (!draftId) {
+      throw new Error("Draft id is required");
+    }
+    if (!isDraftStatus(draftRow?.status)) {
+      throw new Error("Only DRAFT journals can be edited");
+    }
+
+    setJournal((prev) => ({
+      ...prev,
+      legalEntityId: String(draftRow?.legal_entity_id || ""),
+      bookId: String(draftRow?.book_id || ""),
+      fiscalPeriodId: String(draftRow?.fiscal_period_id || ""),
+      entryDate: toDateOnly(draftRow?.entry_date) || prev.entryDate,
+      documentDate: toDateOnly(draftRow?.document_date) || prev.documentDate,
+      currencyCode: String(draftRow?.currency_code || prev.currencyCode || "USD").toUpperCase(),
+      sourceType: String(draftRow?.source_type || "MANUAL").toUpperCase(),
+      description: String(draftRow?.description || ""),
+      referenceNo: String(draftRow?.reference_no || ""),
+    }));
+
+    const sourceLines = Array.isArray(draftRow?.lines) ? draftRow.lines : [];
+    const mappedLines = sourceLines.map((line) =>
+      mapJournalLineToEditorLine(
+        line,
+        String(draftRow?.currency_code || journal.currencyCode || "USD").toUpperCase()
+      )
+    );
+    const safeLines = mappedLines.length >= 2 ? mappedLines : [createLine(), createLine()];
+    setLines(safeLines);
+    setEditingDraftId(String(draftId));
+  }
+
+  async function onLoadDraftIntoEditor(journalId) {
+    if (!canUpdateDraft) {
+      setError(l("Missing permission: gl.journal.update", "Eksik yetki: gl.journal.update"));
+      return;
+    }
+
+    const parsedId = toInt(journalId);
+    if (!parsedId) {
+      setError(l("journalId is required.", "journalId zorunludur."));
+      return;
+    }
+
+    setSaving("loadDraftForEdit");
+    setError("");
+    setMessage("");
+    try {
+      const res = await getJournal(parsedId);
+      const draftRow = res?.row;
+      if (!draftRow || !isDraftStatus(draftRow?.status)) {
+        throw new Error(l("Only DRAFT journals can be edited.", "Yalnizca DRAFT fisler duzenlenebilir."));
+      }
+      hydrateEditorFromDraft(draftRow);
+      setSelectedJournalId(String(parsedId));
+      setSelectedJournal(draftRow);
+      setMessage(
+        l(
+          `Draft loaded into editor. Journal ID: ${parsedId}`,
+          `Taslak editore yuklendi. Fis ID: ${parsedId}`
+        )
+      );
+    } catch (err) {
+      setError(err?.response?.data?.message || err?.message || l("Failed to load draft.", "Taslak yuklenemedi."));
+    } finally {
+      setSaving("");
+    }
+  }
+
+  async function onCancelDraft(journalId) {
+    if (!canCancelDraft) {
+      setError(l("Missing permission: gl.journal.cancel", "Eksik yetki: gl.journal.cancel"));
+      return;
+    }
+
+    const parsedId = toInt(journalId);
+    if (!parsedId) {
+      setError(l("journalId is required.", "journalId zorunludur."));
+      return;
+    }
+
+    const reason = window.prompt(
+      l(
+        "Cancel reason is required. Enter reason:",
+        "Iptal nedeni zorunludur. Lutfen neden girin:"
+      )
+    );
+    if (reason === null) {
+      return;
+    }
+    const reasonText = String(reason || "").trim();
+    if (!reasonText) {
+      setError(l("Cancel reason is required.", "Iptal nedeni zorunludur."));
+      return;
+    }
+
+    setSaving("cancelJournalDraft");
+    setError("");
+    setMessage("");
+    try {
+      await cancelJournalDraft(parsedId, { reason: reasonText });
+      if (editingDraftJournalId === parsedId) {
+        exitEditMode();
+      }
+      setSelectedHistoryJournalIds((prev) => prev.filter((id) => Number(id) !== parsedId));
+      setMessage(
+        l(
+          `Draft cancelled. Journal ID: ${parsedId}`,
+          `Taslak iptal edildi. Fis ID: ${parsedId}`
+        )
+      );
+
+      if (canReadJournals) {
+        await fetchJournalHistory(historyFilters);
+        if (selectedJournalId === String(parsedId)) {
+          await loadJournalDetail(parsedId);
+        }
+      }
+    } catch (err) {
+      setError(
+        err?.response?.data?.message ||
+          l("Failed to cancel draft journal.", "Taslak fis iptal edilemedi.")
+      );
+    } finally {
+      setSaving("");
+    }
+  }
+
   async function onCreateJournal(event) {
     event.preventDefault();
-    if (!canCreate) {
-      setError(l("Missing permission: gl.journal.create", "Eksik yetki: gl.journal.create"));
+    const updateJournalId = toInt(editingDraftId);
+    if (updateJournalId ? !canUpdateDraft : !canCreate) {
+      setError(
+        updateJournalId
+          ? l("Missing permission: gl.journal.update", "Eksik yetki: gl.journal.update")
+          : l("Missing permission: gl.journal.create", "Eksik yetki: gl.journal.create")
+      );
       return;
     }
 
@@ -1554,49 +1785,83 @@ export default function JournalWorkbenchPage() {
       }
     }
 
-    setSaving("createJournal");
+    setSaving(updateJournalId ? "updateJournalDraft" : "createJournal");
     setError("");
     setMessage("");
     try {
       const shouldAutoMirror = sourceType === "INTERCOMPANY" ? Boolean(createAutoMirror) : false;
-      const res = await createJournal({
-        legalEntityId,
-        bookId,
-        fiscalPeriodId,
-        entryDate: periodDate,
-        documentDate: journal.documentDate,
-        currencyCode: journal.currencyCode.trim().toUpperCase(),
-        sourceType: journal.sourceType,
-        description: journal.description.trim() || undefined,
-        referenceNo: journal.referenceNo.trim() || undefined,
-        autoMirror: shouldAutoMirror,
-        lines: payloadLines,
-      });
+      if (updateJournalId) {
+        await updateJournalDraft(updateJournalId, {
+          legalEntityId,
+          bookId,
+          fiscalPeriodId,
+          entryDate: periodDate,
+          documentDate: journal.documentDate,
+          currencyCode: journal.currencyCode.trim().toUpperCase(),
+          sourceType: journal.sourceType,
+          description: journal.description.trim() || undefined,
+          referenceNo: journal.referenceNo.trim() || undefined,
+          lines: payloadLines,
+        });
+        setReverseForm((prev) => ({ ...prev, journalId: String(updateJournalId) }));
+        setMessage(
+          l(
+            `Draft journal updated. ID: ${updateJournalId}`,
+            `Taslak fis guncellendi. ID: ${updateJournalId}`
+          )
+        );
 
-      const createdId = String(res?.journalEntryId || "");
-      setReverseForm((prev) => ({ ...prev, journalId: createdId }));
-      const mirrorIds = Array.isArray(res?.mirrorJournalEntryIds)
-        ? res.mirrorJournalEntryIds.filter((id) => toInt(id))
-        : [];
-      const mirrorSuffix =
-        mirrorIds.length > 0
-          ? l(
-              `, Mirror drafts: ${mirrorIds.join(", ")}`,
-              `, Mirror taslaklari: ${mirrorIds.join(", ")}`
-            )
-          : "";
-      setMessage(
-        l(
-          `Draft journal created. ID: ${res?.journalEntryId || "-"}, No: ${res?.journalNo || "-"}${mirrorSuffix}`,
-          `Taslak fis olusturuldu. ID: ${res?.journalEntryId || "-"}, No: ${res?.journalNo || "-"}${mirrorSuffix}`
-        )
-      );
+        if (canReadJournals) {
+          await fetchJournalHistory(historyFilters);
+          if (selectedJournalId === String(updateJournalId)) {
+            await loadJournalDetail(updateJournalId);
+          }
+        }
+      } else {
+        const res = await createJournal({
+          legalEntityId,
+          bookId,
+          fiscalPeriodId,
+          entryDate: periodDate,
+          documentDate: journal.documentDate,
+          currencyCode: journal.currencyCode.trim().toUpperCase(),
+          sourceType: journal.sourceType,
+          description: journal.description.trim() || undefined,
+          referenceNo: journal.referenceNo.trim() || undefined,
+          autoMirror: shouldAutoMirror,
+          lines: payloadLines,
+        });
 
-      if (canReadJournals) {
-        await fetchJournalHistory({ ...historyFilters, offset: "0" });
+        const createdId = String(res?.journalEntryId || "");
+        setReverseForm((prev) => ({ ...prev, journalId: createdId }));
+        const mirrorIds = Array.isArray(res?.mirrorJournalEntryIds)
+          ? res.mirrorJournalEntryIds.filter((id) => toInt(id))
+          : [];
+        const mirrorSuffix =
+          mirrorIds.length > 0
+            ? l(
+                `, Mirror drafts: ${mirrorIds.join(", ")}`,
+                `, Mirror taslaklari: ${mirrorIds.join(", ")}`
+              )
+            : "";
+        setMessage(
+          l(
+            `Draft journal created. ID: ${res?.journalEntryId || "-"}, No: ${res?.journalNo || "-"}${mirrorSuffix}`,
+            `Taslak fis olusturuldu. ID: ${res?.journalEntryId || "-"}, No: ${res?.journalNo || "-"}${mirrorSuffix}`
+          )
+        );
+
+        if (canReadJournals) {
+          await fetchJournalHistory({ ...historyFilters, offset: "0" });
+        }
       }
     } catch (err) {
-      setError(err?.response?.data?.message || l("Failed to create journal.", "Fis olusturulamadi."));
+      setError(
+        err?.response?.data?.message ||
+          (updateJournalId
+            ? l("Failed to update draft journal.", "Taslak fis guncellenemedi.")
+            : l("Failed to create journal.", "Fis olusturulamadi."))
+      );
     } finally {
       setSaving("");
     }
@@ -1877,7 +2142,25 @@ export default function JournalWorkbenchPage() {
       {message && <div className="rounded border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{message}</div>}
 
       <section className="rounded-xl border border-slate-200 bg-white p-4">
-        <h2 className="mb-3 text-sm font-semibold text-slate-700">{l("Create Draft Journal", "Taslak Fis Olustur")}</h2>
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-sm font-semibold text-slate-700">
+            {isEditMode
+              ? l(
+                  `Edit Draft Journal #${editingDraftJournalId}`,
+                  `Taslak Fis Duzenle #${editingDraftJournalId}`
+                )
+              : l("Create Draft Journal", "Taslak Fis Olustur")}
+          </h2>
+          {isEditMode ? (
+            <button
+              type="button"
+              onClick={exitEditMode}
+              className="rounded border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700"
+            >
+              {l("Exit Edit Mode", "Duzenleme Modundan Cik")}
+            </button>
+          ) : null}
+        </div>
         <form onSubmit={onCreateJournal} className="space-y-3">
           <p className="text-xs text-slate-500">
             {l(
@@ -2052,6 +2335,23 @@ export default function JournalWorkbenchPage() {
                             <span className="font-medium text-slate-700">
                               {formatCreateLineAccountBalance(line.accountId)}
                             </span>
+                            <button
+                              type="button"
+                              onClick={() => applyCreateLineBalance(line.id)}
+                              disabled={
+                                !toInt(line.accountId) ||
+                                !canReadTrialBalance ||
+                                !resolvedCreatePeriodId ||
+                                loadingCreateAccountBalances
+                              }
+                              className="ml-2 rounded border border-cyan-300 px-1.5 py-0.5 text-[10px] font-semibold text-cyan-700 hover:bg-cyan-50 disabled:opacity-50"
+                              title={l(
+                                "Apply account balance to focused debit/credit input (Alt+K)",
+                                "Hesap bakiyesini odaktaki borc/alacak alanina uygula (Alt+K)"
+                              )}
+                            >
+                              {l("Apply", "Uygula")}
+                            </button>
                           </div>
                         </>
                       ) : (
@@ -2121,8 +2421,8 @@ export default function JournalWorkbenchPage() {
                     <td className="px-2 py-2"><input value={line.description} onChange={(event) => updateLine(line.id, "description", event.target.value)} className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs" /></td>
                     <td className="px-2 py-2"><input value={line.currencyCode} onChange={(event) => updateLine(line.id, "currencyCode", event.target.value.toUpperCase())} className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs" maxLength={3} /></td>
                     <td className="px-2 py-2"><input type="number" step="0.0001" value={line.amountTxn} onChange={(event) => updateLine(line.id, "amountTxn", event.target.value)} className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs" /></td>
-                    <td className="px-2 py-2"><input type="number" step="0.0001" value={line.debitBase} onChange={(event) => updateLine(line.id, "debitBase", event.target.value)} className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs" /></td>
-                    <td className="px-2 py-2"><input type="number" step="0.0001" value={line.creditBase} onChange={(event) => updateLine(line.id, "creditBase", event.target.value)} className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs" /></td>
+                    <td className="px-2 py-2"><input type="number" step="0.0001" value={line.debitBase} onChange={(event) => updateLine(line.id, "debitBase", event.target.value)} onFocus={() => setCreateLineAmountFocusById((prev) => ({ ...prev, [line.id]: "debit" }))} onKeyDown={(event) => handleCreateLineBalanceShortcut(event, line.id, "debit")} className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs" /></td>
+                    <td className="px-2 py-2"><input type="number" step="0.0001" value={line.creditBase} onChange={(event) => updateLine(line.id, "creditBase", event.target.value)} onFocus={() => setCreateLineAmountFocusById((prev) => ({ ...prev, [line.id]: "credit" }))} onKeyDown={(event) => handleCreateLineBalanceShortcut(event, line.id, "credit")} className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs" /></td>
                     <td className="px-2 py-2"><input value={line.taxCode} onChange={(event) => updateLine(line.id, "taxCode", event.target.value)} className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs" /></td>
                     <td className="px-2 py-2"><button type="button" onClick={() => removeLine(line.id)} disabled={lines.length <= 2} className="rounded border border-rose-200 px-2 py-1 text-xs font-semibold text-rose-700 disabled:opacity-50">{l("Remove", "Kaldir")}</button></td>
                   </tr>
@@ -2134,7 +2434,23 @@ export default function JournalWorkbenchPage() {
           <div className="flex flex-wrap items-center justify-between gap-2">
             <button type="button" onClick={addLine} className="rounded border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50">{l("Add Line", "Satir Ekle")}</button>
             <div className="text-xs text-slate-700">{l("Debit", "Borc")}: {formatAmount(lineTotals.debit)} | {l("Credit", "Alacak")}: {formatAmount(lineTotals.credit)} | <span className={lineTotals.balanced ? "text-emerald-700" : "text-rose-700"}>{lineTotals.balanced ? l("Balanced", "Dengeli") : l("Not Balanced", "Dengede Degil")}</span></div>
-            <button type="submit" disabled={saving === "createJournal" || !canCreate || !resolvedCreatePeriodId} className="rounded bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">{saving === "createJournal" ? l("Creating...", "Olusturuluyor...") : l("Create Draft", "Taslak Olustur")}</button>
+            <button
+              type="submit"
+              disabled={
+                (saving === "createJournal" || saving === "updateJournalDraft") ||
+                (isEditMode ? !canUpdateDraft : !canCreate) ||
+                !resolvedCreatePeriodId
+              }
+              className="rounded bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+            >
+              {saving === "updateJournalDraft"
+                ? l("Saving...", "Kaydediliyor...")
+                : saving === "createJournal"
+                  ? l("Creating...", "Olusturuluyor...")
+                  : isEditMode
+                    ? l("Save Draft", "Taslagi Kaydet")
+                    : l("Create Draft", "Taslak Olustur")}
+            </button>
           </div>
         </form>
       </section>
@@ -2514,14 +2830,34 @@ export default function JournalWorkbenchPage() {
                     <td className="px-3 py-2">
                       <div className="flex flex-wrap items-center gap-1">
                         <button type="button" onClick={() => loadJournalDetail(row.id)} className="cursor-pointer rounded border border-slate-300 px-2 py-1 text-xs font-semibold text-slate-700">{l("View", "Goruntule")}</button>
+                        {canUpdateDraft && isDraftStatus(row.status) ? (
+                          <button
+                            type="button"
+                            onClick={() => onLoadDraftIntoEditor(row.id)}
+                            disabled={saving === "loadDraftForEdit" || cancelBusy || postingBusy}
+                            className="cursor-pointer rounded border border-slate-300 px-2 py-1 text-xs font-semibold text-slate-700 disabled:opacity-50"
+                          >
+                            {l("Edit", "Duzenle")}
+                          </button>
+                        ) : null}
                         {canPost && isDraftStatus(row.status) ? (
                           <button
                             type="button"
                             onClick={() => onOpenSinglePostConfirm(row)}
-                            disabled={postingBusy}
+                            disabled={postingBusy || cancelBusy || saving === "loadDraftForEdit"}
                             className="cursor-pointer rounded border border-cyan-300 px-2 py-1 text-xs font-semibold text-cyan-700 disabled:opacity-50"
                           >
                             {l("Post", "Post Et")}
+                          </button>
+                        ) : null}
+                        {canCancelDraft && isDraftStatus(row.status) ? (
+                          <button
+                            type="button"
+                            onClick={() => onCancelDraft(row.id)}
+                            disabled={cancelBusy || postingBusy || saving === "loadDraftForEdit"}
+                            className="cursor-pointer rounded border border-rose-300 px-2 py-1 text-xs font-semibold text-rose-700 disabled:opacity-50"
+                          >
+                            {cancelBusy ? l("Cancelling...", "Iptal ediliyor...") : l("Cancel", "Iptal Et")}
                           </button>
                         ) : null}
                       </div>
@@ -2545,16 +2881,43 @@ export default function JournalWorkbenchPage() {
                 <div>{l("Book", "Defter")}: {selectedJournal.book_code}</div>
                 <div>{l("Period", "Donem")}: {selectedJournal.fiscal_year}-P{String(selectedJournal.period_no || "").padStart(2, "0")}</div>
                 <div>{l("Lines", "Satirlar")}: {(selectedJournal.lines || []).length}</div>
-                {canPost && isDraftStatus(selectedJournal.status) ? (
+                {String(selectedJournal.status || "").toUpperCase() === "CANCELLED" && selectedJournal.cancel_reason ? (
+                  <div>{l("Cancel Reason", "Iptal Nedeni")}: {selectedJournal.cancel_reason}</div>
+                ) : null}
+                {isDraftStatus(selectedJournal.status) ? (
                   <div className="pt-1">
-                    <button
-                      type="button"
-                      onClick={() => onOpenSinglePostConfirm(selectedJournal)}
-                      disabled={postingBusy}
-                      className="rounded bg-cyan-700 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-60"
-                    >
-                      {l("Post From Detail", "Detaydan Post Et")}
-                    </button>
+                    <div className="flex flex-wrap items-center gap-2">
+                      {canUpdateDraft ? (
+                        <button
+                          type="button"
+                          onClick={() => onLoadDraftIntoEditor(selectedJournal.id)}
+                          disabled={saving === "loadDraftForEdit" || postingBusy || cancelBusy}
+                          className="rounded border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 disabled:opacity-60"
+                        >
+                          {l("Edit Draft", "Taslagi Duzenle")}
+                        </button>
+                      ) : null}
+                      {canPost ? (
+                        <button
+                          type="button"
+                          onClick={() => onOpenSinglePostConfirm(selectedJournal)}
+                          disabled={postingBusy || saving === "loadDraftForEdit" || cancelBusy}
+                          className="rounded bg-cyan-700 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-60"
+                        >
+                          {l("Post From Detail", "Detaydan Post Et")}
+                        </button>
+                      ) : null}
+                      {canCancelDraft ? (
+                        <button
+                          type="button"
+                          onClick={() => onCancelDraft(selectedJournal.id)}
+                          disabled={cancelBusy || postingBusy || saving === "loadDraftForEdit"}
+                          className="rounded border border-rose-300 px-3 py-1.5 text-xs font-semibold text-rose-700 disabled:opacity-60"
+                        >
+                          {cancelBusy ? l("Cancelling...", "Iptal ediliyor...") : l("Cancel Draft", "Taslagi Iptal Et")}
+                        </button>
+                      ) : null}
+                    </div>
                   </div>
                 ) : null}
                 <div className="max-h-52 overflow-auto rounded border border-slate-200">

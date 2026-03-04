@@ -490,8 +490,9 @@ export default function CashRegistersPage() {
         : null,
     [accountSearchCodeCandidate, selectedEntityAccountByCode]
   );
+  const hasAccountLookupQueryText = Boolean(String(accountLookupQuery || "").trim());
   const showInlineChildCreate =
-    Boolean(accountSearchCodeCandidate) && !exactCodeMatchAccount;
+    hasAccountLookupQueryText && !exactCodeMatchAccount;
   const varianceGainSearchCodeCandidate = useMemo(
     () => deriveSearchCodeCandidate(varianceGainLookupQuery),
     [varianceGainLookupQuery]
@@ -503,8 +504,9 @@ export default function CashRegistersPage() {
         : null,
     [varianceGainSearchCodeCandidate, selectedEntityAccountByCode]
   );
+  const hasVarianceGainLookupQueryText = Boolean(String(varianceGainLookupQuery || "").trim());
   const showVarianceGainInlineChildCreate =
-    Boolean(varianceGainSearchCodeCandidate) && !exactVarianceGainCodeMatchAccount;
+    hasVarianceGainLookupQueryText && !exactVarianceGainCodeMatchAccount;
   const varianceLossSearchCodeCandidate = useMemo(
     () => deriveSearchCodeCandidate(varianceLossLookupQuery),
     [varianceLossLookupQuery]
@@ -516,8 +518,9 @@ export default function CashRegistersPage() {
         : null,
     [varianceLossSearchCodeCandidate, selectedEntityAccountByCode]
   );
+  const hasVarianceLossLookupQueryText = Boolean(String(varianceLossLookupQuery || "").trim());
   const showVarianceLossInlineChildCreate =
-    Boolean(varianceLossSearchCodeCandidate) && !exactVarianceLossCodeMatchAccount;
+    hasVarianceLossLookupQueryText && !exactVarianceLossCodeMatchAccount;
   const selectedInlineParentAccount = useMemo(() => {
     const selectedParentId = toPositiveInt(inlineChildParentAccountId);
     if (!selectedParentId) {
@@ -645,8 +648,24 @@ export default function CashRegistersPage() {
       return;
     }
     setInlineChildCode((prev) => prev || accountSearchCodeCandidate);
-    setInlineChildName((prev) => prev || String(form.name || "").trim());
-  }, [showInlineChildCreate, accountSearchCodeCandidate, form.name]);
+    setInlineChildName(
+      (prev) =>
+        prev || String(accountLookupQuery || "").trim() || String(form.name || "").trim()
+    );
+  }, [showInlineChildCreate, accountSearchCodeCandidate, accountLookupQuery, form.name]);
+  useEffect(() => {
+    if (!showInlineChildCreate || !suggestedNextChildCode) {
+      return;
+    }
+    setInlineChildCode((prev) => {
+      const normalizedPrev = normalizeAccountCode(prev);
+      const normalizedCandidate = normalizeAccountCode(accountSearchCodeCandidate);
+      if (!normalizedPrev || normalizedPrev === normalizedCandidate) {
+        return suggestedNextChildCode;
+      }
+      return prev;
+    });
+  }, [showInlineChildCreate, suggestedNextChildCode, accountSearchCodeCandidate]);
 
   useEffect(() => {
     if (!showInlineChildCreate || toPositiveInt(inlineChildParentAccountId)) {
@@ -693,8 +712,35 @@ export default function CashRegistersPage() {
       return;
     }
     setVarianceGainInlineChildCode((prev) => prev || varianceGainSearchCodeCandidate);
-    setVarianceGainInlineChildName((prev) => prev || String(form.name || "").trim());
-  }, [showVarianceGainInlineChildCreate, varianceGainSearchCodeCandidate, form.name]);
+    setVarianceGainInlineChildName(
+      (prev) =>
+        prev ||
+        String(varianceGainLookupQuery || "").trim() ||
+        String(form.name || "").trim()
+    );
+  }, [
+    showVarianceGainInlineChildCreate,
+    varianceGainSearchCodeCandidate,
+    varianceGainLookupQuery,
+    form.name,
+  ]);
+  useEffect(() => {
+    if (!showVarianceGainInlineChildCreate || !suggestedVarianceGainNextChildCode) {
+      return;
+    }
+    setVarianceGainInlineChildCode((prev) => {
+      const normalizedPrev = normalizeAccountCode(prev);
+      const normalizedCandidate = normalizeAccountCode(varianceGainSearchCodeCandidate);
+      if (!normalizedPrev || normalizedPrev === normalizedCandidate) {
+        return suggestedVarianceGainNextChildCode;
+      }
+      return prev;
+    });
+  }, [
+    showVarianceGainInlineChildCreate,
+    suggestedVarianceGainNextChildCode,
+    varianceGainSearchCodeCandidate,
+  ]);
 
   useEffect(() => {
     if (
@@ -726,8 +772,35 @@ export default function CashRegistersPage() {
       return;
     }
     setVarianceLossInlineChildCode((prev) => prev || varianceLossSearchCodeCandidate);
-    setVarianceLossInlineChildName((prev) => prev || String(form.name || "").trim());
-  }, [showVarianceLossInlineChildCreate, varianceLossSearchCodeCandidate, form.name]);
+    setVarianceLossInlineChildName(
+      (prev) =>
+        prev ||
+        String(varianceLossLookupQuery || "").trim() ||
+        String(form.name || "").trim()
+    );
+  }, [
+    showVarianceLossInlineChildCreate,
+    varianceLossSearchCodeCandidate,
+    varianceLossLookupQuery,
+    form.name,
+  ]);
+  useEffect(() => {
+    if (!showVarianceLossInlineChildCreate || !suggestedVarianceLossNextChildCode) {
+      return;
+    }
+    setVarianceLossInlineChildCode((prev) => {
+      const normalizedPrev = normalizeAccountCode(prev);
+      const normalizedCandidate = normalizeAccountCode(varianceLossSearchCodeCandidate);
+      if (!normalizedPrev || normalizedPrev === normalizedCandidate) {
+        return suggestedVarianceLossNextChildCode;
+      }
+      return prev;
+    });
+  }, [
+    showVarianceLossInlineChildCreate,
+    suggestedVarianceLossNextChildCode,
+    varianceLossSearchCodeCandidate,
+  ]);
 
   useEffect(() => {
     if (
@@ -1169,6 +1242,7 @@ export default function CashRegistersPage() {
 
   function renderInlineChildCreatePanel({
     codeCandidate,
+    searchText,
     parentAccountIdValue,
     onParentChange,
     childCodeValue,
@@ -1182,12 +1256,16 @@ export default function CashRegistersPage() {
     onCreateChild,
     creating,
   }) {
+    const displayQuery = String(codeCandidate || searchText || "").trim();
+    const canUseTypedCode = Boolean(String(codeCandidate || "").trim());
     return (
       <div className="space-y-2 rounded-lg border border-cyan-200 bg-cyan-50 p-2">
         <p className="text-xs text-cyan-800">
-          {t("cashRegisters.accountPicker.codeNotFoundHint", {
-            code: codeCandidate,
-          })}
+          {displayQuery
+            ? t("cashRegisters.accountPicker.codeNotFoundHint", {
+                code: displayQuery,
+              })
+            : "No exact account found. Create a child account below."}
         </p>
         <Combobox
           value={parentAccountIdValue || null}
@@ -1219,6 +1297,7 @@ export default function CashRegistersPage() {
           <button
             type="button"
             onClick={onUseTypedCode}
+            disabled={!canUseTypedCode}
             className="rounded border border-cyan-300 bg-white px-2 py-1 text-[11px] font-semibold text-cyan-800 hover:bg-cyan-100"
           >
             {t("cashRegisters.accountPicker.useTypedCode")}
@@ -1473,6 +1552,7 @@ export default function CashRegistersPage() {
                   onInputChange={(nextValue, meta) => {
                     if (meta?.reason === "input" || meta?.reason === "clear") {
                       setAccountLookupQuery(nextValue);
+                      setInlineChildName(String(nextValue || "").trim());
                     }
                   }}
                   onChange={(nextValue) => {
@@ -1489,6 +1569,7 @@ export default function CashRegistersPage() {
                 {showInlineChildCreate ? (
                   renderInlineChildCreatePanel({
                     codeCandidate: accountSearchCodeCandidate,
+                    searchText: accountLookupQuery,
                     parentAccountIdValue: inlineChildParentAccountId,
                     onParentChange: setInlineChildParentAccountId,
                     childCodeValue: inlineChildCode,
@@ -1534,6 +1615,7 @@ export default function CashRegistersPage() {
                   onInputChange={(nextValue, meta) => {
                     if (meta?.reason === "input" || meta?.reason === "clear") {
                       setVarianceGainLookupQuery(nextValue);
+                      setVarianceGainInlineChildName(String(nextValue || "").trim());
                     }
                   }}
                   onChange={(nextValue) => {
@@ -1547,6 +1629,7 @@ export default function CashRegistersPage() {
                 {showVarianceGainInlineChildCreate
                   ? renderInlineChildCreatePanel({
                       codeCandidate: varianceGainSearchCodeCandidate,
+                      searchText: varianceGainLookupQuery,
                       parentAccountIdValue: varianceGainInlineChildParentAccountId,
                       onParentChange: setVarianceGainInlineChildParentAccountId,
                       childCodeValue: varianceGainInlineChildCode,
@@ -1595,6 +1678,7 @@ export default function CashRegistersPage() {
                   onInputChange={(nextValue, meta) => {
                     if (meta?.reason === "input" || meta?.reason === "clear") {
                       setVarianceLossLookupQuery(nextValue);
+                      setVarianceLossInlineChildName(String(nextValue || "").trim());
                     }
                   }}
                   onChange={(nextValue) => {
@@ -1608,6 +1692,7 @@ export default function CashRegistersPage() {
                 {showVarianceLossInlineChildCreate
                   ? renderInlineChildCreatePanel({
                       codeCandidate: varianceLossSearchCodeCandidate,
+                      searchText: varianceLossLookupQuery,
                       parentAccountIdValue: varianceLossInlineChildParentAccountId,
                       onParentChange: setVarianceLossInlineChildParentAccountId,
                       childCodeValue: varianceLossInlineChildCode,

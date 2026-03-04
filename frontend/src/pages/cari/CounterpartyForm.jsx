@@ -96,6 +96,111 @@ function buildPaymentTermLookupDescription(row) {
   return parts.join(" | ");
 }
 
+function isActivePostableAccount(row) {
+  const allowPosting = row?.allowPosting === true || Number(row?.allowPosting) === 1;
+  const isActive = row?.isActive === true || Number(row?.isActive) === 1;
+  return allowPosting && isActive;
+}
+
+function normalizeAccountCode(value) {
+  return String(value || "")
+    .trim()
+    .toUpperCase();
+}
+
+function renderInlineChildCreatePanel({
+  codeCandidate,
+  searchText,
+  parentAccountLookupOptions,
+  parentAccountId,
+  onParentAccountIdChange,
+  childCode,
+  onChildCodeChange,
+  childName,
+  onChildNameChange,
+  onUseTypedCode,
+  onUseNextCode,
+  suggestedNextCode,
+  hasSelectedParent,
+  onCreateChild,
+  creating,
+  canUpsertAccounts,
+  submitting,
+  permissionHint,
+}) {
+  const displayQuery = String(codeCandidate || searchText || "").trim();
+  const canUseTypedCode = Boolean(String(codeCandidate || "").trim());
+
+  return (
+    <div className="mt-2 space-y-2 rounded-lg border border-cyan-200 bg-cyan-50 p-2">
+      {displayQuery ? (
+        <p className="text-xs text-cyan-800">
+          No exact account found for `"{displayQuery}"`. Create a child account below.
+        </p>
+      ) : (
+        <p className="text-xs text-cyan-800">Create a child account below.</p>
+      )}
+      <Combobox
+        value={parentAccountId || null}
+        options={parentAccountLookupOptions}
+        disabled={submitting || creating}
+        placeholder="Select parent account"
+        noOptionsText="No parent accounts found."
+        onChange={(nextValue) => onParentAccountIdChange?.(nextValue ? String(nextValue) : "")}
+      />
+      <div className="grid gap-2 sm:grid-cols-2">
+        <input
+          value={childCode}
+          onChange={(event) =>
+            onChildCodeChange?.(normalizeAccountCode(event.target.value))
+          }
+          className="rounded-md border border-cyan-300 bg-white px-3 py-2 text-xs"
+          placeholder="Child account code"
+          maxLength={60}
+        />
+        <input
+          value={childName}
+          onChange={(event) => onChildNameChange?.(event.target.value)}
+          className="rounded-md border border-cyan-300 bg-white px-3 py-2 text-xs"
+          placeholder="New child account name"
+          maxLength={255}
+        />
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={onUseTypedCode}
+          disabled={!canUseTypedCode}
+          className="rounded border border-cyan-300 bg-white px-2 py-1 text-[11px] font-semibold text-cyan-800 hover:bg-cyan-100"
+        >
+          Use searched code
+        </button>
+        <button
+          type="button"
+          onClick={onUseNextCode}
+          disabled={!suggestedNextCode || !hasSelectedParent}
+          className="rounded border border-cyan-300 bg-white px-2 py-1 text-[11px] font-semibold text-cyan-800 hover:bg-cyan-100 disabled:opacity-60"
+        >
+          Use next child code
+        </button>
+        <button
+          type="button"
+          onClick={onCreateChild}
+          disabled={creating || submitting || !canUpsertAccounts}
+          className="rounded bg-cyan-700 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-cyan-800 disabled:opacity-60"
+        >
+          {creating ? "Creating child..." : "Create child account"}
+        </button>
+      </div>
+      {!canUpsertAccounts ? (
+        <p className="text-[11px] text-amber-700">
+          {permissionHint || "Missing permission: gl.account.upsert"}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 function withSelectedPaymentTermFallback(options, selectedId) {
   const normalized = Array.isArray(options) ? [...options] : [];
   const selected = String(selectedId || "").trim();
@@ -155,18 +260,46 @@ export default function CounterpartyForm({
   accountOptionsLoading = false,
   accountOptionsError = "",
   onAccountLookupQueryChange,
+  canUpsertGlAccounts = false,
+  accountUpsertFallbackMessage = "",
   canInlineCreateArAccount = false,
   inlineCreateArAccountLabel = "",
   inlineCreateArAccountSaving = false,
   onInlineCreateArAccount,
   inlineCreateArAccountError = "",
   inlineCreateArAccountMessage = "",
+  showInlineCreateArAccountPanel = false,
+  inlineCreateArCodeCandidate = "",
+  inlineCreateArSearchText = "",
+  inlineCreateArParentAccountOptions = [],
+  inlineCreateArParentAccountId = "",
+  onInlineCreateArParentAccountIdChange,
+  inlineCreateArChildCode = "",
+  onInlineCreateArChildCodeChange,
+  inlineCreateArChildName = "",
+  onInlineCreateArChildNameChange,
+  inlineCreateArSuggestedNextCode = "",
+  onInlineCreateArUseTypedCode,
+  onInlineCreateArUseNextCode,
   canInlineCreateApAccount = false,
   inlineCreateApAccountLabel = "",
   inlineCreateApAccountSaving = false,
   onInlineCreateApAccount,
   inlineCreateApAccountError = "",
   inlineCreateApAccountMessage = "",
+  showInlineCreateApAccountPanel = false,
+  inlineCreateApCodeCandidate = "",
+  inlineCreateApSearchText = "",
+  inlineCreateApParentAccountOptions = [],
+  inlineCreateApParentAccountId = "",
+  onInlineCreateApParentAccountIdChange,
+  inlineCreateApChildCode = "",
+  onInlineCreateApChildCodeChange,
+  inlineCreateApChildName = "",
+  onInlineCreateApChildNameChange,
+  inlineCreateApSuggestedNextCode = "",
+  onInlineCreateApUseTypedCode,
+  onInlineCreateApUseNextCode,
   onPaymentTermLookupQueryChange,
   canInlineCreatePaymentTerm = false,
   inlineCreatePaymentTermLabel = "",
@@ -212,12 +345,20 @@ export default function CounterpartyForm({
   const selectedArAccountId = String(form.arAccountId || "");
   const selectedApAccountId = String(form.apAccountId || "");
   const arAccountOptions = withSelectedFallbackOption(
-    allAccountOptions.filter((row) => String(row.accountType || "").toUpperCase() === "ASSET"),
+    allAccountOptions.filter(
+      (row) =>
+        String(row.accountType || "").toUpperCase() === "ASSET" &&
+        isActivePostableAccount(row)
+    ),
     selectedArAccountId,
     "ASSET"
   );
   const apAccountOptions = withSelectedFallbackOption(
-    allAccountOptions.filter((row) => String(row.accountType || "").toUpperCase() === "LIABILITY"),
+    allAccountOptions.filter(
+      (row) =>
+        String(row.accountType || "").toUpperCase() === "LIABILITY" &&
+        isActivePostableAccount(row)
+    ),
     selectedApAccountId,
     "LIABILITY"
   );
@@ -227,6 +368,24 @@ export default function CounterpartyForm({
     description: buildAccountLookupDescription(row),
   }));
   const apAccountLookupOptions = apAccountOptions.map((row) => ({
+    value: String(row.id || ""),
+    label: buildAccountLookupLabel(row),
+    description: buildAccountLookupDescription(row),
+  }));
+  const inlineArParentAccountLookupOptions = (
+    Array.isArray(inlineCreateArParentAccountOptions)
+      ? inlineCreateArParentAccountOptions
+      : []
+  ).map((row) => ({
+    value: String(row.id || ""),
+    label: buildAccountLookupLabel(row),
+    description: buildAccountLookupDescription(row),
+  }));
+  const inlineApParentAccountLookupOptions = (
+    Array.isArray(inlineCreateApParentAccountOptions)
+      ? inlineCreateApParentAccountOptions
+      : []
+  ).map((row) => ({
     value: String(row.id || ""),
     label: buildAccountLookupLabel(row),
     description: buildAccountLookupDescription(row),
@@ -640,7 +799,6 @@ export default function CounterpartyForm({
                 value={selectedArAccountId}
                 options={arAccountLookupOptions}
                 loading={accountOptionsLoading}
-                filterOptions={false}
                 placeholder={
                   form.legalEntityId
                     ? "Search AR account code/name"
@@ -653,7 +811,7 @@ export default function CounterpartyForm({
                 }
                 onInputChange={(nextValue, meta) => {
                   if (typeof onAccountLookupQueryChange === "function") {
-                    onAccountLookupQueryChange(nextValue, meta);
+                    onAccountLookupQueryChange(nextValue, meta, "AR");
                   }
                 }}
                 onChange={(nextValue) =>
@@ -661,7 +819,29 @@ export default function CounterpartyForm({
                 }
                 disabled={submitting || !form.legalEntityId || !form.isCustomer}
               />
-              {canInlineCreateArAccount ? (
+              {showInlineCreateArAccountPanel
+                ? renderInlineChildCreatePanel({
+                    codeCandidate: inlineCreateArCodeCandidate,
+                    searchText: inlineCreateArSearchText,
+                    parentAccountLookupOptions: inlineArParentAccountLookupOptions,
+                    parentAccountId: inlineCreateArParentAccountId,
+                    onParentAccountIdChange: onInlineCreateArParentAccountIdChange,
+                    childCode: inlineCreateArChildCode,
+                    onChildCodeChange: onInlineCreateArChildCodeChange,
+                    childName: inlineCreateArChildName,
+                    onChildNameChange: onInlineCreateArChildNameChange,
+                    onUseTypedCode: onInlineCreateArUseTypedCode,
+                    onUseNextCode: onInlineCreateArUseNextCode,
+                    suggestedNextCode: inlineCreateArSuggestedNextCode,
+                    hasSelectedParent: Boolean(toPositiveInt(inlineCreateArParentAccountId)),
+                    onCreateChild: onInlineCreateArAccount,
+                    creating: inlineCreateArAccountSaving,
+                    canUpsertAccounts: canUpsertGlAccounts,
+                    submitting,
+                    permissionHint: accountUpsertFallbackMessage,
+                  })
+                : null}
+              {!showInlineCreateArAccountPanel && canInlineCreateArAccount ? (
                 <button
                   type="button"
                   className="mt-2 rounded-md border border-slate-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700 disabled:opacity-60"
@@ -714,7 +894,6 @@ export default function CounterpartyForm({
                 value={selectedApAccountId}
                 options={apAccountLookupOptions}
                 loading={accountOptionsLoading}
-                filterOptions={false}
                 placeholder={
                   form.legalEntityId
                     ? "Search AP account code/name"
@@ -727,7 +906,7 @@ export default function CounterpartyForm({
                 }
                 onInputChange={(nextValue, meta) => {
                   if (typeof onAccountLookupQueryChange === "function") {
-                    onAccountLookupQueryChange(nextValue, meta);
+                    onAccountLookupQueryChange(nextValue, meta, "AP");
                   }
                 }}
                 onChange={(nextValue) =>
@@ -735,7 +914,29 @@ export default function CounterpartyForm({
                 }
                 disabled={submitting || !form.legalEntityId || !form.isVendor}
               />
-              {canInlineCreateApAccount ? (
+              {showInlineCreateApAccountPanel
+                ? renderInlineChildCreatePanel({
+                    codeCandidate: inlineCreateApCodeCandidate,
+                    searchText: inlineCreateApSearchText,
+                    parentAccountLookupOptions: inlineApParentAccountLookupOptions,
+                    parentAccountId: inlineCreateApParentAccountId,
+                    onParentAccountIdChange: onInlineCreateApParentAccountIdChange,
+                    childCode: inlineCreateApChildCode,
+                    onChildCodeChange: onInlineCreateApChildCodeChange,
+                    childName: inlineCreateApChildName,
+                    onChildNameChange: onInlineCreateApChildNameChange,
+                    onUseTypedCode: onInlineCreateApUseTypedCode,
+                    onUseNextCode: onInlineCreateApUseNextCode,
+                    suggestedNextCode: inlineCreateApSuggestedNextCode,
+                    hasSelectedParent: Boolean(toPositiveInt(inlineCreateApParentAccountId)),
+                    onCreateChild: onInlineCreateApAccount,
+                    creating: inlineCreateApAccountSaving,
+                    canUpsertAccounts: canUpsertGlAccounts,
+                    submitting,
+                    permissionHint: accountUpsertFallbackMessage,
+                  })
+                : null}
+              {!showInlineCreateApAccountPanel && canInlineCreateApAccount ? (
                 <button
                   type="button"
                   className="mt-2 rounded-md border border-slate-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700 disabled:opacity-60"

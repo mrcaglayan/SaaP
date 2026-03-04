@@ -22,6 +22,7 @@ import {
   createCariCounterparty,
   listCariCounterparties,
 } from "../../api/cariCounterparty.js";
+import { listCariPaymentTerms } from "../../api/cariPaymentTerms.js";
 import { getCariCounterpartyStatementReport } from "../../api/cariReports.js";
 import { getJournal, listAccounts } from "../../api/glAdmin.js";
 import { listExceptionWorkbench } from "../../api/exceptionsWorkbench.js";
@@ -37,6 +38,7 @@ import StatusTimeline from "../../components/StatusTimeline.jsx";
 import TablePreferencesPanel from "../../components/TablePreferencesPanel.jsx";
 import { Link, useSearchParams } from "react-router-dom";
 import { useAuth } from "../../auth/useAuth.js";
+import { useWorkingContext } from "../../context/useWorkingContext.js";
 import { useWorkingContextDefaults } from "../../context/useWorkingContextDefaults.js";
 import { usePersistedFilters } from "../../hooks/usePersistedFilters.js";
 import { usePersistedTablePrefs } from "../../hooks/usePersistedTablePrefs.js";
@@ -124,9 +126,18 @@ const DOCUMENT_EXPORT_COLUMNS = [
   { header: "Status", value: (row) => row?.status },
   { header: "Document Date", value: (row) => firstDefinedRowValue(row, "documentDate", "document_date") },
   { header: "Due Date", value: (row) => firstDefinedRowValue(row, "dueDateSnapshot", "due_date_snapshot") },
-  { header: "Amount Txn", value: (row) => firstDefinedRowValue(row, "amountTxn", "amount_txn") },
-  { header: "Amount Base", value: (row) => firstDefinedRowValue(row, "amountBase", "amount_base") },
-  { header: "Currency", value: (row) => firstDefinedRowValue(row, "currencyCodeSnapshot", "currency_code_snapshot") },
+  {
+    header: "Invoice Amount (Invoice Currency)",
+    value: (row) => firstDefinedRowValue(row, "amountTxn", "amount_txn"),
+  },
+  {
+    header: "Base Amount (Legal Entity Currency)",
+    value: (row) => firstDefinedRowValue(row, "amountBase", "amount_base"),
+  },
+  {
+    header: "Invoice Currency",
+    value: (row) => firstDefinedRowValue(row, "currencyCodeSnapshot", "currency_code_snapshot"),
+  },
   { header: "FX Rate", value: (row) => firstDefinedRowValue(row, "fxRateSnapshot", "fx_rate_snapshot") },
   {
     header: "Posted Journal Entry ID",
@@ -178,6 +189,58 @@ function normalizeOptionalDecimalText(value) {
   }
   const parsed = Number(text);
   return Number.isFinite(parsed) ? String(parsed) : "";
+}
+
+function toPositiveDecimal(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return null;
+  }
+  return Number(parsed.toFixed(6));
+}
+
+const POSTING_LINE_AMOUNT_EPSILON = 0.000001;
+
+function amountsMatch(left, right) {
+  return (
+    Math.abs(Number(left || 0) - Number(right || 0)) <= POSTING_LINE_AMOUNT_EPSILON
+  );
+}
+
+function createPostingLineDraft(seed = {}) {
+  const rowId =
+    globalThis.crypto?.randomUUID?.() ||
+    `line-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  return {
+    rowId,
+    description: normalizeText(seed.description),
+    amountTxn: normalizeOptionalDecimalText(seed.amountTxn),
+    amountBase: normalizeOptionalDecimalText(seed.amountBase),
+    offsetAccountId: normalizePositiveIntText(seed.offsetAccountId),
+  };
+}
+
+function buildInitialPostForm(snapshot = null) {
+  const documentId = toPositiveInt(snapshot?.id);
+  const amountTxn = normalizeOptionalDecimalText(
+    snapshot?.amountTxn ?? snapshot?.amount_txn
+  );
+  const amountBase = normalizeOptionalDecimalText(
+    snapshot?.amountBase ?? snapshot?.amount_base
+  );
+  return {
+    documentId: documentId || null,
+    useFxOverride: false,
+    fxOverrideReason: "",
+    offsetAccountId: "",
+    usePostingLines: false,
+    postingLines: [
+      createPostingLineDraft({
+        amountTxn,
+        amountBase,
+      }),
+    ],
+  };
 }
 
 function normalizeRecurringCadence(value) {
@@ -438,6 +501,41 @@ function mapCounterpartyLookupOption(row) {
   };
 }
 
+function mapLegalEntityLookupOption(row) {
+  const id = toPositiveInt(row?.id);
+  const code = normalizeText(row?.code);
+  const name = normalizeText(row?.name);
+  const functionalCurrencyCode = normalizeCurrencyCode(
+    row?.functional_currency_code || row?.functionalCurrencyCode
+  );
+  const currencyDescription = functionalCurrencyCode
+    ? `Functional currency: ${functionalCurrencyCode}`
+    : "";
+
+  return {
+    value: id ? String(id) : "",
+    label: name ? `${code || id} - ${name}` : String(code || id || "-"),
+    description: currencyDescription,
+  };
+}
+
+function mapPaymentTermLookupOption(row) {
+  const id = toPositiveInt(row?.id);
+  const code = normalizeText(row?.code);
+  const name = normalizeText(row?.name);
+  const dueDaysRaw = Number(row?.dueDays ?? row?.due_days);
+  const dueDaysText =
+    Number.isFinite(dueDaysRaw) && dueDaysRaw >= 0 ? `Due ${dueDaysRaw} day(s)` : "";
+  const status = normalizeText(row?.status).toUpperCase();
+  const statusText = status && status !== "ACTIVE" ? status : "";
+
+  return {
+    value: id ? String(id) : "",
+    label: name ? `${code || id} - ${name}` : String(code || id || "-"),
+    description: [dueDaysText, statusText].filter(Boolean).join(" | "),
+  };
+}
+
 function buildDocumentLifecycleEvents(row) {
   if (!row) {
     return [];
@@ -520,6 +618,10 @@ function formatReadinessReason(reason) {
       return "Mapped account id is invalid.";
     case "ACCOUNT_TENANT_MISMATCH":
       return "Mapped account belongs to a different tenant.";
+    case "ACCOUNT_TYPE_MISMATCH":
+      return "Mapped account type does not match this purpose.";
+    case "ACCOUNT_NORMAL_SIDE_MISMATCH":
+      return "Mapped account normal side does not match this purpose.";
     default:
       return String(reason || "Invalid mapping.");
   }
@@ -529,6 +631,11 @@ export default function CariDocumentsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const { hasPermission } = useAuth();
   const { getModuleRow } = useModuleReadiness();
+  const {
+    legalEntities: workingContextLegalEntities,
+    loadingBase: workingContextBaseLoading,
+    error: workingContextError,
+  } = useWorkingContext();
   const canRead = hasPermission("cari.doc.read");
   const canCreate = hasPermission("cari.doc.create");
   const canUpdate = hasPermission("cari.doc.update");
@@ -563,6 +670,9 @@ export default function CariDocumentsPage() {
   const [createCounterpartyOptions, setCreateCounterpartyOptions] = useState([]);
   const [createCounterpartyLoading, setCreateCounterpartyLoading] = useState(false);
   const [createCounterpartyLookupQuery, setCreateCounterpartyLookupQuery] = useState("");
+  const [createPaymentTermOptions, setCreatePaymentTermOptions] = useState([]);
+  const [createPaymentTermsLoading, setCreatePaymentTermsLoading] = useState(false);
+  const [createPaymentTermsError, setCreatePaymentTermsError] = useState("");
   const [createInlineCounterpartySaving, setCreateInlineCounterpartySaving] = useState(false);
   const [createInlineCounterpartyError, setCreateInlineCounterpartyError] = useState("");
   const [createInlineCounterpartyMessage, setCreateInlineCounterpartyMessage] = useState("");
@@ -594,11 +704,7 @@ export default function CariDocumentsPage() {
   const [cancelSaving, setCancelSaving] = useState(false);
   const [cancelError, setCancelError] = useState("");
 
-  const [postForm, setPostForm] = useState({
-    useFxOverride: false,
-    fxOverrideReason: "",
-    offsetAccountId: "",
-  });
+  const [postForm, setPostForm] = useState(() => buildInitialPostForm());
   const [postOffsetAccountOptions, setPostOffsetAccountOptions] = useState([]);
   const [postOffsetAccountsLoading, setPostOffsetAccountsLoading] = useState(false);
   const [postOffsetAccountsError, setPostOffsetAccountsError] = useState("");
@@ -701,7 +807,7 @@ export default function CariDocumentsPage() {
       },
       {
         id: "amountTxn",
-        label: "Amount Txn",
+        label: "Invoice Amount",
         headerClassName: "px-3 py-2",
         cellClassName: "px-3 py-2",
         render: (row) => formatAmount(row?.amountTxn),
@@ -825,6 +931,58 @@ export default function CariDocumentsPage() {
   const canAttachEvidence = Boolean(selectedSnapshot && canUpdate);
   const canWriteInternalComments = Boolean(selectedSnapshot && canUpdate);
   const canWriteOpsStatus = Boolean(selectedSnapshot && canUpdate);
+  const selectedDocumentAmountTxn = toPositiveDecimal(
+    selectedSnapshot?.amountTxn ?? selectedSnapshot?.amount_txn
+  );
+  const selectedDocumentAmountBase = toPositiveDecimal(
+    selectedSnapshot?.amountBase ?? selectedSnapshot?.amount_base
+  );
+  const postFormPostingLineSummary = useMemo(() => {
+    const rows = Array.isArray(postForm.postingLines) ? postForm.postingLines : [];
+    let totalTxn = 0;
+    let totalBase = 0;
+    let invalidAmountRows = 0;
+    for (const row of rows) {
+      const lineAmountTxn = toPositiveDecimal(row?.amountTxn);
+      const lineAmountBase = toPositiveDecimal(row?.amountBase);
+      if (!lineAmountTxn || !lineAmountBase) {
+        invalidAmountRows += 1;
+      }
+      if (lineAmountTxn) {
+        totalTxn = Number((totalTxn + lineAmountTxn).toFixed(6));
+      }
+      if (lineAmountBase) {
+        totalBase = Number((totalBase + lineAmountBase).toFixed(6));
+      }
+    }
+    const hasDraftTotals = Boolean(
+      selectedDocumentAmountTxn && selectedDocumentAmountBase
+    );
+    const matchesDraftTotals = Boolean(
+      hasDraftTotals &&
+        invalidAmountRows === 0 &&
+        amountsMatch(totalTxn, selectedDocumentAmountTxn) &&
+        amountsMatch(totalBase, selectedDocumentAmountBase)
+    );
+    return {
+      lineCount: rows.length,
+      invalidAmountRows,
+      totalTxn,
+      totalBase,
+      hasDraftTotals,
+      matchesDraftTotals,
+    };
+  }, [
+    postForm.postingLines,
+    selectedDocumentAmountBase,
+    selectedDocumentAmountTxn,
+  ]);
+  const postingLinesReadyForSubmit = !postForm.usePostingLines || Boolean(
+    postFormPostingLineSummary.lineCount > 0 &&
+      postFormPostingLineSummary.hasDraftTotals &&
+      postFormPostingLineSummary.invalidAmountRows === 0 &&
+      postFormPostingLineSummary.matchesDraftTotals
+  );
   const selectedDocumentLifecycleMeta = useMemo(
     () => getLifecycleStatusMeta("cariDocument", selectedSnapshot?.status),
     [selectedSnapshot?.status]
@@ -850,10 +1008,80 @@ export default function CariDocumentsPage() {
     () => (filterCounterpartyOptions || []).map(mapCounterpartyLookupOption).filter((row) => row.value),
     [filterCounterpartyOptions]
   );
-  const createCounterpartyLookupOptions = useMemo(
-    () => (createCounterpartyOptions || []).map(mapCounterpartyLookupOption).filter((row) => row.value),
-    [createCounterpartyOptions]
+  const legalEntityLookupOptions = useMemo(
+    () =>
+      (workingContextLegalEntities || [])
+        .map(mapLegalEntityLookupOption)
+        .filter((row) => row.value),
+    [workingContextLegalEntities]
   );
+  const filterLegalEntityLookupOptions = useMemo(() => {
+    const selectedLegalEntityId = normalizeText(filters.legalEntityId);
+    const rows = [...legalEntityLookupOptions];
+    if (
+      selectedLegalEntityId &&
+      !rows.some((row) => String(row.value) === selectedLegalEntityId)
+    ) {
+      rows.unshift({
+        value: selectedLegalEntityId,
+        label: `Legal entity #${selectedLegalEntityId}`,
+        description: "Selected value is outside current lookup scope.",
+      });
+    }
+    return rows;
+  }, [filters.legalEntityId, legalEntityLookupOptions]);
+  const createLegalEntityLookupOptions = useMemo(() => {
+    const selectedLegalEntityId = normalizeText(createForm.legalEntityId);
+    const rows = [...legalEntityLookupOptions];
+    if (
+      selectedLegalEntityId &&
+      !rows.some((row) => String(row.value) === selectedLegalEntityId)
+    ) {
+      rows.unshift({
+        value: selectedLegalEntityId,
+        label: `Legal entity #${selectedLegalEntityId}`,
+        description: "Selected value is outside current lookup scope.",
+      });
+    }
+    return rows;
+  }, [createForm.legalEntityId, legalEntityLookupOptions]);
+  const createCounterpartyLookupOptions = useMemo(
+    () => {
+      const selectedCounterpartyId = normalizeText(createForm.counterpartyId);
+      const rows = (createCounterpartyOptions || [])
+        .map(mapCounterpartyLookupOption)
+        .filter((row) => row.value);
+      if (
+        selectedCounterpartyId &&
+        !rows.some((row) => String(row.value) === selectedCounterpartyId)
+      ) {
+        rows.unshift({
+          value: selectedCounterpartyId,
+          label: `Counterparty #${selectedCounterpartyId}`,
+          description: "Selected value is outside current lookup scope.",
+        });
+      }
+      return rows;
+    },
+    [createCounterpartyOptions, createForm.counterpartyId]
+  );
+  const createPaymentTermLookupOptions = useMemo(() => {
+    const selectedPaymentTermId = normalizeText(createForm.paymentTermId);
+    const rows = (createPaymentTermOptions || [])
+      .map(mapPaymentTermLookupOption)
+      .filter((row) => row.value);
+    if (
+      selectedPaymentTermId &&
+      !rows.some((row) => String(row.value) === selectedPaymentTermId)
+    ) {
+      rows.unshift({
+        value: selectedPaymentTermId,
+        label: `Payment term #${selectedPaymentTermId}`,
+        description: "Selected value is outside current lookup scope.",
+      });
+    }
+    return rows;
+  }, [createForm.paymentTermId, createPaymentTermOptions]);
   const selectedCreateCounterparty = useMemo(() => {
     const selectedCounterpartyId = toPositiveInt(createForm.counterpartyId);
     if (!selectedCounterpartyId) {
@@ -877,6 +1105,12 @@ export default function CariDocumentsPage() {
       canUpsertCards &&
       toPositiveInt(createForm.legalEntityId) &&
       createInlineCounterpartyName
+  );
+  const filterLegalEntityLookupLoading = Boolean(
+    workingContextBaseLoading && filterLegalEntityLookupOptions.length === 0
+  );
+  const createLegalEntityLookupLoading = Boolean(
+    workingContextBaseLoading && legalEntityLookupOptions.length === 0
   );
   const canInlineCreateCounterpartyInEditForm = Boolean(
     canEditOrCancelSelected &&
@@ -917,6 +1151,122 @@ export default function CariDocumentsPage() {
     setCreateCounterpartyLookupQuery("");
     setCreateInlineCounterpartyError("");
     setCreateInlineCounterpartyMessage("");
+  }
+
+  function handleFilterDirectionChange(nextDirection) {
+    const normalizedDirection = normalizeText(nextDirection).toUpperCase();
+    setFilters((previous) => ({
+      ...previous,
+      direction: DOCUMENT_DIRECTIONS.includes(normalizedDirection)
+        ? normalizedDirection
+        : "",
+      counterpartyId: "",
+    }));
+  }
+
+  function handleFilterLegalEntityChange(nextValue) {
+    const normalizedLegalEntityId = nextValue ? String(nextValue) : "";
+    setFilters((previous) => {
+      if (normalizeText(previous.legalEntityId) === normalizedLegalEntityId) {
+        return previous;
+      }
+      return {
+        ...previous,
+        legalEntityId: normalizedLegalEntityId,
+        counterpartyId: "",
+      };
+    });
+  }
+
+  function handleCreateDirectionChange(nextDirection) {
+    const normalizedDirection = normalizeText(nextDirection).toUpperCase();
+    setCreateForm((previous) => {
+      const safeDirection = DOCUMENT_DIRECTIONS.includes(normalizedDirection)
+        ? normalizedDirection
+        : previous.direction;
+      if (safeDirection === previous.direction && !normalizeText(previous.counterpartyId)) {
+        return previous;
+      }
+      return {
+        ...previous,
+        direction: safeDirection,
+        counterpartyId: "",
+      };
+    });
+    setCreateCounterpartyLookupQuery("");
+    setCreateInlineCounterpartyError("");
+    setCreateInlineCounterpartyMessage("");
+  }
+
+  function handleCreateLegalEntityChange(nextValue) {
+    const normalizedLegalEntityId = nextValue ? String(nextValue) : "";
+    setCreateForm((previous) => {
+      if (normalizeText(previous.legalEntityId) === normalizedLegalEntityId) {
+        return previous;
+      }
+      return {
+        ...previous,
+        legalEntityId: normalizedLegalEntityId,
+        counterpartyId: "",
+        paymentTermId: "",
+      };
+    });
+    setCreatePaymentTermTouched(false);
+    setCreateCounterpartyLookupQuery("");
+    setCreateInlineCounterpartyError("");
+    setCreateInlineCounterpartyMessage("");
+    setCreatePaymentTermsError("");
+  }
+
+  function addPostFormPostingLine() {
+    setPostForm((previous) => {
+      const rows = Array.isArray(previous.postingLines) ? previous.postingLines : [];
+      return {
+        ...previous,
+        postingLines: [...rows, createPostingLineDraft()],
+      };
+    });
+  }
+
+  function updatePostFormPostingLine(rowId, patch) {
+    setPostForm((previous) => {
+      const rows = Array.isArray(previous.postingLines) ? previous.postingLines : [];
+      let changed = false;
+      const nextRows = rows.map((row) => {
+        if (row?.rowId !== rowId) {
+          return row;
+        }
+        changed = true;
+        return {
+          ...row,
+          ...patch,
+        };
+      });
+      if (!changed) {
+        return previous;
+      }
+      return {
+        ...previous,
+        postingLines: nextRows,
+      };
+    });
+  }
+
+  function removePostFormPostingLine(rowId) {
+    setPostForm((previous) => {
+      const rows = Array.isArray(previous.postingLines) ? previous.postingLines : [];
+      if (rows.length <= 1) {
+        return previous;
+      }
+      const nextRows = rows.filter((row) => row?.rowId !== rowId);
+      if (nextRows.length === rows.length) {
+        return previous;
+      }
+      return {
+        ...previous,
+        postingLines: nextRows,
+      };
+    });
   }
 
   async function loadDocuments(nextFilters = filters) {
@@ -1007,6 +1357,45 @@ export default function CariDocumentsPage() {
     searchParams,
     selectedDocumentId,
     setSearchParams,
+  ]);
+
+  useEffect(() => {
+    if (workingContextBaseLoading) {
+      return;
+    }
+    const selectedLegalEntityId = normalizeText(filters.legalEntityId);
+    if (!selectedLegalEntityId) {
+      return;
+    }
+    const selectedStillVisible = legalEntityLookupOptions.some(
+      (row) => String(row.value) === selectedLegalEntityId
+    );
+    if (selectedStillVisible) {
+      return;
+    }
+    const fallbackLegalEntityId = normalizeText(legalEntityLookupOptions[0]?.value);
+    setFilters((previous) => {
+      const previousLegalEntityId = normalizeText(previous.legalEntityId);
+      if (!previousLegalEntityId) {
+        return previous;
+      }
+      const previousStillVisible = legalEntityLookupOptions.some(
+        (row) => String(row.value) === previousLegalEntityId
+      );
+      if (previousStillVisible) {
+        return previous;
+      }
+      return {
+        ...previous,
+        legalEntityId: fallbackLegalEntityId,
+        counterpartyId: "",
+      };
+    });
+  }, [
+    filters.legalEntityId,
+    legalEntityLookupOptions,
+    setFilters,
+    workingContextBaseLoading,
   ]);
 
   useEffect(() => {
@@ -1159,6 +1548,54 @@ export default function CariDocumentsPage() {
       active = false;
     };
   }, [canReadCards, createForm.direction, createForm.legalEntityId]);
+
+  useEffect(() => {
+    if (!canReadCards) {
+      setCreatePaymentTermOptions([]);
+      setCreatePaymentTermsLoading(false);
+      setCreatePaymentTermsError("");
+      return;
+    }
+
+    const legalEntityId = toPositiveInt(createForm.legalEntityId);
+    if (!legalEntityId) {
+      setCreatePaymentTermOptions([]);
+      setCreatePaymentTermsLoading(false);
+      setCreatePaymentTermsError("");
+      return;
+    }
+
+    let active = true;
+    async function loadCreatePaymentTerms() {
+      setCreatePaymentTermsLoading(true);
+      setCreatePaymentTermsError("");
+      try {
+        const response = await listCariPaymentTerms({
+          legalEntityId,
+          status: "ACTIVE",
+          sortBy: "NAME",
+          sortDir: "ASC",
+          limit: 300,
+          offset: 0,
+        });
+        if (!active) return;
+        setCreatePaymentTermOptions(Array.isArray(response?.rows) ? response.rows : []);
+      } catch (error) {
+        if (!active) return;
+        setCreatePaymentTermOptions([]);
+        setCreatePaymentTermsError(
+          normalizeApiError(error, "Failed to load payment terms for selected legal entity.")
+        );
+      } finally {
+        if (active) setCreatePaymentTermsLoading(false);
+      }
+    }
+
+    loadCreatePaymentTerms();
+    return () => {
+      active = false;
+    };
+  }, [canReadCards, createForm.legalEntityId]);
 
   useEffect(() => {
     if (!selectedCreateCounterparty) {
@@ -1452,18 +1889,46 @@ export default function CariDocumentsPage() {
 
         setPostOffsetAccountOptions(options);
         setPostForm((prev) => {
-          if (!prev.offsetAccountId) {
-            return prev;
+          let changed = false;
+          let nextOffsetAccountId = prev.offsetAccountId;
+          if (nextOffsetAccountId) {
+            const exists = options.some(
+              (option) => Number(option.id) === Number(nextOffsetAccountId)
+            );
+            if (!exists) {
+              nextOffsetAccountId = "";
+              changed = true;
+            }
           }
-          const exists = options.some(
-            (option) => Number(option.id) === Number(prev.offsetAccountId)
-          );
-          if (exists) {
+
+          const existingLines = Array.isArray(prev.postingLines)
+            ? prev.postingLines
+            : [];
+          const nextPostingLines = existingLines.map((line) => {
+            const currentOffsetAccountId = normalizePositiveIntText(line?.offsetAccountId);
+            if (!currentOffsetAccountId) {
+              return line;
+            }
+            const exists = options.some(
+              (option) => Number(option.id) === Number(currentOffsetAccountId)
+            );
+            if (exists) {
+              return line;
+            }
+            changed = true;
+            return {
+              ...line,
+              offsetAccountId: "",
+            };
+          });
+
+          if (!changed) {
             return prev;
           }
           return {
             ...prev,
-            offsetAccountId: "",
+            offsetAccountId: nextOffsetAccountId,
+            postingLines: nextPostingLines,
           };
         });
       } catch (error) {
@@ -1541,14 +2006,16 @@ export default function CariDocumentsPage() {
   }, [canRead, selectedDocumentNumericId]);
 
   useEffect(() => {
-    setPostForm({
-      useFxOverride: false,
-      fxOverrideReason: "",
-      offsetAccountId: "",
+    const nextInitial = buildInitialPostForm(selectedSnapshot);
+    setPostForm((previous) => {
+      if (Number(previous?.documentId || 0) === Number(nextInitial.documentId || 0)) {
+        return previous;
+      }
+      return nextInitial;
     });
     setPostError("");
     setPostMessage("");
-  }, [selectedDocumentNumericId]);
+  }, [selectedDocumentNumericId, selectedSnapshot]);
 
   useEffect(() => {
     const documentId = selectedDocumentNumericId;
@@ -2022,15 +2489,80 @@ export default function CariDocumentsPage() {
       return;
     }
 
+    const payload = {
+      useFxOverride: Boolean(postForm.useFxOverride),
+      fxOverrideReason: postForm.useFxOverride
+        ? String(postForm.fxOverrideReason || "").trim()
+        : null,
+      offsetAccountId: toPositiveInt(postForm.offsetAccountId) || null,
+    };
+
+    if (postForm.usePostingLines) {
+      if (!selectedDocumentAmountTxn || !selectedDocumentAmountBase) {
+        setPostError(
+          "Selected draft amountTxn/amountBase is invalid. Re-open the draft and try again."
+        );
+        return;
+      }
+      const sourceLines = Array.isArray(postForm.postingLines)
+        ? postForm.postingLines
+        : [];
+      if (sourceLines.length === 0) {
+        setPostError("Add at least one posting line.");
+        return;
+      }
+
+      let totalTxn = 0;
+      let totalBase = 0;
+      const postingLines = [];
+      for (let index = 0; index < sourceLines.length; index += 1) {
+        const line = sourceLines[index] || {};
+        const lineAmountTxn = toPositiveDecimal(line.amountTxn);
+        const lineAmountBase = toPositiveDecimal(line.amountBase);
+        if (!lineAmountTxn || !lineAmountBase) {
+          setPostError(
+            `Line ${index + 1}: amountTxn and amountBase must be greater than 0.`
+          );
+          return;
+        }
+
+        const lineOffsetAccountRaw = normalizeText(line.offsetAccountId);
+        const lineOffsetAccountId = lineOffsetAccountRaw
+          ? toPositiveInt(lineOffsetAccountRaw)
+          : null;
+        if (lineOffsetAccountRaw && !lineOffsetAccountId) {
+          setPostError(`Line ${index + 1}: offset account is invalid.`);
+          return;
+        }
+
+        totalTxn = Number((totalTxn + lineAmountTxn).toFixed(6));
+        totalBase = Number((totalBase + lineAmountBase).toFixed(6));
+        postingLines.push({
+          amountTxn: lineAmountTxn,
+          amountBase: lineAmountBase,
+          offsetAccountId: lineOffsetAccountId || null,
+          description: normalizeText(line.description).slice(0, 255) || null,
+        });
+      }
+
+      if (
+        !amountsMatch(totalTxn, selectedDocumentAmountTxn) ||
+        !amountsMatch(totalBase, selectedDocumentAmountBase)
+      ) {
+        setPostError(
+          `Line totals must match draft totals. Draft txn/base: ${selectedDocumentAmountTxn} / ${selectedDocumentAmountBase}. Entered txn/base: ${totalTxn} / ${totalBase}.`
+        );
+        return;
+      }
+
+      payload.postingLines = postingLines;
+    }
+
     setPostSaving(true);
     setPostError("");
     setPostMessage("");
     try {
-      const response = await postCariDocument(selectedDocumentId, {
-        useFxOverride: Boolean(postForm.useFxOverride),
-        fxOverrideReason: postForm.useFxOverride ? String(postForm.fxOverrideReason || "").trim() : null,
-        offsetAccountId: toPositiveInt(postForm.offsetAccountId) || null,
-      });
+      const response = await postCariDocument(selectedDocumentId, payload);
       setPostMessage(`Draft posted. postedJournalEntryId=${response?.row?.postedJournalEntryId || response?.journal?.journalEntryId || "-"}`);
       setSelectedDetail(response?.row || null);
       await loadDocuments(filters);
@@ -2495,7 +3027,30 @@ export default function CariDocumentsPage() {
         <h1 className="text-xl font-semibold text-slate-900">Cari Documents</h1>
         {listError ? <div className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{listError}</div> : null}
         <div className="mt-4 grid gap-3 md:grid-cols-4">
-          <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Legal Entity ID<input type="number" min="1" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={filters.legalEntityId} onChange={(event) => setFilters((prev) => ({ ...prev, legalEntityId: event.target.value }))} /></label>
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+            <label className="block">
+              Legal Entity
+              <Combobox
+                className="mt-1"
+                value={filters.legalEntityId}
+                options={filterLegalEntityLookupOptions}
+                loading={filterLegalEntityLookupLoading}
+                placeholder={
+                  filterLegalEntityLookupOptions.length > 0
+                    ? "Search legal entity code/name"
+                    : "No legal entities available"
+                }
+                noOptionsText="No legal entities found."
+                onChange={(nextValue) => handleFilterLegalEntityChange(nextValue)}
+              />
+            </label>
+            {workingContextError ? (
+              <p className="mt-1 text-[11px] normal-case text-amber-700">
+                {workingContextError}
+              </p>
+            ) : null}
+          </div>
+          <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Direction<select className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={filters.direction} onChange={(event) => handleFilterDirectionChange(event.target.value)}><option value="">ALL</option>{DOCUMENT_DIRECTIONS.map((direction) => <option key={`filter-direction-${direction}`} value={direction}>{direction}</option>)}</select></label>
           <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Counterparty ID<input type="number" min="1" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={filters.counterpartyId} onChange={(event) => setFilters((prev) => ({ ...prev, counterpartyId: event.target.value }))} /></label>
           {canReadCards ? (
             <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
@@ -2517,7 +3072,6 @@ export default function CariDocumentsPage() {
               />
             </label>
           ) : null}
-          <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Direction<select className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={filters.direction} onChange={(event) => setFilters((prev) => ({ ...prev, direction: event.target.value }))}><option value="">ALL</option>{DOCUMENT_DIRECTIONS.map((direction) => <option key={`filter-direction-${direction}`} value={direction}>{direction}</option>)}</select></label>
           <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Document Type<select className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={filters.documentType} onChange={(event) => setFilters((prev) => ({ ...prev, documentType: event.target.value }))}><option value="">ALL</option>{DOCUMENT_TYPES.map((documentType) => <option key={`filter-document-type-${documentType}`} value={documentType}>{documentType}</option>)}</select></label>
           <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Status<select className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={filters.status} onChange={(event) => setFilters((prev) => ({ ...prev, status: event.target.value }))}><option value="">ALL</option>{DOCUMENT_STATUSES.map((status) => <option key={`filter-status-${status}`} value={status}>{status}</option>)}</select></label>
           <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Date From<input type="date" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={filters.dateFrom} onChange={(event) => setFilters((prev) => ({ ...prev, dateFrom: event.target.value }))} /></label>
@@ -2764,20 +3318,51 @@ export default function CariDocumentsPage() {
             ) : null}
           </div>
           <form className="mt-4 grid gap-3 md:grid-cols-4" onSubmit={handleCreateDraft}>
-            <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Legal Entity ID<input type="number" min="1" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={createForm.legalEntityId} onChange={(event) => setCreateForm((prev) => ({ ...prev, legalEntityId: event.target.value }))} required /></label>
-            <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Counterparty ID<input type="number" min="1" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={createForm.counterpartyId} onChange={(event) => setCreateForm((prev) => ({ ...prev, counterpartyId: event.target.value }))} required /></label>
+            <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+              <label className="block">
+                Legal Entity
+                <Combobox
+                  className="mt-1"
+                  value={createForm.legalEntityId}
+                  options={createLegalEntityLookupOptions}
+                  loading={createLegalEntityLookupLoading}
+                  disabled={createSaving || createLegalEntityLookupOptions.length === 0}
+                  placeholder={
+                    createLegalEntityLookupOptions.length > 0
+                      ? "Search legal entity code/name"
+                      : "No legal entities available"
+                  }
+                  noOptionsText="No legal entities found."
+                  onChange={(nextValue) => handleCreateLegalEntityChange(nextValue)}
+                />
+              </label>
+              {workingContextError ? (
+                <p className="mt-1 text-[11px] normal-case text-amber-700">
+                  {workingContextError}
+                </p>
+              ) : null}
+            </div>
+            <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Direction<select className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={createForm.direction} onChange={(event) => handleCreateDirectionChange(event.target.value)} required>{DOCUMENT_DIRECTIONS.map((direction) => <option key={`create-direction-${direction}`} value={direction}>{direction}</option>)}</select></label>
             {canReadCards ? (
               <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">
                 <label className="block">
-                  Counterparty Lookup
+                  Counterparty
                   <Combobox
                     className="mt-1"
                     value={createForm.counterpartyId}
                     options={createCounterpartyLookupOptions}
                     loading={createCounterpartyLoading}
                     disabled={!toPositiveInt(createForm.legalEntityId) || createSaving}
-                    placeholder={toPositiveInt(createForm.legalEntityId) ? "Type code/name" : "Select legal entity first"}
-                    noOptionsText={toPositiveInt(createForm.legalEntityId) ? "No counterparties found." : "Set legalEntityId to load counterparties."}
+                    placeholder={
+                      toPositiveInt(createForm.legalEntityId)
+                        ? "Search counterparty code/name"
+                        : "Select legal entity first"
+                    }
+                    noOptionsText={
+                      toPositiveInt(createForm.legalEntityId)
+                        ? "No counterparties found."
+                        : "Select legal entity first."
+                    }
                     onInputChange={(nextValue, meta) => {
                       setCreateInlineCounterpartyError("");
                       setCreateInlineCounterpartyMessage("");
@@ -2815,21 +3400,83 @@ export default function CariDocumentsPage() {
                   <p className="mt-1 text-[11px] normal-case text-emerald-700">{createInlineCounterpartyMessage}</p>
                 ) : null}
               </div>
-            ) : null}
-            <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Payment Term ID (optional)<input type="number" min="1" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={createForm.paymentTermId} onChange={(event) => {
-              setCreatePaymentTermTouched(true);
-              setCreateForm((prev) => ({ ...prev, paymentTermId: event.target.value }));
-            }} /></label>
-            <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Direction<select className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={createForm.direction} onChange={(event) => setCreateForm((prev) => ({ ...prev, direction: event.target.value }))} required>{DOCUMENT_DIRECTIONS.map((direction) => <option key={`create-direction-${direction}`} value={direction}>{direction}</option>)}</select></label>
+            ) : (
+              <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                Counterparty ID
+                <input
+                  type="number"
+                  min="1"
+                  className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                  value={createForm.counterpartyId}
+                  onChange={(event) =>
+                    setCreateForm((prev) => ({
+                      ...prev,
+                      counterpartyId: event.target.value,
+                    }))
+                  }
+                  required
+                />
+              </label>
+            )}
+            {canReadCards ? (
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                <label className="block">
+                  Payment Term (optional)
+                  <Combobox
+                    className="mt-1"
+                    value={createForm.paymentTermId}
+                    options={createPaymentTermLookupOptions}
+                    loading={createPaymentTermsLoading}
+                    disabled={!toPositiveInt(createForm.legalEntityId) || createSaving}
+                    placeholder={
+                      toPositiveInt(createForm.legalEntityId)
+                        ? "Search payment term code/name"
+                        : "Select legal entity first"
+                    }
+                    noOptionsText={
+                      toPositiveInt(createForm.legalEntityId)
+                        ? "No payment terms found."
+                        : "Select legal entity first."
+                    }
+                    onChange={(nextValue) => {
+                      setCreatePaymentTermTouched(true);
+                      setCreateForm((prev) => ({
+                        ...prev,
+                        paymentTermId: nextValue ? String(nextValue) : "",
+                      }));
+                    }}
+                  />
+                </label>
+                {createPaymentTermsError ? (
+                  <p className="mt-1 text-[11px] normal-case text-amber-700">
+                    {createPaymentTermsError}
+                  </p>
+                ) : null}
+              </div>
+            ) : (
+              <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                Payment Term ID (optional)
+                <input
+                  type="number"
+                  min="1"
+                  className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                  value={createForm.paymentTermId}
+                  onChange={(event) => {
+                    setCreatePaymentTermTouched(true);
+                    setCreateForm((prev) => ({ ...prev, paymentTermId: event.target.value }));
+                  }}
+                />
+              </label>
+            )}
             <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Document Type<select className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={createForm.documentType} onChange={(event) => setCreateForm((prev) => ({ ...prev, documentType: event.target.value }))} required>{DOCUMENT_TYPES.map((documentType) => <option key={`create-document-type-${documentType}`} value={documentType}>{documentType}</option>)}</select></label>
             <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Document Date<input type="date" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={createForm.documentDate} onChange={(event) => setCreateForm((prev) => ({ ...prev, documentDate: event.target.value }))} required /></label>
             <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Due Date {requiresDueDate(createForm.documentType) ? "(required for this type)" : "(optional)"}<input type="date" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={createForm.dueDate} onChange={(event) => setCreateForm((prev) => ({ ...prev, dueDate: event.target.value }))} required={requiresDueDate(createForm.documentType)} /></label>
-            <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Amount Txn<input type="number" min="0.000001" step="0.000001" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={createForm.amountTxn} onChange={(event) => setCreateForm((prev) => ({ ...prev, amountTxn: event.target.value }))} required /></label>
-            <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Amount Base<input type="number" min="0.000001" step="0.000001" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={createForm.amountBase} onChange={(event) => setCreateForm((prev) => ({ ...prev, amountBase: event.target.value }))} required /></label>
-            <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Currency<input type="text" maxLength={3} className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal uppercase" value={createForm.currencyCode} onChange={(event) => {
+            <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Invoice Amount (Invoice Currency)<input type="number" min="0.000001" step="0.000001" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={createForm.amountTxn} onChange={(event) => setCreateForm((prev) => ({ ...prev, amountTxn: event.target.value }))} required /></label>
+            <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Invoice Currency<input type="text" maxLength={3} className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal uppercase" value={createForm.currencyCode} onChange={(event) => {
               setCreateCurrencyTouched(true);
               setCreateForm((prev) => ({ ...prev, currencyCode: event.target.value }));
             }} required /></label>
+            <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Base Amount (Legal Entity Currency)<input type="number" min="0.000001" step="0.000001" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={createForm.amountBase} onChange={(event) => setCreateForm((prev) => ({ ...prev, amountBase: event.target.value }))} required /></label>
             <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">FX Rate (optional)<input type="number" min="0.0000000001" step="0.0000000001" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={createForm.fxRate} onChange={(event) => setCreateForm((prev) => ({ ...prev, fxRate: event.target.value }))} /></label>
             <div className="md:col-span-4 flex gap-2">
               <button type="submit" className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white" disabled={createSaving}>{createSaving ? "Creating..." : "Create Draft Document"}</button>
@@ -3478,7 +4125,7 @@ export default function CariDocumentsPage() {
                   </div>
                 ) : null}
                 <label className="mt-2 block text-xs font-semibold uppercase tracking-wide text-slate-600">
-                  Offset Account (Optional)
+                  Default Offset Account (Optional)
                   <select
                     className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
                     value={postForm.offsetAccountId}
@@ -3500,6 +4147,9 @@ export default function CariDocumentsPage() {
                     ))}
                   </select>
                 </label>
+                <p className="mt-1 text-xs text-slate-600">
+                  Applied when a posting line does not choose its own offset account.
+                </p>
                 {!canReadGlAccounts ? (
                   <p className="mt-1 text-xs text-amber-700">
                     Missing permission: `gl.account.read`. Default mapping will be used.
@@ -3519,10 +4169,200 @@ export default function CariDocumentsPage() {
                     No postable accounts found for selected legal entity.
                   </p>
                 ) : null}
+                <label className="mt-2 flex items-center gap-2 text-sm text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={postForm.usePostingLines}
+                    onChange={(event) =>
+                      setPostForm((prev) => {
+                        const usePostingLines = event.target.checked;
+                        if (!usePostingLines) {
+                          return {
+                            ...prev,
+                            usePostingLines: false,
+                          };
+                        }
+                        const existingLines = Array.isArray(prev.postingLines)
+                          ? prev.postingLines
+                          : [];
+                        if (existingLines.length > 0) {
+                          return {
+                            ...prev,
+                            usePostingLines: true,
+                          };
+                        }
+                        return {
+                          ...prev,
+                          usePostingLines: true,
+                          postingLines: [
+                            createPostingLineDraft({
+                              amountTxn: selectedDocumentAmountTxn,
+                              amountBase: selectedDocumentAmountBase,
+                            }),
+                          ],
+                        };
+                      })
+                    }
+                    disabled={!canPostSelected || postSaving}
+                  />
+                  Split posting by line items
+                </label>
+                {postForm.usePostingLines ? (
+                  <div className="mt-2 rounded-md border border-slate-200 bg-slate-50 p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-700">
+                        Posting lines
+                      </p>
+                      <button
+                        type="button"
+                        className="rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 disabled:opacity-50"
+                        onClick={addPostFormPostingLine}
+                        disabled={!canPostSelected || postSaving}
+                      >
+                        Add line
+                      </button>
+                    </div>
+                    <div className="mt-2 space-y-2">
+                      {(Array.isArray(postForm.postingLines) ? postForm.postingLines : []).map(
+                        (line, index) => (
+                          <div
+                            key={line.rowId || `post-line-${index + 1}`}
+                            className="rounded-md border border-slate-200 bg-white p-2"
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <p className="text-xs font-semibold text-slate-700">
+                                Line {index + 1}
+                              </p>
+                              <button
+                                type="button"
+                                className="rounded border border-rose-300 px-2 py-0.5 text-[11px] font-semibold text-rose-700 disabled:opacity-40"
+                                onClick={() => removePostFormPostingLine(line.rowId)}
+                                disabled={
+                                  !canPostSelected ||
+                                  postSaving ||
+                                  (postForm.postingLines || []).length <= 1
+                                }
+                              >
+                                Remove
+                              </button>
+                            </div>
+                            <div className="mt-2 grid gap-2 md:grid-cols-2">
+                              <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                                Description (Optional)
+                                <input
+                                  type="text"
+                                  className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                                  value={line.description || ""}
+                                  maxLength={255}
+                                  onChange={(event) =>
+                                    updatePostFormPostingLine(line.rowId, {
+                                      description: event.target.value,
+                                    })
+                                  }
+                                  disabled={!canPostSelected || postSaving}
+                                />
+                              </label>
+                              <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                                Offset Account (Optional)
+                                <select
+                                  className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                                  value={normalizePositiveIntText(line.offsetAccountId)}
+                                  onChange={(event) =>
+                                    updatePostFormPostingLine(line.rowId, {
+                                      offsetAccountId: normalizePositiveIntText(
+                                        event.target.value
+                                      ),
+                                    })
+                                  }
+                                  disabled={
+                                    !canPostSelected ||
+                                    postSaving ||
+                                    postOffsetAccountsLoading ||
+                                    !canReadGlAccounts
+                                  }
+                                >
+                                  <option value="">Use default offset for this post</option>
+                                  {postOffsetAccountOptions.map((row) => (
+                                    <option
+                                      key={`post-line-offset-account-${line.rowId}-${row.id}`}
+                                      value={String(row.id)}
+                                    >
+                                      {row.code} - {row.name} ({row.accountType || "-"})
+                                    </option>
+                                  ))}
+                                </select>
+                              </label>
+                              <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                                Invoice Amount (Invoice Currency)
+                                <input
+                                  type="number"
+                                  min="0"
+                                  step="0.000001"
+                                  className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                                  value={line.amountTxn || ""}
+                                  onChange={(event) =>
+                                    updatePostFormPostingLine(line.rowId, {
+                                      amountTxn: normalizeOptionalDecimalText(
+                                        event.target.value
+                                      ),
+                                    })
+                                  }
+                                  disabled={!canPostSelected || postSaving}
+                                />
+                              </label>
+                              <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                                Base Amount (Legal Entity Currency)
+                                <input
+                                  type="number"
+                                  min="0"
+                                  step="0.000001"
+                                  className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                                  value={line.amountBase || ""}
+                                  onChange={(event) =>
+                                    updatePostFormPostingLine(line.rowId, {
+                                      amountBase: normalizeOptionalDecimalText(
+                                        event.target.value
+                                      ),
+                                    })
+                                  }
+                                  disabled={!canPostSelected || postSaving}
+                                />
+                              </label>
+                            </div>
+                          </div>
+                        )
+                      )}
+                    </div>
+                    <div className="mt-2 text-xs text-slate-700">
+                      <p>
+                        Draft totals txn/base:{" "}
+                        {selectedDocumentAmountTxn ?? "-"} /{" "}
+                        {selectedDocumentAmountBase ?? "-"}
+                      </p>
+                      <p>
+                        Posting line totals txn/base:{" "}
+                        {postFormPostingLineSummary.totalTxn} /{" "}
+                        {postFormPostingLineSummary.totalBase}
+                      </p>
+                    </div>
+                    {postFormPostingLineSummary.invalidAmountRows > 0 ? (
+                      <p className="mt-1 text-xs text-amber-700">
+                        {postFormPostingLineSummary.invalidAmountRows} line(s) have missing or invalid amounts.
+                      </p>
+                    ) : null}
+                    {postFormPostingLineSummary.lineCount > 0 &&
+                    postFormPostingLineSummary.hasDraftTotals &&
+                    !postFormPostingLineSummary.matchesDraftTotals ? (
+                      <p className="mt-1 text-xs text-amber-700">
+                        Posting line totals must match draft totals before posting.
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
                 <label className="mt-2 flex items-center gap-2 text-sm text-slate-700"><input type="checkbox" checked={postForm.useFxOverride} onChange={(event) => setPostForm((prev) => ({ ...prev, useFxOverride: event.target.checked }))} disabled={!canPostSelected || postSaving} />useFxOverride</label>
                 <input type="text" className="mt-2 w-full rounded-md border border-slate-300 px-3 py-2 text-sm" placeholder="fxOverrideReason" value={postForm.fxOverrideReason} onChange={(event) => setPostForm((prev) => ({ ...prev, fxOverrideReason: event.target.value }))} disabled={!canPostSelected || postSaving} />
                 {postForm.useFxOverride && !canFxOverride ? <p className="mt-2 text-sm text-amber-700">You cannot post with FX override. Missing permission: `cari.fx.override`.</p> : null}
-                <button type="button" className="mt-2 rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50" onClick={handlePostDraft} disabled={!canPostSelected || postSaving}>{postSaving ? "Posting..." : "Post Draft"}</button>
+                <button type="button" className="mt-2 rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50" onClick={handlePostDraft} disabled={!canPostSelected || postSaving || !postingLinesReadyForSubmit}>{postSaving ? "Posting..." : "Post Draft"}</button>
                 {postError ? <div className="mt-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{postError}</div> : null}
                 {postMessage ? <div className="mt-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{postMessage}</div> : null}
 

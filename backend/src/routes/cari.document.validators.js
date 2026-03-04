@@ -29,6 +29,7 @@ const DOCUMENT_STATUS_VALUES = [
   "SETTLED",
 ];
 const DUE_DATE_REQUIRED_TYPES = new Set(["INVOICE", "DEBIT_NOTE"]);
+const MAX_POSTING_LINES = 200;
 
 function parseOptionalDate(value, label) {
   if (value === undefined) {
@@ -123,6 +124,68 @@ function parseRequiredAmount(value, label) {
     required: true,
     allowZero: false,
   });
+}
+
+function parsePostingLines(value) {
+  if (value === undefined) {
+    return null;
+  }
+  if (!Array.isArray(value)) {
+    throw badRequest("postingLines must be an array");
+  }
+  if (value.length === 0) {
+    throw badRequest("postingLines must contain at least one row");
+  }
+  if (value.length > MAX_POSTING_LINES) {
+    throw badRequest(`postingLines cannot exceed ${MAX_POSTING_LINES} rows`);
+  }
+
+  const rows = [];
+  for (let index = 0; index < value.length; index += 1) {
+    const row = value[index];
+    if (!row || typeof row !== "object" || Array.isArray(row)) {
+      throw badRequest(`postingLines[${index}] must be an object`);
+    }
+
+    const amountTxn = parseRequiredAmount(
+      row.amountTxn ?? row.amount_txn,
+      `postingLines[${index}].amountTxn`
+    );
+    const amountBase = parseRequiredAmount(
+      row.amountBase ?? row.amount_base,
+      `postingLines[${index}].amountBase`
+    );
+    const offsetAccountId = parseOptionalPositiveIntField(
+      row.offsetAccountId ?? row.offset_account_id ?? row.offsetGlAccountId,
+      `postingLines[${index}].offsetAccountId`
+    );
+    const offsetAccountCode = parseOptionalShortText(
+      row.offsetAccountCode ?? row.offset_account_code ?? row.offsetGlAccountCode,
+      `postingLines[${index}].offsetAccountCode`,
+      50
+    );
+    if (offsetAccountId && offsetAccountCode) {
+      throw badRequest(
+        `Provide either postingLines[${index}].offsetAccountId or postingLines[${index}].offsetAccountCode, not both`
+      );
+    }
+
+    const description = parseOptionalShortText(
+      row.description,
+      `postingLines[${index}].description`,
+      255
+    );
+
+    rows.push({
+      amountTxn,
+      amountBase,
+      offsetAccountId: offsetAccountId || null,
+      offsetAccountCode: offsetAccountCode || null,
+      description: description || null,
+    });
+  }
+
+  return rows;
 }
 
 function parseOptionalAmount(value, label) {
@@ -396,6 +459,9 @@ export function parseDocumentPostInput(req) {
   if (!useFxOverride && fxOverrideReason) {
     throw badRequest("fxOverrideReason requires useFxOverride=true");
   }
+  const postingLines = parsePostingLines(
+    req.body?.postingLines ?? req.body?.postLines ?? req.body?.lineItems
+  );
 
   return {
     tenantId,
@@ -405,6 +471,7 @@ export function parseDocumentPostInput(req) {
     offsetAccountCode: offsetAccountCode || null,
     useFxOverride,
     fxOverrideReason: fxOverrideReason || null,
+    postingLines,
   };
 }
 

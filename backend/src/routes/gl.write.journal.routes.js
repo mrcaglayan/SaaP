@@ -558,6 +558,314 @@ export function registerGlWriteJournalRoutes(router, deps = {}) {
     })
   );
 
+  router.put(
+    "/journals/:journalId",
+    requirePermission("gl.journal.update", {
+      resolveScope: async (req, tenantId) => {
+        const scope = await resolveScopeFromJournalId(req.params?.journalId, tenantId);
+        if (scope) {
+          return scope;
+        }
+        const legalEntityId = parsePositiveInt(req.body?.legalEntityId);
+        return legalEntityId
+          ? { scopeType: "LEGAL_ENTITY", scopeId: legalEntityId }
+          : { scopeType: "TENANT", scopeId: tenantId };
+      },
+    }),
+    asyncHandler(async (req, res) => {
+      const tenantId = resolveTenantId(req);
+      if (!tenantId) throw badRequest("tenantId is required");
+
+      const journalId = parsePositiveInt(req.params.journalId);
+      if (!journalId) {
+        throw badRequest("journalId must be a positive integer");
+      }
+
+      const userId = parsePositiveInt(req.user?.userId);
+      if (!userId) throw badRequest("Authenticated user is required");
+
+      const existing = await loadJournal(tenantId, journalId);
+      if (!existing) {
+        throw badRequest("Journal not found");
+      }
+      if (String(existing.status).toUpperCase() !== "DRAFT") {
+        throw badRequest("Only DRAFT journals can be updated");
+      }
+
+      assertRequiredFields(req.body, [
+        "legalEntityId",
+        "bookId",
+        "fiscalPeriodId",
+        "entryDate",
+        "documentDate",
+        "currencyCode",
+        "lines",
+      ]);
+
+      const legalEntityId = parsePositiveInt(req.body.legalEntityId);
+      const bookId = parsePositiveInt(req.body.bookId);
+      const fiscalPeriodId = parsePositiveInt(req.body.fiscalPeriodId);
+      const sourceType =
+        req.body?.sourceType === undefined || req.body?.sourceType === null || req.body?.sourceType === ""
+          ? String(existing.source_type || "MANUAL").toUpperCase()
+          : normalizeJournalSourceType(req.body.sourceType);
+      const overrideCashControl = parseBooleanFlag(
+        req.body?.overrideCashControl,
+        false,
+        "overrideCashControl"
+      );
+      const overrideReason = normalizeOptionalShortText(
+        req.body?.overrideReason,
+        "overrideReason",
+        500
+      );
+      const lines = Array.isArray(req.body.lines) ? req.body.lines : [];
+      if (sourceType === "CASH") {
+        throw badRequest("sourceType=CASH is reserved; use /api/v1/cash/transactions/:transactionId/post");
+      }
+      if (!overrideCashControl && overrideReason) {
+        throw badRequest("overrideReason requires overrideCashControl=true");
+      }
+      if (!legalEntityId || !bookId || !fiscalPeriodId) {
+        throw badRequest("legalEntityId, bookId and fiscalPeriodId must be positive integers");
+      }
+      if (lines.length < 2) {
+        throw badRequest("At least 2 journal lines are required");
+      }
+
+      await assertLegalEntityBelongsToTenant(tenantId, legalEntityId, "legalEntityId");
+      assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
+
+      const book = await assertBookBelongsToTenant(tenantId, bookId, "bookId");
+      if (parsePositiveInt(book.legal_entity_id) !== legalEntityId) {
+        throw badRequest("Book does not belong to legalEntityId");
+      }
+
+      await assertFiscalPeriodBelongsToCalendar(
+        parsePositiveInt(book.calendar_id),
+        fiscalPeriodId,
+        "fiscalPeriodId"
+      );
+
+      await ensurePeriodOpen(bookId, fiscalPeriodId, "update draft journal");
+
+      let totalDebit = 0;
+      let totalCredit = 0;
+      for (let i = 0; i < lines.length; i += 1) {
+        const line = lines[i];
+        totalDebit += toAmount(line.debitBase);
+        totalCredit += toAmount(line.creditBase);
+        // eslint-disable-next-line no-await-in-loop
+        await validateJournalLineScope(req, tenantId, legalEntityId, line, i);
+      }
+
+      const controlledAccounts = await loadCashControlledAccounts({
+        tenantId,
+        accountIds: collectLineAccountIds(lines),
+      });
+      const cashControlDecision = evaluateCashControlDecision({
+        mode: cashControlMode,
+        sourceType,
+        controlledAccounts,
+        overrideCashControl,
+        overrideReason,
+      });
+      if (cashControlDecision.blocked) {
+        throw badRequest(cashControlDecision.message);
+      }
+      if (cashControlDecision.requiresOverridePermission) {
+        await runPermissionMiddleware(requireCashControlOverrideOnCreate, req, res);
+      }
+
+      await validateIntercompanyJournalPolicy(tenantId, legalEntityId, sourceType, lines);
+
+      if (Math.abs(totalDebit - totalCredit) > 0.0001) {
+        throw badRequest("Journal is not balanced");
+      }
+
+      const journalNo = req.body.journalNo
+        ? String(req.body.journalNo)
+        : String(existing.journal_no || generateJournalNo());
+      const entryDate = toIsoDate(req.body.entryDate, "entryDate");
+      const documentDate = toIsoDate(req.body.documentDate, "documentDate");
+      const description = req.body.description ? String(req.body.description) : null;
+      const referenceNo = req.body.referenceNo ? String(req.body.referenceNo) : null;
+      const currencyCode = String(req.body.currencyCode).toUpperCase();
+
+      const result = await withTransaction(async (tx) => {
+        await ensurePeriodOpen(
+          bookId,
+          fiscalPeriodId,
+          "update draft journal",
+          tx.query.bind(tx)
+        );
+
+        const updateResult = await tx.query(
+          `UPDATE journal_entries
+           SET legal_entity_id = ?,
+               book_id = ?,
+               fiscal_period_id = ?,
+               journal_no = ?,
+               source_type = ?,
+               entry_date = ?,
+               document_date = ?,
+               currency_code = ?,
+               description = ?,
+               reference_no = ?,
+               total_debit_base = ?,
+               total_credit_base = ?
+           WHERE id = ?
+             AND tenant_id = ?
+             AND status = 'DRAFT'`,
+          [
+            legalEntityId,
+            bookId,
+            fiscalPeriodId,
+            journalNo,
+            sourceType,
+            entryDate,
+            documentDate,
+            currencyCode,
+            description,
+            referenceNo,
+            totalDebit,
+            totalCredit,
+            journalId,
+            tenantId,
+          ]
+        );
+
+        const affectedRows = Number(updateResult?.rows?.affectedRows || 0);
+        if (affectedRows <= 0) {
+          throw badRequest("Only DRAFT journals can be updated");
+        }
+
+        await tx.query(`DELETE FROM journal_lines WHERE journal_entry_id = ?`, [journalId]);
+
+        for (let i = 0; i < lines.length; i += 1) {
+          const line = lines[i];
+          // eslint-disable-next-line no-await-in-loop
+          await tx.query(
+            `INSERT INTO journal_lines (
+                journal_entry_id, line_no, account_id, operating_unit_id,
+                counterparty_legal_entity_id, description, subledger_reference_no, currency_code,
+                amount_txn, debit_base, credit_base, tax_code
+             )
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              journalId,
+              i + 1,
+              parsePositiveInt(line.accountId),
+              parsePositiveInt(line.operatingUnitId),
+              parsePositiveInt(line.counterpartyLegalEntityId),
+              line.description ? String(line.description) : null,
+              normalizeOptionalShortText(
+                line.subledgerReferenceNo,
+                `lines[${i}].subledgerReferenceNo`,
+                100
+              ),
+              String(line.currencyCode || currencyCode || "USD").toUpperCase(),
+              toAmount(line.amountTxn),
+              toAmount(line.debitBase),
+              toAmount(line.creditBase),
+              line.taxCode ? String(line.taxCode) : null,
+            ]
+          );
+        }
+
+        if (cashControlDecision.auditAction) {
+          await writeCashControlAuditLog({
+            runQuery: tx.query,
+            req,
+            tenantId,
+            userId,
+            legalEntityId,
+            journalId,
+            actionType: cashControlDecision.auditAction,
+            sourceType,
+            mode: cashControlDecision.mode,
+            overrideReason,
+            controlledAccounts: cashControlDecision.controlledAccounts,
+            stage: "UPDATE_DRAFT",
+          });
+        }
+
+        return affectedRows;
+      });
+
+      return res.json({
+        ok: true,
+        journalId,
+        updated: Number(result || 0) > 0,
+        status: "DRAFT",
+        totalDebit,
+        totalCredit,
+      });
+    })
+  );
+
+  router.post(
+    "/journals/:journalId/cancel",
+    requirePermission("gl.journal.cancel", {
+      resolveScope: async (req, tenantId) => {
+        return resolveScopeFromJournalId(req.params?.journalId, tenantId);
+      },
+    }),
+    asyncHandler(async (req, res) => {
+      const tenantId = resolveTenantId(req);
+      if (!tenantId) throw badRequest("tenantId is required");
+
+      const journalId = parsePositiveInt(req.params.journalId);
+      if (!journalId) {
+        throw badRequest("journalId must be a positive integer");
+      }
+
+      const userId = parsePositiveInt(req.user?.userId);
+      if (!userId) throw badRequest("Authenticated user is required");
+
+      const reason = normalizeOptionalShortText(
+        req.body?.reason ?? req.body?.cancelReason,
+        "reason",
+        500
+      );
+      if (!reason) {
+        throw badRequest("reason is required");
+      }
+
+      const existing = await loadJournal(tenantId, journalId);
+      if (!existing) {
+        throw badRequest("Journal not found");
+      }
+      if (String(existing.status).toUpperCase() !== "DRAFT") {
+        throw badRequest("Only DRAFT journals can be cancelled");
+      }
+
+      const result = await query(
+        `UPDATE journal_entries
+         SET status = 'CANCELLED',
+             cancel_reason = ?,
+             cancelled_by_user_id = ?,
+             cancelled_at = CURRENT_TIMESTAMP
+         WHERE id = ?
+           AND tenant_id = ?
+           AND status = 'DRAFT'`,
+        [reason, userId, journalId, tenantId]
+      );
+
+      const cancelled = Number(result?.rows?.affectedRows || 0) > 0;
+      if (!cancelled) {
+        throw badRequest("Failed to cancel draft journal");
+      }
+
+      return res.json({
+        ok: true,
+        journalId,
+        cancelled,
+        status: "CANCELLED",
+      });
+    })
+  );
+
   router.post(
     "/journals/:journalId/post",
     requirePermission("gl.journal.post", {
@@ -900,8 +1208,11 @@ export function registerGlWriteJournalRoutes(router, deps = {}) {
       if (lines.length === 0) throw badRequest("Journal has no lines to reverse");
 
       const reversalJournalNo = req.body?.journalNo || `${original.journal_no}-REV`;
-      const entryDate = req.body?.entryDate || original.entry_date;
-      const documentDate = req.body?.documentDate || original.document_date;
+      const entryDate = toIsoDate(req.body?.entryDate || original.entry_date, "entryDate");
+      const documentDate = toIsoDate(
+        req.body?.documentDate || original.document_date,
+        "documentDate"
+      );
 
       const { reversalJournalId, originalUpdated } = await withTransaction(async (tx) => {
         const reversalResult = await tx.query(
@@ -920,8 +1231,8 @@ export function registerGlWriteJournalRoutes(router, deps = {}) {
             reversalJournalNo,
             String(original.source_type || "MANUAL").toUpperCase(),
             autoPost ? "POSTED" : "DRAFT",
-            String(entryDate),
-            String(documentDate),
+            entryDate,
+            documentDate,
             String(original.currency_code).toUpperCase(),
             `Reversal of ${original.journal_no}`,
             original.reference_no ? String(original.reference_no) : null,

@@ -132,11 +132,12 @@ export default function AcilisFisiOlustur() {
     currencyCode: "USD",
     referenceNo: "",
     description: l("Opening entry", "Acilis fisi"),
-    autoPost: false,
+    autoPost: true,
     overrideCashControl: false,
     overrideReason: "",
   });
   const [lines, setLines] = useState([createLine(), createLine({ followsFirstUnit: true })]);
+  const [lineAmountFocusById, setLineAmountFocusById] = useState({});
 
   const selectedLegalEntityId = toPositiveInt(form.legalEntityId);
   const selectedBookId = toPositiveInt(form.bookId);
@@ -611,8 +612,67 @@ export default function AcilisFisiOlustur() {
     return rounded.toFixed(2);
   }
 
+  function resolveLineBalanceAmount(accountIdRaw) {
+    if (
+      !canReadTrialBalance ||
+      !selectedBookId ||
+      !resolvedFiscalPeriodId ||
+      loadingAccountBalances
+    ) {
+      return null;
+    }
+    const accountId = toPositiveInt(accountIdRaw);
+    if (!accountId) {
+      return null;
+    }
+    const balance = Number(accountBalanceById.get(accountId) || 0);
+    return Number.isFinite(balance) ? balance : null;
+  }
+
+  function resolveLineApplySide(lineId, preferredSide = "") {
+    const normalizedPreferredSide = String(preferredSide || "").trim().toLowerCase();
+    if (normalizedPreferredSide === "debit" || normalizedPreferredSide === "credit") {
+      return normalizedPreferredSide;
+    }
+    const focusedSide = String(lineAmountFocusById[lineId] || "")
+      .trim()
+      .toLowerCase();
+    if (focusedSide === "debit" || focusedSide === "credit") {
+      return focusedSide;
+    }
+    return "debit";
+  }
+
+  function applyBalanceToLine(lineId, preferredSide = "") {
+    const side = resolveLineApplySide(lineId, preferredSide);
+    setLines((prev) =>
+      prev.map((line) => {
+        if (line.id !== lineId) {
+          return line;
+        }
+        const balance = resolveLineBalanceAmount(line.accountId);
+        if (balance === null) {
+          return line;
+        }
+        const absolute = Math.abs(balance);
+        return {
+          ...line,
+          debitBase: formatInputAmount(side === "debit" ? absolute : 0),
+          creditBase: formatInputAmount(side === "credit" ? absolute : 0),
+        };
+      })
+    );
+  }
+
   function handleBalanceShortcut(event, lineId, side) {
-    const isBalanceShortcut = event.altKey && String(event.key || "").toLowerCase() === "b";
+    const key = String(event.key || "").toLowerCase();
+    if (event.altKey && key === "k") {
+      event.preventDefault();
+      applyBalanceToLine(lineId, side);
+      return;
+    }
+
+    const isBalanceShortcut = event.altKey && key === "b";
     if (!isBalanceShortcut) {
       return;
     }
@@ -933,7 +993,12 @@ export default function AcilisFisiOlustur() {
 
       let posted = false;
       if (form.autoPost && canPostJournal && journalEntryId) {
-        const postResult = await postJournal(journalEntryId);
+        const postResult = await postJournal(journalEntryId, {
+          overrideCashControl: Boolean(form.overrideCashControl),
+          overrideReason: form.overrideCashControl
+            ? String(form.overrideReason || "").trim()
+            : undefined,
+        });
         posted = Boolean(postResult?.posted);
       }
 
@@ -967,6 +1032,7 @@ export default function AcilisFisiOlustur() {
         ...prev,
         referenceNo: "",
         description: l("Opening entry", "Acilis fisi"),
+        autoPost: true,
         overrideCashControl: false,
         overrideReason: "",
       }));
@@ -1207,8 +1273,8 @@ export default function AcilisFisiOlustur() {
                   </div>
                   <div className="text-[11px] text-slate-500">
                     {l(
-                      "Shortcuts: Ctrl/Cmd+D fill-down description, Alt+B auto-balance focused Debit/Credit cell.",
-                      "Kisayollar: Ctrl/Cmd+D aciklama kopyalar, Alt+B odaktaki Borc/Alacak hucresini otomatik dengeler."
+                      "Shortcuts: Ctrl/Cmd+D fill-down description, Alt+B auto-balance focused Debit/Credit cell, Alt+K apply balance to focused Debit/Credit input.",
+                      "Kisayollar: Ctrl/Cmd+D aciklama kopyalar, Alt+B odaktaki Borc/Alacak hucresini otomatik dengeler, Alt+K bakiyeyi odaktaki Borc/Alacak alanina yazar."
                     )}
                   </div>
                 </div>
@@ -1274,6 +1340,23 @@ export default function AcilisFisiOlustur() {
                               <span className="font-medium text-slate-700">
                                 {formatLineAccountBalance(line.accountId)}
                               </span>
+                              <button
+                                type="button"
+                                onClick={() => applyBalanceToLine(line.id)}
+                                disabled={
+                                  !toPositiveInt(line.accountId) ||
+                                  !canReadTrialBalance ||
+                                  !resolvedFiscalPeriodId ||
+                                  loadingAccountBalances
+                                }
+                                className="ml-2 rounded border border-cyan-300 px-1.5 py-0.5 text-[10px] font-semibold text-cyan-700 hover:bg-cyan-50 disabled:opacity-50"
+                                title={l(
+                                  "Apply account balance to focused debit/credit input (Alt+K)",
+                                  "Hesap bakiyesini odaktaki borc/alacak alanina uygula (Alt+K)"
+                                )}
+                              >
+                                {l("Apply", "Uygula")}
+                              </button>
                             </div>
                           </td>
                         <td className="px-3 py-2">
@@ -1350,6 +1433,12 @@ export default function AcilisFisiOlustur() {
                               onChange={(event) =>
                                 updateLine(line.id, "debitBase", event.target.value)
                               }
+                              onFocus={() =>
+                                setLineAmountFocusById((prev) => ({
+                                  ...prev,
+                                  [line.id]: "debit",
+                                }))
+                              }
                               onKeyDown={(event) => handleBalanceShortcut(event, line.id, "debit")}
                               className="w-full rounded border border-slate-300 px-2 py-1.5 text-right text-xs"
                               required
@@ -1363,6 +1452,12 @@ export default function AcilisFisiOlustur() {
                               value={line.creditBase}
                               onChange={(event) =>
                                 updateLine(line.id, "creditBase", event.target.value)
+                              }
+                              onFocus={() =>
+                                setLineAmountFocusById((prev) => ({
+                                  ...prev,
+                                  [line.id]: "credit",
+                                }))
                               }
                               onKeyDown={(event) => handleBalanceShortcut(event, line.id, "credit")}
                               className="w-full rounded border border-slate-300 px-2 py-1.5 text-right text-xs"

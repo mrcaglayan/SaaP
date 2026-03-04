@@ -245,7 +245,7 @@ export default function OrganizationManagementPage() {
     committedCapital: "0",
     capitalSubAccountId: "",
     commitmentDebitSubAccountId: "",
-    currencyCode: "USD",
+    currencyCode: "",
     status: "ACTIVE",
     notes: "",
   });
@@ -355,7 +355,7 @@ export default function OrganizationManagementPage() {
           return {
             ...prev,
             legalEntityId: nextLegalEntityId,
-            currencyCode: prev.currencyCode || legalEntityCurrency || "USD",
+            currencyCode: legalEntityCurrency || prev.currencyCode || "USD",
           };
         });
       }
@@ -4255,4 +4255,3 @@ export default function OrganizationManagementPage() {
     </div>
   );
 }
-

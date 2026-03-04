@@ -62,6 +62,16 @@ export async function getJournal(journalId) {
   return response.data;
 }
 
+export async function updateJournalDraft(journalId, payload) {
+  const response = await api.put(`/api/v1/gl/journals/${journalId}`, payload);
+  return response.data;
+}
+
+export async function cancelJournalDraft(journalId, payload = {}) {
+  const response = await api.post(`/api/v1/gl/journals/${journalId}/cancel`, payload);
+  return response.data;
+}
+
 export async function postJournal(journalId, payload = {}) {
   const response = await api.post(`/api/v1/gl/journals/${journalId}/post`, payload);
   return response.data;

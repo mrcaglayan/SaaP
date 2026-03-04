@@ -72,6 +72,8 @@ import migration081BankAccountsSubaccountHardening from "./m081_bank_accounts_su
 import migration082CloseConsolidationWorkflowApprovals from "./m082_close_consolidation_workflow_approvals.js";
 import migration083CountryTaxEngineFoundation from "./m083_country_tax_engine_foundation.js";
 import migration084ConsolidationCanonicalMappingFoundation from "./m084_consolidation_canonical_mapping_foundation.js";
+import migration085GlJournalDraftCancelAndEdit from "./m085_gl_journal_draft_cancel_and_edit.js";
+import migration086CariPurposeMappingLeafAutofix from "./m086_cari_purpose_mapping_leaf_autofix.js";
 
 const migrations = [
   migration001GlobalMultiEntity,
@@ -148,6 +150,8 @@ const migrations = [
   migration082CloseConsolidationWorkflowApprovals,
   migration083CountryTaxEngineFoundation,
   migration084ConsolidationCanonicalMappingFoundation,
+  migration085GlJournalDraftCancelAndEdit,
+  migration086CariPurposeMappingLeafAutofix,
 ];
 
 export default migrations;

@@ -148,6 +148,10 @@ function formatReadinessReason(reason) {
       return "Mapped account id is invalid.";
     case "ACCOUNT_TENANT_MISMATCH":
       return "Mapped account belongs to a different tenant.";
+    case "ACCOUNT_TYPE_MISMATCH":
+      return "Mapped account type does not match this purpose.";
+    case "ACCOUNT_NORMAL_SIDE_MISMATCH":
+      return "Mapped account normal side does not match this purpose.";
     default:
       return String(reason || "Invalid mapping.");
   }

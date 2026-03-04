@@ -117,6 +117,18 @@ function normalizeLookupQuery(value) {
   return String(value || "").trim();
 }
 
+function resolveLegalEntityCurrencyCode(legalEntity) {
+  const normalized = String(
+    legalEntity?.functional_currency_code || legalEntity?.functionalCurrencyCode || ""
+  )
+    .trim()
+    .toUpperCase();
+  if (!normalized) {
+    return "";
+  }
+  return normalized.slice(0, 3);
+}
+
 function buildInlinePaymentTermCode({ legalEntityId, name }) {
   const normalizedName = normalizeLookupQuery(name)
     .toUpperCase()
@@ -182,6 +194,82 @@ function normalizeAccountCode(value) {
   return String(value || "")
     .trim()
     .toUpperCase();
+}
+
+function deriveSearchCodeCandidate(value) {
+  const normalized = normalizeAccountCode(value);
+  if (!normalized || /\s/.test(normalized)) {
+    return "";
+  }
+  return normalized;
+}
+
+function findBestParentAccount(candidateCode, parentAccountOptions) {
+  if (!candidateCode) {
+    return null;
+  }
+  let bestParent = null;
+  for (const row of parentAccountOptions || []) {
+    const parentCode = normalizeAccountCode(row?.code);
+    if (!parentCode || candidateCode === parentCode) {
+      continue;
+    }
+    const matchesPrefix =
+      candidateCode.startsWith(`${parentCode}.`) ||
+      candidateCode.startsWith(`${parentCode}-`) ||
+      candidateCode.startsWith(parentCode);
+    if (!matchesPrefix) {
+      continue;
+    }
+    if (
+      !bestParent ||
+      parentCode.length > normalizeAccountCode(bestParent?.code).length
+    ) {
+      bestParent = row;
+    }
+  }
+  return bestParent;
+}
+
+function isActivePostableAccount(row) {
+  const allowPosting = row?.allowPosting === true || Number(row?.allowPosting) === 1;
+  const isActive = row?.isActive === true || Number(row?.isActive) === 1;
+  return allowPosting && isActive;
+}
+
+function isActiveAccount(row) {
+  return row?.isActive === true || Number(row?.isActive) === 1;
+}
+
+function buildInlineParentAccountOptions(rows, expectedType) {
+  const type = normalizeAccountCode(expectedType);
+  return (Array.isArray(rows) ? rows : [])
+    .filter(
+      (row) =>
+        normalizeAccountCode(row?.accountType) === type &&
+        isActiveAccount(row) &&
+        toPositiveInt(row?.id)
+    )
+    .sort((left, right) =>
+      normalizeAccountCode(left?.code).localeCompare(normalizeAccountCode(right?.code))
+    );
+}
+
+function findExactInlineCodeMatch(rows, candidateCode, expectedType) {
+  const normalizedCode = normalizeAccountCode(candidateCode);
+  const normalizedType = normalizeAccountCode(expectedType);
+  if (!normalizedCode || !normalizedType) {
+    return null;
+  }
+  return (
+    (Array.isArray(rows) ? rows : []).find(
+      (row) =>
+        normalizeAccountCode(row?.code) === normalizedCode &&
+        normalizeAccountCode(row?.accountType) === normalizedType &&
+        isActivePostableAccount(row) &&
+        toPositiveInt(row?.id)
+    ) || null
+  );
 }
 
 function resolveInlineControlAccountSpec(direction) {
@@ -345,7 +433,14 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
   const [createAccountOptions, setCreateAccountOptions] = useState([]);
   const [createAccountsLoading, setCreateAccountsLoading] = useState(false);
   const [createAccountsError, setCreateAccountsError] = useState("");
-  const [createAccountLookupQuery, setCreateAccountLookupQuery] = useState("");
+  const [createArAccountLookupQuery, setCreateArAccountLookupQuery] = useState("");
+  const [createApAccountLookupQuery, setCreateApAccountLookupQuery] = useState("");
+  const [createInlineArParentAccountId, setCreateInlineArParentAccountId] = useState("");
+  const [createInlineArChildCode, setCreateInlineArChildCode] = useState("");
+  const [createInlineArChildName, setCreateInlineArChildName] = useState("");
+  const [createInlineApParentAccountId, setCreateInlineApParentAccountId] = useState("");
+  const [createInlineApChildCode, setCreateInlineApChildCode] = useState("");
+  const [createInlineApChildName, setCreateInlineApChildName] = useState("");
   const [createInlineArAccountSaving, setCreateInlineArAccountSaving] = useState(false);
   const [createInlineArAccountError, setCreateInlineArAccountError] = useState("");
   const [createInlineArAccountMessage, setCreateInlineArAccountMessage] = useState("");
@@ -383,7 +478,14 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
   const [editAccountOptions, setEditAccountOptions] = useState([]);
   const [editAccountsLoading, setEditAccountsLoading] = useState(false);
   const [editAccountsError, setEditAccountsError] = useState("");
-  const [editAccountLookupQuery, setEditAccountLookupQuery] = useState("");
+  const [editArAccountLookupQuery, setEditArAccountLookupQuery] = useState("");
+  const [editApAccountLookupQuery, setEditApAccountLookupQuery] = useState("");
+  const [editInlineArParentAccountId, setEditInlineArParentAccountId] = useState("");
+  const [editInlineArChildCode, setEditInlineArChildCode] = useState("");
+  const [editInlineArChildName, setEditInlineArChildName] = useState("");
+  const [editInlineApParentAccountId, setEditInlineApParentAccountId] = useState("");
+  const [editInlineApChildCode, setEditInlineApChildCode] = useState("");
+  const [editInlineApChildName, setEditInlineApChildName] = useState("");
   const [editInlineArAccountSaving, setEditInlineArAccountSaving] = useState(false);
   const [editInlineArAccountError, setEditInlineArAccountError] = useState("");
   const [editInlineArAccountMessage, setEditInlineArAccountMessage] = useState("");
@@ -419,7 +521,14 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
     setCreateInlinePaymentTermMessage("");
     setCreateAccountOptions([]);
     setCreateAccountsError("");
-    setCreateAccountLookupQuery("");
+    setCreateArAccountLookupQuery("");
+    setCreateApAccountLookupQuery("");
+    setCreateInlineArParentAccountId("");
+    setCreateInlineArChildCode("");
+    setCreateInlineArChildName("");
+    setCreateInlineApParentAccountId("");
+    setCreateInlineApChildCode("");
+    setCreateInlineApChildName("");
     setEditPaymentTerms([]);
     setEditPaymentTermsError("");
     setEditPaymentTermLookupQuery("");
@@ -428,7 +537,14 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
     setEditInlinePaymentTermMessage("");
     setEditAccountOptions([]);
     setEditAccountsError("");
-    setEditAccountLookupQuery("");
+    setEditArAccountLookupQuery("");
+    setEditApAccountLookupQuery("");
+    setEditInlineArParentAccountId("");
+    setEditInlineArChildCode("");
+    setEditInlineArChildName("");
+    setEditInlineApParentAccountId("");
+    setEditInlineApChildCode("");
+    setEditInlineApChildName("");
   }, [config.roleDefault, config.mode]);
 
   useEffect(() => {
@@ -491,11 +607,80 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
     if (!isCreatePage) {
       return;
     }
+    const selectedLegalEntityId = String(createForm.legalEntityId || "").trim();
+    if (!selectedLegalEntityId) {
+      return;
+    }
+    const currentCurrency = String(createForm.defaultCurrencyCode || "").trim();
+    if (currentCurrency) {
+      return;
+    }
+    const selectedLegalEntity = legalEntityById.get(selectedLegalEntityId);
+    const entityCurrency = resolveLegalEntityCurrencyCode(selectedLegalEntity);
+    if (!entityCurrency) {
+      return;
+    }
+    setCreateForm((prev) => {
+      if (String(prev.defaultCurrencyCode || "").trim()) {
+        return prev;
+      }
+      if (String(prev.legalEntityId || "").trim() !== selectedLegalEntityId) {
+        return prev;
+      }
+      return {
+        ...prev,
+        defaultCurrencyCode: entityCurrency,
+      };
+    });
+  }, [isCreatePage, createForm.legalEntityId, createForm.defaultCurrencyCode, legalEntityById]);
+
+  useEffect(() => {
+    if (!editingId) {
+      return;
+    }
+    const selectedLegalEntityId = String(editingForm.legalEntityId || "").trim();
+    if (!selectedLegalEntityId) {
+      return;
+    }
+    const currentCurrency = String(editingForm.defaultCurrencyCode || "").trim();
+    if (currentCurrency) {
+      return;
+    }
+    const selectedLegalEntity = legalEntityById.get(selectedLegalEntityId);
+    const entityCurrency = resolveLegalEntityCurrencyCode(selectedLegalEntity);
+    if (!entityCurrency) {
+      return;
+    }
+    setEditingForm((prev) => {
+      if (String(prev.defaultCurrencyCode || "").trim()) {
+        return prev;
+      }
+      if (String(prev.legalEntityId || "").trim() !== selectedLegalEntityId) {
+        return prev;
+      }
+      return {
+        ...prev,
+        defaultCurrencyCode: entityCurrency,
+      };
+    });
+  }, [editingId, editingForm.legalEntityId, editingForm.defaultCurrencyCode, legalEntityById]);
+
+  useEffect(() => {
+    if (!isCreatePage) {
+      return;
+    }
     setCreatePaymentTermLookupQuery("");
     setCreateInlinePaymentTermSaving(false);
     setCreateInlinePaymentTermError("");
     setCreateInlinePaymentTermMessage("");
-    setCreateAccountLookupQuery("");
+    setCreateArAccountLookupQuery("");
+    setCreateApAccountLookupQuery("");
+    setCreateInlineArParentAccountId("");
+    setCreateInlineArChildCode("");
+    setCreateInlineArChildName("");
+    setCreateInlineApParentAccountId("");
+    setCreateInlineApChildCode("");
+    setCreateInlineApChildName("");
     setCreateInlineArAccountSaving(false);
     setCreateInlineArAccountError("");
     setCreateInlineArAccountMessage("");
@@ -510,7 +695,14 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
       setEditInlinePaymentTermSaving(false);
       setEditInlinePaymentTermError("");
       setEditInlinePaymentTermMessage("");
-      setEditAccountLookupQuery("");
+      setEditArAccountLookupQuery("");
+      setEditApAccountLookupQuery("");
+      setEditInlineArParentAccountId("");
+      setEditInlineArChildCode("");
+      setEditInlineArChildName("");
+      setEditInlineApParentAccountId("");
+      setEditInlineApChildCode("");
+      setEditInlineApChildName("");
       setEditInlineArAccountSaving(false);
       setEditInlineArAccountError("");
       setEditInlineArAccountMessage("");
@@ -523,7 +715,14 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
     setEditInlinePaymentTermSaving(false);
     setEditInlinePaymentTermError("");
     setEditInlinePaymentTermMessage("");
-    setEditAccountLookupQuery("");
+    setEditArAccountLookupQuery("");
+    setEditApAccountLookupQuery("");
+    setEditInlineArParentAccountId("");
+    setEditInlineArChildCode("");
+    setEditInlineArChildName("");
+    setEditInlineApParentAccountId("");
+    setEditInlineApChildCode("");
+    setEditInlineApChildName("");
     setEditInlineArAccountSaving(false);
     setEditInlineArAccountError("");
     setEditInlineArAccountMessage("");
@@ -582,7 +781,7 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
 
       await loadAccountsForLegalEntity({
         legalEntityId: createForm.legalEntityId,
-        queryText: createAccountLookupQuery,
+        queryText: "",
         setRows: (rows) => {
           if (!cancelled) {
             setCreateAccountOptions(rows);
@@ -612,7 +811,6 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
   }, [
     isCreatePage,
     createForm.legalEntityId,
-    createAccountLookupQuery,
     accountPickerGates.shouldFetchGlAccounts,
   ]);
 
@@ -666,7 +864,7 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
 
       await loadAccountsForLegalEntity({
         legalEntityId: editingForm.legalEntityId,
-        queryText: editAccountLookupQuery,
+        queryText: "",
         setRows: (rows) => {
           if (!cancelled) {
             setEditAccountOptions(rows);
@@ -696,7 +894,6 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
   }, [
     editingId,
     editingForm.legalEntityId,
-    editAccountLookupQuery,
     accountPickerGates.shouldFetchGlAccounts,
   ]);
 
@@ -780,7 +977,7 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
       const response = await listAccounts({
         legalEntityId: parsedLegalEntityId,
         q: normalizedQuery || undefined,
-        includeInactive: false,
+        includeInactive: true,
         limit: 1000,
       });
       setRows(mapAccountRows(response));
@@ -826,7 +1023,14 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
       setCreatePaymentTermLookupQuery("");
       setCreateInlinePaymentTermError("");
       setCreateInlinePaymentTermMessage("");
-      setCreateAccountLookupQuery("");
+      setCreateArAccountLookupQuery("");
+      setCreateApAccountLookupQuery("");
+      setCreateInlineArParentAccountId("");
+      setCreateInlineArChildCode("");
+      setCreateInlineArChildName("");
+      setCreateInlineApParentAccountId("");
+      setCreateInlineApChildCode("");
+      setCreateInlineApChildName("");
       setCreateInlineArAccountError("");
       setCreateInlineArAccountMessage("");
       setCreateInlineApAccountError("");
@@ -846,7 +1050,14 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
     setEditInlinePaymentTermSaving(false);
     setEditInlinePaymentTermError("");
     setEditInlinePaymentTermMessage("");
-    setEditAccountLookupQuery("");
+    setEditArAccountLookupQuery("");
+    setEditApAccountLookupQuery("");
+    setEditInlineArParentAccountId("");
+    setEditInlineArChildCode("");
+    setEditInlineArChildName("");
+    setEditInlineApParentAccountId("");
+    setEditInlineApChildCode("");
+    setEditInlineApChildName("");
     setEditInlineArAccountSaving(false);
     setEditInlineArAccountError("");
     setEditInlineArAccountMessage("");
@@ -887,17 +1098,39 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
     }
   }
 
-  function handleCreateAccountLookupInput(nextValue, meta = {}) {
+  function handleCreateAccountLookupInput(nextValue, meta = {}, direction = "AR") {
     const reason = String(meta?.reason || "").trim().toLowerCase();
+    const targetDirection = String(direction || "AR").trim().toUpperCase();
     if (reason === "select" || reason === "clear") {
-      setCreateAccountLookupQuery("");
+      if (targetDirection === "AP") {
+        setCreateApAccountLookupQuery("");
+        setCreateInlineApParentAccountId("");
+        setCreateInlineApChildCode("");
+        setCreateInlineApChildName("");
+      } else {
+        setCreateArAccountLookupQuery("");
+        setCreateInlineArParentAccountId("");
+        setCreateInlineArChildCode("");
+        setCreateInlineArChildName("");
+      }
       return;
     }
     setCreateInlineArAccountError("");
     setCreateInlineArAccountMessage("");
     setCreateInlineApAccountError("");
     setCreateInlineApAccountMessage("");
-    setCreateAccountLookupQuery(normalizeLookupQuery(nextValue));
+    const normalized = normalizeLookupQuery(nextValue);
+    if (targetDirection === "AP") {
+      setCreateApAccountLookupQuery(normalized);
+      setCreateInlineApParentAccountId("");
+      setCreateInlineApChildCode("");
+      setCreateInlineApChildName(normalized);
+    } else {
+      setCreateArAccountLookupQuery(normalized);
+      setCreateInlineArParentAccountId("");
+      setCreateInlineArChildCode("");
+      setCreateInlineArChildName(normalized);
+    }
   }
 
   function handleCreatePaymentTermLookupInput(nextValue, meta = {}) {
@@ -911,17 +1144,39 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
     setCreatePaymentTermLookupQuery(normalizeLookupQuery(nextValue));
   }
 
-  function handleEditAccountLookupInput(nextValue, meta = {}) {
+  function handleEditAccountLookupInput(nextValue, meta = {}, direction = "AR") {
     const reason = String(meta?.reason || "").trim().toLowerCase();
+    const targetDirection = String(direction || "AR").trim().toUpperCase();
     if (reason === "select" || reason === "clear") {
-      setEditAccountLookupQuery("");
+      if (targetDirection === "AP") {
+        setEditApAccountLookupQuery("");
+        setEditInlineApParentAccountId("");
+        setEditInlineApChildCode("");
+        setEditInlineApChildName("");
+      } else {
+        setEditArAccountLookupQuery("");
+        setEditInlineArParentAccountId("");
+        setEditInlineArChildCode("");
+        setEditInlineArChildName("");
+      }
       return;
     }
     setEditInlineArAccountError("");
     setEditInlineArAccountMessage("");
     setEditInlineApAccountError("");
     setEditInlineApAccountMessage("");
-    setEditAccountLookupQuery(normalizeLookupQuery(nextValue));
+    const normalized = normalizeLookupQuery(nextValue);
+    if (targetDirection === "AP") {
+      setEditApAccountLookupQuery(normalized);
+      setEditInlineApParentAccountId("");
+      setEditInlineApChildCode("");
+      setEditInlineApChildName(normalized);
+    } else {
+      setEditArAccountLookupQuery(normalized);
+      setEditInlineArParentAccountId("");
+      setEditInlineArChildCode("");
+      setEditInlineArChildName(normalized);
+    }
   }
 
   function handleEditPaymentTermLookupInput(nextValue, meta = {}) {
@@ -999,12 +1254,16 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
     legalEntityId,
     lookupName,
     direction,
+    parentAccountIdValue = "",
+    childCodeValue = "",
+    childNameValue = "",
     setSaving,
     setError,
     setMessage,
     setLookupQuery,
     setForm,
     setOptions,
+    clearInlinePanel,
   }) {
     if (!accountPickerGates.canUpsertGlAccounts) {
       setError("Missing permission: gl.account.upsert");
@@ -1012,7 +1271,11 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
     }
 
     const parsedLegalEntityId = toPositiveInt(legalEntityId);
-    const normalizedName = normalizeLookupQuery(lookupName);
+    const normalizedLookupName = normalizeLookupQuery(lookupName);
+    const normalizedName = normalizeLookupQuery(childNameValue) || normalizedLookupName;
+    const requestedCode = normalizeAccountCode(
+      childCodeValue || deriveSearchCodeCandidate(lookupName)
+    );
     if (!parsedLegalEntityId) {
       setError("Select legal entity first.");
       return;
@@ -1034,7 +1297,51 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
         offset: 0,
       });
       const fullAccountRows = mapAccountRows(fullAccountResponse);
-      const parentAccount = selectInlineControlParentAccount(fullAccountRows, spec);
+      if (requestedCode) {
+        const exactExisting = findExactInlineCodeMatch(
+          fullAccountRows,
+          requestedCode,
+          spec.accountType
+        );
+        if (exactExisting) {
+          const exactExistingId = toPositiveInt(exactExisting.id);
+          setForm((prev) => ({
+            ...prev,
+            [spec.fieldName]: String(exactExistingId),
+          }));
+          setLookupQuery("");
+          setOptions((prevRows) => {
+            const nextRows = Array.isArray(prevRows) ? [...prevRows] : [];
+            const alreadyInRows = nextRows.some(
+              (row) => toPositiveInt(row?.id) === exactExistingId
+            );
+            return alreadyInRows ? nextRows : [exactExisting, ...nextRows];
+          });
+          setMessage(
+            `${spec.direction} account selected: ${exactExisting.code || "-"} - ${exactExisting.name || "-"}`
+          );
+          return;
+        }
+      }
+
+      const selectedParentId = toPositiveInt(parentAccountIdValue);
+      const parentAccountOptions = buildInlineParentAccountOptions(
+        fullAccountRows,
+        spec.accountType
+      );
+
+      let parentAccount =
+        parentAccountOptions.find(
+          (row) => toPositiveInt(row?.id) === selectedParentId
+        ) || null;
+      if (!parentAccount && requestedCode) {
+        parentAccount = findBestParentAccount(requestedCode, parentAccountOptions);
+      }
+      if (!parentAccount) {
+        parentAccount =
+          selectInlineControlParentAccount(parentAccountOptions, spec) ||
+          selectInlineControlParentAccount(fullAccountRows, spec);
+      }
       if (!parentAccount) {
         throw new Error(
           `${spec.controlCode} control parent not found for ${spec.direction}.`
@@ -1046,9 +1353,16 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
         throw new Error("Unable to resolve coaId for selected parent account.");
       }
 
-      const nextCode = buildNextInlineChildCode(fullAccountRows, parentAccount);
+      let nextCode = requestedCode;
+      if (!nextCode) {
+        nextCode = buildNextInlineChildCode(fullAccountRows, parentAccount);
+      }
       if (!nextCode) {
         throw new Error("Unable to generate next child account code.");
+      }
+      const parentCode = normalizeAccountCode(parentAccount?.code);
+      if (parentCode && nextCode === parentCode) {
+        throw new Error("Child account code must differ from parent account code.");
       }
 
       const upsertResponse = await upsertAccount({
@@ -1060,7 +1374,27 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
         allowPosting: true,
         parentAccountId: toPositiveInt(parentAccount?.id) || undefined,
       });
-      const createdAccountId = toPositiveInt(upsertResponse?.id);
+
+      const refreshedResponse = await listAccounts({
+        legalEntityId: parsedLegalEntityId,
+        includeInactive: true,
+        limit: 1000,
+        offset: 0,
+      });
+      const refreshedRows = mapAccountRows(refreshedResponse);
+      setOptions(refreshedRows);
+
+      const createdRow =
+        refreshedRows.find(
+          (row) =>
+            normalizeAccountCode(row?.code) === nextCode &&
+            normalizeAccountCode(row?.accountType) === spec.accountType &&
+            toPositiveInt(row?.id)
+        ) || null;
+      const createdAccountId =
+        toPositiveInt(upsertResponse?.id) ||
+        toPositiveInt(upsertResponse?.row?.id) ||
+        toPositiveInt(createdRow?.id);
       if (!createdAccountId) {
         throw new Error("Account create response missing id.");
       }
@@ -1070,15 +1404,7 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
         [spec.fieldName]: String(createdAccountId),
       }));
       setLookupQuery("");
-
-      const refreshedResponse = await listAccounts({
-        legalEntityId: parsedLegalEntityId,
-        includeInactive: false,
-        q: normalizedName || undefined,
-        limit: 1000,
-        offset: 0,
-      });
-      setOptions(mapAccountRows(refreshedResponse));
+      clearInlinePanel?.();
 
       setMessage(
         `${spec.direction} sub-account created: ${nextCode} - ${normalizedName} (parent ${parentAccount.code || "-"})`
@@ -1098,56 +1424,88 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
   async function handleInlineCreateArAccountForCreateForm() {
     await runInlineControlAccountCreate({
       legalEntityId: createForm.legalEntityId,
-      lookupName: createAccountLookupQuery,
+      lookupName: createArAccountLookupQuery,
       direction: "AR",
+      parentAccountIdValue: createInlineArParentAccountId,
+      childCodeValue: createInlineArChildCode,
+      childNameValue: createInlineArChildName,
       setSaving: setCreateInlineArAccountSaving,
       setError: setCreateInlineArAccountError,
       setMessage: setCreateInlineArAccountMessage,
-      setLookupQuery: setCreateAccountLookupQuery,
+      setLookupQuery: setCreateArAccountLookupQuery,
       setForm: setCreateForm,
       setOptions: setCreateAccountOptions,
+      clearInlinePanel: () => {
+        setCreateInlineArParentAccountId("");
+        setCreateInlineArChildCode("");
+        setCreateInlineArChildName("");
+      },
     });
   }
 
   async function handleInlineCreateApAccountForCreateForm() {
     await runInlineControlAccountCreate({
       legalEntityId: createForm.legalEntityId,
-      lookupName: createAccountLookupQuery,
+      lookupName: createApAccountLookupQuery,
       direction: "AP",
+      parentAccountIdValue: createInlineApParentAccountId,
+      childCodeValue: createInlineApChildCode,
+      childNameValue: createInlineApChildName,
       setSaving: setCreateInlineApAccountSaving,
       setError: setCreateInlineApAccountError,
       setMessage: setCreateInlineApAccountMessage,
-      setLookupQuery: setCreateAccountLookupQuery,
+      setLookupQuery: setCreateApAccountLookupQuery,
       setForm: setCreateForm,
       setOptions: setCreateAccountOptions,
+      clearInlinePanel: () => {
+        setCreateInlineApParentAccountId("");
+        setCreateInlineApChildCode("");
+        setCreateInlineApChildName("");
+      },
     });
   }
 
   async function handleInlineCreateArAccountForEditForm() {
     await runInlineControlAccountCreate({
       legalEntityId: editingForm.legalEntityId,
-      lookupName: editAccountLookupQuery,
+      lookupName: editArAccountLookupQuery,
       direction: "AR",
+      parentAccountIdValue: editInlineArParentAccountId,
+      childCodeValue: editInlineArChildCode,
+      childNameValue: editInlineArChildName,
       setSaving: setEditInlineArAccountSaving,
       setError: setEditInlineArAccountError,
       setMessage: setEditInlineArAccountMessage,
-      setLookupQuery: setEditAccountLookupQuery,
+      setLookupQuery: setEditArAccountLookupQuery,
       setForm: setEditingForm,
       setOptions: setEditAccountOptions,
+      clearInlinePanel: () => {
+        setEditInlineArParentAccountId("");
+        setEditInlineArChildCode("");
+        setEditInlineArChildName("");
+      },
     });
   }
 
   async function handleInlineCreateApAccountForEditForm() {
     await runInlineControlAccountCreate({
       legalEntityId: editingForm.legalEntityId,
-      lookupName: editAccountLookupQuery,
+      lookupName: editApAccountLookupQuery,
       direction: "AP",
+      parentAccountIdValue: editInlineApParentAccountId,
+      childCodeValue: editInlineApChildCode,
+      childNameValue: editInlineApChildName,
       setSaving: setEditInlineApAccountSaving,
       setError: setEditInlineApAccountError,
       setMessage: setEditInlineApAccountMessage,
-      setLookupQuery: setEditAccountLookupQuery,
+      setLookupQuery: setEditApAccountLookupQuery,
       setForm: setEditingForm,
       setOptions: setEditAccountOptions,
+      clearInlinePanel: () => {
+        setEditInlineApParentAccountId("");
+        setEditInlineApChildCode("");
+        setEditInlineApChildName("");
+      },
     });
   }
 
@@ -1179,8 +1537,347 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
 
   const createInlinePaymentTermName = normalizeLookupQuery(createPaymentTermLookupQuery);
   const editInlinePaymentTermName = normalizeLookupQuery(editPaymentTermLookupQuery);
-  const createInlineAccountName = normalizeLookupQuery(createAccountLookupQuery);
-  const editInlineAccountName = normalizeLookupQuery(editAccountLookupQuery);
+  const createInlineArAccountName = normalizeLookupQuery(createArAccountLookupQuery);
+  const createInlineApAccountName = normalizeLookupQuery(createApAccountLookupQuery);
+  const editInlineArAccountName = normalizeLookupQuery(editArAccountLookupQuery);
+  const editInlineApAccountName = normalizeLookupQuery(editApAccountLookupQuery);
+  const createArCodeCandidate = useMemo(
+    () => deriveSearchCodeCandidate(createArAccountLookupQuery),
+    [createArAccountLookupQuery]
+  );
+  const createApCodeCandidate = useMemo(
+    () => deriveSearchCodeCandidate(createApAccountLookupQuery),
+    [createApAccountLookupQuery]
+  );
+  const editArCodeCandidate = useMemo(
+    () => deriveSearchCodeCandidate(editArAccountLookupQuery),
+    [editArAccountLookupQuery]
+  );
+  const editApCodeCandidate = useMemo(
+    () => deriveSearchCodeCandidate(editApAccountLookupQuery),
+    [editApAccountLookupQuery]
+  );
+  const createArParentAccountOptions = useMemo(
+    () => buildInlineParentAccountOptions(createAccountOptions, "ASSET"),
+    [createAccountOptions]
+  );
+  const createApParentAccountOptions = useMemo(
+    () => buildInlineParentAccountOptions(createAccountOptions, "LIABILITY"),
+    [createAccountOptions]
+  );
+  const editArParentAccountOptions = useMemo(
+    () => buildInlineParentAccountOptions(editAccountOptions, "ASSET"),
+    [editAccountOptions]
+  );
+  const editApParentAccountOptions = useMemo(
+    () => buildInlineParentAccountOptions(editAccountOptions, "LIABILITY"),
+    [editAccountOptions]
+  );
+  const createArExactCodeMatch = useMemo(
+    () => findExactInlineCodeMatch(createAccountOptions, createArCodeCandidate, "ASSET"),
+    [createAccountOptions, createArCodeCandidate]
+  );
+  const createApExactCodeMatch = useMemo(
+    () => findExactInlineCodeMatch(createAccountOptions, createApCodeCandidate, "LIABILITY"),
+    [createAccountOptions, createApCodeCandidate]
+  );
+  const editArExactCodeMatch = useMemo(
+    () => findExactInlineCodeMatch(editAccountOptions, editArCodeCandidate, "ASSET"),
+    [editAccountOptions, editArCodeCandidate]
+  );
+  const editApExactCodeMatch = useMemo(
+    () => findExactInlineCodeMatch(editAccountOptions, editApCodeCandidate, "LIABILITY"),
+    [editAccountOptions, editApCodeCandidate]
+  );
+  const showInlineCreateArAccountPanelInCreateForm =
+    Boolean(toPositiveInt(createForm.legalEntityId)) &&
+    Boolean(createForm.isCustomer) &&
+    Boolean(createInlineArAccountName) &&
+    !(Boolean(createArCodeCandidate) && Boolean(createArExactCodeMatch));
+  const showInlineCreateApAccountPanelInCreateForm =
+    Boolean(toPositiveInt(createForm.legalEntityId)) &&
+    Boolean(createForm.isVendor) &&
+    Boolean(createInlineApAccountName) &&
+    !(Boolean(createApCodeCandidate) && Boolean(createApExactCodeMatch));
+  const showInlineCreateArAccountPanelInEditForm =
+    Boolean(editingId) &&
+    Boolean(toPositiveInt(editingForm.legalEntityId)) &&
+    Boolean(editingForm.isCustomer) &&
+    Boolean(editInlineArAccountName) &&
+    !(Boolean(editArCodeCandidate) && Boolean(editArExactCodeMatch));
+  const showInlineCreateApAccountPanelInEditForm =
+    Boolean(editingId) &&
+    Boolean(toPositiveInt(editingForm.legalEntityId)) &&
+    Boolean(editingForm.isVendor) &&
+    Boolean(editInlineApAccountName) &&
+    !(Boolean(editApCodeCandidate) && Boolean(editApExactCodeMatch));
+  const selectedCreateArInlineParentAccount = useMemo(
+    () =>
+      createArParentAccountOptions.find(
+        (row) => toPositiveInt(row?.id) === toPositiveInt(createInlineArParentAccountId)
+      ) || null,
+    [createArParentAccountOptions, createInlineArParentAccountId]
+  );
+  const selectedCreateApInlineParentAccount = useMemo(
+    () =>
+      createApParentAccountOptions.find(
+        (row) => toPositiveInt(row?.id) === toPositiveInt(createInlineApParentAccountId)
+      ) || null,
+    [createApParentAccountOptions, createInlineApParentAccountId]
+  );
+  const selectedEditArInlineParentAccount = useMemo(
+    () =>
+      editArParentAccountOptions.find(
+        (row) => toPositiveInt(row?.id) === toPositiveInt(editInlineArParentAccountId)
+      ) || null,
+    [editArParentAccountOptions, editInlineArParentAccountId]
+  );
+  const selectedEditApInlineParentAccount = useMemo(
+    () =>
+      editApParentAccountOptions.find(
+        (row) => toPositiveInt(row?.id) === toPositiveInt(editInlineApParentAccountId)
+      ) || null,
+    [editApParentAccountOptions, editInlineApParentAccountId]
+  );
+  const createArSuggestedNextCode = useMemo(
+    () => buildNextInlineChildCode(createAccountOptions, selectedCreateArInlineParentAccount),
+    [createAccountOptions, selectedCreateArInlineParentAccount]
+  );
+  const createApSuggestedNextCode = useMemo(
+    () => buildNextInlineChildCode(createAccountOptions, selectedCreateApInlineParentAccount),
+    [createAccountOptions, selectedCreateApInlineParentAccount]
+  );
+  const editArSuggestedNextCode = useMemo(
+    () => buildNextInlineChildCode(editAccountOptions, selectedEditArInlineParentAccount),
+    [editAccountOptions, selectedEditArInlineParentAccount]
+  );
+  const editApSuggestedNextCode = useMemo(
+    () => buildNextInlineChildCode(editAccountOptions, selectedEditApInlineParentAccount),
+    [editAccountOptions, selectedEditApInlineParentAccount]
+  );
+
+  useEffect(() => {
+    if (!showInlineCreateArAccountPanelInCreateForm) {
+      return;
+    }
+    setCreateInlineArChildCode((prev) => prev || createArCodeCandidate);
+    setCreateInlineArChildName(
+      (prev) => prev || String(createInlineArAccountName || createForm.name || "").trim()
+    );
+  }, [
+    showInlineCreateArAccountPanelInCreateForm,
+    createArCodeCandidate,
+    createInlineArAccountName,
+    createForm.name,
+  ]);
+  useEffect(() => {
+    if (!showInlineCreateArAccountPanelInCreateForm || !createArSuggestedNextCode) {
+      return;
+    }
+    setCreateInlineArChildCode((prev) => {
+      const normalizedPrev = normalizeAccountCode(prev);
+      const normalizedCandidate = normalizeAccountCode(createArCodeCandidate);
+      if (!normalizedPrev || normalizedPrev === normalizedCandidate) {
+        return createArSuggestedNextCode;
+      }
+      return prev;
+    });
+  }, [
+    showInlineCreateArAccountPanelInCreateForm,
+    createArSuggestedNextCode,
+    createArCodeCandidate,
+  ]);
+
+  useEffect(() => {
+    if (!showInlineCreateApAccountPanelInCreateForm) {
+      return;
+    }
+    setCreateInlineApChildCode((prev) => prev || createApCodeCandidate);
+    setCreateInlineApChildName(
+      (prev) => prev || String(createInlineApAccountName || createForm.name || "").trim()
+    );
+  }, [
+    showInlineCreateApAccountPanelInCreateForm,
+    createApCodeCandidate,
+    createInlineApAccountName,
+    createForm.name,
+  ]);
+  useEffect(() => {
+    if (!showInlineCreateApAccountPanelInCreateForm || !createApSuggestedNextCode) {
+      return;
+    }
+    setCreateInlineApChildCode((prev) => {
+      const normalizedPrev = normalizeAccountCode(prev);
+      const normalizedCandidate = normalizeAccountCode(createApCodeCandidate);
+      if (!normalizedPrev || normalizedPrev === normalizedCandidate) {
+        return createApSuggestedNextCode;
+      }
+      return prev;
+    });
+  }, [
+    showInlineCreateApAccountPanelInCreateForm,
+    createApSuggestedNextCode,
+    createApCodeCandidate,
+  ]);
+
+  useEffect(() => {
+    if (!showInlineCreateArAccountPanelInEditForm) {
+      return;
+    }
+    setEditInlineArChildCode((prev) => prev || editArCodeCandidate);
+    setEditInlineArChildName(
+      (prev) => prev || String(editInlineArAccountName || editingForm.name || "").trim()
+    );
+  }, [
+    showInlineCreateArAccountPanelInEditForm,
+    editArCodeCandidate,
+    editInlineArAccountName,
+    editingForm.name,
+  ]);
+  useEffect(() => {
+    if (!showInlineCreateArAccountPanelInEditForm || !editArSuggestedNextCode) {
+      return;
+    }
+    setEditInlineArChildCode((prev) => {
+      const normalizedPrev = normalizeAccountCode(prev);
+      const normalizedCandidate = normalizeAccountCode(editArCodeCandidate);
+      if (!normalizedPrev || normalizedPrev === normalizedCandidate) {
+        return editArSuggestedNextCode;
+      }
+      return prev;
+    });
+  }, [
+    showInlineCreateArAccountPanelInEditForm,
+    editArSuggestedNextCode,
+    editArCodeCandidate,
+  ]);
+
+  useEffect(() => {
+    if (!showInlineCreateApAccountPanelInEditForm) {
+      return;
+    }
+    setEditInlineApChildCode((prev) => prev || editApCodeCandidate);
+    setEditInlineApChildName(
+      (prev) => prev || String(editInlineApAccountName || editingForm.name || "").trim()
+    );
+  }, [
+    showInlineCreateApAccountPanelInEditForm,
+    editApCodeCandidate,
+    editInlineApAccountName,
+    editingForm.name,
+  ]);
+  useEffect(() => {
+    if (!showInlineCreateApAccountPanelInEditForm || !editApSuggestedNextCode) {
+      return;
+    }
+    setEditInlineApChildCode((prev) => {
+      const normalizedPrev = normalizeAccountCode(prev);
+      const normalizedCandidate = normalizeAccountCode(editApCodeCandidate);
+      if (!normalizedPrev || normalizedPrev === normalizedCandidate) {
+        return editApSuggestedNextCode;
+      }
+      return prev;
+    });
+  }, [
+    showInlineCreateApAccountPanelInEditForm,
+    editApSuggestedNextCode,
+    editApCodeCandidate,
+  ]);
+
+  useEffect(() => {
+    if (
+      !showInlineCreateArAccountPanelInCreateForm ||
+      toPositiveInt(createInlineArParentAccountId)
+    ) {
+      return;
+    }
+    const candidateCode = normalizeAccountCode(createInlineArChildCode || createArCodeCandidate);
+    const bestParent =
+      findBestParentAccount(candidateCode, createArParentAccountOptions) ||
+      selectInlineControlParentAccount(
+        createArParentAccountOptions,
+        resolveInlineControlAccountSpec("AR")
+      );
+    if (toPositiveInt(bestParent?.id)) {
+      setCreateInlineArParentAccountId(String(bestParent.id));
+    }
+  }, [
+    showInlineCreateArAccountPanelInCreateForm,
+    createInlineArParentAccountId,
+    createInlineArChildCode,
+    createArCodeCandidate,
+    createArParentAccountOptions,
+  ]);
+
+  useEffect(() => {
+    if (
+      !showInlineCreateApAccountPanelInCreateForm ||
+      toPositiveInt(createInlineApParentAccountId)
+    ) {
+      return;
+    }
+    const candidateCode = normalizeAccountCode(createInlineApChildCode || createApCodeCandidate);
+    const bestParent =
+      findBestParentAccount(candidateCode, createApParentAccountOptions) ||
+      selectInlineControlParentAccount(
+        createApParentAccountOptions,
+        resolveInlineControlAccountSpec("AP")
+      );
+    if (toPositiveInt(bestParent?.id)) {
+      setCreateInlineApParentAccountId(String(bestParent.id));
+    }
+  }, [
+    showInlineCreateApAccountPanelInCreateForm,
+    createInlineApParentAccountId,
+    createInlineApChildCode,
+    createApCodeCandidate,
+    createApParentAccountOptions,
+  ]);
+
+  useEffect(() => {
+    if (!showInlineCreateArAccountPanelInEditForm || toPositiveInt(editInlineArParentAccountId)) {
+      return;
+    }
+    const candidateCode = normalizeAccountCode(editInlineArChildCode || editArCodeCandidate);
+    const bestParent =
+      findBestParentAccount(candidateCode, editArParentAccountOptions) ||
+      selectInlineControlParentAccount(
+        editArParentAccountOptions,
+        resolveInlineControlAccountSpec("AR")
+      );
+    if (toPositiveInt(bestParent?.id)) {
+      setEditInlineArParentAccountId(String(bestParent.id));
+    }
+  }, [
+    showInlineCreateArAccountPanelInEditForm,
+    editInlineArParentAccountId,
+    editInlineArChildCode,
+    editArCodeCandidate,
+    editArParentAccountOptions,
+  ]);
+
+  useEffect(() => {
+    if (!showInlineCreateApAccountPanelInEditForm || toPositiveInt(editInlineApParentAccountId)) {
+      return;
+    }
+    const candidateCode = normalizeAccountCode(editInlineApChildCode || editApCodeCandidate);
+    const bestParent =
+      findBestParentAccount(candidateCode, editApParentAccountOptions) ||
+      selectInlineControlParentAccount(
+        editApParentAccountOptions,
+        resolveInlineControlAccountSpec("AP")
+      );
+    if (toPositiveInt(bestParent?.id)) {
+      setEditInlineApParentAccountId(String(bestParent.id));
+    }
+  }, [
+    showInlineCreateApAccountPanelInEditForm,
+    editInlineApParentAccountId,
+    editInlineApChildCode,
+    editApCodeCandidate,
+    editApParentAccountOptions,
+  ]);
+
   const canInlineCreatePaymentTermInCreateForm =
     canUpsert &&
     Boolean(toPositiveInt(createForm.legalEntityId)) &&
@@ -1195,27 +1892,31 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
     accountPickerGates.canUpsertGlAccounts &&
     Boolean(toPositiveInt(createForm.legalEntityId)) &&
     Boolean(createForm.isCustomer) &&
-    Boolean(createInlineAccountName);
+    Boolean(createInlineArAccountName) &&
+    !(Boolean(createArCodeCandidate) && Boolean(createArExactCodeMatch));
   const canInlineCreateApAccountInCreateForm =
     canUpsert &&
     accountPickerGates.canUpsertGlAccounts &&
     Boolean(toPositiveInt(createForm.legalEntityId)) &&
     Boolean(createForm.isVendor) &&
-    Boolean(createInlineAccountName);
+    Boolean(createInlineApAccountName) &&
+    !(Boolean(createApCodeCandidate) && Boolean(createApExactCodeMatch));
   const canInlineCreateArAccountInEditForm =
     canUpsert &&
     accountPickerGates.canUpsertGlAccounts &&
     Boolean(editingId) &&
     Boolean(toPositiveInt(editingForm.legalEntityId)) &&
     Boolean(editingForm.isCustomer) &&
-    Boolean(editInlineAccountName);
+    Boolean(editInlineArAccountName) &&
+    !(Boolean(editArCodeCandidate) && Boolean(editArExactCodeMatch));
   const canInlineCreateApAccountInEditForm =
     canUpsert &&
     accountPickerGates.canUpsertGlAccounts &&
     Boolean(editingId) &&
     Boolean(toPositiveInt(editingForm.legalEntityId)) &&
     Boolean(editingForm.isVendor) &&
-    Boolean(editInlineAccountName);
+    Boolean(editInlineApAccountName) &&
+    !(Boolean(editApCodeCandidate) && Boolean(editApExactCodeMatch));
 
   function renderCreatePage() {
     return (
@@ -1242,18 +1943,46 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
         accountOptionsLoading={createAccountsLoading}
         accountOptionsError={createAccountsError}
         onAccountLookupQueryChange={handleCreateAccountLookupInput}
+        canUpsertGlAccounts={accountPickerGates.canUpsertGlAccounts}
+        accountUpsertFallbackMessage="Missing permission: gl.account.upsert"
         canInlineCreateArAccount={canInlineCreateArAccountInCreateForm}
-        inlineCreateArAccountLabel={createInlineAccountName}
+        inlineCreateArAccountLabel={createInlineArAccountName}
         inlineCreateArAccountSaving={createInlineArAccountSaving}
         onInlineCreateArAccount={handleInlineCreateArAccountForCreateForm}
         inlineCreateArAccountError={createInlineArAccountError}
         inlineCreateArAccountMessage={createInlineArAccountMessage}
+        showInlineCreateArAccountPanel={showInlineCreateArAccountPanelInCreateForm}
+        inlineCreateArCodeCandidate={createArCodeCandidate}
+        inlineCreateArSearchText={createInlineArAccountName}
+        inlineCreateArParentAccountOptions={createArParentAccountOptions}
+        inlineCreateArParentAccountId={createInlineArParentAccountId}
+        onInlineCreateArParentAccountIdChange={setCreateInlineArParentAccountId}
+        inlineCreateArChildCode={createInlineArChildCode}
+        onInlineCreateArChildCodeChange={setCreateInlineArChildCode}
+        inlineCreateArChildName={createInlineArChildName}
+        onInlineCreateArChildNameChange={setCreateInlineArChildName}
+        inlineCreateArSuggestedNextCode={createArSuggestedNextCode}
+        onInlineCreateArUseTypedCode={() => setCreateInlineArChildCode(createArCodeCandidate)}
+        onInlineCreateArUseNextCode={() => setCreateInlineArChildCode(createArSuggestedNextCode)}
         canInlineCreateApAccount={canInlineCreateApAccountInCreateForm}
-        inlineCreateApAccountLabel={createInlineAccountName}
+        inlineCreateApAccountLabel={createInlineApAccountName}
         inlineCreateApAccountSaving={createInlineApAccountSaving}
         onInlineCreateApAccount={handleInlineCreateApAccountForCreateForm}
         inlineCreateApAccountError={createInlineApAccountError}
         inlineCreateApAccountMessage={createInlineApAccountMessage}
+        showInlineCreateApAccountPanel={showInlineCreateApAccountPanelInCreateForm}
+        inlineCreateApCodeCandidate={createApCodeCandidate}
+        inlineCreateApSearchText={createInlineApAccountName}
+        inlineCreateApParentAccountOptions={createApParentAccountOptions}
+        inlineCreateApParentAccountId={createInlineApParentAccountId}
+        onInlineCreateApParentAccountIdChange={setCreateInlineApParentAccountId}
+        inlineCreateApChildCode={createInlineApChildCode}
+        onInlineCreateApChildCodeChange={setCreateInlineApChildCode}
+        inlineCreateApChildName={createInlineApChildName}
+        onInlineCreateApChildNameChange={setCreateInlineApChildName}
+        inlineCreateApSuggestedNextCode={createApSuggestedNextCode}
+        onInlineCreateApUseTypedCode={() => setCreateInlineApChildCode(createApCodeCandidate)}
+        onInlineCreateApUseNextCode={() => setCreateInlineApChildCode(createApSuggestedNextCode)}
         canReadGlAccounts={accountPickerGates.showAccountPickers}
         accountReadFallbackMessage={
           "Missing permission: gl.account.read. AR/AP account selectors are hidden."
@@ -1267,7 +1996,14 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
           setCreateInlinePaymentTermSaving(false);
           setCreateInlinePaymentTermError("");
           setCreateInlinePaymentTermMessage("");
-          setCreateAccountLookupQuery("");
+          setCreateArAccountLookupQuery("");
+          setCreateApAccountLookupQuery("");
+          setCreateInlineArParentAccountId("");
+          setCreateInlineArChildCode("");
+          setCreateInlineArChildName("");
+          setCreateInlineApParentAccountId("");
+          setCreateInlineApChildCode("");
+          setCreateInlineApChildName("");
           setCreateInlineArAccountSaving(false);
           setCreateInlineArAccountError("");
           setCreateInlineArAccountMessage("");
@@ -1613,18 +2349,46 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
             accountOptionsLoading={editAccountsLoading}
             accountOptionsError={editAccountsError}
             onAccountLookupQueryChange={handleEditAccountLookupInput}
+            canUpsertGlAccounts={accountPickerGates.canUpsertGlAccounts}
+            accountUpsertFallbackMessage="Missing permission: gl.account.upsert"
             canInlineCreateArAccount={canInlineCreateArAccountInEditForm}
-            inlineCreateArAccountLabel={editInlineAccountName}
+            inlineCreateArAccountLabel={editInlineArAccountName}
             inlineCreateArAccountSaving={editInlineArAccountSaving}
             onInlineCreateArAccount={handleInlineCreateArAccountForEditForm}
             inlineCreateArAccountError={editInlineArAccountError}
             inlineCreateArAccountMessage={editInlineArAccountMessage}
+            showInlineCreateArAccountPanel={showInlineCreateArAccountPanelInEditForm}
+            inlineCreateArCodeCandidate={editArCodeCandidate}
+            inlineCreateArSearchText={editInlineArAccountName}
+            inlineCreateArParentAccountOptions={editArParentAccountOptions}
+            inlineCreateArParentAccountId={editInlineArParentAccountId}
+            onInlineCreateArParentAccountIdChange={setEditInlineArParentAccountId}
+            inlineCreateArChildCode={editInlineArChildCode}
+            onInlineCreateArChildCodeChange={setEditInlineArChildCode}
+            inlineCreateArChildName={editInlineArChildName}
+            onInlineCreateArChildNameChange={setEditInlineArChildName}
+            inlineCreateArSuggestedNextCode={editArSuggestedNextCode}
+            onInlineCreateArUseTypedCode={() => setEditInlineArChildCode(editArCodeCandidate)}
+            onInlineCreateArUseNextCode={() => setEditInlineArChildCode(editArSuggestedNextCode)}
             canInlineCreateApAccount={canInlineCreateApAccountInEditForm}
-            inlineCreateApAccountLabel={editInlineAccountName}
+            inlineCreateApAccountLabel={editInlineApAccountName}
             inlineCreateApAccountSaving={editInlineApAccountSaving}
             onInlineCreateApAccount={handleInlineCreateApAccountForEditForm}
             inlineCreateApAccountError={editInlineApAccountError}
             inlineCreateApAccountMessage={editInlineApAccountMessage}
+            showInlineCreateApAccountPanel={showInlineCreateApAccountPanelInEditForm}
+            inlineCreateApCodeCandidate={editApCodeCandidate}
+            inlineCreateApSearchText={editInlineApAccountName}
+            inlineCreateApParentAccountOptions={editApParentAccountOptions}
+            inlineCreateApParentAccountId={editInlineApParentAccountId}
+            onInlineCreateApParentAccountIdChange={setEditInlineApParentAccountId}
+            inlineCreateApChildCode={editInlineApChildCode}
+            onInlineCreateApChildCodeChange={setEditInlineApChildCode}
+            inlineCreateApChildName={editInlineApChildName}
+            onInlineCreateApChildNameChange={setEditInlineApChildName}
+            inlineCreateApSuggestedNextCode={editApSuggestedNextCode}
+            onInlineCreateApUseTypedCode={() => setEditInlineApChildCode(editApCodeCandidate)}
+            onInlineCreateApUseNextCode={() => setEditInlineApChildCode(editApSuggestedNextCode)}
             canReadGlAccounts={accountPickerGates.showAccountPickers}
             accountReadFallbackMessage={
               "Missing permission: gl.account.read. AR/AP account selectors are hidden."
@@ -1640,7 +2404,14 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
               setEditInlinePaymentTermSaving(false);
               setEditInlinePaymentTermError("");
               setEditInlinePaymentTermMessage("");
-              setEditAccountLookupQuery("");
+              setEditArAccountLookupQuery("");
+              setEditApAccountLookupQuery("");
+              setEditInlineArParentAccountId("");
+              setEditInlineArChildCode("");
+              setEditInlineArChildName("");
+              setEditInlineApParentAccountId("");
+              setEditInlineApChildCode("");
+              setEditInlineApChildName("");
               setEditInlineArAccountSaving(false);
               setEditInlineArAccountError("");
               setEditInlineArAccountMessage("");

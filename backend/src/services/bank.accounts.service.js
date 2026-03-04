@@ -1,4 +1,5 @@
 import { query, withTransaction } from "../db.js";
+import { autoRemapCariPurposeMappingsForLegalEntity } from "./cari.purpose-mapping-autofix.service.js";
 import {
   assertAccountBelongsToTenant,
   assertCurrencyExists,
@@ -652,6 +653,12 @@ async function createProvisionedChildAccountUnder102({
            AND allow_posting = TRUE`,
         [parentAccountId]
       );
+
+      await autoRemapCariPurposeMappingsForLegalEntity({
+        tenantId,
+        legalEntityId,
+        runQuery,
+      });
 
       return {
         childAccountId,

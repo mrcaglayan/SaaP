@@ -12,7 +12,8 @@ import {
   syncBankConnectorStatements,
   testBankConnectorConnection,
 } from "../../api/bankConnectors.js";
-import { listAccounts } from "../../api/glAdmin.js";
+import { listAccounts, upsertAccount } from "../../api/glAdmin.js";
+import Combobox from "../../components/Combobox.jsx";
 import { listCurrencies, listLegalEntities, listOperatingUnits } from "../../api/orgAdmin.js";
 import { useAuth } from "../../auth/useAuth.js";
 
@@ -38,6 +39,174 @@ function parseDbBoolean(value) {
 function toPositiveInt(value) {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function normalizeAccountCode(value) {
+  return String(value || "")
+    .trim()
+    .toUpperCase();
+}
+
+function getAccountId(row) {
+  return toPositiveInt(row?.id);
+}
+
+function getAccountCode(row) {
+  return normalizeAccountCode(row?.code);
+}
+
+function getAccountName(row) {
+  return String(row?.name || "").trim();
+}
+
+function getAccountType(row) {
+  return normalizeAccountCode(row?.account_type ?? row?.accountType);
+}
+
+function getAccountNormalSide(row) {
+  return normalizeAccountCode(row?.normal_side ?? row?.normalSide);
+}
+
+function getAccountIsActive(row) {
+  return parseDbBoolean(row?.is_active ?? row?.isActive);
+}
+
+function getAccountAllowPosting(row) {
+  return parseDbBoolean(row?.allow_posting ?? row?.allowPosting);
+}
+
+function getAccountParentId(row) {
+  return toPositiveInt(row?.parent_account_id ?? row?.parentAccountId);
+}
+
+function getAccountCoaId(row) {
+  return toPositiveInt(row?.coa_id ?? row?.coaId);
+}
+
+function getAccountLegalEntityId(row) {
+  return toPositiveInt(row?.legal_entity_id ?? row?.legalEntityId);
+}
+
+function formatAccountOptionLabel(row) {
+  const code = getAccountCode(row);
+  const name = getAccountName(row);
+  if (code && name) {
+    return `${code} - ${name}`;
+  }
+  return code || name || String(getAccountId(row) || "-");
+}
+
+function formatAccountOptionDescription(row) {
+  const breadcrumb = String(
+    row?.account_breadcrumb_codes ||
+      row?.account_breadcrumb_names ||
+      row?.account_breadcrumb ||
+      row?.accountBreadcrumbCodes ||
+      row?.accountBreadcrumbNames ||
+      row?.accountBreadcrumb ||
+      ""
+  ).trim();
+  if (breadcrumb) {
+    return breadcrumb;
+  }
+  return [getAccountType(row), getAccountNormalSide(row)].filter(Boolean).join(" | ");
+}
+
+function parseChildCodeSequence(code, parentCode) {
+  const normalizedCode = normalizeAccountCode(code);
+  const normalizedParentCode = normalizeAccountCode(parentCode);
+  if (!normalizedCode || !normalizedParentCode) {
+    return null;
+  }
+
+  let suffix = "";
+  if (normalizedCode.startsWith(`${normalizedParentCode}.`)) {
+    suffix = normalizedCode.slice(normalizedParentCode.length + 1);
+  } else if (normalizedCode.startsWith(`${normalizedParentCode}-`)) {
+    suffix = normalizedCode.slice(normalizedParentCode.length + 1);
+  } else if (normalizedCode.startsWith(normalizedParentCode)) {
+    suffix = normalizedCode.slice(normalizedParentCode.length);
+  } else {
+    return null;
+  }
+
+  if (!/^\d+$/.test(suffix)) {
+    return null;
+  }
+  const value = Number(suffix);
+  if (!Number.isInteger(value) || value <= 0) {
+    return null;
+  }
+  return {
+    value,
+    width: suffix.length,
+  };
+}
+
+function buildNextChildAccountCode(rows, parentAccount) {
+  const parentCode = getAccountCode(parentAccount);
+  const parentAccountId = getAccountId(parentAccount);
+  if (!parentCode || !parentAccountId) {
+    return "";
+  }
+
+  const normalizedRows = Array.isArray(rows) ? rows : [];
+  const existingCodes = new Set(normalizedRows.map((row) => getAccountCode(row)).filter(Boolean));
+  const parsedChildren = normalizedRows
+    .filter((row) => getAccountParentId(row) === parentAccountId)
+    .map((row) => parseChildCodeSequence(getAccountCode(row), parentCode))
+    .filter(Boolean);
+
+  const maxSequence = parsedChildren.reduce(
+    (maxValue, row) => Math.max(maxValue, Number(row?.value || 0)),
+    0
+  );
+  const width = Math.max(
+    2,
+    parsedChildren.reduce((maxWidth, row) => Math.max(maxWidth, Number(row?.width || 0)), 0)
+  );
+
+  let next = Math.max(1, maxSequence + 1);
+  while (next <= 999999) {
+    const candidate = `${parentCode}.${String(next).padStart(width, "0")}`;
+    if (!existingCodes.has(candidate)) {
+      return candidate;
+    }
+    next += 1;
+  }
+  return "";
+}
+
+function deriveSearchCodeCandidate(value) {
+  const normalized = normalizeAccountCode(value);
+  if (!normalized || /\s/.test(normalized)) {
+    return "";
+  }
+  return normalized;
+}
+
+function findBestParentAccount(candidateCode, parentAccountOptions) {
+  if (!candidateCode) {
+    return null;
+  }
+  let bestParent = null;
+  for (const row of parentAccountOptions || []) {
+    const parentCode = getAccountCode(row);
+    if (!parentCode || candidateCode === parentCode) {
+      continue;
+    }
+    const matchesPrefix =
+      candidateCode.startsWith(`${parentCode}.`) ||
+      candidateCode.startsWith(`${parentCode}-`) ||
+      candidateCode.startsWith(parentCode);
+    if (!matchesPrefix) {
+      continue;
+    }
+    if (!bestParent || parentCode.length > getAccountCode(bestParent).length) {
+      bestParent = row;
+    }
+  }
+  return bestParent;
 }
 
 function generateProvisionIdempotencyKey() {
@@ -72,6 +241,7 @@ export default function BankAccountsPage() {
   const canSyncConnectors = hasPermission("bank.connectors.sync");
   const canReadOrgTree = hasPermission("org.tree.read");
   const canReadAccounts = hasPermission("gl.account.read");
+  const canUpsertAccounts = hasPermission("gl.account.upsert");
 
   const [rows, setRows] = useState([]);
   const [connectorRows, setConnectorRows] = useState([]);
@@ -98,6 +268,11 @@ export default function BankAccountsPage() {
   const [connectorError, setConnectorError] = useState("");
   const [connectorMessage, setConnectorMessage] = useState("");
   const [lookupWarning, setLookupWarning] = useState("");
+  const [glAccountLookupQuery, setGlAccountLookupQuery] = useState("");
+  const [inlineChildParentAccountId, setInlineChildParentAccountId] = useState("");
+  const [inlineChildCode, setInlineChildCode] = useState("");
+  const [inlineChildName, setInlineChildName] = useState("");
+  const [inlineChildSaving, setInlineChildSaving] = useState(false);
 
   const selectedLegalEntityId = toPositiveInt(form.legalEntityId);
   const selectedFilterLegalEntityId = toPositiveInt(filters.legalEntityId);
@@ -150,24 +325,125 @@ export default function BankAccountsPage() {
 
   const glAccountOptions = useMemo(() => {
     const filtered = accounts.filter((row) => {
-      if (!parseDbBoolean(row?.is_active) || !parseDbBoolean(row?.allow_posting)) {
+      if (!getAccountIsActive(row) || !getAccountAllowPosting(row)) {
         return false;
       }
       if (String(row?.scope || "").toUpperCase() !== "LEGAL_ENTITY") {
         return false;
       }
-      if (String(row?.account_type || "").toUpperCase() !== "ASSET") {
+      if (getAccountType(row) !== "ASSET") {
         return false;
       }
       if (!selectedLegalEntityId) {
         return true;
       }
-      return toPositiveInt(row?.legal_entity_id) === selectedLegalEntityId;
+      return getAccountLegalEntityId(row) === selectedLegalEntityId;
     });
     return [...filtered].sort((a, b) =>
-      String(a?.code || "").localeCompare(String(b?.code || ""))
+      getAccountCode(a).localeCompare(getAccountCode(b))
     );
   }, [accounts, selectedLegalEntityId]);
+
+  const selectedGlAccountId = toPositiveInt(form.glAccountId);
+  const selectedGlAccountOption = useMemo(
+    () =>
+      glAccountOptions.find((row) => getAccountId(row) === selectedGlAccountId) ||
+      accounts.find((row) => getAccountId(row) === selectedGlAccountId) ||
+      null,
+    [accounts, glAccountOptions, selectedGlAccountId]
+  );
+  const glAccountPickerRows = useMemo(() => {
+    if (!selectedGlAccountOption) {
+      return glAccountOptions;
+    }
+    const selectedId = getAccountId(selectedGlAccountOption);
+    const alreadyInRows = glAccountOptions.some((row) => getAccountId(row) === selectedId);
+    return alreadyInRows ? glAccountOptions : [selectedGlAccountOption, ...glAccountOptions];
+  }, [glAccountOptions, selectedGlAccountOption]);
+  const glAccountLookupOptions = useMemo(
+    () =>
+      glAccountPickerRows.map((row) => ({
+        value: String(getAccountId(row) || ""),
+        label: formatAccountOptionLabel(row),
+        description: formatAccountOptionDescription(row),
+      })),
+    [glAccountPickerRows]
+  );
+  const parentAccountOptions = useMemo(() => {
+    const filtered = accounts.filter((row) => {
+      if (!getAccountIsActive(row)) {
+        return false;
+      }
+      if (getAccountType(row) !== "ASSET") {
+        return false;
+      }
+      if (!selectedLegalEntityId) {
+        return true;
+      }
+      return getAccountLegalEntityId(row) === selectedLegalEntityId;
+    });
+    return [...filtered].sort((a, b) => getAccountCode(a).localeCompare(getAccountCode(b)));
+  }, [accounts, selectedLegalEntityId]);
+  const parentAccountLookupOptions = useMemo(
+    () =>
+      parentAccountOptions.map((row) => ({
+        value: String(getAccountId(row) || ""),
+        label: formatAccountOptionLabel(row),
+        description: formatAccountOptionDescription(row),
+      })),
+    [parentAccountOptions]
+  );
+  const selectedEntityAccountByCode = useMemo(() => {
+    const byCode = new Map();
+    for (const row of accounts) {
+      if (selectedLegalEntityId && getAccountLegalEntityId(row) !== selectedLegalEntityId) {
+        continue;
+      }
+      const code = getAccountCode(row);
+      if (!code || byCode.has(code)) {
+        continue;
+      }
+      byCode.set(code, row);
+    }
+    return byCode;
+  }, [accounts, selectedLegalEntityId]);
+  const glAccountCodeCandidate = useMemo(
+    () => deriveSearchCodeCandidate(glAccountLookupQuery),
+    [glAccountLookupQuery]
+  );
+  const exactCodeMatchAccount = useMemo(() => {
+    if (!glAccountCodeCandidate) {
+      return null;
+    }
+    const row = selectedEntityAccountByCode.get(glAccountCodeCandidate) || null;
+    if (!row) {
+      return null;
+    }
+    if (!getAccountIsActive(row) || !getAccountAllowPosting(row)) {
+      return null;
+    }
+    if (getAccountType(row) !== "ASSET") {
+      return null;
+    }
+    return row;
+  }, [glAccountCodeCandidate, selectedEntityAccountByCode]);
+  const hasTypedSearchText = Boolean(String(glAccountLookupQuery || "").trim());
+  const showInlineChildCreate =
+    !autoProvision102 &&
+    Boolean(selectedLegalEntityId) &&
+    hasTypedSearchText &&
+    !exactCodeMatchAccount;
+  const selectedInlineParentAccount = useMemo(
+    () =>
+      parentAccountOptions.find(
+        (row) => getAccountId(row) === toPositiveInt(inlineChildParentAccountId)
+      ) || null,
+    [parentAccountOptions, inlineChildParentAccountId]
+  );
+  const suggestedNextChildCode = useMemo(
+    () => buildNextChildAccountCode(accounts, selectedInlineParentAccount),
+    [accounts, selectedInlineParentAccount]
+  );
 
   useEffect(() => {
     if (form.id) {
@@ -192,6 +468,70 @@ export default function BankAccountsPage() {
       }));
     }
   }, [currencyOptions, form.currencyCode, form.id]);
+
+  useEffect(() => {
+    setGlAccountLookupQuery("");
+    setInlineChildParentAccountId("");
+    setInlineChildCode("");
+    setInlineChildName("");
+  }, [form.legalEntityId]);
+
+  useEffect(() => {
+    if (!autoProvision102) {
+      return;
+    }
+    setGlAccountLookupQuery("");
+    setInlineChildParentAccountId("");
+    setInlineChildCode("");
+    setInlineChildName("");
+  }, [autoProvision102]);
+
+  useEffect(() => {
+    if (!showInlineChildCreate) {
+      return;
+    }
+    setInlineChildCode((prev) => prev || glAccountCodeCandidate);
+    setInlineChildName(
+      (prev) =>
+        prev || String(glAccountLookupQuery || "").trim() || String(form.name || "").trim()
+    );
+  }, [showInlineChildCreate, glAccountCodeCandidate, glAccountLookupQuery, form.name]);
+  useEffect(() => {
+    if (!showInlineChildCreate || !suggestedNextChildCode) {
+      return;
+    }
+    setInlineChildCode((prev) => {
+      const normalizedPrev = normalizeAccountCode(prev);
+      const normalizedCandidate = normalizeAccountCode(glAccountCodeCandidate);
+      if (!normalizedPrev || normalizedPrev === normalizedCandidate) {
+        return suggestedNextChildCode;
+      }
+      return prev;
+    });
+  }, [showInlineChildCreate, suggestedNextChildCode, glAccountCodeCandidate]);
+
+  useEffect(() => {
+    if (!showInlineChildCreate || toPositiveInt(inlineChildParentAccountId)) {
+      return;
+    }
+    const candidateCode = normalizeAccountCode(inlineChildCode || glAccountCodeCandidate);
+    const bestParent = candidateCode
+      ? findBestParentAccount(candidateCode, parentAccountOptions) ||
+        parentAccountOptions.find((row) => getAccountCode(row) === "102") ||
+        null
+      : parentAccountOptions.find((row) => getAccountCode(row) === "102") ||
+        parentAccountOptions[0] ||
+        null;
+    if (getAccountId(bestParent)) {
+      setInlineChildParentAccountId(String(getAccountId(bestParent)));
+    }
+  }, [
+    showInlineChildCreate,
+    inlineChildParentAccountId,
+    inlineChildCode,
+    glAccountCodeCandidate,
+    parentAccountOptions,
+  ]);
 
   async function loadRows(nextFilters = filters) {
     if (!canRead) {
@@ -301,6 +641,10 @@ export default function BankAccountsPage() {
     }));
     setAutoProvision102(false);
     setProvisionGlAccountName("");
+    setGlAccountLookupQuery("");
+    setInlineChildParentAccountId("");
+    setInlineChildCode("");
+    setInlineChildName("");
   }
 
   function startEdit(row) {
@@ -309,6 +653,10 @@ export default function BankAccountsPage() {
     setForm(mapRowToForm(row));
     setAutoProvision102(false);
     setProvisionGlAccountName("");
+    setGlAccountLookupQuery("");
+    setInlineChildParentAccountId("");
+    setInlineChildCode("");
+    setInlineChildName("");
   }
 
   function buildCommonPayloadFromForm() {
@@ -350,6 +698,104 @@ export default function BankAccountsPage() {
       ...base,
       glAccountName: glAccountName || undefined,
     };
+  }
+
+  async function handleCreateInlineChildGlAccount() {
+    if (!canUpsertAccounts) {
+      setError("Missing permission: gl.account.upsert");
+      return;
+    }
+    if (!selectedLegalEntityId) {
+      setError("legalEntityId is required");
+      return;
+    }
+
+    const parentAccountId = toPositiveInt(inlineChildParentAccountId);
+    const parentAccount =
+      parentAccountOptions.find((row) => getAccountId(row) === parentAccountId) || null;
+    if (!parentAccountId || !parentAccount) {
+      setError("Parent account is required");
+      return;
+    }
+
+    const childCode = normalizeAccountCode(inlineChildCode || glAccountCodeCandidate);
+    const childName = String(inlineChildName || "").trim();
+    if (!childCode) {
+      setError("Child account code is required");
+      return;
+    }
+    if (!childName) {
+      setError("Child account name is required");
+      return;
+    }
+
+    const parentCode = getAccountCode(parentAccount);
+    if (parentCode && childCode === parentCode) {
+      setError("Child account code must differ from parent account code");
+      return;
+    }
+
+    const existingAccount = selectedEntityAccountByCode.get(childCode) || null;
+    const existingAccountId = getAccountId(existingAccount);
+    if (existingAccountId && getAccountType(existingAccount) === "ASSET") {
+      setForm((prev) => ({ ...prev, glAccountId: String(existingAccountId) }));
+      setGlAccountLookupQuery("");
+      setInlineChildParentAccountId("");
+      setInlineChildCode("");
+      setInlineChildName("");
+      setError("");
+      setMessage(`Existing account selected: ${childCode}`);
+      return;
+    }
+
+    const coaId = getAccountCoaId(parentAccount);
+    if (!coaId) {
+      setError("Selected parent account has no coaId");
+      return;
+    }
+    const normalSide = getAccountNormalSide(parentAccount) || "DEBIT";
+
+    setInlineChildSaving(true);
+    setError("");
+    setMessage("");
+    try {
+      const response = await upsertAccount({
+        coaId,
+        code: childCode,
+        name: childName,
+        accountType: "ASSET",
+        normalSide,
+        allowPosting: true,
+        parentAccountId,
+      });
+      const responseId = toPositiveInt(response?.id ?? response?.row?.id);
+
+      const accountsRes = await listAccounts({ includeInactive: true });
+      const refreshedRows = accountsRes?.rows || [];
+      setAccounts(refreshedRows);
+
+      const resolvedRow =
+        refreshedRows.find(
+          (row) =>
+            getAccountCode(row) === childCode &&
+            getAccountType(row) === "ASSET" &&
+            (selectedLegalEntityId ? getAccountLegalEntityId(row) === selectedLegalEntityId : true)
+        ) || null;
+      const resolvedId = responseId || getAccountId(resolvedRow);
+      if (resolvedId) {
+        setForm((prev) => ({ ...prev, glAccountId: String(resolvedId) }));
+      }
+
+      setGlAccountLookupQuery("");
+      setInlineChildParentAccountId("");
+      setInlineChildCode("");
+      setInlineChildName("");
+      setMessage(`Child account created: ${childCode} (parent ${parentCode || "-"})`);
+    } catch (err) {
+      setError(err?.response?.data?.message || err?.message || "Child account create failed");
+    } finally {
+      setInlineChildSaving(false);
+    }
   }
 
   async function handleSubmit(event) {
@@ -665,22 +1111,127 @@ export default function BankAccountsPage() {
 
             <div>
               <label className="mb-1 block text-xs font-medium text-slate-700">GL Account</label>
-              <select
-                value={form.glAccountId}
-                onChange={(event) =>
-                  setForm((prev) => ({ ...prev, glAccountId: event.target.value }))
-                }
-                className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
-                disabled={!canWrite || saving || !canReadAccounts || (!form.id && autoProvision102)}
-                required={form.id || !autoProvision102}
-              >
-                <option value="">Secin</option>
-                {glAccountOptions.map((row) => (
-                  <option key={row.id} value={row.id}>
-                    {row.code} - {row.name}
-                  </option>
-                ))}
-              </select>
+              {canReadAccounts ? (
+                <div className="space-y-2">
+                  <Combobox
+                    value={form.glAccountId || null}
+                    options={glAccountLookupOptions}
+                    disabled={
+                      !canWrite ||
+                      saving ||
+                      !selectedLegalEntityId ||
+                      (!form.id && autoProvision102)
+                    }
+                    placeholder={
+                      !selectedLegalEntityId
+                        ? "Select legal entity first"
+                        : !form.id && autoProvision102
+                          ? "Auto-provisioning enabled (manual select disabled)"
+                          : "Search GL account code/name"
+                    }
+                    noOptionsText="No GL accounts found."
+                    onInputChange={(nextValue, meta) => {
+                      const reason = String(meta?.reason || "").trim().toLowerCase();
+                      if (reason === "input" || reason === "clear") {
+                        setGlAccountLookupQuery(nextValue);
+                        setInlineChildParentAccountId("");
+                        setInlineChildCode("");
+                        setInlineChildName(String(nextValue || "").trim());
+                      }
+                    }}
+                    onChange={(nextValue) => {
+                      setForm((prev) => ({
+                        ...prev,
+                        glAccountId: nextValue ? String(nextValue) : "",
+                      }));
+                      setGlAccountLookupQuery("");
+                      setInlineChildParentAccountId("");
+                      setInlineChildCode("");
+                      setInlineChildName("");
+                    }}
+                  />
+                  {showInlineChildCreate ? (
+                    <div className="space-y-2 rounded-md border border-cyan-200 bg-cyan-50 p-2">
+                      <p className="text-xs text-cyan-800">
+                        No exact account found for "
+                        {String(glAccountCodeCandidate || glAccountLookupQuery || "").trim()}".
+                        Create a child account below.
+                      </p>
+                      <Combobox
+                        value={inlineChildParentAccountId || null}
+                        options={parentAccountLookupOptions}
+                        disabled={saving || inlineChildSaving}
+                        placeholder="Select parent account"
+                        noOptionsText="No parent accounts found."
+                        onChange={(nextValue) =>
+                          setInlineChildParentAccountId(nextValue ? String(nextValue) : "")
+                        }
+                      />
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        <input
+                          value={inlineChildCode}
+                          onChange={(event) =>
+                            setInlineChildCode(normalizeAccountCode(event.target.value))
+                          }
+                          className="rounded border border-cyan-300 bg-white px-2 py-1.5 text-xs"
+                          placeholder="Child account code"
+                          maxLength={60}
+                        />
+                        <input
+                          value={inlineChildName}
+                          onChange={(event) => setInlineChildName(event.target.value)}
+                          className="rounded border border-cyan-300 bg-white px-2 py-1.5 text-xs"
+                          placeholder="New child account name"
+                          maxLength={255}
+                        />
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setInlineChildCode(glAccountCodeCandidate)}
+                          disabled={!glAccountCodeCandidate}
+                          className="rounded border border-cyan-300 bg-white px-2 py-1 text-[11px] font-semibold text-cyan-800 hover:bg-cyan-100"
+                        >
+                          Use searched code
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setInlineChildCode(suggestedNextChildCode)}
+                          disabled={!suggestedNextChildCode || !selectedInlineParentAccount}
+                          className="rounded border border-cyan-300 bg-white px-2 py-1 text-[11px] font-semibold text-cyan-800 hover:bg-cyan-100 disabled:opacity-60"
+                        >
+                          Use next child code
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleCreateInlineChildGlAccount}
+                          disabled={inlineChildSaving || saving || !canUpsertAccounts}
+                          className="rounded bg-cyan-700 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-cyan-800 disabled:opacity-60"
+                        >
+                          {inlineChildSaving ? "Creating child..." : "Create child account"}
+                        </button>
+                      </div>
+                      {!canUpsertAccounts ? (
+                        <p className="text-[11px] text-amber-700">
+                          Missing permission: gl.account.upsert
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
+              ) : (
+                <input
+                  type="number"
+                  min="1"
+                  value={form.glAccountId}
+                  onChange={(event) =>
+                    setForm((prev) => ({ ...prev, glAccountId: event.target.value }))
+                  }
+                  className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                  disabled={!canWrite || saving || (!form.id && autoProvision102)}
+                  required={form.id || !autoProvision102}
+                />
+              )}
               <p className="mt-1 text-xs text-slate-500">
                 {!form.id && autoProvision102
                   ? "GL account is generated automatically under control account 102."
