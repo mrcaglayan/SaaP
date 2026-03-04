@@ -110,12 +110,6 @@ export const sidebarItems = [
     icon: "vault",
     items: [
       {
-        label: "Kasa Oturumlari",
-        to: "/app/kasa-oturumlari",
-        requiredPermissions: ["cash.register.read"],
-        implemented: true,
-      },
-      {
         label: "Tediye",
         to: "/app/tediye-islemleri",
         requiredPermissions: ["cash.txn.read"],
@@ -125,6 +119,12 @@ export const sidebarItems = [
         label: "Tahsilat",
         to: "/app/tahsilat-islemleri",
         requiredPermissions: ["cash.txn.read"],
+        implemented: true,
+      },
+      {
+        label: "Kasa Oturumlari",
+        to: "/app/kasa-oturumlari",
+        requiredPermissions: ["cash.register.read"],
         implemented: true,
       },
       {

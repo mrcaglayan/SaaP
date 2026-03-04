@@ -221,6 +221,7 @@ export function mapDetailToCounterpartyForm(row, fallbackRole = "CUSTOMER") {
 export function validateCounterpartyForm(form, { mode = "create" } = {}) {
   const fieldErrors = {};
   const globalErrors = [];
+  const createMode = mode === "create";
 
   if (!toPositiveInt(form.legalEntityId)) {
     fieldErrors.legalEntityId = "Legal entity is required.";
@@ -245,18 +246,26 @@ export function validateCounterpartyForm(form, { mode = "create" } = {}) {
   }
 
   const arAccountId = toTrimmed(form.arAccountId);
-  if (arAccountId && !toPositiveInt(arAccountId)) {
+  const parsedArAccountId = toPositiveInt(arAccountId);
+  if (arAccountId && !parsedArAccountId) {
     fieldErrors.arAccountId = "AR account must be selected from available options.";
   }
   const apAccountId = toTrimmed(form.apAccountId);
-  if (apAccountId && !toPositiveInt(apAccountId)) {
+  const parsedApAccountId = toPositiveInt(apAccountId);
+  if (apAccountId && !parsedApAccountId) {
     fieldErrors.apAccountId = "AP account must be selected from available options.";
   }
-  if (!form.isCustomer && toPositiveInt(form.arAccountId)) {
+  if (!form.isCustomer && parsedArAccountId) {
     fieldErrors.arAccountId = "AR account requires Customer role.";
   }
-  if (!form.isVendor && toPositiveInt(form.apAccountId)) {
+  if (!form.isVendor && parsedApAccountId) {
     fieldErrors.apAccountId = "AP account requires Vendor role.";
+  }
+  if (createMode && form.isCustomer && !parsedArAccountId) {
+    fieldErrors.arAccountId = "AR account is required when Customer role is selected.";
+  }
+  if (createMode && form.isVendor && !parsedApAccountId) {
+    fieldErrors.apAccountId = "AP account is required when Vendor role is selected.";
   }
 
   const currency = toTrimmed(form.defaultCurrencyCode).toUpperCase();
@@ -298,7 +307,7 @@ export function validateCounterpartyForm(form, { mode = "create" } = {}) {
   }
 
   const hasErrors = Object.keys(fieldErrors).length > 0 || globalErrors.length > 0;
-  if (mode !== "create" && mode !== "edit") {
+  if (!createMode && mode !== "edit") {
     globalErrors.push("Invalid form mode.");
   }
 

@@ -17,6 +17,7 @@ import {
 } from "../../api/cariCounterparty.js";
 import { listLegalEntities } from "../../api/orgAdmin.js";
 import { getCariOpenItemsReport } from "../../api/cariReports.js";
+import { getCariCounterpartyStatementReport } from "../../api/cariReports.js";
 import { extractCariReplayAndRisks } from "../../api/cariCommon.js";
 import Combobox from "../../components/Combobox.jsx";
 import { useAuth } from "../../auth/useAuth.js";
@@ -65,6 +66,29 @@ function toPositiveInt(value) {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
+function normalizeCurrencyCode(value) {
+  return String(value || "")
+    .trim()
+    .toUpperCase()
+    .slice(0, 3);
+}
+
+function resolveLegalEntityCurrencyCode(legalEntities, legalEntityId) {
+  const resolvedLegalEntityId = toPositiveInt(legalEntityId);
+  if (!resolvedLegalEntityId) {
+    return "";
+  }
+  const legalEntityRows = Array.isArray(legalEntities) ? legalEntities : [];
+  const matchedLegalEntity =
+    legalEntityRows.find((row) => toPositiveInt(row?.id) === resolvedLegalEntityId) || null;
+  if (!matchedLegalEntity) {
+    return "";
+  }
+  return normalizeCurrencyCode(
+    matchedLegalEntity?.functional_currency_code || matchedLegalEntity?.functionalCurrencyCode
+  );
+}
+
 function resolveCounterpartyRoleFromDirection(direction) {
   const normalized = toUpper(direction);
   if (normalized === "AR") return "CUSTOMER";
@@ -81,6 +105,32 @@ function resolveCounterpartySettlementAccountId(counterparty, direction) {
     return toPositiveInt(counterparty?.arAccountId || counterparty?.ar_account_id);
   }
   return null;
+}
+
+function resolveCounterpartySettlementAccountMeta(counterparty, direction) {
+  const normalizedDirection = toUpper(direction);
+  if (normalizedDirection === "AP") {
+    return {
+      accountId: toPositiveInt(counterparty?.apAccountId || counterparty?.ap_account_id),
+      accountCode: String(counterparty?.apAccountCode || counterparty?.ap_account_code || "").trim(),
+      accountName: String(counterparty?.apAccountName || counterparty?.ap_account_name || "").trim(),
+      accountRoleLabel: "AP",
+    };
+  }
+  if (normalizedDirection === "AR") {
+    return {
+      accountId: toPositiveInt(counterparty?.arAccountId || counterparty?.ar_account_id),
+      accountCode: String(counterparty?.arAccountCode || counterparty?.ar_account_code || "").trim(),
+      accountName: String(counterparty?.arAccountName || counterparty?.ar_account_name || "").trim(),
+      accountRoleLabel: "AR",
+    };
+  }
+  return {
+    accountId: null,
+    accountCode: "",
+    accountName: "",
+    accountRoleLabel: "",
+  };
 }
 
 function mapCounterpartyLookupOption(row) {
@@ -177,6 +227,12 @@ function formatAmount(value) {
     minimumFractionDigits: 2,
     maximumFractionDigits: 6,
   });
+}
+
+function normalizeSearch(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase();
 }
 
 function parseManualAllocations(openItems, draftMap) {
@@ -297,6 +353,14 @@ function buildReverseDefaultForm() {
   };
 }
 
+function buildReverseLookupDefaultFilters() {
+  return {
+    legalEntityId: "",
+    counterpartyId: "",
+    asOfDate: todayIsoDate(),
+  };
+}
+
 function buildPreviewDefaultFilters() {
   return {
     legalEntityId: "",
@@ -349,6 +413,7 @@ export default function CariSettlementsPage() {
   const [previewError, setPreviewError] = useState("");
 
   const [applyForm, setApplyForm] = useState(() => buildApplyDefaultForm());
+  const [applyCurrencyManuallyEdited, setApplyCurrencyManuallyEdited] = useState(false);
   const [manualAllocationDraft, setManualAllocationDraft] = useState({});
   const [applySubmitting, setApplySubmitting] = useState(false);
   const [applyError, setApplyError] = useState("");
@@ -382,6 +447,13 @@ export default function CariSettlementsPage() {
   const [linkedCashAccountQuery, setLinkedCashAccountQuery] = useState("");
 
   const [reverseForm, setReverseForm] = useState(() => buildReverseDefaultForm());
+  const [reverseLookupFilters, setReverseLookupFilters] = useState(() =>
+    buildReverseLookupDefaultFilters()
+  );
+  const [reverseSettlementRows, setReverseSettlementRows] = useState([]);
+  const [reverseSettlementLoading, setReverseSettlementLoading] = useState(false);
+  const [reverseSettlementLookupError, setReverseSettlementLookupError] = useState("");
+  const [reverseSettlementLookupQuery, setReverseSettlementLookupQuery] = useState("");
   const [reverseSubmitting, setReverseSubmitting] = useState(false);
   const [reverseError, setReverseError] = useState("");
   const [reverseMessage, setReverseMessage] = useState("");
@@ -394,6 +466,8 @@ export default function CariSettlementsPage() {
   const [bankAttachResult, setBankAttachResult] = useState(null);
 
   const [bankApplyForm, setBankApplyForm] = useState(() => buildBankApplyDefaultForm());
+  const [bankApplyCurrencyManuallyEdited, setBankApplyCurrencyManuallyEdited] =
+    useState(false);
   const [bankApplySubmitting, setBankApplySubmitting] = useState(false);
   const [bankApplyError, setBankApplyError] = useState("");
   const [bankApplyMessage, setBankApplyMessage] = useState("");
@@ -465,15 +539,45 @@ export default function CariSettlementsPage() {
     const selectedAccountId = String(linkedCashForm.counterAccountId || "").trim();
     const rows = Array.isArray(linkedCashAccountOptions) ? [...linkedCashAccountOptions] : [];
     if (selectedAccountId && !rows.some((row) => String(row?.id || "") === selectedAccountId)) {
+      const selectedCounterpartyId = toPositiveInt(applyForm.counterpartyId);
+      const selectedCounterpartyRow =
+        selectedCounterpartyId
+          ? (counterpartyOptions || []).find(
+              (row) => toPositiveInt(row?.id) === selectedCounterpartyId
+            ) || null
+          : null;
+      const mappedAccountMeta = resolveCounterpartySettlementAccountMeta(
+        selectedCounterpartyRow,
+        applyForm.direction
+      );
+      const selectedAccountNumericId = toPositiveInt(selectedAccountId);
+      const isCounterpartyMappedAccount =
+        Boolean(selectedAccountNumericId) &&
+        Boolean(mappedAccountMeta.accountId) &&
+        selectedAccountNumericId === mappedAccountMeta.accountId;
+      const fallbackCode = String(mappedAccountMeta.accountCode || "").trim();
+      const fallbackName = String(mappedAccountMeta.accountName || "").trim();
       rows.unshift({
         id: selectedAccountId,
-        code: `#${selectedAccountId}`,
-        name: `Selected account #${selectedAccountId}`,
-        account_breadcrumb: "",
+        code: fallbackCode || `ID ${selectedAccountId}`,
+        name:
+          fallbackName ||
+          (isCounterpartyMappedAccount
+            ? `Counterparty ${mappedAccountMeta.accountRoleLabel} account (ID ${selectedAccountId})`
+            : `Selected account ID ${selectedAccountId}`),
+        account_breadcrumb: isCounterpartyMappedAccount
+          ? `Auto-selected from counterparty ${mappedAccountMeta.accountRoleLabel} mapping`
+          : "Account details unavailable in current lookup results",
       });
     }
     return rows.map(mapGlAccountLookupOption).filter((row) => row.value);
-  }, [linkedCashAccountOptions, linkedCashForm.counterAccountId]);
+  }, [
+    applyForm.counterpartyId,
+    applyForm.direction,
+    counterpartyOptions,
+    linkedCashAccountOptions,
+    linkedCashForm.counterAccountId,
+  ]);
   const counterpartyLookupOptions = useMemo(
     () => (counterpartyOptions || []).map(mapCounterpartyLookupOption).filter((row) => row.value),
     [counterpartyOptions]
@@ -491,6 +595,40 @@ export default function CariSettlementsPage() {
     () => resolveCounterpartySettlementAccountId(selectedApplyCounterparty, applyForm.direction),
     [selectedApplyCounterparty, applyForm.direction]
   );
+  const linkedCashCounterAccountInLookup = useMemo(() => {
+    const counterAccountId = toPositiveInt(linkedCashForm.counterAccountId);
+    if (!counterAccountId) {
+      return true;
+    }
+    return (linkedCashAccountOptions || []).some(
+      (row) => toPositiveInt(row?.id) === counterAccountId
+    );
+  }, [linkedCashAccountOptions, linkedCashForm.counterAccountId]);
+  const linkedCashCounterAccountResolutionHint = useMemo(() => {
+    const counterAccountId = toPositiveInt(linkedCashForm.counterAccountId);
+    if (!counterAccountId || linkedCashCounterAccountInLookup) {
+      return "";
+    }
+    const mappedMeta = resolveCounterpartySettlementAccountMeta(
+      selectedApplyCounterparty,
+      applyForm.direction
+    );
+    const mappedCode = String(mappedMeta.accountCode || "").trim();
+    const mappedName = String(mappedMeta.accountName || "").trim();
+    if (mappedMeta.accountId && mappedMeta.accountId === counterAccountId) {
+      const mappedLabel = [mappedCode, mappedName].filter(Boolean).join(" - ");
+      if (mappedLabel) {
+        return `Using counterparty ${mappedMeta.accountRoleLabel} mapped account (${mappedLabel}).`;
+      }
+      return `Using counterparty ${mappedMeta.accountRoleLabel} mapped account ID ${counterAccountId}.`;
+    }
+    return `Using selected account ID ${counterAccountId}. Details are not in current lookup results.`;
+  }, [
+    applyForm.direction,
+    linkedCashCounterAccountInLookup,
+    linkedCashForm.counterAccountId,
+    selectedApplyCounterparty,
+  ]);
   const linkedCashCounterpartyAccountWarning = useMemo(() => {
     if (
       !linkedCashForm.createLinkedCashTransaction ||
@@ -527,6 +665,60 @@ export default function CariSettlementsPage() {
         .filter((row) => row.value),
     [bankApplyCounterpartyOptions]
   );
+  const reverseSettlementLookupOptions = useMemo(() => {
+    const query = normalizeSearch(reverseSettlementLookupQuery);
+    const rows = Array.isArray(reverseSettlementRows) ? reverseSettlementRows : [];
+    const filteredRows = rows.filter((row) => {
+      const alreadyReversal = Boolean(toPositiveInt(row?.reversalOfSettlementBatchId));
+      const alreadyReversedBy = Boolean(toPositiveInt(row?.reversedBySettlementBatchId));
+      if (alreadyReversal || alreadyReversedBy) {
+        return false;
+      }
+      if (!query) {
+        return true;
+      }
+      const haystack = [
+        row?.settlementNo,
+        row?.settlementBatchId,
+        row?.counterpartyCodeCurrent,
+        row?.counterpartyNameCurrent,
+        row?.settlementDate,
+        row?.statusCurrent,
+      ]
+        .map((part) => normalizeSearch(part))
+        .join(" ");
+      return haystack.includes(query);
+    });
+
+    return filteredRows.map((row) => {
+      const settlementLabel = String(row?.settlementNo || `#${row?.settlementBatchId || "-"}`);
+      const counterpartyLabel = String(
+        row?.counterpartyCodeCurrent ||
+          row?.counterpartyNameCurrent ||
+          row?.counterpartyId ||
+          "-"
+      ).trim();
+      const settlementDate = String(row?.settlementDate || "-").trim();
+      const totalAllocated = formatAmount(row?.totalAllocatedTxn);
+      const currencyCode = toUpper(row?.currencyCode || "");
+      return {
+        value: String(row?.settlementBatchId || ""),
+        label: `${settlementLabel} | ${settlementDate} | ${counterpartyLabel}`,
+        description: `ID:${row?.settlementBatchId || "-"} | ${row?.statusCurrent || "-"} | ${totalAllocated}${currencyCode ? ` ${currencyCode}` : ""}`,
+      };
+    });
+  }, [reverseSettlementLookupQuery, reverseSettlementRows]);
+  const selectedReverseSettlement = useMemo(() => {
+    const settlementBatchId = toPositiveInt(reverseForm.settlementBatchId);
+    if (!settlementBatchId) {
+      return null;
+    }
+    return (
+      (reverseSettlementRows || []).find(
+        (row) => toPositiveInt(row?.settlementBatchId) === settlementBatchId
+      ) || null
+    );
+  }, [reverseForm.settlementBatchId, reverseSettlementRows]);
   const applyInlineCounterpartyName = normalizeLookupQuery(applyCounterpartyLookupQuery);
   const bankApplyInlineCounterpartyName = normalizeLookupQuery(
     bankApplyCounterpartyLookupQuery
@@ -667,6 +859,63 @@ export default function CariSettlementsPage() {
       active = false;
     };
   }, [canReadCashRegisters, canReadCashSessions, canReadOrg]);
+
+  useEffect(() => {
+    if (applyCurrencyManuallyEdited) {
+      return;
+    }
+    const derivedCurrencyCode = resolveLegalEntityCurrencyCode(
+      legalEntities,
+      applyForm.legalEntityId
+    );
+    if (!derivedCurrencyCode || toUpper(applyForm.currencyCode) === derivedCurrencyCode) {
+      return;
+    }
+    setApplyForm((prev) => {
+      if (toUpper(prev.currencyCode) === derivedCurrencyCode) {
+        return prev;
+      }
+      return {
+        ...prev,
+        currencyCode: derivedCurrencyCode,
+      };
+    });
+  }, [
+    applyCurrencyManuallyEdited,
+    applyForm.currencyCode,
+    applyForm.legalEntityId,
+    legalEntities,
+  ]);
+
+  useEffect(() => {
+    if (bankApplyCurrencyManuallyEdited) {
+      return;
+    }
+    const derivedCurrencyCode = resolveLegalEntityCurrencyCode(
+      legalEntities,
+      bankApplyForm.legalEntityId
+    );
+    if (
+      !derivedCurrencyCode ||
+      toUpper(bankApplyForm.currencyCode) === derivedCurrencyCode
+    ) {
+      return;
+    }
+    setBankApplyForm((prev) => {
+      if (toUpper(prev.currencyCode) === derivedCurrencyCode) {
+        return prev;
+      }
+      return {
+        ...prev,
+        currencyCode: derivedCurrencyCode,
+      };
+    });
+  }, [
+    bankApplyCurrencyManuallyEdited,
+    bankApplyForm.currencyCode,
+    bankApplyForm.legalEntityId,
+    legalEntities,
+  ]);
 
   useEffect(() => {
     const legalEntityId = toPositiveInt(applyForm.legalEntityId);
@@ -838,6 +1087,83 @@ export default function CariSettlementsPage() {
   }, [bankApplyForm.direction, bankApplyForm.legalEntityId, canReadCards]);
 
   useEffect(() => {
+    if (!canReverse || !canReadReports) {
+      setReverseSettlementRows([]);
+      setReverseSettlementLoading(false);
+      setReverseSettlementLookupError("");
+      return;
+    }
+
+    const legalEntityId = toPositiveInt(reverseLookupFilters.legalEntityId);
+    if (!legalEntityId) {
+      setReverseSettlementRows([]);
+      setReverseSettlementLoading(false);
+      setReverseSettlementLookupError("");
+      return;
+    }
+
+    let active = true;
+    async function loadReverseSettlementRows() {
+      setReverseSettlementLoading(true);
+      setReverseSettlementLookupError("");
+      try {
+        const response = await getCariCounterpartyStatementReport({
+          asOfDate:
+            String(reverseLookupFilters.asOfDate || "").trim() || todayIsoDate(),
+          legalEntityId,
+          counterpartyId:
+            toPositiveInt(reverseLookupFilters.counterpartyId) || undefined,
+          status: "ALL",
+          includeDetails: true,
+          limit: 1000,
+          offset: 0,
+        });
+        if (!active) {
+          return;
+        }
+        const rows = Array.isArray(response?.settlements?.rows)
+          ? response.settlements.rows
+          : [];
+        rows.sort((left, right) => {
+          const leftDate = String(left?.settlementDate || "");
+          const rightDate = String(right?.settlementDate || "");
+          if (leftDate !== rightDate) {
+            return rightDate.localeCompare(leftDate);
+          }
+          return (
+            Number(right?.settlementBatchId || 0) -
+            Number(left?.settlementBatchId || 0)
+          );
+        });
+        setReverseSettlementRows(rows);
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+        setReverseSettlementRows([]);
+        setReverseSettlementLookupError(
+          normalizeUiError(error, "Failed to load settlement lookup rows.")
+        );
+      } finally {
+        if (active) {
+          setReverseSettlementLoading(false);
+        }
+      }
+    }
+
+    loadReverseSettlementRows();
+    return () => {
+      active = false;
+    };
+  }, [
+    canReverse,
+    canReadReports,
+    reverseLookupFilters.asOfDate,
+    reverseLookupFilters.counterpartyId,
+    reverseLookupFilters.legalEntityId,
+  ]);
+
+  useEffect(() => {
     if (!linkedCashForm.createLinkedCashTransaction) {
       return;
     }
@@ -903,7 +1229,20 @@ export default function CariSettlementsPage() {
   }, [linkedCashForm.registerId, linkedRegisterOptions]);
 
   function updateApplyForm(field, value) {
-    setApplyForm((prev) => ({ ...prev, [field]: value }));
+    if (field === "currencyCode") {
+      setApplyCurrencyManuallyEdited(true);
+    }
+    if (field === "legalEntityId") {
+      const derivedCurrencyCode = resolveLegalEntityCurrencyCode(legalEntities, value);
+      setApplyCurrencyManuallyEdited(false);
+      setApplyForm((prev) => ({
+        ...prev,
+        [field]: value,
+        ...(derivedCurrencyCode ? { currencyCode: derivedCurrencyCode } : {}),
+      }));
+    } else {
+      setApplyForm((prev) => ({ ...prev, [field]: value }));
+    }
     if (field === "legalEntityId" || field === "counterpartyId" || field === "direction") {
       setPreviewFilters((prev) => ({ ...prev, [field]: value }));
     }
@@ -913,6 +1252,23 @@ export default function CariSettlementsPage() {
         bookDate: String(value || "").trim() || prev.bookDate,
       }));
     }
+  }
+
+  function updateBankApplyForm(field, value) {
+    if (field === "currencyCode") {
+      setBankApplyCurrencyManuallyEdited(true);
+    }
+    if (field === "legalEntityId") {
+      const derivedCurrencyCode = resolveLegalEntityCurrencyCode(legalEntities, value);
+      setBankApplyCurrencyManuallyEdited(false);
+      setBankApplyForm((prev) => ({
+        ...prev,
+        [field]: value,
+        ...(derivedCurrencyCode ? { currencyCode: derivedCurrencyCode } : {}),
+      }));
+      return;
+    }
+    setBankApplyForm((prev) => ({ ...prev, [field]: value }));
   }
 
   function validateLinkedCashFormBeforeApply(formSnapshot) {
@@ -1873,6 +2229,11 @@ export default function CariSettlementsPage() {
                     {linkedCashAccountError ? (
                       <p className="mt-1 text-xs text-amber-700">{linkedCashAccountError}</p>
                     ) : null}
+                    {linkedCashCounterAccountResolutionHint ? (
+                      <p className="mt-1 text-xs text-slate-500">
+                        {linkedCashCounterAccountResolutionHint}
+                      </p>
+                    ) : null}
                     {linkedCashCounterpartyAccountWarning ? (
                       <p className="mt-1 text-xs text-amber-700">
                         {linkedCashCounterpartyAccountWarning}
@@ -1973,6 +2334,7 @@ export default function CariSettlementsPage() {
               type="button"
               className="rounded-md border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700"
               onClick={() => {
+                setApplyCurrencyManuallyEdited(false);
                 setApplyForm(buildApplyDefaultForm());
                 setManualAllocationDraft({});
                 setApplyError("");
@@ -2141,7 +2503,173 @@ export default function CariSettlementsPage() {
             {reverseMessage}
           </div>
         ) : null}
-        <form className="mt-4 grid gap-3 md:grid-cols-3" onSubmit={onReverse}>
+        <form className="mt-4 grid gap-3 md:grid-cols-4" onSubmit={onReverse}>
+          <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+            lookup legalEntityId
+            {legalEntities.length > 0 ? (
+              <select
+                className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                value={reverseLookupFilters.legalEntityId}
+                onChange={(event) => {
+                  const nextValue = event.target.value;
+                  setReverseLookupFilters((prev) => ({
+                    ...prev,
+                    legalEntityId: nextValue,
+                  }));
+                  setReverseSettlementLookupQuery("");
+                  setReverseForm((prev) => ({
+                    ...prev,
+                    settlementBatchId: "",
+                  }));
+                }}
+                disabled={!canReverse || reverseSubmitting}
+              >
+                <option value="">Select legal entity</option>
+                {legalEntities.map((row) => (
+                  <option key={`reverse-lookup-le-${row.id}`} value={row.id}>
+                    {`${row.code || row.id} - ${row.name || "-"}`}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                type="number"
+                min="1"
+                className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                value={reverseLookupFilters.legalEntityId}
+                onChange={(event) => {
+                  const nextValue = event.target.value;
+                  setReverseLookupFilters((prev) => ({
+                    ...prev,
+                    legalEntityId: nextValue,
+                  }));
+                  setReverseSettlementLookupQuery("");
+                  setReverseForm((prev) => ({
+                    ...prev,
+                    settlementBatchId: "",
+                  }));
+                }}
+                disabled={!canReverse || reverseSubmitting}
+              />
+            )}
+          </label>
+          <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+            lookup counterpartyId (optional)
+            <input
+              type="number"
+              min="1"
+              className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+              value={reverseLookupFilters.counterpartyId}
+              onChange={(event) => {
+                setReverseLookupFilters((prev) => ({
+                  ...prev,
+                  counterpartyId: event.target.value,
+                }));
+                setReverseSettlementLookupQuery("");
+                setReverseForm((prev) => ({
+                  ...prev,
+                  settlementBatchId: "",
+                }));
+              }}
+              disabled={!canReverse || reverseSubmitting}
+            />
+          </label>
+          <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+            lookup asOfDate
+            <input
+              type="date"
+              className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+              value={reverseLookupFilters.asOfDate}
+              onChange={(event) => {
+                setReverseLookupFilters((prev) => ({
+                  ...prev,
+                  asOfDate: event.target.value,
+                }));
+                setReverseSettlementLookupQuery("");
+                setReverseForm((prev) => ({
+                  ...prev,
+                  settlementBatchId: "",
+                }));
+              }}
+              disabled={!canReverse || reverseSubmitting}
+            />
+          </label>
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+            lookup rows
+            <div className="mt-1 rounded-md border border-slate-300 bg-slate-50 px-3 py-2 text-sm font-normal text-slate-700">
+              {reverseSettlementLoading
+                ? "Loading..."
+                : `${reverseSettlementLookupOptions.length} selectable settlement(s)`}
+            </div>
+          </div>
+
+          {canReadReports ? (
+            <div className="md:col-span-4 text-xs font-semibold uppercase tracking-wide text-slate-600">
+              Settlement lookup (by settlement no/date/counterparty)
+              <Combobox
+                className="mt-1"
+                value={reverseForm.settlementBatchId}
+                options={reverseSettlementLookupOptions}
+                loading={reverseSettlementLoading}
+                disabled={
+                  !canReverse ||
+                  reverseSubmitting ||
+                  !toPositiveInt(reverseLookupFilters.legalEntityId)
+                }
+                placeholder={
+                  toPositiveInt(reverseLookupFilters.legalEntityId)
+                    ? "Type settlement no or counterparty"
+                    : "Select lookup legalEntityId first"
+                }
+                noOptionsText={
+                  toPositiveInt(reverseLookupFilters.legalEntityId)
+                    ? "No reversible settlements found for filters."
+                    : "Set lookup legalEntityId to load settlements."
+                }
+                onInputChange={(nextValue, meta) => {
+                  const reason = String(meta?.reason || "").trim().toLowerCase();
+                  if (reason === "select" || reason === "clear") {
+                    setReverseSettlementLookupQuery("");
+                    return;
+                  }
+                  setReverseSettlementLookupQuery(normalizeLookupQuery(nextValue));
+                }}
+                onChange={(nextValue) => {
+                  setReverseForm((prev) => ({
+                    ...prev,
+                    settlementBatchId: nextValue ? String(nextValue) : "",
+                  }));
+                }}
+              />
+              {reverseSettlementLookupError ? (
+                <p className="mt-1 text-[11px] normal-case text-rose-700">
+                  {reverseSettlementLookupError}
+                </p>
+              ) : null}
+              {selectedReverseSettlement ? (
+                <p className="mt-1 text-[11px] normal-case text-slate-600">
+                  Selected:{" "}
+                  {selectedReverseSettlement.settlementNo ||
+                    `#${selectedReverseSettlement.settlementBatchId || "-"}`}
+                  {selectedReverseSettlement.settlementBatchId
+                    ? ` (ID ${selectedReverseSettlement.settlementBatchId})`
+                    : ""}{" "}
+                  | Date {selectedReverseSettlement.settlementDate || "-"} | Status{" "}
+                  {selectedReverseSettlement.statusCurrent || "-"} | Counterparty{" "}
+                  {selectedReverseSettlement.counterpartyCodeCurrent ||
+                    selectedReverseSettlement.counterpartyNameCurrent ||
+                    selectedReverseSettlement.counterpartyId ||
+                    "-"}
+                </p>
+              ) : null}
+            </div>
+          ) : (
+            <div className="md:col-span-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+              Settlement lookup needs permission: `cari.report.read`. You can still reverse by
+              manual `settlementBatchId`.
+            </div>
+          )}
+
           <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
             settlementBatchId
             <input
@@ -2168,7 +2696,7 @@ export default function CariSettlementsPage() {
               disabled={!canReverse || reverseSubmitting}
             />
           </label>
-          <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+          <label className="text-xs font-semibold uppercase tracking-wide text-slate-600 md:col-span-2">
             reason
             <input
               type="text"
@@ -2180,7 +2708,7 @@ export default function CariSettlementsPage() {
               disabled={!canReverse || reverseSubmitting}
             />
           </label>
-          <div className="md:col-span-3">
+          <div className="md:col-span-4">
             <button
               type="submit"
               className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
@@ -2407,7 +2935,7 @@ export default function CariSettlementsPage() {
               className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
               value={bankApplyForm.legalEntityId}
               onChange={(event) =>
-                setBankApplyForm((prev) => ({ ...prev, legalEntityId: event.target.value }))
+                updateBankApplyForm("legalEntityId", event.target.value)
               }
               disabled={!canBankApply || bankApplySubmitting}
               required
@@ -2513,7 +3041,7 @@ export default function CariSettlementsPage() {
               className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal uppercase"
               value={bankApplyForm.currencyCode}
               onChange={(event) =>
-                setBankApplyForm((prev) => ({ ...prev, currencyCode: event.target.value }))
+                updateBankApplyForm("currencyCode", event.target.value)
               }
               disabled={!canBankApply || bankApplySubmitting}
               required
