@@ -198,6 +198,12 @@ export async function createCashExchangeBatch(payload) {
   return run(() => api.post("/api/v1/cash/exchanges", payload));
 }
 
+export async function postCashExchangeBatch(exchangeBatchId, payload = {}) {
+  return run(() =>
+    api.post(`/api/v1/cash/exchanges/${exchangeBatchId}/post`, payload)
+  );
+}
+
 export async function reverseCashExchangeBatch(exchangeBatchId, payload) {
   return run(() =>
     api.post(`/api/v1/cash/exchanges/${exchangeBatchId}/reverse`, payload)

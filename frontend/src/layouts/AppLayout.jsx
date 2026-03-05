@@ -29,6 +29,9 @@ const TENANT_SETUP_ROUTES = [
   },
 ];
 
+const MOJIBAKE_PATTERN =
+  /(?:\u00C3.|\u00C2.|\u00C4.|\u00C5.|\u00F0\u009F|\u00E2[\u0080-\u00BF]|\u00EF\u00B8[\u0080-\u00BF])/u;
+
 function resolveReadinessChip(loading, error, ready, t) {
   if (loading) {
     return {
@@ -62,6 +65,21 @@ function getReadinessCheckLabel(t, check) {
     ["readinessChecklist", "checkLabels", check?.key],
     check?.label || check?.key || ""
   );
+}
+
+function repairMojibake(value) {
+  const text = String(value ?? "");
+  if (!text || !MOJIBAKE_PATTERN.test(text)) {
+    return text;
+  }
+
+  try {
+    const bytes = Uint8Array.from(text, (ch) => ch.charCodeAt(0) & 0xff);
+    const decoded = new TextDecoder("utf-8").decode(bytes);
+    return decoded || text;
+  } catch {
+    return text;
+  }
 }
 
 function Icon({ name, className = "h-4 w-4" }) {
@@ -251,58 +269,64 @@ const BUILTIN_ICON_NAMES = new Set([
 ]);
 
 const BUILTIN_ICON_EMOJI = {
-  dashboard: "🏠",
-  spark: "✨",
-  journal: "📘",
-  bank: "🏦",
-  company: "🏢",
-  box: "📦",
-  inventory: "🗂️",
-  calendar: "🗓️",
-  report: "📊",
-  settings: "⚙️",
-  logout: "🚪",
+  dashboard: "\u{1F3E0}",
+  spark: "\u2728",
+  journal: "\u{1F4D8}",
+  bank: "\u{1F3E6}",
+  company: "\u{1F3E2}",
+  box: "\u{1F4E6}",
+  inventory: "\u{1F5C2}\uFE0F",
+  calendar: "\u{1F5D3}\uFE0F",
+  report: "\u{1F4CA}",
+  settings: "\u2699\uFE0F",
+  logout: "\u{1F6AA}",
 };
 
 const SIDEBAR_ICON_RULES = [
-  { pattern: /(dashboard|anasayfa)/, icon: "🏠" },
-  { pattern: /(employee|kullanici|user|personel)/, icon: "👥" },
-  { pattern: /(permission|yetki|rbac|scope|audit|rol)/, icon: "🛡️" },
-  { pattern: /(bank)/, icon: "🏦" },
-  { pattern: /(stok|inventory|item)/, icon: "📦" },
-  { pattern: /(demirbas|asset|amortisman)/, icon: "🧰" },
-  { pattern: /(donem|calendar|month|year|kapanis|acilis)/, icon: "🗓️" },
-  { pattern: /(report|rapor|mizan|bilanco|gelir)/, icon: "📊" },
-  { pattern: /(ayar|setup|settings|kurulumu)/, icon: "⚙️" },
-  { pattern: /(kur|fx|rate)/, icon: "💱" },
-  { pattern: /(konsolidasyon|consolidation)/, icon: "🧩" },
-  { pattern: /(tediye|tahsilat|mahsup|yevmiye|journal)/, icon: "📒" },
-  { pattern: /(organizasyon|organization|sirket|company)/, icon: "🏢" },
-  { pattern: /(discount|indirim)/, icon: "🏷️" },
-  { pattern: /(request|talep)/, icon: "📝" },
-  { pattern: /(approve|onay)/, icon: "✅" },
+  { pattern: /(dashboard|anasayfa)/, icon: "\u{1F3E0}" },
+  { pattern: /(employee|kullanici|user|personel)/, icon: "\u{1F465}" },
+  { pattern: /(permission|yetki|rbac|scope|audit|rol)/, icon: "\u{1F6E1}\uFE0F" },
+  { pattern: /(bank)/, icon: "\u{1F3E6}" },
+  { pattern: /(stok|inventory|item)/, icon: "\u{1F4E6}" },
+  { pattern: /(demirbas|asset|amortisman)/, icon: "\u{1F9F0}" },
+  { pattern: /(donem|calendar|month|year|kapanis|acilis)/, icon: "\u{1F5D3}\uFE0F" },
+  { pattern: /(report|rapor|mizan|bilanco|gelir)/, icon: "\u{1F4CA}" },
+  { pattern: /(ayar|setup|settings|kurulumu)/, icon: "\u2699\uFE0F" },
+  { pattern: /(kur|fx|rate)/, icon: "\u{1F4B1}" },
+  { pattern: /(konsolidasyon|consolidation)/, icon: "\u{1F9E9}" },
+  { pattern: /(tediye|tahsilat|mahsup|yevmiye|journal)/, icon: "\u{1F4D2}" },
+  { pattern: /(organizasyon|organization|sirket|company)/, icon: "\u{1F3E2}" },
+  { pattern: /(discount|indirim)/, icon: "\u{1F3F7}\uFE0F" },
+  { pattern: /(request|talep)/, icon: "\u{1F4DD}" },
+  { pattern: /(approve|onay)/, icon: "\u2705" },
 ];
 
 function deriveSidebarEmoji(item) {
-  const rawIcon = typeof item?.icon === "string" ? item.icon.trim() : "";
+  const rawIcon = repairMojibake(
+    typeof item?.icon === "string" ? item.icon.trim() : ""
+  );
   if (rawIcon) {
     if (BUILTIN_ICON_EMOJI[rawIcon]) return BUILTIN_ICON_EMOJI[rawIcon];
     return rawIcon;
   }
 
-  const haystack = `${item?.label || ""} ${item?.title || ""} ${item?.to || ""} ${item?.matchPrefix || ""}`.toLowerCase();
+  const haystack = repairMojibake(
+    `${item?.label || ""} ${item?.title || ""} ${item?.to || ""} ${item?.matchPrefix || ""}`
+  ).toLowerCase();
   for (const rule of SIDEBAR_ICON_RULES) {
     if (rule.pattern.test(haystack)) return rule.icon;
   }
 
-  return isSectionItem(item) ? "📁" : "📄";
+  return isSectionItem(item) ? "\u{1F4C1}" : "\u{1F4C4}";
 }
 
 function renderSidebarIcon(item, options = {}) {
   const { svgClass = "h-4 w-4", emojiClass = "text-[16px]" } = options;
-  const rawIcon = typeof item?.icon === "string" ? item.icon.trim() : "";
+  const rawIcon = repairMojibake(
+    typeof item?.icon === "string" ? item.icon.trim() : ""
+  );
 
-  if (rawIcon && BUILTIN_ICON_NAMES.has(rawIcon) && !BUILTIN_ICON_EMOJI[rawIcon]) {
+  if (rawIcon && BUILTIN_ICON_NAMES.has(rawIcon)) {
     return <Icon name={rawIcon} className={svgClass} />;
   }
 
@@ -330,7 +354,7 @@ function subLinkClass(isActive, nested = false) {
 }
 
 function toSidebarTitleKey(value) {
-  return String(value || "")
+  return repairMojibake(String(value || ""))
     .trim()
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
@@ -535,9 +559,9 @@ export default function AppLayout() {
     const pathKey = item?.to || item?.matchPrefix;
     if (!pathKey) {
       const titleKey = toSidebarTitleKey(fallback);
-      return t(["sidebar", "titles", titleKey], fallback);
+      return repairMojibake(t(["sidebar", "titles", titleKey], fallback));
     }
-    return t(["sidebar", "byPath", pathKey], fallback);
+    return repairMojibake(t(["sidebar", "byPath", pathKey], fallback));
   }
 
   const visibleSidebarItems = useMemo(

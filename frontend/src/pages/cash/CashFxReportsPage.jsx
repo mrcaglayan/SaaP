@@ -100,6 +100,11 @@ function formatDateTime(value) {
   return `${date.toLocaleDateString()} ${date.toLocaleTimeString()}`;
 }
 
+function formatTxnId(value) {
+  const id = toPositiveInt(value);
+  return id ? `#${id}` : "-";
+}
+
 function normalizeError(err, fallback) {
   return String(err?.response?.data?.message || err?.message || fallback);
 }
@@ -242,9 +247,16 @@ function resolveCsvColumns(tab) {
       { header: "Source Amount Base", key: "sourceAmountBase" },
       { header: "Target Amount Base", key: "targetAmountBase" },
       { header: "Realized FX Base", key: "realizedFxBase" },
+      { header: "Reversal Realized FX Base", key: "reversalRealizedFxBase" },
       { header: "Fee Amount Txn", key: "feeAmountTxn" },
       { header: "Fee Amount Base", key: "feeAmountBase" },
       { header: "Spread Amount Base", key: "spreadAmountBase" },
+      { header: "Original Out Txn ID", key: "exchangeOutCashTransactionId" },
+      { header: "Original In Txn ID", key: "exchangeInCashTransactionId" },
+      { header: "Reversal Out Txn ID", key: "reversalOutCashTransactionId" },
+      { header: "Reversal In Txn ID", key: "reversalInCashTransactionId" },
+      { header: "Reversed At", key: "reversedAt" },
+      { header: "Reverse Reason", key: "reverseReason" },
       { header: "Status", key: "status" },
       { header: "Created At", key: "createdAt" },
     ];
@@ -1000,15 +1012,26 @@ export default function CashFxReportsPage() {
       const statusCounts = summary?.statusCounts || {};
       const cards = [
         ["Total Rows", activeTotal],
-        ["Source Txn Total", formatAmount(summary?.sourceAmountTxnTotal)],
-        ["Target Txn Total", formatAmount(summary?.targetAmountTxnTotal)],
-        ["Principal FX Diff (Base)", formatAmount(summary?.principalFxDifferenceBaseTotal)],
-        ["Realized FX (Base)", formatAmount(summary?.realizedFxBaseTotal)],
-        ["Fees + Spread (Base)", formatAmount((summary?.feeAmountBaseTotal || 0) + (summary?.spreadAmountBaseTotal || 0))],
+        ["Posted Source Txn Total", formatAmount(summary?.sourceAmountTxnTotal)],
+        ["Posted Target Txn Total", formatAmount(summary?.targetAmountTxnTotal)],
+        ["Posted Principal FX Diff (Base)", formatAmount(summary?.principalFxDifferenceBaseTotal)],
+        ["Posted Realized FX (Base)", formatAmount(summary?.realizedFxBaseTotal)],
+        [
+          "Posted Fees + Spread (Base)",
+          formatAmount((summary?.feeAmountBaseTotal || 0) + (summary?.spreadAmountBaseTotal || 0)),
+        ],
+        ["Gross Source Txn Total", formatAmount(summary?.grossSourceAmountTxnTotal)],
+        ["Gross Target Txn Total", formatAmount(summary?.grossTargetAmountTxnTotal)],
+        ["Gross Realized FX (Base)", formatAmount(summary?.grossRealizedFxBaseTotal)],
+        ["Reversal Realized FX (Base)", formatAmount(summary?.reversalRealizedFxBaseTotal)],
+        [
+          "Net Realized FX (Base)",
+          formatAmount((summary?.realizedFxBaseTotal || 0) + (summary?.reversalRealizedFxBaseTotal || 0)),
+        ],
       ];
       return (
         <>
-          <section className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
+          <section className="grid gap-3 md:grid-cols-3 xl:grid-cols-5">
             {cards.map(([label, value]) => (
               <article
                 key={`cash-fx-summary-${label}`}
@@ -1106,67 +1129,94 @@ export default function CashFxReportsPage() {
                 <th className="px-3 py-2">FX</th>
                 <th className="px-3 py-2">Base / Realized</th>
                 <th className="px-3 py-2">Fee / Spread</th>
+                <th className="px-3 py-2">Original / Reversal</th>
                 <th className="px-3 py-2">Status</th>
                 <th className="px-3 py-2">Created</th>
               </tr>
             </thead>
             <tbody>
-              {activeRows.map((row) => (
-                <tr key={`cash-fx-ex-history-${row?.id}`} className="border-t border-slate-100">
-                  <td className="px-3 py-2">#{row?.id || "-"}</td>
-                  <td className="px-3 py-2">
-                    {(row?.legalEntityCode || row?.legalEntityId || "-") +
-                      " - " +
-                      (row?.legalEntityName || "-")}
-                  </td>
-                  <td className="px-3 py-2">
-                    <div className="font-medium">
-                      {row?.sourceRegisterCode || row?.sourceRegisterId || "-"}
-                    </div>
-                    <div className="text-slate-600">
-                      {formatAmount(row?.sourceAmountTxn)} {row?.sourceCurrencyCode || "-"}
-                    </div>
-                  </td>
-                  <td className="px-3 py-2">
-                    <div className="font-medium">
-                      {row?.targetRegisterCode || row?.targetRegisterId || "-"}
-                    </div>
-                    <div className="text-slate-600">
-                      {formatAmount(row?.targetAmountTxn)} {row?.targetCurrencyCode || "-"}
-                    </div>
-                  </td>
-                  <td className="px-3 py-2">
-                    <div>{row?.fxRate ? Number(row.fxRate).toFixed(10) : "-"}</div>
-                    <div className="text-xs text-slate-600">
-                      {(row?.fxRateSource || "-") + " / " + (row?.fxRateDate || "-")}
-                    </div>
-                  </td>
-                  <td className="px-3 py-2">
-                    <div>
-                      Src: {formatAmount(row?.sourceAmountBase)} | Tgt:{" "}
-                      {formatAmount(row?.targetAmountBase)}
-                    </div>
-                    <div>Realized: {formatAmount(row?.realizedFxBase)}</div>
-                  </td>
-                  <td className="px-3 py-2">
-                    <div>Fee: {formatAmount(row?.feeAmountBase)}</div>
-                    <div>Spread: {formatAmount(row?.spreadAmountBase)}</div>
-                  </td>
-                  <td className="px-3 py-2">
-                    <span
-                      className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${statusClassName(
-                        row?.status
-                      )}`}
-                    >
-                      {row?.status || "-"}
-                    </span>
-                  </td>
-                  <td className="px-3 py-2">{formatDateTime(row?.createdAt)}</td>
-                </tr>
-              ))}
+              {activeRows.map((row) => {
+                const realizedFxBase = Number(row?.realizedFxBase || 0);
+                const reversalRealizedFxBase = Number(row?.reversalRealizedFxBase || 0);
+                const netRealizedFxBase = realizedFxBase + reversalRealizedFxBase;
+                const isReversed = toUpper(row?.status) === "REVERSED";
+                return (
+                  <tr key={`cash-fx-ex-history-${row?.id}`} className="border-t border-slate-100">
+                    <td className="px-3 py-2">#{row?.id || "-"}</td>
+                    <td className="px-3 py-2">
+                      {(row?.legalEntityCode || row?.legalEntityId || "-") +
+                        " - " +
+                        (row?.legalEntityName || "-")}
+                    </td>
+                    <td className="px-3 py-2">
+                      <div className="font-medium">
+                        {row?.sourceRegisterCode || row?.sourceRegisterId || "-"}
+                      </div>
+                      <div className="text-slate-600">
+                        {formatAmount(row?.sourceAmountTxn)} {row?.sourceCurrencyCode || "-"}
+                      </div>
+                    </td>
+                    <td className="px-3 py-2">
+                      <div className="font-medium">
+                        {row?.targetRegisterCode || row?.targetRegisterId || "-"}
+                      </div>
+                      <div className="text-slate-600">
+                        {formatAmount(row?.targetAmountTxn)} {row?.targetCurrencyCode || "-"}
+                      </div>
+                    </td>
+                    <td className="px-3 py-2">
+                      <div>{row?.fxRate ? Number(row.fxRate).toFixed(10) : "-"}</div>
+                      <div className="text-xs text-slate-600">
+                        {(row?.fxRateSource || "-") + " / " + (row?.fxRateDate || "-")}
+                      </div>
+                    </td>
+                    <td className="px-3 py-2">
+                      <div>
+                        Src: {formatAmount(row?.sourceAmountBase)} | Tgt:{" "}
+                        {formatAmount(row?.targetAmountBase)}
+                      </div>
+                      <div>Realized: {formatAmount(realizedFxBase)}</div>
+                      <div>Reversal Realized: {formatAmount(reversalRealizedFxBase)}</div>
+                      <div>Net Realized: {formatAmount(netRealizedFxBase)}</div>
+                    </td>
+                    <td className="px-3 py-2">
+                      <div>Fee: {formatAmount(row?.feeAmountBase)}</div>
+                      <div>Spread: {formatAmount(row?.spreadAmountBase)}</div>
+                    </td>
+                    <td className="px-3 py-2">
+                      <div className="text-xs">
+                        Orig Out/In: {formatTxnId(row?.exchangeOutCashTransactionId)} /{" "}
+                        {formatTxnId(row?.exchangeInCashTransactionId)}
+                      </div>
+                      <div className="text-xs">
+                        Rev Out/In: {formatTxnId(row?.reversalOutCashTransactionId)} /{" "}
+                        {formatTxnId(row?.reversalInCashTransactionId)}
+                      </div>
+                      <div className="text-xs text-slate-600">
+                        Reversed At: {formatDateTime(row?.reversedAt)}
+                      </div>
+                      {isReversed ? (
+                        <div className="text-xs text-slate-600">
+                          Reason: {String(row?.reverseReason || "-")}
+                        </div>
+                      ) : null}
+                    </td>
+                    <td className="px-3 py-2">
+                      <span
+                        className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${statusClassName(
+                          row?.status
+                        )}`}
+                      >
+                        {row?.status || "-"}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2">{formatDateTime(row?.createdAt)}</td>
+                  </tr>
+                );
+              })}
               {!loading && activeRows.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="px-3 py-3 text-slate-500">
+                  <td colSpan={10} className="px-3 py-3 text-slate-500">
                     No rows.
                   </td>
                 </tr>

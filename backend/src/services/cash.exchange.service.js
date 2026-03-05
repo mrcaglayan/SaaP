@@ -1138,6 +1138,149 @@ export async function createCashExchangeBatch({
   };
 }
 
+export async function postCashExchangeBatchById({
+  req,
+  payload,
+  assertScopeAccess,
+}) {
+  const batch = await findExchangeBatchById({
+    tenantId: payload.tenantId,
+    exchangeBatchId: payload.exchangeBatchId,
+  });
+  if (!batch) {
+    throw badRequest("Cash exchange batch not found");
+  }
+  assertExchangeScopeAccess(req, batch, assertScopeAccess, "exchangeBatchId");
+
+  const status = asUpper(batch.status);
+  if (status === EXCHANGE_STATUS_POSTED || status === EXCHANGE_STATUS_REVERSED) {
+    const transactions = await getBatchTransactions(batch);
+    return {
+      batch: mapExchangeBatchRow(batch),
+      ...transactions,
+      fxLot: await buildExchangeBatchFxLotSummary(payload.tenantId, transactions),
+      idempotentReplay: true,
+    };
+  }
+  if (status !== EXCHANGE_STATUS_DRAFT) {
+    throw badRequest("Only DRAFT cash exchange batches can be posted");
+  }
+
+  const sourceRegisterId = parsePositiveInt(batch.source_cash_register_id);
+  const targetRegisterId = parsePositiveInt(batch.target_cash_register_id);
+  const clearingAccountId = parsePositiveInt(batch.clearing_account_id);
+  const idempotencyKey = normalizeText(batch.idempotency_key, 100);
+  if (!sourceRegisterId || !targetRegisterId || !clearingAccountId || !idempotencyKey) {
+    throw badRequest("Draft cash exchange batch is missing required metadata");
+  }
+
+  const existingTransactions = await getBatchTransactions(batch);
+  const sourceExistingSessionId = parsePositiveInt(
+    existingTransactions.exchangeOutTransaction?.cash_session_id
+  );
+  const targetExistingSessionId = parsePositiveInt(
+    existingTransactions.exchangeInTransaction?.cash_session_id
+  );
+  const sourceCashSessionId =
+    parsePositiveInt(payload.sourceCashSessionId) || sourceExistingSessionId || null;
+  const targetCashSessionId =
+    parsePositiveInt(payload.targetCashSessionId) || targetExistingSessionId || null;
+
+  const toDateOnly = (value) => {
+    if (value === undefined || value === null || value === "") {
+      return null;
+    }
+    const parsed = new Date(value);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed.toISOString().slice(0, 10);
+    }
+    const normalized = String(value).trim();
+    return /^\d{4}-\d{2}-\d{2}$/.test(normalized) ? normalized : null;
+  };
+  const toDateTimeSql = (value) => {
+    if (value === undefined || value === null || value === "") {
+      return null;
+    }
+    const parsed = new Date(value);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed.toISOString().slice(0, 19).replace("T", " ");
+    }
+    const normalized = String(value).trim();
+    return normalized.length >= 19 ? normalized.replace("T", " ").slice(0, 19) : null;
+  };
+
+  const defaultBookDateFromOut = toDateOnly(existingTransactions.exchangeOutTransaction?.book_date);
+  const defaultBookDateFromBatch = toDateOnly(batch.created_at);
+  const bookDate =
+    payload.bookDate ||
+    defaultBookDateFromOut ||
+    defaultBookDateFromBatch ||
+    new Date().toISOString().slice(0, 10);
+
+  const defaultTxnDatetimeFromOut = toDateTimeSql(
+    existingTransactions.exchangeOutTransaction?.txn_datetime
+  );
+  const defaultTxnDatetimeFromBatch = toDateTimeSql(batch.created_at);
+  const txnDatetime =
+    payload.txnDatetime ||
+    defaultTxnDatetimeFromOut ||
+    defaultTxnDatetimeFromBatch ||
+    `${bookDate} 00:00:00`;
+
+  const replayPayload = {
+    tenantId: payload.tenantId,
+    userId: payload.userId,
+    sourceRegisterId,
+    targetRegisterId,
+    sourceCashSessionId,
+    targetCashSessionId,
+    clearingAccountId,
+    txnDatetime,
+    bookDate,
+    sourceAmountTxn: Number(batch.source_amount_txn),
+    targetAmountTxn: Number(batch.target_amount_txn),
+    feeAmountTxn:
+      batch.fee_amount_txn === null || batch.fee_amount_txn === undefined
+        ? null
+        : Number(batch.fee_amount_txn),
+    feeAmountBase:
+      batch.fee_amount_base === null || batch.fee_amount_base === undefined
+        ? null
+        : Number(batch.fee_amount_base),
+    feeAccountId: parsePositiveInt(batch.fee_account_id) || null,
+    fxRate:
+      batch.fx_rate === null || batch.fx_rate === undefined
+        ? null
+        : Number(batch.fx_rate),
+    fxRateSource: normalizeText(batch.fx_rate_source, 40),
+    fxRateDate: toDateOnly(batch.fx_rate_date),
+    providerRef: normalizeText(batch.provider_ref, 120),
+    spreadReferenceRate:
+      batch.spread_reference_rate === null || batch.spread_reference_rate === undefined
+        ? null
+        : Number(batch.spread_reference_rate),
+    spreadRateDelta:
+      batch.spread_rate_delta === null || batch.spread_rate_delta === undefined
+        ? null
+        : Number(batch.spread_rate_delta),
+    spreadAmountBase:
+      batch.spread_amount_base === null || batch.spread_amount_base === undefined
+        ? null
+        : Number(batch.spread_amount_base),
+    description: normalizeText(existingTransactions.exchangeOutTransaction?.description, 500),
+    referenceNo: normalizeText(existingTransactions.exchangeOutTransaction?.reference_no, 100),
+    note: normalizeText(batch.note, 500),
+    integrationEventUid: normalizeText(batch.integration_event_uid, 100),
+    idempotencyKey,
+  };
+
+  return createCashExchangeBatch({
+    req,
+    payload: replayPayload,
+    assertScopeAccess,
+  });
+}
+
 export async function reverseCashExchangeBatchById({
   req,
   payload,

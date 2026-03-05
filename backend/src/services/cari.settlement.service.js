@@ -11,14 +11,17 @@ import { autoRemapCariPurposeMappingsForLegalEntity } from "./cari.purpose-mappi
 import { upsertJournalSourceLinkTx } from "./journal.source-link.service.js";
 import { buildCariTaxAugmentation } from "./cari.tax.integration.service.js";
 import { recordCariSettlementCurrencyMismatchException } from "./cash.fx.ops.service.js";
+import { createAndPostCashJournalTx } from "./cash.service.js";
 import {
   findCashRegisterById,
   findCashSessionById,
   findOpenCashSessionByRegisterId,
+  findCashTransactionById,
   findCashTransactionByIdempotency,
   findCashTransactionByIntegrationEventUid,
   generateCashTxnNoForLegalEntityYearTx,
   insertCashTransaction,
+  postCashTransaction,
 } from "./cash.queries.js";
 
 const AMOUNT_SCALE = 6;
@@ -1933,6 +1936,107 @@ async function createOrReplaySettlementCashTransaction({
   }
 }
 
+async function ensureSettlementLinkedCashTransactionPostedTx({
+  tx,
+  req,
+  tenantId,
+  userId,
+  legalEntityId,
+  cashTransactionId,
+  assertScopeAccess,
+}) {
+  const parsedCashTransactionId = parsePositiveInt(cashTransactionId);
+  if (!parsedCashTransactionId) {
+    return null;
+  }
+
+  const cashTxn = await findCashTransactionById({
+    tenantId,
+    transactionId: parsedCashTransactionId,
+    runQuery: tx.query,
+    forUpdate: true,
+  });
+  if (!cashTxn) {
+    throw badRequest("cashTransactionId not found for tenant");
+  }
+
+  if (parsePositiveInt(cashTxn.legal_entity_id) !== parsePositiveInt(legalEntityId)) {
+    throw badRequest("cashTransactionId must belong to legalEntityId");
+  }
+
+  assertScopeAccess(req, "legal_entity", cashTxn.legal_entity_id, "cashTransactionId");
+  if (cashTxn.operating_unit_id) {
+    assertScopeAccess(req, "operating_unit", cashTxn.operating_unit_id, "cashTransactionId");
+  }
+
+  const status = normalizeUpperText(cashTxn.status);
+  const postedJournalEntryId = parsePositiveInt(cashTxn.posted_journal_entry_id);
+  if (status === "POSTED" && postedJournalEntryId) {
+    await applyCashFxPositionForPostedTransactionTx({
+      tenantId,
+      cashTransactionId: parsedCashTransactionId,
+      cashTransactionRow: cashTxn,
+      runQuery: tx.query,
+    });
+    return cashTxn;
+  }
+
+  if (!["DRAFT", "SUBMITTED", "APPROVED"].includes(status)) {
+    throw badRequest(
+      "cashTransactionId must be DRAFT, SUBMITTED, APPROVED, or POSTED"
+    );
+  }
+
+  if (normalizeUpperText(cashTxn.register_status) !== "ACTIVE") {
+    throw badRequest("Cash register is not ACTIVE");
+  }
+
+  const sessionMode = normalizeUpperText(cashTxn.register_session_mode);
+  if (sessionMode === "REQUIRED") {
+    if (!parsePositiveInt(cashTxn.cash_session_id)) {
+      throw badRequest("Posting requires an OPEN cash session");
+    }
+    if (normalizeUpperText(cashTxn.cash_session_status) !== "OPEN") {
+      throw badRequest("Posting requires cash_session_id to be OPEN");
+    }
+  }
+
+  const posting = await createAndPostCashJournalTx(tx, {
+    tenantId,
+    userId,
+    legalEntityId: parsePositiveInt(cashTxn.legal_entity_id),
+    cashTxn,
+    req,
+  });
+
+  await postCashTransaction({
+    tenantId,
+    transactionId: parsedCashTransactionId,
+    userId,
+    postedJournalEntryId: posting.journalEntryId,
+    overrideCashControl: false,
+    overrideReason: null,
+    runQuery: tx.query,
+  });
+
+  const saved = await findCashTransactionById({
+    tenantId,
+    transactionId: parsedCashTransactionId,
+    runQuery: tx.query,
+    forUpdate: true,
+  });
+  if (saved) {
+    await applyCashFxPositionForPostedTransactionTx({
+      tenantId,
+      cashTransactionId: parsedCashTransactionId,
+      cashTransactionRow: saved,
+      runQuery: tx.query,
+    });
+  }
+
+  return saved || cashTxn;
+}
+
 async function enrichSettlementResultWithCashTransaction({
   tenantId,
   result,
@@ -3037,15 +3141,18 @@ export async function applyCariSettlement({
         if (linkedBatchOnCash) {
           throw badRequest("cashTransactionId is already linked to a settlement batch");
         }
-        if (
-          normalizeUpperText(linkedCashTransaction.status) === "POSTED" &&
-          parsePositiveInt(linkedCashTransaction.posted_journal_entry_id)
-        ) {
-          await applyCashFxPositionForPostedTransactionTx({
-            tenantId,
-            cashTransactionId: parsePositiveInt(linkedCashTransaction.id),
-            runQuery: tx.query,
-          });
+        const postedLinkedCashTransaction = await ensureSettlementLinkedCashTransactionPostedTx({
+          tx,
+          req,
+          tenantId,
+          userId: payload.userId,
+          legalEntityId,
+          cashTransactionId: parsePositiveInt(linkedCashTransaction.id),
+          assertScopeAccess,
+        });
+        if (postedLinkedCashTransaction) {
+          effectiveCashTransactionId =
+            parsePositiveInt(postedLinkedCashTransaction.id) || effectiveCashTransactionId;
         }
       }
 

@@ -32,6 +32,19 @@ const SHAREHOLDER_TYPES = ["INDIVIDUAL", "CORPORATE"];
 const SHAREHOLDER_STATUSES = ["ACTIVE", "INACTIVE"];
 const SHAREHOLDER_BATCH_QUEUE_STORAGE_KEY =
   "org.shareholderCommitmentBatchQueueByEntity.v1";
+const DEFAULT_ENTITY_FORM = {
+  groupCompanyId: "",
+  code: "",
+  name: "",
+  taxId: "",
+  countryId: "",
+  functionalCurrencyCode: "USD",
+  isIntercompanyEnabled: true,
+  intercompanyPartnerRequired: false,
+  autoProvisionDefaults: true,
+  useCustomPaymentTerms: false,
+  paymentTermsJson: "",
+};
 
 function toNumber(value) {
   const parsed = Number(value);
@@ -215,19 +228,8 @@ export default function OrganizationManagementPage() {
 
   const [groupForm, setGroupForm] = useState({ code: "", name: "" });
   const [groupEditingCode, setGroupEditingCode] = useState("");
-  const [entityForm, setEntityForm] = useState({
-    groupCompanyId: "",
-    code: "",
-    name: "",
-    taxId: "",
-    countryId: "",
-    functionalCurrencyCode: "USD",
-    isIntercompanyEnabled: true,
-    intercompanyPartnerRequired: false,
-    autoProvisionDefaults: true,
-    useCustomPaymentTerms: false,
-    paymentTermsJson: "",
-  });
+  const [legalEntityEditingCode, setLegalEntityEditingCode] = useState("");
+  const [entityForm, setEntityForm] = useState(DEFAULT_ENTITY_FORM);
   const [unitForm, setUnitForm] = useState({
     legalEntityId: "",
     code: "",
@@ -416,6 +418,36 @@ export default function OrganizationManagementPage() {
       })),
     [countries]
   );
+  const groupCompanyById = useMemo(() => {
+    const next = new Map();
+    for (const row of groups) {
+      const id = toNumber(row.id);
+      if (id) {
+        next.set(id, row);
+      }
+    }
+    return next;
+  }, [groups]);
+  const countryById = useMemo(() => {
+    const next = new Map();
+    for (const row of countries) {
+      const id = toNumber(row.id);
+      if (id) {
+        next.set(id, row);
+      }
+    }
+    return next;
+  }, [countries]);
+  const legalEntityById = useMemo(() => {
+    const next = new Map();
+    for (const row of legalEntities) {
+      const id = toNumber(row.id);
+      if (id) {
+        next.set(id, row);
+      }
+    }
+    return next;
+  }, [legalEntities]);
 
   const currencySelectOptions = useMemo(
     () =>
@@ -1283,6 +1315,47 @@ export default function OrganizationManagementPage() {
     setMessage("");
   }
 
+  function resetLegalEntityForm() {
+    setEntityForm((prev) => ({
+      ...prev,
+      ...DEFAULT_ENTITY_FORM,
+      groupCompanyId: prev.groupCompanyId,
+      countryId: prev.countryId,
+      functionalCurrencyCode: prev.functionalCurrencyCode || "USD",
+    }));
+    setLegalEntityEditingCode("");
+    setError("");
+    setMessage("");
+  }
+
+  function handleLegalEntityEdit(row) {
+    const code = String(row?.code || "").trim();
+    if (!code) {
+      return;
+    }
+    setLegalEntityEditingCode(code);
+    setEntityForm((prev) => ({
+      ...prev,
+      groupCompanyId: String(row?.group_company_id || ""),
+      code,
+      name: String(row?.name || "").trim(),
+      taxId: String(row?.tax_id || "").trim(),
+      countryId: String(row?.country_id || ""),
+      functionalCurrencyCode: String(row?.functional_currency_code || prev.functionalCurrencyCode || "USD")
+        .trim()
+        .toUpperCase(),
+      isIntercompanyEnabled:
+        row?.is_intercompany_enabled === undefined
+          ? true
+          : Boolean(row?.is_intercompany_enabled),
+      intercompanyPartnerRequired: Boolean(row?.intercompany_partner_required),
+      useCustomPaymentTerms: false,
+      paymentTermsJson: "",
+    }));
+    setError("");
+    setMessage("");
+  }
+
   async function handleGroupSubmit(event) {
     event.preventDefault();
     if (!canUpsertGroupCompany) {
@@ -1370,6 +1443,8 @@ export default function OrganizationManagementPage() {
       }
     }
 
+    const isEditMode = Boolean(legalEntityEditingCode);
+
     setSaving("entity");
     setError("");
     setMessage("");
@@ -1389,15 +1464,10 @@ export default function OrganizationManagementPage() {
         ...(paymentTermsPayload ? { paymentTerms: paymentTermsPayload } : {}),
       });
 
-      setEntityForm((prev) => ({
-        ...prev,
-        code: "",
-        name: "",
-        taxId: "",
-        functionalCurrencyCode: prev.functionalCurrencyCode || "USD",
-        useCustomPaymentTerms: false,
-        paymentTermsJson: "",
-      }));
+      resetLegalEntityForm();
+      const baseSuccessMessage = isEditMode
+        ? l("Legal entity updated.", "Istirak / bagli ortak guncellendi.")
+        : l("Legal entity saved.", "Istirak / bagli ortak kaydedildi.");
       const hasGlProvisioning = Boolean(response?.provisioning?.created);
       const hasPaymentTermProvisioning = Boolean(response?.paymentTermsProvisioning);
       if (hasGlProvisioning || hasPaymentTermProvisioning) {
@@ -1416,11 +1486,9 @@ export default function OrganizationManagementPage() {
             )
           : "";
         const detailMessage = [glSummary, paymentTermsSummary].filter(Boolean).join(" ");
-        setMessage(
-          `${l("Legal entity saved.", "Istirak / bagli ortak kaydedildi.")} ${detailMessage}`.trim()
-        );
+        setMessage(`${baseSuccessMessage} ${detailMessage}`.trim());
       } else {
-        setMessage(l("Legal entity saved.", "Istirak / bagli ortak kaydedildi."));
+        setMessage(baseSuccessMessage);
       }
       await loadCoreData();
     } catch (err) {
@@ -2338,6 +2406,14 @@ export default function OrganizationManagementPage() {
           <h2 className="mb-3 text-sm font-semibold text-slate-700">
             {l("Legal Entities", "Istirakler / Bagli Ortaklar")}
           </h2>
+          {legalEntityEditingCode ? (
+            <p className="mb-2 text-xs text-slate-600">
+              {l(
+                `Editing legal entity ${legalEntityEditingCode}. Entity code is locked.`,
+                `${legalEntityEditingCode} istiraki / bagli ortagi duzenleniyor. Kod kilitli.`
+              )}
+            </p>
+          ) : null}
           <form onSubmit={handleLegalEntitySubmit} className="grid gap-2 md:grid-cols-3">
             <select
               value={entityForm.groupCompanyId}
@@ -2362,6 +2438,7 @@ export default function OrganizationManagementPage() {
               onChange={(event) =>
                 setEntityForm((prev) => ({ ...prev, code: event.target.value }))
               }
+              disabled={Boolean(legalEntityEditingCode)}
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
               placeholder={l("Entity code", "Birim kodu")}
               required
@@ -2507,8 +2584,22 @@ export default function OrganizationManagementPage() {
               disabled={saving === "entity" || !canUpsertLegalEntity}
               className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60"
             >
-              {saving === "entity" ? l("Saving...", "Kaydediliyor...") : l("Save", "Kaydet")}
+              {saving === "entity"
+                ? l("Saving...", "Kaydediliyor...")
+                : legalEntityEditingCode
+                  ? l("Update", "Guncelle")
+                  : l("Save", "Kaydet")}
             </button>
+            {legalEntityEditingCode ? (
+              <button
+                type="button"
+                onClick={resetLegalEntityForm}
+                disabled={saving === "entity"}
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 disabled:opacity-60"
+              >
+                {l("Cancel Edit", "Duzenlemeyi Iptal Et")}
+              </button>
+            ) : null}
           </form>
 
           <div className="mt-3 overflow-x-auto">
@@ -2521,22 +2612,45 @@ export default function OrganizationManagementPage() {
                   <th className="px-3 py-2">{l("Group", "Grup")}</th>
                   <th className="px-3 py-2">{l("Country", "Ulke")}</th>
                   <th className="px-3 py-2">{l("Currency", "Para birimi")}</th>
+                  <th className="px-3 py-2">{l("Action", "Islem")}</th>
                 </tr>
               </thead>
               <tbody>
-                {(legalEntities || []).map((row) => (
-                  <tr key={row.id} className="border-t border-slate-100">
-                    <td className="px-3 py-2">{row.id}</td>
-                    <td className="px-3 py-2">{row.code}</td>
-                    <td className="px-3 py-2">{row.name}</td>
-                    <td className="px-3 py-2">{row.group_company_id}</td>
-                    <td className="px-3 py-2">{row.country_id}</td>
-                    <td className="px-3 py-2">{row.functional_currency_code}</td>
-                  </tr>
-                ))}
+                {(legalEntities || []).map((row) => {
+                  const groupCompany = groupCompanyById.get(
+                    toNumber(row.group_company_id)
+                  );
+                  const country = countryById.get(toNumber(row.country_id));
+                  const groupLabel = groupCompany
+                    ? `${groupCompany.code} - ${groupCompany.name}`
+                    : "-";
+                  const countryLabel = country
+                    ? `${country.iso2} - ${country.name}`
+                    : "-";
+                  return (
+                    <tr key={row.id} className="border-t border-slate-100">
+                      <td className="px-3 py-2">{row.id}</td>
+                      <td className="px-3 py-2">{row.code}</td>
+                      <td className="px-3 py-2">{row.name}</td>
+                      <td className="px-3 py-2">{groupLabel}</td>
+                      <td className="px-3 py-2">{countryLabel}</td>
+                      <td className="px-3 py-2">{row.functional_currency_code}</td>
+                      <td className="px-3 py-2">
+                        <button
+                          type="button"
+                          onClick={() => handleLegalEntityEdit(row)}
+                          disabled={saving === "entity" || !canUpsertLegalEntity}
+                          className="rounded border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                        >
+                          {l("Edit", "Duzenle")}
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
                 {legalEntities.length === 0 && !loading && (
                   <tr>
-                    <td colSpan={6} className="px-3 py-3 text-slate-500">
+                    <td colSpan={7} className="px-3 py-3 text-slate-500">
                       {l("No legal entities found.", "Istirak / bagli ortak bulunamadi.")}
                     </td>
                   </tr>
@@ -2627,7 +2741,7 @@ export default function OrganizationManagementPage() {
               <thead className="bg-slate-50 text-left text-slate-600">
                 <tr>
                   <th className="px-3 py-2">ID</th>
-                  <th className="px-3 py-2">{l("Entity ID", "Birim ID")}</th>
+                  <th className="px-3 py-2">{l("Entity", "Istirak / Bagli Ortak")}</th>
                   <th className="px-3 py-2">{l("Code", "Kod")}</th>
                   <th className="px-3 py-2">{l("Name", "Ad")}</th>
                   <th className="px-3 py-2">{l("Type", "Tur")}</th>
@@ -2635,16 +2749,24 @@ export default function OrganizationManagementPage() {
                 </tr>
               </thead>
               <tbody>
-                {(operatingUnits || []).map((row) => (
-                  <tr key={row.id} className="border-t border-slate-100">
-                    <td className="px-3 py-2">{row.id}</td>
-                    <td className="px-3 py-2">{row.legal_entity_id}</td>
-                    <td className="px-3 py-2">{row.code}</td>
-                    <td className="px-3 py-2">{row.name}</td>
-                    <td className="px-3 py-2">{row.unit_type}</td>
-                    <td className="px-3 py-2">{row.has_subledger ? l("Yes", "Evet") : l("No", "Hayir")}</td>
-                  </tr>
-                ))}
+                {(operatingUnits || []).map((row) => {
+                  const legalEntity = legalEntityById.get(
+                    toNumber(row.legal_entity_id)
+                  );
+                  const legalEntityLabel = legalEntity
+                    ? `${legalEntity.code} - ${legalEntity.name}`
+                    : "-";
+                  return (
+                    <tr key={row.id} className="border-t border-slate-100">
+                      <td className="px-3 py-2">{row.id}</td>
+                      <td className="px-3 py-2">{legalEntityLabel}</td>
+                      <td className="px-3 py-2">{row.code}</td>
+                      <td className="px-3 py-2">{row.name}</td>
+                      <td className="px-3 py-2">{row.unit_type}</td>
+                      <td className="px-3 py-2">{row.has_subledger ? l("Yes", "Evet") : l("No", "Hayir")}</td>
+                    </tr>
+                  );
+                })}
                 {operatingUnits.length === 0 && !loading && (
                   <tr>
                     <td colSpan={6} className="px-3 py-3 text-slate-500">
@@ -3503,13 +3625,19 @@ export default function OrganizationManagementPage() {
                 {visibleShareholders.map((row) => {
                   const shareholderId = toNumber(row.id);
                   const isQueued = selectedEntityCommitmentQueueIdSet.has(shareholderId);
+                  const legalEntity = legalEntityById.get(
+                    toNumber(row.legal_entity_id)
+                  );
+                  const legalEntityLabel = legalEntity
+                    ? `${legalEntity.code} - ${legalEntity.name}`
+                    : "-";
                   const hasMappedSubAccounts =
                     Boolean(toNumber(row.capital_sub_account_id)) &&
                     Boolean(toNumber(row.commitment_debit_sub_account_id));
                   return (
                     <tr key={row.id} className="border-t border-slate-100">
                       <td className="px-3 py-2">{row.id}</td>
-                      <td className="px-3 py-2">{row.legal_entity_id}</td>
+                      <td className="px-3 py-2">{legalEntityLabel}</td>
                       <td className="px-3 py-2">{row.code}</td>
                       <td className="px-3 py-2">{row.name}</td>
                       <td className="px-3 py-2">

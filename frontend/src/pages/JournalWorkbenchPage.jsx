@@ -110,6 +110,10 @@ function toOptionalInt(value) {
   return toInt(value);
 }
 
+function keepDigits(value) {
+  return String(value || "").replace(/\D/g, "");
+}
+
 function toAmount(value) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
@@ -445,6 +449,134 @@ export default function JournalWorkbenchPage() {
       createAccountBalanceById,
     ]
   );
+  const legalEntityOptions = useMemo(
+    () =>
+      entities.map((entity) => ({
+        value: String(entity.id),
+        label: `${entity.code} - ${entity.name}`,
+        description: `#${entity.id}`,
+      })),
+    [entities]
+  );
+  const bookOptions = useMemo(
+    () =>
+      books.map((book) => ({
+        value: String(book.id),
+        label: `${book.code} - ${book.name}`,
+        description: `#${book.id}`,
+      })),
+    [books]
+  );
+  const periodOptions = useMemo(
+    () =>
+      periods.map((period) => ({
+        value: String(period.id),
+        label: formatPeriodLabel(period),
+        description: `#${period.id}`,
+      })),
+    [periods]
+  );
+  const historyPeriodOptions = useMemo(
+    () =>
+      historyPeriods.map((period) => ({
+        value: String(period.id),
+        label: formatPeriodLabel(period),
+        description: `#${period.id}`,
+      })),
+    [historyPeriods]
+  );
+  const compliancePeriodOptions = useMemo(() => {
+    const mergedById = new Map();
+    for (const period of [...periods, ...historyPeriods]) {
+      const periodId = toInt(period?.id);
+      if (!periodId || mergedById.has(periodId)) {
+        continue;
+      }
+      mergedById.set(periodId, {
+        value: String(periodId),
+        label: formatPeriodLabel(period),
+        description: `#${periodId}`,
+      });
+    }
+    return Array.from(mergedById.values());
+  }, [periods, historyPeriods]);
+  const operatingUnitOptions = useMemo(
+    () =>
+      units.map((unit) => ({
+        value: String(unit.id),
+        label: `${unit.code} - ${unit.name}`,
+        description: `#${unit.id}`,
+      })),
+    [units]
+  );
+  const counterpartyLegalEntityOptions = useMemo(
+    () =>
+      entities.map((entity) => ({
+        value: String(entity.id),
+        label: `${entity.code} - ${entity.name}`,
+        description: `#${entity.id}`,
+      })),
+    [entities]
+  );
+  const sourceTypeOptions = useMemo(
+    () => JOURNAL_SOURCE_TYPES.map((value) => ({ value, label: value })),
+    []
+  );
+  const periodStatusOptions = useMemo(
+    () => PERIOD_STATUSES.map((value) => ({ value, label: value })),
+    []
+  );
+  const periodCloseStatusOptions = useMemo(
+    () => ["SOFT_CLOSED", "HARD_CLOSED"].map((value) => ({ value, label: value })),
+    []
+  );
+  const retainedEarningsAccountOptions = useMemo(
+    () =>
+      retainedEarningsAccounts.map((account) => ({
+        value: String(account.id),
+        label: `${account.code} - ${account.name}`,
+        description: `#${account.id}`,
+      })),
+    [retainedEarningsAccounts]
+  );
+  const historyStatusOptions = useMemo(
+    () => JOURNAL_STATUSES.map((value) => ({ value, label: value })),
+    []
+  );
+  const historyLimitOptions = useMemo(
+    () =>
+      ["20", "50", "100", "200"].map((value) => ({
+        value,
+        label: value,
+      })),
+    []
+  );
+  const complianceLimitOptions = useMemo(
+    () =>
+      ["100", "200", "300", "500"].map((value) => ({
+        value,
+        label: value,
+      })),
+    []
+  );
+  const reverseJournalOptions = useMemo(() => {
+    const byId = new Map();
+    const rows = [...(historyRows || []), selectedJournal].filter(Boolean);
+    for (const row of rows) {
+      const journalId = toInt(row?.id);
+      if (!journalId || byId.has(journalId)) {
+        continue;
+      }
+      const journalNo = String(row?.journal_no || row?.journalNo || "-");
+      const status = String(row?.status || "").toUpperCase() || "-";
+      byId.set(journalId, {
+        value: String(journalId),
+        label: `#${journalId} - ${journalNo}`,
+        description: status,
+      });
+    }
+    return Array.from(byId.values());
+  }, [historyRows, selectedJournal]);
   const renderPostableAccountOption = useCallback(
     ({ option, isHighlighted, isSelected, disabled }) => {
       const balanceText =
@@ -2365,30 +2497,52 @@ export default function JournalWorkbenchPage() {
             )}
           </p>
           <div className="grid gap-2 md:grid-cols-4">
-            {entities.length > 0 ? (
-              <select value={journal.legalEntityId} onChange={(event) => setJournal((prev) => ({ ...prev, legalEntityId: event.target.value }))} className="rounded border border-slate-300 px-3 py-2 text-sm" required>
-                <option value="">{l("Select legal entity", "Istirak / bagli ortak secin")}</option>
-                {entities.map((entity) => (
-                  <option key={entity.id} value={entity.id}>
-                    {entity.code} - {entity.name}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <input type="number" min={1} value={journal.legalEntityId} onChange={(event) => setJournal((prev) => ({ ...prev, legalEntityId: event.target.value }))} className="rounded border border-slate-300 px-3 py-2 text-sm" placeholder={l("Legal entity ID", "Istirak / bagli ortak ID")} required />
-            )}
-            {books.length > 0 ? (
-              <select value={journal.bookId} onChange={(event) => setJournal((prev) => ({ ...prev, bookId: event.target.value }))} className="rounded border border-slate-300 px-3 py-2 text-sm" required>
-                <option value="">{l("Select book", "Defter secin")}</option>
-                {books.map((book) => (
-                  <option key={book.id} value={book.id}>
-                    {book.code} - {book.name}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <input type="number" min={1} value={journal.bookId} onChange={(event) => setJournal((prev) => ({ ...prev, bookId: event.target.value }))} className="rounded border border-slate-300 px-3 py-2 text-sm" placeholder={l("Book ID", "Defter ID")} required />
-            )}
+            <Combobox
+              value={journal.legalEntityId || null}
+              options={legalEntityOptions}
+              onChange={(nextValue) =>
+                setJournal((prev) => ({
+                  ...prev,
+                  legalEntityId: nextValue ? String(nextValue) : "",
+                }))
+              }
+              onInputChange={(text, { reason }) => {
+                if (reason === "input") {
+                  setJournal((prev) => ({
+                    ...prev,
+                    legalEntityId: keepDigits(text),
+                  }));
+                } else if (reason === "clear") {
+                  setJournal((prev) => ({ ...prev, legalEntityId: "" }));
+                }
+              }}
+              placeholder={l("Select legal entity", "Istirak / bagli ortak secin")}
+              noOptionsText={l("No legal entities found.", "Istirak bulunamadi.")}
+              clearable={false}
+            />
+            <Combobox
+              value={journal.bookId || null}
+              options={bookOptions}
+              onChange={(nextValue) =>
+                setJournal((prev) => ({
+                  ...prev,
+                  bookId: nextValue ? String(nextValue) : "",
+                }))
+              }
+              onInputChange={(text, { reason }) => {
+                if (reason === "input") {
+                  setJournal((prev) => ({
+                    ...prev,
+                    bookId: keepDigits(text),
+                  }));
+                } else if (reason === "clear") {
+                  setJournal((prev) => ({ ...prev, bookId: "" }));
+                }
+              }}
+              placeholder={l("Select book", "Defter secin")}
+              noOptionsText={l("No books found.", "Defter bulunamadi.")}
+              clearable={false}
+            />
             <div className="space-y-1 rounded border border-slate-200 bg-slate-50 px-3 py-2">
               <span className="px-1 text-[11px] text-slate-500">
                 {l("Resolved fiscal period", "Eslesen mali donem")}
@@ -2420,9 +2574,17 @@ export default function JournalWorkbenchPage() {
               </span>
               <input type="date" value={journal.documentDate} onChange={(event) => setJournal((prev) => ({ ...prev, documentDate: event.target.value }))} className="w-full rounded border border-slate-300 px-3 py-2 text-sm" required />
             </label>
-            <select value={journal.sourceType} onChange={(event) => setJournal((prev) => ({ ...prev, sourceType: event.target.value }))} className="rounded border border-slate-300 px-3 py-2 text-sm">
-              {JOURNAL_SOURCE_TYPES.map((sourceType) => <option key={sourceType} value={sourceType}>{sourceType}</option>)}
-            </select>
+            <Combobox
+              value={journal.sourceType || null}
+              options={sourceTypeOptions}
+              onChange={(nextValue) =>
+                setJournal((prev) => ({
+                  ...prev,
+                  sourceType: nextValue ? String(nextValue) : "MANUAL",
+                }))
+              }
+              clearable={false}
+            />
             <input value={journal.referenceNo} onChange={(event) => setJournal((prev) => ({ ...prev, referenceNo: event.target.value }))} className="rounded border border-slate-300 px-3 py-2 text-sm" placeholder={l("Reference no", "Referans no")} />
             <input value={journal.description} onChange={(event) => setJournal((prev) => ({ ...prev, description: event.target.value }))} className="rounded border border-slate-300 px-3 py-2 text-sm md:col-span-4" placeholder={l("Description", "Aciklama")} />
           </div>
@@ -2505,64 +2667,81 @@ export default function JournalWorkbenchPage() {
                   <tr key={line.id} className="border-t border-slate-100">
                     <td className="px-2 py-2 text-slate-500">{index + 1}</td>
                     <td className="px-2 py-2">
-                      {postableAccountOptions.length > 0 ? (
-                        <>
-                          <Combobox
-                            value={line.accountId || null}
-                            options={postableAccountOptions}
-                            clearable={false}
-                            disabled={!canReadAccounts}
-                            placeholder={l("Search/select account", "Hesap ara/sec")}
-                            noOptionsText={l("No account found.", "Hesap bulunamadi.")}
-                            inputClassName="px-2 py-1.5 pr-14 text-xs"
-                            listClassName="text-xs"
-                            optionClassName="text-xs"
-                            renderOption={renderPostableAccountOption}
-                            onChange={(nextValue) =>
-                              updateLine(
-                                line.id,
-                                "accountId",
-                                nextValue ? String(nextValue) : ""
-                              )
+                      <>
+                        <Combobox
+                          value={line.accountId || null}
+                          options={postableAccountOptions}
+                          clearable={false}
+                          disabled={!canReadAccounts}
+                          placeholder={l("Search/select account", "Hesap ara/sec")}
+                          noOptionsText={l("No account found.", "Hesap bulunamadi.")}
+                          inputClassName="px-2 py-1.5 pr-14 text-xs"
+                          listClassName="text-xs"
+                          optionClassName="text-xs"
+                          renderOption={renderPostableAccountOption}
+                          onChange={(nextValue) =>
+                            updateLine(
+                              line.id,
+                              "accountId",
+                              nextValue ? String(nextValue) : ""
+                            )
+                          }
+                          onInputChange={(text, { reason }) => {
+                            if (reason === "input") {
+                              updateLine(line.id, "accountId", keepDigits(text));
+                            } else if (reason === "clear") {
+                              updateLine(line.id, "accountId", "");
                             }
-                          />
-                          <div className="mt-1 text-[10px] text-slate-500">
-                            {l("Balance", "Bakiye")}:{" "}
-                            <span className="font-medium text-slate-700">
-                              {formatCreateLineAccountBalance(line.accountId)}
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => applyCreateLineBalance(line.id)}
-                              disabled={
-                                !toInt(line.accountId) ||
-                                !canReadTrialBalance ||
-                                !resolvedCreatePeriodId ||
-                                loadingCreateAccountBalances
-                              }
-                              className="ml-2 rounded border border-cyan-300 px-1.5 py-0.5 text-[10px] font-semibold text-cyan-700 hover:bg-cyan-50 disabled:opacity-50"
-                              title={l(
-                                "Apply account balance to focused debit/credit input (Alt+K)",
-                                "Hesap bakiyesini odaktaki borc/alacak alanina uygula (Alt+K)"
-                              )}
-                            >
-                              {l("Apply", "Uygula")}
-                            </button>
-                          </div>
-                        </>
-                      ) : (
-                        <input type="number" min={1} value={line.accountId} onChange={(event) => updateLine(line.id, "accountId", event.target.value)} className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs" placeholder={l("Account ID", "Hesap ID")} required />
-                      )}
+                          }}
+                        />
+                        <div className="mt-1 text-[10px] text-slate-500">
+                          {l("Balance", "Bakiye")}:{" "}
+                          <span className="font-medium text-slate-700">
+                            {formatCreateLineAccountBalance(line.accountId)}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => applyCreateLineBalance(line.id)}
+                            disabled={
+                              !toInt(line.accountId) ||
+                              !canReadTrialBalance ||
+                              !resolvedCreatePeriodId ||
+                              loadingCreateAccountBalances
+                            }
+                            className="ml-2 rounded border border-cyan-300 px-1.5 py-0.5 text-[10px] font-semibold text-cyan-700 hover:bg-cyan-50 disabled:opacity-50"
+                            title={l(
+                              "Apply account balance to focused debit/credit input (Alt+K)",
+                              "Hesap bakiyesini odaktaki borc/alacak alanina uygula (Alt+K)"
+                            )}
+                          >
+                            {l("Apply", "Uygula")}
+                          </button>
+                        </div>
+                      </>
                     </td>
                     <td className="px-2 py-2">
-                      {units.length > 0 ? (
-                        <select value={line.operatingUnitId} onChange={(event) => updateLine(line.id, "operatingUnitId", event.target.value)} className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs">
-                          <option value="">-</option>
-                          {units.map((unit) => <option key={unit.id} value={unit.id}>{unit.code} - {unit.name}</option>)}
-                        </select>
-                      ) : (
-                        <input type="number" min={1} value={line.operatingUnitId} onChange={(event) => updateLine(line.id, "operatingUnitId", event.target.value)} className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs" placeholder={l("Unit ID", "Birim ID")} />
-                      )}
+                      <Combobox
+                        value={line.operatingUnitId || null}
+                        options={operatingUnitOptions}
+                        onChange={(nextValue) =>
+                          updateLine(
+                            line.id,
+                            "operatingUnitId",
+                            nextValue ? String(nextValue) : ""
+                          )
+                        }
+                        onInputChange={(text, { reason }) => {
+                          if (reason === "input") {
+                            updateLine(line.id, "operatingUnitId", keepDigits(text));
+                          } else if (reason === "clear") {
+                            updateLine(line.id, "operatingUnitId", "");
+                          }
+                        }}
+                        placeholder={l("Optional", "Opsiyonel")}
+                        inputClassName="px-2 py-1.5 pr-14 text-xs"
+                        listClassName="text-xs"
+                        optionClassName="text-xs"
+                      />
                     </td>
                     <td className="px-2 py-2">
                       <input
@@ -2580,39 +2759,36 @@ export default function JournalWorkbenchPage() {
                       />
                     </td>
                     <td className="px-2 py-2">
-                      {entities.length > 0 ? (
-                        <select
-                          value={line.counterpartyLegalEntityId}
-                          onChange={(event) =>
-                            updateLine(line.id, "counterpartyLegalEntityId", event.target.value)
+                      <Combobox
+                        value={line.counterpartyLegalEntityId || null}
+                        options={counterpartyLegalEntityOptions}
+                        onChange={(nextValue) =>
+                          updateLine(
+                            line.id,
+                            "counterpartyLegalEntityId",
+                            nextValue ? String(nextValue) : ""
+                          )
+                        }
+                        onInputChange={(text, { reason }) => {
+                          if (reason === "input") {
+                            updateLine(
+                              line.id,
+                              "counterpartyLegalEntityId",
+                              keepDigits(text)
+                            );
+                          } else if (reason === "clear") {
+                            updateLine(line.id, "counterpartyLegalEntityId", "");
                           }
-                          className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs"
-                          required={requiresCounterpartyByPolicy}
-                        >
-                          <option value="">{l("Optional", "Opsiyonel")}</option>
-                          {entities.map((entity) => (
-                            <option key={entity.id} value={entity.id}>
-                              {entity.code} - {entity.name}
-                            </option>
-                          ))}
-                        </select>
-                      ) : (
-                        <input
-                          type="number"
-                          min={1}
-                          value={line.counterpartyLegalEntityId}
-                          onChange={(event) =>
-                            updateLine(line.id, "counterpartyLegalEntityId", event.target.value)
-                          }
-                          className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs"
-                          placeholder={
-                            requiresCounterpartyByPolicy
-                              ? l("Required", "Zorunlu")
-                              : l("Optional", "Opsiyonel")
-                          }
-                          required={requiresCounterpartyByPolicy}
-                        />
-                      )}
+                        }}
+                        placeholder={
+                          requiresCounterpartyByPolicy
+                            ? l("Required", "Zorunlu")
+                            : l("Optional", "Opsiyonel")
+                        }
+                        inputClassName="px-2 py-1.5 pr-14 text-xs"
+                        listClassName="text-xs"
+                        optionClassName="text-xs"
+                      />
                     </td>
                     <td className="px-2 py-2"><input value={line.description} onChange={(event) => updateLine(line.id, "description", event.target.value)} className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs" /></td>
                     <td className="px-2 py-2"><input value={line.currencyCode} onChange={(event) => updateLine(line.id, "currencyCode", event.target.value.toUpperCase())} className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs" maxLength={3} /></td>
@@ -2654,19 +2830,54 @@ export default function JournalWorkbenchPage() {
       <div className="grid gap-4">
         <form onSubmit={onReverseJournal} className="space-y-2 rounded-xl border border-slate-200 bg-white p-4">
           <h2 className="text-sm font-semibold text-slate-700">{l("Reverse Journal", "Ters Fis Kaydi")}</h2>
-          <input type="number" min={1} value={reverseForm.journalId} onChange={(event) => setReverseForm((prev) => ({ ...prev, journalId: event.target.value }))} className="w-full rounded border border-slate-300 px-3 py-2 text-sm" placeholder={l("Journal ID", "Fis ID")} required />
-          {periods.length > 0 ? (
-            <select value={reverseForm.reversalPeriodId} onChange={(event) => setReverseForm((prev) => ({ ...prev, reversalPeriodId: event.target.value }))} className="w-full rounded border border-slate-300 px-3 py-2 text-sm">
-              <option value="">{l("Reversal period (optional)", "Ters kayit donemi (opsiyonel)")}</option>
-              {periods.map((period) => (
-                <option key={period.id} value={period.id}>
-                  {period.fiscal_year}-P{String(period.period_no).padStart(2, "0")} ({period.period_name})
-                </option>
-              ))}
-            </select>
-          ) : (
-            <input type="number" min={1} value={reverseForm.reversalPeriodId} onChange={(event) => setReverseForm((prev) => ({ ...prev, reversalPeriodId: event.target.value }))} className="w-full rounded border border-slate-300 px-3 py-2 text-sm" placeholder={l("Reversal period ID (optional)", "Ters kayit donem ID (opsiyonel)")} />
-          )}
+          <Combobox
+            value={reverseForm.journalId || null}
+            options={reverseJournalOptions}
+            onChange={(nextValue) =>
+              setReverseForm((prev) => ({
+                ...prev,
+                journalId: nextValue ? String(nextValue) : "",
+              }))
+            }
+            onInputChange={(text, { reason }) => {
+              if (reason === "input") {
+                setReverseForm((prev) => ({
+                  ...prev,
+                  journalId: keepDigits(text),
+                }));
+              } else if (reason === "clear") {
+                setReverseForm((prev) => ({ ...prev, journalId: "" }));
+              }
+            }}
+            placeholder={l("Select journal", "Fis secin")}
+            noOptionsText={l("No journals found.", "Fis bulunamadi.")}
+            clearable={false}
+          />
+          <Combobox
+            value={reverseForm.reversalPeriodId || null}
+            options={periodOptions}
+            onChange={(nextValue) =>
+              setReverseForm((prev) => ({
+                ...prev,
+                reversalPeriodId: nextValue ? String(nextValue) : "",
+              }))
+            }
+            onInputChange={(text, { reason }) => {
+              if (reason === "input") {
+                setReverseForm((prev) => ({
+                  ...prev,
+                  reversalPeriodId: keepDigits(text),
+                }));
+              } else if (reason === "clear") {
+                setReverseForm((prev) => ({ ...prev, reversalPeriodId: "" }));
+              }
+            }}
+            placeholder={l(
+              "Reversal period (optional)",
+              "Ters kayit donemi (opsiyonel)"
+            )}
+            noOptionsText={l("No periods found.", "Donem bulunamadi.")}
+          />
           <label className="inline-flex items-center gap-2 text-sm text-slate-700"><input type="checkbox" checked={reverseForm.autoPost} onChange={(event) => setReverseForm((prev) => ({ ...prev, autoPost: event.target.checked }))} />{l("Auto-post reversal", "Ters kaydi otomatik post et")}</label>
           <input value={reverseForm.reason} onChange={(event) => setReverseForm((prev) => ({ ...prev, reason: event.target.value }))} className="w-full rounded border border-slate-300 px-3 py-2 text-sm" placeholder={l("Reason (optional)", "Neden (opsiyonel)")} />
           {isReverseBlockedForSelectedJournal ? (
@@ -2679,30 +2890,50 @@ export default function JournalWorkbenchPage() {
       <div className="grid gap-4 xl:grid-cols-2">
         <form onSubmit={onTrialBalance} className="space-y-2 rounded-xl border border-slate-200 bg-white p-4">
           <h2 className="text-sm font-semibold text-slate-700">{l("Trial Balance", "Mizan")}</h2>
-          {books.length > 0 ? (
-            <select value={tbForm.bookId} onChange={(event) => setTbForm((prev) => ({ ...prev, bookId: event.target.value, fiscalPeriodId: "" }))} className="w-full rounded border border-slate-300 px-3 py-2 text-sm" required>
-              <option value="">{l("Select book", "Defter secin")}</option>
-              {books.map((book) => (
-                <option key={book.id} value={book.id}>
-                  {book.code} - {book.name}
-                </option>
-              ))}
-            </select>
-          ) : (
-            <input type="number" min={1} value={tbForm.bookId} onChange={(event) => setTbForm((prev) => ({ ...prev, bookId: event.target.value }))} className="w-full rounded border border-slate-300 px-3 py-2 text-sm" placeholder={l("Book ID", "Defter ID")} required />
-          )}
-          {canUseTbPeriodLookup ? (
-            <select value={tbForm.fiscalPeriodId} onChange={(event) => setTbForm((prev) => ({ ...prev, fiscalPeriodId: event.target.value }))} className="w-full rounded border border-slate-300 px-3 py-2 text-sm" required>
-              <option value="">{l("Select fiscal period", "Mali donem secin")}</option>
-              {periods.map((period) => (
-                <option key={period.id} value={period.id}>
-                  {period.fiscal_year}-P{String(period.period_no).padStart(2, "0")} ({period.period_name})
-                </option>
-              ))}
-            </select>
-          ) : (
-            <input type="number" min={1} value={tbForm.fiscalPeriodId} onChange={(event) => setTbForm((prev) => ({ ...prev, fiscalPeriodId: event.target.value }))} className="w-full rounded border border-slate-300 px-3 py-2 text-sm" placeholder={l("Fiscal period ID", "Mali donem ID")} required />
-          )}
+          <Combobox
+            value={tbForm.bookId || null}
+            options={bookOptions}
+            onChange={(nextValue) =>
+              setTbForm((prev) => ({
+                ...prev,
+                bookId: nextValue ? String(nextValue) : "",
+                fiscalPeriodId: "",
+              }))
+            }
+            onInputChange={(text, { reason }) => {
+              if (reason === "input") {
+                setTbForm((prev) => ({ ...prev, bookId: keepDigits(text) }));
+              } else if (reason === "clear") {
+                setTbForm((prev) => ({ ...prev, bookId: "" }));
+              }
+            }}
+            placeholder={l("Select book", "Defter secin")}
+            noOptionsText={l("No books found.", "Defter bulunamadi.")}
+            clearable={false}
+          />
+          <Combobox
+            value={tbForm.fiscalPeriodId || null}
+            options={canUseTbPeriodLookup ? periodOptions : []}
+            onChange={(nextValue) =>
+              setTbForm((prev) => ({
+                ...prev,
+                fiscalPeriodId: nextValue ? String(nextValue) : "",
+              }))
+            }
+            onInputChange={(text, { reason }) => {
+              if (reason === "input") {
+                setTbForm((prev) => ({
+                  ...prev,
+                  fiscalPeriodId: keepDigits(text),
+                }));
+              } else if (reason === "clear") {
+                setTbForm((prev) => ({ ...prev, fiscalPeriodId: "" }));
+              }
+            }}
+            placeholder={l("Select fiscal period", "Mali donem secin")}
+            noOptionsText={l("No periods found.", "Donem bulunamadi.")}
+            clearable={false}
+          />
           <button type="submit" disabled={saving === "trialBalance" || !canReadTrialBalance} className="rounded bg-cyan-700 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60">{saving === "trialBalance" ? l("Loading...", "Yukleniyor...") : l("Run", "Calistir")}</button>
           <div className="overflow-x-auto">
             <table className="min-w-full text-xs">
@@ -2720,31 +2951,61 @@ export default function JournalWorkbenchPage() {
           <h2 className="text-sm font-semibold text-slate-700">{l("Period Status & Auto Close", "Donem Durumu ve Otomatik Kapanis")}</h2>
 
           <form onSubmit={onUpdatePeriodStatus} className="grid gap-2 md:grid-cols-2">
-            {books.length > 0 ? (
-              <select value={periodForm.bookId} onChange={(event) => setPeriodForm((prev) => ({ ...prev, bookId: event.target.value, periodId: "" }))} className="w-full rounded border border-slate-300 px-3 py-2 text-sm" required>
-                <option value="">{l("Select book", "Defter secin")}</option>
-                {books.map((book) => (
-                  <option key={book.id} value={book.id}>
-                    {book.code} - {book.name}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <input type="number" min={1} value={periodForm.bookId} onChange={(event) => setPeriodForm((prev) => ({ ...prev, bookId: event.target.value }))} className="w-full rounded border border-slate-300 px-3 py-2 text-sm" placeholder={l("Book ID", "Defter ID")} required />
-            )}
-            {canUsePeriodActionLookup ? (
-              <select value={periodForm.periodId} onChange={(event) => setPeriodForm((prev) => ({ ...prev, periodId: event.target.value }))} className="w-full rounded border border-slate-300 px-3 py-2 text-sm" required>
-                <option value="">{l("Select period", "Donem secin")}</option>
-                {periods.map((period) => (
-                  <option key={period.id} value={period.id}>
-                    {period.fiscal_year}-P{String(period.period_no).padStart(2, "0")} ({period.period_name})
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <input type="number" min={1} value={periodForm.periodId} onChange={(event) => setPeriodForm((prev) => ({ ...prev, periodId: event.target.value }))} className="w-full rounded border border-slate-300 px-3 py-2 text-sm" placeholder={l("Period ID", "Donem ID")} required />
-            )}
-            <select value={periodForm.status} onChange={(event) => setPeriodForm((prev) => ({ ...prev, status: event.target.value }))} className="w-full rounded border border-slate-300 px-3 py-2 text-sm">{PERIOD_STATUSES.map((status) => <option key={status} value={status}>{status}</option>)}</select>
+            <Combobox
+              value={periodForm.bookId || null}
+              options={bookOptions}
+              onChange={(nextValue) =>
+                setPeriodForm((prev) => ({
+                  ...prev,
+                  bookId: nextValue ? String(nextValue) : "",
+                  periodId: "",
+                }))
+              }
+              onInputChange={(text, { reason }) => {
+                if (reason === "input") {
+                  setPeriodForm((prev) => ({ ...prev, bookId: keepDigits(text) }));
+                } else if (reason === "clear") {
+                  setPeriodForm((prev) => ({ ...prev, bookId: "" }));
+                }
+              }}
+              placeholder={l("Select book", "Defter secin")}
+              noOptionsText={l("No books found.", "Defter bulunamadi.")}
+              clearable={false}
+            />
+            <Combobox
+              value={periodForm.periodId || null}
+              options={canUsePeriodActionLookup ? periodOptions : []}
+              onChange={(nextValue) =>
+                setPeriodForm((prev) => ({
+                  ...prev,
+                  periodId: nextValue ? String(nextValue) : "",
+                }))
+              }
+              onInputChange={(text, { reason }) => {
+                if (reason === "input") {
+                  setPeriodForm((prev) => ({
+                    ...prev,
+                    periodId: keepDigits(text),
+                  }));
+                } else if (reason === "clear") {
+                  setPeriodForm((prev) => ({ ...prev, periodId: "" }));
+                }
+              }}
+              placeholder={l("Select period", "Donem secin")}
+              noOptionsText={l("No periods found.", "Donem bulunamadi.")}
+              clearable={false}
+            />
+            <Combobox
+              value={periodForm.status || null}
+              options={periodStatusOptions}
+              onChange={(nextValue) =>
+                setPeriodForm((prev) => ({
+                  ...prev,
+                  status: nextValue ? String(nextValue) : "SOFT_CLOSED",
+                }))
+              }
+              clearable={false}
+            />
             <input value={periodForm.note} onChange={(event) => setPeriodForm((prev) => ({ ...prev, note: event.target.value }))} className="w-full rounded border border-slate-300 px-3 py-2 text-sm" placeholder={l("Manual status note (optional)", "Elle durum notu (opsiyonel)")} />
             <button type="submit" disabled={saving === "periodStatus" || !canClosePeriod} className="rounded bg-slate-900 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60 md:col-span-2">{saving === "periodStatus" ? l("Saving...", "Kaydediliyor...") : l("Update Status", "Durumu Guncelle")}</button>
           </form>
@@ -2807,25 +3068,45 @@ export default function JournalWorkbenchPage() {
           ) : null}
 
           <form onSubmit={onExecutePeriodClose} className="grid gap-2 md:grid-cols-2">
-            <select value={periodCloseForm.closeStatus} onChange={(event) => setPeriodCloseForm((prev) => ({ ...prev, closeStatus: event.target.value }))} className="w-full rounded border border-slate-300 px-3 py-2 text-sm">
-              {["SOFT_CLOSED", "HARD_CLOSED"].map((status) => (
-                <option key={status} value={status}>
-                  {status}
-                </option>
-              ))}
-            </select>
-            {retainedEarningsAccounts.length > 0 ? (
-              <select value={periodCloseForm.retainedEarningsAccountId} onChange={(event) => setPeriodCloseForm((prev) => ({ ...prev, retainedEarningsAccountId: event.target.value }))} className="w-full rounded border border-slate-300 px-3 py-2 text-sm">
-                <option value="">{l("Retained earnings account (year-end optional)", "Gecmis yil kar/zarar hesabi (yil sonu opsiyonel)")}</option>
-                {retainedEarningsAccounts.map((account) => (
-                  <option key={account.id} value={account.id}>
-                    {account.code} - {account.name}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <input type="number" min={1} value={periodCloseForm.retainedEarningsAccountId} onChange={(event) => setPeriodCloseForm((prev) => ({ ...prev, retainedEarningsAccountId: event.target.value }))} className="w-full rounded border border-slate-300 px-3 py-2 text-sm" placeholder={l("Retained earnings account ID (year-end)", "Gecmis yil kar/zarar hesap ID (yil sonu)")} />
-            )}
+            <Combobox
+              value={periodCloseForm.closeStatus || null}
+              options={periodCloseStatusOptions}
+              onChange={(nextValue) =>
+                setPeriodCloseForm((prev) => ({
+                  ...prev,
+                  closeStatus: nextValue ? String(nextValue) : "SOFT_CLOSED",
+                }))
+              }
+              clearable={false}
+            />
+            <Combobox
+              value={periodCloseForm.retainedEarningsAccountId || null}
+              options={retainedEarningsAccountOptions}
+              onChange={(nextValue) =>
+                setPeriodCloseForm((prev) => ({
+                  ...prev,
+                  retainedEarningsAccountId: nextValue ? String(nextValue) : "",
+                }))
+              }
+              onInputChange={(text, { reason }) => {
+                if (reason === "input") {
+                  setPeriodCloseForm((prev) => ({
+                    ...prev,
+                    retainedEarningsAccountId: keepDigits(text),
+                  }));
+                } else if (reason === "clear") {
+                  setPeriodCloseForm((prev) => ({
+                    ...prev,
+                    retainedEarningsAccountId: "",
+                  }));
+                }
+              }}
+              placeholder={l(
+                "Retained earnings account (year-end optional)",
+                "Gecmis yil kar/zarar hesabi (yil sonu opsiyonel)"
+              )}
+              noOptionsText={l("No equity accounts found.", "Sermaye hesabi bulunamadi.")}
+            />
             <input value={periodCloseForm.note} onChange={(event) => setPeriodCloseForm((prev) => ({ ...prev, note: event.target.value }))} className="w-full rounded border border-slate-300 px-3 py-2 text-sm md:col-span-2" placeholder={l("Auto close note (optional)", "Otomatik kapanis notu (opsiyonel)")} />
             {showPeriodCloseFxOverrideControls ? (
               <>
@@ -2955,78 +3236,65 @@ export default function JournalWorkbenchPage() {
         </div>
 
         <form onSubmit={onApplyHistoryFilters} className="grid gap-2 md:grid-cols-6">
-          <select
-            value={historyFilters.legalEntityId}
-            onChange={(event) =>
-              setHistoryFilters((prev) => ({ ...prev, legalEntityId: event.target.value }))
-            }
-            className="rounded border border-slate-300 px-3 py-2 text-sm"
-          >
-            <option value="">{l("All legal entities", "Tum istirakler / bagli ortaklar")}</option>
-            {entities.map((entity) => (
-              <option key={entity.id} value={entity.id}>
-                {entity.code} - {entity.name}
-              </option>
-            ))}
-          </select>
-          <select
-            value={historyFilters.bookId}
-            onChange={(event) =>
-              setHistoryFilters((prev) => ({ ...prev, bookId: event.target.value }))
-            }
-            className="rounded border border-slate-300 px-3 py-2 text-sm"
-          >
-            <option value="">{l("All books", "Tum defterler")}</option>
-            {books.map((book) => (
-              <option key={book.id} value={book.id}>
-                {book.code} - {book.name}
-              </option>
-            ))}
-          </select>
-          <select
-            value={historyFilters.fiscalPeriodId}
-            onChange={(event) =>
+          <Combobox
+            value={historyFilters.legalEntityId || null}
+            options={legalEntityOptions}
+            onChange={(nextValue) =>
               setHistoryFilters((prev) => ({
                 ...prev,
-                fiscalPeriodId: event.target.value,
+                legalEntityId: nextValue ? String(nextValue) : "",
               }))
             }
-            className="rounded border border-slate-300 px-3 py-2 text-sm"
+            placeholder={l("All legal entities", "Tum istirakler / bagli ortaklar")}
+            noOptionsText={l("No legal entities found.", "Istirak bulunamadi.")}
+          />
+          <Combobox
+            value={historyFilters.bookId || null}
+            options={bookOptions}
+            onChange={(nextValue) =>
+              setHistoryFilters((prev) => ({
+                ...prev,
+                bookId: nextValue ? String(nextValue) : "",
+              }))
+            }
+            placeholder={l("All books", "Tum defterler")}
+            noOptionsText={l("No books found.", "Defter bulunamadi.")}
+          />
+          <Combobox
+            value={historyFilters.fiscalPeriodId || null}
+            options={historyPeriodOptions}
+            onChange={(nextValue) =>
+              setHistoryFilters((prev) => ({
+                ...prev,
+                fiscalPeriodId: nextValue ? String(nextValue) : "",
+              }))
+            }
+            placeholder={l("All periods", "Tum donemler")}
+            noOptionsText={l("No periods found.", "Donem bulunamadi.")}
             disabled={loadingHistoryPeriods}
-          >
-            <option value="">{l("All periods", "Tum donemler")}</option>
-            {historyPeriods.map((period) => (
-              <option key={period.id} value={period.id}>
-                {period.fiscal_year}-P{String(period.period_no).padStart(2, "0")} ({period.period_name})
-              </option>
-            ))}
-          </select>
-          <select
-            value={historyFilters.status}
-            onChange={(event) =>
-              setHistoryFilters((prev) => ({ ...prev, status: event.target.value }))
+          />
+          <Combobox
+            value={historyFilters.status || null}
+            options={historyStatusOptions}
+            onChange={(nextValue) =>
+              setHistoryFilters((prev) => ({
+                ...prev,
+                status: nextValue ? String(nextValue) : "",
+              }))
             }
-            className="rounded border border-slate-300 px-3 py-2 text-sm"
-          >
-            <option value="">{l("All statuses", "Tum durumlar")}</option>
-            {JOURNAL_STATUSES.map((status) => (
-              <option key={status} value={status}>
-                {status}
-              </option>
-            ))}
-          </select>
-          <select
-            value={historyFilters.limit}
-            onChange={(event) =>
-              setHistoryFilters((prev) => ({ ...prev, limit: event.target.value }))
+            placeholder={l("All statuses", "Tum durumlar")}
+          />
+          <Combobox
+            value={historyFilters.limit || null}
+            options={historyLimitOptions}
+            onChange={(nextValue) =>
+              setHistoryFilters((prev) => ({
+                ...prev,
+                limit: nextValue ? String(nextValue) : prev.limit,
+              }))
             }
-            className="rounded border border-slate-300 px-3 py-2 text-sm"
-          >
-            <option value="20">20</option>
-            <option value="50">50</option>
-            <option value="100">100</option>
-            <option value="200">200</option>
-          </select>
+            clearable={false}
+          />
           <button
             type="submit"
             disabled={loadingHistory || !canReadJournals}
@@ -3361,51 +3629,44 @@ export default function JournalWorkbenchPage() {
         ) : (
           <>
             <form onSubmit={onApplyComplianceFilters} className="grid gap-2 md:grid-cols-5">
-              <select
-                value={complianceFilters.legalEntityId}
-                onChange={(event) =>
+              <Combobox
+                value={complianceFilters.legalEntityId || null}
+                options={legalEntityOptions}
+                onChange={(nextValue) =>
                   setComplianceFilters((prev) => ({
                     ...prev,
-                    legalEntityId: event.target.value,
+                    legalEntityId: nextValue ? String(nextValue) : "",
                   }))
                 }
-                className="rounded border border-slate-300 px-3 py-2 text-sm"
-              >
-                <option value="">{l("All legal entities", "Tum istirakler / bagli ortaklar")}</option>
-                {entities.map((entity) => (
-                  <option key={entity.id} value={entity.id}>
-                    {entity.code} - {entity.name}
-                  </option>
-                ))}
-              </select>
-              <input
-                type="number"
-                min={1}
-                value={complianceFilters.fiscalPeriodId}
-                onChange={(event) =>
-                  setComplianceFilters((prev) => ({
-                    ...prev,
-                    fiscalPeriodId: event.target.value,
-                  }))
-                }
-                className="rounded border border-slate-300 px-3 py-2 text-sm"
-                placeholder={l("Fiscal period ID (optional)", "Mali donem ID (opsiyonel)")}
+                placeholder={l("All legal entities", "Tum istirakler / bagli ortaklar")}
+                noOptionsText={l("No legal entities found.", "Istirak bulunamadi.")}
               />
-              <select
-                value={complianceFilters.limit}
-                onChange={(event) =>
+              <Combobox
+                value={complianceFilters.fiscalPeriodId || null}
+                options={compliancePeriodOptions}
+                onChange={(nextValue) =>
                   setComplianceFilters((prev) => ({
                     ...prev,
-                    limit: event.target.value,
+                    fiscalPeriodId: nextValue ? String(nextValue) : "",
                   }))
                 }
-                className="rounded border border-slate-300 px-3 py-2 text-sm"
-              >
-                <option value="100">100</option>
-                <option value="200">200</option>
-                <option value="300">300</option>
-                <option value="500">500</option>
-              </select>
+                placeholder={l(
+                  "Fiscal period (optional)",
+                  "Mali donem (opsiyonel)"
+                )}
+                noOptionsText={l("No periods found.", "Donem bulunamadi.")}
+              />
+              <Combobox
+                value={complianceFilters.limit || null}
+                options={complianceLimitOptions}
+                onChange={(nextValue) =>
+                  setComplianceFilters((prev) => ({
+                    ...prev,
+                    limit: nextValue ? String(nextValue) : prev.limit,
+                  }))
+                }
+                clearable={false}
+              />
               <label className="inline-flex items-center gap-2 rounded border border-slate-300 px-3 py-2 text-sm text-slate-700">
                 <input
                   type="checkbox"

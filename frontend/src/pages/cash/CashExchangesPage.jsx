@@ -4,10 +4,12 @@ import {
   getCashExchangeBatch,
   listCashExchangeBatches,
   listCashRegisters,
+  postCashExchangeBatch,
   reverseCashExchangeBatch,
 } from "../../api/cashAdmin.js";
-import { listAccounts } from "../../api/glAdmin.js";
+import { listAccounts, upsertAccount } from "../../api/glAdmin.js";
 import { useAuth } from "../../auth/useAuth.js";
+import Combobox from "../../components/Combobox.jsx";
 import CashControlModeBanner from "./CashControlModeBanner.jsx";
 
 const EXCHANGE_STATUSES = ["DRAFT", "POSTED", "REVERSED", "CANCELLED"];
@@ -116,8 +118,188 @@ function toLegalEntityLabel(row) {
   return `${row?.code || row?.id || "-"} - ${row?.name || "-"}`;
 }
 
-function toAccountLabel(row) {
-  return `${row?.code || row?.id || "-"} - ${row?.name || "-"}`;
+function parseDbBoolean(value) {
+  return value === true || value === 1 || value === "1";
+}
+
+function normalizeAccountCode(value) {
+  return String(value || "").trim().toUpperCase();
+}
+
+function parseBreadcrumbCodes(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item || "").trim()).filter(Boolean);
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return [];
+    }
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) {
+        return parsed.map((item) => String(item || "").trim()).filter(Boolean);
+      }
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+function formatAccountOptionLabel(account) {
+  const code = String(account?.code || "").trim();
+  const name = String(account?.name || "").trim();
+  const breadcrumbCodes = parseBreadcrumbCodes(account?.account_breadcrumb_codes);
+  const parentPath = breadcrumbCodes.slice(0, -1).join(" > ");
+  const baseLabel = [code, name].filter(Boolean).join(" - ");
+  return parentPath ? `${parentPath} > ${baseLabel}` : baseLabel;
+}
+
+function parseChildCodeSequence(code, parentCode) {
+  const normalizedCode = normalizeAccountCode(code);
+  const normalizedParentCode = normalizeAccountCode(parentCode);
+  if (!normalizedCode || !normalizedParentCode) {
+    return null;
+  }
+
+  let suffix = "";
+  if (normalizedCode.startsWith(`${normalizedParentCode}.`)) {
+    suffix = normalizedCode.slice(normalizedParentCode.length + 1);
+  } else if (normalizedCode.startsWith(`${normalizedParentCode}-`)) {
+    suffix = normalizedCode.slice(normalizedParentCode.length + 1);
+  } else if (normalizedCode.startsWith(normalizedParentCode)) {
+    suffix = normalizedCode.slice(normalizedParentCode.length);
+  } else {
+    return null;
+  }
+
+  if (!/^\d+$/.test(suffix)) {
+    return null;
+  }
+  const value = Number(suffix);
+  if (!Number.isInteger(value) || value <= 0) {
+    return null;
+  }
+  return {
+    value,
+    width: suffix.length,
+  };
+}
+
+function buildNextChildAccountCode(rows, parentAccount) {
+  const parentCode = normalizeAccountCode(parentAccount?.code);
+  const parentAccountId = toPositiveInt(parentAccount?.id);
+  if (!parentCode || !parentAccountId) {
+    return "";
+  }
+
+  const normalizedRows = Array.isArray(rows) ? rows : [];
+  const existingCodes = new Set(
+    normalizedRows
+      .map((row) => normalizeAccountCode(row?.code))
+      .filter(Boolean)
+  );
+  const parsedChildren = normalizedRows
+    .filter(
+      (row) =>
+        toPositiveInt(row?.parent_account_id ?? row?.parentAccountId) ===
+        parentAccountId
+    )
+    .map((row) => parseChildCodeSequence(row?.code, parentCode))
+    .filter(Boolean);
+
+  const maxSequence = parsedChildren.reduce(
+    (maxValue, row) => Math.max(maxValue, Number(row?.value || 0)),
+    0
+  );
+  const width = Math.max(
+    2,
+    parsedChildren.reduce(
+      (maxWidth, row) => Math.max(maxWidth, Number(row?.width || 0)),
+      0
+    )
+  );
+
+  let next = Math.max(1, maxSequence + 1);
+  while (next <= 999999) {
+    const candidate = `${parentCode}.${String(next).padStart(width, "0")}`;
+    if (!existingCodes.has(candidate)) {
+      return candidate;
+    }
+    next += 1;
+  }
+  return "";
+}
+
+function resolveSelectedAccountOption(accountOptions, allAccounts, selectedAccountId) {
+  if (!selectedAccountId) {
+    return null;
+  }
+  return (
+    accountOptions.find((row) => toPositiveInt(row?.id) === selectedAccountId) ||
+    allAccounts.find((row) => toPositiveInt(row?.id) === selectedAccountId) ||
+    null
+  );
+}
+
+function buildAccountPickerRows(accountOptions, selectedAccountOption) {
+  if (!selectedAccountOption) {
+    return accountOptions;
+  }
+  const selectedId = toPositiveInt(selectedAccountOption?.id);
+  if (!selectedId) {
+    return accountOptions;
+  }
+  const alreadyPresent = accountOptions.some(
+    (row) => toPositiveInt(row?.id) === selectedId
+  );
+  return alreadyPresent ? accountOptions : [selectedAccountOption, ...accountOptions];
+}
+
+function buildAccountLookupOptions(rows) {
+  return rows.map((row) => ({
+    value: String(row?.id || ""),
+    label: formatAccountOptionLabel(row),
+    description: [normalizeAccountCode(row?.account_type), normalizeAccountCode(row?.normal_side)]
+      .filter(Boolean)
+      .join(" | "),
+  }));
+}
+
+function deriveSearchCodeCandidate(value) {
+  const normalized = normalizeAccountCode(value);
+  if (!normalized || /\s/.test(normalized)) {
+    return "";
+  }
+  return normalized;
+}
+
+function findBestParentAccount(candidateCode, parentAccountOptions) {
+  if (!candidateCode) {
+    return null;
+  }
+  let bestParent = null;
+  for (const row of parentAccountOptions) {
+    const parentCode = normalizeAccountCode(row?.code);
+    if (!parentCode || candidateCode === parentCode) {
+      continue;
+    }
+    const matchesPrefix =
+      candidateCode.startsWith(`${parentCode}.`) ||
+      candidateCode.startsWith(`${parentCode}-`) ||
+      candidateCode.startsWith(parentCode);
+    if (!matchesPrefix) {
+      continue;
+    }
+    if (
+      !bestParent ||
+      parentCode.length > normalizeAccountCode(bestParent?.code).length
+    ) {
+      bestParent = row;
+    }
+  }
+  return bestParent;
 }
 
 function statusClassName(status) {
@@ -149,11 +331,51 @@ function extractRequestId(error) {
   );
 }
 
+function resolveStoredFxRate(row) {
+  const directRate = Number(row?.fxRate);
+  if (Number.isFinite(directRate) && directRate > 0) {
+    return directRate;
+  }
+  const sourceAmount = Number(row?.sourceAmountTxn);
+  const targetAmount = Number(row?.targetAmountTxn);
+  if (Number.isFinite(sourceAmount) && sourceAmount > 0 && Number.isFinite(targetAmount) && targetAmount > 0) {
+    return Number((targetAmount / sourceAmount).toFixed(10));
+  }
+  return null;
+}
+
+function buildFxDisplay(row, mode) {
+  const storedRate = resolveStoredFxRate(row);
+  if (!storedRate) {
+    return null;
+  }
+  const sourceCurrencyCode = toUpper(row?.sourceCurrencyCode);
+  const targetCurrencyCode = toUpper(row?.targetCurrencyCode);
+  if (!sourceCurrencyCode || !targetCurrencyCode) {
+    return null;
+  }
+
+  if (mode === "TARGET_TO_SOURCE") {
+    return {
+      baseCurrencyCode: targetCurrencyCode,
+      quoteCurrencyCode: sourceCurrencyCode,
+      rate: Number((1 / storedRate).toFixed(10)),
+    };
+  }
+
+  return {
+    baseCurrencyCode: sourceCurrencyCode,
+    quoteCurrencyCode: targetCurrencyCode,
+    rate: Number(storedRate.toFixed(10)),
+  };
+}
+
 export default function CashExchangesPage() {
   const { hasPermission } = useAuth();
   const canRead = hasPermission("cash.txn.read");
   const canCreate = hasPermission("cash.txn.create");
   const canReverse = hasPermission("cash.txn.reverse");
+  const canUpsertAccounts = hasPermission("gl.account.upsert");
 
   const [filters, setFilters] = useState(INITIAL_FILTERS);
   const [rows, setRows] = useState([]);
@@ -161,6 +383,7 @@ export default function CashExchangesPage() {
   const [accountRows, setAccountRows] = useState([]);
   const [loading, setLoading] = useState(false);
   const [createSubmitting, setCreateSubmitting] = useState(false);
+  const [postSubmittingBatchId, setPostSubmittingBatchId] = useState(null);
   const [reverseSubmitting, setReverseSubmitting] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
   const [error, setError] = useState("");
@@ -168,9 +391,18 @@ export default function CashExchangesPage() {
   const [warning, setWarning] = useState("");
   const [message, setMessage] = useState("");
   const [createForm, setCreateForm] = useState(() => buildCreateDefaultForm());
+  const [clearingAccountLookupQuery, setClearingAccountLookupQuery] = useState("");
+  const [clearingInlineChildParentAccountId, setClearingInlineChildParentAccountId] =
+    useState("");
+  const [clearingInlineChildCode, setClearingInlineChildCode] = useState("");
+  const [clearingInlineChildName, setClearingInlineChildName] = useState("");
+  const [clearingInlineChildSaving, setClearingInlineChildSaving] = useState(false);
   const [selectedBatchId, setSelectedBatchId] = useState(null);
   const [selectedBatchDetail, setSelectedBatchDetail] = useState(null);
+  const [postSourceSessionByBatchId, setPostSourceSessionByBatchId] = useState({});
+  const [postTargetSessionByBatchId, setPostTargetSessionByBatchId] = useState({});
   const [reverseReasonByBatchId, setReverseReasonByBatchId] = useState({});
+  const [fxDisplayMode, setFxDisplayMode] = useState("TARGET_TO_SOURCE");
 
   const selectedLegalEntityId = toPositiveInt(filters.legalEntityId);
   const selectedCreateSourceRegisterId = toPositiveInt(createForm.sourceRegisterId);
@@ -214,7 +446,7 @@ export default function CashExchangesPage() {
   }, [registerRows, selectedLegalEntityId]);
 
   const createRegisterOptions = useMemo(() => {
-    return registerRows.sort((a, b) =>
+    return [...registerRows].sort((a, b) =>
       String(a?.code || "").localeCompare(String(b?.code || ""))
     );
   }, [registerRows]);
@@ -235,6 +467,105 @@ export default function CashExchangesPage() {
       })
       .sort((a, b) => String(a?.code || "").localeCompare(String(b?.code || "")));
   }, [accountRows, selectedCreateLegalEntityId]);
+
+  const selectedClearingAccountId = toPositiveInt(createForm.clearingAccountId);
+  const selectedClearingAccountOption = useMemo(
+    () =>
+      resolveSelectedAccountOption(accountOptions, accountRows, selectedClearingAccountId),
+    [accountOptions, accountRows, selectedClearingAccountId]
+  );
+  const clearingAccountPickerRows = useMemo(
+    () => buildAccountPickerRows(accountOptions, selectedClearingAccountOption),
+    [accountOptions, selectedClearingAccountOption]
+  );
+  const clearingAccountLookupOptions = useMemo(
+    () => buildAccountLookupOptions(clearingAccountPickerRows),
+    [clearingAccountPickerRows]
+  );
+
+  const parentAccountOptions = useMemo(() => {
+    const filtered = accountRows.filter((row) => {
+      const isActive = parseDbBoolean(row?.is_active ?? row?.isActive);
+      if (!isActive) {
+        return false;
+      }
+      if (!selectedCreateLegalEntityId) {
+        return true;
+      }
+      return (
+        toPositiveInt(row?.legal_entity_id ?? row?.legalEntityId) ===
+        selectedCreateLegalEntityId
+      );
+    });
+    return [...filtered].sort((a, b) =>
+      String(a?.code || "").localeCompare(String(b?.code || ""))
+    );
+  }, [accountRows, selectedCreateLegalEntityId]);
+
+  const parentAccountLookupOptions = useMemo(
+    () =>
+      parentAccountOptions.map((row) => ({
+        value: String(row?.id || ""),
+        label: formatAccountOptionLabel(row),
+        description: [
+          normalizeAccountCode(row?.account_type),
+          normalizeAccountCode(row?.normal_side),
+        ]
+          .filter(Boolean)
+          .join(" | "),
+      })),
+    [parentAccountOptions]
+  );
+
+  const selectedEntityAccountByCode = useMemo(() => {
+    const byCode = new Map();
+    for (const row of accountRows) {
+      if (
+        selectedCreateLegalEntityId &&
+        toPositiveInt(row?.legal_entity_id ?? row?.legalEntityId) !==
+          selectedCreateLegalEntityId
+      ) {
+        continue;
+      }
+      const code = normalizeAccountCode(row?.code);
+      if (!code || byCode.has(code)) {
+        continue;
+      }
+      byCode.set(code, row);
+    }
+    return byCode;
+  }, [accountRows, selectedCreateLegalEntityId]);
+
+  const clearingSearchCodeCandidate = useMemo(
+    () => deriveSearchCodeCandidate(clearingAccountLookupQuery),
+    [clearingAccountLookupQuery]
+  );
+  const exactClearingCodeMatchAccount = useMemo(
+    () =>
+      clearingSearchCodeCandidate
+        ? selectedEntityAccountByCode.get(clearingSearchCodeCandidate) || null
+        : null,
+    [clearingSearchCodeCandidate, selectedEntityAccountByCode]
+  );
+  const showInlineClearingChildCreate =
+    Boolean(String(clearingAccountLookupQuery || "").trim()) &&
+    !exactClearingCodeMatchAccount;
+
+  const selectedClearingInlineParentAccount = useMemo(() => {
+    const parentAccountId = toPositiveInt(clearingInlineChildParentAccountId);
+    if (!parentAccountId) {
+      return null;
+    }
+    return (
+      parentAccountOptions.find((row) => toPositiveInt(row?.id) === parentAccountId) ||
+      null
+    );
+  }, [clearingInlineChildParentAccountId, parentAccountOptions]);
+
+  const suggestedNextClearingChildCode = useMemo(
+    () => buildNextChildAccountCode(accountRows, selectedClearingInlineParentAccount),
+    [accountRows, selectedClearingInlineParentAccount]
+  );
 
   const exchangeRows = useMemo(
     () => [...rows].sort((a, b) => Number(b?.id || 0) - Number(a?.id || 0)),
@@ -345,6 +676,182 @@ export default function CashExchangesPage() {
     }
     loadBatchDetail(selectedBatchId);
   }, [selectedBatchId, loadBatchDetail]);
+
+  useEffect(() => {
+    setClearingAccountLookupQuery("");
+    setClearingInlineChildParentAccountId("");
+    setClearingInlineChildCode("");
+    setClearingInlineChildName("");
+  }, [selectedCreateLegalEntityId]);
+
+  useEffect(() => {
+    if (!showInlineClearingChildCreate) {
+      return;
+    }
+    setClearingInlineChildCode((prev) => prev || clearingSearchCodeCandidate);
+    setClearingInlineChildName(
+      (prev) => prev || String(clearingAccountLookupQuery || "").trim()
+    );
+  }, [
+    showInlineClearingChildCreate,
+    clearingSearchCodeCandidate,
+    clearingAccountLookupQuery,
+  ]);
+
+  useEffect(() => {
+    if (!showInlineClearingChildCreate || !suggestedNextClearingChildCode) {
+      return;
+    }
+    setClearingInlineChildCode((prev) => {
+      const normalizedPrev = normalizeAccountCode(prev);
+      const normalizedCandidate = normalizeAccountCode(clearingSearchCodeCandidate);
+      if (!normalizedPrev || normalizedPrev === normalizedCandidate) {
+        return suggestedNextClearingChildCode;
+      }
+      return prev;
+    });
+  }, [
+    showInlineClearingChildCreate,
+    suggestedNextClearingChildCode,
+    clearingSearchCodeCandidate,
+  ]);
+
+  useEffect(() => {
+    if (
+      !showInlineClearingChildCreate ||
+      toPositiveInt(clearingInlineChildParentAccountId)
+    ) {
+      return;
+    }
+    const candidateCode = normalizeAccountCode(
+      clearingInlineChildCode || clearingSearchCodeCandidate
+    );
+    if (!candidateCode) {
+      return;
+    }
+    const bestParent = findBestParentAccount(candidateCode, parentAccountOptions);
+    if (toPositiveInt(bestParent?.id)) {
+      setClearingInlineChildParentAccountId(String(bestParent.id));
+    }
+  }, [
+    showInlineClearingChildCreate,
+    clearingInlineChildParentAccountId,
+    clearingInlineChildCode,
+    clearingSearchCodeCandidate,
+    parentAccountOptions,
+  ]);
+
+  async function handleCreateClearingChildAccount() {
+    if (!canUpsertAccounts) {
+      setError("Missing permission: gl.account.upsert");
+      setErrorRequestId(null);
+      return;
+    }
+    if (!selectedCreateLegalEntityId) {
+      setError("Select source register first to resolve legal entity.");
+      setErrorRequestId(null);
+      return;
+    }
+
+    const parentAccountId = toPositiveInt(clearingInlineChildParentAccountId);
+    const parentAccount =
+      parentAccountOptions.find((row) => toPositiveInt(row?.id) === parentAccountId) ||
+      null;
+    if (!parentAccountId || !parentAccount) {
+      setError("Parent account is required.");
+      setErrorRequestId(null);
+      return;
+    }
+
+    const childCode = normalizeAccountCode(
+      clearingInlineChildCode || clearingSearchCodeCandidate
+    );
+    const childName = String(clearingInlineChildName || "").trim();
+    if (!childCode) {
+      setError("Child account code is required.");
+      setErrorRequestId(null);
+      return;
+    }
+    if (!childName) {
+      setError("Child account name is required.");
+      setErrorRequestId(null);
+      return;
+    }
+
+    const parentCode = normalizeAccountCode(parentAccount?.code);
+    if (parentCode && childCode === parentCode) {
+      setError("Child account code cannot be same as parent account code.");
+      setErrorRequestId(null);
+      return;
+    }
+
+    const existingAccount = selectedEntityAccountByCode.get(childCode) || null;
+    const existingAccountId = toPositiveInt(existingAccount?.id);
+    if (existingAccountId) {
+      setCreateForm((prev) => ({ ...prev, clearingAccountId: String(existingAccountId) }));
+      setClearingAccountLookupQuery("");
+      setError("");
+      setMessage(`Account ${childCode} already exists and was selected.`);
+      return;
+    }
+
+    const coaId = toPositiveInt(parentAccount?.coa_id ?? parentAccount?.coaId);
+    if (!coaId) {
+      setError("Selected parent account has no valid CoA.");
+      setErrorRequestId(null);
+      return;
+    }
+
+    const accountType = normalizeAccountCode(
+      parentAccount?.account_type ?? parentAccount?.accountType
+    ) || "ASSET";
+    const normalSide = normalizeAccountCode(
+      parentAccount?.normal_side ?? parentAccount?.normalSide
+    ) || "DEBIT";
+
+    setClearingInlineChildSaving(true);
+    setError("");
+    setErrorRequestId(null);
+    setMessage("");
+    try {
+      const upsertResponse = await upsertAccount({
+        coaId,
+        code: childCode,
+        name: childName,
+        accountType,
+        normalSide,
+        allowPosting: true,
+        parentAccountId,
+      });
+      const responseId = toPositiveInt(upsertResponse?.id ?? upsertResponse?.row?.id);
+
+      const refreshResponse = await listAccounts({
+        limit: 1000,
+        offset: 0,
+      });
+      const refreshedRows = Array.isArray(refreshResponse?.rows)
+        ? refreshResponse.rows
+        : [];
+      setAccountRows(refreshedRows);
+
+      const resolvedRow =
+        refreshedRows.find((row) => normalizeAccountCode(row?.code) === childCode) ||
+        null;
+      const resolvedId = responseId || toPositiveInt(resolvedRow?.id);
+      if (resolvedId) {
+        setCreateForm((prev) => ({ ...prev, clearingAccountId: String(resolvedId) }));
+      }
+      setClearingAccountLookupQuery("");
+      setClearingInlineChildCode("");
+      setClearingInlineChildName("");
+      setMessage(`Clearing sub account ${childCode} created and selected.`);
+    } catch (err) {
+      setError(extractErrorMessage(err, "Clearing sub account could not be created."));
+      setErrorRequestId(extractRequestId(err));
+    } finally {
+      setClearingInlineChildSaving(false);
+    }
+  }
 
   function handleSelectBatch(batchId) {
     const resolvedBatchId = toPositiveInt(batchId);
@@ -509,6 +1016,67 @@ export default function CashExchangesPage() {
     }
   }
 
+  async function handlePostExchange(batchId) {
+    const resolvedBatchId = toPositiveInt(batchId);
+    if (!canCreate) {
+      setError("Missing permission: cash.txn.create");
+      setErrorRequestId(null);
+      return;
+    }
+    if (!resolvedBatchId) {
+      setError("batchId is required for post.");
+      setErrorRequestId(null);
+      return;
+    }
+
+    const sourceSessionInput = postSourceSessionByBatchId[String(resolvedBatchId)] || "";
+    const targetSessionInput = postTargetSessionByBatchId[String(resolvedBatchId)] || "";
+    const payload = {};
+    const sourceCashSessionId = toPositiveInt(sourceSessionInput);
+    const targetCashSessionId = toPositiveInt(targetSessionInput);
+    if (String(sourceSessionInput || "").trim() && !sourceCashSessionId) {
+      setError("sourceCashSessionId must be a positive integer.");
+      setErrorRequestId(null);
+      return;
+    }
+    if (String(targetSessionInput || "").trim() && !targetCashSessionId) {
+      setError("targetCashSessionId must be a positive integer.");
+      setErrorRequestId(null);
+      return;
+    }
+    if (sourceCashSessionId) {
+      payload.sourceCashSessionId = sourceCashSessionId;
+    }
+    if (targetCashSessionId) {
+      payload.targetCashSessionId = targetCashSessionId;
+    }
+
+    setPostSubmittingBatchId(resolvedBatchId);
+    setError("");
+    setErrorRequestId(null);
+    setMessage("");
+    try {
+      const response = await postCashExchangeBatch(resolvedBatchId, payload);
+      const postedBatchId = toPositiveInt(response?.batch?.id) || resolvedBatchId;
+      setMessage(`Cash exchange batch #${postedBatchId} posted successfully.`);
+      setPostSourceSessionByBatchId((prev) => ({
+        ...prev,
+        [String(resolvedBatchId)]: "",
+      }));
+      setPostTargetSessionByBatchId((prev) => ({
+        ...prev,
+        [String(resolvedBatchId)]: "",
+      }));
+      await loadData(filters);
+      setSelectedBatchId(postedBatchId);
+    } catch (err) {
+      setError(extractErrorMessage(err, "Cash exchange post failed."));
+      setErrorRequestId(extractRequestId(err));
+    } finally {
+      setPostSubmittingBatchId(null);
+    }
+  }
+
   if (!canRead) {
     return (
       <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
@@ -660,7 +1228,34 @@ export default function CashExchangesPage() {
       </section>
 
       <section className="rounded-xl border border-slate-200 bg-white p-4">
-        <h2 className="text-lg font-semibold text-slate-900">Exchange Batches</h2>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-lg font-semibold text-slate-900">Exchange Batches</h2>
+          <div className="flex items-center gap-2 text-xs">
+            <span className="font-semibold uppercase tracking-wide text-slate-600">FX View</span>
+            <button
+              type="button"
+              className={`rounded border px-2 py-1 font-semibold ${
+                fxDisplayMode === "TARGET_TO_SOURCE"
+                  ? "border-cyan-300 bg-cyan-50 text-cyan-700"
+                  : "border-slate-300 text-slate-700"
+              }`}
+              onClick={() => setFxDisplayMode("TARGET_TO_SOURCE")}
+            >
+              1 Target = Source
+            </button>
+            <button
+              type="button"
+              className={`rounded border px-2 py-1 font-semibold ${
+                fxDisplayMode === "SOURCE_TO_TARGET"
+                  ? "border-cyan-300 bg-cyan-50 text-cyan-700"
+                  : "border-slate-300 text-slate-700"
+              }`}
+              onClick={() => setFxDisplayMode("SOURCE_TO_TARGET")}
+            >
+              1 Source = Target
+            </button>
+          </div>
+        </div>
         <div className="mt-3 overflow-x-auto">
           <table className="min-w-full text-sm">
             <thead className="bg-slate-100 text-left text-xs uppercase tracking-wide text-slate-600">
@@ -679,7 +1274,14 @@ export default function CashExchangesPage() {
               {exchangeRows.map((row) => {
                 const rowId = toPositiveInt(row?.id);
                 const reverseReason = reverseReasonByBatchId[String(rowId || 0)] || "";
+                const postSourceSessionId =
+                  postSourceSessionByBatchId[String(rowId || 0)] || "";
+                const postTargetSessionId =
+                  postTargetSessionByBatchId[String(rowId || 0)] || "";
+                const canPostRow = canCreate && toUpper(row?.status) === "DRAFT";
                 const canReverseRow = canReverse && toUpper(row?.status) === "POSTED";
+                const rowPostSubmitting = postSubmittingBatchId === rowId;
+                const fxDisplay = buildFxDisplay(row, fxDisplayMode);
                 return (
                   <tr
                     key={`cash-exchange-row-${row?.id}`}
@@ -717,7 +1319,11 @@ export default function CashExchangesPage() {
                       </div>
                     </td>
                     <td className="px-3 py-2">
-                      <div>{row?.fxRate ? Number(row.fxRate).toFixed(10) : "-"}</div>
+                      <div>
+                        {fxDisplay
+                          ? `1 ${fxDisplay.baseCurrencyCode} = ${fxDisplay.rate.toFixed(10)} ${fxDisplay.quoteCurrencyCode}`
+                          : "-"}
+                      </div>
                       <div className="text-xs text-slate-600">
                         {row?.fxRateSource || "-"} / {row?.fxRateDate || "-"}
                       </div>
@@ -738,6 +1344,46 @@ export default function CashExchangesPage() {
                     <td className="px-3 py-2">{formatDateTime(row?.createdAt)}</td>
                     <td className="px-3 py-2">
                       <div className="space-y-1">
+                        {canPostRow ? (
+                          <>
+                            <input
+                              type="number"
+                              min="1"
+                              className="w-full rounded border border-slate-300 px-2 py-1 text-xs"
+                              placeholder="Source session (optional)"
+                              value={postSourceSessionId}
+                              onChange={(event) =>
+                                setPostSourceSessionByBatchId((prev) => ({
+                                  ...prev,
+                                  [String(rowId || 0)]: event.target.value,
+                                }))
+                              }
+                              disabled={rowPostSubmitting}
+                            />
+                            <input
+                              type="number"
+                              min="1"
+                              className="w-full rounded border border-slate-300 px-2 py-1 text-xs"
+                              placeholder="Target session (optional)"
+                              value={postTargetSessionId}
+                              onChange={(event) =>
+                                setPostTargetSessionByBatchId((prev) => ({
+                                  ...prev,
+                                  [String(rowId || 0)]: event.target.value,
+                                }))
+                              }
+                              disabled={rowPostSubmitting}
+                            />
+                            <button
+                              type="button"
+                              className="w-full rounded border border-cyan-300 bg-cyan-50 px-2 py-1 text-xs font-semibold text-cyan-700 disabled:opacity-60"
+                              onClick={() => handlePostExchange(rowId)}
+                              disabled={rowPostSubmitting}
+                            >
+                              {rowPostSubmitting ? "Posting..." : "Post Draft"}
+                            </button>
+                          </>
+                        ) : null}
                         {canReverseRow ? (
                           <>
                             <input
@@ -762,9 +1408,10 @@ export default function CashExchangesPage() {
                               {reverseSubmitting ? "Reversing..." : "Reverse"}
                             </button>
                           </>
-                        ) : (
+                        ) : null}
+                        {!canPostRow && !canReverseRow ? (
                           <span className="text-xs text-slate-500">-</span>
-                        )}
+                        ) : null}
                       </div>
                     </td>
                   </tr>
@@ -828,24 +1475,115 @@ export default function CashExchangesPage() {
             </select>
           </label>
 
-          <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-            Clearing Account
-            <select
-              className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
-              value={createForm.clearingAccountId}
-              onChange={(event) =>
-                setCreateForm((prev) => ({ ...prev, clearingAccountId: event.target.value }))
+          <div className="space-y-2 text-xs font-semibold uppercase tracking-wide text-slate-600 md:col-span-2">
+            <span>Clearing Account</span>
+            <Combobox
+              value={createForm.clearingAccountId || null}
+              options={clearingAccountLookupOptions}
+              disabled={!canCreate || createSubmitting || !selectedCreateLegalEntityId}
+              placeholder={
+                selectedCreateLegalEntityId
+                  ? "Search clearing account code/name"
+                  : "Select source register first"
               }
-              disabled={!canCreate || createSubmitting}
-            >
-              <option value="">Select</option>
-              {accountOptions.map((row) => (
-                <option key={`cash-ex-create-clearing-${row.id}`} value={row.id}>
-                  {toAccountLabel(row)}
-                </option>
-              ))}
-            </select>
-          </label>
+              noOptionsText="No clearing accounts found."
+              onInputChange={(nextValue, meta) => {
+                const reason = String(meta?.reason || "").trim().toLowerCase();
+                if (reason === "input" || reason === "clear") {
+                  setClearingAccountLookupQuery(nextValue);
+                  setClearingInlineChildParentAccountId("");
+                  setClearingInlineChildCode("");
+                  setClearingInlineChildName(String(nextValue || "").trim());
+                }
+              }}
+              onChange={(nextValue) => {
+                setCreateForm((prev) => ({
+                  ...prev,
+                  clearingAccountId: nextValue ? String(nextValue) : "",
+                }));
+                setClearingAccountLookupQuery("");
+                setClearingInlineChildParentAccountId("");
+                setClearingInlineChildCode("");
+                setClearingInlineChildName("");
+              }}
+            />
+            <p className="text-[11px] font-normal normal-case tracking-normal text-slate-500">
+              Tip: 108.xx (under 108 - DIGER HAZIR DEGERLER) is a good fit for clearing.
+            </p>
+            {showInlineClearingChildCreate ? (
+              <div className="space-y-2 rounded-md border border-cyan-200 bg-cyan-50 p-2">
+                <p className="text-xs font-normal normal-case tracking-normal text-cyan-800">
+                  No exact account found for "
+                  {String(clearingSearchCodeCandidate || clearingAccountLookupQuery || "").trim()}
+                  ". Create a child account below.
+                </p>
+                <Combobox
+                  value={clearingInlineChildParentAccountId || null}
+                  options={parentAccountLookupOptions}
+                  disabled={!canCreate || createSubmitting || clearingInlineChildSaving}
+                  placeholder="Select parent account"
+                  noOptionsText="No parent accounts found."
+                  onChange={(nextValue) =>
+                    setClearingInlineChildParentAccountId(nextValue ? String(nextValue) : "")
+                  }
+                />
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <input
+                    value={clearingInlineChildCode}
+                    onChange={(event) =>
+                      setClearingInlineChildCode(normalizeAccountCode(event.target.value))
+                    }
+                    className="rounded border border-cyan-300 bg-white px-2 py-1.5 text-xs font-normal"
+                    placeholder="Child account code"
+                    maxLength={60}
+                  />
+                  <input
+                    value={clearingInlineChildName}
+                    onChange={(event) => setClearingInlineChildName(event.target.value)}
+                    className="rounded border border-cyan-300 bg-white px-2 py-1.5 text-xs font-normal"
+                    placeholder="New child account name"
+                    maxLength={255}
+                  />
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setClearingInlineChildCode(clearingSearchCodeCandidate)}
+                    disabled={!clearingSearchCodeCandidate}
+                    className="rounded border border-cyan-300 bg-white px-2 py-1 text-[11px] font-semibold text-cyan-800 hover:bg-cyan-100 disabled:opacity-60"
+                  >
+                    Use searched code
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setClearingInlineChildCode(suggestedNextClearingChildCode)}
+                    disabled={!suggestedNextClearingChildCode || !selectedClearingInlineParentAccount}
+                    className="rounded border border-cyan-300 bg-white px-2 py-1 text-[11px] font-semibold text-cyan-800 hover:bg-cyan-100 disabled:opacity-60"
+                  >
+                    Use next child code
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleCreateClearingChildAccount}
+                    disabled={
+                      !canCreate ||
+                      createSubmitting ||
+                      clearingInlineChildSaving ||
+                      !canUpsertAccounts
+                    }
+                    className="rounded bg-cyan-700 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-cyan-800 disabled:opacity-60"
+                  >
+                    {clearingInlineChildSaving ? "Creating child..." : "Create child account"}
+                  </button>
+                </div>
+                {!canUpsertAccounts ? (
+                  <p className="text-[11px] font-normal normal-case tracking-normal text-amber-700">
+                    Missing permission: gl.account.upsert
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
 
           <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
             Book Date

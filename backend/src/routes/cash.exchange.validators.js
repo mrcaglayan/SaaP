@@ -194,3 +194,35 @@ export function parseCashExchangeReverseInput(req) {
     reverseReason,
   };
 }
+
+export function parseCashExchangePostInput(req) {
+  const tenantId = requireTenantId(req);
+  const userId = requireUserId(req);
+  const exchangeBatchId = parseCashExchangeBatchIdParam(req);
+  const sourceCashSessionId = optionalPositiveInt(
+    req.body?.sourceCashSessionId,
+    "sourceCashSessionId"
+  );
+  const targetCashSessionId = optionalPositiveInt(
+    req.body?.targetCashSessionId,
+    "targetCashSessionId"
+  );
+  const txnDatetime =
+    req.body?.txnDatetime === undefined || req.body?.txnDatetime === null || req.body?.txnDatetime === ""
+      ? null
+      : parseDateTime(req.body?.txnDatetime, "txnDatetime");
+  const bookDate =
+    req.body?.bookDate === undefined || req.body?.bookDate === null || req.body?.bookDate === ""
+      ? null
+      : parseDateOnly(req.body?.bookDate, "bookDate");
+
+  return {
+    tenantId,
+    userId,
+    exchangeBatchId,
+    sourceCashSessionId,
+    targetCashSessionId,
+    txnDatetime,
+    bookDate,
+  };
+}

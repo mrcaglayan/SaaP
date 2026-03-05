@@ -1,8 +1,11 @@
 import { Fragment, memo, useCallback, useEffect, useMemo, useState } from "react";
 import {
+  createBalanceSplitReclassification,
+  getTrialBalance,
   listAccounts,
   listBooks,
   listCoas,
+  postJournal,
   upsertAccount,
   upsertAccountMapping,
   upsertBook,
@@ -11,6 +14,7 @@ import {
 import {
   listCountries,
   listFiscalCalendars,
+  listFiscalPeriods,
   listLegalEntities,
   listShareholderJournalConfigs,
   upsertShareholderJournalConfig,
@@ -30,6 +34,14 @@ import { useModuleReadiness } from "../../readiness/useModuleReadiness.js";
 import TenantReadinessChecklist from "../../readiness/TenantReadinessChecklist.jsx";
 
 const BOOK_TYPES = ["LOCAL", "GROUP"];
+const DEFAULT_BOOK_FORM = {
+  legalEntityId: "",
+  calendarId: "",
+  code: "",
+  name: "",
+  bookType: "LOCAL",
+  baseCurrencyCode: "USD",
+};
 const COA_SCOPES = ["LEGAL_ENTITY", "GROUP"];
 const ACCOUNT_TYPES = ["ASSET", "LIABILITY", "EQUITY", "REVENUE", "EXPENSE"];
 const UNSPECIFIED_ACCOUNT_TYPE = "UNSPECIFIED";
@@ -714,6 +726,57 @@ function toUpper(value) {
     .toUpperCase();
 }
 
+function toIsoLocalDate(value = new Date()) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(
+    date.getDate()
+  ).padStart(2, "0")}`;
+}
+
+function pickDefaultPeriod(periodRows = [], todayIso = toIsoLocalDate()) {
+  const rows = Array.isArray(periodRows)
+    ? [...periodRows].sort((left, right) => {
+        const leftStart = String(left?.start_date || "");
+        const rightStart = String(right?.start_date || "");
+        if (leftStart !== rightStart) {
+          return leftStart.localeCompare(rightStart);
+        }
+        return Number(left?.period_no || 0) - Number(right?.period_no || 0);
+      })
+    : [];
+  if (rows.length === 0) {
+    return null;
+  }
+
+  const currentPeriod = rows.find((period) => {
+    const startDate = String(period?.start_date || "");
+    const endDate = String(period?.end_date || "");
+    if (!startDate || !endDate || !todayIso) {
+      return false;
+    }
+    return todayIso >= startDate && todayIso <= endDate;
+  });
+  return currentPeriod || rows[rows.length - 1];
+}
+
+function pickEntryDateForPeriod(period, todayIso = toIsoLocalDate()) {
+  const startDate = String(period?.start_date || "");
+  const endDate = String(period?.end_date || "");
+  if (!startDate || !endDate) {
+    return todayIso || toIsoLocalDate();
+  }
+  if (todayIso >= startDate && todayIso <= endDate) {
+    return todayIso;
+  }
+  if (todayIso < startDate) {
+    return startDate;
+  }
+  return endDate;
+}
+
 function getCariPurposeUiMeta(purposeCode) {
   const normalized = String(purposeCode || "")
     .trim()
@@ -1109,13 +1172,17 @@ export default function GlSetupPage({ mode = "full" } = {}) {
   const l = useCallback((en, tr) => (isTr ? tr : en), [isTr]);
   const canReadLegalEntities = hasPermission("org.tree.read");
   const canReadCalendars = hasPermission("org.fiscal_calendar.read");
+  const canReadFiscalPeriods = hasPermission("org.fiscal_period.read");
   const canReadBooks = hasPermission("gl.book.read");
   const canReadCoas = hasPermission("gl.coa.read");
   const canReadAccounts = hasPermission("gl.account.read");
+  const canReadTrialBalance = hasPermission("gl.trial_balance.read");
   const canUpsertBooks = hasPermission("gl.book.upsert");
   const canUpsertCoas = hasPermission("gl.coa.upsert");
   const canUpsertAccounts = hasPermission("gl.account.upsert");
   const canUpsertMappings = hasPermission("gl.account_mapping.upsert");
+  const canCreateJournals = hasPermission("gl.journal.create");
+  const canPostJournals = hasPermission("gl.journal.post");
   const canUpsertShareholderParentMappings = hasPermission("org.legal_entity.upsert");
 
   const [loading, setLoading] = useState(true);
@@ -1132,14 +1199,8 @@ export default function GlSetupPage({ mode = "full" } = {}) {
   const [accounts, setAccounts] = useState([]);
   const [policyPacks, setPolicyPacks] = useState([]);
 
-  const [bookForm, setBookForm] = useState({
-    legalEntityId: "",
-    calendarId: "",
-    code: "",
-    name: "",
-    bookType: "LOCAL",
-    baseCurrencyCode: "USD",
-  });
+  const [bookEditingCode, setBookEditingCode] = useState("");
+  const [bookForm, setBookForm] = useState(DEFAULT_BOOK_FORM);
   const [coaForm, setCoaForm] = useState({
     scope: "LEGAL_ENTITY",
     legalEntityId: "",
@@ -1353,6 +1414,28 @@ export default function GlSetupPage({ mode = "full" } = {}) {
     }
     return byId;
   }, [countries]);
+  const legalEntityById = useMemo(() => {
+    const byId = new Map();
+    for (const entity of legalEntities) {
+      const id = toPositiveInt(entity?.id);
+      if (!id) {
+        continue;
+      }
+      byId.set(id, entity);
+    }
+    return byId;
+  }, [legalEntities]);
+  const calendarById = useMemo(() => {
+    const byId = new Map();
+    for (const calendar of calendars) {
+      const id = toPositiveInt(calendar?.id);
+      if (!id) {
+        continue;
+      }
+      byId.set(id, calendar);
+    }
+    return byId;
+  }, [calendars]);
   const accountsByLegalEntityId = useMemo(() => {
     const byEntity = new Map();
     for (const account of accounts) {
@@ -2233,6 +2316,38 @@ export default function GlSetupPage({ mode = "full" } = {}) {
     }
   }
 
+  function resetBookForm() {
+    setBookForm((prev) => ({
+      ...prev,
+      ...DEFAULT_BOOK_FORM,
+      legalEntityId: prev.legalEntityId,
+      calendarId: prev.calendarId,
+      baseCurrencyCode: prev.baseCurrencyCode || "USD",
+    }));
+    setBookEditingCode("");
+    setError("");
+    setMessage("");
+  }
+
+  function handleBookEdit(book) {
+    const code = String(book?.code || "").trim();
+    if (!code) {
+      return;
+    }
+    setBookEditingCode(code);
+    setBookForm((prev) => ({
+      ...prev,
+      legalEntityId: String(book?.legal_entity_id || ""),
+      calendarId: String(book?.calendar_id || ""),
+      code,
+      name: String(book?.name || "").trim(),
+      bookType: toUpper(book?.book_type) || "LOCAL",
+      baseCurrencyCode: toUpper(book?.base_currency_code) || "USD",
+    }));
+    setError("");
+    setMessage("");
+  }
+
   async function handleBookSubmit(event) {
     event.preventDefault();
     if (!canUpsertBooks) {
@@ -2247,6 +2362,8 @@ export default function GlSetupPage({ mode = "full" } = {}) {
       return;
     }
 
+    const isEditMode = Boolean(bookEditingCode);
+
     setSaving("book");
     setError("");
     setMessage("");
@@ -2259,8 +2376,12 @@ export default function GlSetupPage({ mode = "full" } = {}) {
         bookType: bookForm.bookType,
         baseCurrencyCode: bookForm.baseCurrencyCode.trim().toUpperCase(),
       });
-      setBookForm((prev) => ({ ...prev, code: "", name: "" }));
-      setMessage(l("Book saved.", "Defter kaydedildi."));
+      resetBookForm();
+      setMessage(
+        isEditMode
+          ? l("Book updated.", "Defter guncellendi.")
+          : l("Book saved.", "Defter kaydedildi.")
+      );
       await loadData();
     } catch (err) {
       setError(err?.response?.data?.message || l("Failed to save book.", "Defter kaydedilemedi."));
@@ -2413,6 +2534,255 @@ export default function GlSetupPage({ mode = "full" } = {}) {
     );
   }
 
+  async function maybePromptParentBalanceTransferAfterChildCreate({
+    coaId,
+    parentAccount,
+    childAccountId,
+    childCode,
+    childName,
+  }) {
+    const parentAccountId = toPositiveInt(parentAccount?.id);
+    if (!parentAccountId || !toPositiveInt(childAccountId)) {
+      return false;
+    }
+
+    const coaRow = coas.find((row) => toPositiveInt(row?.id) === toPositiveInt(coaId));
+    const legalEntityId = toPositiveInt(
+      coaRow?.legal_entity_id ?? parentAccount?.legal_entity_id
+    );
+    if (!legalEntityId) {
+      return false;
+    }
+
+    if (!canCreateJournals) {
+      setMessage(
+        l(
+          "Account saved. Balance transfer prompt skipped (missing permission: gl.journal.create).",
+          "Hesap kaydedildi. Bakiye aktarim adimi atlandi (eksik yetki: gl.journal.create)."
+        )
+      );
+      return false;
+    }
+    if (!canReadBooks || !canReadFiscalPeriods || !canReadTrialBalance) {
+      setMessage(
+        l(
+          "Account saved. Balance transfer prompt skipped (book/period/trial balance read permission missing).",
+          "Hesap kaydedildi. Bakiye aktarim adimi atlandi (defter/period/mizan okuma yetkisi eksik)."
+        )
+      );
+      return false;
+    }
+
+    const legalEntityBooks = books
+      .filter((book) => toPositiveInt(book?.legal_entity_id) === legalEntityId)
+      .sort((left, right) => String(left?.code || "").localeCompare(String(right?.code || "")));
+    if (legalEntityBooks.length === 0) {
+      setMessage(
+        l(
+          "Account saved. No legal-entity book found to evaluate parent balance transfer.",
+          "Hesap kaydedildi. Parent bakiye aktarimini degerlendirmek icin legal-entity defteri bulunamadi."
+        )
+      );
+      return false;
+    }
+
+    const preferredBook =
+      legalEntityBooks.find((book) => toUpper(book?.book_type) === "LOCAL") || legalEntityBooks[0];
+    const bookId = toPositiveInt(preferredBook?.id);
+    const calendarId = toPositiveInt(preferredBook?.calendar_id);
+    if (!bookId || !calendarId) {
+      setMessage(
+        l(
+          "Account saved. Book/calendar resolution failed for automatic balance transfer.",
+          "Hesap kaydedildi. Otomatik bakiye aktarimi icin defter/takvim cozumlenemedi."
+        )
+      );
+      return false;
+    }
+
+    const periodResponse = await listFiscalPeriods(calendarId);
+    const periodRows = Array.isArray(periodResponse?.rows) ? periodResponse.rows : [];
+    const selectedPeriod = pickDefaultPeriod(periodRows);
+    const fiscalPeriodId = toPositiveInt(selectedPeriod?.id);
+    if (!fiscalPeriodId) {
+      setMessage(
+        l(
+          "Account saved. No fiscal period found to evaluate parent balance transfer.",
+          "Hesap kaydedildi. Parent bakiye aktarimini degerlendirmek icin fiscal period bulunamadi."
+        )
+      );
+      return false;
+    }
+
+    const trialBalance = await getTrialBalance({
+      bookId,
+      fiscalPeriodId,
+      includeRollup: true,
+    });
+    const trialRows = Array.isArray(trialBalance?.rows) ? trialBalance.rows : [];
+    const parentBalanceRow =
+      trialRows.find((row) => toPositiveInt(row?.account_id) === parentAccountId) || null;
+    const directBalance = Number(parentBalanceRow?.direct_balance ?? parentBalanceRow?.balance ?? 0);
+    if (!Number.isFinite(directBalance) || Math.abs(directBalance) <= 0.0001) {
+      return false;
+    }
+
+    const baseCurrencyCode = toUpper(preferredBook?.base_currency_code) || "USD";
+    const periodLabel = `${selectedPeriod?.fiscal_year || ""}/${selectedPeriod?.period_no || ""} ${
+      selectedPeriod?.period_name || ""
+    }`.trim();
+    const parentCode = toUpper(parentAccount?.code) || String(parentAccountId);
+    const parentName = String(parentAccount?.name || "").trim();
+    const formattedBalance = `${directBalance.toLocaleString(isTr ? "tr-TR" : "en-US", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })} ${baseCurrencyCode}`;
+
+    const choiceRaw = window.prompt(
+      l(
+        `Parent account ${parentCode}${parentName ? ` - ${parentName}` : ""} has direct balance ${formattedBalance} in ${preferredBook?.code || bookId} (${periodLabel || fiscalPeriodId}). Choose: 1=Keep on parent, 2=Move all to new child ${childCode}, 3=Move all to another account.`,
+        `Parent hesap ${parentCode}${parentName ? ` - ${parentName}` : ""} icin ${preferredBook?.code || bookId} (${periodLabel || fiscalPeriodId}) doneminde direkt bakiye ${formattedBalance}. Secim yapin: 1=Parentta kalsin, 2=Tamamini yeni alt hesaba (${childCode}) aktar, 3=Tamamini baska hesaba aktar.`
+      ),
+      "2"
+    );
+    const choice = String(choiceRaw || "")
+      .trim()
+      .toUpperCase();
+    if (!choice || choice === "1") {
+      return false;
+    }
+    if (choice !== "2" && choice !== "3") {
+      setError(
+        l(
+          "Invalid transfer choice. Use 1, 2, or 3.",
+          "Gecersiz aktarim secimi. 1, 2 veya 3 kullanin."
+        )
+      );
+      return false;
+    }
+
+    const accountPool = [...selectedCoaAccounts];
+    if (!accountPool.some((row) => toPositiveInt(row?.id) === toPositiveInt(childAccountId))) {
+      accountPool.push({
+        id: childAccountId,
+        code: childCode,
+        name: childName,
+      });
+    }
+    const accountsById = new Map();
+    const accountsByCode = new Map();
+    for (const row of accountPool) {
+      const accountId = toPositiveInt(row?.id);
+      const accountCode = toUpper(row?.code);
+      if (accountId && !accountsById.has(accountId)) {
+        accountsById.set(accountId, row);
+      }
+      if (accountCode && !accountsByCode.has(accountCode)) {
+        accountsByCode.set(accountCode, row);
+      }
+    }
+
+    let targetAccount = accountsById.get(toPositiveInt(childAccountId)) || null;
+    if (choice === "3") {
+      const targetRaw = window.prompt(
+        l(
+          "Enter target account code or account id.",
+          "Hedef hesap kodu veya hesap id girin."
+        ),
+        ""
+      );
+      const targetKey = String(targetRaw || "").trim();
+      const targetId = toPositiveInt(targetKey);
+      targetAccount =
+        (targetId ? accountsById.get(targetId) : null) || accountsByCode.get(toUpper(targetKey)) || null;
+      if (!targetAccount) {
+        setError(
+          l(
+            "Target account not found in selected CoA.",
+            "Secili hesap planinda hedef hesap bulunamadi."
+          )
+        );
+        return false;
+      }
+    }
+
+    const targetAccountId = toPositiveInt(targetAccount?.id);
+    if (!targetAccountId || targetAccountId === parentAccountId) {
+      setError(
+        l(
+          "Target account must be different from parent account.",
+          "Hedef hesap parent hesaptan farkli olmalidir."
+        )
+      );
+      return false;
+    }
+
+    const targetCode = toUpper(targetAccount?.code) || String(targetAccountId);
+    const targetName = String(targetAccount?.name || "").trim();
+    const confirmProceed = window.confirm(
+      l(
+        `Create balance transfer journal now?\nSource: ${parentCode}\nTarget: ${targetCode}${targetName ? ` - ${targetName}` : ""}\nAmount: ${formattedBalance}\nBook: ${preferredBook?.code || bookId}\nPeriod: ${periodLabel || fiscalPeriodId}`,
+        `Bakiye aktarim fisini simdi olusturulsun mu?\nKaynak: ${parentCode}\nHedef: ${targetCode}${targetName ? ` - ${targetName}` : ""}\nTutar: ${formattedBalance}\nDefter: ${preferredBook?.code || bookId}\nDonem: ${periodLabel || fiscalPeriodId}`
+      )
+    );
+    if (!confirmProceed) {
+      return false;
+    }
+
+    const entryDate = pickEntryDateForPeriod(selectedPeriod, toIsoLocalDate());
+    setSaving("account-balance-transfer");
+    try {
+      const reclassResult = await createBalanceSplitReclassification({
+        legalEntityId,
+        bookId,
+        fiscalPeriodId,
+        sourceAccountId: parentAccountId,
+        entryDate,
+        documentDate: entryDate,
+        currencyCode: baseCurrencyCode,
+        allocationMode: "PERCENT",
+        description: l(
+          `Subaccount balance transfer ${parentCode} -> ${targetCode}`,
+          `Alt hesap bakiye aktarimi ${parentCode} -> ${targetCode}`
+        ),
+        note: l(
+          `Triggered after creating child ${childCode}`,
+          `${childCode} alt hesap olusturma sonrasi tetiklendi`
+        ),
+        targets: [
+          {
+            accountId: targetAccountId,
+            percentage: 100,
+          },
+        ],
+      });
+      const journalEntryId = toPositiveInt(reclassResult?.journalEntryId);
+      if (!journalEntryId) {
+        throw new Error("Failed to resolve reclassification journal id");
+      }
+
+      if (canPostJournals) {
+        await postJournal(journalEntryId);
+        setMessage(
+          l(
+            `Account saved and parent balance moved to ${targetCode}. Journal #${journalEntryId} posted.`,
+            `Hesap kaydedildi ve parent bakiye ${targetCode} hesabina tasindi. Fis #${journalEntryId} post edildi.`
+          )
+        );
+      } else {
+        setMessage(
+          l(
+            `Account saved and balance transfer draft created (#${journalEntryId}). Missing permission to post (gl.journal.post).`,
+            `Hesap kaydedildi ve bakiye aktarim taslagi olusturuldu (#${journalEntryId}). Post etmek icin yetki eksik (gl.journal.post).`
+          )
+        );
+      }
+      return true;
+    } finally {
+      setSaving("");
+    }
+  }
+
   async function handleAccountSubmit(nextEditorForm) {
     if (!canUpsertAccounts) {
       setError(l("Missing permission: gl.account.upsert", "Eksik yetki: gl.account.upsert"));
@@ -2478,6 +2848,7 @@ export default function GlSetupPage({ mode = "full" } = {}) {
       ? selectedCoaAccountById.get(currentAccountId)
       : null;
     const currentCode = toUpper(currentAccount?.code);
+    const isCreatingChildAccount = Boolean(parentAccountId) && (!currentAccountId || currentCode !== code);
     if (currentAccount && currentCode && currentCode !== code) {
       const confirmed = window.confirm(
         l(
@@ -2513,6 +2884,26 @@ export default function GlSetupPage({ mode = "full" } = {}) {
       }
       setMessage(l("Account saved.", "Hesap kaydedildi."));
       await loadData();
+      if (isCreatingChildAccount && savedAccountId && parentAccount) {
+        try {
+          await maybePromptParentBalanceTransferAfterChildCreate({
+            coaId,
+            parentAccount,
+            childAccountId: savedAccountId,
+            childCode: code,
+            childName: name,
+          });
+        } catch (transferErr) {
+          setError(
+            transferErr?.response?.data?.message ||
+              transferErr?.message ||
+              l(
+                "Account saved, but automatic parent balance transfer failed.",
+                "Hesap kaydedildi, ancak otomatik parent bakiye aktarimi basarisiz oldu."
+              )
+          );
+        }
+      }
     } catch (err) {
       setError(err?.response?.data?.message || l("Failed to save account.", "Hesap kaydedilemedi."));
     } finally {
@@ -3375,6 +3766,14 @@ export default function GlSetupPage({ mode = "full" } = {}) {
         {!accountsOnlyMode ? (
           <section className="rounded-xl border border-slate-200 bg-white p-4">
           <h2 className="mb-3 text-sm font-semibold text-slate-700">{l("Books", "Defterler")}</h2>
+          {bookEditingCode ? (
+            <p className="mb-2 text-xs text-slate-600">
+              {l(
+                `Editing book ${bookEditingCode}. Book code is locked.`,
+                `${bookEditingCode} defteri duzenleniyor. Defter kodu kilitli.`
+              )}
+            </p>
+          ) : null}
           <form onSubmit={handleBookSubmit} className="grid gap-2 md:grid-cols-3">
             <select
               value={bookForm.legalEntityId}
@@ -3424,6 +3823,7 @@ export default function GlSetupPage({ mode = "full" } = {}) {
               onChange={(event) =>
                 setBookForm((prev) => ({ ...prev, code: event.target.value }))
               }
+              disabled={Boolean(bookEditingCode)}
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
               placeholder={l("Book code", "Defter kodu")}
               required
@@ -3455,8 +3855,22 @@ export default function GlSetupPage({ mode = "full" } = {}) {
               disabled={saving === "book" || !canUpsertBooks}
               className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60 md:col-span-3"
             >
-              {saving === "book" ? l("Saving...", "Kaydediliyor...") : l("Save Book", "Defteri Kaydet")}
+              {saving === "book"
+                ? l("Saving...", "Kaydediliyor...")
+                : bookEditingCode
+                  ? l("Update Book", "Defteri Guncelle")
+                  : l("Save Book", "Defteri Kaydet")}
             </button>
+            {bookEditingCode ? (
+              <button
+                type="button"
+                onClick={resetBookForm}
+                disabled={saving === "book"}
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 disabled:opacity-60 md:col-span-3"
+              >
+                {l("Cancel Edit", "Duzenlemeyi Iptal Et")}
+              </button>
+            ) : null}
           </form>
 
           <div className="mt-3 overflow-x-auto">
@@ -3468,21 +3882,46 @@ export default function GlSetupPage({ mode = "full" } = {}) {
                   <th className="px-3 py-2">{l("Name", "Ad")}</th>
                   <th className="px-3 py-2">{l("Entity", "Birim")}</th>
                   <th className="px-3 py-2">{l("Calendar", "Takvim")}</th>
+                  <th className="px-3 py-2">{l("Currency", "Para Birimi")}</th>
+                  <th className="px-3 py-2">{l("Action", "Islem")}</th>
                 </tr>
               </thead>
               <tbody>
-                {books.map((book) => (
-                  <tr key={book.id} className="border-t border-slate-100">
-                    <td className="px-3 py-2">{book.id}</td>
-                    <td className="px-3 py-2">{book.code}</td>
-                    <td className="px-3 py-2">{book.name}</td>
-                    <td className="px-3 py-2">{book.legal_entity_id}</td>
-                    <td className="px-3 py-2">{book.calendar_id}</td>
-                  </tr>
-                ))}
+                {books.map((book) => {
+                  const legalEntity = legalEntityById.get(
+                    toPositiveInt(book.legal_entity_id)
+                  );
+                  const calendar = calendarById.get(toPositiveInt(book.calendar_id));
+                  const legalEntityLabel = legalEntity
+                    ? `${legalEntity.code} - ${legalEntity.name}`
+                    : "-";
+                  const calendarLabel = calendar
+                    ? `${calendar.code} - ${calendar.name}`
+                    : "-";
+                  return (
+                    <tr key={book.id} className="border-t border-slate-100">
+                      <td className="px-3 py-2">{book.id}</td>
+                      <td className="px-3 py-2">{book.code}</td>
+                      <td className="px-3 py-2">{book.name}</td>
+                      <td className="px-3 py-2">{legalEntityLabel}</td>
+                      <td className="px-3 py-2">{calendarLabel}</td>
+                      <td className="px-3 py-2">{toUpper(book.base_currency_code) || "-"}</td>
+                      <td className="px-3 py-2">
+                        <button
+                          type="button"
+                          onClick={() => handleBookEdit(book)}
+                          disabled={saving === "book" || !canUpsertBooks}
+                          className="rounded border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                        >
+                          {l("Edit", "Duzenle")}
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
                 {books.length === 0 && !loading && (
                   <tr>
-                    <td colSpan={5} className="px-3 py-3 text-slate-500">
+                    <td colSpan={7} className="px-3 py-3 text-slate-500">
                       {l("No books found.", "Defter bulunamadi.")}
                     </td>
                   </tr>
@@ -3566,15 +4005,23 @@ export default function GlSetupPage({ mode = "full" } = {}) {
                 </tr>
               </thead>
               <tbody>
-                {coas.map((coa) => (
-                  <tr key={coa.id} className="border-t border-slate-100">
-                    <td className="px-3 py-2">{coa.id}</td>
-                    <td className="px-3 py-2">{coa.code}</td>
-                    <td className="px-3 py-2">{coa.name}</td>
-                    <td className="px-3 py-2">{coa.scope}</td>
-                    <td className="px-3 py-2">{coa.legal_entity_id || "-"}</td>
-                  </tr>
-                ))}
+                {coas.map((coa) => {
+                  const legalEntity = legalEntityById.get(
+                    toPositiveInt(coa.legal_entity_id)
+                  );
+                  const legalEntityLabel = legalEntity
+                    ? `${legalEntity.code} - ${legalEntity.name}`
+                    : "-";
+                  return (
+                    <tr key={coa.id} className="border-t border-slate-100">
+                      <td className="px-3 py-2">{coa.id}</td>
+                      <td className="px-3 py-2">{coa.code}</td>
+                      <td className="px-3 py-2">{coa.name}</td>
+                      <td className="px-3 py-2">{coa.scope}</td>
+                      <td className="px-3 py-2">{legalEntityLabel}</td>
+                    </tr>
+                  );
+                })}
                 {coas.length === 0 && !loading && (
                   <tr>
                     <td colSpan={5} className="px-3 py-3 text-slate-500">

@@ -28,6 +28,7 @@ import {
   listLegalEntities,
 } from "../../api/orgAdmin.js";
 import { useAuth } from "../../auth/useAuth.js";
+import Combobox from "../../components/Combobox.jsx";
 import { useI18n } from "../../i18n/useI18n.js";
 import TenantReadinessChecklist from "../../readiness/TenantReadinessChecklist.jsx";
 
@@ -253,6 +254,115 @@ export default function ConsolidationSetupPage() {
         return String(coa?.scope || row?.scope || "").toUpperCase() === "GROUP";
       }),
     [accounts, coaById]
+  );
+  const selectedGroupOptions = useMemo(
+    () =>
+      groups.map((row) => ({
+        value: String(row.id),
+        label: `${row.code} - ${row.name}`,
+        description: `#${row.id}`,
+      })),
+    [groups]
+  );
+  const groupCompanySelectOptions = useMemo(
+    () =>
+      groupCompanies.map((row) => ({
+        value: String(row.id),
+        label: `${row.code} - ${row.name}`,
+        description: `#${row.id}`,
+      })),
+    [groupCompanies]
+  );
+  const calendarSelectOptions = useMemo(
+    () =>
+      calendars.map((row) => ({
+        value: String(row.id),
+        label: `${row.code} - ${row.name}`,
+        description: `#${row.id}`,
+      })),
+    [calendars]
+  );
+  const legalEntitySelectOptions = useMemo(
+    () =>
+      filteredLegalEntities.map((row) => ({
+        value: String(row.id),
+        label: `${row.code} - ${row.name}`,
+        description: `#${row.id}`,
+      })),
+    [filteredLegalEntities]
+  );
+  const groupCoaSelectOptions = useMemo(
+    () =>
+      groupCoaOptions.map((row) => ({
+        value: String(row.id),
+        label: `${row.code} - ${row.name}`,
+        description: `#${row.id}`,
+      })),
+    [groupCoaOptions]
+  );
+  const localCoaSelectOptions = useMemo(
+    () =>
+      localCoaOptions.map((row) => ({
+        value: String(row.id),
+        label: `${row.code} - ${row.name}`,
+        description: `#${row.id}`,
+      })),
+    [localCoaOptions]
+  );
+  const canonicalLocalAccountSelectOptions = useMemo(
+    () =>
+      canonicalLocalAccountOptions.map((row) => ({
+        value: String(row.id),
+        label: `${row.code} - ${row.name}`,
+        description: `#${row.id}`,
+      })),
+    [canonicalLocalAccountOptions]
+  );
+  const canonicalGroupAccountSelectOptions = useMemo(
+    () =>
+      canonicalGroupAccountOptions.map((row) => ({
+        value: String(row.id),
+        label: `${row.code} - ${row.name}`,
+        description: `#${row.id}`,
+      })),
+    [canonicalGroupAccountOptions]
+  );
+  const accountSelectOptions = useMemo(
+    () =>
+      accounts.map((row) => ({
+        value: String(row.id),
+        label: `${row.code} - ${row.name}`,
+        description: `#${row.id}`,
+      })),
+    [accounts]
+  );
+  const periodSelectOptions = useMemo(
+    () =>
+      periods.map((row) => ({
+        value: String(row.id),
+        label: `${row.fiscal_year}-P${padPeriod(row.period_no)} ${row.period_name}`,
+        description: `#${row.id}`,
+      })),
+    [periods]
+  );
+  const methodSelectOptions = useMemo(
+    () => METHODS.map((value) => ({ value, label: value })),
+    []
+  );
+  const directionSelectOptions = useMemo(
+    () => DIRECTIONS.map((value) => ({ value, label: value })),
+    []
+  );
+  const rateTypeSelectOptions = useMemo(
+    () => RATE_TYPES.map((value) => ({ value, label: value })),
+    []
+  );
+  const activeInactiveSelectOptions = useMemo(
+    () => [
+      { value: "ACTIVE", label: "ACTIVE" },
+      { value: "INACTIVE", label: "INACTIVE" },
+    ],
+    []
   );
 
   async function loadLookups() {
@@ -1209,18 +1319,17 @@ export default function ConsolidationSetupPage() {
         </div>
 
         <div className="grid gap-2 md:grid-cols-3">
-          <select
-            value={selectedGroupId}
-            onChange={(event) => setSelectedGroupId(event.target.value)}
-            className="rounded-lg border border-slate-300 px-3 py-2 text-sm md:col-span-2"
-          >
-            <option value="">{l("Select group", "Grup secin")}</option>
-            {groups.map((row) => (
-              <option key={row.id} value={row.id}>
-                #{row.id} | {row.code} - {row.name}
-              </option>
-            ))}
-          </select>
+          <Combobox
+            value={selectedGroupId || null}
+            options={selectedGroupOptions}
+            onChange={(nextValue) =>
+              setSelectedGroupId(nextValue ? String(nextValue) : "")
+            }
+            placeholder={l("Select group", "Grup secin")}
+            noOptionsText={l("No groups found.", "Grup bulunamadi.")}
+            className="md:col-span-2"
+            clearable={false}
+          />
           <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
             {selectedGroup
               ? `${selectedGroup.code} (${selectedGroup.presentation_currency_code})`
@@ -1229,37 +1338,33 @@ export default function ConsolidationSetupPage() {
         </div>
 
         <form onSubmit={onSaveGroup} className="mt-3 grid gap-2 md:grid-cols-5">
-          <input
-            type="number"
-            min={1}
-            value={groupForm.groupCompanyId}
-            onChange={(event) => setGroupForm((prev) => ({ ...prev, groupCompanyId: event.target.value }))}
-            className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-            list="group-company-options"
-            placeholder={l("Group company ID", "Grup sirketi ID")}
-            required
+          <Combobox
+            value={groupForm.groupCompanyId || null}
+            options={groupCompanySelectOptions}
+            onChange={(nextValue) =>
+              setGroupForm((prev) => ({
+                ...prev,
+                groupCompanyId: nextValue ? String(nextValue) : "",
+              }))
+            }
+            placeholder={l("Select group company", "Grup sirketi secin")}
+            noOptionsText={l("No group companies found.", "Grup sirketi bulunamadi.")}
+            clearable={false}
           />
-          <datalist id="group-company-options">
-            {groupCompanies.map((row) => (
-              <option key={row.id} value={row.id}>{row.code} - {row.name}</option>
-            ))}
-          </datalist>
 
-          <input
-            type="number"
-            min={1}
-            value={groupForm.calendarId}
-            onChange={(event) => setGroupForm((prev) => ({ ...prev, calendarId: event.target.value }))}
-            className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-            list="calendar-options"
-            placeholder={l("Calendar ID", "Takvim ID")}
-            required
+          <Combobox
+            value={groupForm.calendarId || null}
+            options={calendarSelectOptions}
+            onChange={(nextValue) =>
+              setGroupForm((prev) => ({
+                ...prev,
+                calendarId: nextValue ? String(nextValue) : "",
+              }))
+            }
+            placeholder={l("Select calendar", "Takvim secin")}
+            noOptionsText={l("No calendars found.", "Takvim bulunamadi.")}
+            clearable={false}
           />
-          <datalist id="calendar-options">
-            {calendars.map((row) => (
-              <option key={row.id} value={row.id}>{row.code} - {row.name}</option>
-            ))}
-          </datalist>
 
           <input
             value={groupForm.code}
@@ -1414,30 +1519,32 @@ export default function ConsolidationSetupPage() {
           <section className="rounded-xl border border-slate-200 bg-white p-4">
             <h2 className="mb-3 text-sm font-semibold text-slate-700">{l("Members", "Uyeler")}</h2>
             <form onSubmit={onSaveMember} className="grid gap-2 md:grid-cols-5">
-              <input
-                type="number"
-                min={1}
-                value={memberForm.legalEntityId}
-                onChange={(event) => setMemberForm((prev) => ({ ...prev, legalEntityId: event.target.value }))}
-                className="rounded-lg border border-slate-300 px-3 py-2 text-sm md:col-span-2"
-                list="legal-entity-options"
-                placeholder={l("Legal entity ID", "Istirak / bagli ortak ID")}
-                required
+              <Combobox
+                value={memberForm.legalEntityId || null}
+                options={legalEntitySelectOptions}
+                onChange={(nextValue) =>
+                  setMemberForm((prev) => ({
+                    ...prev,
+                    legalEntityId: nextValue ? String(nextValue) : "",
+                  }))
+                }
+                className="md:col-span-2"
+                placeholder={l("Select legal entity", "Istirak / bagli ortak secin")}
+                noOptionsText={l("No legal entities found.", "Istirak bulunamadi.")}
+                clearable={false}
               />
-              <datalist id="legal-entity-options">
-                {filteredLegalEntities.map((row) => (
-                  <option key={row.id} value={row.id}>{row.code} - {row.name}</option>
-                ))}
-              </datalist>
-              <select
-                value={memberForm.consolidationMethod}
-                onChange={(event) => setMemberForm((prev) => ({ ...prev, consolidationMethod: event.target.value }))}
-                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              >
-                {METHODS.map((method) => (
-                  <option key={method} value={method}>{method}</option>
-                ))}
-              </select>
+              <Combobox
+                value={memberForm.consolidationMethod || null}
+                options={methodSelectOptions}
+                onChange={(nextValue) =>
+                  setMemberForm((prev) => ({
+                    ...prev,
+                    consolidationMethod: nextValue ? String(nextValue) : "FULL",
+                  }))
+                }
+                placeholder={l("Consolidation method", "Konsolidasyon yontemi")}
+                clearable={false}
+              />
               <input
                 type="number"
                 min="0"
@@ -1481,55 +1588,59 @@ export default function ConsolidationSetupPage() {
           <section className="rounded-xl border border-slate-200 bg-white p-4">
             <h2 className="mb-3 text-sm font-semibold text-slate-700">{l("CoA Mappings", "Hesap Plani Eslemeleri")}</h2>
             <form onSubmit={onSaveMapping} className="grid gap-2 md:grid-cols-4">
-              <input
-                type="number"
-                min={1}
-                value={mappingForm.legalEntityId}
-                onChange={(event) => setMappingForm((prev) => ({ ...prev, legalEntityId: event.target.value, localCoaId: "" }))}
-                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                list="legal-entity-options"
-                placeholder={l("Legal entity ID", "Istirak / bagli ortak ID")}
-                required
+              <Combobox
+                value={mappingForm.legalEntityId || null}
+                options={legalEntitySelectOptions}
+                onChange={(nextValue) =>
+                  setMappingForm((prev) => ({
+                    ...prev,
+                    legalEntityId: nextValue ? String(nextValue) : "",
+                    localCoaId: "",
+                  }))
+                }
+                placeholder={l("Select legal entity", "Istirak / bagli ortak secin")}
+                noOptionsText={l("No legal entities found.", "Istirak bulunamadi.")}
+                clearable={false}
               />
-              <input
-                type="number"
-                min={1}
-                value={mappingForm.groupCoaId}
-                onChange={(event) => setMappingForm((prev) => ({ ...prev, groupCoaId: event.target.value }))}
-                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                list="group-coa-options"
-                placeholder={l("Group CoA ID", "Grup HP ID")}
-                required
+              <Combobox
+                value={mappingForm.groupCoaId || null}
+                options={groupCoaSelectOptions}
+                onChange={(nextValue) =>
+                  setMappingForm((prev) => ({
+                    ...prev,
+                    groupCoaId: nextValue ? String(nextValue) : "",
+                  }))
+                }
+                placeholder={l("Select group CoA", "Grup HP secin")}
+                noOptionsText={l("No group CoA found.", "Grup HP bulunamadi.")}
+                clearable={false}
               />
-              <datalist id="group-coa-options">
-                {groupCoaOptions.map((row) => (
-                  <option key={row.id} value={row.id}>{row.code} - {row.name}</option>
-                ))}
-              </datalist>
-              <input
-                type="number"
-                min={1}
-                value={mappingForm.localCoaId}
-                onChange={(event) => setMappingForm((prev) => ({ ...prev, localCoaId: event.target.value }))}
-                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                list="local-coa-options"
-                placeholder={l("Local CoA ID", "Lokal HP ID")}
-                required
+              <Combobox
+                value={mappingForm.localCoaId || null}
+                options={localCoaSelectOptions}
+                onChange={(nextValue) =>
+                  setMappingForm((prev) => ({
+                    ...prev,
+                    localCoaId: nextValue ? String(nextValue) : "",
+                  }))
+                }
+                placeholder={l("Select local CoA", "Lokal HP secin")}
+                noOptionsText={l("No local CoA found.", "Lokal HP bulunamadi.")}
+                clearable={false}
               />
-              <datalist id="local-coa-options">
-                {localCoaOptions.map((row) => (
-                  <option key={row.id} value={row.id}>{row.code} - {row.name}</option>
-                ))}
-              </datalist>
               <div className="flex gap-2">
-                <select
-                  value={mappingForm.status}
-                  onChange={(event) => setMappingForm((prev) => ({ ...prev, status: event.target.value }))}
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                >
-                  <option value="ACTIVE">ACTIVE</option>
-                  <option value="INACTIVE">INACTIVE</option>
-                </select>
+                <Combobox
+                  value={mappingForm.status || null}
+                  options={activeInactiveSelectOptions}
+                  onChange={(nextValue) =>
+                    setMappingForm((prev) => ({
+                      ...prev,
+                      status: nextValue ? String(nextValue) : "ACTIVE",
+                    }))
+                  }
+                  className="w-full"
+                  clearable={false}
+                />
                 <button type="submit" disabled={saving === "mapping"} className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60">
                   {saving === "mapping" ? l("Saving...", "Kaydediliyor...") : l("Save", "Kaydet")}
                 </button>
@@ -1553,27 +1664,22 @@ export default function ConsolidationSetupPage() {
               {l("Canonical Mappings", "Canonical Eslemeler")}
             </h2>
             <div className="mb-3 grid gap-2 rounded-lg border border-slate-200 bg-slate-50 p-2 md:grid-cols-5">
-              <input
-                type="number"
-                min={1}
-                value={canonicalCandidateFilters.legalEntityId}
-                onChange={(event) =>
+              <Combobox
+                value={canonicalCandidateFilters.legalEntityId || null}
+                options={legalEntitySelectOptions}
+                onChange={(nextValue) =>
                   setCanonicalCandidateFilters((prev) => ({
                     ...prev,
-                    legalEntityId: event.target.value,
+                    legalEntityId: nextValue ? String(nextValue) : "",
                   }))
                 }
-                className="rounded-lg border border-slate-300 px-3 py-2 text-sm md:col-span-2"
-                list="canonical-candidate-legal-entity-options"
-                placeholder={l("Legal entity ID (optional)", "Istirak / bagli ortak ID (opsiyonel)")}
+                className="md:col-span-2"
+                placeholder={l(
+                  "Legal entity (optional)",
+                  "Istirak / bagli ortak (opsiyonel)"
+                )}
+                noOptionsText={l("No legal entities found.", "Istirak bulunamadi.")}
               />
-              <datalist id="canonical-candidate-legal-entity-options">
-                {filteredLegalEntities.map((row) => (
-                  <option key={row.id} value={row.id}>
-                    {row.code} - {row.name}
-                  </option>
-                ))}
-              </datalist>
               <input
                 type="number"
                 min={1}
@@ -1702,51 +1808,33 @@ export default function ConsolidationSetupPage() {
               onSubmit={onSaveCanonicalLocalMapping}
               className="grid gap-2 md:grid-cols-4"
             >
-              <input
-                type="number"
-                min={1}
-                value={canonicalLocalForm.legalEntityId}
-                onChange={(event) =>
+              <Combobox
+                value={canonicalLocalForm.legalEntityId || null}
+                options={legalEntitySelectOptions}
+                onChange={(nextValue) =>
                   setCanonicalLocalForm((prev) => ({
                     ...prev,
-                    legalEntityId: event.target.value,
+                    legalEntityId: nextValue ? String(nextValue) : "",
                     localAccountId: "",
                   }))
                 }
-                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                list="canonical-legal-entity-options"
-                placeholder={l("Legal entity ID", "Istirak / bagli ortak ID")}
-                required
+                placeholder={l("Select legal entity", "Istirak / bagli ortak secin")}
+                noOptionsText={l("No legal entities found.", "Istirak bulunamadi.")}
+                clearable={false}
               />
-              <datalist id="canonical-legal-entity-options">
-                {filteredLegalEntities.map((row) => (
-                  <option key={row.id} value={row.id}>
-                    {row.code} - {row.name}
-                  </option>
-                ))}
-              </datalist>
-              <input
-                type="number"
-                min={1}
-                value={canonicalLocalForm.localAccountId}
-                onChange={(event) =>
+              <Combobox
+                value={canonicalLocalForm.localAccountId || null}
+                options={canonicalLocalAccountSelectOptions}
+                onChange={(nextValue) =>
                   setCanonicalLocalForm((prev) => ({
                     ...prev,
-                    localAccountId: event.target.value,
+                    localAccountId: nextValue ? String(nextValue) : "",
                   }))
                 }
-                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                list="canonical-local-account-options"
-                placeholder={l("Local account ID", "Lokal hesap ID")}
-                required
+                placeholder={l("Select local account", "Lokal hesap secin")}
+                noOptionsText={l("No local accounts found.", "Lokal hesap bulunamadi.")}
+                clearable={false}
               />
-              <datalist id="canonical-local-account-options">
-                {canonicalLocalAccountOptions.map((row) => (
-                  <option key={row.id} value={row.id}>
-                    {row.code} - {row.name}
-                  </option>
-                ))}
-              </datalist>
               <input
                 value={canonicalLocalForm.canonicalKey}
                 onChange={(event) =>
@@ -1784,19 +1872,17 @@ export default function ConsolidationSetupPage() {
                   "Neden/not (yuksek-risk remap icin zorunlu)"
                 )}
               />
-              <select
-                value={canonicalLocalForm.status}
-                onChange={(event) =>
+              <Combobox
+                value={canonicalLocalForm.status || null}
+                options={activeInactiveSelectOptions}
+                onChange={(nextValue) =>
                   setCanonicalLocalForm((prev) => ({
                     ...prev,
-                    status: event.target.value,
+                    status: nextValue ? String(nextValue) : "ACTIVE",
                   }))
                 }
-                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              >
-                <option value="ACTIVE">ACTIVE</option>
-                <option value="INACTIVE">INACTIVE</option>
-              </select>
+                clearable={false}
+              />
               <input
                 type="date"
                 value={canonicalLocalForm.effectiveFrom}
@@ -1834,28 +1920,19 @@ export default function ConsolidationSetupPage() {
               onSubmit={onSaveCanonicalGroupMapping}
               className="mt-2 grid gap-2 md:grid-cols-4"
             >
-              <input
-                type="number"
-                min={1}
-                value={canonicalGroupForm.groupAccountId}
-                onChange={(event) =>
+              <Combobox
+                value={canonicalGroupForm.groupAccountId || null}
+                options={canonicalGroupAccountSelectOptions}
+                onChange={(nextValue) =>
                   setCanonicalGroupForm((prev) => ({
                     ...prev,
-                    groupAccountId: event.target.value,
+                    groupAccountId: nextValue ? String(nextValue) : "",
                   }))
                 }
-                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                list="canonical-group-account-options"
-                placeholder={l("Group account ID", "Grup hesap ID")}
-                required
+                placeholder={l("Select group account", "Grup hesap secin")}
+                noOptionsText={l("No group accounts found.", "Grup hesap bulunamadi.")}
+                clearable={false}
               />
-              <datalist id="canonical-group-account-options">
-                {canonicalGroupAccountOptions.map((row) => (
-                  <option key={row.id} value={row.id}>
-                    {row.code} - {row.name}
-                  </option>
-                ))}
-              </datalist>
               <input
                 value={canonicalGroupForm.canonicalKey}
                 onChange={(event) =>
@@ -1893,19 +1970,17 @@ export default function ConsolidationSetupPage() {
                   "Neden/not (yuksek-risk remap icin zorunlu)"
                 )}
               />
-              <select
-                value={canonicalGroupForm.status}
-                onChange={(event) =>
+              <Combobox
+                value={canonicalGroupForm.status || null}
+                options={activeInactiveSelectOptions}
+                onChange={(nextValue) =>
                   setCanonicalGroupForm((prev) => ({
                     ...prev,
-                    status: event.target.value,
+                    status: nextValue ? String(nextValue) : "ACTIVE",
                   }))
                 }
-                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              >
-                <option value="ACTIVE">ACTIVE</option>
-                <option value="INACTIVE">INACTIVE</option>
-              </select>
+                clearable={false}
+              />
               <input
                 type="date"
                 value={canonicalGroupForm.effectiveFrom}
@@ -1974,29 +2049,29 @@ export default function ConsolidationSetupPage() {
                 placeholder={l("Name", "Ad")}
                 required
               />
-              <input
-                type="number"
-                min={1}
-                value={placeholderForm.accountId}
-                onChange={(event) => setPlaceholderForm((prev) => ({ ...prev, accountId: event.target.value }))}
-                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                list="account-options"
-                placeholder={l("Account ID", "Hesap ID")}
+              <Combobox
+                value={placeholderForm.accountId || null}
+                options={accountSelectOptions}
+                onChange={(nextValue) =>
+                  setPlaceholderForm((prev) => ({
+                    ...prev,
+                    accountId: nextValue ? String(nextValue) : "",
+                  }))
+                }
+                placeholder={l("Account (optional)", "Hesap (opsiyonel)")}
+                noOptionsText={l("No accounts found.", "Hesap bulunamadi.")}
               />
-              <datalist id="account-options">
-                {accounts.map((row) => (
-                  <option key={row.id} value={row.id}>{row.code} - {row.name}</option>
-                ))}
-              </datalist>
-              <select
-                value={placeholderForm.defaultDirection}
-                onChange={(event) => setPlaceholderForm((prev) => ({ ...prev, defaultDirection: event.target.value }))}
-                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              >
-                {DIRECTIONS.map((direction) => (
-                  <option key={direction} value={direction}>{direction}</option>
-                ))}
-              </select>
+              <Combobox
+                value={placeholderForm.defaultDirection || null}
+                options={directionSelectOptions}
+                onChange={(nextValue) =>
+                  setPlaceholderForm((prev) => ({
+                    ...prev,
+                    defaultDirection: nextValue ? String(nextValue) : "AUTO",
+                  }))
+                }
+                clearable={false}
+              />
               <button type="submit" disabled={saving === "placeholder"} className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60">
                 {saving === "placeholder" ? l("Saving...", "Kaydediliyor...") : l("Save", "Kaydet")}
               </button>
@@ -2023,21 +2098,19 @@ export default function ConsolidationSetupPage() {
           <section className="rounded-xl border border-slate-200 bg-white p-4">
             <h2 className="mb-3 text-sm font-semibold text-slate-700">{l("Runs", "Runlar")}</h2>
             <form onSubmit={onCreateRun} className="grid gap-2 md:grid-cols-4">
-              <input
-                type="number"
-                min={1}
-                value={runForm.fiscalPeriodId}
-                onChange={(event) => setRunForm((prev) => ({ ...prev, fiscalPeriodId: event.target.value }))}
-                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                list="period-options"
-                placeholder={l("Fiscal period ID", "Mali donem ID")}
-                required
+              <Combobox
+                value={runForm.fiscalPeriodId || null}
+                options={periodSelectOptions}
+                onChange={(nextValue) =>
+                  setRunForm((prev) => ({
+                    ...prev,
+                    fiscalPeriodId: nextValue ? String(nextValue) : "",
+                  }))
+                }
+                placeholder={l("Select fiscal period", "Mali donem secin")}
+                noOptionsText={l("No periods found.", "Donem bulunamadi.")}
+                clearable={false}
               />
-              <datalist id="period-options">
-                {periods.map((row) => (
-                  <option key={row.id} value={row.id}>{row.fiscal_year}-P{padPeriod(row.period_no)} {row.period_name}</option>
-                ))}
-              </datalist>
               <input
                 value={runForm.runName}
                 onChange={(event) => setRunForm((prev) => ({ ...prev, runName: event.target.value }))}
@@ -2056,15 +2129,18 @@ export default function ConsolidationSetupPage() {
               <button type="submit" disabled={saving === "run-create"} className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60">
                 {saving === "run-create" ? l("Creating...", "Olusturuluyor...") : l("Create Run", "Run Olustur")}
               </button>
-              <select
-                value={runForm.rateType}
-                onChange={(event) => setRunForm((prev) => ({ ...prev, rateType: event.target.value }))}
-                className="rounded-lg border border-slate-300 px-3 py-2 text-sm md:col-span-2"
-              >
-                {RATE_TYPES.map((rateType) => (
-                  <option key={rateType} value={rateType}>{rateType}</option>
-                ))}
-              </select>
+              <Combobox
+                value={runForm.rateType || null}
+                options={rateTypeSelectOptions}
+                onChange={(nextValue) =>
+                  setRunForm((prev) => ({
+                    ...prev,
+                    rateType: nextValue ? String(nextValue) : "CLOSING",
+                  }))
+                }
+                className="md:col-span-2"
+                clearable={false}
+              />
             </form>
             <div className="mt-3 max-h-64 overflow-auto rounded-lg border border-slate-200 p-2 text-xs">
               {runs.length === 0 ? (

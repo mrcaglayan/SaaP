@@ -7,12 +7,14 @@ import {
   createCashExchangeBatch,
   getCashExchangeBatchByIdForTenant,
   listCashExchangeBatchRows,
+  postCashExchangeBatchById,
   resolveCashExchangeScope,
   reverseCashExchangeBatchById,
 } from "../services/cash.exchange.service.js";
 import {
   parseCashExchangeBatchIdParam,
   parseCashExchangeCreateInput,
+  parseCashExchangePostInput,
   parseCashExchangeReadFilters,
   parseCashExchangeReverseInput,
 } from "./cash.exchange.validators.js";
@@ -109,6 +111,24 @@ router.post(
     return res
       .status(result.idempotentReplay ? 200 : 201)
       .json(buildCashExchangeResponse(payload.tenantId, result));
+  })
+);
+
+router.post(
+  "/:exchangeBatchId/post",
+  requirePermission("cash.txn.create", {
+    resolveScope: async (req, tenantId) => {
+      return resolveCashExchangeScope(req.params?.exchangeBatchId, tenantId);
+    },
+  }),
+  asyncHandler(async (req, res) => {
+    const payload = parseCashExchangePostInput(req);
+    const result = await postCashExchangeBatchById({
+      req,
+      payload,
+      assertScopeAccess,
+    });
+    return res.json(buildCashExchangeResponse(payload.tenantId, result));
   })
 );
 

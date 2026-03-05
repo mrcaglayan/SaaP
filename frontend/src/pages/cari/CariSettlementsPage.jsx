@@ -405,7 +405,8 @@ export default function CariSettlementsPage() {
   const canReadOrg = hasPermission("org.tree.read");
   const canCreateCashTxn = hasPermission("cash.txn.create");
   const canReadCashRegisters = hasPermission("cash.register.read");
-  const canReadCashSessions = hasPermission("cash.session.read");
+  // Cash session listing endpoint is guarded by cash.register.read.
+  const canReadCashSessions = canReadCashRegisters;
   const canReadGlAccounts = hasPermission("gl.account.read");
 
   const [previewFilters, setPreviewFilters] = usePersistedFilters(
@@ -844,6 +845,11 @@ export default function CariSettlementsPage() {
     let active = true;
     async function loadLookups() {
       const warnings = [];
+      if (!canReadCashRegisters) {
+        warnings.push(
+          "Cash register/session lookup unavailable (missing permission: cash.register.read)."
+        );
+      }
       const [legalEntitiesResult, registersResult, sessionsResult] =
         await Promise.allSettled([
           canReadOrg ? listLegalEntities({ limit: 500, includeInactive: true }) : Promise.resolve({ rows: [] }),
@@ -1305,6 +1311,9 @@ export default function CariSettlementsPage() {
     }
     if (!canCreateCashTxn) {
       return "Missing permission: cash.txn.create";
+    }
+    if (!canReadCashSessions) {
+      return "Missing permission: cash.register.read (required to list OPEN cash sessions).";
     }
     if (!toPositiveInt(linkedCashForm.registerId)) {
       return "registerId is required for linked cash transaction.";
@@ -2236,6 +2245,11 @@ export default function CariSettlementsPage() {
                   <p className="mt-1 text-xs normal-case text-rose-700">
                     Selected register has session_mode=REQUIRED but no OPEN session exists.
                     Open a session on Cash Sessions page first.
+                  </p>
+                ) : null}
+                {!canReadCashSessions ? (
+                  <p className="mt-1 text-xs normal-case text-rose-700">
+                    Missing permission: cash.register.read (required to list OPEN sessions).
                   </p>
                 ) : null}
                 {linkedCashSessionValueMissing && !linkedCashSessionMissingOpenSession ? (

@@ -21,10 +21,16 @@ function roundAmount(value) {
 }
 
 function signedAmountCase(columnSql) {
-  return `CASE
-    WHEN ct.txn_type IN ('RECEIPT', 'TRANSFER_IN') THEN ${columnSql}
-    WHEN ct.txn_type IN ('PAYMENT', 'TRANSFER_OUT') THEN -${columnSql}
+  const signedByTxnType = `CASE
+    WHEN ct.txn_type IN ('RECEIPT', 'WITHDRAWAL_FROM_BANK', 'TRANSFER_IN', 'OPENING_FLOAT')
+      THEN ${columnSql}
+    WHEN ct.txn_type IN ('PAYOUT', 'DEPOSIT_TO_BANK', 'TRANSFER_OUT', 'CLOSING_ADJUSTMENT')
+      THEN -${columnSql}
     ELSE 0
+  END`;
+  return `CASE
+    WHEN ct.reversal_of_transaction_id IS NOT NULL THEN -1 * (${signedByTxnType})
+    ELSE (${signedByTxnType})
   END`;
 }
 
@@ -90,6 +96,17 @@ function buildCashExchangeSummary(rows) {
   let feeAmountTxnTotal = 0;
   let feeAmountBaseTotal = 0;
   let spreadAmountBaseTotal = 0;
+  let reversalRealizedFxBaseTotal = 0;
+
+  let grossSourceAmountTxnTotal = 0;
+  let grossTargetAmountTxnTotal = 0;
+  let grossSourceAmountBaseTotal = 0;
+  let grossTargetAmountBaseTotal = 0;
+  let grossPrincipalFxDifferenceBaseTotal = 0;
+  let grossRealizedFxBaseTotal = 0;
+  let grossFeeAmountTxnTotal = 0;
+  let grossFeeAmountBaseTotal = 0;
+  let grossSpreadAmountBaseTotal = 0;
 
   for (const row of rows || []) {
     const status = asUpper(row?.status || "UNKNOWN");
@@ -102,7 +119,23 @@ function buildCashExchangeSummary(rows) {
     const feeTxn = toNumber(row?.feeAmountTxn);
     const feeBase = toNumber(row?.feeAmountBase);
     const realizedFxBase = toNumber(row?.realizedFxBase);
+    const reversalRealizedFxBase = toNumber(row?.reversalRealizedFxBase);
     const spreadBase = toNumber(row?.spreadAmountBase);
+
+    grossSourceAmountTxnTotal += sourceTxn;
+    grossTargetAmountTxnTotal += targetTxn;
+    grossSourceAmountBaseTotal += sourceBase;
+    grossTargetAmountBaseTotal += targetBase;
+    grossPrincipalFxDifferenceBaseTotal += targetBase - sourceBase;
+    grossRealizedFxBaseTotal += realizedFxBase;
+    grossFeeAmountTxnTotal += feeTxn;
+    grossFeeAmountBaseTotal += feeBase;
+    grossSpreadAmountBaseTotal += spreadBase;
+    reversalRealizedFxBaseTotal += reversalRealizedFxBase;
+
+    if (status !== "POSTED") {
+      continue;
+    }
 
     sourceAmountTxnTotal += sourceTxn;
     targetAmountTxnTotal += targetTxn;
@@ -127,6 +160,16 @@ function buildCashExchangeSummary(rows) {
     feeAmountTxnTotal: roundAmount(feeAmountTxnTotal),
     feeAmountBaseTotal: roundAmount(feeAmountBaseTotal),
     spreadAmountBaseTotal: roundAmount(spreadAmountBaseTotal),
+    reversalRealizedFxBaseTotal: roundAmount(reversalRealizedFxBaseTotal),
+    grossSourceAmountTxnTotal: roundAmount(grossSourceAmountTxnTotal),
+    grossTargetAmountTxnTotal: roundAmount(grossTargetAmountTxnTotal),
+    grossSourceAmountBaseTotal: roundAmount(grossSourceAmountBaseTotal),
+    grossTargetAmountBaseTotal: roundAmount(grossTargetAmountBaseTotal),
+    grossPrincipalFxDifferenceBaseTotal: roundAmount(grossPrincipalFxDifferenceBaseTotal),
+    grossRealizedFxBaseTotal: roundAmount(grossRealizedFxBaseTotal),
+    grossFeeAmountTxnTotal: roundAmount(grossFeeAmountTxnTotal),
+    grossFeeAmountBaseTotal: roundAmount(grossFeeAmountBaseTotal),
+    grossSpreadAmountBaseTotal: roundAmount(grossSpreadAmountBaseTotal),
   };
 }
 
@@ -156,7 +199,7 @@ export async function getForeignCashBalancesReport({
   buildScopeFilter,
   assertScopeAccess,
 }) {
-  const where = ["ct.tenant_id = ?", "ct.status = 'POSTED'", "ct.book_date <= ?"];
+  const where = ["ct.tenant_id = ?", "ct.status IN ('POSTED', 'REVERSED')", "ct.book_date <= ?"];
   const params = [filters.tenantId, filters.asOfDate];
 
   if (filters.legalEntityId) {
