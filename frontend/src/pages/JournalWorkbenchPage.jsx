@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Combobox from "../components/Combobox.jsx";
 import {
   closePeriod,
@@ -395,6 +395,8 @@ export default function JournalWorkbenchPage() {
   });
   const [selectedJournalId, setSelectedJournalId] = useState("");
   const [selectedJournal, setSelectedJournal] = useState(null);
+  const lastObservedUrlJournalIdRef = useRef(null);
+  const pendingUrlSelectionJournalIdRef = useRef(null);
   const [complianceRows, setComplianceRows] = useState([]);
   const [complianceSummary, setComplianceSummary] = useState(null);
   const [complianceFilters, setComplianceFilters, resetComplianceFilters] = usePersistedFilters(
@@ -1476,18 +1478,29 @@ export default function JournalWorkbenchPage() {
   ]);
 
   useEffect(() => {
-    if (!canReadJournals || !deepLinkedJournalId) {
+    const previousDeepLinkedJournalId = toInt(lastObservedUrlJournalIdRef.current);
+    const currentDeepLinkedJournalId = toInt(deepLinkedJournalId);
+    const deepLinkChanged =
+      Number(previousDeepLinkedJournalId || 0) !==
+      Number(currentDeepLinkedJournalId || 0);
+    lastObservedUrlJournalIdRef.current = currentDeepLinkedJournalId || null;
+    if (!canReadJournals || !currentDeepLinkedJournalId) {
+      pendingUrlSelectionJournalIdRef.current = null;
       return;
     }
-    // Avoid ping-pong between URL deep link and an actively selected row
-    // while search params are still catching up.
-    if (selectedJournalId && selectedJournalId !== String(deepLinkedJournalId)) {
+    if (!deepLinkChanged) {
       return;
     }
-    if (selectedJournalId === String(deepLinkedJournalId)) {
+    if (toInt(selectedJournalId) === currentDeepLinkedJournalId) {
+      pendingUrlSelectionJournalIdRef.current = null;
       return;
     }
-    void loadJournalDetail(deepLinkedJournalId);
+    pendingUrlSelectionJournalIdRef.current = currentDeepLinkedJournalId;
+    setSelectedJournalId(String(currentDeepLinkedJournalId));
+    setSelectedJournal((previous) =>
+      toInt(previous?.id) === currentDeepLinkedJournalId ? previous : null
+    );
+    void loadJournalDetail(currentDeepLinkedJournalId);
   }, [
     canReadJournals,
     deepLinkedJournalId,
@@ -1500,10 +1513,19 @@ export default function JournalWorkbenchPage() {
     const currentId = toInt(
       searchParams.get("journalId") || searchParams.get("journal_id")
     );
+    const pendingUrlSelectionId = toInt(
+      pendingUrlSelectionJournalIdRef.current
+    );
     if (deepLinkedJournalId && !selectedId) {
       return;
     }
     if (selectedId === currentId) {
+      if (pendingUrlSelectionId && selectedId === pendingUrlSelectionId) {
+        pendingUrlSelectionJournalIdRef.current = null;
+      }
+      return;
+    }
+    if (pendingUrlSelectionId && currentId === pendingUrlSelectionId) {
       return;
     }
     const nextParams = new URLSearchParams(searchParams);

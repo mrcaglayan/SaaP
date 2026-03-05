@@ -1,4 +1,5 @@
 ﻿import { useEffect, useMemo, useState } from "react";
+import { useRef } from "react";
 import {
   cancelCariDocument,
   createCariDocumentComment,
@@ -710,6 +711,8 @@ export default function CariDocumentsPage() {
   const [selectedDocumentId, setSelectedDocumentId] = useState(null);
   const [selectedDetail, setSelectedDetail] = useState(null);
   const [detailError, setDetailError] = useState("");
+  const lastObservedUrlDocumentIdRef = useRef(null);
+  const pendingUrlSelectionDocumentIdRef = useRef(null);
 
   const [editForm, setEditForm] = useState(() => createInitialDraftForm());
   const [editSaving, setEditSaving] = useState(false);
@@ -854,7 +857,7 @@ export default function CariDocumentsPage() {
         render: (row) => (
           <button
             type="button"
-            className="rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-slate-700"
+            className="cursor-pointer rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-slate-700"
             onClick={() => setSelectedDocumentId(row?.id)}
           >
             View / Actions
@@ -1365,13 +1368,27 @@ export default function CariDocumentsPage() {
   ]);
 
   useEffect(() => {
-    if (!canRead || !deepLinkedDocumentId) {
+    const previousDeepLinkedDocumentId = toPositiveInt(
+      lastObservedUrlDocumentIdRef.current
+    );
+    const currentDeepLinkedDocumentId = toPositiveInt(deepLinkedDocumentId);
+    const deepLinkChanged =
+      Number(previousDeepLinkedDocumentId || 0) !==
+      Number(currentDeepLinkedDocumentId || 0);
+    lastObservedUrlDocumentIdRef.current = currentDeepLinkedDocumentId || null;
+    if (!canRead || !currentDeepLinkedDocumentId) {
+      pendingUrlSelectionDocumentIdRef.current = null;
       return;
     }
-    if (Number(selectedDocumentId || 0) === Number(deepLinkedDocumentId)) {
+    if (!deepLinkChanged) {
       return;
     }
-    setSelectedDocumentId(deepLinkedDocumentId);
+    if (Number(selectedDocumentId || 0) === Number(currentDeepLinkedDocumentId)) {
+      pendingUrlSelectionDocumentIdRef.current = null;
+      return;
+    }
+    pendingUrlSelectionDocumentIdRef.current = currentDeepLinkedDocumentId;
+    setSelectedDocumentId(currentDeepLinkedDocumentId);
   }, [canRead, deepLinkedDocumentId, selectedDocumentId]);
 
   useEffect(() => {
@@ -1379,10 +1396,19 @@ export default function CariDocumentsPage() {
     const currentId = toPositiveInt(
       searchParams.get("documentId") || searchParams.get("document_id")
     );
+    const pendingUrlSelectionId = toPositiveInt(
+      pendingUrlSelectionDocumentIdRef.current
+    );
     if (deepLinkedDocumentId && !selectedId) {
       return;
     }
     if (selectedId === currentId) {
+      if (pendingUrlSelectionId && selectedId === pendingUrlSelectionId) {
+        pendingUrlSelectionDocumentIdRef.current = null;
+      }
+      return;
+    }
+    if (pendingUrlSelectionId && currentId === pendingUrlSelectionId) {
       return;
     }
     const nextParams = new URLSearchParams(searchParams);

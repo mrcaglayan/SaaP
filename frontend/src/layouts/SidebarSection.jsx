@@ -148,7 +148,7 @@ export default function SidebarSection({
             setInternalOpen((value) => !value);
           }
         }}
-        className={`group flex items-center text-left text-sm font-semibold transition-colors ${
+        className={`group flex cursor-pointer items-center text-left text-sm font-semibold transition-colors ${
           nested
             ? `w-full gap-2 rounded-sm pl-2 pr-2 py-2 ${
                 sectionHighlighted
