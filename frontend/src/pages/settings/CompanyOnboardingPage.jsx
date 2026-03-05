@@ -12,6 +12,11 @@ const ACCOUNT_TYPES = ["ASSET", "LIABILITY", "EQUITY", "REVENUE", "EXPENSE"];
 const NORMAL_SIDES = ["DEBIT", "CREDIT"];
 const WIZARD_STEPS = Object.freeze([
 Object.freeze({
+  key: "country",
+  titleEn: "Country + Company",
+  titleTr: "Ulke + Sirket",
+}),
+Object.freeze({
   key: "entity",
   titleEn: "Company + Entities",
   titleTr: "Sirket + Birimler",
@@ -621,7 +626,7 @@ for (let index = 0; index < form.legalEntities.length; index += 1) {
 return "";
 }
 function validateWizardStep(form, stepKey, l) {
-if (stepKey === "entity") {
+if (stepKey === "country" || stepKey === "entity") {
   if (!form.groupCompany.code.trim() || !form.groupCompany.name.trim()) {
     return l(
       "Group company code and name are required.",
@@ -1305,7 +1310,7 @@ return (
       </div>
     )}
     <form onSubmit={handleSubmit} className="space-y-4">
-      {activeStep.key === "entity" ? (
+      {activeStep.key === "country" || activeStep.key === "entity" ? (
         <section className="space-y-4">
           <section className="rounded-2xl border border-slate-200 bg-white p-4">
             <h2 className="mb-3 text-sm font-semibold text-slate-700">
