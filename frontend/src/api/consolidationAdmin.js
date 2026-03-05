@@ -54,6 +54,63 @@ export async function upsertConsolidationCoaMapping(groupId, payload) {
   return response.data;
 }
 
+export async function listConsolidationCanonicalMappings(groupId, params = {}) {
+  const response = await api.get(
+    `/api/v1/consolidation/groups/${groupId}/canonical-mappings${toQueryString(
+      params
+    )}`
+  );
+  return response.data;
+}
+
+export async function getConsolidationCanonicalReadiness(groupId, params = {}) {
+  const response = await api.get(
+    `/api/v1/consolidation/groups/${groupId}/canonical-readiness${toQueryString(
+      params
+    )}`
+  );
+  return response.data;
+}
+
+export async function upsertConsolidationCanonicalLocalMapping(groupId, payload) {
+  const response = await api.post(
+    `/api/v1/consolidation/groups/${groupId}/canonical-mappings/local`,
+    payload
+  );
+  return response.data;
+}
+
+export async function upsertConsolidationCanonicalGroupMapping(groupId, payload) {
+  const response = await api.post(
+    `/api/v1/consolidation/groups/${groupId}/canonical-mappings/group`,
+    payload
+  );
+  return response.data;
+}
+
+export async function previewConsolidationCanonicalMappingCandidates(
+  groupId,
+  params = {}
+) {
+  const response = await api.get(
+    `/api/v1/consolidation/groups/${groupId}/canonical-mappings/candidates${toQueryString(
+      params
+    )}`
+  );
+  return response.data;
+}
+
+export async function applyConsolidationCanonicalMappingCandidates(
+  groupId,
+  payload = {}
+) {
+  const response = await api.post(
+    `/api/v1/consolidation/groups/${groupId}/canonical-mappings/candidates/apply`,
+    payload
+  );
+  return response.data;
+}
+
 export async function listConsolidationEliminationPlaceholders(
   groupId,
   params = {}
@@ -78,6 +135,11 @@ export async function listConsolidationRuns(params = {}) {
   const response = await api.get(
     `/api/v1/consolidation/runs${toQueryString(params)}`
   );
+  return response.data;
+}
+
+export async function getConsolidationRun(runId) {
+  const response = await api.get(`/api/v1/consolidation/runs/${runId}`);
   return response.data;
 }
 

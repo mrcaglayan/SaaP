@@ -18,9 +18,14 @@ import {
   parsePositiveInt,
   resolveTenantId,
 } from "./_utils.js";
+import { logWarn } from "../observability/logger.js";
 import { evaluateWorkflowApprovalGate } from "../services/workflows.service.js";
 import {
+  applyCanonicalMappingCandidates,
+  getCanonicalMappingGovernanceReview,
+  getCanonicalMappingReadiness,
   listCanonicalAccountMappings,
+  listCanonicalMappingCandidates,
   listCanonicalKeys,
   upsertCanonicalKey,
   upsertGroupAccountCanonicalMapping,
@@ -35,6 +40,13 @@ const FEATURE_SUBACCOUNTS_V1 = "FEATURE_SUBACCOUNTS_V1";
 const FEATURE_WORKFLOW_CLOSE_CONSOLIDATION_V1 =
   "FEATURE_WORKFLOW_CLOSE_CONSOLIDATION_V1";
 const FEATURE_TAX_ENGINE_V1 = "FEATURE_TAX_ENGINE_V1";
+const CONSOLIDATION_CANONICAL_FAILURE_AUDIT_ACTION =
+  "consolidation.execute.failure.canonical_mapping";
+const CONSOLIDATION_CANONICAL_FAILURE_ALERT_WINDOW_MINUTES =
+  parsePositiveInt(process.env.CONSOLIDATION_CANONICAL_FAILURE_ALERT_WINDOW_MINUTES) ||
+  60;
+const CONSOLIDATION_CANONICAL_FAILURE_ALERT_THRESHOLD =
+  parsePositiveInt(process.env.CONSOLIDATION_CANONICAL_FAILURE_ALERT_THRESHOLD) || 3;
 
 function normalizeRateType(value) {
   const rateType = String(value || "CLOSING").toUpperCase();
@@ -98,6 +110,26 @@ function toIsoDate(value, fieldLabel = "date") {
   return toLocalYyyyMmDd(parsed);
 }
 
+function resolveClientIpAddress(req) {
+  const forwardedFor = req?.headers?.["x-forwarded-for"];
+  const forwardedIp = Array.isArray(forwardedFor)
+    ? forwardedFor[0]
+    : String(forwardedFor || "")
+        .split(",")
+        .map((value) => value.trim())
+        .filter(Boolean)[0];
+  return forwardedIp || req?.ip || req?.socket?.remoteAddress || null;
+}
+
+function buildAuditRequestMeta(req) {
+  return {
+    requestId:
+      String(req?.requestId || req?.headers?.["x-request-id"] || "").trim() || null,
+    ipAddress: resolveClientIpAddress(req),
+    userAgent: String(req?.headers?.["user-agent"] || "").trim() || null,
+  };
+}
+
 function normalizeBalanceByAccountType(accountType, balance) {
   const type = String(accountType || "").toUpperCase();
   const amount = Number(balance || 0);
@@ -156,6 +188,164 @@ function toDbBoolean(value) {
 
 function isMissingTableError(err) {
   return Number(err?.errno) === 1146;
+}
+
+function safeJsonStringify(value) {
+  try {
+    return JSON.stringify(value ?? null);
+  } catch {
+    return JSON.stringify({ error: "SERIALIZATION_FAILED" });
+  }
+}
+
+function normalizeCanonicalFailureReasonCounts(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+  const normalized = {};
+  for (const [key, rawCount] of Object.entries(value)) {
+    const normalizedKey = String(key || "").trim().toUpperCase();
+    if (!normalizedKey) {
+      continue;
+    }
+    normalized[normalizedKey] = Number(rawCount || 0);
+  }
+  return normalized;
+}
+
+function resolveCanonicalFailureSubtype(reasonCounts = {}) {
+  const localDateMismatch = Number(reasonCounts.LOCAL_MAPPING_DATE_MISMATCH || 0);
+  const groupDateMismatch = Number(reasonCounts.GROUP_MAPPING_DATE_MISMATCH || 0);
+  if (localDateMismatch + groupDateMismatch > 0) {
+    return "EFFECTIVE_DATE_MISMATCH";
+  }
+  return "MISSING_MAPPING";
+}
+
+function isCanonicalCoverageFailure(err) {
+  const message = String(err?.message || "").toLowerCase();
+  if (message.includes("canonical consolidation mapping is missing")) {
+    return true;
+  }
+  const reasonCounts = err?.details?.reasonCounts;
+  return Boolean(reasonCounts && typeof reasonCounts === "object");
+}
+
+async function recordCanonicalExecuteFailureEvent({
+  req,
+  tenantId,
+  runId,
+  executedByUserId = null,
+  err,
+}) {
+  const parsedTenantId = parsePositiveInt(tenantId);
+  const parsedRunId = parsePositiveInt(runId);
+  if (!parsedTenantId || !parsedRunId) {
+    return;
+  }
+
+  const details =
+    err?.details && typeof err.details === "object" && !Array.isArray(err.details)
+      ? err.details
+      : {};
+  const reasonCounts = normalizeCanonicalFailureReasonCounts(details.reasonCounts);
+  const subtype = resolveCanonicalFailureSubtype(reasonCounts);
+  const legalEntityId = parsePositiveInt(details.legalEntityId) || null;
+  const consolidationGroupId = parsePositiveInt(details.consolidationGroupId) || null;
+  const auditScopeType = consolidationGroupId
+    ? "GROUP"
+    : legalEntityId
+      ? "LEGAL_ENTITY"
+      : null;
+  const auditScopeId = consolidationGroupId || legalEntityId || null;
+
+  const payload = {
+    eventCode: "CONSOLIDATION_CANONICAL_EXECUTE_FAILURE",
+    subtype,
+    runId: parsedRunId,
+    tenantId: parsedTenantId,
+    consolidationGroupId,
+    legalEntityId,
+    uncoveredCount: Number(details.uncoveredCount || 0),
+    sampledCount: Number(details.sampledCount || 0),
+    sampleTruncated: details.sampleTruncated === true,
+    reasonCounts,
+    sampleRows: Array.isArray(details.sampleRows) ? details.sampleRows.slice(0, 10) : [],
+    errorMessage: String(err?.message || "Consolidation execute failed").slice(0, 500),
+  };
+
+  await query(
+    `INSERT INTO audit_logs (
+        tenant_id,
+        user_id,
+        action,
+        resource_type,
+        resource_id,
+        scope_type,
+        scope_id,
+        request_id,
+        ip_address,
+        user_agent,
+        payload_json
+     )
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      parsedTenantId,
+      parsePositiveInt(executedByUserId) || null,
+      CONSOLIDATION_CANONICAL_FAILURE_AUDIT_ACTION,
+      "consolidation_run",
+      String(parsedRunId),
+      auditScopeType,
+      auditScopeId,
+      String(req?.requestId || req?.headers?.["x-request-id"] || "").trim() || null,
+      resolveClientIpAddress(req),
+      String(req?.headers?.["user-agent"] || "").trim() || null,
+      safeJsonStringify(payload),
+    ]
+  );
+
+  logWarn("Consolidation canonical execute failure observed", {
+    eventCode: "CONSOLIDATION_CANONICAL_EXECUTE_FAILURE",
+    subtype,
+    tenantId: parsedTenantId,
+    consolidationGroupId,
+    legalEntityId,
+    runId: parsedRunId,
+    uncoveredCount: payload.uncoveredCount,
+    requestId: req?.requestId || null,
+  });
+
+  const alertWindowMinutes = CONSOLIDATION_CANONICAL_FAILURE_ALERT_WINDOW_MINUTES;
+  const alertThreshold = CONSOLIDATION_CANONICAL_FAILURE_ALERT_THRESHOLD;
+  if (alertWindowMinutes <= 0 || alertThreshold <= 0) {
+    return;
+  }
+
+  const since = new Date(Date.now() - alertWindowMinutes * 60 * 1000);
+  const sinceUtc = since.toISOString().slice(0, 19).replace("T", " ");
+  const alertResult = await query(
+    `SELECT COUNT(*) AS failure_count
+     FROM audit_logs
+     WHERE tenant_id = ?
+       AND action = ?
+       AND created_at >= ?`,
+    [parsedTenantId, CONSOLIDATION_CANONICAL_FAILURE_AUDIT_ACTION, sinceUtc]
+  );
+  const failureCount = Number(alertResult.rows?.[0]?.failure_count || 0);
+  if (failureCount >= alertThreshold) {
+    logWarn("Consolidation canonical execute failure threshold reached", {
+      eventCode: "CONSOLIDATION_CANONICAL_EXECUTE_FAILURE_ALERT",
+      tenantId: parsedTenantId,
+      consolidationGroupId,
+      legalEntityId,
+      latestRunId: parsedRunId,
+      latestSubtype: subtype,
+      windowMinutes: alertWindowMinutes,
+      threshold: alertThreshold,
+      observedFailureCount: failureCount,
+      requestId: req?.requestId || null,
+    });
+  }
 }
 
 function normalizeConsolidationStatus(value) {
@@ -1193,6 +1383,69 @@ async function assertCanonicalMappingCoverage({
   effectiveOn,
   runQuery = query,
 }) {
+  function isDateCovered(fromValue, toValue, asOfDate) {
+    const from = String(fromValue || "").slice(0, 10);
+    const to = String(toValue || "").slice(0, 10);
+    const asOf = String(asOfDate || "").slice(0, 10);
+    if (!from || !asOf) {
+      return false;
+    }
+    if (from > asOf) {
+      return false;
+    }
+    if (to && to < asOf) {
+      return false;
+    }
+    return true;
+  }
+
+  function resolveUncoveredReason(row, asOfDate) {
+    const localMappingId = parsePositiveInt(row?.local_mapping_id);
+    const localStatus = String(row?.local_mapping_status || "").toUpperCase();
+    const localCoveredByDate = isDateCovered(
+      row?.local_effective_from,
+      row?.local_effective_to,
+      asOfDate
+    );
+
+    const canonicalKeyId = parsePositiveInt(row?.canonical_key_id);
+    const canonicalKeyStatus = String(row?.canonical_key_status || "").toUpperCase();
+
+    const groupMappingId = parsePositiveInt(row?.group_mapping_id);
+    const groupMappingStatus = String(row?.group_mapping_status || "").toUpperCase();
+    const groupCoveredByDate = isDateCovered(
+      row?.group_effective_from,
+      row?.group_effective_to,
+      asOfDate
+    );
+
+    if (!localMappingId) {
+      return "LOCAL_MAPPING_MISSING";
+    }
+    if (localStatus !== "ACTIVE") {
+      return "LOCAL_MAPPING_INACTIVE";
+    }
+    if (!localCoveredByDate) {
+      return "LOCAL_MAPPING_DATE_MISMATCH";
+    }
+    if (!canonicalKeyId) {
+      return "CANONICAL_KEY_MISSING";
+    }
+    if (canonicalKeyStatus !== "ACTIVE") {
+      return "CANONICAL_KEY_INACTIVE";
+    }
+    if (!groupMappingId) {
+      return "GROUP_MAPPING_MISSING";
+    }
+    if (groupMappingStatus !== "ACTIVE") {
+      return "GROUP_MAPPING_INACTIVE";
+    }
+    if (!groupCoveredByDate) {
+      return "GROUP_MAPPING_DATE_MISMATCH";
+    }
+    return "UNKNOWN";
+  }
+
   const uncoveredResult = await runQuery(
     `SELECT COUNT(DISTINCT local_acc.id) AS uncovered_count
      FROM journal_entries je
@@ -1245,41 +1498,82 @@ async function assertCanonicalMappingCoverage({
     `SELECT
        local_acc.id AS local_account_id,
        local_acc.code AS local_account_code,
-       local_acc.name AS local_account_name
+       local_acc.name AS local_account_name,
+       clm.id AS local_mapping_id,
+       clm.status AS local_mapping_status,
+       clm.effective_from AS local_effective_from,
+       clm.effective_to AS local_effective_to,
+       cck.id AS canonical_key_id,
+       cck.canonical_key,
+       cck.status AS canonical_key_status,
+       ccgm.id AS group_mapping_id,
+       ccgm.group_account_id,
+       ccgm.status AS group_mapping_status,
+       ccgm.effective_from AS group_effective_from,
+       ccgm.effective_to AS group_effective_to
      FROM journal_entries je
      JOIN journal_lines jl ON jl.journal_entry_id = je.id
      JOIN accounts local_acc ON local_acc.id = jl.account_id
+     LEFT JOIN consolidation_canonical_local_account_mappings clm
+       ON clm.tenant_id = je.tenant_id
+      AND clm.consolidation_group_id = ?
+      AND clm.legal_entity_id = je.legal_entity_id
+      AND clm.local_account_id = local_acc.id
+     LEFT JOIN consolidation_canonical_keys cck
+       ON cck.id = clm.canonical_key_id
+      AND cck.tenant_id = clm.tenant_id
+      AND cck.consolidation_group_id = clm.consolidation_group_id
+     LEFT JOIN consolidation_canonical_group_account_mappings ccgm
+       ON ccgm.tenant_id = clm.tenant_id
+      AND ccgm.consolidation_group_id = clm.consolidation_group_id
+      AND ccgm.canonical_key_id = clm.canonical_key_id
      WHERE je.tenant_id = ?
        AND je.status = 'POSTED'
        AND je.fiscal_period_id = ?
        AND je.legal_entity_id = ?
        AND NOT EXISTS (
          SELECT 1
-         FROM consolidation_canonical_local_account_mappings clm
-         JOIN consolidation_canonical_keys cck
-           ON cck.id = clm.canonical_key_id
-          AND cck.tenant_id = clm.tenant_id
-          AND cck.consolidation_group_id = clm.consolidation_group_id
-          AND cck.status = 'ACTIVE'
-         JOIN consolidation_canonical_group_account_mappings ccgm
-           ON ccgm.tenant_id = clm.tenant_id
-          AND ccgm.consolidation_group_id = clm.consolidation_group_id
-          AND ccgm.canonical_key_id = clm.canonical_key_id
-          AND ccgm.status = 'ACTIVE'
-          AND ccgm.effective_from <= ?
-          AND (ccgm.effective_to IS NULL OR ccgm.effective_to >= ?)
-         WHERE clm.tenant_id = je.tenant_id
-           AND clm.consolidation_group_id = ?
-           AND clm.legal_entity_id = je.legal_entity_id
-           AND clm.local_account_id = local_acc.id
-           AND clm.status = 'ACTIVE'
-           AND clm.effective_from <= ?
-           AND (clm.effective_to IS NULL OR clm.effective_to >= ?)
+         FROM consolidation_canonical_local_account_mappings clm2
+         JOIN consolidation_canonical_keys cck2
+           ON cck2.id = clm2.canonical_key_id
+          AND cck2.tenant_id = clm2.tenant_id
+          AND cck2.consolidation_group_id = clm2.consolidation_group_id
+          AND cck2.status = 'ACTIVE'
+         JOIN consolidation_canonical_group_account_mappings ccgm2
+           ON ccgm2.tenant_id = clm2.tenant_id
+          AND ccgm2.consolidation_group_id = clm2.consolidation_group_id
+          AND ccgm2.canonical_key_id = clm2.canonical_key_id
+          AND ccgm2.status = 'ACTIVE'
+          AND ccgm2.effective_from <= ?
+          AND (ccgm2.effective_to IS NULL OR ccgm2.effective_to >= ?)
+         WHERE clm2.tenant_id = je.tenant_id
+           AND clm2.consolidation_group_id = ?
+           AND clm2.legal_entity_id = je.legal_entity_id
+           AND clm2.local_account_id = local_acc.id
+           AND clm2.status = 'ACTIVE'
+           AND clm2.effective_from <= ?
+           AND (clm2.effective_to IS NULL OR clm2.effective_to >= ?)
        )
-     GROUP BY local_acc.id, local_acc.code, local_acc.name
+     GROUP BY
+       local_acc.id,
+       local_acc.code,
+       local_acc.name,
+       clm.id,
+       clm.status,
+       clm.effective_from,
+       clm.effective_to,
+       cck.id,
+       cck.canonical_key,
+       cck.status,
+       ccgm.id,
+       ccgm.group_account_id,
+       ccgm.status,
+       ccgm.effective_from,
+       ccgm.effective_to
      ORDER BY local_acc.code ASC
-     LIMIT 5`,
+     LIMIT 25`,
     [
+      consolidationGroupId,
       tenantId,
       fiscalPeriodId,
       legalEntityId,
@@ -1290,13 +1584,59 @@ async function assertCanonicalMappingCoverage({
       effectiveOn,
     ]
   );
-  const sampleCodes = (sampleResult.rows || [])
-    .map((row) => String(row.local_account_code || "").trim())
+
+  const sampleRows = (sampleResult.rows || []).map((row) => {
+    const reasonCode = resolveUncoveredReason(row, effectiveOn);
+    return {
+      localAccountId: parsePositiveInt(row.local_account_id),
+      localAccountCode: row.local_account_code || null,
+      localAccountName: row.local_account_name || null,
+      reasonCode,
+      canonicalKey: row.canonical_key || null,
+      canonicalKeyStatus: row.canonical_key_status || null,
+      localMapping: {
+        id: parsePositiveInt(row.local_mapping_id),
+        status: row.local_mapping_status || null,
+        effectiveFrom: row.local_effective_from || null,
+        effectiveTo: row.local_effective_to || null,
+      },
+      groupMapping: {
+        id: parsePositiveInt(row.group_mapping_id),
+        groupAccountId: parsePositiveInt(row.group_account_id),
+        status: row.group_mapping_status || null,
+        effectiveFrom: row.group_effective_from || null,
+        effectiveTo: row.group_effective_to || null,
+      },
+    };
+  });
+
+  const reasonCounts = sampleRows.reduce((acc, row) => {
+    const key = String(row?.reasonCode || "UNKNOWN").toUpperCase();
+    acc[key] = Number(acc[key] || 0) + 1;
+    return acc;
+  }, {});
+
+  const sampleCodes = sampleRows
+    .map((row) => String(row.localAccountCode || "").trim())
     .filter(Boolean)
+    .slice(0, 5)
     .join(", ");
-  throw badRequest(
+
+  const err = badRequest(
     `Canonical consolidation mapping is missing for ${uncoveredCount} posted local account(s) in legalEntityId=${legalEntityId}. Sample codes: ${sampleCodes || "n/a"}`
   );
+  err.details = {
+    legalEntityId,
+    consolidationGroupId,
+    fiscalPeriodId,
+    effectiveOn,
+    uncoveredCount,
+    sampledCount: sampleRows.length,
+    sampleTruncated: uncoveredCount > sampleRows.length,
+    reasonCounts,
+    sampleRows,
+  };
+  throw err;
 }
 
 async function loadMemberMappedBalances({
@@ -2235,6 +2575,211 @@ router.get(
   })
 );
 
+router.get(
+  "/groups/:groupId/canonical-readiness",
+  requirePermission("consolidation.coa_mapping.read"),
+  asyncHandler(async (req, res) => {
+    const tenantId = resolveTenantId(req);
+    if (!tenantId) {
+      throw badRequest("tenantId is required");
+    }
+
+    const groupId = parsePositiveInt(req.params.groupId);
+    if (!groupId) {
+      throw badRequest("groupId must be a positive integer");
+    }
+    const group = await assertConsolidationGroupBelongsToTenant(tenantId, groupId, "groupId");
+    assertScopeAccess(req, "group", group.group_company_id, "groupCompanyId");
+
+    let limit = undefined;
+    if (req.query.limit !== undefined && req.query.limit !== "") {
+      limit = parsePositiveInt(req.query.limit);
+      if (!limit) {
+        throw badRequest("limit must be a positive integer");
+      }
+    }
+
+    const snapshot = await getCanonicalMappingReadiness({
+      tenantId,
+      consolidationGroupId: groupId,
+      limit,
+    });
+
+    return res.json({
+      tenantId,
+      groupId,
+      ...snapshot,
+    });
+  })
+);
+
+router.get(
+  "/groups/:groupId/canonical-governance-review",
+  requirePermission("consolidation.coa_mapping.read"),
+  asyncHandler(async (req, res) => {
+    const tenantId = resolveTenantId(req);
+    if (!tenantId) {
+      throw badRequest("tenantId is required");
+    }
+
+    const groupId = parsePositiveInt(req.params.groupId);
+    if (!groupId) {
+      throw badRequest("groupId must be a positive integer");
+    }
+    const group = await assertConsolidationGroupBelongsToTenant(tenantId, groupId, "groupId");
+    assertScopeAccess(req, "group", group.group_company_id, "groupCompanyId");
+
+    let limit = undefined;
+    if (req.query.limit !== undefined && req.query.limit !== "") {
+      limit = parsePositiveInt(req.query.limit);
+      if (!limit) {
+        throw badRequest("limit must be a positive integer");
+      }
+    }
+
+    const snapshot = await getCanonicalMappingGovernanceReview({
+      tenantId,
+      consolidationGroupId: groupId,
+      fromDate: req.query.fromDate,
+      toDate: req.query.toDate,
+      limit,
+    });
+
+    return res.json({
+      tenantId,
+      groupId,
+      ...snapshot,
+    });
+  })
+);
+
+router.get(
+  "/groups/:groupId/canonical-mappings/candidates",
+  requirePermission("consolidation.coa_mapping.read"),
+  asyncHandler(async (req, res) => {
+    const tenantId = resolveTenantId(req);
+    if (!tenantId) {
+      throw badRequest("tenantId is required");
+    }
+
+    const groupId = parsePositiveInt(req.params.groupId);
+    if (!groupId) {
+      throw badRequest("groupId must be a positive integer");
+    }
+    const group = await assertConsolidationGroupBelongsToTenant(tenantId, groupId, "groupId");
+    assertScopeAccess(req, "group", group.group_company_id, "groupCompanyId");
+
+    let legalEntityId = null;
+    if (req.query.legalEntityId !== undefined && req.query.legalEntityId !== "") {
+      legalEntityId = parsePositiveInt(req.query.legalEntityId);
+      if (!legalEntityId) {
+        throw badRequest("legalEntityId must be a positive integer");
+      }
+      const legalEntity = await assertLegalEntityBelongsToTenant(
+        tenantId,
+        legalEntityId,
+        "legalEntityId"
+      );
+      assertLegalEntityMatchesGroupCompany(
+        legalEntity,
+        group.group_company_id,
+        "legalEntityId"
+      );
+      assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
+    }
+
+    let limit = undefined;
+    if (req.query.limit !== undefined && req.query.limit !== "") {
+      limit = parsePositiveInt(req.query.limit);
+      if (!limit) {
+        throw badRequest("limit must be a positive integer");
+      }
+    }
+
+    const result = await listCanonicalMappingCandidates({
+      tenantId,
+      consolidationGroupId: groupId,
+      legalEntityId,
+      limit,
+    });
+
+    return res.json({
+      tenantId,
+      groupId,
+      legalEntityId: legalEntityId || null,
+      limit: result.limit,
+      summary: result.summary,
+      rows: result.rows,
+    });
+  })
+);
+
+router.post(
+  "/groups/:groupId/canonical-mappings/candidates/apply",
+  requirePermission("consolidation.coa_mapping.upsert"),
+  asyncHandler(async (req, res) => {
+    const tenantId = resolveTenantId(req);
+    if (!tenantId) {
+      throw badRequest("tenantId is required");
+    }
+
+    const groupId = parsePositiveInt(req.params.groupId);
+    if (!groupId) {
+      throw badRequest("groupId must be a positive integer");
+    }
+    const group = await assertConsolidationGroupBelongsToTenant(tenantId, groupId, "groupId");
+    assertScopeAccess(req, "group", group.group_company_id, "groupCompanyId");
+
+    let legalEntityId = null;
+    if (req.body?.legalEntityId !== undefined && req.body?.legalEntityId !== "") {
+      legalEntityId = parsePositiveInt(req.body.legalEntityId);
+      if (!legalEntityId) {
+        throw badRequest("legalEntityId must be a positive integer");
+      }
+      const legalEntity = await assertLegalEntityBelongsToTenant(
+        tenantId,
+        legalEntityId,
+        "legalEntityId"
+      );
+      assertLegalEntityMatchesGroupCompany(
+        legalEntity,
+        group.group_company_id,
+        "legalEntityId"
+      );
+      assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
+    }
+
+    let limit = undefined;
+    if (req.body?.limit !== undefined && req.body?.limit !== "") {
+      limit = parsePositiveInt(req.body.limit);
+      if (!limit) {
+        throw badRequest("limit must be a positive integer");
+      }
+    }
+    const actedByUserId = parsePositiveInt(req.user?.userId) || null;
+    const auditRequestMeta = buildAuditRequestMeta(req);
+
+    const result = await applyCanonicalMappingCandidates({
+      tenantId,
+      consolidationGroupId: groupId,
+      legalEntityId,
+      limit,
+      changeReason: req.body?.reason,
+      changeSource: req.body?.source,
+      actedByUserId,
+      requestMeta: auditRequestMeta,
+    });
+
+    return res.status(200).json({
+      ok: true,
+      tenantId,
+      groupId,
+      legalEntityId: legalEntityId || null,
+      ...result,
+    });
+  })
+);
+
 router.post(
   "/groups/:groupId/canonical-mappings/local",
   requirePermission("consolidation.coa_mapping.upsert"),
@@ -2269,6 +2814,8 @@ router.post(
     );
     assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
     await assertAccountBelongsToTenant(tenantId, localAccountId, "localAccountId");
+    const actedByUserId = parsePositiveInt(req.user?.userId) || null;
+    const auditRequestMeta = buildAuditRequestMeta(req);
 
     const row = await upsertLocalAccountCanonicalMapping({
       tenantId,
@@ -2283,6 +2830,10 @@ router.post(
       status: req.body.status,
       effectiveFrom: req.body.effectiveFrom,
       effectiveTo: req.body.effectiveTo,
+      changeReason: req.body?.reason,
+      changeSource: req.body?.source,
+      actedByUserId,
+      requestMeta: auditRequestMeta,
     });
 
     return res.status(201).json({
@@ -2314,6 +2865,8 @@ router.post(
       throw badRequest("groupAccountId must be a positive integer");
     }
     await assertAccountBelongsToTenant(tenantId, groupAccountId, "groupAccountId");
+    const actedByUserId = parsePositiveInt(req.user?.userId) || null;
+    const auditRequestMeta = buildAuditRequestMeta(req);
 
     const row = await upsertGroupAccountCanonicalMapping({
       tenantId,
@@ -2327,6 +2880,10 @@ router.post(
       status: req.body.status,
       effectiveFrom: req.body.effectiveFrom,
       effectiveTo: req.body.effectiveTo,
+      changeReason: req.body?.reason,
+      changeSource: req.body?.source,
+      actedByUserId,
+      requestMeta: auditRequestMeta,
     });
 
     return res.status(201).json({
@@ -2697,6 +3254,28 @@ router.post(
          WHERE id = ?`,
         [String(err.message || "Execution failed").slice(0, 500), runId]
       );
+      if (isCanonicalCoverageFailure(err)) {
+        try {
+          await recordCanonicalExecuteFailureEvent({
+            req,
+            tenantId,
+            runId,
+            executedByUserId,
+            err,
+          });
+        } catch (monitorErr) {
+          logWarn(
+            "Failed to record consolidation canonical execute failure event",
+            {
+              eventCode: "CONSOLIDATION_CANONICAL_EXECUTE_FAILURE_MONITORING_ERROR",
+              tenantId,
+              runId,
+              requestId: req.requestId || null,
+            },
+            monitorErr
+          );
+        }
+      }
       throw err;
     }
   })

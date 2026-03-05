@@ -1,13 +1,20 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  applyConsolidationCanonicalMappingCandidates,
   createConsolidationRun,
   executeConsolidationRun,
   finalizeConsolidationRun,
+  getConsolidationCanonicalReadiness,
+  getConsolidationRun,
+  listConsolidationCanonicalMappings,
+  previewConsolidationCanonicalMappingCandidates,
   listConsolidationCoaMappings,
   listConsolidationEliminationPlaceholders,
   listConsolidationGroupMembers,
   listConsolidationGroups,
   listConsolidationRuns,
+  upsertConsolidationCanonicalGroupMapping,
+  upsertConsolidationCanonicalLocalMapping,
   upsertConsolidationCoaMapping,
   upsertConsolidationEliminationPlaceholder,
   upsertConsolidationGroup,
@@ -37,12 +44,30 @@ function todayIso() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function toDateOnly(value) {
+  const text = String(value || "").trim();
+  const match = text.match(/^(\d{4}-\d{2}-\d{2})/);
+  return match?.[1] || "";
+}
+
 function padPeriod(value) {
   return String(value || "").padStart(2, "0");
 }
 
 function isLocked(status) {
   return String(status || "").toUpperCase() === "LOCKED";
+}
+
+function resolveCanonicalCoverageSnapshot(runPayload) {
+  const subaccounts = runPayload?.compatibility?.subaccounts || {};
+  const checks = subaccounts?.checks || {};
+  const run = runPayload?.run || {};
+  return {
+    canonicalCoverage: checks.canonicalMappingCoverage === true,
+    missingCount: Number(subaccounts?.missingCanonicalMappingCount || 0),
+    message: String(subaccounts?.message || "").trim(),
+    periodEndDate: toDateOnly(run?.period_end_date || run?.periodEndDate || ""),
+  };
 }
 
 export default function ConsolidationSetupPage() {
@@ -92,9 +117,22 @@ export default function ConsolidationSetupPage() {
   const [selectedGroupId, setSelectedGroupId] = useState("");
   const [members, setMembers] = useState([]);
   const [mappings, setMappings] = useState([]);
+  const [canonicalMappings, setCanonicalMappings] = useState([]);
+  const [canonicalCandidatePreview, setCanonicalCandidatePreview] = useState(null);
+  const [canonicalCandidateReason, setCanonicalCandidateReason] = useState("");
+  const [canonicalReadiness, setCanonicalReadiness] = useState({
+    isLoading: false,
+    error: "",
+    snapshot: null,
+  });
   const [placeholders, setPlaceholders] = useState([]);
   const [runs, setRuns] = useState([]);
+  const [runPreflightById, setRunPreflightById] = useState({});
   const [periods, setPeriods] = useState([]);
+  const [canonicalCandidateFilters, setCanonicalCandidateFilters] = useState({
+    legalEntityId: "",
+    limit: "500",
+  });
 
   const [groupForm, setGroupForm] = useState({
     groupCompanyId: "",
@@ -115,6 +153,25 @@ export default function ConsolidationSetupPage() {
     groupCoaId: "",
     localCoaId: "",
     status: "ACTIVE",
+  });
+  const [canonicalLocalForm, setCanonicalLocalForm] = useState({
+    legalEntityId: "",
+    localAccountId: "",
+    canonicalKey: "",
+    canonicalName: "",
+    reason: "",
+    status: "ACTIVE",
+    effectiveFrom: todayIso(),
+    effectiveTo: "",
+  });
+  const [canonicalGroupForm, setCanonicalGroupForm] = useState({
+    groupAccountId: "",
+    canonicalKey: "",
+    canonicalName: "",
+    reason: "",
+    status: "ACTIVE",
+    effectiveFrom: todayIso(),
+    effectiveTo: "",
   });
   const [placeholderForm, setPlaceholderForm] = useState({
     placeholderCode: "",
@@ -163,6 +220,41 @@ export default function ConsolidationSetupPage() {
     });
   }, [coas, mappingForm.legalEntityId]);
 
+  const coaById = useMemo(() => {
+    const out = new Map();
+    for (const row of coas) {
+      const id = toPositiveInt(row?.id);
+      if (id) {
+        out.set(id, row);
+      }
+    }
+    return out;
+  }, [coas]);
+
+  const canonicalLocalAccountOptions = useMemo(() => {
+    const legalEntityId = toPositiveInt(canonicalLocalForm.legalEntityId);
+    return accounts.filter((row) => {
+      const coaId = toPositiveInt(row?.coa_id);
+      const coa = coaById.get(coaId);
+      const accountLegalEntityId =
+        toPositiveInt(row?.legal_entity_id) || toPositiveInt(coa?.legal_entity_id);
+      if (!legalEntityId) {
+        return String(coa?.scope || "").toUpperCase() === "LEGAL_ENTITY";
+      }
+      return accountLegalEntityId === legalEntityId;
+    });
+  }, [accounts, coaById, canonicalLocalForm.legalEntityId]);
+
+  const canonicalGroupAccountOptions = useMemo(
+    () =>
+      accounts.filter((row) => {
+        const coaId = toPositiveInt(row?.coa_id);
+        const coa = coaById.get(coaId);
+        return String(coa?.scope || row?.scope || "").toUpperCase() === "GROUP";
+      }),
+    [accounts, coaById]
+  );
+
   async function loadLookups() {
     const results = await Promise.allSettled([
       listGroupCompanies(),
@@ -197,6 +289,10 @@ export default function ConsolidationSetupPage() {
         legalEntityId: prev.legalEntityId || String(rows[0]?.id || ""),
       }));
       setMappingForm((prev) => ({
+        ...prev,
+        legalEntityId: prev.legalEntityId || String(rows[0]?.id || ""),
+      }));
+      setCanonicalLocalForm((prev) => ({
         ...prev,
         legalEntityId: prev.legalEntityId || String(rows[0]?.id || ""),
       }));
@@ -243,14 +339,96 @@ export default function ConsolidationSetupPage() {
     }
   }
 
+  async function loadRunPreflight(rows) {
+    const runIds = (Array.isArray(rows) ? rows : [])
+      .map((row) => toPositiveInt(row?.id))
+      .filter(Boolean);
+
+    if (!runIds.length || !canReadRuns) {
+      setRunPreflightById({});
+      return;
+    }
+
+    const pending = {};
+    for (const runId of runIds) {
+      pending[String(runId)] = {
+        isLoading: true,
+        canonicalCoverage: false,
+        missingCount: null,
+        message: "",
+        error: "",
+        periodEndDate: "",
+      };
+    }
+    setRunPreflightById(pending);
+
+    const results = await Promise.allSettled(
+      runIds.map((runId) => getConsolidationRun(runId))
+    );
+
+    const next = {};
+    for (let index = 0; index < results.length; index += 1) {
+      const runId = runIds[index];
+      const result = results[index];
+      if (result.status === "fulfilled") {
+        const snapshot = resolveCanonicalCoverageSnapshot(result.value);
+        next[String(runId)] = {
+          isLoading: false,
+          canonicalCoverage: snapshot.canonicalCoverage,
+          missingCount: snapshot.missingCount,
+          message: snapshot.message,
+          error: "",
+          periodEndDate: snapshot.periodEndDate || "",
+        };
+        continue;
+      }
+
+      next[String(runId)] = {
+        isLoading: false,
+        canonicalCoverage: false,
+        missingCount: null,
+        message: "",
+        error: String(
+          result.reason?.response?.data?.message ||
+            result.reason?.message ||
+            "Failed to load run compatibility"
+        ),
+        periodEndDate: "",
+      };
+    }
+    setRunPreflightById(next);
+  }
+
   async function loadGroupDetails(groupId) {
     const id = toPositiveInt(groupId);
     if (!id) {
       setMembers([]);
       setMappings([]);
+      setCanonicalMappings([]);
+      setCanonicalCandidatePreview(null);
+      setCanonicalCandidateReason("");
+      setCanonicalReadiness({ isLoading: false, error: "", snapshot: null });
       setPlaceholders([]);
       setRuns([]);
+      setRunPreflightById({});
       return;
+    }
+    setCanonicalCandidateReason("");
+    if (!canReadRuns) {
+      setRuns([]);
+      setRunPreflightById({});
+    }
+    if (!canReadMappings) {
+      setMappings([]);
+      setCanonicalMappings([]);
+      setCanonicalCandidatePreview(null);
+      setCanonicalReadiness({ isLoading: false, error: "", snapshot: null });
+    } else {
+      setCanonicalReadiness((prev) => ({
+        isLoading: true,
+        error: "",
+        snapshot: prev?.snapshot || null,
+      }));
     }
 
     const tasks = [];
@@ -267,6 +445,32 @@ export default function ConsolidationSetupPage() {
           setMappings(response?.rows || [])
         )
       );
+      tasks.push(
+        listConsolidationCanonicalMappings(id).then((response) =>
+          setCanonicalMappings(response?.rows || [])
+        )
+      );
+      tasks.push(
+        getConsolidationCanonicalReadiness(id, { limit: 5000 })
+          .then((response) =>
+            setCanonicalReadiness({
+              isLoading: false,
+              error: "",
+              snapshot: response || null,
+            })
+          )
+          .catch((err) =>
+            setCanonicalReadiness({
+              isLoading: false,
+              error: String(
+                err?.response?.data?.message ||
+                  err?.message ||
+                  "Failed to load canonical readiness"
+              ),
+              snapshot: null,
+            })
+          )
+      );
     }
     if (canReadPlaceholders) {
       tasks.push(
@@ -277,8 +481,12 @@ export default function ConsolidationSetupPage() {
     }
     if (canReadRuns) {
       tasks.push(
-        listConsolidationRuns({ consolidationGroupId: id }).then((response) =>
-          setRuns(response?.rows || [])
+        listConsolidationRuns({ consolidationGroupId: id }).then(
+          async (response) => {
+            const rows = response?.rows || [];
+            setRuns(rows);
+            await loadRunPreflight(rows);
+          }
         )
       );
     }
@@ -349,7 +557,69 @@ export default function ConsolidationSetupPage() {
         localCoaId: "",
       };
     });
+    setCanonicalLocalForm((prev) => {
+      const current = toPositiveInt(prev.legalEntityId);
+      const isValid =
+        current &&
+        filteredLegalEntities.some((row) => Number(row.id) === Number(current));
+      const sameLegalEntity = String(prev.legalEntityId || "") === fallbackLegalEntityId;
+      if (isValid || (sameLegalEntity && !prev.localAccountId)) {
+        return prev;
+      }
+      return {
+        ...prev,
+        legalEntityId: fallbackLegalEntityId,
+        localAccountId: "",
+      };
+    });
+    setCanonicalCandidateFilters((prev) => {
+      const current = toPositiveInt(prev.legalEntityId);
+      if (!current) {
+        return prev;
+      }
+      const isValid = filteredLegalEntities.some(
+        (row) => Number(row.id) === Number(current)
+      );
+      if (isValid) {
+        return prev;
+      }
+      return {
+        ...prev,
+        legalEntityId: "",
+      };
+    });
   }, [filteredLegalEntities]);
+
+  function findCanonicalDateMisalignedRuns(effectiveFromInput) {
+    const effectiveFrom = toDateOnly(effectiveFromInput || todayIso());
+    if (!effectiveFrom) {
+      return [];
+    }
+
+    return (runs || [])
+      .map((run) => {
+        const runId = toPositiveInt(run?.id);
+        const preflight = runPreflightById[String(runId || "")] || null;
+        const periodEndDate = toDateOnly(
+          preflight?.periodEndDate || run?.period_end_date || ""
+        );
+        if (!runId || !preflight || !periodEndDate) {
+          return null;
+        }
+        if (preflight.isLoading || preflight.error || preflight.canonicalCoverage === true) {
+          return null;
+        }
+        if (effectiveFrom <= periodEndDate) {
+          return null;
+        }
+        return {
+          runId,
+          runName: String(run?.run_name || ""),
+          periodEndDate,
+        };
+      })
+      .filter(Boolean);
+  }
 
   async function runAction(key, fn, failText, okText) {
     setSaving(key);
@@ -482,6 +752,301 @@ export default function ConsolidationSetupPage() {
     );
   }
 
+  async function onSaveCanonicalLocalMapping(event) {
+    event.preventDefault();
+    if (!canUpsertMappings) {
+      setError(
+        l(
+          "Missing permission: consolidation.coa_mapping.upsert",
+          "Eksik yetki: consolidation.coa_mapping.upsert"
+        )
+      );
+      return;
+    }
+
+    const groupId = toPositiveInt(selectedGroupId);
+    const legalEntityId = toPositiveInt(canonicalLocalForm.legalEntityId);
+    const localAccountId = toPositiveInt(canonicalLocalForm.localAccountId);
+    const canonicalKey = String(canonicalLocalForm.canonicalKey || "").trim();
+
+    if (!groupId || !legalEntityId || !localAccountId || !canonicalKey) {
+      setError(
+        l(
+          "Group, legalEntityId, localAccountId and canonicalKey are required.",
+          "Grup, legalEntityId, localAccountId ve canonicalKey zorunludur."
+        )
+      );
+      return;
+    }
+    if (!filteredLegalEntities.some((row) => Number(row.id) === legalEntityId)) {
+      setError(
+        l(
+          "Selected legal entity must belong to selected group company.",
+          "Secilen istirak / bagli ortak secili grup sirketine ait olmalidir."
+        )
+      );
+      return;
+    }
+    const effectiveFrom = toDateOnly(canonicalLocalForm.effectiveFrom || todayIso());
+    const misalignedRuns = findCanonicalDateMisalignedRuns(effectiveFrom);
+    if (misalignedRuns.length > 0) {
+      const runList = misalignedRuns
+        .slice(0, 3)
+        .map((row) => `#${row.runId}(${row.periodEndDate})`)
+        .join(", ");
+      setError(
+        l(
+          `effectiveFrom ${effectiveFrom} is after run period end for unresolved run(s): ${runList}. Use an effectiveFrom on/before those period end dates.`,
+          `effectiveFrom ${effectiveFrom}, cozumlenecek run(lar) icin period end tarihinden sonra: ${runList}. Bu runlar icin effectiveFrom tarihini period end veya oncesi yapin.`
+        )
+      );
+      return;
+    }
+
+    await runAction(
+      "canonical-local",
+      async () => {
+        await upsertConsolidationCanonicalLocalMapping(groupId, {
+          legalEntityId,
+          localAccountId,
+          canonicalKey: canonicalKey.toUpperCase(),
+          canonicalName: String(canonicalLocalForm.canonicalName || "").trim() || undefined,
+          canonicalType: "ACCOUNT",
+          status: canonicalLocalForm.status,
+          effectiveFrom: canonicalLocalForm.effectiveFrom || undefined,
+          effectiveTo: canonicalLocalForm.effectiveTo || undefined,
+          reason: String(canonicalLocalForm.reason || "").trim() || undefined,
+          source: "UI_WORKBENCH_MANUAL",
+        });
+      },
+      l(
+        "Failed to save canonical local mapping.",
+        "Canonical local mapping kaydedilemedi."
+      ),
+      l(
+        "Canonical local mapping saved.",
+        "Canonical local mapping kaydedildi."
+      )
+    );
+  }
+
+  async function onSaveCanonicalGroupMapping(event) {
+    event.preventDefault();
+    if (!canUpsertMappings) {
+      setError(
+        l(
+          "Missing permission: consolidation.coa_mapping.upsert",
+          "Eksik yetki: consolidation.coa_mapping.upsert"
+        )
+      );
+      return;
+    }
+
+    const groupId = toPositiveInt(selectedGroupId);
+    const groupAccountId = toPositiveInt(canonicalGroupForm.groupAccountId);
+    const canonicalKey = String(canonicalGroupForm.canonicalKey || "").trim();
+    if (!groupId || !groupAccountId || !canonicalKey) {
+      setError(
+        l(
+          "Group, groupAccountId and canonicalKey are required.",
+          "Grup, groupAccountId ve canonicalKey zorunludur."
+        )
+      );
+      return;
+    }
+    const effectiveFrom = toDateOnly(canonicalGroupForm.effectiveFrom || todayIso());
+    const misalignedRuns = findCanonicalDateMisalignedRuns(effectiveFrom);
+    if (misalignedRuns.length > 0) {
+      const runList = misalignedRuns
+        .slice(0, 3)
+        .map((row) => `#${row.runId}(${row.periodEndDate})`)
+        .join(", ");
+      setError(
+        l(
+          `effectiveFrom ${effectiveFrom} is after run period end for unresolved run(s): ${runList}. Use an effectiveFrom on/before those period end dates.`,
+          `effectiveFrom ${effectiveFrom}, cozumlenecek run(lar) icin period end tarihinden sonra: ${runList}. Bu runlar icin effectiveFrom tarihini period end veya oncesi yapin.`
+        )
+      );
+      return;
+    }
+
+    await runAction(
+      "canonical-group",
+      async () => {
+        await upsertConsolidationCanonicalGroupMapping(groupId, {
+          groupAccountId,
+          canonicalKey: canonicalKey.toUpperCase(),
+          canonicalName: String(canonicalGroupForm.canonicalName || "").trim() || undefined,
+          canonicalType: "ACCOUNT",
+          status: canonicalGroupForm.status,
+          effectiveFrom: canonicalGroupForm.effectiveFrom || undefined,
+          effectiveTo: canonicalGroupForm.effectiveTo || undefined,
+          reason: String(canonicalGroupForm.reason || "").trim() || undefined,
+          source: "UI_WORKBENCH_MANUAL",
+        });
+      },
+      l(
+        "Failed to save canonical group mapping.",
+        "Canonical group mapping kaydedilemedi."
+      ),
+      l(
+        "Canonical group mapping saved.",
+        "Canonical group mapping kaydedildi."
+      )
+    );
+  }
+
+  async function onPreviewCanonicalCandidates() {
+    if (!canReadMappings) {
+      setError(
+        l(
+          "Missing permission: consolidation.coa_mapping.read",
+          "Eksik yetki: consolidation.coa_mapping.read"
+        )
+      );
+      return;
+    }
+
+    const groupId = toPositiveInt(selectedGroupId);
+    const legalEntityId = toPositiveInt(canonicalCandidateFilters.legalEntityId);
+    const limitRaw = String(canonicalCandidateFilters.limit || "").trim();
+    const limit = limitRaw ? toPositiveInt(limitRaw) : null;
+    if (!groupId) {
+      setError(l("Group is required.", "Grup zorunludur."));
+      return;
+    }
+    if (limitRaw && !limit) {
+      setError(l("limit must be a positive integer.", "limit pozitif bir tam sayi olmalidir."));
+      return;
+    }
+    if (
+      legalEntityId &&
+      !filteredLegalEntities.some((row) => Number(row.id) === legalEntityId)
+    ) {
+      setError(
+        l(
+          "Selected legal entity must belong to selected group company.",
+          "Secilen istirak / bagli ortak secili grup sirketine ait olmalidir."
+        )
+      );
+      return;
+    }
+
+    setSaving("canonical-candidates-preview");
+    setError("");
+    setMessage("");
+    try {
+      const response = await previewConsolidationCanonicalMappingCandidates(groupId, {
+        legalEntityId: legalEntityId || undefined,
+        limit: limit || undefined,
+      });
+      setCanonicalCandidatePreview(response || null);
+      const safeCount = Number(response?.summary?.safeCount || 0);
+      const totalCount = Number(response?.summary?.total || 0);
+      setMessage(
+        l(
+          `Candidate preview ready: ${safeCount}/${totalCount} safe.`,
+          `Aday onizleme hazir: ${safeCount}/${totalCount} guvenli.`
+        )
+      );
+    } catch (err) {
+      setError(
+        err?.response?.data?.message ||
+          l("Failed to preview candidates.", "Adaylar onizlenemedi.")
+      );
+    } finally {
+      setSaving("");
+    }
+  }
+
+  async function onApplyCanonicalCandidates() {
+    if (!canUpsertMappings) {
+      setError(
+        l(
+          "Missing permission: consolidation.coa_mapping.upsert",
+          "Eksik yetki: consolidation.coa_mapping.upsert"
+        )
+      );
+      return;
+    }
+
+    const groupId = toPositiveInt(selectedGroupId);
+    const legalEntityId = toPositiveInt(canonicalCandidateFilters.legalEntityId);
+    const limitRaw = String(canonicalCandidateFilters.limit || "").trim();
+    const limit = limitRaw ? toPositiveInt(limitRaw) : null;
+    if (!groupId) {
+      setError(l("Group is required.", "Grup zorunludur."));
+      return;
+    }
+    if (limitRaw && !limit) {
+      setError(l("limit must be a positive integer.", "limit pozitif bir tam sayi olmalidir."));
+      return;
+    }
+    if (
+      legalEntityId &&
+      !filteredLegalEntities.some((row) => Number(row.id) === legalEntityId)
+    ) {
+      setError(
+        l(
+          "Selected legal entity must belong to selected group company.",
+          "Secilen istirak / bagli ortak secili grup sirketine ait olmalidir."
+        )
+      );
+      return;
+    }
+    const highRiskSafeCount = Number(
+      (canonicalCandidatePreview?.rows || []).filter(
+        (row) =>
+          String(row?.classification || "").toUpperCase() === "SAFE" &&
+          row?.semanticRisk?.highRisk === true
+      ).length
+    );
+    const applyReason = String(canonicalCandidateReason || "").trim();
+    if (highRiskSafeCount > 0 && !applyReason) {
+      setError(
+        l(
+          `Reason is required before applying ${highRiskSafeCount} high-risk safe candidate(s).`,
+          `${highRiskSafeCount} adet yuksek-riskli guvenli aday icin uygulama oncesi reason zorunludur.`
+        )
+      );
+      return;
+    }
+
+    setSaving("canonical-candidates-apply");
+    setError("");
+    setMessage("");
+    try {
+      const response = await applyConsolidationCanonicalMappingCandidates(groupId, {
+        legalEntityId: legalEntityId || undefined,
+        limit: limit || undefined,
+        reason: applyReason || undefined,
+        source: "UI_WORKBENCH_CANDIDATE_APPLY",
+      });
+      const applied = Number(response?.appliedCandidateCount || 0);
+      const safeCount = Number(response?.safeCandidateCount || 0);
+      setMessage(
+        l(
+          `Applied ${applied} safe candidate(s) out of ${safeCount}.`,
+          `${safeCount} guvenli adaydan ${applied} tanesi uygulandi.`
+        )
+      );
+      await loadGroupDetails(groupId);
+      const refreshedPreview = await previewConsolidationCanonicalMappingCandidates(groupId, {
+        legalEntityId: legalEntityId || undefined,
+        limit: limit || undefined,
+      });
+      setCanonicalCandidatePreview(refreshedPreview || null);
+      setCanonicalCandidateReason("");
+    } catch (err) {
+      setError(
+        err?.response?.data?.message ||
+          l("Failed to apply safe candidates.", "Guvenli adaylar uygulanamadi.")
+      );
+    } finally {
+      setSaving("");
+    }
+  }
+
   async function onSavePlaceholder(event) {
     event.preventDefault();
     if (!canUpsertPlaceholders) {
@@ -556,6 +1121,22 @@ export default function ConsolidationSetupPage() {
   async function onExecuteRun(runId) {
     if (!canExecuteRuns) {
       setError(l("Missing permission: consolidation.run.execute", "Eksik yetki: consolidation.run.execute"));
+      return;
+    }
+    const preflight = runPreflightById[String(runId)] || null;
+    if (!preflight || preflight.canonicalCoverage !== true) {
+      const missingCount = Number(preflight?.missingCount || 0);
+      setError(
+        missingCount > 0
+          ? l(
+              `Canonical mapping coverage is missing (${missingCount} account(s)). Complete mappings before Execute.`,
+              `Canonical mapping coverage eksik (${missingCount} hesap). Execute oncesi eslemeleri tamamlayin.`
+            )
+          : l(
+              "Canonical mapping preflight is not ready. Refresh run compatibility before Execute.",
+              "Canonical mapping preflight hazir degil. Execute oncesi run uyumluluk durumunu yenileyin."
+            )
+      );
       return;
     }
 
@@ -719,6 +1300,117 @@ export default function ConsolidationSetupPage() {
 
       {toPositiveInt(selectedGroupId) && (
         <div className="grid gap-4 xl:grid-cols-2">
+          <section className="rounded-xl border border-slate-200 bg-white p-4 xl:col-span-2">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <h2 className="text-sm font-semibold text-slate-700">
+                {l("Canonical Readiness", "Canonical Hazirlik")}
+              </h2>
+              <button
+                type="button"
+                onClick={() => loadGroupDetails(selectedGroupId)}
+                disabled={loading || canonicalReadiness.isLoading}
+                className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 disabled:opacity-60"
+              >
+                {canonicalReadiness.isLoading
+                  ? l("Refreshing...", "Yenileniyor...")
+                  : l("Refresh readiness", "Hazirligi yenile")}
+              </button>
+            </div>
+
+            {!canReadMappings ? (
+              <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                {l(
+                  "Missing permission: consolidation.coa_mapping.read",
+                  "Eksik yetki: consolidation.coa_mapping.read"
+                )}
+              </div>
+            ) : canonicalReadiness.isLoading && !canonicalReadiness.snapshot ? (
+              <div className="text-xs text-slate-500">
+                {l(
+                  "Loading canonical readiness snapshot...",
+                  "Canonical hazirlik ozeti yukleniyor..."
+                )}
+              </div>
+            ) : canonicalReadiness.error ? (
+              <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                {canonicalReadiness.error}
+              </div>
+            ) : canonicalReadiness.snapshot ? (
+              <div className="space-y-2 text-xs">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span
+                    className={`rounded-full px-2 py-0.5 font-semibold ${
+                      canonicalReadiness.snapshot.ready
+                        ? "bg-emerald-100 text-emerald-700"
+                        : "bg-amber-100 text-amber-700"
+                    }`}
+                  >
+                    {canonicalReadiness.snapshot.ready
+                      ? l("READY", "HAZIR")
+                      : l("SETUP_REQUIRED", "KURULUM_GEREKLI")}
+                  </span>
+                  <span className="text-slate-600">
+                    {l("coverage", "kapsam")}:{" "}
+                    {canonicalReadiness.snapshot.coverageDetected
+                      ? l("detected", "algilandi")
+                      : l("missing", "eksik")}
+                  </span>
+                  {canonicalReadiness.snapshot.blockedReason && (
+                    <span className="text-amber-700">
+                      {l("blocked reason", "engel nedeni")}:{" "}
+                      {canonicalReadiness.snapshot.blockedReason}
+                    </span>
+                  )}
+                </div>
+                <div className="text-slate-700">
+                  {l("Summary", "Ozet")}:{" "}
+                  {l("total", "toplam")}{" "}
+                  {Number(canonicalReadiness.snapshot?.summary?.total || 0)} |{" "}
+                  SAFE {Number(canonicalReadiness.snapshot?.summary?.safeCount || 0)} |{" "}
+                  UNRESOLVED{" "}
+                  {Number(canonicalReadiness.snapshot?.summary?.unresolvedCount || 0)} |{" "}
+                  PARTIAL{" "}
+                  {Number(canonicalReadiness.snapshot?.summary?.partialMappingCount || 0)} |{" "}
+                  MISSING{" "}
+                  {Number(
+                    canonicalReadiness.snapshot?.summary?.missingGroupMatchCount || 0
+                  )}{" "}
+                  | AMBIGUOUS{" "}
+                  {Number(
+                    canonicalReadiness.snapshot?.summary?.ambiguousGroupMatchCount || 0
+                  )}
+                </div>
+                <div className="max-h-32 overflow-auto rounded border border-slate-200 p-2 text-[11px] text-slate-700">
+                  {(canonicalReadiness.snapshot?.byLegalEntity || []).length === 0 ? (
+                    <div className="text-slate-500">
+                      {l("No legal entity readiness rows", "Istirak bazli hazirlik satiri yok")}
+                    </div>
+                  ) : (
+                    (canonicalReadiness.snapshot?.byLegalEntity || []).map((row) => (
+                      <div
+                        key={`canonical-readiness-le-${row?.legalEntityId || "na"}`}
+                        className="border-b border-slate-100 py-1 last:border-0"
+                      >
+                        LE {row?.legalEntityId || "-"} ({row?.legalEntityCode || "-"}) |{" "}
+                        {row?.readinessState || "-"} |{" "}
+                        {l("unresolved", "cozumlenecek")}{" "}
+                        {Number(row?.unresolvedCount || 0)} / {l("total", "toplam")}{" "}
+                        {Number(row?.total || 0)}
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="text-xs text-slate-500">
+                {l(
+                  "Canonical readiness snapshot is not available yet.",
+                  "Canonical hazirlik ozeti henuz mevcut degil."
+                )}
+              </div>
+            )}
+          </section>
+
           <section className="rounded-xl border border-slate-200 bg-white p-4">
             <h2 className="mb-3 text-sm font-semibold text-slate-700">{l("Members", "Uyeler")}</h2>
             <form onSubmit={onSaveMember} className="grid gap-2 md:grid-cols-5">
@@ -857,6 +1549,415 @@ export default function ConsolidationSetupPage() {
           </section>
 
           <section className="rounded-xl border border-slate-200 bg-white p-4">
+            <h2 className="mb-3 text-sm font-semibold text-slate-700">
+              {l("Canonical Mappings", "Canonical Eslemeler")}
+            </h2>
+            <div className="mb-3 grid gap-2 rounded-lg border border-slate-200 bg-slate-50 p-2 md:grid-cols-5">
+              <input
+                type="number"
+                min={1}
+                value={canonicalCandidateFilters.legalEntityId}
+                onChange={(event) =>
+                  setCanonicalCandidateFilters((prev) => ({
+                    ...prev,
+                    legalEntityId: event.target.value,
+                  }))
+                }
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm md:col-span-2"
+                list="canonical-candidate-legal-entity-options"
+                placeholder={l("Legal entity ID (optional)", "Istirak / bagli ortak ID (opsiyonel)")}
+              />
+              <datalist id="canonical-candidate-legal-entity-options">
+                {filteredLegalEntities.map((row) => (
+                  <option key={row.id} value={row.id}>
+                    {row.code} - {row.name}
+                  </option>
+                ))}
+              </datalist>
+              <input
+                type="number"
+                min={1}
+                value={canonicalCandidateFilters.limit}
+                onChange={(event) =>
+                  setCanonicalCandidateFilters((prev) => ({
+                    ...prev,
+                    limit: event.target.value,
+                  }))
+                }
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                placeholder={l("Candidate limit", "Aday limiti")}
+              />
+              <button
+                type="button"
+                onClick={onPreviewCanonicalCandidates}
+                disabled={
+                  saving === "canonical-candidates-preview" ||
+                  saving === "canonical-candidates-apply"
+                }
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 disabled:opacity-60"
+              >
+                {saving === "canonical-candidates-preview"
+                  ? l("Previewing...", "Onizleniyor...")
+                  : l("Preview candidates", "Adaylari onizle")}
+              </button>
+              <button
+                type="button"
+                onClick={onApplyCanonicalCandidates}
+                disabled={
+                  saving === "canonical-candidates-preview" ||
+                  saving === "canonical-candidates-apply"
+                }
+                className="rounded-lg bg-cyan-700 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60"
+              >
+                {saving === "canonical-candidates-apply"
+                  ? l("Applying...", "Uygulaniyor...")
+                  : l("Apply safe candidates", "Guvenli adaylari uygula")}
+              </button>
+              <input
+                value={canonicalCandidateReason}
+                onChange={(event) => setCanonicalCandidateReason(event.target.value)}
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm md:col-span-5"
+                placeholder={l(
+                  "Apply reason (required when SAFE rows have high-risk semantic warnings)",
+                  "Uygulama nedeni (SAFE satirlarda yuksek-risk semantic uyari varsa zorunlu)"
+                )}
+              />
+            </div>
+
+            {canonicalCandidatePreview && (
+              <div className="mb-3 rounded-lg border border-slate-200 p-2 text-xs text-slate-700">
+                <div>
+                  {l("Candidate summary", "Aday ozeti")}:{" "}
+                  {l("total", "toplam")}{" "}
+                  {Number(canonicalCandidatePreview?.summary?.total || 0)} |{" "}
+                  SAFE {Number(canonicalCandidatePreview?.summary?.safeCount || 0)} |{" "}
+                  ALREADY_MAPPED{" "}
+                  {Number(canonicalCandidatePreview?.summary?.alreadyMappedCount || 0)} |{" "}
+                  PARTIAL_MAPPING{" "}
+                  {Number(canonicalCandidatePreview?.summary?.partialMappingCount || 0)} |{" "}
+                  MISSING_GROUP_MATCH{" "}
+                  {Number(
+                    canonicalCandidatePreview?.summary?.missingGroupMatchCount || 0
+                  )}{" "}
+                  | AMBIGUOUS_GROUP_MATCH{" "}
+                  {Number(
+                    canonicalCandidatePreview?.summary?.ambiguousGroupMatchCount || 0
+                  )}
+                </div>
+                <div className="mt-1 text-[11px] text-slate-600">
+                  {l("semantic warned", "semantic uyarili")}{" "}
+                  {Number(canonicalCandidatePreview?.summary?.semanticWarningCount || 0)}{" "}
+                  | {l("semantic high-risk", "semantic yuksek-risk")}{" "}
+                  {Number(canonicalCandidatePreview?.summary?.semanticHighRiskCount || 0)}
+                </div>
+                <div className="mt-2 max-h-40 overflow-auto rounded border border-slate-200 p-2">
+                  {(canonicalCandidatePreview?.rows || []).length === 0 ? (
+                    <div className="text-slate-500">
+                      {l("No candidate rows", "Aday satiri yok")}
+                    </div>
+                  ) : (
+                    (canonicalCandidatePreview?.rows || []).map((row) => (
+                      <div
+                        key={`${row?.legalEntityId || "le"}-${row?.localAccountId || "acc"}-${row?.expectedCanonicalKey || "key"}`}
+                        className="border-b border-slate-100 py-1 last:border-0"
+                      >
+                        [{row?.classification || "-"}] LE {row?.legalEntityId || "-"} |{" "}
+                        L:{row?.localAccountCode || "-"} ({row?.localAccountId || "-"}) | G:
+                        {row?.resolvedGroupAccountId || "-"} | K:
+                        {row?.expectedCanonicalKey || "-"} | {row?.reason || "-"}
+                        <div className="mt-1 flex flex-wrap items-center gap-1">
+                          {row?.semanticRisk?.highRisk === true && (
+                            <span className="rounded bg-rose-100 px-1.5 py-0.5 text-[10px] font-semibold text-rose-700">
+                              HIGH_RISK
+                            </span>
+                          )}
+                          {(row?.semanticWarnings || []).map((warning, index) => (
+                            <span
+                              key={`${warning?.code || "warn"}-${index}`}
+                              className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${
+                                String(warning?.severity || "").toUpperCase() === "HIGH"
+                                  ? "bg-rose-100 text-rose-700"
+                                  : "bg-amber-100 text-amber-700"
+                              }`}
+                            >
+                              {warning?.code || "SEMANTIC_WARNING"}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
+
+            <div className="mb-2 text-[11px] text-amber-700">
+              {l(
+                "Date safety: if unresolved runs exist, set mapping effectiveFrom on/before run period end.",
+                "Tarih guvenligi: cozumlenmemis run varsa mapping effectiveFrom tarihini run period end veya oncesi yapin."
+              )}
+            </div>
+
+            <form
+              onSubmit={onSaveCanonicalLocalMapping}
+              className="grid gap-2 md:grid-cols-4"
+            >
+              <input
+                type="number"
+                min={1}
+                value={canonicalLocalForm.legalEntityId}
+                onChange={(event) =>
+                  setCanonicalLocalForm((prev) => ({
+                    ...prev,
+                    legalEntityId: event.target.value,
+                    localAccountId: "",
+                  }))
+                }
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                list="canonical-legal-entity-options"
+                placeholder={l("Legal entity ID", "Istirak / bagli ortak ID")}
+                required
+              />
+              <datalist id="canonical-legal-entity-options">
+                {filteredLegalEntities.map((row) => (
+                  <option key={row.id} value={row.id}>
+                    {row.code} - {row.name}
+                  </option>
+                ))}
+              </datalist>
+              <input
+                type="number"
+                min={1}
+                value={canonicalLocalForm.localAccountId}
+                onChange={(event) =>
+                  setCanonicalLocalForm((prev) => ({
+                    ...prev,
+                    localAccountId: event.target.value,
+                  }))
+                }
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                list="canonical-local-account-options"
+                placeholder={l("Local account ID", "Lokal hesap ID")}
+                required
+              />
+              <datalist id="canonical-local-account-options">
+                {canonicalLocalAccountOptions.map((row) => (
+                  <option key={row.id} value={row.id}>
+                    {row.code} - {row.name}
+                  </option>
+                ))}
+              </datalist>
+              <input
+                value={canonicalLocalForm.canonicalKey}
+                onChange={(event) =>
+                  setCanonicalLocalForm((prev) => ({
+                    ...prev,
+                    canonicalKey: event.target.value.toUpperCase(),
+                  }))
+                }
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                placeholder={l("Canonical key", "Canonical anahtar")}
+                required
+              />
+              <input
+                value={canonicalLocalForm.canonicalName}
+                onChange={(event) =>
+                  setCanonicalLocalForm((prev) => ({
+                    ...prev,
+                    canonicalName: event.target.value,
+                  }))
+                }
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                placeholder={l("Canonical name (optional)", "Canonical ad (opsiyonel)")}
+              />
+              <input
+                value={canonicalLocalForm.reason}
+                onChange={(event) =>
+                  setCanonicalLocalForm((prev) => ({
+                    ...prev,
+                    reason: event.target.value,
+                  }))
+                }
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm md:col-span-2"
+                placeholder={l(
+                  "Reason/note (required for high-risk remap)",
+                  "Neden/not (yuksek-risk remap icin zorunlu)"
+                )}
+              />
+              <select
+                value={canonicalLocalForm.status}
+                onChange={(event) =>
+                  setCanonicalLocalForm((prev) => ({
+                    ...prev,
+                    status: event.target.value,
+                  }))
+                }
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              >
+                <option value="ACTIVE">ACTIVE</option>
+                <option value="INACTIVE">INACTIVE</option>
+              </select>
+              <input
+                type="date"
+                value={canonicalLocalForm.effectiveFrom}
+                onChange={(event) =>
+                  setCanonicalLocalForm((prev) => ({
+                    ...prev,
+                    effectiveFrom: event.target.value,
+                  }))
+                }
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              />
+              <input
+                type="date"
+                value={canonicalLocalForm.effectiveTo}
+                onChange={(event) =>
+                  setCanonicalLocalForm((prev) => ({
+                    ...prev,
+                    effectiveTo: event.target.value,
+                  }))
+                }
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              />
+              <button
+                type="submit"
+                disabled={saving === "canonical-local"}
+                className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60"
+              >
+                {saving === "canonical-local"
+                  ? l("Saving local...", "Lokal kaydediliyor...")
+                  : l("Save Local Mapping", "Lokal Eslemeyi Kaydet")}
+              </button>
+            </form>
+
+            <form
+              onSubmit={onSaveCanonicalGroupMapping}
+              className="mt-2 grid gap-2 md:grid-cols-4"
+            >
+              <input
+                type="number"
+                min={1}
+                value={canonicalGroupForm.groupAccountId}
+                onChange={(event) =>
+                  setCanonicalGroupForm((prev) => ({
+                    ...prev,
+                    groupAccountId: event.target.value,
+                  }))
+                }
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                list="canonical-group-account-options"
+                placeholder={l("Group account ID", "Grup hesap ID")}
+                required
+              />
+              <datalist id="canonical-group-account-options">
+                {canonicalGroupAccountOptions.map((row) => (
+                  <option key={row.id} value={row.id}>
+                    {row.code} - {row.name}
+                  </option>
+                ))}
+              </datalist>
+              <input
+                value={canonicalGroupForm.canonicalKey}
+                onChange={(event) =>
+                  setCanonicalGroupForm((prev) => ({
+                    ...prev,
+                    canonicalKey: event.target.value.toUpperCase(),
+                  }))
+                }
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                placeholder={l("Canonical key", "Canonical anahtar")}
+                required
+              />
+              <input
+                value={canonicalGroupForm.canonicalName}
+                onChange={(event) =>
+                  setCanonicalGroupForm((prev) => ({
+                    ...prev,
+                    canonicalName: event.target.value,
+                  }))
+                }
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                placeholder={l("Canonical name (optional)", "Canonical ad (opsiyonel)")}
+              />
+              <input
+                value={canonicalGroupForm.reason}
+                onChange={(event) =>
+                  setCanonicalGroupForm((prev) => ({
+                    ...prev,
+                    reason: event.target.value,
+                  }))
+                }
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm md:col-span-2"
+                placeholder={l(
+                  "Reason/note (required for high-risk remap)",
+                  "Neden/not (yuksek-risk remap icin zorunlu)"
+                )}
+              />
+              <select
+                value={canonicalGroupForm.status}
+                onChange={(event) =>
+                  setCanonicalGroupForm((prev) => ({
+                    ...prev,
+                    status: event.target.value,
+                  }))
+                }
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              >
+                <option value="ACTIVE">ACTIVE</option>
+                <option value="INACTIVE">INACTIVE</option>
+              </select>
+              <input
+                type="date"
+                value={canonicalGroupForm.effectiveFrom}
+                onChange={(event) =>
+                  setCanonicalGroupForm((prev) => ({
+                    ...prev,
+                    effectiveFrom: event.target.value,
+                  }))
+                }
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              />
+              <input
+                type="date"
+                value={canonicalGroupForm.effectiveTo}
+                onChange={(event) =>
+                  setCanonicalGroupForm((prev) => ({
+                    ...prev,
+                    effectiveTo: event.target.value,
+                  }))
+                }
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              />
+              <button
+                type="submit"
+                disabled={saving === "canonical-group"}
+                className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60"
+              >
+                {saving === "canonical-group"
+                  ? l("Saving group...", "Grup kaydediliyor...")
+                  : l("Save Group Mapping", "Grup Eslemeyi Kaydet")}
+              </button>
+            </form>
+
+            <div className="mt-3 max-h-56 overflow-auto rounded-lg border border-slate-200 p-2 text-xs">
+              {canonicalMappings.length === 0 ? (
+                <div className="text-slate-500">
+                  {l("No canonical mappings", "Canonical esleme yok")}
+                </div>
+              ) : (
+                canonicalMappings.map((row, index) => (
+                  <div
+                    key={`${row?.canonicalKeyId || "key"}-${row?.localMapping?.id || "local"}-${row?.groupMapping?.id || "group"}-${index}`}
+                    className="border-b border-slate-100 py-1 last:border-0"
+                  >
+                    {row?.canonicalKey || "-"} | LE {row?.localMapping?.legalEntityId || "-"} | L:{row?.localMapping?.localAccountCode || "-"} | G:{row?.groupMapping?.groupAccountCode || "-"} | L:{row?.localMapping?.status || "-"} | G:{row?.groupMapping?.status || "-"}
+                  </div>
+                ))
+              )}
+            </div>
+          </section>
+
+          <section className="rounded-xl border border-slate-200 bg-white p-4">
             <h2 className="mb-3 text-sm font-semibold text-slate-700">{l("Elimination Placeholders", "Eliminasyon Placeholderlari")}</h2>
             <form onSubmit={onSavePlaceholder} className="grid gap-2 md:grid-cols-5">
               <input
@@ -969,31 +2070,97 @@ export default function ConsolidationSetupPage() {
               {runs.length === 0 ? (
                 <div className="text-slate-500">{l("No runs", "Run yok")}</div>
               ) : (
-                runs.map((row) => (
-                  <div key={row.id} className="flex items-center justify-between gap-2 border-b border-slate-100 py-1 last:border-0">
-                    <div>
-                      #{row.id} | {row.run_name} | {row.fiscal_year}-P{padPeriod(row.period_no)} | {row.status}
+                runs.map((row) => {
+                  const runIdKey = String(row.id);
+                  const preflight = runPreflightById[runIdKey] || null;
+                  const isPreflightLoading = Boolean(preflight?.isLoading);
+                  const canonicalCoverageReady =
+                    preflight?.canonicalCoverage === true;
+                  const executeBlockedByPreflight = !canonicalCoverageReady;
+                  const executeDisabled =
+                    saving === `run-exec-${row.id}` ||
+                    isLocked(row.status) ||
+                    executeBlockedByPreflight;
+
+                  let preflightToneClass = "text-slate-500";
+                  let preflightText = l(
+                    "Preflight not loaded yet. Refresh runs before Execute.",
+                    "Preflight henuz yuklenmedi. Execute oncesi runlari yenileyin."
+                  );
+                  if (isPreflightLoading) {
+                    preflightToneClass = "text-slate-500";
+                    preflightText = l(
+                      "Checking canonical mapping coverage...",
+                      "Canonical mapping coverage kontrol ediliyor..."
+                    );
+                  } else if (preflight?.error) {
+                    preflightToneClass = "text-amber-700";
+                    preflightText = l(
+                      "Preflight could not be loaded. Execute is blocked until compatibility is available.",
+                      "Preflight yuklenemedi. Uyumluluk verisi gelene kadar Execute engellendi."
+                    );
+                  } else if (canonicalCoverageReady) {
+                    preflightToneClass = "text-emerald-700";
+                    preflightText = l(
+                      "Canonical mapping coverage: ready.",
+                      "Canonical mapping coverage: hazir."
+                    );
+                  } else {
+                    const missingCount = Number(preflight?.missingCount || 0);
+                    preflightToneClass = "text-amber-700";
+                    preflightText =
+                      missingCount > 0
+                        ? l(
+                            `Execute blocked: canonical mapping coverage missing (${missingCount} account(s)). Complete canonical mappings and refresh.`,
+                            `Execute engellendi: canonical mapping coverage eksik (${missingCount} hesap). Canonical eslemeleri tamamlayip yenileyin.`
+                          )
+                        : l(
+                            "Execute blocked: canonical mapping coverage is not ready. Complete mappings and refresh.",
+                            "Execute engellendi: canonical mapping coverage hazir degil. Eslemeleri tamamlayip yenileyin."
+                          );
+                  }
+
+                  return (
+                    <div
+                      key={row.id}
+                      className="border-b border-slate-100 py-1 last:border-0"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <div>
+                          #{row.id} | {row.run_name} | {row.fiscal_year}-P
+                          {padPeriod(row.period_no)} | {row.status}
+                        </div>
+                        <div className="flex gap-1">
+                          <button
+                            type="button"
+                            onClick={() => onExecuteRun(row.id)}
+                            disabled={executeDisabled}
+                            className="rounded bg-cyan-700 px-2 py-1 text-[11px] font-semibold text-white disabled:opacity-50"
+                          >
+                            {saving === `run-exec-${row.id}`
+                              ? l("Running...", "Calisiyor...")
+                              : l("Execute", "Execute")}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => onFinalizeRun(row.id)}
+                            disabled={
+                              saving === `run-final-${row.id}` || isLocked(row.status)
+                            }
+                            className="rounded border border-slate-300 px-2 py-1 text-[11px] font-semibold text-slate-700 disabled:opacity-50"
+                          >
+                            {saving === `run-final-${row.id}`
+                              ? l("Finalizing...", "Final ediliyor...")
+                              : l("Finalize", "Finalize")}
+                          </button>
+                        </div>
+                      </div>
+                      <div className={`mt-1 text-[11px] ${preflightToneClass}`}>
+                        {preflightText}
+                      </div>
                     </div>
-                    <div className="flex gap-1">
-                      <button
-                        type="button"
-                        onClick={() => onExecuteRun(row.id)}
-                        disabled={saving === `run-exec-${row.id}` || isLocked(row.status)}
-                        className="rounded bg-cyan-700 px-2 py-1 text-[11px] font-semibold text-white disabled:opacity-50"
-                      >
-                        {saving === `run-exec-${row.id}` ? l("Running...", "Calisiyor...") : l("Execute", "Execute")}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => onFinalizeRun(row.id)}
-                        disabled={saving === `run-final-${row.id}` || isLocked(row.status)}
-                        className="rounded border border-slate-300 px-2 py-1 text-[11px] font-semibold text-slate-700 disabled:opacity-50"
-                      >
-                        {saving === `run-final-${row.id}` ? l("Finalizing...", "Final ediliyor...") : l("Finalize", "Finalize")}
-                      </button>
-                    </div>
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
           </section>

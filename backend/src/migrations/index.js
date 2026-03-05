@@ -85,6 +85,7 @@ import migration094CashFxPositionLots from "./m094_cash_fx_position_lots.js";
 import migration095CashFxRevaluationReversalHardening from "./m095_cash_fx_revaluation_reversal_hardening.js";
 import migration096CashExchangeFeeSpreadAccounting from "./m096_cash_exchange_fee_spread_accounting.js";
 import migration097ExceptionWorkbenchCashModule from "./m097_exception_workbench_cash_module.js";
+import migration098ConsolidationCanonicalPerformanceIndexes from "./m098_consolidation_canonical_performance_indexes.js";
 
 const migrations = [
   migration001GlobalMultiEntity,
@@ -174,6 +175,7 @@ const migrations = [
   migration095CashFxRevaluationReversalHardening,
   migration096CashExchangeFeeSpreadAccounting,
   migration097ExceptionWorkbenchCashModule,
+  migration098ConsolidationCanonicalPerformanceIndexes,
 ];
 
 export default migrations;

@@ -499,6 +499,10 @@ const ROLE_DEFINITIONS = [
       "intercompany.flag.read",
       "intercompany.flag.upsert",
       "fx.rate.read",
+      "consolidation.coa_mapping.read",
+      "consolidation.coa_mapping.upsert",
+      "consolidation.run.read",
+      "consolidation.run.execute",
     ],
   },
   {
@@ -657,6 +661,10 @@ const ROLE_DEFINITIONS = [
       "fx.rate.read",
       "intercompany.pair.upsert",
       "intercompany.reconcile.run",
+      "consolidation.coa_mapping.read",
+      "consolidation.coa_mapping.upsert",
+      "consolidation.run.read",
+      "consolidation.run.execute",
     ],
   },
   {
