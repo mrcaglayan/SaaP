@@ -54,6 +54,10 @@ const statements = [
   `,
   `
   ALTER TABLE consolidation_canonical_local_account_mappings
+  MODIFY COLUMN effective_from DATE NOT NULL
+  `,
+  `
+  ALTER TABLE consolidation_canonical_local_account_mappings
   ADD KEY ix_cons_local_scope_status_effective (
     tenant_id,
     consolidation_group_id,
@@ -64,6 +68,10 @@ const statements = [
     effective_to,
     canonical_key_id
   )
+  `,
+  `
+  ALTER TABLE consolidation_canonical_group_account_mappings
+  MODIFY COLUMN effective_from DATE NOT NULL
   `,
   `
   ALTER TABLE consolidation_canonical_group_account_mappings

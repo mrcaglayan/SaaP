@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   applyCariSettlement,
@@ -387,6 +387,10 @@ const SETTLEMENT_REVERSE_CONTEXT_MAPPINGS = [
   { stateKey: "reversalDate", contextKey: "dateTo" },
 ];
 const SETTLEMENT_PREVIEW_FILTERS_STORAGE_SCOPE = "cari-settlements.preview";
+const LINKED_CASH_SESSION_REQUIRED_ERROR =
+  "cashSessionId is required because selected cash register has session_mode=REQUIRED.";
+const LINKED_CASH_OPEN_SESSION_REQUIRED_ERROR =
+  "Selected cash register requires an OPEN cash session. Open one from Cash Sessions first.";
 
 export default function CariSettlementsPage() {
   const { hasPermission } = useAuth();
@@ -473,6 +477,7 @@ export default function CariSettlementsPage() {
   const [bankApplyMessage, setBankApplyMessage] = useState("");
   const [bankApplyResult, setBankApplyResult] = useState(null);
   const [bankApplyFollowUpRisks, setBankApplyFollowUpRisks] = useState([]);
+  const linkedCashSessionInputRef = useRef(null);
 
   useWorkingContextDefaults(setPreviewFilters, SETTLEMENT_PREVIEW_CONTEXT_MAPPINGS, [
     previewFilters.legalEntityId,
@@ -535,6 +540,26 @@ export default function CariSettlementsPage() {
       (row) => toPositiveInt(row?.cash_register_id) === registerId
     );
   }, [linkedCashForm.registerId, openCashSessions]);
+  const linkedRegisterSessionMode = toUpper(selectedLinkedRegister?.session_mode);
+  const linkedCashSessionRequiredByRegister = Boolean(
+    linkedCashForm.createLinkedCashTransaction &&
+      toUpper(linkedCashForm.paymentChannel) === "CASH" &&
+      linkedRegisterSessionMode === "REQUIRED"
+  );
+  const linkedCashSessionValueMissing = Boolean(
+    linkedCashSessionRequiredByRegister && !toPositiveInt(linkedCashForm.cashSessionId)
+  );
+  const linkedCashSessionMissingOpenSession = Boolean(
+    linkedCashSessionRequiredByRegister &&
+      canReadCashSessions &&
+      toPositiveInt(linkedCashForm.registerId) &&
+      linkedRegisterOpenSessions.length === 0
+  );
+  const linkedCashSessionFieldInvalid =
+    linkedCashSessionValueMissing || linkedCashSessionMissingOpenSession;
+  const linkedCashSessionInputClass = `mt-1 w-full rounded-md border px-3 py-2 text-sm font-normal ${
+    linkedCashSessionFieldInvalid ? "border-rose-300 bg-rose-50" : "border-slate-300"
+  }`;
   const linkedCashAccountLookupOptions = useMemo(() => {
     const selectedAccountId = String(linkedCashForm.counterAccountId || "").trim();
     const rows = Array.isArray(linkedCashAccountOptions) ? [...linkedCashAccountOptions] : [];
@@ -1284,6 +1309,12 @@ export default function CariSettlementsPage() {
     if (!toPositiveInt(linkedCashForm.registerId)) {
       return "registerId is required for linked cash transaction.";
     }
+    if (linkedCashSessionMissingOpenSession) {
+      return LINKED_CASH_OPEN_SESSION_REQUIRED_ERROR;
+    }
+    if (linkedCashSessionValueMissing) {
+      return LINKED_CASH_SESSION_REQUIRED_ERROR;
+    }
     if (!toPositiveInt(linkedCashForm.counterAccountId)) {
       return "counterAccountId is required for linked cash transaction.";
     }
@@ -1469,6 +1500,16 @@ export default function CariSettlementsPage() {
     const linkedCashValidationError = validateLinkedCashFormBeforeApply(form);
     if (linkedCashValidationError) {
       setApplyError(linkedCashValidationError);
+      if (
+        linkedCashValidationError === LINKED_CASH_SESSION_REQUIRED_ERROR ||
+        linkedCashValidationError === LINKED_CASH_OPEN_SESSION_REQUIRED_ERROR
+      ) {
+        linkedCashSessionInputRef.current?.focus();
+        linkedCashSessionInputRef.current?.scrollIntoView({
+          block: "center",
+          behavior: "smooth",
+        });
+      }
       return;
     }
 
@@ -2160,15 +2201,16 @@ export default function CariSettlementsPage() {
                 )}
               </label>
               <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                cash session (optional)
+                cash session {linkedCashSessionRequiredByRegister ? "*" : "(optional)"}
                 {linkedRegisterOpenSessions.length > 0 ? (
                   <select
-                    className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                    className={linkedCashSessionInputClass}
                     value={linkedCashForm.cashSessionId}
                     onChange={(event) =>
                       setLinkedCashForm((prev) => ({ ...prev, cashSessionId: event.target.value }))
                     }
                     disabled={applySubmitting}
+                    ref={linkedCashSessionInputRef}
                   >
                     <option value="">Select open session</option>
                     {linkedRegisterOpenSessions.map((row) => (
@@ -2181,14 +2223,26 @@ export default function CariSettlementsPage() {
                   <input
                     type="number"
                     min="1"
-                    className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                    className={linkedCashSessionInputClass}
                     value={linkedCashForm.cashSessionId}
                     onChange={(event) =>
                       setLinkedCashForm((prev) => ({ ...prev, cashSessionId: event.target.value }))
                     }
                     disabled={applySubmitting}
+                    ref={linkedCashSessionInputRef}
                   />
                 )}
+                {linkedCashSessionMissingOpenSession ? (
+                  <p className="mt-1 text-xs normal-case text-rose-700">
+                    Selected register has session_mode=REQUIRED but no OPEN session exists.
+                    Open a session on Cash Sessions page first.
+                  </p>
+                ) : null}
+                {linkedCashSessionValueMissing && !linkedCashSessionMissingOpenSession ? (
+                  <p className="mt-1 text-xs normal-case text-rose-700">
+                    This register requires cashSessionId. Select an OPEN session.
+                  </p>
+                ) : null}
               </label>
               <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
                 counterAccount
