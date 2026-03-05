@@ -12,14 +12,14 @@ const ACCOUNT_TYPES = ["ASSET", "LIABILITY", "EQUITY", "REVENUE", "EXPENSE"];
 const NORMAL_SIDES = ["DEBIT", "CREDIT"];
 const WIZARD_STEPS = Object.freeze([
 Object.freeze({
-  key: "country",
-  titleEn: "Country + Company",
-  titleTr: "Ulke + Sirket",
+  key: "entity",
+  titleEn: "Group Company + Fiscal Calendar",
+  titleTr: "Grup Sirketi + Mali Takvim",
 }),
 Object.freeze({
-  key: "entity",
-  titleEn: "Company + Entities",
-  titleTr: "Sirket + Birimler",
+  key: "country",
+  titleEn: "Legal Entities + Country",
+  titleTr: "Istirakler / Bagli Ortaklar",
 }),
 Object.freeze({
   key: "template",
@@ -626,7 +626,7 @@ for (let index = 0; index < form.legalEntities.length; index += 1) {
 return "";
 }
 function validateWizardStep(form, stepKey, l) {
-if (stepKey === "country" || stepKey === "entity") {
+if (stepKey === "entity") {
   if (!form.groupCompany.code.trim() || !form.groupCompany.name.trim()) {
     return l(
       "Group company code and name are required.",
@@ -658,6 +658,14 @@ if (stepKey === "country" || stepKey === "entity") {
     return l(
       "Fiscal year must be a positive integer.",
       "Mali yil pozitif bir tam sayi olmali."
+    );
+  }
+}
+if (stepKey === "country") {
+  if (!Array.isArray(form.legalEntities) || form.legalEntities.length === 0) {
+    return l(
+      "At least one legal entity is required.",
+      "En az bir istirak / bagli ortak zorunludur."
     );
   }
   for (let index = 0; index < form.legalEntities.length; index += 1) {
@@ -1263,7 +1271,7 @@ return (
       </div>
     </div>
     <div className="rounded-2xl border border-slate-200 bg-white p-4">
-      <ol className="grid gap-2 sm:grid-cols-4">
+      <ol className="grid gap-2 sm:grid-cols-5">
         {WIZARD_STEPS.map((step, index) => {
           const isActive = index === activeStepIndex;
           const isCompleted = index < activeStepIndex;
@@ -1312,90 +1320,95 @@ return (
     <form onSubmit={handleSubmit} className="space-y-4">
       {activeStep.key === "country" || activeStep.key === "entity" ? (
         <section className="space-y-4">
-          <section className="rounded-2xl border border-slate-200 bg-white p-4">
-            <h2 className="mb-3 text-sm font-semibold text-slate-700">
-              {l("Group Company", "Grup Sirketi")}
-            </h2>
-            <div className="grid gap-3 md:grid-cols-2">
-              <input
-                value={form.groupCompany.code}
-                onChange={(event) => setGroupCompanyField("code", event.target.value)}
-                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                placeholder={l("Code (e.g. GLOBAL)", "Kod (orn. GLOBAL)")}
-                required
-              />
-              <input
-                value={form.groupCompany.name}
-                onChange={(event) => setGroupCompanyField("name", event.target.value)}
-                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                placeholder={l("Name", "Ad")}
-                required
-              />
-            </div>
-          </section>
-          <section className="rounded-2xl border border-slate-200 bg-white p-4">
-            <h2 className="mb-3 text-sm font-semibold text-slate-700">
-              {l("Fiscal Calendar", "Mali Takvim")}
-            </h2>
-            <div className="grid gap-3 md:grid-cols-5">
-              <input
-                value={form.fiscalCalendar.code}
-                onChange={(event) =>
-                  setFiscalCalendarField("code", event.target.value)
-                }
-                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                placeholder={l("Calendar code", "Takvim kodu")}
-                required
-              />
-              <input
-                value={form.fiscalCalendar.name}
-                onChange={(event) =>
-                  setFiscalCalendarField("name", event.target.value)
-                }
-                className="rounded-lg border border-slate-300 px-3 py-2 text-sm md:col-span-2"
-                placeholder={l("Calendar name", "Takvim adi")}
-                required
-              />
-              <input
-                type="number"
-                min={1}
-                max={12}
-                value={form.fiscalCalendar.yearStartMonth}
-                onChange={(event) =>
-                  setFiscalCalendarField("yearStartMonth", event.target.value)
-                }
-                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                placeholder={l("Start month", "Baslangic ayi")}
-                required
-              />
-              <input
-                type="number"
-                min={1}
-                max={31}
-                value={form.fiscalCalendar.yearStartDay}
-                onChange={(event) =>
-                  setFiscalCalendarField("yearStartDay", event.target.value)
-                }
-                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                placeholder={l("Start day", "Baslangic gunu")}
-                required
-              />
-            </div>
-            <div className="mt-3 grid gap-3 md:w-52">
-              <input
-                type="number"
-                min={2000}
-                value={form.fiscalYear}
-                onChange={(event) =>
-                  setForm((prev) => ({ ...prev, fiscalYear: event.target.value }))
-                }
-                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                placeholder={l("Fiscal year", "Mali yil")}
-                required
-              />
-            </div>
-          </section>
-          <section className="rounded-2xl border border-slate-200 bg-white p-4">
+          {activeStep.key === "entity" ? (
+            <>
+              <section className="rounded-2xl border border-slate-200 bg-white p-4">
+                <h2 className="mb-3 text-sm font-semibold text-slate-700">
+                  {l("Group Company", "Grup Sirketi")}
+                </h2>
+                <div className="grid gap-3 md:grid-cols-2">
+                  <input
+                    value={form.groupCompany.code}
+                    onChange={(event) => setGroupCompanyField("code", event.target.value)}
+                    className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                    placeholder={l("Code (e.g. GLOBAL)", "Kod (orn. GLOBAL)")}
+                    required
+                  />
+                  <input
+                    value={form.groupCompany.name}
+                    onChange={(event) => setGroupCompanyField("name", event.target.value)}
+                    className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                    placeholder={l("Name", "Ad")}
+                    required
+                  />
+                </div>
+              </section>
+              <section className="rounded-2xl border border-slate-200 bg-white p-4">
+                <h2 className="mb-3 text-sm font-semibold text-slate-700">
+                  {l("Fiscal Calendar", "Mali Takvim")}
+                </h2>
+                <div className="grid gap-3 md:grid-cols-5">
+                  <input
+                    value={form.fiscalCalendar.code}
+                    onChange={(event) =>
+                      setFiscalCalendarField("code", event.target.value)
+                    }
+                    className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                    placeholder={l("Calendar code", "Takvim kodu")}
+                    required
+                  />
+                  <input
+                    value={form.fiscalCalendar.name}
+                    onChange={(event) =>
+                      setFiscalCalendarField("name", event.target.value)
+                    }
+                    className="rounded-lg border border-slate-300 px-3 py-2 text-sm md:col-span-2"
+                    placeholder={l("Calendar name", "Takvim adi")}
+                    required
+                  />
+                  <input
+                    type="number"
+                    min={1}
+                    max={12}
+                    value={form.fiscalCalendar.yearStartMonth}
+                    onChange={(event) =>
+                      setFiscalCalendarField("yearStartMonth", event.target.value)
+                    }
+                    className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                    placeholder={l("Start month", "Baslangic ayi")}
+                    required
+                  />
+                  <input
+                    type="number"
+                    min={1}
+                    max={31}
+                    value={form.fiscalCalendar.yearStartDay}
+                    onChange={(event) =>
+                      setFiscalCalendarField("yearStartDay", event.target.value)
+                    }
+                    className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                    placeholder={l("Start day", "Baslangic gunu")}
+                    required
+                  />
+                </div>
+                <div className="mt-3 grid gap-3 md:w-52">
+                  <input
+                    type="number"
+                    min={2000}
+                    value={form.fiscalYear}
+                    onChange={(event) =>
+                      setForm((prev) => ({ ...prev, fiscalYear: event.target.value }))
+                    }
+                    className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                    placeholder={l("Fiscal year", "Mali yil")}
+                    required
+                  />
+                </div>
+              </section>
+            </>
+          ) : null}
+          {activeStep.key === "country" ? (
+            <section className="rounded-2xl border border-slate-200 bg-white p-4">
             <div className="mb-3 flex items-center justify-between gap-2">
               <h2 className="text-sm font-semibold text-slate-700">
                 {l("Legal Entities", "Istirakler / Bagli Ortaklar")} ({entityCount})
@@ -1584,7 +1597,8 @@ return (
                 );
               })}
             </div>
-          </section>
+            </section>
+          ) : null}
         </section>
       ) : null}
       {activeStep.key === "template" ? (
