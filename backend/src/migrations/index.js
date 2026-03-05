@@ -88,6 +88,7 @@ import migration097ExceptionWorkbenchCashModule from "./m097_exception_workbench
 import migration098ConsolidationCanonicalPerformanceIndexes from "./m098_consolidation_canonical_performance_indexes.js";
 import migration099CariCheckConstraintCompatGuards from "./m099_cari_check_constraint_compat_guards.js";
 import migration100CariCheckConstraintCompatGuardCleanup from "./m100_cari_check_constraint_compat_guard_cleanup.js";
+import migration101CariSettlementAllocationDualCurrencyFoundation from "./m101_cari_settlement_allocation_dual_currency_foundation.js";
 
 const migrations = [
   migration001GlobalMultiEntity,
@@ -180,6 +181,7 @@ const migrations = [
   migration098ConsolidationCanonicalPerformanceIndexes,
   migration099CariCheckConstraintCompatGuards,
   migration100CariCheckConstraintCompatGuardCleanup,
+  migration101CariSettlementAllocationDualCurrencyFoundation,
 ];
 
 export default migrations;

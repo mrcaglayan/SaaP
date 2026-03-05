@@ -15,6 +15,7 @@ import {
   createCariCounterparty,
   listCariCounterparties,
 } from "../../api/cariCounterparty.js";
+import { listFxRates } from "../../api/fxAdmin.js";
 import { listLegalEntities } from "../../api/orgAdmin.js";
 import { getCariOpenItemsReport } from "../../api/cariReports.js";
 import { getCariCounterpartyStatementReport } from "../../api/cariReports.js";
@@ -71,6 +72,23 @@ function normalizeCurrencyCode(value) {
     .trim()
     .toUpperCase()
     .slice(0, 3);
+}
+
+function resolveOpenItemCurrencyCode(row) {
+  return normalizeCurrencyCode(
+    row?.currencyCode || row?.currency_code || row?.currencyCodeSnapshot || row?.currency_code_snapshot
+  );
+}
+
+function formatCrossRate(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return "-";
+  }
+  return parsed.toLocaleString(undefined, {
+    minimumFractionDigits: 6,
+    maximumFractionDigits: 10,
+  });
 }
 
 function resolveLegalEntityCurrencyCode(legalEntities, legalEntityId) {
@@ -403,6 +421,7 @@ export default function CariSettlementsPage() {
   const canReadCards = hasPermission("cari.card.read");
   const canUpsertCards = hasPermission("cari.card.upsert");
   const canReadOrg = hasPermission("org.tree.read");
+  const canReadFxRates = hasPermission("fx.rate.read");
   const canCreateCashTxn = hasPermission("cash.txn.create");
   const canReadCashRegisters = hasPermission("cash.register.read");
   // Cash session listing endpoint is guarded by cash.register.read.
@@ -416,6 +435,9 @@ export default function CariSettlementsPage() {
   const [openItems, setOpenItems] = useState([]);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState("");
+  const [previewFxRates, setPreviewFxRates] = useState([]);
+  const [previewFxLoading, setPreviewFxLoading] = useState(false);
+  const [previewFxError, setPreviewFxError] = useState("");
 
   const [applyForm, setApplyForm] = useState(() => buildApplyDefaultForm());
   const [applyCurrencyManuallyEdited, setApplyCurrencyManuallyEdited] = useState(false);
@@ -510,10 +532,51 @@ export default function CariSettlementsPage() {
   const bankApplyCariNotReady = Boolean(
     bankApplyCariReadiness && !bankApplyCariReadiness.ready
   );
+  const applyFunctionalCurrencyCode = useMemo(
+    () => resolveLegalEntityCurrencyCode(legalEntities, applyForm.legalEntityId),
+    [applyForm.legalEntityId, legalEntities]
+  );
 
   const previewRows = useMemo(
-    () => buildAutoAllocatePreview(openItems, Number(applyForm.incomingAmountTxn || 0)),
-    [openItems, applyForm.incomingAmountTxn]
+    () =>
+      buildAutoAllocatePreview(openItems, Number(applyForm.incomingAmountTxn || 0), {
+        settlementCurrencyCode: applyForm.currencyCode,
+        functionalCurrencyCode: applyFunctionalCurrencyCode,
+        settlementDate: applyForm.settlementDate,
+        providedSettlementFxRate: applyForm.fxRate,
+        fxRates: previewFxRates,
+      }),
+    [
+      applyForm.currencyCode,
+      applyForm.fxRate,
+      applyForm.incomingAmountTxn,
+      applyForm.settlementDate,
+      applyFunctionalCurrencyCode,
+      openItems,
+      previewFxRates,
+    ]
+  );
+  const previewMissingFxRows = useMemo(
+    () => previewRows.filter((row) => Boolean(row.fxMissing)),
+    [previewRows]
+  );
+  const hasCrossCurrencyPreviewRows = useMemo(
+    () =>
+      previewRows.some(
+        (row) =>
+          normalizeCurrencyCode(row.documentCurrencyCode) &&
+          normalizeCurrencyCode(row.settlementCurrencyCode) &&
+          normalizeCurrencyCode(row.documentCurrencyCode) !==
+            normalizeCurrencyCode(row.settlementCurrencyCode)
+      ),
+    [previewRows]
+  );
+  const autoAllocateMissingFxRows = useMemo(
+    () =>
+      previewRows.filter(
+        (row) => Boolean(row.fxMissing) && Boolean(row.autoAllocateBlockedByFx)
+      ),
+    [previewRows]
   );
   const mixedDirectionRisk = useMemo(() => hasMixedDirections(openItems), [openItems]);
   const linkedRegisterOptions = useMemo(() => {
@@ -776,6 +839,27 @@ export default function CariSettlementsPage() {
   const previewCounterpartyId = previewFilters.counterpartyId;
   const previewAsOfDate = previewFilters.asOfDate;
   const previewDirection = previewFilters.direction;
+  const previewDocumentCurrencies = useMemo(() => {
+    const currencies = new Set();
+    for (const row of openItems || []) {
+      const currencyCode = resolveOpenItemCurrencyCode(row);
+      if (currencyCode) {
+        currencies.add(currencyCode);
+      }
+    }
+    return Array.from(currencies).sort();
+  }, [openItems]);
+  const previewFxCurrencyKey = useMemo(() => {
+    const currencies = new Set(previewDocumentCurrencies);
+    const settlementCurrencyCode = normalizeCurrencyCode(applyForm.currencyCode);
+    if (settlementCurrencyCode) {
+      currencies.add(settlementCurrencyCode);
+    }
+    if (applyFunctionalCurrencyCode) {
+      currencies.add(applyFunctionalCurrencyCode);
+    }
+    return Array.from(currencies).sort().join("|");
+  }, [applyForm.currencyCode, applyFunctionalCurrencyCode, previewDocumentCurrencies]);
 
   useEffect(() => {
     const pendingKey = loadPendingIdempotencyKey(applyIntentScope, applyIntentFingerprint);
@@ -839,6 +923,81 @@ export default function CariSettlementsPage() {
     previewCounterpartyId,
     previewAsOfDate,
     previewDirection,
+  ]);
+
+  useEffect(() => {
+    const legalEntityId = toPositiveInt(applyForm.legalEntityId);
+    if (!canReadFxRates || !canReadReports || !legalEntityId || !applyForm.settlementDate) {
+      setPreviewFxRates([]);
+      setPreviewFxError("");
+      setPreviewFxLoading(false);
+      return;
+    }
+
+    const scopedCurrencies = previewFxCurrencyKey
+      ? previewFxCurrencyKey.split("|").filter(Boolean)
+      : [];
+    if (scopedCurrencies.length <= 1) {
+      setPreviewFxRates([]);
+      setPreviewFxError("");
+      setPreviewFxLoading(false);
+      return;
+    }
+
+    let active = true;
+    async function loadPreviewFxRates() {
+      setPreviewFxLoading(true);
+      setPreviewFxError("");
+      try {
+        const payload = await listFxRates({
+          dateFrom: applyForm.settlementDate,
+          dateTo: applyForm.settlementDate,
+          rateType: "SPOT",
+        });
+        if (!active) {
+          return;
+        }
+        const rows = Array.isArray(payload?.rows) ? payload.rows : [];
+        const allowSet = new Set(scopedCurrencies);
+        setPreviewFxRates(
+          rows.filter((row) => {
+            const fromCurrencyCode = normalizeCurrencyCode(
+              row?.from_currency_code || row?.fromCurrencyCode
+            );
+            const toCurrencyCode = normalizeCurrencyCode(
+              row?.to_currency_code || row?.toCurrencyCode
+            );
+            return (
+              fromCurrencyCode &&
+              toCurrencyCode &&
+              allowSet.has(fromCurrencyCode) &&
+              allowSet.has(toCurrencyCode)
+            );
+          })
+        );
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+        setPreviewFxRates([]);
+        setPreviewFxError(normalizeUiError(error, "Failed to load FX rates for settlement preview."));
+      } finally {
+        if (active) {
+          setPreviewFxLoading(false);
+        }
+      }
+    }
+
+    loadPreviewFxRates();
+    return () => {
+      active = false;
+    };
+  }, [
+    applyForm.legalEntityId,
+    applyForm.settlementDate,
+    canReadFxRates,
+    canReadReports,
+    previewFxCurrencyKey,
   ]);
 
   useEffect(() => {
@@ -1505,6 +1664,12 @@ export default function CariSettlementsPage() {
       );
       return;
     }
+    if (form.autoAllocate && canReadFxRates && autoAllocateMissingFxRows.length > 0) {
+      setApplyError(
+        "Auto-allocation requires settlement/document FX rates for the preview rows. Add missing SPOT rates or enter manual allocations."
+      );
+      return;
+    }
 
     const linkedCashValidationError = validateLinkedCashFormBeforeApply(form);
     if (linkedCashValidationError) {
@@ -1801,8 +1966,14 @@ export default function CariSettlementsPage() {
   );
   const autoAllocateDirectionMissing =
     Boolean(applyForm.autoAllocate) && !String(applyForm.direction || "").trim();
+  const autoAllocateFxMissing =
+    Boolean(applyForm.autoAllocate) &&
+    canReadFxRates &&
+    autoAllocateMissingFxRows.length > 0;
   const autoAllocateBlocked =
-    autoAllocateDirectionMissing || (Boolean(applyForm.autoAllocate) && mixedDirectionRisk);
+    autoAllocateDirectionMissing ||
+    (Boolean(applyForm.autoAllocate) && mixedDirectionRisk) ||
+    autoAllocateFxMissing;
 
   return (
     <div className="space-y-5">
@@ -2441,6 +2612,12 @@ export default function CariSettlementsPage() {
             Mixed-direction risk detected in preview rows. Select one direction before auto-allocate.
           </p>
         ) : null}
+        {applyForm.autoAllocate && autoAllocateFxMissing ? (
+          <p className="mt-1 text-sm text-amber-700">
+            Auto-allocation is blocked: missing settlement/document FX rate on at least one due
+            row.
+          </p>
+        ) : null}
 
         <div className="mt-4 rounded-lg border border-slate-200 p-4">
           <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-700">
@@ -2457,6 +2634,28 @@ export default function CariSettlementsPage() {
               {previewError}
             </div>
           ) : null}
+          {previewFxLoading ? (
+            <p className="mt-2 text-sm text-slate-600">
+              Loading exact-date SPOT FX rates for settlement preview...
+            </p>
+          ) : null}
+          {previewFxError ? (
+            <div className="mt-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+              {previewFxError}
+            </div>
+          ) : null}
+          {!canReadFxRates && hasCrossCurrencyPreviewRows ? (
+            <p className="mt-2 text-sm text-amber-700">
+              Cross-currency preview requires permission: `fx.rate.read`. You can still submit and
+              the backend will validate rates.
+            </p>
+          ) : null}
+          {previewMissingFxRows.length > 0 ? (
+            <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+              Missing FX for {previewMissingFxRows.length} row(s). Add SPOT rate(s) for settlement
+              date {applyForm.settlementDate || "-"}, or use same-currency settlement.
+            </div>
+          ) : null}
           <div className="mt-3 overflow-x-auto rounded-lg border border-slate-200">
             <table className="min-w-full text-sm">
               <thead className="bg-slate-50 text-left text-slate-600">
@@ -2465,10 +2664,12 @@ export default function CariSettlementsPage() {
                   <th className="px-3 py-2">documentNo</th>
                   <th className="px-3 py-2">direction</th>
                   <th className="px-3 py-2">dueDate</th>
-                  <th className="px-3 py-2">openAmountTxn</th>
-                  <th className="px-3 py-2">expectedApplyTxn</th>
-                  <th className="px-3 py-2">expectedResidualTxn</th>
-                  <th className="px-3 py-2">manual amount</th>
+                  <th className="px-3 py-2">open (doc)</th>
+                  <th className="px-3 py-2">apply (settlement)</th>
+                  <th className="px-3 py-2">equiv. doc apply</th>
+                  <th className="px-3 py-2">residual (doc)</th>
+                  <th className="px-3 py-2">cross rate / source</th>
+                  <th className="px-3 py-2">manual doc amount</th>
                 </tr>
               </thead>
               <tbody>
@@ -2478,15 +2679,42 @@ export default function CariSettlementsPage() {
                     <td className="px-3 py-2">{row.documentNo || "-"}</td>
                     <td className="px-3 py-2">{row.direction || "-"}</td>
                     <td className="px-3 py-2">{row.dueDate || "-"}</td>
-                    <td className="px-3 py-2">{formatAmount(row.openAmountTxn)}</td>
-                    <td className="px-3 py-2">{formatAmount(row.expectedApplyTxn)}</td>
-                    <td className="px-3 py-2">{formatAmount(row.expectedResidualTxn)}</td>
+                    <td className="px-3 py-2">
+                      {formatAmount(row.openAmountDocTxn)} {row.documentCurrencyCode || "-"}
+                    </td>
+                    <td className="px-3 py-2">
+                      {formatAmount(row.expectedApplySettlementTxn)}{" "}
+                      {row.settlementCurrencyCode || "-"}
+                    </td>
+                    <td className="px-3 py-2">
+                      {formatAmount(row.expectedApplyDocTxn)} {row.documentCurrencyCode || "-"}
+                    </td>
+                    <td className="px-3 py-2">
+                      {formatAmount(row.expectedResidualDocTxn)} {row.documentCurrencyCode || "-"}
+                    </td>
+                    <td className="px-3 py-2 text-xs">
+                      {row.fxMissing ? (
+                        <span className="text-amber-700">{row.fxMissingReason || "Missing FX rate"}</span>
+                      ) : (
+                        <>
+                          <span>
+                            1 {row.settlementCurrencyCode || "-"} = {formatCrossRate(row.appliedCrossRate)}{" "}
+                            {row.documentCurrencyCode || "-"}
+                          </span>
+                          <br />
+                          <span className="text-slate-500">
+                            {row.crossRateSource || "-"} / {row.crossRateDate || "-"}
+                          </span>
+                        </>
+                      )}
+                    </td>
                     <td className="px-3 py-2">
                       <input
                         type="number"
                         min="0"
                         step="0.000001"
                         className="w-36 rounded-md border border-slate-300 px-2 py-1 text-xs"
+                        placeholder={row.documentCurrencyCode || "DOC"}
                         value={manualAllocationDraft[String(row.openItemId)] || ""}
                         onChange={(event) =>
                           setManualAllocationDraft((prev) => ({
@@ -2501,7 +2729,7 @@ export default function CariSettlementsPage() {
                 ))}
                 {previewRows.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="px-3 py-3 text-slate-500">
+                    <td colSpan={10} className="px-3 py-3 text-slate-500">
                       {previewLoading
                         ? "Loading preview..."
                         : "No preview rows. Enter legalEntityId, counterpartyId and asOfDate."}
@@ -2513,7 +2741,7 @@ export default function CariSettlementsPage() {
           </div>
           {!applyForm.autoAllocate ? (
             <p className="mt-2 text-sm text-slate-600">
-              Manual allocations selected: {manualAllocations.length}
+              Manual allocations selected: {manualAllocations.length} (document-currency amounts)
             </p>
           ) : null}
         </div>

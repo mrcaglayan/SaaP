@@ -657,7 +657,7 @@ async function loadOpenItemAsOfRows({
          a.tenant_id,
          a.legal_entity_id,
          a.open_item_id,
-         SUM(a.allocation_amount_txn) AS allocated_txn,
+         SUM(COALESCE(a.allocation_amount_doc_txn, a.allocation_amount_txn)) AS allocated_txn,
          SUM(a.allocation_amount_base) AS allocated_base,
          COUNT(*) AS allocation_count,
          MAX(b.settlement_date) AS last_settlement_date,
@@ -1085,7 +1085,14 @@ async function loadStatementAllocationRows({
        a.open_item_id,
        a.allocation_date,
        a.allocation_amount_txn,
+       a.allocation_amount_doc_txn,
+       a.allocation_amount_settlement_txn,
        a.allocation_amount_base,
+       a.document_currency_code,
+       a.settlement_currency_code,
+       a.applied_cross_rate,
+       a.cross_rate_source,
+       a.cross_rate_date,
        a.apply_idempotency_key,
        a.bank_statement_line_id,
        a.bank_apply_idempotency_key,
@@ -1093,6 +1100,7 @@ async function loadStatementAllocationRows({
        b.settlement_no,
        b.settlement_date,
        b.status AS settlement_status,
+       b.currency_code AS settlement_batch_currency_code,
        b.bank_statement_line_id AS settlement_bank_statement_line_id,
        b.bank_transaction_ref AS settlement_bank_transaction_ref,
        b.bank_apply_idempotency_key AS settlement_bank_apply_idempotency_key,
@@ -1101,6 +1109,7 @@ async function loadStatementAllocationRows({
        b_rev.settlement_no AS reversal_settlement_no,
        b_rev.settlement_date AS reversal_settlement_date,
        oi.document_id,
+       oi.currency_code AS open_item_currency_code,
        d.document_no,
        d.document_date,
        d.direction,
@@ -1177,7 +1186,27 @@ async function loadStatementAllocationRows({
       isVendor,
       allocationDate: toDateOnlyString(row.allocation_date),
       allocationAmountTxn: roundAmount(row.allocation_amount_txn),
+      allocationAmountDocTxn: roundAmount(
+        row.allocation_amount_doc_txn ?? row.allocation_amount_txn
+      ),
+      allocationAmountSettlementTxn: roundAmount(
+        row.allocation_amount_settlement_txn ?? row.allocation_amount_txn
+      ),
       allocationAmountBase: roundAmount(row.allocation_amount_base),
+      documentCurrencyCode:
+        normalizeUpperText(row.document_currency_code) ||
+        normalizeUpperText(row.open_item_currency_code) ||
+        null,
+      settlementCurrencyCode:
+        normalizeUpperText(row.settlement_currency_code) ||
+        normalizeUpperText(row.settlement_batch_currency_code) ||
+        null,
+      appliedCrossRate:
+        row.applied_cross_rate === null || row.applied_cross_rate === undefined
+          ? null
+          : toNumber(row.applied_cross_rate),
+      crossRateSource: row.cross_rate_source || null,
+      crossRateDate: toDateOnlyString(row.cross_rate_date),
       applyIdempotencyKey: row.apply_idempotency_key || null,
       bankStatementLineId: parsePositiveInt(row.bank_statement_line_id),
       bankApplyIdempotencyKey: row.bank_apply_idempotency_key || null,
@@ -1549,7 +1578,14 @@ function buildAllocationLinksByDocumentId(allocationRows) {
         settlementNo: row.settlementNo,
         settlementDate: row.settlementDate,
         allocationAmountTxn: row.allocationAmountTxn,
+        allocationAmountDocTxn: row.allocationAmountDocTxn,
+        allocationAmountSettlementTxn: row.allocationAmountSettlementTxn,
         allocationAmountBase: row.allocationAmountBase,
+        documentCurrencyCode: row.documentCurrencyCode,
+        settlementCurrencyCode: row.settlementCurrencyCode,
+        appliedCrossRate: row.appliedCrossRate,
+        crossRateSource: row.crossRateSource,
+        crossRateDate: row.crossRateDate,
         activeAsOf: row.activeAsOf,
         reversalSettlementBatchId: row.reversalSettlementBatchId,
         reversalSettlementNo: row.reversalSettlementNo,
@@ -1617,11 +1653,41 @@ function summarizeStatementSettlements(rows, asOfDate) {
   let reversedCount = 0;
   let reversalRowsCount = 0;
   let activeAsOfCount = 0;
+  let postedTotalAllocatedTxn = 0;
+  let postedTotalAllocatedBase = 0;
+  let postedRealizedFxNetBase = 0;
+  let reversedOriginalTotalAllocatedTxn = 0;
+  let reversedOriginalTotalAllocatedBase = 0;
+  let reversedOriginalRealizedFxNetBase = 0;
+  let reversalRowsTotalAllocatedTxn = 0;
+  let reversalRowsTotalAllocatedBase = 0;
+  let reversalRowsRealizedFxNetBase = 0;
+  const activeAllocatedByCurrency = new Map();
+  const reversalRowsAllocatedByCurrency = new Map();
 
   for (const row of rows) {
     const isReversalRow = Boolean(parsePositiveInt(row.reversalOfSettlementBatchId));
+    const totalAllocatedTxn = toNumber(row.totalAllocatedTxn);
+    const totalAllocatedBase = toNumber(row.totalAllocatedBase);
+    const realizedFxNetBase = toNumber(row.realizedFxNetBase);
+    const currencyCode = row.currencyCode;
     if (isReversalRow) {
       reversalRowsCount += 1;
+      reversalRowsTotalAllocatedTxn = roundAmount(
+        reversalRowsTotalAllocatedTxn + totalAllocatedTxn
+      );
+      reversalRowsTotalAllocatedBase = roundAmount(
+        reversalRowsTotalAllocatedBase + totalAllocatedBase
+      );
+      reversalRowsRealizedFxNetBase = roundAmount(
+        reversalRowsRealizedFxNetBase + realizedFxNetBase
+      );
+      addCurrencyAggregate(
+        reversalRowsAllocatedByCurrency,
+        currencyCode,
+        totalAllocatedTxn,
+        totalAllocatedBase
+      );
       continue;
     }
 
@@ -1629,9 +1695,27 @@ function summarizeStatementSettlements(rows, asOfDate) {
     const reversedByAsOf = reversalDate && reversalDate <= asOfDate;
     if (reversedByAsOf) {
       reversedCount += 1;
+      reversedOriginalTotalAllocatedTxn = roundAmount(
+        reversedOriginalTotalAllocatedTxn + totalAllocatedTxn
+      );
+      reversedOriginalTotalAllocatedBase = roundAmount(
+        reversedOriginalTotalAllocatedBase + totalAllocatedBase
+      );
+      reversedOriginalRealizedFxNetBase = roundAmount(
+        reversedOriginalRealizedFxNetBase + realizedFxNetBase
+      );
     } else {
       postedCount += 1;
       activeAsOfCount += 1;
+      postedTotalAllocatedTxn = roundAmount(postedTotalAllocatedTxn + totalAllocatedTxn);
+      postedTotalAllocatedBase = roundAmount(postedTotalAllocatedBase + totalAllocatedBase);
+      postedRealizedFxNetBase = roundAmount(postedRealizedFxNetBase + realizedFxNetBase);
+      addCurrencyAggregate(
+        activeAllocatedByCurrency,
+        currencyCode,
+        totalAllocatedTxn,
+        totalAllocatedBase
+      );
     }
   }
 
@@ -1641,6 +1725,28 @@ function summarizeStatementSettlements(rows, asOfDate) {
     reversedCount,
     reversalRowsCount,
     activeAsOfCount,
+    postedTotalAllocatedTxn,
+    postedTotalAllocatedBase,
+    postedRealizedFxNetBase,
+    reversedOriginalTotalAllocatedTxn,
+    reversedOriginalTotalAllocatedBase,
+    reversedOriginalRealizedFxNetBase,
+    reversalRowsTotalAllocatedTxn,
+    reversalRowsTotalAllocatedBase,
+    reversalRowsRealizedFxNetBase,
+    asOfVisibleTotalAllocatedTxn: roundAmount(
+      postedTotalAllocatedTxn + reversalRowsTotalAllocatedTxn
+    ),
+    asOfVisibleTotalAllocatedBase: roundAmount(
+      postedTotalAllocatedBase + reversalRowsTotalAllocatedBase
+    ),
+    asOfVisibleRealizedFxNetBase: roundAmount(
+      postedRealizedFxNetBase + reversalRowsRealizedFxNetBase
+    ),
+    activeAllocatedByCurrency: currencyMapToSortedArray(activeAllocatedByCurrency),
+    reversalRowsAllocatedByCurrency: currencyMapToSortedArray(
+      reversalRowsAllocatedByCurrency
+    ),
   };
 }
 
@@ -1649,29 +1755,91 @@ function summarizeStatementAllocations(rows) {
   let activeCount = 0;
   let reversedCount = 0;
   let allocationAmountTxnTotal = 0;
+  let allocationAmountDocTxnTotal = 0;
+  let allocationAmountSettlementTxnTotal = 0;
   let allocationAmountBaseTotal = 0;
   let activeAllocationAmountTxnTotal = 0;
+  let activeAllocationAmountDocTxnTotal = 0;
+  let activeAllocationAmountSettlementTxnTotal = 0;
   let activeAllocationAmountBaseTotal = 0;
+  let reversedAllocationAmountTxnTotal = 0;
+  let reversedAllocationAmountDocTxnTotal = 0;
+  let reversedAllocationAmountSettlementTxnTotal = 0;
+  let reversedAllocationAmountBaseTotal = 0;
+  const allocationByDocumentCurrency = new Map();
+  const allocationBySettlementCurrency = new Map();
+  const activeAllocationByDocumentCurrency = new Map();
+  const activeAllocationBySettlementCurrency = new Map();
 
   for (const row of rows) {
+    const amountTxn = toNumber(row.allocationAmountTxn);
+    const amountDocTxn = toNumber(row.allocationAmountDocTxn);
+    const amountSettlementTxn = toNumber(row.allocationAmountSettlementTxn);
+    const amountBase = toNumber(row.allocationAmountBase);
+
     count += 1;
-    allocationAmountTxnTotal = roundAmount(
-      allocationAmountTxnTotal + toNumber(row.allocationAmountTxn)
+    allocationAmountTxnTotal = roundAmount(allocationAmountTxnTotal + amountTxn);
+    allocationAmountDocTxnTotal = roundAmount(
+      allocationAmountDocTxnTotal + amountDocTxn
     );
-    allocationAmountBaseTotal = roundAmount(
-      allocationAmountBaseTotal + toNumber(row.allocationAmountBase)
+    allocationAmountSettlementTxnTotal = roundAmount(
+      allocationAmountSettlementTxnTotal + amountSettlementTxn
+    );
+    allocationAmountBaseTotal = roundAmount(allocationAmountBaseTotal + amountBase);
+
+    addCurrencyAggregate(
+      allocationByDocumentCurrency,
+      row.documentCurrencyCode,
+      amountDocTxn,
+      amountBase
+    );
+    addCurrencyAggregate(
+      allocationBySettlementCurrency,
+      row.settlementCurrencyCode,
+      amountSettlementTxn,
+      amountBase
     );
 
     if (row.activeAsOf) {
       activeCount += 1;
       activeAllocationAmountTxnTotal = roundAmount(
-        activeAllocationAmountTxnTotal + toNumber(row.allocationAmountTxn)
+        activeAllocationAmountTxnTotal + amountTxn
+      );
+      activeAllocationAmountDocTxnTotal = roundAmount(
+        activeAllocationAmountDocTxnTotal + amountDocTxn
+      );
+      activeAllocationAmountSettlementTxnTotal = roundAmount(
+        activeAllocationAmountSettlementTxnTotal + amountSettlementTxn
       );
       activeAllocationAmountBaseTotal = roundAmount(
-        activeAllocationAmountBaseTotal + toNumber(row.allocationAmountBase)
+        activeAllocationAmountBaseTotal + amountBase
+      );
+      addCurrencyAggregate(
+        activeAllocationByDocumentCurrency,
+        row.documentCurrencyCode,
+        amountDocTxn,
+        amountBase
+      );
+      addCurrencyAggregate(
+        activeAllocationBySettlementCurrency,
+        row.settlementCurrencyCode,
+        amountSettlementTxn,
+        amountBase
       );
     } else {
       reversedCount += 1;
+      reversedAllocationAmountTxnTotal = roundAmount(
+        reversedAllocationAmountTxnTotal + amountTxn
+      );
+      reversedAllocationAmountDocTxnTotal = roundAmount(
+        reversedAllocationAmountDocTxnTotal + amountDocTxn
+      );
+      reversedAllocationAmountSettlementTxnTotal = roundAmount(
+        reversedAllocationAmountSettlementTxnTotal + amountSettlementTxn
+      );
+      reversedAllocationAmountBaseTotal = roundAmount(
+        reversedAllocationAmountBaseTotal + amountBase
+      );
     }
   }
 
@@ -1680,9 +1848,25 @@ function summarizeStatementAllocations(rows) {
     activeCount,
     reversedCount,
     allocationAmountTxnTotal,
+    allocationAmountDocTxnTotal,
+    allocationAmountSettlementTxnTotal,
     allocationAmountBaseTotal,
     activeAllocationAmountTxnTotal,
+    activeAllocationAmountDocTxnTotal,
+    activeAllocationAmountSettlementTxnTotal,
     activeAllocationAmountBaseTotal,
+    reversedAllocationAmountTxnTotal,
+    reversedAllocationAmountDocTxnTotal,
+    reversedAllocationAmountSettlementTxnTotal,
+    reversedAllocationAmountBaseTotal,
+    allocationByDocumentCurrency: currencyMapToSortedArray(allocationByDocumentCurrency),
+    allocationBySettlementCurrency: currencyMapToSortedArray(allocationBySettlementCurrency),
+    activeAllocationByDocumentCurrency: currencyMapToSortedArray(
+      activeAllocationByDocumentCurrency
+    ),
+    activeAllocationBySettlementCurrency: currencyMapToSortedArray(
+      activeAllocationBySettlementCurrency
+    ),
   };
 }
 

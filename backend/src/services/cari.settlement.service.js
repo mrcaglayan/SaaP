@@ -213,6 +213,15 @@ function normalizeDateInput(value, label) {
   return normalized;
 }
 
+function pickEarlierDate(left, right) {
+  const normalizedLeft = toDateOnlyString(left, "date");
+  const normalizedRight = toDateOnlyString(right, "date");
+  if (normalizedLeft && normalizedRight) {
+    return normalizedLeft <= normalizedRight ? normalizedLeft : normalizedRight;
+  }
+  return normalizedLeft || normalizedRight || null;
+}
+
 function normalizeAmount(value, label = "amount", { allowZero = false } = {}) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) {
@@ -611,6 +620,18 @@ function mapSettlementBatchRow(row) {
 }
 
 function mapAllocationRow(row) {
+  const allocationAmountTxn = toDecimalNumber(row.allocation_amount_txn);
+  const allocationAmountDocTxn = toDecimalNumber(
+    row.allocation_amount_doc_txn === null || row.allocation_amount_doc_txn === undefined
+      ? row.allocation_amount_txn
+      : row.allocation_amount_doc_txn
+  );
+  const allocationAmountSettlementTxn = toDecimalNumber(
+    row.allocation_amount_settlement_txn === null ||
+      row.allocation_amount_settlement_txn === undefined
+      ? row.allocation_amount_txn
+      : row.allocation_amount_settlement_txn
+  );
   return {
     id: parsePositiveInt(row.id),
     tenantId: parsePositiveInt(row.tenant_id),
@@ -618,8 +639,24 @@ function mapAllocationRow(row) {
     settlementBatchId: parsePositiveInt(row.settlement_batch_id),
     openItemId: parsePositiveInt(row.open_item_id),
     allocationDate: toDateOnlyString(row.allocation_date, "allocationDate"),
-    allocationAmountTxn: toDecimalNumber(row.allocation_amount_txn),
+    allocationAmountTxn,
+    allocationAmountDocTxn,
+    allocationAmountSettlementTxn,
     allocationAmountBase: toDecimalNumber(row.allocation_amount_base),
+    documentCurrencyCode:
+      normalizeUpperText(row.document_currency_code) ||
+      normalizeUpperText(row.open_item_currency_code) ||
+      null,
+    settlementCurrencyCode:
+      normalizeUpperText(row.settlement_currency_code) ||
+      normalizeUpperText(row.batch_currency_code) ||
+      null,
+    appliedCrossRate: toDecimalNumber(row.applied_cross_rate),
+    crossRateSource: row.cross_rate_source || null,
+    crossRateDate:
+      row.cross_rate_date === null || row.cross_rate_date === undefined
+        ? null
+        : toDateOnlyString(row.cross_rate_date, "crossRateDate"),
     applyIdempotencyKey: row.apply_idempotency_key || null,
     bankStatementLineId: parsePositiveInt(row.bank_statement_line_id),
     bankApplyIdempotencyKey: row.bank_apply_idempotency_key || null,
@@ -676,6 +713,10 @@ function mapCashTransactionLinkRow(row) {
     txnType: row.txn_type || null,
     status: row.status || null,
     amount: toDecimalNumber(row.amount),
+    amountBase: toDecimalNumber(row.amount_base),
+    fxRate: toDecimalNumber(row.fx_rate),
+    fxRateSource: row.fx_rate_source || null,
+    fxRateDate: toDateOnlyString(row.fx_rate_date, "fxRateDate"),
     currencyCode: row.currency_code || null,
     bookDate: toDateOnlyString(row.book_date, "bookDate"),
     referenceNo: row.reference_no || null,
@@ -1076,6 +1117,7 @@ async function resolveSettlementFxRate({
   providedFxRate,
   fxFallbackMode,
   fxFallbackMaxDays,
+  allowMissingRate = false,
   runQuery = query,
 }) {
   const normalizedDate = normalizeDateInput(settlementDate, "settlementDate");
@@ -1193,6 +1235,9 @@ async function resolveSettlementFxRate({
         riskNotes: FOLLOW_UP_RISKS,
       };
     }
+    if (allowMissingRate) {
+      return null;
+    }
     throw badRequest(
       normalizedFallbackMaxDays === null
         ? "fxRate is required because no exact-date SPOT rate exists and no prior SPOT rate was found for settlement currency pair"
@@ -1200,9 +1245,113 @@ async function resolveSettlementFxRate({
     );
   }
 
+  if (allowMissingRate) {
+    return null;
+  }
   throw badRequest(
     "fxRate is required because no exact-date SPOT FX rate exists for settlementDate and currency pair"
   );
+}
+
+async function resolveSettlementToDocumentCrossRate({
+  tenantId,
+  settlementDate,
+  settlementCurrencyCode,
+  documentCurrencyCode,
+  functionalCurrencyCode,
+  settlementFxRate,
+  settlementFxSource,
+  settlementFxRateDate,
+  fxFallbackMode,
+  fxFallbackMaxDays,
+  runQuery = query,
+}) {
+  const normalizedDate = normalizeDateInput(settlementDate, "settlementDate");
+  const settlementCurrency = normalizeUpperText(settlementCurrencyCode);
+  const documentCurrency = normalizeUpperText(documentCurrencyCode);
+  const functionalCurrency = normalizeUpperText(functionalCurrencyCode);
+  if (!settlementCurrency || !documentCurrency || !functionalCurrency) {
+    throw badRequest("Settlement, document, and functional currency codes are required");
+  }
+
+  if (settlementCurrency === documentCurrency) {
+    return {
+      appliedCrossRate: 1,
+      crossRateSource: "PARITY",
+      crossRateDate: normalizedDate,
+    };
+  }
+
+  const directPolicy = await resolveSettlementFxRate({
+    tenantId,
+    settlementDate: normalizedDate,
+    settlementCurrencyCode: settlementCurrency,
+    functionalCurrencyCode: documentCurrency,
+    providedFxRate: null,
+    fxFallbackMode,
+    fxFallbackMaxDays,
+    allowMissingRate: true,
+    runQuery,
+  });
+  if (directPolicy?.settlementFxRate) {
+    return {
+      appliedCrossRate: normalizeOptionalPositiveDecimal(
+        directPolicy.settlementFxRate,
+        "appliedCrossRate"
+      ),
+      crossRateSource: toNullableString(directPolicy.source, 40) || "FX_TABLE_EXACT_SPOT",
+      crossRateDate:
+        toDateOnlyString(directPolicy.rateDate, "crossRateDate") || normalizedDate,
+    };
+  }
+
+  const settlementToFunctionalRate = normalizeOptionalPositiveDecimal(
+    settlementFxRate,
+    "settlementFxRate"
+  );
+  if (!settlementToFunctionalRate) {
+    throw badRequest(
+      "settlementFxRate must be resolved before deriving settlement/document cross rate"
+    );
+  }
+
+  const documentToFunctionalPolicy = await resolveSettlementFxRate({
+    tenantId,
+    settlementDate: normalizedDate,
+    settlementCurrencyCode: documentCurrency,
+    functionalCurrencyCode: functionalCurrency,
+    providedFxRate: null,
+    fxFallbackMode,
+    fxFallbackMaxDays,
+    runQuery,
+  });
+  const documentToFunctionalRate = normalizeOptionalPositiveDecimal(
+    documentToFunctionalPolicy?.settlementFxRate,
+    "documentToFunctionalFxRate"
+  );
+  if (!documentToFunctionalRate) {
+    throw badRequest(
+      "Unable to resolve document/functional FX rate for settlement cross-rate derivation"
+    );
+  }
+
+  const derivedCrossRate = normalizeOptionalPositiveDecimal(
+    settlementToFunctionalRate / documentToFunctionalRate,
+    "appliedCrossRate"
+  );
+  const settlementSource = normalizeUpperText(settlementFxSource);
+  const documentSource = normalizeUpperText(documentToFunctionalPolicy?.source);
+  const usedPrior =
+    settlementSource.includes("PRIOR") || documentSource.includes("PRIOR");
+  return {
+    appliedCrossRate: derivedCrossRate,
+    crossRateSource: usedPrior
+      ? "DERIVED_VIA_FUNCTIONAL_PRIOR"
+      : "DERIVED_VIA_FUNCTIONAL",
+    crossRateDate:
+      pickEarlierDate(settlementFxRateDate, documentToFunctionalPolicy?.rateDate) ||
+      normalizedDate,
+  };
 }
 
 async function insertPostedJournalWithLinesTx(tx, payload) {
@@ -1410,24 +1559,41 @@ async function fetchSettlementAllocationsByBatchId({
 }) {
   const result = await runQuery(
     `SELECT
-       id,
-       tenant_id,
-       legal_entity_id,
-       settlement_batch_id,
-       open_item_id,
-       allocation_date,
-       allocation_amount_txn,
-       allocation_amount_base,
-       apply_idempotency_key,
-       bank_statement_line_id,
-       bank_apply_idempotency_key,
-       note,
-       created_at,
-       updated_at
-     FROM cari_settlement_allocations
-     WHERE tenant_id = ?
-       AND settlement_batch_id = ?
-     ORDER BY id ASC`,
+       a.id,
+       a.tenant_id,
+       a.legal_entity_id,
+       a.settlement_batch_id,
+       a.open_item_id,
+       a.allocation_date,
+       a.allocation_amount_txn,
+       a.allocation_amount_doc_txn,
+       a.allocation_amount_settlement_txn,
+       a.allocation_amount_base,
+       a.document_currency_code,
+       a.settlement_currency_code,
+       a.applied_cross_rate,
+       a.cross_rate_source,
+       a.cross_rate_date,
+       a.apply_idempotency_key,
+       a.bank_statement_line_id,
+       a.bank_apply_idempotency_key,
+       a.note,
+       a.created_at,
+       a.updated_at,
+       oi.currency_code AS open_item_currency_code,
+       b.currency_code AS batch_currency_code
+     FROM cari_settlement_allocations a
+     LEFT JOIN cari_open_items oi
+       ON oi.tenant_id = a.tenant_id
+      AND oi.legal_entity_id = a.legal_entity_id
+      AND oi.id = a.open_item_id
+     LEFT JOIN cari_settlement_batches b
+       ON b.tenant_id = a.tenant_id
+      AND b.legal_entity_id = a.legal_entity_id
+      AND b.id = a.settlement_batch_id
+     WHERE a.tenant_id = ?
+       AND a.settlement_batch_id = ?
+     ORDER BY a.id ASC`,
     [tenantId, settlementBatchId]
   );
   return result.rows || [];
@@ -1541,6 +1707,10 @@ async function fetchCashTransactionForSettlementLink({
        ct.txn_type,
        ct.status,
        ct.amount,
+       ct.amount_base,
+       ct.fx_rate,
+       ct.fx_rate_source,
+       ct.fx_rate_date,
        ct.book_date,
        ct.currency_code,
        ct.reference_no,
@@ -1642,12 +1812,16 @@ async function createOrReplaySettlementCashTransaction({
   tenantId,
   userId,
   legalEntityId,
+  functionalCurrencyCode,
   direction,
   counterpartyId,
   counterpartyRow,
   currencyCode,
   amountTxn,
   settlementDate,
+  providedFxRate = null,
+  fxFallbackMode = null,
+  fxFallbackMaxDays = null,
   settlementIdempotencyKey,
   settlementIntegrationEventUid,
   linkedCashTransaction,
@@ -1859,6 +2033,24 @@ async function createOrReplaySettlementCashTransaction({
     bookDate,
     runQuery,
   });
+  const fxPolicy = await resolveSettlementFxRate({
+    tenantId,
+    settlementDate: bookDate,
+    settlementCurrencyCode: currencyCode,
+    functionalCurrencyCode,
+    providedFxRate,
+    fxFallbackMode,
+    fxFallbackMaxDays,
+    runQuery,
+  });
+  const resolvedFxRate = normalizeOptionalPositiveDecimal(
+    fxPolicy?.settlementFxRate,
+    "linkedCashTransaction.fxRate"
+  );
+  const resolvedAmountBase = roundAmount(Number(amountTxn) * Number(resolvedFxRate));
+  const resolvedFxRateSource = toNullableString(fxPolicy?.source, 40) || "REQUEST";
+  const resolvedFxRateDate =
+    toDateOnlyString(fxPolicy?.rateDate, "linkedCashTransaction.fxRateDate") || bookDate;
   try {
     const transactionId = await insertCashTransaction({
       payload: {
@@ -1871,7 +2063,14 @@ async function createOrReplaySettlementCashTransaction({
         txnDatetime,
         bookDate,
         amount: roundAmount(Number(amountTxn)).toFixed(6),
+        amountBase: resolvedAmountBase.toFixed(6),
         currencyCode,
+        fxRate: resolvedFxRate,
+        fxRateSource: resolvedFxRateSource,
+        fxRateDate: resolvedFxRateDate,
+        fxFallbackMode: fxPolicy?.fallbackMode || null,
+        fxFallbackMaxDays:
+          fxPolicy?.fallbackMaxDays === undefined ? null : fxPolicy?.fallbackMaxDays,
         description,
         referenceNo,
         sourceDocType: null,
@@ -2248,18 +2447,17 @@ async function fetchOpenItemsForApply({
   tenantId,
   legalEntityId,
   counterpartyId,
-  currencyCode,
+  currencyCode = null,
   openItemIds = null,
   runQuery = query,
 }) {
   const statuses = [OPEN_ITEM_STATUS_OPEN, OPEN_ITEM_STATUS_PARTIALLY_SETTLED];
-  const params = [
-    tenantId,
-    legalEntityId,
-    counterpartyId,
-    normalizeUpperText(currencyCode),
-    ...statuses,
-  ];
+  const params = [tenantId, legalEntityId, counterpartyId, ...statuses];
+  const normalizedCurrency = normalizeUpperText(currencyCode);
+  const currencyFilterSql = normalizedCurrency ? "AND oi.currency_code = ?" : "";
+  if (normalizedCurrency) {
+    params.push(normalizedCurrency);
+  }
   let whereExtra = "";
   if (Array.isArray(openItemIds) && openItemIds.length > 0) {
     whereExtra = ` AND oi.id IN (${openItemIds.map(() => "?").join(", ")})`;
@@ -2294,9 +2492,9 @@ async function fetchOpenItemsForApply({
      WHERE oi.tenant_id = ?
        AND oi.legal_entity_id = ?
        AND oi.counterparty_id = ?
-       AND oi.currency_code = ?
        AND oi.status IN (?, ?)
        AND oi.residual_amount_txn > 0
+       ${currencyFilterSql}
        ${whereExtra}
      ORDER BY oi.id ASC
      FOR UPDATE`,
@@ -2462,9 +2660,11 @@ function buildManualAllocationPlan(openItems, requestedAllocations) {
   return plan.sort((left, right) => left.openItemId - right.openItemId);
 }
 
-function buildAutoAllocationPlan(openItems, availableFundsTxn) {
-  let remainingFunds = roundAmount(availableFundsTxn);
-  if (remainingFunds <= AMOUNT_EPSILON) {
+function buildAutoAllocationPlan(openItems, availableFundsSettlementTxn, {
+  crossRateByDocumentCurrency = new Map(),
+} = {}) {
+  let remainingSettlementFunds = roundAmount(availableFundsSettlementTxn);
+  if (remainingSettlementFunds <= AMOUNT_EPSILON) {
     return [];
   }
 
@@ -2485,23 +2685,63 @@ function buildAutoAllocationPlan(openItems, availableFundsTxn) {
 
   const plan = [];
   for (const row of ordered) {
-    if (remainingFunds <= AMOUNT_EPSILON) {
+    if (remainingSettlementFunds <= AMOUNT_EPSILON) {
       break;
     }
-    const residualTxn = normalizeAmount(row.residual_amount_txn, "openItem.residualAmountTxn");
-    if (residualTxn <= AMOUNT_EPSILON) {
+    const residualDocTxn = normalizeAmount(row.residual_amount_txn, "openItem.residualAmountTxn");
+    if (residualDocTxn <= AMOUNT_EPSILON) {
       continue;
     }
-    const allocationTxn = roundAmount(Math.min(remainingFunds, residualTxn));
-    if (allocationTxn <= AMOUNT_EPSILON) {
+    const documentCurrencyCode = normalizeUpperText(row.currency_code);
+    const crossRate = normalizeOptionalPositiveDecimal(
+      crossRateByDocumentCurrency.get(documentCurrencyCode),
+      `crossRateByDocumentCurrency.${documentCurrencyCode || "UNKNOWN"}`
+    );
+    if (!crossRate) {
+      throw badRequest(
+        `Missing cross rate for auto allocation document currency ${documentCurrencyCode || "UNKNOWN"}`
+      );
+    }
+    let allocationDocTxn = roundAmount(
+      Math.min(residualDocTxn, Number(remainingSettlementFunds) * Number(crossRate))
+    );
+    if (allocationDocTxn <= AMOUNT_EPSILON) {
+      continue;
+    }
+    if (allocationDocTxn > residualDocTxn) {
+      allocationDocTxn = residualDocTxn;
+    }
+    let allocationSettlementTxn = roundAmount(
+      Number(allocationDocTxn) / Number(crossRate)
+    );
+    if (allocationSettlementTxn > remainingSettlementFunds) {
+      if (allocationSettlementTxn - remainingSettlementFunds <= AMOUNT_EPSILON) {
+        allocationSettlementTxn = remainingSettlementFunds;
+      } else {
+        allocationSettlementTxn = remainingSettlementFunds;
+        allocationDocTxn = roundAmount(
+          Math.min(
+            residualDocTxn,
+            Number(allocationSettlementTxn) * Number(crossRate)
+          )
+        );
+      }
+    }
+    if (
+      allocationDocTxn <= AMOUNT_EPSILON ||
+      allocationSettlementTxn <= AMOUNT_EPSILON
+    ) {
       continue;
     }
     plan.push({
       openItemId: parsePositiveInt(row.id),
-      allocationTxn,
+      allocationTxn: allocationDocTxn,
+      allocationSettlementTxnHint: allocationSettlementTxn,
       row,
     });
-    remainingFunds = roundAmount(remainingFunds - allocationTxn);
+    remainingSettlementFunds = roundAmount(
+      remainingSettlementFunds - allocationSettlementTxn
+    );
   }
 
   return plan;
@@ -2837,6 +3077,7 @@ export async function applyCariSettlement({
   const incomingAmountTxn = normalizeAmount(payload.incomingAmountTxn || 0, "incomingAmountTxn", {
     allowZero: true,
   });
+  let effectiveIncomingAmountTxn = incomingAmountTxn;
   const useUnappliedCash = payload.useUnappliedCash !== false;
   const autoAllocate = Boolean(payload.autoAllocate);
   const bankApplyIdempotencyKey = toNullableString(payload.bankApplyIdempotencyKey, 100);
@@ -3013,7 +3254,6 @@ export async function applyCariSettlement({
         tenantId,
         legalEntityId,
         counterpartyId,
-        currencyCode: settlementCurrencyCode,
         openItemIds: requestedOpenItemIds.length > 0 ? requestedOpenItemIds : null,
         runQuery: tx.query,
       });
@@ -3039,12 +3279,16 @@ export async function applyCariSettlement({
           tenantId,
           userId: payload.userId,
           legalEntityId,
+          functionalCurrencyCode: legalEntity.functional_currency_code,
           direction,
           counterpartyId,
           counterpartyRow: counterparty,
           currencyCode: settlementCurrencyCode,
-          amountTxn: incomingAmountTxn,
+          amountTxn: effectiveIncomingAmountTxn,
           settlementDate,
+          providedFxRate: payload.fxRate,
+          fxFallbackMode: payload.fxFallbackMode,
+          fxFallbackMaxDays: payload.fxFallbackMaxDays,
           settlementIdempotencyKey: idempotencyKey,
           settlementIntegrationEventUid: integrationEventUid,
           linkedCashTransaction,
@@ -3092,43 +3336,45 @@ export async function applyCariSettlement({
         integrationEventUid,
       });
 
+      let lockedCashTransaction = null;
+      let settlementFxRateOverrideFromLinkedCash = null;
       if (effectiveCashTransactionId) {
-        const linkedCashTransaction = await fetchCashTransactionForSettlementLink({
+        lockedCashTransaction = await fetchCashTransactionForSettlementLink({
           tenantId,
           cashTransactionId: effectiveCashTransactionId,
           runQuery: tx.query,
           forUpdate: true,
         });
-        if (!linkedCashTransaction) {
+        if (!lockedCashTransaction) {
           throw badRequest("cashTransactionId not found for tenant");
         }
-        if (parsePositiveInt(linkedCashTransaction.register_legal_entity_id) !== legalEntityId) {
+        if (parsePositiveInt(lockedCashTransaction.register_legal_entity_id) !== legalEntityId) {
           throw badRequest("cashTransactionId must belong to legalEntityId");
         }
         const expectedCashTxnType = DIRECTION_TO_CASH_TXN_TYPE[direction];
-        if (normalizeUpperText(linkedCashTransaction.txn_type) !== expectedCashTxnType) {
+        if (normalizeUpperText(lockedCashTransaction.txn_type) !== expectedCashTxnType) {
           throw badRequest(
             `cashTransactionId must be txnType=${expectedCashTxnType} for settlement direction=${direction}`
           );
         }
         if (
-          parsePositiveInt(linkedCashTransaction.counterparty_id) &&
-          parsePositiveInt(linkedCashTransaction.counterparty_id) !== counterpartyId
+          parsePositiveInt(lockedCashTransaction.counterparty_id) &&
+          parsePositiveInt(lockedCashTransaction.counterparty_id) !== counterpartyId
         ) {
           throw badRequest("cashTransactionId counterparty does not match counterpartyId");
         }
-        if (normalizeUpperText(linkedCashTransaction.currency_code) !== settlementCurrencyCode) {
+        if (normalizeUpperText(lockedCashTransaction.currency_code) !== settlementCurrencyCode) {
           await recordSettlementCurrencyMismatchSafe({
             tenantId,
             legalEntityId,
             settlementCurrencyCode,
-            registerId: parsePositiveInt(linkedCashTransaction.cash_register_id),
+            registerId: parsePositiveInt(lockedCashTransaction.cash_register_id),
             registerCode: null,
-            registerCurrencyCode: linkedCashTransaction.currency_code,
+            registerCurrencyCode: lockedCashTransaction.currency_code,
             counterpartyId,
             counterpartyType: direction === "AR" ? "CUSTOMER" : "VENDOR",
             settlementIdempotencyKey: idempotencyKey,
-            cashTransactionId: parsePositiveInt(linkedCashTransaction.id),
+            cashTransactionId: parsePositiveInt(lockedCashTransaction.id),
             runQuery: tx.query,
           });
           throw badRequest(
@@ -3136,7 +3382,7 @@ export async function applyCariSettlement({
           );
         }
         const linkedBatchOnCash = parsePositiveInt(
-          linkedCashTransaction.linked_cari_settlement_batch_id
+          lockedCashTransaction.linked_cari_settlement_batch_id
         );
         if (linkedBatchOnCash) {
           throw badRequest("cashTransactionId is already linked to a settlement batch");
@@ -3147,12 +3393,53 @@ export async function applyCariSettlement({
           tenantId,
           userId: payload.userId,
           legalEntityId,
-          cashTransactionId: parsePositiveInt(linkedCashTransaction.id),
+          cashTransactionId: parsePositiveInt(lockedCashTransaction.id),
           assertScopeAccess,
         });
         if (postedLinkedCashTransaction) {
           effectiveCashTransactionId =
             parsePositiveInt(postedLinkedCashTransaction.id) || effectiveCashTransactionId;
+          lockedCashTransaction = await fetchCashTransactionForSettlementLink({
+            tenantId,
+            cashTransactionId: effectiveCashTransactionId,
+            runQuery: tx.query,
+            forUpdate: true,
+          });
+        }
+
+        const cashAmountTxn = normalizeAmount(
+          lockedCashTransaction?.amount,
+          "cashTransaction.amount"
+        );
+        if (effectiveIncomingAmountTxn <= AMOUNT_EPSILON) {
+          effectiveIncomingAmountTxn = cashAmountTxn;
+        } else if (!amountsAreEqual(effectiveIncomingAmountTxn, cashAmountTxn)) {
+          throw badRequest("incomingAmountTxn must equal cashTransactionId amount");
+        }
+
+        const cashFxRate = normalizeOptionalPositiveDecimal(
+          lockedCashTransaction?.fx_rate,
+          "cashTransaction.fxRate"
+        );
+        const cashAmountBase = normalizeOptionalPositiveDecimal(
+          lockedCashTransaction?.amount_base,
+          "cashTransaction.amountBase"
+        );
+        const derivedCashFxRate =
+          cashFxRate ||
+          (cashAmountBase
+            ? normalizeOptionalPositiveDecimal(
+                Number(cashAmountBase) / Number(cashAmountTxn),
+                "cashTransaction.derivedFxRate"
+              )
+            : null);
+        if (payload.fxRate && derivedCashFxRate && !amountsAreEqual(payload.fxRate, derivedCashFxRate)) {
+          throw badRequest(
+            "fxRate must match linked cash transaction FX rate for cash-linked settlement"
+          );
+        }
+        if (!payload.fxRate && derivedCashFxRate) {
+          settlementFxRateOverrideFromLinkedCash = derivedCashFxRate;
         }
       }
 
@@ -3161,7 +3448,7 @@ export async function applyCariSettlement({
         settlementDate,
         settlementCurrencyCode,
         functionalCurrencyCode: legalEntity.functional_currency_code,
-        providedFxRate: payload.fxRate,
+        providedFxRate: payload.fxRate || settlementFxRateOverrideFromLinkedCash,
         fxFallbackMode: payload.fxFallbackMode,
         fxFallbackMaxDays: payload.fxFallbackMaxDays,
         runQuery: tx.query,
@@ -3182,7 +3469,9 @@ export async function applyCariSettlement({
           0
         )
       );
-      const totalAvailableFundsTxn = roundAmount(incomingAmountTxn + unappliedAvailableTxn);
+      const totalAvailableFundsTxn = roundAmount(
+        effectiveIncomingAmountTxn + unappliedAvailableTxn
+      );
       if (totalAvailableFundsTxn <= AMOUNT_EPSILON) {
         throw badRequest("No available funds from incomingAmountTxn or unapplied cash");
       }
@@ -3190,34 +3479,136 @@ export async function applyCariSettlement({
       const requestedAllocations = Array.isArray(payload.allocations)
         ? payload.allocations
         : [];
+      const uniqueDocumentCurrencies = Array.from(
+        new Set(
+          lockedOpenItems
+            .map((row) => normalizeUpperText(row.currency_code))
+            .filter(Boolean)
+        )
+      );
+      const crossRatePolicyByDocumentCurrency = new Map();
+      for (const documentCurrencyCode of uniqueDocumentCurrencies) {
+        // eslint-disable-next-line no-await-in-loop
+        const crossRatePolicy = await resolveSettlementToDocumentCrossRate({
+          tenantId,
+          settlementDate,
+          settlementCurrencyCode,
+          documentCurrencyCode,
+          functionalCurrencyCode: legalEntity.functional_currency_code,
+          settlementFxRate: fxPolicy.settlementFxRate,
+          settlementFxSource: fxPolicy.source,
+          settlementFxRateDate: fxPolicy.rateDate,
+          fxFallbackMode: fxPolicy.fallbackMode,
+          fxFallbackMaxDays: fxPolicy.fallbackMaxDays,
+          runQuery: tx.query,
+        });
+        crossRatePolicyByDocumentCurrency.set(documentCurrencyCode, crossRatePolicy);
+      }
+      const crossRateByDocumentCurrency = new Map(
+        Array.from(crossRatePolicyByDocumentCurrency.entries()).map(
+          ([documentCurrencyCode, policy]) => [
+            documentCurrencyCode,
+            normalizeOptionalPositiveDecimal(policy?.appliedCrossRate, "appliedCrossRate"),
+          ]
+        )
+      );
       const manualPlan =
         requestedAllocations.length > 0
           ? buildManualAllocationPlan(lockedOpenItems, requestedAllocations)
           : [];
       let allocationPlan = manualPlan;
       if (autoAllocate || manualPlan.length === 0) {
-        allocationPlan = buildAutoAllocationPlan(lockedOpenItems, totalAvailableFundsTxn);
+        allocationPlan = buildAutoAllocationPlan(lockedOpenItems, totalAvailableFundsTxn, {
+          crossRateByDocumentCurrency,
+        });
       }
       if (allocationPlan.length === 0) {
         throw badRequest("No allocations can be produced for this settlement request");
       }
 
-      const enrichedAllocations = allocationPlan.map((entry) => {
+      const getCrossRatePolicyForDocumentCurrency = (documentCurrencyCode) => {
+        const normalizedDocumentCurrency =
+          normalizeUpperText(documentCurrencyCode) || settlementCurrencyCode;
+        const crossRatePolicy = crossRatePolicyByDocumentCurrency.get(
+          normalizedDocumentCurrency
+        );
+        if (!crossRatePolicy) {
+          throw badRequest(
+            `Missing settlement/document cross-rate for currency ${normalizedDocumentCurrency}`
+          );
+        }
+        return crossRatePolicy;
+      };
+
+      const enrichedAllocations = [];
+      for (const entry of allocationPlan) {
+        const crossRatePolicy = getCrossRatePolicyForDocumentCurrency(
+          entry?.row?.currency_code
+        );
+        const documentCurrencyCode =
+          normalizeUpperText(entry?.row?.currency_code) || settlementCurrencyCode;
+        const allocationAmountDocTxn = normalizeAmount(
+          entry.allocationTxn,
+          "allocationTxn"
+        );
+        const appliedCrossRate = normalizeOptionalPositiveDecimal(
+          crossRatePolicy?.appliedCrossRate,
+          "appliedCrossRate"
+        );
+        const hintedSettlementTxn = normalizeAmount(
+          entry?.allocationSettlementTxnHint || 0,
+          "allocationSettlementTxnHint",
+          { allowZero: true }
+        );
+        const allocationAmountSettlementTxn =
+          hintedSettlementTxn > AMOUNT_EPSILON
+            ? hintedSettlementTxn
+            : amountsAreEqual(appliedCrossRate, 1)
+              ? allocationAmountDocTxn
+              : normalizeAmount(
+                  roundAmount(allocationAmountDocTxn / Number(appliedCrossRate)),
+                  "allocationAmountSettlementTxn"
+                );
         const historicalBase = calculateHistoricalBaseAllocation(
           entry.row,
-          entry.allocationTxn
+          allocationAmountDocTxn
         );
         const settlementBase = roundAmount(
-          Number(entry.allocationTxn) * Number(fxPolicy.settlementFxRate)
+          Number(allocationAmountSettlementTxn) * Number(fxPolicy.settlementFxRate)
         );
-        return {
+        enrichedAllocations.push({
           ...entry,
+          allocationAmountDocTxn,
+          allocationAmountSettlementTxn,
+          documentCurrencyCode,
+          settlementCurrencyCode,
+          appliedCrossRate,
+          crossRateSource:
+            toNullableString(crossRatePolicy?.crossRateSource, 40) || "DERIVED",
+          crossRateDate:
+            toDateOnlyString(crossRatePolicy?.crossRateDate, "crossRateDate") ||
+            settlementDate,
           allocationBaseHistorical: historicalBase,
           allocationBaseSettlement: settlementBase,
-        };
-      });
+        });
+      }
+      const totalAllocatedDocTxn = roundAmount(
+        enrichedAllocations.reduce(
+          (sum, entry) => sum + Number(entry.allocationAmountDocTxn),
+          0
+        )
+      );
+      const totalAllocatedSettlementTxn = roundAmount(
+        enrichedAllocations.reduce(
+          (sum, entry) => sum + Number(entry.allocationAmountSettlementTxn),
+          0
+        )
+      );
       const totalAllocatedTxn = roundAmount(
-        enrichedAllocations.reduce((sum, entry) => sum + Number(entry.allocationTxn), 0)
+        enrichedAllocations.reduce(
+          (sum, entry) => sum + Number(entry.allocationAmountSettlementTxn),
+          0
+        )
       );
       const totalAllocatedBaseHistorical = roundAmount(
         enrichedAllocations.reduce(
@@ -3277,13 +3668,15 @@ export async function applyCariSettlement({
         remainingNeedTxn = roundAmount(remainingNeedTxn - consumeTxn);
       }
 
-      if (remainingNeedTxn > incomingAmountTxn + AMOUNT_EPSILON) {
+      if (remainingNeedTxn > effectiveIncomingAmountTxn + AMOUNT_EPSILON) {
         throw badRequest(
           "incomingAmountTxn is insufficient after unapplied consumption for requested allocations"
         );
       }
       const incomingUsedTxn = roundAmount(Math.max(0, remainingNeedTxn));
-      const incomingResidualTxn = roundAmount(Math.max(0, incomingAmountTxn - incomingUsedTxn));
+      const incomingResidualTxn = roundAmount(
+        Math.max(0, effectiveIncomingAmountTxn - incomingUsedTxn)
+      );
       const incomingResidualBase = roundAmount(
         incomingResidualTxn * Number(fxPolicy.settlementFxRate)
       );
@@ -3503,21 +3896,35 @@ export async function applyCariSettlement({
               open_item_id,
               allocation_date,
               allocation_amount_txn,
+              allocation_amount_doc_txn,
+              allocation_amount_settlement_txn,
               allocation_amount_base,
+              document_currency_code,
+              settlement_currency_code,
+              applied_cross_rate,
+              cross_rate_source,
+              cross_rate_date,
               apply_idempotency_key,
               bank_statement_line_id,
               bank_apply_idempotency_key,
               note
            )
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             tenantId,
             legalEntityId,
             settlementBatchId,
             entry.openItemId,
             settlementDate,
-            entry.allocationTxn,
+            entry.allocationAmountDocTxn,
+            entry.allocationAmountDocTxn,
+            entry.allocationAmountSettlementTxn,
             entry.allocationBaseHistorical,
+            entry.documentCurrencyCode,
+            settlementCurrencyCode,
+            entry.appliedCrossRate,
+            entry.crossRateSource,
+            entry.crossRateDate,
             applyIdempotencyKey,
             bankStatementLineId,
             allocationBankApplyIdempotencyKey,
@@ -3545,7 +3952,9 @@ export async function applyCariSettlement({
           row.original_amount_base,
           "openItem.originalAmountBase"
         );
-        let nextResidualTxn = roundAmount(currentResidualTxn - entry.allocationTxn);
+        let nextResidualTxn = roundAmount(
+          currentResidualTxn - entry.allocationAmountDocTxn
+        );
         let nextResidualBase = roundAmount(
           currentResidualBase - entry.allocationBaseHistorical
         );
@@ -3777,7 +4186,9 @@ export async function applyCariSettlement({
           counterpartyId,
           direction,
           settlementDate,
-          incomingAmountTxn,
+          incomingAmountTxn: effectiveIncomingAmountTxn,
+          totalAllocatedDocTxn,
+          totalAllocatedSettlementTxn,
           totalAllocatedTxn,
           totalAllocatedBaseHistorical,
           totalAllocatedBaseSettlement,
@@ -3790,6 +4201,13 @@ export async function applyCariSettlement({
             openItemId: entry.openItemId,
             documentId: parsePositiveInt(entry.row.document_id),
             allocationTxn: entry.allocationTxn,
+            allocationAmountDocTxn: entry.allocationAmountDocTxn,
+            allocationAmountSettlementTxn: entry.allocationAmountSettlementTxn,
+            documentCurrencyCode: entry.documentCurrencyCode,
+            settlementCurrencyCode: entry.settlementCurrencyCode,
+            appliedCrossRate: entry.appliedCrossRate,
+            crossRateSource: entry.crossRateSource,
+            crossRateDate: entry.crossRateDate,
             allocationBaseHistorical: entry.allocationBaseHistorical,
             allocationBaseSettlement: entry.allocationBaseSettlement,
           })),
@@ -3847,6 +4265,9 @@ export async function applyCariSettlement({
         followUpRisks: FOLLOW_UP_RISKS,
         metrics: {
           createdCashTransactionId: effectiveCashTransactionId,
+          incomingAmountTxn: effectiveIncomingAmountTxn,
+          totalAllocatedDocTxn,
+          totalAllocatedSettlementTxn,
           totalAllocatedTxn,
           totalAllocatedBaseHistorical,
           totalAllocatedBaseSettlement,
@@ -4429,7 +4850,7 @@ export async function reverseCariSettlementById({
         }
 
         const allocationTxn = normalizeAmount(
-          allocation.allocation_amount_txn,
+          allocation.allocation_amount_doc_txn ?? allocation.allocation_amount_txn,
           "allocationAmountTxn"
         );
         const allocationBase = normalizeAmount(

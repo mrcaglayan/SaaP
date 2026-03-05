@@ -131,6 +131,46 @@ function formatAmount(value) {
   });
 }
 
+function getJournalLineSide(line) {
+  const debit = toAmount(line?.debit_base ?? line?.debitBase);
+  const credit = toAmount(line?.credit_base ?? line?.creditBase);
+  if (debit > 0 && credit <= 0) {
+    return "DEBIT";
+  }
+  if (credit > 0 && debit <= 0) {
+    return "CREDIT";
+  }
+  return "OTHER";
+}
+
+function getJournalLineSortOrder(line) {
+  const side = getJournalLineSide(line);
+  if (side === "DEBIT") return 0;
+  if (side === "CREDIT") return 1;
+  return 2;
+}
+
+function sortJournalDetailLines(lines = []) {
+  return [...(Array.isArray(lines) ? lines : [])]
+    .map((line, index) => ({ line, index }))
+    .sort((left, right) => {
+      const sideDelta =
+        getJournalLineSortOrder(left.line) - getJournalLineSortOrder(right.line);
+      if (sideDelta !== 0) {
+        return sideDelta;
+      }
+
+      const leftLineNo = Number(left.line?.line_no || 0);
+      const rightLineNo = Number(right.line?.line_no || 0);
+      if (leftLineNo !== rightLineNo) {
+        return leftLineNo - rightLineNo;
+      }
+
+      return left.index - right.index;
+    })
+    .map((entry) => entry.line);
+}
+
 function hasId(rows, id) {
   return rows.some((row) => Number(row.id) === Number(id));
 }
@@ -664,6 +704,10 @@ export default function JournalWorkbenchPage() {
   const deepLinkedJournalId = toInt(deepLinkedJournalIdRaw);
   const selectedJournalReverseBlockedSourceLinks = useMemo(
     () => resolveReverseBlockedSourceLinks(selectedJournal?.source_links),
+    [selectedJournal]
+  );
+  const selectedJournalDetailLines = useMemo(
+    () => sortJournalDetailLines(selectedJournal?.lines || []),
     [selectedJournal]
   );
   const isReverseBlockedForSelectedJournal = useMemo(() => {
@@ -3504,15 +3548,24 @@ export default function JournalWorkbenchPage() {
                   <table className="min-w-full text-[11px]">
                     <thead className="bg-slate-50 text-left text-slate-600"><tr><th className="px-2 py-1.5">#</th><th className="px-2 py-1.5">{l("Account", "Hesap")}</th><th className="px-2 py-1.5">{l("Subledger Ref", "Alt Defter Ref")}</th><th className="px-2 py-1.5">{l("Debit", "Borc")}</th><th className="px-2 py-1.5">{l("Credit", "Alacak")}</th></tr></thead>
                     <tbody>
-                      {(selectedJournal.lines || []).map((line) => (
-                        <tr key={line.id} className="border-t border-slate-100">
+                      {selectedJournalDetailLines.map((line, index) => {
+                        const lineSide = getJournalLineSide(line);
+                        const accountPrefix = lineSide === "CREDIT" ? " " : "";
+                        const rowKey =
+                          line?.id ||
+                          `${line?.line_no || index}-${line?.account_code || ""}-${line?.account_name || ""}`;
+                        return (
+                        <tr key={rowKey} className="border-t border-slate-100">
                           <td className="px-2 py-1.5">{line.line_no}</td>
-                          <td className="px-2 py-1.5">{line.account_code} - {line.account_name}</td>
+                          <td className={`px-2 py-1.5 ${lineSide === "CREDIT" ? "pl-8" : ""}`}>
+                            {accountPrefix}
+                            {line.account_code} - {line.account_name}
+                          </td>
                           <td className="px-2 py-1.5">{line.subledger_reference_no || "-"}</td>
                           <td className="px-2 py-1.5">{formatAmount(line.debit_base)}</td>
                           <td className="px-2 py-1.5">{formatAmount(line.credit_base)}</td>
                         </tr>
-                      ))}
+                      )})}
                     </tbody>
                   </table>
                 </div>

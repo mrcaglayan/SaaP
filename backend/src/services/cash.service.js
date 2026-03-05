@@ -10,6 +10,7 @@ import { upsertJournalSourceLinkTx } from "./journal.source-link.service.js";
 
 const BALANCE_EPSILON = 0.0001;
 const CASH_TXN_SUBLEDGER_PREFIX = "CASH_TXN:";
+const CARI_SETTLEMENT_INTENT_SOURCE_ENTITY_TYPE = "CARI_SETTLEMENT_APPLY";
 
 function asUpper(value) {
   return String(value || "").trim().toUpperCase();
@@ -45,10 +46,19 @@ function ensureBalanced(lines) {
   };
 }
 
+function resolveCashJournalNoPrefix(cashTxn) {
+  const sourceEntityType = asUpper(cashTxn?.source_entity_type);
+  if (sourceEntityType === CARI_SETTLEMENT_INTENT_SOURCE_ENTITY_TYPE) {
+    return "SETL";
+  }
+  return "CASH";
+}
+
 function buildCashJournalNo(cashTxn) {
+  const journalNoPrefix = resolveCashJournalNoPrefix(cashTxn);
   const txnNo = String(cashTxn.txn_no || "").trim().toUpperCase();
   if (txnNo) {
-    const candidate = `CASH-${txnNo}`.slice(0, 40);
+    const candidate = `${journalNoPrefix}-${txnNo}`.slice(0, 40);
     if (candidate.length <= 40) {
       return candidate;
     }
@@ -60,7 +70,7 @@ function buildCashJournalNo(cashTxn) {
     .digest("hex")
     .slice(0, 10)
     .toUpperCase();
-  return `CASH-${cashTxn.id}-${hash}`.slice(0, 40);
+  return `${journalNoPrefix}-${cashTxn.id}-${hash}`.slice(0, 40);
 }
 
 function requireAccountId(value, label) {
