@@ -1823,6 +1823,7 @@ export default function ConsolidationSetupPage() {
                 clearable={false}
               />
               <Combobox
+                id="canonical-local-account-options"
                 value={canonicalLocalForm.localAccountId || null}
                 options={canonicalLocalAccountSelectOptions}
                 onChange={(nextValue) =>
@@ -1921,6 +1922,7 @@ export default function ConsolidationSetupPage() {
               className="mt-2 grid gap-2 md:grid-cols-4"
             >
               <Combobox
+                id="canonical-group-account-options"
                 value={canonicalGroupForm.groupAccountId || null}
                 options={canonicalGroupAccountSelectOptions}
                 onChange={(nextValue) =>
