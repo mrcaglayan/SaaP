@@ -221,7 +221,7 @@
     "test:tenant-safety": "node scripts/test-tenant-safety-and-transactions.js",
     "test:period-close": "node scripts/test-period-close-process.js",
     "test:intercompany-consolidation": "node scripts/test-intercompany-and-consolidation-reports.js",
-    "test:release-gate:core": "npm run test:permission-matrix && npm run test:ux:rswire02 && npm run test:ux:rswire03 && npm run test:ux:consolidation-prcm && npm run test:ux:consolidation-fup-cm02 && npm run test:ux:consolidation-fup-cm03 && npm run test:ux:consolidation-fup-cm04 && npm run test:ux:consolidation-fup-cm05 && npm run test:ux:consolidation-fup-cm06 && npm run test:ux:consolidation-fup-cm07 && npm run test:cash-characterization && npm run test:cash-idempotency-double-post && npm run test:cash-exceptions && npm run test:tenant-safety && npm run test:period-close && npm run test:intercompany-consolidation && npm run test:cari-quality-gate",
+    "test:release-gate:core": "npm run test:permission-matrix && npm run test:ux:rswire02 && npm run test:ux:rswire03 && npm run test:ux:consolidation-prcm && npm run test:ux:consolidation-fup-cm02 && npm run test:ux:consolidation-fup-cm03 && npm run test:ux:consolidation-fup-cm04 && npm run test:ux:consolidation-fup-cm05 && npm run test:ux:consolidation-fup-cm06 && npm run test:ux:consolidation-fup-cm07 && npm run test:cash-fx-release-gate && npm run test:cash-characterization && npm run test:cash-idempotency-double-post && npm run test:cash-exceptions && npm run test:tenant-safety && npm run test:period-close && npm run test:intercompany-consolidation && npm run test:cari-quality-gate",
     "test:release-gate": "node scripts/test-release-gate.js"
   },
   "keywords": [],

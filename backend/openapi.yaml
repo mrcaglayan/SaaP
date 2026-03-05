@@ -11163,6 +11163,48 @@
         }
       }
     },
+    "/api/v1/consolidation/groups/{groupId}/canonical-governance-review": {
+      "get": {
+        "tags": [
+          "Consolidation"
+        ],
+        "operationId": "getApiV1ConsolidationGroupsGroupidCanonicalGovernanceReview",
+        "summary": "Auto-generated: GET /api/v1/consolidation/groups/{groupId}/canonical-governance-review",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "groupId",
+            "required": true,
+            "description": "groupId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      }
+    },
     "/api/v1/consolidation/groups/{groupId}/canonical-keys": {
       "get": {
         "tags": [
@@ -11297,6 +11339,100 @@
         ]
       }
     },
+    "/api/v1/consolidation/groups/{groupId}/canonical-mappings/candidates": {
+      "get": {
+        "tags": [
+          "Consolidation"
+        ],
+        "operationId": "getApiV1ConsolidationGroupsGroupidCanonicalMappingsCandidates",
+        "summary": "Auto-generated: GET /api/v1/consolidation/groups/{groupId}/canonical-mappings/candidates",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "groupId",
+            "required": true,
+            "description": "groupId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/consolidation/groups/{groupId}/canonical-mappings/candidates/apply": {
+      "post": {
+        "tags": [
+          "Consolidation"
+        ],
+        "operationId": "postApiV1ConsolidationGroupsGroupidCanonicalMappingsCandidatesApply",
+        "summary": "Auto-generated: POST /api/v1/consolidation/groups/{groupId}/canonical-mappings/candidates/apply",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "groupId",
+            "required": true,
+            "description": "groupId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/consolidation/groups/{groupId}/canonical-mappings/group": {
       "post": {
         "tags": [
@@ -11399,6 +11535,48 @@
             }
           }
         }
+      }
+    },
+    "/api/v1/consolidation/groups/{groupId}/canonical-readiness": {
+      "get": {
+        "tags": [
+          "Consolidation"
+        ],
+        "operationId": "getApiV1ConsolidationGroupsGroupidCanonicalReadiness",
+        "summary": "Auto-generated: GET /api/v1/consolidation/groups/{groupId}/canonical-readiness",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "groupId",
+            "required": true,
+            "description": "groupId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
       }
     },
     "/api/v1/contracts": {
