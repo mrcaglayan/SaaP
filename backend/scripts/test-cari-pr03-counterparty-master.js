@@ -21,6 +21,16 @@ function toNumber(value) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function resolveRowVersion(...values) {
+  for (const value of values) {
+    const parsed = toNumber(value);
+    if (Number.isInteger(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+  return 1;
+}
+
 async function apiRequest({
   token,
   method = "GET",
@@ -477,12 +487,10 @@ async function main() {
     });
     const customerRow = createCustomer.json?.row || {};
     const customerId = toNumber(customerRow.id);
-    let customerRowVersion = toNumber(
-      customerRow.rowVersion || customerRow.row_version
+    let customerRowVersion = resolveRowVersion(
+      customerRow.rowVersion,
+      customerRow.row_version
     );
-    if (!customerRowVersion) {
-      customerRowVersion = 1;
-    }
     assert(customerId > 0, "Customer counterparty should be created");
     assert(customerRow.isCustomer === true, "Customer row should be customer-only");
     assert(customerRow.isVendor === false, "Customer row should not be vendor");
@@ -519,10 +527,10 @@ async function main() {
       expectedStatus: 201,
     });
     const dualId = toNumber(createDual.json?.row?.id);
-    const dualRowVersion =
-      toNumber(
-        createDual.json?.row?.rowVersion || createDual.json?.row?.row_version
-      ) || 1;
+    const dualRowVersion = resolveRowVersion(
+      createDual.json?.row?.rowVersion,
+      createDual.json?.row?.row_version
+    );
     assert(dualId > 0, "Dual-role counterparty should be created");
 
     await apiRequest({
@@ -631,21 +639,36 @@ async function main() {
         toNumber(detailRow.defaults?.addressId) > 0,
       "Counterparty detail should return default contact/address ids"
     );
+    customerRowVersion = resolveRowVersion(
+      detailRow.rowVersion,
+      detailRow.row_version,
+      customerRowVersion
+    );
 
-    await apiRequest({
+    const updateCustomerStatus = await apiRequest({
       token: tenantWideToken,
       method: "PUT",
       path: `/api/v1/cari/counterparties/${customerId}`,
-      body: { rowVersion: customerRowVersion, status: "INACTIVE" },
+      body: {
+        rowVersion: resolveRowVersion(customerRowVersion),
+        status: "INACTIVE",
+      },
       expectedStatus: 200,
     });
-    customerRowVersion += 1;
+    customerRowVersion = resolveRowVersion(
+      updateCustomerStatus.json?.row?.rowVersion,
+      updateCustomerStatus.json?.row?.row_version,
+      customerRowVersion + 1
+    );
 
     await apiRequest({
       token: tenantWideToken,
       method: "PUT",
       path: `/api/v1/cari/counterparties/${customerId}`,
-      body: { rowVersion: customerRowVersion, defaultContactId: 99999999 },
+      body: {
+        rowVersion: resolveRowVersion(customerRowVersion),
+        defaultContactId: 99999999,
+      },
       expectedStatus: 400,
     });
 
@@ -653,7 +676,10 @@ async function main() {
       token: tenantWideToken,
       method: "PUT",
       path: `/api/v1/cari/counterparties/${customerId}`,
-      body: { rowVersion: customerRowVersion, defaultAddressId: 99999999 },
+      body: {
+        rowVersion: resolveRowVersion(customerRowVersion),
+        defaultAddressId: 99999999,
+      },
       expectedStatus: 400,
     });
 
@@ -667,7 +693,10 @@ async function main() {
       token: leScopedToken,
       method: "PUT",
       path: `/api/v1/cari/counterparties/${dualId}`,
-      body: { rowVersion: dualRowVersion, status: "INACTIVE" },
+      body: {
+        rowVersion: resolveRowVersion(dualRowVersion),
+        status: "INACTIVE",
+      },
       expectedStatus: 403,
     });
 
@@ -681,7 +710,10 @@ async function main() {
       token: otherTenantToken,
       method: "PUT",
       path: `/api/v1/cari/counterparties/${customerId}`,
-      body: { rowVersion: customerRowVersion, status: "ACTIVE" },
+      body: {
+        rowVersion: resolveRowVersion(customerRowVersion),
+        status: "ACTIVE",
+      },
       expectedStatus: 400,
     });
 
