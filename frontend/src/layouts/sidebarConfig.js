@@ -81,6 +81,10 @@ const CONSOLIDATION_SETUP_PAGE_PERMISSIONS = [
   "consolidation.run.execute",
   "consolidation.run.finalize",
 ];
+const CASH_FX_ROLLOUT_FEATURE_CODES = [
+  "FEATURE_CASH_FX_EXF05_PILOT_V1",
+  "FEATURE_CASH_FX_EXF05_GA_V1",
+];
 
 export const sidebarItems = [
   {
@@ -143,18 +147,21 @@ export const sidebarItems = [
         label: "Kasa Kur Degisimleri",
         to: "/app/kasa-kur-degisimleri",
         requiredPermissions: ["cash.txn.read"],
+        requiredFeatureCodes: CASH_FX_ROLLOUT_FEATURE_CODES,
         implemented: true,
       },
       {
         label: "Kasa Kur Raporlari",
         to: "/app/kasa-kur-raporlari",
         requiredPermissions: ["cash.report.read"],
+        requiredFeatureCodes: CASH_FX_ROLLOUT_FEATURE_CODES,
         implemented: true,
       },
       {
         label: "Kasa Kur Ops Dashboard",
         to: "/app/kasa-kur-ops-dashboard",
         requiredPermissions: ["cash.report.read"],
+        requiredFeatureCodes: CASH_FX_ROLLOUT_FEATURE_CODES,
         implemented: true,
       },
       {

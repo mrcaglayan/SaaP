@@ -6,7 +6,7 @@ This runbook defines setup, reporting, month-end/year-end controls, and determin
 
 ## Setup Requirements
 
-- Run migrations through `m093_cash_fx_revaluation_runs`.
+- Run migrations through `m097_exception_workbench_cash_module` (or latest available migration).
 - Ensure cash registers are configured per currency (one register currency per register).
 - Ensure `fx_rates` contains SPOT rates for required currency pairs and period-end dates.
 - Configure journal purpose accounts:
@@ -40,7 +40,7 @@ These endpoints use persisted columns/tables (`cash_exchange_batches`, `cash_fx_
 - `FEATURE_CASH_FX_EXF05_PILOT_V1`
 - `FEATURE_CASH_FX_EXF05_GA_V1`
 
-These rollout flags can still be managed for backend rollout governance, but current frontend navigation/routing for FX pages is permission-based and not hidden by tenant rollout phase.
+FX pages are visible/accessible only when tenant has at least one rollout code above enabled (`PILOT` or `GA`) and the required page permissions.
 
 ### Page Paths
 
@@ -66,14 +66,16 @@ These rollout flags can still be managed for backend rollout governance, but cur
 
 ### UI Smoke-Click Checklist
 
-1. Sign in with a tenant that has required permissions:
+1. Sign in with a tenant that has required permissions and at least one rollout feature enabled (`FEATURE_CASH_FX_EXF05_PILOT_V1` or `FEATURE_CASH_FX_EXF05_GA_V1`):
    - confirm FX menu entries appear in sidebar under `Kasa`.
    - open `/app/kasa-kur-degisimleri`, `/app/kasa-kur-raporlari`, `/app/kasa-kur-ops-dashboard` and verify no redirect occurs.
-2. Permission checks:
+2. Feature gate checks:
+   - disable both FX rollout feature codes and confirm all three FX pages are hidden/blocked.
+3. Permission checks:
    - remove `cash.report.read` and confirm reports/ops pages are blocked by permission guard.
    - keep `cash.report.read`, remove `ops.jobs.manage`, and confirm rerun button is disabled on ops dashboard.
    - keep `cash.report.read`, remove `ops.exceptions.manage`, and confirm override button is disabled.
-3. Close-gate UX validation:
+4. Close-gate UX validation:
    - in `/app/mahsup-islemleri`, trigger FX close-gate error and verify guided panel and links to FX pages.
    - verify override checkbox/reason fields only render for users with `cash.fx.revaluation.override`.
 
