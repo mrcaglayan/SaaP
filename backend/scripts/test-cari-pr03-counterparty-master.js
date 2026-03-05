@@ -477,6 +477,12 @@ async function main() {
     });
     const customerRow = createCustomer.json?.row || {};
     const customerId = toNumber(customerRow.id);
+    let customerRowVersion = toNumber(
+      customerRow.rowVersion || customerRow.row_version
+    );
+    if (!customerRowVersion) {
+      customerRowVersion = 1;
+    }
     assert(customerId > 0, "Customer counterparty should be created");
     assert(customerRow.isCustomer === true, "Customer row should be customer-only");
     assert(customerRow.isVendor === false, "Customer row should not be vendor");
@@ -513,6 +519,10 @@ async function main() {
       expectedStatus: 201,
     });
     const dualId = toNumber(createDual.json?.row?.id);
+    const dualRowVersion =
+      toNumber(
+        createDual.json?.row?.rowVersion || createDual.json?.row?.row_version
+      ) || 1;
     assert(dualId > 0, "Dual-role counterparty should be created");
 
     await apiRequest({
@@ -626,15 +636,16 @@ async function main() {
       token: tenantWideToken,
       method: "PUT",
       path: `/api/v1/cari/counterparties/${customerId}`,
-      body: { status: "INACTIVE" },
+      body: { rowVersion: customerRowVersion, status: "INACTIVE" },
       expectedStatus: 200,
     });
+    customerRowVersion += 1;
 
     await apiRequest({
       token: tenantWideToken,
       method: "PUT",
       path: `/api/v1/cari/counterparties/${customerId}`,
-      body: { defaultContactId: 99999999 },
+      body: { rowVersion: customerRowVersion, defaultContactId: 99999999 },
       expectedStatus: 400,
     });
 
@@ -642,7 +653,7 @@ async function main() {
       token: tenantWideToken,
       method: "PUT",
       path: `/api/v1/cari/counterparties/${customerId}`,
-      body: { defaultAddressId: 99999999 },
+      body: { rowVersion: customerRowVersion, defaultAddressId: 99999999 },
       expectedStatus: 400,
     });
 
@@ -656,7 +667,7 @@ async function main() {
       token: leScopedToken,
       method: "PUT",
       path: `/api/v1/cari/counterparties/${dualId}`,
-      body: { status: "INACTIVE" },
+      body: { rowVersion: dualRowVersion, status: "INACTIVE" },
       expectedStatus: 403,
     });
 
@@ -670,7 +681,7 @@ async function main() {
       token: otherTenantToken,
       method: "PUT",
       path: `/api/v1/cari/counterparties/${customerId}`,
-      body: { status: "ACTIVE" },
+      body: { rowVersion: customerRowVersion, status: "ACTIVE" },
       expectedStatus: 400,
     });
 

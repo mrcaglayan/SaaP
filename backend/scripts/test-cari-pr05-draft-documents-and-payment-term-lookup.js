@@ -431,11 +431,13 @@ async function runFrontendSmokeChecks() {
     "Counterparty form should render payment term lookup label"
   );
   assert(
-    counterpartyFormSource.includes("No default payment term"),
+    counterpartyFormSource.includes(
+      'updateField("defaultPaymentTermId", nextValue ? String(nextValue) : "")'
+    ),
     "Counterparty form should support clearing default payment term"
   );
   assert(
-    counterpartyFormSource.includes("Loading payment terms..."),
+    counterpartyFormSource.includes("loading={paymentTermsLoading}"),
     "Counterparty form should show payment-term lookup loading state"
   );
   assert(
@@ -583,6 +585,11 @@ async function main() {
       expectedStatus: 201,
     });
     const invoiceDraftId = toNumber(createDraftArInvoice.json?.row?.id);
+    let invoiceDraftRowVersion =
+      toNumber(
+        createDraftArInvoice.json?.row?.rowVersion ||
+          createDraftArInvoice.json?.row?.row_version
+      ) || 1;
     assert(invoiceDraftId > 0, "AR invoice draft should be created");
     assert(
       createDraftArInvoice.json?.row?.status === "DRAFT",
@@ -612,6 +619,11 @@ async function main() {
       expectedStatus: 201,
     });
     const paymentDraftId = toNumber(createDraftApPayment.json?.row?.id);
+    let paymentDraftRowVersion =
+      toNumber(
+        createDraftApPayment.json?.row?.rowVersion ||
+          createDraftApPayment.json?.row?.row_version
+      ) || 1;
     assert(paymentDraftId > 0, "AP payment draft should be created");
 
     await apiRequest({
@@ -694,12 +706,17 @@ async function main() {
       method: "PUT",
       requestPath: `/api/v1/cari/documents/${invoiceDraftId}`,
       body: {
+        rowVersion: invoiceDraftRowVersion,
         amountTxn: 1300,
         amountBase: 1300,
         dueDate: "2026-02-18",
       },
       expectedStatus: 200,
     });
+    invoiceDraftRowVersion =
+      toNumber(
+        updatedDraft.json?.row?.rowVersion || updatedDraft.json?.row?.row_version
+      ) || invoiceDraftRowVersion + 1;
     assert(
       toNumber(updatedDraft.json?.row?.amountTxn) === 1300,
       "Draft update should apply new amountTxn"
@@ -719,12 +736,17 @@ async function main() {
       String(cancelDraft.json?.row?.status || "") === "CANCELLED",
       "Draft cancel endpoint should transition status to CANCELLED"
     );
+    paymentDraftRowVersion =
+      toNumber(
+        cancelDraft.json?.row?.rowVersion || cancelDraft.json?.row?.row_version
+      ) || paymentDraftRowVersion + 1;
 
     await apiRequest({
       token: tenantWideToken,
       method: "PUT",
       requestPath: `/api/v1/cari/documents/${paymentDraftId}`,
       body: {
+        rowVersion: paymentDraftRowVersion,
         amountTxn: 500,
         amountBase: 500,
       },
