@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   createCariCounterparty,
   getCariCounterparty,
@@ -447,6 +447,7 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
   const [createInlineApAccountSaving, setCreateInlineApAccountSaving] = useState(false);
   const [createInlineApAccountError, setCreateInlineApAccountError] = useState("");
   const [createInlineApAccountMessage, setCreateInlineApAccountMessage] = useState("");
+  const createPreviousLegalEntityIdRef = useRef("");
 
   useWorkingContextDefaults(setCreateForm, COUNTERPARTY_CREATE_CONTEXT_MAPPINGS, [
     createForm.legalEntityId,
@@ -492,6 +493,7 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
   const [editInlineApAccountSaving, setEditInlineApAccountSaving] = useState(false);
   const [editInlineApAccountError, setEditInlineApAccountError] = useState("");
   const [editInlineApAccountMessage, setEditInlineApAccountMessage] = useState("");
+  const editPreviousLegalEntityIdRef = useRef("");
 
   const legalEntityById = useMemo(() => {
     const map = new Map();
@@ -545,6 +547,8 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
     setEditInlineApParentAccountId("");
     setEditInlineApChildCode("");
     setEditInlineApChildName("");
+    createPreviousLegalEntityIdRef.current = "";
+    editPreviousLegalEntityIdRef.current = "";
   }, [config.roleDefault, config.mode]);
 
   useEffect(() => {
@@ -605,62 +609,94 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
 
   useEffect(() => {
     if (!isCreatePage) {
+      createPreviousLegalEntityIdRef.current = "";
       return;
     }
     const selectedLegalEntityId = String(createForm.legalEntityId || "").trim();
     if (!selectedLegalEntityId) {
-      return;
-    }
-    const currentCurrency = String(createForm.defaultCurrencyCode || "").trim();
-    if (currentCurrency) {
+      createPreviousLegalEntityIdRef.current = "";
       return;
     }
     const selectedLegalEntity = legalEntityById.get(selectedLegalEntityId);
     const entityCurrency = resolveLegalEntityCurrencyCode(selectedLegalEntity);
     if (!entityCurrency) {
+      createPreviousLegalEntityIdRef.current = selectedLegalEntityId;
+      return;
+    }
+    const previousLegalEntityId = createPreviousLegalEntityIdRef.current;
+    const legalEntityChanged =
+      Boolean(previousLegalEntityId) && previousLegalEntityId !== selectedLegalEntityId;
+    const currentCurrency = String(createForm.defaultCurrencyCode || "").trim();
+    const shouldSyncCurrency = !currentCurrency || legalEntityChanged;
+    createPreviousLegalEntityIdRef.current = selectedLegalEntityId;
+    if (!shouldSyncCurrency) {
+      return;
+    }
+    const normalizedEntityCurrency = String(entityCurrency).trim().toUpperCase();
+    if (!normalizedEntityCurrency) {
+      return;
+    }
+    if (currentCurrency.toUpperCase() === normalizedEntityCurrency) {
       return;
     }
     setCreateForm((prev) => {
-      if (String(prev.defaultCurrencyCode || "").trim()) {
+      if (String(prev.legalEntityId || "").trim() !== selectedLegalEntityId) {
         return prev;
       }
-      if (String(prev.legalEntityId || "").trim() !== selectedLegalEntityId) {
+      const prevCurrency = String(prev.defaultCurrencyCode || "").trim();
+      if (!legalEntityChanged && prevCurrency) {
         return prev;
       }
       return {
         ...prev,
-        defaultCurrencyCode: entityCurrency,
+        defaultCurrencyCode: normalizedEntityCurrency,
       };
     });
   }, [isCreatePage, createForm.legalEntityId, createForm.defaultCurrencyCode, legalEntityById]);
 
   useEffect(() => {
     if (!editingId) {
+      editPreviousLegalEntityIdRef.current = "";
       return;
     }
     const selectedLegalEntityId = String(editingForm.legalEntityId || "").trim();
     if (!selectedLegalEntityId) {
-      return;
-    }
-    const currentCurrency = String(editingForm.defaultCurrencyCode || "").trim();
-    if (currentCurrency) {
+      editPreviousLegalEntityIdRef.current = "";
       return;
     }
     const selectedLegalEntity = legalEntityById.get(selectedLegalEntityId);
     const entityCurrency = resolveLegalEntityCurrencyCode(selectedLegalEntity);
     if (!entityCurrency) {
+      editPreviousLegalEntityIdRef.current = selectedLegalEntityId;
+      return;
+    }
+    const previousLegalEntityId = editPreviousLegalEntityIdRef.current;
+    const legalEntityChanged =
+      Boolean(previousLegalEntityId) && previousLegalEntityId !== selectedLegalEntityId;
+    const currentCurrency = String(editingForm.defaultCurrencyCode || "").trim();
+    const shouldSyncCurrency = !currentCurrency || legalEntityChanged;
+    editPreviousLegalEntityIdRef.current = selectedLegalEntityId;
+    if (!shouldSyncCurrency) {
+      return;
+    }
+    const normalizedEntityCurrency = String(entityCurrency).trim().toUpperCase();
+    if (!normalizedEntityCurrency) {
+      return;
+    }
+    if (currentCurrency.toUpperCase() === normalizedEntityCurrency) {
       return;
     }
     setEditingForm((prev) => {
-      if (String(prev.defaultCurrencyCode || "").trim()) {
+      if (String(prev.legalEntityId || "").trim() !== selectedLegalEntityId) {
         return prev;
       }
-      if (String(prev.legalEntityId || "").trim() !== selectedLegalEntityId) {
+      const prevCurrency = String(prev.defaultCurrencyCode || "").trim();
+      if (!legalEntityChanged && prevCurrency) {
         return prev;
       }
       return {
         ...prev,
-        defaultCurrencyCode: entityCurrency,
+        defaultCurrencyCode: normalizedEntityCurrency,
       };
     });
   }, [editingId, editingForm.legalEntityId, editingForm.defaultCurrencyCode, legalEntityById]);
@@ -1070,10 +1106,13 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
     try {
       const response = await getCariCounterparty(counterpartyId);
       const row = response?.row || null;
+      const nextForm = mapDetailToCounterpartyForm(row, config.roleDefault);
       setEditingId(counterpartyId);
-      setEditingForm(mapDetailToCounterpartyForm(row, config.roleDefault));
+      editPreviousLegalEntityIdRef.current = String(nextForm.legalEntityId || "").trim();
+      setEditingForm(nextForm);
     } catch (err) {
       setEditingId(null);
+      editPreviousLegalEntityIdRef.current = "";
       setEditError(mapCounterpartyApiError(err, "Failed to load counterparty detail."));
     } finally {
       setEditLoading(false);
@@ -2398,6 +2437,7 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
             onSubmit={handleEditSubmit}
             onCancel={() => {
               setEditingId(null);
+              editPreviousLegalEntityIdRef.current = "";
               setEditError("");
               setEditMessage("");
               setEditPaymentTermLookupQuery("");
