@@ -86,6 +86,8 @@ import migration095CashFxRevaluationReversalHardening from "./m095_cash_fx_reval
 import migration096CashExchangeFeeSpreadAccounting from "./m096_cash_exchange_fee_spread_accounting.js";
 import migration097ExceptionWorkbenchCashModule from "./m097_exception_workbench_cash_module.js";
 import migration098ConsolidationCanonicalPerformanceIndexes from "./m098_consolidation_canonical_performance_indexes.js";
+import migration099CariCheckConstraintCompatGuards from "./m099_cari_check_constraint_compat_guards.js";
+import migration100CariCheckConstraintCompatGuardCleanup from "./m100_cari_check_constraint_compat_guard_cleanup.js";
 
 const migrations = [
   migration001GlobalMultiEntity,
@@ -176,6 +178,8 @@ const migrations = [
   migration096CashExchangeFeeSpreadAccounting,
   migration097ExceptionWorkbenchCashModule,
   migration098ConsolidationCanonicalPerformanceIndexes,
+  migration099CariCheckConstraintCompatGuards,
+  migration100CariCheckConstraintCompatGuardCleanup,
 ];
 
 export default migrations;

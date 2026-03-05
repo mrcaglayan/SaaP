@@ -11,7 +11,7 @@ function assert(condition, message) {
 async function main() {
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
   const pagePath = path.resolve(root, "frontend/src/pages/cari/CariSettlementsPage.jsx");
-  const page = await readFile(pagePath, "utf8");
+  const page = (await readFile(pagePath, "utf8")).replace(/\r\n/g, "\n");
 
   assert(
     page.includes("function resolveLegalEntityCurrencyCode(legalEntities, legalEntityId)"),
