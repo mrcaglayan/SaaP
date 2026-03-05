@@ -9909,6 +9909,58 @@
         ]
       }
     },
+    "/api/v1/cash/exchanges/{exchangeBatchId}/post": {
+      "post": {
+        "tags": [
+          "Cash"
+        ],
+        "operationId": "postApiV1CashExchangesExchangebatchidPost",
+        "summary": "Auto-generated: POST /api/v1/cash/exchanges/{exchangeBatchId}/post",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "exchangeBatchId",
+            "required": true,
+            "description": "exchangeBatchId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/cash/exchanges/{exchangeBatchId}/reverse": {
       "post": {
         "tags": [

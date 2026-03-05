@@ -2621,8 +2621,12 @@ export default function CariSettlementsPage() {
 
         <div className="mt-4 rounded-lg border border-slate-200 p-4">
           <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-700">
-            Auto-allocation preview (oldest due first)
+            Open-item auto-allocation preview (oldest due first)
           </h3>
+          <p className="mt-2 text-sm text-slate-600">
+            This preview shows only posted documents that still have an open residual balance for
+            the selected legal entity, counterparty, and as-of date.
+          </p>
           {!canReadReports ? (
             <p className="mt-2 text-sm text-amber-700">
               Preview needs permission: `cari.report.read`. Settlement apply/reverse and bank
@@ -2732,7 +2736,7 @@ export default function CariSettlementsPage() {
                     <td colSpan={10} className="px-3 py-3 text-slate-500">
                       {previewLoading
                         ? "Loading preview..."
-                        : "No preview rows. Enter legalEntityId, counterpartyId and asOfDate."}
+                        : "No open-item preview rows for the selected legalEntityId, counterpartyId, and asOfDate."}
                     </td>
                   </tr>
                 ) : null}
