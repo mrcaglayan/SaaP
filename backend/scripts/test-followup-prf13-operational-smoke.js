@@ -370,6 +370,10 @@ async function ensureConsolidationGroupForTenant({
     `SELECT id
      FROM consolidation_groups
      WHERE tenant_id = ?
+       AND group_company_id IS NOT NULL
+       AND calendar_id IS NOT NULL
+       AND presentation_currency_code IS NOT NULL
+       AND presentation_currency_code <> ''
        AND status = 'ACTIVE'
      ORDER BY id ASC
      LIMIT 1`,
@@ -389,16 +393,14 @@ async function ensureConsolidationGroupForTenant({
        code,
        name,
        presentation_currency_code,
-       status,
-       created_by_user_id
+       status
      )
-     VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE', ?)
+     VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE')
      ON DUPLICATE KEY UPDATE
        group_company_id = VALUES(group_company_id),
        calendar_id = VALUES(calendar_id),
        presentation_currency_code = VALUES(presentation_currency_code),
-       status = 'ACTIVE',
-       created_by_user_id = VALUES(created_by_user_id)`,
+       status = 'ACTIVE'`,
     [
       tenantId,
       groupCompanyId,
@@ -406,7 +408,6 @@ async function ensureConsolidationGroupForTenant({
       code,
       `PRF13 Smoke Consolidation Group ${tenantId}`,
       currencyCode,
-      requesterUserId,
     ]
   );
   const groupRes = await query(
@@ -928,6 +929,8 @@ async function createTempPeriodCloseRun(tenantId, requesterUserId) {
      FROM books b
      JOIN legal_entities le ON le.id = b.legal_entity_id
      WHERE b.tenant_id = ?
+       AND b.calendar_id IS NOT NULL
+       AND le.group_company_id IS NOT NULL
      ORDER BY b.id ASC
      LIMIT 1`,
     [tenantId]
@@ -1000,6 +1003,10 @@ async function createTempConsolidationRun(tenantId, requesterUserId) {
        cg.presentation_currency_code
      FROM consolidation_groups cg
      WHERE cg.tenant_id = ?
+       AND cg.group_company_id IS NOT NULL
+       AND cg.calendar_id IS NOT NULL
+       AND cg.presentation_currency_code IS NOT NULL
+       AND cg.presentation_currency_code <> ''
        AND cg.status = 'ACTIVE'
      ORDER BY cg.id ASC
      LIMIT 1`,
@@ -1202,6 +1209,32 @@ async function runTenantSmoke(tenantId) {
 
   try {
     const users = await ensureApproverUserForTenant(tenantId);
+    const core = await ensureTenantCoreContext(tenantId);
+    const requiredPermissionCode = await resolveAnyWorkflowPermissionCodeForUser(
+      tenantId,
+      users.approverUserId
+    );
+    await ensureWorkflowGateSetup({
+      tenantId,
+      requesterUserId: users.requesterUserId,
+      legalEntityId: core.legalEntityId,
+      groupCompanyId: core.groupCompanyId,
+      requiredPermissionCode,
+    });
+    await ensureConsolidationGroupForTenant({
+      tenantId,
+      requesterUserId: users.requesterUserId,
+      groupCompanyId: core.groupCompanyId,
+      calendarId: core.calendarId,
+      currencyCode: core.currencyCode,
+    });
+    await ensureTaxPipelineFixture({
+      tenantId,
+      requesterUserId: users.requesterUserId,
+      legalEntityId: core.legalEntityId,
+      countryId: core.countryId,
+      currencyCode: core.currencyCode,
+    });
 
     const periodClose = await createTempPeriodCloseRun(tenantId, users.requesterUserId);
     periodCloseRunIds.push(periodClose.runId);
@@ -1236,7 +1269,7 @@ async function runTenantSmoke(tenantId) {
 
     const tax = await runTaxPipelineSmoke({
       tenantId,
-      legalEntityId: periodClose.legalEntityId,
+      legalEntityId: core.legalEntityId,
     });
 
     return {

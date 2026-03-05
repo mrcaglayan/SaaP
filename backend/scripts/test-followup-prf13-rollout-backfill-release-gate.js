@@ -8,6 +8,26 @@ function assert(condition, message) {
   }
 }
 
+async function readFirstExisting(filePaths) {
+  for (const filePath of filePaths) {
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      const source = await readFile(filePath, "utf8");
+      return { source, filePath };
+    } catch (error) {
+      if (error?.code === "ENOENT") {
+        // Try the next candidate path.
+        // eslint-disable-next-line no-continue
+        continue;
+      }
+      throw error;
+    }
+  }
+  throw new Error(
+    `None of the expected documentation files were found: ${filePaths.join(", ")}`
+  );
+}
+
 async function main() {
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -57,10 +77,11 @@ async function main() {
     );
   }
 
-  const runbookSource = await readFile(
+  const runbookDoc = await readFirstExisting([
     path.resolve(root, "11-PR-F13-ROLLOUT-RUNBOOK.md"),
-    "utf8"
-  );
+    path.resolve(root, "PR-STEPS/11-PR-F13-ROLLOUT-RUNBOOK.md"),
+  ]);
+  const runbookSource = runbookDoc.source;
   for (const requiredToken of [
     "Pilot Feature Rollout Automation",
     "rollout:prf13-pilot",
@@ -68,14 +89,15 @@ async function main() {
   ]) {
     assert(
       runbookSource.includes(requiredToken),
-      `11-PR-F13-ROLLOUT-RUNBOOK.md missing required rollout token: ${requiredToken}`
+      `${runbookDoc.filePath} missing required rollout token: ${requiredToken}`
     );
   }
 
-  const gaPlanSource = await readFile(
+  const gaPlanDoc = await readFirstExisting([
     path.resolve(root, "12-PR-F13-PILOT-GA-SWITCH-PLAN.md"),
-    "utf8"
-  );
+    path.resolve(root, "PR-STEPS/12-PR-F13-PILOT-GA-SWITCH-PLAN.md"),
+  ]);
+  const gaPlanSource = gaPlanDoc.source;
   for (const requiredToken of [
     "Pilot Tenant Matrix",
     "Close + Consolidation + Tax E2E Validation",
@@ -84,7 +106,7 @@ async function main() {
   ]) {
     assert(
       gaPlanSource.includes(requiredToken),
-      `12-PR-F13-PILOT-GA-SWITCH-PLAN.md missing required token: ${requiredToken}`
+      `${gaPlanDoc.filePath} missing required token: ${requiredToken}`
     );
   }
 
