@@ -429,8 +429,10 @@ async function runFrontendGuardSmokeAssertions() {
       `App route is not implemented for ${routePath}`
     );
   }
+  const permissionGuardPattern =
+    /element=\{withPermissionGuard\(\s*route\.appPath,\s*route\.element(?:,\s*hasAnyFeature)?\s*\)\}/m;
   assert(
-    appSource.includes("element={withPermissionGuard(route.appPath, route.element)}"),
+    permissionGuardPattern.test(appSource),
     "App routes should be wrapped with permission guard"
   );
 }
