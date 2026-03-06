@@ -35,6 +35,7 @@ import {
   updateMeSavedView,
 } from "../../api/me.js";
 import Combobox from "../../components/Combobox.jsx";
+import MoneyText from "../../components/MoneyText.jsx";
 import StatusTimeline from "../../components/StatusTimeline.jsx";
 import TablePreferencesPanel from "../../components/TablePreferencesPanel.jsx";
 import { Link, useSearchParams } from "react-router-dom";
@@ -923,21 +924,13 @@ export default function CariDocumentsPage() {
         label: "Invoice Amount",
         headerClassName: "px-3 py-2",
         cellClassName: "px-3 py-2",
-        render: (row) => {
-          const currencyCode = String(
-            row?.currencyCode || row?.currencyCodeSnapshot || row?.currency_code || "-"
-          )
-            .trim()
-            .toUpperCase();
-          return (
-            <div className="leading-tight">
-              <div>{formatAmount(row?.amountTxn)}</div>
-              <div className="text-[11px] font-medium uppercase tracking-wide text-slate-500">
-                {currencyCode || "-"}
-              </div>
-            </div>
-          );
-        },
+        render: (row) => (
+          <MoneyText
+            amount={row?.amountTxn}
+            currencyCode={row?.currencyCode || row?.currencyCodeSnapshot || row?.currency_code}
+            variant="stack"
+          />
+        ),
       },
       {
         id: "postedJournal",
@@ -4183,7 +4176,11 @@ export default function CariDocumentsPage() {
                             className="rounded border border-slate-200 bg-white px-2 py-1"
                           >
                             itemNo={row.itemNo || "-"} | status={row.status || "-"} | residual=
-                            {formatAmount(row.residualAmountTxn)} {row.currencyCode || ""}
+                            <MoneyText
+                              amount={row.residualAmountTxn}
+                              currencyCode={row.currencyCode}
+                              className="ml-1"
+                            />
                           </li>
                         ))}
                       </ul>

@@ -8,6 +8,7 @@ import {
 import { listBooks } from "../../api/glAdmin.js";
 import { listLegalEntities } from "../../api/orgAdmin.js";
 import { useAuth } from "../../auth/useAuth.js";
+import MoneyText from "../../components/MoneyText.jsx";
 import { exportRowsAsCsv } from "../../utils/csvExport.js";
 
 const REPORT_TABS = Object.freeze({
@@ -127,6 +128,29 @@ function toRegisterLabel(row) {
 
 function toBookLabel(row) {
   return `${row?.code || row?.id || "-"} - ${row?.name || "-"}`;
+}
+
+function resolveLegalEntityCurrencyCode(legalEntityRows, legalEntityId) {
+  const targetLegalEntityId = toPositiveInt(legalEntityId);
+  if (!targetLegalEntityId) {
+    return "";
+  }
+  const rows = Array.isArray(legalEntityRows) ? legalEntityRows : [];
+  const matchedRow =
+    rows.find((row) => toPositiveInt(row?.id) === targetLegalEntityId) || null;
+  if (!matchedRow) {
+    return "";
+  }
+  return toUpper(
+    matchedRow?.functional_currency_code || matchedRow?.functionalCurrencyCode
+  );
+}
+
+function resolveBaseCurrencyCode(row, legalEntityRows) {
+  return (
+    toUpper(row?.baseCurrencyCode || row?.base_currency_code) ||
+    resolveLegalEntityCurrencyCode(legalEntityRows, row?.legalEntityId || row?.legal_entity_id)
+  );
 }
 
 function statusClassName(status) {
@@ -1140,6 +1164,7 @@ export default function CashFxReportsPage() {
                 const reversalRealizedFxBase = Number(row?.reversalRealizedFxBase || 0);
                 const netRealizedFxBase = realizedFxBase + reversalRealizedFxBase;
                 const isReversed = toUpper(row?.status) === "REVERSED";
+                const baseCurrencyCode = resolveBaseCurrencyCode(row, legalEntityRows);
                 return (
                   <tr key={`cash-fx-ex-history-${row?.id}`} className="border-t border-slate-100">
                     <td className="px-3 py-2">#{row?.id || "-"}</td>
@@ -1153,7 +1178,10 @@ export default function CashFxReportsPage() {
                         {row?.sourceRegisterCode || row?.sourceRegisterId || "-"}
                       </div>
                       <div className="text-slate-600">
-                        {formatAmount(row?.sourceAmountTxn)} {row?.sourceCurrencyCode || "-"}
+                        <MoneyText
+                          amount={row?.sourceAmountTxn}
+                          currencyCode={row?.sourceCurrencyCode}
+                        />
                       </div>
                     </td>
                     <td className="px-3 py-2">
@@ -1161,7 +1189,10 @@ export default function CashFxReportsPage() {
                         {row?.targetRegisterCode || row?.targetRegisterId || "-"}
                       </div>
                       <div className="text-slate-600">
-                        {formatAmount(row?.targetAmountTxn)} {row?.targetCurrencyCode || "-"}
+                        <MoneyText
+                          amount={row?.targetAmountTxn}
+                          currencyCode={row?.targetCurrencyCode}
+                        />
                       </div>
                     </td>
                     <td className="px-3 py-2">
@@ -1172,16 +1203,45 @@ export default function CashFxReportsPage() {
                     </td>
                     <td className="px-3 py-2">
                       <div>
-                        Src: {formatAmount(row?.sourceAmountBase)} | Tgt:{" "}
-                        {formatAmount(row?.targetAmountBase)}
+                        Src:{" "}
+                        <MoneyText
+                          amount={row?.sourceAmountBase}
+                          currencyCode={baseCurrencyCode}
+                        />{" "}
+                        | Tgt:{" "}
+                        <MoneyText
+                          amount={row?.targetAmountBase}
+                          currencyCode={baseCurrencyCode}
+                        />
                       </div>
-                      <div>Realized: {formatAmount(realizedFxBase)}</div>
-                      <div>Reversal Realized: {formatAmount(reversalRealizedFxBase)}</div>
-                      <div>Net Realized: {formatAmount(netRealizedFxBase)}</div>
+                      <div>
+                        Realized:{" "}
+                        <MoneyText amount={realizedFxBase} currencyCode={baseCurrencyCode} />
+                      </div>
+                      <div>
+                        Reversal Realized:{" "}
+                        <MoneyText
+                          amount={reversalRealizedFxBase}
+                          currencyCode={baseCurrencyCode}
+                        />
+                      </div>
+                      <div>
+                        Net Realized:{" "}
+                        <MoneyText amount={netRealizedFxBase} currencyCode={baseCurrencyCode} />
+                      </div>
                     </td>
                     <td className="px-3 py-2">
-                      <div>Fee: {formatAmount(row?.feeAmountBase)}</div>
-                      <div>Spread: {formatAmount(row?.spreadAmountBase)}</div>
+                      <div>
+                        Fee:{" "}
+                        <MoneyText amount={row?.feeAmountBase} currencyCode={baseCurrencyCode} />
+                      </div>
+                      <div>
+                        Spread:{" "}
+                        <MoneyText
+                          amount={row?.spreadAmountBase}
+                          currencyCode={baseCurrencyCode}
+                        />
+                      </div>
                     </td>
                     <td className="px-3 py-2">
                       <div className="text-xs">
@@ -1269,8 +1329,18 @@ export default function CashFxReportsPage() {
                   <td className="px-3 py-2">
                     {row?.currencyCode || "-"} / {row?.baseCurrencyCode || "-"}
                   </td>
-                  <td className="px-3 py-2">{formatAmount(row?.balanceAmountTxn)}</td>
-                  <td className="px-3 py-2">{formatAmount(row?.carryingAmountBase)}</td>
+                  <td className="px-3 py-2">
+                    <MoneyText
+                      amount={row?.balanceAmountTxn}
+                      currencyCode={row?.currencyCode}
+                    />
+                  </td>
+                  <td className="px-3 py-2">
+                    <MoneyText
+                      amount={row?.carryingAmountBase}
+                      currencyCode={row?.baseCurrencyCode}
+                    />
+                  </td>
                   <td className="px-3 py-2">{row?.isForeignCurrency ? "YES" : "NO"}</td>
                 </tr>
               ))}
@@ -1347,9 +1417,27 @@ export default function CashFxReportsPage() {
                         </span>
                       </td>
                       <td className="px-3 py-2">
-                        <div>Carry: {formatAmount(row?.totalCarryingBase)}</div>
-                        <div>Close: {formatAmount(row?.totalClosingBase)}</div>
-                        <div>Delta: {formatAmount(row?.totalDeltaBase)}</div>
+                        <div>
+                          Carry:{" "}
+                          <MoneyText
+                            amount={row?.totalCarryingBase}
+                            currencyCode={row?.baseCurrencyCode}
+                          />
+                        </div>
+                        <div>
+                          Close:{" "}
+                          <MoneyText
+                            amount={row?.totalClosingBase}
+                            currencyCode={row?.baseCurrencyCode}
+                          />
+                        </div>
+                        <div>
+                          Delta:{" "}
+                          <MoneyText
+                            amount={row?.totalDeltaBase}
+                            currencyCode={row?.baseCurrencyCode}
+                          />
+                        </div>
                       </td>
                       <td className="px-3 py-2">
                         <div>JE: {row?.journalEntryId || "-"}</div>
@@ -1401,16 +1489,28 @@ export default function CashFxReportsPage() {
                                       {Number(line?.registerCount || 0)}
                                     </td>
                                     <td className="px-2 py-1.5">
-                                      {formatAmount(line?.balanceAmountTxn)}
+                                      <MoneyText
+                                        amount={line?.balanceAmountTxn}
+                                        currencyCode={line?.currencyCode}
+                                      />
                                     </td>
                                     <td className="px-2 py-1.5">
-                                      {formatAmount(line?.carryingAmountBase)}
+                                      <MoneyText
+                                        amount={line?.carryingAmountBase}
+                                        currencyCode={row?.baseCurrencyCode}
+                                      />
                                     </td>
                                     <td className="px-2 py-1.5">
-                                      {formatAmount(line?.closingAmountBase)}
+                                      <MoneyText
+                                        amount={line?.closingAmountBase}
+                                        currencyCode={row?.baseCurrencyCode}
+                                      />
                                     </td>
                                     <td className="px-2 py-1.5">
-                                      {formatAmount(line?.deltaBase)}
+                                      <MoneyText
+                                        amount={line?.deltaBase}
+                                        currencyCode={row?.baseCurrencyCode}
+                                      />
                                     </td>
                                   </tr>
                                 ))}

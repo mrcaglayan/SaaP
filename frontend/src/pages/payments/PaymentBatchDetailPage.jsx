@@ -13,17 +13,7 @@ import {
   importPaymentBatchAck,
 } from "../../api/bankPaymentFiles.js";
 import { useAuth } from "../../auth/useAuth.js";
-
-function formatAmount(value) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) {
-    return "-";
-  }
-  return parsed.toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 6,
-  });
-}
+import MoneyText from "../../components/MoneyText.jsx";
 
 function formatDateTime(value) {
   if (!value) {
@@ -302,7 +292,9 @@ export default function PaymentBatchDetailPage() {
               </div>
               <div>
                 <div className="text-slate-500">Toplam</div>
-                <div className="font-medium">{formatAmount(row.total_amount)}</div>
+                <div className="font-medium">
+                  <MoneyText amount={row.total_amount} currencyCode={row.currency_code} />
+                </div>
               </div>
               <div>
                 <div className="text-slate-500">Olusturan</div>
@@ -445,8 +437,12 @@ export default function PaymentBatchDetailPage() {
                     {line.payable_gl_account_code || line.payable_gl_account_id}
                     <div className="text-xs text-slate-500">{line.payable_gl_account_name || ""}</div>
                   </td>
-                  <td className="p-2">{formatAmount(line.amount)}</td>
-                  <td className="p-2">{formatAmount(line.executed_amount)}</td>
+                  <td className="p-2">
+                    <MoneyText amount={line.amount} currencyCode={row?.currency_code} />
+                  </td>
+                  <td className="p-2">
+                    <MoneyText amount={line.executed_amount} currencyCode={row?.currency_code} />
+                  </td>
                   <td className="p-2">{line.status}</td>
                   <td className="p-2">
                     <div>{line.bank_execution_status || "-"}</div>

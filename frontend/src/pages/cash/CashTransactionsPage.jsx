@@ -22,6 +22,7 @@ import {
   updateMeSavedView,
 } from "../../api/me.js";
 import { useAuth } from "../../auth/useAuth.js";
+import MoneyText from "../../components/MoneyText.jsx";
 import StatusTimeline from "../../components/StatusTimeline.jsx";
 import TablePreferencesPanel from "../../components/TablePreferencesPanel.jsx";
 import { useWorkingContextDefaults } from "../../context/useWorkingContextDefaults.js";
@@ -35,6 +36,7 @@ import {
   getLifecycleStatusMeta,
 } from "../../lifecycle/lifecycleRules.js";
 import { exportRowsAsCsv } from "../../utils/csvExport.js";
+import { formatMoneyText } from "../../utils/money.js";
 import CashControlModeBanner from "./CashControlModeBanner.jsx";
 
 const MANUAL_TXN_TYPES = [
@@ -3854,7 +3856,10 @@ export default function CashTransactionsPage() {
                   </p>
                   <p className="mt-1">
                     {t("cashTransactions.apply.selectedTotal", {
-                      total: formatAmount(applySelectedTotal),
+                      total: formatMoneyText(
+                        applySelectedTotal,
+                        selectedActionRow?.currency_code
+                      ),
                     })}
                   </p>
                   {applyOpenItemsError ? (
@@ -3901,7 +3906,12 @@ export default function CashTransactionsPage() {
                             <td className="px-2 py-1">{item.documentNo || item.documentId}</td>
                             <td className="px-2 py-1">{item.openItemId}</td>
                             <td className="px-2 py-1">{item.dueDate || "-"}</td>
-                            <td className="px-2 py-1">{formatAmount(item.residualAmountTxnAsOf)}</td>
+                            <td className="px-2 py-1">
+                              <MoneyText
+                                amount={item.residualAmountTxnAsOf}
+                                currencyCode={item.currencyCode || item.currency_code}
+                              />
+                            </td>
                             <td className="px-2 py-1">
                               <input
                                 type="number"
@@ -4135,7 +4145,9 @@ export default function CashTransactionsPage() {
                       <td className="px-3 py-2">{row.book_date || "-"}</td>
                     ) : null}
                     {transactionVisibleColumnSet.has("amount") ? (
-                      <td className="px-3 py-2">{formatAmount(row.amount)}</td>
+                      <td className="px-3 py-2">
+                        <MoneyText amount={row.amount} currencyCode={row.currency_code} />
+                      </td>
                     ) : null}
                     {transactionVisibleColumnSet.has("currency") ? (
                       <td className="px-3 py-2">{row.currency_code || "-"}</td>

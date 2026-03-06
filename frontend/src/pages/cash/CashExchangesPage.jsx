@@ -10,6 +10,7 @@ import {
 import { listAccounts, upsertAccount } from "../../api/glAdmin.js";
 import { useAuth } from "../../auth/useAuth.js";
 import Combobox from "../../components/Combobox.jsx";
+import MoneyText from "../../components/MoneyText.jsx";
 import CashControlModeBanner from "./CashControlModeBanner.jsx";
 
 const EXCHANGE_STATUSES = ["DRAFT", "POSTED", "REVERSED", "CANCELLED"];
@@ -1304,7 +1305,10 @@ export default function CashExchangesPage() {
                           {row?.sourceRegisterCode || row?.sourceRegisterId || "-"}
                         </div>
                         <div className="text-slate-600">
-                          {formatAmount(row?.sourceAmountTxn)} {row?.sourceCurrencyCode || "-"}
+                          <MoneyText
+                            amount={row?.sourceAmountTxn}
+                            currencyCode={row?.sourceCurrencyCode}
+                          />
                         </div>
                       </div>
                     </td>
@@ -1314,7 +1318,10 @@ export default function CashExchangesPage() {
                           {row?.targetRegisterCode || row?.targetRegisterId || "-"}
                         </div>
                         <div className="text-slate-600">
-                          {formatAmount(row?.targetAmountTxn)} {row?.targetCurrencyCode || "-"}
+                          <MoneyText
+                            amount={row?.targetAmountTxn}
+                            currencyCode={row?.targetCurrencyCode}
+                          />
                         </div>
                       </div>
                     </td>

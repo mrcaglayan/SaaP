@@ -9,6 +9,7 @@ import {
   getCariSettlementRealizedFxReport,
 } from "../../api/cariReports.js";
 import { useAuth } from "../../auth/useAuth.js";
+import MoneyText from "../../components/MoneyText.jsx";
 import {
   buildCariReportQuery,
   reconcileOpenItemsSummary,
@@ -46,6 +47,37 @@ function formatDate(value) {
     return normalized;
   }
   return date.toLocaleDateString();
+}
+
+function normalizeCurrencyCode(value) {
+  return String(value || "")
+    .trim()
+    .toUpperCase();
+}
+
+function resolveReportCurrencyCode(row) {
+  return normalizeCurrencyCode(
+    row?.currencyCode ||
+      row?.currencyCodeSnapshot ||
+      row?.currency_code ||
+      row?.currency_code_snapshot
+  );
+}
+
+function resolveLegalEntityCurrencyCode(legalEntities, legalEntityId) {
+  const targetLegalEntityId = Number(legalEntityId || 0);
+  if (!Number.isInteger(targetLegalEntityId) || targetLegalEntityId <= 0) {
+    return "";
+  }
+  const rows = Array.isArray(legalEntities) ? legalEntities : [];
+  const matchedRow =
+    rows.find((row) => Number(row?.id || 0) === targetLegalEntityId) || null;
+  if (!matchedRow) {
+    return "";
+  }
+  return normalizeCurrencyCode(
+    matchedRow?.functional_currency_code || matchedRow?.functionalCurrencyCode
+  );
 }
 
 function normalizeError(err, fallback) {
@@ -553,8 +585,18 @@ export default function CariReportsPage() {
                       <td className="px-3 py-2">{row.documentNo || row.documentId}</td>
                       <td className="px-3 py-2">{formatDate(row.dueDate)}</td>
                       <td className="px-3 py-2">{row.asOfStatus}</td>
-                      <td className="px-3 py-2">{formatAmount(row.originalAmountTxn)}</td>
-                      <td className="px-3 py-2">{formatAmount(row.residualAmountTxnAsOf)}</td>
+                      <td className="px-3 py-2">
+                        <MoneyText
+                          amount={row.originalAmountTxn}
+                          currencyCode={resolveReportCurrencyCode(row)}
+                        />
+                      </td>
+                      <td className="px-3 py-2">
+                        <MoneyText
+                          amount={row.residualAmountTxnAsOf}
+                          currencyCode={resolveReportCurrencyCode(row)}
+                        />
+                      </td>
                       <td className="px-3 py-2">{row.agingBucket?.label || "-"}</td>
                       <td className="px-3 py-2">{row.settlementContext?.allocationCountAsOf || 0}</td>
                       <td className="px-3 py-2">
@@ -594,8 +636,15 @@ export default function CariReportsPage() {
                       <td className="px-3 py-2">{row.cashReceiptNo || row.unappliedCashId}</td>
                       <td className="px-3 py-2">{formatDate(row.receiptDate)}</td>
                       <td className="px-3 py-2">{row.asOfStatus}</td>
-                      <td className="px-3 py-2">{formatAmount(row.amountTxn)}</td>
-                      <td className="px-3 py-2">{formatAmount(row.residualAmountTxnAsOf)}</td>
+                      <td className="px-3 py-2">
+                        <MoneyText amount={row.amountTxn} currencyCode={row.currencyCode} />
+                      </td>
+                      <td className="px-3 py-2">
+                        <MoneyText
+                          amount={row.residualAmountTxnAsOf}
+                          currencyCode={row.currencyCode}
+                        />
+                      </td>
                       <td className="px-3 py-2">
                         {row.bankTransactionRef || row.bankStatementLineId || "-"}
                       </td>
@@ -636,30 +685,61 @@ export default function CariReportsPage() {
                 </tr>
               </thead>
               <tbody>
-                {(reportData.rows || []).map((row, index) => (
-                  <tr
-                    key={`settlement-realized-fx-row-${row.period || "na"}-${row.legalEntityId || "na"}-${row.counterpartyId || "na"}-${row.currencyCode || "na"}-${index}`}
-                    className="border-t border-slate-100"
-                  >
-                    <td className="px-3 py-2">{row.period || "-"}</td>
-                    <td className="px-3 py-2">
-                      {row.legalEntityCode || row.legalEntityId || "-"}
-                      {row.legalEntityName ? ` - ${row.legalEntityName}` : ""}
-                    </td>
-                    <td className="px-3 py-2">
-                      {row.counterpartyCode || row.counterpartyId || "-"}
-                      {row.counterpartyName ? ` - ${row.counterpartyName}` : ""}
-                    </td>
-                    <td className="px-3 py-2">{row.counterpartyType || "-"}</td>
-                    <td className="px-3 py-2">{row.currencyCode || "-"}</td>
-                    <td className="px-3 py-2">{Number(row.settlementCount || 0)}</td>
-                    <td className="px-3 py-2">{formatAmount(row.totalAllocatedTxn)}</td>
-                    <td className="px-3 py-2">{formatAmount(row.totalAllocatedBase)}</td>
-                    <td className="px-3 py-2">{formatAmount(row.realizedFxNetBase)}</td>
-                    <td className="px-3 py-2">{formatAmount(row.realizedFxGainBase)}</td>
-                    <td className="px-3 py-2">{formatAmount(row.realizedFxLossBase)}</td>
-                  </tr>
-                ))}
+                {(reportData.rows || []).map((row, index) => {
+                  const baseCurrencyCode = resolveLegalEntityCurrencyCode(
+                    legalEntities,
+                    row.legalEntityId
+                  );
+                  return (
+                    <tr
+                      key={`settlement-realized-fx-row-${row.period || "na"}-${row.legalEntityId || "na"}-${row.counterpartyId || "na"}-${row.currencyCode || "na"}-${index}`}
+                      className="border-t border-slate-100"
+                    >
+                      <td className="px-3 py-2">{row.period || "-"}</td>
+                      <td className="px-3 py-2">
+                        {row.legalEntityCode || row.legalEntityId || "-"}
+                        {row.legalEntityName ? ` - ${row.legalEntityName}` : ""}
+                      </td>
+                      <td className="px-3 py-2">
+                        {row.counterpartyCode || row.counterpartyId || "-"}
+                        {row.counterpartyName ? ` - ${row.counterpartyName}` : ""}
+                      </td>
+                      <td className="px-3 py-2">{row.counterpartyType || "-"}</td>
+                      <td className="px-3 py-2">{row.currencyCode || "-"}</td>
+                      <td className="px-3 py-2">{Number(row.settlementCount || 0)}</td>
+                      <td className="px-3 py-2">
+                        <MoneyText
+                          amount={row.totalAllocatedTxn}
+                          currencyCode={row.currencyCode}
+                        />
+                      </td>
+                      <td className="px-3 py-2">
+                        <MoneyText
+                          amount={row.totalAllocatedBase}
+                          currencyCode={baseCurrencyCode}
+                        />
+                      </td>
+                      <td className="px-3 py-2">
+                        <MoneyText
+                          amount={row.realizedFxNetBase}
+                          currencyCode={baseCurrencyCode}
+                        />
+                      </td>
+                      <td className="px-3 py-2">
+                        <MoneyText
+                          amount={row.realizedFxGainBase}
+                          currencyCode={baseCurrencyCode}
+                        />
+                      </td>
+                      <td className="px-3 py-2">
+                        <MoneyText
+                          amount={row.realizedFxLossBase}
+                          currencyCode={baseCurrencyCode}
+                        />
+                      </td>
+                    </tr>
+                  );
+                })}
                 {(reportData.rows || []).length === 0 ? (
                   <tr>
                     <td colSpan={11} className="px-3 py-3 text-slate-500">
@@ -695,8 +775,18 @@ export default function CariReportsPage() {
                       <td className="px-3 py-2">{row.documentNo || row.documentId}</td>
                       <td className="px-3 py-2">{formatDate(row.documentDate)}</td>
                       <td className="px-3 py-2">{row.asOfStatus}</td>
-                      <td className="px-3 py-2">{formatAmount(row.amountTxn)}</td>
-                      <td className="px-3 py-2">{formatAmount(row.asOfOpenAmountTxn)}</td>
+                      <td className="px-3 py-2">
+                        <MoneyText
+                          amount={row.amountTxn}
+                          currencyCode={resolveReportCurrencyCode(row)}
+                        />
+                      </td>
+                      <td className="px-3 py-2">
+                        <MoneyText
+                          amount={row.asOfOpenAmountTxn}
+                          currencyCode={resolveReportCurrencyCode(row)}
+                        />
+                      </td>
                       <td className="px-3 py-2">
                         {row.reversedByDocumentNo || row.reversalOfDocumentId || "-"}
                       </td>
@@ -729,7 +819,12 @@ export default function CariReportsPage() {
                       <td className="px-3 py-2">{row.settlementNo || row.settlementBatchId}</td>
                       <td className="px-3 py-2">{formatDate(row.settlementDate)}</td>
                       <td className="px-3 py-2">{row.statusCurrent}</td>
-                      <td className="px-3 py-2">{formatAmount(row.totalAllocatedTxn)}</td>
+                      <td className="px-3 py-2">
+                        <MoneyText
+                          amount={row.totalAllocatedTxn}
+                          currencyCode={row.currencyCode}
+                        />
+                      </td>
                       <td className="px-3 py-2">{row.cashTransactionId || "-"}</td>
                       <td className="px-3 py-2">{row.reversalOfSettlementNo || "-"}</td>
                       <td className="px-3 py-2">{row.reversedBySettlementNo || "-"}</td>

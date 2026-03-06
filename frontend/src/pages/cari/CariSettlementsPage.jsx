@@ -21,11 +21,13 @@ import { getCariOpenItemsReport } from "../../api/cariReports.js";
 import { getCariCounterpartyStatementReport } from "../../api/cariReports.js";
 import { extractCariReplayAndRisks } from "../../api/cariCommon.js";
 import Combobox from "../../components/Combobox.jsx";
+import MoneyText from "../../components/MoneyText.jsx";
 import { useAuth } from "../../auth/useAuth.js";
 import { useI18n } from "../../i18n/useI18n.js";
 import { useWorkingContextDefaults } from "../../context/useWorkingContextDefaults.js";
 import { usePersistedFilters } from "../../hooks/usePersistedFilters.js";
 import { useModuleReadiness } from "../../readiness/useModuleReadiness.js";
+import { formatMoneyText } from "../../utils/money.js";
 import {
   buildAutoAllocatePreview,
   buildSettlementApplyPayload,
@@ -287,17 +289,6 @@ function formatReadinessReason(reason, translate = (en) => en) {
     default:
       return String(reason || translate("Invalid mapping.", "Gecersiz esleme."));
   }
-}
-
-function formatAmount(value) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) {
-    return "-";
-  }
-  return parsed.toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 6,
-  });
 }
 
 function normalizeSearch(value) {
@@ -968,12 +959,11 @@ export default function CariSettlementsPage() {
           "-"
       ).trim();
       const settlementDate = String(row?.settlementDate || "-").trim();
-      const totalAllocated = formatAmount(row?.totalAllocatedTxn);
-      const currencyCode = toUpper(row?.currencyCode || "");
+      const totalAllocated = formatMoneyText(row?.totalAllocatedTxn, row?.currencyCode);
       return {
         value: String(row?.settlementBatchId || ""),
         label: `${settlementLabel} | ${settlementDate} | ${counterpartyLabel}`,
-        description: `ID:${row?.settlementBatchId || "-"} | ${row?.statusCurrent || "-"} | ${totalAllocated}${currencyCode ? ` ${currencyCode}` : ""}`,
+        description: `ID:${row?.settlementBatchId || "-"} | ${row?.statusCurrent || "-"} | ${totalAllocated}`,
       };
     });
   }, [reverseSettlementLookupQuery, reverseSettlementRows]);
@@ -3072,17 +3062,28 @@ export default function CariSettlementsPage() {
                     <td className="px-3 py-2">{row.direction || "-"}</td>
                     <td className="px-3 py-2">{row.dueDate || "-"}</td>
                     <td className="px-3 py-2">
-                      {formatAmount(row.openAmountDocTxn)} {row.documentCurrencyCode || "-"}
+                      <MoneyText
+                        amount={row.openAmountDocTxn}
+                        currencyCode={row.documentCurrencyCode}
+                      />
                     </td>
                     <td className="px-3 py-2">
-                      {formatAmount(row.expectedApplySettlementTxn)}{" "}
-                      {row.settlementCurrencyCode || "-"}
+                      <MoneyText
+                        amount={row.expectedApplySettlementTxn}
+                        currencyCode={row.settlementCurrencyCode}
+                      />
                     </td>
                     <td className="px-3 py-2">
-                      {formatAmount(row.expectedApplyDocTxn)} {row.documentCurrencyCode || "-"}
+                      <MoneyText
+                        amount={row.expectedApplyDocTxn}
+                        currencyCode={row.documentCurrencyCode}
+                      />
                     </td>
                     <td className="px-3 py-2">
-                      {formatAmount(row.expectedResidualDocTxn)} {row.documentCurrencyCode || "-"}
+                      <MoneyText
+                        amount={row.expectedResidualDocTxn}
+                        currencyCode={row.documentCurrencyCode}
+                      />
                     </td>
                     <td className="px-3 py-2 text-xs">
                       {row.fxMissing ? (

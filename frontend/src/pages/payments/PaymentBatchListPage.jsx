@@ -3,17 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { listBankAccounts } from "../../api/bankAccounts.js";
 import { createPaymentBatch, listPaymentBatches } from "../../api/payments.js";
 import { useAuth } from "../../auth/useAuth.js";
-
-function formatAmount(value) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) {
-    return "-";
-  }
-  return parsed.toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 6,
-  });
-}
+import MoneyText from "../../components/MoneyText.jsx";
 
 function formatDateTime(value) {
   if (!value) {
@@ -347,7 +337,9 @@ export default function PaymentBatchListPage() {
                     <div className="text-xs text-slate-500">{row.bank_account_name}</div>
                   </td>
                   <td className="p-2">{row.currency_code}</td>
-                  <td className="p-2">{formatAmount(row.total_amount)}</td>
+                  <td className="p-2">
+                    <MoneyText amount={row.total_amount} currencyCode={row.currency_code} />
+                  </td>
                   <td className="p-2">{row.status}</td>
                   <td className="p-2">
                     {row.line_count}{" "}
@@ -372,4 +364,3 @@ export default function PaymentBatchListPage() {
     </div>
   );
 }
-
