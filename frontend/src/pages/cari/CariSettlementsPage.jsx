@@ -536,6 +536,16 @@ export default function CariSettlementsPage() {
     () => resolveLegalEntityCurrencyCode(legalEntities, applyForm.legalEntityId),
     [applyForm.legalEntityId, legalEntities]
   );
+  const applySettlementCurrencyCode = normalizeCurrencyCode(applyForm.currencyCode);
+  const applyFxRateHint = useMemo(() => {
+    if (!applySettlementCurrencyCode || !applyFunctionalCurrencyCode) {
+      return "One-off override for this settlement only. It is not saved to FX Rate Management.";
+    }
+    if (applySettlementCurrencyCode === applyFunctionalCurrencyCode) {
+      return `One-off override only. Same-currency settlement uses parity: 1 ${applySettlementCurrencyCode} = 1 ${applyFunctionalCurrencyCode}.`;
+    }
+    return `One-off override only. Enter as 1 ${applySettlementCurrencyCode} = X ${applyFunctionalCurrencyCode}. Not saved to FX Rate Management.`;
+  }, [applyFunctionalCurrencyCode, applySettlementCurrencyCode]);
 
   const previewRows = useMemo(
     () =>
@@ -2291,6 +2301,9 @@ export default function CariSettlementsPage() {
               onChange={(event) => updateApplyForm("fxRate", event.target.value)}
               disabled={!canApply || applySubmitting}
             />
+            <span className="mt-1 block text-[11px] font-normal normal-case text-slate-500">
+              {applyFxRateHint}
+            </span>
           </label>
           <label className="text-xs font-semibold uppercase tracking-wide text-slate-600 md:col-span-2">
             Note (optional)
