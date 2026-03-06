@@ -19,19 +19,55 @@ import {
 } from "../../api/payrollSettlementOverrides.js";
 import { getPayrollLiabilityBeneficiarySnapshot } from "../../api/payrollBeneficiaries.js";
 import { useAuth } from "../../auth/useAuth.js";
+import MoneyText from "../../components/MoneyText.jsx";
+import { formatMoneyAmount, formatMoneyText } from "../../utils/money.js";
 
 function toPositiveInt(value) {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
-function formatAmount(value) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) return "-";
-  return parsed.toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 6,
-  });
+function collectDistinctCurrencyCodes(rows, resolveRowCurrencyCode) {
+  const codes = new Set();
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const currencyCode = String(resolveRowCurrencyCode?.(row) || "")
+      .trim()
+      .toUpperCase();
+    if (currencyCode) {
+      codes.add(currencyCode);
+    }
+  }
+  return Array.from(codes);
+}
+
+function buildAggregateMoneyMeta(
+  value,
+  { explicitCurrencyCode = "", rows = [], resolveRowCurrencyCode } = {}
+) {
+  const currencyCode = String(explicitCurrencyCode || "")
+    .trim()
+    .toUpperCase();
+  if (currencyCode) {
+    return { currencyCode, mixed: false };
+  }
+  const codes = collectDistinctCurrencyCodes(rows, resolveRowCurrencyCode);
+  if (codes.length === 1) {
+    return { currencyCode: codes[0], mixed: false };
+  }
+  return {
+    currencyCode: "",
+    mixed: codes.length > 1 || Number(value || 0) !== 0,
+  };
+}
+
+function formatAggregateMoneyValue(value, moneyMeta) {
+  if (moneyMeta?.currencyCode) {
+    return formatMoneyText(value, moneyMeta.currencyCode);
+  }
+  if (moneyMeta?.mixed) {
+    return "Mixed";
+  }
+  return formatMoneyAmount(value);
 }
 
 function formatDateTime(value) {
@@ -97,6 +133,47 @@ export default function PayrollLiabilitiesPage() {
     () => toAmount(items.reduce((sum, row) => sum + Number(row?.amount || 0), 0)),
     [items]
   );
+  const runCurrencyCode = String(
+    runDetail?.currency_code || runDetail?.currencyCode || ""
+  )
+    .trim()
+    .toUpperCase();
+  const summaryMoneyMeta = useMemo(
+    () =>
+      buildAggregateMoneyMeta(summary?.total_amount, {
+        explicitCurrencyCode: runCurrencyCode,
+        rows: items,
+        resolveRowCurrencyCode: (row) => row?.currency_code || row?.currencyCode,
+      }),
+    [summary?.total_amount, runCurrencyCode, items]
+  );
+  const previewMoneyMeta = useMemo(
+    () =>
+      buildAggregateMoneyMeta(currentPreview?.total_amount, {
+        explicitCurrencyCode: runCurrencyCode,
+        rows: currentPreview?.eligible_liabilities || [],
+        resolveRowCurrencyCode: (row) => row?.currency_code || row?.currencyCode,
+      }),
+    [currentPreview?.total_amount, currentPreview?.eligible_liabilities, runCurrencyCode]
+  );
+  const syncMoneyMeta = useMemo(
+    () =>
+      buildAggregateMoneyMeta(currentSyncPreview?.summary?.mark_paid_amount, {
+        explicitCurrencyCode: runCurrencyCode,
+        rows: currentSyncPreview?.items || [],
+        resolveRowCurrencyCode: (row) => row?.currency_code || row?.currencyCode,
+      }),
+    [currentSyncPreview?.summary?.mark_paid_amount, currentSyncPreview?.items, runCurrencyCode]
+  );
+  const listTotalMoneyMeta = useMemo(
+    () =>
+      buildAggregateMoneyMeta(totalAmount, {
+        explicitCurrencyCode: routeRunId ? runCurrencyCode : "",
+        rows: items,
+        resolveRowCurrencyCode: (row) => row?.currency_code || row?.currencyCode,
+      }),
+    [totalAmount, routeRunId, runCurrencyCode, items]
+  );
 
   function toAmount(value) {
     const parsed = Number(value);
@@ -145,7 +222,10 @@ export default function PayrollLiabilitiesPage() {
       return;
     }
     const amountRaw = window.prompt(
-      `Manual settlement amount (remaining ${formatAmount(liability.outstanding_amount ?? liability.amount)})`,
+      `Manual settlement amount (remaining ${formatMoneyText(
+        liability.outstanding_amount ?? liability.amount,
+        liability.currency_code
+      )})`,
       ""
     );
     if (amountRaw === null) return;
@@ -594,27 +674,39 @@ export default function PayrollLiabilitiesPage() {
             <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-6">
               <div>
                 <div className="text-xs text-slate-500">Toplam Liability</div>
-                <div className="font-medium">{formatAmount(summary?.total_amount)}</div>
+                <div className="font-medium">
+                  {formatAggregateMoneyValue(summary?.total_amount, summaryMoneyMeta)}
+                </div>
               </div>
               <div>
                 <div className="text-xs text-slate-500">Open</div>
-                <div className="font-medium">{formatAmount(summary?.total_open)}</div>
+                <div className="font-medium">
+                  {formatAggregateMoneyValue(summary?.total_open, summaryMoneyMeta)}
+                </div>
               </div>
               <div>
                 <div className="text-xs text-slate-500">In Batch</div>
-                <div className="font-medium">{formatAmount(summary?.total_in_batch)}</div>
+                <div className="font-medium">
+                  {formatAggregateMoneyValue(summary?.total_in_batch, summaryMoneyMeta)}
+                </div>
               </div>
               <div>
                 <div className="text-xs text-slate-500">Partially Paid</div>
-                <div className="font-medium">{formatAmount(summary?.total_partially_paid)}</div>
+                <div className="font-medium">
+                  {formatAggregateMoneyValue(summary?.total_partially_paid, summaryMoneyMeta)}
+                </div>
               </div>
               <div>
                 <div className="text-xs text-slate-500">Paid</div>
-                <div className="font-medium">{formatAmount(summary?.total_paid)}</div>
+                <div className="font-medium">
+                  {formatAggregateMoneyValue(summary?.total_paid, summaryMoneyMeta)}
+                </div>
               </div>
               <div>
                 <div className="text-xs text-slate-500">Outstanding</div>
-                <div className="font-medium">{formatAmount(summary?.total_outstanding)}</div>
+                <div className="font-medium">
+                  {formatAggregateMoneyValue(summary?.total_outstanding, summaryMoneyMeta)}
+                </div>
               </div>
             </div>
 
@@ -695,7 +787,9 @@ export default function PayrollLiabilitiesPage() {
                   </div>
                   <div>
                     <div className="text-xs text-slate-500">Preview Total</div>
-                    <div className="font-medium">{formatAmount(currentPreview.total_amount)}</div>
+                    <div className="font-medium">
+                      {formatAggregateMoneyValue(currentPreview.total_amount, previewMoneyMeta)}
+                    </div>
                   </div>
                   <div>
                     <div className="text-xs text-slate-500">Can Prepare</div>
@@ -725,7 +819,12 @@ export default function PayrollLiabilitiesPage() {
                             {row.employee_code ? `${row.employee_code} - ${row.employee_name || ""}` : row.beneficiary_name}
                           </td>
                           <td className="p-2">{row.payable_gl_account_id}</td>
-                          <td className="p-2">{formatAmount(row.amount)}</td>
+                          <td className="p-2">
+                            <MoneyText
+                              amount={row.amount}
+                              currencyCode={row.currency_code || runDetail?.currency_code}
+                            />
+                          </td>
                         </tr>
                       ))}
                       {(currentPreview.eligible_liabilities || []).length === 0 ? (
@@ -818,28 +917,40 @@ export default function PayrollLiabilitiesPage() {
                     <div className="text-xs text-slate-500">Mark PARTIAL</div>
                     <div className="font-medium">
                       {currentSyncPreview.summary?.mark_partial_count || 0} /{" "}
-                      {formatAmount(currentSyncPreview.summary?.mark_partial_amount)}
+                      {formatAggregateMoneyValue(
+                        currentSyncPreview.summary?.mark_partial_amount,
+                        syncMoneyMeta
+                      )}
                     </div>
                   </div>
                   <div>
                     <div className="text-xs text-slate-500">Mark PAID</div>
                     <div className="font-medium">
                       {currentSyncPreview.summary?.mark_paid_count || 0} /{" "}
-                      {formatAmount(currentSyncPreview.summary?.mark_paid_amount)}
+                      {formatAggregateMoneyValue(
+                        currentSyncPreview.summary?.mark_paid_amount,
+                        syncMoneyMeta
+                      )}
                     </div>
                   </div>
                   <div>
                     <div className="text-xs text-slate-500">Release to OPEN</div>
                     <div className="font-medium">
                       {currentSyncPreview.summary?.release_count || 0} /{" "}
-                      {formatAmount(currentSyncPreview.summary?.release_amount)}
+                      {formatAggregateMoneyValue(
+                        currentSyncPreview.summary?.release_amount,
+                        syncMoneyMeta
+                      )}
                     </div>
                   </div>
                   <div>
                     <div className="text-xs text-slate-500">No-op</div>
                     <div className="font-medium">
                       {currentSyncPreview.summary?.noop_count || 0} /{" "}
-                      {formatAmount(currentSyncPreview.summary?.noop_amount)}
+                      {formatAggregateMoneyValue(
+                        currentSyncPreview.summary?.noop_amount,
+                        syncMoneyMeta
+                      )}
                     </div>
                   </div>
                   <div>
@@ -889,7 +1000,11 @@ export default function PayrollLiabilitiesPage() {
                           <td className="p-2">
                             {Number(row.batch_bank_match_count || 0) > 0 ? (
                               <>
-                                matches={row.batch_bank_match_count} total={formatAmount(row.batch_bank_matched_total)}
+                                matches={row.batch_bank_match_count} total=
+                                {formatMoneyText(
+                                  row.batch_bank_matched_total,
+                                  row.currency_code || runDetail?.currency_code
+                                )}
                                 {row.bank_statement_line_id ? (
                                   <div className="text-xs text-slate-500">
                                     stmtLine #{row.bank_statement_line_id}
@@ -905,12 +1020,17 @@ export default function PayrollLiabilitiesPage() {
                             <div className="text-xs text-slate-500">{row.verdict?.reason || "-"}</div>
                           </td>
                           <td className="p-2">
-                            {formatAmount(row.verdict?.amount ?? row.allocated_amount)}
+                            <MoneyText
+                              amount={row.verdict?.amount ?? row.allocated_amount}
+                              currencyCode={row.currency_code || runDetail?.currency_code}
+                            />
                             {(row.verdict?.targetSettledAmount ?? row.verdict?.target_settled_amount) ? (
                               <div className="text-xs text-slate-500">
                                 target:{" "}
-                                {formatAmount(
-                                  row.verdict?.targetSettledAmount ?? row.verdict?.target_settled_amount
+                                {formatMoneyText(
+                                  row.verdict?.targetSettledAmount ??
+                                    row.verdict?.target_settled_amount,
+                                  row.currency_code || runDetail?.currency_code
                                 )}
                               </div>
                             ) : null}
@@ -942,7 +1062,9 @@ export default function PayrollLiabilitiesPage() {
       <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="flex items-center justify-between gap-2">
           <h2 className="text-sm font-semibold text-slate-900">Liabilities</h2>
-          <div className="text-xs text-slate-500">Toplam: {formatAmount(totalAmount)}</div>
+          <div className="text-xs text-slate-500">
+            Toplam: {formatAggregateMoneyValue(totalAmount, listTotalMoneyMeta)}
+          </div>
         </div>
         <div className="mt-3 overflow-auto">
           <table className="min-w-full border-collapse text-sm">
@@ -978,9 +1100,15 @@ export default function PayrollLiabilitiesPage() {
                     {row.employee_code ? `${row.employee_code} - ${row.employee_name || ""}` : "-"}
                   </td>
                   <td className="p-2">{row.beneficiary_name}</td>
-                  <td className="p-2">{formatAmount(row.amount)}</td>
-                  <td className="p-2">{formatAmount(row.settled_amount)}</td>
-                  <td className="p-2">{formatAmount(row.outstanding_amount)}</td>
+                  <td className="p-2">
+                    <MoneyText amount={row.amount} currencyCode={row.currency_code} />
+                  </td>
+                  <td className="p-2">
+                    <MoneyText amount={row.settled_amount} currencyCode={row.currency_code} />
+                  </td>
+                  <td className="p-2">
+                    <MoneyText amount={row.outstanding_amount} currencyCode={row.currency_code} />
+                  </td>
                   <td className="p-2">{row.status}</td>
                   <td className="p-2">
                     <div>{row.beneficiary_snapshot_status || "-"}</div>
@@ -1168,15 +1296,30 @@ export default function PayrollLiabilitiesPage() {
                 </div>
                 <div>
                   <div className="text-xs text-slate-500">Amount</div>
-                  <div className="font-medium">{formatAmount(selectedLiability?.amount)}</div>
+                  <div className="font-medium">
+                    <MoneyText
+                      amount={selectedLiability?.amount}
+                      currencyCode={selectedLiability?.currency_code}
+                    />
+                  </div>
                 </div>
                 <div>
                   <div className="text-xs text-slate-500">Settled</div>
-                  <div className="font-medium">{formatAmount(selectedLiability?.settled_amount)}</div>
+                  <div className="font-medium">
+                    <MoneyText
+                      amount={selectedLiability?.settled_amount}
+                      currencyCode={selectedLiability?.currency_code}
+                    />
+                  </div>
                 </div>
                 <div>
                   <div className="text-xs text-slate-500">Outstanding</div>
-                  <div className="font-medium">{formatAmount(selectedLiability?.outstanding_amount)}</div>
+                  <div className="font-medium">
+                    <MoneyText
+                      amount={selectedLiability?.outstanding_amount}
+                      currencyCode={selectedLiability?.currency_code}
+                    />
+                  </div>
                 </div>
                 <div>
                   <div className="text-xs text-slate-500">Payment Link</div>
@@ -1223,7 +1366,11 @@ export default function PayrollLiabilitiesPage() {
                       <span className="font-medium">Req #{reqRow.id}</span>
                       <span className="rounded border px-2 py-0.5 text-xs">{reqRow.status}</span>
                       <span className="text-xs text-slate-500">
-                        amount {formatAmount(reqRow.requested_amount)} {reqRow.currency_code}
+                        amount{" "}
+                        {formatMoneyText(
+                          reqRow.requested_amount,
+                          reqRow.currency_code || selectedLiability?.currency_code
+                        )}
                       </span>
                       <span className="ml-auto text-xs text-slate-500">
                         {formatDateTime(reqRow.requested_at)}

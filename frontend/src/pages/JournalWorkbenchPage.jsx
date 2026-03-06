@@ -26,11 +26,17 @@ import {
   listOperatingUnits,
 } from "../api/orgAdmin.js";
 import { useAuth } from "../auth/useAuth.js";
+import MoneyText from "../components/MoneyText.jsx";
 import { Link, useSearchParams } from "react-router-dom";
 import { useWorkingContextDefaults } from "../context/useWorkingContextDefaults.js";
 import { usePersistedFilters } from "../hooks/usePersistedFilters.js";
 import { useToastMessage } from "../hooks/useToastMessage.js";
 import { useI18n } from "../i18n/useI18n.js";
+import {
+  formatMoneyText,
+  resolveBookBaseCurrencyCode,
+  resolveContextBaseCurrencyCode,
+} from "../utils/money.js";
 
 const JOURNAL_SOURCE_TYPES = [
   "MANUAL",
@@ -619,12 +625,26 @@ export default function JournalWorkbenchPage() {
     }
     return Array.from(byId.values());
   }, [historyRows, selectedJournal]);
+  const selectedLegalEntity = useMemo(
+    () => entities.find((entity) => Number(entity.id) === Number(selectedLegalEntityId)) || null,
+    [entities, selectedLegalEntityId]
+  );
+  const selectedBookBaseCurrencyCode = useMemo(
+    () =>
+      resolveContextBaseCurrencyCode({
+        legalEntityRows: entities,
+        legalEntityId: selectedLegalEntityId,
+        bookRows: books,
+        bookId: selectedBookId,
+      }),
+    [books, entities, selectedBookId, selectedLegalEntityId]
+  );
   const renderPostableAccountOption = useCallback(
     ({ option, isHighlighted, isSelected, disabled }) => {
       const balanceText =
         option?.balance === null
           ? l("Period required", "Donem gerekli")
-          : `${formatAmount(option.balance)} ${String(journal.currencyCode || "").toUpperCase()}`;
+          : formatMoneyText(option.balance, selectedBookBaseCurrencyCode);
       const rowClass = disabled
         ? "cursor-not-allowed text-slate-400"
         : isHighlighted
@@ -650,7 +670,7 @@ export default function JournalWorkbenchPage() {
         </div>
       );
     },
-    [journal.currencyCode, l]
+    [l, selectedBookBaseCurrencyCode]
   );
 
   const lineTotals = useMemo(() => {
@@ -750,10 +770,29 @@ export default function JournalWorkbenchPage() {
     selectedJournalReverseBlockedSourceLinks,
     l,
   ]);
-
-  const selectedLegalEntity = useMemo(
-    () => entities.find((entity) => Number(entity.id) === Number(selectedLegalEntityId)) || null,
-    [entities, selectedLegalEntityId]
+  const trialBalanceBookBaseCurrencyCode = useMemo(
+    () => resolveBookBaseCurrencyCode(books, tbForm.bookId),
+    [books, tbForm.bookId]
+  );
+  const historyBookBaseCurrencyCode = useMemo(
+    () => resolveBookBaseCurrencyCode(books, historyFilters.bookId),
+    [books, historyFilters.bookId]
+  );
+  const selectedJournalBookBaseCurrencyCode = useMemo(
+    () =>
+      resolveContextBaseCurrencyCode({
+        legalEntityRows: entities,
+        legalEntityId:
+          selectedJournal?.legal_entity_id ||
+          selectedJournal?.legalEntityId ||
+          historyFilters.legalEntityId,
+        bookRows: books,
+        bookId:
+          selectedJournal?.book_id ||
+          selectedJournal?.bookId ||
+          historyFilters.bookId,
+      }),
+    [books, entities, historyFilters.bookId, historyFilters.legalEntityId, selectedJournal]
   );
   const showPeriodCloseFxOverrideControls = canOverrideCashFxRevaluation;
   const periodCloseFxGateDetails = useMemo(() => {
@@ -1797,7 +1836,7 @@ export default function JournalWorkbenchPage() {
 
     const accountId = toInt(accountIdRaw);
     const balance = accountId ? Number(createAccountBalanceById.get(accountId) || 0) : 0;
-    return `${formatAmount(balance)} ${String(journal.currencyCode || "").toUpperCase()}`;
+    return formatMoneyText(balance, selectedBookBaseCurrencyCode);
   }
 
   function exitEditMode() {
@@ -2871,7 +2910,7 @@ export default function JournalWorkbenchPage() {
 
           <div className="flex flex-wrap items-center justify-between gap-2">
             <button type="button" onClick={addLine} className="rounded border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50">{l("Add Line", "Satir Ekle")}</button>
-            <div className="text-xs text-slate-700">{l("Debit", "Borc")}: {formatAmount(lineTotals.debit)} | {l("Credit", "Alacak")}: {formatAmount(lineTotals.credit)} | <span className={lineTotals.balanced ? "text-emerald-700" : "text-rose-700"}>{lineTotals.balanced ? l("Balanced", "Dengeli") : l("Not Balanced", "Dengede Degil")}</span></div>
+            <div className="text-xs text-slate-700">{l("Debit", "Borc")}: {formatMoneyText(lineTotals.debit, selectedBookBaseCurrencyCode)} | {l("Credit", "Alacak")}: {formatMoneyText(lineTotals.credit, selectedBookBaseCurrencyCode)} | <span className={lineTotals.balanced ? "text-emerald-700" : "text-rose-700"}>{lineTotals.balanced ? l("Balanced", "Dengeli") : l("Not Balanced", "Dengede Degil")}</span></div>
             <button
               type="submit"
               disabled={
@@ -3005,10 +3044,10 @@ export default function JournalWorkbenchPage() {
             <table className="min-w-full text-xs">
               <thead className="bg-slate-50 text-left text-slate-600"><tr><th className="px-2 py-2">{l("Account", "Hesap")}</th><th className="px-2 py-2">{l("Debit", "Borc")}</th><th className="px-2 py-2">{l("Credit", "Alacak")}</th><th className="px-2 py-2">{l("Balance", "Bakiye")}</th></tr></thead>
               <tbody>
-                {tbRows.map((row) => <tr key={row.account_id} className={`border-t border-slate-100 ${row.is_rollup ? "bg-slate-50/60" : ""}`}><td className="px-2 py-2">{row.account_code} - {row.account_name}{row.is_rollup ? ` (${l("Roll-up", "Toplam")})` : ""}</td><td className="px-2 py-2">{formatAmount(row.debit_total)}</td><td className="px-2 py-2">{formatAmount(row.credit_total)}</td><td className="px-2 py-2">{formatAmount(row.balance)}</td></tr>)}
+                {tbRows.map((row) => <tr key={row.account_id} className={`border-t border-slate-100 ${row.is_rollup ? "bg-slate-50/60" : ""}`}><td className="px-2 py-2">{row.account_code} - {row.account_name}{row.is_rollup ? ` (${l("Roll-up", "Toplam")})` : ""}</td><td className="px-2 py-2"><MoneyText amount={row.debit_total} currencyCode={trialBalanceBookBaseCurrencyCode} /></td><td className="px-2 py-2"><MoneyText amount={row.credit_total} currencyCode={trialBalanceBookBaseCurrencyCode} /></td><td className="px-2 py-2"><MoneyText amount={row.balance} currencyCode={trialBalanceBookBaseCurrencyCode} /></td></tr>)}
                 {tbRows.length === 0 && <tr><td colSpan={4} className="px-2 py-3 text-slate-500">{l("No trial balance rows.", "Mizan satiri yok.")}</td></tr>}
               </tbody>
-              {tbRows.length > 0 && <tfoot><tr className="border-t bg-slate-50 font-semibold text-slate-700"><td className="px-2 py-2">{l("Totals", "Toplamlar")}</td><td className="px-2 py-2">{formatAmount(tbTotals.debit)}</td><td className="px-2 py-2">{formatAmount(tbTotals.credit)}</td><td className="px-2 py-2">{formatAmount(tbTotals.balance)}</td></tr></tfoot>}
+              {tbRows.length > 0 && <tfoot><tr className="border-t bg-slate-50 font-semibold text-slate-700"><td className="px-2 py-2">{l("Totals", "Toplamlar")}</td><td className="px-2 py-2"><MoneyText amount={tbTotals.debit} currencyCode={trialBalanceBookBaseCurrencyCode} /></td><td className="px-2 py-2"><MoneyText amount={tbTotals.credit} currencyCode={trialBalanceBookBaseCurrencyCode} /></td><td className="px-2 py-2"><MoneyText amount={tbTotals.balance} currencyCode={trialBalanceBookBaseCurrencyCode} /></td></tr></tfoot>}
             </table>
           </div>
         </form>
@@ -3449,8 +3488,18 @@ export default function JournalWorkbenchPage() {
                     <td className="px-3 py-2">{row.journal_no}</td>
                     <td className="px-3 py-2">{row.status}</td>
                     <td className="px-3 py-2">{row.entry_date}</td>
-                    <td className="px-3 py-2">{formatAmount(row.total_debit_base)}</td>
-                    <td className="px-3 py-2">{formatAmount(row.total_credit_base)}</td>
+                    <td className="px-3 py-2">
+                      <MoneyText
+                        amount={row.total_debit_base}
+                        currencyCode={historyBookBaseCurrencyCode}
+                      />
+                    </td>
+                    <td className="px-3 py-2">
+                      <MoneyText
+                        amount={row.total_credit_base}
+                        currencyCode={historyBookBaseCurrencyCode}
+                      />
+                    </td>
                     <td className="px-3 py-2">{row.line_count}</td>
                     <td className="px-3 py-2">
                       <div className="flex flex-wrap items-center gap-1">
@@ -3584,8 +3633,18 @@ export default function JournalWorkbenchPage() {
                             {line.account_code} - {line.account_name}
                           </td>
                           <td className="px-2 py-1.5">{line.subledger_reference_no || "-"}</td>
-                          <td className="px-2 py-1.5">{formatAmount(line.debit_base)}</td>
-                          <td className="px-2 py-1.5">{formatAmount(line.credit_base)}</td>
+                          <td className="px-2 py-1.5">
+                            <MoneyText
+                              amount={line.debit_base}
+                              currencyCode={selectedJournalBookBaseCurrencyCode}
+                            />
+                          </td>
+                          <td className="px-2 py-1.5">
+                            <MoneyText
+                              amount={line.credit_base}
+                              currencyCode={selectedJournalBookBaseCurrencyCode}
+                            />
+                          </td>
                         </tr>
                       )})}
                     </tbody>
@@ -3630,8 +3689,18 @@ export default function JournalWorkbenchPage() {
                       <td className="px-2 py-1.5">{row.journal_no || "-"}</td>
                       <td className="px-2 py-1.5">{row.status || "-"}</td>
                       <td className="px-2 py-1.5">{row.entry_date || "-"}</td>
-                      <td className="px-2 py-1.5">{formatAmount(row.total_debit_base)}</td>
-                      <td className="px-2 py-1.5">{formatAmount(row.total_credit_base)}</td>
+                      <td className="px-2 py-1.5">
+                        <MoneyText
+                          amount={row.total_debit_base}
+                          currencyCode={historyBookBaseCurrencyCode}
+                        />
+                      </td>
+                      <td className="px-2 py-1.5">
+                        <MoneyText
+                          amount={row.total_credit_base}
+                          currencyCode={historyBookBaseCurrencyCode}
+                        />
+                      </td>
                       <td className="px-2 py-1.5">{row.line_count}</td>
                     </tr>
                   ))}

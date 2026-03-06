@@ -8,9 +8,11 @@ import {
   reverseCashExchangeBatch,
 } from "../../api/cashAdmin.js";
 import { listAccounts, upsertAccount } from "../../api/glAdmin.js";
+import { listLegalEntities } from "../../api/orgAdmin.js";
 import { useAuth } from "../../auth/useAuth.js";
 import Combobox from "../../components/Combobox.jsx";
 import MoneyText from "../../components/MoneyText.jsx";
+import { resolveContextBaseCurrencyCode } from "../../utils/money.js";
 import CashControlModeBanner from "./CashControlModeBanner.jsx";
 
 const EXCHANGE_STATUSES = ["DRAFT", "POSTED", "REVERSED", "CANCELLED"];
@@ -87,17 +89,6 @@ function toOptionalPositiveNumber(value) {
 
 function toUpper(value) {
   return String(value || "").trim().toUpperCase();
-}
-
-function formatAmount(value) {
-  const amount = Number(value);
-  if (!Number.isFinite(amount)) {
-    return "-";
-  }
-  return amount.toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 6,
-  });
 }
 
 function formatDateTime(value) {
@@ -381,6 +372,7 @@ export default function CashExchangesPage() {
   const [filters, setFilters] = useState(INITIAL_FILTERS);
   const [rows, setRows] = useState([]);
   const [registerRows, setRegisterRows] = useState([]);
+  const [legalEntityRows, setLegalEntityRows] = useState([]);
   const [accountRows, setAccountRows] = useState([]);
   const [loading, setLoading] = useState(false);
   const [createSubmitting, setCreateSubmitting] = useState(false);
@@ -600,6 +592,7 @@ export default function CashExchangesPage() {
       if (!canRead) {
         setRows([]);
         setRegisterRows([]);
+        setLegalEntityRows([]);
         setAccountRows([]);
         return;
       }
@@ -620,9 +613,11 @@ export default function CashExchangesPage() {
         offset: 0,
       };
 
-      const [exchangeResult, registerResult, accountResult] = await Promise.allSettled([
+      const [exchangeResult, registerResult, legalEntityResult, accountResult] =
+        await Promise.allSettled([
         listCashExchangeBatches(query),
         listCashRegisters({ limit: 500, offset: 0 }),
+        listLegalEntities(),
         listAccounts({ limit: 1000, offset: 0 }),
       ]);
 
@@ -639,6 +634,20 @@ export default function CashExchangesPage() {
           setRegisterRows([]);
           warnings.push(
             extractErrorMessage(registerResult.reason, "Cash register lookup is unavailable.")
+          );
+        }
+
+        if (legalEntityResult.status === "fulfilled") {
+          setLegalEntityRows(
+            Array.isArray(legalEntityResult.value?.rows) ? legalEntityResult.value.rows : []
+          );
+        } else {
+          setLegalEntityRows([]);
+          warnings.push(
+            extractErrorMessage(
+              legalEntityResult.reason,
+              "Legal entity currency lookup is unavailable."
+            )
           );
         }
 
@@ -1283,6 +1292,10 @@ export default function CashExchangesPage() {
                 const canReverseRow = canReverse && toUpper(row?.status) === "POSTED";
                 const rowPostSubmitting = postSubmittingBatchId === rowId;
                 const fxDisplay = buildFxDisplay(row, fxDisplayMode);
+                const rowBaseCurrencyCode = resolveContextBaseCurrencyCode({
+                  legalEntityRows,
+                  legalEntityId: row?.legalEntityId || row?.legal_entity_id,
+                });
                 return (
                   <tr
                     key={`cash-exchange-row-${row?.id}`}
@@ -1336,8 +1349,20 @@ export default function CashExchangesPage() {
                       </div>
                     </td>
                     <td className="px-3 py-2">
-                      <div>Fee: {formatAmount(row?.feeAmountBase)}</div>
-                      <div>Spread: {formatAmount(row?.spreadAmountBase)}</div>
+                      <div>
+                        Fee:{" "}
+                        <MoneyText
+                          amount={row?.feeAmountBase}
+                          currencyCode={rowBaseCurrencyCode}
+                        />
+                      </div>
+                      <div>
+                        Spread:{" "}
+                        <MoneyText
+                          amount={row?.spreadAmountBase}
+                          currencyCode={rowBaseCurrencyCode}
+                        />
+                      </div>
                     </td>
                     <td className="px-3 py-2">
                       <span

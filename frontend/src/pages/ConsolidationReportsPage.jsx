@@ -11,18 +11,13 @@ import {
 } from "../api/glAdmin.js";
 import { listWorkflowInstances } from "../api/workflows.js";
 import { useAuth } from "../auth/useAuth.js";
+import MoneyText from "../components/MoneyText.jsx";
 import { useI18n } from "../i18n/useI18n.js";
+import { formatMoneyText } from "../utils/money.js";
 
 function toInt(value) {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
-}
-
-function formatAmount(value) {
-  return Number(value || 0).toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
 }
 
 function formatPeriodNo(value) {
@@ -69,6 +64,17 @@ export default function ConsolidationReportsPage() {
     }
     return runs.find((row) => Number(row.id) === selectedId) || null;
   }, [form.runId, runs]);
+  const presentationCurrencyCode = useMemo(
+    () =>
+      String(
+        selectedRun?.presentationCurrencyCode ||
+          selectedRun?.presentation_currency_code ||
+          ""
+      )
+        .trim()
+        .toUpperCase(),
+    [selectedRun]
+  );
 
   useEffect(() => {
     if (!selectedRun || !canReadWorkflow) {
@@ -523,20 +529,44 @@ export default function ConsolidationReportsPage() {
         {balanceSheetReport?.totals && (
           <div className="rounded border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
             {t("consolidationReports.bsTotals", {
-              assets: formatAmount(balanceSheetReport.totals.assetsTotal),
-              liabilities: formatAmount(balanceSheetReport.totals.liabilitiesTotal),
-              equity: formatAmount(balanceSheetReport.totals.equityTotal),
-              earnings: formatAmount(balanceSheetReport.totals.currentPeriodEarnings),
-              delta: formatAmount(balanceSheetReport.totals.equationDelta),
+              assets: formatMoneyText(
+                balanceSheetReport.totals.assetsTotal,
+                presentationCurrencyCode
+              ),
+              liabilities: formatMoneyText(
+                balanceSheetReport.totals.liabilitiesTotal,
+                presentationCurrencyCode
+              ),
+              equity: formatMoneyText(
+                balanceSheetReport.totals.equityTotal,
+                presentationCurrencyCode
+              ),
+              earnings: formatMoneyText(
+                balanceSheetReport.totals.currentPeriodEarnings,
+                presentationCurrencyCode
+              ),
+              delta: formatMoneyText(
+                balanceSheetReport.totals.equationDelta,
+                presentationCurrencyCode
+              ),
             })}
           </div>
         )}
         {incomeStatementReport?.totals && (
           <div className="rounded border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
             {t("consolidationReports.isTotals", {
-              revenue: formatAmount(incomeStatementReport.totals.revenueTotal),
-              expense: formatAmount(incomeStatementReport.totals.expenseTotal),
-              net: formatAmount(incomeStatementReport.totals.netIncome),
+              revenue: formatMoneyText(
+                incomeStatementReport.totals.revenueTotal,
+                presentationCurrencyCode
+              ),
+              expense: formatMoneyText(
+                incomeStatementReport.totals.expenseTotal,
+                presentationCurrencyCode
+              ),
+              net: formatMoneyText(
+                incomeStatementReport.totals.netIncome,
+                presentationCurrencyCode
+              ),
             })}
           </div>
         )}
@@ -559,7 +589,10 @@ export default function ConsolidationReportsPage() {
                     </td>
                     <td className="px-2 py-2">{row.accountType}</td>
                     <td className="px-2 py-2">
-                      {formatAmount(row.normalizedFinalBalance || 0)}
+                      <MoneyText
+                        amount={row.normalizedFinalBalance || 0}
+                        currencyCode={presentationCurrencyCode}
+                      />
                     </td>
                   </tr>
                 ))}
@@ -591,7 +624,10 @@ export default function ConsolidationReportsPage() {
                     </td>
                     <td className="px-2 py-2">{row.accountType}</td>
                     <td className="px-2 py-2">
-                      {formatAmount(row.normalizedFinalBalance || 0)}
+                      <MoneyText
+                        amount={row.normalizedFinalBalance || 0}
+                        currencyCode={presentationCurrencyCode}
+                      />
                     </td>
                   </tr>
                 ))}
@@ -633,8 +669,12 @@ export default function ConsolidationReportsPage() {
                     <td className="px-2 py-2">
                       {row.accountCode} - {row.accountName}
                     </td>
-                    <td className="px-2 py-2">{formatAmount(row.debitAmount)}</td>
-                    <td className="px-2 py-2">{formatAmount(row.creditAmount)}</td>
+                    <td className="px-2 py-2">
+                      <MoneyText amount={row.debitAmount} currencyCode={presentationCurrencyCode} />
+                    </td>
+                    <td className="px-2 py-2">
+                      <MoneyText amount={row.creditAmount} currencyCode={presentationCurrencyCode} />
+                    </td>
                     <td className="px-2 py-2">
                       {row.status === "DRAFT" ? (
                         <button

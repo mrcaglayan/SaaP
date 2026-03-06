@@ -2,17 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { listPayrollRuns } from "../../api/payrollRuns.js";
 import { useAuth } from "../../auth/useAuth.js";
-
-function formatAmount(value) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) {
-    return "-";
-  }
-  return parsed.toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 6,
-  });
-}
+import MoneyText from "../../components/MoneyText.jsx";
 
 function formatDate(value) {
   if (!value) {
@@ -227,8 +217,12 @@ export default function PayrollRunsPage() {
                   <td className="p-2">{formatDate(row.payroll_period)}</td>
                   <td className="p-2">{formatDate(row.pay_date)}</td>
                   <td className="p-2">{row.employee_count}</td>
-                  <td className="p-2">{formatAmount(row.total_gross_pay)}</td>
-                  <td className="p-2">{formatAmount(row.total_net_pay)}</td>
+                  <td className="p-2">
+                    <MoneyText amount={row.total_gross_pay} currencyCode={row.currency_code} />
+                  </td>
+                  <td className="p-2">
+                    <MoneyText amount={row.total_net_pay} currencyCode={row.currency_code} />
+                  </td>
                   <td className="p-2">
                     <div>{row.status}</div>
                     {row.run_type && row.run_type !== "REGULAR" ? (

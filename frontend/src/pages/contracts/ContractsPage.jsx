@@ -23,6 +23,8 @@ import {
 import { listCariCounterparties } from "../../api/cariCounterparty.js";
 import { listLegalEntities } from "../../api/orgAdmin.js";
 import { useAuth } from "../../auth/useAuth.js";
+import MoneyText from "../../components/MoneyText.jsx";
+import { resolveContextBaseCurrencyCode } from "../../utils/money.js";
 import {
   CONTRACT_LINE_STATUSES,
   CONTRACT_STATUSES,
@@ -209,6 +211,17 @@ export default function ContractsPage() {
   const lifecycleStates = useMemo(
     () => getLifecycleActionStates(selectedContract?.status, gates),
     [selectedContract?.status, gates]
+  );
+  const selectedContractCurrencyCode = toUpper(
+    financialRollup?.currencyCode || selectedContract?.currencyCode
+  );
+  const selectedContractBaseCurrencyCode = useMemo(
+    () =>
+      resolveContextBaseCurrencyCode({
+        legalEntityRows: legalEntityOptions,
+        legalEntityId: selectedContract?.legalEntityId || selectedContract?.legal_entity_id,
+      }),
+    [legalEntityOptions, selectedContract]
   );
 
   const selectedStatus = toUpper(selectedContract?.status);
@@ -1259,7 +1272,15 @@ export default function ContractsPage() {
                   <td>{row.contractNo}</td>
                   <td>{row.contractType}</td>
                   <td>{row.status}</td>
-                  <td>{formatAmount(row.totalAmountBase)}</td>
+                  <td>
+                    <MoneyText
+                      amount={row.totalAmountBase}
+                      currencyCode={resolveContextBaseCurrencyCode({
+                        legalEntityRows: legalEntityOptions,
+                        legalEntityId: row?.legalEntityId || row?.legal_entity_id,
+                      })}
+                    />
+                  </td>
                   <td>
                     <button className="rounded border border-slate-300 px-2 py-1 text-xs" onClick={() => setSelectedContractId(row.id)}>
                       Select
@@ -1477,42 +1498,81 @@ export default function ContractsPage() {
               <div className="rounded border border-slate-200 bg-slate-50 p-3">
                 <div className="text-xs uppercase tracking-wide text-slate-500">Billed</div>
                 <div className="mt-1 text-lg font-semibold text-slate-900">
-                  {formatAmount(financialRollup?.billedAmountBase)}
+                  <MoneyText
+                    amount={financialRollup?.billedAmountBase}
+                    currencyCode={selectedContractBaseCurrencyCode}
+                  />
                 </div>
-                <div className="text-xs text-slate-600">Txn {formatAmount(financialRollup?.billedAmountTxn)}</div>
+                <div className="text-xs text-slate-600">
+                  Txn{" "}
+                  <MoneyText
+                    amount={financialRollup?.billedAmountTxn}
+                    currencyCode={selectedContractCurrencyCode}
+                  />
+                </div>
               </div>
               <div className="rounded border border-slate-200 bg-slate-50 p-3">
                 <div className="text-xs uppercase tracking-wide text-slate-500">Collected</div>
                 <div className="mt-1 text-lg font-semibold text-emerald-700">
-                  {formatAmount(financialRollup?.collectedAmountBase)}
+                  <MoneyText
+                    amount={financialRollup?.collectedAmountBase}
+                    currencyCode={selectedContractBaseCurrencyCode}
+                  />
                 </div>
-                <div className="text-xs text-slate-600">Txn {formatAmount(financialRollup?.collectedAmountTxn)}</div>
+                <div className="text-xs text-slate-600">
+                  Txn{" "}
+                  <MoneyText
+                    amount={financialRollup?.collectedAmountTxn}
+                    currencyCode={selectedContractCurrencyCode}
+                  />
+                </div>
               </div>
               <div className="rounded border border-slate-200 bg-slate-50 p-3">
                 <div className="text-xs uppercase tracking-wide text-slate-500">Uncollected</div>
                 <div className="mt-1 text-lg font-semibold text-amber-700">
-                  {formatAmount(financialRollup?.uncollectedAmountBase)}
+                  <MoneyText
+                    amount={financialRollup?.uncollectedAmountBase}
+                    currencyCode={selectedContractBaseCurrencyCode}
+                  />
                 </div>
                 <div className="text-xs text-slate-600">
-                  Txn {formatAmount(financialRollup?.uncollectedAmountTxn)}
+                  Txn{" "}
+                  <MoneyText
+                    amount={financialRollup?.uncollectedAmountTxn}
+                    currencyCode={selectedContractCurrencyCode}
+                  />
                 </div>
               </div>
               <div className="rounded border border-slate-200 bg-slate-50 p-3">
                 <div className="text-xs uppercase tracking-wide text-slate-500">Recognized To Date</div>
                 <div className="mt-1 text-lg font-semibold text-sky-700">
-                  {formatAmount(financialRollup?.recognizedToDateBase)}
+                  <MoneyText
+                    amount={financialRollup?.recognizedToDateBase}
+                    currencyCode={selectedContractBaseCurrencyCode}
+                  />
                 </div>
                 <div className="text-xs text-slate-600">
-                  Txn {formatAmount(financialRollup?.recognizedToDateTxn)}
+                  Txn{" "}
+                  <MoneyText
+                    amount={financialRollup?.recognizedToDateTxn}
+                    currencyCode={selectedContractCurrencyCode}
+                  />
                 </div>
               </div>
               <div className="rounded border border-slate-200 bg-slate-50 p-3">
                 <div className="text-xs uppercase tracking-wide text-slate-500">Deferred Balance</div>
                 <div className="mt-1 text-lg font-semibold text-indigo-700">
-                  {formatAmount(financialRollup?.deferredBalanceBase)}
+                  <MoneyText
+                    amount={financialRollup?.deferredBalanceBase}
+                    currencyCode={selectedContractBaseCurrencyCode}
+                  />
                 </div>
                 <div className="text-xs text-slate-600">
-                  Txn {formatAmount(financialRollup?.deferredBalanceTxn)}
+                  Txn{" "}
+                  <MoneyText
+                    amount={financialRollup?.deferredBalanceTxn}
+                    currencyCode={selectedContractCurrencyCode}
+                  />
                 </div>
               </div>
               <div className="rounded border border-slate-200 bg-slate-50 p-3">
@@ -1522,15 +1582,25 @@ export default function ContractsPage() {
                     : "Open Receivable"}
                 </div>
                 <div className="mt-1 text-lg font-semibold text-rose-700">
-                  {toUpper(selectedContract?.contractType) === "VENDOR"
-                    ? formatAmount(financialRollup?.openPayableBase)
-                    : formatAmount(financialRollup?.openReceivableBase)}
+                  <MoneyText
+                    amount={
+                      toUpper(selectedContract?.contractType) === "VENDOR"
+                        ? financialRollup?.openPayableBase
+                        : financialRollup?.openReceivableBase
+                    }
+                    currencyCode={selectedContractBaseCurrencyCode}
+                  />
                 </div>
                 <div className="text-xs text-slate-600">
                   Txn{" "}
-                  {toUpper(selectedContract?.contractType) === "VENDOR"
-                    ? formatAmount(financialRollup?.openPayableTxn)
-                    : formatAmount(financialRollup?.openReceivableTxn)}
+                  <MoneyText
+                    amount={
+                      toUpper(selectedContract?.contractType) === "VENDOR"
+                        ? financialRollup?.openPayableTxn
+                        : financialRollup?.openReceivableTxn
+                    }
+                    currencyCode={selectedContractCurrencyCode}
+                  />
                 </div>
               </div>
             </div>
@@ -1713,7 +1783,10 @@ export default function ContractsPage() {
                       />
                       <span>
                         #{lineId || "-"} | {line?.description || "-"} | {line?.status} | txn{" "}
-                        {formatAmount(line?.lineAmountTxn)}
+                        <MoneyText
+                          amount={line?.lineAmountTxn}
+                          currencyCode={selectedContractCurrencyCode}
+                        />
                       </span>
                     </label>
                   );
@@ -1955,8 +2028,18 @@ export default function ContractsPage() {
                         {(row.documentCurrencyCodeSnapshot || "-")}
                       </td>
                       <td>{formatAmount(row.linkFxRateSnapshot)}</td>
-                      <td>{formatAmount(row.linkedAmountTxn)}</td>
-                      <td>{formatAmount(row.linkedAmountBase)}</td>
+                      <td>
+                        <MoneyText
+                          amount={row.linkedAmountTxn}
+                          currencyCode={row.documentCurrencyCodeSnapshot}
+                        />
+                      </td>
+                      <td>
+                        <MoneyText
+                          amount={row.linkedAmountBase}
+                          currencyCode={selectedContractBaseCurrencyCode}
+                        />
+                      </td>
                       <td>{row.isUnlinked ? "UNLINKED" : "ACTIVE"}</td>
                       <td>
                         <div className="flex flex-wrap gap-2">

@@ -18,17 +18,8 @@ import {
   getLifecycleAllowedActions,
   getLifecycleStatusMeta,
 } from "../../lifecycle/lifecycleRules.js";
-
-function formatAmount(value) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) {
-    return "-";
-  }
-  return parsed.toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 6,
-  });
-}
+import MoneyText from "../../components/MoneyText.jsx";
+import { formatMoneyText } from "../../utils/money.js";
 
 function formatDate(value) {
   if (!value) {
@@ -465,31 +456,51 @@ export default function PayrollRunDetailPage() {
             <div className="mt-4 grid gap-3 text-sm md:grid-cols-2 xl:grid-cols-4">
               <div>
                 <div className="text-xs text-slate-500">Total Gross</div>
-                <div className="font-medium">{formatAmount(row.total_gross_pay)}</div>
+                <div className="font-medium">
+                  <MoneyText amount={row.total_gross_pay} currencyCode={row.currency_code} />
+                </div>
               </div>
               <div>
                 <div className="text-xs text-slate-500">Total Net</div>
-                <div className="font-medium">{formatAmount(row.total_net_pay)}</div>
+                <div className="font-medium">
+                  <MoneyText amount={row.total_net_pay} currencyCode={row.currency_code} />
+                </div>
               </div>
               <div>
                 <div className="text-xs text-slate-500">Emp Tax</div>
-                <div className="font-medium">{formatAmount(row.total_employee_tax)}</div>
+                <div className="font-medium">
+                  <MoneyText amount={row.total_employee_tax} currencyCode={row.currency_code} />
+                </div>
               </div>
               <div>
                 <div className="text-xs text-slate-500">Emp SS</div>
-                <div className="font-medium">{formatAmount(row.total_employee_social_security)}</div>
+                <div className="font-medium">
+                  <MoneyText
+                    amount={row.total_employee_social_security}
+                    currencyCode={row.currency_code}
+                  />
+                </div>
               </div>
               <div>
                 <div className="text-xs text-slate-500">Employer Tax</div>
-                <div className="font-medium">{formatAmount(row.total_employer_tax)}</div>
+                <div className="font-medium">
+                  <MoneyText amount={row.total_employer_tax} currencyCode={row.currency_code} />
+                </div>
               </div>
               <div>
                 <div className="text-xs text-slate-500">Employer SS</div>
-                <div className="font-medium">{formatAmount(row.total_employer_social_security)}</div>
+                <div className="font-medium">
+                  <MoneyText
+                    amount={row.total_employer_social_security}
+                    currencyCode={row.currency_code}
+                  />
+                </div>
               </div>
               <div>
                 <div className="text-xs text-slate-500">Allowances</div>
-                <div className="font-medium">{formatAmount(row.total_allowances)}</div>
+                <div className="font-medium">
+                  <MoneyText amount={row.total_allowances} currencyCode={row.currency_code} />
+                </div>
               </div>
               <div>
                 <div className="text-xs text-slate-500">Filename</div>
@@ -736,11 +747,21 @@ export default function PayrollRunDetailPage() {
                 <div className="grid gap-3 text-sm md:grid-cols-2 xl:grid-cols-4">
                   <div>
                     <div className="text-xs text-slate-500">Debit Total</div>
-                    <div className="font-medium">{formatAmount(preview.debit_total)}</div>
+                    <div className="font-medium">
+                      <MoneyText
+                        amount={preview.debit_total}
+                        currencyCode={preview?.run?.currency_code || row?.currency_code}
+                      />
+                    </div>
                   </div>
                   <div>
                     <div className="text-xs text-slate-500">Credit Total</div>
-                    <div className="font-medium">{formatAmount(preview.credit_total)}</div>
+                    <div className="font-medium">
+                      <MoneyText
+                        amount={preview.credit_total}
+                        currencyCode={preview?.run?.currency_code || row?.currency_code}
+                      />
+                    </div>
                   </div>
                   <div>
                     <div className="text-xs text-slate-500">Missing Mappings</div>
@@ -760,7 +781,11 @@ export default function PayrollRunDetailPage() {
                     <ul className="mt-2 list-disc pl-5 text-sm text-rose-800">
                       {preview.missing_mappings.map((item, idx) => (
                         <li key={`${item.component_code}-${idx}`}>
-                          {item.component_code} ({item.entry_side}) amount={formatAmount(item.amount)}
+                          {item.component_code} ({item.entry_side}) amount=
+                          {formatMoneyText(
+                            item.amount,
+                            row?.currency_code || preview?.run?.currency_code
+                          )}
                           {item.issue ? ` - ${item.issue}` : ""}
                         </li>
                       ))}
@@ -793,7 +818,12 @@ export default function PayrollRunDetailPage() {
                               <div className="text-xs text-slate-500">{line.gl_account_name}</div>
                             ) : null}
                           </td>
-                          <td className="p-2">{formatAmount(line.amount)}</td>
+                          <td className="p-2">
+                            <MoneyText
+                              amount={line.amount}
+                              currencyCode={row?.currency_code || preview?.run?.currency_code}
+                            />
+                          </td>
                         </tr>
                       ))}
                       {(preview.posting_lines || []).length === 0 ? (
@@ -884,12 +914,30 @@ export default function PayrollRunDetailPage() {
                         {line.employee_code} - {line.employee_name}
                       </td>
                       <td className="p-2">{line.cost_center_code || "-"}</td>
-                      <td className="p-2">{formatAmount(line.gross_pay)}</td>
-                      <td className="p-2">{formatAmount(line.net_pay)}</td>
-                      <td className="p-2">{formatAmount(line.employee_tax)}</td>
-                      <td className="p-2">{formatAmount(line.employee_social_security)}</td>
-                      <td className="p-2">{formatAmount(line.employer_tax)}</td>
-                      <td className="p-2">{formatAmount(line.employer_social_security)}</td>
+                      <td className="p-2">
+                        <MoneyText amount={line.gross_pay} currencyCode={row?.currency_code} />
+                      </td>
+                      <td className="p-2">
+                        <MoneyText amount={line.net_pay} currencyCode={row?.currency_code} />
+                      </td>
+                      <td className="p-2">
+                        <MoneyText amount={line.employee_tax} currencyCode={row?.currency_code} />
+                      </td>
+                      <td className="p-2">
+                        <MoneyText
+                          amount={line.employee_social_security}
+                          currencyCode={row?.currency_code}
+                        />
+                      </td>
+                      <td className="p-2">
+                        <MoneyText amount={line.employer_tax} currencyCode={row?.currency_code} />
+                      </td>
+                      <td className="p-2">
+                        <MoneyText
+                          amount={line.employer_social_security}
+                          currencyCode={row?.currency_code}
+                        />
+                      </td>
                     </tr>
                   ))}
                   {(row.lines || []).length === 0 ? (

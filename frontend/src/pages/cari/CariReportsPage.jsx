@@ -11,6 +11,11 @@ import {
 import { useAuth } from "../../auth/useAuth.js";
 import MoneyText from "../../components/MoneyText.jsx";
 import {
+  formatMoneyAmount,
+  formatMoneyText,
+  resolveLegalEntityFunctionalCurrencyCode,
+} from "../../utils/money.js";
+import {
   buildCariReportQuery,
   reconcileOpenItemsSummary,
   reconcileSettlementRealizedFxSummary,
@@ -27,14 +32,6 @@ function todayIsoDate() {
 function toNumber(value) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function formatAmount(value) {
-  const amount = toNumber(value);
-  return amount.toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 6,
-  });
 }
 
 function formatDate(value) {
@@ -64,24 +61,47 @@ function resolveReportCurrencyCode(row) {
   );
 }
 
-function resolveLegalEntityCurrencyCode(legalEntities, legalEntityId) {
-  const targetLegalEntityId = Number(legalEntityId || 0);
-  if (!Number.isInteger(targetLegalEntityId) || targetLegalEntityId <= 0) {
-    return "";
-  }
-  const rows = Array.isArray(legalEntities) ? legalEntities : [];
-  const matchedRow =
-    rows.find((row) => Number(row?.id || 0) === targetLegalEntityId) || null;
-  if (!matchedRow) {
-    return "";
-  }
-  return normalizeCurrencyCode(
-    matchedRow?.functional_currency_code || matchedRow?.functionalCurrencyCode
-  );
-}
-
 function normalizeError(err, fallback) {
   return String(err?.response?.data?.message || err?.message || fallback);
+}
+
+function collectDistinctCurrencyCodes(rows, resolveRowCurrencyCode) {
+  const codes = new Set();
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const currencyCode = normalizeCurrencyCode(resolveRowCurrencyCode?.(row));
+    if (currencyCode) {
+      codes.add(currencyCode);
+    }
+  }
+  return Array.from(codes);
+}
+
+function buildAggregateMoneyMeta(
+  value,
+  { explicitCurrencyCode = "", rows = [], resolveRowCurrencyCode } = {}
+) {
+  const currencyCode = normalizeCurrencyCode(explicitCurrencyCode);
+  if (currencyCode) {
+    return { currencyCode, mixed: false };
+  }
+  const codes = collectDistinctCurrencyCodes(rows, resolveRowCurrencyCode);
+  if (codes.length === 1) {
+    return { currencyCode: codes[0], mixed: false };
+  }
+  return {
+    currencyCode: "",
+    mixed: codes.length > 1 || toNumber(value) !== 0,
+  };
+}
+
+function formatAggregateMoneyValue(value, moneyMeta) {
+  if (moneyMeta?.currencyCode) {
+    return formatMoneyText(value, moneyMeta.currencyCode);
+  }
+  if (moneyMeta?.mixed) {
+    return "Mixed";
+  }
+  return formatMoneyAmount(value);
 }
 
 const TAB_CONFIG = [
@@ -108,7 +128,7 @@ const DEFAULT_FILTERS = {
   offset: 0,
 };
 
-function renderSummaryCards(summary) {
+function renderSummaryCards(summary, { txnMoneyMeta, baseMoneyMeta }) {
   if (!summary) {
     return null;
   }
@@ -118,8 +138,14 @@ function renderSummaryCards(summary) {
     ["Open", summary.openCount ?? summary.postedCount],
     ["Partial", summary.partiallySettledCount ?? summary.partiallyAppliedCount],
     ["Settled", summary.settledCount ?? summary.fullyAppliedCount],
-    ["Residual Txn", formatAmount(summary.residualAmountTxnTotal)],
-    ["Residual Base", formatAmount(summary.residualAmountBaseTotal)],
+    [
+      "Residual Txn",
+      formatAggregateMoneyValue(summary.residualAmountTxnTotal, txnMoneyMeta),
+    ],
+    [
+      "Residual Base",
+      formatAggregateMoneyValue(summary.residualAmountBaseTotal, baseMoneyMeta),
+    ],
   ];
 
   return (
@@ -134,7 +160,7 @@ function renderSummaryCards(summary) {
   );
 }
 
-function renderSettlementRealizedFxSummaryCards(summary, reconcile) {
+function renderSettlementRealizedFxSummaryCards(summary, reconcile, { baseMoneyMeta }) {
   if (!summary || !reconcile) {
     return null;
   }
@@ -143,9 +169,18 @@ function renderSettlementRealizedFxSummaryCards(summary, reconcile) {
     ["Settlements", Number(summary.settlementCount || 0)],
     ["Distinct Counterparties", Number(summary.distinctCounterpartyCount || 0)],
     ["Distinct Currencies", Number(summary.distinctCurrencyCount || 0)],
-    ["Realized FX Net (Base)", formatAmount(summary.realizedFxNetBase)],
-    ["Realized FX Gain (Rows)", formatAmount(reconcile.rowsRealizedFxGainBase)],
-    ["Realized FX Loss (Rows)", formatAmount(reconcile.rowsRealizedFxLossBase)],
+    [
+      "Realized FX Net (Base)",
+      formatAggregateMoneyValue(summary.realizedFxNetBase, baseMoneyMeta),
+    ],
+    [
+      "Realized FX Gain (Rows)",
+      formatAggregateMoneyValue(reconcile.rowsRealizedFxGainBase, baseMoneyMeta),
+    ],
+    [
+      "Realized FX Loss (Rows)",
+      formatAggregateMoneyValue(reconcile.rowsRealizedFxLossBase, baseMoneyMeta),
+    ],
   ];
 
   return (
@@ -189,6 +224,53 @@ export default function CariReportsPage() {
   const settlementRealizedFxReconcile = useMemo(
     () => reconcileSettlementRealizedFxSummary(reportData),
     [reportData]
+  );
+  const reportRows = useMemo(
+    () => (Array.isArray(reportData?.rows) ? reportData.rows : []),
+    [reportData]
+  );
+  const baseCurrencyCodeFromFilter = useMemo(
+    () =>
+      resolveLegalEntityFunctionalCurrencyCode(
+        legalEntities,
+        filters.legalEntityId
+      ),
+    [filters.legalEntityId, legalEntities]
+  );
+  const reportTxnMoneyMeta = useMemo(
+    () =>
+      buildAggregateMoneyMeta(reportData?.summary?.residualAmountTxnTotal, {
+        explicitCurrencyCode: filters.currencyCode,
+        rows: reportRows,
+        resolveRowCurrencyCode: resolveReportCurrencyCode,
+      }),
+    [filters.currencyCode, reportData, reportRows]
+  );
+  const reportBaseMoneyMeta = useMemo(
+    () =>
+      buildAggregateMoneyMeta(reportData?.summary?.residualAmountBaseTotal, {
+        explicitCurrencyCode: baseCurrencyCodeFromFilter,
+        rows: reportRows,
+        resolveRowCurrencyCode: (row) =>
+          resolveLegalEntityFunctionalCurrencyCode(
+            legalEntities,
+            row?.legalEntityId || row?.legal_entity_id
+          ),
+      }),
+    [baseCurrencyCodeFromFilter, legalEntities, reportData, reportRows]
+  );
+  const settlementFxBaseMoneyMeta = useMemo(
+    () =>
+      buildAggregateMoneyMeta(reportData?.summary?.realizedFxNetBase, {
+        explicitCurrencyCode: baseCurrencyCodeFromFilter,
+        rows: reportRows,
+        resolveRowCurrencyCode: (row) =>
+          resolveLegalEntityFunctionalCurrencyCode(
+            legalEntities,
+            row?.legalEntityId || row?.legal_entity_id
+          ),
+      }),
+    [baseCurrencyCodeFromFilter, legalEntities, reportData, reportRows]
   );
 
   async function loadLookups() {
@@ -529,9 +611,13 @@ export default function CariReportsPage() {
       {activeTab === REPORT_TABS.SETTLEMENT_REALIZED_FX
         ? renderSettlementRealizedFxSummaryCards(
             reportData?.summary,
-            settlementRealizedFxReconcile
+            settlementRealizedFxReconcile,
+            { baseMoneyMeta: settlementFxBaseMoneyMeta }
           )
-        : renderSummaryCards(reportData?.summary)}
+        : renderSummaryCards(reportData?.summary, {
+            txnMoneyMeta: reportTxnMoneyMeta,
+            baseMoneyMeta: reportBaseMoneyMeta,
+          })}
 
       {(activeTab === REPORT_TABS.AR_AGING || activeTab === REPORT_TABS.AP_AGING) && reportData ? (
         <section className="rounded-xl border border-slate-200 bg-white p-4">
@@ -551,8 +637,18 @@ export default function CariReportsPage() {
                   <tr key={`bucket-${row.bucketCode}`} className="border-t border-slate-100">
                     <td className="px-3 py-2">{row.bucketLabel}</td>
                     <td className="px-3 py-2">{row.count}</td>
-                    <td className="px-3 py-2">{formatAmount(row.residualAmountTxnTotal)}</td>
-                    <td className="px-3 py-2">{formatAmount(row.residualAmountBaseTotal)}</td>
+                    <td className="px-3 py-2">
+                      {formatAggregateMoneyValue(
+                        row.residualAmountTxnTotal,
+                        reportTxnMoneyMeta
+                      )}
+                    </td>
+                    <td className="px-3 py-2">
+                      {formatAggregateMoneyValue(
+                        row.residualAmountBaseTotal,
+                        reportBaseMoneyMeta
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -686,7 +782,7 @@ export default function CariReportsPage() {
               </thead>
               <tbody>
                 {(reportData.rows || []).map((row, index) => {
-                  const baseCurrencyCode = resolveLegalEntityCurrencyCode(
+                  const baseCurrencyCode = resolveLegalEntityFunctionalCurrencyCode(
                     legalEntities,
                     row.legalEntityId
                   );

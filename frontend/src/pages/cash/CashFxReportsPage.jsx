@@ -9,6 +9,12 @@ import { listBooks } from "../../api/glAdmin.js";
 import { listLegalEntities } from "../../api/orgAdmin.js";
 import { useAuth } from "../../auth/useAuth.js";
 import MoneyText from "../../components/MoneyText.jsx";
+import {
+  formatMoneyAmount,
+  formatMoneyText,
+  resolveBookBaseCurrencyCode,
+  resolveLegalEntityFunctionalCurrencyCode,
+} from "../../utils/money.js";
 import { exportRowsAsCsv } from "../../utils/csvExport.js";
 
 const REPORT_TABS = Object.freeze({
@@ -67,17 +73,6 @@ function toUpper(value) {
   return String(value || "").trim().toUpperCase();
 }
 
-function formatAmount(value) {
-  const amount = Number(value);
-  if (!Number.isFinite(amount)) {
-    return "-";
-  }
-  return amount.toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 6,
-  });
-}
-
 function formatDate(value) {
   const normalized = String(value || "").slice(0, 10);
   if (!normalized) {
@@ -130,27 +125,53 @@ function toBookLabel(row) {
   return `${row?.code || row?.id || "-"} - ${row?.name || "-"}`;
 }
 
-function resolveLegalEntityCurrencyCode(legalEntityRows, legalEntityId) {
-  const targetLegalEntityId = toPositiveInt(legalEntityId);
-  if (!targetLegalEntityId) {
-    return "";
-  }
-  const rows = Array.isArray(legalEntityRows) ? legalEntityRows : [];
-  const matchedRow =
-    rows.find((row) => toPositiveInt(row?.id) === targetLegalEntityId) || null;
-  if (!matchedRow) {
-    return "";
-  }
-  return toUpper(
-    matchedRow?.functional_currency_code || matchedRow?.functionalCurrencyCode
-  );
-}
-
 function resolveBaseCurrencyCode(row, legalEntityRows) {
   return (
     toUpper(row?.baseCurrencyCode || row?.base_currency_code) ||
-    resolveLegalEntityCurrencyCode(legalEntityRows, row?.legalEntityId || row?.legal_entity_id)
+    resolveLegalEntityFunctionalCurrencyCode(
+      legalEntityRows,
+      row?.legalEntityId || row?.legal_entity_id
+    )
   );
+}
+
+function collectDistinctCurrencyCodes(rows, resolveRowCurrencyCode) {
+  const codes = new Set();
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const currencyCode = toUpper(resolveRowCurrencyCode?.(row));
+    if (currencyCode) {
+      codes.add(currencyCode);
+    }
+  }
+  return Array.from(codes);
+}
+
+function buildAggregateMoneyMeta(
+  value,
+  { explicitCurrencyCode = "", rows = [], resolveRowCurrencyCode } = {}
+) {
+  const currencyCode = toUpper(explicitCurrencyCode);
+  if (currencyCode) {
+    return { currencyCode, mixed: false };
+  }
+  const codes = collectDistinctCurrencyCodes(rows, resolveRowCurrencyCode);
+  if (codes.length === 1) {
+    return { currencyCode: codes[0], mixed: false };
+  }
+  return {
+    currencyCode: "",
+    mixed: codes.length > 1 || Number(value || 0) !== 0,
+  };
+}
+
+function formatAggregateMoneyValue(value, moneyMeta) {
+  if (moneyMeta?.currencyCode) {
+    return formatMoneyText(value, moneyMeta.currencyCode);
+  }
+  if (moneyMeta?.mixed) {
+    return "Mixed";
+  }
+  return formatMoneyAmount(value);
 }
 
 function statusClassName(status) {
@@ -446,6 +467,10 @@ export default function CashFxReportsPage() {
   const activePage = Math.floor(activeOffset / Math.max(activeLimit, 1)) + 1;
   const hasPrevPage = activeOffset > 0;
   const hasNextPage = activeOffset + activeRows.length < activeTotal;
+  const selectedBookBaseCurrencyCode = useMemo(
+    () => resolveBookBaseCurrencyCode(bookRows, filters.bookId),
+    [bookRows, filters.bookId]
+  );
 
   function updateReport(tab, payload) {
     setReportByTab((prev) => ({ ...prev, [tab]: payload || null }));
@@ -1034,23 +1059,75 @@ export default function CashFxReportsPage() {
     const summary = activeReport?.summary || {};
     if (activeTab === REPORT_TABS.EXCHANGE_HISTORY) {
       const statusCounts = summary?.statusCounts || {};
+      const sourceTxnMoneyMeta = buildAggregateMoneyMeta(
+        summary?.sourceAmountTxnTotal,
+        {
+          rows: activeRows,
+          resolveRowCurrencyCode: (row) => row?.sourceCurrencyCode,
+        }
+      );
+      const targetTxnMoneyMeta = buildAggregateMoneyMeta(
+        summary?.targetAmountTxnTotal,
+        {
+          rows: activeRows,
+          resolveRowCurrencyCode: (row) => row?.targetCurrencyCode,
+        }
+      );
+      const baseMoneyMeta = buildAggregateMoneyMeta(
+        summary?.realizedFxBaseTotal,
+        {
+          rows: activeRows,
+          resolveRowCurrencyCode: (row) => resolveBaseCurrencyCode(row, legalEntityRows),
+        }
+      );
       const cards = [
         ["Total Rows", activeTotal],
-        ["Posted Source Txn Total", formatAmount(summary?.sourceAmountTxnTotal)],
-        ["Posted Target Txn Total", formatAmount(summary?.targetAmountTxnTotal)],
-        ["Posted Principal FX Diff (Base)", formatAmount(summary?.principalFxDifferenceBaseTotal)],
-        ["Posted Realized FX (Base)", formatAmount(summary?.realizedFxBaseTotal)],
+        [
+          "Posted Source Txn Total",
+          formatAggregateMoneyValue(summary?.sourceAmountTxnTotal, sourceTxnMoneyMeta),
+        ],
+        [
+          "Posted Target Txn Total",
+          formatAggregateMoneyValue(summary?.targetAmountTxnTotal, targetTxnMoneyMeta),
+        ],
+        [
+          "Posted Principal FX Diff (Base)",
+          formatAggregateMoneyValue(summary?.principalFxDifferenceBaseTotal, baseMoneyMeta),
+        ],
+        [
+          "Posted Realized FX (Base)",
+          formatAggregateMoneyValue(summary?.realizedFxBaseTotal, baseMoneyMeta),
+        ],
         [
           "Posted Fees + Spread (Base)",
-          formatAmount((summary?.feeAmountBaseTotal || 0) + (summary?.spreadAmountBaseTotal || 0)),
+          formatAggregateMoneyValue(
+            (summary?.feeAmountBaseTotal || 0) + (summary?.spreadAmountBaseTotal || 0),
+            baseMoneyMeta
+          ),
         ],
-        ["Gross Source Txn Total", formatAmount(summary?.grossSourceAmountTxnTotal)],
-        ["Gross Target Txn Total", formatAmount(summary?.grossTargetAmountTxnTotal)],
-        ["Gross Realized FX (Base)", formatAmount(summary?.grossRealizedFxBaseTotal)],
-        ["Reversal Realized FX (Base)", formatAmount(summary?.reversalRealizedFxBaseTotal)],
+        [
+          "Gross Source Txn Total",
+          formatAggregateMoneyValue(summary?.grossSourceAmountTxnTotal, sourceTxnMoneyMeta),
+        ],
+        [
+          "Gross Target Txn Total",
+          formatAggregateMoneyValue(summary?.grossTargetAmountTxnTotal, targetTxnMoneyMeta),
+        ],
+        [
+          "Gross Realized FX (Base)",
+          formatAggregateMoneyValue(summary?.grossRealizedFxBaseTotal, baseMoneyMeta),
+        ],
+        [
+          "Reversal Realized FX (Base)",
+          formatAggregateMoneyValue(summary?.reversalRealizedFxBaseTotal, baseMoneyMeta),
+        ],
         [
           "Net Realized FX (Base)",
-          formatAmount((summary?.realizedFxBaseTotal || 0) + (summary?.reversalRealizedFxBaseTotal || 0)),
+          formatAggregateMoneyValue(
+            (summary?.realizedFxBaseTotal || 0) +
+              (summary?.reversalRealizedFxBaseTotal || 0),
+            baseMoneyMeta
+          ),
         ],
       ];
       return (
@@ -1090,11 +1167,26 @@ export default function CashFxReportsPage() {
     }
 
     if (activeTab === REPORT_TABS.FOREIGN_BALANCES) {
+      const txnMoneyMeta = buildAggregateMoneyMeta(summary?.totalBalanceTxn, {
+        explicitCurrencyCode: filters.currencyCode,
+        rows: activeRows,
+        resolveRowCurrencyCode: (row) => row?.currencyCode || row?.currency_code,
+      });
+      const baseMoneyMeta = buildAggregateMoneyMeta(summary?.totalCarryingBase, {
+        rows: activeRows,
+        resolveRowCurrencyCode: (row) => resolveBaseCurrencyCode(row, legalEntityRows),
+      });
       const cards = [
         ["Total Rows", activeTotal],
         ["Register Count", Number(summary?.registerCount || 0)],
-        ["Total Balance Txn", formatAmount(summary?.totalBalanceTxn)],
-        ["Total Carrying Base", formatAmount(summary?.totalCarryingBase)],
+        [
+          "Total Balance Txn",
+          formatAggregateMoneyValue(summary?.totalBalanceTxn, txnMoneyMeta),
+        ],
+        [
+          "Total Carrying Base",
+          formatAggregateMoneyValue(summary?.totalCarryingBase, baseMoneyMeta),
+        ],
         ["As-Of Date", activeReport?.asOfDate || "-"],
       ];
       return (
@@ -1114,11 +1206,28 @@ export default function CashFxReportsPage() {
       );
     }
 
+    const revaluationBaseMoneyMeta = buildAggregateMoneyMeta(
+      summary?.totalCarryingBase,
+      {
+        explicitCurrencyCode: selectedBookBaseCurrencyCode,
+        rows: activeRows,
+        resolveRowCurrencyCode: (row) => row?.baseCurrencyCode || row?.base_currency_code,
+      }
+    );
     const cards = [
       ["Total Runs", activeTotal],
-      ["Total Carrying Base", formatAmount(summary?.totalCarryingBase)],
-      ["Total Closing Base", formatAmount(summary?.totalClosingBase)],
-      ["Total Delta Base", formatAmount(summary?.totalDeltaBase)],
+      [
+        "Total Carrying Base",
+        formatAggregateMoneyValue(summary?.totalCarryingBase, revaluationBaseMoneyMeta),
+      ],
+      [
+        "Total Closing Base",
+        formatAggregateMoneyValue(summary?.totalClosingBase, revaluationBaseMoneyMeta),
+      ],
+      [
+        "Total Delta Base",
+        formatAggregateMoneyValue(summary?.totalDeltaBase, revaluationBaseMoneyMeta),
+      ],
       ["Include Line Summary", activeReport?.includeLineCurrencySummary ? "YES" : "NO"],
     ];
     return (
