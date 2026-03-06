@@ -29,6 +29,7 @@ import { useModuleReadiness } from "../../readiness/useModuleReadiness.js";
 import {
   buildAutoAllocatePreview,
   buildSettlementApplyPayload,
+  FX_MISSING_REASON_CODES,
 } from "./cariSettlementsUtils.js";
 import {
   buildSettlementIntentFingerprint,
@@ -73,6 +74,33 @@ function normalizeCurrencyCode(value) {
     .trim()
     .toUpperCase()
     .slice(0, 3);
+}
+
+function formatFxMissingReason(reasonCode, translate = (en) => en) {
+  switch (String(reasonCode || "").trim().toUpperCase()) {
+    case FX_MISSING_REASON_CODES.SETTLEMENT_OR_DOCUMENT_CURRENCY_MISSING:
+      return translate(
+        "Settlement or document currency is missing.",
+        "Mahsuplastirma veya belge para birimi eksik."
+      );
+    case FX_MISSING_REASON_CODES.FUNCTIONAL_CURRENCY_REQUIRED_FOR_DERIVED_CROSS_RATE:
+      return translate(
+        "Functional currency is required for derived cross-rate.",
+        "Turetilmis capraz kur icin fonksiyonel para birimi gerekli."
+      );
+    case FX_MISSING_REASON_CODES.SETTLEMENT_DOCUMENT_CONVERSION_RATE_MISSING:
+      return translate(
+        "Missing settlement/document conversion rate. Add SPOT rate(s) for settlement date.",
+        "Mahsuplastirma/belge donusum kuru eksik. Mahsuplastirma tarihi icin SPOT kur(lar) ekleyin."
+      );
+    case FX_MISSING_REASON_CODES.DERIVED_CROSS_RATE_INVALID:
+      return translate(
+        "Derived cross-rate is invalid.",
+        "Turetilmis capraz kur gecersiz."
+      );
+    default:
+      return translate("Missing FX rate", "Kur eksik");
+  }
 }
 
 function resolveOpenItemCurrencyCode(row) {
@@ -3051,7 +3079,12 @@ export default function CariSettlementsPage() {
                     </td>
                     <td className="px-3 py-2 text-xs">
                       {row.fxMissing ? (
-                        <span className="text-amber-700">{row.fxMissingReason || "Missing FX rate"}</span>
+                        <span className="text-amber-700">
+                          {formatFxMissingReason(
+                            row.fxMissingReasonCode || row.fxMissingReason,
+                            l
+                          )}
+                        </span>
                       ) : (
                         <>
                           <span>

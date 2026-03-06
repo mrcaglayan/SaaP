@@ -558,7 +558,7 @@ function mapPaymentTermLookupOption(row) {
   };
 }
 
-function buildDocumentLifecycleEvents(row) {
+function buildDocumentLifecycleEvents(row, translate = (en) => en) {
   if (!row) {
     return [];
   }
@@ -575,14 +575,14 @@ function buildDocumentLifecycleEvents(row) {
     events.push({
       statusCode: "DRAFT",
       at: createdAt,
-      note: "Draft created.",
+      note: translate("Draft created.", "Taslak olusturuldu."),
     });
   }
   if (postedAt) {
     events.push({
       statusCode: "POSTED",
       at: postedAt,
-      note: "Posted to journal.",
+      note: translate("Posted to journal.", "Yevmiyeye kaydedildi."),
     });
   }
   if (status === "PARTIALLY_SETTLED") {
@@ -590,15 +590,23 @@ function buildDocumentLifecycleEvents(row) {
       statusCode: "PARTIALLY_SETTLED",
       at: updatedAt,
       note: updatedAt
-        ? "Partially settled (timestamp inferred from updatedAt)."
-        : "Partially settled.",
+        ? translate(
+            "Partially settled (timestamp inferred from updatedAt).",
+            "Kismen mahsuplastirildi (zaman bilgisi updatedAt alanindan tahmin edildi)."
+          )
+        : translate("Partially settled.", "Kismen mahsuplastirildi."),
     });
   }
   if (status === "SETTLED") {
     events.push({
       statusCode: "SETTLED",
       at: updatedAt,
-      note: updatedAt ? "Settled (timestamp inferred from updatedAt)." : "Settled.",
+      note: updatedAt
+        ? translate(
+            "Settled (timestamp inferred from updatedAt).",
+            "Mahsuplastirildi (zaman bilgisi updatedAt alanindan tahmin edildi)."
+          )
+        : translate("Settled.", "Mahsuplastirildi."),
     });
   }
   if (status === "CANCELLED") {
@@ -606,8 +614,11 @@ function buildDocumentLifecycleEvents(row) {
       statusCode: "CANCELLED",
       at: updatedAt || createdAt,
       note: updatedAt
-        ? "Cancelled (timestamp inferred from updatedAt)."
-        : "Cancelled.",
+        ? translate(
+            "Cancelled (timestamp inferred from updatedAt).",
+            "Iptal edildi (zaman bilgisi updatedAt alanindan tahmin edildi)."
+          )
+        : translate("Cancelled.", "Iptal edildi."),
     });
   }
   if (status === "REVERSED") {
@@ -615,8 +626,11 @@ function buildDocumentLifecycleEvents(row) {
       statusCode: "REVERSED",
       at: reversedAt || updatedAt,
       note: reversedAt
-        ? "Reversal completed."
-        : "Reversed (timestamp inferred from updatedAt).",
+        ? translate("Reversal completed.", "Ters kayit tamamlandi.")
+        : translate(
+            "Reversed (timestamp inferred from updatedAt).",
+            "Terslendi (zaman bilgisi updatedAt alanindan tahmin edildi)."
+          ),
     });
   }
   return events;
@@ -1104,21 +1118,22 @@ export default function CariDocumentsPage() {
       postFormPostingLineSummary.matchesDraftTotals
   );
   const selectedDocumentLifecycleMeta = useMemo(
-    () => getLifecycleStatusMeta("cariDocument", selectedSnapshot?.status),
-    [selectedSnapshot?.status]
+    () => getLifecycleStatusMeta("cariDocument", selectedSnapshot?.status, l),
+    [language, selectedSnapshot?.status]
   );
   const selectedDocumentLifecycleActions = useMemo(
-    () => getLifecycleAllowedActions("cariDocument", selectedSnapshot?.status),
-    [selectedSnapshot?.status]
+    () => getLifecycleAllowedActions("cariDocument", selectedSnapshot?.status, l),
+    [language, selectedSnapshot?.status]
   );
   const selectedDocumentLifecycleTimeline = useMemo(
     () =>
       buildLifecycleTimelineSteps(
         "cariDocument",
         selectedSnapshot?.status,
-        buildDocumentLifecycleEvents(selectedSnapshot)
+        buildDocumentLifecycleEvents(selectedSnapshot, l),
+        l
       ),
-    [selectedSnapshot]
+    [language, selectedSnapshot]
   );
   const deepLinkedDocumentIdRaw = String(
     searchParams.get("documentId") || searchParams.get("document_id") || ""
@@ -4036,7 +4051,9 @@ export default function CariDocumentsPage() {
                 <dt className="font-semibold text-slate-600">fxRateSnapshot</dt><dd>{selectedSnapshot.fxRateSnapshot || "-"}</dd>
               </dl>
               <div className="mt-4 rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
-                <p className="text-xs font-semibold uppercase tracking-wide text-slate-700">Lifecycle Snapshot</p>
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-700">
+                  {l("Lifecycle Snapshot", "Yasam Dongusu Ozeti")}
+                </p>
                 <p className="mt-1 text-sm font-semibold text-slate-800">
                   {selectedDocumentLifecycleMeta?.label || selectedSnapshot.status || "-"}
                 </p>
@@ -4045,23 +4062,36 @@ export default function CariDocumentsPage() {
                 ) : null}
                 {selectedDocumentLifecycleActions.length > 0 ? (
                   <p className="mt-1 text-xs text-slate-600">
-                    Next allowed transitions:{" "}
+                    {l("Next allowed transitions:", "Siradaki izinli gecisler:")}{" "}
                     {selectedDocumentLifecycleActions.map((row) => row.label).join(", ")}
                   </p>
                 ) : (
                   <p className="mt-1 text-xs text-slate-500">
-                    No further lifecycle transitions are defined from this status.
+                    {l(
+                      "No further lifecycle transitions are defined from this status.",
+                      "Bu durumdan sonrasi icin tanimli bir yasam dongusu gecisi yok."
+                    )}
                   </p>
                 )}
               </div>
-              {reverseResult ? <div className="mt-4 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">Reverse linkage: `response.row.id`={reverseResult.reversalDocumentId || "-"}, `response.row.documentNo`={reverseResult.reversalDocumentNo || "-"}, `response.journal.reversalJournalEntryId`={reverseResult.reversalJournalEntryId || "-"}</div> : null}
+              {reverseResult ? <div className="mt-4 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{l("Reverse linkage", "Ters baglanti")}: `response.row.id`={reverseResult.reversalDocumentId || "-"}, `response.row.documentNo`={reverseResult.reversalDocumentNo || "-"}, `response.journal.reversalJournalEntryId`={reverseResult.reversalJournalEntryId || "-"}</div> : null}
               {canReadReports ? (
                 <div className="mt-4 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
-                  <p className="font-semibold text-slate-800">Linked settlements / cash transactions</p>
+                  <p className="font-semibold text-slate-800">
+                    {l(
+                      "Linked settlements / cash transactions",
+                      "Bagli mahsuplar / nakit hareketleri"
+                    )}
+                  </p>
                   {linkedCashError ? <p className="mt-1 text-rose-700">{linkedCashError}</p> : null}
-                  {linkedCashLoading ? <p className="mt-1 text-slate-600">Loading linkage...</p> : null}
+                  {linkedCashLoading ? <p className="mt-1 text-slate-600">{l("Loading linkage...", "Baglanti yukleniyor...")}</p> : null}
                   {!linkedCashLoading && linkedCashRows.length === 0 ? (
-                    <p className="mt-1 text-slate-600">No linked settlements found for this document as of today.</p>
+                    <p className="mt-1 text-slate-600">
+                      {l(
+                        "No linked settlements found for this document as of today.",
+                        "Bu belge icin bugun itibariyla bagli mahsup bulunmuyor."
+                      )}
+                    </p>
                   ) : null}
                   {!linkedCashLoading && linkedCashRows.length > 0 ? (
                     <ul className="mt-2 space-y-1">
@@ -4075,22 +4105,27 @@ export default function CariDocumentsPage() {
                 </div>
               ) : null}
               <div className="mt-4 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
-                <p className="font-semibold text-slate-800">Related Panel (GL / Open Items / Exceptions / Audit)</p>
+                <p className="font-semibold text-slate-800">
+                  {l(
+                    "Related Panel (GL / Open Items / Exceptions / Audit)",
+                    "Iliskili Panel (GL / Acik Kalemler / Istisnalar / Denetim)"
+                  )}
+                </p>
                 {relatedLoading ? (
-                  <p className="mt-1 text-slate-600">Loading related records...</p>
+                  <p className="mt-1 text-slate-600">{l("Loading related records...", "Iliskili kayitlar yukleniyor...")}</p>
                 ) : null}
                 {relatedError ? <p className="mt-1 text-rose-700">{relatedError}</p> : null}
 
                 <div className="mt-2 space-y-3 text-xs">
                   <div>
-                    <p className="font-semibold text-slate-700">GL journal</p>
+                    <p className="font-semibold text-slate-700">{l("GL journal", "GL yevmiyesi")}</p>
                     {!canReadGlJournals ? (
-                      <p className="mt-1 text-slate-500">Missing permission: gl.journal.read</p>
+                      <p className="mt-1 text-slate-500">{l("Missing permission: gl.journal.read", "Eksik yetki: gl.journal.read")}</p>
                     ) : !selectedPostedJournalEntryId ? (
-                      <p className="mt-1 text-slate-600">No posted journal linked yet.</p>
+                      <p className="mt-1 text-slate-600">{l("No posted journal linked yet.", "Henuz bagli kaydedilmis yevmiye yok.")}</p>
                     ) : !relatedJournal ? (
                       <p className="mt-1 text-slate-600">
-                        Linked journal id: {selectedPostedJournalEntryId}
+                        {l("Linked journal id:", "Bagli yevmiye ID:")} {selectedPostedJournalEntryId}
                       </p>
                     ) : (
                       <>
@@ -4102,7 +4137,7 @@ export default function CariDocumentsPage() {
                           to={`/app/mahsup-islemleri?journalId=${relatedJournal.id}`}
                           className="mt-1 inline-block rounded border border-slate-300 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700"
                         >
-                          Open in Journal Workbench
+                          {l("Open in Journal Workbench", "Yevmiye Calisma Ekraninda Ac")}
                         </Link>
                         {Array.isArray(relatedJournal.source_links) &&
                         relatedJournal.source_links.length > 0 ? (
@@ -4123,9 +4158,9 @@ export default function CariDocumentsPage() {
                   </div>
 
                   <div>
-                    <p className="font-semibold text-slate-700">Open items</p>
+                    <p className="font-semibold text-slate-700">{l("Open items", "Acik kalemler")}</p>
                     {relatedOpenItems.length === 0 ? (
-                      <p className="mt-1 text-slate-600">No open items found for this document.</p>
+                      <p className="mt-1 text-slate-600">{l("No open items found for this document.", "Bu belge icin acik kalem bulunmuyor.")}</p>
                     ) : (
                       <ul className="mt-2 space-y-1">
                         {relatedOpenItems.map((row) => (
@@ -4142,7 +4177,12 @@ export default function CariDocumentsPage() {
                   </div>
 
                   <div>
-                    <p className="font-semibold text-slate-700">Ops status note / blocked reason</p>
+                    <p className="font-semibold text-slate-700">
+                      {l(
+                        "Ops status note / blocked reason",
+                        "Operasyon durum notu / engel nedeni"
+                      )}
+                    </p>
                     {opsStatusError ? (
                       <p className="mt-1 text-rose-700">{opsStatusError}</p>
                     ) : null}
@@ -4150,12 +4190,12 @@ export default function CariDocumentsPage() {
                       <p className="mt-1 text-emerald-700">{opsStatusMessage}</p>
                     ) : null}
                     {opsStatusLoading ? (
-                      <p className="mt-1 text-slate-600">Loading ops status...</p>
+                      <p className="mt-1 text-slate-600">{l("Loading ops status...", "Operasyon durumu yukleniyor...")}</p>
                     ) : null}
                     {!opsStatusLoading ? (
                       <p className="mt-1 text-slate-600">
-                        Current: {opsStatusRow?.opsStatus || "OK"}{" "}
-                        {opsStatusRow?.updatedAt ? `(updated ${formatDateTime(opsStatusRow.updatedAt)})` : ""}
+                        {l("Current:", "Guncel:")} {opsStatusRow?.opsStatus || "OK"}{" "}
+                        {opsStatusRow?.updatedAt ? `(${l("updated", "guncellendi")} ${formatDateTime(opsStatusRow.updatedAt)})` : ""}
                       </p>
                     ) : null}
 
@@ -4165,7 +4205,7 @@ export default function CariDocumentsPage() {
                         className="mt-2 space-y-2 rounded border border-slate-200 bg-white p-2"
                       >
                         <label className="block text-[11px] font-semibold uppercase tracking-wide text-slate-600">
-                          Ops Status
+                          {l("Ops Status", "Operasyon Durumu")}
                           <select
                             className="mt-1 w-full rounded border border-slate-300 px-2 py-1 text-xs font-normal"
                             value={opsStatusForm.opsStatus}
@@ -4185,7 +4225,10 @@ export default function CariDocumentsPage() {
                         <input
                           type="text"
                           className="w-full rounded border border-slate-300 px-2 py-1 text-xs"
-                          placeholder="Blocked reason (required when status=BLOCKED)"
+                          placeholder={l(
+                            "Blocked reason (required when status=BLOCKED)",
+                            "Engel nedeni (status=BLOCKED iken zorunlu)"
+                          )}
                           value={opsStatusForm.blockedReason}
                           onChange={(event) =>
                             setOpsStatusForm((prev) => ({
@@ -4197,7 +4240,7 @@ export default function CariDocumentsPage() {
                         />
                         <textarea
                           className="w-full rounded border border-slate-300 px-2 py-1 text-xs"
-                          placeholder="Ops note (optional)"
+                          placeholder={l("Ops note (optional)", "Operasyon notu (opsiyonel)")}
                           rows={3}
                           value={opsStatusForm.note}
                           onChange={(event) =>
@@ -4213,16 +4256,18 @@ export default function CariDocumentsPage() {
                           className="rounded border border-slate-300 bg-slate-50 px-2 py-1 text-[11px] font-semibold text-slate-700 disabled:opacity-60"
                           disabled={opsStatusSaving}
                         >
-                          {opsStatusSaving ? "Saving..." : "Save Ops Status"}
+                          {opsStatusSaving
+                            ? l("Saving...", "Kaydediliyor...")
+                            : l("Save Ops Status", "Operasyon Durumunu Kaydet")}
                         </button>
                       </form>
                     ) : (
-                      <p className="mt-1 text-slate-500">Missing permission: cari.doc.update</p>
+                      <p className="mt-1 text-slate-500">{l("Missing permission: cari.doc.update", "Eksik yetki: cari.doc.update")}</p>
                     )}
                   </div>
 
                   <div>
-                    <p className="font-semibold text-slate-700">Internal comments</p>
+                    <p className="font-semibold text-slate-700">{l("Internal comments", "Dahili yorumlar")}</p>
                     {internalCommentsError ? (
                       <p className="mt-1 text-rose-700">{internalCommentsError}</p>
                     ) : null}
@@ -4230,7 +4275,7 @@ export default function CariDocumentsPage() {
                       <p className="mt-1 text-emerald-700">{internalCommentsMessage}</p>
                     ) : null}
                     {internalCommentsLoading ? (
-                      <p className="mt-1 text-slate-600">Loading comments...</p>
+                      <p className="mt-1 text-slate-600">{l("Loading comments...", "Yorumlar yukleniyor...")}</p>
                     ) : null}
 
                     {canWriteInternalComments ? (
@@ -4240,7 +4285,10 @@ export default function CariDocumentsPage() {
                       >
                         <textarea
                           className="w-full rounded border border-slate-300 px-2 py-1 text-xs"
-                          placeholder="Add internal comment... Use @email to mention."
+                          placeholder={l(
+                            "Add internal comment... Use @email to mention.",
+                            "Dahili yorum ekleyin... Etiketlemek icin @email kullanin."
+                          )}
                           rows={3}
                           value={internalCommentBody}
                           onChange={(event) => {
@@ -4255,19 +4303,25 @@ export default function CariDocumentsPage() {
                           className="rounded border border-slate-300 bg-slate-50 px-2 py-1 text-[11px] font-semibold text-slate-700 disabled:opacity-60"
                           disabled={!String(internalCommentBody || "").trim() || internalCommentSaving}
                         >
-                          {internalCommentSaving ? "Adding..." : "Add Comment"}
+                          {internalCommentSaving
+                            ? l("Adding...", "Ekleniyor...")
+                            : l("Add Comment", "Yorum Ekle")}
                         </button>
                         <p className="text-[11px] text-slate-500">
-                          Mention teammates with <span className="font-mono">@email</span> to
-                          send in-app notifications.
+                          {l("Mention teammates with", "Ekip arkadaslarini")}{" "}
+                          <span className="font-mono">@email</span>{" "}
+                          {l(
+                            "to send in-app notifications.",
+                            "ile etiketleyip uygulama ici bildirim gonderin."
+                          )}
                         </p>
                       </form>
                     ) : (
-                      <p className="mt-1 text-slate-500">Missing permission: cari.doc.update</p>
+                      <p className="mt-1 text-slate-500">{l("Missing permission: cari.doc.update", "Eksik yetki: cari.doc.update")}</p>
                     )}
 
                     {!internalCommentsLoading && internalCommentRows.length === 0 ? (
-                      <p className="mt-1 text-slate-600">No internal comments yet.</p>
+                      <p className="mt-1 text-slate-600">{l("No internal comments yet.", "Henuz dahili yorum yok.")}</p>
                     ) : null}
                     {!internalCommentsLoading && internalCommentRows.length > 0 ? (
                       <ul className="mt-2 space-y-1">
@@ -4293,7 +4347,7 @@ export default function CariDocumentsPage() {
                   </div>
 
                   <div>
-                    <p className="font-semibold text-slate-700">Evidence attachments</p>
+                    <p className="font-semibold text-slate-700">{l("Evidence attachments", "Kanit ekleri")}</p>
                     {evidenceError ? (
                       <p className="mt-1 text-rose-700">{evidenceError}</p>
                     ) : null}
@@ -4301,7 +4355,7 @@ export default function CariDocumentsPage() {
                       <p className="mt-1 text-emerald-700">{evidenceMessage}</p>
                     ) : null}
                     {evidenceLoading ? (
-                      <p className="mt-1 text-slate-600">Loading evidence...</p>
+                      <p className="mt-1 text-slate-600">{l("Loading evidence...", "Kanitlar yukleniyor...")}</p>
                     ) : null}
 
                     {canAttachEvidence ? (
@@ -4320,7 +4374,7 @@ export default function CariDocumentsPage() {
                         <input
                           type="text"
                           className="w-full rounded border border-slate-300 px-2 py-1 text-xs"
-                          placeholder="Optional note"
+                          placeholder={l("Optional note", "Opsiyonel not")}
                           value={evidenceNote}
                           onChange={(event) => setEvidenceNote(event.target.value)}
                           disabled={evidenceUploading}
@@ -4330,15 +4384,17 @@ export default function CariDocumentsPage() {
                           className="rounded border border-slate-300 bg-slate-50 px-2 py-1 text-[11px] font-semibold text-slate-700 disabled:opacity-60"
                           disabled={!evidenceUploadFile || evidenceUploading}
                         >
-                          {evidenceUploading ? "Uploading..." : "Attach Evidence"}
+                          {evidenceUploading
+                            ? l("Uploading...", "Yukleniyor...")
+                            : l("Attach Evidence", "Kanit Ekle")}
                         </button>
                       </form>
                     ) : (
-                      <p className="mt-1 text-slate-500">Missing permission: cari.doc.update</p>
+                      <p className="mt-1 text-slate-500">{l("Missing permission: cari.doc.update", "Eksik yetki: cari.doc.update")}</p>
                     )}
 
                     {!evidenceLoading && evidenceRows.length === 0 ? (
-                      <p className="mt-1 text-slate-600">No evidence attached to this document.</p>
+                      <p className="mt-1 text-slate-600">{l("No evidence attached to this document.", "Bu belgeye ekli kanit yok.")}</p>
                     ) : null}
                     {!evidenceLoading && evidenceRows.length > 0 ? (
                       <ul className="mt-2 space-y-1">
@@ -4368,7 +4424,9 @@ export default function CariDocumentsPage() {
                                   onClick={() => handleDownloadEvidence(row)}
                                   disabled={!rowId || Boolean(isDownloading)}
                                 >
-                                  {isDownloading ? "Downloading..." : "Download"}
+                                  {isDownloading
+                                    ? l("Downloading...", "Indiriliyor...")
+                                    : l("Download", "Indir")}
                                 </button>
                                 {canAttachEvidence ? (
                                   <button
@@ -4377,7 +4435,9 @@ export default function CariDocumentsPage() {
                                     onClick={() => handleDeleteEvidence(rowId)}
                                     disabled={!rowId || Boolean(isDeleting)}
                                   >
-                                    {isDeleting ? "Deleting..." : "Delete"}
+                                    {isDeleting
+                                      ? l("Deleting...", "Siliniyor...")
+                                      : l("Delete", "Sil")}
                                   </button>
                                 ) : null}
                               </div>
@@ -4389,11 +4449,11 @@ export default function CariDocumentsPage() {
                   </div>
 
                   <div>
-                    <p className="font-semibold text-slate-700">Exceptions</p>
+                    <p className="font-semibold text-slate-700">{l("Exceptions", "Istisnalar")}</p>
                     {!canReadExceptions ? (
-                      <p className="mt-1 text-slate-500">Missing permission: ops.exceptions.read</p>
+                      <p className="mt-1 text-slate-500">{l("Missing permission: ops.exceptions.read", "Eksik yetki: ops.exceptions.read")}</p>
                     ) : relatedExceptions.length === 0 ? (
-                      <p className="mt-1 text-slate-600">No related exceptions for this source id.</p>
+                      <p className="mt-1 text-slate-600">{l("No related exceptions for this source id.", "Bu kaynak ID icin iliskili istisna yok.")}</p>
                     ) : (
                       <ul className="mt-2 space-y-1">
                         {relatedExceptions.map((row) => (
@@ -4409,7 +4469,7 @@ export default function CariDocumentsPage() {
                               to={`/app/ayarlar/exception-workbench?exceptionId=${row.id}`}
                               className="mt-1 inline-block rounded border border-slate-300 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700"
                             >
-                              Open Exception
+                              {l("Open Exception", "Istisnayi Ac")}
                             </Link>
                           </li>
                         ))}
@@ -4418,11 +4478,11 @@ export default function CariDocumentsPage() {
                   </div>
 
                   <div>
-                    <p className="font-semibold text-slate-700">Audit trail</p>
+                    <p className="font-semibold text-slate-700">{l("Audit trail", "Denetim izi")}</p>
                     {!canReadCariAudit ? (
-                      <p className="mt-1 text-slate-500">Missing permission: cari.audit.read</p>
+                      <p className="mt-1 text-slate-500">{l("Missing permission: cari.audit.read", "Eksik yetki: cari.audit.read")}</p>
                     ) : relatedAuditRows.length === 0 ? (
-                      <p className="mt-1 text-slate-600">No audit records found for this document.</p>
+                      <p className="mt-1 text-slate-600">{l("No audit records found for this document.", "Bu belge icin denetim kaydi bulunmadi.")}</p>
                     ) : (
                       <ul className="mt-2 space-y-1">
                         {relatedAuditRows.map((row) => (
@@ -4441,9 +4501,12 @@ export default function CariDocumentsPage() {
               </div>
               <StatusTimeline
                 className="mt-4"
-                title="Document Lifecycle Timeline"
+                title={l("Document Lifecycle Timeline", "Belge Yasam Dongusu Zaman Cizelgesi")}
                 steps={selectedDocumentLifecycleTimeline}
-                emptyText="No lifecycle history available for this document yet."
+                emptyText={l(
+                  "No lifecycle history available for this document yet.",
+                  "Bu belge icin henuz yasam dongusu gecmisi yok."
+                )}
               />
             </div>
 

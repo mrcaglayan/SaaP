@@ -1,3 +1,5 @@
+import { useI18n } from "../i18n/useI18n.js";
+
 function normalizeSteps(steps) {
   return Array.isArray(steps) ? steps : [];
 }
@@ -25,7 +27,7 @@ function stateClasses(state) {
   };
 }
 
-function formatDateTime(value) {
+function formatDateTime(value, language) {
   if (!value) {
     return null;
   }
@@ -33,21 +35,32 @@ function formatDateTime(value) {
   if (Number.isNaN(parsed.getTime())) {
     return String(value);
   }
-  return parsed.toLocaleString();
+  return parsed.toLocaleString(language || undefined);
 }
 
 export default function StatusTimeline({
-  title = "Status Timeline",
+  title,
   steps = [],
-  emptyText = "No lifecycle data available.",
+  emptyText,
   className = "",
 }) {
+  const { language } = useI18n();
   const rows = normalizeSteps(steps);
+  const resolvedTitle = title || (language === "tr" ? "Durum Zaman Cizelgesi" : "Status Timeline");
+  const resolvedEmptyText =
+    emptyText ||
+    (language === "tr"
+      ? "Kullanilabilir yasam dongusu verisi yok."
+      : "No lifecycle data available.");
 
   return (
     <section className={`rounded-xl border border-slate-200 bg-white p-4 shadow-sm ${className}`}>
-      <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-700">{title}</h3>
-      {rows.length === 0 ? <p className="mt-2 text-sm text-slate-500">{emptyText}</p> : null}
+      <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-700">
+        {resolvedTitle}
+      </h3>
+      {rows.length === 0 ? (
+        <p className="mt-2 text-sm text-slate-500">{resolvedEmptyText}</p>
+      ) : null}
       {rows.length > 0 ? (
         <ol className="mt-3 space-y-3">
           {rows.map((step, index) => {
@@ -55,7 +68,7 @@ export default function StatusTimeline({
             const key = String(step?.key || step?.statusCode || index);
             const label = String(step?.label || step?.statusCode || key);
             const description = String(step?.description || "").trim();
-            const atText = formatDateTime(step?.eventAt || step?.at);
+            const atText = formatDateTime(step?.eventAt || step?.at, language);
             const actorText = String(step?.actorName || step?.actor || "").trim();
             const noteText = String(step?.note || "").trim();
             const isLast = index === rows.length - 1;

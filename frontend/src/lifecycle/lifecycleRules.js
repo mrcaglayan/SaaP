@@ -20,143 +20,268 @@ function normalizeDate(value) {
   return parsed.toISOString();
 }
 
+function translateLifecycleText(translate, enText, trText) {
+  return typeof translate === "function" ? translate(enText, trText) : enText;
+}
+
 const LIFECYCLE_DEFINITIONS = {
   cariDocument: {
     id: "cariDocument",
     label: "Cari Document",
+    labelTr: "Cari Belge",
     terminalStatuses: ["SETTLED", "CANCELLED", "REVERSED"],
     statuses: [
-      { code: "DRAFT", label: "Draft", description: "Document is editable." },
+      {
+        code: "DRAFT",
+        label: "Draft",
+        labelTr: "Taslak",
+        description: "Document is editable.",
+        descriptionTr: "Belge duzenlenebilir.",
+      },
       {
         code: "POSTED",
         label: "Posted",
+        labelTr: "Kaydedildi",
         description: "Document has posted journal entries.",
+        descriptionTr: "Belgenin yevmiye kayitlari olusturuldu.",
       },
       {
         code: "PARTIALLY_SETTLED",
         label: "Partially Settled",
+        labelTr: "Kismen Mahsuplastirildi",
         description: "Document has partial settlement allocations.",
+        descriptionTr: "Belgenin kismi mahsuplastirma dagitimlari var.",
       },
       {
         code: "SETTLED",
         label: "Settled",
+        labelTr: "Mahsuplastirildi",
         description: "Document is fully settled.",
+        descriptionTr: "Belge tamamen mahsuplastirildi.",
       },
       {
         code: "CANCELLED",
         label: "Cancelled",
+        labelTr: "Iptal Edildi",
         description: "Draft was cancelled before posting.",
+        descriptionTr: "Taslak kayit oncesi iptal edildi.",
       },
       {
         code: "REVERSED",
         label: "Reversed",
+        labelTr: "Terslendi",
         description: "Posted document was reversed.",
+        descriptionTr: "Kaydedilmis belge terslendi.",
       },
     ],
     transitions: {
-      post: { from: ["DRAFT"], to: "POSTED", label: "Post" },
+      post: { from: ["DRAFT"], to: "POSTED", label: "Post", labelTr: "Kaydet" },
       settlePartial: {
         from: ["POSTED", "PARTIALLY_SETTLED"],
         to: "PARTIALLY_SETTLED",
         label: "Settle (Partial)",
+        labelTr: "Mahsuplastir (Kismi)",
       },
       settleFull: {
         from: ["POSTED", "PARTIALLY_SETTLED"],
         to: "SETTLED",
         label: "Settle (Full)",
+        labelTr: "Mahsuplastir (Tam)",
       },
-      cancel: { from: ["DRAFT"], to: "CANCELLED", label: "Cancel Draft" },
-      reverse: { from: ["POSTED"], to: "REVERSED", label: "Reverse" },
+      cancel: {
+        from: ["DRAFT"],
+        to: "CANCELLED",
+        label: "Cancel Draft",
+        labelTr: "Taslagi Iptal Et",
+      },
+      reverse: { from: ["POSTED"], to: "REVERSED", label: "Reverse", labelTr: "Tersle" },
     },
   },
   cashTransaction: {
     id: "cashTransaction",
     label: "Cash Transaction",
+    labelTr: "Kasa Islemi",
     terminalStatuses: ["POSTED", "CANCELLED", "REVERSED"],
     statuses: [
-      { code: "DRAFT", label: "Draft", description: "Awaiting submit/review." },
-      { code: "SUBMITTED", label: "Submitted", description: "Submitted for approval." },
-      { code: "APPROVED", label: "Approved", description: "Approved for posting." },
-      { code: "POSTED", label: "Posted", description: "Posted to ledger." },
-      { code: "REVERSED", label: "Reversed", description: "Reversal posted." },
-      { code: "CANCELLED", label: "Cancelled", description: "Cancelled before posting." },
+      {
+        code: "DRAFT",
+        label: "Draft",
+        labelTr: "Taslak",
+        description: "Awaiting submit/review.",
+        descriptionTr: "Gonderim/inceleme bekliyor.",
+      },
+      {
+        code: "SUBMITTED",
+        label: "Submitted",
+        labelTr: "Gonderildi",
+        description: "Submitted for approval.",
+        descriptionTr: "Onay icin gonderildi.",
+      },
+      {
+        code: "APPROVED",
+        label: "Approved",
+        labelTr: "Onaylandi",
+        description: "Approved for posting.",
+        descriptionTr: "Kayit icin onaylandi.",
+      },
+      {
+        code: "POSTED",
+        label: "Posted",
+        labelTr: "Kaydedildi",
+        description: "Posted to ledger.",
+        descriptionTr: "Deftere kaydedildi.",
+      },
+      {
+        code: "REVERSED",
+        label: "Reversed",
+        labelTr: "Terslendi",
+        description: "Reversal posted.",
+        descriptionTr: "Ters kayit olusturuldu.",
+      },
+      {
+        code: "CANCELLED",
+        label: "Cancelled",
+        labelTr: "Iptal Edildi",
+        description: "Cancelled before posting.",
+        descriptionTr: "Kayit oncesi iptal edildi.",
+      },
     ],
     transitions: {
-      submit: { from: ["DRAFT"], to: "SUBMITTED", label: "Submit" },
-      approve: { from: ["SUBMITTED"], to: "APPROVED", label: "Approve" },
+      submit: { from: ["DRAFT"], to: "SUBMITTED", label: "Submit", labelTr: "Gonder" },
+      approve: { from: ["SUBMITTED"], to: "APPROVED", label: "Approve", labelTr: "Onayla" },
       post: {
         from: ["DRAFT", "SUBMITTED", "APPROVED"],
         to: "POSTED",
         label: "Post",
+        labelTr: "Kaydet",
       },
       cancel: {
         from: ["DRAFT", "SUBMITTED"],
         to: "CANCELLED",
         label: "Cancel",
+        labelTr: "Iptal Et",
       },
-      reverse: { from: ["POSTED"], to: "REVERSED", label: "Reverse" },
+      reverse: { from: ["POSTED"], to: "REVERSED", label: "Reverse", labelTr: "Tersle" },
     },
   },
   cashSession: {
     id: "cashSession",
     label: "Cash Session",
+    labelTr: "Kasa Oturumu",
     terminalStatuses: ["CLOSED"],
     statuses: [
-      { code: "OPEN", label: "Open", description: "Session is accepting transactions." },
-      { code: "CLOSED", label: "Closed", description: "Session was closed and reconciled." },
+      {
+        code: "OPEN",
+        label: "Open",
+        labelTr: "Acik",
+        description: "Session is accepting transactions.",
+        descriptionTr: "Oturum islem kabul ediyor.",
+      },
+      {
+        code: "CLOSED",
+        label: "Closed",
+        labelTr: "Kapali",
+        description: "Session was closed and reconciled.",
+        descriptionTr: "Oturum kapatildi ve mutabik hale getirildi.",
+      },
     ],
     transitions: {
-      close: { from: ["OPEN"], to: "CLOSED", label: "Close Session" },
+      close: { from: ["OPEN"], to: "CLOSED", label: "Close Session", labelTr: "Oturumu Kapat" },
     },
   },
   payrollRun: {
     id: "payrollRun",
     label: "Payroll Run",
+    labelTr: "Bordro Calistirma",
     terminalStatuses: ["FINALIZED"],
     statuses: [
-      { code: "DRAFT", label: "Draft", description: "Adjustment shell or pre-import draft." },
-      { code: "IMPORTED", label: "Imported", description: "Provider file imported." },
-      { code: "REVIEWED", label: "Reviewed", description: "Validated and reviewed." },
-      { code: "FINALIZED", label: "Finalized", description: "Finalized for posting/close." },
+      {
+        code: "DRAFT",
+        label: "Draft",
+        labelTr: "Taslak",
+        description: "Adjustment shell or pre-import draft.",
+        descriptionTr: "Duzeltme kabugu veya ice aktarim oncesi taslak.",
+      },
+      {
+        code: "IMPORTED",
+        label: "Imported",
+        labelTr: "Ice Aktarildi",
+        description: "Provider file imported.",
+        descriptionTr: "Saglayici dosyasi ice aktarildi.",
+      },
+      {
+        code: "REVIEWED",
+        label: "Reviewed",
+        labelTr: "Incelendi",
+        description: "Validated and reviewed.",
+        descriptionTr: "Dogrulandi ve incelendi.",
+      },
+      {
+        code: "FINALIZED",
+        label: "Finalized",
+        labelTr: "Tamamlandi",
+        description: "Finalized for posting/close.",
+        descriptionTr: "Kayit/kapanis icin tamamlandi.",
+      },
     ],
     transitions: {
-      import: { from: ["DRAFT"], to: "IMPORTED", label: "Import" },
-      review: { from: ["IMPORTED"], to: "REVIEWED", label: "Review" },
-      finalize: { from: ["REVIEWED"], to: "FINALIZED", label: "Finalize" },
+      import: { from: ["DRAFT"], to: "IMPORTED", label: "Import", labelTr: "Ice Aktar" },
+      review: { from: ["IMPORTED"], to: "REVIEWED", label: "Review", labelTr: "Incele" },
+      finalize: { from: ["REVIEWED"], to: "FINALIZED", label: "Finalize", labelTr: "Tamamla" },
     },
   },
   payrollClose: {
     id: "payrollClose",
     label: "Payroll Close",
+    labelTr: "Bordro Kapanis",
     terminalStatuses: ["CLOSED", "REOPENED"],
     statuses: [
-      { code: "DRAFT", label: "Draft", description: "Checklist is being prepared." },
+      {
+        code: "DRAFT",
+        label: "Draft",
+        labelTr: "Taslak",
+        description: "Checklist is being prepared.",
+        descriptionTr: "Kontrol listesi hazirlaniyor.",
+      },
       {
         code: "READY",
         label: "Ready",
+        labelTr: "Hazir",
         description: "Checks passed and ready for request.",
+        descriptionTr: "Kontroller gecti ve talep icin hazir.",
       },
       {
         code: "REQUESTED",
         label: "Requested",
+        labelTr: "Talep Edildi",
         description: "Awaiting close approval.",
+        descriptionTr: "Kapanis onayi bekleniyor.",
       },
-      { code: "CLOSED", label: "Closed", description: "Payroll period is closed." },
+      {
+        code: "CLOSED",
+        label: "Closed",
+        labelTr: "Kapali",
+        description: "Payroll period is closed.",
+        descriptionTr: "Bordro donemi kapatildi.",
+      },
       {
         code: "REOPENED",
         label: "Reopened",
+        labelTr: "Yeniden Acildi",
         description: "Closed period has been reopened.",
+        descriptionTr: "Kapatilan donem yeniden acildi.",
       },
     ],
     transitions: {
-      prepare: { from: ["DRAFT"], to: "READY", label: "Prepare" },
-      request: { from: ["READY"], to: "REQUESTED", label: "Request Close" },
+      prepare: { from: ["DRAFT"], to: "READY", label: "Prepare", labelTr: "Hazirla" },
+      request: { from: ["READY"], to: "REQUESTED", label: "Request Close", labelTr: "Kapanis Talep Et" },
       approveClose: {
         from: ["REQUESTED"],
         to: "CLOSED",
         label: "Approve & Close",
+        labelTr: "Onayla ve Kapat",
       },
-      reopen: { from: ["CLOSED"], to: "REOPENED", label: "Reopen" },
+      reopen: { from: ["CLOSED"], to: "REOPENED", label: "Reopen", labelTr: "Yeniden Ac" },
     },
   },
 };
@@ -168,16 +293,28 @@ export function getLifecycleDefinition(entityType) {
   return LIFECYCLE_DEFINITIONS[key] || null;
 }
 
-export function getLifecycleStatusMeta(entityType, statusCode) {
+export function getLifecycleStatusMeta(entityType, statusCode, translate) {
   const definition = getLifecycleDefinition(entityType);
   if (!definition) {
     return null;
   }
   const normalizedStatus = toUpper(statusCode);
-  return definition.statuses.find((row) => row.code === normalizedStatus) || null;
+  const matched = definition.statuses.find((row) => row.code === normalizedStatus) || null;
+  if (!matched) {
+    return null;
+  }
+  return {
+    ...matched,
+    label: translateLifecycleText(translate, matched.label, matched.labelTr),
+    description: translateLifecycleText(
+      translate,
+      matched.description || "",
+      matched.descriptionTr || matched.description || ""
+    ),
+  };
 }
 
-export function getLifecycleAllowedActions(entityType, currentStatus) {
+export function getLifecycleAllowedActions(entityType, currentStatus, translate) {
   const definition = getLifecycleDefinition(entityType);
   if (!definition) {
     return [];
@@ -187,12 +324,12 @@ export function getLifecycleAllowedActions(entityType, currentStatus) {
     .filter(([, transition]) => transition.from.includes(normalizedStatus))
     .map(([action, transition]) => ({
       action,
-      label: transition.label,
+      label: translateLifecycleText(translate, transition.label, transition.labelTr),
       toStatus: transition.to,
     }));
 }
 
-export function buildLifecycleTimelineSteps(entityType, currentStatus, events = []) {
+export function buildLifecycleTimelineSteps(entityType, currentStatus, events = [], translate) {
   const definition = getLifecycleDefinition(entityType);
   if (!definition) {
     return [];
@@ -212,8 +349,12 @@ export function buildLifecycleTimelineSteps(entityType, currentStatus, events = 
     return {
       key: status.code,
       statusCode: status.code,
-      label: status.label,
-      description: status.description || "",
+      label: translateLifecycleText(translate, status.label, status.labelTr),
+      description: translateLifecycleText(
+        translate,
+        status.description || "",
+        status.descriptionTr || status.description || ""
+      ),
       state,
       eventAt: null,
       actorName: null,

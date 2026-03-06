@@ -1,6 +1,16 @@
 const AMOUNT_SCALE = 6;
 const AMOUNT_EPSILON = 0.000001;
 
+export const FX_MISSING_REASON_CODES = Object.freeze({
+  SETTLEMENT_OR_DOCUMENT_CURRENCY_MISSING:
+    "SETTLEMENT_OR_DOCUMENT_CURRENCY_MISSING",
+  FUNCTIONAL_CURRENCY_REQUIRED_FOR_DERIVED_CROSS_RATE:
+    "FUNCTIONAL_CURRENCY_REQUIRED_FOR_DERIVED_CROSS_RATE",
+  SETTLEMENT_DOCUMENT_CONVERSION_RATE_MISSING:
+    "SETTLEMENT_DOCUMENT_CONVERSION_RATE_MISSING",
+  DERIVED_CROSS_RATE_INVALID: "DERIVED_CROSS_RATE_INVALID",
+});
+
 function roundAmount(value) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) {
@@ -112,7 +122,9 @@ function resolveSettlementToDocumentCrossRate({
       crossRateSource: null,
       crossRateDate: normalizedDate,
       missingRate: true,
-      missingReason: "Settlement or document currency is missing.",
+      missingReasonCode:
+        FX_MISSING_REASON_CODES.SETTLEMENT_OR_DOCUMENT_CURRENCY_MISSING,
+      missingReason: "",
     };
   }
 
@@ -122,6 +134,7 @@ function resolveSettlementToDocumentCrossRate({
       crossRateSource: "PARITY",
       crossRateDate: normalizedDate,
       missingRate: false,
+      missingReasonCode: "",
       missingReason: "",
     };
   }
@@ -133,6 +146,7 @@ function resolveSettlementToDocumentCrossRate({
       crossRateSource: direct.source || "FX_TABLE_EXACT_SPOT",
       crossRateDate: direct.rateDate || normalizedDate,
       missingRate: false,
+      missingReasonCode: "",
       missingReason: "",
     };
   }
@@ -143,7 +157,9 @@ function resolveSettlementToDocumentCrossRate({
       crossRateSource: null,
       crossRateDate: normalizedDate,
       missingRate: true,
-      missingReason: "Functional currency is required for derived cross-rate.",
+      missingReasonCode:
+        FX_MISSING_REASON_CODES.FUNCTIONAL_CURRENCY_REQUIRED_FOR_DERIVED_CROSS_RATE,
+      missingReason: "",
     };
   }
 
@@ -188,8 +204,9 @@ function resolveSettlementToDocumentCrossRate({
       crossRateSource: null,
       crossRateDate: normalizedDate,
       missingRate: true,
-      missingReason:
-        "Missing settlement/document conversion rate. Add SPOT rate(s) for settlement date.",
+      missingReasonCode:
+        FX_MISSING_REASON_CODES.SETTLEMENT_DOCUMENT_CONVERSION_RATE_MISSING,
+      missingReason: "",
     };
   }
 
@@ -202,7 +219,8 @@ function resolveSettlementToDocumentCrossRate({
       crossRateSource: null,
       crossRateDate: normalizedDate,
       missingRate: true,
-      missingReason: "Derived cross-rate is invalid.",
+      missingReasonCode: FX_MISSING_REASON_CODES.DERIVED_CROSS_RATE_INVALID,
+      missingReason: "",
     };
   }
 
@@ -224,6 +242,7 @@ function resolveSettlementToDocumentCrossRate({
       normalizedDate
     ),
     missingRate: false,
+    missingReasonCode: "",
     missingReason: "",
   };
 }
@@ -319,6 +338,7 @@ export function buildAutoAllocatePreview(openItems = [], incomingAmountTxn = 0, 
       crossRateSource: crossRatePolicy.crossRateSource,
       crossRateDate: crossRatePolicy.crossRateDate,
       fxMissing: Boolean(crossRatePolicy.missingRate),
+      fxMissingReasonCode: crossRatePolicy.missingReasonCode || "",
       fxMissingReason: crossRatePolicy.missingReason || "",
       autoAllocateBlockedByFx:
         allocationBlockedByFx && rowRemainingBefore > AMOUNT_EPSILON,

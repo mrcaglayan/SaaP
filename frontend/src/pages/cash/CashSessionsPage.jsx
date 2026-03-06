@@ -174,7 +174,8 @@ function toSessionErrorState(err, t, fallbackKey) {
 
 export default function CashSessionsPage() {
   const { hasPermission } = useAuth();
-  const { t } = useI18n();
+  const { language, t } = useI18n();
+  const l = (en, tr) => (language === "tr" ? tr : en);
   const localizeSessionStatus = (status) => {
     const normalized = toUpper(status);
     if (!normalized) {
@@ -276,12 +277,12 @@ export default function CashSessionsPage() {
     );
   }, [closeForm.sessionId, historyRows, openSessions, selectedLifecycleSessionId]);
   const selectedSessionLifecycleMeta = useMemo(
-    () => getLifecycleStatusMeta("cashSession", selectedLifecycleSession?.status),
-    [selectedLifecycleSession?.status]
+    () => getLifecycleStatusMeta("cashSession", selectedLifecycleSession?.status, l),
+    [language, selectedLifecycleSession?.status]
   );
   const selectedSessionLifecycleActions = useMemo(
-    () => getLifecycleAllowedActions("cashSession", selectedLifecycleSession?.status),
-    [selectedLifecycleSession?.status]
+    () => getLifecycleAllowedActions("cashSession", selectedLifecycleSession?.status, l),
+    [language, selectedLifecycleSession?.status]
   );
   const selectedSessionLifecycleActionLabels = useMemo(() => {
     const labelsByAction = {
@@ -296,9 +297,10 @@ export default function CashSessionsPage() {
       buildLifecycleTimelineSteps(
         "cashSession",
         selectedLifecycleSession?.status,
-        buildCashSessionLifecycleEvents(selectedLifecycleSession)
+        buildCashSessionLifecycleEvents(selectedLifecycleSession),
+        l
       ),
-    [selectedLifecycleSession]
+    [language, selectedLifecycleSession]
   );
 
   async function loadData() {

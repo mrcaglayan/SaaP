@@ -727,7 +727,8 @@ function toTransactionErrorState(err, t, fallbackKey) {
 export default function CashTransactionsPage() {
   const { pathname } = useLocation();
   const { hasPermission } = useAuth();
-  const { t } = useI18n();
+  const { language, t } = useI18n();
+  const l = (en, tr) => (language === "tr" ? tr : en);
   const localizeTxnStatus = (status) => {
     const normalized = toUpper(status);
     if (!normalized) {
@@ -1046,12 +1047,12 @@ export default function CashTransactionsPage() {
   const canFilterByTxnType = !presetTxnType;
   const effectiveTxnTypeFilter = presetTxnType || filters.txnType || "";
   const selectedTransactionLifecycleMeta = useMemo(
-    () => getLifecycleStatusMeta("cashTransaction", selectedLifecycleTransactionRow?.status),
-    [selectedLifecycleTransactionRow?.status]
+    () => getLifecycleStatusMeta("cashTransaction", selectedLifecycleTransactionRow?.status, l),
+    [language, selectedLifecycleTransactionRow?.status]
   );
   const selectedTransactionLifecycleActions = useMemo(
-    () => getLifecycleAllowedActions("cashTransaction", selectedLifecycleTransactionRow?.status),
-    [selectedLifecycleTransactionRow?.status]
+    () => getLifecycleAllowedActions("cashTransaction", selectedLifecycleTransactionRow?.status, l),
+    [language, selectedLifecycleTransactionRow?.status]
   );
   const selectedTransactionLifecycleActionLabels = useMemo(() => {
     const labelsByAction = {
@@ -1070,9 +1071,10 @@ export default function CashTransactionsPage() {
       buildLifecycleTimelineSteps(
         "cashTransaction",
         selectedLifecycleTransactionRow?.status,
-        buildCashTransactionLifecycleEvents(selectedLifecycleTransactionRow, t)
+        buildCashTransactionLifecycleEvents(selectedLifecycleTransactionRow, t),
+        l
       ),
-    [selectedLifecycleTransactionRow, t]
+    [language, selectedLifecycleTransactionRow, t]
   );
 
   const createWarnings = useMemo(() => {
