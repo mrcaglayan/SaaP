@@ -460,16 +460,20 @@ const USA_DEFAULT_COA_ACCOUNTS = [
   },
   { code: "4000", name: "Sales Revenue", accountType: "REVENUE", normalSide: "CREDIT" },
   { code: "4100", name: "Service Revenue", accountType: "REVENUE", normalSide: "CREDIT" },
+  { code: "4050", name: "Foreign Exchange Gain", accountType: "REVENUE", normalSide: "CREDIT" },
   { code: "5000", name: "Cost of Goods Sold", accountType: "EXPENSE", normalSide: "DEBIT" },
   { code: "6100", name: "Operating Expenses", accountType: "EXPENSE", normalSide: "DEBIT" },
   { code: "6200", name: "General and Administrative Expense", accountType: "EXPENSE", normalSide: "DEBIT" },
   { code: "7000", name: "Interest Expense", accountType: "EXPENSE", normalSide: "DEBIT" },
+  { code: "7050", name: "Foreign Exchange Loss", accountType: "EXPENSE", normalSide: "DEBIT" },
 ];
 const CARI_REQUIRED_PURPOSE_CODES = Object.freeze([
   "CARI_AR_CONTROL",
   "CARI_AR_OFFSET",
   "CARI_AP_CONTROL",
   "CARI_AP_OFFSET",
+  "CARI_SETTLEMENT_FX_GAIN",
+  "CARI_SETTLEMENT_FX_LOSS",
 ]);
 const CARI_OPTIONAL_CONTEXT_PURPOSE_CODES = Object.freeze([
   "CARI_AR_CONTROL_CASH",
@@ -538,6 +542,18 @@ const CARI_PURPOSE_UI_META = Object.freeze({
     tr: "AP belge karsi hesabi (genelde gider/maliyet hesabi).",
     exampleEn: "Example: AP expense side -> 770 or 632",
     exampleTr: "Ornek: AP gider tarafi -> 770 veya 632",
+  }),
+  CARI_SETTLEMENT_FX_GAIN: Object.freeze({
+    en: "Realized FX gain account used when settlement base exceeds historical carrying base.",
+    tr: "Settlement baz tutari tarihi tasinan baz tutari astiginda kullanilan gerceklesen kur farki kar hesabi.",
+    exampleEn: "Example: AR collection at a stronger rate -> 646 / dedicated FX gain income.",
+    exampleTr: "Ornek: daha guclu kurdan AR tahsilati -> 646 / ozel kambiyo kar hesabi.",
+  }),
+  CARI_SETTLEMENT_FX_LOSS: Object.freeze({
+    en: "Realized FX loss account used when settlement base is below or economically worse than historical carrying base.",
+    tr: "Settlement baz tutari tarihi tasinan baz tutardan dusuk veya ekonomik olarak daha kotu oldugunda kullanilan gerceklesen kur farki zarar hesabi.",
+    exampleEn: "Example: AP payment at a weaker rate -> 656 / dedicated FX loss expense.",
+    exampleTr: "Ornek: daha zayif kurdan AP odemesi -> 656 / ozel kambiyo zarar hesabi.",
   }),
   CARI_AR_CONTROL_CASH: Object.freeze({
     en: "Optional AR control override for CASH settlement context.",

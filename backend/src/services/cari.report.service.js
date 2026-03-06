@@ -927,7 +927,7 @@ async function loadStatementSettlementRows({
     counterpartyColumn: "b.counterparty_id",
     roleCustomerColumn: "cp.is_customer",
     roleVendorColumn: "cp.is_vendor",
-    directionColumn: null,
+    directionColumn: "b.direction",
   });
 
   const rowsResult = await runQuery(
@@ -941,6 +941,7 @@ async function loadStatementSettlementRows({
        b.fiscal_year,
        b.sequence_no,
        b.settlement_no,
+       b.direction,
        b.settlement_date,
        b.status,
        b.total_allocated_txn,
@@ -1016,6 +1017,7 @@ async function loadStatementSettlementRows({
       fiscalYear: Number(row.fiscal_year || 0),
       sequenceNo: Number(row.sequence_no || 0),
       settlementNo: row.settlement_no || null,
+      direction: row.direction || null,
       settlementDate: toDateOnlyString(row.settlement_date),
       statusCurrent: row.status || null,
       totalAllocatedTxn: roundAmount(row.total_allocated_txn),
@@ -2180,6 +2182,11 @@ export async function getCariSettlementRealizedFxReport({
     params.push(normalizeUpperText(filters.currencyCode));
   }
 
+  if (filters.direction) {
+    conditions.push("UPPER(b.direction) = ?");
+    params.push(normalizeUpperText(filters.direction));
+  }
+
   if (filters.periodFrom) {
     conditions.push("b.settlement_date >= ?");
     params.push(filters.periodFrom);
@@ -2209,7 +2216,15 @@ export async function getCariSettlementRealizedFxReport({
       COALESCE(
         SUM(
           CASE
-            WHEN COALESCE(b.realized_fx_net_base, 0) > 0 THEN COALESCE(b.realized_fx_net_base, 0)
+            WHEN UPPER(COALESCE(b.direction, '')) = 'AR'
+             AND COALESCE(b.realized_fx_net_base, 0) > 0
+              THEN COALESCE(b.realized_fx_net_base, 0)
+            WHEN UPPER(COALESCE(b.direction, '')) = 'AP'
+             AND COALESCE(b.realized_fx_net_base, 0) < 0
+              THEN ABS(COALESCE(b.realized_fx_net_base, 0))
+            WHEN COALESCE(b.direction, '') = ''
+             AND COALESCE(b.realized_fx_net_base, 0) > 0
+              THEN COALESCE(b.realized_fx_net_base, 0)
             ELSE 0
           END
         ),
@@ -2218,7 +2233,15 @@ export async function getCariSettlementRealizedFxReport({
       COALESCE(
         SUM(
           CASE
-            WHEN COALESCE(b.realized_fx_net_base, 0) < 0 THEN ABS(COALESCE(b.realized_fx_net_base, 0))
+            WHEN UPPER(COALESCE(b.direction, '')) = 'AR'
+             AND COALESCE(b.realized_fx_net_base, 0) < 0
+              THEN ABS(COALESCE(b.realized_fx_net_base, 0))
+            WHEN UPPER(COALESCE(b.direction, '')) = 'AP'
+             AND COALESCE(b.realized_fx_net_base, 0) > 0
+              THEN COALESCE(b.realized_fx_net_base, 0)
+            WHEN COALESCE(b.direction, '') = ''
+             AND COALESCE(b.realized_fx_net_base, 0) < 0
+              THEN ABS(COALESCE(b.realized_fx_net_base, 0))
             ELSE 0
           END
         ),
@@ -2289,6 +2312,40 @@ export async function getCariSettlementRealizedFxReport({
        COALESCE(SUM(b.total_allocated_txn), 0) AS total_allocated_txn,
        COALESCE(SUM(b.total_allocated_base), 0) AS total_allocated_base,
        COALESCE(SUM(COALESCE(b.realized_fx_net_base, 0)), 0) AS realized_fx_net_base,
+       COALESCE(
+         SUM(
+           CASE
+             WHEN UPPER(COALESCE(b.direction, '')) = 'AR'
+              AND COALESCE(b.realized_fx_net_base, 0) > 0
+               THEN COALESCE(b.realized_fx_net_base, 0)
+             WHEN UPPER(COALESCE(b.direction, '')) = 'AP'
+              AND COALESCE(b.realized_fx_net_base, 0) < 0
+               THEN ABS(COALESCE(b.realized_fx_net_base, 0))
+             WHEN COALESCE(b.direction, '') = ''
+              AND COALESCE(b.realized_fx_net_base, 0) > 0
+               THEN COALESCE(b.realized_fx_net_base, 0)
+             ELSE 0
+           END
+         ),
+         0
+       ) AS realized_fx_gain_base,
+       COALESCE(
+         SUM(
+           CASE
+             WHEN UPPER(COALESCE(b.direction, '')) = 'AR'
+              AND COALESCE(b.realized_fx_net_base, 0) < 0
+               THEN ABS(COALESCE(b.realized_fx_net_base, 0))
+             WHEN UPPER(COALESCE(b.direction, '')) = 'AP'
+              AND COALESCE(b.realized_fx_net_base, 0) > 0
+               THEN COALESCE(b.realized_fx_net_base, 0)
+             WHEN COALESCE(b.direction, '') = ''
+              AND COALESCE(b.realized_fx_net_base, 0) < 0
+               THEN ABS(COALESCE(b.realized_fx_net_base, 0))
+             ELSE 0
+           END
+         ),
+         0
+       ) AS realized_fx_loss_base,
        COALESCE(COUNT(DISTINCT b.counterparty_id), 0) AS distinct_counterparty_count,
        COALESCE(COUNT(DISTINCT UPPER(b.currency_code)), 0) AS distinct_currency_count
      FROM cari_settlement_batches b
@@ -2305,6 +2362,7 @@ export async function getCariSettlementRealizedFxReport({
     legalEntityId: filters.legalEntityId || null,
     counterpartyId: filters.counterpartyId || null,
     role: filters.role || null,
+    direction: filters.direction || null,
     currencyCode: filters.currencyCode || null,
     periodFrom: filters.periodFrom || null,
     periodTo: filters.periodTo || null,
@@ -2318,6 +2376,8 @@ export async function getCariSettlementRealizedFxReport({
       totalAllocatedTxn: roundAmount(summaryRow.total_allocated_txn),
       totalAllocatedBase: roundAmount(summaryRow.total_allocated_base),
       realizedFxNetBase: roundAmount(summaryRow.realized_fx_net_base),
+      realizedFxGainBase: roundAmount(summaryRow.realized_fx_gain_base),
+      realizedFxLossBase: roundAmount(summaryRow.realized_fx_loss_base),
     },
     rows: filters.includeDetails ? rows : [],
   };

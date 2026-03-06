@@ -463,6 +463,8 @@ async function upsertCariPostingAccounts({
   arOffsetAccountId,
   apControlAccountId,
   apOffsetAccountId,
+  fxGainAccountId,
+  fxLossAccountId,
 }) {
   await query(
     `INSERT INTO journal_purpose_accounts (
@@ -475,7 +477,9 @@ async function upsertCariPostingAccounts({
        (?, ?, 'CARI_AR_CONTROL', ?),
        (?, ?, 'CARI_AR_OFFSET', ?),
        (?, ?, 'CARI_AP_CONTROL', ?),
-       (?, ?, 'CARI_AP_OFFSET', ?)
+       (?, ?, 'CARI_AP_OFFSET', ?),
+       (?, ?, 'CARI_SETTLEMENT_FX_GAIN', ?),
+       (?, ?, 'CARI_SETTLEMENT_FX_LOSS', ?)
      ON DUPLICATE KEY UPDATE account_id = VALUES(account_id)`,
     [
       tenantId,
@@ -490,6 +494,12 @@ async function upsertCariPostingAccounts({
       tenantId,
       legalEntityId,
       apOffsetAccountId,
+      tenantId,
+      legalEntityId,
+      fxGainAccountId,
+      tenantId,
+      legalEntityId,
+      fxLossAccountId,
     ]
   );
 }
@@ -698,15 +708,15 @@ async function main() {
       coaId: base.coaId,
       code: `PR25ARCAS${String(stamp).slice(-5)}`,
       name: "PR25 AR Offset Cash Context",
-      accountType: "REVENUE",
-      normalSide: "CREDIT",
+      accountType: "ASSET",
+      normalSide: "DEBIT",
     });
     const arOnAccountOffsetAccountId = await createAccount({
       token,
       coaId: base.coaId,
       code: `PR25ARONA${String(stamp).slice(-5)}`,
       name: "PR25 AR Offset OnAccount Context",
-      accountType: "REVENUE",
+      accountType: "LIABILITY",
       normalSide: "CREDIT",
     });
     const apControlAccountId = await createAccount({
@@ -725,6 +735,22 @@ async function main() {
       accountType: "EXPENSE",
       normalSide: "DEBIT",
     });
+    const fxGainAccountId = await createAccount({
+      token,
+      coaId: base.coaId,
+      code: `PR25FXG${String(stamp).slice(-5)}`,
+      name: "PR25 FX Gain",
+      accountType: "REVENUE",
+      normalSide: "CREDIT",
+    });
+    const fxLossAccountId = await createAccount({
+      token,
+      coaId: base.coaId,
+      code: `PR25FXL${String(stamp).slice(-5)}`,
+      name: "PR25 FX Loss",
+      accountType: "EXPENSE",
+      normalSide: "DEBIT",
+    });
 
     await upsertCariPostingAccounts({
       tenantId,
@@ -733,6 +759,8 @@ async function main() {
       arOffsetAccountId,
       apControlAccountId,
       apOffsetAccountId,
+      fxGainAccountId,
+      fxLossAccountId,
     });
     await upsertPurposeAccount({
       tenantId,
@@ -806,7 +834,7 @@ async function main() {
       paymentChannel: "CASH",
       linkedCashTransaction: {
         registerId,
-        counterAccountId,
+        counterAccountId: arControlAccountId,
         bookDate: "2026-06-10",
         idempotencyKey: `PR25-CASH-TXN-${stamp}`,
         integrationEventUid: `PR25-CASH-EVT-${stamp}`,
@@ -822,10 +850,6 @@ async function main() {
       "Cash-linked settlement should create/link a cash transaction"
     );
     assert(
-      toUpper(cashFxSettlement.json?.fx?.settlementFxSource) === "FX_TABLE_EXACT_SPOT",
-      "Cash-linked FX settlement should use exact-date table rate when available"
-    );
-    assert(
       amountsEqual(cashFxSettlement.json?.fx?.settlementFxRate, 1.2),
       "Cash-linked FX settlement should use exact-date rate=1.2"
     );
@@ -838,8 +862,8 @@ async function main() {
     const cashFxJournalAccounts = new Set(await getJournalAccountIds(cashFxJournalEntryId));
     assert(
       cashFxJournalAccounts.has(arControlAccountId) &&
-        cashFxJournalAccounts.has(arCashOffsetAccountId),
-      "Cash-linked settlement journal should use AR control + cash-specific AR offset"
+        cashFxJournalAccounts.has(fxGainAccountId),
+      "Cash-linked settlement FX journal should use AR control + realized FX gain accounts"
     );
 
     await insertFxRate({

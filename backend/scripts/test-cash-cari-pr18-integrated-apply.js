@@ -440,6 +440,8 @@ async function upsertCariPostingAccounts({
   arOffsetAccountId,
   apControlAccountId,
   apOffsetAccountId,
+  fxGainAccountId,
+  fxLossAccountId,
 }) {
   await query(
     `INSERT INTO journal_purpose_accounts (
@@ -452,7 +454,9 @@ async function upsertCariPostingAccounts({
        (?, ?, 'CARI_AR_CONTROL', ?),
        (?, ?, 'CARI_AR_OFFSET', ?),
        (?, ?, 'CARI_AP_CONTROL', ?),
-       (?, ?, 'CARI_AP_OFFSET', ?)
+       (?, ?, 'CARI_AP_OFFSET', ?),
+       (?, ?, 'CARI_SETTLEMENT_FX_GAIN', ?),
+       (?, ?, 'CARI_SETTLEMENT_FX_LOSS', ?)
      ON DUPLICATE KEY UPDATE account_id = VALUES(account_id)`,
     [
       tenantId,
@@ -467,6 +471,12 @@ async function upsertCariPostingAccounts({
       tenantId,
       legalEntityId,
       apOffsetAccountId,
+      tenantId,
+      legalEntityId,
+      fxGainAccountId,
+      tenantId,
+      legalEntityId,
+      fxLossAccountId,
     ]
   );
 }
@@ -675,6 +685,22 @@ async function main() {
       accountType: "EXPENSE",
       normalSide: "DEBIT",
     });
+    const fxGainAccountId = await createAccount({
+      token,
+      coaId: base.coaId,
+      code: `PR18FXG${String(stamp).slice(-5)}`,
+      name: "PR18 FX Gain",
+      accountType: "REVENUE",
+      normalSide: "CREDIT",
+    });
+    const fxLossAccountId = await createAccount({
+      token,
+      coaId: base.coaId,
+      code: `PR18FXL${String(stamp).slice(-5)}`,
+      name: "PR18 FX Loss",
+      accountType: "EXPENSE",
+      normalSide: "DEBIT",
+    });
 
     await upsertCariPostingAccounts({
       tenantId,
@@ -683,6 +709,8 @@ async function main() {
       arOffsetAccountId,
       apControlAccountId,
       apOffsetAccountId,
+      fxGainAccountId,
+      fxLossAccountId,
     });
 
     const registerId = await createRegister({

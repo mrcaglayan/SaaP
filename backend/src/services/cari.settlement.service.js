@@ -69,7 +69,7 @@ const SETTLEMENT_POSTING_SOURCE_CONTEXT = Object.freeze({
   ON_ACCOUNT_APPLY: "ON_ACCOUNT_APPLY",
 });
 const FOLLOW_UP_RISKS = Object.freeze([
-  "Posting depends on configured journal_purpose_accounts mappings. Engine tries context codes first (for CASH, MANUAL, ON_ACCOUNT) and falls back to base mappings (CARI_AR_CONTROL/CARI_AR_OFFSET/CARI_AP_CONTROL/CARI_AP_OFFSET). Missing setup blocks posting.",
+  "Posting depends on configured journal_purpose_accounts mappings. Engine tries context codes first (for CASH, MANUAL, ON_ACCOUNT) and falls back to base mappings (CARI_AR_CONTROL/CARI_AR_OFFSET/CARI_AP_CONTROL/CARI_AP_OFFSET). Realized FX gain/loss postings also require dedicated CARI FX mappings. Missing setup blocks posting.",
   "FX lookup uses request fxRate first, then exact-date SPOT, then optional nearest-prior fallback when enabled by config.",
   "Settlement posting resolves source context (CASH_LINKED, MANUAL, ON_ACCOUNT_APPLY) and falls back to generic purpose mappings for compatibility.",
 ]);
@@ -82,6 +82,10 @@ const CARI_SETTLEMENT_PURPOSES = Object.freeze({
     control: "CARI_AP_CONTROL",
     offset: "CARI_AP_OFFSET",
   }),
+});
+const CARI_SETTLEMENT_REALIZED_FX_PURPOSES = Object.freeze({
+  gain: "CARI_SETTLEMENT_FX_GAIN",
+  loss: "CARI_SETTLEMENT_FX_LOSS",
 });
 const DEFAULT_SETTLEMENT_FX_FALLBACK_MODE = (() => {
   const normalized = normalizeUpperText(process.env.CARI_SETTLEMENT_FX_FALLBACK_MODE);
@@ -389,6 +393,123 @@ function resolvePurposeAccountByCandidates({
   return null;
 }
 
+function buildSettlementJournalLine({
+  accountId,
+  debitBase = 0,
+  creditBase = 0,
+  amountTxn = 0,
+  lineDescription,
+  subledgerReferenceNo,
+  currencyCode,
+}) {
+  const parsedAccountId = parsePositiveInt(accountId);
+  if (!parsedAccountId) {
+    throw badRequest("Settlement journal line account is invalid");
+  }
+
+  return {
+    accountId: parsedAccountId,
+    debitBase: normalizeAmount(debitBase, "journalLine.debitBase", {
+      allowZero: true,
+    }),
+    creditBase: normalizeAmount(creditBase, "journalLine.creditBase", {
+      allowZero: true,
+    }),
+    amountTxn: normalizeSignedAmount(amountTxn, "journalLine.amountTxn"),
+    description: toNullableString(lineDescription, 255),
+    subledgerReferenceNo: toNullableString(subledgerReferenceNo, 100),
+    currencyCode: normalizeUpperText(currencyCode) || null,
+  };
+}
+
+function classifySettlementRealizedFx({
+  direction,
+  realizedFxNetBase,
+}) {
+  const normalizedDirection = normalizeUpperText(direction);
+  if (normalizedDirection !== "AR" && normalizedDirection !== "AP") {
+    throw badRequest("Settlement direction must be AR or AP");
+  }
+
+  const netBase = normalizeSignedAmount(
+    realizedFxNetBase === null || realizedFxNetBase === undefined
+      ? 0
+      : realizedFxNetBase,
+    "realizedFxNetBase"
+  );
+  if (Math.abs(netBase) <= AMOUNT_EPSILON) {
+    return {
+      normalizedDirection,
+      realizedFxNetBase: 0,
+      gainBase: 0,
+      lossBase: 0,
+      classification: "NONE",
+      hasFx: false,
+    };
+  }
+
+  const absoluteBase = roundAmount(Math.abs(netBase));
+  let gainBase = 0;
+  let lossBase = 0;
+  if (normalizedDirection === "AR") {
+    if (netBase > 0) {
+      gainBase = absoluteBase;
+    } else {
+      lossBase = absoluteBase;
+    }
+  } else if (netBase < 0) {
+    gainBase = absoluteBase;
+  } else {
+    lossBase = absoluteBase;
+  }
+
+  return {
+    normalizedDirection,
+    realizedFxNetBase: netBase,
+    gainBase,
+    lossBase,
+    classification: gainBase > AMOUNT_EPSILON ? "GAIN" : "LOSS",
+    hasFx: gainBase > AMOUNT_EPSILON || lossBase > AMOUNT_EPSILON,
+  };
+}
+
+function deriveSettlementEquivalentTxnAmount(baseAmount, settlementFxRate, label) {
+  const normalizedBaseAmount = normalizeAmount(baseAmount, label);
+  const normalizedSettlementFxRate = normalizeOptionalPositiveDecimal(
+    settlementFxRate,
+    "settlementFxRate"
+  );
+  if (!normalizedSettlementFxRate) {
+    throw badRequest(
+      "settlementFxRate is required to derive realized FX settlement journal amountTxn"
+    );
+  }
+  return roundAmount(normalizedBaseAmount / Number(normalizedSettlementFxRate));
+}
+
+function assertSettlementCashCounterAccount({
+  actualCounterAccountId,
+  expectedControlAccountId,
+  label,
+}) {
+  const parsedExpectedControlAccountId = parsePositiveInt(expectedControlAccountId);
+  if (!parsedExpectedControlAccountId) {
+    return;
+  }
+
+  const parsedActualCounterAccountId = parsePositiveInt(actualCounterAccountId);
+  if (!parsedActualCounterAccountId) {
+    throw badRequest(
+      `${label} must equal the resolved CARI control account for cash-linked settlement`
+    );
+  }
+  if (parsedActualCounterAccountId !== parsedExpectedControlAccountId) {
+    throw badRequest(
+      `${label} must equal the resolved CARI control account for cash-linked settlement`
+    );
+  }
+}
+
 function resolveSettlementIntegrationMetadata({
   payload,
   idempotencyKey,
@@ -581,6 +702,7 @@ function mapSettlementBatchRow(row) {
     tenantId: parsePositiveInt(row.tenant_id),
     legalEntityId: parsePositiveInt(row.legal_entity_id),
     counterpartyId: parsePositiveInt(row.counterparty_id),
+    direction: normalizeUpperText(row.direction) || null,
     cashTransactionId: parsePositiveInt(row.cash_transaction_id),
     sequenceNamespace: row.sequence_namespace,
     fiscalYear: Number(row.fiscal_year),
@@ -1109,6 +1231,79 @@ async function resolveSettlementPostingAccounts({
   };
 }
 
+async function resolveSettlementRealizedFxPostingAccounts({
+  tenantId,
+  legalEntityId,
+  runQuery = query,
+}) {
+  const requestedPurposes = [
+    CARI_SETTLEMENT_REALIZED_FX_PURPOSES.gain,
+    CARI_SETTLEMENT_REALIZED_FX_PURPOSES.loss,
+  ];
+  await autoRemapCariPurposeMappingsForLegalEntity({
+    tenantId,
+    legalEntityId,
+    purposeCodes: requestedPurposes,
+    runQuery,
+  });
+
+  const placeholders = requestedPurposes.map(() => "?").join(", ");
+  const result = await runQuery(
+    `SELECT
+       jpa.purpose_code,
+       a.id AS account_id,
+       a.code AS account_code
+     FROM journal_purpose_accounts jpa
+     JOIN accounts a ON a.id = jpa.account_id
+     JOIN charts_of_accounts c ON c.id = a.coa_id
+     WHERE jpa.tenant_id = ?
+       AND jpa.legal_entity_id = ?
+       AND jpa.purpose_code IN (${placeholders})
+       AND c.tenant_id = ?
+       AND c.legal_entity_id = ?
+       AND a.is_active = TRUE
+       AND a.allow_posting = TRUE`,
+    [tenantId, legalEntityId, ...requestedPurposes, tenantId, legalEntityId]
+  );
+
+  const byPurpose = new Map(
+    (result.rows || []).map((row) => [
+      normalizeUpperText(row.purpose_code),
+      {
+        id: parsePositiveInt(row.account_id),
+        code: String(row.account_code || ""),
+      },
+    ])
+  );
+
+  const gain = resolvePurposeAccountByCandidates({
+    byPurpose,
+    candidates: [CARI_SETTLEMENT_REALIZED_FX_PURPOSES.gain],
+  });
+  const loss = resolvePurposeAccountByCandidates({
+    byPurpose,
+    candidates: [CARI_SETTLEMENT_REALIZED_FX_PURPOSES.loss],
+  });
+
+  if (!gain?.id || !loss?.id) {
+    throw badRequest(
+      `Setup required: configure journal_purpose_accounts for realized FX gain [${CARI_SETTLEMENT_REALIZED_FX_PURPOSES.gain}] and loss [${CARI_SETTLEMENT_REALIZED_FX_PURPOSES.loss}]`
+    );
+  }
+  if (gain.id === loss.id) {
+    throw badRequest("Realized FX gain and loss accounts must be different");
+  }
+
+  return {
+    gainAccountId: gain.id,
+    lossAccountId: loss.id,
+    gainAccountCode: gain.code || null,
+    lossAccountCode: loss.code || null,
+    gainPurposeCode: gain.purposeCode || null,
+    lossPurposeCode: loss.purposeCode || null,
+  };
+}
+
 async function resolveSettlementFxRate({
   tenantId,
   settlementDate,
@@ -1516,6 +1711,7 @@ async function fetchSettlementBatchRow({
        fiscal_year,
        sequence_no,
        settlement_no,
+       direction,
        settlement_date,
        status,
        total_allocated_txn,
@@ -1717,6 +1913,7 @@ async function fetchCashTransactionForSettlementLink({
        ct.description,
        ct.counterparty_type,
        ct.counterparty_id,
+       ct.counter_account_id,
        ct.linked_cari_settlement_batch_id,
        ct.linked_cari_unapplied_cash_id,
        ct.source_module,
@@ -1825,6 +2022,7 @@ async function createOrReplaySettlementCashTransaction({
   settlementIdempotencyKey,
   settlementIntegrationEventUid,
   linkedCashTransaction,
+  expectedControlAccountId = null,
   assertScopeAccess,
   runQuery = query,
 }) {
@@ -1956,6 +2154,11 @@ async function createOrReplaySettlementCashTransaction({
     "linkedCashTransaction.counterAccountId",
     { runQuery }
   );
+  assertSettlementCashCounterAccount({
+    actualCounterAccountId: counterAccountId,
+    expectedControlAccountId,
+    label: "linkedCashTransaction.counterAccountId",
+  });
 
   const resolvedSession = await resolveCashSessionForSettlementPayment({
     tenantId,
@@ -2023,6 +2226,11 @@ async function createOrReplaySettlementCashTransaction({
         "linkedCashTransaction.idempotencyKey/integrationEventUid is already used by a different amount"
       );
     }
+    assertSettlementCashCounterAccount({
+      actualCounterAccountId: replayRow.counter_account_id,
+      expectedControlAccountId,
+      label: "linkedCashTransaction.counterAccountId",
+    });
     return replayRow;
   }
 
@@ -2288,6 +2496,7 @@ async function fetchSettlementBatchRowByBankAttachIdempotency({
        fiscal_year,
        sequence_no,
        settlement_no,
+       direction,
        settlement_date,
        status,
        total_allocated_txn,
@@ -2877,65 +3086,230 @@ async function fetchApplyAuditPayloadForSettlement({
 function buildSettlementPostingLines({
   direction,
   totalAmountTxn,
-  totalAmountBase,
+  totalAmountBaseSettlement,
+  totalAmountBaseHistorical,
+  settlementFxRate = null,
   controlAccountId,
   offsetAccountId,
+  fxGainAccountId = null,
+  fxLossAccountId = null,
   lineDescription,
   subledgerReferenceNo,
   currencyCode,
 }) {
   const normalizedDirection = normalizeUpperText(direction);
-  const normalizedCurrency = normalizeUpperText(currencyCode);
   const amountTxn = normalizeAmount(totalAmountTxn, "totalAllocatedTxn");
-  const amountBase = normalizeAmount(totalAmountBase, "totalPostingAmountBase");
+  const settlementAmountBase = normalizeAmount(
+    totalAmountBaseSettlement,
+    "totalPostingAmountBaseSettlement"
+  );
+  const historicalAmountBase =
+    totalAmountBaseHistorical === null || totalAmountBaseHistorical === undefined
+      ? settlementAmountBase
+      : normalizeAmount(totalAmountBaseHistorical, "totalPostingAmountBaseHistorical");
+  const realizedFx = classifySettlementRealizedFx({
+    direction: normalizedDirection,
+    realizedFxNetBase: roundAmount(settlementAmountBase - historicalAmountBase),
+  });
+  const hasRealizedFx = realizedFx.hasFx;
+  const controlAmountTxn = hasRealizedFx
+    ? deriveSettlementEquivalentTxnAmount(
+        historicalAmountBase,
+        settlementFxRate,
+        "totalPostingAmountBaseHistorical"
+      )
+    : amountTxn;
+  const fxAmountTxnRaw = hasRealizedFx ? roundAmount(amountTxn - controlAmountTxn) : 0;
 
   if (normalizedDirection === "AR") {
-    return [
-      {
-        accountId: parsePositiveInt(offsetAccountId),
-        debitBase: amountBase,
+    const lines = [
+      buildSettlementJournalLine({
+        accountId: offsetAccountId,
+        debitBase: settlementAmountBase,
         creditBase: 0,
         amountTxn,
-        description: toNullableString(lineDescription, 255),
-        subledgerReferenceNo: toNullableString(subledgerReferenceNo, 100),
-        currencyCode: normalizedCurrency,
-      },
-      {
-        accountId: parsePositiveInt(controlAccountId),
+        lineDescription,
+        subledgerReferenceNo,
+        currencyCode,
+      }),
+      buildSettlementJournalLine({
+        accountId: controlAccountId,
         debitBase: 0,
-        creditBase: amountBase,
-        amountTxn: roundAmount(amountTxn * -1),
-        description: toNullableString(lineDescription, 255),
-        subledgerReferenceNo: toNullableString(subledgerReferenceNo, 100),
-        currencyCode: normalizedCurrency,
-      },
+        creditBase: hasRealizedFx ? historicalAmountBase : settlementAmountBase,
+        amountTxn: roundAmount(0 - controlAmountTxn),
+        lineDescription,
+        subledgerReferenceNo,
+        currencyCode,
+      }),
     ];
+    if (realizedFx.gainBase > AMOUNT_EPSILON) {
+      lines.push(
+        buildSettlementJournalLine({
+          accountId: fxGainAccountId,
+          debitBase: 0,
+          creditBase: realizedFx.gainBase,
+          amountTxn: roundAmount(0 - fxAmountTxnRaw),
+          lineDescription,
+          subledgerReferenceNo,
+          currencyCode,
+        })
+      );
+    } else if (realizedFx.lossBase > AMOUNT_EPSILON) {
+      lines.push(
+        buildSettlementJournalLine({
+          accountId: fxLossAccountId,
+          debitBase: realizedFx.lossBase,
+          creditBase: 0,
+          amountTxn: roundAmount(0 - fxAmountTxnRaw),
+          lineDescription,
+          subledgerReferenceNo,
+          currencyCode,
+        })
+      );
+    }
+    ensureBalancedJournalLines(lines);
+    return lines;
   }
 
   if (normalizedDirection === "AP") {
-    return [
-      {
-        accountId: parsePositiveInt(controlAccountId),
-        debitBase: amountBase,
+    const lines = [
+      buildSettlementJournalLine({
+        accountId: controlAccountId,
+        debitBase: hasRealizedFx ? historicalAmountBase : settlementAmountBase,
         creditBase: 0,
-        amountTxn,
-        description: toNullableString(lineDescription, 255),
-        subledgerReferenceNo: toNullableString(subledgerReferenceNo, 100),
-        currencyCode: normalizedCurrency,
-      },
-      {
-        accountId: parsePositiveInt(offsetAccountId),
-        debitBase: 0,
-        creditBase: amountBase,
-        amountTxn: roundAmount(amountTxn * -1),
-        description: toNullableString(lineDescription, 255),
-        subledgerReferenceNo: toNullableString(subledgerReferenceNo, 100),
-        currencyCode: normalizedCurrency,
-      },
+        amountTxn: controlAmountTxn,
+        lineDescription,
+        subledgerReferenceNo,
+        currencyCode,
+      }),
     ];
+    if (realizedFx.lossBase > AMOUNT_EPSILON) {
+      lines.push(
+        buildSettlementJournalLine({
+          accountId: fxLossAccountId,
+          debitBase: realizedFx.lossBase,
+          creditBase: 0,
+          amountTxn: fxAmountTxnRaw,
+          lineDescription,
+          subledgerReferenceNo,
+          currencyCode,
+        })
+      );
+    } else if (realizedFx.gainBase > AMOUNT_EPSILON) {
+      lines.push(
+        buildSettlementJournalLine({
+          accountId: fxGainAccountId,
+          debitBase: 0,
+          creditBase: realizedFx.gainBase,
+          amountTxn: fxAmountTxnRaw,
+          lineDescription,
+          subledgerReferenceNo,
+          currencyCode,
+        })
+      );
+    }
+    lines.push(
+      buildSettlementJournalLine({
+        accountId: offsetAccountId,
+        debitBase: 0,
+        creditBase: settlementAmountBase,
+        amountTxn: roundAmount(amountTxn * -1),
+        lineDescription,
+        subledgerReferenceNo,
+        currencyCode,
+      })
+    );
+    ensureBalancedJournalLines(lines);
+    return lines;
   }
 
   throw badRequest("Settlement direction must be AR or AP");
+}
+
+function buildCashLinkedSettlementFxAdjustmentLines({
+  direction,
+  totalAmountTxn,
+  totalAmountBaseSettlement,
+  totalAmountBaseHistorical,
+  settlementFxRate,
+  controlAccountId,
+  fxGainAccountId,
+  fxLossAccountId,
+  lineDescription,
+  subledgerReferenceNo,
+  currencyCode,
+}) {
+  const amountTxn = normalizeAmount(totalAmountTxn, "totalAllocatedTxn");
+  const settlementAmountBase = normalizeAmount(
+    totalAmountBaseSettlement,
+    "totalPostingAmountBaseSettlement"
+  );
+  const historicalAmountBase = normalizeAmount(
+    totalAmountBaseHistorical,
+    "totalPostingAmountBaseHistorical"
+  );
+  const realizedFx = classifySettlementRealizedFx({
+    direction,
+    realizedFxNetBase: roundAmount(settlementAmountBase - historicalAmountBase),
+  });
+  if (!realizedFx.hasFx) {
+    return [];
+  }
+
+  const controlAmountTxn = deriveSettlementEquivalentTxnAmount(
+    historicalAmountBase,
+    settlementFxRate,
+    "totalPostingAmountBaseHistorical"
+  );
+  const fxEquivalentTxn = roundAmount(Math.abs(amountTxn - controlAmountTxn));
+
+  if (realizedFx.gainBase > AMOUNT_EPSILON) {
+    const lines = [
+      buildSettlementJournalLine({
+        accountId: controlAccountId,
+        debitBase: realizedFx.gainBase,
+        creditBase: 0,
+        amountTxn: fxEquivalentTxn,
+        lineDescription,
+        subledgerReferenceNo,
+        currencyCode,
+      }),
+      buildSettlementJournalLine({
+        accountId: fxGainAccountId,
+        debitBase: 0,
+        creditBase: realizedFx.gainBase,
+        amountTxn: roundAmount(0 - fxEquivalentTxn),
+        lineDescription,
+        subledgerReferenceNo,
+        currencyCode,
+      }),
+    ];
+    ensureBalancedJournalLines(lines);
+    return lines;
+  }
+
+  const lines = [
+    buildSettlementJournalLine({
+      accountId: fxLossAccountId,
+      debitBase: realizedFx.lossBase,
+      creditBase: 0,
+      amountTxn: fxEquivalentTxn,
+      lineDescription,
+      subledgerReferenceNo,
+      currencyCode,
+    }),
+    buildSettlementJournalLine({
+      accountId: controlAccountId,
+      debitBase: 0,
+      creditBase: realizedFx.lossBase,
+      amountTxn: roundAmount(0 - fxEquivalentTxn),
+      lineDescription,
+      subledgerReferenceNo,
+      currencyCode,
+    }),
+  ];
+  ensureBalancedJournalLines(lines);
+  return lines;
 }
 
 async function loadSettlementResult({
@@ -3273,6 +3647,17 @@ export async function applyCariSettlement({
         throw badRequest("Settlement apply supports one direction (AR or AP) per request");
       }
       const direction = Array.from(directions)[0];
+      const cashLinkedPostingAccounts =
+        paymentChannel === PAYMENT_CHANNEL_CASH || effectiveCashTransactionId
+          ? await resolveSettlementPostingAccounts({
+              tenantId,
+              legalEntityId,
+              direction,
+              sourceContext: SETTLEMENT_POSTING_SOURCE_CONTEXT.CASH_LINKED,
+              counterpartyRow: counterparty,
+              runQuery: tx.query,
+            })
+          : null;
       if (paymentChannel === PAYMENT_CHANNEL_CASH && !effectiveCashTransactionId) {
         const linkedCashTxn = await createOrReplaySettlementCashTransaction({
           req,
@@ -3292,6 +3677,7 @@ export async function applyCariSettlement({
           settlementIdempotencyKey: idempotencyKey,
           settlementIntegrationEventUid: integrationEventUid,
           linkedCashTransaction,
+          expectedControlAccountId: cashLinkedPostingAccounts?.controlAccountId || null,
           assertScopeAccess,
           runQuery: tx.query,
         });
@@ -3363,6 +3749,11 @@ export async function applyCariSettlement({
         ) {
           throw badRequest("cashTransactionId counterparty does not match counterpartyId");
         }
+        assertSettlementCashCounterAccount({
+          actualCounterAccountId: lockedCashTransaction.counter_account_id,
+          expectedControlAccountId: cashLinkedPostingAccounts?.controlAccountId || null,
+          label: "cashTransactionId counterAccountId",
+        });
         if (normalizeUpperText(lockedCashTransaction.currency_code) !== settlementCurrencyCode) {
           await recordSettlementCurrencyMismatchSafe({
             tenantId,
@@ -3683,6 +4074,24 @@ export async function applyCariSettlement({
       const realizedFxNetBase = roundAmount(
         totalAllocatedBaseSettlement - totalAllocatedBaseHistorical
       );
+      const realizedFxPosting = classifySettlementRealizedFx({
+        direction,
+        realizedFxNetBase,
+      });
+      const realizedFxPostingAccounts = realizedFxPosting.hasFx
+        ? await resolveSettlementRealizedFxPostingAccounts({
+            tenantId,
+            legalEntityId,
+            runQuery: tx.query,
+          })
+        : {
+            gainAccountId: null,
+            lossAccountId: null,
+            gainAccountCode: null,
+            lossAccountCode: null,
+            gainPurposeCode: null,
+            lossPurposeCode: null,
+          };
 
       const sequence = await reserveSettlementSequence({
         tenantId,
@@ -3736,9 +4145,13 @@ export async function applyCariSettlement({
           ...buildSettlementPostingLines({
             direction,
             totalAmountTxn: totalAllocatedTxn,
-            totalAmountBase: totalAllocatedBaseSettlement,
+            totalAmountBaseSettlement: totalAllocatedBaseSettlement,
+            totalAmountBaseHistorical: totalAllocatedBaseHistorical,
+            settlementFxRate: fxPolicy.settlementFxRate,
             controlAccountId: postingAccounts.controlAccountId,
             offsetAccountId: postingAccounts.offsetAccountId,
+            fxGainAccountId: realizedFxPostingAccounts.gainAccountId,
+            fxLossAccountId: realizedFxPostingAccounts.lossAccountId,
             lineDescription: `Cari settlement ${sequence.settlementNo}`.slice(0, 255),
             subledgerReferenceNo,
             currencyCode: settlementCurrencyCode,
@@ -3775,6 +4188,54 @@ export async function applyCariSettlement({
           lines: postingLines,
         });
         postedJournalEntryId = parsePositiveInt(journalResult?.journalEntryId);
+      } else {
+        postingAccounts =
+          cashLinkedPostingAccounts ||
+          (await resolveSettlementPostingAccounts({
+            tenantId,
+            legalEntityId,
+            direction,
+            sourceContext: postingSourceContext,
+            counterpartyRow: counterparty,
+            runQuery: tx.query,
+          }));
+        if (realizedFxPosting.hasFx) {
+          const journalContext = await resolveBookAndOpenPeriodForDate({
+            tenantId,
+            legalEntityId,
+            targetDate: settlementDate,
+            runQuery: tx.query,
+          });
+          const subledgerReferenceNo = `${CARI_SETTLEMENT_REFERENCE_PREFIX}${sequence.settlementNo}`;
+          const postingLines = buildCashLinkedSettlementFxAdjustmentLines({
+            direction,
+            totalAmountTxn: totalAllocatedTxn,
+            totalAmountBaseSettlement: totalAllocatedBaseSettlement,
+            totalAmountBaseHistorical: totalAllocatedBaseHistorical,
+            settlementFxRate: fxPolicy.settlementFxRate,
+            controlAccountId: postingAccounts.controlAccountId,
+            fxGainAccountId: realizedFxPostingAccounts.gainAccountId,
+            fxLossAccountId: realizedFxPostingAccounts.lossAccountId,
+            lineDescription: `Cari settlement FX ${sequence.settlementNo}`.slice(0, 255),
+            subledgerReferenceNo,
+            currencyCode: settlementCurrencyCode,
+          });
+          journalResult = await insertPostedJournalWithLinesTx(tx, {
+            tenantId,
+            legalEntityId,
+            bookId: journalContext.bookId,
+            fiscalPeriodId: journalContext.fiscalPeriodId,
+            userId: payload.userId,
+            journalNo: buildCariJournalNo("CARI-SET-FX", sequence.sequenceNo),
+            entryDate: settlementDate,
+            documentDate: settlementDate,
+            currencyCode: settlementCurrencyCode,
+            description: `Cari settlement FX apply ${sequence.settlementNo}`.slice(0, 500),
+            referenceNo: toNullableString(sequence.settlementNo, 100),
+            lines: postingLines,
+          });
+          postedJournalEntryId = parsePositiveInt(journalResult?.journalEntryId);
+        }
       }
 
       const settlementInsert = await tx.query(
@@ -3787,6 +4248,7 @@ export async function applyCariSettlement({
             fiscal_year,
             sequence_no,
             settlement_no,
+            direction,
             settlement_date,
             status,
             total_allocated_txn,
@@ -3811,7 +4273,7 @@ export async function applyCariSettlement({
             integration_event_uid,
             posted_at
          )
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
         [
           tenantId,
           legalEntityId,
@@ -3821,6 +4283,7 @@ export async function applyCariSettlement({
           sequence.fiscalYear,
           sequence.sequenceNo,
           sequence.settlementNo,
+          direction,
           settlementDate,
           SETTLEMENT_STATUS_POSTED,
           totalAllocatedTxn,
@@ -5221,6 +5684,7 @@ export async function reverseCariSettlementById({
             fiscal_year,
             sequence_no,
             settlement_no,
+            direction,
             settlement_date,
             status,
             total_allocated_txn,
@@ -5241,7 +5705,7 @@ export async function reverseCariSettlementById({
             posted_at,
             reversed_at
          )
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
         [
           tenantId,
           lockedLegalEntityId,
@@ -5250,6 +5714,7 @@ export async function reverseCariSettlementById({
           reversalSequence.fiscalYear,
           reversalSequence.sequenceNo,
           reversalSequence.settlementNo,
+          normalizeUpperText(original.direction),
           reversalDate,
           SETTLEMENT_STATUS_REVERSED,
           normalizeAmount(original.total_allocated_txn, "totalAllocatedTxn"),

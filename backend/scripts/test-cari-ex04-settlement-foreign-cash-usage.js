@@ -476,6 +476,8 @@ async function upsertCariPostingAccounts({
   arOffsetAccountId,
   apControlAccountId,
   apOffsetAccountId,
+  fxGainAccountId,
+  fxLossAccountId,
 }) {
   await query(
     `INSERT INTO journal_purpose_accounts (
@@ -488,7 +490,9 @@ async function upsertCariPostingAccounts({
        (?, ?, 'CARI_AR_CONTROL', ?),
        (?, ?, 'CARI_AR_OFFSET', ?),
        (?, ?, 'CARI_AP_CONTROL', ?),
-       (?, ?, 'CARI_AP_OFFSET', ?)
+       (?, ?, 'CARI_AP_OFFSET', ?),
+       (?, ?, 'CARI_SETTLEMENT_FX_GAIN', ?),
+       (?, ?, 'CARI_SETTLEMENT_FX_LOSS', ?)
      ON DUPLICATE KEY UPDATE account_id = VALUES(account_id)`,
     [
       tenantId,
@@ -503,6 +507,12 @@ async function upsertCariPostingAccounts({
       tenantId,
       legalEntityId,
       apOffsetAccountId,
+      tenantId,
+      legalEntityId,
+      fxGainAccountId,
+      tenantId,
+      legalEntityId,
+      fxLossAccountId,
     ]
   );
 }
@@ -673,6 +683,22 @@ async function main() {
       accountType: "EXPENSE",
       normalSide: "DEBIT",
     });
+    const fxGainAccountId = await createAccount({
+      token,
+      coaId: base.coaId,
+      code: `EX04U_FXG_${String(stamp).slice(-5)}`,
+      name: "EX04U FX Gain",
+      accountType: "REVENUE",
+      normalSide: "CREDIT",
+    });
+    const fxLossAccountId = await createAccount({
+      token,
+      coaId: base.coaId,
+      code: `EX04U_FXL_${String(stamp).slice(-5)}`,
+      name: "EX04U FX Loss",
+      accountType: "EXPENSE",
+      normalSide: "DEBIT",
+    });
     const usdRegisterAccountId = await createAccount({
       token,
       coaId: base.coaId,
@@ -705,6 +731,8 @@ async function main() {
       arOffsetAccountId,
       apControlAccountId,
       apOffsetAccountId,
+      fxGainAccountId,
+      fxLossAccountId,
     });
 
     const usdRegisterId = await createRegister({
@@ -786,7 +814,7 @@ async function main() {
         paymentChannel: "CASH",
         linkedCashTransaction: {
           registerId: usdRegisterId,
-          counterAccountId: linkedCashCounterAccountId,
+          counterAccountId: apControlAccountId,
           bookDate: SETTLEMENT_DATE,
           txnDatetime: `${SETTLEMENT_DATE}T10:00:00`,
           idempotencyKey: `EX04-USAGE-CASH-SUCCESS-${stamp}`,
@@ -867,7 +895,7 @@ async function main() {
         paymentChannel: "CASH",
         linkedCashTransaction: {
           registerId: tryRegisterId,
-          counterAccountId: linkedCashCounterAccountId,
+          counterAccountId: apControlAccountId,
           bookDate: SETTLEMENT_DATE,
           txnDatetime: `${SETTLEMENT_DATE}T11:00:00`,
           idempotencyKey: `EX04-USAGE-CASH-MISMATCH-${stamp}`,

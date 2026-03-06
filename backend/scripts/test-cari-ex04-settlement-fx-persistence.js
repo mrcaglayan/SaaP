@@ -431,6 +431,8 @@ async function upsertCariPostingAccounts({
   arOffsetAccountId,
   apControlAccountId,
   apOffsetAccountId,
+  fxGainAccountId,
+  fxLossAccountId,
 }) {
   await query(
     `INSERT INTO journal_purpose_accounts (
@@ -443,7 +445,9 @@ async function upsertCariPostingAccounts({
        (?, ?, 'CARI_AR_CONTROL', ?),
        (?, ?, 'CARI_AR_OFFSET', ?),
        (?, ?, 'CARI_AP_CONTROL', ?),
-       (?, ?, 'CARI_AP_OFFSET', ?)
+       (?, ?, 'CARI_AP_OFFSET', ?),
+       (?, ?, 'CARI_SETTLEMENT_FX_GAIN', ?),
+       (?, ?, 'CARI_SETTLEMENT_FX_LOSS', ?)
      ON DUPLICATE KEY UPDATE account_id = VALUES(account_id)`,
     [
       tenantId,
@@ -458,6 +462,12 @@ async function upsertCariPostingAccounts({
       tenantId,
       legalEntityId,
       apOffsetAccountId,
+      tenantId,
+      legalEntityId,
+      fxGainAccountId,
+      tenantId,
+      legalEntityId,
+      fxLossAccountId,
     ]
   );
 }
@@ -554,7 +564,9 @@ async function fetchSettlementBatchById({ tenantId, settlementBatchId }) {
     `SELECT
        id,
        status,
+       direction,
        reversal_of_settlement_batch_id,
+       posted_journal_entry_id,
        settlement_fx_rate,
        settlement_fx_source,
        DATE_FORMAT(settlement_fx_rate_date, '%Y-%m-%d') AS settlement_fx_rate_date,
@@ -578,7 +590,9 @@ async function fetchReversalBatchByOriginal({
     `SELECT
        id,
        status,
+       direction,
        reversal_of_settlement_batch_id,
+       posted_journal_entry_id,
        settlement_fx_rate,
        settlement_fx_source,
        DATE_FORMAT(settlement_fx_rate_date, '%Y-%m-%d') AS settlement_fx_rate_date,
@@ -593,6 +607,17 @@ async function fetchReversalBatchByOriginal({
     [tenantId, originalSettlementBatchId]
   );
   return result.rows?.[0] || null;
+}
+
+async function getJournalAccountIds(journalEntryId) {
+  const result = await query(
+    `SELECT account_id
+     FROM journal_lines
+     WHERE journal_entry_id = ?
+     ORDER BY line_no ASC`,
+    [journalEntryId]
+  );
+  return (result.rows || []).map((row) => toNumber(row.account_id)).filter((id) => id > 0);
 }
 
 async function main() {
@@ -650,6 +675,22 @@ async function main() {
       accountType: "EXPENSE",
       normalSide: "DEBIT",
     });
+    const fxGainAccountId = await createAccount({
+      token,
+      coaId: base.coaId,
+      code: `EX04F_FXG_${String(stamp).slice(-5)}`,
+      name: "EX04F FX Gain",
+      accountType: "REVENUE",
+      normalSide: "CREDIT",
+    });
+    const fxLossAccountId = await createAccount({
+      token,
+      coaId: base.coaId,
+      code: `EX04F_FXL_${String(stamp).slice(-5)}`,
+      name: "EX04F FX Loss",
+      accountType: "EXPENSE",
+      normalSide: "DEBIT",
+    });
 
     await upsertCariPostingAccounts({
       tenantId,
@@ -658,6 +699,8 @@ async function main() {
       arOffsetAccountId,
       apControlAccountId,
       apOffsetAccountId,
+      fxGainAccountId,
+      fxLossAccountId,
     });
 
     const paymentTermId = await createPaymentTerm({
@@ -761,6 +804,19 @@ async function main() {
       amountsEqual(settlementRow.realized_fx_net_base, 100),
       `realized_fx_net_base must persist as 100, got=${settlementRow.realized_fx_net_base}`
     );
+    assert(
+      toUpper(settlementRow.direction) === "AP",
+      `Settlement direction must persist as AP, got=${settlementRow.direction}`
+    );
+    const settlementJournalEntryId = toNumber(settlementRow.posted_journal_entry_id);
+    assert(settlementJournalEntryId > 0, "Settlement posting journal id must persist");
+    const settlementJournalAccounts = new Set(await getJournalAccountIds(settlementJournalEntryId));
+    assert(
+      settlementJournalAccounts.has(apControlAccountId) &&
+        settlementJournalAccounts.has(apOffsetAccountId) &&
+        settlementJournalAccounts.has(fxLossAccountId),
+      "AP settlement journal must include AP control, AP offset, and realized FX loss accounts"
+    );
 
     const reverseResponse = await apiRequest({
       token,
@@ -817,6 +873,10 @@ async function main() {
     assert(
       amountsEqual(reversalRow.realized_fx_net_base, -100),
       `Reversal row realized_fx_net_base must be -100, got=${reversalRow.realized_fx_net_base}`
+    );
+    assert(
+      toUpper(reversalRow.direction) === "AP",
+      `Reversal row direction must persist as AP, got=${reversalRow.direction}`
     );
 
     console.log("PR-EX04 settlement FX persistence checks passed.");

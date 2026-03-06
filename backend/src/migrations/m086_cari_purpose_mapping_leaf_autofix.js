@@ -34,6 +34,16 @@ const CARI_PURPOSE_RULES = Object.freeze({
     normalSide: "DEBIT",
     preferredCodes: Object.freeze(["770", "632"]),
   }),
+  CARI_SETTLEMENT_FX_GAIN: Object.freeze({
+    accountType: "REVENUE",
+    normalSide: "CREDIT",
+    preferredCodes: Object.freeze(["646"]),
+  }),
+  CARI_SETTLEMENT_FX_LOSS: Object.freeze({
+    accountType: "EXPENSE",
+    normalSide: "DEBIT",
+    preferredCodes: Object.freeze(["656"]),
+  }),
   CARI_AR_CONTROL_CASH: Object.freeze({
     accountType: "ASSET",
     normalSide: "DEBIT",

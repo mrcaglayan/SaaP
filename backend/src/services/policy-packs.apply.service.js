@@ -21,6 +21,11 @@ const DISTINCT_PURPOSE_PAIRS = Object.freeze([
     label: "CARI_AP_CONTROL and CARI_AP_OFFSET",
   }),
   Object.freeze({
+    left: "CARI_SETTLEMENT_FX_GAIN",
+    right: "CARI_SETTLEMENT_FX_LOSS",
+    label: "CARI_SETTLEMENT_FX_GAIN and CARI_SETTLEMENT_FX_LOSS",
+  }),
+  Object.freeze({
     left: "CARI_AR_CONTROL_CASH",
     right: "CARI_AR_OFFSET_CASH",
     label: "CARI_AR_CONTROL_CASH and CARI_AR_OFFSET_CASH",
