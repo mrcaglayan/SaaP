@@ -4831,7 +4831,7 @@ POST
     "documentDate": "2026-03-05",
     "dueDate": "2026-03-11",
     "amountTxn": 10000,
-    "amountBase": 65000,
+    "amountBase": 650000,
     "currencyCode": "USD",
     "fxRate": 65
 }

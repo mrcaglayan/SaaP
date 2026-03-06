@@ -562,6 +562,7 @@ export default function CariSettlementsPage() {
   const [previewFxRates, setPreviewFxRates] = useState([]);
   const [previewFxLoading, setPreviewFxLoading] = useState(false);
   const [previewFxError, setPreviewFxError] = useState("");
+  const [previewRefreshToken, setPreviewRefreshToken] = useState(0);
 
   const [applyForm, setApplyForm] = useState(() => buildApplyDefaultForm());
   const [applyCurrencyManuallyEdited, setApplyCurrencyManuallyEdited] = useState(false);
@@ -1104,6 +1105,7 @@ export default function CariSettlementsPage() {
     previewCounterpartyId,
     previewAsOfDate,
     previewDirection,
+    previewRefreshToken,
   ]);
 
   useEffect(() => {
@@ -1993,6 +1995,8 @@ export default function CariSettlementsPage() {
           `Mahsuplastirma uygulamasi tamamlandi. settlementBatchId=${response?.row?.id || "-"}`
         )
       );
+      setManualAllocationDraft({});
+      setPreviewRefreshToken((prev) => prev + 1);
       const wantsCashLink =
         linkedCashForm.createLinkedCashTransaction &&
         toUpper(linkedCashForm.paymentChannel) === "CASH";
@@ -2069,6 +2073,8 @@ export default function CariSettlementsPage() {
           `Mahsuplastirma terslendi. reversalSettlementBatchId=${response?.row?.id || "-"}`
         )
       );
+      setManualAllocationDraft({});
+      setPreviewRefreshToken((prev) => prev + 1);
     } catch (error) {
       setReverseError(
         normalizeUiError(error, l("Settlement reverse failed.", "Mahsuplastirma tersleme basarisiz oldu."))
@@ -2295,6 +2301,7 @@ export default function CariSettlementsPage() {
           )
         );
       }
+      setPreviewRefreshToken((prev) => prev + 1);
     } catch (error) {
       setBankApplyError(
         normalizeUiError(error, l("Bank apply failed.", "Banka uygulamasi basarisiz oldu."))
