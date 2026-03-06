@@ -346,6 +346,8 @@ async function createOrgFixtures({ tenantId, stamp }) {
        (?, ?, ?, 'ASSET', 'DEBIT', TRUE, NULL, TRUE),
        (?, ?, ?, 'REVENUE', 'CREDIT', TRUE, NULL, TRUE),
        (?, ?, ?, 'LIABILITY', 'CREDIT', TRUE, NULL, TRUE),
+       (?, ?, ?, 'EXPENSE', 'DEBIT', TRUE, NULL, TRUE),
+       (?, ?, ?, 'REVENUE', 'CREDIT', TRUE, NULL, TRUE),
        (?, ?, ?, 'EXPENSE', 'DEBIT', TRUE, NULL, TRUE)`,
     [
       coaId,
@@ -360,13 +362,19 @@ async function createOrgFixtures({ tenantId, stamp }) {
       coaId,
       `${accountPrefix}04`,
       "CARI07 AP Offset",
+      coaId,
+      `${accountPrefix}05`,
+      "CARI07 FX Gain",
+      coaId,
+      `${accountPrefix}06`,
+      "CARI07 FX Loss",
     ]
   );
   const accountRows = await query(
     `SELECT id, code
      FROM accounts
      WHERE coa_id = ?
-       AND code IN (?, ?, ?, ?)
+       AND code IN (?, ?, ?, ?, ?, ?)
      ORDER BY code`,
     [
       coaId,
@@ -374,6 +382,8 @@ async function createOrgFixtures({ tenantId, stamp }) {
       `${accountPrefix}02`,
       `${accountPrefix}03`,
       `${accountPrefix}04`,
+      `${accountPrefix}05`,
+      `${accountPrefix}06`,
     ]
   );
   const accountByCode = new Map(
@@ -383,10 +393,14 @@ async function createOrgFixtures({ tenantId, stamp }) {
   const arOffsetAccountId = accountByCode.get(`${accountPrefix}02`);
   const apControlAccountId = accountByCode.get(`${accountPrefix}03`);
   const apOffsetAccountId = accountByCode.get(`${accountPrefix}04`);
+  const fxGainAccountId = accountByCode.get(`${accountPrefix}05`);
+  const fxLossAccountId = accountByCode.get(`${accountPrefix}06`);
   assert(arControlAccountId > 0, "AR control account missing");
   assert(arOffsetAccountId > 0, "AR offset account missing");
   assert(apControlAccountId > 0, "AP control account missing");
   assert(apOffsetAccountId > 0, "AP offset account missing");
+  assert(fxGainAccountId > 0, "FX gain account missing");
+  assert(fxLossAccountId > 0, "FX loss account missing");
 
   await query(
     `INSERT INTO journal_purpose_accounts (
@@ -399,7 +413,9 @@ async function createOrgFixtures({ tenantId, stamp }) {
        (?, ?, 'CARI_AR_CONTROL', ?),
        (?, ?, 'CARI_AR_OFFSET', ?),
        (?, ?, 'CARI_AP_CONTROL', ?),
-       (?, ?, 'CARI_AP_OFFSET', ?)
+       (?, ?, 'CARI_AP_OFFSET', ?),
+       (?, ?, 'CARI_SETTLEMENT_FX_GAIN', ?),
+       (?, ?, 'CARI_SETTLEMENT_FX_LOSS', ?)
      ON DUPLICATE KEY UPDATE account_id = VALUES(account_id)`,
     [
       tenantId,
@@ -414,6 +430,12 @@ async function createOrgFixtures({ tenantId, stamp }) {
       tenantId,
       legalEntityId,
       apOffsetAccountId,
+      tenantId,
+      legalEntityId,
+      fxGainAccountId,
+      tenantId,
+      legalEntityId,
+      fxLossAccountId,
     ]
   );
 
@@ -486,6 +508,8 @@ async function createOrgFixtures({ tenantId, stamp }) {
     arOffsetAccountId,
     apControlAccountId,
     apOffsetAccountId,
+    fxGainAccountId,
+    fxLossAccountId,
   };
 }
 
@@ -929,12 +953,24 @@ async function main() {
     const fxJournalEntryId = toNumber(fxApply.json?.journal?.journalEntryId);
     assert(fxJournalEntryId > 0, "FX settlement journal id missing");
     const fxJournalLines = await getJournalLines(fxJournalEntryId);
-    assert(fxJournalLines.length === 2, "Settlement posting must use 2-line model");
+    assert(
+      fxJournalLines.length === 3,
+      "FX settlement posting must include control, offset, and realized FX lines"
+    );
     const fxAccountIds = new Set(fxJournalLines.map((line) => toNumber(line.account_id)));
     assert(
       fxAccountIds.has(fixtures.arControlAccountId) &&
-        fxAccountIds.has(fixtures.arOffsetAccountId),
-      "Settlement journal accounts must come from journal_purpose_accounts"
+        fxAccountIds.has(fixtures.arOffsetAccountId) &&
+        fxAccountIds.has(fixtures.fxGainAccountId),
+      "FX settlement journal accounts must include AR control, AR offset, and realized FX gain mappings"
+    );
+    const fxGainLine = fxJournalLines.find(
+      (line) => toNumber(line.account_id) === fixtures.fxGainAccountId
+    );
+    assert(fxGainLine, "FX settlement journal must include realized FX gain line");
+    assert(
+      amountsEqual(fxGainLine?.credit_base, 100),
+      "Realized FX gain line must credit 100 base"
     );
 
     const residualBeforeReverseCheck = await query(
