@@ -39,6 +39,7 @@ import StatusTimeline from "../../components/StatusTimeline.jsx";
 import TablePreferencesPanel from "../../components/TablePreferencesPanel.jsx";
 import { Link, useSearchParams } from "react-router-dom";
 import { useAuth } from "../../auth/useAuth.js";
+import { useI18n } from "../../i18n/useI18n.js";
 import { useWorkingContext } from "../../context/useWorkingContext.js";
 import { useWorkingContextDefaults } from "../../context/useWorkingContextDefaults.js";
 import { usePersistedFilters } from "../../hooks/usePersistedFilters.js";
@@ -621,37 +622,109 @@ function buildDocumentLifecycleEvents(row) {
   return events;
 }
 
-function formatReadinessReason(reason) {
+function formatReadinessReason(reason, translate = (en) => en) {
   switch (String(reason || "").trim().toUpperCase()) {
     case "ACCOUNT_NOT_FOUND":
-      return "Mapped account no longer exists.";
+      return translate(
+        "Mapped account no longer exists.",
+        "Eslenen hesap artik mevcut degil."
+      );
     case "ACCOUNT_INACTIVE":
-      return "Mapped account is inactive.";
+      return translate("Mapped account is inactive.", "Eslenen hesap pasif.");
     case "ACCOUNT_NOT_POSTABLE":
-      return "Mapped account is not postable.";
+      return translate(
+        "Mapped account is not postable.",
+        "Eslenen hesap kayit yapilabilir degil."
+      );
     case "ACCOUNT_SCOPE_NOT_LEGAL_ENTITY":
-      return "Mapped account is not in a legal-entity chart.";
+      return translate(
+        "Mapped account is not in a legal-entity chart.",
+        "Eslenen hesap tuzel kisilik hesap planinda degil."
+      );
     case "ACCOUNT_LEGAL_ENTITY_MISMATCH":
-      return "Mapped account belongs to a different legal entity.";
+      return translate(
+        "Mapped account belongs to a different legal entity.",
+        "Eslenen hesap farkli bir tuzel kisilige ait."
+      );
     case "PURPOSES_MUST_MAP_TO_DIFFERENT_ACCOUNTS":
-      return "Control and offset must map to different accounts.";
+      return translate(
+        "Control and offset must map to different accounts.",
+        "Kontrol ve karsi hesap farkli hesaplara eslenmelidir."
+      );
     case "MAPPED_ACCOUNT_ID_INVALID":
-      return "Mapped account id is invalid.";
+      return translate("Mapped account id is invalid.", "Eslenen hesap id gecersiz.");
     case "ACCOUNT_TENANT_MISMATCH":
-      return "Mapped account belongs to a different tenant.";
+      return translate(
+        "Mapped account belongs to a different tenant.",
+        "Eslenen hesap farkli bir tenant'a ait."
+      );
     case "ACCOUNT_TYPE_MISMATCH":
-      return "Mapped account type does not match this purpose.";
+      return translate(
+        "Mapped account type does not match this purpose.",
+        "Eslenen hesap turu bu amacla uyusmuyor."
+      );
     case "ACCOUNT_NORMAL_SIDE_MISMATCH":
-      return "Mapped account normal side does not match this purpose.";
+      return translate(
+        "Mapped account normal side does not match this purpose.",
+        "Eslenen hesap normal bakiye yonu bu amacla uyusmuyor."
+      );
     default:
-      return String(reason || "Invalid mapping.");
+      return String(reason || translate("Invalid mapping.", "Gecersiz esleme."));
   }
 }
 
 export default function CariDocumentsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const { hasPermission } = useAuth();
+  const { language } = useI18n();
   const { getModuleRow } = useModuleReadiness();
+  const l = (en, tr) => (language === "tr" ? tr : en);
+  const translateDocumentMutationError = (message) => {
+    switch (String(message || "").trim()) {
+      case "legalEntityId is required.":
+        return l("legalEntityId is required.", "legalEntityId zorunludur.");
+      case "counterpartyId is required.":
+        return l("counterpartyId is required.", "counterpartyId zorunludur.");
+      case "direction must be AR or AP.":
+        return l("direction must be AR or AP.", "direction AR veya AP olmali.");
+      case "documentType is invalid.":
+        return l("documentType is invalid.", "documentType gecersiz.");
+      case "documentDate is required.":
+        return l("documentDate is required.", "documentDate zorunludur.");
+      case "amountTxn must be > 0.":
+        return l("amountTxn must be > 0.", "amountTxn 0'dan buyuk olmali.");
+      case "amountBase must be > 0.":
+        return l("amountBase must be > 0.", "amountBase 0'dan buyuk olmali.");
+      case "currencyCode must be a 3-letter code.":
+        return l(
+          "currencyCode must be a 3-letter code.",
+          "currencyCode 3 harfli bir kod olmali."
+        );
+      case "fxRate must be > 0 when provided.":
+        return l(
+          "fxRate must be > 0 when provided.",
+          "fxRate girildiginde 0'dan buyuk olmali."
+        );
+      default: {
+        const dueDatePrefix = "dueDate is required for documentType=";
+        if (String(message || "").startsWith(dueDatePrefix)) {
+          const documentType = String(message || "")
+            .slice(dueDatePrefix.length)
+            .replace(/\.$/, "");
+          return l(
+            `dueDate is required for documentType=${documentType}.`,
+            `documentType=${documentType} icin dueDate zorunludur.`
+          );
+        }
+        return String(message || "");
+      }
+    }
+  };
+  const translateDocumentMutationErrors = (errors = []) =>
+    (Array.isArray(errors) ? errors : [])
+      .map((message) => translateDocumentMutationError(message))
+      .filter(Boolean)
+      .join(" ");
   const {
     legalEntities: workingContextLegalEntities,
     loadingBase: workingContextBaseLoading,
@@ -735,7 +808,10 @@ export default function CariDocumentsPage() {
   const [postError, setPostError] = useState("");
   const [postMessage, setPostMessage] = useState("");
 
-  const [reverseForm, setReverseForm] = useState({ reason: "Manual reversal", reversalDate: "" });
+  const [reverseForm, setReverseForm] = useState(() => ({
+    reason: l("Manual reversal", "Manuel ters kayit"),
+    reversalDate: "",
+  }));
   const [reverseSaving, setReverseSaving] = useState(false);
   const [reverseError, setReverseError] = useState("");
   const [reverseMessage, setReverseMessage] = useState("");
@@ -1317,7 +1393,7 @@ export default function CariDocumentsPage() {
     if (!canRead) {
       setRows([]);
       setTotalRows(0);
-      setListError("Missing permission: cari.doc.read");
+      setListError(l("Missing permission: cari.doc.read", "Eksik yetki: cari.doc.read"));
       return;
     }
     setListLoading(true);
@@ -1329,7 +1405,9 @@ export default function CariDocumentsPage() {
     } catch (error) {
       setRows([]);
       setTotalRows(0);
-      setListError(normalizeApiError(error, "Failed to load documents."));
+      setListError(
+        normalizeApiError(error, l("Failed to load documents.", "Belgeler yuklenemedi."))
+      );
     } finally {
       setListLoading(false);
     }
@@ -1348,7 +1426,9 @@ export default function CariDocumentsPage() {
       if (row && isDraft(row)) setEditForm(mapDocumentRowToForm(row));
     } catch (error) {
       setSelectedDetail(null);
-      setDetailError(normalizeApiError(error, "Failed to load document detail."));
+      setDetailError(
+        normalizeApiError(error, l("Failed to load document detail.", "Belge detayi yuklenemedi."))
+      );
     }
   }
 
@@ -1651,7 +1731,13 @@ export default function CariDocumentsPage() {
         if (!active) return;
         setCreatePaymentTermOptions([]);
         setCreatePaymentTermsError(
-          normalizeApiError(error, "Failed to load payment terms for selected legal entity.")
+          normalizeApiError(
+            error,
+            l(
+              "Failed to load payment terms for selected legal entity.",
+              "Secili tuzel kisilik icin vade kosullari yuklenemedi."
+            )
+          )
         );
       } finally {
         if (active) setCreatePaymentTermsLoading(false);
@@ -1791,7 +1877,12 @@ export default function CariDocumentsPage() {
           return;
         }
         setLinkedCashRows([]);
-        setLinkedCashError(normalizeApiError(error, "Failed to load settlement/cash links."));
+        setLinkedCashError(
+          normalizeApiError(
+            error,
+            l("Failed to load settlement/cash links.", "Mahsuplastirma/nakit baglantilari yuklenemedi.")
+          )
+        );
       } finally {
         if (active) {
           setLinkedCashLoading(false);
@@ -1836,7 +1927,12 @@ export default function CariDocumentsPage() {
           ? openItemsResponse.rows
           : [];
       } catch (error) {
-        errors.push(normalizeApiError(error, "Related open items failed to load."));
+        errors.push(
+          normalizeApiError(
+            error,
+            l("Related open items failed to load.", "Ilgili acik kalemler yuklenemedi.")
+          )
+        );
       }
 
       if (canReadGlJournals && selectedPostedJournalEntryId) {
@@ -1844,7 +1940,12 @@ export default function CariDocumentsPage() {
           const journalResponse = await getJournal(selectedPostedJournalEntryId);
           nextJournal = journalResponse?.row || null;
         } catch (error) {
-          errors.push(normalizeApiError(error, "Related GL journal failed to load."));
+          errors.push(
+            normalizeApiError(
+              error,
+              l("Related GL journal failed to load.", "Ilgili yevmiye kaydi yuklenemedi.")
+            )
+          );
         }
       }
 
@@ -1862,7 +1963,12 @@ export default function CariDocumentsPage() {
             ? exceptionResponse.rows
             : [];
         } catch (error) {
-          errors.push(normalizeApiError(error, "Related exceptions failed to load."));
+          errors.push(
+            normalizeApiError(
+              error,
+              l("Related exceptions failed to load.", "Ilgili istisnalar yuklenemedi.")
+            )
+          );
         }
       }
 
@@ -1878,7 +1984,12 @@ export default function CariDocumentsPage() {
           });
           nextAuditRows = Array.isArray(auditResponse?.rows) ? auditResponse.rows : [];
         } catch (error) {
-          errors.push(normalizeApiError(error, "Related audit trail failed to load."));
+          errors.push(
+            normalizeApiError(
+              error,
+              l("Related audit trail failed to load.", "Ilgili denetim kayitlari yuklenemedi.")
+            )
+          );
         }
       }
 
@@ -1961,7 +2072,10 @@ export default function CariDocumentsPage() {
         }
         setPostOffsetAccountOptions([]);
         setPostOffsetAccountsError(
-          normalizeApiError(error, "Failed to load postable account options.")
+          normalizeApiError(
+            error,
+            l("Failed to load postable account options.", "Kaydedilebilir hesap secenekleri yuklenemedi.")
+          )
         );
       } finally {
         if (active) {
@@ -2060,7 +2174,12 @@ export default function CariDocumentsPage() {
         if (!active) {
           return;
         }
-        setOpsStatusError(normalizeApiError(error, "Failed to load ops status note."));
+        setOpsStatusError(
+          normalizeApiError(
+            error,
+            l("Failed to load ops status note.", "Operasyon durumu notu yuklenemedi.")
+          )
+        );
       } finally {
         if (active) {
           setOpsStatusLoading(false);
@@ -2112,7 +2231,9 @@ export default function CariDocumentsPage() {
           return;
         }
         setInternalCommentRows([]);
-        setInternalCommentsError(normalizeApiError(error, "Failed to load internal comments."));
+        setInternalCommentsError(
+          normalizeApiError(error, l("Failed to load internal comments.", "Ic yorumlar yuklenemedi."))
+        );
       } finally {
         if (active) {
           setInternalCommentsLoading(false);
@@ -2156,7 +2277,9 @@ export default function CariDocumentsPage() {
           return;
         }
         setEvidenceRows([]);
-        setEvidenceError(normalizeApiError(error, "Failed to load evidence attachments."));
+        setEvidenceError(
+          normalizeApiError(error, l("Failed to load evidence attachments.", "Kanit ekleri yuklenemedi."))
+        );
       } finally {
         if (active) {
           setEvidenceLoading(false);
@@ -2182,7 +2305,10 @@ export default function CariDocumentsPage() {
     const documentId = selectedDocumentNumericId;
     if (!documentId || !canWriteOpsStatus) {
       setOpsStatusError(
-        "Ops status update requires selected document and permission: cari.doc.update."
+        l(
+          "Ops status update requires selected document and permission: cari.doc.update.",
+          "Operasyon durumu guncellemesi icin secili belge ve `cari.doc.update` yetkisi gerekir."
+        )
       );
       return;
     }
@@ -2192,11 +2318,18 @@ export default function CariDocumentsPage() {
     const note = String(opsStatusForm?.note || "").trim();
 
     if (!["OK", "AT_RISK", "BLOCKED"].includes(opsStatus)) {
-      setOpsStatusError("opsStatus must be OK, AT_RISK, or BLOCKED.");
+      setOpsStatusError(
+        l("opsStatus must be OK, AT_RISK, or BLOCKED.", "opsStatus OK, AT_RISK veya BLOCKED olmali.")
+      );
       return;
     }
     if (opsStatus === "BLOCKED" && !blockedReason) {
-      setOpsStatusError("blockedReason is required when opsStatus=BLOCKED.");
+      setOpsStatusError(
+        l(
+          "blockedReason is required when opsStatus=BLOCKED.",
+          "opsStatus=BLOCKED iken blockedReason zorunludur."
+        )
+      );
       return;
     }
 
@@ -2216,9 +2349,14 @@ export default function CariDocumentsPage() {
         blockedReason: String(row?.blockedReason || ""),
         note: String(row?.note || ""),
       });
-      setOpsStatusMessage("Ops status note updated.");
+      setOpsStatusMessage(l("Ops status note updated.", "Operasyon durumu notu guncellendi."));
     } catch (error) {
-      setOpsStatusError(normalizeApiError(error, "Failed to update ops status note."));
+      setOpsStatusError(
+        normalizeApiError(
+          error,
+          l("Failed to update ops status note.", "Operasyon durumu notu guncellenemedi.")
+        )
+      );
     } finally {
       setOpsStatusSaving(false);
     }
@@ -2234,14 +2372,17 @@ export default function CariDocumentsPage() {
     const documentId = selectedDocumentNumericId;
     if (!documentId || !canWriteInternalComments) {
       setInternalCommentsError(
-        "Internal comment add requires selected document and permission: cari.doc.update."
+        l(
+          "Internal comment add requires selected document and permission: cari.doc.update.",
+          "Ic yorum eklemek icin secili belge ve `cari.doc.update` yetkisi gerekir."
+        )
       );
       return;
     }
 
     const body = String(internalCommentBody || "").trim();
     if (!body) {
-      setInternalCommentsError("Comment body is required.");
+      setInternalCommentsError(l("Comment body is required.", "Yorum metni zorunludur."));
       return;
     }
 
@@ -2254,10 +2395,14 @@ export default function CariDocumentsPage() {
       const commentId = toPositiveInt(response?.row?.id);
       setInternalCommentBody("");
       setInternalCommentsMessage(
-        commentId ? `Internal comment added. id=${commentId}` : "Internal comment added."
+        commentId
+          ? l(`Internal comment added. id=${commentId}`, `Ic yorum eklendi. id=${commentId}`)
+          : l("Internal comment added.", "Ic yorum eklendi.")
       );
     } catch (error) {
-      setInternalCommentsError(normalizeApiError(error, "Failed to add internal comment."));
+      setInternalCommentsError(
+        normalizeApiError(error, l("Failed to add internal comment.", "Ic yorum eklenemedi."))
+      );
     } finally {
       setInternalCommentSaving(false);
     }
@@ -2273,12 +2418,15 @@ export default function CariDocumentsPage() {
     const documentId = selectedDocumentNumericId;
     if (!documentId || !canAttachEvidence) {
       setEvidenceError(
-        "Evidence attach requires selected document and permission: cari.doc.update."
+        l(
+          "Evidence attach requires selected document and permission: cari.doc.update.",
+          "Kanit eklemek icin secili belge ve `cari.doc.update` yetkisi gerekir."
+        )
       );
       return;
     }
     if (!evidenceUploadFile) {
-      setEvidenceError("Select a file before attaching evidence.");
+      setEvidenceError(l("Select a file before attaching evidence.", "Kanit eklemeden once dosya secin."));
       return;
     }
 
@@ -2294,7 +2442,7 @@ export default function CariDocumentsPage() {
       });
       const evidenceId = toPositiveInt(draftResponse?.row?.id);
       if (!evidenceId) {
-        throw new Error("Evidence create response is missing id.");
+        throw new Error(l("Evidence create response is missing id.", "Kanit olusturma yanitinda id yok."));
       }
 
       await uploadCariDocumentEvidenceContent(documentId, evidenceId, evidenceUploadFile, {
@@ -2302,12 +2450,12 @@ export default function CariDocumentsPage() {
       });
 
       await refreshEvidenceRows(documentId);
-      setEvidenceMessage(`Evidence attached. id=${evidenceId}`);
+      setEvidenceMessage(l(`Evidence attached. id=${evidenceId}`, `Kanit eklendi. id=${evidenceId}`));
       setEvidenceNote("");
       setEvidenceUploadFile(null);
       setEvidenceUploadInputKey((prev) => prev + 1);
     } catch (error) {
-      setEvidenceError(normalizeApiError(error, "Failed to attach evidence."));
+      setEvidenceError(normalizeApiError(error, l("Failed to attach evidence.", "Kanit eklenemedi.")));
     } finally {
       setEvidenceUploading(false);
     }
@@ -2317,7 +2465,7 @@ export default function CariDocumentsPage() {
     const documentId = selectedDocumentNumericId;
     const evidenceId = toPositiveInt(row?.id);
     if (!documentId || !evidenceId) {
-      setEvidenceError("Evidence id is invalid.");
+      setEvidenceError(l("Evidence id is invalid.", "Kanit id gecersiz."));
       return;
     }
 
@@ -2327,7 +2475,9 @@ export default function CariDocumentsPage() {
       const response = await downloadCariDocumentEvidence(documentId, evidenceId);
       const blob = response?.blob;
       if (!(blob instanceof Blob)) {
-        throw new Error("Evidence download payload is invalid.");
+        throw new Error(
+          l("Evidence download payload is invalid.", "Kanit indirme yuklemi gecersiz.")
+        );
       }
       const objectUrl = window.URL.createObjectURL(blob);
       const anchor = document.createElement("a");
@@ -2340,7 +2490,7 @@ export default function CariDocumentsPage() {
       anchor.remove();
       window.URL.revokeObjectURL(objectUrl);
     } catch (error) {
-      setEvidenceError(normalizeApiError(error, "Failed to download evidence."));
+      setEvidenceError(normalizeApiError(error, l("Failed to download evidence.", "Kanit indirilemedi.")));
     } finally {
       setEvidenceDownloadingId(null);
     }
@@ -2351,7 +2501,10 @@ export default function CariDocumentsPage() {
     const evidenceId = toPositiveInt(evidenceIdRaw);
     if (!documentId || !evidenceId || !canAttachEvidence) {
       setEvidenceError(
-        "Evidence delete requires selected document, valid evidence id, and cari.doc.update permission."
+        l(
+          "Evidence delete requires selected document, valid evidence id, and cari.doc.update permission.",
+          "Kanit silmek icin secili belge, gecerli kanit id ve `cari.doc.update` yetkisi gerekir."
+        )
       );
       return;
     }
@@ -2362,9 +2515,9 @@ export default function CariDocumentsPage() {
     try {
       await deleteCariDocumentEvidence(documentId, evidenceId);
       await refreshEvidenceRows(documentId);
-      setEvidenceMessage(`Evidence deleted. id=${evidenceId}`);
+      setEvidenceMessage(l(`Evidence deleted. id=${evidenceId}`, `Kanit silindi. id=${evidenceId}`));
     } catch (error) {
-      setEvidenceError(normalizeApiError(error, "Failed to delete evidence."));
+      setEvidenceError(normalizeApiError(error, l("Failed to delete evidence.", "Kanit silinemedi.")));
     } finally {
       setEvidenceDeletingId(null);
     }
@@ -2376,15 +2529,27 @@ export default function CariDocumentsPage() {
     const legalEntityId = toPositiveInt(createForm.legalEntityId);
     const name = normalizeLookupQuery(createCounterpartyLookupQuery);
     if (!canUpsertCards) {
-      setCreateInlineCounterpartyError("Missing permission: cari.card.upsert");
+      setCreateInlineCounterpartyError(
+        l("Missing permission: cari.card.upsert", "Eksik yetki: cari.card.upsert")
+      );
       return;
     }
     if (!legalEntityId) {
-      setCreateInlineCounterpartyError("Select legalEntityId before creating a counterparty.");
+      setCreateInlineCounterpartyError(
+        l(
+          "Select legalEntityId before creating a counterparty.",
+          "Cari olusturmadan once legalEntityId secin."
+        )
+      );
       return;
     }
     if (!name) {
-      setCreateInlineCounterpartyError("Type a counterparty name in lookup before creating.");
+      setCreateInlineCounterpartyError(
+        l(
+          "Type a counterparty name in lookup before creating.",
+          "Cari olusturmadan once aramaya cari adini yazin."
+        )
+      );
       return;
     }
 
@@ -2401,17 +2566,22 @@ export default function CariDocumentsPage() {
       const row = response?.row || null;
       const counterpartyId = toPositiveInt(row?.id);
       if (!counterpartyId) {
-        throw new Error("Counterparty create response is missing row.id.");
+        throw new Error(
+          l("Counterparty create response is missing row.id.", "Cari olusturma yanitinda row.id yok.")
+        );
       }
       setCreateCounterpartyOptions((prev) => prependOrReplaceCounterpartyOption(prev, row));
       setCreateForm((prev) => ({ ...prev, counterpartyId: String(counterpartyId) }));
       setCreateCounterpartyLookupQuery("");
       setCreateInlineCounterpartyMessage(
-        `Counterparty created and selected. counterpartyId=${counterpartyId}`
+        l(
+          `Counterparty created and selected. counterpartyId=${counterpartyId}`,
+          `Cari olusturuldu ve secildi. counterpartyId=${counterpartyId}`
+        )
       );
     } catch (error) {
       setCreateInlineCounterpartyError(
-        normalizeApiError(error, "Failed to create counterparty from lookup.")
+        normalizeApiError(error, l("Failed to create counterparty from lookup.", "Aramadan cari olusturulamadi."))
       );
     } finally {
       setCreateInlineCounterpartySaving(false);
@@ -2424,15 +2594,27 @@ export default function CariDocumentsPage() {
     const legalEntityId = toPositiveInt(editForm.legalEntityId);
     const name = normalizeLookupQuery(editCounterpartyLookupQuery);
     if (!canUpsertCards) {
-      setEditInlineCounterpartyError("Missing permission: cari.card.upsert");
+      setEditInlineCounterpartyError(
+        l("Missing permission: cari.card.upsert", "Eksik yetki: cari.card.upsert")
+      );
       return;
     }
     if (!legalEntityId) {
-      setEditInlineCounterpartyError("Select legalEntityId before creating a counterparty.");
+      setEditInlineCounterpartyError(
+        l(
+          "Select legalEntityId before creating a counterparty.",
+          "Cari olusturmadan once legalEntityId secin."
+        )
+      );
       return;
     }
     if (!name) {
-      setEditInlineCounterpartyError("Type a counterparty name in lookup before creating.");
+      setEditInlineCounterpartyError(
+        l(
+          "Type a counterparty name in lookup before creating.",
+          "Cari olusturmadan once aramaya cari adini yazin."
+        )
+      );
       return;
     }
 
@@ -2449,17 +2631,22 @@ export default function CariDocumentsPage() {
       const row = response?.row || null;
       const counterpartyId = toPositiveInt(row?.id);
       if (!counterpartyId) {
-        throw new Error("Counterparty create response is missing row.id.");
+        throw new Error(
+          l("Counterparty create response is missing row.id.", "Cari olusturma yanitinda row.id yok.")
+        );
       }
       setEditCounterpartyOptions((prev) => prependOrReplaceCounterpartyOption(prev, row));
       setEditForm((prev) => ({ ...prev, counterpartyId: String(counterpartyId) }));
       setEditCounterpartyLookupQuery("");
       setEditInlineCounterpartyMessage(
-        `Counterparty created and selected. counterpartyId=${counterpartyId}`
+        l(
+          `Counterparty created and selected. counterpartyId=${counterpartyId}`,
+          `Cari olusturuldu ve secildi. counterpartyId=${counterpartyId}`
+        )
       );
     } catch (error) {
       setEditInlineCounterpartyError(
-        normalizeApiError(error, "Failed to create counterparty from lookup.")
+        normalizeApiError(error, l("Failed to create counterparty from lookup.", "Aramadan cari olusturulamadi."))
       );
     } finally {
       setEditInlineCounterpartySaving(false);
@@ -2474,17 +2661,24 @@ export default function CariDocumentsPage() {
     try {
       const { errors } = validateDocumentMutationForm(createForm);
       if (errors.length > 0) {
-        setCreateError(errors.join(" "));
+        setCreateError(translateDocumentMutationErrors(errors));
         return;
       }
       const payload = buildDocumentMutationPayload(createForm);
       const response = await createCariDocument(payload);
-      setCreateMessage(`Draft document created. id=${response?.row?.id || "-"}`);
+      setCreateMessage(
+        l(
+          `Draft document created. id=${response?.row?.id || "-"}`,
+          `Belge taslagi olusturuldu. id=${response?.row?.id || "-"}`
+        )
+      );
       resetCreateDraftFormWithSmartDefaults();
       await loadDocuments(filters);
       if (response?.row?.id) setSelectedDocumentId(response.row.id);
     } catch (error) {
-      setCreateError(normalizeApiError(error, "Failed to create draft document."));
+      setCreateError(
+        normalizeApiError(error, l("Failed to create draft document.", "Belge taslagi olusturulamadi."))
+      );
     } finally {
       setCreateSaving(false);
     }
@@ -2493,7 +2687,12 @@ export default function CariDocumentsPage() {
   async function handleUpdateDraft(event) {
     event.preventDefault();
     if (!selectedDocumentId || !canEditOrCancelSelected) {
-      setEditError("Only DRAFT documents can be edited with cari.doc.update permission.");
+      setEditError(
+        l(
+          "Only DRAFT documents can be edited with cari.doc.update permission.",
+          "Yalnizca DRAFT belgeler `cari.doc.update` yetkisiyle duzenlenebilir."
+        )
+      );
       return;
     }
     setEditSaving(true);
@@ -2502,7 +2701,7 @@ export default function CariDocumentsPage() {
     try {
       const { errors } = validateDocumentMutationForm(editForm);
       if (errors.length > 0) {
-        setEditError(errors.join(" "));
+        setEditError(translateDocumentMutationErrors(errors));
         return;
       }
       const payload = buildDocumentMutationPayload(editForm);
@@ -2510,11 +2709,13 @@ export default function CariDocumentsPage() {
         payload.rowVersion = Number(selectedDetail?.rowVersion || 0) || undefined;
       }
       const response = await updateCariDocument(selectedDocumentId, payload);
-      setEditMessage("Draft document updated.");
+      setEditMessage(l("Draft document updated.", "Belge taslagi guncellendi."));
       setSelectedDetail(response?.row || null);
       await loadDocuments(filters);
     } catch (error) {
-      setEditError(normalizeApiError(error, "Failed to update draft document."));
+      setEditError(
+        normalizeApiError(error, l("Failed to update draft document.", "Belge taslagi guncellenemedi."))
+      );
     } finally {
       setEditSaving(false);
     }
@@ -2522,7 +2723,12 @@ export default function CariDocumentsPage() {
 
   async function handleCancelDraft() {
     if (!selectedDocumentId || !canEditOrCancelSelected) {
-      setCancelError("Only DRAFT documents can be cancelled with cari.doc.update permission.");
+      setCancelError(
+        l(
+          "Only DRAFT documents can be cancelled with cari.doc.update permission.",
+          "Yalnizca DRAFT belgeler `cari.doc.update` yetkisiyle iptal edilebilir."
+        )
+      );
       return;
     }
     setCancelSaving(true);
@@ -2532,7 +2738,9 @@ export default function CariDocumentsPage() {
       setSelectedDetail(response?.row || null);
       await loadDocuments(filters);
     } catch (error) {
-      setCancelError(normalizeApiError(error, "Failed to cancel draft document."));
+      setCancelError(
+        normalizeApiError(error, l("Failed to cancel draft document.", "Belge taslagi iptal edilemedi."))
+      );
     } finally {
       setCancelSaving(false);
     }
@@ -2541,20 +2749,38 @@ export default function CariDocumentsPage() {
   async function handlePostDraft() {
     if (cariPostingNotReady) {
       setPostError(
-        "Setup incomplete for selected legal entity. Configure CARI purpose mappings in GL Setup first."
+        l(
+          "Setup incomplete for selected legal entity. Configure CARI purpose mappings in GL Setup first.",
+          "Secili tuzel kisilik icin kurulum eksik. Once GL Ayarlari altinda CARI amac eslemelerini tamamlayin."
+        )
       );
       return;
     }
     if (!selectedDocumentId || !canPostSelected) {
-      setPostError("Only DRAFT documents can be posted with cari.doc.post permission.");
+      setPostError(
+        l(
+          "Only DRAFT documents can be posted with cari.doc.post permission.",
+          "Yalnizca DRAFT belgeler `cari.doc.post` yetkisiyle kayda alinabilir."
+        )
+      );
       return;
     }
     if (postForm.useFxOverride && !canFxOverride) {
-      setPostError("FX override requires permission: cari.fx.override. Disable override or request access.");
+      setPostError(
+        l(
+          "FX override requires permission: cari.fx.override. Disable override or request access.",
+          "Kur gecersiz kilma icin `cari.fx.override` yetkisi gerekir. Gecersiz kilmayi kapatin veya erisim isteyin."
+        )
+      );
       return;
     }
     if (postForm.useFxOverride && !String(postForm.fxOverrideReason || "").trim()) {
-      setPostError("fxOverrideReason is required when useFxOverride=true.");
+      setPostError(
+        l(
+          "fxOverrideReason is required when useFxOverride=true.",
+          "useFxOverride=true iken fxOverrideReason zorunludur."
+        )
+      );
       return;
     }
 
@@ -2569,7 +2795,10 @@ export default function CariDocumentsPage() {
     if (postForm.usePostingLines) {
       if (!selectedDocumentAmountTxn || !selectedDocumentAmountBase) {
         setPostError(
-          "Selected draft amountTxn/amountBase is invalid. Re-open the draft and try again."
+          l(
+            "Selected draft amountTxn/amountBase is invalid. Re-open the draft and try again.",
+            "Secili taslak amountTxn/amountBase gecersiz. Taslagi yeniden acip tekrar deneyin."
+          )
         );
         return;
       }
@@ -2577,7 +2806,7 @@ export default function CariDocumentsPage() {
         ? postForm.postingLines
         : [];
       if (sourceLines.length === 0) {
-        setPostError("Add at least one posting line.");
+        setPostError(l("Add at least one posting line.", "En az bir kayit satiri ekleyin."));
         return;
       }
 
@@ -2590,7 +2819,10 @@ export default function CariDocumentsPage() {
         const lineAmountBase = toPositiveDecimal(line.amountBase);
         if (!lineAmountTxn || !lineAmountBase) {
           setPostError(
-            `Line ${index + 1}: amountTxn and amountBase must be greater than 0.`
+            l(
+              `Line ${index + 1}: amountTxn and amountBase must be greater than 0.`,
+              `Satir ${index + 1}: amountTxn ve amountBase 0'dan buyuk olmali.`
+            )
           );
           return;
         }
@@ -2600,7 +2832,12 @@ export default function CariDocumentsPage() {
           ? toPositiveInt(lineOffsetAccountRaw)
           : null;
         if (lineOffsetAccountRaw && !lineOffsetAccountId) {
-          setPostError(`Line ${index + 1}: offset account is invalid.`);
+          setPostError(
+            l(
+              `Line ${index + 1}: offset account is invalid.`,
+              `Satir ${index + 1}: karsi hesap gecersiz.`
+            )
+          );
           return;
         }
 
@@ -2619,7 +2856,10 @@ export default function CariDocumentsPage() {
         !amountsMatch(totalBase, selectedDocumentAmountBase)
       ) {
         setPostError(
-          `Line totals must match draft totals. Draft txn/base: ${selectedDocumentAmountTxn} / ${selectedDocumentAmountBase}. Entered txn/base: ${totalTxn} / ${totalBase}.`
+          l(
+            `Line totals must match draft totals. Draft txn/base: ${selectedDocumentAmountTxn} / ${selectedDocumentAmountBase}. Entered txn/base: ${totalTxn} / ${totalBase}.`,
+            `Satir toplamlari taslak toplamlariyla eslesmelidir. Taslak txn/base: ${selectedDocumentAmountTxn} / ${selectedDocumentAmountBase}. Girilen txn/base: ${totalTxn} / ${totalBase}.`
+          )
         );
         return;
       }
@@ -2632,12 +2872,19 @@ export default function CariDocumentsPage() {
     setPostMessage("");
     try {
       const response = await postCariDocument(selectedDocumentId, payload);
-      setPostMessage(`Draft posted. postedJournalEntryId=${response?.row?.postedJournalEntryId || response?.journal?.journalEntryId || "-"}`);
+      setPostMessage(
+        l(
+          `Draft posted. postedJournalEntryId=${response?.row?.postedJournalEntryId || response?.journal?.journalEntryId || "-"}`,
+          `Taslak kayda alindi. postedJournalEntryId=${response?.row?.postedJournalEntryId || response?.journal?.journalEntryId || "-"}`
+        )
+      );
       setSelectedDetail(response?.row || null);
       await loadDocuments(filters);
       await loadDocumentDetail(selectedDocumentId);
     } catch (error) {
-      setPostError(normalizeApiError(error, "Failed to post draft document."));
+      setPostError(
+        normalizeApiError(error, l("Failed to post draft document.", "Belge taslagi kayda alinamadi."))
+      );
     } finally {
       setPostSaving(false);
     }
@@ -2645,7 +2892,12 @@ export default function CariDocumentsPage() {
 
   async function handleReversePosted() {
     if (!selectedDocumentId || !canReverseSelected) {
-      setReverseError("Only POSTED documents can be reversed with cari.doc.reverse permission.");
+      setReverseError(
+        l(
+          "Only POSTED documents can be reversed with cari.doc.reverse permission.",
+          "Yalnizca POSTED belgeler `cari.doc.reverse` yetkisiyle terslenebilir."
+        )
+      );
       return;
     }
     setReverseSaving(true);
@@ -2653,7 +2905,7 @@ export default function CariDocumentsPage() {
     setReverseMessage("");
     try {
       const response = await reverseCariDocument(selectedDocumentId, {
-        reason: String(reverseForm.reason || "").trim() || "Manual reversal",
+        reason: String(reverseForm.reason || "").trim() || l("Manual reversal", "Manuel ters kayit"),
         reversalDate: String(reverseForm.reversalDate || "").trim() || undefined,
       });
       setReverseResult({
@@ -2661,11 +2913,18 @@ export default function CariDocumentsPage() {
         reversalDocumentNo: response?.row?.documentNo || null,
         reversalJournalEntryId: response?.journal?.reversalJournalEntryId || null,
       });
-      setReverseMessage(`Reverse completed. reversalDocumentId=${response?.row?.id || "-"}`);
+      setReverseMessage(
+        l(
+          `Reverse completed. reversalDocumentId=${response?.row?.id || "-"}`,
+          `Ters kayit tamamlandi. reversalDocumentId=${response?.row?.id || "-"}`
+        )
+      );
       await loadDocuments(filters);
       await loadDocumentDetail(selectedDocumentId);
     } catch (error) {
-      setReverseError(normalizeApiError(error, "Failed to reverse posted document."));
+      setReverseError(
+        normalizeApiError(error, l("Failed to reverse posted document.", "Kaydedilmis belge terslenemedi."))
+      );
     } finally {
       setReverseSaving(false);
     }
@@ -2679,20 +2938,33 @@ export default function CariDocumentsPage() {
       fileName: `cari-documents-${todayIsoDate()}.csv`,
     });
     if (!exported) {
-      setListError("CSV export is only available in browser sessions.");
+      setListError(
+        l(
+          "CSV export is only available in browser sessions.",
+          "CSV disa aktarma yalnizca tarayici oturumlarinda kullanilabilir."
+        )
+      );
     }
   }
 
   function handleCloneSelectedDocumentToCreateForm() {
     if (!selectedSnapshot) {
-      setDraftTemplatesError("Select a document first to clone into draft form.");
+      setDraftTemplatesError(
+        l(
+          "Select a document first to clone into draft form.",
+          "Taslak forma kopyalamak icin once bir belge secin."
+        )
+      );
       return;
     }
     const nextForm = buildCloneDraftFormFromRow(selectedSnapshot, createForm);
     applyCreateDraftFormSnapshot(nextForm);
     setDraftTemplatesError("");
     setDraftTemplatesMessage(
-      `Draft form cloned from document id=${selectedSnapshot?.id || "-"}`
+      l(
+        `Draft form cloned from document id=${selectedSnapshot?.id || "-"}`,
+        `Taslak form belge id=${selectedSnapshot?.id || "-"} kaydindan kopyalandi.`
+      )
     );
   }
 
@@ -2725,7 +2997,9 @@ export default function CariDocumentsPage() {
     } catch (error) {
       setDraftTemplates([]);
       setSelectedDraftTemplateId("");
-      setDraftTemplatesError(normalizeApiError(error, "Failed to load draft templates."));
+      setDraftTemplatesError(
+        normalizeApiError(error, l("Failed to load draft templates.", "Taslak sablonlari yuklenemedi."))
+      );
     } finally {
       setDraftTemplatesLoading(false);
     }
@@ -2734,7 +3008,7 @@ export default function CariDocumentsPage() {
   function applyDocumentDraftTemplate(templateRow, options = {}) {
     const targetTemplate = templateRow && typeof templateRow === "object" ? templateRow : null;
     if (!targetTemplate) {
-      setDraftTemplatesError("Draft template not found.");
+      setDraftTemplatesError(l("Draft template not found.", "Taslak sablon bulunamadi."));
       return;
     }
     const resolved = resolveDocumentDraftTemplateState(targetTemplate);
@@ -2744,13 +3018,16 @@ export default function CariDocumentsPage() {
     if (!options.silent) {
       setDraftTemplatesError("");
       setDraftTemplatesMessage(
-        `Draft template applied: ${targetTemplate.name || targetTemplate.id}`
+        l(
+          `Draft template applied: ${targetTemplate.name || targetTemplate.id}`,
+          `Taslak sablon uygulandi: ${targetTemplate.name || targetTemplate.id}`
+        )
       );
     }
   }
 
   async function handleCreateDocumentDraftTemplate() {
-    const rawName = window.prompt("Recurring template name", "");
+    const rawName = window.prompt(l("Recurring template name", "Tekrarlayan sablon adi"), "");
     const name = String(rawName || "").trim();
     if (!name) {
       return;
@@ -2769,10 +3046,15 @@ export default function CariDocumentsPage() {
       });
       const createdId = toPositiveInt(response?.row?.id);
       await loadDocumentDraftTemplates({ preferredId: createdId });
-      setDraftTemplatesMessage(`Recurring template created: ${name}`);
+      setDraftTemplatesMessage(
+        l(`Recurring template created: ${name}`, `Tekrarlayan sablon olusturuldu: ${name}`)
+      );
     } catch (error) {
       setDraftTemplatesError(
-        normalizeApiError(error, "Failed to create recurring draft template.")
+        normalizeApiError(
+          error,
+          l("Failed to create recurring draft template.", "Tekrarlayan taslak sablon olusturulamadi.")
+        )
       );
     } finally {
       setDraftTemplatesSaving(false);
@@ -2782,7 +3064,9 @@ export default function CariDocumentsPage() {
   async function handleUpdateDocumentDraftTemplate() {
     const templateId = toPositiveInt(selectedDraftTemplate?.id);
     if (!templateId) {
-      setDraftTemplatesError("Select a recurring template to update.");
+      setDraftTemplatesError(
+        l("Select a recurring template to update.", "Guncellemek icin tekrarlayan bir sablon secin.")
+      );
       return;
     }
     setDraftTemplatesSaving(true);
@@ -2797,13 +3081,17 @@ export default function CariDocumentsPage() {
       });
       await loadDocumentDraftTemplates({ preferredId: templateId });
       setDraftTemplatesMessage(
-        `Recurring template updated: ${
-          selectedDraftTemplate?.name || templateId
-        }`
+        l(
+          `Recurring template updated: ${selectedDraftTemplate?.name || templateId}`,
+          `Tekrarlayan sablon guncellendi: ${selectedDraftTemplate?.name || templateId}`
+        )
       );
     } catch (error) {
       setDraftTemplatesError(
-        normalizeApiError(error, "Failed to update recurring draft template.")
+        normalizeApiError(
+          error,
+          l("Failed to update recurring draft template.", "Tekrarlayan taslak sablon guncellenemedi.")
+        )
       );
     } finally {
       setDraftTemplatesSaving(false);
@@ -2813,7 +3101,12 @@ export default function CariDocumentsPage() {
   async function handleSetDefaultDocumentDraftTemplate() {
     const templateId = toPositiveInt(selectedDraftTemplate?.id);
     if (!templateId) {
-      setDraftTemplatesError("Select a recurring template to set as default.");
+      setDraftTemplatesError(
+        l(
+          "Select a recurring template to set as default.",
+          "Varsayilan yapmak icin tekrarlayan bir sablon secin."
+        )
+      );
       return;
     }
     setDraftTemplatesSaving(true);
@@ -2822,10 +3115,18 @@ export default function CariDocumentsPage() {
     try {
       await updateMeSavedView(templateId, { isDefault: true });
       await loadDocumentDraftTemplates({ preferredId: templateId });
-      setDraftTemplatesMessage("Recurring template set as default.");
+      setDraftTemplatesMessage(
+        l("Recurring template set as default.", "Tekrarlayan sablon varsayilan yapildi.")
+      );
     } catch (error) {
       setDraftTemplatesError(
-        normalizeApiError(error, "Failed to set recurring draft template as default.")
+        normalizeApiError(
+          error,
+          l(
+            "Failed to set recurring draft template as default.",
+            "Tekrarlayan taslak sablon varsayilan yapilamadi."
+          )
+        )
       );
     } finally {
       setDraftTemplatesSaving(false);
@@ -2835,11 +3136,16 @@ export default function CariDocumentsPage() {
   async function handleDeleteDocumentDraftTemplate() {
     const templateId = toPositiveInt(selectedDraftTemplate?.id);
     if (!templateId) {
-      setDraftTemplatesError("Select a recurring template to delete.");
+      setDraftTemplatesError(
+        l("Select a recurring template to delete.", "Silmek icin tekrarlayan bir sablon secin.")
+      );
       return;
     }
     const confirmed = window.confirm(
-      `Delete recurring template "${selectedDraftTemplate?.name || templateId}"?`
+      l(
+        `Delete recurring template "${selectedDraftTemplate?.name || templateId}"?`,
+        `"${selectedDraftTemplate?.name || templateId}" tekrarlayan sablonu silinsin mi?`
+      )
     );
     if (!confirmed) {
       return;
@@ -2850,10 +3156,13 @@ export default function CariDocumentsPage() {
     try {
       await deleteMeSavedView(templateId);
       await loadDocumentDraftTemplates();
-      setDraftTemplatesMessage("Recurring template deleted.");
+      setDraftTemplatesMessage(l("Recurring template deleted.", "Tekrarlayan sablon silindi."));
     } catch (error) {
       setDraftTemplatesError(
-        normalizeApiError(error, "Failed to delete recurring draft template.")
+        normalizeApiError(
+          error,
+          l("Failed to delete recurring draft template.", "Tekrarlayan taslak sablon silinemedi.")
+        )
       );
     } finally {
       setDraftTemplatesSaving(false);
@@ -2889,7 +3198,9 @@ export default function CariDocumentsPage() {
     } catch (error) {
       setSavedViews([]);
       setSelectedSavedViewId("");
-      setSavedViewsError(normalizeApiError(error, "Failed to load saved views."));
+      setSavedViewsError(
+        normalizeApiError(error, l("Failed to load saved views.", "Kayitli gorunumler yuklenemedi."))
+      );
     } finally {
       setSavedViewsLoading(false);
     }
@@ -2898,7 +3209,7 @@ export default function CariDocumentsPage() {
   function applyDocumentSavedView(savedView, options = {}) {
     const targetView = savedView && typeof savedView === "object" ? savedView : null;
     if (!targetView) {
-      setSavedViewsError("Saved view not found.");
+      setSavedViewsError(l("Saved view not found.", "Kayitli gorunum bulunamadi."));
       return;
     }
     const resolvedState = resolveDocumentSavedViewState(
@@ -2913,13 +3224,18 @@ export default function CariDocumentsPage() {
     setDocumentListPage(1);
     setSelectedSavedViewId(String(targetView.id));
     if (!options.silent) {
-      setSavedViewsMessage(`Saved view applied: ${targetView.name || targetView.id}`);
+      setSavedViewsMessage(
+        l(
+          `Saved view applied: ${targetView.name || targetView.id}`,
+          `Kayitli gorunum uygulandi: ${targetView.name || targetView.id}`
+        )
+      );
       setSavedViewsError("");
     }
   }
 
   async function handleCreateDocumentSavedView() {
-    const rawName = window.prompt("Saved view name", "");
+    const rawName = window.prompt(l("Saved view name", "Kayitli gorunum adi"), "");
     const name = String(rawName || "").trim();
     if (!name) {
       return;
@@ -2939,9 +3255,13 @@ export default function CariDocumentsPage() {
       });
       const createdId = toPositiveInt(response?.row?.id);
       await loadDocumentSavedViews({ preferredId: createdId });
-      setSavedViewsMessage(`Saved view created: ${name}`);
+      setSavedViewsMessage(
+        l(`Saved view created: ${name}`, `Kayitli gorunum olusturuldu: ${name}`)
+      );
     } catch (error) {
-      setSavedViewsError(normalizeApiError(error, "Failed to create saved view."));
+      setSavedViewsError(
+        normalizeApiError(error, l("Failed to create saved view.", "Kayitli gorunum olusturulamadi."))
+      );
     } finally {
       setSavedViewsSaving(false);
     }
@@ -2950,7 +3270,9 @@ export default function CariDocumentsPage() {
   async function handleUpdateDocumentSavedView() {
     const savedViewId = toPositiveInt(selectedSavedView?.id);
     if (!savedViewId) {
-      setSavedViewsError("Select a saved view to update.");
+      setSavedViewsError(
+        l("Select a saved view to update.", "Guncellemek icin bir kayitli gorunum secin.")
+      );
       return;
     }
     setSavedViewsSaving(true);
@@ -2966,10 +3288,15 @@ export default function CariDocumentsPage() {
       });
       await loadDocumentSavedViews({ preferredId: savedViewId });
       setSavedViewsMessage(
-        `Saved view updated: ${selectedSavedView?.name || savedViewId}`
+        l(
+          `Saved view updated: ${selectedSavedView?.name || savedViewId}`,
+          `Kayitli gorunum guncellendi: ${selectedSavedView?.name || savedViewId}`
+        )
       );
     } catch (error) {
-      setSavedViewsError(normalizeApiError(error, "Failed to update saved view."));
+      setSavedViewsError(
+        normalizeApiError(error, l("Failed to update saved view.", "Kayitli gorunum guncellenemedi."))
+      );
     } finally {
       setSavedViewsSaving(false);
     }
@@ -2978,7 +3305,12 @@ export default function CariDocumentsPage() {
   async function handleSetDefaultDocumentSavedView() {
     const savedViewId = toPositiveInt(selectedSavedView?.id);
     if (!savedViewId) {
-      setSavedViewsError("Select a saved view to set as default.");
+      setSavedViewsError(
+        l(
+          "Select a saved view to set as default.",
+          "Varsayilan yapmak icin bir kayitli gorunum secin."
+        )
+      );
       return;
     }
     setSavedViewsSaving(true);
@@ -2988,12 +3320,15 @@ export default function CariDocumentsPage() {
       await updateMeSavedView(savedViewId, { isDefault: true });
       await loadDocumentSavedViews({ preferredId: savedViewId });
       setSavedViewsMessage(
-        `Saved view marked as default: ${
-          selectedSavedView?.name || savedViewId
-        }`
+        l(
+          `Saved view marked as default: ${selectedSavedView?.name || savedViewId}`,
+          `Kayitli gorunum varsayilan yapildi: ${selectedSavedView?.name || savedViewId}`
+        )
       );
     } catch (error) {
-      setSavedViewsError(normalizeApiError(error, "Failed to set default saved view."));
+      setSavedViewsError(
+        normalizeApiError(error, l("Failed to set default saved view.", "Varsayilan kayitli gorunum ayarlanamadi."))
+      );
     } finally {
       setSavedViewsSaving(false);
     }
@@ -3002,11 +3337,16 @@ export default function CariDocumentsPage() {
   async function handleDeleteDocumentSavedView() {
     const savedViewId = toPositiveInt(selectedSavedView?.id);
     if (!savedViewId) {
-      setSavedViewsError("Select a saved view to delete.");
+      setSavedViewsError(
+        l("Select a saved view to delete.", "Silmek icin bir kayitli gorunum secin.")
+      );
       return;
     }
     const confirmed = window.confirm(
-      `Delete saved view "${selectedSavedView?.name || savedViewId}"?`
+      l(
+        `Delete saved view "${selectedSavedView?.name || savedViewId}"?`,
+        `"${selectedSavedView?.name || savedViewId}" kayitli gorunumu silinsin mi?`
+      )
     );
     if (!confirmed) {
       return;
@@ -3017,9 +3357,11 @@ export default function CariDocumentsPage() {
     try {
       await deleteMeSavedView(savedViewId);
       await loadDocumentSavedViews();
-      setSavedViewsMessage("Saved view deleted.");
+      setSavedViewsMessage(l("Saved view deleted.", "Kayitli gorunum silindi."));
     } catch (error) {
-      setSavedViewsError(normalizeApiError(error, "Failed to delete saved view."));
+      setSavedViewsError(
+        normalizeApiError(error, l("Failed to delete saved view.", "Kayitli gorunum silinemedi."))
+      );
     } finally {
       setSavedViewsSaving(false);
     }
@@ -3093,12 +3435,14 @@ export default function CariDocumentsPage() {
   return (
     <div className="space-y-5">
       <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-        <h1 className="text-xl font-semibold text-slate-900">Cari Documents</h1>
+        <h1 className="text-xl font-semibold text-slate-900">
+          {l("Cari Documents", "Cari Belgeler")}
+        </h1>
         {listError ? <div className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{listError}</div> : null}
         <div className="mt-4 grid gap-3 md:grid-cols-4">
           <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">
             <label className="block">
-              Legal Entity
+              {l("Legal Entity", "Tuzel Kisilik")}
               <Combobox
                 className="mt-1"
                 value={filters.legalEntityId}
@@ -3106,10 +3450,10 @@ export default function CariDocumentsPage() {
                 loading={filterLegalEntityLookupLoading}
                 placeholder={
                   filterLegalEntityLookupOptions.length > 0
-                    ? "Search legal entity code/name"
-                    : "No legal entities available"
+                    ? l("Search legal entity code/name", "Tuzel kisilik kodu/adi ara")
+                    : l("No legal entities available", "Kullanilabilir tuzel kisilik yok")
                 }
-                noOptionsText="No legal entities found."
+                noOptionsText={l("No legal entities found.", "Tuzel kisilik bulunamadi.")}
                 onChange={(nextValue) => handleFilterLegalEntityChange(nextValue)}
               />
             </label>
@@ -3119,19 +3463,19 @@ export default function CariDocumentsPage() {
               </p>
             ) : null}
           </div>
-          <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Direction<select className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={filters.direction} onChange={(event) => handleFilterDirectionChange(event.target.value)}><option value="">ALL</option>{DOCUMENT_DIRECTIONS.map((direction) => <option key={`filter-direction-${direction}`} value={direction}>{direction}</option>)}</select></label>
-          <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Counterparty ID<input type="number" min="1" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={filters.counterpartyId} onChange={(event) => setFilters((prev) => ({ ...prev, counterpartyId: event.target.value }))} /></label>
+          <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">{l("Direction", "Yon")}<select className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={filters.direction} onChange={(event) => handleFilterDirectionChange(event.target.value)}><option value="">{l("ALL", "TUMU")}</option>{DOCUMENT_DIRECTIONS.map((direction) => <option key={`filter-direction-${direction}`} value={direction}>{direction}</option>)}</select></label>
+          <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">{l("Counterparty ID", "Cari ID")}<input type="number" min="1" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={filters.counterpartyId} onChange={(event) => setFilters((prev) => ({ ...prev, counterpartyId: event.target.value }))} /></label>
           {canReadCards ? (
             <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-              Counterparty Lookup
+              {l("Counterparty Lookup", "Cari Arama")}
               <Combobox
                 className="mt-1"
                 value={filters.counterpartyId}
                 options={filterCounterpartyLookupOptions}
                 loading={filterCounterpartyLoading}
                 disabled={!toPositiveInt(filters.legalEntityId)}
-                placeholder={toPositiveInt(filters.legalEntityId) ? "Type code/name" : "Select legal entity first"}
-                noOptionsText={toPositiveInt(filters.legalEntityId) ? "No counterparties found." : "Set legalEntityId to load counterparties."}
+                placeholder={toPositiveInt(filters.legalEntityId) ? l("Type code/name", "Kod/ad yazin") : l("Select legal entity first", "Once tuzel kisilik secin")}
+                noOptionsText={toPositiveInt(filters.legalEntityId) ? l("No counterparties found.", "Cari bulunamadi.") : l("Set legalEntityId to load counterparties.", "Carileri yuklemek icin legalEntityId secin.")}
                 onChange={(nextValue) =>
                   setFilters((prev) => ({
                     ...prev,
@@ -3141,27 +3485,27 @@ export default function CariDocumentsPage() {
               />
             </label>
           ) : null}
-          <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Document Type<select className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={filters.documentType} onChange={(event) => setFilters((prev) => ({ ...prev, documentType: event.target.value }))}><option value="">ALL</option>{DOCUMENT_TYPES.map((documentType) => <option key={`filter-document-type-${documentType}`} value={documentType}>{documentType}</option>)}</select></label>
-          <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Status<select className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={filters.status} onChange={(event) => setFilters((prev) => ({ ...prev, status: event.target.value }))}><option value="">ALL</option>{DOCUMENT_STATUSES.map((status) => <option key={`filter-status-${status}`} value={status}>{status}</option>)}</select></label>
-          <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Date From<input type="date" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={filters.dateFrom} onChange={(event) => setFilters((prev) => ({ ...prev, dateFrom: event.target.value }))} /></label>
-          <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Date To<input type="date" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={filters.dateTo} onChange={(event) => setFilters((prev) => ({ ...prev, dateTo: event.target.value }))} /></label>
-          <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Search<input type="text" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={filters.q} onChange={(event) => setFilters((prev) => ({ ...prev, q: event.target.value }))} placeholder="documentNo / counterparty snapshot" /></label>
+          <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">{l("Document Type", "Belge Turu")}<select className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={filters.documentType} onChange={(event) => setFilters((prev) => ({ ...prev, documentType: event.target.value }))}><option value="">{l("ALL", "TUMU")}</option>{DOCUMENT_TYPES.map((documentType) => <option key={`filter-document-type-${documentType}`} value={documentType}>{documentType}</option>)}</select></label>
+          <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">{l("Status", "Durum")}<select className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={filters.status} onChange={(event) => setFilters((prev) => ({ ...prev, status: event.target.value }))}><option value="">{l("ALL", "TUMU")}</option>{DOCUMENT_STATUSES.map((status) => <option key={`filter-status-${status}`} value={status}>{status}</option>)}</select></label>
+          <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">{l("Date From", "Baslangic Tarihi")}<input type="date" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={filters.dateFrom} onChange={(event) => setFilters((prev) => ({ ...prev, dateFrom: event.target.value }))} /></label>
+          <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">{l("Date To", "Bitis Tarihi")}<input type="date" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={filters.dateTo} onChange={(event) => setFilters((prev) => ({ ...prev, dateTo: event.target.value }))} /></label>
+          <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">{l("Search", "Ara")}<input type="text" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={filters.q} onChange={(event) => setFilters((prev) => ({ ...prev, q: event.target.value }))} placeholder={l("documentNo / counterparty snapshot", "documentNo / cari ozet")} /></label>
         </div>
         <div className="mt-3 flex gap-2">
-          <button type="button" className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white" onClick={() => loadDocuments(filters)} disabled={listLoading}>{listLoading ? "Loading..." : "Refresh List"}</button>
-          <button type="button" className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700" onClick={resetFilters} disabled={listLoading}>Reset Filters</button>
+          <button type="button" className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white" onClick={() => loadDocuments(filters)} disabled={listLoading}>{listLoading ? l("Loading...", "Yukleniyor...") : l("Refresh List", "Listeyi Yenile")}</button>
+          <button type="button" className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700" onClick={resetFilters} disabled={listLoading}>{l("Reset Filters", "Filtreleri Sifirla")}</button>
           <button
             type="button"
             className="rounded-md border border-emerald-300 px-4 py-2 text-sm font-medium text-emerald-700 disabled:opacity-60"
             onClick={handleExportDocumentListCsv}
             disabled={listLoading || rows.length === 0}
           >
-            Export CSV
+            {l("Export CSV", "CSV Disa Aktar")}
           </button>
         </div>
         <div className="mt-3 rounded-md border border-slate-200 bg-slate-50 p-3">
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-            Saved Views (server-side)
+            {l("Saved Views (server-side)", "Kayitli Gorunumler (sunucu)")}
           </p>
           <div className="mt-2 flex flex-wrap gap-2">
             <select
@@ -3170,11 +3514,11 @@ export default function CariDocumentsPage() {
               onChange={(event) => setSelectedSavedViewId(event.target.value)}
               disabled={savedViewsLoading || savedViewsSaving || savedViews.length === 0}
             >
-              <option value="">Select saved view</option>
+              <option value="">{l("Select saved view", "Kayitli gorunum secin")}</option>
               {savedViews.map((row) => (
                 <option key={`document-saved-view-${row.id}`} value={row.id}>
                   {row.name}
-                  {row.isDefault ? " (default)" : ""}
+                  {row.isDefault ? l(" (default)", " (varsayilan)") : ""}
                 </option>
               ))}
             </select>
@@ -3184,7 +3528,7 @@ export default function CariDocumentsPage() {
               onClick={() => applyDocumentSavedView(selectedSavedView)}
               disabled={!selectedSavedView || savedViewsSaving}
             >
-              Apply
+              {l("Apply", "Uygula")}
             </button>
             <button
               type="button"
@@ -3192,7 +3536,7 @@ export default function CariDocumentsPage() {
               onClick={handleCreateDocumentSavedView}
               disabled={savedViewsSaving}
             >
-              Save Current
+              {l("Save Current", "Mevcutu Kaydet")}
             </button>
             <button
               type="button"
@@ -3200,7 +3544,7 @@ export default function CariDocumentsPage() {
               onClick={handleUpdateDocumentSavedView}
               disabled={!selectedSavedView || savedViewsSaving}
             >
-              Update Selected
+              {l("Update Selected", "Secileni Guncelle")}
             </button>
             <button
               type="button"
@@ -3208,7 +3552,7 @@ export default function CariDocumentsPage() {
               onClick={handleSetDefaultDocumentSavedView}
               disabled={!selectedSavedView || savedViewsSaving}
             >
-              Set Default
+              {l("Set Default", "Varsayilan Yap")}
             </button>
             <button
               type="button"
@@ -3216,7 +3560,7 @@ export default function CariDocumentsPage() {
               onClick={handleDeleteDocumentSavedView}
               disabled={!selectedSavedView || savedViewsSaving}
             >
-              Delete
+              {l("Delete", "Sil")}
             </button>
             <button
               type="button"
@@ -3224,7 +3568,9 @@ export default function CariDocumentsPage() {
               onClick={() => loadDocumentSavedViews({ preferredId: selectedSavedViewId })}
               disabled={savedViewsLoading || savedViewsSaving}
             >
-              {savedViewsLoading ? "Loading..." : "Refresh Saved Views"}
+              {savedViewsLoading
+                ? l("Loading...", "Yukleniyor...")
+                : l("Refresh Saved Views", "Kayitli Gorunumleri Yenile")}
             </button>
           </div>
           {savedViewsError ? (
@@ -3238,12 +3584,14 @@ export default function CariDocumentsPage() {
 
       {canCreate ? (
         <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-          <h2 className="text-lg font-semibold text-slate-900">Create Draft Document</h2>
+          <h2 className="text-lg font-semibold text-slate-900">
+            {l("Create Draft Document", "Belge Taslagi Olustur")}
+          </h2>
           {createError ? <div className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{createError}</div> : null}
           {createMessage ? <div className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{createMessage}</div> : null}
           <div className="mt-3 rounded-md border border-slate-200 bg-slate-50 p-3">
             <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-              Clone + Recurring Templates
+              {l("Clone + Recurring Templates", "Kopyala + Tekrarlayan Sablonlar")}
             </p>
             <div className="mt-2 flex flex-wrap gap-2">
               <button
@@ -3252,7 +3600,7 @@ export default function CariDocumentsPage() {
                 onClick={handleCloneSelectedDocumentToCreateForm}
                 disabled={!selectedSnapshot || createSaving}
               >
-                Clone Selected Document
+                {l("Clone Selected Document", "Secili Belgeyi Kopyala")}
               </button>
               <select
                 className="min-w-[220px] rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm"
@@ -3265,11 +3613,11 @@ export default function CariDocumentsPage() {
                   createSaving
                 }
               >
-                <option value="">Select recurring template</option>
+                <option value="">{l("Select recurring template", "Tekrarlayan sablon secin")}</option>
                 {draftTemplates.map((row) => (
                   <option key={`document-draft-template-${row.id}`} value={row.id}>
                     {row.name}
-                    {row.isDefault ? " (default)" : ""}
+                    {row.isDefault ? l(" (default)", " (varsayilan)") : ""}
                   </option>
                 ))}
               </select>
@@ -3279,7 +3627,7 @@ export default function CariDocumentsPage() {
                 onClick={() => applyDocumentDraftTemplate(selectedDraftTemplate)}
                 disabled={!selectedDraftTemplate || draftTemplatesSaving || createSaving}
               >
-                Apply Template
+                {l("Apply Template", "Sablonu Uygula")}
               </button>
               <button
                 type="button"
@@ -3287,7 +3635,7 @@ export default function CariDocumentsPage() {
                 onClick={handleCreateDocumentDraftTemplate}
                 disabled={draftTemplatesSaving || createSaving}
               >
-                Save Current Template
+                {l("Save Current Template", "Mevcut Sablonu Kaydet")}
               </button>
               <button
                 type="button"
@@ -3295,7 +3643,7 @@ export default function CariDocumentsPage() {
                 onClick={handleUpdateDocumentDraftTemplate}
                 disabled={!selectedDraftTemplate || draftTemplatesSaving || createSaving}
               >
-                Update Template
+                {l("Update Template", "Sablonu Guncelle")}
               </button>
               <button
                 type="button"
@@ -3303,7 +3651,7 @@ export default function CariDocumentsPage() {
                 onClick={handleSetDefaultDocumentDraftTemplate}
                 disabled={!selectedDraftTemplate || draftTemplatesSaving || createSaving}
               >
-                Set Default
+                {l("Set Default", "Varsayilan Yap")}
               </button>
               <button
                 type="button"
@@ -3311,7 +3659,7 @@ export default function CariDocumentsPage() {
                 onClick={handleDeleteDocumentDraftTemplate}
                 disabled={!selectedDraftTemplate || draftTemplatesSaving || createSaving}
               >
-                Delete
+                {l("Delete", "Sil")}
               </button>
               <button
                 type="button"
@@ -3321,12 +3669,14 @@ export default function CariDocumentsPage() {
                 }
                 disabled={draftTemplatesLoading || draftTemplatesSaving || createSaving}
               >
-                {draftTemplatesLoading ? "Loading..." : "Refresh Templates"}
+                {draftTemplatesLoading
+                  ? l("Loading...", "Yukleniyor...")
+                  : l("Refresh Templates", "Sablonlari Yenile")}
               </button>
             </div>
             <div className="mt-3 grid gap-2 md:grid-cols-3">
               <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                Recurring Cadence
+                {l("Recurring Cadence", "Tekrar Araligi")}
                 <select
                   className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
                   value={createRecurringRule.cadence}
@@ -3346,7 +3696,7 @@ export default function CariDocumentsPage() {
                 </select>
               </label>
               <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                Repeat Every
+                {l("Repeat Every", "Her Tekrar")}
                 <input
                   type="number"
                   min="1"
@@ -3362,7 +3712,7 @@ export default function CariDocumentsPage() {
                 />
               </label>
               <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                Anchor Day (optional)
+                {l("Anchor Day (optional)", "Sabit Gun (opsiyonel)")}
                 <input
                   type="number"
                   min="1"
@@ -3389,7 +3739,7 @@ export default function CariDocumentsPage() {
           <form className="mt-4 grid gap-3 md:grid-cols-4" onSubmit={handleCreateDraft}>
             <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">
               <label className="block">
-                Legal Entity
+                {l("Legal Entity", "Tuzel Kisilik")}
                 <Combobox
                   className="mt-1"
                   value={createForm.legalEntityId}
@@ -3398,10 +3748,10 @@ export default function CariDocumentsPage() {
                   disabled={createSaving || createLegalEntityLookupOptions.length === 0}
                   placeholder={
                     createLegalEntityLookupOptions.length > 0
-                      ? "Search legal entity code/name"
-                      : "No legal entities available"
+                      ? l("Search legal entity code/name", "Tuzel kisilik kodu/adi ara")
+                      : l("No legal entities available", "Kullanilabilir tuzel kisilik yok")
                   }
-                  noOptionsText="No legal entities found."
+                  noOptionsText={l("No legal entities found.", "Tuzel kisilik bulunamadi.")}
                   onChange={(nextValue) => handleCreateLegalEntityChange(nextValue)}
                 />
               </label>
@@ -3411,11 +3761,11 @@ export default function CariDocumentsPage() {
                 </p>
               ) : null}
             </div>
-            <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Direction<select className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={createForm.direction} onChange={(event) => handleCreateDirectionChange(event.target.value)} required>{DOCUMENT_DIRECTIONS.map((direction) => <option key={`create-direction-${direction}`} value={direction}>{direction}</option>)}</select></label>
+            <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">{l("Direction", "Yon")}<select className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={createForm.direction} onChange={(event) => handleCreateDirectionChange(event.target.value)} required>{DOCUMENT_DIRECTIONS.map((direction) => <option key={`create-direction-${direction}`} value={direction}>{direction}</option>)}</select></label>
             {canReadCards ? (
               <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">
                 <label className="block">
-                  Counterparty
+                  {l("Counterparty", "Cari")}
                   <Combobox
                     className="mt-1"
                     value={createForm.counterpartyId}
@@ -3424,13 +3774,13 @@ export default function CariDocumentsPage() {
                     disabled={!toPositiveInt(createForm.legalEntityId) || createSaving}
                     placeholder={
                       toPositiveInt(createForm.legalEntityId)
-                        ? "Search counterparty code/name"
-                        : "Select legal entity first"
+                        ? l("Search counterparty code/name", "Cari kodu/adi ara")
+                        : l("Select legal entity first", "Once tuzel kisilik secin")
                     }
                     noOptionsText={
                       toPositiveInt(createForm.legalEntityId)
-                        ? "No counterparties found."
-                        : "Select legal entity first."
+                        ? l("No counterparties found.", "Cari bulunamadi.")
+                        : l("Select legal entity first.", "Once tuzel kisilik secin.")
                     }
                     onInputChange={(nextValue, meta) => {
                       setCreateInlineCounterpartyError("");
@@ -3458,8 +3808,11 @@ export default function CariDocumentsPage() {
                     disabled={!canInlineCreateCounterpartyInCreateForm || createInlineCounterpartySaving || createSaving}
                   >
                     {createInlineCounterpartySaving
-                      ? "Creating counterparty..."
-                      : `Create "${createInlineCounterpartyName || "new counterparty"}"`}
+                      ? l("Creating counterparty...", "Cari olusturuluyor...")
+                      : l(
+                          `Create "${createInlineCounterpartyName || "new counterparty"}"`,
+                          `"${createInlineCounterpartyName || "yeni cari"}" olustur`
+                        )}
                   </button>
                 ) : null}
                 {createInlineCounterpartyError ? (
@@ -3471,7 +3824,7 @@ export default function CariDocumentsPage() {
               </div>
             ) : (
               <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                Counterparty ID
+                {l("Counterparty ID", "Cari ID")}
                 <input
                   type="number"
                   min="1"
@@ -3490,7 +3843,7 @@ export default function CariDocumentsPage() {
             {canReadCards ? (
               <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">
                 <label className="block">
-                  Payment Term (optional)
+                  {l("Payment Term (optional)", "Odeme Kosulu (opsiyonel)")}
                   <Combobox
                     className="mt-1"
                     value={createForm.paymentTermId}
@@ -3499,13 +3852,13 @@ export default function CariDocumentsPage() {
                     disabled={!toPositiveInt(createForm.legalEntityId) || createSaving}
                     placeholder={
                       toPositiveInt(createForm.legalEntityId)
-                        ? "Search payment term code/name"
-                        : "Select legal entity first"
+                        ? l("Search payment term code/name", "Odeme kosulu kodu/adi ara")
+                        : l("Select legal entity first", "Once tuzel kisilik secin")
                     }
                     noOptionsText={
                       toPositiveInt(createForm.legalEntityId)
-                        ? "No payment terms found."
-                        : "Select legal entity first."
+                        ? l("No payment terms found.", "Odeme kosulu bulunamadi.")
+                        : l("Select legal entity first.", "Once tuzel kisilik secin.")
                     }
                     onChange={(nextValue) => {
                       setCreatePaymentTermTouched(true);
@@ -3524,7 +3877,7 @@ export default function CariDocumentsPage() {
               </div>
             ) : (
               <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                Payment Term ID (optional)
+                {l("Payment Term ID (optional)", "Odeme Kosulu ID (opsiyonel)")}
                 <input
                   type="number"
                   min="1"
@@ -3537,25 +3890,25 @@ export default function CariDocumentsPage() {
                 />
               </label>
             )}
-            <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Document Type<select className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={createForm.documentType} onChange={(event) => setCreateForm((prev) => ({ ...prev, documentType: event.target.value }))} required>{DOCUMENT_TYPES.map((documentType) => <option key={`create-document-type-${documentType}`} value={documentType}>{documentType}</option>)}</select></label>
-            <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Document Date<input type="date" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={createForm.documentDate} onChange={(event) => setCreateForm((prev) => ({ ...prev, documentDate: event.target.value }))} required /></label>
-            <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Due Date {requiresDueDate(createForm.documentType) ? "(required for this type)" : "(optional)"}<input type="date" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={createForm.dueDate} onChange={(event) => setCreateForm((prev) => ({ ...prev, dueDate: event.target.value }))} required={requiresDueDate(createForm.documentType)} /></label>
-            <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Invoice Amount (Invoice Currency)<input type="number" min="0.000001" step="0.000001" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={createForm.amountTxn} onChange={(event) => setCreateForm((prev) => ({ ...prev, amountTxn: event.target.value }))} required /></label>
-            <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Invoice Currency<input type="text" maxLength={3} className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal uppercase" value={createForm.currencyCode} onChange={(event) => {
+            <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">{l("Document Type", "Belge Turu")}<select className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={createForm.documentType} onChange={(event) => setCreateForm((prev) => ({ ...prev, documentType: event.target.value }))} required>{DOCUMENT_TYPES.map((documentType) => <option key={`create-document-type-${documentType}`} value={documentType}>{documentType}</option>)}</select></label>
+            <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">{l("Document Date", "Belge Tarihi")}<input type="date" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={createForm.documentDate} onChange={(event) => setCreateForm((prev) => ({ ...prev, documentDate: event.target.value }))} required /></label>
+            <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">{l("Due Date", "Vade Tarihi")} {requiresDueDate(createForm.documentType) ? l("(required for this type)", "(bu tur icin zorunlu)") : l("(optional)", "(opsiyonel)")}<input type="date" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={createForm.dueDate} onChange={(event) => setCreateForm((prev) => ({ ...prev, dueDate: event.target.value }))} required={requiresDueDate(createForm.documentType)} /></label>
+            <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">{l("Invoice Amount (Invoice Currency)", "Fatura Tutari (Fatura Para Birimi)")}<input type="number" min="0.000001" step="0.000001" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={createForm.amountTxn} onChange={(event) => setCreateForm((prev) => ({ ...prev, amountTxn: event.target.value }))} required /></label>
+            <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">{l("Invoice Currency", "Fatura Para Birimi")}<input type="text" maxLength={3} className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal uppercase" value={createForm.currencyCode} onChange={(event) => {
               setCreateCurrencyTouched(true);
               setCreateForm((prev) => ({ ...prev, currencyCode: event.target.value }));
             }} required /></label>
-            <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Base Amount (Legal Entity Currency)<input type="number" min="0.000001" step="0.000001" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={createForm.amountBase} onChange={(event) => setCreateForm((prev) => ({ ...prev, amountBase: event.target.value }))} required /></label>
-            <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">FX Rate (optional)<input type="number" min="0.0000000001" step="0.0000000001" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={createForm.fxRate} onChange={(event) => setCreateForm((prev) => ({ ...prev, fxRate: event.target.value }))} /></label>
+            <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">{l("Base Amount (Legal Entity Currency)", "Baz Tutar (Tuzel Kisilik Para Birimi)")}<input type="number" min="0.000001" step="0.000001" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={createForm.amountBase} onChange={(event) => setCreateForm((prev) => ({ ...prev, amountBase: event.target.value }))} required /></label>
+            <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">{l("FX Rate (optional)", "Kur (opsiyonel)")}<input type="number" min="0.0000000001" step="0.0000000001" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={createForm.fxRate} onChange={(event) => setCreateForm((prev) => ({ ...prev, fxRate: event.target.value }))} /></label>
             <div className="md:col-span-4 flex gap-2">
-              <button type="submit" className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white" disabled={createSaving}>{createSaving ? "Creating..." : "Create Draft Document"}</button>
+              <button type="submit" className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white" disabled={createSaving}>{createSaving ? l("Creating...", "Olusturuluyor...") : l("Create Draft Document", "Belge Taslagi Olustur")}</button>
               <button
                 type="button"
                 className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700"
                 onClick={resetCreateDraftFormWithSmartDefaults}
                 disabled={createSaving}
               >
-                Reset Draft Form
+                {l("Reset Draft Form", "Taslak Formunu Sifirla")}
               </button>
             </div>
           </form>
@@ -3563,14 +3916,17 @@ export default function CariDocumentsPage() {
       ) : null}
 
       <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-        <h2 className="text-lg font-semibold text-slate-900">Document List</h2>
+        <h2 className="text-lg font-semibold text-slate-900">
+          {l("Document List", "Belge Listesi")}
+        </h2>
         <p className="mt-1 text-sm text-slate-600">
-          Total rows: {totalRows} | Showing {pagedDocumentRows.length} of {rows.length} on page{" "}
-          {documentListPage}/{documentListTotalPages}
+          {l("Total rows", "Toplam satir")}: {totalRows} |{" "}
+          {l("Showing", "Gosterilen")}: {pagedDocumentRows.length} / {rows.length} |{" "}
+          {l("Page", "Sayfa")} {documentListPage}/{documentListTotalPages}
         </p>
         <TablePreferencesPanel
           className="mt-3"
-          title="Document table preferences"
+          title={l("Document table preferences", "Belge tablo tercihleri")}
           rowsPerPage={documentRowsPerPage}
           rowsPerPageOptions={DOCUMENT_TABLE_ROWS_PER_PAGE_OPTIONS}
           onRowsPerPageChange={handleDocumentTableRowsPerPageChange}
@@ -3624,7 +3980,9 @@ export default function CariDocumentsPage() {
               {rows.length === 0 ? (
                 <tr>
                   <td className="px-3 py-4 text-slate-500" colSpan={documentVisibleColumnCount}>
-                    {listLoading ? "Loading documents..." : "No documents found for current filters."}
+                    {listLoading
+                      ? l("Loading documents...", "Belgeler yukleniyor...")
+                      : l("No documents found for current filters.", "Mevcut filtreler icin belge bulunamadi.")}
                   </td>
                 </tr>
               ) : null}
@@ -3638,7 +3996,7 @@ export default function CariDocumentsPage() {
             onClick={() => setDocumentListPage((current) => Math.max(1, current - 1))}
             disabled={documentListPage <= 1}
           >
-            Previous
+            {l("Previous", "Onceki")}
           </button>
           <button
             type="button"
@@ -3650,18 +4008,22 @@ export default function CariDocumentsPage() {
             }
             disabled={documentListPage >= documentListTotalPages}
           >
-            Next
+            {l("Next", "Sonraki")}
           </button>
         </div>
       </section>
 
       <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-        <h2 className="text-lg font-semibold text-slate-900">Detail + Actions</h2>
+        <h2 className="text-lg font-semibold text-slate-900">
+          {l("Detail + Actions", "Detay + Islemler")}
+        </h2>
         {detailError ? <div className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{detailError}</div> : null}
         {selectedSnapshot ? (
           <div className="mt-4 grid gap-4 lg:grid-cols-2">
             <div className="rounded-lg border border-slate-200 p-4">
-              <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-700">Document Detail</h3>
+              <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-700">
+                {l("Document Detail", "Belge Detayi")}
+              </h3>
               <dl className="mt-3 grid grid-cols-2 gap-2 text-sm">
                 <dt className="font-semibold text-slate-600">documentNo</dt><dd>{selectedSnapshot.documentNo || "-"}</dd>
                 <dt className="font-semibold text-slate-600">status</dt><dd>{selectedSnapshot.status || "-"}</dd>
@@ -4087,24 +4449,26 @@ export default function CariDocumentsPage() {
 
             <div className="space-y-4">
               <div className="rounded-lg border border-slate-200 p-4">
-                <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-700">Draft Actions</h3>
+                <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-700">
+                  {l("Draft Actions", "Taslak Islemleri")}
+                </h3>
                 {editError ? <div className="mt-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{editError}</div> : null}
                 {editMessage ? <div className="mt-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{editMessage}</div> : null}
                 <form className="mt-3 grid gap-2 md:grid-cols-2" onSubmit={handleUpdateDraft}>
-                  <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Legal Entity ID<input type="number" min="1" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={editForm.legalEntityId} onChange={(event) => setEditForm((prev) => ({ ...prev, legalEntityId: event.target.value }))} disabled={!canEditOrCancelSelected || editSaving} /></label>
-                  <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Counterparty ID<input type="number" min="1" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={editForm.counterpartyId} onChange={(event) => setEditForm((prev) => ({ ...prev, counterpartyId: event.target.value }))} disabled={!canEditOrCancelSelected || editSaving} /></label>
+                  <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">{l("Legal Entity ID", "Tuzel Kisilik ID")}<input type="number" min="1" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={editForm.legalEntityId} onChange={(event) => setEditForm((prev) => ({ ...prev, legalEntityId: event.target.value }))} disabled={!canEditOrCancelSelected || editSaving} /></label>
+                  <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">{l("Counterparty ID", "Cari ID")}<input type="number" min="1" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={editForm.counterpartyId} onChange={(event) => setEditForm((prev) => ({ ...prev, counterpartyId: event.target.value }))} disabled={!canEditOrCancelSelected || editSaving} /></label>
                   {canReadCards ? (
                     <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">
                       <label className="block">
-                        Counterparty Lookup
+                        {l("Counterparty Lookup", "Cari Arama")}
                         <Combobox
                           className="mt-1"
                           value={editForm.counterpartyId}
                           options={editCounterpartyLookupOptions}
                           loading={editCounterpartyLoading}
                           disabled={!canEditOrCancelSelected || !toPositiveInt(editForm.legalEntityId) || editSaving}
-                          placeholder={toPositiveInt(editForm.legalEntityId) ? "Type code/name" : "Select legal entity first"}
-                          noOptionsText={toPositiveInt(editForm.legalEntityId) ? "No counterparties found." : "Set legalEntityId to load counterparties."}
+                          placeholder={toPositiveInt(editForm.legalEntityId) ? l("Type code/name", "Kod/ad yazin") : l("Select legal entity first", "Once tuzel kisilik secin")}
+                          noOptionsText={toPositiveInt(editForm.legalEntityId) ? l("No counterparties found.", "Cari bulunamadi.") : l("Set legalEntityId to load counterparties.", "Carileri yuklemek icin legalEntityId secin.")}
                           onInputChange={(nextValue, meta) => {
                             setEditInlineCounterpartyError("");
                             setEditInlineCounterpartyMessage("");
@@ -4131,8 +4495,11 @@ export default function CariDocumentsPage() {
                           disabled={!canInlineCreateCounterpartyInEditForm || editInlineCounterpartySaving || editSaving}
                         >
                           {editInlineCounterpartySaving
-                            ? "Creating counterparty..."
-                            : `Create "${editInlineCounterpartyName || "new counterparty"}"`}
+                            ? l("Creating counterparty...", "Cari olusturuluyor...")
+                            : l(
+                                `Create "${editInlineCounterpartyName || "new counterparty"}"`,
+                                `"${editInlineCounterpartyName || "yeni cari"}" olustur`
+                              )}
                         </button>
                       ) : null}
                       {editInlineCounterpartyError ? (
@@ -4143,26 +4510,31 @@ export default function CariDocumentsPage() {
                       ) : null}
                     </div>
                   ) : null}
-                  <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Document Type<select className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={editForm.documentType} onChange={(event) => setEditForm((prev) => ({ ...prev, documentType: event.target.value }))} disabled={!canEditOrCancelSelected || editSaving}>{DOCUMENT_TYPES.map((documentType) => <option key={`edit-document-type-${documentType}`} value={documentType}>{documentType}</option>)}</select></label>
-                  <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Due Date<input type="date" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={editForm.dueDate} onChange={(event) => setEditForm((prev) => ({ ...prev, dueDate: event.target.value }))} disabled={!canEditOrCancelSelected || editSaving} required={requiresDueDate(editForm.documentType)} /></label>
-                  <button type="submit" className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50" disabled={!canEditOrCancelSelected || editSaving}>{editSaving ? "Saving..." : "Update Draft Document"}</button>
-                  <button type="button" className="rounded-md border border-rose-300 px-4 py-2 text-sm font-semibold text-rose-700 disabled:opacity-50" onClick={handleCancelDraft} disabled={!canEditOrCancelSelected || cancelSaving}>{cancelSaving ? "Cancelling..." : "Cancel Draft"}</button>
+                  <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">{l("Document Type", "Belge Turu")}<select className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={editForm.documentType} onChange={(event) => setEditForm((prev) => ({ ...prev, documentType: event.target.value }))} disabled={!canEditOrCancelSelected || editSaving}>{DOCUMENT_TYPES.map((documentType) => <option key={`edit-document-type-${documentType}`} value={documentType}>{documentType}</option>)}</select></label>
+                  <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">{l("Due Date", "Vade Tarihi")}<input type="date" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={editForm.dueDate} onChange={(event) => setEditForm((prev) => ({ ...prev, dueDate: event.target.value }))} disabled={!canEditOrCancelSelected || editSaving} required={requiresDueDate(editForm.documentType)} /></label>
+                  <button type="submit" className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50" disabled={!canEditOrCancelSelected || editSaving}>{editSaving ? l("Saving...", "Kaydediliyor...") : l("Update Draft Document", "Taslak Belgeyi Guncelle")}</button>
+                  <button type="button" className="rounded-md border border-rose-300 px-4 py-2 text-sm font-semibold text-rose-700 disabled:opacity-50" onClick={handleCancelDraft} disabled={!canEditOrCancelSelected || cancelSaving}>{cancelSaving ? l("Cancelling...", "Iptal ediliyor...") : l("Cancel Draft", "Taslagi Iptal Et")}</button>
                 </form>
                 {cancelError ? <div className="mt-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{cancelError}</div> : null}
               </div>
 
               <div className="rounded-lg border border-slate-200 p-4">
-                <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-700">Post / Reverse</h3>
+                <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-700">
+                  {l("Post / Reverse", "Kaydet / Ters Kayit")}
+                </h3>
                 {cariPostingNotReady ? (
                   <div className="mt-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-                    <p className="font-semibold">Setup incomplete (CARI posting)</p>
+                    <p className="font-semibold">
+                      {l("Setup incomplete (CARI posting)", "Kurulum eksik (CARI kaydi)")}
+                    </p>
                     <p className="mt-1">
-                      Posting is disabled for legalEntityId={selectedDocumentLegalEntityId}.
+                      {l("Posting is disabled for legalEntityId=", "Kayit islemi su legalEntityId icin kapali:")}
+                      {selectedDocumentLegalEntityId}.
                     </p>
                     {Array.isArray(selectedCariPostingReadiness?.missingPurposeCodes) &&
                     selectedCariPostingReadiness.missingPurposeCodes.length > 0 ? (
                       <p className="mt-1">
-                        Missing purpose codes:{" "}
+                        {l("Missing purpose codes:", "Eksik amac kodlari:")}{" "}
                         {selectedCariPostingReadiness.missingPurposeCodes.join(", ")}
                       </p>
                     ) : null}
@@ -4172,7 +4544,7 @@ export default function CariDocumentsPage() {
                         {selectedCariPostingReadiness.invalidMappings.map((row, index) => (
                           <li key={`cari-readiness-invalid-${index}`}>
                             {String(row?.purposeCode || "-")}:{" "}
-                            {formatReadinessReason(row?.reason)}
+                            {formatReadinessReason(row?.reason, l)}
                           </li>
                         ))}
                       </ul>
@@ -4182,19 +4554,19 @@ export default function CariDocumentsPage() {
                         to="/app/ayarlar/hesap-plani-ayarlari#manual-purpose-mappings"
                         className="rounded border border-amber-300 bg-white px-2.5 py-1 text-xs font-semibold text-amber-900"
                       >
-                        Fix manually
+                        {l("Fix manually", "Elle Duzelt")}
                       </Link>
                       <Link
                         to="/app/ayarlar/hesap-plani-ayarlari#template-wizard"
                         className="rounded border border-amber-300 bg-white px-2.5 py-1 text-xs font-semibold text-amber-900"
                       >
-                        Use template
+                        {l("Use template", "Sablon Kullan")}
                       </Link>
                     </div>
                   </div>
                 ) : null}
                 <label className="mt-2 block text-xs font-semibold uppercase tracking-wide text-slate-600">
-                  Default Offset Account (Optional)
+                  {l("Default Offset Account (Optional)", "Varsayilan Karsi Hesap (Opsiyonel)")}
                   <select
                     className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
                     value={postForm.offsetAccountId}
@@ -4208,7 +4580,7 @@ export default function CariDocumentsPage() {
                       !canReadGlAccounts
                     }
                   >
-                    <option value="">Use default CARI purpose mapping</option>
+                    <option value="">{l("Use default CARI purpose mapping", "Varsayilan CARI amac eslemesini kullan")}</option>
                     {filteredPostOffsetAccountOptions.map((row) => (
                       <option key={`post-offset-account-${row.id}`} value={String(row.id)}>
                         {row.code} - {row.name} ({row.accountType || "-"})
@@ -4228,10 +4600,10 @@ export default function CariDocumentsPage() {
                     }
                     disabled={!canPostSelected || postSaving || !canReadGlAccounts}
                   />
-                  Show all account types
+                  {l("Show all account types", "Tum hesap turlerini goster")}
                 </label>
                 <p className="mt-1 text-xs text-slate-600">
-                  Applied when a posting line does not choose its own offset account.
+                  {l("Applied when a posting line does not choose its own offset account.", "Bir kayit satiri kendi karsi hesabini secmezse uygulanir.")}
                 </p>
                 {selectedOffsetAccountType && !postForm.showAllOffsetAccounts ? (
                   <p className="mt-1 text-xs text-slate-600">
@@ -4241,11 +4613,11 @@ export default function CariDocumentsPage() {
                 ) : null}
                 {!canReadGlAccounts ? (
                   <p className="mt-1 text-xs text-amber-700">
-                    Missing permission: `gl.account.read`. Default mapping will be used.
+                    {l("Missing permission: `gl.account.read`. Default mapping will be used.", "Eksik yetki: `gl.account.read`. Varsayilan esleme kullanilacak.")}
                   </p>
                 ) : null}
                 {postOffsetAccountsLoading ? (
-                  <p className="mt-1 text-xs text-slate-600">Loading postable account options...</p>
+                  <p className="mt-1 text-xs text-slate-600">{l("Loading postable account options...", "Kaydedilebilir hesap secenekleri yukleniyor...")}</p>
                 ) : null}
                 {postOffsetAccountsError ? (
                   <p className="mt-1 text-xs text-rose-700">{postOffsetAccountsError}</p>
@@ -4256,8 +4628,11 @@ export default function CariDocumentsPage() {
                 filteredPostOffsetAccountOptions.length === 0 ? (
                   <p className="mt-1 text-xs text-slate-600">
                     {selectedOffsetAccountType && !postForm.showAllOffsetAccounts
-                      ? `No postable ${selectedOffsetAccountType} accounts found for selected legal entity.`
-                      : "No postable accounts found for selected legal entity."}
+                      ? l(
+                          `No postable ${selectedOffsetAccountType} accounts found for selected legal entity.`,
+                          `Secili tuzel kisilik icin kaydedilebilir ${selectedOffsetAccountType} hesap bulunamadi.`
+                        )
+                      : l("No postable accounts found for selected legal entity.", "Secili tuzel kisilik icin kaydedilebilir hesap bulunamadi.")}
                   </p>
                 ) : null}
                 <label className="mt-2 flex items-center gap-2 text-sm text-slate-700">
@@ -4296,13 +4671,13 @@ export default function CariDocumentsPage() {
                     }
                     disabled={!canPostSelected || postSaving}
                   />
-                  Split posting by line items
+                  {l("Split posting by line items", "Kaydi satirlara bol")}
                 </label>
                 {postForm.usePostingLines ? (
                   <div className="mt-2 rounded-md border border-slate-200 bg-slate-50 p-3">
                     <div className="flex items-center justify-between gap-2">
                       <p className="text-xs font-semibold uppercase tracking-wide text-slate-700">
-                        Posting lines
+                        {l("Posting lines", "Kayit satirlari")}
                       </p>
                       <button
                         type="button"
@@ -4310,7 +4685,7 @@ export default function CariDocumentsPage() {
                         onClick={addPostFormPostingLine}
                         disabled={!canPostSelected || postSaving}
                       >
-                        Add line
+                        {l("Add line", "Satir Ekle")}
                       </button>
                     </div>
                     <div className="mt-2 space-y-2">
@@ -4322,7 +4697,7 @@ export default function CariDocumentsPage() {
                           >
                             <div className="flex items-center justify-between gap-2">
                               <p className="text-xs font-semibold text-slate-700">
-                                Line {index + 1}
+                                {l("Line", "Satir")} {index + 1}
                               </p>
                               <button
                                 type="button"
@@ -4334,12 +4709,12 @@ export default function CariDocumentsPage() {
                                   (postForm.postingLines || []).length <= 1
                                 }
                               >
-                                Remove
+                                {l("Remove", "Kaldir")}
                               </button>
                             </div>
                             <div className="mt-2 grid gap-2 md:grid-cols-2">
                               <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                                Description (Optional)
+                                {l("Description (Optional)", "Aciklama (Opsiyonel)")}
                                 <input
                                   type="text"
                                   className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
@@ -4354,7 +4729,7 @@ export default function CariDocumentsPage() {
                                 />
                               </label>
                               <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                                Offset Account (Optional)
+                                {l("Offset Account (Optional)", "Karsi Hesap (Opsiyonel)")}
                                 <select
                                   className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
                                   value={normalizePositiveIntText(line.offsetAccountId)}
@@ -4372,7 +4747,7 @@ export default function CariDocumentsPage() {
                                     !canReadGlAccounts
                                   }
                                 >
-                                  <option value="">Use default offset for this post</option>
+                                  <option value="">{l("Use default offset for this post", "Bu kayit icin varsayilan karsi hesabi kullan")}</option>
                                   {filteredPostOffsetAccountOptions.map((row) => (
                                     <option
                                       key={`post-line-offset-account-${line.rowId}-${row.id}`}
@@ -4384,7 +4759,7 @@ export default function CariDocumentsPage() {
                                 </select>
                               </label>
                               <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                                Invoice Amount (Invoice Currency)
+                                {l("Invoice Amount (Invoice Currency)", "Fatura Tutari (Fatura Para Birimi)")}
                                 <input
                                   type="number"
                                   min="0"
@@ -4402,7 +4777,7 @@ export default function CariDocumentsPage() {
                                 />
                               </label>
                               <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                                Base Amount (Legal Entity Currency)
+                                {l("Base Amount (Legal Entity Currency)", "Baz Tutar (Tuzel Kisilik Para Birimi)")}
                                 <input
                                   type="number"
                                   min="0"
@@ -4426,40 +4801,40 @@ export default function CariDocumentsPage() {
                     </div>
                     <div className="mt-2 text-xs text-slate-700">
                       <p>
-                        Draft totals txn/base:{" "}
+                        {l("Draft totals txn/base:", "Taslak toplam txn/base:")}{" "}
                         {selectedDocumentAmountTxn ?? "-"} /{" "}
                         {selectedDocumentAmountBase ?? "-"}
                       </p>
                       <p>
-                        Posting line totals txn/base:{" "}
+                        {l("Posting line totals txn/base:", "Kayit satiri toplam txn/base:")}{" "}
                         {postFormPostingLineSummary.totalTxn} /{" "}
                         {postFormPostingLineSummary.totalBase}
                       </p>
                     </div>
                     {postFormPostingLineSummary.invalidAmountRows > 0 ? (
                       <p className="mt-1 text-xs text-amber-700">
-                        {postFormPostingLineSummary.invalidAmountRows} line(s) have missing or invalid amounts.
+                        {postFormPostingLineSummary.invalidAmountRows} {l("line(s) have missing or invalid amounts.", "satirda eksik veya gecersiz tutar var.")}
                       </p>
                     ) : null}
                     {postFormPostingLineSummary.lineCount > 0 &&
                     postFormPostingLineSummary.hasDraftTotals &&
                     !postFormPostingLineSummary.matchesDraftTotals ? (
                       <p className="mt-1 text-xs text-amber-700">
-                        Posting line totals must match draft totals before posting.
+                        {l("Posting line totals must match draft totals before posting.", "Kayit oncesi satir toplamlari taslak toplamlariyla eslesmelidir.")}
                       </p>
                     ) : null}
                   </div>
                 ) : null}
-                <label className="mt-2 flex items-center gap-2 text-sm text-slate-700"><input type="checkbox" checked={postForm.useFxOverride} onChange={(event) => setPostForm((prev) => ({ ...prev, useFxOverride: event.target.checked }))} disabled={!canPostSelected || postSaving} />useFxOverride</label>
-                <input type="text" className="mt-2 w-full rounded-md border border-slate-300 px-3 py-2 text-sm" placeholder="fxOverrideReason" value={postForm.fxOverrideReason} onChange={(event) => setPostForm((prev) => ({ ...prev, fxOverrideReason: event.target.value }))} disabled={!canPostSelected || postSaving} />
-                {postForm.useFxOverride && !canFxOverride ? <p className="mt-2 text-sm text-amber-700">You cannot post with FX override. Missing permission: `cari.fx.override`.</p> : null}
-                <button type="button" className="mt-2 rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50" onClick={handlePostDraft} disabled={!canPostSelected || postSaving || !postingLinesReadyForSubmit}>{postSaving ? "Posting..." : "Post Draft"}</button>
+                <label className="mt-2 flex items-center gap-2 text-sm text-slate-700"><input type="checkbox" checked={postForm.useFxOverride} onChange={(event) => setPostForm((prev) => ({ ...prev, useFxOverride: event.target.checked }))} disabled={!canPostSelected || postSaving} />{l("useFxOverride", "Kur gecersiz kilma kullan")}</label>
+                <input type="text" className="mt-2 w-full rounded-md border border-slate-300 px-3 py-2 text-sm" placeholder={l("fxOverrideReason", "Kur gecersiz kilma nedeni")} value={postForm.fxOverrideReason} onChange={(event) => setPostForm((prev) => ({ ...prev, fxOverrideReason: event.target.value }))} disabled={!canPostSelected || postSaving} />
+                {postForm.useFxOverride && !canFxOverride ? <p className="mt-2 text-sm text-amber-700">{l("You cannot post with FX override. Missing permission: `cari.fx.override`.", "Kur gecersiz kilma ile kayit yapamazsiniz. Eksik yetki: `cari.fx.override`.")}</p> : null}
+                <button type="button" className="mt-2 rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50" onClick={handlePostDraft} disabled={!canPostSelected || postSaving || !postingLinesReadyForSubmit}>{postSaving ? l("Posting...", "Kaydediliyor...") : l("Post Draft", "Taslagi Kaydet")}</button>
                 {postError ? <div className="mt-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{postError}</div> : null}
                 {postMessage ? <div className="mt-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{postMessage}</div> : null}
 
-                <label className="mt-3 block text-xs font-semibold uppercase tracking-wide text-slate-600">reverse reason<input type="text" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={reverseForm.reason} onChange={(event) => setReverseForm((prev) => ({ ...prev, reason: event.target.value }))} disabled={!canReverseSelected || reverseSaving} /></label>
-                <label className="mt-2 block text-xs font-semibold uppercase tracking-wide text-slate-600">reversalDate<input type="date" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={reverseForm.reversalDate} onChange={(event) => setReverseForm((prev) => ({ ...prev, reversalDate: event.target.value }))} disabled={!canReverseSelected || reverseSaving} /></label>
-                <button type="button" className="mt-2 rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50" onClick={handleReversePosted} disabled={!canReverseSelected || reverseSaving}>{reverseSaving ? "Reversing..." : "Reverse Posted Document"}</button>
+                <label className="mt-3 block text-xs font-semibold uppercase tracking-wide text-slate-600">{l("Reverse Reason", "Ters Kayit Nedeni")}<input type="text" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={reverseForm.reason} onChange={(event) => setReverseForm((prev) => ({ ...prev, reason: event.target.value }))} disabled={!canReverseSelected || reverseSaving} /></label>
+                <label className="mt-2 block text-xs font-semibold uppercase tracking-wide text-slate-600">{l("Reversal Date", "Ters Kayit Tarihi")}<input type="date" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={reverseForm.reversalDate} onChange={(event) => setReverseForm((prev) => ({ ...prev, reversalDate: event.target.value }))} disabled={!canReverseSelected || reverseSaving} /></label>
+                <button type="button" className="mt-2 rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50" onClick={handleReversePosted} disabled={!canReverseSelected || reverseSaving}>{reverseSaving ? l("Reversing...", "Ters kayit olusturuluyor...") : l("Reverse Posted Document", "Kaydedilmis Belgeyi Tersle")}</button>
                 {reverseError ? <div className="mt-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{reverseError}</div> : null}
                 {reverseMessage ? <div className="mt-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{reverseMessage}</div> : null}
               </div>

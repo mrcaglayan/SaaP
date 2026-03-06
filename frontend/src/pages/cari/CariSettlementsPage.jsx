@@ -22,6 +22,7 @@ import { getCariCounterpartyStatementReport } from "../../api/cariReports.js";
 import { extractCariReplayAndRisks } from "../../api/cariCommon.js";
 import Combobox from "../../components/Combobox.jsx";
 import { useAuth } from "../../auth/useAuth.js";
+import { useI18n } from "../../i18n/useI18n.js";
 import { useWorkingContextDefaults } from "../../context/useWorkingContextDefaults.js";
 import { usePersistedFilters } from "../../hooks/usePersistedFilters.js";
 import { useModuleReadiness } from "../../readiness/useModuleReadiness.js";
@@ -209,30 +210,54 @@ function normalizeUiError(error, fallback) {
   return requestId ? `${message} (requestId: ${requestId})` : message;
 }
 
-function formatReadinessReason(reason) {
+function formatReadinessReason(reason, translate = (en) => en) {
   switch (String(reason || "").trim().toUpperCase()) {
     case "ACCOUNT_NOT_FOUND":
-      return "Mapped account no longer exists.";
+      return translate(
+        "Mapped account no longer exists.",
+        "Eslenen hesap artik mevcut degil."
+      );
     case "ACCOUNT_INACTIVE":
-      return "Mapped account is inactive.";
+      return translate("Mapped account is inactive.", "Eslenen hesap pasif.");
     case "ACCOUNT_NOT_POSTABLE":
-      return "Mapped account is not postable.";
+      return translate(
+        "Mapped account is not postable.",
+        "Eslenen hesap kayit yapilabilir degil."
+      );
     case "ACCOUNT_SCOPE_NOT_LEGAL_ENTITY":
-      return "Mapped account is not in a legal-entity chart.";
+      return translate(
+        "Mapped account is not in a legal-entity chart.",
+        "Eslenen hesap tuzel kisilik hesap planinda degil."
+      );
     case "ACCOUNT_LEGAL_ENTITY_MISMATCH":
-      return "Mapped account belongs to a different legal entity.";
+      return translate(
+        "Mapped account belongs to a different legal entity.",
+        "Eslenen hesap farkli bir tuzel kisilige ait."
+      );
     case "PURPOSES_MUST_MAP_TO_DIFFERENT_ACCOUNTS":
-      return "Control and offset must map to different accounts.";
+      return translate(
+        "Control and offset must map to different accounts.",
+        "Kontrol ve karsi hesap farkli hesaplara eslenmelidir."
+      );
     case "MAPPED_ACCOUNT_ID_INVALID":
-      return "Mapped account id is invalid.";
+      return translate("Mapped account id is invalid.", "Eslenen hesap id gecersiz.");
     case "ACCOUNT_TENANT_MISMATCH":
-      return "Mapped account belongs to a different tenant.";
+      return translate(
+        "Mapped account belongs to a different tenant.",
+        "Eslenen hesap farkli bir tenant'a ait."
+      );
     case "ACCOUNT_TYPE_MISMATCH":
-      return "Mapped account type does not match this purpose.";
+      return translate(
+        "Mapped account type does not match this purpose.",
+        "Eslenen hesap turu bu amacla uyusmuyor."
+      );
     case "ACCOUNT_NORMAL_SIDE_MISMATCH":
-      return "Mapped account normal side does not match this purpose.";
+      return translate(
+        "Mapped account normal side does not match this purpose.",
+        "Eslenen hesap normal bakiye yonu bu amacla uyusmuyor."
+      );
     default:
-      return String(reason || "Invalid mapping.");
+      return String(reason || translate("Invalid mapping.", "Gecersiz esleme."));
   }
 }
 
@@ -412,7 +437,78 @@ const LINKED_CASH_OPEN_SESSION_REQUIRED_ERROR =
 
 export default function CariSettlementsPage() {
   const { hasPermission } = useAuth();
+  const { language } = useI18n();
   const { getModuleRow } = useModuleReadiness();
+  const l = (en, tr) => (language === "tr" ? tr : en);
+  const translateLinkedCashValidationError = (message) => {
+    switch (String(message || "").trim()) {
+      case "Missing permission: cash.txn.create":
+        return l("Missing permission: cash.txn.create", "Eksik yetki: cash.txn.create");
+      case "Missing permission: cash.register.read (required to list OPEN cash sessions).":
+        return l(
+          "Missing permission: cash.register.read (required to list OPEN cash sessions).",
+          "Eksik yetki: cash.register.read (OPEN kasa oturumlarini listelemek icin gerekli)."
+        );
+      case "registerId is required for linked cash transaction.":
+        return l(
+          "registerId is required for linked cash transaction.",
+          "Bagli nakit islemi icin registerId zorunludur."
+        );
+      case LINKED_CASH_OPEN_SESSION_REQUIRED_ERROR:
+        return l(
+          LINKED_CASH_OPEN_SESSION_REQUIRED_ERROR,
+          "Secili kasa icin OPEN durumunda bir kasa oturumu gerekir. Once Kasa Oturumlari ekranindan acin."
+        );
+      case LINKED_CASH_SESSION_REQUIRED_ERROR:
+        return l(
+          LINKED_CASH_SESSION_REQUIRED_ERROR,
+          "Secili kasada session_mode=REQUIRED oldugu icin cashSessionId zorunludur."
+        );
+      case "counterAccountId is required for linked cash transaction.":
+        return l(
+          "counterAccountId is required for linked cash transaction.",
+          "Bagli nakit islemi icin counterAccountId zorunludur."
+        );
+      case "direction must be AR or AP when linked cash creation is enabled.":
+        return l(
+          "direction must be AR or AP when linked cash creation is enabled.",
+          "Bagli nakit olusturma acikken yon AR veya AP olmali."
+        );
+      case "counterpartyId is required when linked cash creation is enabled.":
+        return l(
+          "counterpartyId is required when linked cash creation is enabled.",
+          "Bagli nakit olusturma acikken counterpartyId zorunludur."
+        );
+      case "incomingAmountTxn must be > 0 when linked cash creation is enabled.":
+        return l(
+          "incomingAmountTxn must be > 0 when linked cash creation is enabled.",
+          "Bagli nakit olusturma acikken incomingAmountTxn 0'dan buyuk olmali."
+        );
+      default:
+        return String(message || "");
+    }
+  };
+  const translateAllocationsJsonError = (message) => {
+    const text = String(message || "").trim();
+    if (text === "allocations must be a JSON array.") {
+      return l("allocations must be a JSON array.", "allocations bir JSON dizisi olmali.");
+    }
+    const openItemMatch = text.match(/^allocations\[(\d+)\]\.openItemId must be a positive integer\.$/);
+    if (openItemMatch) {
+      return l(
+        text,
+        `allocations[${openItemMatch[1]}].openItemId pozitif bir tam sayi olmali.`
+      );
+    }
+    const amountMatch = text.match(/^allocations\[(\d+)\]\.amountTxn must be > 0\.$/);
+    if (amountMatch) {
+      return l(
+        text,
+        `allocations[${amountMatch[1]}].amountTxn 0'dan buyuk olmali.`
+      );
+    }
+    return text;
+  };
   const canApply = hasPermission("cari.settlement.apply");
   const canReverse = hasPermission("cari.settlement.reverse");
   const canBankAttach = hasPermission("cari.bank.attach");
@@ -473,7 +569,10 @@ export default function CariSettlementsPage() {
   const [linkedCashAccountError, setLinkedCashAccountError] = useState("");
   const [linkedCashAccountQuery, setLinkedCashAccountQuery] = useState("");
 
-  const [reverseForm, setReverseForm] = useState(() => buildReverseDefaultForm());
+  const [reverseForm, setReverseForm] = useState(() => ({
+    ...buildReverseDefaultForm(),
+    reason: l("Manual settlement reversal", "Manuel mahsuplastirma tersleme"),
+  }));
   const [reverseLookupFilters, setReverseLookupFilters] = useState(() =>
     buildReverseLookupDefaultFilters()
   );
@@ -539,13 +638,22 @@ export default function CariSettlementsPage() {
   const applySettlementCurrencyCode = normalizeCurrencyCode(applyForm.currencyCode);
   const applyFxRateHint = useMemo(() => {
     if (!applySettlementCurrencyCode || !applyFunctionalCurrencyCode) {
-      return "One-off override for this settlement only. It is not saved to FX Rate Management.";
+      return l(
+        "One-off override for this settlement only. It is not saved to FX Rate Management.",
+        "Bu sadece bu mahsuplastirma icin tek seferlik bir gecersiz kilmadir. Kur Yonetimine kaydedilmez."
+      );
     }
     if (applySettlementCurrencyCode === applyFunctionalCurrencyCode) {
-      return `One-off override only. Same-currency settlement uses parity: 1 ${applySettlementCurrencyCode} = 1 ${applyFunctionalCurrencyCode}.`;
+      return l(
+        `One-off override only. Same-currency settlement uses parity: 1 ${applySettlementCurrencyCode} = 1 ${applyFunctionalCurrencyCode}.`,
+        `Sadece tek seferlik gecersiz kilma. Ayni para birimi mahsuplastirmasi esdegerlik kullanir: 1 ${applySettlementCurrencyCode} = 1 ${applyFunctionalCurrencyCode}.`
+      );
     }
-    return `One-off override only. Enter as 1 ${applySettlementCurrencyCode} = X ${applyFunctionalCurrencyCode}. Not saved to FX Rate Management.`;
-  }, [applyFunctionalCurrencyCode, applySettlementCurrencyCode]);
+    return l(
+      `One-off override only. Enter as 1 ${applySettlementCurrencyCode} = X ${applyFunctionalCurrencyCode}. Not saved to FX Rate Management.`,
+      `Sadece tek seferlik gecersiz kilma. 1 ${applySettlementCurrencyCode} = X ${applyFunctionalCurrencyCode} olarak girin. Kur Yonetimine kaydedilmez.`
+    );
+  }, [applyFunctionalCurrencyCode, applySettlementCurrencyCode, language]);
 
   const previewRows = useMemo(
     () =>
@@ -662,11 +770,23 @@ export default function CariSettlementsPage() {
         name:
           fallbackName ||
           (isCounterpartyMappedAccount
-            ? `Counterparty ${mappedAccountMeta.accountRoleLabel} account (ID ${selectedAccountId})`
-            : `Selected account ID ${selectedAccountId}`),
+            ? l(
+                `Counterparty ${mappedAccountMeta.accountRoleLabel} account (ID ${selectedAccountId})`,
+                `Cari ${mappedAccountMeta.accountRoleLabel} hesabi (ID ${selectedAccountId})`
+              )
+            : l(
+                `Selected account ID ${selectedAccountId}`,
+                `Secili hesap ID ${selectedAccountId}`
+              )),
         account_breadcrumb: isCounterpartyMappedAccount
-          ? `Auto-selected from counterparty ${mappedAccountMeta.accountRoleLabel} mapping`
-          : "Account details unavailable in current lookup results",
+          ? l(
+              `Auto-selected from counterparty ${mappedAccountMeta.accountRoleLabel} mapping`,
+              `Cari ${mappedAccountMeta.accountRoleLabel} eslemesinden otomatik secildi`
+            )
+          : l(
+              "Account details unavailable in current lookup results",
+              "Hesap detaylari mevcut arama sonucunda kullanilamiyor"
+            ),
       });
     }
     return rows.map(mapGlAccountLookupOption).filter((row) => row.value);
@@ -674,6 +794,7 @@ export default function CariSettlementsPage() {
     applyForm.counterpartyId,
     applyForm.direction,
     counterpartyOptions,
+    language,
     linkedCashAccountOptions,
     linkedCashForm.counterAccountId,
   ]);
@@ -717,13 +838,23 @@ export default function CariSettlementsPage() {
     if (mappedMeta.accountId && mappedMeta.accountId === counterAccountId) {
       const mappedLabel = [mappedCode, mappedName].filter(Boolean).join(" - ");
       if (mappedLabel) {
-        return `Using counterparty ${mappedMeta.accountRoleLabel} mapped account (${mappedLabel}).`;
+        return l(
+          `Using counterparty ${mappedMeta.accountRoleLabel} mapped account (${mappedLabel}).`,
+          `Cari ${mappedMeta.accountRoleLabel} eslenmis hesabi kullaniliyor (${mappedLabel}).`
+        );
       }
-      return `Using counterparty ${mappedMeta.accountRoleLabel} mapped account ID ${counterAccountId}.`;
+      return l(
+        `Using counterparty ${mappedMeta.accountRoleLabel} mapped account ID ${counterAccountId}.`,
+        `Cari ${mappedMeta.accountRoleLabel} eslenmis hesap ID ${counterAccountId} kullaniliyor.`
+      );
     }
-    return `Using selected account ID ${counterAccountId}. Details are not in current lookup results.`;
+    return l(
+      `Using selected account ID ${counterAccountId}. Details are not in current lookup results.`,
+      `Secili hesap ID ${counterAccountId} kullaniliyor. Detaylar mevcut arama sonucunda yok.`
+    );
   }, [
     applyForm.direction,
+    language,
     linkedCashCounterAccountInLookup,
     linkedCashForm.counterAccountId,
     selectedApplyCounterparty,
@@ -743,17 +874,27 @@ export default function CariSettlementsPage() {
     }
     const normalizedDirection = toUpper(applyForm.direction);
     if (normalizedDirection === "AP") {
-      return "Selected vendor has no AP account configured. Set AP account on counterparty card or choose counterAccount manually.";
+      return l(
+        "Selected vendor has no AP account configured. Set AP account on counterparty card or choose counterAccount manually.",
+        "Secili tedarikci icin AP hesabi tanimli degil. Cari kartinda AP hesabi tanimlayin veya counterAccount'i manuel secin."
+      );
     }
     if (normalizedDirection === "AR") {
-      return "Selected customer has no AR account configured. Set AR account on counterparty card or choose counterAccount manually.";
+      return l(
+        "Selected customer has no AR account configured. Set AR account on counterparty card or choose counterAccount manually.",
+        "Secili musteri icin AR hesabi tanimli degil. Cari kartinda AR hesabi tanimlayin veya counterAccount'i manuel secin."
+      );
     }
-    return "Selected counterparty has no default AR/AP account configured for current direction.";
+    return l(
+      "Selected counterparty has no default AR/AP account configured for current direction.",
+      "Secili cari icin mevcut yone ait varsayilan AR/AP hesabi tanimli degil."
+    );
   }, [
     linkedCashForm.createLinkedCashTransaction,
     linkedCashForm.paymentChannel,
     applyForm.counterpartyId,
     applyForm.direction,
+    language,
     selectedApplyCounterparty,
     selectedApplyCounterpartyAccountId,
   ]);
@@ -915,7 +1056,9 @@ export default function CariSettlementsPage() {
           return;
         }
         setOpenItems([]);
-        setPreviewError(normalizeUiError(error, "Failed to load open-items preview."));
+        setPreviewError(
+          normalizeUiError(error, l("Failed to load open-items preview.", "Acik kalem onizlemesi yuklenemedi."))
+        );
       } finally {
         if (active) {
           setPreviewLoading(false);
@@ -990,7 +1133,15 @@ export default function CariSettlementsPage() {
           return;
         }
         setPreviewFxRates([]);
-        setPreviewFxError(normalizeUiError(error, "Failed to load FX rates for settlement preview."));
+        setPreviewFxError(
+          normalizeUiError(
+            error,
+            l(
+              "Failed to load FX rates for settlement preview.",
+              "Mahsuplastirma onizlemesi icin kur oranlari yuklenemedi."
+            )
+          )
+        );
       } finally {
         if (active) {
           setPreviewFxLoading(false);
@@ -1016,7 +1167,10 @@ export default function CariSettlementsPage() {
       const warnings = [];
       if (!canReadCashRegisters) {
         warnings.push(
-          "Cash register/session lookup unavailable (missing permission: cash.register.read)."
+          l(
+            "Cash register/session lookup unavailable (missing permission: cash.register.read).",
+            "Kasa/kasa oturumu aramasi kullanilamiyor (eksik yetki: cash.register.read)."
+          )
         );
       }
       const [legalEntitiesResult, registersResult, sessionsResult] =
@@ -1034,21 +1188,21 @@ export default function CariSettlementsPage() {
         setLegalEntities(Array.isArray(legalEntitiesResult.value?.rows) ? legalEntitiesResult.value.rows : []);
       } else {
         setLegalEntities([]);
-        warnings.push("Legal entity lookup unavailable.");
+        warnings.push(l("Legal entity lookup unavailable.", "Tuzel kisilik aramasi kullanilamiyor."));
       }
 
       if (registersResult.status === "fulfilled") {
         setCashRegisterOptions(Array.isArray(registersResult.value?.rows) ? registersResult.value.rows : []);
       } else {
         setCashRegisterOptions([]);
-        warnings.push("Cash register lookup unavailable.");
+        warnings.push(l("Cash register lookup unavailable.", "Kasa aramasi kullanilamiyor."));
       }
 
       if (sessionsResult.status === "fulfilled") {
         setOpenCashSessions(Array.isArray(sessionsResult.value?.rows) ? sessionsResult.value.rows : []);
       } else {
         setOpenCashSessions([]);
-        warnings.push("Cash session lookup unavailable.");
+        warnings.push(l("Cash session lookup unavailable.", "Kasa oturumu aramasi kullanilamiyor."));
       }
 
       setLookupWarning(warnings.join(" "));
@@ -1165,7 +1319,13 @@ export default function CariSettlementsPage() {
           }
           setLinkedCashAccountOptions([]);
           setLinkedCashAccountError(
-            normalizeUiError(error, "Failed to load linked-cash counterAccount options.")
+            normalizeUiError(
+              error,
+              l(
+                "Failed to load linked-cash counterAccount options.",
+                "Bagli nakit karsi hesap secenekleri yuklenemedi."
+              )
+            )
           );
         } finally {
           if (active) {
@@ -1342,7 +1502,10 @@ export default function CariSettlementsPage() {
         }
         setReverseSettlementRows([]);
         setReverseSettlementLookupError(
-          normalizeUiError(error, "Failed to load settlement lookup rows.")
+          normalizeUiError(
+            error,
+            l("Failed to load settlement lookup rows.", "Mahsuplastirma arama satirlari yuklenemedi.")
+          )
         );
       } finally {
         if (active) {
@@ -1550,15 +1713,27 @@ export default function CariSettlementsPage() {
     const legalEntityId = toPositiveInt(applyForm.legalEntityId);
     const name = normalizeLookupQuery(applyCounterpartyLookupQuery);
     if (!canUpsertCards) {
-      setApplyInlineCounterpartyError("Missing permission: cari.card.upsert");
+      setApplyInlineCounterpartyError(
+        l("Missing permission: cari.card.upsert", "Eksik yetki: cari.card.upsert")
+      );
       return;
     }
     if (!legalEntityId) {
-      setApplyInlineCounterpartyError("Select legalEntityId before creating a counterparty.");
+      setApplyInlineCounterpartyError(
+        l(
+          "Select legalEntityId before creating a counterparty.",
+          "Cari olusturmadan once legalEntityId secin."
+        )
+      );
       return;
     }
     if (!name) {
-      setApplyInlineCounterpartyError("Type a counterparty name in lookup before creating.");
+      setApplyInlineCounterpartyError(
+        l(
+          "Type a counterparty name in lookup before creating.",
+          "Cari olusturmadan once aramaya cari adini yazin."
+        )
+      );
       return;
     }
 
@@ -1575,17 +1750,22 @@ export default function CariSettlementsPage() {
       const row = response?.row || null;
       const counterpartyId = toPositiveInt(row?.id);
       if (!counterpartyId) {
-        throw new Error("Counterparty create response is missing row.id.");
+        throw new Error(
+          l("Counterparty create response is missing row.id.", "Cari olusturma yanitinda row.id yok.")
+        );
       }
       setCounterpartyOptions((prev) => prependOrReplaceCounterpartyOption(prev, row));
       updateApplyForm("counterpartyId", String(counterpartyId));
       setApplyCounterpartyLookupQuery("");
       setApplyInlineCounterpartyMessage(
-        `Counterparty created and selected. counterpartyId=${counterpartyId}`
+        l(
+          `Counterparty created and selected. counterpartyId=${counterpartyId}`,
+          `Cari olusturuldu ve secildi. counterpartyId=${counterpartyId}`
+        )
       );
     } catch (error) {
       setApplyInlineCounterpartyError(
-        normalizeUiError(error, "Failed to create counterparty from lookup.")
+        normalizeUiError(error, l("Failed to create counterparty from lookup.", "Aramadan cari olusturulamadi."))
       );
     } finally {
       setApplyInlineCounterpartySaving(false);
@@ -1598,15 +1778,27 @@ export default function CariSettlementsPage() {
     const legalEntityId = toPositiveInt(bankApplyForm.legalEntityId);
     const name = normalizeLookupQuery(bankApplyCounterpartyLookupQuery);
     if (!canUpsertCards) {
-      setBankApplyInlineCounterpartyError("Missing permission: cari.card.upsert");
+      setBankApplyInlineCounterpartyError(
+        l("Missing permission: cari.card.upsert", "Eksik yetki: cari.card.upsert")
+      );
       return;
     }
     if (!legalEntityId) {
-      setBankApplyInlineCounterpartyError("Select legalEntityId before creating a counterparty.");
+      setBankApplyInlineCounterpartyError(
+        l(
+          "Select legalEntityId before creating a counterparty.",
+          "Cari olusturmadan once legalEntityId secin."
+        )
+      );
       return;
     }
     if (!name) {
-      setBankApplyInlineCounterpartyError("Type a counterparty name in lookup before creating.");
+      setBankApplyInlineCounterpartyError(
+        l(
+          "Type a counterparty name in lookup before creating.",
+          "Cari olusturmadan once aramaya cari adini yazin."
+        )
+      );
       return;
     }
 
@@ -1623,7 +1815,9 @@ export default function CariSettlementsPage() {
       const row = response?.row || null;
       const counterpartyId = toPositiveInt(row?.id);
       if (!counterpartyId) {
-        throw new Error("Counterparty create response is missing row.id.");
+        throw new Error(
+          l("Counterparty create response is missing row.id.", "Cari olusturma yanitinda row.id yok.")
+        );
       }
       setBankApplyCounterpartyOptions((prev) => prependOrReplaceCounterpartyOption(prev, row));
       setBankApplyForm((prev) => ({
@@ -1632,11 +1826,14 @@ export default function CariSettlementsPage() {
       }));
       setBankApplyCounterpartyLookupQuery("");
       setBankApplyInlineCounterpartyMessage(
-        `Counterparty created and selected. counterpartyId=${counterpartyId}`
+        l(
+          `Counterparty created and selected. counterpartyId=${counterpartyId}`,
+          `Cari olusturuldu ve secildi. counterpartyId=${counterpartyId}`
+        )
       );
     } catch (error) {
       setBankApplyInlineCounterpartyError(
-        normalizeUiError(error, "Failed to create counterparty from lookup.")
+        normalizeUiError(error, l("Failed to create counterparty from lookup.", "Aramadan cari olusturulamadi."))
       );
     } finally {
       setBankApplyInlineCounterpartySaving(false);
@@ -1654,36 +1851,49 @@ export default function CariSettlementsPage() {
     setLinkedCashResult(null);
 
     if (!canApply) {
-      setApplyError("Missing permission: cari.settlement.apply");
+      setApplyError(
+        l("Missing permission: cari.settlement.apply", "Eksik yetki: cari.settlement.apply")
+      );
       return;
     }
     if (applyCariNotReady) {
       setApplyError(
-        "Setup incomplete for selected legal entity. Configure CARI purpose mappings in GL Setup first."
+        l(
+          "Setup incomplete for selected legal entity. Configure CARI purpose mappings in GL Setup first.",
+          "Secili tuzel kisilik icin kurulum eksik. Once GL Ayarlari altinda CARI amac eslemelerini tamamlayin."
+        )
       );
       return;
     }
 
     if (form.autoAllocate && !form.direction) {
-      setApplyError("Direction is required for auto-allocation.");
+      setApplyError(
+        l("Direction is required for auto-allocation.", "Otomatik dagitim icin yon zorunludur.")
+      );
       return;
     }
     if (form.autoAllocate && mixedDirectionRisk) {
       setApplyError(
-        "Open-items preview contains mixed AR/AP rows. Select one direction and retry."
+        l(
+          "Open-items preview contains mixed AR/AP rows. Select one direction and retry.",
+          "Acik kalem onizlemesinde karisik AR/AP satirlari var. Tek bir yon secip tekrar deneyin."
+        )
       );
       return;
     }
     if (form.autoAllocate && canReadFxRates && autoAllocateMissingFxRows.length > 0) {
       setApplyError(
-        "Auto-allocation requires settlement/document FX rates for the preview rows. Add missing SPOT rates or enter manual allocations."
+        l(
+          "Auto-allocation requires settlement/document FX rates for the preview rows. Add missing SPOT rates or enter manual allocations.",
+          "Otomatik dagitim icin onizleme satirlarinda mahsuplastirma/belge kurlari gerekir. Eksik SPOT kurlarini ekleyin veya manuel dagitim girin."
+        )
       );
       return;
     }
 
     const linkedCashValidationError = validateLinkedCashFormBeforeApply(form);
     if (linkedCashValidationError) {
-      setApplyError(linkedCashValidationError);
+      setApplyError(translateLinkedCashValidationError(linkedCashValidationError));
       if (
         linkedCashValidationError === LINKED_CASH_SESSION_REQUIRED_ERROR ||
         linkedCashValidationError === LINKED_CASH_OPEN_SESSION_REQUIRED_ERROR
@@ -1705,7 +1915,9 @@ export default function CariSettlementsPage() {
 
     const manualAllocations = parseManualAllocations(openItems, manualAllocationDraft);
     if (!form.autoAllocate && manualAllocations.length === 0) {
-      setApplyError("allocations are required when autoAllocate=false.");
+      setApplyError(
+        l("allocations are required when autoAllocate=false.", "autoAllocate=false iken allocations zorunludur.")
+      );
       return;
     }
 
@@ -1715,7 +1927,12 @@ export default function CariSettlementsPage() {
       );
       const maxOpen = Number(openItem?.residualAmountTxnAsOf || 0);
       if (allocation.amountTxn > maxOpen + 0.000001) {
-        setApplyError(`Allocation exceeds open amount for openItemId=${allocation.openItemId}.`);
+        setApplyError(
+          l(
+            `Allocation exceeds open amount for openItemId=${allocation.openItemId}.`,
+            `Dagitim tutari openItemId=${allocation.openItemId} icin acik tutari asiyor.`
+          )
+        );
         return;
       }
     }
@@ -1735,10 +1952,18 @@ export default function CariSettlementsPage() {
       setApplyResult(response);
       setApplyFollowUpRisks(replayState.followUpRisks);
       if (replayState.idempotentReplay) {
-        setApplyReplayMessage("Bu istek daha once uygulanmis; mevcut sonuc gosteriliyor.");
+        setApplyReplayMessage(
+          l(
+            "This request was already applied; showing the existing result.",
+            "Bu istek daha once uygulanmis; mevcut sonuc gosteriliyor."
+          )
+        );
       }
       setApplyMessage(
-        `Settlement apply completed. settlementBatchId=${response?.row?.id || "-"}`
+        l(
+          `Settlement apply completed. settlementBatchId=${response?.row?.id || "-"}`,
+          `Mahsuplastirma uygulamasi tamamlandi. settlementBatchId=${response?.row?.id || "-"}`
+        )
       );
       const wantsCashLink =
         linkedCashForm.createLinkedCashTransaction &&
@@ -1749,14 +1974,23 @@ export default function CariSettlementsPage() {
           toPositiveInt(response?.row?.cashTransactionId);
         if (!linkedCashId) {
           setLinkedCashError(
-            "Settlement applied, but linked cash transaction details were not returned."
+            l(
+              "Settlement applied, but linked cash transaction details were not returned.",
+              "Mahsuplastirma uygulandi ancak bagli nakit islem detayi donmedi."
+            )
           );
         } else {
           setLinkedCashResult(response?.cashTransaction || { id: linkedCashId });
           setLinkedCashMessage(
             replayState.idempotentReplay
-              ? `Linked cash transaction already exists. cashTransactionId=${linkedCashId}`
-              : `Linked cash transaction created. cashTransactionId=${linkedCashId}`
+              ? l(
+                  `Linked cash transaction already exists. cashTransactionId=${linkedCashId}`,
+                  `Bagli nakit islemi zaten mevcut. cashTransactionId=${linkedCashId}`
+                )
+              : l(
+                  `Linked cash transaction created. cashTransactionId=${linkedCashId}`,
+                  `Bagli nakit islemi olusturuldu. cashTransactionId=${linkedCashId}`
+                )
           );
         }
       }
@@ -1764,7 +1998,9 @@ export default function CariSettlementsPage() {
       if (shouldClearPendingKeyAfterError(error)) {
         clearPendingIdempotencyKey(intentScope);
       }
-      setApplyError(normalizeUiError(error, "Settlement apply failed."));
+      setApplyError(
+        normalizeUiError(error, l("Settlement apply failed.", "Mahsuplastirma uygulamasi basarisiz oldu."))
+      );
     } finally {
       setApplySubmitting(false);
     }
@@ -1776,28 +2012,39 @@ export default function CariSettlementsPage() {
     setReverseMessage("");
     setReverseResult(null);
     if (!canReverse) {
-      setReverseError("Missing permission: cari.settlement.reverse");
+      setReverseError(
+        l("Missing permission: cari.settlement.reverse", "Eksik yetki: cari.settlement.reverse")
+      );
       return;
     }
 
     const settlementBatchId = toPositiveInt(reverseForm.settlementBatchId);
     if (!settlementBatchId) {
-      setReverseError("settlementBatchId must be a positive integer.");
+      setReverseError(
+        l("settlementBatchId must be a positive integer.", "settlementBatchId pozitif bir tam sayi olmali.")
+      );
       return;
     }
 
     setReverseSubmitting(true);
     try {
       const response = await reverseCariSettlement(settlementBatchId, {
-        reason: String(reverseForm.reason || "").trim() || "Manual settlement reversal",
+        reason:
+          String(reverseForm.reason || "").trim() ||
+          l("Manual settlement reversal", "Manuel mahsuplastirma tersleme"),
         reversalDate: String(reverseForm.reversalDate || "").trim() || undefined,
       });
       setReverseResult(response);
       setReverseMessage(
-        `Settlement reversed. reversalSettlementBatchId=${response?.row?.id || "-"}`
+        l(
+          `Settlement reversed. reversalSettlementBatchId=${response?.row?.id || "-"}`,
+          `Mahsuplastirma terslendi. reversalSettlementBatchId=${response?.row?.id || "-"}`
+        )
       );
     } catch (error) {
-      setReverseError(normalizeUiError(error, "Settlement reverse failed."));
+      setReverseError(
+        normalizeUiError(error, l("Settlement reverse failed.", "Mahsuplastirma tersleme basarisiz oldu."))
+      );
     } finally {
       setReverseSubmitting(false);
     }
@@ -1809,18 +2056,21 @@ export default function CariSettlementsPage() {
     setBankAttachMessage("");
     setBankAttachResult(null);
     if (!canBankAttach) {
-      setBankAttachError("Missing permission: cari.bank.attach");
+      setBankAttachError(l("Missing permission: cari.bank.attach", "Eksik yetki: cari.bank.attach"));
       return;
     }
 
     const legalEntityId = toPositiveInt(bankAttachForm.legalEntityId);
     if (!legalEntityId) {
-      setBankAttachError("legalEntityId is required.");
+      setBankAttachError(l("legalEntityId is required.", "legalEntityId zorunludur."));
       return;
     }
     if (!bankAttachForm.bankStatementLineId && !bankAttachForm.bankTransactionRef) {
       setBankAttachError(
-        "bankStatementLineId or bankTransactionRef is required for bank attach."
+        l(
+          "bankStatementLineId or bankTransactionRef is required for bank attach.",
+          "Banka baglama icin bankStatementLineId veya bankTransactionRef zorunludur."
+        )
       );
       return;
     }
@@ -1830,24 +2080,49 @@ export default function CariSettlementsPage() {
     const unappliedCashId = toPositiveInt(bankAttachForm.unappliedCashId);
     if (targetType === "SETTLEMENT") {
       if (!settlementBatchId) {
-        setBankAttachError("settlementBatchId is required when targetType=SETTLEMENT.");
+        setBankAttachError(
+          l(
+            "settlementBatchId is required when targetType=SETTLEMENT.",
+            "targetType=SETTLEMENT iken settlementBatchId zorunludur."
+          )
+        );
         return;
       }
       if (unappliedCashId) {
-        setBankAttachError("unappliedCashId must be empty when targetType=SETTLEMENT.");
+        setBankAttachError(
+          l(
+            "unappliedCashId must be empty when targetType=SETTLEMENT.",
+            "targetType=SETTLEMENT iken unappliedCashId bos olmali."
+          )
+        );
         return;
       }
     } else if (targetType === "UNAPPLIED_CASH") {
       if (!unappliedCashId) {
-        setBankAttachError("unappliedCashId is required when targetType=UNAPPLIED_CASH.");
+        setBankAttachError(
+          l(
+            "unappliedCashId is required when targetType=UNAPPLIED_CASH.",
+            "targetType=UNAPPLIED_CASH iken unappliedCashId zorunludur."
+          )
+        );
         return;
       }
       if (settlementBatchId) {
-        setBankAttachError("settlementBatchId must be empty when targetType=UNAPPLIED_CASH.");
+        setBankAttachError(
+          l(
+            "settlementBatchId must be empty when targetType=UNAPPLIED_CASH.",
+            "targetType=UNAPPLIED_CASH iken settlementBatchId bos olmali."
+          )
+        );
         return;
       }
     } else {
-      setBankAttachError("targetType must be SETTLEMENT or UNAPPLIED_CASH.");
+      setBankAttachError(
+        l(
+          "targetType must be SETTLEMENT or UNAPPLIED_CASH.",
+          "targetType SETTLEMENT veya UNAPPLIED_CASH olmali."
+        )
+      );
       return;
     }
 
@@ -1870,12 +2145,19 @@ export default function CariSettlementsPage() {
       });
       setBankAttachResult(response);
       if (response?.idempotentReplay) {
-        setBankAttachMessage("Bu istek daha once uygulanmis; mevcut sonuc gosteriliyor.");
+        setBankAttachMessage(
+          l(
+            "This request was already applied; showing the existing result.",
+            "Bu istek daha once uygulanmis; mevcut sonuc gosteriliyor."
+          )
+        );
       } else {
-        setBankAttachMessage("Bank attach completed.");
+        setBankAttachMessage(l("Bank attach completed.", "Banka baglama tamamlandi."));
       }
     } catch (error) {
-      setBankAttachError(normalizeUiError(error, "Bank attach failed."));
+      setBankAttachError(
+        normalizeUiError(error, l("Bank attach failed.", "Banka baglama basarisiz oldu."))
+      );
     } finally {
       setBankAttachSubmitting(false);
     }
@@ -1888,12 +2170,15 @@ export default function CariSettlementsPage() {
     setBankApplyResult(null);
     setBankApplyFollowUpRisks([]);
     if (!canBankApply) {
-      setBankApplyError("Missing permission: cari.bank.apply");
+      setBankApplyError(l("Missing permission: cari.bank.apply", "Eksik yetki: cari.bank.apply"));
       return;
     }
     if (bankApplyCariNotReady) {
       setBankApplyError(
-        "Setup incomplete for selected legal entity. Configure CARI purpose mappings in GL Setup first."
+        l(
+          "Setup incomplete for selected legal entity. Configure CARI purpose mappings in GL Setup first.",
+          "Secili tuzel kisilik icin kurulum eksik. Once GL Ayarlari altinda CARI amac eslemelerini tamamlayin."
+        )
       );
       return;
     }
@@ -1901,21 +2186,26 @@ export default function CariSettlementsPage() {
     const legalEntityId = toPositiveInt(bankApplyForm.legalEntityId);
     const counterpartyId = toPositiveInt(bankApplyForm.counterpartyId);
     if (!legalEntityId) {
-      setBankApplyError("legalEntityId is required.");
+      setBankApplyError(l("legalEntityId is required.", "legalEntityId zorunludur."));
       return;
     }
     if (!counterpartyId) {
-      setBankApplyError("counterpartyId is required.");
+      setBankApplyError(l("counterpartyId is required.", "counterpartyId zorunludur."));
       return;
     }
     if (!bankApplyForm.bankStatementLineId && !bankApplyForm.bankTransactionRef) {
       setBankApplyError(
-        "bankStatementLineId or bankTransactionRef is required for bank apply."
+        l(
+          "bankStatementLineId or bankTransactionRef is required for bank apply.",
+          "Banka uygulama icin bankStatementLineId veya bankTransactionRef zorunludur."
+        )
       );
       return;
     }
     if (bankApplyForm.autoAllocate && !String(bankApplyForm.direction || "").trim()) {
-      setBankApplyError("Direction is required for auto-allocation.");
+      setBankApplyError(
+        l("Direction is required for auto-allocation.", "Otomatik dagitim icin yon zorunludur.")
+      );
       return;
     }
 
@@ -1924,11 +2214,17 @@ export default function CariSettlementsPage() {
       try {
         allocations = parseAllocationsJson(bankApplyForm.allocationsJson);
       } catch (error) {
-        setBankApplyError(error?.message || "allocations JSON is invalid.");
+        setBankApplyError(
+          translateAllocationsJsonError(
+            error?.message || l("allocations JSON is invalid.", "allocations JSON gecersiz.")
+          )
+        );
         return;
       }
       if (allocations.length === 0) {
-        setBankApplyError("allocations are required when autoAllocate=false.");
+        setBankApplyError(
+          l("allocations are required when autoAllocate=false.", "autoAllocate=false iken allocations zorunludur.")
+        );
         return;
       }
     }
@@ -1957,14 +2253,24 @@ export default function CariSettlementsPage() {
       setBankApplyResult(response);
       setBankApplyFollowUpRisks(replayState.followUpRisks);
       if (replayState.idempotentReplay) {
-        setBankApplyMessage("Bu istek daha once uygulanmis; mevcut sonuc gosteriliyor.");
+        setBankApplyMessage(
+          l(
+            "This request was already applied; showing the existing result.",
+            "Bu istek daha once uygulanmis; mevcut sonuc gosteriliyor."
+          )
+        );
       } else {
         setBankApplyMessage(
-          `Bank apply completed. settlementBatchId=${response?.row?.id || "-"}`
+          l(
+            `Bank apply completed. settlementBatchId=${response?.row?.id || "-"}`,
+            `Banka uygulamasi tamamlandi. settlementBatchId=${response?.row?.id || "-"}`
+          )
         );
       }
     } catch (error) {
-      setBankApplyError(normalizeUiError(error, "Bank apply failed."));
+      setBankApplyError(
+        normalizeUiError(error, l("Bank apply failed.", "Banka uygulamasi basarisiz oldu."))
+      );
     } finally {
       setBankApplySubmitting(false);
     }
@@ -1988,9 +2294,14 @@ export default function CariSettlementsPage() {
   return (
     <div className="space-y-5">
       <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-        <h1 className="text-xl font-semibold text-slate-900">Cari Settlements</h1>
+        <h1 className="text-xl font-semibold text-slate-900">
+          {l("Cari Settlements", "Cari Mahsuplastirmalari")}
+        </h1>
         <p className="mt-1 text-sm text-slate-600">
-          Settlement apply/reverse and bank attach/apply workflows are separated on this page.
+          {l(
+            "Settlement apply/reverse and bank attach/apply workflows are separated on this page.",
+            "Mahsuplastirma uygula/tersle ve banka bagla/uygula akislari bu sayfada ayridir."
+          )}
         </p>
         {lookupWarning ? (
           <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
@@ -1999,7 +2310,7 @@ export default function CariSettlementsPage() {
         ) : null}
         <div className="mt-4 grid gap-3 md:grid-cols-4">
           <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-            Legal Entity ID
+            {l("Legal Entity ID", "Tuzel Kisilik ID")}
             {legalEntities.length > 0 ? (
               <select
                 className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
@@ -2007,7 +2318,7 @@ export default function CariSettlementsPage() {
                 onChange={(event) => updateApplyForm("legalEntityId", event.target.value)}
                 disabled={!canApply}
               >
-                <option value="">Select legal entity</option>
+                <option value="">{l("Select legal entity", "Tuzel kisilik secin")}</option>
                 {legalEntities.map((row) => (
                   <option key={`settlement-le-${row.id}`} value={row.id}>
                     {`${row.code || row.id} - ${row.name || "-"}`}
@@ -2026,7 +2337,7 @@ export default function CariSettlementsPage() {
             )}
           </label>
           <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-            Counterparty ID
+            {l("Counterparty ID", "Cari ID")}
             {counterpartyOptions.length > 0 ? (
               <select
                 className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
@@ -2034,7 +2345,7 @@ export default function CariSettlementsPage() {
                 onChange={(event) => updateApplyForm("counterpartyId", event.target.value)}
                 disabled={!canApply}
               >
-                <option value="">Select counterparty</option>
+                <option value="">{l("Select counterparty", "Cari secin")}</option>
                 {counterpartyOptions.map((row) => (
                   <option key={`settlement-cp-${row.id}`} value={row.id}>
                     {`${row.code || row.id} - ${row.name || "-"} (${row.counterpartyType || "OTHER"})`}
@@ -2055,15 +2366,15 @@ export default function CariSettlementsPage() {
           {canReadCards ? (
             <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">
               <label className="block">
-                Counterparty Lookup
+                {l("Counterparty Lookup", "Cari Arama")}
                 <Combobox
                   className="mt-1"
                   value={applyForm.counterpartyId}
                   options={counterpartyLookupOptions}
                   loading={counterpartyLoading}
                   disabled={!canApply || !toPositiveInt(applyForm.legalEntityId)}
-                  placeholder={toPositiveInt(applyForm.legalEntityId) ? "Type code/name" : "Select legal entity first"}
-                  noOptionsText={toPositiveInt(applyForm.legalEntityId) ? "No counterparties found." : "Set legalEntityId to load counterparties."}
+                  placeholder={toPositiveInt(applyForm.legalEntityId) ? l("Type code/name", "Kod/ad yazin") : l("Select legal entity first", "Once tuzel kisilik secin")}
+                  noOptionsText={toPositiveInt(applyForm.legalEntityId) ? l("No counterparties found.", "Cari bulunamadi.") : l("Set legalEntityId to load counterparties.", "Carileri yuklemek icin legalEntityId secin.")}
                   onInputChange={(nextValue, meta) => {
                     setApplyInlineCounterpartyError("");
                     setApplyInlineCounterpartyMessage("");
@@ -2087,8 +2398,11 @@ export default function CariSettlementsPage() {
                   disabled={!canInlineCreateCounterpartyInApplyForm || applyInlineCounterpartySaving}
                 >
                   {applyInlineCounterpartySaving
-                    ? "Creating counterparty..."
-                    : `Create "${applyInlineCounterpartyName || "new counterparty"}"`}
+                    ? l("Creating counterparty...", "Cari olusturuluyor...")
+                    : l(
+                        `Create "${applyInlineCounterpartyName || "new counterparty"}"`,
+                        `"${applyInlineCounterpartyName || "yeni cari"}" olustur`
+                      )}
                 </button>
               ) : null}
               {applyInlineCounterpartyError ? (
@@ -2100,20 +2414,20 @@ export default function CariSettlementsPage() {
             </div>
           ) : null}
           <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-            Direction
+            {l("Direction", "Yon")}
             <select
               className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
               value={applyForm.direction}
               onChange={(event) => updateApplyForm("direction", event.target.value)}
               disabled={!canApply}
             >
-              <option value="">Select</option>
+              <option value="">{l("Select", "Secin")}</option>
               <option value="AR">AR</option>
               <option value="AP">AP</option>
             </select>
           </label>
           <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-            As-Of Date (Preview)
+            {l("As-Of Date (Preview)", "Tarih Itibariyla (Onizleme)")}
             <input
               type="date"
               className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
@@ -2125,7 +2439,7 @@ export default function CariSettlementsPage() {
             />
           </label>
           <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-            Payment Channel
+            {l("Payment Channel", "Odeme Kanali")}
             <select
               className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
               value={linkedCashForm.paymentChannel}
@@ -2156,33 +2470,48 @@ export default function CariSettlementsPage() {
               }
               disabled={!canApply || toUpper(linkedCashForm.paymentChannel) !== "CASH"}
             />
-            Create linked cash transaction after settlement apply
+            {l(
+              "Create linked cash transaction after settlement apply",
+              "Mahsuplastirma sonrasi bagli kasa islemi olustur"
+            )}
           </label>
           {toUpper(linkedCashForm.paymentChannel) !== "CASH" ? (
             <p className="text-xs text-slate-500 md:col-span-2">
-              Select payment channel CASH to enable linked cash transaction creation.
+              {l(
+                "Select payment channel CASH to enable linked cash transaction creation.",
+                "Bagli kasa islemi olusturmayi acmak icin odeme kanali olarak CASH secin."
+              )}
             </p>
           ) : null}
         </div>
       </section>
 
       <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-        <h2 className="text-lg font-semibold text-slate-900">Settlement Apply</h2>
+        <h2 className="text-lg font-semibold text-slate-900">
+          {l("Settlement Apply", "Mahsuplastirma Uygula")}
+        </h2>
         {!canApply ? (
           <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-            Missing permission: `cari.settlement.apply`
+            {l("Missing permission: `cari.settlement.apply`", "Eksik yetki: `cari.settlement.apply`")}
           </div>
         ) : null}
         {applyCariNotReady ? (
           <div className="mt-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-            <p className="font-semibold">Setup incomplete (CARI posting)</p>
+            <p className="font-semibold">
+              {l("Setup incomplete (CARI posting)", "Kurulum eksik (CARI kaydi)")}
+            </p>
             <p className="mt-1">
-              Settlement apply is disabled for legalEntityId={applyLegalEntityId || "-"}.
+              {l(
+                "Settlement apply is disabled for legalEntityId=",
+                "Mahsuplastirma uygulama su legalEntityId icin kapali: "
+              )}
+              {applyLegalEntityId || "-"}.
             </p>
             {Array.isArray(applyCariReadiness?.missingPurposeCodes) &&
             applyCariReadiness.missingPurposeCodes.length > 0 ? (
               <p className="mt-1">
-                Missing purpose codes: {applyCariReadiness.missingPurposeCodes.join(", ")}
+                {l("Missing purpose codes:", "Eksik amac kodlari:")}{" "}
+                {applyCariReadiness.missingPurposeCodes.join(", ")}
               </p>
             ) : null}
             {Array.isArray(applyCariReadiness?.invalidMappings) &&
@@ -2190,7 +2519,7 @@ export default function CariSettlementsPage() {
               <ul className="mt-2 list-disc pl-5">
                 {applyCariReadiness.invalidMappings.map((row, index) => (
                   <li key={`apply-cari-invalid-${index}`}>
-                    {String(row?.purposeCode || "-")}: {formatReadinessReason(row?.reason)}
+                    {String(row?.purposeCode || "-")}: {formatReadinessReason(row?.reason, l)}
                   </li>
                 ))}
               </ul>
@@ -2200,13 +2529,13 @@ export default function CariSettlementsPage() {
                 to="/app/ayarlar/hesap-plani-ayarlari#manual-purpose-mappings"
                 className="rounded border border-amber-300 bg-white px-2.5 py-1 text-xs font-semibold text-amber-900"
               >
-                Fix manually
+                {l("Fix manually", "Elle Duzelt")}
               </Link>
               <Link
                 to="/app/ayarlar/hesap-plani-ayarlari#template-wizard"
                 className="rounded border border-amber-300 bg-white px-2.5 py-1 text-xs font-semibold text-amber-900"
               >
-                Use template
+                {l("Use template", "Sablon Kullan")}
               </Link>
             </div>
           </div>
@@ -2228,7 +2557,7 @@ export default function CariSettlementsPage() {
         ) : null}
         {applyFollowUpRisks.length > 0 ? (
           <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-            <p className="font-semibold">Follow-up risks</p>
+            <p className="font-semibold">{l("Follow-up risks", "Takip riskleri")}</p>
             <ul className="mt-1 list-disc pl-5">
               {applyFollowUpRisks.map((risk, index) => (
                 <li key={`apply-risk-${index}`}>{risk}</li>
@@ -2255,7 +2584,7 @@ export default function CariSettlementsPage() {
           }}
         >
           <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-            Settlement Date
+            {l("Settlement Date", "Mahsuplastirma Tarihi")}
             <input
               type="date"
               className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
@@ -2266,7 +2595,7 @@ export default function CariSettlementsPage() {
             />
           </label>
           <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-            Currency
+            {l("Currency", "Para Birimi")}
             <input
               type="text"
               maxLength={3}
@@ -2278,7 +2607,7 @@ export default function CariSettlementsPage() {
             />
           </label>
           <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-            Incoming Amount Txn
+            {l("Incoming Amount Txn", "Gelen Tutar Txn")}
             <input
               type="number"
               min="0"
@@ -2291,7 +2620,7 @@ export default function CariSettlementsPage() {
             />
           </label>
           <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-            FX Rate (optional)
+            {l("FX Rate (optional)", "Kur (opsiyonel)")}
             <input
               type="number"
               min="0.0000000001"
@@ -2306,7 +2635,7 @@ export default function CariSettlementsPage() {
             </span>
           </label>
           <label className="text-xs font-semibold uppercase tracking-wide text-slate-600 md:col-span-2">
-            Note (optional)
+            {l("Note (optional)", "Not (opsiyonel)")}
             <input
               type="text"
               className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
@@ -2316,7 +2645,7 @@ export default function CariSettlementsPage() {
             />
           </label>
           <label className="text-xs font-semibold uppercase tracking-wide text-slate-600 md:col-span-2">
-            Idempotency Key (auto-generated if empty)
+            {l("Idempotency Key (auto-generated if empty)", "Idempotency Key (bossa otomatik olusur)")}
             <input
               type="text"
               className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
@@ -2332,7 +2661,7 @@ export default function CariSettlementsPage() {
               onChange={(event) => updateApplyForm("autoAllocate", event.target.checked)}
               disabled={!canApply || applySubmitting}
             />
-            autoAllocate
+            {l("autoAllocate", "otomatikDagit")}
           </label>
           <label className="flex items-center gap-2 text-sm text-slate-700 md:col-span-2">
             <input
@@ -2341,7 +2670,7 @@ export default function CariSettlementsPage() {
               onChange={(event) => updateApplyForm("useUnappliedCash", event.target.checked)}
               disabled={!canApply || applySubmitting}
             />
-            useUnappliedCash
+            {l("useUnappliedCash", "kullanilmayanNakdiKullan")}
           </label>
 
           {linkedCashForm.createLinkedCashTransaction &&
@@ -2349,11 +2678,11 @@ export default function CariSettlementsPage() {
             <>
               {!canCreateCashTxn ? (
                 <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 md:col-span-4">
-                  Missing permission: `cash.txn.create`
+                  {l("Missing permission: `cash.txn.create`", "Eksik yetki: `cash.txn.create`")}
                 </div>
               ) : null}
               <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                cash register
+                {l("cash register", "kasa")}
                 {linkedRegisterOptions.length > 0 ? (
                   <select
                     className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
@@ -2368,7 +2697,7 @@ export default function CariSettlementsPage() {
                     disabled={applySubmitting}
                     required
                   >
-                    <option value="">Select register</option>
+                    <option value="">{l("Select register", "Kasa secin")}</option>
                     {linkedRegisterOptions.map((row) => (
                       <option key={`linked-register-${row.id}`} value={row.id}>
                         {`${row.code || row.id} - ${row.name || "-"} (${row.currency_code || "-"})`}
@@ -2394,7 +2723,7 @@ export default function CariSettlementsPage() {
                 )}
               </label>
               <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                cash session {linkedCashSessionRequiredByRegister ? "*" : "(optional)"}
+                {l("cash session", "kasa oturumu")} {linkedCashSessionRequiredByRegister ? "*" : l("(optional)", "(opsiyonel)")}
                 {linkedRegisterOpenSessions.length > 0 ? (
                   <select
                     className={linkedCashSessionInputClass}
@@ -2405,7 +2734,7 @@ export default function CariSettlementsPage() {
                     disabled={applySubmitting}
                     ref={linkedCashSessionInputRef}
                   >
-                    <option value="">Select open session</option>
+                    <option value="">{l("Select open session", "Acik oturum secin")}</option>
                     {linkedRegisterOpenSessions.map((row) => (
                       <option key={`linked-session-${row.id}`} value={row.id}>
                         {`#${row.id} - ${row.cash_register_code || row.cash_register_id}`}
@@ -2428,22 +2757,22 @@ export default function CariSettlementsPage() {
                 {linkedCashSessionMissingOpenSession ? (
                   <p className="mt-1 text-xs normal-case text-rose-700">
                     Selected register has session_mode=REQUIRED but no OPEN session exists.
-                    Open a session on Cash Sessions page first.
+                    {l("Open a session on Cash Sessions page first.", "Once Cash Sessions sayfasinda bir oturum acin.")}
                   </p>
                 ) : null}
                 {!canReadCashSessions ? (
                   <p className="mt-1 text-xs normal-case text-rose-700">
-                    Missing permission: cash.register.read (required to list OPEN sessions).
+                    {l("Missing permission: cash.register.read (required to list OPEN sessions).", "Eksik yetki: cash.register.read (OPEN oturumlari listelemek icin gerekli).")}
                   </p>
                 ) : null}
                 {linkedCashSessionValueMissing && !linkedCashSessionMissingOpenSession ? (
                   <p className="mt-1 text-xs normal-case text-rose-700">
-                    This register requires cashSessionId. Select an OPEN session.
+                    {l("This register requires cashSessionId. Select an OPEN session.", "Bu kasa cashSessionId gerektirir. Bir OPEN oturumu secin.")}
                   </p>
                 ) : null}
               </label>
               <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                counterAccount
+                {l("counterAccount", "karsiHesap")}
                 {canReadGlAccounts ? (
                   <>
                     <Combobox
@@ -2454,13 +2783,13 @@ export default function CariSettlementsPage() {
                       filterOptions={false}
                       placeholder={
                         toPositiveInt(applyForm.legalEntityId)
-                          ? "Type account code/name"
-                          : "Select legal entity first"
+                          ? l("Type account code/name", "Hesap kodu/adi yazin")
+                          : l("Select legal entity first", "Once tuzel kisilik secin")
                       }
                       noOptionsText={
                         toPositiveInt(applyForm.legalEntityId)
-                          ? "No accounts found. Type to refine search."
-                          : "Set legalEntityId to load accounts."
+                          ? l("No accounts found. Type to refine search.", "Hesap bulunamadi. Aramayi daraltin.")
+                          : l("Set legalEntityId to load accounts.", "Hesaplari yuklemek icin legalEntityId secin.")
                       }
                       disabled={applySubmitting || !toPositiveInt(applyForm.legalEntityId)}
                       onInputChange={(nextValue, meta) => {
@@ -2510,7 +2839,7 @@ export default function CariSettlementsPage() {
                 )}
               </label>
               <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                txnDatetime
+                {l("txnDatetime", "islemZamani")}
                 <input
                   type="datetime-local"
                   className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
@@ -2523,7 +2852,7 @@ export default function CariSettlementsPage() {
                 />
               </label>
               <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                bookDate
+                {l("bookDate", "kayitTarihi")}
                 <input
                   type="date"
                   className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
@@ -2536,7 +2865,7 @@ export default function CariSettlementsPage() {
                 />
               </label>
               <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                referenceNo (optional)
+                {l("referenceNo (optional)", "referansNo (opsiyonel)")}
                 <input
                   type="text"
                   className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
@@ -2548,7 +2877,7 @@ export default function CariSettlementsPage() {
                 />
               </label>
               <label className="text-xs font-semibold uppercase tracking-wide text-slate-600 md:col-span-2">
-                description (optional)
+                {l("description (optional)", "aciklama (opsiyonel)")}
                 <input
                   type="text"
                   className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
@@ -2562,8 +2891,10 @@ export default function CariSettlementsPage() {
               {selectedLinkedRegister &&
               toUpper(selectedLinkedRegister.currency_code) !== toUpper(applyForm.currencyCode) ? (
                 <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 md:col-span-4">
-                  Register currency ({selectedLinkedRegister.currency_code}) differs from settlement
-                  currency ({toUpper(applyForm.currencyCode)}). Exchange first, then settle.
+                  {l(
+                    `Register currency (${selectedLinkedRegister.currency_code}) differs from settlement currency (${toUpper(applyForm.currencyCode)}). Exchange first, then settle.`,
+                    `Kasa para birimi (${selectedLinkedRegister.currency_code}) mahsuplastirma para biriminden (${toUpper(applyForm.currencyCode)}) farkli. Once kur degisimi yapin, sonra mahsuplastirin.`
+                  )}
                 </div>
               ) : null}
             </>
@@ -2580,7 +2911,7 @@ export default function CariSettlementsPage() {
                 applyCariNotReady
               }
             >
-              {applySubmitting ? "Applying..." : "Apply Settlement"}
+              {applySubmitting ? l("Applying...", "Uygulaniyor...") : l("Apply Settlement", "Mahsuplastirmayi Uygula")}
             </button>
             <button
               type="button"
@@ -2610,40 +2941,43 @@ export default function CariSettlementsPage() {
               }}
               disabled={applySubmitting}
             >
-              Reset Apply Form
+              {l("Reset Apply Form", "Uygulama Formunu Sifirla")}
             </button>
           </div>
         </form>
 
         {autoAllocateDirectionMissing ? (
           <p className="mt-3 text-sm text-amber-700">
-            Direction is required for auto-allocation.
+            {l("Direction is required for auto-allocation.", "Otomatik dagitim icin yon zorunludur.")}
           </p>
         ) : null}
         {applyForm.autoAllocate && mixedDirectionRisk ? (
           <p className="mt-1 text-sm text-amber-700">
-            Mixed-direction risk detected in preview rows. Select one direction before auto-allocate.
+            {l("Mixed-direction risk detected in preview rows. Select one direction before auto-allocate.", "Onizleme satirlarinda karisik yon riski bulundu. Otomatik dagitimdan once tek yon secin.")}
           </p>
         ) : null}
         {applyForm.autoAllocate && autoAllocateFxMissing ? (
           <p className="mt-1 text-sm text-amber-700">
-            Auto-allocation is blocked: missing settlement/document FX rate on at least one due
-            row.
+            {l("Auto-allocation is blocked: missing settlement/document FX rate on at least one due row.", "Otomatik dagitim engellendi: en az bir satirda mahsuplastirma/belge kuru eksik.")}
           </p>
         ) : null}
 
         <div className="mt-4 rounded-lg border border-slate-200 p-4">
           <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-700">
-            Open-item auto-allocation preview (oldest due first)
+            {l("Open-item auto-allocation preview (oldest due first)", "Acik kalem otomatik dagitim onizlemesi (en eski vade once)")}
           </h3>
           <p className="mt-2 text-sm text-slate-600">
-            This preview shows only posted documents that still have an open residual balance for
-            the selected legal entity, counterparty, and as-of date.
+            {l(
+              "This preview shows only posted documents that still have an open residual balance for the selected legal entity, counterparty, and as-of date.",
+              "Bu onizleme, secili tuzel kisilik, cari ve tarih icin acik bakiye tasiyan sadece kaydedilmis belgeleri gosterir."
+            )}
           </p>
           {!canReadReports ? (
             <p className="mt-2 text-sm text-amber-700">
-              Preview needs permission: `cari.report.read`. Settlement apply/reverse and bank
-              workflows can still be submitted with their own permissions.
+              {l(
+                "Preview needs permission: `cari.report.read`. Settlement apply/reverse and bank workflows can still be submitted with their own permissions.",
+                "Onizleme icin `cari.report.read` yetkisi gerekir. Mahsuplastirma ve banka akislari kendi yetkileriyle yine gonderilebilir."
+              )}
             </p>
           ) : null}
           {previewError ? (
@@ -2653,7 +2987,7 @@ export default function CariSettlementsPage() {
           ) : null}
           {previewFxLoading ? (
             <p className="mt-2 text-sm text-slate-600">
-              Loading exact-date SPOT FX rates for settlement preview...
+              {l("Loading exact-date SPOT FX rates for settlement preview...", "Mahsuplastirma onizlemesi icin tam tarihli SPOT kurlar yukleniyor...")}
             </p>
           ) : null}
           {previewFxError ? (
@@ -2663,30 +2997,36 @@ export default function CariSettlementsPage() {
           ) : null}
           {!canReadFxRates && hasCrossCurrencyPreviewRows ? (
             <p className="mt-2 text-sm text-amber-700">
-              Cross-currency preview requires permission: `fx.rate.read`. You can still submit and
-              the backend will validate rates.
+              {l(
+                "Cross-currency preview requires permission: `fx.rate.read`. You can still submit and the backend will validate rates.",
+                "Capraz para birimi onizlemesi `fx.rate.read` yetkisi ister. Yine de gonderebilirsiniz; backend kurlari dogrular."
+              )}
             </p>
           ) : null}
           {previewMissingFxRows.length > 0 ? (
             <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-              Missing FX for {previewMissingFxRows.length} row(s). Add SPOT rate(s) for settlement
-              date {applyForm.settlementDate || "-"}, or use same-currency settlement.
+              {l("Missing FX for", "Eksik kur")} {previewMissingFxRows.length}{" "}
+              {l(
+                "row(s). Add SPOT rate(s) for settlement date",
+                "satir. Mahsuplastirma tarihi icin SPOT kur ekleyin"
+              )}{" "}
+              {applyForm.settlementDate || "-"}, {l("or use same-currency settlement.", "veya ayni para birimi ile mahsuplastirin.")}
             </div>
           ) : null}
           <div className="mt-3 overflow-x-auto rounded-lg border border-slate-200">
             <table className="min-w-full text-sm">
               <thead className="bg-slate-50 text-left text-slate-600">
                 <tr>
-                  <th className="px-3 py-2">openItemId</th>
-                  <th className="px-3 py-2">documentNo</th>
-                  <th className="px-3 py-2">direction</th>
-                  <th className="px-3 py-2">dueDate</th>
-                  <th className="px-3 py-2">open (doc)</th>
-                  <th className="px-3 py-2">apply (settlement)</th>
-                  <th className="px-3 py-2">equiv. doc apply</th>
-                  <th className="px-3 py-2">residual (doc)</th>
-                  <th className="px-3 py-2">cross rate / source</th>
-                  <th className="px-3 py-2">manual doc amount</th>
+                  <th className="px-3 py-2">{l("openItemId", "openItemId")}</th>
+                  <th className="px-3 py-2">{l("documentNo", "belgeNo")}</th>
+                  <th className="px-3 py-2">{l("direction", "yon")}</th>
+                  <th className="px-3 py-2">{l("dueDate", "vadeTarihi")}</th>
+                  <th className="px-3 py-2">{l("open (doc)", "acik (belge)")}</th>
+                  <th className="px-3 py-2">{l("apply (settlement)", "uygula (mahsuplastirma)")}</th>
+                  <th className="px-3 py-2">{l("equiv. doc apply", "esdeger belge uygulama")}</th>
+                  <th className="px-3 py-2">{l("residual (doc)", "kalan (belge)")}</th>
+                  <th className="px-3 py-2">{l("cross rate / source", "capraz kur / kaynak")}</th>
+                  <th className="px-3 py-2">{l("manual doc amount", "manuel belge tutari")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -2748,8 +3088,11 @@ export default function CariSettlementsPage() {
                   <tr>
                     <td colSpan={10} className="px-3 py-3 text-slate-500">
                       {previewLoading
-                        ? "Loading preview..."
-                        : "No open-item preview rows for the selected legalEntityId, counterpartyId, and asOfDate."}
+                        ? l("Loading preview...", "Onizleme yukleniyor...")
+                        : l(
+                            "No open-item preview rows for the selected legalEntityId, counterpartyId, and asOfDate.",
+                            "Secili legalEntityId, counterpartyId ve asOfDate icin acik kalem onizleme satiri yok."
+                          )}
                     </td>
                   </tr>
                 ) : null}
@@ -2758,7 +3101,8 @@ export default function CariSettlementsPage() {
           </div>
           {!applyForm.autoAllocate ? (
             <p className="mt-2 text-sm text-slate-600">
-              Manual allocations selected: {manualAllocations.length} (document-currency amounts)
+              {l("Manual allocations selected:", "Secilen manuel dagitim:")}{" "}
+              {manualAllocations.length} {l("(document-currency amounts)", "(belge para birimi tutarlari)")}
             </p>
           ) : null}
         </div>
@@ -2766,7 +3110,7 @@ export default function CariSettlementsPage() {
         {applyResult ? (
           <div className="mt-4 rounded-lg border border-slate-200 p-4">
             <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-700">
-              Apply response blocks
+              {l("Apply response blocks", "Uygulama yanit bloklari")}
             </h3>
             <dl className="mt-2 grid grid-cols-2 gap-2 text-sm">
               <dt className="font-semibold text-slate-600">settlementBatchId</dt>
@@ -2800,10 +3144,12 @@ export default function CariSettlementsPage() {
       </section>
 
       <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-        <h2 className="text-lg font-semibold text-slate-900">Settlement Reverse</h2>
+        <h2 className="text-lg font-semibold text-slate-900">
+          {l("Settlement Reverse", "Mahsuplastirmayi Tersle")}
+        </h2>
         {!canReverse ? (
           <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-            Missing permission: `cari.settlement.reverse`
+            {l("Missing permission: `cari.settlement.reverse`", "Eksik yetki: `cari.settlement.reverse`")}
           </div>
         ) : null}
         {reverseError ? (
@@ -2818,7 +3164,7 @@ export default function CariSettlementsPage() {
         ) : null}
         <form className="mt-4 grid gap-3 md:grid-cols-4" onSubmit={onReverse}>
           <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-            lookup legalEntityId
+            {l("lookup legalEntityId", "arama legalEntityId")}
             {legalEntities.length > 0 ? (
               <select
                 className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
@@ -2837,7 +3183,7 @@ export default function CariSettlementsPage() {
                 }}
                 disabled={!canReverse || reverseSubmitting}
               >
-                <option value="">Select legal entity</option>
+                <option value="">{l("Select legal entity", "Tuzel kisilik secin")}</option>
                 {legalEntities.map((row) => (
                   <option key={`reverse-lookup-le-${row.id}`} value={row.id}>
                     {`${row.code || row.id} - ${row.name || "-"}`}
@@ -2867,7 +3213,7 @@ export default function CariSettlementsPage() {
             )}
           </label>
           <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-            lookup counterpartyId (optional)
+            {l("lookup counterpartyId (optional)", "arama counterpartyId (opsiyonel)")}
             <input
               type="number"
               min="1"
@@ -2888,7 +3234,7 @@ export default function CariSettlementsPage() {
             />
           </label>
           <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-            lookup asOfDate
+            {l("lookup asOfDate", "arama asOfDate")}
             <input
               type="date"
               className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
@@ -2908,17 +3254,20 @@ export default function CariSettlementsPage() {
             />
           </label>
           <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-            lookup rows
+            {l("lookup rows", "arama satirlari")}
             <div className="mt-1 rounded-md border border-slate-300 bg-slate-50 px-3 py-2 text-sm font-normal text-slate-700">
               {reverseSettlementLoading
-                ? "Loading..."
-                : `${reverseSettlementLookupOptions.length} selectable settlement(s)`}
+                ? l("Loading...", "Yukleniyor...")
+                : l(
+                    `${reverseSettlementLookupOptions.length} selectable settlement(s)`,
+                    `${reverseSettlementLookupOptions.length} secilebilir mahsuplastirma`
+                  )}
             </div>
           </div>
 
           {canReadReports ? (
             <div className="md:col-span-4 text-xs font-semibold uppercase tracking-wide text-slate-600">
-              Settlement lookup (by settlement no/date/counterparty)
+              {l("Settlement lookup (by settlement no/date/counterparty)", "Mahsuplastirma arama (mahsuplastirma no/tarih/cari)")}
               <Combobox
                 className="mt-1"
                 value={reverseForm.settlementBatchId}
@@ -2931,13 +3280,13 @@ export default function CariSettlementsPage() {
                 }
                 placeholder={
                   toPositiveInt(reverseLookupFilters.legalEntityId)
-                    ? "Type settlement no or counterparty"
-                    : "Select lookup legalEntityId first"
+                    ? l("Type settlement no or counterparty", "Mahsuplastirma no veya cari yazin")
+                    : l("Select lookup legalEntityId first", "Once arama legalEntityId secin")
                 }
                 noOptionsText={
                   toPositiveInt(reverseLookupFilters.legalEntityId)
-                    ? "No reversible settlements found for filters."
-                    : "Set lookup legalEntityId to load settlements."
+                    ? l("No reversible settlements found for filters.", "Filtreler icin terslenebilir mahsuplastirma bulunamadi.")
+                    : l("Set lookup legalEntityId to load settlements.", "Mahsuplastirmalari yuklemek icin arama legalEntityId secin.")
                 }
                 onInputChange={(nextValue, meta) => {
                   const reason = String(meta?.reason || "").trim().toLowerCase();
@@ -2961,14 +3310,14 @@ export default function CariSettlementsPage() {
               ) : null}
               {selectedReverseSettlement ? (
                 <p className="mt-1 text-[11px] normal-case text-slate-600">
-                  Selected:{" "}
+                  {l("Selected:", "Secilen:")}{" "}
                   {selectedReverseSettlement.settlementNo ||
                     `#${selectedReverseSettlement.settlementBatchId || "-"}`}
                   {selectedReverseSettlement.settlementBatchId
                     ? ` (ID ${selectedReverseSettlement.settlementBatchId})`
                     : ""}{" "}
-                  | Date {selectedReverseSettlement.settlementDate || "-"} | Status{" "}
-                  {selectedReverseSettlement.statusCurrent || "-"} | Counterparty{" "}
+                  | {l("Date", "Tarih")} {selectedReverseSettlement.settlementDate || "-"} | {l("Status", "Durum")}{" "}
+                  {selectedReverseSettlement.statusCurrent || "-"} | {l("Counterparty", "Cari")}{" "}
                   {selectedReverseSettlement.counterpartyCodeCurrent ||
                     selectedReverseSettlement.counterpartyNameCurrent ||
                     selectedReverseSettlement.counterpartyId ||
@@ -2978,13 +3327,15 @@ export default function CariSettlementsPage() {
             </div>
           ) : (
             <div className="md:col-span-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-              Settlement lookup needs permission: `cari.report.read`. You can still reverse by
-              manual `settlementBatchId`.
+              {l(
+                "Settlement lookup needs permission: `cari.report.read`. You can still reverse by manual `settlementBatchId`.",
+                "Mahsuplastirma aramasi icin `cari.report.read` yetkisi gerekir. Yine de manuel `settlementBatchId` ile ters kayit yapabilirsiniz."
+              )}
             </div>
           )}
 
           <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-            settlementBatchId
+            {l("settlementBatchId", "settlementBatchId")}
             <input
               type="number"
               min="1"
@@ -2998,7 +3349,7 @@ export default function CariSettlementsPage() {
             />
           </label>
           <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-            reversalDate
+            {l("reversalDate", "tersKayitTarihi")}
             <input
               type="date"
               className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
@@ -3010,7 +3361,7 @@ export default function CariSettlementsPage() {
             />
           </label>
           <label className="text-xs font-semibold uppercase tracking-wide text-slate-600 md:col-span-2">
-            reason
+            {l("reason", "neden")}
             <input
               type="text"
               className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
@@ -3027,7 +3378,7 @@ export default function CariSettlementsPage() {
               className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
               disabled={!canReverse || reverseSubmitting}
             >
-              {reverseSubmitting ? "Reversing..." : "Reverse Settlement"}
+              {reverseSubmitting ? l("Reversing...", "Tersleniyor...") : l("Reverse Settlement", "Mahsuplastirmayi Tersle")}
             </button>
           </div>
         </form>
@@ -3039,10 +3390,12 @@ export default function CariSettlementsPage() {
       </section>
 
       <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-        <h2 className="text-lg font-semibold text-slate-900">Bank Attach (explicit workflow)</h2>
+        <h2 className="text-lg font-semibold text-slate-900">
+          {l("Bank Attach (explicit workflow)", "Banka Bagla (acik akis)")}
+        </h2>
         {!canBankAttach ? (
           <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-            Missing permission: `cari.bank.attach`
+            {l("Missing permission: `cari.bank.attach`", "Eksik yetki: `cari.bank.attach`")}
           </div>
         ) : null}
         {bankAttachError ? (
@@ -3057,7 +3410,7 @@ export default function CariSettlementsPage() {
         ) : null}
         <form className="mt-4 grid gap-3 md:grid-cols-4" onSubmit={onBankAttach}>
           <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-            legalEntityId
+            {l("legalEntityId", "legalEntityId")}
             <input
               type="number"
               min="1"
@@ -3071,7 +3424,7 @@ export default function CariSettlementsPage() {
             />
           </label>
           <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-            targetType
+            {l("targetType", "hedefTip")}
             <select
               className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
               value={bankAttachForm.targetType}
@@ -3085,7 +3438,7 @@ export default function CariSettlementsPage() {
             </select>
           </label>
           <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-            settlementBatchId
+            {l("settlementBatchId", "settlementBatchId")}
             <input
               type="number"
               min="1"
@@ -3102,7 +3455,7 @@ export default function CariSettlementsPage() {
             />
           </label>
           <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-            unappliedCashId
+            {l("unappliedCashId", "unappliedCashId")}
             <input
               type="number"
               min="1"
@@ -3119,7 +3472,7 @@ export default function CariSettlementsPage() {
             />
           </label>
           <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-            bankStatementLineId
+            {l("bankStatementLineId", "bankStatementLineId")}
             <input
               type="number"
               min="1"
@@ -3132,7 +3485,7 @@ export default function CariSettlementsPage() {
             />
           </label>
           <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-            bankTransactionRef
+            {l("bankTransactionRef", "bankTransactionRef")}
             <input
               type="text"
               className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
@@ -3144,7 +3497,7 @@ export default function CariSettlementsPage() {
             />
           </label>
           <label className="text-xs font-semibold uppercase tracking-wide text-slate-600 md:col-span-2">
-            note
+            {l("note", "not")}
             <input
               type="text"
               className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
@@ -3161,7 +3514,7 @@ export default function CariSettlementsPage() {
               className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
               disabled={!canBankAttach || bankAttachSubmitting}
             >
-              {bankAttachSubmitting ? "Attaching..." : "Attach Bank Reference"}
+              {bankAttachSubmitting ? l("Attaching...", "Baglaniyor...") : l("Attach Bank Reference", "Banka Referansi Bagla")}
             </button>
           </div>
         </form>
@@ -3173,22 +3526,27 @@ export default function CariSettlementsPage() {
       </section>
 
       <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-        <h2 className="text-lg font-semibold text-slate-900">Bank Apply (explicit workflow)</h2>
+        <h2 className="text-lg font-semibold text-slate-900">
+          {l("Bank Apply (explicit workflow)", "Banka Uygula (acik akis)")}
+        </h2>
         {!canBankApply ? (
           <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-            Missing permission: `cari.bank.apply`
+            {l("Missing permission: `cari.bank.apply`", "Eksik yetki: `cari.bank.apply`")}
           </div>
         ) : null}
         {bankApplyCariNotReady ? (
           <div className="mt-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-            <p className="font-semibold">Setup incomplete (CARI posting)</p>
+            <p className="font-semibold">
+              {l("Setup incomplete (CARI posting)", "Kurulum eksik (CARI kaydi)")}
+            </p>
             <p className="mt-1">
-              Bank apply is disabled for legalEntityId={bankApplyLegalEntityId || "-"}.
+              {l("Bank apply is disabled for legalEntityId=", "Banka uygulama su legalEntityId icin kapali:")}
+              {bankApplyLegalEntityId || "-"}.
             </p>
             {Array.isArray(bankApplyCariReadiness?.missingPurposeCodes) &&
             bankApplyCariReadiness.missingPurposeCodes.length > 0 ? (
               <p className="mt-1">
-                Missing purpose codes:{" "}
+                {l("Missing purpose codes:", "Eksik amac kodlari:")}{" "}
                 {bankApplyCariReadiness.missingPurposeCodes.join(", ")}
               </p>
             ) : null}
@@ -3197,7 +3555,7 @@ export default function CariSettlementsPage() {
               <ul className="mt-2 list-disc pl-5">
                 {bankApplyCariReadiness.invalidMappings.map((row, index) => (
                   <li key={`bank-apply-cari-invalid-${index}`}>
-                    {String(row?.purposeCode || "-")}: {formatReadinessReason(row?.reason)}
+                    {String(row?.purposeCode || "-")}: {formatReadinessReason(row?.reason, l)}
                   </li>
                 ))}
               </ul>
@@ -3207,13 +3565,13 @@ export default function CariSettlementsPage() {
                 to="/app/ayarlar/hesap-plani-ayarlari#manual-purpose-mappings"
                 className="rounded border border-amber-300 bg-white px-2.5 py-1 text-xs font-semibold text-amber-900"
               >
-                Fix manually
+                {l("Fix manually", "Elle Duzelt")}
               </Link>
               <Link
                 to="/app/ayarlar/hesap-plani-ayarlari#template-wizard"
                 className="rounded border border-amber-300 bg-white px-2.5 py-1 text-xs font-semibold text-amber-900"
               >
-                Use template
+                {l("Use template", "Sablon Kullan")}
               </Link>
             </div>
           </div>
@@ -3230,7 +3588,7 @@ export default function CariSettlementsPage() {
         ) : null}
         {bankApplyFollowUpRisks.length > 0 ? (
           <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-            <p className="font-semibold">Follow-up risks</p>
+            <p className="font-semibold">{l("Follow-up risks", "Takip riskleri")}</p>
             <ul className="mt-1 list-disc pl-5">
               {bankApplyFollowUpRisks.map((risk, index) => (
                 <li key={`bank-apply-risk-${index}`}>{risk}</li>
@@ -3271,15 +3629,15 @@ export default function CariSettlementsPage() {
           {canReadCards ? (
             <div className="text-xs font-semibold uppercase tracking-wide text-slate-600 md:col-span-2">
               <label className="block">
-                counterpartyLookup
+                {l("counterpartyLookup", "cariArama")}
                 <Combobox
                   className="mt-1"
                   value={bankApplyForm.counterpartyId}
                   options={bankApplyCounterpartyLookupOptions}
                   loading={bankApplyCounterpartyLoading}
                   disabled={!canBankApply || bankApplySubmitting || !toPositiveInt(bankApplyForm.legalEntityId)}
-                  placeholder={toPositiveInt(bankApplyForm.legalEntityId) ? "Type code/name" : "Select legal entity first"}
-                  noOptionsText={toPositiveInt(bankApplyForm.legalEntityId) ? "No counterparties found." : "Set legalEntityId to load counterparties."}
+                  placeholder={toPositiveInt(bankApplyForm.legalEntityId) ? l("Type code/name", "Kod/ad yazin") : l("Select legal entity first", "Once tuzel kisilik secin")}
+                  noOptionsText={toPositiveInt(bankApplyForm.legalEntityId) ? l("No counterparties found.", "Cari bulunamadi.") : l("Set legalEntityId to load counterparties.", "Carileri yuklemek icin legalEntityId secin.")}
                   onInputChange={(nextValue, meta) => {
                     setBankApplyInlineCounterpartyError("");
                     setBankApplyInlineCounterpartyMessage("");
@@ -3306,8 +3664,11 @@ export default function CariSettlementsPage() {
                   disabled={!canInlineCreateCounterpartyInBankApplyForm || bankApplyInlineCounterpartySaving || bankApplySubmitting}
                 >
                   {bankApplyInlineCounterpartySaving
-                    ? "Creating counterparty..."
-                    : `Create "${bankApplyInlineCounterpartyName || "new counterparty"}"`}
+                    ? l("Creating counterparty...", "Cari olusturuluyor...")
+                    : l(
+                        `Create "${bankApplyInlineCounterpartyName || "new counterparty"}"`,
+                        `"${bankApplyInlineCounterpartyName || "yeni cari"}" olustur`
+                      )}
                 </button>
               ) : null}
               {bankApplyInlineCounterpartyError ? (
@@ -3319,7 +3680,7 @@ export default function CariSettlementsPage() {
             </div>
           ) : null}
           <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-            direction
+            {l("direction", "yon")}
             <select
               className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
               value={bankApplyForm.direction}
@@ -3328,13 +3689,13 @@ export default function CariSettlementsPage() {
               }
               disabled={!canBankApply || bankApplySubmitting}
             >
-              <option value="">Select</option>
+              <option value="">{l("Select", "Secin")}</option>
               <option value="AR">AR</option>
               <option value="AP">AP</option>
             </select>
           </label>
           <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-            settlementDate
+            {l("settlementDate", "mahsuplastirmaTarihi")}
             <input
               type="date"
               className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
@@ -3347,7 +3708,7 @@ export default function CariSettlementsPage() {
             />
           </label>
           <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-            currencyCode
+            {l("currencyCode", "paraBirimi")}
             <input
               type="text"
               maxLength={3}
@@ -3361,7 +3722,7 @@ export default function CariSettlementsPage() {
             />
           </label>
           <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-            incomingAmountTxn
+            {l("incomingAmountTxn", "gelenTutarTxn")}
             <input
               type="number"
               min="0"
@@ -3376,7 +3737,7 @@ export default function CariSettlementsPage() {
             />
           </label>
           <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-            bankStatementLineId
+            {l("bankStatementLineId", "bankStatementLineId")}
             <input
               type="number"
               min="1"
@@ -3389,7 +3750,7 @@ export default function CariSettlementsPage() {
             />
           </label>
           <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-            bankTransactionRef
+            {l("bankTransactionRef", "bankTransactionRef")}
             <input
               type="text"
               className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
@@ -3409,7 +3770,7 @@ export default function CariSettlementsPage() {
               }
               disabled={!canBankApply || bankApplySubmitting}
             />
-            autoAllocate
+            {l("autoAllocate", "otomatikDagit")}
           </label>
           <label className="flex items-center gap-2 text-sm text-slate-700 md:col-span-2">
             <input
@@ -3420,10 +3781,10 @@ export default function CariSettlementsPage() {
               }
               disabled={!canBankApply || bankApplySubmitting}
             />
-            useUnappliedCash
+            {l("useUnappliedCash", "kullanilmayanNakdiKullan")}
           </label>
           <label className="text-xs font-semibold uppercase tracking-wide text-slate-600 md:col-span-4">
-            allocations JSON (required if autoAllocate=false)
+            {l("allocations JSON (required if autoAllocate=false)", "allocations JSON (autoAllocate=false ise zorunlu)")}
             <textarea
               rows={4}
               className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal font-mono"
@@ -3436,7 +3797,7 @@ export default function CariSettlementsPage() {
             />
           </label>
           <label className="text-xs font-semibold uppercase tracking-wide text-slate-600 md:col-span-2">
-            bankApplyIdempotencyKey
+            {l("bankApplyIdempotencyKey", "bankApplyIdempotencyKey")}
             <input
               type="text"
               className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
@@ -3451,7 +3812,7 @@ export default function CariSettlementsPage() {
             />
           </label>
           <label className="text-xs font-semibold uppercase tracking-wide text-slate-600 md:col-span-2">
-            note
+            {l("note", "not")}
             <input
               type="text"
               className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
@@ -3468,7 +3829,7 @@ export default function CariSettlementsPage() {
               className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
               disabled={!canBankApply || bankApplySubmitting || bankApplyCariNotReady}
             >
-              {bankApplySubmitting ? "Applying..." : "Apply Bank Settlement"}
+              {bankApplySubmitting ? l("Applying...", "Uygulaniyor...") : l("Apply Bank Settlement", "Banka Mahsuplastirmasini Uygula")}
             </button>
           </div>
         </form>
