@@ -70,7 +70,12 @@ async function listOperationalSmokeCandidateTenantIds() {
     .map((row) => parsePositiveInt(row.id))
     .filter(Boolean);
   const priority = [1, 2];
-  return Array.from(new Set([...priority, ...discovered]));
+  const discoveredSet = new Set(discovered);
+  const prioritized = [
+    ...priority.filter((tenantId) => discoveredSet.has(tenantId)),
+    ...discovered.filter((tenantId) => !priority.includes(tenantId)),
+  ];
+  return Array.from(new Set(prioritized));
 }
 
 async function resolveAnyWorkflowPermissionCodeForUser(tenantId, userId) {

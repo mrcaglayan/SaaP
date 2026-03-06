@@ -1600,7 +1600,7 @@ POST
                     "name": "KAMBIYO KARLARI",
                     "accountType": "REVENUE",
                     "normalSide": "CREDIT",
-                    "allowPosting": false
+                    "allowPosting": true
                 },
                 {
                     "code": "647",
@@ -1649,7 +1649,7 @@ POST
                     "name": "KAMBIYO ZARARLARI",
                     "accountType": "EXPENSE",
                     "normalSide": "DEBIT",
-                    "allowPosting": false
+                    "allowPosting": true
                 },
                 {
                     "code": "657",
@@ -3646,7 +3646,7 @@ POST
                     "name": "KAMBIYO KARLARI",
                     "accountType": "REVENUE",
                     "normalSide": "CREDIT",
-                    "allowPosting": false
+                    "allowPosting": true
                 },
                 {
                     "code": "647",
@@ -3695,7 +3695,7 @@ POST
                     "name": "KAMBIYO ZARARLARI",
                     "accountType": "EXPENSE",
                     "normalSide": "DEBIT",
-                    "allowPosting": false
+                    "allowPosting": true
                 },
                 {
                     "code": "657",

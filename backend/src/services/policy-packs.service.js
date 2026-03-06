@@ -2440,78 +2440,6 @@ const PACKS = Object.freeze([
               allowPosting: true,
             }),
           }),
-          Object.freeze({
-            purposeCode: "CARI_SETTLEMENT_FX_GAIN",
-            rules: Object.freeze({
-              allowPosting: true,
-              accountType: "REVENUE",
-              normalSide: "CREDIT",
-            }),
-            match: Object.freeze({
-              codeExact: Object.freeze(["4050"]),
-            }),
-            suggestCreate: Object.freeze({
-              code: "4050",
-              name: "Foreign Exchange Gain",
-              accountType: "REVENUE",
-              normalSide: "CREDIT",
-              allowPosting: true,
-            }),
-          }),
-          Object.freeze({
-            purposeCode: "CARI_SETTLEMENT_FX_LOSS",
-            rules: Object.freeze({
-              allowPosting: true,
-              accountType: "EXPENSE",
-              normalSide: "DEBIT",
-            }),
-            match: Object.freeze({
-              codeExact: Object.freeze(["7050"]),
-            }),
-            suggestCreate: Object.freeze({
-              code: "7050",
-              name: "Foreign Exchange Loss",
-              accountType: "EXPENSE",
-              normalSide: "DEBIT",
-              allowPosting: true,
-            }),
-          }),
-          Object.freeze({
-            purposeCode: "CARI_SETTLEMENT_FX_GAIN",
-            rules: Object.freeze({
-              allowPosting: true,
-              accountType: "REVENUE",
-              normalSide: "CREDIT",
-            }),
-            match: Object.freeze({
-              codeExact: Object.freeze(["4050"]),
-            }),
-            suggestCreate: Object.freeze({
-              code: "4050",
-              name: "Foreign Exchange Gain",
-              accountType: "REVENUE",
-              normalSide: "CREDIT",
-              allowPosting: true,
-            }),
-          }),
-          Object.freeze({
-            purposeCode: "CARI_SETTLEMENT_FX_LOSS",
-            rules: Object.freeze({
-              allowPosting: true,
-              accountType: "EXPENSE",
-              normalSide: "DEBIT",
-            }),
-            match: Object.freeze({
-              codeExact: Object.freeze(["7050"]),
-            }),
-            suggestCreate: Object.freeze({
-              code: "7050",
-              name: "Foreign Exchange Loss",
-              accountType: "EXPENSE",
-              normalSide: "DEBIT",
-              allowPosting: true,
-            }),
-          }),
         ]),
       }),
       Object.freeze({
@@ -2640,6 +2568,42 @@ const PACKS = Object.freeze([
               allowPosting: true,
             }),
           }),
+          Object.freeze({
+            purposeCode: "CARI_SETTLEMENT_FX_GAIN",
+            rules: Object.freeze({
+              allowPosting: true,
+              accountType: "REVENUE",
+              normalSide: "CREDIT",
+            }),
+            match: Object.freeze({
+              codeExact: Object.freeze(["4050"]),
+            }),
+            suggestCreate: Object.freeze({
+              code: "4050",
+              name: "Foreign Exchange Gain",
+              accountType: "REVENUE",
+              normalSide: "CREDIT",
+              allowPosting: true,
+            }),
+          }),
+          Object.freeze({
+            purposeCode: "CARI_SETTLEMENT_FX_LOSS",
+            rules: Object.freeze({
+              allowPosting: true,
+              accountType: "EXPENSE",
+              normalSide: "DEBIT",
+            }),
+            match: Object.freeze({
+              codeExact: Object.freeze(["7050"]),
+            }),
+            suggestCreate: Object.freeze({
+              code: "7050",
+              name: "Foreign Exchange Loss",
+              accountType: "EXPENSE",
+              normalSide: "DEBIT",
+              allowPosting: true,
+            }),
+          }),
         ]),
       }),
       Object.freeze({
@@ -2763,6 +2727,42 @@ const PACKS = Object.freeze([
             suggestCreate: Object.freeze({
               code: "5000",
               name: "Operating Expenses",
+              accountType: "EXPENSE",
+              normalSide: "DEBIT",
+              allowPosting: true,
+            }),
+          }),
+          Object.freeze({
+            purposeCode: "CARI_SETTLEMENT_FX_GAIN",
+            rules: Object.freeze({
+              allowPosting: true,
+              accountType: "REVENUE",
+              normalSide: "CREDIT",
+            }),
+            match: Object.freeze({
+              codeExact: Object.freeze(["4050"]),
+            }),
+            suggestCreate: Object.freeze({
+              code: "4050",
+              name: "Foreign Exchange Gain",
+              accountType: "REVENUE",
+              normalSide: "CREDIT",
+              allowPosting: true,
+            }),
+          }),
+          Object.freeze({
+            purposeCode: "CARI_SETTLEMENT_FX_LOSS",
+            rules: Object.freeze({
+              allowPosting: true,
+              accountType: "EXPENSE",
+              normalSide: "DEBIT",
+            }),
+            match: Object.freeze({
+              codeExact: Object.freeze(["7050"]),
+            }),
+            suggestCreate: Object.freeze({
+              code: "7050",
+              name: "Foreign Exchange Loss",
               accountType: "EXPENSE",
               normalSide: "DEBIT",
               allowPosting: true,
