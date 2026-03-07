@@ -988,16 +988,6 @@ export default function CariDocumentsPage() {
       DOCUMENT_TABLE_DEFAULT_ROWS_PER_PAGE,
     [documentTablePrefs.rowsPerPage]
   );
-  const documentListTotalPages = useMemo(() => {
-    if (!rows.length) {
-      return 1;
-    }
-    return Math.max(1, Math.ceil(rows.length / documentRowsPerPage));
-  }, [documentRowsPerPage, rows.length]);
-  const pagedDocumentRows = useMemo(() => {
-    const startIndex = Math.max(0, (documentListPage - 1) * documentRowsPerPage);
-    return rows.slice(startIndex, startIndex + documentRowsPerPage);
-  }, [documentListPage, documentRowsPerPage, rows]);
   const documentVisibleColumnCount = Math.max(1, documentVisibleColumns.length);
   const selectedSavedView = useMemo(
     () =>
@@ -1029,6 +1019,35 @@ export default function CariDocumentsPage() {
     [rows, selectedDocumentId]
   );
   const selectedSnapshot = selectedDetail || selectedRow;
+  const selectedDocumentOutsideList = useMemo(() => {
+    const selectedId = Number(selectedSnapshot?.id || 0);
+    if (!selectedId) {
+      return false;
+    }
+    return !rows.some((row) => Number(row?.id || 0) === selectedId);
+  }, [rows, selectedSnapshot]);
+  const documentListRows = useMemo(() => {
+    if (!selectedDocumentOutsideList || !selectedSnapshot) {
+      return rows;
+    }
+    return [
+      {
+        ...selectedSnapshot,
+        _outsideActiveFilters: true,
+      },
+      ...rows,
+    ];
+  }, [rows, selectedDocumentOutsideList, selectedSnapshot]);
+  const documentListTotalPages = useMemo(() => {
+    if (!documentListRows.length) {
+      return 1;
+    }
+    return Math.max(1, Math.ceil(documentListRows.length / documentRowsPerPage));
+  }, [documentListRows.length, documentRowsPerPage]);
+  const pagedDocumentRows = useMemo(() => {
+    const startIndex = Math.max(0, (documentListPage - 1) * documentRowsPerPage);
+    return documentListRows.slice(startIndex, startIndex + documentRowsPerPage);
+  }, [documentListPage, documentListRows, documentRowsPerPage]);
   const selectedDocumentDirection = normalizeDirection(
     selectedSnapshot?.direction || selectedSnapshot?.documentDirection
   );
@@ -2321,6 +2340,13 @@ export default function CariDocumentsPage() {
     }
     setDocumentListPage(documentListTotalPages);
   }, [documentListPage, documentListTotalPages]);
+
+  useEffect(() => {
+    if (!selectedDocumentOutsideList || documentListPage === 1) {
+      return;
+    }
+    setDocumentListPage(1);
+  }, [documentListPage, selectedDocumentOutsideList]);
 
   async function handleSaveOpsStatus(event) {
     event.preventDefault();
@@ -3943,9 +3969,17 @@ export default function CariDocumentsPage() {
         </h2>
         <p className="mt-1 text-sm text-slate-600">
           {l("Total rows", "Toplam satir")}: {totalRows} |{" "}
-          {l("Showing", "Gosterilen")}: {pagedDocumentRows.length} / {rows.length} |{" "}
+          {l("Showing", "Gosterilen")}: {pagedDocumentRows.length} / {documentListRows.length} |{" "}
           {l("Page", "Sayfa")} {documentListPage}/{documentListTotalPages}
         </p>
+        {selectedDocumentOutsideList ? (
+          <p className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+            {l(
+              "Selected document is outside the active list filters and is shown temporarily.",
+              "Secili belge aktif liste filtrelerinin disinda; gecici olarak gosteriliyor."
+            )}
+          </p>
+        ) : null}
         <TablePreferencesPanel
           className="mt-3"
           title={l("Document table preferences", "Belge tablo tercihleri")}
@@ -3986,7 +4020,11 @@ export default function CariDocumentsPage() {
                 <tr
                   key={`doc-row-${row.id}`}
                   className={`border-t border-slate-100 ${
-                    Number(row.id) === Number(selectedDocumentId) ? "bg-cyan-50" : "bg-white"
+                    row._outsideActiveFilters
+                      ? "bg-amber-50"
+                      : Number(row.id) === Number(selectedDocumentId)
+                        ? "bg-cyan-50"
+                        : "bg-white"
                   }`}
                 >
                   {documentVisibleColumns.map((column) => (
@@ -3999,7 +4037,7 @@ export default function CariDocumentsPage() {
                   ))}
                 </tr>
               ))}
-              {rows.length === 0 ? (
+              {documentListRows.length === 0 ? (
                 <tr>
                   <td className="px-3 py-4 text-slate-500" colSpan={documentVisibleColumnCount}>
                     {listLoading
