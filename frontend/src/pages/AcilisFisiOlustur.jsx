@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Combobox from "../components/Combobox.jsx";
 import {
   createJournal,
@@ -138,6 +138,7 @@ export default function AcilisFisiOlustur() {
   });
   const [lines, setLines] = useState([createLine(), createLine({ followsFirstUnit: true })]);
   const [lineAmountFocusById, setLineAmountFocusById] = useState({});
+  const formRef = useRef(null);
 
   const selectedLegalEntityId = toPositiveInt(form.legalEntityId);
   const selectedBookId = toPositiveInt(form.bookId);
@@ -542,6 +543,28 @@ export default function AcilisFisiOlustur() {
     Boolean(String(form.periodDate || "").trim()) &&
     Boolean(resolvedFiscalPeriodId);
   const canCopyFirstUnitToAll = Boolean(toPositiveInt(lines[0]?.operatingUnitId));
+
+  useEffect(() => {
+    function handleKeyDown(event) {
+      const isSaveShortcut =
+        (event.ctrlKey || event.metaKey) &&
+        !event.altKey &&
+        !event.shiftKey &&
+        String(event.key || "").toLowerCase() === "s";
+      if (!isSaveShortcut) {
+        return;
+      }
+      event.preventDefault();
+      if (canSubmit && formRef.current) {
+        formRef.current.requestSubmit();
+      }
+    }
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [canSubmit]);
 
   function setFormField(field, value) {
     setForm((prev) => ({
@@ -1064,7 +1087,11 @@ export default function AcilisFisiOlustur() {
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="flex min-h-0 flex-1 flex-col gap-3">
+        <form
+          ref={formRef}
+          onSubmit={handleSubmit}
+          className="flex min-h-0 flex-1 flex-col gap-3"
+        >
           <section className="min-h-45 shrink-0 basis-1/5 overflow-auto rounded-xl border border-slate-200 bg-white px-4">
             <div className="grid items-start gap-0.5 md:grid-cols-4">
               <label className="space-y-0.5">
@@ -1273,8 +1300,8 @@ export default function AcilisFisiOlustur() {
                   </div>
                   <div className="text-[11px] text-slate-500">
                     {l(
-                      "Shortcuts: Ctrl/Cmd+D fill-down description, Alt+B auto-balance focused Debit/Credit cell, Alt+K apply balance to focused Debit/Credit input.",
-                      "Kisayollar: Ctrl/Cmd+D aciklama kopyalar, Alt+B odaktaki Borc/Alacak hucresini otomatik dengeler, Alt+K bakiyeyi odaktaki Borc/Alacak alanina yazar."
+                      "Shortcuts: Ctrl/Cmd+S save, Ctrl/Cmd+D fill-down description, Alt+B auto-balance focused Debit/Credit cell, Alt+K apply balance to focused Debit/Credit input.",
+                      "Kisayollar: Ctrl/Cmd+S kaydet, Ctrl/Cmd+D aciklama kopyalar, Alt+B odaktaki Borc/Alacak hucresini otomatik dengeler, Alt+K bakiyeyi odaktaki Borc/Alacak alanina yazar."
                     )}
                   </div>
                 </div>
@@ -1519,6 +1546,10 @@ export default function AcilisFisiOlustur() {
                 <button
                   type="submit"
                   disabled={!canSubmit}
+                  title={l(
+                    "Save opening entry (Ctrl/Cmd+S)",
+                    "Acilis fisini kaydet (Ctrl/Cmd+S)"
+                  )}
                   className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
                 >
                   {submitting

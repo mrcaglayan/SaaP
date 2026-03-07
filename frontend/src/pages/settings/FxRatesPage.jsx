@@ -1,5 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
-import { bulkUpsertFxRates, listFxRates } from "../../api/fxAdmin.js";
+import {
+  bulkUpsertFxRates,
+  importTcmbDailyRates,
+  listFxRates,
+} from "../../api/fxAdmin.js";
 import { useAuth } from "../../auth/useAuth.js";
 import { useI18n } from "../../i18n/useI18n.js";
 import TenantReadinessChecklist from "../../readiness/TenantReadinessChecklist.jsx";
@@ -36,6 +40,11 @@ export default function FxRatesPage() {
     fromCurrencyCode: "",
     toCurrencyCode: "",
     rateType: "",
+  });
+  const [tcmbImportForm, setTcmbImportForm] = useState({
+    rateDate: "",
+    pricingMode: "FOREX_MID",
+    rateType: "SPOT",
   });
   const [draftRows, setDraftRows] = useState([createDraftRow(today)]);
 
@@ -176,6 +185,44 @@ export default function FxRatesPage() {
     await loadRates(queryForm);
   }
 
+  async function handleTcmbImport(event) {
+    event.preventDefault();
+    if (!canUpsertRates) {
+      setError(l("Missing permission: fx.rate.bulk_upsert", "Eksik yetki: fx.rate.bulk_upsert"));
+      return;
+    }
+
+    setSaving(true);
+    setError("");
+    setMessage("");
+    try {
+      const response = await importTcmbDailyRates(tcmbImportForm);
+      const skippedCodes = Array.isArray(response?.skippedCurrencyCodes)
+        ? response.skippedCurrencyCodes
+        : [];
+      const skippedText = skippedCodes.length
+        ? l(
+            ` Skipped unsupported currencies: ${skippedCodes.join(", ")}.`,
+            ` Desteklenmeyen para birimleri atlandi: ${skippedCodes.join(", ")}.`
+          )
+        : "";
+      setMessage(
+        l(
+          `TCMB import completed for ${response?.importedRateDate || tcmbImportForm.rateDate}. Upserted ${Number(response?.upserted || 0)} rate rows.${skippedText}`,
+          `TCMB ice aktarma ${response?.importedRateDate || tcmbImportForm.rateDate} icin tamamlandi. ${Number(response?.upserted || 0)} kur satiri guncellendi.${skippedText}`
+        )
+      );
+      await loadRates();
+    } catch (err) {
+      setError(
+        err?.response?.data?.message ||
+          l("Failed to import TCMB daily rates.", "TCMB gunluk kurlari ice aktarilamadi.")
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
   if (!canReadRates && !canUpsertRates) {
     return (
       <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
@@ -213,6 +260,71 @@ export default function FxRatesPage() {
           {message}
         </div>
       )}
+
+      <section className="rounded-xl border border-slate-200 bg-white p-4">
+        <div className="mb-3">
+          <h2 className="text-sm font-semibold text-slate-700">
+            {l("TCMB Daily Import", "TCMB Gunluk Ice Aktarma")}
+          </h2>
+        <p className="mt-1 text-sm text-slate-600">
+          {l(
+            "Fetch TCMB daily XML and upsert reference FX rates as both FOREIGN/TRY and TRY/FOREIGN pairs.",
+            "TCMB gunluk XML kaynagini cekip referans kurlari hem DOVIZ/TRY hem TRY/DOVIZ pariteleri olarak gunceller."
+          )}
+        </p>
+        </div>
+
+        <form onSubmit={handleTcmbImport} className="grid gap-2 md:grid-cols-4">
+          <input
+            type="date"
+            value={tcmbImportForm.rateDate}
+            onChange={(event) =>
+              setTcmbImportForm((prev) => ({ ...prev, rateDate: event.target.value }))
+            }
+            className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+          />
+          <select
+            value={tcmbImportForm.pricingMode}
+            onChange={(event) =>
+              setTcmbImportForm((prev) => ({ ...prev, pricingMode: event.target.value }))
+            }
+            className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+          >
+            {["FOREX_MID", "FOREX_BUYING", "FOREX_SELLING"].map((pricingMode) => (
+              <option key={pricingMode} value={pricingMode}>
+                {pricingMode}
+              </option>
+            ))}
+          </select>
+          <select
+            value={tcmbImportForm.rateType}
+            onChange={(event) =>
+              setTcmbImportForm((prev) => ({ ...prev, rateType: event.target.value }))
+            }
+            className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+          >
+            {["SPOT", "AVERAGE", "CLOSING"].map((rateType) => (
+              <option key={rateType} value={rateType}>
+                {rateType}
+              </option>
+            ))}
+          </select>
+          <button
+            type="submit"
+            disabled={!canUpsertRates || saving}
+            className="rounded-lg bg-emerald-700 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60"
+          >
+            {saving ? l("Importing...", "Ice aktariliyor...") : l("Import from TCMB", "TCMB'den al")}
+          </button>
+        </form>
+
+        <p className="mt-2 text-xs text-slate-500">
+          {l(
+            "Leave date empty to use TCMB today.xml (latest bulletin). Current TCMB feed is TRY-based only; it does not provide direct AFN/USD style pairs.",
+            "En son bulletin icin tarihi bos birakin ve TCMB today.xml kullanilsin. Guncel TCMB akisi sadece TRY tabanlidir; AFN/USD gibi dogrudan pariteler saglamaz."
+          )}
+        </p>
+      </section>
 
       <section className="rounded-xl border border-slate-200 bg-white p-4">
         <h2 className="mb-3 text-sm font-semibold text-slate-700">

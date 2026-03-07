@@ -1,6 +1,7 @@
 import express from "express";
 import { query } from "../db.js";
 import { requirePermission } from "../middleware/rbac.js";
+import { importTcmbDailyRates } from "../services/fx.tcmb.service.js";
 import {
   asyncHandler,
   badRequest,
@@ -8,6 +9,30 @@ import {
 } from "./_utils.js";
 
 const router = express.Router();
+
+router.post(
+  "/rates/import/tcmb-daily",
+  requirePermission("fx.rate.bulk_upsert"),
+  asyncHandler(async (req, res) => {
+    const tenantId = resolveTenantId(req);
+    if (!tenantId) {
+      throw badRequest("tenantId is required");
+    }
+
+    const result = await importTcmbDailyRates({
+      tenantId,
+      rateDate: req.body?.rateDate ?? req.body?.date ?? "",
+      pricingMode: req.body?.pricingMode ?? "FOREX_MID",
+      rateType: req.body?.rateType ?? "SPOT",
+      runQuery: query,
+    });
+
+    return res.status(201).json({
+      ok: true,
+      ...result,
+    });
+  })
+);
 
 router.post(
   "/rates/bulk-upsert",

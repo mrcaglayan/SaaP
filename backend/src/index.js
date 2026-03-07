@@ -149,6 +149,8 @@ const corsOptions = {
   allowedHeaders: [
     "Content-Type",
     "Authorization",
+    "Idempotency-Key",
+    "X-Idempotency-Key",
     "X-Provider-Key",
     "X-Request-Id",
     "X-Correlation-Id",

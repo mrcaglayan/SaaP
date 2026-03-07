@@ -11,7 +11,7 @@
     "db:migrate": "node src/migrate.js",
     "db:migrate:status": "node src/migrate.js status",
     "db:reset": "npm run db:drop && npm run db:init && npm run db:seed:core && npm run db:seed:provider-admin",
-    "db:reset-tenantli": "npm run db:drop && npm run db:init && npm run db:seed:core && npm run db:seed:provider-admin && npm run db:seed",
+    "db:reset-tenantli": "npm run db:reset && npm run db:seed",
     "db:reset:starter": "npm run db:reset && npm run db:seed:starter",
     "db:seed:core": "node src/seedCoreCli.js",
     "db:seed:starter": "node src/seedStarterCli.js",

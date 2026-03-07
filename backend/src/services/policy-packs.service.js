@@ -1962,7 +1962,7 @@ const TR_UNIFORM_DEFAULT_NON_POSTING_CODES = Object.freeze(
 );
 
 const TR_UNIFORM_POSTABLE_EXCEPTION_CODES = Object.freeze(
-  new Set(["600", "632", "770"])
+  new Set(["600", "632", "646", "656", "770"])
 );
 
 function shouldForceTrUniformNonPostingByCode(code) {

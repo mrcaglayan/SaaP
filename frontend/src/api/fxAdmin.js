@@ -17,6 +17,11 @@ export async function listFxRates(params = {}) {
   return response.data;
 }
 
+export async function importTcmbDailyRates(payload = {}) {
+  const response = await api.post("/api/v1/fx/rates/import/tcmb-daily", payload);
+  return response.data;
+}
+
 export async function bulkUpsertFxRates(rates) {
   const response = await api.post("/api/v1/fx/rates/bulk-upsert", { rates });
   return response.data;
