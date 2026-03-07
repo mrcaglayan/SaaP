@@ -100,6 +100,17 @@ function normalizeCurrency(value) {
     .toUpperCase();
 }
 
+function normalizeOptionalShortText(value, maxLength = 255) {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  const normalized = String(value).trim();
+  if (!normalized) {
+    return null;
+  }
+  return normalized.slice(0, maxLength);
+}
+
 function normalizeOptionalPositiveDecimal(value, label) {
   if (value === undefined || value === null || value === "") {
     return null;
@@ -143,6 +154,71 @@ function normalizeCashFxFallbackMaxDays(value, fallbackMode) {
 
 function amountsAreClose(left, right, epsilon = AMOUNT_EPSILON) {
   return Math.abs(Number(left || 0) - Number(right || 0)) <= epsilon;
+}
+
+async function fetchSettlementPostedJournalId({
+  tenantId,
+  settlementBatchId,
+  runQuery = query,
+}) {
+  const parsedSettlementBatchId = parsePositiveInt(settlementBatchId);
+  if (!parsedSettlementBatchId) {
+    return null;
+  }
+  const result = await runQuery(
+    `SELECT posted_journal_entry_id
+     FROM cari_settlement_batches
+     WHERE tenant_id = ?
+       AND id = ?
+     LIMIT 1`,
+    [tenantId, parsedSettlementBatchId]
+  );
+  return parsePositiveInt(result.rows?.[0]?.posted_journal_entry_id);
+}
+
+async function fetchJournalLinesByEntryId({
+  journalEntryId,
+  runQuery = query,
+}) {
+  const parsedJournalEntryId = parsePositiveInt(journalEntryId);
+  if (!parsedJournalEntryId) {
+    return [];
+  }
+  const result = await runQuery(
+    `SELECT
+       line_no,
+       account_id,
+       operating_unit_id,
+       counterparty_legal_entity_id,
+       description,
+       currency_code,
+       amount_txn,
+       debit_base,
+       credit_base,
+       tax_code
+     FROM journal_lines
+     WHERE journal_entry_id = ?
+     ORDER BY line_no ASC`,
+    [parsedJournalEntryId]
+  );
+  return result.rows || [];
+}
+
+function buildSharedCashReversalJournalLines({
+  originalJournalLines,
+  reversalDescription,
+}) {
+  return (Array.isArray(originalJournalLines) ? originalJournalLines : []).map((line) => ({
+    accountId: parsePositiveInt(line.account_id),
+    operatingUnitId: parsePositiveInt(line.operating_unit_id) || null,
+    counterpartyLegalEntityId: parsePositiveInt(line.counterparty_legal_entity_id) || null,
+    description: normalizeOptionalShortText(reversalDescription, 255),
+    currencyCode: normalizeCurrency(line.currency_code),
+    amountTxn: Number((Number(line.amount_txn || 0) * -1).toFixed(6)),
+    debitBase: Number(Number(line.credit_base || 0).toFixed(6)),
+    creditBase: Number(Number(line.debit_base || 0).toFixed(6)),
+    taxCode: normalizeOptionalShortText(line.tax_code, 40),
+  }));
 }
 
 async function resolveBookBaseCurrencyCodeForLegalEntity({
@@ -2913,12 +2989,37 @@ export async function reverseCashTransactionById({
     }
     const reversalPostedJournalEntryId = parsePositiveInt(reversal.posted_journal_entry_id);
     if (asUpper(reversal.status) !== "POSTED" || !reversalPostedJournalEntryId) {
+      let reversalJournalLinesOverride = null;
+      const originalPostedJournalEntryId = parsePositiveInt(original.posted_journal_entry_id);
+      const linkedSettlementBatchId = parsePositiveInt(original.linked_cari_settlement_batch_id);
+      const linkedSettlementPostedJournalId = await fetchSettlementPostedJournalId({
+        tenantId: payload.tenantId,
+        settlementBatchId: linkedSettlementBatchId,
+        runQuery: tx.query,
+      });
+      const usesSharedSettlementJournal =
+        Boolean(originalPostedJournalEntryId) &&
+        originalPostedJournalEntryId === linkedSettlementPostedJournalId;
+      if (usesSharedSettlementJournal) {
+        const originalJournalLines = await fetchJournalLinesByEntryId({
+          journalEntryId: originalPostedJournalEntryId,
+          runQuery: tx.query,
+        });
+        if (originalJournalLines.length > 0) {
+          reversalJournalLinesOverride = buildSharedCashReversalJournalLines({
+            originalJournalLines,
+            reversalDescription: `Reversal of ${original.txn_no}: ${payload.reverseReason}`,
+          });
+        }
+      }
       const reversalPosting = await createAndPostCashJournalTx(tx, {
         tenantId: payload.tenantId,
         userId: payload.userId,
         legalEntityId: parsePositiveInt(reversal.legal_entity_id),
         cashTxn: reversal,
         req,
+        journalLinesOverride: reversalJournalLinesOverride,
+        descriptionOverride: `Reversal of ${original.txn_no}: ${payload.reverseReason}`.slice(0, 255),
       });
 
       await postCashTransaction({

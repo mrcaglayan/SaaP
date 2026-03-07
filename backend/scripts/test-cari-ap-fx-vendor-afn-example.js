@@ -386,7 +386,8 @@ async function createOrgFixtures({ tenantId, stamp }) {
        (?, ?, ?, 'LIABILITY', 'CREDIT', TRUE, NULL, TRUE),
        (?, ?, ?, 'ASSET', 'DEBIT', TRUE, NULL, TRUE),
        (?, ?, ?, 'REVENUE', 'CREDIT', TRUE, NULL, TRUE),
-       (?, ?, ?, 'EXPENSE', 'DEBIT', TRUE, NULL, TRUE)`,
+       (?, ?, ?, 'EXPENSE', 'DEBIT', TRUE, NULL, TRUE),
+       (?, ?, ?, 'ASSET', 'DEBIT', TRUE, NULL, TRUE)`,
     [
       coaId,
       `${accountPrefix}01`,
@@ -403,13 +404,16 @@ async function createOrgFixtures({ tenantId, stamp }) {
       coaId,
       `${accountPrefix}05`,
       "FX Loss",
+      coaId,
+      `${accountPrefix}06`,
+      "Cash",
     ]
   );
   const accountRows = await query(
     `SELECT id, code
      FROM accounts
      WHERE coa_id = ?
-       AND code IN (?, ?, ?, ?, ?)
+       AND code IN (?, ?, ?, ?, ?, ?)
      ORDER BY code`,
     [
       coaId,
@@ -418,6 +422,7 @@ async function createOrgFixtures({ tenantId, stamp }) {
       `${accountPrefix}03`,
       `${accountPrefix}04`,
       `${accountPrefix}05`,
+      `${accountPrefix}06`,
     ]
   );
   const accountByCode = new Map(
@@ -428,11 +433,13 @@ async function createOrgFixtures({ tenantId, stamp }) {
   const bankAccountId = accountByCode.get(`${accountPrefix}03`);
   const fxGainAccountId = accountByCode.get(`${accountPrefix}04`);
   const fxLossAccountId = accountByCode.get(`${accountPrefix}05`);
+  const cashAccountId = accountByCode.get(`${accountPrefix}06`);
   assert(purchasesAccountId > 0, "Purchases account missing");
   assert(apControlAccountId > 0, "AP control account missing");
   assert(bankAccountId > 0, "Bank account missing");
   assert(fxGainAccountId > 0, "FX gain account missing");
   assert(fxLossAccountId > 0, "FX loss account missing");
+  assert(cashAccountId > 0, "Cash account missing");
 
   await query(
     `INSERT INTO journal_purpose_accounts (
@@ -534,12 +541,15 @@ async function createOrgFixtures({ tenantId, stamp }) {
     bankAccountId,
     fxGainAccountId,
     fxLossAccountId,
+    cashAccountId,
   };
 }
 
 async function createAndPostDocument({
   token,
   fixtures,
+  counterpartyId = fixtures.counterpartyId,
+  paymentTermId = fixtures.paymentTermId,
   direction = "AP",
   documentType = "INVOICE",
   documentDate,
@@ -555,8 +565,8 @@ async function createAndPostDocument({
     requestPath: "/api/v1/cari/documents",
     body: {
       legalEntityId: fixtures.legalEntityId,
-      counterpartyId: fixtures.counterpartyId,
-      paymentTermId: fixtures.paymentTermId,
+      counterpartyId,
+      paymentTermId,
       direction,
       documentType,
       documentDate,
@@ -593,6 +603,43 @@ async function createAndPostDocument({
   assert(openItemId > 0, "Open item missing after post");
 
   return { documentId, openItemId };
+}
+
+async function createCounterparty({
+  tenantId,
+  legalEntityId,
+  paymentTermId,
+  code,
+  name,
+  currencyCode = "USD",
+}) {
+  await query(
+    `INSERT INTO counterparties (
+        tenant_id,
+        legal_entity_id,
+        code,
+        name,
+        is_customer,
+        is_vendor,
+        default_currency_code,
+        default_payment_term_id,
+        status
+     )
+     VALUES (?, ?, ?, ?, FALSE, TRUE, ?, ?, 'ACTIVE')`,
+    [tenantId, legalEntityId, code, name, currencyCode, paymentTermId]
+  );
+  const result = await query(
+    `SELECT id
+     FROM counterparties
+     WHERE tenant_id = ?
+       AND legal_entity_id = ?
+       AND code = ?
+     LIMIT 1`,
+    [tenantId, legalEntityId, code]
+  );
+  const counterpartyId = toNumber(result.rows?.[0]?.id);
+  assert(counterpartyId > 0, "Counterparty create failed");
+  return counterpartyId;
 }
 
 async function createBankStatementLineFixture({
@@ -769,6 +816,37 @@ async function insertFxRate({
   );
 }
 
+async function createCashRegister({
+  token,
+  tenantId,
+  legalEntityId,
+  accountId,
+  code,
+  name,
+  currencyCode,
+}) {
+  const response = await apiRequest({
+    token,
+    method: "POST",
+    requestPath: "/api/v1/cash/registers",
+    body: {
+      tenantId,
+      legalEntityId,
+      accountId,
+      code,
+      name,
+      registerType: "DRAWER",
+      sessionMode: "OPTIONAL",
+      currencyCode,
+      status: "ACTIVE",
+    },
+    expectedStatus: 200,
+  });
+  const registerId = toNumber(response.json?.row?.id);
+  assert(registerId > 0, "Cash register create failed");
+  return registerId;
+}
+
 async function getDocument(tenantId, documentId) {
   const result = await query(
     `SELECT id, status, posted_journal_entry_id
@@ -781,6 +859,24 @@ async function getDocument(tenantId, documentId) {
   return result.rows?.[0] || null;
 }
 
+async function getOpenItem(tenantId, openItemId) {
+  const result = await query(
+    `SELECT
+        id,
+        status,
+        residual_amount_txn,
+        residual_amount_base,
+        settled_amount_txn,
+        settled_amount_base
+     FROM cari_open_items
+     WHERE tenant_id = ?
+       AND id = ?
+     LIMIT 1`,
+    [tenantId, openItemId]
+  );
+  return result.rows?.[0] || null;
+}
+
 async function getSettlementBatch(tenantId, settlementBatchId) {
   const result = await query(
     `SELECT
@@ -789,10 +885,45 @@ async function getSettlementBatch(tenantId, settlementBatchId) {
         settlement_fx_rate,
         settlement_fx_source,
         realized_fx_net_base,
-        posted_journal_entry_id
+        posted_journal_entry_id,
+        cash_transaction_id
      FROM cari_settlement_batches
      WHERE tenant_id = ?
        AND id = ?
+     LIMIT 1`,
+    [tenantId, settlementBatchId]
+  );
+  return result.rows?.[0] || null;
+}
+
+async function getCashTransaction(tenantId, cashTransactionId) {
+  const result = await query(
+    `SELECT
+        id,
+        status,
+        posted_journal_entry_id,
+        linked_cari_settlement_batch_id
+     FROM cash_transactions
+     WHERE tenant_id = ?
+       AND id = ?
+     LIMIT 1`,
+    [tenantId, cashTransactionId]
+  );
+  return result.rows?.[0] || null;
+}
+
+async function getLatestSettlementAllocation(tenantId, settlementBatchId) {
+  const result = await query(
+    `SELECT
+        id,
+        open_item_id,
+        allocation_amount_doc_txn,
+        allocation_amount_settlement_txn,
+        applied_cross_rate
+     FROM cari_settlement_allocations
+     WHERE tenant_id = ?
+       AND settlement_batch_id = ?
+     ORDER BY id DESC
      LIMIT 1`,
     [tenantId, settlementBatchId]
   );
@@ -814,6 +945,32 @@ function findLineByAccountId(lines, accountId) {
   );
 }
 
+async function reverseCashTransaction({ token, tenantId, transactionId }) {
+  return apiRequest({
+    token,
+    method: "POST",
+    requestPath: `/api/v1/cash/transactions/${transactionId}/reverse`,
+    body: {
+      tenantId,
+      reverseReason: "Shared settlement journal reversal check",
+    },
+    expectedStatus: 200,
+  });
+}
+
+async function reverseSettlement({ token, settlementBatchId, reversalDate }) {
+  return apiRequest({
+    token,
+    method: "POST",
+    requestPath: `/api/v1/cari/settlements/${settlementBatchId}/reverse`,
+    body: {
+      reversalDate,
+      reason: "Shared settlement journal reversal check",
+    },
+    expectedStatus: 201,
+  });
+}
+
 async function main() {
   await seedCore({ ensureDefaultTenantIfMissing: true });
 
@@ -824,7 +981,7 @@ async function main() {
   const passwordHash = await bcrypt.hash(TEST_PASSWORD, 10);
   const user = await createUserWithRole({
     tenantId,
-    roleCode: "EntityAccountant",
+    roleCode: "TenantAdmin",
     email: `afx_vendor_${stamp}@example.com`,
     passwordHash,
     name: "AP FX Vendor Accountant",
@@ -982,6 +1139,121 @@ async function main() {
       "Settlement manual offset line must credit 70,000 AFN and carry -1,000 USD txn amount"
     );
 
+    const cashRegisterId = await createCashRegister({
+      token,
+      tenantId,
+      legalEntityId: fixtures.legalEntityId,
+      accountId: fixtures.cashAccountId,
+      code: `AFXCASH${stamp}`,
+      name: `AP FX Cash ${stamp}`,
+      currencyCode: "USD",
+    });
+    const cashSettlementDate = "2026-04-09";
+    const cashLinkedDocument = await createAndPostDocument({
+      token,
+      fixtures,
+      direction: "AP",
+      documentDate: "2026-03-09",
+      dueDate: cashSettlementDate,
+      amountTxn: INVOICE_AMOUNT_USD,
+      amountBase: HISTORICAL_BASE_AFN,
+      currencyCode: "USD",
+      fxRate: HISTORICAL_RATE,
+    });
+    await insertFxRate({
+      tenantId,
+      rateDate: cashSettlementDate,
+      fromCurrencyCode: "USD",
+      toCurrencyCode: "AFN",
+      rate: SETTLEMENT_RATE,
+    });
+    const cashApplyResponse = await apiRequest({
+      token,
+      method: "POST",
+      requestPath: "/api/v1/cari/settlements/apply",
+      body: {
+        legalEntityId: fixtures.legalEntityId,
+        counterpartyId: fixtures.counterpartyId,
+        direction: "AP",
+        settlementDate: cashSettlementDate,
+        currencyCode: "USD",
+        incomingAmountTxn: INVOICE_AMOUNT_USD,
+        idempotencyKey: `AFX-VENDOR-CASH-${stamp}`,
+        autoAllocate: false,
+        useUnappliedCash: false,
+        allocations: [{ openItemId: cashLinkedDocument.openItemId, amountTxn: INVOICE_AMOUNT_USD }],
+        paymentChannel: "CASH",
+        linkedCashTransaction: {
+          registerId: cashRegisterId,
+          counterAccountId: fixtures.apControlAccountId,
+          bookDate: cashSettlementDate,
+          txnDatetime: `${cashSettlementDate}T09:00:00`,
+          idempotencyKey: `AFX-VENDOR-CASH-TXN-${stamp}`,
+          integrationEventUid: `AFX-VENDOR-CASH-EVT-${stamp}`,
+        },
+      },
+      expectedStatus: 201,
+    });
+    const cashSettlementBatchId = toNumber(cashApplyResponse.json?.row?.id);
+    assert(cashSettlementBatchId > 0, "Cash-linked settlement batch id missing");
+    const cashSettlementRow = await getSettlementBatch(tenantId, cashSettlementBatchId);
+    const cashTransactionId =
+      toNumber(cashApplyResponse.json?.row?.cashTransactionId) ||
+      toNumber(cashSettlementRow?.cash_transaction_id);
+    assert(cashTransactionId > 0, "Cash-linked settlement must create/link cash transaction");
+    const cashTransactionRow = await getCashTransaction(tenantId, cashTransactionId);
+    assert(Boolean(cashTransactionRow), "Cash-linked cash transaction row missing");
+    const cashSettlementJournalEntryId = toNumber(cashSettlementRow?.posted_journal_entry_id);
+    assert(cashSettlementJournalEntryId > 0, "Cash-linked settlement must persist a journal id");
+    assert(
+      cashSettlementJournalEntryId === toNumber(cashTransactionRow?.posted_journal_entry_id),
+      "Cash-linked settlement and cash transaction must share one posted journal"
+    );
+    const cashSettlementJournal = await getJournalDetail({
+      token,
+      journalEntryId: cashSettlementJournalEntryId,
+    });
+    const cashSettlementLines = Array.isArray(cashSettlementJournal?.lines)
+      ? cashSettlementJournal.lines
+      : [];
+    assert(cashSettlementLines.length === 3, "Cash-linked shared journal must have 3 lines");
+    const cashApLine = findLineByAccountId(cashSettlementLines, fixtures.apControlAccountId);
+    const cashFxLossLine = findLineByAccountId(cashSettlementLines, fixtures.fxLossAccountId);
+    const cashRegisterLine = findLineByAccountId(cashSettlementLines, fixtures.cashAccountId);
+    assert(Boolean(cashApLine), "Cash-linked shared journal must debit AP control");
+    assert(Boolean(cashFxLossLine), "Cash-linked shared journal must debit FX loss");
+    assert(Boolean(cashRegisterLine), "Cash-linked shared journal must credit the cash register account");
+    assert(
+      amountsEqual(cashApLine?.debit_base, HISTORICAL_BASE_AFN) &&
+        amountsEqual(cashFxLossLine?.debit_base, REALIZED_FX_LOSS_AFN) &&
+        amountsEqual(cashRegisterLine?.credit_base, SETTLEMENT_BASE_AFN) &&
+        amountsEqual(cashRegisterLine?.amount_txn, INVOICE_AMOUNT_USD * -1),
+      "Cash-linked shared journal must post AP 65,000 / FX loss 5,000 / cash 70,000"
+    );
+
+    await reverseCashTransaction({
+      token,
+      tenantId,
+      transactionId: cashTransactionId,
+    });
+    await reverseSettlement({
+      token,
+      settlementBatchId: cashSettlementBatchId,
+      reversalDate: "2026-04-10",
+    });
+    const reversedCashSettlementRow = await getSettlementBatch(tenantId, cashSettlementBatchId);
+    const reopenedCashOpenItem = await getOpenItem(tenantId, cashLinkedDocument.openItemId);
+    assert(
+      toUpper(reversedCashSettlementRow?.status) === "REVERSED",
+      "Cash-linked settlement must reverse cleanly after reversing the cash transaction"
+    );
+    assert(
+      toUpper(reopenedCashOpenItem?.status) === "OPEN" &&
+        amountsEqual(reopenedCashOpenItem?.residual_amount_txn, INVOICE_AMOUNT_USD) &&
+        amountsEqual(reopenedCashOpenItem?.residual_amount_base, HISTORICAL_BASE_AFN),
+      "Reversing the shared cash/settlement journal flow must fully reopen the AP open item"
+    );
+
     const bankApplyInvoiceDate = "2026-03-08";
     const bankApplyDueDate = "2026-04-08";
     const bankApplySettlementDate = "2026-04-08";
@@ -1062,8 +1334,127 @@ async function main() {
       "Bank apply offset line must credit 70,000 AFN and carry -1,000 USD txn amount"
     );
 
+    const roundedCounterpartyId = await createCounterparty({
+      tenantId,
+      legalEntityId: fixtures.legalEntityId,
+      paymentTermId: fixtures.paymentTermId,
+      code: `AFXVENDRND${stamp}`,
+      name: `AP FX Vendor Rounding ${stamp}`,
+    });
+    const roundedDocument = await createAndPostDocument({
+      token,
+      fixtures,
+      counterpartyId: roundedCounterpartyId,
+      direction: "AP",
+      documentDate: "2026-03-10",
+      dueDate: "2026-04-12",
+      amountTxn: 10_000,
+      amountBase: 650_000,
+      currencyCode: "USD",
+      fxRate: HISTORICAL_RATE,
+    });
+    await insertFxRate({
+      tenantId,
+      rateDate: "2026-04-10",
+      fromCurrencyCode: "USD",
+      toCurrencyCode: "AFN",
+      rate: 70,
+    });
+    await apiRequest({
+      token,
+      method: "POST",
+      requestPath: "/api/v1/cari/settlements/apply",
+      body: {
+        legalEntityId: fixtures.legalEntityId,
+        counterpartyId: roundedCounterpartyId,
+        direction: "AP",
+        settlementDate: "2026-04-10",
+        currencyCode: "AFN",
+        incomingAmountTxn: 50_000,
+        idempotencyKey: `AFX-ROUNDING-STEP1-${stamp}`,
+        autoAllocate: true,
+        useUnappliedCash: false,
+        allocations: [],
+        paymentChannel: "MANUAL",
+        offsetAccountId: fixtures.bankAccountId,
+      },
+      expectedStatus: 201,
+    });
+    await insertFxRate({
+      tenantId,
+      rateDate: "2026-04-11",
+      fromCurrencyCode: "USD",
+      toCurrencyCode: "AFN",
+      rate: 70,
+    });
+    await apiRequest({
+      token,
+      method: "POST",
+      requestPath: "/api/v1/cari/settlements/apply",
+      body: {
+        legalEntityId: fixtures.legalEntityId,
+        counterpartyId: roundedCounterpartyId,
+        direction: "AP",
+        settlementDate: "2026-04-11",
+        currencyCode: "USD",
+        incomingAmountTxn: 9_000,
+        idempotencyKey: `AFX-ROUNDING-STEP2-${stamp}`,
+        autoAllocate: true,
+        useUnappliedCash: false,
+        allocations: [],
+        paymentChannel: "MANUAL",
+        offsetAccountId: fixtures.bankAccountId,
+      },
+      expectedStatus: 201,
+    });
+    await insertFxRate({
+      tenantId,
+      rateDate: "2026-04-12",
+      fromCurrencyCode: "USD",
+      toCurrencyCode: "AFN",
+      rate: 100,
+    });
+    const roundedCloseResponse = await apiRequest({
+      token,
+      method: "POST",
+      requestPath: "/api/v1/cari/settlements/apply",
+      body: {
+        legalEntityId: fixtures.legalEntityId,
+        counterpartyId: roundedCounterpartyId,
+        direction: "AP",
+        settlementDate: "2026-04-12",
+        currencyCode: "AFN",
+        incomingAmountTxn: 28_571,
+        idempotencyKey: `AFX-ROUNDING-STEP3-${stamp}`,
+        autoAllocate: true,
+        useUnappliedCash: false,
+        allocations: [],
+        paymentChannel: "MANUAL",
+        offsetAccountId: fixtures.bankAccountId,
+      },
+      expectedStatus: 201,
+    });
+    const roundedCloseSettlementBatchId = toNumber(roundedCloseResponse.json?.row?.id);
+    assert(roundedCloseSettlementBatchId > 0, "Rounded close settlement batch id missing");
+    const roundedOpenItem = await getOpenItem(tenantId, roundedDocument.openItemId);
+    assert(Boolean(roundedOpenItem), "Rounded close open item missing");
+    assert(
+      toUpper(roundedOpenItem?.status) === "SETTLED" &&
+        amountsEqual(roundedOpenItem?.residual_amount_txn, 0) &&
+        amountsEqual(roundedOpenItem?.residual_amount_base, 0),
+      "A sub-cent FX residual must auto-close and mark the AP open item SETTLED"
+    );
+    const roundedCloseAllocation = await getLatestSettlementAllocation(
+      tenantId,
+      roundedCloseSettlementBatchId
+    );
+    assert(
+      toNumber(roundedCloseAllocation?.allocation_amount_doc_txn) > 285.71,
+      "Rounded close allocation must consume the full residual document amount, not leave a tiny remainder"
+    );
+
     console.log(
-      "CARI AP FX vendor AFN example passed (manual offset override + bank-line-derived offset both post correctly)."
+      "CARI AP FX vendor AFN example passed (manual offset, bank apply, shared cash journal, and tiny residual closure all post correctly)."
     );
     console.log(
       JSON.stringify(
@@ -1076,8 +1467,13 @@ async function main() {
           documentJournalEntryId,
           settlementBatchId,
           settlementJournalEntryId,
+          cashRegisterId,
+          cashSettlementBatchId,
+          cashSettlementJournalEntryId,
+          cashTransactionId,
           bankApplyBatchId,
           bankApplyJournalEntryId,
+          roundedCloseSettlementBatchId,
           documentJournalLines: documentLines.map((line) => ({
             accountId: toNumber(line.account_id),
             accountCode: line.account_code || null,
@@ -1094,6 +1490,14 @@ async function main() {
             amountTxn: toNumber(line.amount_txn),
             currencyCode: line.currency_code || null,
           })),
+          cashSettlementJournalLines: cashSettlementLines.map((line) => ({
+            accountId: toNumber(line.account_id),
+            accountCode: line.account_code || null,
+            debitBase: toNumber(line.debit_base),
+            creditBase: toNumber(line.credit_base),
+            amountTxn: toNumber(line.amount_txn),
+            currencyCode: line.currency_code || null,
+          })),
           bankApplyJournalLines: bankApplyLines.map((line) => ({
             accountId: toNumber(line.account_id),
             accountCode: line.account_code || null,
@@ -1102,6 +1506,11 @@ async function main() {
             amountTxn: toNumber(line.amount_txn),
             currencyCode: line.currency_code || null,
           })),
+          roundedResidualOpenItem: {
+            status: roundedOpenItem?.status || null,
+            residualAmountTxn: toNumber(roundedOpenItem?.residual_amount_txn),
+            residualAmountBase: toNumber(roundedOpenItem?.residual_amount_base),
+          },
         },
         null,
         2

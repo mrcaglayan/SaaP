@@ -677,6 +677,68 @@ function buildUnappliedReceiptNo(settlementNo) {
   return base.slice(0, 80);
 }
 
+function normalizeMinorUnits(value, defaultValue = 2) {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    return defaultValue;
+  }
+  return parsed;
+}
+
+function resolveCurrencyMinorUnits(currencyCode, minorUnitsByCurrency = null, defaultValue = 2) {
+  const normalizedCode = normalizeUpperText(currencyCode);
+  if (!normalizedCode || !(minorUnitsByCurrency instanceof Map)) {
+    return defaultValue;
+  }
+  return normalizeMinorUnits(minorUnitsByCurrency.get(normalizedCode), defaultValue);
+}
+
+function resolveCurrencyTolerance(currencyCode, minorUnitsByCurrency = null, defaultValue = 2) {
+  const minorUnits = resolveCurrencyMinorUnits(currencyCode, minorUnitsByCurrency, defaultValue);
+  return Number((1 / 10 ** minorUnits).toFixed(10));
+}
+
+function snapAmountToCurrencyResidual({
+  amount,
+  residual,
+  currencyCode,
+  minorUnitsByCurrency = null,
+}) {
+  const normalizedAmount = normalizeAmount(amount, "amount");
+  const normalizedResidual = normalizeAmount(residual, "residual");
+  const tolerance = resolveCurrencyTolerance(currencyCode, minorUnitsByCurrency);
+  return Math.abs(normalizedResidual - normalizedAmount) <= tolerance + AMOUNT_EPSILON
+    ? normalizedResidual
+    : normalizedAmount;
+}
+
+async function fetchCurrencyMinorUnitsMap({ currencyCodes, runQuery = query }) {
+  const normalizedCodes = Array.from(
+    new Set(
+      (Array.isArray(currencyCodes) ? currencyCodes : [])
+        .map((value) => normalizeUpperText(value))
+        .filter(Boolean)
+    )
+  ).sort();
+  const minorUnitsByCurrency = new Map();
+  if (normalizedCodes.length === 0) {
+    return minorUnitsByCurrency;
+  }
+  const result = await runQuery(
+    `SELECT code, minor_units
+     FROM currencies
+     WHERE code IN (${normalizedCodes.map(() => "?").join(", ")})`,
+    normalizedCodes
+  );
+  for (const row of result.rows || []) {
+    minorUnitsByCurrency.set(
+      normalizeUpperText(row.code),
+      normalizeMinorUnits(row.minor_units)
+    );
+  }
+  return minorUnitsByCurrency;
+}
+
 function ensureBalancedJournalLines(lines) {
   let debitTotal = 0;
   let creditTotal = 0;
@@ -2136,13 +2198,16 @@ async function fetchCashTransactionForSettlementLink({
        ct.counter_account_id,
        ct.linked_cari_settlement_batch_id,
        ct.linked_cari_unapplied_cash_id,
+       ct.posted_journal_entry_id,
        ct.source_module,
        ct.source_entity_type,
        ct.source_entity_id,
        ct.integration_link_status,
        ct.integration_event_uid,
        ct.idempotency_key,
-       cr.legal_entity_id AS register_legal_entity_id
+       cr.legal_entity_id AS register_legal_entity_id,
+       cr.operating_unit_id AS operating_unit_id,
+       cr.account_id AS register_account_id
      FROM cash_transactions ct
      JOIN cash_registers cr ON cr.id = ct.cash_register_id
      WHERE ct.tenant_id = ?
@@ -2571,6 +2636,7 @@ async function ensureSettlementLinkedCashTransactionPostedTx({
   legalEntityId,
   cashTransactionId,
   assertScopeAccess,
+  journalPostingOverride = null,
 }) {
   const parsedCashTransactionId = parsePositiveInt(cashTransactionId);
   if (!parsedCashTransactionId) {
@@ -2634,6 +2700,12 @@ async function ensureSettlementLinkedCashTransactionPostedTx({
     legalEntityId: parsePositiveInt(cashTxn.legal_entity_id),
     cashTxn,
     req,
+    journalLinesOverride: Array.isArray(journalPostingOverride?.lines)
+      ? journalPostingOverride.lines
+      : null,
+    descriptionOverride: journalPostingOverride?.description || null,
+    referenceNoOverride: journalPostingOverride?.referenceNo || null,
+    journalNoOverride: journalPostingOverride?.journalNo || null,
   });
 
   await postCashTransaction({
@@ -3053,7 +3125,9 @@ function normalizeUnappliedStatus({
   return UNAPPLIED_STATUS_PARTIALLY_APPLIED;
 }
 
-function buildManualAllocationPlan(openItems, requestedAllocations) {
+function buildManualAllocationPlan(openItems, requestedAllocations, {
+  minorUnitsByCurrency = null,
+} = {}) {
   if (!Array.isArray(requestedAllocations) || requestedAllocations.length === 0) {
     return [];
   }
@@ -3076,12 +3150,18 @@ function buildManualAllocationPlan(openItems, requestedAllocations) {
       throw badRequest(`openItemId=${openItemId} is not available for settlement`);
     }
     const residualTxn = normalizeAmount(row.residual_amount_txn, "openItem.residualAmountTxn");
-    if (allocationTxn > residualTxn + AMOUNT_EPSILON) {
+    const normalizedAllocationTxn = snapAmountToCurrencyResidual({
+      amount: allocationTxn,
+      residual: residualTxn,
+      currencyCode: row.currency_code,
+      minorUnitsByCurrency,
+    });
+    if (normalizedAllocationTxn > residualTxn + AMOUNT_EPSILON) {
       throw badRequest(`allocation exceeds residual for openItemId=${openItemId}`);
     }
     plan.push({
       openItemId,
-      allocationTxn,
+      allocationTxn: normalizedAllocationTxn,
       row,
     });
   }
@@ -3091,6 +3171,7 @@ function buildManualAllocationPlan(openItems, requestedAllocations) {
 
 function buildAutoAllocationPlan(openItems, availableFundsSettlementTxn, {
   crossRateByDocumentCurrency = new Map(),
+  minorUnitsByCurrency = null,
 } = {}) {
   let remainingSettlementFunds = roundAmount(availableFundsSettlementTxn);
   if (remainingSettlementFunds <= AMOUNT_EPSILON) {
@@ -3162,6 +3243,12 @@ function buildAutoAllocationPlan(openItems, availableFundsSettlementTxn, {
     ) {
       continue;
     }
+    allocationDocTxn = snapAmountToCurrencyResidual({
+      amount: allocationDocTxn,
+      residual: residualDocTxn,
+      currencyCode: documentCurrencyCode,
+      minorUnitsByCurrency,
+    });
     plan.push({
       openItemId: parsePositiveInt(row.id),
       allocationTxn: allocationDocTxn,
@@ -3444,6 +3531,17 @@ function buildSettlementPostingLines({
   }
 
   throw badRequest("Settlement direction must be AR or AP");
+}
+
+function buildUnifiedCashLinkedSettlementPostingLines({
+  operatingUnitId = null,
+  ...payload
+}) {
+  const resolvedOperatingUnitId = parsePositiveInt(operatingUnitId) || null;
+  return buildSettlementPostingLines(payload).map((line) => ({
+    ...line,
+    operatingUnitId: resolvedOperatingUnitId,
+  }));
 }
 
 function buildCashLinkedSettlementFxAdjustmentLines({
@@ -3951,6 +4049,7 @@ export async function applyCariSettlement({
       });
 
       let lockedCashTransaction = null;
+      let cashTransactionWasPostedBeforeSettlement = false;
       let settlementFxRateOverrideFromLinkedCash = null;
       if (effectiveCashTransactionId) {
         lockedCashTransaction = await fetchCashTransactionForSettlementLink({
@@ -4006,23 +4105,15 @@ export async function applyCariSettlement({
         if (linkedBatchOnCash) {
           throw badRequest("cashTransactionId is already linked to a settlement batch");
         }
-        const postedLinkedCashTransaction = await ensureSettlementLinkedCashTransactionPostedTx({
-          tx,
-          req,
-          tenantId,
-          userId: payload.userId,
-          legalEntityId,
-          cashTransactionId: parsePositiveInt(lockedCashTransaction.id),
-          assertScopeAccess,
-        });
-        if (postedLinkedCashTransaction) {
-          effectiveCashTransactionId =
-            parsePositiveInt(postedLinkedCashTransaction.id) || effectiveCashTransactionId;
-          lockedCashTransaction = await fetchCashTransactionForSettlementLink({
+        cashTransactionWasPostedBeforeSettlement =
+          normalizeUpperText(lockedCashTransaction.status) === "POSTED" &&
+          Boolean(parsePositiveInt(lockedCashTransaction.posted_journal_entry_id));
+        if (cashTransactionWasPostedBeforeSettlement) {
+          await applyCashFxPositionForPostedTransactionTx({
             tenantId,
-            cashTransactionId: effectiveCashTransactionId,
+            cashTransactionId: parsePositiveInt(lockedCashTransaction.id),
+            cashTransactionRow: lockedCashTransaction,
             runQuery: tx.query,
-            forUpdate: true,
           });
         }
 
@@ -4105,6 +4196,14 @@ export async function applyCariSettlement({
             .filter(Boolean)
         )
       );
+      const minorUnitsByCurrency = await fetchCurrencyMinorUnitsMap({
+        currencyCodes: [
+          ...uniqueDocumentCurrencies,
+          legalEntity.functional_currency_code,
+          settlementCurrencyCode,
+        ],
+        runQuery: tx.query,
+      });
       const crossRatePolicyByDocumentCurrency = new Map();
       for (const documentCurrencyCode of uniqueDocumentCurrencies) {
         // eslint-disable-next-line no-await-in-loop
@@ -4133,12 +4232,15 @@ export async function applyCariSettlement({
       );
       const manualPlan =
         requestedAllocations.length > 0
-          ? buildManualAllocationPlan(lockedOpenItems, requestedAllocations)
+          ? buildManualAllocationPlan(lockedOpenItems, requestedAllocations, {
+              minorUnitsByCurrency,
+            })
           : [];
       let allocationPlan = manualPlan;
       if (autoAllocate || manualPlan.length === 0) {
         allocationPlan = buildAutoAllocationPlan(lockedOpenItems, totalAvailableFundsTxn, {
           crossRateByDocumentCurrency,
+          minorUnitsByCurrency,
         });
       }
       if (allocationPlan.length === 0) {
@@ -4166,9 +4268,9 @@ export async function applyCariSettlement({
         );
         const documentCurrencyCode =
           normalizeUpperText(entry?.row?.currency_code) || settlementCurrencyCode;
-        const allocationAmountDocTxn = normalizeAmount(
-          entry.allocationTxn,
-          "allocationTxn"
+        const residualAmountDocTxn = normalizeAmount(
+          entry?.row?.residual_amount_txn,
+          "openItem.residualAmountTxn"
         );
         const appliedCrossRate = normalizeOptionalPositiveDecimal(
           crossRatePolicy?.appliedCrossRate,
@@ -4179,6 +4281,15 @@ export async function applyCariSettlement({
           "allocationSettlementTxnHint",
           { allowZero: true }
         );
+        const allocationAmountDocTxn =
+          hintedSettlementTxn > AMOUNT_EPSILON || amountsAreEqual(appliedCrossRate, 1)
+            ? snapAmountToCurrencyResidual({
+                amount: normalizeAmount(entry.allocationTxn, "allocationTxn"),
+                residual: residualAmountDocTxn,
+                currencyCode: documentCurrencyCode,
+                minorUnitsByCurrency,
+              })
+            : normalizeAmount(entry.allocationTxn, "allocationTxn");
         const allocationAmountSettlementTxn =
           hintedSettlementTxn > AMOUNT_EPSILON
             ? hintedSettlementTxn
@@ -4449,7 +4560,58 @@ export async function applyCariSettlement({
             counterpartyRow: counterparty,
             runQuery: tx.query,
           }));
-        if (realizedFxPosting.hasFx) {
+        const cashOffsetAccountId = parsePositiveInt(lockedCashTransaction?.register_account_id);
+        if (!cashOffsetAccountId) {
+          throw badRequest("cashTransactionId register account is not configured");
+        }
+        postingAccounts = {
+          ...postingAccounts,
+          offsetAccountId: cashOffsetAccountId,
+        };
+        const canUseUnifiedCashJournal =
+          Boolean(effectiveCashTransactionId) && !cashTransactionWasPostedBeforeSettlement;
+        if (canUseUnifiedCashJournal) {
+          const postingLines = buildUnifiedCashLinkedSettlementPostingLines({
+            direction,
+            totalAmountTxn: totalAllocatedTxn,
+            totalAmountBaseSettlement: totalAllocatedBaseSettlement,
+            totalAmountBaseHistorical: totalAllocatedBaseHistorical,
+            settlementFxRate: fxPolicy.settlementFxRate,
+            controlAccountId: postingAccounts.controlAccountId,
+            offsetAccountId: cashOffsetAccountId,
+            fxGainAccountId: realizedFxPostingAccounts.gainAccountId,
+            fxLossAccountId: realizedFxPostingAccounts.lossAccountId,
+            lineDescription: `Cari settlement ${sequence.settlementNo}`.slice(0, 255),
+            currencyCode: settlementCurrencyCode,
+            operatingUnitId: lockedCashTransaction?.operating_unit_id,
+          });
+          const postedLinkedCashTransaction = await ensureSettlementLinkedCashTransactionPostedTx({
+            tx,
+            req,
+            tenantId,
+            userId: payload.userId,
+            legalEntityId,
+            cashTransactionId: parsePositiveInt(lockedCashTransaction?.id),
+            assertScopeAccess,
+            journalPostingOverride: {
+              lines: postingLines,
+              description: `Cari settlement apply ${sequence.settlementNo}`.slice(0, 255),
+              referenceNo: toNullableString(sequence.settlementNo, 100),
+            },
+          });
+          effectiveCashTransactionId =
+            parsePositiveInt(postedLinkedCashTransaction?.id) || effectiveCashTransactionId;
+          lockedCashTransaction = await fetchCashTransactionForSettlementLink({
+            tenantId,
+            cashTransactionId: effectiveCashTransactionId,
+            runQuery: tx.query,
+            forUpdate: true,
+          });
+          postedJournalEntryId = parsePositiveInt(
+            postedLinkedCashTransaction?.posted_journal_entry_id ||
+              lockedCashTransaction?.posted_journal_entry_id
+          );
+        } else if (realizedFxPosting.hasFx) {
           const journalContext = await resolveBookAndOpenPeriodForDate({
             tenantId,
             legalEntityId,
@@ -4679,6 +4841,14 @@ export async function applyCariSettlement({
         }
         if (nextResidualTxn < -AMOUNT_EPSILON || nextResidualBase < -AMOUNT_EPSILON) {
           throw badRequest(`allocation exceeds residual for openItemId=${entry.openItemId}`);
+        }
+        const documentTolerance = resolveCurrencyTolerance(
+          row.currency_code,
+          minorUnitsByCurrency
+        );
+        if (nextResidualTxn > 0 && nextResidualTxn <= documentTolerance + AMOUNT_EPSILON) {
+          nextResidualTxn = 0;
+          nextResidualBase = 0;
         }
         const nextSettledTxn = roundAmount(originalAmountTxn - nextResidualTxn);
         const nextSettledBase = roundAmount(originalAmountBase - nextResidualBase);
@@ -5508,8 +5678,9 @@ export async function reverseCariSettlementById({
       const lockedLegalEntityId = parsePositiveInt(original.legal_entity_id);
       const originalJournalEntryId = parsePositiveInt(original.posted_journal_entry_id);
       const linkedCashTransactionId = parsePositiveInt(original.cash_transaction_id);
+      let linkedCashTxn = null;
       if (linkedCashTransactionId) {
-        const linkedCashTxn = await fetchCashTransactionForSettlementLink({
+        linkedCashTxn = await fetchCashTransactionForSettlementLink({
           tenantId,
           cashTransactionId: linkedCashTransactionId,
           runQuery: tx.query,
@@ -5521,7 +5692,9 @@ export async function reverseCariSettlementById({
           );
         }
       }
-      const hasSettlementJournal = Boolean(originalJournalEntryId);
+      const hasSettlementJournal =
+        Boolean(originalJournalEntryId) &&
+        originalJournalEntryId !== parsePositiveInt(linkedCashTxn?.posted_journal_entry_id);
 
       const existingReversalBatchId = await findReversalSettlementBatchId({
         tenantId,
@@ -5548,6 +5721,23 @@ export async function reverseCariSettlementById({
         tenantId,
         legalEntityId: lockedLegalEntityId,
         openItemIds,
+        runQuery: tx.query,
+      });
+      const legalEntityCurrencyResult = await tx.query(
+        `SELECT functional_currency_code
+         FROM legal_entities
+         WHERE tenant_id = ?
+           AND id = ?
+         LIMIT 1`,
+        [tenantId, lockedLegalEntityId]
+      );
+      const functionalCurrencyCode =
+        normalizeUpperText(legalEntityCurrencyResult.rows?.[0]?.functional_currency_code) || null;
+      const minorUnitsByCurrency = await fetchCurrencyMinorUnitsMap({
+        currencyCodes: [
+          functionalCurrencyCode,
+          ...lockedOpenItems.map((row) => normalizeUpperText(row.currency_code)),
+        ],
         runQuery: tx.query,
       });
       const openItemById = new Map(
@@ -5594,6 +5784,14 @@ export async function reverseCariSettlementById({
           nextResidualTxn = originalAmountTxn;
         }
         if (nextResidualBase > originalAmountBase && nextResidualBase - originalAmountBase <= AMOUNT_EPSILON) {
+          nextResidualBase = originalAmountBase;
+        }
+        const documentTolerance = resolveCurrencyTolerance(
+          lockedOpenItem.currency_code,
+          minorUnitsByCurrency
+        );
+        if (nextResidualTxn >= originalAmountTxn - documentTolerance - AMOUNT_EPSILON) {
+          nextResidualTxn = originalAmountTxn;
           nextResidualBase = originalAmountBase;
         }
         if (

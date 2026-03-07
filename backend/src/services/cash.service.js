@@ -136,6 +136,34 @@ function buildBaseLine({
   };
 }
 
+function normalizeOptionalId(value) {
+  return parsePositiveInt(value) || null;
+}
+
+function normalizeCashJournalOverrideLine(line, { currencyCode, postingReference }) {
+  const operatingUnitId = normalizeOptionalId(line?.operatingUnitId);
+  const subledgerReferenceNo = operatingUnitId
+    ? normalizeOptionalShortText(
+        line?.subledgerReferenceNo || postingReference,
+        "line.subledgerReferenceNo",
+        100
+      )
+    : null;
+
+  return {
+    accountId: requireAccountId(line?.accountId, "line.accountId"),
+    operatingUnitId,
+    counterpartyLegalEntityId: normalizeOptionalId(line?.counterpartyLegalEntityId),
+    description: normalizeOptionalShortText(line?.description, "line.description", 255),
+    subledgerReferenceNo,
+    currencyCode: asUpper(line?.currencyCode) || currencyCode,
+    amountTxn: Number(toAmount(line?.amountTxn).toFixed(6)),
+    debitBase: Number(toAmount(line?.debitBase).toFixed(6)),
+    creditBase: Number(toAmount(line?.creditBase).toFixed(6)),
+    taxCode: normalizeOptionalShortText(line?.taxCode, "line.taxCode", 40),
+  };
+}
+
 function invertLines(lines) {
   return lines.map((line) => ({
     ...line,
@@ -451,6 +479,9 @@ export async function createAndPostCashJournalTx(tx, payload) {
   const legalEntityId = parsePositiveInt(payload?.legalEntityId);
   const cashTxn = payload?.cashTxn || null;
   const req = payload?.req;
+  const journalLinesOverride = Array.isArray(payload?.journalLinesOverride)
+    ? payload.journalLinesOverride
+    : null;
 
   if (!tenantId || !userId || !legalEntityId || !cashTxn || !req) {
     throw badRequest("Missing required payload for cash journal posting");
@@ -468,6 +499,7 @@ export async function createAndPostCashJournalTx(tx, payload) {
   if (!currencyCode || currencyCode.length !== 3) {
     throw badRequest("cashTransaction.currency_code is invalid");
   }
+  const postingReference = `${CASH_TXN_SUBLEDGER_PREFIX}${txnId}`;
 
   const journalContext = await resolveBookAndPeriodForCashPostingTx(tx, {
     tenantId,
@@ -475,28 +507,41 @@ export async function createAndPostCashJournalTx(tx, payload) {
     bookDate,
   });
 
-  const lines = buildCashPostingLines(cashTxn);
+  const lines = journalLinesOverride
+    ? journalLinesOverride.map((line) =>
+        normalizeCashJournalOverrideLine(line, {
+          currencyCode,
+          postingReference,
+        })
+      )
+    : buildCashPostingLines(cashTxn);
   for (let i = 0; i < lines.length; i += 1) {
     // eslint-disable-next-line no-await-in-loop
     await validateJournalLineScope(req, tenantId, legalEntityId, lines[i], i);
   }
 
   const totals = ensureBalanced(lines);
-  const referenceNo = normalizeOptionalShortText(
-    cashTxn.reference_no,
-    "cashTransaction.reference_no",
+  const referenceNoOverride = normalizeOptionalShortText(
+    payload?.referenceNoOverride,
+    "referenceNoOverride",
     100
   );
-  const entryDescription = normalizeOptionalShortText(
-    cashTxn.description,
-    "cashTransaction.description",
+  const descriptionOverride = normalizeOptionalShortText(
+    payload?.descriptionOverride,
+    "descriptionOverride",
     255
   );
-  const postingReference = `${CASH_TXN_SUBLEDGER_PREFIX}${txnId}`;
+  const journalNoOverride = normalizeOptionalShortText(
+    payload?.journalNoOverride,
+    "journalNoOverride",
+    40
+  );
+  const referenceNo = normalizeOptionalShortText(cashTxn.reference_no, "cashTransaction.reference_no", 100);
+  const entryDescription = normalizeOptionalShortText(cashTxn.description, "cashTransaction.description", 255);
   const effectiveReferenceNo = referenceNo || postingReference;
   const effectiveDescription = entryDescription || `Cash ${asUpper(cashTxn.txn_type)} ${cashTxn.txn_no}`;
   const txnAmountMagnitude = Number(toAmount(cashTxn.amount).toFixed(6));
-  if (!(txnAmountMagnitude > 0)) {
+  if (!journalLinesOverride && !(txnAmountMagnitude > 0)) {
     throw badRequest("Cash transaction amount must be > 0 for journal_lines.amount_txn");
   }
 
@@ -526,12 +571,12 @@ export async function createAndPostCashJournalTx(tx, payload) {
       legalEntityId,
       journalContext.bookId,
       journalContext.fiscalPeriodId,
-      buildCashJournalNo(cashTxn),
+      journalNoOverride || buildCashJournalNo(cashTxn),
       entryDate,
       documentDate,
       currencyCode,
-      effectiveDescription,
-      effectiveReferenceNo,
+      descriptionOverride || effectiveDescription,
+      referenceNoOverride || effectiveReferenceNo,
       totals.totalDebit,
       totals.totalCredit,
       userId,
@@ -560,7 +605,9 @@ export async function createAndPostCashJournalTx(tx, payload) {
     if (!isDebitLine && !isCreditLine) {
       throw badRequest("Cash posting line must have exactly one non-zero base side");
     }
-    const amountTxn = Number((isDebitLine ? txnAmountMagnitude : -txnAmountMagnitude).toFixed(6));
+    const amountTxn = journalLinesOverride
+      ? Number(toAmount(line.amountTxn).toFixed(6))
+      : Number((isDebitLine ? txnAmountMagnitude : -txnAmountMagnitude).toFixed(6));
 
     // eslint-disable-next-line no-await-in-loop
     await tx.query(
@@ -578,19 +625,20 @@ export async function createAndPostCashJournalTx(tx, payload) {
           credit_base,
           tax_code
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         journalEntryId,
         i + 1,
         parsePositiveInt(line.accountId),
-        parsePositiveInt(line.operatingUnitId),
-        parsePositiveInt(line.counterpartyLegalEntityId),
+        normalizeOptionalId(line.operatingUnitId),
+        normalizeOptionalId(line.counterpartyLegalEntityId),
         line.description || null,
-        line.subledgerReferenceNo || postingReference,
-        currencyCode,
+        journalLinesOverride ? line.subledgerReferenceNo || null : line.subledgerReferenceNo || postingReference,
+        line.currencyCode || currencyCode,
         amountTxn,
         debitBase,
         creditBase,
+        line.taxCode || null,
       ]
     );
   }
