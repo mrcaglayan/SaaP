@@ -13,8 +13,8 @@ function createDraftRow(rateDate = "") {
     id: `fx-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     rateDate,
     fromCurrencyCode: "USD",
-    toCurrencyCode: "TRY",
-    rateType: "CLOSING",
+    toCurrencyCode: "",
+    rateType: "SPOT",
     value: "",
     source: "",
   };
@@ -160,10 +160,17 @@ export default function FxRatesPage() {
     setMessage("");
     try {
       const response = await bulkUpsertFxRates(payload);
+      const inverseRowsUpserted = Number(response?.inverseRowsUpserted || 0);
+      const inverseText = inverseRowsUpserted
+        ? l(
+            ` Inverse SPOT pairs synced: ${inverseRowsUpserted}.`,
+            ` Ters SPOT pariteler esitlendi: ${inverseRowsUpserted}.`
+          )
+        : "";
       setMessage(
         l(
-          `Rates upserted: ${Number(response?.upserted || payload.length)}.`,
-          `Kur kayitlari guncellendi: ${Number(response?.upserted || payload.length)}.`
+          `Rates upserted: ${Number(response?.upserted || payload.length)}.${inverseText}`,
+          `Kur kayitlari guncellendi: ${Number(response?.upserted || payload.length)}.${inverseText}`
         )
       );
       setDraftRows([createDraftRow(today)]);
@@ -434,9 +441,17 @@ export default function FxRatesPage() {
 
       <section className="rounded-xl border border-slate-200 bg-white p-4">
         <div className="mb-3 flex items-center justify-between gap-2">
-          <h2 className="text-sm font-semibold text-slate-700">
-            {l("Bulk Upsert", "Toplu Kur Guncelleme")}
-          </h2>
+          <div>
+            <h2 className="text-sm font-semibold text-slate-700">
+              {l("Bulk Upsert", "Toplu Kur Guncelleme")}
+            </h2>
+            <p className="mt-1 text-xs text-slate-500">
+              {l(
+                "For SPOT, enter only the market quote as 1 USD = X target currency. Do not enter the reciprocal pair manually.",
+                "SPOT icin sadece 1 USD = X hedef para birimi piyasa kurunu girin. Ters pariteyi manuel girmeyin."
+              )}
+            </p>
+          </div>
           <button
             type="button"
             onClick={addDraftRow}
@@ -483,7 +498,7 @@ export default function FxRatesPage() {
                 }
                 className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm"
                 maxLength={3}
-                placeholder="TRY"
+                placeholder={l("Local", "Yerel")}
                 required
               />
               <select
@@ -502,8 +517,8 @@ export default function FxRatesPage() {
               </select>
               <input
                 type="number"
-                min="0.0000000001"
-                step="0.000001"
+                min="0"
+                step="any"
                 value={row.value}
                 onChange={(event) => updateDraftRow(row.id, "value", event.target.value)}
                 className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm"

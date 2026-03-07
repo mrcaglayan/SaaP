@@ -446,7 +446,7 @@ function normalizeApiError(error, fallback = "Operation failed.") {
 function formatAmount(value) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return "-";
-  return parsed.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 });
+  return parsed.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 function formatDateTime(value) {

@@ -532,31 +532,18 @@ async function createAndPostDocument({
   return { documentId, openItemId };
 }
 
-async function insertFxRate({
-  tenantId,
-  rateDate,
-  fromCurrencyCode,
-  toCurrencyCode,
-  rate,
+async function bulkUpsertFxRates({
+  token,
+  rates,
+  expectedStatus = 201,
 }) {
-  await query(
-    `INSERT INTO fx_rates (
-        tenant_id,
-        rate_date,
-        from_currency_code,
-        to_currency_code,
-        rate_type,
-        rate,
-        source,
-        is_locked
-     )
-     VALUES (?, ?, ?, ?, 'SPOT', ?, 'EX04_TEST', FALSE)
-     ON DUPLICATE KEY UPDATE
-       rate = VALUES(rate),
-       source = VALUES(source),
-       is_locked = VALUES(is_locked)`,
-    [tenantId, rateDate, fromCurrencyCode, toCurrencyCode, rate]
-  );
+  return apiRequest({
+    token,
+    method: "POST",
+    requestPath: "/api/v1/fx/rates/bulk-upsert",
+    body: { rates },
+    expectedStatus,
+  });
 }
 
 async function fetchSettlementBatchById({ tenantId, settlementBatchId }) {
@@ -720,13 +707,104 @@ async function main() {
       isVendor: true,
     });
 
-    await insertFxRate({
-      tenantId,
-      rateDate: SETTLEMENT_DATE,
-      fromCurrencyCode: "USD",
-      toCurrencyCode: "TRY",
-      rate: 39,
+    const fxUpsertResponse = await bulkUpsertFxRates({
+      token,
+      rates: [
+        {
+          rateDate: SETTLEMENT_DATE,
+          fromCurrencyCode: "USD",
+          toCurrencyCode: "TRY",
+          rateType: "SPOT",
+          value: 39,
+          source: "EX04_TEST",
+        },
+      ],
     });
+    assert(
+      toNumber(fxUpsertResponse.json?.upserted) === 1,
+      "FX bulk upsert should acknowledge one submitted row"
+    );
+    assert(
+      toNumber(fxUpsertResponse.json?.inverseRowsUpserted) === 1,
+      "FX bulk upsert should sync one inverse SPOT row"
+    );
+    assert(
+      toNumber(fxUpsertResponse.json?.totalRowsUpserted) === 2,
+      "FX bulk upsert should persist direct and inverse SPOT rows"
+    );
+
+    const fxRateListResponse = await apiRequest({
+      token,
+      method: "GET",
+      requestPath:
+        `/api/v1/fx/rates?dateFrom=${SETTLEMENT_DATE}&dateTo=${SETTLEMENT_DATE}` +
+        `&rateType=SPOT`,
+      expectedStatus: 200,
+    });
+    const fxRows = Array.isArray(fxRateListResponse.json?.rows)
+      ? fxRateListResponse.json.rows
+      : [];
+    const fxRowByPair = new Map(
+      fxRows.map((row) => [
+        `${toUpper(row?.from_currency_code)}/${toUpper(row?.to_currency_code)}`,
+        row,
+      ])
+    );
+    const usdTryRate = fxRowByPair.get("USD/TRY");
+    const tryUsdRate = fxRowByPair.get("TRY/USD");
+    assert(
+      Boolean(usdTryRate),
+      "Seeded USD/TRY SPOT rate must be returned by /api/v1/fx/rates"
+    );
+    assert(
+      Boolean(tryUsdRate),
+      "Reciprocal TRY/USD SPOT rate must be returned by /api/v1/fx/rates"
+    );
+    assert(
+      String(usdTryRate?.rate_date || "") === SETTLEMENT_DATE,
+      `USD/TRY rate_date must equal ${SETTLEMENT_DATE}, got=${usdTryRate?.rate_date}`
+    );
+    assert(
+      String(tryUsdRate?.rate_date || "") === SETTLEMENT_DATE,
+      `TRY/USD rate_date must equal ${SETTLEMENT_DATE}, got=${tryUsdRate?.rate_date}`
+    );
+    assert(
+      amountsEqual(usdTryRate?.rate, 39),
+      `USD/TRY SPOT rate must be 39, got=${usdTryRate?.rate}`
+    );
+    assert(
+      amountsEqual(tryUsdRate?.rate, 1 / 39),
+      `TRY/USD SPOT rate must be reciprocal of 39, got=${tryUsdRate?.rate}`
+    );
+
+    const conflictingFxUpsertResponse = await bulkUpsertFxRates({
+      token,
+      expectedStatus: 400,
+      rates: [
+        {
+          rateDate: "2026-08-16",
+          fromCurrencyCode: "USD",
+          toCurrencyCode: "TRY",
+          rateType: "SPOT",
+          value: 40,
+          source: "EX04_CONFLICT",
+        },
+        {
+          rateDate: "2026-08-16",
+          fromCurrencyCode: "TRY",
+          toCurrencyCode: "USD",
+          rateType: "SPOT",
+          value: 0.025,
+          source: "EX04_CONFLICT",
+        },
+      ],
+    });
+    assert(
+      String(conflictingFxUpsertResponse.json?.message || "").includes(
+        "submit only one SPOT direction"
+      ),
+      "Manual SPOT upsert must reject direct and reciprocal rows in the same request"
+    );
 
     const doc = await createAndPostDocument({
       token,

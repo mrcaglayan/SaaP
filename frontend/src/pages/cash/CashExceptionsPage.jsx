@@ -60,7 +60,7 @@ function formatAmount(value) {
   }
   return amount.toLocaleString(undefined, {
     minimumFractionDigits: 2,
-    maximumFractionDigits: 6,
+    maximumFractionDigits: 2,
   });
 }
 

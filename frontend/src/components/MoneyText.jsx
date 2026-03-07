@@ -12,7 +12,7 @@ export default function MoneyText({
   showCurrency = true,
   locale = undefined,
   minimumFractionDigits = 2,
-  maximumFractionDigits = 6,
+  maximumFractionDigits = 2,
   className = "",
   amountClassName = "",
   currencyClassName = "",

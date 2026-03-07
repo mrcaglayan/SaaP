@@ -68,7 +68,7 @@ function formatAmount(value) {
   }
   return parsed.toLocaleString(undefined, {
     minimumFractionDigits: 2,
-    maximumFractionDigits: 6,
+    maximumFractionDigits: 2,
   });
 }
 
@@ -693,17 +693,16 @@ export default function BankReconciliationPage() {
       });
       setAutoPreviewRows(res?.rows || []);
       setAutoPreviewSummary(res?.summary || null);
-        const refreshedQueue = await loadQueue({ preserveSelection: true });
-        await loadExceptions();
-        if (selectedLineId) {
-          const queueLine =
-            refreshedQueue.find((row) => String(row?.id || "") === String(selectedLineId || "")) ||
-            null;
-          await loadLineDetails(selectedLineId, queueLine);
-        }
+      const refreshedQueue = await loadQueue({ preserveSelection: true });
+      await loadExceptions();
+      if (selectedLineId) {
+        const queueLine =
+          refreshedQueue.find((row) => String(row?.id || "") === String(selectedLineId || "")) ||
+          null;
+        await loadLineDetails(selectedLineId, queueLine);
+      }
       setMessage(
-        `B07 auto-apply completed${res?.replay ? " (replay)" : ""}: reconciled ${
-          res?.summary?.reconciledCount ?? 0
+        `B07 auto-apply completed${res?.replay ? " (replay)" : ""}: reconciled ${res?.summary?.reconciledCount ?? 0
         }, exceptions ${res?.summary?.exceptionCount ?? 0}`
       );
     } catch (err) {
@@ -1401,7 +1400,7 @@ export default function BankReconciliationPage() {
                       <tr key={`b08-template-${row.id}`} className="border-t">
                         <td className="px-2 py-2">
                           <div className="font-medium text-slate-900">{row.template_code}</div>
-                          <div className="max-w-[220px] truncate text-slate-500" title={row.template_name}>
+                          <div className="max-w-55 truncate text-slate-500" title={row.template_name}>
                             {row.template_name}
                           </div>
                         </td>
@@ -1414,7 +1413,7 @@ export default function BankReconciliationPage() {
                         <td className="px-2 py-2">
                           {row.counter_account_code || row.counter_account_id || "-"}
                           {row.counter_account_name ? (
-                            <div className="max-w-[180px] truncate text-slate-500" title={row.counter_account_name}>
+                            <div className="max-w-45 truncate text-slate-500" title={row.counter_account_name}>
                               {row.counter_account_name}
                             </div>
                           ) : null}
@@ -1511,7 +1510,7 @@ export default function BankReconciliationPage() {
                         <tr key={`b08b-dp-${row.id}`} className="border-t">
                           <td className="px-2 py-2">
                             <div className="font-medium text-slate-900">{row.profile_code}</div>
-                            <div className="max-w-[180px] truncate text-slate-500" title={row.profile_name}>
+                            <div className="max-w-45 truncate text-slate-500" title={row.profile_name}>
                               {row.profile_name}
                             </div>
                           </td>
@@ -1805,7 +1804,7 @@ export default function BankReconciliationPage() {
                           <td className="px-2 py-2">
                             <div className="font-medium text-slate-900">{row.event_type}</div>
                             <div className="text-slate-500">{row.source_type} / #{row.id}</div>
-                            <div className="max-w-[180px] truncate text-slate-500" title={row.reason_message || ""}>
+                            <div className="max-w-45 truncate text-slate-500" title={row.reason_message || ""}>
                               {row.reason_code || row.reason_message || "-"}
                             </div>
                           </td>
@@ -1946,7 +1945,7 @@ export default function BankReconciliationPage() {
               {loadingQueue ? "Yukleniyor..." : `${queueRows.length} / ${queueTotal}`}
             </span>
           </div>
-          <div className="max-h-[620px] overflow-auto">
+          <div className="max-h-155 overflow-auto">
             <table className="min-w-full text-left text-xs">
               <thead className="sticky top-0 bg-slate-50 text-slate-600">
                 <tr>
@@ -1970,9 +1969,8 @@ export default function BankReconciliationPage() {
                     return (
                       <tr
                         key={row.id}
-                        className={`cursor-pointer border-t ${
-                          active ? "bg-slate-100" : "hover:bg-slate-50"
-                        }`}
+                        className={`cursor-pointer border-t ${active ? "bg-slate-100" : "hover:bg-slate-50"
+                          }`}
                         onClick={() => setSelectedLineId(String(row.id))}
                       >
                         <td className="px-2 py-2">
@@ -1980,7 +1978,7 @@ export default function BankReconciliationPage() {
                           <div className="text-[11px] text-slate-500">{row.bank_account_code}</div>
                         </td>
                         <td className="px-2 py-2">
-                          <div className="max-w-[240px] truncate" title={row.description}>
+                          <div className="max-w-60 truncate" title={row.description}>
                             {row.description}
                           </div>
                           <div className="text-[11px] text-slate-500">{row.reference_no || "-"}</div>
@@ -2031,28 +2029,24 @@ export default function BankReconciliationPage() {
                 <div>
                   <strong>B07 Meta:</strong>{" "}
                   {selectedLine.reconciliation_method || selectedLine.reconciliation_rule_id
-                    ? `${selectedLine.reconciliation_method || "-"} / rule ${
-                        selectedLine.reconciliation_rule_id || "-"
-                      } / conf ${selectedLine.reconciliation_confidence ?? "-"}`
+                    ? `${selectedLine.reconciliation_method || "-"} / rule ${selectedLine.reconciliation_rule_id || "-"
+                    } / conf ${selectedLine.reconciliation_confidence ?? "-"}`
                     : "-"}
                 </div>
                 <div>
                   <strong>B08 Auto-Post:</strong>{" "}
                   {selectedLine.auto_post_template_id || selectedLine.auto_post_journal_entry_id
-                    ? `tpl ${selectedLine.auto_post_template_id || "-"} / JE ${
-                        selectedLine.auto_post_journal_entry_id || "-"
-                      }`
+                    ? `tpl ${selectedLine.auto_post_template_id || "-"} / JE ${selectedLine.auto_post_journal_entry_id || "-"
+                    }`
                     : "-"}
                 </div>
                 <div>
                   <strong>B08-B Diff:</strong>{" "}
                   {selectedLine.reconciliation_difference_type ||
-                  selectedLine.reconciliation_difference_journal_entry_id
-                    ? `${selectedLine.reconciliation_difference_type || "-"} / amt ${
-                        selectedLine.reconciliation_difference_amount ?? "-"
-                      } / profile ${selectedLine.reconciliation_difference_profile_id || "-"} / JE ${
-                        selectedLine.reconciliation_difference_journal_entry_id || "-"
-                      }`
+                    selectedLine.reconciliation_difference_journal_entry_id
+                    ? `${selectedLine.reconciliation_difference_type || "-"} / amt ${selectedLine.reconciliation_difference_amount ?? "-"
+                    } / profile ${selectedLine.reconciliation_difference_profile_id || "-"} / JE ${selectedLine.reconciliation_difference_journal_entry_id || "-"
+                    }`
                     : "-"}
                 </div>
                 <div>
@@ -2087,11 +2081,11 @@ export default function BankReconciliationPage() {
                         {(row.reconciliation_rule_id ||
                           (row.reconciliation_confidence !== undefined &&
                             row.reconciliation_confidence !== null)) && (
-                          <div className="text-slate-500">
-                            Rule: {row.reconciliation_rule_id || "-"} | Confidence:{" "}
-                            {row.reconciliation_confidence ?? "-"}
-                          </div>
-                        )}
+                            <div className="text-slate-500">
+                              Rule: {row.reconciliation_rule_id || "-"} | Confidence:{" "}
+                              {row.reconciliation_confidence ?? "-"}
+                            </div>
+                          )}
                         <div className="text-slate-500">
                           {row.notes || "-"} | {formatDateTime(row.matched_at)}
                         </div>
@@ -2241,7 +2235,7 @@ export default function BankReconciliationPage() {
                       </td>
                       <td className="px-2 py-2">
                         <div>{row.reason_code}</div>
-                        <div className="max-w-[260px] truncate text-[11px] text-slate-500" title={row.reason_message}>
+                        <div className="max-w-65 truncate text-[11px] text-slate-500" title={row.reason_message}>
                           {row.reason_message || "-"}
                         </div>
                       </td>

@@ -1,6 +1,6 @@
 const DEFAULT_FALLBACK = "-";
 const DEFAULT_MINIMUM_FRACTION_DIGITS = 2;
-const DEFAULT_MAXIMUM_FRACTION_DIGITS = 6;
+const DEFAULT_MAXIMUM_FRACTION_DIGITS = 2;
 
 function normalizeFallback(value) {
   const text = String(value ?? "").trim();

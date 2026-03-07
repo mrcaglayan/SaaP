@@ -9,6 +9,150 @@ import {
 } from "./_utils.js";
 
 const router = express.Router();
+const AUTO_INVERSE_SOURCE = "AUTO_INVERSE";
+
+function normalizeUpperText(value) {
+  return String(value || "")
+    .trim()
+    .toUpperCase();
+}
+
+function normalizeDateOnlyInput(value, label = "rateDate") {
+  const raw = String(value || "").trim();
+  const match = raw.match(/^(\d{4}-\d{2}-\d{2})(?:\b|T.*)?$/);
+  if (!match?.[1]) {
+    throw badRequest(`${label} must be YYYY-MM-DD`);
+  }
+  return match[1];
+}
+
+function normalizePositiveRate(value, label = "value") {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw badRequest(`${label} must be a positive number`);
+  }
+  return Number(parsed.toFixed(10));
+}
+
+function makeFxRateKey({
+  rateDate,
+  fromCurrencyCode,
+  toCurrencyCode,
+  rateType,
+}) {
+  return [
+    rateDate,
+    fromCurrencyCode,
+    toCurrencyCode,
+    rateType,
+  ].join("|");
+}
+
+function normalizeRateInput(rate, index) {
+  const { rateDate, fromCurrencyCode, toCurrencyCode, rateType, value, source } =
+    rate || {};
+  if (
+    !rateDate ||
+    !fromCurrencyCode ||
+    !toCurrencyCode ||
+    !rateType ||
+    value === undefined ||
+    value === null
+  ) {
+    throw badRequest(
+      `Row ${index + 1}: Each rate item requires rateDate, fromCurrencyCode, toCurrencyCode, rateType, value`
+    );
+  }
+
+  const normalizedRow = {
+    inputRowNumber: index + 1,
+    rateDate: normalizeDateOnlyInput(rateDate),
+    fromCurrencyCode: normalizeUpperText(fromCurrencyCode),
+    toCurrencyCode: normalizeUpperText(toCurrencyCode),
+    rateType: normalizeUpperText(rateType),
+    value: normalizePositiveRate(value),
+    source: source ? String(source).trim() : null,
+  };
+  if (
+    !normalizedRow.fromCurrencyCode ||
+    !normalizedRow.toCurrencyCode ||
+    !normalizedRow.rateType
+  ) {
+    throw badRequest(
+      `Row ${index + 1}: Each rate item requires rateDate, fromCurrencyCode, toCurrencyCode, rateType, value`
+    );
+  }
+  return normalizedRow;
+}
+
+function buildInverseSource(source) {
+  return source ? `${source}_${AUTO_INVERSE_SOURCE}` : AUTO_INVERSE_SOURCE;
+}
+
+function buildInverseRateRow(row) {
+  return {
+    rateDate: row.rateDate,
+    fromCurrencyCode: row.toCurrencyCode,
+    toCurrencyCode: row.fromCurrencyCode,
+    rateType: row.rateType,
+    value: normalizePositiveRate(1 / Number(row.value)),
+    source: buildInverseSource(row.source),
+  };
+}
+
+function shouldSyncInverseRate(row) {
+  return (
+    row.rateType === "SPOT" &&
+    row.fromCurrencyCode &&
+    row.toCurrencyCode &&
+    row.fromCurrencyCode !== row.toCurrencyCode
+  );
+}
+
+function assertNoExplicitSpotReciprocalInputs(rows) {
+  const byKey = new Map(rows.map((row) => [makeFxRateKey(row), row]));
+  for (const row of rows) {
+    if (!shouldSyncInverseRate(row)) {
+      continue;
+    }
+    const reciprocalKey = makeFxRateKey({
+      rateDate: row.rateDate,
+      fromCurrencyCode: row.toCurrencyCode,
+      toCurrencyCode: row.fromCurrencyCode,
+      rateType: row.rateType,
+    });
+    const reciprocalRow = byKey.get(reciprocalKey);
+    if (
+      reciprocalRow &&
+      reciprocalRow.inputRowNumber !== row.inputRowNumber
+    ) {
+      throw badRequest(
+        `Rows ${row.inputRowNumber} and ${reciprocalRow.inputRowNumber}: submit only one SPOT direction for a pair/date. Enter the USD/local quote once; the reciprocal is managed automatically.`
+      );
+    }
+  }
+}
+
+async function upsertFxRateRow({ tenantId, row }) {
+  await query(
+    `INSERT INTO fx_rates (
+        tenant_id, rate_date, from_currency_code, to_currency_code, rate_type, rate, source
+      )
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE
+       rate = VALUES(rate),
+       source = VALUES(source)`,
+    [
+      tenantId,
+      row.rateDate,
+      row.fromCurrencyCode,
+      row.toCurrencyCode,
+      row.rateType,
+      row.value,
+      row.source,
+    ]
+  );
+}
 
 router.post(
   "/rates/import/tcmb-daily",
@@ -48,46 +192,42 @@ router.post(
       throw badRequest("rates must be a non-empty array");
     }
 
-    for (const rate of rates) {
-      const { rateDate, fromCurrencyCode, toCurrencyCode, rateType, value, source } =
-        rate || {};
-      if (
-        !rateDate ||
-        !fromCurrencyCode ||
-        !toCurrencyCode ||
-        !rateType ||
-        value === undefined ||
-        value === null
-      ) {
-        throw badRequest(
-          "Each rate item requires rateDate, fromCurrencyCode, toCurrencyCode, rateType, value"
-        );
-      }
+    const normalizedRates = rates.map((rate, index) => normalizeRateInput(rate, index));
+    assertNoExplicitSpotReciprocalInputs(normalizedRates);
+    const upsertMap = new Map();
+    for (const row of normalizedRates) {
+      upsertMap.set(makeFxRateKey(row), row);
+    }
 
-      await query(
-        `INSERT INTO fx_rates (
-            tenant_id, rate_date, from_currency_code, to_currency_code, rate_type, rate, source
-          )
-         VALUES (?, ?, ?, ?, ?, ?, ?)
-         ON DUPLICATE KEY UPDATE
-           rate = VALUES(rate),
-           source = VALUES(source)`,
-        [
-          tenantId,
-          String(rateDate),
-          String(fromCurrencyCode).toUpperCase(),
-          String(toCurrencyCode).toUpperCase(),
-          String(rateType).toUpperCase(),
-          Number(value),
-          source ? String(source) : null,
-        ]
-      );
+    let inverseRowsUpserted = 0;
+    for (const row of normalizedRates) {
+      if (!shouldSyncInverseRate(row)) {
+        continue;
+      }
+      const inverseRow = buildInverseRateRow(row);
+      const inverseKey = makeFxRateKey(inverseRow);
+      if (upsertMap.has(inverseKey)) {
+        continue;
+      }
+      upsertMap.set(inverseKey, inverseRow);
+      inverseRowsUpserted += 1;
+    }
+
+    for (const row of upsertMap.values()) {
+      // Preserve exact reciprocal rows for SPOT so users can maintain the common
+      // "1 USD = X local currency" quote while downstream consumers can read either side.
+      await upsertFxRateRow({
+        tenantId,
+        row,
+      });
     }
 
     return res.status(201).json({
       ok: true,
       tenantId,
-      upserted: rates.length,
+      upserted: normalizedRates.length,
+      inverseRowsUpserted,
+      totalRowsUpserted: upsertMap.size,
     });
   })
 );

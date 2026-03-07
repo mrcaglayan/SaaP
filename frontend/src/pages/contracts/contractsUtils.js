@@ -110,7 +110,7 @@ export function formatAmount(value) {
   }
   return parsed.toLocaleString(undefined, {
     minimumFractionDigits: 2,
-    maximumFractionDigits: 6,
+    maximumFractionDigits: 2,
   });
 }
 

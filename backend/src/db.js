@@ -25,6 +25,9 @@ export const pool = mysql.createPool({
   user: dbUser,
   password: dbPassword,
   database: dbName,
+  // Keep SQL DATE columns as YYYY-MM-DD strings so date-only values do not shift
+  // when Node serializes them through the server timezone.
+  dateStrings: ["DATE"],
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0,
