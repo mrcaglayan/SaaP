@@ -15,6 +15,13 @@ import {
   resolveTenantId,
 } from "./_utils.js";
 import { listJournalSourceLinksByJournalIds } from "../services/journal.source-link.service.js";
+import { listCariSettlementDrilldownsByBatchIds } from "../services/cari.settlement.drilldown.service.js";
+
+function normalizeUpperText(value) {
+  return String(value || "")
+    .trim()
+    .toUpperCase();
+}
 
 export function registerGlReadJournalRoutes(router, deps = {}) {
   const { resolveScopeFromBookId, resolveScopeFromJournalId } = deps;
@@ -265,13 +272,45 @@ export function registerGlReadJournalRoutes(router, deps = {}) {
         tenantId,
         journalEntryIds: [journalId],
       });
+      const sourceLinks = sourceLinksByJournalId.get(journalId) || [];
+      const settlementBatchIds = [];
+      const settlementLinkRolesByBatchId = new Map();
+
+      for (const linkRow of sourceLinks) {
+        const sourceRefType = normalizeUpperText(linkRow?.source_ref_type);
+        const settlementBatchId = parsePositiveInt(linkRow?.source_ref_id);
+        if (sourceRefType !== "CARI_SETTLEMENT_BATCH" || !settlementBatchId) {
+          continue;
+        }
+        if (!settlementLinkRolesByBatchId.has(settlementBatchId)) {
+          settlementLinkRolesByBatchId.set(settlementBatchId, new Set());
+          settlementBatchIds.push(settlementBatchId);
+        }
+        settlementLinkRolesByBatchId
+          .get(settlementBatchId)
+          .add(normalizeUpperText(linkRow?.link_role || "PRIMARY") || "PRIMARY");
+      }
+
+      const cariSettlementDrilldowns =
+        settlementBatchIds.length > 0
+          ? await listCariSettlementDrilldownsByBatchIds({
+              tenantId,
+              settlementBatchIds,
+            })
+          : [];
 
       return res.json({
         tenantId,
         row: {
           ...journal,
           lines: lineResult.rows || [],
-          source_links: sourceLinksByJournalId.get(journalId) || [],
+          source_links: sourceLinks,
+          cari_settlement_drilldowns: cariSettlementDrilldowns.map((row) => ({
+            ...row,
+            sourceLinkRoles: Array.from(
+              settlementLinkRolesByBatchId.get(parsePositiveInt(row?.settlementBatchId)) || []
+            ),
+          })),
         },
       });
     })

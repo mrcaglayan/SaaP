@@ -106,6 +106,74 @@ function resolveReverseBlockedSourceLinks(sourceLinks = []) {
     );
 }
 
+function formatSettlementSourceLinkRole(role, l) {
+  const normalizedRole = normalizeSourceRefType(role || "PRIMARY");
+  if (normalizedRole === "REVERSAL_OF") {
+    return l("Original Settlement", "Orijinal Mahsup");
+  }
+  if (normalizedRole === "PRIMARY") {
+    return l("Source Settlement", "Kaynak Mahsup");
+  }
+  return normalizedRole || l("Settlement Link", "Mahsup Baglantisi");
+}
+
+function resolveJournalSourceLinkPath(sourceLink, settlementDrilldowns = []) {
+  const sourceRefType = normalizeSourceRefType(
+    sourceLink?.source_ref_type || sourceLink?.sourceRefType
+  );
+  const sourceRefId = parsePositiveIntOrNull(
+    sourceLink?.source_ref_id || sourceLink?.sourceRefId
+  );
+  if (!sourceRefType || !sourceRefId) {
+    return null;
+  }
+
+  if (sourceRefType === "CARI_DOCUMENT") {
+    return `/app/cari-belgeler?documentId=${sourceRefId}`;
+  }
+
+  if (sourceRefType === "CARI_SETTLEMENT_BATCH") {
+    const settlement =
+      (Array.isArray(settlementDrilldowns) ? settlementDrilldowns : []).find(
+        (row) => parsePositiveIntOrNull(row?.settlementBatchId) === sourceRefId
+      ) || null;
+    const params = new URLSearchParams({
+      settlementBatchId: String(sourceRefId),
+    });
+    const legalEntityId = parsePositiveIntOrNull(settlement?.legalEntityId);
+    const counterpartyId = parsePositiveIntOrNull(settlement?.counterpartyId);
+    if (legalEntityId) {
+      params.set("legalEntityId", String(legalEntityId));
+    }
+    if (counterpartyId) {
+      params.set("counterpartyId", String(counterpartyId));
+    }
+    return `/app/cari-settlements?${params.toString()}`;
+  }
+
+  if (sourceRefType === "PAYMENT_BATCH") {
+    return `/app/odeme-batchleri/${sourceRefId}`;
+  }
+
+  return null;
+}
+
+function formatJournalSourceLinkAction(sourceLink, l) {
+  const sourceRefType = normalizeSourceRefType(
+    sourceLink?.source_ref_type || sourceLink?.sourceRefType
+  );
+  if (sourceRefType === "CARI_DOCUMENT") {
+    return l("Open Document", "Belgeyi Ac");
+  }
+  if (sourceRefType === "CARI_SETTLEMENT_BATCH") {
+    return l("Open Settlement", "Mahsuplastirmayi Ac");
+  }
+  if (sourceRefType === "PAYMENT_BATCH") {
+    return l("Open Payment Batch", "Odeme Batch'ini Ac");
+  }
+  return l("Open Source", "Kaynagi Ac");
+}
+
 function toInt(value) {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
@@ -308,6 +376,8 @@ export default function JournalWorkbenchPage() {
   const canReadAccounts = hasPermission("gl.account.read");
   const canReadPeriods = hasPermission("org.fiscal_period.read");
   const canReadJournals = hasPermission("gl.journal.read");
+  const canReadCariDocuments = hasPermission("cari.doc.read");
+  const canReadCariReports = hasPermission("cari.report.read");
   const canCreate = hasPermission("gl.journal.create");
   const canUpdateDraft = hasPermission("gl.journal.update");
   const canCancelDraft = hasPermission("gl.journal.cancel");
@@ -389,6 +459,7 @@ export default function JournalWorkbenchPage() {
     JOURNAL_HISTORY_FILTERS_STORAGE_SCOPE,
     () => ({ ...JOURNAL_HISTORY_DEFAULT_FILTERS })
   );
+  const [historyBooks, setHistoryBooks] = useState([]);
   const [historyPeriods, setHistoryPeriods] = useState([]);
   const [loadingHistoryPeriods, setLoadingHistoryPeriods] = useState(false);
   const [historyRows, setHistoryRows] = useState([]);
@@ -515,6 +586,26 @@ export default function JournalWorkbenchPage() {
       })),
     [books]
   );
+  const historyBookOptions = useMemo(
+    () =>
+      historyBooks.map((book) => ({
+        value: String(book.id),
+        label: `${book.code} - ${book.name}`,
+        description: `#${book.id}`,
+      })),
+    [historyBooks]
+  );
+  const contextBookRows = useMemo(() => {
+    const merged = new Map();
+    for (const book of [...books, ...historyBooks]) {
+      const bookId = toInt(book?.id);
+      if (!bookId || merged.has(bookId)) {
+        continue;
+      }
+      merged.set(bookId, book);
+    }
+    return Array.from(merged.values());
+  }, [books, historyBooks]);
   const periodOptions = useMemo(
     () =>
       periods.map((period) => ({
@@ -728,6 +819,13 @@ export default function JournalWorkbenchPage() {
     () => resolveReverseBlockedSourceLinks(selectedJournal?.source_links),
     [selectedJournal]
   );
+  const selectedJournalCariSettlementDrilldowns = useMemo(() => {
+    const rows =
+      selectedJournal?.cariSettlementDrilldowns ||
+      selectedJournal?.cari_settlement_drilldowns ||
+      [];
+    return Array.isArray(rows) ? rows : [];
+  }, [selectedJournal]);
   const selectedJournalDetailLines = useMemo(
     () => sortJournalDetailLines(selectedJournal?.lines || []),
     [selectedJournal]
@@ -775,8 +873,8 @@ export default function JournalWorkbenchPage() {
     [books, tbForm.bookId]
   );
   const historyBookBaseCurrencyCode = useMemo(
-    () => resolveBookBaseCurrencyCode(books, historyFilters.bookId),
-    [books, historyFilters.bookId]
+    () => resolveBookBaseCurrencyCode(historyBooks, historyFilters.bookId),
+    [historyBooks, historyFilters.bookId]
   );
   const selectedJournalBookBaseCurrencyCode = useMemo(
     () =>
@@ -786,13 +884,13 @@ export default function JournalWorkbenchPage() {
           selectedJournal?.legal_entity_id ||
           selectedJournal?.legalEntityId ||
           historyFilters.legalEntityId,
-        bookRows: books,
+        bookRows: contextBookRows,
         bookId:
           selectedJournal?.book_id ||
           selectedJournal?.bookId ||
           historyFilters.bookId,
       }),
-    [books, entities, historyFilters.bookId, historyFilters.legalEntityId, selectedJournal]
+    [contextBookRows, entities, historyFilters.bookId, historyFilters.legalEntityId, selectedJournal]
   );
   const showPeriodCloseFxOverrideControls = canOverrideCashFxRevaluation;
   const periodCloseFxGateDetails = useMemo(() => {
@@ -966,6 +1064,52 @@ export default function JournalWorkbenchPage() {
       cancelled = true;
     };
   }, [canReadOrgTree, canReadBooks, canReadAccounts, selectedLegalEntityId, l]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadHistoryBooks() {
+      if (!canReadBooks) {
+        setHistoryBooks([]);
+        return;
+      }
+
+      setError("");
+      try {
+        const historyLegalEntityId = toInt(historyFilters.legalEntityId);
+        const res = await listBooks(
+          historyLegalEntityId ? { legalEntityId: historyLegalEntityId } : {}
+        );
+        if (cancelled) return;
+
+        const rows = res?.rows || [];
+        setHistoryBooks(rows);
+        setHistoryFilters((prev) => {
+          const historyBookId = toInt(prev.bookId);
+          if (!historyBookId || hasId(rows, historyBookId)) {
+            return prev;
+          }
+          return {
+            ...prev,
+            bookId: "",
+            fiscalPeriodId: "",
+          };
+        });
+      } catch (err) {
+        if (!cancelled) {
+          setError(
+            err?.response?.data?.message ||
+              l("Failed to load history books.", "Gecmis defterleri yuklenemedi.")
+          );
+        }
+      }
+    }
+
+    loadHistoryBooks();
+    return () => {
+      cancelled = true;
+    };
+  }, [canReadBooks, historyFilters.legalEntityId, l, setHistoryFilters]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1155,7 +1299,7 @@ export default function JournalWorkbenchPage() {
         return;
       }
 
-      const book = books.find((row) => Number(row.id) === historyBookId);
+      const book = historyBooks.find((row) => Number(row.id) === historyBookId);
       const calendarId = toInt(book?.calendar_id);
       if (!calendarId) {
         setHistoryPeriods([]);
@@ -1201,7 +1345,7 @@ export default function JournalWorkbenchPage() {
     return () => {
       cancelled = true;
     };
-  }, [canReadPeriods, books, historyFilters.bookId, l, setHistoryFilters]);
+  }, [canReadPeriods, historyBooks, historyFilters.bookId, l, setHistoryFilters]);
 
   async function fetchJournalHistory(filters = historyFilters) {
     if (!canReadJournals) return;
@@ -3355,7 +3499,7 @@ export default function JournalWorkbenchPage() {
           />
           <Combobox
             value={historyFilters.bookId || null}
-            options={bookOptions}
+            options={historyBookOptions}
             onChange={(nextValue) =>
               setHistoryFilters((prev) => ({
                 ...prev,
@@ -3574,6 +3718,169 @@ export default function JournalWorkbenchPage() {
                       })
                       .filter(Boolean)
                       .join(", ") || "-"}
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {selectedJournal.source_links.map((row, index) => {
+                        const sourceRefType = normalizeSourceRefType(
+                          row?.source_ref_type || row?.sourceRefType
+                        );
+                        const sourceRefId = parsePositiveIntOrNull(
+                          row?.source_ref_id || row?.sourceRefId
+                        );
+                        const destination = resolveJournalSourceLinkPath(
+                          row,
+                          selectedJournalCariSettlementDrilldowns
+                        );
+                        if (!sourceRefType || !sourceRefId || !destination) {
+                          return null;
+                        }
+                        return (
+                          <Link
+                            key={`journal-source-open-${sourceRefType}-${sourceRefId}-${index}`}
+                            to={destination}
+                            className="rounded border border-slate-300 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700"
+                          >
+                            {formatJournalSourceLinkAction(row, l)}
+                          </Link>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : null}
+                {(canReadCariReports || canReadCariDocuments) &&
+                selectedJournalCariSettlementDrilldowns.length > 0 ? (
+                  <div className="rounded border border-slate-200 bg-slate-50 p-2">
+                    <div className="font-semibold text-slate-700">
+                      {l("Applied Documents", "Uygulanan Belgeler")}
+                    </div>
+                    <div className="mt-1 text-[11px] text-slate-500">
+                      {l(
+                        "Resolved from linked CARI settlement batches.",
+                        "Bagli CARI mahsup partilerinden cozuldu."
+                      )}
+                    </div>
+                    <div className="mt-2 space-y-2">
+                      {selectedJournalCariSettlementDrilldowns.map((settlement, settlementIndex) => {
+                        const settlementBatchId = toInt(settlement?.settlementBatchId);
+                        const settlementLabel =
+                          settlement?.settlementNo ||
+                          (settlementBatchId ? `#${settlementBatchId}` : `#${settlementIndex + 1}`);
+                        const settlementRoles = Array.isArray(settlement?.sourceLinkRoles)
+                          ? settlement.sourceLinkRoles
+                          : Array.isArray(settlement?.source_link_roles)
+                            ? settlement.source_link_roles
+                            : [];
+                        const appliedDocuments = Array.isArray(settlement?.appliedDocuments)
+                          ? settlement.appliedDocuments
+                          : Array.isArray(settlement?.applied_documents)
+                            ? settlement.applied_documents
+                            : [];
+                        return (
+                          <div
+                            key={`journal-settlement-drilldown-${settlementBatchId || settlementIndex}`}
+                            className="rounded border border-slate-200 bg-white p-2"
+                          >
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="font-semibold text-slate-800">{settlementLabel}</span>
+                              <span>{settlement?.settlementDate || "-"}</span>
+                              <span>{settlement?.status || "-"}</span>
+                              {settlement?.cashTransactionId ? (
+                                <span>
+                                  {l("Cash Txn", "Nakit Islem")} #{settlement.cashTransactionId}
+                                </span>
+                              ) : null}
+                              <span>
+                                <MoneyText
+                                  amount={settlement?.totalAllocatedTxn}
+                                  currencyCode={settlement?.currencyCode}
+                                />
+                              </span>
+                              {settlementBatchId ? (
+                                <Link
+                                  to={resolveJournalSourceLinkPath(
+                                    {
+                                      sourceRefType: "CARI_SETTLEMENT_BATCH",
+                                      sourceRefId: settlementBatchId,
+                                    },
+                                    selectedJournalCariSettlementDrilldowns
+                                  )}
+                                  className="rounded border border-slate-300 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700"
+                                >
+                                  {l("Open Settlement", "Mahsuplastirmayi Ac")}
+                                </Link>
+                              ) : null}
+                            </div>
+                            {settlementRoles.length > 0 ? (
+                              <div className="mt-2 flex flex-wrap gap-1">
+                                {settlementRoles.map((role) => (
+                                  <span
+                                    key={`settlement-link-role-${settlementBatchId || settlementIndex}-${role}`}
+                                    className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-600"
+                                  >
+                                    {formatSettlementSourceLinkRole(role, l)}
+                                  </span>
+                                ))}
+                              </div>
+                            ) : null}
+                            {appliedDocuments.length === 0 ? (
+                              <div className="mt-2 text-[11px] text-slate-500">
+                                {l(
+                                  "No applied documents found on this settlement batch.",
+                                  "Bu mahsup partisinde uygulanan belge bulunmadi."
+                                )}
+                              </div>
+                            ) : (
+                              <div className="mt-2 space-y-1">
+                                {appliedDocuments.map((documentRow, documentIndex) => {
+                                  const documentId = toInt(documentRow?.documentId);
+                                  const allocationAmount =
+                                    documentRow?.allocationAmountDocTxn ??
+                                    documentRow?.allocation_amount_doc_txn ??
+                                    documentRow?.allocationAmountTxn ??
+                                    documentRow?.allocation_amount_txn;
+                                  const documentCurrencyCode =
+                                    documentRow?.documentCurrencyCode ||
+                                    documentRow?.document_currency_code ||
+                                    null;
+                                  const itemNo =
+                                    documentRow?.itemNo ?? documentRow?.item_no ?? null;
+                                  const documentLabel =
+                                    documentRow?.documentNo ||
+                                    documentRow?.document_no ||
+                                    (documentId ? `#${documentId}` : `#${documentIndex + 1}`);
+                                  return (
+                                    <div
+                                      key={`journal-applied-document-${settlementBatchId || settlementIndex}-${documentId || documentIndex}`}
+                                      className="flex flex-wrap items-center gap-2 rounded border border-slate-200 bg-slate-50 px-2 py-1"
+                                    >
+                                      <span className="font-medium text-slate-800">{documentLabel}</span>
+                                      <span>{documentRow?.documentDate || documentRow?.document_date || "-"}</span>
+                                      <span>{documentRow?.documentType || documentRow?.document_type || "-"}</span>
+                                      <span>{documentRow?.documentDirection || documentRow?.document_direction || "-"}</span>
+                                      <span>{l("Item", "Kalem")} {itemNo || "-"}</span>
+                                      <span>
+                                        {l("Applied", "Uygulanan")}{" "}
+                                        <MoneyText
+                                          amount={allocationAmount}
+                                          currencyCode={documentCurrencyCode}
+                                        />
+                                      </span>
+                                      {canReadCariDocuments && documentId ? (
+                                        <Link
+                                          to={`/app/cari-belgeler?documentId=${documentId}`}
+                                          className="rounded border border-slate-300 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700"
+                                        >
+                                          {l("Open Document", "Belgeyi Ac")}
+                                        </Link>
+                                      ) : null}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
                 ) : null}
                 {String(selectedJournal.status || "").toUpperCase() === "CANCELLED" && selectedJournal.cancel_reason ? (

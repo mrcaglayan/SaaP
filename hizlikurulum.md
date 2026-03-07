@@ -4817,7 +4817,7 @@ POST
 {
     "useFxOverride": false,
     "fxOverrideReason": null,
-    "offsetAccountId": 271
+    "offsetAccountCode": "770"
 }
 51-http://localhost:3000/api/v1/cari/documents
 Request Method
@@ -4842,5 +4842,161 @@ POST
 {
     "useFxOverride": false,
     "fxOverrideReason": null,
-    "offsetAccountId": 271
+    "offsetAccountCode": "770"
+}
+53-Request URL
+http://localhost:3000/api/v1/cari/documents
+Request Method
+POST
+{
+    "legalEntityId": 1,
+    "counterpartyId": 1,
+    "paymentTermId": 3,
+    "direction": "AR",
+    "documentType": "INVOICE",
+    "documentDate": "2026-03-07",
+    "dueDate": "2026-03-08",
+    "amountTxn": 150000,
+    "amountBase": 150000,
+    "currencyCode": "AFN",
+    "fxRate": null
+}
+54-Request URL
+http://localhost:3000/api/v1/cari/documents/3/post
+Request Method
+POST
+{
+    "useFxOverride": false,
+    "fxOverrideReason": null,
+    "offsetAccountCode": "600"
+}
+55-Request URL
+http://localhost:3000/api/v1/cari/documents
+Request Method
+POST
+{
+    "legalEntityId": 1,
+    "counterpartyId": 1,
+    "paymentTermId": 3,
+    "direction": "AR",
+    "documentType": "INVOICE",
+    "documentDate": "2026-03-07",
+    "dueDate": "2026-03-08",
+    "amountTxn": 20000,
+    "amountBase": 1300000,
+    "currencyCode": "USD",
+    "fxRate": 65
+}
+56-Request URL
+http://localhost:3000/api/v1/cari/documents/4/post
+Request Method
+POST
+{
+    "useFxOverride": false,
+    "fxOverrideReason": null,
+    "offsetAccountCode": "600"
+}
+57-Request URL
+http://localhost:3000/api/v1/cari/documents
+Request Method
+POST
+{
+    "legalEntityId": 2,
+    "counterpartyId": 4,
+    "paymentTermId": 8,
+    "direction": "AP",
+    "documentType": "INVOICE",
+    "documentDate": "2026-03-07",
+    "dueDate": "2026-03-09",
+    "amountTxn": 120000,
+    "amountBase": 120000,
+    "currencyCode": "PKR",
+    "fxRate": null
+}
+58-Request URL
+http://localhost:3000/api/v1/cari/documents/5/post
+Request Method
+POST
+{
+    "useFxOverride": false,
+    "fxOverrideReason": null,
+    "offsetAccountCode": "770"
+}
+59-Request URL
+http://localhost:3000/api/v1/cari/documents
+Request Method
+POST
+{
+    "legalEntityId": 2,
+    "counterpartyId": 4,
+    "paymentTermId": null,
+    "direction": "AP",
+    "documentType": "INVOICE",
+    "documentDate": "2026-03-07",
+    "dueDate": "2026-03-08",
+    "amountTxn": 10000,
+    "amountBase": 1770000,
+    "currencyCode": "USD",
+    "fxRate": 177
+}
+60-Request URL
+http://localhost:3000/api/v1/cari/documents/6/post
+Request Method
+POST
+{
+    "useFxOverride": false,
+    "fxOverrideReason": null,
+    "offsetAccountCode": "770"
+}
+61-Request URL
+http://localhost:3000/api/v1/cari/documents
+Request Method
+POST
+{
+    "legalEntityId": 2,
+    "counterpartyId": 2,
+    "paymentTermId": 8,
+    "direction": "AR",
+    "documentType": "INVOICE",
+    "documentDate": "2026-03-07",
+    "dueDate": "2026-03-08",
+    "amountTxn": 50000,
+    "amountBase": 50000,
+    "currencyCode": "PKR",
+    "fxRate": null
+}
+62-Request URL
+http://localhost:3000/api/v1/cari/documents/7/post
+Request Method
+POST
+{
+    "useFxOverride": false,
+    "fxOverrideReason": null,
+    "offsetAccountCode": "600"
+}
+63-Request URL
+http://localhost:3000/api/v1/cari/documents
+Request Method
+POST
+{
+    "legalEntityId": 2,
+    "counterpartyId": 2,
+    "paymentTermId": null,
+    "direction": "AR",
+    "documentType": "INVOICE",
+    "documentDate": "2026-03-07",
+    "dueDate": "2026-03-08",
+    "amountTxn": 30000,
+    "amountBase": 5310000,
+    "currencyCode": "USD",
+    "fxRate": 177
+}
+64-Request URL
+http://localhost:3000/api/v1/cari/documents/8/post
+Request Method
+POST
+{
+    "useFxOverride": false,
+    "fxOverrideReason": null,
+    "offsetAccountCode": "600"
 }

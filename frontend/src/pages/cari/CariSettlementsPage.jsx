@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import {
   applyCariSettlement,
   attachCariBankReference,
@@ -456,6 +456,7 @@ const LINKED_CASH_OPEN_SESSION_REQUIRED_ERROR =
   "Selected cash register requires an OPEN cash session. Open one from Cash Sessions first.";
 
 export default function CariSettlementsPage() {
+  const [searchParams] = useSearchParams();
   const { hasPermission } = useAuth();
   const { language } = useI18n();
   const { getModuleRow } = useModuleReadiness();
@@ -624,6 +625,15 @@ export default function CariSettlementsPage() {
   const [bankApplyResult, setBankApplyResult] = useState(null);
   const [bankApplyFollowUpRisks, setBankApplyFollowUpRisks] = useState([]);
   const linkedCashSessionInputRef = useRef(null);
+  const deepLinkedSettlementBatchId = toPositiveInt(
+    searchParams.get("settlementBatchId") || searchParams.get("settlement_batch_id")
+  );
+  const deepLinkedLegalEntityId = toPositiveInt(
+    searchParams.get("legalEntityId") || searchParams.get("legal_entity_id")
+  );
+  const deepLinkedCounterpartyId = toPositiveInt(
+    searchParams.get("counterpartyId") || searchParams.get("counterparty_id")
+  );
 
   useWorkingContextDefaults(setPreviewFilters, SETTLEMENT_PREVIEW_CONTEXT_MAPPINGS, [
     previewFilters.legalEntityId,
@@ -642,6 +652,50 @@ export default function CariSettlementsPage() {
   ]);
   useWorkingContextDefaults(setReverseForm, SETTLEMENT_REVERSE_CONTEXT_MAPPINGS, [
     reverseForm.reversalDate,
+  ]);
+
+  useEffect(() => {
+    if (!deepLinkedSettlementBatchId) {
+      return;
+    }
+
+    setReverseSettlementLookupQuery("");
+    setReverseForm((prev) => {
+      const nextSettlementBatchId = String(deepLinkedSettlementBatchId);
+      if (String(prev?.settlementBatchId || "") === nextSettlementBatchId) {
+        return prev;
+      }
+      return {
+        ...prev,
+        settlementBatchId: nextSettlementBatchId,
+      };
+    });
+    setReverseLookupFilters((prev) => {
+      let next = prev;
+      if (
+        deepLinkedLegalEntityId &&
+        String(prev?.legalEntityId || "") !== String(deepLinkedLegalEntityId)
+      ) {
+        next = {
+          ...next,
+          legalEntityId: String(deepLinkedLegalEntityId),
+        };
+      }
+      if (
+        deepLinkedCounterpartyId &&
+        String(next?.counterpartyId || "") !== String(deepLinkedCounterpartyId)
+      ) {
+        next = {
+          ...next,
+          counterpartyId: String(deepLinkedCounterpartyId),
+        };
+      }
+      return next;
+    });
+  }, [
+    deepLinkedCounterpartyId,
+    deepLinkedLegalEntityId,
+    deepLinkedSettlementBatchId,
   ]);
 
   const applyLegalEntityId = toPositiveInt(applyForm.legalEntityId);
@@ -1564,7 +1618,7 @@ export default function CariSettlementsPage() {
   }, [bankApplyForm.direction, bankApplyForm.legalEntityId, canReadCards]);
 
   useEffect(() => {
-    if (!canReverse || !canReadReports) {
+    if (!canReadReports) {
       setReverseSettlementRows([]);
       setReverseSettlementLoading(false);
       setReverseSettlementLookupError("");
@@ -1636,7 +1690,6 @@ export default function CariSettlementsPage() {
       active = false;
     };
   }, [
-    canReverse,
     canReadReports,
     reverseLookupFilters.asOfDate,
     reverseLookupFilters.counterpartyId,

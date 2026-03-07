@@ -9,11 +9,7 @@ import { query } from "./db.js";
 import { runMigrations } from "./migrationRunner.js";
 import { seedCore } from "./seedCore.js";
 
-const REQUIRED_REQUEST_IDS = [
-  1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
-  23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42,
-  43, 44, 45, 46, 47, 48, 49, 50, 51, 52,
-];
+const REQUIRED_REQUEST_IDS = Array.from({ length: 64 }, (_, index) => index + 1);
 
 const DEFAULT_MARKDOWN_PATH = path.resolve(process.cwd(), "..", "hizlikurulum.md");
 const DEFAULT_BASE_URL = String(process.env.STARTER_SEED_BASE_URL || "").trim() ||
@@ -26,7 +22,7 @@ const FX_CLEARANCE_PARENT_CODE = "108";
 const CASH_PARENT_CODE = "100";
 const AR_PARENT_CODE = "120";
 const AP_PARENT_CODE = "320";
-const CARI_OFFSET_ACCOUNT_CODE = "271";
+const CARI_OFFSET_ACCOUNT_CODE = "770";
 
 function parsePositiveInt(value) {
   const parsed = Number(value);
@@ -850,6 +846,41 @@ async function ensureOpenSession({
   });
 }
 
+async function createCariDocument({
+  baseUrl,
+  cookie,
+  payload,
+  errorLabel,
+}) {
+  const response = await requestJson({
+    baseUrl,
+    cookie,
+    method: "POST",
+    pathName: "/api/v1/cari/documents",
+    body: payload,
+  });
+  const documentId = parsePositiveInt(response?.row?.id);
+  if (!documentId) {
+    throw new Error(`Unable to resolve ${errorLabel} cari document id`);
+  }
+  return documentId;
+}
+
+async function postCariDocument({
+  baseUrl,
+  cookie,
+  documentId,
+  payload,
+}) {
+  await requestJson({
+    baseUrl,
+    cookie,
+    method: "POST",
+    pathName: `/api/v1/cari/documents/${documentId}/post`,
+    body: payload,
+  });
+}
+
 function info(message, details = null) {
   if (details) {
     console.log(`[seed:starter] ${message}`, details);
@@ -1231,6 +1262,11 @@ export async function seedStarter(options = {}) {
     const paymentTermAId = await findPaymentTermId(
       tenantContext.tenantId,
       legalEntityA.id,
+      PAYMENT_TERM_NET_30
+    );
+    const paymentTermBId = await findPaymentTermId(
+      tenantContext.tenantId,
+      legalEntityB.id,
       PAYMENT_TERM_NET_30
     );
 
@@ -1632,63 +1668,105 @@ export async function seedStarter(options = {}) {
       body: accountPkrFxClearancePayload,
     });
 
-    const cariOffsetAccountId = await findAccountIdByCoaCode(
-      tenantContext.tenantId,
-      coaCodeA,
-      CARI_OFFSET_ACCOUNT_CODE
-    );
+    const postedCariDocumentIds = [];
+    const cariDocumentPlans = [
+      {
+        createRequestId: 49,
+        postRequestId: 50,
+        errorLabel: "first AP",
+        legalEntityId: legalEntityA.id,
+        counterpartyId: counterpartyAfgVendorId,
+        paymentTermId: paymentTermAId,
+        offsetAccountCode: CARI_OFFSET_ACCOUNT_CODE,
+      },
+      {
+        createRequestId: 51,
+        postRequestId: 52,
+        errorLabel: "second AP",
+        legalEntityId: legalEntityA.id,
+        counterpartyId: counterpartyAfgVendorId,
+        paymentTermId: paymentTermAId,
+        offsetAccountCode: CARI_OFFSET_ACCOUNT_CODE,
+      },
+      {
+        createRequestId: 53,
+        postRequestId: 54,
+        errorLabel: "first AR",
+        legalEntityId: legalEntityA.id,
+        counterpartyId: counterpartyAfgCustomerId,
+        paymentTermId: paymentTermAId,
+      },
+      {
+        createRequestId: 55,
+        postRequestId: 56,
+        errorLabel: "second AR",
+        legalEntityId: legalEntityA.id,
+        counterpartyId: counterpartyAfgCustomerId,
+        paymentTermId: paymentTermAId,
+      },
+      {
+        createRequestId: 57,
+        postRequestId: 58,
+        errorLabel: "third AP",
+        legalEntityId: legalEntityB.id,
+        counterpartyId: counterpartyPkrVendorId,
+        paymentTermId: paymentTermBId,
+        offsetAccountCode: CARI_OFFSET_ACCOUNT_CODE,
+      },
+      {
+        createRequestId: 59,
+        postRequestId: 60,
+        errorLabel: "fourth AP",
+        legalEntityId: legalEntityB.id,
+        counterpartyId: counterpartyPkrVendorId,
+        paymentTermId: null,
+        offsetAccountCode: CARI_OFFSET_ACCOUNT_CODE,
+      },
+      {
+        createRequestId: 61,
+        postRequestId: 62,
+        errorLabel: "third AR",
+        legalEntityId: legalEntityB.id,
+        counterpartyId: counterpartyPkrCustomerId,
+        paymentTermId: paymentTermBId,
+      },
+      {
+        createRequestId: 63,
+        postRequestId: 64,
+        errorLabel: "fourth AR",
+        legalEntityId: legalEntityB.id,
+        counterpartyId: counterpartyPkrCustomerId,
+        paymentTermId: null,
+      },
+    ];
 
-    const documentCreateA = getRequestBody(requests, 49);
-    documentCreateA.legalEntityId = legalEntityA.id;
-    documentCreateA.counterpartyId = counterpartyAfgVendorId;
-    documentCreateA.paymentTermId = paymentTermAId;
-    const documentCreateAResult = await requestJson({
-      baseUrl,
-      cookie: authCookie,
-      method: "POST",
-      pathName: "/api/v1/cari/documents",
-      body: documentCreateA,
-    });
-    const documentAId = parsePositiveInt(documentCreateAResult?.row?.id);
-    if (!documentAId) {
-      throw new Error("Unable to resolve first cari document id");
+    for (const plan of cariDocumentPlans) {
+      const documentCreatePayload = getRequestBody(requests, plan.createRequestId);
+      documentCreatePayload.legalEntityId = plan.legalEntityId;
+      documentCreatePayload.counterpartyId = plan.counterpartyId;
+      documentCreatePayload.paymentTermId = plan.paymentTermId;
+
+      const documentId = await createCariDocument({
+        baseUrl,
+        cookie: authCookie,
+        payload: documentCreatePayload,
+        errorLabel: plan.errorLabel,
+      });
+
+      const documentPostPayload = getRequestBody(requests, plan.postRequestId);
+      delete documentPostPayload.offsetAccountId;
+      if (plan.offsetAccountCode) {
+        documentPostPayload.offsetAccountCode = plan.offsetAccountCode;
+      }
+
+      await postCariDocument({
+        baseUrl,
+        cookie: authCookie,
+        documentId,
+        payload: documentPostPayload,
+      });
+      postedCariDocumentIds.push(documentId);
     }
-
-    const documentPostA = getRequestBody(requests, 50);
-    documentPostA.offsetAccountId = cariOffsetAccountId;
-    await requestJson({
-      baseUrl,
-      cookie: authCookie,
-      method: "POST",
-      pathName: `/api/v1/cari/documents/${documentAId}/post`,
-      body: documentPostA,
-    });
-
-    const documentCreateB = getRequestBody(requests, 51);
-    documentCreateB.legalEntityId = legalEntityA.id;
-    documentCreateB.counterpartyId = counterpartyAfgVendorId;
-    documentCreateB.paymentTermId = paymentTermAId;
-    const documentCreateBResult = await requestJson({
-      baseUrl,
-      cookie: authCookie,
-      method: "POST",
-      pathName: "/api/v1/cari/documents",
-      body: documentCreateB,
-    });
-    const documentBId = parsePositiveInt(documentCreateBResult?.row?.id);
-    if (!documentBId) {
-      throw new Error("Unable to resolve second cari document id");
-    }
-
-    const documentPostB = getRequestBody(requests, 52);
-    documentPostB.offsetAccountId = cariOffsetAccountId;
-    await requestJson({
-      baseUrl,
-      cookie: authCookie,
-      method: "POST",
-      pathName: `/api/v1/cari/documents/${documentBId}/post`,
-      body: documentPostB,
-    });
 
     return {
       ok: true,
@@ -1713,7 +1791,7 @@ export async function seedStarter(options = {}) {
         [legalEntityACode]: openingJournalAId,
         [legalEntityBCode]: openingJournalBId,
       },
-      postedCariDocumentIds: [documentAId, documentBId],
+      postedCariDocumentIds,
       cashRegisterIds: {
         [registerA1Payload.code]: registerA1Id,
         [registerA2Payload.code]: registerA2Id,
