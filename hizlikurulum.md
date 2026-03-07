@@ -4794,6 +4794,19 @@ POST
     "parentAccountId": 293
 }
 49-Request URL
+http://localhost:3000/api/v1/gl/accounts
+Request Method
+POST
+{
+    "coaId": 1,
+    "code": "108.02",
+    "name": "ÅžUBELER ARASI TRANSFERLER",
+    "accountType": "ASSET",
+    "normalSide": "DEBIT",
+    "allowPosting": true,
+    "parentAccountId": 5
+}
+50-Request URL
 http://localhost:3000/api/v1/cari/documents
 Request Method
 POST
@@ -4810,7 +4823,7 @@ POST
     "currencyCode": "AFN",
     "fxRate": null
 }
-50-Request URL
+51-Request URL
 http://localhost:3000/api/v1/cari/documents/21/post
 Request Method
 POST
@@ -4819,7 +4832,7 @@ POST
     "fxOverrideReason": null,
     "offsetAccountCode": "770"
 }
-51-http://localhost:3000/api/v1/cari/documents
+52-http://localhost:3000/api/v1/cari/documents
 Request Method
 POST
 {
@@ -4835,7 +4848,7 @@ POST
     "currencyCode": "USD",
     "fxRate": 65
 }
-52-Request URL
+53-Request URL
 http://localhost:3000/api/v1/cari/documents/22/post
 Request Method
 POST
@@ -4844,7 +4857,7 @@ POST
     "fxOverrideReason": null,
     "offsetAccountCode": "770"
 }
-53-Request URL
+54-Request URL
 http://localhost:3000/api/v1/cari/documents
 Request Method
 POST
@@ -4861,7 +4874,7 @@ POST
     "currencyCode": "AFN",
     "fxRate": null
 }
-54-Request URL
+55-Request URL
 http://localhost:3000/api/v1/cari/documents/3/post
 Request Method
 POST
@@ -4870,7 +4883,7 @@ POST
     "fxOverrideReason": null,
     "offsetAccountCode": "600"
 }
-55-Request URL
+56-Request URL
 http://localhost:3000/api/v1/cari/documents
 Request Method
 POST
@@ -4887,7 +4900,7 @@ POST
     "currencyCode": "USD",
     "fxRate": 65
 }
-56-Request URL
+57-Request URL
 http://localhost:3000/api/v1/cari/documents/4/post
 Request Method
 POST
@@ -4896,7 +4909,7 @@ POST
     "fxOverrideReason": null,
     "offsetAccountCode": "600"
 }
-57-Request URL
+58-Request URL
 http://localhost:3000/api/v1/cari/documents
 Request Method
 POST
@@ -4913,7 +4926,7 @@ POST
     "currencyCode": "PKR",
     "fxRate": null
 }
-58-Request URL
+59-Request URL
 http://localhost:3000/api/v1/cari/documents/5/post
 Request Method
 POST
@@ -4922,7 +4935,7 @@ POST
     "fxOverrideReason": null,
     "offsetAccountCode": "770"
 }
-59-Request URL
+60-Request URL
 http://localhost:3000/api/v1/cari/documents
 Request Method
 POST
@@ -4939,7 +4952,7 @@ POST
     "currencyCode": "USD",
     "fxRate": 177
 }
-60-Request URL
+61-Request URL
 http://localhost:3000/api/v1/cari/documents/6/post
 Request Method
 POST
@@ -4948,7 +4961,7 @@ POST
     "fxOverrideReason": null,
     "offsetAccountCode": "770"
 }
-61-Request URL
+62-Request URL
 http://localhost:3000/api/v1/cari/documents
 Request Method
 POST
@@ -4965,7 +4978,7 @@ POST
     "currencyCode": "PKR",
     "fxRate": null
 }
-62-Request URL
+63-Request URL
 http://localhost:3000/api/v1/cari/documents/7/post
 Request Method
 POST
@@ -4974,7 +4987,7 @@ POST
     "fxOverrideReason": null,
     "offsetAccountCode": "600"
 }
-63-Request URL
+64-Request URL
 http://localhost:3000/api/v1/cari/documents
 Request Method
 POST
@@ -4991,7 +5004,7 @@ POST
     "currencyCode": "USD",
     "fxRate": 177
 }
-64-Request URL
+65-Request URL
 http://localhost:3000/api/v1/cari/documents/8/post
 Request Method
 POST
@@ -5000,7 +5013,7 @@ POST
     "fxOverrideReason": null,
     "offsetAccountCode": "600"
 }
-65-Request URL
+66-Request URL
 http://localhost:3000/api/v1/fx/rates/bulk-upsert
 Request Method
 POST
@@ -5015,7 +5028,7 @@ POST
         }
     ]
 }
-66-Request URL
+67-Request URL
 http://localhost:3000/api/v1/fx/rates/bulk-upsert
 Request Method
 POST
@@ -5030,7 +5043,7 @@ POST
         }
     ]
 }
-67-Request URL
+68-Request URL
 http://localhost:3000/api/v1/gl/accounts
 Request Method
 POST
@@ -5043,7 +5056,7 @@ POST
     "allowPosting": true,
     "parentAccountId": 289
 }
-68-Request URL
+69-Request URL
 http://localhost:3000/api/v1/cash/registers
 Request Method
 POST
@@ -5063,21 +5076,14 @@ POST
     "maxTxnAmount": null,
     "requiresApprovalOverAmount": null
 }
-69-Request URL
+70-Request URL
 http://localhost:3000/api/v1/cash/sessions/open
 Request Method
 POST
 {
     "registerId": 6
 }
-70-Request URL
-http://localhost:3000/api/v1/cash/sessions/open
-Request Method
-POST
-{
-    "registerId": 3
-}
-70-Request URL
+71-Request URL
 http://localhost:3000/api/v1/cari/settlements/apply
 Request Method
 POST

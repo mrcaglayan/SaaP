@@ -9,7 +9,7 @@ import { query } from "./db.js";
 import { runMigrations } from "./migrationRunner.js";
 import { seedCore } from "./seedCore.js";
 
-const REQUIRED_REQUEST_IDS = Array.from({ length: 64 }, (_, index) => index + 1);
+const REQUIRED_REQUEST_IDS = Array.from({ length: 71 }, (_, index) => index + 1);
 
 const DEFAULT_MARKDOWN_PATH = path.resolve(process.cwd(), "..", "hizlikurulum.md");
 const DEFAULT_BASE_URL = String(process.env.STARTER_SEED_BASE_URL || "").trim() ||
@@ -1565,11 +1565,18 @@ export async function seedStarter(options = {}) {
       baseUrl,
       cookie: authCookie,
       tenantId: tenantContext.tenantId,
-      registerId: registerA4Id,
+      registerId: registerA3Id,
       openingAmount: Number(openSession3Payload.openingAmount || 0),
     });
 
     const openSession4Payload = getRequestBody(requests, 42);
+    await ensureOpenSession({
+      baseUrl,
+      cookie: authCookie,
+      tenantId: tenantContext.tenantId,
+      registerId: registerA4Id,
+      openingAmount: Number(openSession4Payload.openingAmount || 0),
+    });
     await ensureOpenSession({
       baseUrl,
       cookie: authCookie,
@@ -1668,11 +1675,26 @@ export async function seedStarter(options = {}) {
       body: accountPkrFxClearancePayload,
     });
 
+    const accountAfgBranchTransitPayload = getRequestBody(requests, 49);
+    accountAfgBranchTransitPayload.coaId = coaA.id;
+    accountAfgBranchTransitPayload.parentAccountId = await findAccountIdByCoaId(
+      coaA.id,
+      FX_CLEARANCE_PARENT_CODE
+    );
+    await requestJson({
+      baseUrl,
+      cookie: authCookie,
+      method: "POST",
+      pathName: "/api/v1/gl/accounts",
+      body: accountAfgBranchTransitPayload,
+    });
+
     const postedCariDocumentIds = [];
+    const settlementBatchIds = [];
     const cariDocumentPlans = [
       {
-        createRequestId: 49,
-        postRequestId: 50,
+        createRequestId: 50,
+        postRequestId: 51,
         errorLabel: "first AP",
         legalEntityId: legalEntityA.id,
         counterpartyId: counterpartyAfgVendorId,
@@ -1680,8 +1702,8 @@ export async function seedStarter(options = {}) {
         offsetAccountCode: CARI_OFFSET_ACCOUNT_CODE,
       },
       {
-        createRequestId: 51,
-        postRequestId: 52,
+        createRequestId: 52,
+        postRequestId: 53,
         errorLabel: "second AP",
         legalEntityId: legalEntityA.id,
         counterpartyId: counterpartyAfgVendorId,
@@ -1689,24 +1711,24 @@ export async function seedStarter(options = {}) {
         offsetAccountCode: CARI_OFFSET_ACCOUNT_CODE,
       },
       {
-        createRequestId: 53,
-        postRequestId: 54,
+        createRequestId: 54,
+        postRequestId: 55,
         errorLabel: "first AR",
         legalEntityId: legalEntityA.id,
         counterpartyId: counterpartyAfgCustomerId,
         paymentTermId: paymentTermAId,
       },
       {
-        createRequestId: 55,
-        postRequestId: 56,
+        createRequestId: 56,
+        postRequestId: 57,
         errorLabel: "second AR",
         legalEntityId: legalEntityA.id,
         counterpartyId: counterpartyAfgCustomerId,
         paymentTermId: paymentTermAId,
       },
       {
-        createRequestId: 57,
-        postRequestId: 58,
+        createRequestId: 58,
+        postRequestId: 59,
         errorLabel: "third AP",
         legalEntityId: legalEntityB.id,
         counterpartyId: counterpartyPkrVendorId,
@@ -1714,8 +1736,8 @@ export async function seedStarter(options = {}) {
         offsetAccountCode: CARI_OFFSET_ACCOUNT_CODE,
       },
       {
-        createRequestId: 59,
-        postRequestId: 60,
+        createRequestId: 60,
+        postRequestId: 61,
         errorLabel: "fourth AP",
         legalEntityId: legalEntityB.id,
         counterpartyId: counterpartyPkrVendorId,
@@ -1723,16 +1745,16 @@ export async function seedStarter(options = {}) {
         offsetAccountCode: CARI_OFFSET_ACCOUNT_CODE,
       },
       {
-        createRequestId: 61,
-        postRequestId: 62,
+        createRequestId: 62,
+        postRequestId: 63,
         errorLabel: "third AR",
         legalEntityId: legalEntityB.id,
         counterpartyId: counterpartyPkrCustomerId,
         paymentTermId: paymentTermBId,
       },
       {
-        createRequestId: 63,
-        postRequestId: 64,
+        createRequestId: 64,
+        postRequestId: 65,
         errorLabel: "fourth AR",
         legalEntityId: legalEntityB.id,
         counterpartyId: counterpartyPkrCustomerId,
@@ -1768,6 +1790,85 @@ export async function seedStarter(options = {}) {
       postedCariDocumentIds.push(documentId);
     }
 
+    const fxRateBulkUpsertDay1 = getRequestBody(requests, 66);
+    await requestJson({
+      baseUrl,
+      cookie: authCookie,
+      method: "POST",
+      pathName: "/api/v1/fx/rates/bulk-upsert",
+      body: fxRateBulkUpsertDay1,
+    });
+
+    const fxRateBulkUpsertDay2 = getRequestBody(requests, 67);
+    await requestJson({
+      baseUrl,
+      cookie: authCookie,
+      method: "POST",
+      pathName: "/api/v1/fx/rates/bulk-upsert",
+      body: fxRateBulkUpsertDay2,
+    });
+
+    const account10002BRequest = getRequestBody(requests, 68);
+    account10002BRequest.coaId = coaB.id;
+    account10002BRequest.parentAccountId = await findAccountIdByCoaId(
+      coaB.id,
+      CASH_PARENT_CODE
+    );
+    await requestJson({
+      baseUrl,
+      cookie: authCookie,
+      method: "POST",
+      pathName: "/api/v1/gl/accounts",
+      body: account10002BRequest,
+    });
+    const account10002BId = await findAccountIdByCoaId(
+      coaB.id,
+      account10002BRequest.code
+    );
+
+    const registerB2Payload = getRequestBody(requests, 69);
+    registerB2Payload.legalEntityId = legalEntityB.id;
+    registerB2Payload.operatingUnitId = operatingUnitB1Id;
+    registerB2Payload.accountId = account10002BId;
+    await requestJson({
+      baseUrl,
+      cookie: authCookie,
+      method: "POST",
+      pathName: "/api/v1/cash/registers",
+      body: registerB2Payload,
+    });
+    const registerB2Id = await findCashRegisterId(
+      tenantContext.tenantId,
+      registerB2Payload.code
+    );
+
+    const openSession5Payload = getRequestBody(requests, 70);
+    await ensureOpenSession({
+      baseUrl,
+      cookie: authCookie,
+      tenantId: tenantContext.tenantId,
+      registerId: registerB2Id,
+      openingAmount: Number(openSession5Payload.openingAmount || 0),
+    });
+
+    const pkrUsdSettlementPayload = getRequestBody(requests, 71);
+    pkrUsdSettlementPayload.legalEntityId = legalEntityB.id;
+    pkrUsdSettlementPayload.counterpartyId = counterpartyPkrCustomerId;
+    const pkrUsdSettlementResult = await requestJson({
+      baseUrl,
+      cookie: authCookie,
+      method: "POST",
+      pathName: "/api/v1/cari/settlements/apply",
+      body: pkrUsdSettlementPayload,
+    });
+    const pkrUsdSettlementBatchId = parsePositiveInt(
+      pkrUsdSettlementResult?.row?.id ?? pkrUsdSettlementResult?.row?.settlementBatchId
+    );
+    if (!pkrUsdSettlementBatchId) {
+      throw new Error("Unable to resolve PKR USD settlement batch id");
+    }
+    settlementBatchIds.push(pkrUsdSettlementBatchId);
+
     return {
       ok: true,
       tenantId: tenantContext.tenantId,
@@ -1792,12 +1893,14 @@ export async function seedStarter(options = {}) {
         [legalEntityBCode]: openingJournalBId,
       },
       postedCariDocumentIds,
+      settlementBatchIds,
       cashRegisterIds: {
         [registerA1Payload.code]: registerA1Id,
         [registerA2Payload.code]: registerA2Id,
         [registerA3Payload.code]: registerA3Id,
         [registerA4Payload.code]: registerA4Id,
         [registerB1Payload.code]: registerB1Id,
+        [registerB2Payload.code]: registerB2Id,
       },
       periods: {
         fiscalCalendarId: fiscalCalendar.id,

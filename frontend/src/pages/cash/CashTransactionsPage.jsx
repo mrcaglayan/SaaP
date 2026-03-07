@@ -268,6 +268,11 @@ function toUpper(value) {
   return String(value || "").trim().toUpperCase();
 }
 
+function isTransferTxnType(txnType) {
+  const normalized = toUpper(txnType);
+  return normalized === "TRANSFER_IN" || normalized === "TRANSFER_OUT";
+}
+
 function requiresCounterAccountTxnType(txnType) {
   return COUNTER_ACCOUNT_REQUIRED_TXN_TYPES.has(toUpper(txnType));
 }
@@ -278,6 +283,21 @@ function parseDbBoolean(value) {
 
 function todayIsoDate() {
   return new Date().toISOString().slice(0, 10);
+}
+
+function formatAccountOptionLabel(account) {
+  return `${account?.code || account?.id || "-"} - ${account?.name || "-"}`;
+}
+
+function isTransitLikeAccount(account) {
+  const code = toUpper(account?.code);
+  const name = toUpper(account?.name);
+  return (
+    code.startsWith("108") ||
+    name.includes("TRANSIT") ||
+    name.includes("TRANSFER") ||
+    name.includes("CLEAR")
+  );
 }
 
 function toDateTimeLocalInput(date = new Date()) {
@@ -462,6 +482,10 @@ function buildCashTransactionTemplateSafeForm(input = {}, presetTxnType = null) 
   }
   if (!requiresCounterAccount && !isTransfer) {
     next.counterAccountId = "";
+  }
+  if (isTransfer) {
+    next.counterpartyType = "";
+    next.counterpartyId = "";
   }
   if (expectedCounterpartyType) {
     if (next.counterpartyType !== expectedCounterpartyType) {
@@ -812,6 +836,7 @@ export default function CashTransactionsPage() {
   const [actionForm, setActionForm] = useState(null);
   const [selectedLifecycleTransactionId, setSelectedLifecycleTransactionId] = useState(null);
   const [counterpartyQuery, setCounterpartyQuery] = useState("");
+  const [accountQuery, setAccountQuery] = useState("");
   const [counterpartyOptions, setCounterpartyOptions] = useState([]);
   const [counterpartyLoading, setCounterpartyLoading] = useState(false);
   const [counterpartyWarning, setCounterpartyWarning] = useState("");
@@ -868,9 +893,48 @@ export default function CashTransactionsPage() {
     }
     return registers.find((row) => toPositiveInt(row?.id) === registerId) || null;
   }, [form.counterCashRegisterId, registers]);
+  const showCounterpartyFields = !isTransferTxnType(form.txnType);
   const selectedIsCrossOuTransfer = useMemo(() => {
     return isCrossOuRegisterPair(selectedRegister, selectedCounterRegister);
   }, [selectedCounterRegister, selectedRegister]);
+  const selectedRegisterLegalEntityId = useMemo(
+    () => toPositiveInt(selectedRegister?.legal_entity_id),
+    [selectedRegister]
+  );
+  const scopedAccountOptions = useMemo(() => {
+    if (!selectedRegisterLegalEntityId) {
+      return accountOptions;
+    }
+    return accountOptions.filter(
+      (row) => toPositiveInt(row?.legal_entity_id) === selectedRegisterLegalEntityId
+    );
+  }, [accountOptions, selectedRegisterLegalEntityId]);
+  const counterAccountIsTransfer = isTransferTxnType(form.txnType);
+  const counterAccountIsRequired =
+    requiresCounterAccountTxnType(form.txnType) || selectedIsCrossOuTransfer;
+  const showCounterAccountPicker =
+    scopedAccountOptions.length > 0 &&
+    (requiresCounterAccountTxnType(form.txnType) || counterAccountIsTransfer);
+  const filteredCounterAccountOptions = useMemo(() => {
+    const normalizedQuery = toUpper(accountQuery);
+    const filtered = normalizedQuery
+      ? scopedAccountOptions.filter((row) => {
+          const haystack = `${row?.code || ""} ${row?.name || ""} ${row?.id || ""}`;
+          return toUpper(haystack).includes(normalizedQuery);
+        })
+      : [...scopedAccountOptions];
+
+    return filtered.sort((a, b) => {
+      if (counterAccountIsTransfer) {
+        const transitRankA = isTransitLikeAccount(a) ? 0 : 1;
+        const transitRankB = isTransitLikeAccount(b) ? 0 : 1;
+        if (transitRankA !== transitRankB) {
+          return transitRankA - transitRankB;
+        }
+      }
+      return String(a?.code || "").localeCompare(String(b?.code || ""));
+    });
+  }, [scopedAccountOptions, accountQuery, counterAccountIsTransfer]);
   const selectedRegisterId = useMemo(() => toPositiveInt(form.registerId), [form.registerId]);
   const selectedRegisterOpenSessions = useMemo(() => {
     if (!selectedRegisterId) {
@@ -954,6 +1018,13 @@ export default function CashTransactionsPage() {
     }
     return counterpartyOptions.find((row) => toPositiveInt(row?.id) === counterpartyId) || null;
   }, [counterpartyOptions, form.counterpartyId]);
+  const selectedCounterAccountOption = useMemo(() => {
+    const accountId = toPositiveInt(form.counterAccountId);
+    if (!accountId) {
+      return null;
+    }
+    return scopedAccountOptions.find((row) => toPositiveInt(row?.id) === accountId) || null;
+  }, [scopedAccountOptions, form.counterAccountId]);
   const counterpartyPickerReady = canReadCariCards && toPositiveInt(selectedRegister?.legal_entity_id);
   const counterpartyFallbackHint = useMemo(() => {
     if (counterpartyPickerReady) {
@@ -1352,6 +1423,7 @@ export default function CashTransactionsPage() {
     const normalized = buildCashTransactionTemplateSafeForm(nextForm, presetTxnType);
     setForm(normalized);
     setCounterpartyQuery("");
+    setAccountQuery("");
   }
 
   function resetCreateFormWithDefaults() {
@@ -1367,6 +1439,7 @@ export default function CashTransactionsPage() {
       );
     });
     setCounterpartyQuery("");
+    setAccountQuery("");
     setSelectedPresetCode("");
     setTemplatesError("");
     setTemplatesMessage("");
@@ -2003,6 +2076,12 @@ export default function CashTransactionsPage() {
       setCounterpartyWarning("");
       return;
     }
+    if (!showCounterpartyFields) {
+      setCounterpartyOptions([]);
+      setCounterpartyLoading(false);
+      setCounterpartyWarning("");
+      return;
+    }
 
     const legalEntityId = toPositiveInt(selectedRegister?.legal_entity_id);
     const expectedType = resolveExpectedCounterpartyType(form.txnType);
@@ -2059,7 +2138,7 @@ export default function CashTransactionsPage() {
     return () => {
       active = false;
     };
-  }, [canReadCariCards, counterpartyQuery, form.txnType, selectedRegister?.legal_entity_id, t]);
+  }, [canReadCariCards, counterpartyQuery, form.txnType, selectedRegister?.legal_entity_id, showCounterpartyFields, t]);
 
   useEffect(() => {
     if (actionForm?.type !== "applyCari" || !selectedActionRow) {
@@ -2140,11 +2219,17 @@ export default function CashTransactionsPage() {
   function handleRegisterChange(nextRegisterId) {
     const nextRegister =
       registers.find((row) => String(row.id) === String(nextRegisterId)) || null;
+    const currentLegalEntityId = toPositiveInt(selectedRegister?.legal_entity_id);
+    const nextLegalEntityId = toPositiveInt(nextRegister?.legal_entity_id);
     setForm((prev) => ({
       ...prev,
       registerId: String(nextRegisterId || ""),
       cashSessionId: "",
       currencyCode: nextRegister ? toUpper(nextRegister.currency_code) : prev.currencyCode,
+      counterAccountId:
+        currentLegalEntityId && nextLegalEntityId && currentLegalEntityId === nextLegalEntityId
+          ? prev.counterAccountId
+          : "",
       counterpartyId: "",
       counterpartyType: prev.counterpartyType,
       counterCashRegisterId:
@@ -2154,11 +2239,12 @@ export default function CashTransactionsPage() {
           : prev.counterCashRegisterId,
     }));
     setCounterpartyQuery("");
+    setAccountQuery("");
   }
 
   function handleTxnTypeChange(nextTxnType) {
     const normalized = toUpper(nextTxnType);
-    const isTransfer = normalized === "TRANSFER_IN" || normalized === "TRANSFER_OUT";
+    const isTransfer = isTransferTxnType(normalized);
     const requiresCounterAccount = requiresCounterAccountTxnType(normalized);
     const expectedCounterpartyType = resolveExpectedCounterpartyType(normalized);
 
@@ -2166,14 +2252,16 @@ export default function CashTransactionsPage() {
       ...prev,
       txnType: normalized,
       counterCashRegisterId: isTransfer ? prev.counterCashRegisterId : "",
-      counterAccountId: requiresCounterAccount ? prev.counterAccountId : "",
-      counterpartyType: expectedCounterpartyType || prev.counterpartyType,
-      counterpartyId:
-        expectedCounterpartyType && expectedCounterpartyType !== toUpper(prev.counterpartyType)
+      counterAccountId: requiresCounterAccount || isTransfer ? prev.counterAccountId : "",
+      counterpartyType: isTransfer ? "" : expectedCounterpartyType || prev.counterpartyType,
+      counterpartyId: isTransfer
+        ? ""
+        : expectedCounterpartyType && expectedCounterpartyType !== toUpper(prev.counterpartyType)
           ? ""
           : prev.counterpartyId,
     }));
     setCounterpartyQuery("");
+    setAccountQuery("");
   }
 
   function handleCounterpartyPick(nextCounterpartyId) {
@@ -3343,101 +3431,124 @@ export default function CashTransactionsPage() {
               ))}
             </select>
 
-            <select
-              value={form.counterpartyType}
-              onChange={(event) =>
-                setForm((prev) => ({ ...prev, counterpartyType: event.target.value }))
-              }
-              className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-            >
-              <option value="">{t("cashTransactions.form.counterpartyTypeOptional")}</option>
-              {COUNTERPARTY_TYPES.map((value) => (
-                <option key={`counterparty-type-${value}`} value={value}>
-                  {value}
-                </option>
-              ))}
-            </select>
+            {showCounterpartyFields ? (
+              <>
+                <select
+                  value={form.counterpartyType}
+                  onChange={(event) =>
+                    setForm((prev) => ({ ...prev, counterpartyType: event.target.value }))
+                  }
+                  className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                >
+                  <option value="">{t("cashTransactions.form.counterpartyTypeOptional")}</option>
+                  {COUNTERPARTY_TYPES.map((value) => (
+                    <option key={`counterparty-type-${value}`} value={value}>
+                      {value}
+                    </option>
+                  ))}
+                </select>
 
-            {counterpartyPickerReady ? (
+                {counterpartyPickerReady ? (
+                  <div className="md:col-span-2 grid gap-2 md:grid-cols-2">
+                    <input
+                      type="text"
+                      value={counterpartyQuery}
+                      onChange={(event) => setCounterpartyQuery(event.target.value)}
+                      className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                      placeholder={t("cashTransactions.placeholders.searchCounterparty")}
+                    />
+                    <select
+                      value={form.counterpartyId}
+                      onChange={(event) => handleCounterpartyPick(event.target.value)}
+                      className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                    >
+                      <option value="">
+                        {counterpartyLoading
+                          ? t("cashTransactions.values.loadingCounterparties")
+                          : t("cashTransactions.placeholders.selectCounterparty")}
+                      </option>
+                      {counterpartyOptions.map((row) => (
+                        <option key={`counterparty-option-${row.id}`} value={row.id}>
+                          {`${row.code || row.id} - ${row.name || "-"} (${row.counterpartyType || "OTHER"})`}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ) : (
+                  <input
+                    type="number"
+                    min={1}
+                    value={form.counterpartyId}
+                    onChange={(event) =>
+                      setForm((prev) => ({ ...prev, counterpartyId: event.target.value }))
+                    }
+                    className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                    placeholder={t("cashTransactions.form.counterpartyIdManualFallback")}
+                  />
+                )}
+                {counterpartyFallbackHint ? (
+                  <div className="md:col-span-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                    <p>{counterpartyFallbackHint}</p>
+                    {!selectedRegisterId || !toPositiveInt(selectedRegister?.legal_entity_id) ? (
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        <Link
+                          to={CASH_REGISTER_SETUP_PATH}
+                          className="inline-flex items-center rounded border border-amber-400 bg-amber-100 px-2 py-1 text-xs font-medium text-amber-900 hover:bg-amber-200"
+                        >
+                          {t("cashTransactions.actions.openRegisterSetup")}
+                        </Link>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                {selectedCounterpartyOption ? (
+                  <div className="md:col-span-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+                    {t("cashTransactions.values.selectedCounterparty", {
+                      code: selectedCounterpartyOption.code || selectedCounterpartyOption.id,
+                      name: selectedCounterpartyOption.name || "-",
+                      type: selectedCounterpartyOption.counterpartyType || "OTHER",
+                    })}
+                  </div>
+                ) : null}
+              </>
+            ) : null}
+
+            {showCounterAccountPicker ? (
               <div className="md:col-span-2 grid gap-2 md:grid-cols-2">
                 <input
                   type="text"
-                  value={counterpartyQuery}
-                  onChange={(event) => setCounterpartyQuery(event.target.value)}
+                  value={accountQuery}
+                  onChange={(event) => setAccountQuery(event.target.value)}
                   className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                  placeholder={t("cashTransactions.placeholders.searchCounterparty")}
+                  placeholder={t(
+                    counterAccountIsTransfer
+                      ? "cashTransactions.placeholders.searchTransitAccount"
+                      : "cashTransactions.placeholders.searchAccount"
+                  )}
                 />
                 <select
-                  value={form.counterpartyId}
-                  onChange={(event) => handleCounterpartyPick(event.target.value)}
+                  value={form.counterAccountId}
+                  onChange={(event) =>
+                    setForm((prev) => ({ ...prev, counterAccountId: event.target.value }))
+                  }
                   className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  required={counterAccountIsRequired}
                 >
                   <option value="">
-                    {counterpartyLoading
-                      ? t("cashTransactions.values.loadingCounterparties")
-                      : t("cashTransactions.placeholders.selectCounterparty")}
+                    {t(
+                      counterAccountIsTransfer
+                        ? "cashTransactions.placeholders.transitCounterAccount"
+                        : "cashTransactions.placeholders.counterAccount"
+                    )}
                   </option>
-                  {counterpartyOptions.map((row) => (
-                    <option key={`counterparty-option-${row.id}`} value={row.id}>
-                      {`${row.code || row.id} - ${row.name || "-"} (${row.counterpartyType || "OTHER"})`}
+                  {filteredCounterAccountOptions.map((account) => (
+                    <option key={`counter-account-${account.id}`} value={account.id}>
+                      {formatAccountOptionLabel(account)}
                     </option>
                   ))}
                 </select>
               </div>
-            ) : (
-                <input
-                  type="number"
-                  min={1}
-                  value={form.counterpartyId}
-                  onChange={(event) =>
-                    setForm((prev) => ({ ...prev, counterpartyId: event.target.value }))
-                  }
-                  className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                  placeholder={t("cashTransactions.form.counterpartyIdManualFallback")}
-                />
-              )}
-            {counterpartyFallbackHint ? (
-              <div className="md:col-span-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-                <p>{counterpartyFallbackHint}</p>
-                {!selectedRegisterId || !toPositiveInt(selectedRegister?.legal_entity_id) ? (
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    <Link
-                      to={CASH_REGISTER_SETUP_PATH}
-                      className="inline-flex items-center rounded border border-amber-400 bg-amber-100 px-2 py-1 text-xs font-medium text-amber-900 hover:bg-amber-200"
-                    >
-                      {t("cashTransactions.actions.openRegisterSetup")}
-                    </Link>
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
-
-            {selectedCounterpartyOption ? (
-              <div className="md:col-span-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
-                {t("cashTransactions.values.selectedCounterparty", {
-                  code: selectedCounterpartyOption.code || selectedCounterpartyOption.id,
-                  name: selectedCounterpartyOption.name || "-",
-                  type: selectedCounterpartyOption.counterpartyType || "OTHER",
-                })}
-              </div>
-            ) : null}
-
-            {requiresCounterAccountTxnType(form.txnType) && accountOptions.length > 0 ? (
-              <select
-                value={form.counterAccountId}
-                onChange={(event) =>
-                  setForm((prev) => ({ ...prev, counterAccountId: event.target.value }))
-                }
-                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                required
-              >
-                <option value="">{t("cashTransactions.placeholders.counterAccount")}</option>
-                {accountOptions.map((account) => (
-                  <option key={`counter-account-${account.id}`} value={account.id}>
-                    {`${account.code || account.id} - ${account.name || "-"}`}
-                  </option>
-                ))}
-              </select>
             ) : (
               <input
                 type="number"
@@ -3447,12 +3558,21 @@ export default function CashTransactionsPage() {
                   setForm((prev) => ({ ...prev, counterAccountId: event.target.value }))
                 }
                 className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                placeholder={t("cashTransactions.form.counterAccountIdOptional")}
-                required={requiresCounterAccountTxnType(form.txnType)}
+                placeholder={t("cashTransactions.form.counterAccountIdManualFallback")}
+                required={counterAccountIsRequired}
               />
             )}
+            {selectedCounterAccountOption ? (
+              <div className="md:col-span-3 rounded-lg border border-cyan-200 bg-cyan-50 px-3 py-2 text-xs text-cyan-800">
+                {t("cashTransactions.values.selectedCounterAccount", {
+                  code:
+                    selectedCounterAccountOption.code || selectedCounterAccountOption.id,
+                  name: selectedCounterAccountOption.name || "-",
+                })}
+              </div>
+            ) : null}
 
-            {toUpper(form.txnType) === "TRANSFER_IN" || toUpper(form.txnType) === "TRANSFER_OUT" ? (
+            {isTransferTxnType(form.txnType) ? (
               registerOptions.length > 0 ? (
                 <select
                   value={form.counterCashRegisterId}
