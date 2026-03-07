@@ -105,6 +105,26 @@ const CARI_PURPOSE_RULES = Object.freeze({
 });
 
 const ALL_CARI_PURPOSE_CODES = Object.freeze(Object.keys(CARI_PURPOSE_RULES));
+const CARI_PURPOSE_ANALOG_CANDIDATES = Object.freeze({
+  CARI_AR_CONTROL_CASH: Object.freeze(["CARI_AR_CONTROL", "CARI_AR_CONTROL_MANUAL"]),
+  CARI_AP_CONTROL_CASH: Object.freeze(["CARI_AP_CONTROL", "CARI_AP_CONTROL_MANUAL"]),
+  CARI_AR_CONTROL_MANUAL: Object.freeze(["CARI_AR_CONTROL", "CARI_AR_CONTROL_CASH"]),
+  CARI_AP_CONTROL_MANUAL: Object.freeze(["CARI_AP_CONTROL", "CARI_AP_CONTROL_CASH"]),
+  CARI_AR_CONTROL_ON_ACCOUNT: Object.freeze([
+    "CARI_AR_CONTROL",
+    "CARI_AR_CONTROL_MANUAL",
+    "CARI_AR_CONTROL_CASH",
+  ]),
+  CARI_AP_CONTROL_ON_ACCOUNT: Object.freeze([
+    "CARI_AP_CONTROL",
+    "CARI_AP_CONTROL_MANUAL",
+    "CARI_AP_CONTROL_CASH",
+  ]),
+  CARI_AR_OFFSET_CASH: Object.freeze(["CARI_AR_OFFSET_MANUAL"]),
+  CARI_AP_OFFSET_CASH: Object.freeze(["CARI_AP_OFFSET_MANUAL"]),
+  CARI_AR_OFFSET_MANUAL: Object.freeze(["CARI_AR_OFFSET_CASH"]),
+  CARI_AP_OFFSET_MANUAL: Object.freeze(["CARI_AP_OFFSET_CASH"]),
+});
 
 function normalizePurposeCodes(input) {
   if (!Array.isArray(input) || input.length === 0) {
@@ -253,6 +273,7 @@ async function resolveReplacementAccount({
   legalEntityId,
   currentMappedAccountId,
   rule,
+  allowGenericFallback = true,
 }) {
   const currentAccountId = parsePositiveInt(currentMappedAccountId);
   if (currentAccountId) {
@@ -284,6 +305,10 @@ async function resolveReplacementAccount({
     }
   }
 
+  if (!allowGenericFallback) {
+    return null;
+  }
+
   return findFallbackCandidate({
     runQuery,
     tenantId,
@@ -291,6 +316,44 @@ async function resolveReplacementAccount({
     accountType: rule.accountType,
     normalSide: rule.normalSide,
   });
+}
+
+function getAnalogPurposeCandidates(purposeCode) {
+  return CARI_PURPOSE_ANALOG_CANDIDATES[toUpper(purposeCode)] || [];
+}
+
+function resolveReplacementFromAnalogMapping({
+  rowByPurposeCode,
+  purposeCode,
+  rule,
+  tenantId,
+  legalEntityId,
+}) {
+  for (const analogPurposeCode of getAnalogPurposeCandidates(purposeCode)) {
+    const analogRow = rowByPurposeCode.get(analogPurposeCode) || null;
+    if (
+      !analogRow ||
+      !isRowValidForRule({
+        row: analogRow,
+        rule,
+        tenantId,
+        legalEntityId,
+      })
+    ) {
+      continue;
+    }
+    const accountId =
+      parsePositiveInt(analogRow.account_id) || parsePositiveInt(analogRow.mapped_account_id);
+    if (!accountId) {
+      continue;
+    }
+    return {
+      id: accountId,
+      code: String(analogRow.account_code || "").trim() || null,
+      sourcePurposeCode: analogPurposeCode,
+    };
+  }
+  return null;
 }
 
 export async function autoRemapCariPurposeMappingsForLegalEntity({
@@ -311,7 +374,15 @@ export async function autoRemapCariPurposeMappingsForLegalEntity({
     };
   }
 
-  const placeholders = normalizedPurposeCodes.map(() => "?").join(", ");
+  const lookupPurposeCodes = Array.from(
+    new Set(
+      normalizedPurposeCodes.flatMap((purposeCode) => [
+        purposeCode,
+        ...getAnalogPurposeCandidates(purposeCode),
+      ])
+    )
+  );
+  const placeholders = lookupPurposeCodes.map(() => "?").join(", ");
   const result = await runQuery(
     `SELECT
        jpa.purpose_code,
@@ -331,7 +402,7 @@ export async function autoRemapCariPurposeMappingsForLegalEntity({
      WHERE jpa.tenant_id = ?
        AND jpa.legal_entity_id = ?
        AND jpa.purpose_code IN (${placeholders})`,
-    [normalizedTenantId, normalizedLegalEntityId, ...normalizedPurposeCodes]
+    [normalizedTenantId, normalizedLegalEntityId, ...lookupPurposeCodes]
   );
 
   const rowByPurposeCode = new Map(
@@ -343,9 +414,10 @@ export async function autoRemapCariPurposeMappingsForLegalEntity({
     const row = rowByPurposeCode.get(purposeCode) || null;
     const rule = CARI_PURPOSE_RULES[purposeCode];
     if (!rule || !row) {
-      continue;
-    }
-    if (
+      if (!rule) {
+        continue;
+      }
+    } else if (
       isRowValidForRule({
         row,
         rule,
@@ -356,35 +428,49 @@ export async function autoRemapCariPurposeMappingsForLegalEntity({
       continue;
     }
 
-    // eslint-disable-next-line no-await-in-loop
-    const replacement = await resolveReplacementAccount({
-      runQuery,
+    const analogReplacement = resolveReplacementFromAnalogMapping({
+      rowByPurposeCode,
+      purposeCode,
+      rule,
       tenantId: normalizedTenantId,
       legalEntityId: normalizedLegalEntityId,
-      currentMappedAccountId: row.mapped_account_id,
-      rule,
     });
+    // eslint-disable-next-line no-await-in-loop
+    const replacement =
+      analogReplacement ||
+      (await resolveReplacementAccount({
+        runQuery,
+        tenantId: normalizedTenantId,
+        legalEntityId: normalizedLegalEntityId,
+        currentMappedAccountId: row?.mapped_account_id,
+        rule,
+        allowGenericFallback: Boolean(row),
+      }));
     const replacementAccountId = parsePositiveInt(replacement?.id);
-    const currentMappedAccountId = parsePositiveInt(row.mapped_account_id);
+    const currentMappedAccountId = parsePositiveInt(row?.mapped_account_id);
     if (!replacementAccountId || replacementAccountId === currentMappedAccountId) {
       continue;
     }
 
     // eslint-disable-next-line no-await-in-loop
     await runQuery(
-      `UPDATE journal_purpose_accounts
-       SET account_id = ?,
-           updated_at = CURRENT_TIMESTAMP
-       WHERE tenant_id = ?
-         AND legal_entity_id = ?
-         AND purpose_code = ?`,
-      [replacementAccountId, normalizedTenantId, normalizedLegalEntityId, purposeCode]
+      `INSERT INTO journal_purpose_accounts (
+          tenant_id,
+          legal_entity_id,
+          purpose_code,
+          account_id
+       )
+       VALUES (?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         account_id = VALUES(account_id),
+         updated_at = CURRENT_TIMESTAMP`,
+      [normalizedTenantId, normalizedLegalEntityId, purposeCode, replacementAccountId]
     );
 
     updatedRows.push({
       purposeCode,
       previousAccountId: currentMappedAccountId || null,
-      previousAccountCode: String(row.account_code || "").trim() || null,
+      previousAccountCode: String(row?.account_code || "").trim() || null,
       newAccountId: replacementAccountId,
       newAccountCode: String(replacement?.code || "").trim() || null,
     });

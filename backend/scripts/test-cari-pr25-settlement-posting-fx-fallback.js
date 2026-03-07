@@ -948,8 +948,8 @@ async function main() {
     );
     assert(
       toUpper(manualLocalSettlement.json?.metrics?.journalPurposeAccounts?.offsetPurposeCode) ===
-        "CARI_AR_OFFSET",
-      "Manual local settlement should fallback to generic AR offset purpose"
+        "CARI_AR_OFFSET_MANUAL",
+      "Manual local settlement should resolve MANUAL-specific AR offset purpose"
     );
     const manualLocalJournalEntryId = toNumber(
       manualLocalSettlement.json?.journal?.journalEntryId
@@ -957,8 +957,8 @@ async function main() {
     const manualLocalAccounts = new Set(await getJournalAccountIds(manualLocalJournalEntryId));
     assert(
       manualLocalAccounts.has(arControlAccountId) &&
-        manualLocalAccounts.has(arOffsetAccountId),
-      "Manual local settlement journal should use generic AR control/offset accounts"
+        manualLocalAccounts.has(arCashOffsetAccountId),
+      "Manual local settlement journal should use AR control plus cash/manual offset accounts"
     );
 
     const unappliedSourceDoc = await createAndPostDocument({

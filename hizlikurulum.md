@@ -5000,3 +5000,98 @@ POST
     "fxOverrideReason": null,
     "offsetAccountCode": "600"
 }
+65-Request URL
+http://localhost:3000/api/v1/fx/rates/bulk-upsert
+Request Method
+POST
+{
+    "rates": [
+        {
+            "rateDate": "2026-03-08",
+            "fromCurrencyCode": "USD",
+            "toCurrencyCode": "PKR",
+            "rateType": "SPOT",
+            "value": 200
+        }
+    ]
+}
+66-Request URL
+http://localhost:3000/api/v1/fx/rates/bulk-upsert
+Request Method
+POST
+{
+    "rates": [
+        {
+            "rateDate": "2026-03-09",
+            "fromCurrencyCode": "USD",
+            "toCurrencyCode": "PKR",
+            "rateType": "SPOT",
+            "value": 200
+        }
+    ]
+}
+67-Request URL
+http://localhost:3000/api/v1/gl/accounts
+Request Method
+POST
+{
+    "coaId": 2,
+    "code": "100.02",
+    "name": "KASA USD",
+    "accountType": "ASSET",
+    "normalSide": "DEBIT",
+    "allowPosting": true,
+    "parentAccountId": 289
+}
+68-Request URL
+http://localhost:3000/api/v1/cash/registers
+Request Method
+POST
+{
+    "legalEntityId": 2,
+    "operatingUnitId": 3,
+    "accountId": 592,
+    "code": "ISLMUSD",
+    "name": "KASA USD",
+    "registerType": "DRAWER",
+    "sessionMode": "REQUIRED",
+    "currencyCode": "USD",
+    "status": "ACTIVE",
+    "allowNegative": false,
+    "varianceGainAccountId": null,
+    "varianceLossAccountId": null,
+    "maxTxnAmount": null,
+    "requiresApprovalOverAmount": null
+}
+69-Request URL
+http://localhost:3000/api/v1/cash/sessions/open
+Request Method
+POST
+{
+    "registerId": 6
+}
+70-Request URL
+http://localhost:3000/api/v1/cash/sessions/open
+Request Method
+POST
+{
+    "registerId": 3
+}
+70-Request URL
+http://localhost:3000/api/v1/cari/settlements/apply
+Request Method
+POST
+{
+    "legalEntityId": 2,
+    "counterpartyId": 2,
+    "direction": "AR",
+    "settlementDate": "2026-03-08",
+    "currencyCode": "USD",
+    "incomingAmountTxn": 20250,
+    "idempotencyKey": "CARI-SET-1772907018860-wompka8r",
+    "autoAllocate": true,
+    "useUnappliedCash": false,
+    "allocations": [],
+    "paymentChannel": "MANUAL"
+}
+71-
