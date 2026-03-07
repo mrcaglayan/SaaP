@@ -358,6 +358,7 @@ function buildApplyDefaultForm() {
     useUnappliedCash: false,
     allocations: [],
     fxRate: "",
+    offsetAccountId: "",
     note: "",
   };
 }
@@ -584,6 +585,9 @@ export default function CariSettlementsPage() {
   const [lookupWarning, setLookupWarning] = useState("");
   const [cashRegisterOptions, setCashRegisterOptions] = useState([]);
   const [openCashSessions, setOpenCashSessions] = useState([]);
+  const [applyOffsetAccountOptions, setApplyOffsetAccountOptions] = useState([]);
+  const [applyOffsetAccountsLoading, setApplyOffsetAccountsLoading] = useState(false);
+  const [applyOffsetAccountsError, setApplyOffsetAccountsError] = useState("");
   const [linkedCashAccountOptions, setLinkedCashAccountOptions] = useState([]);
   const [linkedCashAccountLoading, setLinkedCashAccountLoading] = useState(false);
   const [linkedCashAccountError, setLinkedCashAccountError] = useState("");
@@ -674,6 +678,13 @@ export default function CariSettlementsPage() {
       `Sadece tek seferlik gecersiz kilma. 1 ${applySettlementCurrencyCode} = X ${applyFunctionalCurrencyCode} olarak girin. Kur Yonetimine kaydedilmez.`
     );
   }, [applyFunctionalCurrencyCode, applySettlementCurrencyCode, language]);
+  const applyOffsetAccountChoices = useMemo(
+    () =>
+      (Array.isArray(applyOffsetAccountOptions) ? applyOffsetAccountOptions : []).filter(
+        (row) => String(row?.accountType || "").toUpperCase() === "ASSET"
+      ),
+    [applyOffsetAccountOptions]
+  );
 
   const previewRows = useMemo(
     () =>
@@ -1293,6 +1304,92 @@ export default function CariSettlementsPage() {
 
   useEffect(() => {
     const legalEntityId = toPositiveInt(applyForm.legalEntityId);
+
+    setApplyOffsetAccountsError("");
+    if (!canReadGlAccounts || !legalEntityId) {
+      setApplyOffsetAccountOptions([]);
+      setApplyOffsetAccountsLoading(false);
+      return;
+    }
+
+    let active = true;
+    async function loadApplyOffsetAccounts() {
+      setApplyOffsetAccountsLoading(true);
+      try {
+        const response = await listAccounts({
+          legalEntityId,
+          includeInactive: false,
+          limit: 1000,
+          offset: 0,
+        });
+        if (!active) {
+          return;
+        }
+        const options = (Array.isArray(response?.rows) ? response.rows : [])
+          .filter((row) => {
+            const isActive = row?.is_active === true || Number(row?.is_active) === 1;
+            const allowPosting =
+              row?.allow_posting === true || Number(row?.allow_posting) === 1;
+            return isActive && allowPosting;
+          })
+          .map((row) => ({
+            id: Number(row?.id || 0),
+            code: String(row?.code || "").trim(),
+            name: String(row?.name || "").trim(),
+            accountType: String(row?.account_type || "").trim().toUpperCase(),
+          }))
+          .filter((row) => row.id > 0 && row.code);
+        setApplyOffsetAccountOptions(options);
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+        setApplyOffsetAccountOptions([]);
+        setApplyOffsetAccountsError(
+          normalizeUiError(
+            error,
+            l(
+              "Failed to load settlement source account options.",
+              "Mahsuplastirma kaynak hesap secenekleri yuklenemedi."
+            )
+          )
+        );
+      } finally {
+        if (active) {
+          setApplyOffsetAccountsLoading(false);
+        }
+      }
+    }
+
+    void loadApplyOffsetAccounts();
+    return () => {
+      active = false;
+    };
+  }, [applyForm.legalEntityId, canReadGlAccounts]);
+
+  useEffect(() => {
+    const availableOptionIds = new Set(
+      applyOffsetAccountChoices
+        .map((row) => Number(row?.id || 0))
+        .filter((id) => Number.isInteger(id) && id > 0)
+    );
+    setApplyForm((prev) => {
+      const currentOffsetAccountId = String(prev.offsetAccountId || "").trim();
+      if (!currentOffsetAccountId) {
+        return prev;
+      }
+      if (availableOptionIds.has(Number(currentOffsetAccountId))) {
+        return prev;
+      }
+      return {
+        ...prev,
+        offsetAccountId: "",
+      };
+    });
+  }, [applyOffsetAccountChoices]);
+
+  useEffect(() => {
+    const legalEntityId = toPositiveInt(applyForm.legalEntityId);
     if (legalEntityId) {
       return;
     }
@@ -1621,6 +1718,7 @@ export default function CariSettlementsPage() {
       setApplyForm((prev) => ({
         ...prev,
         [field]: value,
+        offsetAccountId: "",
         ...(derivedCurrencyCode ? { currencyCode: derivedCurrencyCode } : {}),
       }));
     } else {
@@ -2659,6 +2757,82 @@ export default function CariSettlementsPage() {
               {applyFxRateHint}
             </span>
           </label>
+          {toUpper(linkedCashForm.paymentChannel) === "CASH" ? (
+            <div className="text-xs font-semibold uppercase tracking-wide text-slate-600 md:col-span-2">
+              {l("Settlement Source Account", "Mahsuplastirma Kaynak Hesabi")}
+              <p className="mt-1 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] font-normal normal-case text-slate-600">
+                {l(
+                  "CASH channel uses the selected cash register account automatically.",
+                  "CASH kanali secilen kasa hesabini otomatik kullanir."
+                )}
+              </p>
+            </div>
+          ) : (
+            <label className="text-xs font-semibold uppercase tracking-wide text-slate-600 md:col-span-2">
+              {l("Settlement Source Account (optional)", "Mahsuplastirma Kaynak Hesabi (opsiyonel)")}
+              <select
+                className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                value={applyForm.offsetAccountId}
+                onChange={(event) => updateApplyForm("offsetAccountId", event.target.value)}
+                disabled={
+                  !canApply ||
+                  applySubmitting ||
+                  applyOffsetAccountsLoading ||
+                  !canReadGlAccounts
+                }
+              >
+                <option value="">
+                  {l(
+                    "Use default MANUAL settlement mapping",
+                    "Varsayilan MANUAL mahsuplastirma eslemesini kullan"
+                  )}
+                </option>
+                {applyOffsetAccountChoices.map((row) => (
+                  <option key={`settlement-offset-account-${row.id}`} value={String(row.id)}>
+                    {row.code} - {row.name} ({row.accountType || "-"})
+                  </option>
+                ))}
+              </select>
+              <span className="mt-1 block text-[11px] font-normal normal-case text-slate-500">
+                {l(
+                  "Pick the actual bank/cash/clearing asset account for this MANUAL settlement.",
+                  "Bu MANUAL mahsuplastirma icin gercek banka/kasa/clearing varlik hesabini secin."
+                )}
+              </span>
+              {!canReadGlAccounts ? (
+                <span className="mt-1 block text-[11px] font-normal normal-case text-amber-700">
+                  {l(
+                    "Missing permission: gl.account.read. Default mapping will be used.",
+                    "Eksik yetki: gl.account.read. Varsayilan esleme kullanilacak."
+                  )}
+                </span>
+              ) : null}
+              {applyOffsetAccountsLoading ? (
+                <span className="mt-1 block text-[11px] font-normal normal-case text-slate-500">
+                  {l(
+                    "Loading settlement source accounts...",
+                    "Mahsuplastirma kaynak hesaplari yukleniyor..."
+                  )}
+                </span>
+              ) : null}
+              {applyOffsetAccountsError ? (
+                <span className="mt-1 block text-[11px] font-normal normal-case text-rose-700">
+                  {applyOffsetAccountsError}
+                </span>
+              ) : null}
+              {!applyOffsetAccountsLoading &&
+              !applyOffsetAccountsError &&
+              canReadGlAccounts &&
+              applyOffsetAccountChoices.length === 0 ? (
+                <span className="mt-1 block text-[11px] font-normal normal-case text-slate-500">
+                  {l(
+                    "No postable ASSET accounts found for the selected legal entity.",
+                    "Secili tuzel kisilik icin kaydedilebilir ASSET hesap bulunamadi."
+                  )}
+                </span>
+              ) : null}
+            </label>
+          )}
           <label className="text-xs font-semibold uppercase tracking-wide text-slate-600 md:col-span-2">
             {l("Note (optional)", "Not (opsiyonel)")}
             <input

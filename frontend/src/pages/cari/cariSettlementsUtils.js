@@ -347,6 +347,7 @@ export function buildAutoAllocatePreview(openItems = [], incomingAmountTxn = 0, 
 }
 
 export function buildSettlementApplyPayload(form) {
+  const paymentChannel = String(form.paymentChannel || "").trim().toUpperCase();
   const payload = {
     legalEntityId: Number(form.legalEntityId),
     counterpartyId: Number(form.counterpartyId),
@@ -362,11 +363,17 @@ export function buildSettlementApplyPayload(form) {
     note: form.note || undefined,
   };
 
-  if (form.paymentChannel) {
-    payload.paymentChannel = String(form.paymentChannel).trim().toUpperCase();
+  if (paymentChannel) {
+    payload.paymentChannel = paymentChannel;
   }
   if (form.linkedCashTransaction) {
     payload.linkedCashTransaction = form.linkedCashTransaction;
+  }
+  if (paymentChannel !== "CASH") {
+    const offsetAccountId = Number(form.offsetAccountId || 0);
+    if (Number.isInteger(offsetAccountId) && offsetAccountId > 0) {
+      payload.offsetAccountId = offsetAccountId;
+    }
   }
 
   return payload;

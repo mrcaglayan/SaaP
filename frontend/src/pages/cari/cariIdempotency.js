@@ -12,6 +12,7 @@ export function buildSettlementIntentFingerprint(form = {}) {
     currencyCode: String(form?.currencyCode || ""),
     incomingAmountTxn: Number(form?.incomingAmountTxn || 0),
     settlementDate: String(form?.settlementDate || ""),
+    offsetAccountId: String(form?.offsetAccountId || ""),
   });
 }
 

@@ -155,6 +155,28 @@ function parseBankReferenceFields(rawBody, { required = false } = {}) {
   };
 }
 
+function parseOffsetAccountFields(rawBody) {
+  const offsetAccountId = optionalPositiveInt(
+    rawBody?.offsetAccountId ?? rawBody?.offsetGlAccountId,
+    "offsetAccountId"
+  );
+  const offsetAccountCode =
+    normalizeText(
+      rawBody?.offsetAccountCode ?? rawBody?.offsetGlAccountCode,
+      "offsetAccountCode",
+      60
+    ) || null;
+
+  if (offsetAccountId && offsetAccountCode) {
+    throw badRequest("Provide either offsetAccountId or offsetAccountCode, not both");
+  }
+
+  return {
+    offsetAccountId: offsetAccountId || null,
+    offsetAccountCode,
+  };
+}
+
 function parseSettlementApplyCommon(
   req,
   { idempotencyKeySource, bankReferenceRequired = false, allowPaymentChannel = true }
@@ -241,6 +263,7 @@ function parseSettlementApplyCommon(
   const bankFields = parseBankReferenceFields(req.body, {
     required: bankReferenceRequired,
   });
+  const offsetAccountFields = parseOffsetAccountFields(req.body);
 
   if (!autoAllocate && allocations.length === 0) {
     throw badRequest("allocations are required when autoAllocate=false");
@@ -295,6 +318,12 @@ function parseSettlementApplyCommon(
       throw badRequest("linkedCashTransaction.counterAccountId is required for paymentChannel=CASH");
     }
   }
+  if (
+    paymentChannel === "CASH" &&
+    (offsetAccountFields.offsetAccountId || offsetAccountFields.offsetAccountCode)
+  ) {
+    throw badRequest("offsetAccountId/offsetAccountCode is only supported when paymentChannel=MANUAL");
+  }
 
   return {
     tenantId,
@@ -323,6 +352,7 @@ function parseSettlementApplyCommon(
     integrationLinkStatus,
     integrationEventUid,
     allocations,
+    ...offsetAccountFields,
     ...bankFields,
   };
 }

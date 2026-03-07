@@ -1132,6 +1132,226 @@ async function resolveCounterpartyControlAccountOverride({
   };
 }
 
+async function resolveSettlementOffsetAccountOverride({
+  tenantId,
+  legalEntityId,
+  offsetAccountId = null,
+  offsetAccountCode = null,
+  runQuery = query,
+}) {
+  const normalizedOffsetAccountId = parsePositiveInt(offsetAccountId);
+  const normalizedOffsetAccountCode = toNullableString(offsetAccountCode, 60);
+
+  if (!normalizedOffsetAccountId && !normalizedOffsetAccountCode) {
+    return null;
+  }
+  if (normalizedOffsetAccountId && normalizedOffsetAccountCode) {
+    throw badRequest("Provide either offsetAccountId or offsetAccountCode, not both");
+  }
+
+  let account = null;
+  if (normalizedOffsetAccountId) {
+    await assertAccountBelongsToTenant(tenantId, normalizedOffsetAccountId, "offsetAccountId", {
+      runQuery,
+    });
+
+    const result = await runQuery(
+      `SELECT
+          a.id,
+          a.code,
+          a.account_type,
+          a.is_active,
+          a.allow_posting,
+          c.scope AS coa_scope,
+          c.legal_entity_id AS coa_legal_entity_id
+       FROM accounts a
+       JOIN charts_of_accounts c ON c.id = a.coa_id
+       WHERE a.id = ?
+         AND c.tenant_id = ?
+       LIMIT 1`,
+      [normalizedOffsetAccountId, tenantId]
+    );
+    account = result.rows?.[0] || null;
+    if (!account) {
+      throw badRequest("offsetAccountId not found for tenant");
+    }
+  } else {
+    const result = await runQuery(
+      `SELECT
+          a.id,
+          a.code,
+          a.account_type,
+          a.is_active,
+          a.allow_posting,
+          c.scope AS coa_scope,
+          c.legal_entity_id AS coa_legal_entity_id
+       FROM accounts a
+       JOIN charts_of_accounts c ON c.id = a.coa_id
+       WHERE c.tenant_id = ?
+         AND c.scope = 'LEGAL_ENTITY'
+         AND c.legal_entity_id = ?
+         AND UPPER(a.code) = UPPER(?)
+       ORDER BY a.id ASC
+       LIMIT 2`,
+      [tenantId, legalEntityId, normalizedOffsetAccountCode]
+    );
+    const rows = result.rows || [];
+    if (rows.length === 0) {
+      throw badRequest("offsetAccountCode not found in legalEntity chart");
+    }
+    if (rows.length > 1) {
+      throw badRequest("offsetAccountCode is ambiguous for legalEntity");
+    }
+    account = rows[0];
+  }
+
+  if (normalizeUpperText(account.coa_scope) !== "LEGAL_ENTITY") {
+    throw badRequest("Settlement offset account override must belong to a LEGAL_ENTITY chart");
+  }
+  if (parsePositiveInt(account.coa_legal_entity_id) !== parsePositiveInt(legalEntityId)) {
+    throw badRequest("Settlement offset account override must belong to legalEntityId");
+  }
+  if (normalizeUpperText(account.account_type) !== "ASSET") {
+    throw badRequest("Settlement offset account override must have accountType=ASSET");
+  }
+  if (!(account.is_active === true || Number(account.is_active) === 1)) {
+    throw badRequest("Settlement offset account override must reference an ACTIVE account");
+  }
+  if (!(account.allow_posting === true || Number(account.allow_posting) === 1)) {
+    throw badRequest("Settlement offset account override must reference a postable account");
+  }
+
+  return {
+    id: parsePositiveInt(account.id),
+    code: String(account.code || ""),
+  };
+}
+
+async function resolveSettlementBankStatementOffsetAccount({
+  tenantId,
+  legalEntityId,
+  bankStatementLineId = null,
+  runQuery = query,
+}) {
+  const normalizedBankStatementLineId = parsePositiveInt(bankStatementLineId);
+  if (!normalizedBankStatementLineId) {
+    return null;
+  }
+
+  const result = await runQuery(
+    `SELECT
+        l.id AS bank_statement_line_id,
+        ba.id AS bank_account_id,
+        ba.is_active AS bank_account_is_active,
+        a.id AS account_id,
+        a.code AS account_code,
+        a.account_type,
+        a.is_active,
+        a.allow_posting,
+        c.scope AS coa_scope,
+        c.legal_entity_id AS coa_legal_entity_id
+     FROM bank_statement_lines l
+     JOIN bank_accounts ba
+       ON ba.id = l.bank_account_id
+      AND ba.tenant_id = l.tenant_id
+      AND ba.legal_entity_id = l.legal_entity_id
+     JOIN accounts a
+       ON a.id = ba.gl_account_id
+     JOIN charts_of_accounts c
+       ON c.id = a.coa_id
+     WHERE l.tenant_id = ?
+       AND l.legal_entity_id = ?
+       AND l.id = ?
+     LIMIT 1`,
+    [tenantId, legalEntityId, normalizedBankStatementLineId]
+  );
+  const row = result.rows?.[0] || null;
+  if (!row) {
+    return null;
+  }
+
+  if (!(row.bank_account_is_active === true || Number(row.bank_account_is_active) === 1)) {
+    throw badRequest("bankStatementLineId references an INACTIVE bank account");
+  }
+  if (normalizeUpperText(row.coa_scope) !== "LEGAL_ENTITY") {
+    throw badRequest("bankStatementLineId bank GL account must belong to a LEGAL_ENTITY chart");
+  }
+  if (parsePositiveInt(row.coa_legal_entity_id) !== parsePositiveInt(legalEntityId)) {
+    throw badRequest("bankStatementLineId bank GL account must belong to legalEntityId");
+  }
+  if (normalizeUpperText(row.account_type) !== "ASSET") {
+    throw badRequest("bankStatementLineId bank GL account must have accountType=ASSET");
+  }
+  if (!(row.is_active === true || Number(row.is_active) === 1)) {
+    throw badRequest("bankStatementLineId bank GL account must reference an ACTIVE account");
+  }
+  if (!(row.allow_posting === true || Number(row.allow_posting) === 1)) {
+    throw badRequest("bankStatementLineId bank GL account must reference a postable account");
+  }
+
+  return {
+    id: parsePositiveInt(row.account_id),
+    code: String(row.account_code || ""),
+  };
+}
+
+async function resolveSettlementEffectiveOffsetAccount({
+  tenantId,
+  legalEntityId,
+  bankStatementLineId = null,
+  offsetAccountId = null,
+  offsetAccountCode = null,
+  runQuery = query,
+}) {
+  const bankStatementOffset = await resolveSettlementBankStatementOffsetAccount({
+    tenantId,
+    legalEntityId,
+    bankStatementLineId,
+    runQuery,
+  });
+  const explicitOverride = await resolveSettlementOffsetAccountOverride({
+    tenantId,
+    legalEntityId,
+    offsetAccountId,
+    offsetAccountCode,
+    runQuery,
+  });
+
+  if (
+    bankStatementOffset?.id &&
+    explicitOverride?.id &&
+    bankStatementOffset.id !== explicitOverride.id
+  ) {
+    throw badRequest(
+      "offsetAccountId/offsetAccountCode must match the bank GL account resolved from bankStatementLineId"
+    );
+  }
+
+  return bankStatementOffset || explicitOverride || null;
+}
+
+function applySettlementOffsetAccountOverride({
+  postingAccounts,
+  offsetAccountOverride,
+}) {
+  if (!offsetAccountOverride?.id) {
+    return postingAccounts;
+  }
+  if (offsetAccountOverride.id === postingAccounts.controlAccountId) {
+    throw badRequest("Cari settlement control and offset accounts must be different");
+  }
+  if (offsetAccountOverride.id === postingAccounts.offsetAccountId) {
+    return postingAccounts;
+  }
+
+  return {
+    ...postingAccounts,
+    offsetAccountId: offsetAccountOverride.id,
+    offsetAccountCode: offsetAccountOverride.code || null,
+    offsetPurposeCode: null,
+  };
+}
+
 async function resolveSettlementPostingAccounts({
   tenantId,
   legalEntityId,
@@ -3459,6 +3679,11 @@ export async function applyCariSettlement({
     payload.bankStatementLineId,
     "bankStatementLineId"
   );
+  const requestedOffsetAccountId = normalizeOptionalPositiveInt(
+    payload.offsetAccountId,
+    "offsetAccountId"
+  );
+  const requestedOffsetAccountCode = toNullableString(payload.offsetAccountCode, 60);
   const bankTransactionRef = toNullableString(payload.bankTransactionRef, 100);
   const initialIntegrationMetadata = resolveSettlementIntegrationMetadata({
     payload,
@@ -3475,6 +3700,9 @@ export async function applyCariSettlement({
     throw badRequest(
       "bankStatementLineId or bankTransactionRef is required when bankApplyIdempotencyKey is set"
     );
+  }
+  if (requestedOffsetAccountId && requestedOffsetAccountCode) {
+    throw badRequest("Provide either offsetAccountId or offsetAccountCode, not both");
   }
   if (paymentChannel !== PAYMENT_CHANNEL_CASH && linkedCashTransaction) {
     throw badRequest("linkedCashTransaction is only supported when paymentChannel=CASH");
@@ -4125,6 +4353,14 @@ export async function applyCariSettlement({
       let postedJournalEntryId = null;
 
       if (!isDirectCashLinkedSettlement) {
+        if (
+          postingSourceContext !== SETTLEMENT_POSTING_SOURCE_CONTEXT.MANUAL &&
+          (requestedOffsetAccountId || requestedOffsetAccountCode)
+        ) {
+          throw badRequest(
+            "offsetAccountId/offsetAccountCode is only supported for MANUAL settlement posting"
+          );
+        }
         postingAccounts = await resolveSettlementPostingAccounts({
           tenantId,
           legalEntityId,
@@ -4133,6 +4369,20 @@ export async function applyCariSettlement({
           counterpartyRow: counterparty,
           runQuery: tx.query,
         });
+        if (postingSourceContext === SETTLEMENT_POSTING_SOURCE_CONTEXT.MANUAL) {
+          const offsetAccountOverride = await resolveSettlementEffectiveOffsetAccount({
+            tenantId,
+            legalEntityId,
+            bankStatementLineId,
+            offsetAccountId: requestedOffsetAccountId,
+            offsetAccountCode: requestedOffsetAccountCode,
+            runQuery: tx.query,
+          });
+          postingAccounts = applySettlementOffsetAccountOverride({
+            postingAccounts,
+            offsetAccountOverride,
+          });
+        }
         const journalContext = await resolveBookAndOpenPeriodForDate({
           tenantId,
           legalEntityId,
