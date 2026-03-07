@@ -13008,6 +13008,46 @@
         }
       }
     },
+    "/api/v1/fx/rates/import/tcmb-daily": {
+      "post": {
+        "tags": [
+          "FX"
+        ],
+        "operationId": "postApiV1FxRatesImportTcmbDaily",
+        "summary": "Auto-generated: POST /api/v1/fx/rates/import/tcmb-daily",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/gl/journal-purpose-accounts": {
       "get": {
         "tags": [
