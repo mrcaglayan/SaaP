@@ -72,6 +72,7 @@ import {
 
 const DEFAULT_FILTERS = {
   legalEntityId: "",
+  operatingUnitId: "",
   counterpartyId: "",
   direction: "",
   documentType: "",
@@ -116,6 +117,10 @@ const DOCUMENT_EXPORT_COLUMNS = [
   { header: "ID", value: (row) => row?.id },
   { header: "Document No", value: (row) => firstDefinedRowValue(row, "documentNo", "document_no") },
   { header: "Legal Entity ID", value: (row) => firstDefinedRowValue(row, "legalEntityId", "legal_entity_id") },
+  {
+    header: "Operating Unit ID",
+    value: (row) => firstDefinedRowValue(row, "operatingUnitId", "operating_unit_id"),
+  },
   { header: "Counterparty ID", value: (row) => firstDefinedRowValue(row, "counterpartyId", "counterparty_id") },
   {
     header: "Counterparty Code",
@@ -782,14 +787,19 @@ export default function CariDocumentsPage() {
     DOCUMENT_FILTERS_STORAGE_SCOPE,
     () => ({ ...DEFAULT_FILTERS })
   );
+  const [filterContextDefaultsSuspended, setFilterContextDefaultsSuspended] = useState(false);
   const [rows, setRows] = useState([]);
   const [totalRows, setTotalRows] = useState(0);
   const [listLoading, setListLoading] = useState(false);
   const [listError, setListError] = useState("");
+  const [filterOperatingUnitOptions, setFilterOperatingUnitOptions] = useState([]);
+  const [filterOperatingUnitLoading, setFilterOperatingUnitLoading] = useState(false);
+  const [filterOperatingUnitError, setFilterOperatingUnitError] = useState("");
   const [filterCounterpartyOptions, setFilterCounterpartyOptions] = useState([]);
   const [filterCounterpartyLoading, setFilterCounterpartyLoading] = useState(false);
 
   const [createForm, setCreateForm] = useState(() => createInitialDraftForm());
+  const [createContextDefaultsSuspended, setCreateContextDefaultsSuspended] = useState(false);
   const [createSaving, setCreateSaving] = useState(false);
   const [createError, setCreateError] = useState("");
   const [createMessage, setCreateMessage] = useState("");
@@ -917,6 +927,13 @@ export default function CariDocumentsPage() {
         render: (row) => row?.documentNo || "-",
       },
       {
+        id: "operatingUnit",
+        label: "Operating Unit",
+        headerClassName: "px-3 py-2",
+        cellClassName: "px-3 py-2",
+        render: (row) => firstDefinedRowValue(row, "operatingUnitId", "operating_unit_id") || "-",
+      },
+      {
         id: "direction",
         label: "Direction",
         headerClassName: "px-3 py-2",
@@ -1029,15 +1046,21 @@ export default function CariDocumentsPage() {
     [draftTemplates, selectedDraftTemplateId]
   );
 
-  useWorkingContextDefaults(setFilters, DOCUMENT_FILTER_CONTEXT_MAPPINGS, [
-    filters.legalEntityId,
-    filters.dateFrom,
-    filters.dateTo,
-  ]);
-  useWorkingContextDefaults(setCreateForm, DOCUMENT_CREATE_CONTEXT_MAPPINGS, [
-    createForm.legalEntityId,
-    createForm.documentDate,
-  ]);
+  useWorkingContextDefaults(
+    setFilters,
+    filterContextDefaultsSuspended ? [] : DOCUMENT_FILTER_CONTEXT_MAPPINGS,
+    [
+      filterContextDefaultsSuspended,
+      filters.legalEntityId,
+      filters.dateFrom,
+      filters.dateTo,
+    ]
+  );
+  useWorkingContextDefaults(
+    setCreateForm,
+    createContextDefaultsSuspended ? [] : DOCUMENT_CREATE_CONTEXT_MAPPINGS,
+    [createContextDefaultsSuspended, createForm.legalEntityId, createForm.documentDate]
+  );
 
   const selectedRow = useMemo(
     () => rows.find((row) => Number(row?.id || 0) === Number(selectedDocumentId || 0)) || null,
@@ -1194,6 +1217,23 @@ export default function CariDocumentsPage() {
     () => (filterCounterpartyOptions || []).map(mapCounterpartyLookupOption).filter((row) => row.value),
     [filterCounterpartyOptions]
   );
+  const filterOperatingUnitLookupOptions = useMemo(() => {
+    const selectedOperatingUnitId = normalizeText(filters.operatingUnitId);
+    const rows = (filterOperatingUnitOptions || [])
+      .map(mapOperatingUnitLookupOption)
+      .filter((row) => row.value);
+    if (
+      selectedOperatingUnitId &&
+      !rows.some((row) => String(row.value) === selectedOperatingUnitId)
+    ) {
+      rows.unshift({
+        value: selectedOperatingUnitId,
+        label: `Operating unit #${selectedOperatingUnitId}`,
+        description: "Selected value is outside current lookup scope.",
+      });
+    }
+    return rows;
+  }, [filterOperatingUnitOptions, filters.operatingUnitId]);
   const legalEntityLookupOptions = useMemo(
     () =>
       (workingContextLegalEntities || [])
@@ -1387,6 +1427,7 @@ export default function CariDocumentsPage() {
 
   function handleFilterLegalEntityChange(nextValue) {
     const normalizedLegalEntityId = nextValue ? String(nextValue) : "";
+    setFilterContextDefaultsSuspended(true);
     setFilters((previous) => {
       if (normalizeText(previous.legalEntityId) === normalizedLegalEntityId) {
         return previous;
@@ -1394,6 +1435,7 @@ export default function CariDocumentsPage() {
       return {
         ...previous,
         legalEntityId: normalizedLegalEntityId,
+        operatingUnitId: "",
         counterpartyId: "",
       };
     });
@@ -1421,6 +1463,7 @@ export default function CariDocumentsPage() {
 
   function handleCreateLegalEntityChange(nextValue) {
     const normalizedLegalEntityId = nextValue ? String(nextValue) : "";
+    setCreateContextDefaultsSuspended(true);
     setCreateForm((previous) => {
       if (normalizeText(previous.legalEntityId) === normalizedLegalEntityId) {
         return previous;
@@ -1717,6 +1760,67 @@ export default function CariDocumentsPage() {
     loadDocumentDetail(selectedDocumentId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedDocumentId, canRead]);
+
+  useEffect(() => {
+    if (!canReadOrgTree) {
+      setFilterOperatingUnitOptions([]);
+      setFilterOperatingUnitLoading(false);
+      setFilterOperatingUnitError("");
+      return;
+    }
+    const legalEntityId = toPositiveInt(filters.legalEntityId);
+    if (!legalEntityId) {
+      setFilterOperatingUnitOptions([]);
+      setFilterOperatingUnitLoading(false);
+      setFilterOperatingUnitError("");
+      return;
+    }
+    let active = true;
+    async function loadFilterOperatingUnits() {
+      setFilterOperatingUnitLoading(true);
+      setFilterOperatingUnitError("");
+      try {
+        const response = await listOperatingUnits({
+          legalEntityId,
+          limit: 500,
+          includeInactive: true,
+        });
+        if (!active) return;
+        const rows = Array.isArray(response?.rows) ? response.rows : [];
+        setFilterOperatingUnitOptions(rows);
+        setFilters((previous) => {
+          const selectedOperatingUnitId = normalizeText(previous.operatingUnitId);
+          if (!selectedOperatingUnitId) {
+            return previous;
+          }
+          const selectedStillVisible = rows.some(
+            (row) => String(toPositiveInt(row?.id) || "") === selectedOperatingUnitId
+          );
+          return selectedStillVisible
+            ? previous
+            : { ...previous, operatingUnitId: "" };
+        });
+      } catch (error) {
+        if (!active) return;
+        setFilterOperatingUnitOptions([]);
+        setFilterOperatingUnitError(
+          normalizeApiError(
+            error,
+            l(
+              "Failed to load operating units for selected legal entity.",
+              "Secili tuzel kisilik icin operasyon birimleri yuklenemedi."
+            )
+          )
+        );
+      } finally {
+        if (active) setFilterOperatingUnitLoading(false);
+      }
+    }
+    loadFilterOperatingUnits();
+    return () => {
+      active = false;
+    };
+  }, [canReadOrgTree, filters.legalEntityId, l, setFilters]);
 
   useEffect(() => {
     if (!canReadCards) {
@@ -3699,6 +3803,43 @@ export default function CariDocumentsPage() {
             ) : null}
           </div>
           <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">{l("Direction", "Yon")}<select className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={filters.direction} onChange={(event) => handleFilterDirectionChange(event.target.value)}><option value="">{l("ALL", "TUMU")}</option>{DOCUMENT_DIRECTIONS.map((direction) => <option key={`filter-direction-${direction}`} value={direction}>{direction}</option>)}</select></label>
+          {canReadOrgTree ? (
+            <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+              <label className="block">
+                {l("Operating Unit", "Operasyon Birimi")}
+                <Combobox
+                  className="mt-1"
+                  value={filters.operatingUnitId}
+                  options={filterOperatingUnitLookupOptions}
+                  loading={filterOperatingUnitLoading}
+                  disabled={!toPositiveInt(filters.legalEntityId)}
+                  placeholder={
+                    toPositiveInt(filters.legalEntityId)
+                      ? l("Search operating unit code/name", "Operasyon birimi kodu/adi ara")
+                      : l("Select legal entity first", "Once tuzel kisilik secin")
+                  }
+                  noOptionsText={
+                    toPositiveInt(filters.legalEntityId)
+                      ? l("No operating units found.", "Operasyon birimi bulunamadi.")
+                      : l("Select legal entity first.", "Once tuzel kisilik secin.")
+                  }
+                  onChange={(nextValue) =>
+                    setFilters((prev) => ({
+                      ...prev,
+                      operatingUnitId: nextValue ? String(nextValue) : "",
+                    }))
+                  }
+                />
+              </label>
+              {filterOperatingUnitError ? (
+                <p className="mt-1 text-[11px] normal-case text-amber-700">
+                  {filterOperatingUnitError}
+                </p>
+              ) : null}
+            </div>
+          ) : (
+            <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">{l("Operating Unit ID", "Operasyon Birimi ID")}<input type="number" min="1" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={filters.operatingUnitId} onChange={(event) => setFilters((prev) => ({ ...prev, operatingUnitId: event.target.value }))} /></label>
+          )}
           <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">{l("Counterparty ID", "Cari ID")}<input type="number" min="1" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={filters.counterpartyId} onChange={(event) => setFilters((prev) => ({ ...prev, counterpartyId: event.target.value }))} /></label>
           {canReadCards ? (
             <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
@@ -4000,32 +4141,29 @@ export default function CariDocumentsPage() {
               <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">
                 <label className="block">
                   {l("Operating Unit (optional)", "Operasyon Birimi (opsiyonel)")}
-                  <select
-                    className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                  <Combobox
+                    className="mt-1"
                     value={createForm.operatingUnitId}
-                    onChange={(event) =>
+                    options={createOperatingUnitLookupOptions}
+                    loading={createOperatingUnitsLoading}
+                    disabled={!toPositiveInt(createForm.legalEntityId) || createSaving}
+                    placeholder={
+                      toPositiveInt(createForm.legalEntityId)
+                        ? l("Search operating unit code/name", "Operasyon birimi kodu/adi ara")
+                        : l("Select legal entity first", "Once tuzel kisilik secin")
+                    }
+                    noOptionsText={
+                      toPositiveInt(createForm.legalEntityId)
+                        ? l("No operating units found.", "Operasyon birimi bulunamadi.")
+                        : l("Select legal entity first.", "Once tuzel kisilik secin.")
+                    }
+                    onChange={(nextValue) =>
                       setCreateForm((prev) => ({
                         ...prev,
-                        operatingUnitId: event.target.value,
+                        operatingUnitId: nextValue ? String(nextValue) : "",
                       }))
                     }
-                    disabled={
-                      !toPositiveInt(createForm.legalEntityId) ||
-                      createSaving ||
-                      createOperatingUnitsLoading
-                    }
-                  >
-                    <option value="">
-                      {toPositiveInt(createForm.legalEntityId)
-                        ? l("No operating unit", "Operasyon birimi yok")
-                        : l("Select legal entity first", "Once tuzel kisilik secin")}
-                    </option>
-                    {createOperatingUnitLookupOptions.map((row) => (
-                      <option key={`create-operating-unit-${row.value}`} value={row.value}>
-                        {row.label}
-                      </option>
-                    ))}
-                  </select>
+                  />
                 </label>
                 {createOperatingUnitsError ? (
                   <p className="mt-1 text-[11px] normal-case text-amber-700">
@@ -4329,6 +4467,7 @@ export default function CariDocumentsPage() {
               <dl className="mt-3 grid grid-cols-2 gap-2 text-sm">
                 <dt className="font-semibold text-slate-600">documentNo</dt><dd>{selectedSnapshot.documentNo || "-"}</dd>
                 <dt className="font-semibold text-slate-600">status</dt><dd>{selectedSnapshot.status || "-"}</dd>
+                <dt className="font-semibold text-slate-600">operatingUnitId</dt><dd>{firstDefinedRowValue(selectedSnapshot, "operatingUnitId", "operating_unit_id") || "-"}</dd>
                 <dt className="font-semibold text-slate-600">postedJournalEntryId</dt><dd>{selectedSnapshot.postedJournalEntryId || "-"}</dd>
                 <dt className="font-semibold text-slate-600">reversalOfDocumentId</dt><dd>{selectedSnapshot.reversalOfDocumentId || "-"}</dd>
                 <dt className="font-semibold text-slate-600">counterpartyCodeSnapshot</dt><dd>{selectedSnapshot.counterpartyCodeSnapshot || "-"}</dd>
@@ -4814,33 +4953,29 @@ export default function CariDocumentsPage() {
                     <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">
                       <label className="block">
                         {l("Operating Unit (optional)", "Operasyon Birimi (opsiyonel)")}
-                        <select
-                          className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                        <Combobox
+                          className="mt-1"
                           value={editForm.operatingUnitId}
-                          onChange={(event) =>
+                          options={editOperatingUnitLookupOptions}
+                          loading={editOperatingUnitsLoading}
+                          disabled={!canEditOrCancelSelected || !toPositiveInt(editForm.legalEntityId) || editSaving}
+                          placeholder={
+                            toPositiveInt(editForm.legalEntityId)
+                              ? l("Search operating unit code/name", "Operasyon birimi kodu/adi ara")
+                              : l("Select legal entity first", "Once tuzel kisilik secin")
+                          }
+                          noOptionsText={
+                            toPositiveInt(editForm.legalEntityId)
+                              ? l("No operating units found.", "Operasyon birimi bulunamadi.")
+                              : l("Select legal entity first.", "Once tuzel kisilik secin.")
+                          }
+                          onChange={(nextValue) =>
                             setEditForm((prev) => ({
                               ...prev,
-                              operatingUnitId: event.target.value,
+                              operatingUnitId: nextValue ? String(nextValue) : "",
                             }))
                           }
-                          disabled={
-                            !canEditOrCancelSelected ||
-                            !toPositiveInt(editForm.legalEntityId) ||
-                            editSaving ||
-                            editOperatingUnitsLoading
-                          }
-                        >
-                          <option value="">
-                            {toPositiveInt(editForm.legalEntityId)
-                              ? l("No operating unit", "Operasyon birimi yok")
-                              : l("Select legal entity first", "Once tuzel kisilik secin")}
-                          </option>
-                          {editOperatingUnitLookupOptions.map((row) => (
-                            <option key={`edit-operating-unit-${row.value}`} value={row.value}>
-                              {row.label}
-                            </option>
-                          ))}
-                        </select>
+                        />
                       </label>
                       {editOperatingUnitsError ? (
                         <p className="mt-1 text-[11px] normal-case text-amber-700">

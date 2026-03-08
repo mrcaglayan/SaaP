@@ -144,6 +144,11 @@ export default function Combobox({
   const [isOpen, setIsOpen] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState(-1);
 
+  useEffect(() => {
+    if (isInputControlled) return;
+    setLocalInputValue(normalizeText(selectedOption?.label));
+  }, [isInputControlled, selectedOption?.label, value]);
+
   const query = isInputControlled
     ? normalizeText(inputValue)
     : isOpen

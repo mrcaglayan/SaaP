@@ -22,6 +22,7 @@ export const DUE_DATE_REQUIRED_TYPES = new Set(["INVOICE", "DEBIT_NOTE"]);
 export function buildDocumentListQuery(filters) {
   return {
     legalEntityId: filters.legalEntityId || undefined,
+    operatingUnitId: filters.operatingUnitId || undefined,
     counterpartyId: filters.counterpartyId || undefined,
     direction: filters.direction || undefined,
     documentType: filters.documentType || undefined,
