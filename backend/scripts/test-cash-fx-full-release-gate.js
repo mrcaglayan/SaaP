@@ -9,6 +9,8 @@ async function main() {
       "test-cash-exf02-revaluation-reversal-automation.js",
       "test-cash-exf02-close-reopen-integrity.js",
       "test-cash-exf03-exchange-fee-and-spread.js",
+      "test-cash-exf06-direct-mode-exchange.js",
+      "test-cash-exf07-direct-mode-reversal.js",
       "test-cash-exf04-fx-ops-dashboard.js",
       "test-cash-exf04-fx-exception-actions.js",
       "test-cash-exf05-backfill-and-rollout.js",

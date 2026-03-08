@@ -12,6 +12,8 @@ This runbook defines setup, reporting, month-end/year-end controls, and determin
 - Configure journal purpose accounts:
   - `CASH_FX_REVALUATION_GAIN`
   - `CASH_FX_REVALUATION_LOSS`
+- Configure `CASH_EXCHANGE_CLEARING` when using staged exchange posting (`postingMode=CLEARING`).
+- Keep a fee/commission expense account available for exchange rows that include commission. Fee account selection is manual in the exchange workbench.
 - Confirm permissions:
   - `cash.txn.*` for exchange and reversal operations
   - `cash.report.read` for finance/support report queries
@@ -19,6 +21,32 @@ This runbook defines setup, reporting, month-end/year-end controls, and determin
 - Enable scheduler/worker for automatic revaluation jobs when using job mode:
   - `npm run job:cash-fx:revaluation:schedule-due`
   - `npm run jobs:cash-fx:revaluation:scheduler`
+
+## Exchange Posting Modes
+
+### `CLEARING`
+
+- Use for staged exchange, maker-checker flow, external desk/bank handoff, or any pending completion scenario.
+- Requires `CASH_EXCHANGE_CLEARING` purpose mapping or a manually selected clearing account.
+- Principal journals post through clearing:
+  - exchange out: debit clearing / credit source register
+  - exchange in: debit target register / credit clearing
+- Fee/commission, when present, posts as a separate cash payout using the selected fee expense account.
+
+### `DIRECT`
+
+- Use for same-event safe-to-safe exchange where both legs are completed together.
+- `clearingAccountId` must be empty.
+- Principal journals post directly:
+  - debit target register / credit source register
+- Both exchange cash transactions share the same posted journal entry.
+- Fee/commission, when present, still posts separately to the selected fee expense account and credits the source register.
+
+### Operational Rule
+
+- Choose `CLEARING` for in-transit or controlled exchange.
+- Choose `DIRECT` for instant completed exchange.
+- Reversal is available in both modes and will reverse fee postings separately when commission exists.
 
 ## Reporting Endpoints
 
@@ -78,6 +106,10 @@ FX pages are visible/accessible only when tenant has at least one rollout code a
 4. Close-gate UX validation:
    - in `/app/mahsup-islemleri`, trigger FX close-gate error and verify guided panel and links to FX pages.
    - verify override checkbox/reason fields only render for users with `cash.fx.revaluation.override`.
+5. Exchange workbench mode validation:
+   - create one draft/post in `CLEARING` mode and verify clearing account input is visible and prefilled when `CASH_EXCHANGE_CLEARING` mapping exists.
+   - switch to `DIRECT` mode and verify clearing account input is hidden/disabled.
+   - enter commission amount/account and verify the page accepts commission in both modes.
 
 ## Month-End Checklist
 
@@ -144,7 +176,10 @@ FX pages are visible/accessible only when tenant has at least one rollout code a
 
 1. Reverse exchange from `POST /api/v1/cash/exchanges/:exchangeBatchId/reverse`.
 2. Verify batch status becomes `REVERSED` and reversal cash transactions are posted.
-3. Verify exchange history report reflects original and reversal linkage.
+3. For `CLEARING`, confirm the original principal journals used the configured clearing account and the reversal unwinds that staged flow.
+4. For `DIRECT`, confirm no clearing account lines were used and the principal reversal journal posts source register against target register.
+5. If commission existed, confirm reversal also created the fee reversal transaction against the same fee expense account.
+6. Verify exchange history report reflects original and reversal linkage.
 
 ### Wrong revaluation run
 
@@ -156,6 +191,14 @@ FX pages are visible/accessible only when tenant has at least one rollout code a
 
 - Missing FX rate on period end:
   - Add exact-date rate or allowed prior-date fallback and rerun.
+- Exchange create fails because clearing account is missing:
+  - use `postingMode=DIRECT`, or
+  - configure `CASH_EXCHANGE_CLEARING`, or
+  - select a manual clearing account on the exchange form.
+- Exchange create fails with `clearingAccountId must be empty when postingMode is DIRECT`:
+  - remove the clearing account input and retry in direct mode.
+- Exchange create fails because `feeAccountId` is required:
+  - provide a fee/commission expense account when `feeAmountTxn` is entered.
 - Close blocked by revaluation gate:
   - Run required revaluation, then retry close.
   - Use override only with `cash.fx.revaluation.override` and explicit reason.
@@ -166,5 +209,5 @@ FX pages are visible/accessible only when tenant has at least one rollout code a
 
 - End-to-end EX01..EX05 + EX06 checks:
   - `cd backend && npm run test:cash-fx-release-gate`
-- End-to-end EX + EXF full chain (including EXF05):
+- End-to-end EX + EXF full chain (including EXF03 fee/spread, EXF06 direct exchange, EXF07 direct reversal, and EXF05):
   - `cd backend && npm run test:cash-fx-full-release-gate`
