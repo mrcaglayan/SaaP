@@ -12,6 +12,7 @@ import {
   getCariDocumentOpenItems,
   listCariDocumentComments,
   listCariDocumentEvidence,
+  listCariDocumentMentionCandidates,
   listCariDocuments,
   getCariDocumentOpsStatus,
   postCariDocument,
@@ -181,6 +182,31 @@ function toPositiveInt(value) {
 
 function normalizeText(value) {
   return String(value || "").trim();
+}
+
+const INTERNAL_COMMENT_MENTION_REGEX = /(^|[\s(])@([A-Za-z0-9._%+\-@]*)$/;
+
+function getInternalCommentMentionDraft(value, selectionStart) {
+  const text = String(value || "");
+  const caret =
+    typeof selectionStart === "number" && Number.isFinite(selectionStart)
+      ? Math.max(0, Math.min(selectionStart, text.length))
+      : text.length;
+  const beforeCaret = text.slice(0, caret);
+  const match = beforeCaret.match(INTERNAL_COMMENT_MENTION_REGEX);
+  if (!match) {
+    return null;
+  }
+  const query = String(match[2] || "");
+  return {
+    query,
+    replaceFrom: caret - query.length - 1,
+    replaceTo: caret,
+  };
+}
+
+function shouldInsertMentionSpacer(nextCharacter) {
+  return !/[\s),.;:!?]/.test(String(nextCharacter || ""));
 }
 
 function normalizeCurrencyCode(value) {
@@ -577,6 +603,52 @@ function mapOperatingUnitLookupOption(row) {
   };
 }
 
+function formatOperatingUnitDisplay(unitId, unitCode, unitName) {
+  const code = normalizeText(unitCode);
+  const name = normalizeText(unitName);
+  if (code && name) {
+    return `${code} - ${name}`;
+  }
+  if (code) {
+    return code;
+  }
+  if (name) {
+    return name;
+  }
+  return unitId ? `#${unitId}` : "-";
+}
+
+function buildOperatingUnitsById(...collections) {
+  const unitsById = new Map();
+  for (const collection of collections) {
+    for (const row of collection || []) {
+      const id = toPositiveInt(row?.id);
+      if (!id) {
+        continue;
+      }
+      const code = normalizeText(row?.code);
+      const name = normalizeText(row?.name);
+      if (!code && !name) {
+        continue;
+      }
+      unitsById.set(id, { code, name });
+    }
+  }
+  return unitsById;
+}
+
+function getDocumentOperatingUnitLabel(row, operatingUnitsById = new Map()) {
+  const unitId = toPositiveInt(
+    firstDefinedRowValue(row, "operatingUnitId", "operating_unit_id")
+  );
+  const lookupUnit = unitId ? operatingUnitsById.get(unitId) || null : null;
+  return formatOperatingUnitDisplay(
+    unitId,
+    firstDefinedRowValue(row, "operatingUnitCode", "operating_unit_code") || lookupUnit?.code,
+    firstDefinedRowValue(row, "operatingUnitName", "operating_unit_name") || lookupUnit?.name
+  );
+}
+
 function buildDocumentLifecycleEvents(row, translate = (en) => en) {
   if (!row) {
     return [];
@@ -828,6 +900,8 @@ export default function CariDocumentsPage() {
   const [detailError, setDetailError] = useState("");
   const lastObservedUrlDocumentIdRef = useRef(null);
   const pendingUrlSelectionDocumentIdRef = useRef(null);
+  const internalCommentTextareaRef = useRef(null);
+  const internalCommentMentionRequestRef = useRef(0);
 
   const [editForm, setEditForm] = useState(() => createInitialDraftForm());
   const [editSaving, setEditSaving] = useState(false);
@@ -876,6 +950,11 @@ export default function CariDocumentsPage() {
   const [internalCommentsMessage, setInternalCommentsMessage] = useState("");
   const [internalCommentBody, setInternalCommentBody] = useState("");
   const [internalCommentSaving, setInternalCommentSaving] = useState(false);
+  const [internalCommentMentionDraft, setInternalCommentMentionDraft] = useState(null);
+  const [internalCommentMentionRows, setInternalCommentMentionRows] = useState([]);
+  const [internalCommentMentionLoading, setInternalCommentMentionLoading] = useState(false);
+  const [internalCommentMentionError, setInternalCommentMentionError] = useState("");
+  const [internalCommentMentionHighlightIndex, setInternalCommentMentionHighlightIndex] = useState(-1);
   const [opsStatusRow, setOpsStatusRow] = useState(null);
   const [opsStatusLoading, setOpsStatusLoading] = useState(false);
   const [opsStatusError, setOpsStatusError] = useState("");
@@ -904,6 +983,15 @@ export default function CariDocumentsPage() {
   const [savedViews, setSavedViews] = useState([]);
   const [selectedSavedViewId, setSelectedSavedViewId] = useState("");
   const [defaultSavedViewHydrated, setDefaultSavedViewHydrated] = useState(false);
+  const operatingUnitsById = useMemo(
+    () =>
+      buildOperatingUnitsById(
+        filterOperatingUnitOptions,
+        createOperatingUnitOptions,
+        editOperatingUnitOptions
+      ),
+    [createOperatingUnitOptions, editOperatingUnitOptions, filterOperatingUnitOptions]
+  );
 
   const documentTableColumns = useMemo(
     () => [
@@ -926,7 +1014,7 @@ export default function CariDocumentsPage() {
         label: "Operating Unit",
         headerClassName: "px-3 py-2",
         cellClassName: "px-3 py-2",
-        render: (row) => firstDefinedRowValue(row, "operatingUnitId", "operating_unit_id") || "-",
+        render: (row) => getDocumentOperatingUnitLabel(row, operatingUnitsById),
       },
       {
         id: "direction",
@@ -999,7 +1087,7 @@ export default function CariDocumentsPage() {
         ),
       },
     ],
-    [setSelectedDocumentId]
+    [operatingUnitsById, setSelectedDocumentId]
   );
   const documentTableColumnIds = useMemo(
     () => documentTableColumns.map((column) => column.id),
@@ -1134,6 +1222,132 @@ export default function CariDocumentsPage() {
   const canAttachEvidence = Boolean(selectedSnapshot && canUpdate);
   const canWriteInternalComments = Boolean(selectedSnapshot && canUpdate);
   const canWriteOpsStatus = Boolean(selectedSnapshot && canUpdate);
+
+  function closeInternalCommentMentionPicker() {
+    internalCommentMentionRequestRef.current += 1;
+    setInternalCommentMentionDraft(null);
+    setInternalCommentMentionRows([]);
+    setInternalCommentMentionLoading(false);
+    setInternalCommentMentionError("");
+    setInternalCommentMentionHighlightIndex(-1);
+  }
+
+  function syncInternalCommentMentionDraft(value, selectionStart) {
+    if (!selectedDocumentNumericId || !canWriteInternalComments || internalCommentSaving) {
+      closeInternalCommentMentionPicker();
+      return;
+    }
+    const nextDraft = getInternalCommentMentionDraft(value, selectionStart);
+    if (!nextDraft) {
+      closeInternalCommentMentionPicker();
+      return;
+    }
+    const isSameDraft =
+      internalCommentMentionDraft &&
+      internalCommentMentionDraft.query === nextDraft.query &&
+      internalCommentMentionDraft.replaceFrom === nextDraft.replaceFrom &&
+      internalCommentMentionDraft.replaceTo === nextDraft.replaceTo;
+    setInternalCommentMentionError("");
+    if (isSameDraft) {
+      return;
+    }
+    setInternalCommentMentionDraft(nextDraft);
+    setInternalCommentMentionHighlightIndex(0);
+  }
+
+  function handleInternalCommentBodyChange(event) {
+    const nextValue = String(event?.target?.value || "");
+    const nextSelectionStart = event?.target?.selectionStart;
+    setInternalCommentsError("");
+    setInternalCommentsMessage("");
+    setInternalCommentBody(nextValue);
+    syncInternalCommentMentionDraft(nextValue, nextSelectionStart);
+  }
+
+  function handleInternalCommentBodyCursorChange(event) {
+    syncInternalCommentMentionDraft(event?.target?.value, event?.target?.selectionStart);
+  }
+
+  function handleInternalCommentBodyBlur() {
+    window.setTimeout(() => {
+      if (document.activeElement === internalCommentTextareaRef.current) {
+        return;
+      }
+      closeInternalCommentMentionPicker();
+    }, 0);
+  }
+
+  function applyInternalCommentMention(candidate) {
+    const email = normalizeText(candidate?.email);
+    if (!email) {
+      return;
+    }
+    const textarea = internalCommentTextareaRef.current;
+    const currentValue = String(internalCommentBody || "");
+    const activeDraft =
+      internalCommentMentionDraft ||
+      getInternalCommentMentionDraft(currentValue, textarea?.selectionStart);
+    if (!activeDraft) {
+      return;
+    }
+    const nextCharacter = currentValue.slice(activeDraft.replaceTo, activeDraft.replaceTo + 1);
+    const spacer = shouldInsertMentionSpacer(nextCharacter) ? " " : "";
+    const insertedText = `@${email}${spacer}`;
+    const nextValue = `${currentValue.slice(0, activeDraft.replaceFrom)}${insertedText}${currentValue.slice(
+      activeDraft.replaceTo
+    )}`;
+    const nextCaretPosition = activeDraft.replaceFrom + insertedText.length;
+
+    setInternalCommentsError("");
+    setInternalCommentsMessage("");
+    setInternalCommentBody(nextValue);
+    closeInternalCommentMentionPicker();
+
+    window.requestAnimationFrame(() => {
+      if (!textarea) {
+        return;
+      }
+      textarea.focus();
+      textarea.setSelectionRange(nextCaretPosition, nextCaretPosition);
+    });
+  }
+
+  function handleInternalCommentBodyKeyDown(event) {
+    if (!internalCommentMentionDraft) {
+      return;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeInternalCommentMentionPicker();
+      return;
+    }
+    if (!internalCommentMentionRows.length) {
+      return;
+    }
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setInternalCommentMentionHighlightIndex((previous) =>
+        previous >= internalCommentMentionRows.length - 1 ? 0 : previous + 1
+      );
+      return;
+    }
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setInternalCommentMentionHighlightIndex((previous) =>
+        previous <= 0 ? internalCommentMentionRows.length - 1 : previous - 1
+      );
+      return;
+    }
+    if ((event.key === "Enter" || event.key === "Tab") && internalCommentMentionHighlightIndex >= 0) {
+      const candidate = internalCommentMentionRows[internalCommentMentionHighlightIndex];
+      if (!candidate) {
+        return;
+      }
+      event.preventDefault();
+      applyInternalCommentMention(candidate);
+    }
+  }
+
   const selectedDocumentAmountTxn = toPositiveDecimal(
     selectedSnapshot?.amountTxn ?? selectedSnapshot?.amount_txn
   );
@@ -2539,6 +2753,7 @@ export default function CariDocumentsPage() {
     setInternalCommentsError("");
     setInternalCommentsMessage("");
     setInternalCommentBody("");
+    closeInternalCommentMentionPicker();
 
     if (!canRead || !documentId) {
       setInternalCommentRows([]);
@@ -2575,6 +2790,59 @@ export default function CariDocumentsPage() {
       active = false;
     };
   }, [canRead, l, selectedDocumentNumericId]);
+
+  useEffect(() => {
+    const documentId = selectedDocumentNumericId;
+    if (!documentId || !canWriteInternalComments || !internalCommentMentionDraft) {
+      setInternalCommentMentionRows([]);
+      setInternalCommentMentionLoading(false);
+      setInternalCommentMentionError("");
+      setInternalCommentMentionHighlightIndex(-1);
+      return;
+    }
+
+    const requestId = internalCommentMentionRequestRef.current + 1;
+    internalCommentMentionRequestRef.current = requestId;
+    const timeoutId = window.setTimeout(async () => {
+      setInternalCommentMentionLoading(true);
+      setInternalCommentMentionError("");
+      try {
+        const response = await listCariDocumentMentionCandidates(documentId, {
+          q: internalCommentMentionDraft.query,
+          limit: 8,
+        });
+        if (internalCommentMentionRequestRef.current !== requestId) {
+          return;
+        }
+        const rows = Array.isArray(response?.rows) ? response.rows : [];
+        setInternalCommentMentionRows(rows);
+        setInternalCommentMentionHighlightIndex(rows.length > 0 ? 0 : -1);
+      } catch (error) {
+        if (internalCommentMentionRequestRef.current !== requestId) {
+          return;
+        }
+        setInternalCommentMentionRows([]);
+        setInternalCommentMentionHighlightIndex(-1);
+        setInternalCommentMentionError(
+          normalizeApiError(
+            error,
+            l(
+              "Mention suggestions could not be loaded. You can still type the full email.",
+              "Etiket onerileri yuklenemedi. E-postayi tam yazarak devam edebilirsiniz."
+            )
+          )
+        );
+      } finally {
+        if (internalCommentMentionRequestRef.current === requestId) {
+          setInternalCommentMentionLoading(false);
+        }
+      }
+    }, 120);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [canWriteInternalComments, internalCommentMentionDraft, l, selectedDocumentNumericId]);
 
   useEffect(() => {
     const documentId = selectedDocumentNumericId;
@@ -2722,6 +2990,7 @@ export default function CariDocumentsPage() {
       return;
     }
 
+    closeInternalCommentMentionPicker();
     setInternalCommentSaving(true);
     setInternalCommentsError("");
     setInternalCommentsMessage("");
@@ -4464,7 +4733,7 @@ export default function CariDocumentsPage() {
               <dl className="mt-3 grid grid-cols-2 gap-2 text-sm">
                 <dt className="font-semibold text-slate-600">documentNo</dt><dd>{selectedSnapshot.documentNo || "-"}</dd>
                 <dt className="font-semibold text-slate-600">status</dt><dd>{selectedSnapshot.status || "-"}</dd>
-                <dt className="font-semibold text-slate-600">operatingUnitId</dt><dd>{firstDefinedRowValue(selectedSnapshot, "operatingUnitId", "operating_unit_id") || "-"}</dd>
+                <dt className="font-semibold text-slate-600">operatingUnit</dt><dd>{getDocumentOperatingUnitLabel(selectedSnapshot, operatingUnitsById)}</dd>
                 <dt className="font-semibold text-slate-600">postedJournalEntryId</dt><dd>{selectedSnapshot.postedJournalEntryId || "-"}</dd>
                 <dt className="font-semibold text-slate-600">reversalOfDocumentId</dt><dd>{selectedSnapshot.reversalOfDocumentId || "-"}</dd>
                 <dt className="font-semibold text-slate-600">counterpartyCodeSnapshot</dt><dd>{selectedSnapshot.counterpartyCodeSnapshot || "-"}</dd>
@@ -4710,21 +4979,90 @@ export default function CariDocumentsPage() {
                         onSubmit={handleCreateInternalComment}
                         className="mt-2 space-y-2 rounded border border-slate-200 bg-white p-2"
                       >
-                        <textarea
-                          className="w-full rounded border border-slate-300 px-2 py-1 text-xs"
-                          placeholder={l(
-                            "Add internal comment... Use @email to mention.",
-                            "Dahili yorum ekleyin... Etiketlemek icin @email kullanin."
-                          )}
-                          rows={3}
-                          value={internalCommentBody}
-                          onChange={(event) => {
-                            setInternalCommentsError("");
-                            setInternalCommentsMessage("");
-                            setInternalCommentBody(event.target.value);
-                          }}
-                          disabled={internalCommentSaving}
-                        />
+                        <div className="space-y-1">
+                          <textarea
+                            ref={internalCommentTextareaRef}
+                            className="w-full rounded border border-slate-300 px-2 py-1 text-xs"
+                            placeholder={l(
+                              "Add internal comment... Type @ to mention teammates.",
+                              "Dahili yorum ekleyin... Ekip arkadaslarini etiketlemek icin @ yazin."
+                            )}
+                            rows={3}
+                            value={internalCommentBody}
+                            onChange={handleInternalCommentBodyChange}
+                            onClick={handleInternalCommentBodyCursorChange}
+                            onKeyUp={handleInternalCommentBodyCursorChange}
+                            onKeyDown={handleInternalCommentBodyKeyDown}
+                            onBlur={handleInternalCommentBodyBlur}
+                            disabled={internalCommentSaving}
+                          />
+                          {internalCommentMentionDraft ? (
+                            <div className="rounded border border-cyan-200 bg-cyan-50">
+                              <div className="border-b border-cyan-200 px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-cyan-800">
+                                {l("Mention teammates", "Ekip arkadaslarini etiketle")}
+                              </div>
+                              {internalCommentMentionLoading ? (
+                                <p className="px-2 py-2 text-xs text-cyan-800">
+                                  {l("Loading suggestions...", "Oneriler yukleniyor...")}
+                                </p>
+                              ) : null}
+                              {!internalCommentMentionLoading && internalCommentMentionError ? (
+                                <p className="px-2 py-2 text-xs text-amber-800">
+                                  {internalCommentMentionError}
+                                </p>
+                              ) : null}
+                              {!internalCommentMentionLoading &&
+                              !internalCommentMentionError &&
+                              internalCommentMentionRows.length === 0 ? (
+                                <p className="px-2 py-2 text-xs text-cyan-800">
+                                  {l(
+                                    "No matching teammates found.",
+                                    "Eslesen ekip arkadasi bulunamadi."
+                                  )}
+                                </p>
+                              ) : null}
+                              {!internalCommentMentionLoading &&
+                              !internalCommentMentionError &&
+                              internalCommentMentionRows.length > 0 ? (
+                                <ul className="max-h-40 overflow-auto p-1">
+                                  {internalCommentMentionRows.map((row, index) => {
+                                    const displayName = normalizeText(row?.name);
+                                    const displayEmail = normalizeText(row?.email);
+                                    const isHighlighted = index === internalCommentMentionHighlightIndex;
+                                    return (
+                                      <li key={`internal-comment-mention-${row?.id || displayEmail || index}`}>
+                                        <button
+                                          type="button"
+                                          className={`flex w-full items-start gap-2 rounded px-2 py-1.5 text-left text-xs ${
+                                            isHighlighted
+                                              ? "bg-cyan-100 text-cyan-950"
+                                              : "text-slate-700 hover:bg-cyan-100/70"
+                                          }`}
+                                          onMouseEnter={() =>
+                                            setInternalCommentMentionHighlightIndex(index)
+                                          }
+                                          onMouseDown={(event) => event.preventDefault()}
+                                          onClick={() => applyInternalCommentMention(row)}
+                                        >
+                                          <span className="min-w-0 flex-1">
+                                            <span className="block truncate font-semibold">
+                                              {displayName || displayEmail || "-"}
+                                            </span>
+                                            {displayName && displayEmail ? (
+                                              <span className="block truncate font-mono text-[11px] text-slate-500">
+                                                @{displayEmail}
+                                              </span>
+                                            ) : null}
+                                          </span>
+                                        </button>
+                                      </li>
+                                    );
+                                  })}
+                                </ul>
+                              ) : null}
+                            </div>
+                          ) : null}
+                        </div>
                         <button
                           type="submit"
                           className="rounded border border-slate-300 bg-slate-50 px-2 py-1 text-[11px] font-semibold text-slate-700 disabled:opacity-60"
@@ -4735,11 +5073,10 @@ export default function CariDocumentsPage() {
                             : l("Add Comment", "Yorum Ekle")}
                         </button>
                         <p className="text-[11px] text-slate-500">
-                          {l("Mention teammates with", "Ekip arkadaslarini")}{" "}
-                          <span className="font-mono">@email</span>{" "}
+                          {l("Type", "Yazin")} <span className="font-mono">@</span>{" "}
                           {l(
-                            "to send in-app notifications.",
-                            "ile etiketleyip uygulama ici bildirim gonderin."
+                            "to open the teammate list. Picking a suggestion inserts @email and sends an in-app notification.",
+                            "ekip listesini acmak icin. Bir oneriyi secmek @email ekler ve uygulama ici bildirim gonderir."
                           )}
                         </p>
                       </form>

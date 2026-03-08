@@ -226,6 +226,8 @@ function mapDocumentRow(row) {
     tenantId: parsePositiveInt(row.tenant_id),
     legalEntityId: parsePositiveInt(row.legal_entity_id),
     operatingUnitId: parsePositiveInt(row.operating_unit_id),
+    operatingUnitCode: row.operating_unit_code || null,
+    operatingUnitName: row.operating_unit_name || null,
     counterpartyId: parsePositiveInt(row.counterparty_id),
     paymentTermId: parsePositiveInt(row.payment_term_id),
     paymentTermCode: row.payment_term_code || null,
@@ -482,9 +484,13 @@ async function fetchDocumentRow({
   const result = await runQuery(
     `SELECT
         d.*,
+        ou.code AS operating_unit_code,
+        ou.name AS operating_unit_name,
         pt.code AS payment_term_code,
         pt.name AS payment_term_name
      FROM cari_documents d
+     LEFT JOIN operating_units ou
+       ON ou.id = d.operating_unit_id
      LEFT JOIN payment_terms pt
        ON pt.tenant_id = d.tenant_id
       AND pt.legal_entity_id = d.legal_entity_id
@@ -1518,9 +1524,13 @@ export async function listCariDocuments({
   const rowsResult = await query(
     `SELECT
         d.*,
+        ou.code AS operating_unit_code,
+        ou.name AS operating_unit_name,
         pt.code AS payment_term_code,
         pt.name AS payment_term_name
      FROM cari_documents d
+     LEFT JOIN operating_units ou
+       ON ou.id = d.operating_unit_id
      LEFT JOIN payment_terms pt
        ON pt.tenant_id = d.tenant_id
       AND pt.legal_entity_id = d.legal_entity_id

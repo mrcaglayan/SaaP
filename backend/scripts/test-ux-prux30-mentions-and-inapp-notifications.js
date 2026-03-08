@@ -31,12 +31,20 @@ async function main() {
     path.resolve(root, "backend/src/routes/me.js"),
     "utf8"
   );
+  const cariDocumentCommentsRouteSource = await readFile(
+    path.resolve(root, "backend/src/routes/cari.document.comments.routes.js"),
+    "utf8"
+  );
   const meApiSource = await readFile(
     path.resolve(root, "frontend/src/api/me.js"),
     "utf8"
   );
   const dashboardSource = await readFile(
     path.resolve(root, "frontend/src/pages/Dashboard.jsx"),
+    "utf8"
+  );
+  const cariDocumentsApiSource = await readFile(
+    path.resolve(root, "frontend/src/api/cariDocuments.js"),
     "utf8"
   );
   const cariDocumentsPageSource = await readFile(
@@ -80,6 +88,12 @@ async function main() {
   );
 
   assert(
+    cariDocumentCommentsRouteSource.includes('"/mention-candidates"') &&
+      cariDocumentCommentsRouteSource.includes("listCariDocumentMentionCandidates"),
+    "cari document comments routes should expose mention-candidates lookup"
+  );
+
+  assert(
     meApiSource.includes("export async function listMeNotifications") &&
       meApiSource.includes("export async function markMeNotificationRead") &&
       meApiSource.includes("export async function markAllMeNotificationsRead"),
@@ -95,8 +109,15 @@ async function main() {
   );
 
   assert(
+    cariDocumentsApiSource.includes("export async function listCariDocumentMentionCandidates") &&
+      cariDocumentsPageSource.includes("listCariDocumentMentionCandidates") &&
+      cariDocumentsPageSource.includes("handleInternalCommentBodyKeyDown"),
+    "Cari documents page should fetch mention candidates and support keyboard mention selection"
+  );
+
+  assert(
     cariDocumentsPageSource.includes("@email") &&
-      cariDocumentsPageSource.includes("in-app notifications"),
+      cariDocumentsPageSource.includes("in-app notification"),
     "CariDocumentsPage internal comment form should hint mention format for notifications"
   );
 

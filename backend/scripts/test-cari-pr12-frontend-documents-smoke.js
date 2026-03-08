@@ -33,6 +33,10 @@ async function main() {
     path.resolve(root, "frontend/src/pages/cari/cariDocumentsUtils.js"),
     "utf8"
   );
+  const service = await readFile(
+    path.resolve(root, "backend/src/services/cari.document.service.js"),
+    "utf8"
+  );
   const messages = await readFile(path.resolve(root, "frontend/src/i18n/messages.js"), "utf8");
   const implementedRoutesBlock = getImplementedRoutesBlock(app);
 
@@ -88,6 +92,12 @@ async function main() {
     "reverse action should read nested response.row/journal linkage fields"
   );
   assert(
+    page.includes("getDocumentOperatingUnitLabel") &&
+      page.includes("operatingUnitCode") &&
+      page.includes("operatingUnitName"),
+    "document page should render operating unit labels from code/name when available"
+  );
+  assert(
     utils.includes("dateFrom: filters.dateFrom || filters.documentDateFrom || undefined"),
     "utils should support dateFrom alias mapping"
   );
@@ -98,6 +108,13 @@ async function main() {
   assert(
     /cariDocuments\s*:\s*\{/.test(messages),
     "messages should include cariDocuments section"
+  );
+  assert(
+    service.includes("ou.code AS operating_unit_code") &&
+      service.includes("ou.name AS operating_unit_name") &&
+      service.includes("operatingUnitCode: row.operating_unit_code || null") &&
+      service.includes("operatingUnitName: row.operating_unit_name || null"),
+    "document service should expose operating unit code/name on mapped rows"
   );
 
   console.log("PR-12 frontend documents smoke passed.");

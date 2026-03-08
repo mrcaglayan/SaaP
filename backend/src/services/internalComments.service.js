@@ -8,6 +8,8 @@ const NOTIFICATION_STATUS_UNREAD = "UNREAD";
 const NOTIFICATION_TYPE_INTERNAL_COMMENT_MENTION = "INTERNAL_COMMENT_MENTION";
 const MENTION_EMAIL_REGEX =
   /(^|[\s(])@([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})(?=$|[\s),.;:!?])/gi;
+const DEFAULT_MENTION_CANDIDATE_LIMIT = 8;
+const MAX_MENTION_CANDIDATE_LIMIT = 20;
 
 function normalizeText(value, label, maxLength, { required = false } = {}) {
   const normalized = String(value ?? "").trim();
@@ -56,6 +58,14 @@ function normalizeEmail(value) {
   return String(value || "")
     .trim()
     .toLowerCase();
+}
+
+function resolveMentionCandidateLimit(value) {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    return DEFAULT_MENTION_CANDIDATE_LIMIT;
+  }
+  return Math.min(parsed, MAX_MENTION_CANDIDATE_LIMIT);
 }
 
 function extractMentionEmailsFromBody(value) {
@@ -254,6 +264,61 @@ export async function listCariDocumentInternalCommentsForTenant({
   );
 
   return (result.rows || []).map(mapInternalCommentRow);
+}
+
+export async function listCariDocumentMentionCandidates({
+  req,
+  tenantId,
+  documentId,
+  userId,
+  q,
+  limit,
+  assertScopeAccess,
+}) {
+  const scope = await assertCariDocumentScope({
+    req,
+    tenantId,
+    documentId,
+    assertScopeAccess,
+  });
+  const normalizedUserId = parsePositiveInt(userId);
+  const normalizedQuery = String(q || "")
+    .trim()
+    .toLowerCase();
+  const resolvedLimit = resolveMentionCandidateLimit(limit);
+  const whereClauses = ["tenant_id = ?", "status = 'ACTIVE'"];
+  const params = [scope.tenantId];
+
+  if (normalizedUserId) {
+    whereClauses.push("id <> ?");
+    params.push(normalizedUserId);
+  }
+  if (normalizedQuery) {
+    whereClauses.push("(LOWER(email) LIKE ? OR LOWER(name) LIKE ?)");
+    params.push(`%${normalizedQuery}%`, `%${normalizedQuery}%`);
+  }
+
+  const result = await query(
+    `SELECT id, email, name
+     FROM users
+     WHERE ${whereClauses.join(" AND ")}
+     ORDER BY
+       CASE WHEN COALESCE(TRIM(name), '') = '' THEN 1 ELSE 0 END,
+       LOWER(COALESCE(name, email)),
+       LOWER(email)
+     LIMIT ${resolvedLimit}`,
+    params
+  );
+
+  return {
+    rows: (result.rows || []).map((row) => ({
+      id: parsePositiveInt(row?.id),
+      email: String(row?.email || "").trim(),
+      name: row?.name ? String(row.name).trim() : null,
+    })),
+    limit: resolvedLimit,
+    q: normalizedQuery,
+  };
 }
 
 export async function createCariDocumentInternalComment({

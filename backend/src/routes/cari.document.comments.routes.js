@@ -3,6 +3,7 @@ import { assertScopeAccess, requirePermission } from "../middleware/rbac.js";
 import { resolveCariDocumentScope } from "../services/cari.document.service.js";
 import {
   createCariDocumentInternalComment,
+  listCariDocumentMentionCandidates,
   listCariDocumentInternalCommentsForTenant,
 } from "../services/internalComments.service.js";
 import { requireTenantId, requireUserId } from "./cash.validators.common.js";
@@ -30,6 +31,32 @@ function parseCommentCreateInput(req) {
 
 const resolveDocumentScope = async (req, tenantId) =>
   resolveCariDocumentScope(req.params?.documentId, tenantId);
+
+router.get(
+  "/mention-candidates",
+  requirePermission("cari.doc.update", {
+    resolveScope: resolveDocumentScope,
+  }),
+  asyncHandler(async (req, res) => {
+    const tenantId = requireTenantId(req);
+    const documentId = parseDocumentIdParam(req);
+    const userId = requireUserId(req);
+    const result = await listCariDocumentMentionCandidates({
+      req,
+      tenantId,
+      documentId,
+      userId,
+      q: req.query?.q ?? req.query?.query ?? "",
+      limit: req.query?.limit,
+      assertScopeAccess,
+    });
+    return res.json({
+      tenantId,
+      documentId,
+      ...result,
+    });
+  })
+);
 
 router.get(
   "/",

@@ -30,6 +30,12 @@ export async function createCariDocumentComment(documentId, payload = {}) {
   return run(() => api.post(`/api/v1/cari/documents/${documentId}/comments`, payload));
 }
 
+export async function listCariDocumentMentionCandidates(documentId, params = {}) {
+  return run(() =>
+    api.get(`/api/v1/cari/documents/${documentId}/comments/mention-candidates${toCariQueryString(params)}`)
+  );
+}
+
 export async function getCariDocumentOpsStatus(documentId) {
   return run(() => api.get(`/api/v1/cari/documents/${documentId}/ops-status`));
 }

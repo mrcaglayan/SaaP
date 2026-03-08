@@ -2,7 +2,7 @@
 http://localhost:3000/api/v1/provider/tenants
 Request Method
 POST
-{"tenantCode":"TMV","tenantName":"Türkiye Maarif Vakfı","adminName":"Ufuk","adminEmail":"tmv@gmali.com","adminPassword":"12121212"}
+{"tenantCode":"TMV","tenantName":"Türkiye Maarif Vakfı","adminName":"Ufuk","adminEmail":"tmv@gmail.com","adminPassword":"12121212"}
 2-Request URL
 http://localhost:3000/api/v1/onboarding/company-bootstrap
 Request Method

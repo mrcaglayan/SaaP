@@ -9805,14 +9805,14 @@
           "Cash"
         ],
         "operationId": "getApiV1CashExchanges",
-        "summary": "Auto-generated: GET /api/v1/cash/exchanges",
+        "summary": "List cash exchange batches",
         "responses": {
           "200": {
-            "description": "Successful response",
+            "description": "Cash exchange list",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/CashExchangeListResponse"
                 }
               }
             }
@@ -9826,21 +9826,114 @@
           "403": {
             "$ref": "#/components/responses/ErrorResponse"
           }
-        }
+        },
+        "parameters": [
+          {
+            "in": "query",
+            "name": "tenantId",
+            "required": false,
+            "description": "Tenant identifier when not implied by authenticated session",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "legalEntityId",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "sourceRegisterId",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "targetRegisterId",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/CashExchangeStatus"
+            }
+          },
+          {
+            "in": "query",
+            "name": "createdDateFrom",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "in": "query",
+            "name": "createdDateTo",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ]
       },
       "post": {
         "tags": [
           "Cash"
         ],
         "operationId": "postApiV1CashExchanges",
-        "summary": "Auto-generated: POST /api/v1/cash/exchanges",
+        "summary": "Create and post a cash exchange batch",
         "responses": {
           "200": {
-            "description": "Successful response",
+            "description": "Existing cash exchange returned from idempotent replay",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/CashExchangeEnvelope"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Cash exchange created and posted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CashExchangeEnvelope"
                 }
               }
             }
@@ -9856,11 +9949,11 @@
           }
         },
         "requestBody": {
-          "required": false,
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/AnyObject"
+                "$ref": "#/components/schemas/CashExchangeCreateRequest"
               }
             }
           }
@@ -9873,14 +9966,14 @@
           "Cash"
         ],
         "operationId": "getApiV1CashExchangesExchangebatchid",
-        "summary": "Auto-generated: GET /api/v1/cash/exchanges/{exchangeBatchId}",
+        "summary": "Get one cash exchange batch",
         "responses": {
           "200": {
-            "description": "Successful response",
+            "description": "Cash exchange detail",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/CashExchangeEnvelope"
                 }
               }
             }
@@ -9901,6 +9994,16 @@
             "name": "exchangeBatchId",
             "required": true,
             "description": "exchangeBatchId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "tenantId",
+            "required": false,
+            "description": "Tenant identifier when not implied by authenticated session",
             "schema": {
               "type": "integer",
               "minimum": 1
@@ -9915,14 +10018,14 @@
           "Cash"
         ],
         "operationId": "postApiV1CashExchangesExchangebatchidPost",
-        "summary": "Auto-generated: POST /api/v1/cash/exchanges/{exchangeBatchId}/post",
+        "summary": "Post an existing draft cash exchange batch",
         "responses": {
           "200": {
-            "description": "Successful response",
+            "description": "Cash exchange posted",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/CashExchangeEnvelope"
                 }
               }
             }
@@ -9954,7 +10057,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/AnyObject"
+                "$ref": "#/components/schemas/CashExchangePostRequest"
               }
             }
           }
@@ -9967,14 +10070,14 @@
           "Cash"
         ],
         "operationId": "postApiV1CashExchangesExchangebatchidReverse",
-        "summary": "Auto-generated: POST /api/v1/cash/exchanges/{exchangeBatchId}/reverse",
+        "summary": "Reverse a posted cash exchange batch",
         "responses": {
           "200": {
-            "description": "Successful response",
+            "description": "Cash exchange reversed",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/CashExchangeEnvelope"
                 }
               }
             }
@@ -10002,11 +10105,11 @@
           }
         ],
         "requestBody": {
-          "required": false,
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/AnyObject"
+                "$ref": "#/components/schemas/CashExchangeReverseRequest"
               }
             }
           }
@@ -20363,6 +20466,795 @@
         "type": "object",
         "additionalProperties": true
       },
+      "CashExchangePostingMode": {
+        "type": "string",
+        "enum": [
+          "CLEARING",
+          "DIRECT"
+        ]
+      },
+      "CashExchangeStatus": {
+        "type": "string",
+        "enum": [
+          "DRAFT",
+          "POSTED",
+          "REVERSED",
+          "CANCELLED"
+        ]
+      },
+      "CashExchangeBatch": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "legalEntityId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "legalEntityCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "sourceRegisterId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "sourceRegisterCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "sourceRegisterName": {
+            "type": "string",
+            "nullable": true
+          },
+          "sourceOperatingUnitId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "targetRegisterId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "targetRegisterCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "targetRegisterName": {
+            "type": "string",
+            "nullable": true
+          },
+          "targetOperatingUnitId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "sourceCurrencyCode": {
+            "type": "string",
+            "maxLength": 3,
+            "nullable": true
+          },
+          "targetCurrencyCode": {
+            "type": "string",
+            "maxLength": 3,
+            "nullable": true
+          },
+          "sourceAmountTxn": {
+            "type": "number",
+            "nullable": true
+          },
+          "targetAmountTxn": {
+            "type": "number",
+            "nullable": true
+          },
+          "sourceAmountBase": {
+            "type": "number",
+            "nullable": true
+          },
+          "targetAmountBase": {
+            "type": "number",
+            "nullable": true
+          },
+          "realizedFxBase": {
+            "type": "number",
+            "nullable": true
+          },
+          "reversalRealizedFxBase": {
+            "type": "number",
+            "nullable": true
+          },
+          "feeAmountTxn": {
+            "type": "number",
+            "nullable": true
+          },
+          "feeAmountBase": {
+            "type": "number",
+            "nullable": true
+          },
+          "clearingAccountId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "clearingAccountCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "clearingAccountName": {
+            "type": "string",
+            "nullable": true
+          },
+          "postingMode": {
+            "$ref": "#/components/schemas/CashExchangePostingMode"
+          },
+          "feeAccountId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "feeAccountCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "feeAccountName": {
+            "type": "string",
+            "nullable": true
+          },
+          "fxRate": {
+            "type": "number",
+            "nullable": true
+          },
+          "fxRateSource": {
+            "type": "string",
+            "nullable": true
+          },
+          "fxRateDate": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "providerRef": {
+            "type": "string",
+            "nullable": true
+          },
+          "spreadReferenceRate": {
+            "type": "number",
+            "nullable": true
+          },
+          "spreadRateDelta": {
+            "type": "number",
+            "nullable": true
+          },
+          "spreadAmountBase": {
+            "type": "number",
+            "nullable": true
+          },
+          "status": {
+            "$ref": "#/components/schemas/CashExchangeStatus"
+          },
+          "exchangeOutCashTransactionId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "exchangeInCashTransactionId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "feeCashTransactionId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "reversalOutCashTransactionId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "reversalInCashTransactionId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "reversalFeeCashTransactionId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "postedByUserId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "reversedByUserId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "postedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "reversedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "reverseReason": {
+            "type": "string",
+            "nullable": true
+          },
+          "idempotencyKey": {
+            "type": "string",
+            "nullable": true
+          },
+          "integrationEventUid": {
+            "type": "string",
+            "nullable": true
+          },
+          "note": {
+            "type": "string",
+            "nullable": true
+          },
+          "createdByUserId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          }
+        }
+      },
+      "CashExchangeTransaction": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "txnNo": {
+            "type": "string",
+            "nullable": true
+          },
+          "txnType": {
+            "type": "string",
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "nullable": true
+          },
+          "legalEntityId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "cashRegisterId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "cashSessionId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "operatingUnitId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "currencyCode": {
+            "type": "string",
+            "maxLength": 3,
+            "nullable": true
+          },
+          "amount": {
+            "type": "number",
+            "nullable": true
+          },
+          "amountBase": {
+            "type": "number",
+            "nullable": true
+          },
+          "counterAccountId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "counterCashRegisterId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "postedJournalEntryId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "reversalOfTransactionId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "txnDatetime": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "bookDate": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "description": {
+            "type": "string",
+            "nullable": true
+          },
+          "referenceNo": {
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
+      "CashFxLotMovementSummary": {
+        "type": "object",
+        "properties": {
+          "movementCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "totalInTxn": {
+            "type": "number",
+            "nullable": true
+          },
+          "totalOutTxn": {
+            "type": "number",
+            "nullable": true
+          },
+          "totalMovementBase": {
+            "type": "number",
+            "nullable": true
+          },
+          "totalCarryingBase": {
+            "type": "number",
+            "nullable": true
+          },
+          "realizedFxBase": {
+            "type": "number",
+            "nullable": true
+          }
+        },
+        "required": [
+          "movementCount",
+          "totalInTxn",
+          "totalOutTxn",
+          "totalMovementBase",
+          "totalCarryingBase",
+          "realizedFxBase"
+        ]
+      },
+      "CashExchangeFxLotEnvelope": {
+        "type": "object",
+        "properties": {
+          "exchangeOut": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CashFxLotMovementSummary"
+              }
+            ],
+            "nullable": true
+          },
+          "exchangeIn": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CashFxLotMovementSummary"
+              }
+            ],
+            "nullable": true
+          },
+          "fee": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CashFxLotMovementSummary"
+              }
+            ],
+            "nullable": true
+          },
+          "reversalOut": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CashFxLotMovementSummary"
+              }
+            ],
+            "nullable": true
+          },
+          "reversalIn": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CashFxLotMovementSummary"
+              }
+            ],
+            "nullable": true
+          },
+          "reversalFee": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CashFxLotMovementSummary"
+              }
+            ],
+            "nullable": true
+          }
+        }
+      },
+      "OffsetPaginationMeta": {
+        "type": "object",
+        "properties": {
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "rowCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "hasMore": {
+            "type": "boolean"
+          },
+          "nextOffset": {
+            "type": "integer",
+            "minimum": 0,
+            "nullable": true
+          }
+        },
+        "required": [
+          "total",
+          "limit",
+          "offset",
+          "rowCount",
+          "hasMore",
+          "nextOffset"
+        ]
+      },
+      "CashExchangeListResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CashExchangeBatch"
+            }
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "hasMore": {
+            "type": "boolean"
+          },
+          "pagination": {
+            "$ref": "#/components/schemas/OffsetPaginationMeta"
+          }
+        },
+        "required": [
+          "tenantId",
+          "rows",
+          "total",
+          "limit",
+          "offset",
+          "hasMore",
+          "pagination"
+        ]
+      },
+      "CashExchangeEnvelope": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "batch": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CashExchangeBatch"
+              }
+            ],
+            "nullable": true
+          },
+          "exchangeOutTransaction": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CashExchangeTransaction"
+              }
+            ],
+            "nullable": true
+          },
+          "exchangeInTransaction": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CashExchangeTransaction"
+              }
+            ],
+            "nullable": true
+          },
+          "feeTransaction": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CashExchangeTransaction"
+              }
+            ],
+            "nullable": true
+          },
+          "reversalOutTransaction": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CashExchangeTransaction"
+              }
+            ],
+            "nullable": true
+          },
+          "reversalInTransaction": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CashExchangeTransaction"
+              }
+            ],
+            "nullable": true
+          },
+          "reversalFeeTransaction": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CashExchangeTransaction"
+              }
+            ],
+            "nullable": true
+          },
+          "fxLot": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CashExchangeFxLotEnvelope"
+              }
+            ],
+            "nullable": true
+          },
+          "idempotentReplay": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "tenantId",
+          "idempotentReplay"
+        ]
+      },
+      "CashExchangeCreateRequest": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "postingMode": {
+            "$ref": "#/components/schemas/CashExchangePostingMode"
+          },
+          "sourceRegisterId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "targetRegisterId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "sourceCashSessionId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "targetCashSessionId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "clearingAccountId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true,
+            "description": "Required for CLEARING mode when no CASH_EXCHANGE_CLEARING mapping is available. Must be omitted in DIRECT mode."
+          },
+          "txnDatetime": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "bookDate": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "sourceAmountTxn": {
+            "type": "number",
+            "minimum": 0,
+            "exclusiveMinimum": true
+          },
+          "targetAmountTxn": {
+            "type": "number",
+            "minimum": 0,
+            "exclusiveMinimum": true
+          },
+          "feeAmountTxn": {
+            "type": "number",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "nullable": true
+          },
+          "feeAmountBase": {
+            "type": "number",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "nullable": true
+          },
+          "feeAccountId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true,
+            "description": "Required when feeAmountTxn is provided."
+          },
+          "fxRate": {
+            "type": "number",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "nullable": true
+          },
+          "fxRateSource": {
+            "type": "string",
+            "maxLength": 40,
+            "nullable": true
+          },
+          "fxRateDate": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "providerRef": {
+            "type": "string",
+            "maxLength": 120,
+            "nullable": true
+          },
+          "spreadReferenceRate": {
+            "type": "number",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "nullable": true
+          },
+          "spreadRateDelta": {
+            "type": "number",
+            "nullable": true
+          },
+          "spreadAmountBase": {
+            "type": "number",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "nullable": true
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 500,
+            "nullable": true
+          },
+          "referenceNo": {
+            "type": "string",
+            "maxLength": 100,
+            "nullable": true
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 500,
+            "nullable": true
+          },
+          "integrationEventUid": {
+            "type": "string",
+            "maxLength": 100,
+            "nullable": true
+          },
+          "idempotencyKey": {
+            "type": "string",
+            "maxLength": 100
+          }
+        },
+        "required": [
+          "sourceRegisterId",
+          "targetRegisterId",
+          "sourceAmountTxn",
+          "targetAmountTxn",
+          "idempotencyKey"
+        ]
+      },
+      "CashExchangePostRequest": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "sourceCashSessionId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "targetCashSessionId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "txnDatetime": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "bookDate": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          }
+        }
+      },
+      "CashExchangeReverseRequest": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "reverseReason": {
+            "type": "string",
+            "maxLength": 255
+          }
+        },
+        "required": [
+          "reverseReason"
+        ]
+      },
       "CashTransactionApplyCariApplicationInput": {
         "oneOf": [
           {
@@ -20374,7 +21266,9 @@
               },
               "amountTxn": {
                 "type": "number",
-                "exclusiveMinimum": 0
+                "minimum": 0,
+
+                "exclusiveMinimum": true
               }
             },
             "required": [
@@ -20391,7 +21285,9 @@
               },
               "amount": {
                 "type": "number",
-                "exclusiveMinimum": 0
+                "minimum": 0,
+
+                "exclusiveMinimum": true
               }
             },
             "required": [
@@ -20408,7 +21304,9 @@
               },
               "amountTxn": {
                 "type": "number",
-                "exclusiveMinimum": 0
+                "minimum": 0,
+
+                "exclusiveMinimum": true
               }
             },
             "required": [
@@ -20425,7 +21323,9 @@
               },
               "amount": {
                 "type": "number",
-                "exclusiveMinimum": 0
+                "minimum": 0,
+
+                "exclusiveMinimum": true
               }
             },
             "required": [
@@ -20467,7 +21367,9 @@
           },
           "fxRate": {
             "type": "number",
-            "exclusiveMinimum": 0,
+            "minimum": 0,
+
+            "exclusiveMinimum": true,
             "nullable": true
           },
           "applications": {
@@ -20675,7 +21577,9 @@
           },
           "amount": {
             "type": "number",
-            "exclusiveMinimum": 0
+            "minimum": 0,
+
+            "exclusiveMinimum": true
           },
           "currencyCode": {
             "type": "string",
@@ -20847,7 +21751,9 @@
           },
           "amountTxn": {
             "type": "number",
-            "exclusiveMinimum": 0
+            "minimum": 0,
+
+            "exclusiveMinimum": true
           }
         },
         "required": [
@@ -20976,7 +21882,9 @@
           },
           "fxRate": {
             "type": "number",
-            "exclusiveMinimum": 0,
+            "minimum": 0,
+
+            "exclusiveMinimum": true,
             "nullable": true
           },
           "fxFallbackMode": {
@@ -21122,7 +22030,9 @@
           },
           "fxRate": {
             "type": "number",
-            "exclusiveMinimum": 0,
+            "minimum": 0,
+
+            "exclusiveMinimum": true,
             "nullable": true
           },
           "fxFallbackMode": {
@@ -23738,7 +24648,9 @@
           },
           "fxRate": {
             "type": "number",
-            "exclusiveMinimum": 0,
+            "minimum": 0,
+
+            "exclusiveMinimum": true,
             "nullable": true
           },
           "amountTxn": {
@@ -23994,7 +24906,9 @@
           },
           "fxRate": {
             "type": "number",
-            "exclusiveMinimum": 0,
+            "minimum": 0,
+
+            "exclusiveMinimum": true,
             "nullable": true
           },
           "totalAmountTxn": {
@@ -24071,7 +24985,9 @@
           },
           "fxRate": {
             "type": "number",
-            "exclusiveMinimum": 0,
+            "minimum": 0,
+
+            "exclusiveMinimum": true,
             "nullable": true
           },
           "totalAmountTxn": {
@@ -25494,15 +26410,21 @@
           },
           "linkedAmountTxn": {
             "type": "number",
-            "exclusiveMinimum": 0
+            "minimum": 0,
+
+            "exclusiveMinimum": true
           },
           "linkedAmountBase": {
             "type": "number",
-            "exclusiveMinimum": 0
+            "minimum": 0,
+
+            "exclusiveMinimum": true
           },
           "linkFxRate": {
             "type": "number",
-            "exclusiveMinimum": 0,
+            "minimum": 0,
+
+            "exclusiveMinimum": true,
             "nullable": true
           }
         },
@@ -25543,12 +26465,16 @@
           },
           "amountTxn": {
             "type": "number",
-            "exclusiveMinimum": 0,
+            "minimum": 0,
+
+            "exclusiveMinimum": true,
             "nullable": true
           },
           "amountBase": {
             "type": "number",
-            "exclusiveMinimum": 0,
+            "minimum": 0,
+
+            "exclusiveMinimum": true,
             "nullable": true
           },
           "idempotencyKey": {
@@ -25620,11 +26546,15 @@
         "properties": {
           "nextLinkedAmountTxn": {
             "type": "number",
-            "exclusiveMinimum": 0
+            "minimum": 0,
+
+            "exclusiveMinimum": true
           },
           "nextLinkedAmountBase": {
             "type": "number",
-            "exclusiveMinimum": 0
+            "minimum": 0,
+
+            "exclusiveMinimum": true
           },
           "reason": {
             "type": "string",
