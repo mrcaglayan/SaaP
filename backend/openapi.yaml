@@ -8272,6 +8272,48 @@
         }
       }
     },
+    "/api/v1/cari/documents/{documentId}/comments/mention-candidates": {
+      "get": {
+        "tags": [
+          "Cari"
+        ],
+        "operationId": "getApiV1CariDocumentsDocumentidCommentsMentionCandidates",
+        "summary": "Cari endpoint: GET /api/v1/cari/documents/{documentId}/comments/mention-candidates",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "documentId",
+            "required": true,
+            "description": "documentId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      }
+    },
     "/api/v1/cari/documents/{documentId}/evidence": {
       "get": {
         "tags": [
@@ -9842,6 +9884,7 @@
             "in": "query",
             "name": "legalEntityId",
             "required": false,
+            "description": "Legal entity filter",
             "schema": {
               "type": "integer",
               "minimum": 1
@@ -9851,6 +9894,7 @@
             "in": "query",
             "name": "sourceRegisterId",
             "required": false,
+            "description": "Source cash register filter",
             "schema": {
               "type": "integer",
               "minimum": 1
@@ -9860,6 +9904,7 @@
             "in": "query",
             "name": "targetRegisterId",
             "required": false,
+            "description": "Target cash register filter",
             "schema": {
               "type": "integer",
               "minimum": 1
@@ -9869,6 +9914,7 @@
             "in": "query",
             "name": "status",
             "required": false,
+            "description": "Cash exchange status filter",
             "schema": {
               "$ref": "#/components/schemas/CashExchangeStatus"
             }
@@ -9877,6 +9923,7 @@
             "in": "query",
             "name": "createdDateFrom",
             "required": false,
+            "description": "Created-date lower bound",
             "schema": {
               "type": "string",
               "format": "date"
@@ -9886,6 +9933,7 @@
             "in": "query",
             "name": "createdDateTo",
             "required": false,
+            "description": "Created-date upper bound",
             "schema": {
               "type": "string",
               "format": "date"
@@ -9895,6 +9943,7 @@
             "in": "query",
             "name": "limit",
             "required": false,
+            "description": "Page size",
             "schema": {
               "type": "integer",
               "minimum": 1
@@ -9904,6 +9953,7 @@
             "in": "query",
             "name": "offset",
             "required": false,
+            "description": "Page offset",
             "schema": {
               "type": "integer",
               "minimum": 0
@@ -9993,7 +10043,7 @@
             "in": "path",
             "name": "exchangeBatchId",
             "required": true,
-            "description": "exchangeBatchId identifier",
+            "description": "Cash exchange batch identifier",
             "schema": {
               "type": "integer",
               "minimum": 1
@@ -10045,7 +10095,7 @@
             "in": "path",
             "name": "exchangeBatchId",
             "required": true,
-            "description": "exchangeBatchId identifier",
+            "description": "Cash exchange batch identifier",
             "schema": {
               "type": "integer",
               "minimum": 1
@@ -10097,7 +10147,7 @@
             "in": "path",
             "name": "exchangeBatchId",
             "required": true,
-            "description": "exchangeBatchId identifier",
+            "description": "Cash exchange batch identifier",
             "schema": {
               "type": "integer",
               "minimum": 1
@@ -21267,7 +21317,6 @@
               "amountTxn": {
                 "type": "number",
                 "minimum": 0,
-
                 "exclusiveMinimum": true
               }
             },
@@ -21286,7 +21335,6 @@
               "amount": {
                 "type": "number",
                 "minimum": 0,
-
                 "exclusiveMinimum": true
               }
             },
@@ -21305,7 +21353,6 @@
               "amountTxn": {
                 "type": "number",
                 "minimum": 0,
-
                 "exclusiveMinimum": true
               }
             },
@@ -21324,7 +21371,6 @@
               "amount": {
                 "type": "number",
                 "minimum": 0,
-
                 "exclusiveMinimum": true
               }
             },
@@ -21368,7 +21414,6 @@
           "fxRate": {
             "type": "number",
             "minimum": 0,
-
             "exclusiveMinimum": true,
             "nullable": true
           },
@@ -21578,7 +21623,6 @@
           "amount": {
             "type": "number",
             "minimum": 0,
-
             "exclusiveMinimum": true
           },
           "currencyCode": {
@@ -21752,7 +21796,6 @@
           "amountTxn": {
             "type": "number",
             "minimum": 0,
-
             "exclusiveMinimum": true
           }
         },
@@ -21883,7 +21926,6 @@
           "fxRate": {
             "type": "number",
             "minimum": 0,
-
             "exclusiveMinimum": true,
             "nullable": true
           },
@@ -22031,7 +22073,6 @@
           "fxRate": {
             "type": "number",
             "minimum": 0,
-
             "exclusiveMinimum": true,
             "nullable": true
           },
@@ -24649,7 +24690,6 @@
           "fxRate": {
             "type": "number",
             "minimum": 0,
-
             "exclusiveMinimum": true,
             "nullable": true
           },
@@ -24907,7 +24947,6 @@
           "fxRate": {
             "type": "number",
             "minimum": 0,
-
             "exclusiveMinimum": true,
             "nullable": true
           },
@@ -24986,7 +25025,6 @@
           "fxRate": {
             "type": "number",
             "minimum": 0,
-
             "exclusiveMinimum": true,
             "nullable": true
           },
@@ -26411,19 +26449,16 @@
           "linkedAmountTxn": {
             "type": "number",
             "minimum": 0,
-
             "exclusiveMinimum": true
           },
           "linkedAmountBase": {
             "type": "number",
             "minimum": 0,
-
             "exclusiveMinimum": true
           },
           "linkFxRate": {
             "type": "number",
             "minimum": 0,
-
             "exclusiveMinimum": true,
             "nullable": true
           }
@@ -26466,14 +26501,12 @@
           "amountTxn": {
             "type": "number",
             "minimum": 0,
-
             "exclusiveMinimum": true,
             "nullable": true
           },
           "amountBase": {
             "type": "number",
             "minimum": 0,
-
             "exclusiveMinimum": true,
             "nullable": true
           },
@@ -26547,13 +26580,11 @@
           "nextLinkedAmountTxn": {
             "type": "number",
             "minimum": 0,
-
             "exclusiveMinimum": true
           },
           "nextLinkedAmountBase": {
             "type": "number",
             "minimum": 0,
-
             "exclusiveMinimum": true
           },
           "reason": {

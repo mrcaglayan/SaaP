@@ -11,6 +11,12 @@ const nonNegativeInt = { type: "integer", minimum: 0 };
 const shortText = { type: "string", minLength: 1 };
 const currencyCode = { type: "string", minLength: 3, maxLength: 3 };
 
+function positiveNumber(nullable = false) {
+  return nullable
+    ? { type: "number", minimum: 0, exclusiveMinimum: true, nullable: true }
+    : { type: "number", minimum: 0, exclusiveMinimum: true };
+}
+
 function jsonResponse(schemaRef, description) {
   return {
     description,
@@ -840,6 +846,124 @@ function applyCariOperationOverrides(specObject) {
 function applyCashOperationOverrides(specObject) {
   ensureTagPresent(specObject, "Cash");
   const paths = specObject.paths || {};
+
+  const exchangeListOperation = paths["/api/v1/cash/exchanges"]?.get;
+  if (exchangeListOperation) {
+    exchangeListOperation.summary = "List cash exchange batches";
+    exchangeListOperation.tags = ["Cash"];
+    exchangeListOperation.parameters = [
+      queryParamInt(
+        "tenantId",
+        false,
+        "Tenant identifier when not implied by authenticated session"
+      ),
+      queryParamInt("legalEntityId", false, "Legal entity filter"),
+      queryParamInt("sourceRegisterId", false, "Source cash register filter"),
+      queryParamInt("targetRegisterId", false, "Target cash register filter"),
+      queryParam(
+        "status",
+        { $ref: "#/components/schemas/CashExchangeStatus" },
+        false,
+        "Cash exchange status filter"
+      ),
+      queryParam(
+        "createdDateFrom",
+        { type: "string", format: "date" },
+        false,
+        "Created-date lower bound"
+      ),
+      queryParam(
+        "createdDateTo",
+        { type: "string", format: "date" },
+        false,
+        "Created-date upper bound"
+      ),
+      queryParam("limit", { type: "integer", minimum: 1 }, false, "Page size"),
+      queryParam("offset", nonNegativeInt, false, "Page offset"),
+    ];
+    exchangeListOperation.responses = withStandardResponses(
+      "200",
+      "Cash exchange list",
+      "#/components/schemas/CashExchangeListResponse"
+    );
+  }
+
+  const exchangeCreateOperation = paths["/api/v1/cash/exchanges"]?.post;
+  if (exchangeCreateOperation) {
+    exchangeCreateOperation.summary = "Create and post a cash exchange batch";
+    exchangeCreateOperation.tags = ["Cash"];
+    exchangeCreateOperation.requestBody = bodyFromRef(
+      "#/components/schemas/CashExchangeCreateRequest"
+    );
+    exchangeCreateOperation.responses = {
+      "200": jsonResponse(
+        "#/components/schemas/CashExchangeEnvelope",
+        "Existing cash exchange returned from idempotent replay"
+      ),
+      "201": jsonResponse(
+        "#/components/schemas/CashExchangeEnvelope",
+        "Cash exchange created and posted"
+      ),
+      "400": errorResponseRef,
+      "401": errorResponseRef,
+      "403": errorResponseRef,
+    };
+  }
+
+  const exchangeDetailOperation = paths["/api/v1/cash/exchanges/{exchangeBatchId}"]?.get;
+  if (exchangeDetailOperation) {
+    exchangeDetailOperation.summary = "Get one cash exchange batch";
+    exchangeDetailOperation.tags = ["Cash"];
+    exchangeDetailOperation.parameters = [
+      pathParam("exchangeBatchId", "Cash exchange batch identifier"),
+      queryParamInt(
+        "tenantId",
+        false,
+        "Tenant identifier when not implied by authenticated session"
+      ),
+    ];
+    exchangeDetailOperation.responses = withStandardResponses(
+      "200",
+      "Cash exchange detail",
+      "#/components/schemas/CashExchangeEnvelope"
+    );
+  }
+
+  const exchangePostOperation = paths["/api/v1/cash/exchanges/{exchangeBatchId}/post"]?.post;
+  if (exchangePostOperation) {
+    exchangePostOperation.summary = "Post an existing draft cash exchange batch";
+    exchangePostOperation.tags = ["Cash"];
+    exchangePostOperation.parameters = [
+      pathParam("exchangeBatchId", "Cash exchange batch identifier"),
+    ];
+    exchangePostOperation.requestBody = bodyFromRef(
+      "#/components/schemas/CashExchangePostRequest",
+      false
+    );
+    exchangePostOperation.responses = withStandardResponses(
+      "200",
+      "Cash exchange posted",
+      "#/components/schemas/CashExchangeEnvelope"
+    );
+  }
+
+  const exchangeReverseOperation =
+    paths["/api/v1/cash/exchanges/{exchangeBatchId}/reverse"]?.post;
+  if (exchangeReverseOperation) {
+    exchangeReverseOperation.summary = "Reverse a posted cash exchange batch";
+    exchangeReverseOperation.tags = ["Cash"];
+    exchangeReverseOperation.parameters = [
+      pathParam("exchangeBatchId", "Cash exchange batch identifier"),
+    ];
+    exchangeReverseOperation.requestBody = bodyFromRef(
+      "#/components/schemas/CashExchangeReverseRequest"
+    );
+    exchangeReverseOperation.responses = withStandardResponses(
+      "200",
+      "Cash exchange reversed",
+      "#/components/schemas/CashExchangeEnvelope"
+    );
+  }
 
   const applyCariOperation = paths["/api/v1/cash/transactions/{transactionId}/apply-cari"]?.post;
   if (applyCariOperation) {
@@ -2697,13 +2821,286 @@ const spec = {
         type: "object",
         additionalProperties: true,
       },
+      CashExchangePostingMode: {
+        type: "string",
+        enum: ["CLEARING", "DIRECT"],
+      },
+      CashExchangeStatus: {
+        type: "string",
+        enum: ["DRAFT", "POSTED", "REVERSED", "CANCELLED"],
+      },
+      CashExchangeBatch: {
+        type: "object",
+        additionalProperties: true,
+        properties: {
+          id: { ...intId, nullable: true },
+          legalEntityId: { ...intId, nullable: true },
+          legalEntityCode: { type: "string", nullable: true },
+          sourceRegisterId: { ...intId, nullable: true },
+          sourceRegisterCode: { type: "string", nullable: true },
+          sourceRegisterName: { type: "string", nullable: true },
+          sourceOperatingUnitId: { ...intId, nullable: true },
+          targetRegisterId: { ...intId, nullable: true },
+          targetRegisterCode: { type: "string", nullable: true },
+          targetRegisterName: { type: "string", nullable: true },
+          targetOperatingUnitId: { ...intId, nullable: true },
+          sourceCurrencyCode: { type: "string", maxLength: 3, nullable: true },
+          targetCurrencyCode: { type: "string", maxLength: 3, nullable: true },
+          sourceAmountTxn: { type: "number", nullable: true },
+          targetAmountTxn: { type: "number", nullable: true },
+          sourceAmountBase: { type: "number", nullable: true },
+          targetAmountBase: { type: "number", nullable: true },
+          realizedFxBase: { type: "number", nullable: true },
+          reversalRealizedFxBase: { type: "number", nullable: true },
+          feeAmountTxn: { type: "number", nullable: true },
+          feeAmountBase: { type: "number", nullable: true },
+          clearingAccountId: { ...intId, nullable: true },
+          clearingAccountCode: { type: "string", nullable: true },
+          clearingAccountName: { type: "string", nullable: true },
+          postingMode: { $ref: "#/components/schemas/CashExchangePostingMode" },
+          feeAccountId: { ...intId, nullable: true },
+          feeAccountCode: { type: "string", nullable: true },
+          feeAccountName: { type: "string", nullable: true },
+          fxRate: { type: "number", nullable: true },
+          fxRateSource: { type: "string", nullable: true },
+          fxRateDate: { type: "string", format: "date", nullable: true },
+          providerRef: { type: "string", nullable: true },
+          spreadReferenceRate: { type: "number", nullable: true },
+          spreadRateDelta: { type: "number", nullable: true },
+          spreadAmountBase: { type: "number", nullable: true },
+          status: { $ref: "#/components/schemas/CashExchangeStatus" },
+          exchangeOutCashTransactionId: { ...intId, nullable: true },
+          exchangeInCashTransactionId: { ...intId, nullable: true },
+          feeCashTransactionId: { ...intId, nullable: true },
+          reversalOutCashTransactionId: { ...intId, nullable: true },
+          reversalInCashTransactionId: { ...intId, nullable: true },
+          reversalFeeCashTransactionId: { ...intId, nullable: true },
+          postedByUserId: { ...intId, nullable: true },
+          reversedByUserId: { ...intId, nullable: true },
+          postedAt: { type: "string", format: "date-time", nullable: true },
+          reversedAt: { type: "string", format: "date-time", nullable: true },
+          reverseReason: { type: "string", nullable: true },
+          idempotencyKey: { type: "string", nullable: true },
+          integrationEventUid: { type: "string", nullable: true },
+          note: { type: "string", nullable: true },
+          createdByUserId: { ...intId, nullable: true },
+          createdAt: { type: "string", format: "date-time", nullable: true },
+          updatedAt: { type: "string", format: "date-time", nullable: true },
+        },
+      },
+      CashExchangeTransaction: {
+        type: "object",
+        additionalProperties: true,
+        properties: {
+          id: { ...intId, nullable: true },
+          txnNo: { type: "string", nullable: true },
+          txnType: { type: "string", nullable: true },
+          status: { type: "string", nullable: true },
+          legalEntityId: { ...intId, nullable: true },
+          cashRegisterId: { ...intId, nullable: true },
+          cashSessionId: { ...intId, nullable: true },
+          operatingUnitId: { ...intId, nullable: true },
+          currencyCode: { type: "string", maxLength: 3, nullable: true },
+          amount: { type: "number", nullable: true },
+          amountBase: { type: "number", nullable: true },
+          counterAccountId: { ...intId, nullable: true },
+          counterCashRegisterId: { ...intId, nullable: true },
+          postedJournalEntryId: { ...intId, nullable: true },
+          reversalOfTransactionId: { ...intId, nullable: true },
+          txnDatetime: { type: "string", format: "date-time", nullable: true },
+          bookDate: { type: "string", format: "date", nullable: true },
+          description: { type: "string", nullable: true },
+          referenceNo: { type: "string", nullable: true },
+        },
+      },
+      CashFxLotMovementSummary: {
+        type: "object",
+        properties: {
+          movementCount: nonNegativeInt,
+          totalInTxn: { type: "number", nullable: true },
+          totalOutTxn: { type: "number", nullable: true },
+          totalMovementBase: { type: "number", nullable: true },
+          totalCarryingBase: { type: "number", nullable: true },
+          realizedFxBase: { type: "number", nullable: true },
+        },
+        required: [
+          "movementCount",
+          "totalInTxn",
+          "totalOutTxn",
+          "totalMovementBase",
+          "totalCarryingBase",
+          "realizedFxBase",
+        ],
+      },
+      CashExchangeFxLotEnvelope: {
+        type: "object",
+        properties: {
+          exchangeOut: {
+            allOf: [{ $ref: "#/components/schemas/CashFxLotMovementSummary" }],
+            nullable: true,
+          },
+          exchangeIn: {
+            allOf: [{ $ref: "#/components/schemas/CashFxLotMovementSummary" }],
+            nullable: true,
+          },
+          fee: {
+            allOf: [{ $ref: "#/components/schemas/CashFxLotMovementSummary" }],
+            nullable: true,
+          },
+          reversalOut: {
+            allOf: [{ $ref: "#/components/schemas/CashFxLotMovementSummary" }],
+            nullable: true,
+          },
+          reversalIn: {
+            allOf: [{ $ref: "#/components/schemas/CashFxLotMovementSummary" }],
+            nullable: true,
+          },
+          reversalFee: {
+            allOf: [{ $ref: "#/components/schemas/CashFxLotMovementSummary" }],
+            nullable: true,
+          },
+        },
+      },
+      OffsetPaginationMeta: {
+        type: "object",
+        properties: {
+          total: nonNegativeInt,
+          limit: { type: "integer", minimum: 1 },
+          offset: nonNegativeInt,
+          rowCount: nonNegativeInt,
+          hasMore: { type: "boolean" },
+          nextOffset: { ...nonNegativeInt, nullable: true },
+        },
+        required: ["total", "limit", "offset", "rowCount", "hasMore", "nextOffset"],
+      },
+      CashExchangeListResponse: {
+        type: "object",
+        properties: {
+          tenantId: intId,
+          rows: {
+            type: "array",
+            items: { $ref: "#/components/schemas/CashExchangeBatch" },
+          },
+          total: nonNegativeInt,
+          limit: { type: "integer", minimum: 1 },
+          offset: nonNegativeInt,
+          hasMore: { type: "boolean" },
+          pagination: { $ref: "#/components/schemas/OffsetPaginationMeta" },
+        },
+        required: ["tenantId", "rows", "total", "limit", "offset", "hasMore", "pagination"],
+      },
+      CashExchangeEnvelope: {
+        type: "object",
+        properties: {
+          tenantId: intId,
+          batch: {
+            allOf: [{ $ref: "#/components/schemas/CashExchangeBatch" }],
+            nullable: true,
+          },
+          exchangeOutTransaction: {
+            allOf: [{ $ref: "#/components/schemas/CashExchangeTransaction" }],
+            nullable: true,
+          },
+          exchangeInTransaction: {
+            allOf: [{ $ref: "#/components/schemas/CashExchangeTransaction" }],
+            nullable: true,
+          },
+          feeTransaction: {
+            allOf: [{ $ref: "#/components/schemas/CashExchangeTransaction" }],
+            nullable: true,
+          },
+          reversalOutTransaction: {
+            allOf: [{ $ref: "#/components/schemas/CashExchangeTransaction" }],
+            nullable: true,
+          },
+          reversalInTransaction: {
+            allOf: [{ $ref: "#/components/schemas/CashExchangeTransaction" }],
+            nullable: true,
+          },
+          reversalFeeTransaction: {
+            allOf: [{ $ref: "#/components/schemas/CashExchangeTransaction" }],
+            nullable: true,
+          },
+          fxLot: {
+            allOf: [{ $ref: "#/components/schemas/CashExchangeFxLotEnvelope" }],
+            nullable: true,
+          },
+          idempotentReplay: { type: "boolean" },
+        },
+        required: ["tenantId", "idempotentReplay"],
+      },
+      CashExchangeCreateRequest: {
+        type: "object",
+        properties: {
+          tenantId: { ...intId, nullable: true },
+          postingMode: { $ref: "#/components/schemas/CashExchangePostingMode" },
+          sourceRegisterId: intId,
+          targetRegisterId: intId,
+          sourceCashSessionId: { ...intId, nullable: true },
+          targetCashSessionId: { ...intId, nullable: true },
+          clearingAccountId: {
+            ...intId,
+            nullable: true,
+            description:
+              "Required for CLEARING mode when no CASH_EXCHANGE_CLEARING mapping is available. Must be omitted in DIRECT mode.",
+          },
+          txnDatetime: { type: "string", format: "date-time", nullable: true },
+          bookDate: { type: "string", format: "date", nullable: true },
+          sourceAmountTxn: positiveNumber(),
+          targetAmountTxn: positiveNumber(),
+          feeAmountTxn: positiveNumber(true),
+          feeAmountBase: positiveNumber(true),
+          feeAccountId: {
+            ...intId,
+            nullable: true,
+            description: "Required when feeAmountTxn is provided.",
+          },
+          fxRate: positiveNumber(true),
+          fxRateSource: { type: "string", maxLength: 40, nullable: true },
+          fxRateDate: { type: "string", format: "date", nullable: true },
+          providerRef: { type: "string", maxLength: 120, nullable: true },
+          spreadReferenceRate: positiveNumber(true),
+          spreadRateDelta: { type: "number", nullable: true },
+          spreadAmountBase: positiveNumber(true),
+          description: { type: "string", maxLength: 500, nullable: true },
+          referenceNo: { type: "string", maxLength: 100, nullable: true },
+          note: { type: "string", maxLength: 500, nullable: true },
+          integrationEventUid: { type: "string", maxLength: 100, nullable: true },
+          idempotencyKey: { type: "string", maxLength: 100 },
+        },
+        required: [
+          "sourceRegisterId",
+          "targetRegisterId",
+          "sourceAmountTxn",
+          "targetAmountTxn",
+          "idempotencyKey",
+        ],
+      },
+      CashExchangePostRequest: {
+        type: "object",
+        properties: {
+          tenantId: { ...intId, nullable: true },
+          sourceCashSessionId: { ...intId, nullable: true },
+          targetCashSessionId: { ...intId, nullable: true },
+          txnDatetime: { type: "string", format: "date-time", nullable: true },
+          bookDate: { type: "string", format: "date", nullable: true },
+        },
+      },
+      CashExchangeReverseRequest: {
+        type: "object",
+        properties: {
+          tenantId: { ...intId, nullable: true },
+          reverseReason: { type: "string", maxLength: 255 },
+        },
+        required: ["reverseReason"],
+      },
       CashTransactionApplyCariApplicationInput: {
         oneOf: [
           {
             type: "object",
             properties: {
               openItemId: intId,
-              amountTxn: { type: "number", exclusiveMinimum: 0 },
+              amountTxn: positiveNumber(),
             },
             required: ["openItemId", "amountTxn"],
           },
@@ -2711,7 +3108,7 @@ const spec = {
             type: "object",
             properties: {
               openItemId: intId,
-              amount: { type: "number", exclusiveMinimum: 0 },
+              amount: positiveNumber(),
             },
             required: ["openItemId", "amount"],
           },
@@ -2719,7 +3116,7 @@ const spec = {
             type: "object",
             properties: {
               cariDocumentId: intId,
-              amountTxn: { type: "number", exclusiveMinimum: 0 },
+              amountTxn: positiveNumber(),
             },
             required: ["cariDocumentId", "amountTxn"],
           },
@@ -2727,7 +3124,7 @@ const spec = {
             type: "object",
             properties: {
               cariDocumentId: intId,
-              amount: { type: "number", exclusiveMinimum: 0 },
+              amount: positiveNumber(),
             },
             required: ["cariDocumentId", "amount"],
           },
@@ -2742,7 +3139,7 @@ const spec = {
           autoAllocate: { type: "boolean", default: false },
           useUnappliedCash: { type: "boolean", default: true },
           note: { type: "string", maxLength: 500, nullable: true },
-          fxRate: { type: "number", exclusiveMinimum: 0, nullable: true },
+          fxRate: positiveNumber(true),
           applications: {
             type: "array",
             items: { $ref: "#/components/schemas/CashTransactionApplyCariApplicationInput" },
@@ -2835,7 +3232,7 @@ const spec = {
           cashSessionId: { ...intId, nullable: true },
           txnDatetime: { type: "string", format: "date-time", nullable: true },
           bookDate: { type: "string", format: "date", nullable: true },
-          amount: { type: "number", exclusiveMinimum: 0 },
+          amount: positiveNumber(),
           currencyCode,
           description: { type: "string", maxLength: 500, nullable: true },
           referenceNo: { type: "string", maxLength: 100, nullable: true },
@@ -2915,7 +3312,7 @@ const spec = {
         type: "object",
         properties: {
           openItemId: intId,
-          amountTxn: { type: "number", exclusiveMinimum: 0 },
+          amountTxn: positiveNumber(),
         },
         required: ["openItemId", "amountTxn"],
       },
@@ -2959,7 +3356,7 @@ const spec = {
             type: "array",
             items: { $ref: "#/components/schemas/CariSettlementApplyAllocationInput" },
           },
-          fxRate: { type: "number", exclusiveMinimum: 0, nullable: true },
+          fxRate: positiveNumber(true),
           fxFallbackMode: {
             type: "string",
             enum: ["EXACT_ONLY", "PRIOR_DATE"],
@@ -3004,7 +3401,7 @@ const spec = {
             type: "array",
             items: { $ref: "#/components/schemas/CariSettlementApplyAllocationInput" },
           },
-          fxRate: { type: "number", exclusiveMinimum: 0, nullable: true },
+          fxRate: positiveNumber(true),
           fxFallbackMode: {
             type: "string",
             enum: ["EXACT_ONLY", "PRIOR_DATE"],
@@ -4050,7 +4447,7 @@ const spec = {
           maturityDate: { type: "string", format: "date" },
           reclassRequired: { type: "boolean" },
           currencyCode,
-          fxRate: { type: "number", exclusiveMinimum: 0, nullable: true },
+          fxRate: positiveNumber(true),
           amountTxn: { type: "number", minimum: 0 },
           amountBase: { type: "number", minimum: 0 },
           sourceEventUid: { type: "string", maxLength: 160, nullable: true },
@@ -4152,7 +4549,7 @@ const spec = {
           maturityDate: { type: "string", format: "date" },
           reclassRequired: { type: "boolean" },
           currencyCode,
-          fxRate: { type: "number", exclusiveMinimum: 0, nullable: true },
+          fxRate: positiveNumber(true),
           totalAmountTxn: { type: "number", minimum: 0 },
           totalAmountBase: { type: "number", minimum: 0 },
         },
@@ -4183,7 +4580,7 @@ const spec = {
           maturityDate: { type: "string", format: "date" },
           reclassRequired: { type: "boolean" },
           currencyCode,
-          fxRate: { type: "number", exclusiveMinimum: 0, nullable: true },
+          fxRate: positiveNumber(true),
           totalAmountTxn: { type: "number", minimum: 0 },
           totalAmountBase: { type: "number", minimum: 0 },
         },
@@ -4875,9 +5272,9 @@ const spec = {
         properties: {
           cariDocumentId: intId,
           linkType: { type: "string", enum: ["BILLING", "ADVANCE", "ADJUSTMENT"] },
-          linkedAmountTxn: { type: "number", exclusiveMinimum: 0 },
-          linkedAmountBase: { type: "number", exclusiveMinimum: 0 },
-          linkFxRate: { type: "number", exclusiveMinimum: 0, nullable: true },
+          linkedAmountTxn: positiveNumber(),
+          linkedAmountBase: positiveNumber(),
+          linkFxRate: positiveNumber(true),
         },
         required: ["cariDocumentId", "linkType", "linkedAmountTxn", "linkedAmountBase"],
       },
@@ -4891,8 +5288,8 @@ const spec = {
           },
           billingDate: { type: "string", format: "date" },
           dueDate: { type: "string", format: "date", nullable: true },
-          amountTxn: { type: "number", exclusiveMinimum: 0, nullable: true },
-          amountBase: { type: "number", exclusiveMinimum: 0, nullable: true },
+          amountTxn: positiveNumber(true),
+          amountBase: positiveNumber(true),
           idempotencyKey: { type: "string", minLength: 1, maxLength: 100 },
           integrationEventUid: { type: "string", maxLength: 100, nullable: true },
           note: { type: "string", maxLength: 500, nullable: true },
@@ -4923,8 +5320,8 @@ const spec = {
       ContractLinkAdjustInput: {
         type: "object",
         properties: {
-          nextLinkedAmountTxn: { type: "number", exclusiveMinimum: 0 },
-          nextLinkedAmountBase: { type: "number", exclusiveMinimum: 0 },
+          nextLinkedAmountTxn: positiveNumber(),
+          nextLinkedAmountBase: positiveNumber(),
           reason: { type: "string", minLength: 1, maxLength: 500 },
         },
         required: ["nextLinkedAmountTxn", "nextLinkedAmountBase", "reason"],
@@ -5183,5 +5580,3 @@ fs.writeFileSync(targetPath, `${JSON.stringify(spec, null, 2)}\n`, "utf8");
 console.log(
   `Generated ${targetPath} (auto-documented operations added: ${autoDocumentedOperationCount})`
 );
-
-
