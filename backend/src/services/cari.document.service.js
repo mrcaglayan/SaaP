@@ -359,6 +359,7 @@ async function fetchCounterpartyRow({
         id,
         tenant_id,
         legal_entity_id,
+        primary_operating_unit_id,
         code,
         name,
         is_customer,
@@ -374,6 +375,73 @@ async function fetchCounterpartyRow({
     [tenantId, legalEntityId, counterpartyId]
   );
   return result.rows?.[0] || null;
+}
+
+async function listCounterpartyOperatingUnitIds({
+  tenantId,
+  legalEntityId,
+  counterpartyId,
+  runQuery = query,
+}) {
+  const result = await runQuery(
+    `SELECT operating_unit_id
+     FROM counterparty_operating_units
+     WHERE tenant_id = ?
+       AND legal_entity_id = ?
+       AND counterparty_id = ?`,
+    [tenantId, legalEntityId, counterpartyId]
+  );
+  return Array.from(
+    new Set((result.rows || []).map((row) => parsePositiveInt(row.operating_unit_id)).filter(Boolean))
+  );
+}
+
+async function resolveDocumentOperatingUnitForCounterparty({
+  tenantId,
+  legalEntityId,
+  requestedOperatingUnitId,
+  counterpartyRow,
+  runQuery = query,
+}) {
+  const validatedOperatingUnitId = await validateDocumentOperatingUnit({
+    tenantId,
+    legalEntityId,
+    operatingUnitId: requestedOperatingUnitId,
+    runQuery,
+  });
+  if (!counterpartyRow) {
+    return validatedOperatingUnitId;
+  }
+
+  const primaryOperatingUnitId =
+    parsePositiveInt(counterpartyRow.primary_operating_unit_id) ||
+    parsePositiveInt(counterpartyRow.primaryOperatingUnitId) ||
+    null;
+  const allowedOperatingUnitIds = await listCounterpartyOperatingUnitIds({
+    tenantId,
+    legalEntityId,
+    counterpartyId: counterpartyRow.id,
+    runQuery,
+  });
+  const constrainedOperatingUnitIds = new Set([
+    ...allowedOperatingUnitIds,
+    ...(primaryOperatingUnitId ? [primaryOperatingUnitId] : []),
+  ]);
+  if (constrainedOperatingUnitIds.size === 0) {
+    return validatedOperatingUnitId;
+  }
+  if (!validatedOperatingUnitId) {
+    if (primaryOperatingUnitId) {
+      return primaryOperatingUnitId;
+    }
+    throw badRequest(
+      "operatingUnitId is required because this counterparty is restricted to specific operating units"
+    );
+  }
+  if (!constrainedOperatingUnitIds.has(validatedOperatingUnitId)) {
+    throw badRequest("operatingUnitId is not assigned to counterparty");
+  }
+  return validatedOperatingUnitId;
 }
 
 async function fetchPaymentTermRow({
@@ -1543,16 +1611,6 @@ export async function createCariDraftDocument({
   assertFrozenTransactionType(payload.direction, payload.documentType);
   await assertLegalEntityBelongsToTenant(tenantId, legalEntityId, "legalEntityId");
   await assertCurrencyExists(payload.currencyCode, "currencyCode");
-  const operatingUnitId = await validateDocumentOperatingUnit({
-    tenantId,
-    legalEntityId,
-    operatingUnitId: requestedOperatingUnitId,
-  });
-  if (operatingUnitId) {
-    assertScopeAccess(req, "operating_unit", operatingUnitId, "operatingUnitId");
-  } else {
-    assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
-  }
 
   const created = await withTransaction(async (tx) => {
     const counterparty = await fetchCounterpartyRow({
@@ -1563,6 +1621,19 @@ export async function createCariDraftDocument({
     });
     if (!counterparty) {
       throw badRequest("counterpartyId must belong to legalEntityId");
+    }
+
+    const operatingUnitId = await resolveDocumentOperatingUnitForCounterparty({
+      tenantId,
+      legalEntityId,
+      requestedOperatingUnitId,
+      counterpartyRow: counterparty,
+      runQuery: tx.query,
+    });
+    if (operatingUnitId) {
+      assertScopeAccess(req, "operating_unit", operatingUnitId, "operatingUnitId");
+    } else {
+      assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
     }
 
     const paymentTerm = await fetchPaymentTermRow({
@@ -1751,14 +1822,6 @@ export async function updateCariDraftDocumentById({
   assertFrozenTransactionType(nextDirection, nextDocumentType);
   await assertLegalEntityBelongsToTenant(tenantId, legalEntityId, "legalEntityId");
   await assertCurrencyExists(nextCurrencyCode, "currencyCode");
-  const operatingUnitId = await validateDocumentOperatingUnit({
-    tenantId,
-    legalEntityId,
-    operatingUnitId: nextOperatingUnitId,
-  });
-  if (payload.operatingUnitId !== undefined && operatingUnitId) {
-    assertScopeAccess(req, "operating_unit", operatingUnitId, "operatingUnitId");
-  }
 
   const updated = await withTransaction(async (tx) => {
     const counterparty = await fetchCounterpartyRow({
@@ -1769,6 +1832,19 @@ export async function updateCariDraftDocumentById({
     });
     if (!counterparty) {
       throw badRequest("counterpartyId must belong to legalEntityId");
+    }
+
+    const operatingUnitId = await resolveDocumentOperatingUnitForCounterparty({
+      tenantId,
+      legalEntityId,
+      requestedOperatingUnitId: nextOperatingUnitId,
+      counterpartyRow: counterparty,
+      runQuery: tx.query,
+    });
+    if (operatingUnitId) {
+      assertScopeAccess(req, "operating_unit", operatingUnitId, "operatingUnitId");
+    } else if (payload.operatingUnitId !== undefined || legalEntityId !== parsePositiveInt(existing.legal_entity_id)) {
+      assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
     }
 
     const paymentTerm = await fetchPaymentTermRow({

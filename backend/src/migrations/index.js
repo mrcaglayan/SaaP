@@ -92,6 +92,7 @@ import migration101CariSettlementAllocationDualCurrencyFoundation from "./m101_c
 import migration102CariSettlementBatchDirection from "./m102_cari_settlement_batch_direction.js";
 import migration103CariDocumentsOperatingUnit from "./m103_cari_documents_operating_unit.js";
 import migration104BankStatementLinesOperatingUnit from "./m104_bank_statement_lines_operating_unit.js";
+import migration105CounterpartyOperatingUnits from "./m105_counterparty_operating_units.js";
 
 const migrations = [
   migration001GlobalMultiEntity,
@@ -188,6 +189,7 @@ const migrations = [
   migration102CariSettlementBatchDirection,
   migration103CariDocumentsOperatingUnit,
   migration104BankStatementLinesOperatingUnit,
+  migration105CounterpartyOperatingUnits,
 ];
 
 export default migrations;

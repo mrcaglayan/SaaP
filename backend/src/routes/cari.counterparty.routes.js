@@ -30,6 +30,14 @@ router.get(
       if (legalEntityId) {
         return { scopeType: "LEGAL_ENTITY", scopeId: legalEntityId };
       }
+      const primaryOperatingUnitId = parsePositiveInt(req.query?.primaryOperatingUnitId);
+      if (primaryOperatingUnitId) {
+        return { scopeType: "OPERATING_UNIT", scopeId: primaryOperatingUnitId };
+      }
+      const allowedOperatingUnitId = parsePositiveInt(req.query?.allowedOperatingUnitId);
+      if (allowedOperatingUnitId) {
+        return { scopeType: "OPERATING_UNIT", scopeId: allowedOperatingUnitId };
+      }
       return null;
     },
   }),

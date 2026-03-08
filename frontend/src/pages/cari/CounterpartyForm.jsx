@@ -96,6 +96,23 @@ function buildPaymentTermLookupDescription(row) {
   return parts.join(" | ");
 }
 
+function buildOperatingUnitLookupLabel(row) {
+  const code = String(row?.code || "").trim();
+  const name = String(row?.name || "").trim();
+  if (code && name) {
+    return `${code} - ${name}`;
+  }
+  if (code || name) {
+    return code || name;
+  }
+  return String(row?.id || "-");
+}
+
+function buildOperatingUnitLookupDescription(row) {
+  const status = String(row?.status || "ACTIVE").trim().toUpperCase();
+  return status === "ACTIVE" ? "" : status;
+}
+
 function isActivePostableAccount(row) {
   const allowPosting = row?.allowPosting === true || Number(row?.allowPosting) === 1;
   const isActive = row?.isActive === true || Number(row?.isActive) === 1;
@@ -244,6 +261,26 @@ function withSelectedFallbackOption(options, selectedId, expectedType = "") {
   return normalized;
 }
 
+function withSelectedOperatingUnitFallbacks(options, selectedIds) {
+  const normalized = Array.isArray(options) ? [...options] : [];
+  const selected = Array.from(
+    new Set((Array.isArray(selectedIds) ? selectedIds : []).map((id) => String(id || "").trim()).filter(Boolean))
+  );
+  for (const id of selected) {
+    const exists = normalized.some((row) => String(row?.id || "") === id);
+    if (exists) {
+      continue;
+    }
+    normalized.unshift({
+      id,
+      code: `#${id}`,
+      name: `Selected operating unit #${id}`,
+      status: "ACTIVE",
+    });
+  }
+  return normalized;
+}
+
 export default function CounterpartyForm({
   title,
   description,
@@ -253,6 +290,9 @@ export default function CounterpartyForm({
   legalEntities = [],
   legalEntitiesLoading = false,
   legalEntitiesError = "",
+  operatingUnits = [],
+  operatingUnitsLoading = false,
+  operatingUnitsError = "",
   paymentTerms = [],
   paymentTermsLoading = false,
   paymentTermsError = "",
@@ -327,6 +367,25 @@ export default function CounterpartyForm({
   const roleLabel = normalizeRoleLabel(form.isCustomer, form.isVendor);
   const legalEntityOptions = Array.isArray(legalEntities) ? legalEntities : [];
   const showLegalEntitySelect = legalEntityOptions.length > 0;
+  const selectedPrimaryOperatingUnitId = String(form.primaryOperatingUnitId || "");
+  const selectedOperatingUnitIds = Array.from(
+    new Set(
+      (Array.isArray(form.operatingUnitIds) ? form.operatingUnitIds : [])
+        .map((id) => String(id || "").trim())
+        .filter(Boolean)
+    )
+  );
+  const operatingUnitOptions = withSelectedOperatingUnitFallbacks(
+    operatingUnits,
+    selectedPrimaryOperatingUnitId
+      ? [selectedPrimaryOperatingUnitId, ...selectedOperatingUnitIds]
+      : selectedOperatingUnitIds
+  );
+  const operatingUnitLookupOptions = operatingUnitOptions.map((row) => ({
+    value: String(row.id || ""),
+    label: buildOperatingUnitLookupLabel(row),
+    description: buildOperatingUnitLookupDescription(row),
+  }));
   const selectedPaymentTermId = String(form.defaultPaymentTermId || "");
   const rawPaymentTermOptions = Array.isArray(paymentTerms) ? paymentTerms : [];
   const hasSelectedPaymentTerm = rawPaymentTermOptions.some(
@@ -393,6 +452,47 @@ export default function CounterpartyForm({
 
   function updateField(field, value) {
     setForm((prev) => ({ ...prev, [field]: value }));
+  }
+
+  function updatePrimaryOperatingUnit(nextValue) {
+    const normalizedValue = nextValue ? String(nextValue) : "";
+    setForm((prev) => {
+      const existingIds = Array.isArray(prev.operatingUnitIds)
+        ? prev.operatingUnitIds.map((id) => String(id || "").trim()).filter(Boolean)
+        : [];
+      const nextOperatingUnitIds = normalizedValue
+        ? Array.from(new Set([normalizedValue, ...existingIds]))
+        : existingIds;
+      return {
+        ...prev,
+        primaryOperatingUnitId: normalizedValue,
+        operatingUnitIds: nextOperatingUnitIds,
+      };
+    });
+  }
+
+  function toggleAllowedOperatingUnit(operatingUnitId, checked) {
+    const normalizedOperatingUnitId = String(operatingUnitId || "").trim();
+    if (!normalizedOperatingUnitId) {
+      return;
+    }
+    setForm((prev) => {
+      const existingIds = Array.isArray(prev.operatingUnitIds)
+        ? prev.operatingUnitIds.map((id) => String(id || "").trim()).filter(Boolean)
+        : [];
+      const nextOperatingUnitIds = checked
+        ? Array.from(new Set([...existingIds, normalizedOperatingUnitId]))
+        : existingIds.filter((id) => id !== normalizedOperatingUnitId);
+      const nextPrimaryOperatingUnitId =
+        String(prev.primaryOperatingUnitId || "").trim() === normalizedOperatingUnitId && !checked
+          ? ""
+          : String(prev.primaryOperatingUnitId || "").trim();
+      return {
+        ...prev,
+        primaryOperatingUnitId: nextPrimaryOperatingUnitId,
+        operatingUnitIds: nextOperatingUnitIds,
+      };
+    });
   }
 
   function handleSubmit(event) {
@@ -600,6 +700,81 @@ export default function CounterpartyForm({
               </option>
             ))}
           </select>
+        </div>
+
+        <div>
+          <label className="block text-xs font-semibold uppercase tracking-wide text-slate-600">
+            Primary Operating Unit
+          </label>
+          <Combobox
+            className="mt-1"
+            value={selectedPrimaryOperatingUnitId}
+            options={operatingUnitLookupOptions}
+            loading={operatingUnitsLoading}
+            disabled={submitting || !form.legalEntityId}
+            placeholder={
+              form.legalEntityId
+                ? "Search operating unit code/name"
+                : "Select legal entity first"
+            }
+            noOptionsText={
+              form.legalEntityId
+                ? "No operating units found."
+                : "Set legalEntityId to load operating units."
+            }
+            onChange={(nextValue) => updatePrimaryOperatingUnit(nextValue ? String(nextValue) : "")}
+          />
+          {!form.legalEntityId ? (
+            <p className="mt-1 text-xs text-slate-500">Select legal entity first.</p>
+          ) : null}
+          {operatingUnitsError ? (
+            <p className="mt-1 text-xs text-amber-700">{operatingUnitsError}</p>
+          ) : null}
+        </div>
+
+        <div className="md:col-span-2">
+          <label className="block text-xs font-semibold uppercase tracking-wide text-slate-600">
+            Allowed Operating Units
+          </label>
+          {!form.legalEntityId ? (
+            <p className="mt-1 text-xs text-slate-500">Select legal entity first.</p>
+          ) : operatingUnitOptions.length === 0 ? (
+            <p className="mt-1 text-xs text-slate-500">
+              No operating units loaded. Leave empty to keep the counterparty shared across the legal entity.
+            </p>
+          ) : (
+            <div className="mt-2 grid gap-2 md:grid-cols-2">
+              {operatingUnitOptions.map((row) => {
+                const operatingUnitId = String(row?.id || "").trim();
+                const checked = selectedOperatingUnitIds.includes(operatingUnitId);
+                return (
+                  <label
+                    key={`counterparty-operating-unit-${operatingUnitId}`}
+                    className="flex items-start gap-2 rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-700"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={(event) =>
+                        toggleAllowedOperatingUnit(operatingUnitId, event.target.checked)
+                      }
+                      disabled={submitting}
+                    />
+                    <span>
+                      <span className="block font-medium">
+                        {buildOperatingUnitLookupLabel(row)}
+                      </span>
+                      {buildOperatingUnitLookupDescription(row) ? (
+                        <span className="block text-xs text-slate-500">
+                          {buildOperatingUnitLookupDescription(row)}
+                        </span>
+                      ) : null}
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         <div>

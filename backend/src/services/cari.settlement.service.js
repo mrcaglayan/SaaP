@@ -973,6 +973,7 @@ async function fetchCounterpartyRow({
         legal_entity_id,
         code,
         name,
+        primary_operating_unit_id,
         is_customer,
         is_vendor,
         ar_account_id,
@@ -986,6 +987,101 @@ async function fetchCounterpartyRow({
     [tenantId, legalEntityId, counterpartyId]
   );
   return result.rows?.[0] || null;
+}
+
+async function assertSettlementOperatingUnitBelongsToLegalEntity({
+  tenantId,
+  legalEntityId,
+  operatingUnitId,
+  runQuery = query,
+}) {
+  const normalizedOperatingUnitId = parsePositiveInt(operatingUnitId) || null;
+  if (!normalizedOperatingUnitId) {
+    return null;
+  }
+  const result = await runQuery(
+    `SELECT id
+     FROM operating_units
+     WHERE tenant_id = ?
+       AND legal_entity_id = ?
+       AND id = ?
+     LIMIT 1`,
+    [tenantId, legalEntityId, normalizedOperatingUnitId]
+  );
+  if (!result.rows?.[0]) {
+    throw badRequest("operatingUnitId must belong to legalEntityId");
+  }
+  return normalizedOperatingUnitId;
+}
+
+async function listCounterpartyOperatingUnitIds({
+  tenantId,
+  legalEntityId,
+  counterpartyId,
+  runQuery = query,
+}) {
+  const result = await runQuery(
+    `SELECT operating_unit_id
+     FROM counterparty_operating_units
+     WHERE tenant_id = ?
+       AND legal_entity_id = ?
+       AND counterparty_id = ?
+     ORDER BY operating_unit_id ASC`,
+    [tenantId, legalEntityId, counterpartyId]
+  );
+  return Array.from(
+    new Set(
+      (result.rows || [])
+        .map((row) => parsePositiveInt(row.operating_unit_id))
+        .filter(Boolean)
+    )
+  );
+}
+
+async function resolveSettlementOperatingUnitForCounterparty({
+  tenantId,
+  legalEntityId,
+  requestedOperatingUnitId,
+  counterpartyRow,
+  runQuery = query,
+}) {
+  const normalizedRequestedOperatingUnitId =
+    await assertSettlementOperatingUnitBelongsToLegalEntity({
+      tenantId,
+      legalEntityId,
+      operatingUnitId: requestedOperatingUnitId,
+      runQuery,
+    });
+  const primaryOperatingUnitId =
+    parsePositiveInt(counterpartyRow?.primary_operating_unit_id) || null;
+  const allowedOperatingUnitIds = await listCounterpartyOperatingUnitIds({
+    tenantId,
+    legalEntityId,
+    counterpartyId: counterpartyRow?.id,
+    runQuery,
+  });
+  if (
+    primaryOperatingUnitId &&
+    !allowedOperatingUnitIds.includes(primaryOperatingUnitId)
+  ) {
+    allowedOperatingUnitIds.unshift(primaryOperatingUnitId);
+  }
+
+  if (allowedOperatingUnitIds.length === 0) {
+    return normalizedRequestedOperatingUnitId;
+  }
+  if (!normalizedRequestedOperatingUnitId && primaryOperatingUnitId) {
+    return primaryOperatingUnitId;
+  }
+  if (!normalizedRequestedOperatingUnitId) {
+    throw badRequest(
+      "operatingUnitId is required because this counterparty is restricted to specific operating units"
+    );
+  }
+  if (!allowedOperatingUnitIds.includes(normalizedRequestedOperatingUnitId)) {
+    throw badRequest("operatingUnitId is not assigned to counterparty");
+  }
+  return normalizedRequestedOperatingUnitId;
 }
 
 async function resolveBookAndOpenPeriodForDate({
@@ -2948,12 +3044,20 @@ async function fetchOpenItemsForApply({
   tenantId,
   legalEntityId,
   counterpartyId,
+  operatingUnitId = null,
   currencyCode = null,
   openItemIds = null,
   runQuery = query,
 }) {
   const statuses = [OPEN_ITEM_STATUS_OPEN, OPEN_ITEM_STATUS_PARTIALLY_SETTLED];
   const params = [tenantId, legalEntityId, counterpartyId, ...statuses];
+  const normalizedOperatingUnitId = parsePositiveInt(operatingUnitId) || null;
+  const operatingUnitFilterSql = normalizedOperatingUnitId
+    ? "AND d.operating_unit_id = ?"
+    : "";
+  if (normalizedOperatingUnitId) {
+    params.push(normalizedOperatingUnitId);
+  }
   const normalizedCurrency = normalizeUpperText(currencyCode);
   const currencyFilterSql = normalizedCurrency ? "AND oi.currency_code = ?" : "";
   if (normalizedCurrency) {
@@ -2982,6 +3086,7 @@ async function fetchOpenItemsForApply({
        oi.settled_amount_txn,
        oi.settled_amount_base,
        oi.currency_code,
+       d.operating_unit_id,
        d.direction,
        d.document_type,
        d.status AS document_status
@@ -2995,6 +3100,7 @@ async function fetchOpenItemsForApply({
        AND oi.counterparty_id = ?
        AND oi.status IN (?, ?)
        AND oi.residual_amount_txn > 0
+       ${operatingUnitFilterSql}
        ${currencyFilterSql}
        ${whereExtra}
      ORDER BY oi.id ASC
@@ -3757,6 +3863,10 @@ export async function applyCariSettlement({
   const tenantId = payload.tenantId;
   const legalEntityId = payload.legalEntityId;
   const counterpartyId = payload.counterpartyId;
+  const requestedOperatingUnitId = normalizeOptionalPositiveInt(
+    payload.operatingUnitId,
+    "operatingUnitId"
+  );
   const idempotencyKey = toNullableString(payload.idempotencyKey, 100);
   const requestedCashTransactionId = normalizeOptionalPositiveInt(
     payload.cashTransactionId,
@@ -3879,17 +3989,17 @@ export async function applyCariSettlement({
     };
   }
 
-  const counterparty = await fetchCounterpartyRow({
-    tenantId,
-    legalEntityId,
-    counterpartyId,
-  });
-  if (!counterparty) {
-    throw badRequest("counterpartyId must belong to legalEntityId");
-  }
+      const counterparty = await fetchCounterpartyRow({
+        tenantId,
+        legalEntityId,
+        counterpartyId,
+      });
+      if (!counterparty) {
+        throw badRequest("counterpartyId must belong to legalEntityId");
+      }
 
-  try {
-    const created = await withTransaction(async (tx) => {
+      try {
+        const created = await withTransaction(async (tx) => {
       const replayBatchIdByApply = await findSettlementBatchIdByApplyIdempotency({
         tenantId,
         legalEntityId,
@@ -3945,6 +4055,18 @@ export async function applyCariSettlement({
         };
       }
 
+      const settlementOperatingUnitId =
+        await resolveSettlementOperatingUnitForCounterparty({
+          tenantId,
+          legalEntityId,
+          requestedOperatingUnitId,
+          counterpartyRow: counterparty,
+          runQuery: tx.query,
+        });
+      if (settlementOperatingUnitId) {
+        assertScopeAccess(req, "operating_unit", settlementOperatingUnitId, "operatingUnitId");
+      }
+
       const requestedOpenItemIds = Array.isArray(payload.allocations)
         ? payload.allocations
             .map((entry) => parsePositiveInt(entry?.openItemId))
@@ -3954,6 +4076,7 @@ export async function applyCariSettlement({
         tenantId,
         legalEntityId,
         counterpartyId,
+        operatingUnitId: settlementOperatingUnitId,
         openItemIds: requestedOpenItemIds.length > 0 ? requestedOpenItemIds : null,
         runQuery: tx.query,
       });

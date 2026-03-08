@@ -164,6 +164,7 @@ function mapCounterpartyRow(row) {
     id: parsePositiveInt(row.id),
     tenantId: parsePositiveInt(row.tenant_id),
     legalEntityId: parsePositiveInt(row.legal_entity_id),
+    primaryOperatingUnitId: parsePositiveInt(row.primary_operating_unit_id),
     code: row.code,
     name: row.name,
     counterpartyType,
@@ -916,6 +917,113 @@ async function applyAddressMutations({
   }
 }
 
+async function listCounterpartyOperatingUnitRows({
+  tenantId,
+  legalEntityId,
+  counterpartyId,
+  runQuery = query,
+}) {
+  const result = await runQuery(
+    `SELECT
+        ou.id,
+        ou.code,
+        ou.name,
+        ou.status
+     FROM counterparty_operating_units cou
+     JOIN operating_units ou
+       ON ou.id = cou.operating_unit_id
+     WHERE cou.tenant_id = ?
+       AND cou.legal_entity_id = ?
+       AND cou.counterparty_id = ?
+     ORDER BY ou.code ASC, ou.id ASC`,
+    [tenantId, legalEntityId, counterpartyId]
+  );
+  return (result.rows || []).map((row) => ({
+    id: parsePositiveInt(row.id),
+    code: row.code || null,
+    name: row.name || null,
+    status: row.status || null,
+  }));
+}
+
+async function assertCounterpartyOperatingUnitScope({
+  tenantId,
+  legalEntityId,
+  primaryOperatingUnitId = null,
+  operatingUnitIds = undefined,
+  runQuery = query,
+}) {
+  const normalizedPrimaryOperatingUnitId = parsePositiveInt(primaryOperatingUnitId) || null;
+  const normalizedOperatingUnitIds = Array.from(
+    new Set((Array.isArray(operatingUnitIds) ? operatingUnitIds : []).map(parsePositiveInt).filter(Boolean))
+  );
+  if (
+    normalizedPrimaryOperatingUnitId &&
+    !normalizedOperatingUnitIds.includes(normalizedPrimaryOperatingUnitId)
+  ) {
+    normalizedOperatingUnitIds.unshift(normalizedPrimaryOperatingUnitId);
+  }
+
+  if (!normalizedPrimaryOperatingUnitId && normalizedOperatingUnitIds.length === 0) {
+    return {
+      primaryOperatingUnitId: null,
+      operatingUnitIds: [],
+    };
+  }
+
+  const placeholders = normalizedOperatingUnitIds.map(() => "?").join(", ");
+  const result = await runQuery(
+    `SELECT id, legal_entity_id
+     FROM operating_units
+     WHERE tenant_id = ?
+       AND id IN (${placeholders})`,
+    [tenantId, ...normalizedOperatingUnitIds]
+  );
+  const rows = result.rows || [];
+  if (rows.length !== normalizedOperatingUnitIds.length) {
+    throw badRequest("operatingUnitIds must belong to tenant");
+  }
+  for (const row of rows) {
+    if (parsePositiveInt(row.legal_entity_id) !== parsePositiveInt(legalEntityId)) {
+      throw badRequest("operatingUnitIds must belong to legalEntityId");
+    }
+  }
+
+  return {
+    primaryOperatingUnitId: normalizedPrimaryOperatingUnitId,
+    operatingUnitIds: normalizedOperatingUnitIds,
+  };
+}
+
+async function replaceCounterpartyOperatingUnitLinks({
+  tenantId,
+  legalEntityId,
+  counterpartyId,
+  operatingUnitIds,
+  runQuery,
+}) {
+  await runQuery(
+    `DELETE FROM counterparty_operating_units
+     WHERE tenant_id = ?
+       AND legal_entity_id = ?
+       AND counterparty_id = ?`,
+    [tenantId, legalEntityId, counterpartyId]
+  );
+
+  for (const operatingUnitId of operatingUnitIds || []) {
+    await runQuery(
+      `INSERT INTO counterparty_operating_units (
+          tenant_id,
+          legal_entity_id,
+          counterparty_id,
+          operating_unit_id
+       )
+       VALUES (?, ?, ?, ?)`,
+      [tenantId, legalEntityId, counterpartyId, operatingUnitId]
+    );
+  }
+}
+
 async function fetchCounterpartyDetail({
   tenantId,
   counterpartyId,
@@ -930,7 +1038,7 @@ async function fetchCounterpartyDetail({
     return null;
   }
 
-  const [contactRows, addressRows] = await Promise.all([
+  const [contactRows, addressRows, operatingUnitRows] = await Promise.all([
     listContactRows({
       tenantId,
       legalEntityId: baseRow.legal_entity_id,
@@ -938,6 +1046,12 @@ async function fetchCounterpartyDetail({
       runQuery,
     }),
     listAddressRows({
+      tenantId,
+      legalEntityId: baseRow.legal_entity_id,
+      counterpartyId,
+      runQuery,
+    }),
+    listCounterpartyOperatingUnitRows({
       tenantId,
       legalEntityId: baseRow.legal_entity_id,
       counterpartyId,
@@ -953,6 +1067,8 @@ async function fetchCounterpartyDetail({
     ...row,
     contacts,
     addresses,
+    operatingUnitIds: operatingUnitRows.map((unit) => parsePositiveInt(unit.id)).filter(Boolean),
+    operatingUnits: operatingUnitRows,
     defaults: {
       paymentTermId: row.defaultPaymentTermId,
       contactId: row.defaultContactId,
@@ -1053,6 +1169,35 @@ export async function listCounterpartyRows({
     assertScopeAccess(req, "legal_entity", filters.legalEntityId, "legalEntityId");
     conditions.push("c.legal_entity_id = ?");
     params.push(filters.legalEntityId);
+  }
+  if (filters.primaryOperatingUnitId) {
+    assertScopeAccess(
+      req,
+      "operating_unit",
+      filters.primaryOperatingUnitId,
+      "primaryOperatingUnitId"
+    );
+    conditions.push("c.primary_operating_unit_id = ?");
+    params.push(filters.primaryOperatingUnitId);
+  }
+  if (filters.allowedOperatingUnitId) {
+    assertScopeAccess(
+      req,
+      "operating_unit",
+      filters.allowedOperatingUnitId,
+      "allowedOperatingUnitId"
+    );
+    conditions.push(
+      `EXISTS (
+         SELECT 1
+         FROM counterparty_operating_units cou
+         WHERE cou.tenant_id = c.tenant_id
+           AND cou.legal_entity_id = c.legal_entity_id
+           AND cou.counterparty_id = c.id
+           AND cou.operating_unit_id = ?
+       )`
+    );
+    params.push(filters.allowedOperatingUnitId);
   }
 
   if (filters.status) {
@@ -1226,6 +1371,12 @@ export async function createCounterparty({
     fieldLabel: "apAccountId",
     expectedAccountType: "LIABILITY",
   });
+  const counterpartyOperatingUnits = await assertCounterpartyOperatingUnitScope({
+    tenantId,
+    legalEntityId,
+    primaryOperatingUnitId: payload.primaryOperatingUnitId,
+    operatingUnitIds: payload.operatingUnitIds,
+  });
 
   await assertCountryIdsExist((payload.addresses || []).map((row) => row.countryId));
 
@@ -1235,6 +1386,7 @@ export async function createCounterparty({
         `INSERT INTO counterparties (
             tenant_id,
             legal_entity_id,
+            primary_operating_unit_id,
             code,
             name,
             is_customer,
@@ -1249,10 +1401,11 @@ export async function createCounterparty({
             status,
             notes
          )
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` ,
         [
           tenantId,
           legalEntityId,
+          counterpartyOperatingUnits.primaryOperatingUnitId,
           payload.code,
           payload.name,
           isCustomer ? 1 : 0,
@@ -1272,6 +1425,14 @@ export async function createCounterparty({
       if (!counterpartyId) {
         throw new Error("Counterparty create failed");
       }
+
+      await replaceCounterpartyOperatingUnitLinks({
+        tenantId,
+        legalEntityId,
+        counterpartyId,
+        operatingUnitIds: counterpartyOperatingUnits.operatingUnitIds,
+        runQuery: tx.query,
+      });
 
       if (Array.isArray(payload.contacts) && payload.contacts.length > 0) {
         await insertContactRows({
@@ -1434,9 +1595,37 @@ export async function updateCounterpartyById({
 
   try {
     const updated = await withTransaction(async (tx) => {
+      const currentOperatingUnits = await listCounterpartyOperatingUnitRows({
+        tenantId,
+        legalEntityId,
+        counterpartyId,
+        runQuery: tx.query,
+      });
+      const currentOperatingUnitIds = currentOperatingUnits
+        .map((row) => parsePositiveInt(row.id))
+        .filter(Boolean);
+      const legalEntityChanged = legalEntityId !== parsePositiveInt(existing.legal_entity_id);
+      const counterpartyOperatingUnits = await assertCounterpartyOperatingUnitScope({
+        tenantId,
+        legalEntityId,
+        primaryOperatingUnitId:
+          payload.primaryOperatingUnitId === undefined
+            ? legalEntityChanged
+              ? null
+              : parsePositiveInt(existing.primary_operating_unit_id)
+            : payload.primaryOperatingUnitId,
+        operatingUnitIds:
+          payload.operatingUnitIds === undefined
+            ? legalEntityChanged
+              ? []
+              : currentOperatingUnitIds
+            : payload.operatingUnitIds,
+        runQuery: tx.query,
+      });
       await tx.query(
         `UPDATE counterparties
-         SET code = ?,
+         SET primary_operating_unit_id = ?,
+             code = ?,
              name = ?,
              is_customer = ?,
              is_vendor = ?,
@@ -1454,6 +1643,7 @@ export async function updateCounterpartyById({
            AND id = ?
            AND row_version = ?`,
         [
+          counterpartyOperatingUnits.primaryOperatingUnitId,
           nextCode,
           nextName,
           nextIsCustomer ? 1 : 0,
@@ -1479,6 +1669,14 @@ export async function updateCounterpartyById({
           "Counterparty update conflict: refresh and retry with latest rowVersion."
         );
       }
+
+      await replaceCounterpartyOperatingUnitLinks({
+        tenantId,
+        legalEntityId,
+        counterpartyId,
+        operatingUnitIds: counterpartyOperatingUnits.operatingUnitIds,
+        runQuery: tx.query,
+      });
 
       await applyContactMutations({
         tenantId,
@@ -1517,6 +1715,8 @@ export async function updateCounterpartyById({
         counterpartyId,
         payload: {
           before: {
+            primaryOperatingUnitId: parsePositiveInt(existing.primary_operating_unit_id),
+            operatingUnitIds: currentOperatingUnitIds,
             code: existing.code,
             name: existing.name,
             status: existing.status,
@@ -1535,6 +1735,8 @@ export async function updateCounterpartyById({
             apAccountName: existing.ap_account_name || null,
           },
           after: {
+            primaryOperatingUnitId: row.primaryOperatingUnitId,
+            operatingUnitIds: row.operatingUnitIds || [],
             code: row.code,
             name: row.name,
             status: row.status,

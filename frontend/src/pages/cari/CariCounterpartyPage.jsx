@@ -10,7 +10,7 @@ import {
   createCariPaymentTerm,
   listCariPaymentTerms,
 } from "../../api/cariPaymentTerms.js";
-import { listLegalEntities } from "../../api/orgAdmin.js";
+import { listLegalEntities, listOperatingUnits } from "../../api/orgAdmin.js";
 import { useAuth } from "../../auth/useAuth.js";
 import { useWorkingContextDefaults } from "../../context/useWorkingContextDefaults.js";
 import CounterpartyForm from "./CounterpartyForm.jsx";
@@ -448,6 +448,10 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
   const [createInlineApAccountError, setCreateInlineApAccountError] = useState("");
   const [createInlineApAccountMessage, setCreateInlineApAccountMessage] = useState("");
   const createPreviousLegalEntityIdRef = useRef("");
+  const createOperatingUnitLegalEntityRef = useRef("");
+  const [createOperatingUnits, setCreateOperatingUnits] = useState([]);
+  const [createOperatingUnitsLoading, setCreateOperatingUnitsLoading] = useState(false);
+  const [createOperatingUnitsError, setCreateOperatingUnitsError] = useState("");
 
   useWorkingContextDefaults(setCreateForm, COUNTERPARTY_CREATE_CONTEXT_MAPPINGS, [
     createForm.legalEntityId,
@@ -456,6 +460,10 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
   const [filters, setFilters] = useState(() =>
     createCounterpartyListFilters(config.roleDefault)
   );
+  const filterOperatingUnitLegalEntityRef = useRef("");
+  const [filterOperatingUnits, setFilterOperatingUnits] = useState([]);
+  const [filterOperatingUnitsLoading, setFilterOperatingUnitsLoading] = useState(false);
+  const [filterOperatingUnitsError, setFilterOperatingUnitsError] = useState("");
   const [rows, setRows] = useState([]);
   const [totalRows, setTotalRows] = useState(0);
   const [listLoading, setListLoading] = useState(false);
@@ -494,6 +502,10 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
   const [editInlineApAccountError, setEditInlineApAccountError] = useState("");
   const [editInlineApAccountMessage, setEditInlineApAccountMessage] = useState("");
   const editPreviousLegalEntityIdRef = useRef("");
+  const editOperatingUnitLegalEntityRef = useRef("");
+  const [editOperatingUnits, setEditOperatingUnits] = useState([]);
+  const [editOperatingUnitsLoading, setEditOperatingUnitsLoading] = useState(false);
+  const [editOperatingUnitsError, setEditOperatingUnitsError] = useState("");
 
   const legalEntityById = useMemo(() => {
     const map = new Map();
@@ -506,6 +518,9 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
   useEffect(() => {
     setCreateForm(buildInitialCounterpartyForm(config.roleDefault));
     setFilters(createCounterpartyListFilters(config.roleDefault));
+    setFilterOperatingUnits([]);
+    setFilterOperatingUnitsLoading(false);
+    setFilterOperatingUnitsError("");
     setRows([]);
     setTotalRows(0);
     setEditingId(null);
@@ -523,6 +538,9 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
     setCreateInlinePaymentTermMessage("");
     setCreateAccountOptions([]);
     setCreateAccountsError("");
+    setCreateOperatingUnits([]);
+    setCreateOperatingUnitsLoading(false);
+    setCreateOperatingUnitsError("");
     setCreateArAccountLookupQuery("");
     setCreateApAccountLookupQuery("");
     setCreateInlineArParentAccountId("");
@@ -539,6 +557,9 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
     setEditInlinePaymentTermMessage("");
     setEditAccountOptions([]);
     setEditAccountsError("");
+    setEditOperatingUnits([]);
+    setEditOperatingUnitsLoading(false);
+    setEditOperatingUnitsError("");
     setEditArAccountLookupQuery("");
     setEditApAccountLookupQuery("");
     setEditInlineArParentAccountId("");
@@ -548,7 +569,10 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
     setEditInlineApChildCode("");
     setEditInlineApChildName("");
     createPreviousLegalEntityIdRef.current = "";
+    createOperatingUnitLegalEntityRef.current = "";
+    filterOperatingUnitLegalEntityRef.current = "";
     editPreviousLegalEntityIdRef.current = "";
+    editOperatingUnitLegalEntityRef.current = "";
   }, [config.roleDefault, config.mode]);
 
   useEffect(() => {
@@ -726,6 +750,45 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
   }, [isCreatePage, createForm.legalEntityId]);
 
   useEffect(() => {
+    if (!isCreatePage) {
+      createOperatingUnitLegalEntityRef.current = "";
+      return;
+    }
+    const selectedLegalEntityId = String(createForm.legalEntityId || "").trim();
+    const previousLegalEntityId = createOperatingUnitLegalEntityRef.current;
+    const legalEntityChanged =
+      Boolean(previousLegalEntityId) && previousLegalEntityId !== selectedLegalEntityId;
+    createOperatingUnitLegalEntityRef.current = selectedLegalEntityId;
+
+    if (!selectedLegalEntityId) {
+      setCreateForm((prev) => {
+        if (
+          !prev.primaryOperatingUnitId &&
+          (!Array.isArray(prev.operatingUnitIds) || prev.operatingUnitIds.length === 0)
+        ) {
+          return prev;
+        }
+        return {
+          ...prev,
+          primaryOperatingUnitId: "",
+          operatingUnitIds: [],
+        };
+      });
+      return;
+    }
+
+    if (!legalEntityChanged) {
+      return;
+    }
+
+    setCreateForm((prev) => ({
+      ...prev,
+      primaryOperatingUnitId: "",
+      operatingUnitIds: [],
+    }));
+  }, [isCreatePage, createForm.legalEntityId]);
+
+  useEffect(() => {
     if (!editingId) {
       setEditPaymentTermLookupQuery("");
       setEditInlinePaymentTermSaving(false);
@@ -765,6 +828,45 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
     setEditInlineApAccountSaving(false);
     setEditInlineApAccountError("");
     setEditInlineApAccountMessage("");
+  }, [editingId, editingForm.legalEntityId]);
+
+  useEffect(() => {
+    if (!editingId) {
+      editOperatingUnitLegalEntityRef.current = "";
+      return;
+    }
+    const selectedLegalEntityId = String(editingForm.legalEntityId || "").trim();
+    const previousLegalEntityId = editOperatingUnitLegalEntityRef.current;
+    const legalEntityChanged =
+      Boolean(previousLegalEntityId) && previousLegalEntityId !== selectedLegalEntityId;
+    editOperatingUnitLegalEntityRef.current = selectedLegalEntityId;
+
+    if (!selectedLegalEntityId) {
+      setEditingForm((prev) => {
+        if (
+          !prev.primaryOperatingUnitId &&
+          (!Array.isArray(prev.operatingUnitIds) || prev.operatingUnitIds.length === 0)
+        ) {
+          return prev;
+        }
+        return {
+          ...prev,
+          primaryOperatingUnitId: "",
+          operatingUnitIds: [],
+        };
+      });
+      return;
+    }
+
+    if (!legalEntityChanged) {
+      return;
+    }
+
+    setEditingForm((prev) => ({
+      ...prev,
+      primaryOperatingUnitId: "",
+      operatingUnitIds: [],
+    }));
   }, [editingId, editingForm.legalEntityId]);
 
   useEffect(() => {
@@ -852,6 +954,84 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
 
   useEffect(() => {
     let cancelled = false;
+    async function loadCreateOperatingUnits() {
+      if (!isCreatePage) {
+        setCreateOperatingUnits([]);
+        setCreateOperatingUnitsError("");
+        setCreateOperatingUnitsLoading(false);
+        return;
+      }
+
+      await loadOperatingUnitsForLegalEntity({
+        legalEntityId: createForm.legalEntityId,
+        setRows: (rows) => {
+          if (!cancelled) {
+            setCreateOperatingUnits(rows);
+            setCreateForm((prev) => {
+              const visibleIds = new Set(
+                rows.map((row) => String(row?.id || "").trim()).filter(Boolean)
+              );
+              const nextPrimaryOperatingUnitId = visibleIds.has(
+                String(prev.primaryOperatingUnitId || "").trim()
+              )
+                ? String(prev.primaryOperatingUnitId || "").trim()
+                : "";
+              const nextOperatingUnitIds = Array.isArray(prev.operatingUnitIds)
+                ? prev.operatingUnitIds
+                    .map((value) => String(value || "").trim())
+                    .filter((value) => value && visibleIds.has(value))
+                : [];
+              if (
+                nextPrimaryOperatingUnitId &&
+                !nextOperatingUnitIds.includes(nextPrimaryOperatingUnitId)
+              ) {
+                nextOperatingUnitIds.push(nextPrimaryOperatingUnitId);
+              }
+              const currentPrimaryOperatingUnitId = String(
+                prev.primaryOperatingUnitId || ""
+              ).trim();
+              const currentOperatingUnitIds = Array.isArray(prev.operatingUnitIds)
+                ? prev.operatingUnitIds.map((value) => String(value || "").trim()).filter(Boolean)
+                : [];
+              if (
+                currentPrimaryOperatingUnitId === nextPrimaryOperatingUnitId &&
+                currentOperatingUnitIds.length === nextOperatingUnitIds.length &&
+                currentOperatingUnitIds.every(
+                  (value, index) => value === nextOperatingUnitIds[index]
+                )
+              ) {
+                return prev;
+              }
+              return {
+                ...prev,
+                primaryOperatingUnitId: nextPrimaryOperatingUnitId,
+                operatingUnitIds: nextOperatingUnitIds,
+              };
+            });
+          }
+        },
+        setLoading: (loading) => {
+          if (!cancelled) {
+            setCreateOperatingUnitsLoading(loading);
+          }
+        },
+        setError: (error) => {
+          if (!cancelled) {
+            setCreateOperatingUnitsError(error);
+          }
+        },
+      });
+    }
+
+    void loadCreateOperatingUnits();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isCreatePage, createForm.legalEntityId, canReadOrgTree]);
+
+  useEffect(() => {
+    let cancelled = false;
     async function loadEditPaymentTerms() {
       if (!editingId) {
         setEditPaymentTerms([]);
@@ -932,6 +1112,182 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
     editingForm.legalEntityId,
     accountPickerGates.shouldFetchGlAccounts,
   ]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadEditOperatingUnits() {
+      if (!editingId) {
+        setEditOperatingUnits([]);
+        setEditOperatingUnitsError("");
+        setEditOperatingUnitsLoading(false);
+        return;
+      }
+
+      await loadOperatingUnitsForLegalEntity({
+        legalEntityId: editingForm.legalEntityId,
+        setRows: (rows) => {
+          if (!cancelled) {
+            setEditOperatingUnits(rows);
+            setEditingForm((prev) => {
+              const visibleIds = new Set(
+                rows.map((row) => String(row?.id || "").trim()).filter(Boolean)
+              );
+              const nextPrimaryOperatingUnitId = visibleIds.has(
+                String(prev.primaryOperatingUnitId || "").trim()
+              )
+                ? String(prev.primaryOperatingUnitId || "").trim()
+                : "";
+              const nextOperatingUnitIds = Array.isArray(prev.operatingUnitIds)
+                ? prev.operatingUnitIds
+                    .map((value) => String(value || "").trim())
+                    .filter((value) => value && visibleIds.has(value))
+                : [];
+              if (
+                nextPrimaryOperatingUnitId &&
+                !nextOperatingUnitIds.includes(nextPrimaryOperatingUnitId)
+              ) {
+                nextOperatingUnitIds.push(nextPrimaryOperatingUnitId);
+              }
+              const currentPrimaryOperatingUnitId = String(
+                prev.primaryOperatingUnitId || ""
+              ).trim();
+              const currentOperatingUnitIds = Array.isArray(prev.operatingUnitIds)
+                ? prev.operatingUnitIds.map((value) => String(value || "").trim()).filter(Boolean)
+                : [];
+              if (
+                currentPrimaryOperatingUnitId === nextPrimaryOperatingUnitId &&
+                currentOperatingUnitIds.length === nextOperatingUnitIds.length &&
+                currentOperatingUnitIds.every(
+                  (value, index) => value === nextOperatingUnitIds[index]
+                )
+              ) {
+                return prev;
+              }
+              return {
+                ...prev,
+                primaryOperatingUnitId: nextPrimaryOperatingUnitId,
+                operatingUnitIds: nextOperatingUnitIds,
+              };
+            });
+          }
+        },
+        setLoading: (loading) => {
+          if (!cancelled) {
+            setEditOperatingUnitsLoading(loading);
+          }
+        },
+        setError: (error) => {
+          if (!cancelled) {
+            setEditOperatingUnitsError(error);
+          }
+        },
+      });
+    }
+
+    void loadEditOperatingUnits();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editingId, editingForm.legalEntityId, canReadOrgTree]);
+
+  useEffect(() => {
+    const selectedLegalEntityId = String(filters.legalEntityId || "").trim();
+    const previousLegalEntityId = filterOperatingUnitLegalEntityRef.current;
+    const legalEntityChanged =
+      Boolean(previousLegalEntityId) && previousLegalEntityId !== selectedLegalEntityId;
+    filterOperatingUnitLegalEntityRef.current = selectedLegalEntityId;
+
+    if (!selectedLegalEntityId) {
+      setFilterOperatingUnits([]);
+      setFilterOperatingUnitsError("");
+      setFilterOperatingUnitsLoading(false);
+      setFilters((prev) => {
+        if (!prev.primaryOperatingUnitId && !prev.allowedOperatingUnitId) {
+          return prev;
+        }
+        return {
+          ...prev,
+          primaryOperatingUnitId: "",
+          allowedOperatingUnitId: "",
+        };
+      });
+      return;
+    }
+
+    if (!legalEntityChanged) {
+      return;
+    }
+
+    setFilters((prev) => ({
+      ...prev,
+      primaryOperatingUnitId: "",
+      allowedOperatingUnitId: "",
+    }));
+  }, [filters.legalEntityId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadFilterOperatingUnits() {
+      if (!String(filters.legalEntityId || "").trim()) {
+        setFilterOperatingUnits([]);
+        setFilterOperatingUnitsError("");
+        setFilterOperatingUnitsLoading(false);
+        return;
+      }
+
+      await loadOperatingUnitsForLegalEntity({
+        legalEntityId: filters.legalEntityId,
+        setRows: (rows) => {
+          if (!cancelled) {
+            setFilterOperatingUnits(rows);
+            setFilters((prev) => {
+              const visibleIds = new Set(
+                rows.map((row) => String(row?.id || "").trim()).filter(Boolean)
+              );
+              const nextPrimaryOperatingUnitId = visibleIds.has(
+                String(prev.primaryOperatingUnitId || "").trim()
+              )
+                ? String(prev.primaryOperatingUnitId || "").trim()
+                : "";
+              const nextAllowedOperatingUnitId = visibleIds.has(
+                String(prev.allowedOperatingUnitId || "").trim()
+              )
+                ? String(prev.allowedOperatingUnitId || "").trim()
+                : "";
+              if (
+                String(prev.primaryOperatingUnitId || "").trim() === nextPrimaryOperatingUnitId &&
+                String(prev.allowedOperatingUnitId || "").trim() === nextAllowedOperatingUnitId
+              ) {
+                return prev;
+              }
+              return {
+                ...prev,
+                primaryOperatingUnitId: nextPrimaryOperatingUnitId,
+                allowedOperatingUnitId: nextAllowedOperatingUnitId,
+              };
+            });
+          }
+        },
+        setLoading: (loading) => {
+          if (!cancelled) {
+            setFilterOperatingUnitsLoading(loading);
+          }
+        },
+        setError: (error) => {
+          if (!cancelled) {
+            setFilterOperatingUnitsError(error);
+          }
+        },
+      });
+    }
+
+    void loadFilterOperatingUnits();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filters.legalEntityId, canReadOrgTree]);
 
   async function loadCounterpartyRows(nextFilters = filters) {
     if (!canRead) {
@@ -1021,6 +1377,50 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
       setRows([]);
       setError(
         mapCounterpartyApiError(err, "Failed to load account options for selected legal entity.")
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function loadOperatingUnitsForLegalEntity({
+    legalEntityId,
+    setRows,
+    setLoading,
+    setError,
+  }) {
+    const parsedLegalEntityId = toPositiveInt(legalEntityId);
+    if (!parsedLegalEntityId) {
+      setRows([]);
+      setError("");
+      setLoading(false);
+      return;
+    }
+    if (!canReadOrgTree) {
+      setRows([]);
+      setError(
+        "Operating unit list permission missing. Leave the counterparty shared or ask for org.tree.read."
+      );
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    setError("");
+    try {
+      const response = await listOperatingUnits({
+        legalEntityId: parsedLegalEntityId,
+        includeInactive: true,
+        limit: 500,
+      });
+      setRows(Array.isArray(response?.rows) ? response.rows : []);
+    } catch (err) {
+      setRows([]);
+      setError(
+        mapCounterpartyApiError(
+          err,
+          "Failed to load operating units for selected legal entity."
+        )
       );
     } finally {
       setLoading(false);
@@ -1968,6 +2368,9 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
         legalEntities={legalEntities}
         legalEntitiesLoading={legalEntitiesLoading}
         legalEntitiesError={legalEntitiesError}
+        operatingUnits={createOperatingUnits}
+        operatingUnitsLoading={createOperatingUnitsLoading}
+        operatingUnitsError={createOperatingUnitsError}
         paymentTerms={createPaymentTerms}
         paymentTermsLoading={createPaymentTermsLoading}
         paymentTermsError={createPaymentTermsError}
@@ -2103,6 +2506,92 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
                   placeholder="Legal entity id"
                 />
               )}
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-wide text-slate-600">
+                Primary OU
+              </label>
+              {canReadOrgTree ? (
+                <select
+                  className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                  value={filters.primaryOperatingUnitId}
+                  onChange={(event) =>
+                    setFilters((prev) => ({
+                      ...prev,
+                      primaryOperatingUnitId: event.target.value,
+                    }))
+                  }
+                  disabled={!filters.legalEntityId}
+                >
+                  <option value="">Any</option>
+                  {filterOperatingUnits.map((row) => (
+                    <option key={`filter-primary-ou-${row.id}`} value={String(row.id)}>
+                      {row.code} - {row.name}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                  type="number"
+                  min="1"
+                  value={filters.primaryOperatingUnitId}
+                  onChange={(event) =>
+                    setFilters((prev) => ({
+                      ...prev,
+                      primaryOperatingUnitId: event.target.value,
+                    }))
+                  }
+                  placeholder="Primary OU id"
+                />
+              )}
+              {filterOperatingUnitsError ? (
+                <p className="mt-1 text-xs text-amber-700">{filterOperatingUnitsError}</p>
+              ) : null}
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-wide text-slate-600">
+                Allowed OU
+              </label>
+              {canReadOrgTree ? (
+                <select
+                  className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                  value={filters.allowedOperatingUnitId}
+                  onChange={(event) =>
+                    setFilters((prev) => ({
+                      ...prev,
+                      allowedOperatingUnitId: event.target.value,
+                    }))
+                  }
+                  disabled={!filters.legalEntityId}
+                >
+                  <option value="">Any membership</option>
+                  {filterOperatingUnits.map((row) => (
+                    <option key={`filter-allowed-ou-${row.id}`} value={String(row.id)}>
+                      {row.code} - {row.name}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                  type="number"
+                  min="1"
+                  value={filters.allowedOperatingUnitId}
+                  onChange={(event) =>
+                    setFilters((prev) => ({
+                      ...prev,
+                      allowedOperatingUnitId: event.target.value,
+                    }))
+                  }
+                  placeholder="Allowed OU id"
+                />
+              )}
+              {filterOperatingUnitsLoading ? (
+                <p className="mt-1 text-xs text-slate-500">Loading operating units...</p>
+              ) : null}
             </div>
 
             <div>
@@ -2302,6 +2791,7 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
                   <th className="px-3 py-2">Role</th>
                   <th className="px-3 py-2">Status</th>
                   <th className="px-3 py-2">Legal Entity</th>
+                  <th className="px-3 py-2">Primary OU</th>
                   <th className="px-3 py-2">AR Account</th>
                   <th className="px-3 py-2">AP Account</th>
                   <th className="px-3 py-2">Payment Term</th>
@@ -2326,6 +2816,9 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
                     <td className="px-3 py-2 text-slate-700">
                       {legalEntityById.get(String(row.legalEntityId))?.code ||
                         row.legalEntityId}
+                    </td>
+                    <td className="px-3 py-2 text-slate-700">
+                      {row.primaryOperatingUnitId || "-"}
                     </td>
                     <td className="px-3 py-2 text-slate-700">
                       {formatMappedAccountLabel(row.arAccountCode, row.arAccountName)}
@@ -2374,6 +2867,9 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
             legalEntities={legalEntities}
             legalEntitiesLoading={legalEntitiesLoading}
             legalEntitiesError={legalEntitiesError}
+            operatingUnits={editOperatingUnits}
+            operatingUnitsLoading={editOperatingUnitsLoading}
+            operatingUnitsError={editOperatingUnitsError}
             paymentTerms={editPaymentTerms}
             paymentTermsLoading={editPaymentTermsLoading}
             paymentTermsError={editPaymentTermsError}

@@ -213,6 +213,32 @@ function parseAddressRows(value, label = "addresses", { allowIds = true } = {}) 
   return rows;
 }
 
+function parseOperatingUnitIds(value, label = "operatingUnitIds") {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!Array.isArray(value)) {
+    throw badRequest(`${label} must be an array`);
+  }
+
+  const rows = [];
+  const seenIds = new Set();
+  for (const [index, item] of value.entries()) {
+    const rawValue =
+      item && typeof item === "object" && !Array.isArray(item) ? item.id ?? item.operatingUnitId : item;
+    const operatingUnitId = optionalPositiveInt(rawValue, `${label}[${index}]`);
+    if (!operatingUnitId) {
+      throw badRequest(`${label}[${index}] must be a positive integer`);
+    }
+    if (seenIds.has(operatingUnitId)) {
+      throw badRequest(`${label}[${index}] is duplicated`);
+    }
+    seenIds.add(operatingUnitId);
+    rows.push(operatingUnitId);
+  }
+  return rows;
+}
+
 function normalizeRoleFilter(value) {
   const normalized = String(value || "")
     .trim()
@@ -237,6 +263,14 @@ export function parseCounterpartyIdParam(req) {
 export function parseCounterpartyReadFilters(req) {
   const tenantId = requireTenantId(req);
   const legalEntityId = optionalPositiveInt(req.query?.legalEntityId, "legalEntityId");
+  const primaryOperatingUnitId = optionalPositiveInt(
+    req.query?.primaryOperatingUnitId,
+    "primaryOperatingUnitId"
+  );
+  const allowedOperatingUnitId = optionalPositiveInt(
+    req.query?.allowedOperatingUnitId,
+    "allowedOperatingUnitId"
+  );
   const q = normalizeText(req.query?.q, "q", 120);
   const arAccountCode = normalizeText(req.query?.arAccountCode, "arAccountCode", 120);
   const arAccountName = normalizeText(req.query?.arAccountName, "arAccountName", 255);
@@ -258,6 +292,8 @@ export function parseCounterpartyReadFilters(req) {
   return {
     tenantId,
     legalEntityId,
+    primaryOperatingUnitId,
+    allowedOperatingUnitId,
     q,
     arAccountCode,
     arAccountName,
@@ -306,6 +342,11 @@ export function parseCounterpartyCreateInput(req) {
     req.body?.defaultPaymentTermId,
     "defaultPaymentTermId"
   );
+  const primaryOperatingUnitId = optionalPositiveInt(
+    req.body?.primaryOperatingUnitId,
+    "primaryOperatingUnitId"
+  );
+  const operatingUnitIds = parseOperatingUnitIds(req.body?.operatingUnitIds, "operatingUnitIds");
   const arAccountId = optionalPositiveInt(req.body?.arAccountId, "arAccountId");
   const apAccountId = optionalPositiveInt(req.body?.apAccountId, "apAccountId");
   const defaultContactId = optionalPositiveInt(
@@ -355,6 +396,8 @@ export function parseCounterpartyCreateInput(req) {
     notes,
     defaultCurrencyCode,
     defaultPaymentTermId,
+    primaryOperatingUnitId,
+    operatingUnitIds,
     arAccountId,
     apAccountId,
     defaultContactId,
@@ -416,6 +459,14 @@ export function parseCounterpartyUpdateInput(req) {
     req.body?.defaultPaymentTermId !== undefined
       ? optionalPositiveInt(req.body?.defaultPaymentTermId, "defaultPaymentTermId")
       : undefined;
+  const primaryOperatingUnitId =
+    req.body?.primaryOperatingUnitId !== undefined
+      ? optionalPositiveInt(req.body?.primaryOperatingUnitId, "primaryOperatingUnitId")
+      : undefined;
+  const operatingUnitIds =
+    req.body?.operatingUnitIds !== undefined
+      ? parseOperatingUnitIds(req.body?.operatingUnitIds, "operatingUnitIds")
+      : undefined;
   const arAccountId =
     req.body?.arAccountId !== undefined
       ? optionalPositiveInt(req.body?.arAccountId, "arAccountId")
@@ -459,6 +510,8 @@ export function parseCounterpartyUpdateInput(req) {
     notes !== undefined ||
     defaultCurrencyCode !== undefined ||
     defaultPaymentTermId !== undefined ||
+    primaryOperatingUnitId !== undefined ||
+    operatingUnitIds !== undefined ||
     arAccountId !== undefined ||
     apAccountId !== undefined ||
     defaultContactId !== undefined ||
@@ -487,6 +540,8 @@ export function parseCounterpartyUpdateInput(req) {
     notes,
     defaultCurrencyCode,
     defaultPaymentTermId,
+    primaryOperatingUnitId,
+    operatingUnitIds,
     arAccountId,
     apAccountId,
     defaultContactId,

@@ -71,6 +71,8 @@ export function normalizeCounterpartyListSortDir(value, fallback = "desc") {
 export function createCounterpartyListFilters(roleDefault = "CUSTOMER") {
   return {
     legalEntityId: "",
+    primaryOperatingUnitId: "",
+    allowedOperatingUnitId: "",
     status: "",
     role: roleDefault,
     q: "",
@@ -88,6 +90,10 @@ export function createCounterpartyListFilters(roleDefault = "CUSTOMER") {
 export function buildCounterpartyListParams(filters = {}) {
   return {
     legalEntityId: normalizeFilterText(filters.legalEntityId) || undefined,
+    primaryOperatingUnitId:
+      normalizeFilterText(filters.primaryOperatingUnitId) || undefined,
+    allowedOperatingUnitId:
+      normalizeFilterText(filters.allowedOperatingUnitId) || undefined,
     status: normalizeFilterText(filters.status) || undefined,
     role: normalizeFilterText(filters.role) || undefined,
     q: normalizeFilterText(filters.q) || undefined,
@@ -147,6 +153,8 @@ export function buildInitialCounterpartyForm(defaultRole = "CUSTOMER") {
   return {
     rowVersion: "",
     legalEntityId: "",
+    primaryOperatingUnitId: "",
+    operatingUnitIds: [],
     code: "",
     name: "",
     isCustomer: defaultRole === "CUSTOMER",
@@ -200,6 +208,10 @@ export function mapDetailToCounterpartyForm(row, fallbackRole = "CUSTOMER") {
   return {
     rowVersion: String(row.rowVersion || ""),
     legalEntityId: String(row.legalEntityId || ""),
+    primaryOperatingUnitId: String(row.primaryOperatingUnitId || ""),
+    operatingUnitIds: Array.isArray(row.operatingUnitIds)
+      ? row.operatingUnitIds.map((id) => String(id || "")).filter(Boolean)
+      : [],
     code: String(row.code || ""),
     name: String(row.name || ""),
     isCustomer: Boolean(row.isCustomer),
@@ -356,6 +368,14 @@ export function buildCounterpartyPayload(form, { mode = "create" } = {}) {
 
   const payload = {
     legalEntityId: toPositiveInt(form.legalEntityId),
+    primaryOperatingUnitId: toPositiveInt(form.primaryOperatingUnitId),
+    operatingUnitIds: Array.from(
+      new Set(
+        (Array.isArray(form.operatingUnitIds) ? form.operatingUnitIds : [])
+          .map((id) => toPositiveInt(id))
+          .filter(Boolean)
+      )
+    ),
     code: toTrimmed(form.code).toUpperCase(),
     name: toTrimmed(form.name),
     isCustomer: Boolean(form.isCustomer),

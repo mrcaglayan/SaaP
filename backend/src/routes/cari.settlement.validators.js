@@ -185,6 +185,7 @@ function parseSettlementApplyCommon(
   const userId = requireUserId(req);
   const legalEntityId = requirePositiveInt(req.body?.legalEntityId, "legalEntityId");
   const counterpartyId = requirePositiveInt(req.body?.counterpartyId, "counterpartyId");
+  const operatingUnitId = optionalPositiveInt(req.body?.operatingUnitId, "operatingUnitId");
   const directionRaw = String(req.body?.direction || "")
     .trim()
     .toUpperCase();
@@ -330,6 +331,7 @@ function parseSettlementApplyCommon(
     userId,
     legalEntityId,
     counterpartyId,
+    operatingUnitId,
     direction,
     settlementDate,
     cashTransactionId,
