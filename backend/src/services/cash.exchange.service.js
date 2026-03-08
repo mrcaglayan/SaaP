@@ -8,6 +8,11 @@ import {
 import {
   findCashRegisterById,
   findCashTransactionById,
+  findCashTransactionByReversalOf,
+  generateCashTxnNoForLegalEntityYearTx,
+  insertCashTransaction,
+  markCashTransactionAsReversed,
+  postCashTransaction,
 } from "./cash.queries.js";
 import { assertRegisterOperationalConfig } from "./cash.register.service.js";
 import {
@@ -15,16 +20,24 @@ import {
   postCashTransactionById,
   reverseCashTransactionById,
 } from "./cash.transaction.service.js";
-import { getCashFxLotMovementSummaryByTransaction } from "./cash.fx.position.service.js";
+import {
+  applyCashFxPositionForPostedTransactionTx,
+  getCashFxLotMovementSummaryByTransaction,
+} from "./cash.fx.position.service.js";
 import {
   CASH_PURPOSE_CODES,
   resolveCashPurposeAccountId,
 } from "./cash.purpose-mappings.service.js";
+import { createAndPostCashJournalTx } from "./cash.service.js";
+import { upsertJournalSourceLinkTx } from "./journal.source-link.service.js";
 
 const EXCHANGE_STATUS_DRAFT = "DRAFT";
 const EXCHANGE_STATUS_POSTED = "POSTED";
 const EXCHANGE_STATUS_REVERSED = "REVERSED";
+const EXCHANGE_POSTING_MODE_CLEARING = "CLEARING";
+const EXCHANGE_POSTING_MODE_DIRECT = "DIRECT";
 const AMOUNT_EPSILON = 0.000001;
+const CASH_POSTABLE_STATUSES = new Set(["DRAFT", "SUBMITTED", "APPROVED"]);
 
 const EXCHANGE_BASE_SELECT = `
   SELECT
@@ -44,6 +57,7 @@ const EXCHANGE_BASE_SELECT = `
     ceb.fee_amount_txn,
     ceb.fee_amount_base,
     ceb.clearing_account_id,
+    ceb.posting_mode,
     ceb.fee_account_id,
     ceb.fx_rate,
     ceb.fx_rate_source,
@@ -86,7 +100,7 @@ const EXCHANGE_BASE_SELECT = `
   JOIN cash_registers sr ON sr.id = ceb.source_cash_register_id
   JOIN cash_registers tr ON tr.id = ceb.target_cash_register_id
   JOIN legal_entities le ON le.id = ceb.legal_entity_id
-  JOIN accounts ca ON ca.id = ceb.clearing_account_id
+  LEFT JOIN accounts ca ON ca.id = ceb.clearing_account_id
   LEFT JOIN accounts fa ON fa.id = ceb.fee_account_id
 `;
 
@@ -94,10 +108,28 @@ function asUpper(value) {
   return String(value || "").trim().toUpperCase();
 }
 
+function normalizeExchangePostingMode(value) {
+  return asUpper(value) === EXCHANGE_POSTING_MODE_DIRECT
+    ? EXCHANGE_POSTING_MODE_DIRECT
+    : EXCHANGE_POSTING_MODE_CLEARING;
+}
+
 function normalizeCurrency(value) {
   return String(value || "")
     .trim()
     .toUpperCase();
+}
+
+function isActive(value) {
+  return asUpper(value) === "ACTIVE";
+}
+
+function nowMysqlDateTime() {
+  return new Date().toISOString().slice(0, 19).replace("T", " ");
+}
+
+function todayIsoDate() {
+  return new Date().toISOString().slice(0, 10);
 }
 
 function normalizeText(value, maxLength = 100) {
@@ -164,6 +196,34 @@ function roundAmount(value, precision = 6) {
   return Number(Number(value || 0).toFixed(precision));
 }
 
+function normalizeMoney(value) {
+  return Number(value || 0).toFixed(6);
+}
+
+function toDateOnly(value) {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+  const parsed = new Date(value);
+  if (!Number.isNaN(parsed.getTime())) {
+    return parsed.toISOString().slice(0, 10);
+  }
+  const normalized = String(value).trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(normalized) ? normalized : null;
+}
+
+function toDateTimeSql(value) {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+  const parsed = new Date(value);
+  if (!Number.isNaN(parsed.getTime())) {
+    return parsed.toISOString().slice(0, 19).replace("T", " ");
+  }
+  const normalized = String(value).trim();
+  return normalized.length >= 19 ? normalized.replace("T", " ").slice(0, 19) : null;
+}
+
 function buildDerivedKey(prefix, value, maxLength = 100) {
   const normalizedPrefix = String(prefix || "").trim();
   const normalizedValue = String(value || "").trim();
@@ -171,6 +231,185 @@ function buildDerivedKey(prefix, value, maxLength = 100) {
     throw badRequest("Unable to derive idempotency key");
   }
   return `${normalizedPrefix}:${normalizedValue}`.slice(0, maxLength);
+}
+
+function assertCashTransactionReadyForPosting(row, label) {
+  if (!row) {
+    throw badRequest(`${label} not found`);
+  }
+
+  const status = asUpper(row.status);
+  const postedJournalEntryId = parsePositiveInt(row.posted_journal_entry_id);
+  if (status === "POSTED") {
+    if (!postedJournalEntryId) {
+      throw badRequest(`${label} is POSTED without posted_journal_entry_id`);
+    }
+    return;
+  }
+
+  if (!CASH_POSTABLE_STATUSES.has(status)) {
+    throw badRequest(`${label} must be DRAFT, SUBMITTED, or APPROVED before posting`);
+  }
+
+  if (!isActive(row.register_status)) {
+    throw badRequest(`${label} cash register is not ACTIVE`);
+  }
+
+  const sessionMode = asUpper(row.register_session_mode);
+  if (sessionMode === "REQUIRED") {
+    if (!parsePositiveInt(row.cash_session_id)) {
+      throw badRequest(`${label} requires an OPEN cash session`);
+    }
+    if (asUpper(row.cash_session_status) !== "OPEN") {
+      throw badRequest(`${label} cash_session_id must be OPEN`);
+    }
+  }
+}
+
+function resolveSharedCashJournalEntryId(leftTxn, rightTxn, label) {
+  const leftStatus = asUpper(leftTxn?.status);
+  const rightStatus = asUpper(rightTxn?.status);
+  const leftJournalEntryId = parsePositiveInt(leftTxn?.posted_journal_entry_id);
+  const rightJournalEntryId = parsePositiveInt(rightTxn?.posted_journal_entry_id);
+  const leftPosted = leftStatus === "POSTED";
+  const rightPosted = rightStatus === "POSTED";
+
+  if (leftPosted && rightPosted) {
+    if (!leftJournalEntryId || !rightJournalEntryId || leftJournalEntryId !== rightJournalEntryId) {
+      throw badRequest(`${label} must share a single posted journal entry`);
+    }
+    return leftJournalEntryId;
+  }
+
+  if (leftPosted || rightPosted) {
+    throw badRequest(`${label} is partially posted`);
+  }
+
+  return null;
+}
+
+function buildExchangeSubledgerReference(exchangeBatchId) {
+  return `CASH_EXCH:${exchangeBatchId}`.slice(0, 100);
+}
+
+function buildDirectExchangeJournalLines({
+  exchangeBatchId,
+  sourceTransaction,
+  targetTransaction,
+  description,
+}) {
+  const sourceAmountTxn = normalizePositiveAmount(
+    sourceTransaction.amount,
+    "exchangeOut.amountTxn"
+  );
+  const targetAmountTxn = normalizePositiveAmount(
+    targetTransaction.amount,
+    "exchangeIn.amountTxn"
+  );
+  const sourceAmountBase = normalizePositiveAmount(
+    sourceTransaction.amount_base ?? sourceTransaction.amount,
+    "exchangeOut.amountBase"
+  );
+  const targetAmountBase = normalizePositiveAmount(
+    targetTransaction.amount_base ?? targetTransaction.amount,
+    "exchangeIn.amountBase"
+  );
+  if (!amountsEqual(sourceAmountBase, targetAmountBase)) {
+    throw badRequest("Direct exchange source/target base effects must net cleanly");
+  }
+
+  const sourceRegisterAccountId = parsePositiveInt(sourceTransaction.register_account_id);
+  const targetRegisterAccountId = parsePositiveInt(targetTransaction.register_account_id);
+  if (!sourceRegisterAccountId || !targetRegisterAccountId) {
+    throw badRequest("Direct exchange register account metadata is missing");
+  }
+
+  const lineDescription = normalizeText(description, 255) || "Cash exchange direct";
+  const subledgerReferenceNo = buildExchangeSubledgerReference(exchangeBatchId);
+
+  return [
+    {
+      accountId: targetRegisterAccountId,
+      operatingUnitId: parsePositiveInt(targetTransaction.operating_unit_id) || null,
+      description: lineDescription,
+      subledgerReferenceNo,
+      currencyCode: normalizeCurrency(targetTransaction.currency_code),
+      amountTxn: targetAmountTxn,
+      debitBase: targetAmountBase,
+      creditBase: 0,
+    },
+    {
+      accountId: sourceRegisterAccountId,
+      operatingUnitId: parsePositiveInt(sourceTransaction.operating_unit_id) || null,
+      description: lineDescription,
+      subledgerReferenceNo,
+      currencyCode: normalizeCurrency(sourceTransaction.currency_code),
+      amountTxn: Number((sourceAmountTxn * -1).toFixed(6)),
+      debitBase: 0,
+      creditBase: sourceAmountBase,
+    },
+  ];
+}
+
+function buildDirectExchangeReversalJournalLines({
+  exchangeBatchId,
+  sourceTransaction,
+  targetTransaction,
+  reverseReason,
+}) {
+  const sourceAmountTxn = normalizePositiveAmount(
+    sourceTransaction.amount,
+    "exchangeOut.amountTxn"
+  );
+  const targetAmountTxn = normalizePositiveAmount(
+    targetTransaction.amount,
+    "exchangeIn.amountTxn"
+  );
+  const sourceAmountBase = normalizePositiveAmount(
+    sourceTransaction.amount_base ?? sourceTransaction.amount,
+    "exchangeOut.amountBase"
+  );
+  const targetAmountBase = normalizePositiveAmount(
+    targetTransaction.amount_base ?? targetTransaction.amount,
+    "exchangeIn.amountBase"
+  );
+  if (!amountsEqual(sourceAmountBase, targetAmountBase)) {
+    throw badRequest("Direct exchange source/target base effects must net cleanly");
+  }
+
+  const sourceRegisterAccountId = parsePositiveInt(sourceTransaction.register_account_id);
+  const targetRegisterAccountId = parsePositiveInt(targetTransaction.register_account_id);
+  if (!sourceRegisterAccountId || !targetRegisterAccountId) {
+    throw badRequest("Direct exchange register account metadata is missing");
+  }
+
+  const lineDescription =
+    normalizeText(`Reversal of cash exchange ${exchangeBatchId}: ${reverseReason}`, 255) ||
+    `Reversal of cash exchange ${exchangeBatchId}`.slice(0, 255);
+  const subledgerReferenceNo = buildExchangeSubledgerReference(exchangeBatchId);
+
+  return [
+    {
+      accountId: sourceRegisterAccountId,
+      operatingUnitId: parsePositiveInt(sourceTransaction.operating_unit_id) || null,
+      description: lineDescription,
+      subledgerReferenceNo,
+      currencyCode: normalizeCurrency(sourceTransaction.currency_code),
+      amountTxn: sourceAmountTxn,
+      debitBase: sourceAmountBase,
+      creditBase: 0,
+    },
+    {
+      accountId: targetRegisterAccountId,
+      operatingUnitId: parsePositiveInt(targetTransaction.operating_unit_id) || null,
+      description: lineDescription,
+      subledgerReferenceNo,
+      currencyCode: normalizeCurrency(targetTransaction.currency_code),
+      amountTxn: Number((targetAmountTxn * -1).toFixed(6)),
+      debitBase: 0,
+      creditBase: targetAmountBase,
+    },
+  ];
 }
 
 function mapExchangeBatchRow(row) {
@@ -228,6 +467,7 @@ function mapExchangeBatchRow(row) {
     clearingAccountId: parsePositiveInt(row.clearing_account_id),
     clearingAccountCode: row.clearing_account_code || null,
     clearingAccountName: row.clearing_account_name || null,
+    postingMode: normalizeExchangePostingMode(row.posting_mode),
     feeAccountId: parsePositiveInt(row.fee_account_id),
     feeAccountCode: row.fee_account_code || null,
     feeAccountName: row.fee_account_name || null,
@@ -342,6 +582,750 @@ async function resolveBaseCurrencyCodeForLegalEntity({
   return baseCurrencyCode;
 }
 
+async function createDirectExchangeReversalTransactionTx({
+  tx,
+  tenantId,
+  userId,
+  originalTransaction,
+  reverseReason,
+}) {
+  const originalTransactionId = parsePositiveInt(originalTransaction?.id);
+  if (!originalTransactionId) {
+    throw badRequest("Original exchange transaction is required for direct reversal");
+  }
+
+  const existingReversal = await findCashTransactionByReversalOf({
+    tenantId,
+    transactionId: originalTransactionId,
+    runQuery: tx.query,
+  });
+  if (existingReversal) {
+    return existingReversal;
+  }
+
+  const reversalBookDate = todayIsoDate();
+  const reversalTxnNo = await generateCashTxnNoForLegalEntityYearTx({
+    tenantId,
+    legalEntityId: parsePositiveInt(originalTransaction.legal_entity_id),
+    legalEntityCode: originalTransaction.legal_entity_code,
+    bookDate: reversalBookDate,
+    runQuery: tx.query,
+  });
+
+  const reversalId = await insertCashTransaction({
+    payload: {
+      tenantId,
+      registerId: parsePositiveInt(originalTransaction.cash_register_id),
+      cashSessionId: parsePositiveInt(originalTransaction.cash_session_id) || null,
+      txnNo: reversalTxnNo,
+      txnType: originalTransaction.txn_type,
+      status: "DRAFT",
+      txnDatetime: nowMysqlDateTime(),
+      bookDate: reversalBookDate,
+      amount: normalizeMoney(originalTransaction.amount),
+      amountBase: normalizeMoney(
+        originalTransaction.amount_base === null || originalTransaction.amount_base === undefined
+          ? originalTransaction.amount
+          : originalTransaction.amount_base
+      ),
+      currencyCode: originalTransaction.currency_code,
+      fxRate:
+        originalTransaction.fx_rate === null || originalTransaction.fx_rate === undefined
+          ? Number(1).toFixed(10)
+          : Number(originalTransaction.fx_rate).toFixed(10),
+      fxRateSource: originalTransaction.fx_rate_source || "PARITY",
+      fxRateDate: originalTransaction.fx_rate_date || reversalBookDate,
+      fxFallbackMode: originalTransaction.fx_fallback_mode || null,
+      fxFallbackMaxDays:
+        originalTransaction.fx_fallback_max_days === undefined
+          ? null
+          : originalTransaction.fx_fallback_max_days,
+      description: `Reversal of ${originalTransaction.txn_no}: ${reverseReason}`.slice(0, 500),
+      referenceNo: originalTransaction.reference_no,
+      sourceDocType: originalTransaction.source_doc_type,
+      sourceDocId: originalTransaction.source_doc_id,
+      sourceModule: "CASH",
+      sourceEntityType: "cash_transaction_reversal",
+      sourceEntityId: String(originalTransactionId),
+      integrationLinkStatus: "UNLINKED",
+      counterpartyType: originalTransaction.counterparty_type,
+      counterpartyId: parsePositiveInt(originalTransaction.counterparty_id) || null,
+      counterAccountId: parsePositiveInt(originalTransaction.counter_account_id) || null,
+      counterCashRegisterId:
+        parsePositiveInt(originalTransaction.counter_cash_register_id_resolved) ||
+        parsePositiveInt(originalTransaction.counter_cash_register_id) ||
+        null,
+      linkedCariSettlementBatchId: null,
+      linkedCariUnappliedCashId: null,
+      postedJournalEntryId: null,
+      reversalOfTransactionId: originalTransactionId,
+      overrideCashControl: false,
+      overrideReason: null,
+      idempotencyKey: `REV-${originalTransactionId}`,
+      integrationEventUid: `REV-${originalTransactionId}`,
+      userId,
+      postedByUserId: null,
+      postedAt: null,
+    },
+    runQuery: tx.query,
+  });
+
+  return findCashTransactionById({
+    tenantId,
+    transactionId: reversalId,
+    runQuery: tx.query,
+  });
+}
+
+async function postDirectExchangeBatch({
+  req,
+  assertScopeAccess,
+  exchangeBatchId,
+  tenantId,
+  userId,
+  legalEntityId,
+  sourceRegister,
+  targetRegister,
+  sourceCashSessionId,
+  targetCashSessionId,
+  txnDatetime,
+  bookDate,
+  sourceAmountTxn,
+  targetAmountTxn,
+  feeAmountTxn,
+  feeAmountBaseInput,
+  feeAccountId,
+  effectiveFxRate,
+  effectiveFxRateSource,
+  effectiveFxRateDate,
+  providerRef,
+  spreadReferenceRate,
+  spreadRateDelta,
+  spreadAmountBase,
+  description,
+  referenceNo,
+}) {
+  const exchangeReferenceNo = referenceNo || `EXCH-${exchangeBatchId}`;
+  const exchangeDescription =
+    description ||
+    `Cash exchange direct ${sourceRegister.code || sourceRegister.id} -> ${targetRegister.code || targetRegister.id}`;
+
+  const outTxnCreate = await createCashTransaction({
+    req,
+    payload: {
+      tenantId,
+      userId,
+      registerId: parsePositiveInt(sourceRegister.id),
+      cashSessionId: sourceCashSessionId,
+      txnType: "PAYOUT",
+      txnDatetime,
+      bookDate,
+      amount: sourceAmountTxn,
+      currencyCode: normalizeCurrency(sourceRegister.currency_code),
+      amountBase: null,
+      fxRate: null,
+      fxRateSource: null,
+      fxRateDate: null,
+      fxFallbackMode: null,
+      fxFallbackMaxDays: null,
+      description: description || `Cash exchange out to ${targetRegister.code || targetRegister.id}`,
+      referenceNo: exchangeReferenceNo,
+      sourceDocType: null,
+      sourceDocId: null,
+      counterpartyType: null,
+      counterpartyId: null,
+      counterAccountId: parsePositiveInt(targetRegister.account_id),
+      counterCashRegisterId: parsePositiveInt(targetRegister.id),
+      linkedCariSettlementBatchId: null,
+      linkedCariUnappliedCashId: null,
+      sourceModule: "CASH",
+      sourceEntityType: "cash_exchange_batch",
+      sourceEntityId: String(exchangeBatchId),
+      integrationLinkStatus: "LINKED",
+      integrationEventUid: buildDerivedKey("CASH_EXCHANGE_OUT_EVENT", exchangeBatchId),
+      idempotencyKey: buildDerivedKey("CASH_EXCHANGE_OUT", exchangeBatchId),
+    },
+    assertScopeAccess,
+  });
+  const outTxnId = parsePositiveInt(outTxnCreate.row?.id);
+  if (!outTxnId) {
+    throw badRequest("Failed to create exchange out transaction");
+  }
+
+  const sourceAmountBase = normalizePositiveAmount(outTxnCreate.row.amount_base, "sourceAmountBase");
+  const baseCurrencyCode = await resolveBaseCurrencyCodeForLegalEntity({
+    tenantId,
+    legalEntityId,
+  });
+
+  let inAmountBase = null;
+  let inFxRate = null;
+  let inFxRateSource = null;
+  let inFxRateDate = null;
+  const sourceCurrency = normalizeCurrency(sourceRegister.currency_code);
+  const targetCurrency = normalizeCurrency(targetRegister.currency_code);
+  if (targetCurrency === baseCurrencyCode) {
+    if (!amountsEqual(targetAmountTxn, sourceAmountBase)) {
+      throw badRequest(
+        "targetAmountTxn must equal source amount_base when target register currency is book base currency"
+      );
+    }
+  } else {
+    inAmountBase = sourceAmountBase;
+    inFxRate = Number((sourceAmountBase / targetAmountTxn).toFixed(10));
+    inFxRateSource = "EXCHANGE_DERIVED";
+    inFxRateDate = bookDate;
+  }
+
+  const inTxnCreate = await createCashTransaction({
+    req,
+    payload: {
+      tenantId,
+      userId,
+      registerId: parsePositiveInt(targetRegister.id),
+      cashSessionId: targetCashSessionId,
+      txnType: "RECEIPT",
+      txnDatetime,
+      bookDate,
+      amount: targetAmountTxn,
+      currencyCode: targetCurrency,
+      amountBase: inAmountBase,
+      fxRate: inFxRate,
+      fxRateSource: inFxRateSource,
+      fxRateDate: inFxRateDate,
+      fxFallbackMode: null,
+      fxFallbackMaxDays: null,
+      description: description || `Cash exchange in from ${sourceRegister.code || sourceRegister.id}`,
+      referenceNo: exchangeReferenceNo,
+      sourceDocType: null,
+      sourceDocId: null,
+      counterpartyType: null,
+      counterpartyId: null,
+      counterAccountId: parsePositiveInt(sourceRegister.account_id),
+      counterCashRegisterId: parsePositiveInt(sourceRegister.id),
+      linkedCariSettlementBatchId: null,
+      linkedCariUnappliedCashId: null,
+      sourceModule: "CASH",
+      sourceEntityType: "cash_exchange_batch",
+      sourceEntityId: String(exchangeBatchId),
+      integrationLinkStatus: "LINKED",
+      integrationEventUid: buildDerivedKey("CASH_EXCHANGE_IN_EVENT", exchangeBatchId),
+      idempotencyKey: buildDerivedKey("CASH_EXCHANGE_IN", exchangeBatchId),
+    },
+    assertScopeAccess,
+  });
+  const inTxnId = parsePositiveInt(inTxnCreate.row?.id);
+  if (!inTxnId) {
+    throw badRequest("Failed to create exchange in transaction");
+  }
+
+  let feeTxnId = null;
+  if (feeAmountTxn) {
+    let feeAmountBase = feeAmountBaseInput;
+    let feeFxRate = null;
+    let feeFxRateSource = null;
+    let feeFxRateDate = null;
+
+    if (sourceCurrency === baseCurrencyCode) {
+      if (feeAmountBase !== null && !amountsEqual(feeAmountBase, feeAmountTxn)) {
+        throw badRequest(
+          "feeAmountBase must equal feeAmountTxn when source register currency is book base currency"
+        );
+      }
+    } else {
+      const sourceFxRate = Number((sourceAmountBase / sourceAmountTxn).toFixed(10));
+      if (feeAmountBase === null) {
+        if (!(sourceFxRate > 0)) {
+          throw badRequest(
+            "feeAmountBase or source exchange rate is required for foreign-currency fee posting"
+          );
+        }
+        feeAmountBase = roundAmount(feeAmountTxn * sourceFxRate);
+      }
+      feeFxRate = Number((feeAmountBase / feeAmountTxn).toFixed(10));
+      feeFxRateSource = "EXCHANGE_FEE_EXECUTED";
+      feeFxRateDate = bookDate;
+    }
+
+    const feeCreate = await createCashTransaction({
+      req,
+      payload: {
+        tenantId,
+        userId,
+        registerId: parsePositiveInt(sourceRegister.id),
+        cashSessionId: sourceCashSessionId,
+        txnType: "PAYOUT",
+        txnDatetime,
+        bookDate,
+        amount: feeAmountTxn,
+        currencyCode: sourceCurrency,
+        amountBase: feeAmountBase,
+        fxRate: feeFxRate,
+        fxRateSource: feeFxRateSource,
+        fxRateDate: feeFxRateDate,
+        fxFallbackMode: null,
+        fxFallbackMaxDays: null,
+        description:
+          description ||
+          `Cash exchange commission (${providerRef || sourceRegister.code || sourceRegister.id})`,
+        referenceNo: exchangeReferenceNo,
+        sourceDocType: null,
+        sourceDocId: null,
+        counterpartyType: null,
+        counterpartyId: null,
+        counterAccountId: parsePositiveInt(feeAccountId),
+        counterCashRegisterId: null,
+        linkedCariSettlementBatchId: null,
+        linkedCariUnappliedCashId: null,
+        sourceModule: "CASH",
+        sourceEntityType: "cash_exchange_batch",
+        sourceEntityId: String(exchangeBatchId),
+        integrationLinkStatus: "LINKED",
+        integrationEventUid: buildDerivedKey("CASH_EXCHANGE_FEE_EVENT", exchangeBatchId),
+        idempotencyKey: buildDerivedKey("CASH_EXCHANGE_FEE", exchangeBatchId),
+      },
+      assertScopeAccess,
+    });
+    feeTxnId = parsePositiveInt(feeCreate.row?.id);
+    if (!feeTxnId) {
+      throw badRequest("Failed to create exchange fee transaction");
+    }
+  }
+
+  await withTransaction(async (tx) => {
+    const lockedBatch = await findExchangeBatchById({
+      tenantId,
+      exchangeBatchId,
+      runQuery: tx.query,
+      forUpdate: true,
+    });
+    if (!lockedBatch) {
+      throw badRequest("Cash exchange batch not found");
+    }
+
+    let lockedOutTxn = await findCashTransactionById({
+      tenantId,
+      transactionId: outTxnId,
+      runQuery: tx.query,
+      forUpdate: true,
+    });
+    let lockedInTxn = await findCashTransactionById({
+      tenantId,
+      transactionId: inTxnId,
+      runQuery: tx.query,
+      forUpdate: true,
+    });
+    if (!lockedOutTxn || !lockedInTxn) {
+      throw badRequest("Direct exchange draft transactions are missing");
+    }
+
+    let sharedJournalEntryId = resolveSharedCashJournalEntryId(
+      lockedOutTxn,
+      lockedInTxn,
+      "Direct exchange transactions"
+    );
+    if (!sharedJournalEntryId) {
+      assertCashTransactionReadyForPosting(lockedOutTxn, "Exchange out transaction");
+      assertCashTransactionReadyForPosting(lockedInTxn, "Exchange in transaction");
+
+      const journalPosting = await createAndPostCashJournalTx(tx, {
+        tenantId,
+        userId,
+        legalEntityId,
+        cashTxn: lockedOutTxn,
+        req,
+        journalLinesOverride: buildDirectExchangeJournalLines({
+          exchangeBatchId,
+          sourceTransaction: lockedOutTxn,
+          targetTransaction: lockedInTxn,
+          description: exchangeDescription,
+        }),
+        descriptionOverride: exchangeDescription,
+        referenceNoOverride: exchangeReferenceNo,
+      });
+      sharedJournalEntryId = parsePositiveInt(journalPosting.journalEntryId);
+      if (!sharedJournalEntryId) {
+        throw badRequest("Failed to post direct exchange journal");
+      }
+
+      await upsertJournalSourceLinkTx(tx, {
+        tenantId,
+        legalEntityId,
+        journalEntryId: sharedJournalEntryId,
+        sourceRefType: "CASH_TRANSACTION",
+        sourceRefId: parsePositiveInt(lockedInTxn.id),
+      });
+
+      await postCashTransaction({
+        tenantId,
+        transactionId: parsePositiveInt(lockedOutTxn.id),
+        userId,
+        postedJournalEntryId: sharedJournalEntryId,
+        overrideCashControl: false,
+        overrideReason: null,
+        runQuery: tx.query,
+      });
+      await postCashTransaction({
+        tenantId,
+        transactionId: parsePositiveInt(lockedInTxn.id),
+        userId,
+        postedJournalEntryId: sharedJournalEntryId,
+        overrideCashControl: false,
+        overrideReason: null,
+        runQuery: tx.query,
+      });
+
+      lockedOutTxn = await findCashTransactionById({
+        tenantId,
+        transactionId: outTxnId,
+        runQuery: tx.query,
+      });
+      lockedInTxn = await findCashTransactionById({
+        tenantId,
+        transactionId: inTxnId,
+        runQuery: tx.query,
+      });
+    }
+
+    await applyCashFxPositionForPostedTransactionTx({
+      tenantId,
+      cashTransactionId: outTxnId,
+      cashTransactionRow: lockedOutTxn,
+      runQuery: tx.query,
+    });
+    await applyCashFxPositionForPostedTransactionTx({
+      tenantId,
+      cashTransactionId: inTxnId,
+      cashTransactionRow: lockedInTxn,
+      runQuery: tx.query,
+    });
+
+    let feeAmountBasePosted = null;
+    if (feeTxnId) {
+      let lockedFeeTxn = await findCashTransactionById({
+        tenantId,
+        transactionId: feeTxnId,
+        runQuery: tx.query,
+        forUpdate: true,
+      });
+      if (!lockedFeeTxn) {
+        throw badRequest("Exchange fee transaction is missing");
+      }
+
+      const feePostedJournalEntryId = parsePositiveInt(lockedFeeTxn.posted_journal_entry_id);
+      if (asUpper(lockedFeeTxn.status) !== "POSTED") {
+        assertCashTransactionReadyForPosting(lockedFeeTxn, "Exchange fee transaction");
+        const feePosting = await createAndPostCashJournalTx(tx, {
+          tenantId,
+          userId,
+          legalEntityId,
+          cashTxn: lockedFeeTxn,
+          req,
+        });
+        const directFeeJournalEntryId = parsePositiveInt(feePosting.journalEntryId);
+        if (!directFeeJournalEntryId) {
+          throw badRequest("Failed to post exchange fee transaction");
+        }
+        await postCashTransaction({
+          tenantId,
+          transactionId: feeTxnId,
+          userId,
+          postedJournalEntryId: directFeeJournalEntryId,
+          overrideCashControl: false,
+          overrideReason: null,
+          runQuery: tx.query,
+        });
+        lockedFeeTxn = await findCashTransactionById({
+          tenantId,
+          transactionId: feeTxnId,
+          runQuery: tx.query,
+        });
+      } else if (!feePostedJournalEntryId) {
+        throw badRequest("Exchange fee transaction is POSTED without posted_journal_entry_id");
+      }
+
+      await applyCashFxPositionForPostedTransactionTx({
+        tenantId,
+        cashTransactionId: feeTxnId,
+        cashTransactionRow: lockedFeeTxn,
+        runQuery: tx.query,
+      });
+      feeAmountBasePosted = normalizePositiveAmount(
+        lockedFeeTxn.amount_base,
+        "exchangeFee.posted.amountBase"
+      );
+    }
+
+    lockedOutTxn = await findCashTransactionById({
+      tenantId,
+      transactionId: outTxnId,
+      runQuery: tx.query,
+    });
+    lockedInTxn = await findCashTransactionById({
+      tenantId,
+      transactionId: inTxnId,
+      runQuery: tx.query,
+    });
+
+    const outAmountBase = normalizePositiveAmount(
+      lockedOutTxn.amount_base,
+      "exchangeOut.posted.amountBase"
+    );
+    const inAmountBasePosted = normalizePositiveAmount(
+      lockedInTxn.amount_base,
+      "exchangeIn.posted.amountBase"
+    );
+    if (!amountsEqual(outAmountBase, inAmountBasePosted)) {
+      throw badRequest("Direct exchange source/target base effects must net cleanly");
+    }
+
+    const exchangeOutFxLotSummary = await getCashFxLotMovementSummaryByTransaction({
+      tenantId,
+      cashTransactionId: outTxnId,
+      runQuery: tx.query,
+    });
+    const realizedFxBase = roundAmount(exchangeOutFxLotSummary?.realizedFxBase || 0);
+
+    await tx.query(
+      `UPDATE cash_exchange_batches
+       SET
+         source_amount_base = ?,
+         target_amount_base = ?,
+         realized_fx_base = ?,
+         fee_amount_txn = ?,
+         fee_amount_base = ?,
+         exchange_out_cash_transaction_id = ?,
+         exchange_in_cash_transaction_id = ?,
+         fee_cash_transaction_id = ?,
+         status = ?,
+         posted_by_user_id = ?,
+         posted_at = UTC_TIMESTAMP(),
+         fx_rate = ?,
+         fx_rate_source = ?,
+         fx_rate_date = ?,
+         provider_ref = ?,
+         spread_reference_rate = ?,
+         spread_rate_delta = ?,
+         spread_amount_base = ?
+       WHERE tenant_id = ?
+         AND id = ?`,
+      [
+        outAmountBase,
+        inAmountBasePosted,
+        realizedFxBase,
+        feeAmountTxn,
+        feeAmountBasePosted,
+        outTxnId,
+        inTxnId,
+        feeTxnId,
+        EXCHANGE_STATUS_POSTED,
+        userId,
+        effectiveFxRate,
+        effectiveFxRateSource,
+        effectiveFxRateDate,
+        providerRef,
+        spreadReferenceRate,
+        spreadRateDelta,
+        spreadAmountBase,
+        tenantId,
+        exchangeBatchId,
+      ]
+    );
+  });
+
+  const saved = await findExchangeBatchById({
+    tenantId,
+    exchangeBatchId,
+  });
+  if (!saved) {
+    throw badRequest("Cash exchange batch not found after posting");
+  }
+  const transactions = await getBatchTransactions(saved);
+  return {
+    batch: mapExchangeBatchRow(saved),
+    ...transactions,
+    fxLot: await buildExchangeBatchFxLotSummary(tenantId, transactions),
+    idempotentReplay: false,
+  };
+}
+
+async function reverseDirectExchangeBatch({
+  req,
+  tenantId,
+  userId,
+  exchangeBatchId,
+  legalEntityId,
+  outTxnId,
+  inTxnId,
+  reverseReason,
+}) {
+  const result = await withTransaction(async (tx) => {
+    const originalOutTxn = await findCashTransactionById({
+      tenantId,
+      transactionId: outTxnId,
+      runQuery: tx.query,
+      forUpdate: true,
+    });
+    const originalInTxn = await findCashTransactionById({
+      tenantId,
+      transactionId: inTxnId,
+      runQuery: tx.query,
+      forUpdate: true,
+    });
+    if (!originalOutTxn || !originalInTxn) {
+      throw badRequest("Cash exchange batch is missing linked posted transactions");
+    }
+
+    const outStatus = asUpper(originalOutTxn.status);
+    const inStatus = asUpper(originalInTxn.status);
+    if (
+      outStatus !== "POSTED" &&
+      !(outStatus === "REVERSED" && parsePositiveInt(originalOutTxn.posted_journal_entry_id))
+    ) {
+      throw badRequest("Exchange out transaction must be POSTED before reversal");
+    }
+    if (
+      inStatus !== "POSTED" &&
+      !(inStatus === "REVERSED" && parsePositiveInt(originalInTxn.posted_journal_entry_id))
+    ) {
+      throw badRequest("Exchange in transaction must be POSTED before reversal");
+    }
+
+    let reversalOutTxn = await createDirectExchangeReversalTransactionTx({
+      tx,
+      tenantId,
+      userId,
+      originalTransaction: originalOutTxn,
+      reverseReason,
+    });
+    let reversalInTxn = await createDirectExchangeReversalTransactionTx({
+      tx,
+      tenantId,
+      userId,
+      originalTransaction: originalInTxn,
+      reverseReason,
+    });
+    if (!reversalOutTxn || !reversalInTxn) {
+      throw badRequest("Failed to create exchange reversal transactions");
+    }
+
+    let reversalJournalEntryId = resolveSharedCashJournalEntryId(
+      reversalOutTxn,
+      reversalInTxn,
+      "Direct exchange reversal transactions"
+    );
+    if (!reversalJournalEntryId) {
+      assertCashTransactionReadyForPosting(reversalOutTxn, "Exchange out reversal transaction");
+      assertCashTransactionReadyForPosting(reversalInTxn, "Exchange in reversal transaction");
+
+      const reversalPosting = await createAndPostCashJournalTx(tx, {
+        tenantId,
+        userId,
+        legalEntityId,
+        cashTxn: reversalOutTxn,
+        req,
+        journalLinesOverride: buildDirectExchangeReversalJournalLines({
+          exchangeBatchId,
+          sourceTransaction: originalOutTxn,
+          targetTransaction: originalInTxn,
+          reverseReason,
+        }),
+        descriptionOverride: `Reversal of cash exchange ${exchangeBatchId}: ${reverseReason}`.slice(
+          0,
+          255
+        ),
+        referenceNoOverride: originalOutTxn.reference_no || `EXCH-${exchangeBatchId}`,
+      });
+      reversalJournalEntryId = parsePositiveInt(reversalPosting.journalEntryId);
+      if (!reversalJournalEntryId) {
+        throw badRequest("Failed to post direct exchange reversal journal");
+      }
+
+      await upsertJournalSourceLinkTx(tx, {
+        tenantId,
+        legalEntityId,
+        journalEntryId: reversalJournalEntryId,
+        sourceRefType: "CASH_TRANSACTION",
+        sourceRefId: parsePositiveInt(reversalInTxn.id),
+      });
+
+      await postCashTransaction({
+        tenantId,
+        transactionId: parsePositiveInt(reversalOutTxn.id),
+        userId,
+        postedJournalEntryId: reversalJournalEntryId,
+        overrideCashControl: false,
+        overrideReason: null,
+        runQuery: tx.query,
+      });
+      await postCashTransaction({
+        tenantId,
+        transactionId: parsePositiveInt(reversalInTxn.id),
+        userId,
+        postedJournalEntryId: reversalJournalEntryId,
+        overrideCashControl: false,
+        overrideReason: null,
+        runQuery: tx.query,
+      });
+
+      reversalOutTxn = await findCashTransactionById({
+        tenantId,
+        transactionId: parsePositiveInt(reversalOutTxn.id),
+        runQuery: tx.query,
+      });
+      reversalInTxn = await findCashTransactionById({
+        tenantId,
+        transactionId: parsePositiveInt(reversalInTxn.id),
+        runQuery: tx.query,
+      });
+    }
+
+    await applyCashFxPositionForPostedTransactionTx({
+      tenantId,
+      cashTransactionId: parsePositiveInt(reversalOutTxn.id),
+      cashTransactionRow: reversalOutTxn,
+      runQuery: tx.query,
+    });
+    await applyCashFxPositionForPostedTransactionTx({
+      tenantId,
+      cashTransactionId: parsePositiveInt(reversalInTxn.id),
+      cashTransactionRow: reversalInTxn,
+      runQuery: tx.query,
+    });
+
+    if (outStatus !== "REVERSED") {
+      await markCashTransactionAsReversed({
+        tenantId,
+        transactionId: outTxnId,
+        userId,
+        runQuery: tx.query,
+      });
+    }
+    if (inStatus !== "REVERSED") {
+      await markCashTransactionAsReversed({
+        tenantId,
+        transactionId: inTxnId,
+        userId,
+        runQuery: tx.query,
+      });
+    }
+
+    const reversalOutFxLotSummary = await getCashFxLotMovementSummaryByTransaction({
+      tenantId,
+      cashTransactionId: parsePositiveInt(reversalOutTxn.id),
+      runQuery: tx.query,
+    });
+
+    return {
+      reversalOutTxnId: parsePositiveInt(reversalOutTxn.id),
+      reversalInTxnId: parsePositiveInt(reversalInTxn.id),
+      reversalRealizedFxBase: roundAmount(reversalOutFxLotSummary?.realizedFxBase || 0),
+    };
+  });
+
+  return result;
+}
+
 function assertExchangeScopeAccess(req, row, assertScopeAccess, label = "exchangeBatchId") {
   assertScopeAccess(req, "legal_entity", row.legal_entity_id, label);
   const sourceOuId = parsePositiveInt(row.source_operating_unit_id);
@@ -358,6 +1342,9 @@ function assertBatchRequestFingerprint(batchRow, payload) {
   if (!batchRow) {
     return;
   }
+  const samePostingMode =
+    normalizeExchangePostingMode(batchRow.posting_mode) ===
+    normalizeExchangePostingMode(payload.postingMode);
   const sameTargetRegister =
     parsePositiveInt(batchRow.target_cash_register_id) ===
     parsePositiveInt(payload.targetRegisterId);
@@ -386,6 +1373,7 @@ function assertBatchRequestFingerprint(batchRow, payload) {
   );
   const sameProviderRef = normalizeText(batchRow.provider_ref, 120) === normalizeText(payload.providerRef, 120);
   if (
+    !samePostingMode ||
     !sameTargetRegister ||
     !sameClearingAccount ||
     !sameFeeAccount ||
@@ -604,6 +1592,7 @@ export async function createCashExchangeBatch({
   payload,
   assertScopeAccess,
 }) {
+  const postingMode = normalizeExchangePostingMode(payload.postingMode);
   const sourceAmountTxn = normalizePositiveAmount(payload.sourceAmountTxn, "sourceAmountTxn");
   const targetAmountTxn = normalizePositiveAmount(payload.targetAmountTxn, "targetAmountTxn");
   const feeAmountTxn = normalizeOptionalPositiveAmount(payload.feeAmountTxn, "feeAmountTxn");
@@ -694,25 +1683,39 @@ export async function createCashExchangeBatch({
       "Source and target register currencies are the same; use cash transit transfer for same-currency movement"
     );
   }
+  if (
+    postingMode === EXCHANGE_POSTING_MODE_DIRECT &&
+    parsePositiveInt(payload.clearingAccountId)
+  ) {
+    throw badRequest("clearingAccountId must be empty when postingMode is DIRECT");
+  }
 
-  const resolvedClearingAccountId = await resolveCashPurposeAccountId({
-    tenantId: payload.tenantId,
-    legalEntityId,
-    purposeCode: CASH_PURPOSE_CODES.EXCHANGE_CLEARING,
-    providedAccountId: payload.clearingAccountId,
-    fieldLabel: "clearingAccountId",
-  });
+  const resolvedClearingAccountId =
+    postingMode === EXCHANGE_POSTING_MODE_CLEARING
+      ? await resolveCashPurposeAccountId({
+          tenantId: payload.tenantId,
+          legalEntityId,
+          purposeCode: CASH_PURPOSE_CODES.EXCHANGE_CLEARING,
+          providedAccountId: payload.clearingAccountId,
+          fieldLabel: "clearingAccountId",
+        })
+      : null;
   const effectivePayload = {
     ...payload,
+    postingMode,
     clearingAccountId: resolvedClearingAccountId,
   };
-  const hasExplicitClearingAccount = Boolean(parsePositiveInt(payload.clearingAccountId));
+  const hasExplicitClearingAccount =
+    postingMode === EXCHANGE_POSTING_MODE_CLEARING &&
+    Boolean(parsePositiveInt(payload.clearingAccountId));
 
-  await assertAccountBelongsToTenant(
-    effectivePayload.tenantId,
-    effectivePayload.clearingAccountId,
-    "clearingAccountId"
-  );
+  if (postingMode === EXCHANGE_POSTING_MODE_CLEARING) {
+    await assertAccountBelongsToTenant(
+      effectivePayload.tenantId,
+      effectivePayload.clearingAccountId,
+      "clearingAccountId"
+    );
+  }
   if (feeAmountTxn && !parsePositiveInt(payload.feeAccountId)) {
     throw badRequest("feeAccountId is required when feeAmountTxn is provided");
   }
@@ -732,8 +1735,11 @@ export async function createCashExchangeBatch({
     idempotencyKey: effectivePayload.idempotencyKey,
   });
   if (replayByIdempotency) {
+    const replayPostingMode = normalizeExchangePostingMode(replayByIdempotency.posting_mode);
     const replayFingerprintPayload =
-      !hasExplicitClearingAccount && parsePositiveInt(replayByIdempotency.clearing_account_id)
+      replayPostingMode === EXCHANGE_POSTING_MODE_CLEARING &&
+      !hasExplicitClearingAccount &&
+      parsePositiveInt(replayByIdempotency.clearing_account_id)
         ? {
             ...effectivePayload,
             clearingAccountId: parsePositiveInt(replayByIdempotency.clearing_account_id),
@@ -760,8 +1766,11 @@ export async function createCashExchangeBatch({
     integrationEventUid,
   });
   if (replayByEvent) {
+    const replayPostingMode = normalizeExchangePostingMode(replayByEvent.posting_mode);
     const replayFingerprintPayload =
-      !hasExplicitClearingAccount && parsePositiveInt(replayByEvent.clearing_account_id)
+      replayPostingMode === EXCHANGE_POSTING_MODE_CLEARING &&
+      !hasExplicitClearingAccount &&
+      parsePositiveInt(replayByEvent.clearing_account_id)
         ? {
             ...effectivePayload,
             clearingAccountId: parsePositiveInt(replayByEvent.clearing_account_id),
@@ -808,6 +1817,7 @@ export async function createCashExchangeBatch({
          fee_amount_txn,
          fee_amount_base,
          clearing_account_id,
+         posting_mode,
          fee_account_id,
          fx_rate,
          fx_rate_source,
@@ -823,7 +1833,7 @@ export async function createCashExchangeBatch({
          source_entity_type,
          note,
          created_by_user_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'CASH', 'cash_exchange_batch', ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'CASH', 'cash_exchange_batch', ?, ?)`,
       [
         effectivePayload.tenantId,
         sourceRegister.legal_entity_id,
@@ -836,6 +1846,7 @@ export async function createCashExchangeBatch({
         feeAmountTxn,
         feeAmountBaseInput,
         effectivePayload.clearingAccountId,
+        effectivePayload.postingMode,
         parsePositiveInt(effectivePayload.feeAccountId) || null,
         effectiveFxRate,
         effectiveFxRateSource,
@@ -870,6 +1881,37 @@ export async function createCashExchangeBatch({
   const exchangeBatchId = parsePositiveInt(draftBatch.id);
   if (!exchangeBatchId) {
     throw badRequest("Cash exchange batch id is invalid");
+  }
+
+  if (postingMode === EXCHANGE_POSTING_MODE_DIRECT) {
+    return postDirectExchangeBatch({
+      req,
+      assertScopeAccess,
+      exchangeBatchId,
+      tenantId: effectivePayload.tenantId,
+      userId: effectivePayload.userId,
+      legalEntityId,
+      sourceRegister,
+      targetRegister,
+      sourceCashSessionId: effectivePayload.sourceCashSessionId,
+      targetCashSessionId: effectivePayload.targetCashSessionId,
+      txnDatetime,
+      bookDate,
+      sourceAmountTxn,
+      targetAmountTxn,
+      feeAmountTxn,
+      feeAmountBaseInput,
+      feeAccountId: parsePositiveInt(effectivePayload.feeAccountId) || null,
+      effectiveFxRate,
+      effectiveFxRateSource,
+      effectiveFxRateDate,
+      providerRef,
+      spreadReferenceRate,
+      spreadRateDelta,
+      spreadAmountBase,
+      description: effectivePayload.description || null,
+      referenceNo: effectivePayload.referenceNo || null,
+    });
   }
 
   const outTxnCreate = await createCashTransaction({
@@ -1203,9 +2245,13 @@ export async function postCashExchangeBatchById({
 
   const sourceRegisterId = parsePositiveInt(batch.source_cash_register_id);
   const targetRegisterId = parsePositiveInt(batch.target_cash_register_id);
+  const postingMode = normalizeExchangePostingMode(batch.posting_mode);
   const clearingAccountId = parsePositiveInt(batch.clearing_account_id);
   const idempotencyKey = normalizeText(batch.idempotency_key, 100);
-  if (!sourceRegisterId || !targetRegisterId || !clearingAccountId || !idempotencyKey) {
+  if (!sourceRegisterId || !targetRegisterId || !idempotencyKey) {
+    throw badRequest("Draft cash exchange batch is missing required metadata");
+  }
+  if (postingMode === EXCHANGE_POSTING_MODE_CLEARING && !clearingAccountId) {
     throw badRequest("Draft cash exchange batch is missing required metadata");
   }
 
@@ -1220,29 +2266,6 @@ export async function postCashExchangeBatchById({
     parsePositiveInt(payload.sourceCashSessionId) || sourceExistingSessionId || null;
   const targetCashSessionId =
     parsePositiveInt(payload.targetCashSessionId) || targetExistingSessionId || null;
-
-  const toDateOnly = (value) => {
-    if (value === undefined || value === null || value === "") {
-      return null;
-    }
-    const parsed = new Date(value);
-    if (!Number.isNaN(parsed.getTime())) {
-      return parsed.toISOString().slice(0, 10);
-    }
-    const normalized = String(value).trim();
-    return /^\d{4}-\d{2}-\d{2}$/.test(normalized) ? normalized : null;
-  };
-  const toDateTimeSql = (value) => {
-    if (value === undefined || value === null || value === "") {
-      return null;
-    }
-    const parsed = new Date(value);
-    if (!Number.isNaN(parsed.getTime())) {
-      return parsed.toISOString().slice(0, 19).replace("T", " ");
-    }
-    const normalized = String(value).trim();
-    return normalized.length >= 19 ? normalized.replace("T", " ").slice(0, 19) : null;
-  };
 
   const defaultBookDateFromOut = toDateOnly(existingTransactions.exchangeOutTransaction?.book_date);
   const defaultBookDateFromBatch = toDateOnly(batch.created_at);
@@ -1265,6 +2288,7 @@ export async function postCashExchangeBatchById({
   const replayPayload = {
     tenantId: payload.tenantId,
     userId: payload.userId,
+    postingMode,
     sourceRegisterId,
     targetRegisterId,
     sourceCashSessionId,
@@ -1309,6 +2333,65 @@ export async function postCashExchangeBatchById({
     idempotencyKey,
   };
 
+  if (postingMode === EXCHANGE_POSTING_MODE_DIRECT) {
+    const sourceRegister = await findCashRegisterById({
+      tenantId: payload.tenantId,
+      registerId: sourceRegisterId,
+    });
+    const targetRegister = await findCashRegisterById({
+      tenantId: payload.tenantId,
+      registerId: targetRegisterId,
+    });
+    if (!sourceRegister || !targetRegister) {
+      throw badRequest("Draft cash exchange batch references missing registers");
+    }
+
+    return postDirectExchangeBatch({
+      req,
+      assertScopeAccess,
+      exchangeBatchId: payload.exchangeBatchId,
+      tenantId: payload.tenantId,
+      userId: payload.userId,
+      legalEntityId: parsePositiveInt(batch.legal_entity_id),
+      sourceRegister,
+      targetRegister,
+      sourceCashSessionId,
+      targetCashSessionId,
+      txnDatetime,
+      bookDate,
+      sourceAmountTxn: Number(batch.source_amount_txn),
+      targetAmountTxn: Number(batch.target_amount_txn),
+      feeAmountTxn:
+        batch.fee_amount_txn === null || batch.fee_amount_txn === undefined
+          ? null
+          : Number(batch.fee_amount_txn),
+      feeAmountBaseInput:
+        batch.fee_amount_base === null || batch.fee_amount_base === undefined
+          ? null
+          : Number(batch.fee_amount_base),
+      feeAccountId: parsePositiveInt(batch.fee_account_id) || null,
+      effectiveFxRate:
+        batch.fx_rate === null || batch.fx_rate === undefined ? null : Number(batch.fx_rate),
+      effectiveFxRateSource: normalizeText(batch.fx_rate_source, 40),
+      effectiveFxRateDate: toDateOnly(batch.fx_rate_date),
+      providerRef: normalizeText(batch.provider_ref, 120),
+      spreadReferenceRate:
+        batch.spread_reference_rate === null || batch.spread_reference_rate === undefined
+          ? null
+          : Number(batch.spread_reference_rate),
+      spreadRateDelta:
+        batch.spread_rate_delta === null || batch.spread_rate_delta === undefined
+          ? null
+          : Number(batch.spread_rate_delta),
+      spreadAmountBase:
+        batch.spread_amount_base === null || batch.spread_amount_base === undefined
+          ? null
+          : Number(batch.spread_amount_base),
+      description: normalizeText(existingTransactions.exchangeOutTransaction?.description, 500),
+      referenceNo: normalizeText(existingTransactions.exchangeOutTransaction?.reference_no, 100),
+    });
+  }
+
   return createCashExchangeBatch({
     req,
     payload: replayPayload,
@@ -1348,6 +2431,82 @@ export async function reverseCashExchangeBatchById({
   const feeTxnId = parsePositiveInt(batch.fee_cash_transaction_id);
   if (!outTxnId || !inTxnId) {
     throw badRequest("Cash exchange batch is missing linked posted transactions");
+  }
+
+  const postingMode = normalizeExchangePostingMode(batch.posting_mode);
+  if (postingMode === EXCHANGE_POSTING_MODE_DIRECT) {
+    const directReverse = await reverseDirectExchangeBatch({
+      req,
+      tenantId: payload.tenantId,
+      userId: payload.userId,
+      exchangeBatchId: payload.exchangeBatchId,
+      legalEntityId: parsePositiveInt(batch.legal_entity_id),
+      outTxnId,
+      inTxnId,
+      reverseReason: payload.reverseReason,
+    });
+
+    let feeReverse = null;
+    if (feeTxnId) {
+      feeReverse = await reverseCashTransactionById({
+        req,
+        payload: {
+          tenantId: payload.tenantId,
+          userId: payload.userId,
+          transactionId: feeTxnId,
+          reverseReason: payload.reverseReason,
+        },
+        assertScopeAccess,
+      });
+    }
+
+    const reversalFeeTxnId = parsePositiveInt(feeReverse?.reversal?.id);
+    if (feeTxnId && !reversalFeeTxnId) {
+      throw badRequest("Failed to create exchange fee reversal transaction");
+    }
+
+    await withTransaction(async (tx) => {
+      await tx.query(
+        `UPDATE cash_exchange_batches
+         SET
+           status = ?,
+           reversal_out_cash_transaction_id = ?,
+           reversal_in_cash_transaction_id = ?,
+           reversal_fee_cash_transaction_id = ?,
+           reversal_realized_fx_base = ?,
+           reversed_by_user_id = ?,
+           reversed_at = UTC_TIMESTAMP(),
+           reverse_reason = ?
+         WHERE tenant_id = ?
+           AND id = ?`,
+        [
+          EXCHANGE_STATUS_REVERSED,
+          directReverse.reversalOutTxnId,
+          directReverse.reversalInTxnId,
+          reversalFeeTxnId,
+          directReverse.reversalRealizedFxBase,
+          payload.userId,
+          payload.reverseReason,
+          payload.tenantId,
+          payload.exchangeBatchId,
+        ]
+      );
+    });
+
+    const saved = await findExchangeBatchById({
+      tenantId: payload.tenantId,
+      exchangeBatchId: payload.exchangeBatchId,
+    });
+    if (!saved) {
+      throw badRequest("Cash exchange batch not found after reversal");
+    }
+    const transactions = await getBatchTransactions(saved);
+    return {
+      batch: mapExchangeBatchRow(saved),
+      ...transactions,
+      fxLot: await buildExchangeBatchFxLotSummary(payload.tenantId, transactions),
+      idempotentReplay: false,
+    };
   }
 
   const outReverse = await reverseCashTransactionById({

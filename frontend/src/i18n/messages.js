@@ -1474,6 +1474,98 @@ export const messages = {
           "Bu istek daha once islenmis; mevcut kayit geri donduruldu.",
       },
     },
+    cashExchanges: {
+      sections: {
+        exchangeBatches: "Kur Degisim Batch'leri",
+        createExchangeBatch: "Kur Degisim Batch'i Olustur",
+        selectedBatchDetail: "Secili Batch Detayi",
+      },
+      postingModes: {
+        clearing: "CLEARING (108.xx / asamali)",
+        direct: "DIRECT (kasadan kasaya)",
+      },
+      form: {
+        postingMode: "Posting Modu",
+        directModeHelp:
+          "Direct mod, hedef kasayi kaynak kasa ile 108 clearing olmadan kaydeder.",
+        clearingModeHelp:
+          "108.xx transit veya kontrollu tamamlama gerektiginde clearing modu kullanin.",
+        clearingAccount: "Clearing Hesabi",
+        directModeNoClearing: "Direct modda clearing hesabi kullanilmaz.",
+        clearingAccountHelp:
+          "GL setup icinde CASH_EXCHANGE_CLEARING tanimliysa buraya otomatik gelir. Ipucu: asamali kur degisimi clearing'i icin 108.xx uygundur.",
+        commissionAmountTxn: "Komisyon Tutari (Islem)",
+        commissionAmountBase: "Komisyon Tutari (Baz)",
+        commissionAccount: "Komisyon Hesabi",
+        selectCommissionAccount: "Secin",
+        commissionHelp:
+          "Komisyon opsiyoneldir. Girildiginde komisyon hesabi zorunludur.",
+        spreadReferenceRate: "Spread Referans Kuru",
+        spreadRateDelta: "Spread Kur Farki",
+        spreadAmountBase: "Spread Tutari (Baz)",
+        searchClearingAccount: "Clearing hesap kodu/adi ara",
+        selectSourceRegisterFirst: "Once kaynak register secin",
+        noClearingAccounts: "Clearing hesabi bulunamadi.",
+      },
+      values: {
+        clearingUsage: "Clearing",
+        noClearing: "Clearing yok",
+        commissionAmount: "Komisyon",
+        spreadAmount: "Spread",
+        commissionAccount: "Komisyon Hesabi",
+        noCommissionAccount: "Komisyon hesabi yok",
+      },
+      detail: {
+        selectPrompt:
+          "Bagli islemleri incelemek icin tablodan bir batch numarasi secin.",
+        loading: "Batch detayi yukleniyor...",
+        postingMode: "Posting Modu",
+        clearingUsage: "Clearing Kullanimi",
+        commissionAccount: "Komisyon Hesabi",
+        commissionAmount: "Komisyon Tutari",
+        spreadAmount: "Spread Tutari",
+        sourceRegister: "Kaynak Register",
+        targetRegister: "Hedef Register",
+        exchangeTransactions: "Degisim Islemleri",
+        sourceTxn: "Cikis",
+        targetTxn: "Giris",
+        rawJson: "Ham JSON",
+      },
+      actions: {
+        saving: "Kaydediliyor...",
+        create: "Kur Degisimi Olustur",
+      },
+      table: {
+        loading: "Kur degisim batch'leri yukleniyor...",
+        empty: "Kur degisim batch'i bulunamadi.",
+      },
+      errors: {
+        missingCreatePermission: "Eksik yetki: cash.txn.create",
+        registersRequired: "sourceRegisterId ve targetRegisterId zorunludur.",
+        registersMustDiffer: "sourceRegisterId ve targetRegisterId farkli olmali.",
+        amountsRequired:
+          "sourceAmountTxn ve targetAmountTxn pozitif sayi olmalidir.",
+        idempotencyRequired: "idempotencyKey zorunludur.",
+        fxRateInvalid: "FX rate pozitif sayi olmali.",
+        commissionAmountTxnInvalid:
+          "Komisyon tutari (islem) pozitif sayi olmali.",
+        commissionAmountBaseInvalid:
+          "Komisyon tutari (baz) pozitif sayi olmali.",
+        spreadReferenceRateInvalid:
+          "Spread referans kuru pozitif sayi olmali.",
+        spreadAmountBaseInvalid: "Spread tutari (baz) pozitif sayi olmali.",
+        spreadRateDeltaInvalid: "Spread kur farki sayisal olmali.",
+        commissionAccountRequired:
+          "Komisyon tutari girildiginde komisyon hesabi zorunludur.",
+        commissionAmountRequired:
+          "Komisyon hesabi girildiginde komisyon tutari zorunludur.",
+        create: "Kur degisimi olusturulamadi.",
+      },
+      messages: {
+        savedWithId: "Kur degisim batch #{{id}} basariyla kaydedildi.",
+        saved: "Kur degisim batch basariyla kaydedildi.",
+      },
+    },
     cashExceptions: {
       title: "Kasa Istisnalari",
       subtitle:
@@ -3151,6 +3243,100 @@ export const messages = {
         applyCompleted: "Cari apply completed.",
         idempotentReplay:
           "This request was already processed; existing transaction returned.",
+      },
+    },
+    cashExchanges: {
+      sections: {
+        exchangeBatches: "Exchange Batches",
+        createExchangeBatch: "Create Exchange Batch",
+        selectedBatchDetail: "Selected Batch Detail",
+      },
+      postingModes: {
+        clearing: "CLEARING (108.xx / staged)",
+        direct: "DIRECT (safe-to-safe)",
+      },
+      form: {
+        postingMode: "Posting Mode",
+        directModeHelp:
+          "Direct mode posts target safe vs source safe without 108 clearing.",
+        clearingModeHelp:
+          "Use clearing mode when the exchange needs 108.xx transit or controlled completion.",
+        clearingAccount: "Clearing Account",
+        directModeNoClearing: "No clearing account is used in direct mode.",
+        clearingAccountHelp:
+          "If CASH_EXCHANGE_CLEARING is configured in GL setup it prefills here. Tip: 108.xx under 108 is a good fit for staged exchange clearing.",
+        commissionAmountTxn: "Commission Amount (Txn)",
+        commissionAmountBase: "Commission Amount (Base)",
+        commissionAccount: "Commission Account",
+        selectCommissionAccount: "Select",
+        commissionHelp:
+          "Commission is optional. When entered, a commission account is required.",
+        spreadReferenceRate: "Spread Reference Rate",
+        spreadRateDelta: "Spread Rate Delta",
+        spreadAmountBase: "Spread Amount (Base)",
+        searchClearingAccount: "Search clearing account code/name",
+        selectSourceRegisterFirst: "Select source register first",
+        noClearingAccounts: "No clearing accounts found.",
+      },
+      values: {
+        clearingUsage: "Clearing",
+        noClearing: "No clearing",
+        commissionAmount: "Commission",
+        spreadAmount: "Spread",
+        commissionAccount: "Commission Account",
+        noCommissionAccount: "No commission account",
+      },
+      detail: {
+        selectPrompt:
+          "Select a batch number from the table to inspect linked transactions.",
+        loading: "Loading batch detail...",
+        postingMode: "Posting Mode",
+        clearingUsage: "Clearing Usage",
+        commissionAccount: "Commission Account",
+        commissionAmount: "Commission Amount",
+        spreadAmount: "Spread Amount",
+        sourceRegister: "Source Register",
+        targetRegister: "Target Register",
+        exchangeTransactions: "Exchange Transactions",
+        sourceTxn: "Out",
+        targetTxn: "In",
+        rawJson: "Raw JSON",
+      },
+      actions: {
+        saving: "Saving...",
+        create: "Create Exchange",
+      },
+      table: {
+        loading: "Loading exchange batches...",
+        empty: "No exchange batches found.",
+      },
+      errors: {
+        missingCreatePermission: "Missing permission: cash.txn.create",
+        registersRequired: "sourceRegisterId and targetRegisterId are required.",
+        registersMustDiffer:
+          "sourceRegisterId and targetRegisterId must be different.",
+        amountsRequired:
+          "sourceAmountTxn and targetAmountTxn must be positive numbers.",
+        idempotencyRequired: "idempotencyKey is required.",
+        fxRateInvalid: "FX rate must be a positive number.",
+        commissionAmountTxnInvalid:
+          "Commission amount (txn) must be a positive number.",
+        commissionAmountBaseInvalid:
+          "Commission amount (base) must be a positive number.",
+        spreadReferenceRateInvalid:
+          "Spread reference rate must be a positive number.",
+        spreadAmountBaseInvalid:
+          "Spread amount (base) must be a positive number.",
+        spreadRateDeltaInvalid: "Spread rate delta must be numeric.",
+        commissionAccountRequired:
+          "Commission account is required when commission amount is provided.",
+        commissionAmountRequired:
+          "Commission amount is required when commission account is provided.",
+        create: "Cash exchange could not be created.",
+      },
+      messages: {
+        savedWithId: "Cash exchange batch #{{id}} saved successfully.",
+        saved: "Cash exchange batch saved successfully.",
       },
     },
     cashExceptions: {

@@ -1540,6 +1540,10 @@ export default function GlSetupPage({ mode = "full" } = {}) {
     "cariPosting",
     selectedManualLegalEntityId
   );
+  const selectedManualCashReadiness = getModuleRow(
+    "cashClearing",
+    selectedManualLegalEntityId
+  );
   const selectedManualShareholderReadiness = getModuleRow(
     "shareholderCommitment",
     selectedManualLegalEntityId
@@ -3630,8 +3634,8 @@ export default function GlSetupPage({ mode = "full" } = {}) {
         ) : isManualCashModule ? (
           <p className="mb-2 text-xs text-slate-500">
             {l(
-              "CASH rows are optional defaults for FX exchange and cross-unit transit clearing. If left blank, users can still pick accounts manually.",
-              "CASH satirlari kur degisimi ve unitler arasi nakit transferi icin opsiyonel varsayilanlardir. Bos birakilirsa kullanici hesaplari manuel secmeye devam edebilir."
+              "CASH rows define standard defaults for FX exchange and cross-unit transit clearing. Users can still override per transaction, but readiness tracks missing defaults here.",
+              "CASH satirlari kur degisimi ve unitler arasi nakit transferi icin standart varsayilanlari tanimlar. Kullanici islem bazinda override edebilir, ancak hazirlik ekrani eksik varsayilanlari burada takip eder."
             )}
           </p>
         ) : (
@@ -3672,6 +3676,8 @@ export default function GlSetupPage({ mode = "full" } = {}) {
                 const readinessStatus =
                   isManualRevrecModule
                     ? getRevrecPurposeMappingStatus(row)
+                    : isManualCashModule
+                    ? getPurposeReadinessStatus(selectedManualCashReadiness, purposeCode)
                     : isRequiredPurpose
                     ? getPurposeReadinessStatus(selectedManualCariReadiness, purposeCode)
                     : {

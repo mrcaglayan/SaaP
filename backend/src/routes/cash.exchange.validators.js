@@ -12,6 +12,7 @@ import {
 } from "./cash.validators.common.js";
 
 const EXCHANGE_STATUSES = ["DRAFT", "POSTED", "REVERSED", "CANCELLED"];
+const EXCHANGE_POSTING_MODES = ["CLEARING", "DIRECT"];
 
 function parseOptionalPositiveDecimal(value, label) {
   if (value === undefined || value === null || value === "") {
@@ -76,6 +77,11 @@ export function parseCashExchangeReadFilters(req) {
 export function parseCashExchangeCreateInput(req) {
   const tenantId = requireTenantId(req);
   const userId = requireUserId(req);
+  const postingMode = normalizeEnum(
+    String(req.body?.postingMode || "CLEARING").trim().toUpperCase(),
+    "postingMode",
+    EXCHANGE_POSTING_MODES
+  );
   const sourceRegisterId = optionalPositiveInt(req.body?.sourceRegisterId, "sourceRegisterId");
   const targetRegisterId = optionalPositiveInt(req.body?.targetRegisterId, "targetRegisterId");
   const sourceCashSessionId = optionalPositiveInt(
@@ -137,6 +143,9 @@ export function parseCashExchangeCreateInput(req) {
   if (sourceRegisterId === targetRegisterId) {
     throw badRequest("sourceRegisterId and targetRegisterId must be different");
   }
+  if (postingMode === "DIRECT" && clearingAccountId) {
+    throw badRequest("clearingAccountId must be empty when postingMode is DIRECT");
+  }
   if (feeAmountTxn && !feeAccountId) {
     throw badRequest("feeAccountId is required when feeAmountTxn is provided");
   }
@@ -150,6 +159,7 @@ export function parseCashExchangeCreateInput(req) {
   return {
     tenantId,
     userId,
+    postingMode,
     sourceRegisterId,
     targetRegisterId,
     sourceCashSessionId,

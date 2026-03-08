@@ -406,6 +406,38 @@ async function buildLegalEntityFixture({
   });
   await createAccount({
     coaId,
+    code: "646",
+    name: "FX Gain",
+    accountType: "REVENUE",
+    normalSide: "CREDIT",
+    allowPosting: true,
+  });
+  await createAccount({
+    coaId,
+    code: "656",
+    name: "FX Loss",
+    accountType: "EXPENSE",
+    normalSide: "DEBIT",
+    allowPosting: true,
+  });
+  await createAccount({
+    coaId,
+    code: "108.01",
+    name: "FX Clearing",
+    accountType: "ASSET",
+    normalSide: "DEBIT",
+    allowPosting: true,
+  });
+  await createAccount({
+    coaId,
+    code: "108.02",
+    name: "Cash Transit Clearing",
+    accountType: "ASSET",
+    normalSide: "DEBIT",
+    allowPosting: true,
+  });
+  await createAccount({
+    coaId,
     code: "500",
     name: "Capital Parent",
     accountType: "EQUITY",
@@ -428,6 +460,10 @@ async function buildLegalEntityFixture({
       arOffset: await resolveAccountIdByCode(coaId, "600"),
       apControl: await resolveAccountIdByCode(coaId, "320"),
       apOffset: await resolveAccountIdByCode(coaId, "632"),
+      fxGain: await resolveAccountIdByCode(coaId, "646"),
+      fxLoss: await resolveAccountIdByCode(coaId, "656"),
+      exchangeClearing: await resolveAccountIdByCode(coaId, "108.01"),
+      transitClearing: await resolveAccountIdByCode(coaId, "108.02"),
       shareholderCapitalParent: await resolveAccountIdByCode(coaId, "500"),
       shareholderCommitmentParent: await resolveAccountIdByCode(coaId, "501"),
     },
@@ -440,6 +476,16 @@ function buildAllPurposeRows(accounts) {
     { purposeCode: "CARI_AR_OFFSET", accountId: accounts.arOffset },
     { purposeCode: "CARI_AP_CONTROL", accountId: accounts.apControl },
     { purposeCode: "CARI_AP_OFFSET", accountId: accounts.apOffset },
+    { purposeCode: "CARI_SETTLEMENT_FX_GAIN", accountId: accounts.fxGain },
+    { purposeCode: "CARI_SETTLEMENT_FX_LOSS", accountId: accounts.fxLoss },
+    {
+      purposeCode: "CASH_EXCHANGE_CLEARING",
+      accountId: accounts.exchangeClearing,
+    },
+    {
+      purposeCode: "CASH_TRANSIT_CLEARING",
+      accountId: accounts.transitClearing,
+    },
     {
       purposeCode: "SHAREHOLDER_CAPITAL_CREDIT_PARENT",
       accountId: accounts.shareholderCapitalParent,
@@ -550,16 +596,12 @@ async function main() {
       "shareholderCommitment",
       manualFixture.legalEntityId
     );
+    const initialManualCash = findModuleRow(
+      initialManualReadiness.json,
+      "cashClearing",
+      manualFixture.legalEntityId
+    );
     assert(initialManualCari, "Initial manual cari readiness row must exist");
-    assert(
-      initialManualCari.ready === false,
-      "Initial manual cari readiness must be false"
-    );
-    assertMissingPurposeCodes(
-      initialManualCari,
-      ["CARI_AR_CONTROL", "CARI_AR_OFFSET", "CARI_AP_CONTROL", "CARI_AP_OFFSET"],
-      "Initial manual cari"
-    );
     assert(
       initialManualShareholder,
       "Initial manual shareholder readiness row must exist"
@@ -576,9 +618,22 @@ async function main() {
       ],
       "Initial manual shareholder"
     );
+    assert(initialManualCash, "Initial manual cash readiness row must exist");
+    assert(
+      initialManualCash.ready === false,
+      "Initial manual cash readiness must be false"
+    );
+    assertMissingPurposeCodes(
+      initialManualCash,
+      ["CASH_EXCHANGE_CLEARING", "CASH_TRANSIT_CLEARING"],
+      "Initial manual cash"
+    );
 
     const manualCariRows = buildAllPurposeRows(manualFixture.accounts).filter((row) =>
       row.purposeCode.startsWith("CARI_")
+    );
+    const manualCashRows = buildAllPurposeRows(manualFixture.accounts).filter((row) =>
+      row.purposeCode.startsWith("CASH_")
     );
     for (const row of manualCariRows) {
       // eslint-disable-next-line no-await-in-loop
@@ -588,6 +643,21 @@ async function main() {
         path: "/api/v1/gl/journal-purpose-accounts",
         body: {
           legalEntityId: manualFixture.legalEntityId,
+          purposeCode: row.purposeCode,
+          accountId: row.accountId,
+        },
+        expectedStatus: 201,
+      });
+    }
+    for (const row of manualCashRows) {
+      // eslint-disable-next-line no-await-in-loop
+      await apiRequest({
+        token: adminToken,
+        method: "POST",
+        path: "/api/v1/gl/journal-purpose-accounts",
+        body: {
+          legalEntityId: manualFixture.legalEntityId,
+          moduleKey: "CASH",
           purposeCode: row.purposeCode,
           accountId: row.accountId,
         },
@@ -624,6 +694,11 @@ async function main() {
       "shareholderCommitment",
       manualFixture.legalEntityId
     );
+    const manualReadyCash = findModuleRow(
+      manualReady.json,
+      "cashClearing",
+      manualFixture.legalEntityId
+    );
     assert(
       manualReadyCari?.ready === true,
       "Manual path should make cari posting readiness true"
@@ -647,6 +722,18 @@ async function main() {
     assert(
       (manualReadyShareholder?.invalidMappings || []).length === 0,
       "Manual shareholder readiness should have no invalid mappings"
+    );
+    assert(
+      manualReadyCash?.ready === true,
+      "Manual path should make cash clearing readiness true"
+    );
+    assert(
+      (manualReadyCash?.missingPurposeCodes || []).length === 0,
+      "Manual cash readiness should have no missing purpose codes"
+    );
+    assert(
+      (manualReadyCash?.invalidMappings || []).length === 0,
+      "Manual cash readiness should have no invalid mappings"
     );
 
     const packApply = await apiRequest({
@@ -678,6 +765,11 @@ async function main() {
       "shareholderCommitment",
       packFixture.legalEntityId
     );
+    const packReadyCash = findModuleRow(
+      packReady.json,
+      "cashClearing",
+      packFixture.legalEntityId
+    );
     assert(
       packReadyCari?.ready === true,
       "Pack path should make cari posting readiness true"
@@ -685,6 +777,10 @@ async function main() {
     assert(
       packReadyShareholder?.ready === true,
       "Pack path should make shareholder readiness true"
+    );
+    assert(
+      packReadyCash?.ready === true,
+      "Pack path should make cash clearing readiness true"
     );
 
     const allEntitiesReadiness = await apiRequest({
@@ -694,11 +790,16 @@ async function main() {
       expectedStatus: 200,
     });
     const allCariRows = allEntitiesReadiness.json?.modules?.cariPosting?.byLegalEntity || [];
+    const allCashRows = allEntitiesReadiness.json?.modules?.cashClearing?.byLegalEntity || [];
     const allShareholderRows =
       allEntitiesReadiness.json?.modules?.shareholderCommitment?.byLegalEntity || [];
     assert(
       allCariRows.length === 2,
       "Global module readiness should include both legal entities for cari module"
+    );
+    assert(
+      allCashRows.length === 2,
+      "Global module readiness should include both legal entities for cash module"
     );
     assert(
       allShareholderRows.length === 2,
@@ -707,6 +808,10 @@ async function main() {
     assert(
       allCariRows.every((row) => row.ready === true),
       "Global cari module rows should all be ready after setup"
+    );
+    assert(
+      allCashRows.every((row) => row.ready === true),
+      "Global cash module rows should all be ready after setup"
     );
     assert(
       allShareholderRows.every((row) => row.ready === true),

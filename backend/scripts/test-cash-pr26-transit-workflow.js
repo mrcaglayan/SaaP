@@ -430,6 +430,19 @@ async function bootstrapTransitContext(token, identity) {
     currencyCode,
   });
 
+  await apiRequest({
+    token,
+    method: "POST",
+    path: "/api/v1/gl/journal-purpose-accounts",
+    body: {
+      legalEntityId,
+      moduleKey: "CASH",
+      purposeCode: "CASH_TRANSIT_CLEARING",
+      accountId: transitAccountId,
+    },
+    expectedStatus: 201,
+  });
+
   return {
     currencyCode,
     legalEntityId,
@@ -540,7 +553,6 @@ async function main() {
         tenantId: identity.tenantId,
         registerId: setup.sourceRegisterId,
         targetRegisterId: setup.targetRegisterId,
-        transitAccountId: setup.transitAccountId,
         amount: "110.50",
         currencyCode: setup.currencyCode,
         idempotencyKey: `PR26-TRANSIT-INIT-${identity.stamp}`,
@@ -661,7 +673,6 @@ async function main() {
         tenantId: identity.tenantId,
         registerId: setup.sourceRegisterId,
         targetRegisterId: setup.targetRegisterId,
-        transitAccountId: setup.transitAccountId,
         amount: "40.00",
         currencyCode: setup.currencyCode,
         idempotencyKey: `PR26-TRANSIT-CANCEL-${identity.stamp}`,

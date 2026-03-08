@@ -13,11 +13,14 @@ import { listLegalEntities } from "../../api/orgAdmin.js";
 import { useAuth } from "../../auth/useAuth.js";
 import Combobox from "../../components/Combobox.jsx";
 import MoneyText from "../../components/MoneyText.jsx";
+import { useI18n } from "../../i18n/useI18n.js";
 import { resolveContextBaseCurrencyCode } from "../../utils/money.js";
 import CashControlModeBanner from "./CashControlModeBanner.jsx";
 
 const EXCHANGE_STATUSES = ["DRAFT", "POSTED", "REVERSED", "CANCELLED"];
 const CASH_EXCHANGE_CLEARING_PURPOSE_CODE = "CASH_EXCHANGE_CLEARING";
+const EXCHANGE_POSTING_MODE_CLEARING = "CLEARING";
+const EXCHANGE_POSTING_MODE_DIRECT = "DIRECT";
 
 const INITIAL_FILTERS = {
   legalEntityId: "",
@@ -54,6 +57,7 @@ function buildCreateDefaultForm() {
     targetRegisterId: "",
     sourceCashSessionId: "",
     targetCashSessionId: "",
+    postingMode: EXCHANGE_POSTING_MODE_CLEARING,
     clearingAccountId: "",
     sourceAmountTxn: "",
     targetAmountTxn: "",
@@ -91,6 +95,16 @@ function toOptionalPositiveNumber(value) {
 
 function toUpper(value) {
   return String(value || "").trim().toUpperCase();
+}
+
+function normalizeExchangePostingMode(value) {
+  return toUpper(value) === EXCHANGE_POSTING_MODE_DIRECT
+    ? EXCHANGE_POSTING_MODE_DIRECT
+    : EXCHANGE_POSTING_MODE_CLEARING;
+}
+
+function isDirectExchangePostingMode(value) {
+  return normalizeExchangePostingMode(value) === EXCHANGE_POSTING_MODE_DIRECT;
 }
 
 function formatDateTime(value) {
@@ -261,6 +275,15 @@ function buildAccountLookupOptions(rows) {
   }));
 }
 
+function formatAccountSummary(code, name, id) {
+  const parts = [String(code || "").trim(), String(name || "").trim()].filter(Boolean);
+  if (parts.length > 0) {
+    return parts.join(" - ");
+  }
+  const resolvedId = toPositiveInt(id);
+  return resolvedId ? `#${resolvedId}` : "-";
+}
+
 function buildPurposeMappingMap(rows) {
   const byPurposeCode = {};
   for (const row of Array.isArray(rows) ? rows : []) {
@@ -378,6 +401,7 @@ function buildFxDisplay(row, mode) {
 
 export default function CashExchangesPage() {
   const { hasPermission } = useAuth();
+  const { t } = useI18n();
   const canRead = hasPermission("cash.txn.read");
   const canCreate = hasPermission("cash.txn.create");
   const canReverse = hasPermission("cash.txn.reverse");
@@ -424,6 +448,8 @@ export default function CashExchangesPage() {
   );
 
   const selectedCreateLegalEntityId = toPositiveInt(selectedSourceRegister?.legal_entity_id);
+  const createPostingMode = normalizeExchangePostingMode(createForm.postingMode);
+  const createIsDirectPostingMode = createPostingMode === EXCHANGE_POSTING_MODE_DIRECT;
 
   const legalEntityOptions = useMemo(() => {
     const map = new Map();
@@ -498,6 +524,19 @@ export default function CashExchangesPage() {
     () => buildAccountLookupOptions(clearingAccountPickerRows),
     [clearingAccountPickerRows]
   );
+  const selectedFeeAccountId = toPositiveInt(createForm.feeAccountId);
+  const selectedFeeAccountOption = useMemo(
+    () => resolveSelectedAccountOption(accountOptions, accountRows, selectedFeeAccountId),
+    [accountOptions, accountRows, selectedFeeAccountId]
+  );
+  const selectedFeeAccountLegalEntityId = toPositiveInt(
+    selectedFeeAccountOption?.legal_entity_id ?? selectedFeeAccountOption?.legalEntityId
+  );
+  const detailBatch = selectedBatchDetail?.batch || null;
+  const detailBaseCurrencyCode = resolveContextBaseCurrencyCode({
+    legalEntityRows,
+    legalEntityId: detailBatch?.legalEntityId || detailBatch?.legal_entity_id,
+  });
 
   const parentAccountOptions = useMemo(() => {
     const filtered = accountRows.filter((row) => {
@@ -813,6 +852,25 @@ export default function CashExchangesPage() {
   ]);
 
   useEffect(() => {
+    if (!selectedCreateLegalEntityId) {
+      return;
+    }
+    setCreateForm((prev) => {
+      const currentFeeAccountId = toPositiveInt(prev.feeAccountId);
+      if (
+        !currentFeeAccountId ||
+        selectedFeeAccountLegalEntityId === selectedCreateLegalEntityId
+      ) {
+        return prev;
+      }
+      return {
+        ...prev,
+        feeAccountId: "",
+      };
+    });
+  }, [selectedCreateLegalEntityId, selectedFeeAccountLegalEntityId]);
+
+  useEffect(() => {
     if (!showInlineClearingChildCreate) {
       return;
     }
@@ -868,6 +926,42 @@ export default function CashExchangesPage() {
     clearingSearchCodeCandidate,
     parentAccountOptions,
   ]);
+
+  const getPostingModeLabel = useCallback(
+    (value) =>
+      normalizeExchangePostingMode(value) === EXCHANGE_POSTING_MODE_DIRECT
+        ? t("cashExchanges.postingModes.direct", "DIRECT (safe-to-safe)")
+        : t("cashExchanges.postingModes.clearing", "CLEARING (108.xx / staged)"),
+    [t]
+  );
+
+  const getClearingUsageLabel = useCallback(
+    (row) => {
+      if (isDirectExchangePostingMode(row?.postingMode || row?.posting_mode)) {
+        return t("cashExchanges.values.noClearing", "No clearing");
+      }
+      return formatAccountSummary(
+        row?.clearingAccountCode || row?.clearing_account_code,
+        row?.clearingAccountName || row?.clearing_account_name,
+        row?.clearingAccountId || row?.clearing_account_id
+      );
+    },
+    [t]
+  );
+
+  const getFeeAccountLabel = useCallback(
+    (row) => {
+      const summary = formatAccountSummary(
+        row?.feeAccountCode || row?.fee_account_code,
+        row?.feeAccountName || row?.fee_account_name,
+        row?.feeAccountId || row?.fee_account_id
+      );
+      return summary === "-"
+        ? t("cashExchanges.values.noCommissionAccount", "No commission account")
+        : summary;
+    },
+    [t]
+  );
 
   async function handleCreateClearingChildAccount() {
     if (!canUpsertAccounts) {
@@ -1012,34 +1106,137 @@ export default function CashExchangesPage() {
   async function handleCreateExchange(event) {
     event.preventDefault();
     if (!canCreate) {
-      setError("Missing permission: cash.txn.create");
+      setError(t("cashExchanges.errors.missingCreatePermission", "Missing permission: cash.txn.create"));
       setErrorRequestId(null);
       return;
     }
 
     const sourceRegisterId = toPositiveInt(createForm.sourceRegisterId);
     const targetRegisterId = toPositiveInt(createForm.targetRegisterId);
+    const postingMode = normalizeExchangePostingMode(createForm.postingMode);
     const clearingAccountId = toPositiveInt(createForm.clearingAccountId);
     const sourceAmountTxn = toOptionalPositiveNumber(createForm.sourceAmountTxn);
     const targetAmountTxn = toOptionalPositiveNumber(createForm.targetAmountTxn);
+    const fxRate = toOptionalPositiveNumber(createForm.fxRate);
+    const feeAmountTxn = toOptionalPositiveNumber(createForm.feeAmountTxn);
+    const feeAmountBase = toOptionalPositiveNumber(createForm.feeAmountBase);
+    const feeAccountId = toPositiveInt(createForm.feeAccountId);
+    const spreadReferenceRate = toOptionalPositiveNumber(createForm.spreadReferenceRate);
+    const spreadAmountBase = toOptionalPositiveNumber(createForm.spreadAmountBase);
+    const spreadRateDelta =
+      createForm.spreadRateDelta === undefined ||
+      createForm.spreadRateDelta === null ||
+      createForm.spreadRateDelta === ""
+        ? undefined
+        : Number(createForm.spreadRateDelta);
 
     if (!sourceRegisterId || !targetRegisterId) {
-      setError("sourceRegisterId and targetRegisterId are required.");
+      setError(
+        t(
+          "cashExchanges.errors.registersRequired",
+          "sourceRegisterId and targetRegisterId are required."
+        )
+      );
       setErrorRequestId(null);
       return;
     }
     if (sourceRegisterId === targetRegisterId) {
-      setError("sourceRegisterId and targetRegisterId must be different.");
+      setError(
+        t(
+          "cashExchanges.errors.registersMustDiffer",
+          "sourceRegisterId and targetRegisterId must be different."
+        )
+      );
       setErrorRequestId(null);
       return;
     }
     if (!sourceAmountTxn || Number.isNaN(sourceAmountTxn) || !targetAmountTxn || Number.isNaN(targetAmountTxn)) {
-      setError("sourceAmountTxn and targetAmountTxn must be positive numbers.");
+      setError(
+        t(
+          "cashExchanges.errors.amountsRequired",
+          "sourceAmountTxn and targetAmountTxn must be positive numbers."
+        )
+      );
       setErrorRequestId(null);
       return;
     }
     if (!String(createForm.idempotencyKey || "").trim()) {
-      setError("idempotencyKey is required.");
+      setError(t("cashExchanges.errors.idempotencyRequired", "idempotencyKey is required."));
+      setErrorRequestId(null);
+      return;
+    }
+    if (fxRate !== null && Number.isNaN(fxRate)) {
+      setError(t("cashExchanges.errors.fxRateInvalid", "FX rate must be a positive number."));
+      setErrorRequestId(null);
+      return;
+    }
+    if (feeAmountTxn !== null && Number.isNaN(feeAmountTxn)) {
+      setError(
+        t(
+          "cashExchanges.errors.commissionAmountTxnInvalid",
+          "Commission amount (txn) must be a positive number."
+        )
+      );
+      setErrorRequestId(null);
+      return;
+    }
+    if (feeAmountBase !== null && Number.isNaN(feeAmountBase)) {
+      setError(
+        t(
+          "cashExchanges.errors.commissionAmountBaseInvalid",
+          "Commission amount (base) must be a positive number."
+        )
+      );
+      setErrorRequestId(null);
+      return;
+    }
+    if (spreadReferenceRate !== null && Number.isNaN(spreadReferenceRate)) {
+      setError(
+        t(
+          "cashExchanges.errors.spreadReferenceRateInvalid",
+          "Spread reference rate must be a positive number."
+        )
+      );
+      setErrorRequestId(null);
+      return;
+    }
+    if (spreadAmountBase !== null && Number.isNaN(spreadAmountBase)) {
+      setError(
+        t(
+          "cashExchanges.errors.spreadAmountBaseInvalid",
+          "Spread amount (base) must be a positive number."
+        )
+      );
+      setErrorRequestId(null);
+      return;
+    }
+    if (spreadRateDelta !== undefined && !Number.isFinite(spreadRateDelta)) {
+      setError(
+        t(
+          "cashExchanges.errors.spreadRateDeltaInvalid",
+          "Spread rate delta must be numeric."
+        )
+      );
+      setErrorRequestId(null);
+      return;
+    }
+    if (feeAmountTxn && !feeAccountId) {
+      setError(
+        t(
+          "cashExchanges.errors.commissionAccountRequired",
+          "Commission account is required when commission amount is provided."
+        )
+      );
+      setErrorRequestId(null);
+      return;
+    }
+    if (!feeAmountTxn && feeAccountId) {
+      setError(
+        t(
+          "cashExchanges.errors.commissionAmountRequired",
+          "Commission amount is required when commission account is provided."
+        )
+      );
       setErrorRequestId(null);
       return;
     }
@@ -1047,28 +1244,27 @@ export default function CashExchangesPage() {
     const payload = {
       sourceRegisterId,
       targetRegisterId,
+      postingMode,
       sourceCashSessionId: toPositiveInt(createForm.sourceCashSessionId) || undefined,
       targetCashSessionId: toPositiveInt(createForm.targetCashSessionId) || undefined,
-      clearingAccountId: clearingAccountId || undefined,
+      clearingAccountId:
+        postingMode === EXCHANGE_POSTING_MODE_CLEARING
+          ? clearingAccountId || undefined
+          : undefined,
       txnDatetime: createForm.txnDatetime || undefined,
       bookDate: createForm.bookDate || undefined,
       sourceAmountTxn,
       targetAmountTxn,
-      fxRate: toOptionalPositiveNumber(createForm.fxRate) || undefined,
+      fxRate: fxRate || undefined,
       fxRateSource: String(createForm.fxRateSource || "").trim() || undefined,
       fxRateDate: createForm.fxRateDate || undefined,
       providerRef: String(createForm.providerRef || "").trim() || undefined,
-      feeAmountTxn: toOptionalPositiveNumber(createForm.feeAmountTxn) || undefined,
-      feeAmountBase: toOptionalPositiveNumber(createForm.feeAmountBase) || undefined,
-      feeAccountId: toPositiveInt(createForm.feeAccountId) || undefined,
-      spreadReferenceRate: toOptionalPositiveNumber(createForm.spreadReferenceRate) || undefined,
-      spreadRateDelta:
-        createForm.spreadRateDelta === undefined ||
-        createForm.spreadRateDelta === null ||
-        createForm.spreadRateDelta === ""
-          ? undefined
-          : Number(createForm.spreadRateDelta),
-      spreadAmountBase: toOptionalPositiveNumber(createForm.spreadAmountBase) || undefined,
+      feeAmountTxn: feeAmountTxn || undefined,
+      feeAmountBase: feeAmountBase || undefined,
+      feeAccountId: feeAccountId || undefined,
+      spreadReferenceRate: spreadReferenceRate || undefined,
+      spreadRateDelta,
+      spreadAmountBase: spreadAmountBase || undefined,
       description: String(createForm.description || "").trim() || undefined,
       referenceNo: String(createForm.referenceNo || "").trim() || undefined,
       note: String(createForm.note || "").trim() || undefined,
@@ -1085,8 +1281,12 @@ export default function CashExchangesPage() {
       const batchId = toPositiveInt(response?.batch?.id);
       setMessage(
         batchId
-          ? `Cash exchange batch #${batchId} saved successfully.`
-          : "Cash exchange batch saved successfully."
+          ? t(
+              "cashExchanges.messages.savedWithId",
+              "Cash exchange batch #{{id}} saved successfully.",
+              { id: batchId }
+            )
+          : t("cashExchanges.messages.saved", "Cash exchange batch saved successfully.")
       );
       await loadData(filters);
       if (batchId) {
@@ -1096,10 +1296,16 @@ export default function CashExchangesPage() {
         ...buildCreateDefaultForm(),
         sourceRegisterId: prev.sourceRegisterId || "",
         targetRegisterId: prev.targetRegisterId || "",
+        postingMode: prev.postingMode || EXCHANGE_POSTING_MODE_CLEARING,
         clearingAccountId: prev.clearingAccountId || "",
       }));
     } catch (err) {
-      setError(extractErrorMessage(err, "Cash exchange could not be created."));
+      setError(
+        extractErrorMessage(
+          err,
+          t("cashExchanges.errors.create", "Cash exchange could not be created.")
+        )
+      );
       setErrorRequestId(extractRequestId(err));
     } finally {
       setCreateSubmitting(false);
@@ -1357,7 +1563,9 @@ export default function CashExchangesPage() {
 
       <section className="rounded-xl border border-slate-200 bg-white p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 className="text-lg font-semibold text-slate-900">Exchange Batches</h2>
+          <h2 className="text-lg font-semibold text-slate-900">
+            {t("cashExchanges.sections.exchangeBatches", "Exchange Batches")}
+          </h2>
           <div className="flex items-center gap-2 text-xs">
             <span className="font-semibold uppercase tracking-wide text-slate-600">FX View</span>
             <button
@@ -1429,6 +1637,9 @@ export default function CashExchangesPage() {
                       >
                         #{row?.id || "-"}
                       </button>
+                      <div className="mt-1 text-xs text-slate-600">
+                        {getPostingModeLabel(row?.postingMode || row?.posting_mode)}
+                      </div>
                     </td>
                     <td className="px-3 py-2">
                       <div>
@@ -1465,21 +1676,29 @@ export default function CashExchangesPage() {
                       <div className="text-xs text-slate-600">
                         {row?.fxRateSource || "-"} / {row?.fxRateDate || "-"}
                       </div>
+                      <div className="text-xs text-slate-600">
+                        {t("cashExchanges.values.clearingUsage", "Clearing")}:{" "}
+                        {getClearingUsageLabel(row)}
+                      </div>
                     </td>
                     <td className="px-3 py-2">
                       <div>
-                        Fee:{" "}
+                        {t("cashExchanges.values.commissionAmount", "Commission")}:{" "}
                         <MoneyText
                           amount={row?.feeAmountBase}
                           currencyCode={rowBaseCurrencyCode}
                         />
                       </div>
                       <div>
-                        Spread:{" "}
+                        {t("cashExchanges.values.spreadAmount", "Spread")}:{" "}
                         <MoneyText
                           amount={row?.spreadAmountBase}
                           currencyCode={rowBaseCurrencyCode}
                         />
+                      </div>
+                      <div className="text-xs text-slate-600">
+                        {t("cashExchanges.values.commissionAccount", "Commission Account")}:{" "}
+                        {getFeeAccountLabel(row)}
                       </div>
                     </td>
                     <td className="px-3 py-2">
@@ -1570,7 +1789,9 @@ export default function CashExchangesPage() {
               {exchangeRows.length === 0 ? (
                 <tr>
                   <td colSpan={8} className="px-3 py-3 text-slate-500">
-                    {loading ? "Loading exchange batches..." : "No exchange batches found."}
+                    {loading
+                      ? t("cashExchanges.table.loading", "Loading exchange batches...")
+                      : t("cashExchanges.table.empty", "No exchange batches found.")}
                   </td>
                 </tr>
               ) : null}
@@ -1580,10 +1801,15 @@ export default function CashExchangesPage() {
       </section>
 
       <section className="rounded-xl border border-slate-200 bg-white p-4">
-        <h2 className="text-lg font-semibold text-slate-900">Create Exchange Batch</h2>
+        <h2 className="text-lg font-semibold text-slate-900">
+          {t("cashExchanges.sections.createExchangeBatch", "Create Exchange Batch")}
+        </h2>
         {!canCreate ? (
           <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-            Missing permission: `cash.txn.create`
+            {t(
+              "cashExchanges.errors.missingCreatePermission",
+              "Missing permission: cash.txn.create"
+            )}
           </div>
         ) : null}
         <form className="mt-4 grid gap-3 md:grid-cols-4" onSubmit={handleCreateExchange}>
@@ -1625,18 +1851,91 @@ export default function CashExchangesPage() {
             </select>
           </label>
 
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate-600 md:col-span-4">
+            <span>{t("cashExchanges.form.postingMode", "Posting Mode")}</span>
+            <div className="mt-2 inline-flex flex-wrap rounded-md border border-slate-300 bg-white p-1">
+              <button
+                type="button"
+                className={`rounded px-3 py-1.5 text-xs font-semibold ${
+                  createPostingMode === EXCHANGE_POSTING_MODE_CLEARING
+                    ? "bg-cyan-600 text-white"
+                    : "text-slate-700"
+                }`}
+                onClick={() =>
+                  setCreateForm((prev) => ({
+                    ...prev,
+                    postingMode: EXCHANGE_POSTING_MODE_CLEARING,
+                  }))
+                }
+                disabled={!canCreate || createSubmitting}
+              >
+                {t("cashExchanges.postingModes.clearing", "CLEARING (108.xx / staged)")}
+              </button>
+              <button
+                type="button"
+                className={`rounded px-3 py-1.5 text-xs font-semibold ${
+                  createPostingMode === EXCHANGE_POSTING_MODE_DIRECT
+                    ? "bg-cyan-600 text-white"
+                    : "text-slate-700"
+                }`}
+                onClick={() =>
+                  setCreateForm((prev) => ({
+                    ...prev,
+                    postingMode: EXCHANGE_POSTING_MODE_DIRECT,
+                  }))
+                }
+                disabled={!canCreate || createSubmitting}
+              >
+                {t("cashExchanges.postingModes.direct", "DIRECT (safe-to-safe)")}
+              </button>
+            </div>
+            <p className="mt-2 text-[11px] font-normal normal-case tracking-normal text-slate-500">
+              {createIsDirectPostingMode
+                ? t(
+                    "cashExchanges.form.directModeHelp",
+                    "Direct mode posts target safe vs source safe without 108 clearing."
+                  )
+                : t(
+                    "cashExchanges.form.clearingModeHelp",
+                    "Use staged clearing when the exchange needs 108.xx transit or controlled completion."
+                  )}
+            </p>
+          </div>
+
+          {createIsDirectPostingMode ? (
+            <div className="space-y-2 rounded-md border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600 md:col-span-2">
+              <div className="font-semibold uppercase tracking-wide text-slate-700">
+                {t("cashExchanges.form.clearingAccount", "Clearing Account")}
+              </div>
+              <p>
+                {t(
+                  "cashExchanges.form.directModeNoClearing",
+                  "No clearing account is used in direct mode."
+                )}
+              </p>
+            </div>
+          ) : (
           <div className="space-y-2 text-xs font-semibold uppercase tracking-wide text-slate-600 md:col-span-2">
-            <span>Clearing Account</span>
+            <span>{t("cashExchanges.form.clearingAccount", "Clearing Account")}</span>
             <Combobox
               value={createForm.clearingAccountId || null}
               options={clearingAccountLookupOptions}
               disabled={!canCreate || createSubmitting || !selectedCreateLegalEntityId}
               placeholder={
                 selectedCreateLegalEntityId
-                  ? "Search clearing account code/name"
-                  : "Select source register first"
+                  ? t(
+                      "cashExchanges.form.searchClearingAccount",
+                      "Search clearing account code/name"
+                    )
+                  : t(
+                      "cashExchanges.form.selectSourceRegisterFirst",
+                      "Select source register first"
+                    )
               }
-              noOptionsText="No clearing accounts found."
+              noOptionsText={t(
+                "cashExchanges.form.noClearingAccounts",
+                "No clearing accounts found."
+              )}
               onInputChange={(nextValue, meta) => {
                 const reason = String(meta?.reason || "").trim().toLowerCase();
                 if (reason === "input" || reason === "clear") {
@@ -1658,8 +1957,10 @@ export default function CashExchangesPage() {
               }}
             />
             <p className="text-[11px] font-normal normal-case tracking-normal text-slate-500">
-              If `CASH_EXCHANGE_CLEARING` is configured in GL setup it prefills here. Tip:
-              108.xx (under 108 - DIGER HAZIR DEGERLER) is a good fit for clearing.
+              {t(
+                "cashExchanges.form.clearingAccountHelp",
+                "If CASH_EXCHANGE_CLEARING is configured in GL setup it prefills here. Tip: 108.xx under 108 is a good fit for staged exchange clearing."
+              )}
             </p>
             {showInlineClearingChildCreate ? (
               <div className="space-y-2 rounded-md border border-cyan-200 bg-cyan-50 p-2">
@@ -1735,6 +2036,7 @@ export default function CashExchangesPage() {
               </div>
             ) : null}
           </div>
+          )}
 
           <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
             Book Date
@@ -1847,6 +2149,110 @@ export default function CashExchangesPage() {
           </label>
 
           <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+            {t("cashExchanges.form.commissionAmountTxn", "Commission Amount (Txn)")}
+            <input
+              type="number"
+              min="0"
+              step="0.000001"
+              className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+              value={createForm.feeAmountTxn}
+              onChange={(event) =>
+                setCreateForm((prev) => ({ ...prev, feeAmountTxn: event.target.value }))
+              }
+              disabled={!canCreate || createSubmitting}
+            />
+          </label>
+
+          <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+            {t("cashExchanges.form.commissionAmountBase", "Commission Amount (Base)")}
+            <input
+              type="number"
+              min="0"
+              step="0.000001"
+              className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+              value={createForm.feeAmountBase}
+              onChange={(event) =>
+                setCreateForm((prev) => ({ ...prev, feeAmountBase: event.target.value }))
+              }
+              disabled={!canCreate || createSubmitting}
+            />
+          </label>
+
+          <label className="text-xs font-semibold uppercase tracking-wide text-slate-600 md:col-span-2">
+            {t("cashExchanges.form.commissionAccount", "Commission Account")}
+            <select
+              className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+              value={createForm.feeAccountId}
+              onChange={(event) =>
+                setCreateForm((prev) => ({ ...prev, feeAccountId: event.target.value }))
+              }
+              disabled={!canCreate || createSubmitting || !selectedCreateLegalEntityId}
+            >
+              <option value="">
+                {t("cashExchanges.form.selectCommissionAccount", "Select")}
+              </option>
+              {accountOptions.map((row) => (
+                <option key={`cash-ex-create-fee-account-${row.id}`} value={row.id}>
+                  {formatAccountOptionLabel(row)}
+                </option>
+              ))}
+            </select>
+            <p className="mt-1 text-[11px] font-normal normal-case tracking-normal text-slate-500">
+              {t(
+                "cashExchanges.form.commissionHelp",
+                "Commission is optional. When entered, a commission account is required."
+              )}
+            </p>
+          </label>
+
+          <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+            {t("cashExchanges.form.spreadReferenceRate", "Spread Reference Rate")}
+            <input
+              type="number"
+              min="0"
+              step="0.0000000001"
+              className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+              value={createForm.spreadReferenceRate}
+              onChange={(event) =>
+                setCreateForm((prev) => ({
+                  ...prev,
+                  spreadReferenceRate: event.target.value,
+                }))
+              }
+              disabled={!canCreate || createSubmitting}
+            />
+          </label>
+
+          <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+            {t("cashExchanges.form.spreadRateDelta", "Spread Rate Delta")}
+            <input
+              type="number"
+              step="0.0000000001"
+              className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+              value={createForm.spreadRateDelta}
+              onChange={(event) =>
+                setCreateForm((prev) => ({ ...prev, spreadRateDelta: event.target.value }))
+              }
+              disabled={!canCreate || createSubmitting}
+            />
+          </label>
+
+          <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+            {t("cashExchanges.form.spreadAmountBase", "Spread Amount (Base)")}
+            <input
+              type="number"
+              min="0"
+              step="0.000001"
+              className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+              value={createForm.spreadAmountBase}
+              onChange={(event) =>
+                setCreateForm((prev) => ({ ...prev, spreadAmountBase: event.target.value }))
+              }
+              disabled={!canCreate || createSubmitting}
+            />
+          </label>
+
+          <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
             Reference No (optional)
             <input
               type="text"
@@ -1902,24 +2308,123 @@ export default function CashExchangesPage() {
               className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
               disabled={!canCreate || createSubmitting}
             >
-              {createSubmitting ? "Saving..." : "Create Exchange"}
+              {createSubmitting
+                ? t("cashExchanges.actions.saving", "Saving...")
+                : t("cashExchanges.actions.create", "Create Exchange")}
             </button>
           </div>
         </form>
       </section>
 
       <section className="rounded-xl border border-slate-200 bg-white p-4">
-        <h2 className="text-lg font-semibold text-slate-900">Selected Batch Detail</h2>
+        <h2 className="text-lg font-semibold text-slate-900">
+          {t("cashExchanges.sections.selectedBatchDetail", "Selected Batch Detail")}
+        </h2>
         {!selectedBatchId ? (
           <p className="mt-2 text-sm text-slate-600">
-            Select a batch number from the table to inspect linked transactions.
+            {t(
+              "cashExchanges.detail.selectPrompt",
+              "Select a batch number from the table to inspect linked transactions."
+            )}
           </p>
         ) : detailLoading ? (
-          <p className="mt-2 text-sm text-slate-600">Loading batch detail...</p>
+          <p className="mt-2 text-sm text-slate-600">
+            {t("cashExchanges.detail.loading", "Loading batch detail...")}
+          </p>
         ) : (
-          <pre className="mt-3 overflow-x-auto rounded-md bg-slate-900 p-3 text-xs text-slate-100">
+          <div className="mt-3 space-y-4">
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+              <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  {t("cashExchanges.detail.postingMode", "Posting Mode")}
+                </div>
+                <div className="mt-1 text-sm font-semibold text-slate-900">
+                  {getPostingModeLabel(detailBatch?.postingMode || detailBatch?.posting_mode)}
+                </div>
+              </div>
+              <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  {t("cashExchanges.detail.clearingUsage", "Clearing Usage")}
+                </div>
+                <div className="mt-1 text-sm font-semibold text-slate-900">
+                  {detailBatch ? getClearingUsageLabel(detailBatch) : "-"}
+                </div>
+              </div>
+              <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  {t("cashExchanges.detail.commissionAccount", "Commission Account")}
+                </div>
+                <div className="mt-1 text-sm font-semibold text-slate-900">
+                  {detailBatch ? getFeeAccountLabel(detailBatch) : "-"}
+                </div>
+              </div>
+              <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  {t("cashExchanges.detail.commissionAmount", "Commission Amount")}
+                </div>
+                <div className="mt-1 text-sm font-semibold text-slate-900">
+                  <MoneyText
+                    amount={detailBatch?.feeAmountBase}
+                    currencyCode={detailBaseCurrencyCode}
+                  />
+                </div>
+              </div>
+              <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  {t("cashExchanges.detail.spreadAmount", "Spread Amount")}
+                </div>
+                <div className="mt-1 text-sm font-semibold text-slate-900">
+                  <MoneyText
+                    amount={detailBatch?.spreadAmountBase}
+                    currencyCode={detailBaseCurrencyCode}
+                  />
+                </div>
+              </div>
+              <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  {t("cashExchanges.detail.sourceRegister", "Source Register")}
+                </div>
+                <div className="mt-1 text-sm font-semibold text-slate-900">
+                  {formatAccountSummary(
+                    detailBatch?.sourceRegisterCode,
+                    detailBatch?.sourceRegisterName,
+                    detailBatch?.sourceRegisterId
+                  )}
+                </div>
+              </div>
+              <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  {t("cashExchanges.detail.targetRegister", "Target Register")}
+                </div>
+                <div className="mt-1 text-sm font-semibold text-slate-900">
+                  {formatAccountSummary(
+                    detailBatch?.targetRegisterCode,
+                    detailBatch?.targetRegisterName,
+                    detailBatch?.targetRegisterId
+                  )}
+                </div>
+              </div>
+              <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  {t("cashExchanges.detail.exchangeTransactions", "Exchange Transactions")}
+                </div>
+                <div className="mt-1 text-sm font-semibold text-slate-900">
+                  {t("cashExchanges.detail.sourceTxn", "Out")}: #
+                  {selectedBatchDetail?.exchangeOutTransaction?.id || "-"} /{" "}
+                  {t("cashExchanges.detail.targetTxn", "In")}: #
+                  {selectedBatchDetail?.exchangeInTransaction?.id || "-"}
+                </div>
+              </div>
+            </div>
+            <details className="rounded-md border border-slate-200 bg-slate-50 p-3">
+              <summary className="cursor-pointer text-sm font-semibold text-slate-800">
+                {t("cashExchanges.detail.rawJson", "Raw JSON")}
+              </summary>
+              <pre className="mt-3 overflow-x-auto rounded-md bg-slate-900 p-3 text-xs text-slate-100">
 {JSON.stringify(selectedBatchDetail || {}, null, 2)}
-          </pre>
+              </pre>
+            </details>
+          </div>
         )}
       </section>
     </div>

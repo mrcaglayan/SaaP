@@ -1,6 +1,7 @@
 import { query } from "../db.js";
 import { badRequest, parsePositiveInt } from "../routes/_utils.js";
 import { autoRemapCariPurposeMappingsForLegalEntity } from "./cari.purpose-mapping-autofix.service.js";
+import { CASH_PURPOSE_CODES } from "./cash.purpose-mappings.service.js";
 
 const CARI_REQUIRED_PURPOSE_CODES = Object.freeze([
   "CARI_AR_CONTROL",
@@ -14,6 +15,11 @@ const CARI_REQUIRED_PURPOSE_CODES = Object.freeze([
 const SHAREHOLDER_REQUIRED_PURPOSE_CODES = Object.freeze([
   "SHAREHOLDER_CAPITAL_CREDIT_PARENT",
   "SHAREHOLDER_COMMITMENT_DEBIT_PARENT",
+]);
+
+const CASH_CLEARING_REQUIRED_PURPOSE_CODES = Object.freeze([
+  CASH_PURPOSE_CODES.EXCHANGE_CLEARING,
+  CASH_PURPOSE_CODES.TRANSIT_CLEARING,
 ]);
 
 const SHAREHOLDER_EXPECTED_NORMAL_SIDE = Object.freeze({
@@ -60,6 +66,23 @@ const SHAREHOLDER_DISTINCT_PAIRS = Object.freeze([
     right: "SHAREHOLDER_COMMITMENT_DEBIT_PARENT",
   }),
 ]);
+
+const CASH_CLEARING_DISTINCT_PAIRS = Object.freeze([
+  Object.freeze({
+    left: CASH_PURPOSE_CODES.EXCHANGE_CLEARING,
+    right: CASH_PURPOSE_CODES.TRANSIT_CLEARING,
+  }),
+]);
+
+const CASH_CLEARING_EXPECTED_ACCOUNT_TYPE = Object.freeze({
+  [CASH_PURPOSE_CODES.EXCHANGE_CLEARING]: "ASSET",
+  [CASH_PURPOSE_CODES.TRANSIT_CLEARING]: "ASSET",
+});
+
+const CASH_CLEARING_EXPECTED_NORMAL_SIDE = Object.freeze({
+  [CASH_PURPOSE_CODES.EXCHANGE_CLEARING]: "DEBIT",
+  [CASH_PURPOSE_CODES.TRANSIT_CLEARING]: "DEBIT",
+});
 
 const WORKFLOW_REQUIRED_PROCESS_TYPES = Object.freeze([
   "PERIOD_CLOSE",
@@ -859,6 +882,68 @@ function evaluateShareholderPurposeRow({
   return invalids;
 }
 
+function evaluateCashClearingPurposeRow({
+  tenantId,
+  legalEntityId,
+  purposeCode,
+  row,
+}) {
+  const invalids = evaluateCommonMappingValidity({
+    tenantId,
+    legalEntityId,
+    row,
+  }).map((invalid) => ({
+    purposeCode,
+    ...invalid,
+  }));
+
+  const accountExists = parsePositiveInt(row?.account_id);
+  const accountId = accountExists || parsePositiveInt(row?.mapped_account_id);
+  const accountCode = String(row?.account_code || "");
+  if (!row || !accountExists) {
+    return invalids;
+  }
+
+  if (!toDbBoolean(row?.allow_posting)) {
+    invalids.push({
+      purposeCode,
+      reason: "ACCOUNT_NOT_POSTABLE",
+      accountId: accountId || null,
+      accountCode: accountCode || null,
+    });
+  }
+
+  const expectedAccountType = CASH_CLEARING_EXPECTED_ACCOUNT_TYPE[purposeCode];
+  if (expectedAccountType && toUpper(row?.account_type) !== expectedAccountType) {
+    invalids.push({
+      purposeCode,
+      reason: "ACCOUNT_TYPE_MISMATCH",
+      accountId: accountId || null,
+      accountCode: accountCode || null,
+      details: {
+        expectedAccountType,
+        actualAccountType: toUpper(row?.account_type) || null,
+      },
+    });
+  }
+
+  const expectedNormalSide = CASH_CLEARING_EXPECTED_NORMAL_SIDE[purposeCode];
+  if (expectedNormalSide && toUpper(row?.normal_side) !== expectedNormalSide) {
+    invalids.push({
+      purposeCode,
+      reason: "ACCOUNT_NORMAL_SIDE_MISMATCH",
+      accountId: accountId || null,
+      accountCode: accountCode || null,
+      details: {
+        expectedNormalSide,
+        actualNormalSide: toUpper(row?.normal_side) || null,
+      },
+    });
+  }
+
+  return invalids;
+}
+
 function evaluateDistinctPurposePairs({
   purposeMap,
   distinctPairs,
@@ -1034,6 +1119,38 @@ export async function getShareholderCommitmentReadiness(
   };
 }
 
+export async function getCashClearingReadiness(
+  tenantId,
+  legalEntityId = null,
+  { runQuery = query } = {}
+) {
+  const legalEntityIds = await resolveTargetLegalEntityIds({
+    tenantId,
+    legalEntityId,
+    runQuery,
+  });
+  const purposeMapByLegalEntity = await loadPurposeMappingsByLegalEntity({
+    tenantId,
+    legalEntityIds,
+    requiredPurposeCodes: CASH_CLEARING_REQUIRED_PURPOSE_CODES,
+    runQuery,
+  });
+
+  const byLegalEntity = buildModuleReadinessByLegalEntity({
+    tenantId,
+    legalEntityIds,
+    requiredPurposeCodes: CASH_CLEARING_REQUIRED_PURPOSE_CODES,
+    purposeMapByLegalEntity,
+    distinctPairs: CASH_CLEARING_DISTINCT_PAIRS,
+    evaluatePurposeRow: evaluateCashClearingPurposeRow,
+  });
+
+  return {
+    moduleKey: "cashClearing",
+    byLegalEntity,
+  };
+}
+
 export async function getModuleReadiness(
   tenantId,
   legalEntityId = null,
@@ -1045,12 +1162,15 @@ export async function getModuleReadiness(
   }
 
   const normalizedLegalEntityId = parsePositiveInt(legalEntityId);
-  const [cariPosting, shareholderCommitment, closeConsolidationWorkflow] =
+  const [cariPosting, shareholderCommitment, cashClearing, closeConsolidationWorkflow] =
     await Promise.all([
     getCariPostingReadiness(normalizedTenantId, normalizedLegalEntityId, {
       runQuery,
     }),
     getShareholderCommitmentReadiness(normalizedTenantId, normalizedLegalEntityId, {
+      runQuery,
+    }),
+    getCashClearingReadiness(normalizedTenantId, normalizedLegalEntityId, {
       runQuery,
     }),
     getCloseConsolidationWorkflowReadiness(
@@ -1071,6 +1191,9 @@ export async function getModuleReadiness(
       },
       shareholderCommitment: {
         byLegalEntity: shareholderCommitment.byLegalEntity,
+      },
+      cashClearing: {
+        byLegalEntity: cashClearing.byLegalEntity,
       },
       closeConsolidationWorkflow: {
         byLegalEntity: closeConsolidationWorkflow.byLegalEntity,

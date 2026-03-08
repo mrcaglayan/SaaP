@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import {
   applyCariForCashTransaction,
@@ -15,6 +15,7 @@ import {
 import { listCariCounterparties } from "../../api/cariCounterparty.js";
 import { getCariOpenItemsReport } from "../../api/cariReports.js";
 import { listAccounts } from "../../api/glAdmin.js";
+import { listJournalPurposeAccounts } from "../../api/glPurposeMappings.js";
 import {
   createMeSavedView,
   deleteMeSavedView,
@@ -75,6 +76,7 @@ const SOURCE_DOC_TYPES = [
 const CARI_SETTLEMENT_LINKED_TXN_TYPES = new Set(["RECEIPT", "PAYOUT"]);
 const CASH_REGISTER_SETUP_PATH = "/app/kasa-tanimlari";
 const CASH_SESSION_SETUP_PATH = "/app/kasa-oturumlari";
+const CASH_TRANSIT_CLEARING_PURPOSE_CODE = "CASH_TRANSIT_CLEARING";
 
 const CASH_TRANSACTION_FILTER_CONTEXT_MAPPINGS = [
   { stateKey: "bookDateFrom", contextKey: "dateFrom" },
@@ -287,6 +289,18 @@ function todayIsoDate() {
 
 function formatAccountOptionLabel(account) {
   return `${account?.code || account?.id || "-"} - ${account?.name || "-"}`;
+}
+
+function buildPurposeMappingMap(rows) {
+  const byPurposeCode = {};
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const purposeCode = toUpper(row?.purposeCode || row?.purpose_code);
+    if (!purposeCode) {
+      continue;
+    }
+    byPurposeCode[purposeCode] = row;
+  }
+  return byPurposeCode;
 }
 
 function isTransitLikeAccount(account) {
@@ -860,6 +874,8 @@ export default function CashTransactionsPage() {
   const [selectedTemplateId, setSelectedTemplateId] = useState("");
   const [defaultTemplateHydrated, setDefaultTemplateHydrated] = useState(false);
   const [selectedPresetCode, setSelectedPresetCode] = useState("");
+  const [cashPurposeMappingsByPurpose, setCashPurposeMappingsByPurpose] = useState({});
+  const lastSuggestedCounterAccountIdRef = useRef(null);
 
   useWorkingContextDefaults(setFilters, CASH_TRANSACTION_FILTER_CONTEXT_MAPPINGS, [
     filters.bookDateFrom,
@@ -1025,6 +1041,21 @@ export default function CashTransactionsPage() {
     }
     return scopedAccountOptions.find((row) => toPositiveInt(row?.id) === accountId) || null;
   }, [scopedAccountOptions, form.counterAccountId]);
+  const selectedCounterAccountLegalEntityId = useMemo(
+    () =>
+      toPositiveInt(
+        selectedCounterAccountOption?.legal_entity_id ?? selectedCounterAccountOption?.legalEntityId
+      ),
+    [selectedCounterAccountOption]
+  );
+  const defaultTransitCounterAccountId = useMemo(
+    () =>
+      toPositiveInt(
+        cashPurposeMappingsByPurpose[CASH_TRANSIT_CLEARING_PURPOSE_CODE]?.accountId ||
+          cashPurposeMappingsByPurpose[CASH_TRANSIT_CLEARING_PURPOSE_CODE]?.account_id
+      ),
+    [cashPurposeMappingsByPurpose]
+  );
   const counterpartyPickerReady = canReadCariCards && toPositiveInt(selectedRegister?.legal_entity_id);
   const counterpartyFallbackHint = useMemo(() => {
     if (counterpartyPickerReady) {
@@ -1058,6 +1089,120 @@ export default function CashTransactionsPage() {
     sessionModeDisablesSession,
     sessionModeRequiresSession,
     t,
+  ]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadCashPurposeMappings() {
+      if (!selectedRegisterLegalEntityId) {
+        setCashPurposeMappingsByPurpose({});
+        return;
+      }
+      try {
+        const response = await listJournalPurposeAccounts({
+          legalEntityId: selectedRegisterLegalEntityId,
+          moduleKey: "CASH",
+        });
+        if (cancelled) {
+          return;
+        }
+        setCashPurposeMappingsByPurpose(buildPurposeMappingMap(response?.rows || []));
+      } catch {
+        if (!cancelled) {
+          setCashPurposeMappingsByPurpose({});
+        }
+      }
+    }
+
+    loadCashPurposeMappings();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedRegisterLegalEntityId]);
+
+  useEffect(() => {
+    const previousSuggestedCounterAccountId = toPositiveInt(
+      lastSuggestedCounterAccountIdRef.current
+    );
+    const nextSuggestedCounterAccountId = defaultTransitCounterAccountId;
+
+    if (!counterAccountIsTransfer) {
+      setForm((prev) => {
+        const currentCounterAccountId = toPositiveInt(prev.counterAccountId);
+        if (
+          previousSuggestedCounterAccountId &&
+          currentCounterAccountId === previousSuggestedCounterAccountId
+        ) {
+          return {
+            ...prev,
+            counterAccountId: "",
+          };
+        }
+        return prev;
+      });
+      lastSuggestedCounterAccountIdRef.current = null;
+      return;
+    }
+
+    if (!selectedRegisterLegalEntityId) {
+      lastSuggestedCounterAccountIdRef.current = null;
+      return;
+    }
+
+    setForm((prev) => {
+      const currentCounterAccountId = toPositiveInt(prev.counterAccountId);
+      const currentBelongsToSelectedLegalEntity =
+        !currentCounterAccountId ||
+        selectedCounterAccountLegalEntityId === selectedRegisterLegalEntityId;
+
+      if (!currentBelongsToSelectedLegalEntity) {
+        return {
+          ...prev,
+          counterAccountId: nextSuggestedCounterAccountId
+            ? String(nextSuggestedCounterAccountId)
+            : "",
+        };
+      }
+
+      if (!nextSuggestedCounterAccountId) {
+        if (
+          previousSuggestedCounterAccountId &&
+          currentCounterAccountId === previousSuggestedCounterAccountId
+        ) {
+          return {
+            ...prev,
+            counterAccountId: "",
+          };
+        }
+        return prev;
+      }
+
+      if (
+        !currentCounterAccountId ||
+        (previousSuggestedCounterAccountId &&
+          currentCounterAccountId === previousSuggestedCounterAccountId)
+      ) {
+        if (currentCounterAccountId === nextSuggestedCounterAccountId) {
+          return prev;
+        }
+        return {
+          ...prev,
+          counterAccountId: String(nextSuggestedCounterAccountId),
+        };
+      }
+
+      return prev;
+    });
+
+    lastSuggestedCounterAccountIdRef.current = nextSuggestedCounterAccountId
+      ? String(nextSuggestedCounterAccountId)
+      : null;
+  }, [
+    counterAccountIsTransfer,
+    defaultTransitCounterAccountId,
+    selectedCounterAccountLegalEntityId,
+    selectedRegisterLegalEntityId,
   ]);
 
   useEffect(() => {

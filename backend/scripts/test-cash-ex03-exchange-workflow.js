@@ -441,6 +441,19 @@ async function bootstrapExchangeContext(token, identity) {
     currencyCode: "TRY",
   });
 
+  await apiRequest({
+    token,
+    method: "POST",
+    path: "/api/v1/gl/journal-purpose-accounts",
+    body: {
+      legalEntityId,
+      moduleKey: "CASH",
+      purposeCode: "CASH_EXCHANGE_CLEARING",
+      accountId: clearingAccountId,
+    },
+    expectedStatus: 201,
+  });
+
   await query(
     `INSERT INTO fx_rates (
        tenant_id, rate_date, from_currency_code, to_currency_code, rate_type, rate, source, is_locked
@@ -482,7 +495,7 @@ async function createCashExchange({
       tenantId,
       sourceRegisterId,
       targetRegisterId,
-      clearingAccountId,
+      ...(clearingAccountId ? { clearingAccountId } : {}),
       sourceAmountTxn,
       targetAmountTxn,
       bookDate: BOOK_DATE,
@@ -582,6 +595,8 @@ async function fetchExchangeBatchById({
        target_amount_txn,
        source_amount_base,
        target_amount_base,
+       clearing_account_id,
+       posting_mode,
        status,
        exchange_out_cash_transaction_id,
        exchange_in_cash_transaction_id,
@@ -612,7 +627,6 @@ async function main() {
       tenantId: identity.tenantId,
       sourceRegisterId: setup.sourceRegisterId,
       targetRegisterId: setup.targetRegisterId,
-      clearingAccountId: setup.clearingAccountId,
       sourceAmountTxn: "100.00",
       targetAmountTxn: "3850.00",
       idempotencyKey: `EX03-CREATE-${identity.stamp}`,
@@ -679,6 +693,48 @@ async function main() {
     assert(amountsEqual(inTxn.amount_base, 3850), "exchange in amount_base must be 3850");
     assert(toNumber(inTxn.posted_journal_entry_id) > 0, "exchange in must have posted journal");
 
+    const outJournalLines = (
+      await query(
+        `SELECT account_id, debit_base, credit_base
+         FROM journal_lines
+         WHERE journal_entry_id = ?
+         ORDER BY line_no ASC, id ASC`,
+        [toNumber(outTxn.posted_journal_entry_id)]
+      )
+    ).rows || [];
+    assert(outJournalLines.length === 2, "exchange out journal must have exactly two lines");
+    const outSourceLine = outJournalLines.find(
+      (line) => toNumber(line.account_id) === setup.sourceRegisterAccountId
+    );
+    const outClearingLine = outJournalLines.find(
+      (line) => toNumber(line.account_id) === setup.clearingAccountId
+    );
+    assert(outSourceLine, "exchange out journal must credit source register");
+    assert(outClearingLine, "exchange out journal must debit clearing");
+    assert(amountsEqual(outSourceLine.credit_base, 3850), "exchange out source credit must be 3850");
+    assert(amountsEqual(outClearingLine.debit_base, 3850), "exchange out clearing debit must be 3850");
+
+    const inJournalLines = (
+      await query(
+        `SELECT account_id, debit_base, credit_base
+         FROM journal_lines
+         WHERE journal_entry_id = ?
+         ORDER BY line_no ASC, id ASC`,
+        [toNumber(inTxn.posted_journal_entry_id)]
+      )
+    ).rows || [];
+    assert(inJournalLines.length === 2, "exchange in journal must have exactly two lines");
+    const inTargetLine = inJournalLines.find(
+      (line) => toNumber(line.account_id) === setup.targetRegisterAccountId
+    );
+    const inClearingLine = inJournalLines.find(
+      (line) => toNumber(line.account_id) === setup.clearingAccountId
+    );
+    assert(inTargetLine, "exchange in journal must debit target register");
+    assert(inClearingLine, "exchange in journal must credit clearing");
+    assert(amountsEqual(inTargetLine.debit_base, 3850), "exchange in target debit must be 3850");
+    assert(amountsEqual(inClearingLine.credit_base, 3850), "exchange in clearing credit must be 3850");
+
     const persistedBatch = await fetchExchangeBatchById({
       tenantId: identity.tenantId,
       exchangeBatchId,
@@ -700,6 +756,31 @@ async function main() {
     assert(
       amountsEqual(persistedBatch.target_amount_base, 3850),
       "target_amount_base must be persisted as 3850"
+    );
+    assert(
+      toNumber(persistedBatch.clearing_account_id) === setup.clearingAccountId,
+      "clearing_account_id must resolve from CASH_EXCHANGE_CLEARING mapping"
+    );
+    assert(asUpper(persistedBatch.posting_mode) === "CLEARING", "posting_mode must be CLEARING");
+
+    const clearingNet = (
+      await query(
+        `SELECT
+           COALESCE(SUM(debit_base), 0) AS debit_total,
+           COALESCE(SUM(credit_base), 0) AS credit_total
+         FROM journal_lines
+         WHERE account_id = ?
+           AND journal_entry_id IN (?, ?)`,
+        [setup.clearingAccountId, toNumber(outTxn.posted_journal_entry_id), toNumber(inTxn.posted_journal_entry_id)]
+      )
+    ).rows?.[0];
+    assert(
+      amountsEqual(clearingNet?.debit_total, 3850),
+      `clearing debit total should be 3850, got ${clearingNet?.debit_total}`
+    );
+    assert(
+      amountsEqual(clearingNet?.credit_total, 3850),
+      `clearing credit total should be 3850, got ${clearingNet?.credit_total}`
     );
 
     const getRes = await getCashExchange({
@@ -737,7 +818,6 @@ async function main() {
       tenantId: identity.tenantId,
       sourceRegisterId: setup.sourceRegisterId,
       targetRegisterId: setup.targetRegisterId,
-      clearingAccountId: setup.clearingAccountId,
       sourceAmountTxn: "100.00",
       targetAmountTxn: "3850.00",
       idempotencyKey: `EX03-CREATE-${identity.stamp}`,
