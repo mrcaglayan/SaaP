@@ -92,6 +92,7 @@ async function getStatementLineForAutoPost({ tenantId, lineId, runQuery = query 
         l.id,
         l.tenant_id,
         l.legal_entity_id,
+        l.operating_unit_id,
         l.bank_account_id,
         l.txn_date,
         l.value_date,
@@ -559,11 +560,12 @@ async function insertOrReuseAutoPostJournalTx(tx, { tenantId, line, template, us
           credit_base,
           tax_code
         )
-        VALUES (?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, NULL)`,
+        VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, NULL)`,
       [
         journalEntryId,
         jl.lineNo,
         jl.accountId,
+        parsePositiveInt(jl.operatingUnitId ?? line.operating_unit_id) || null,
         jl.description,
         jl.subledgerReferenceNo,
         u(line.currency_code),

@@ -9,7 +9,7 @@ import { query } from "./db.js";
 import { runMigrations } from "./migrationRunner.js";
 import { seedCore } from "./seedCore.js";
 
-const REQUIRED_REQUEST_IDS = Array.from({ length: 71 }, (_, index) => index + 1);
+const REQUIRED_REQUEST_IDS = Array.from({ length: 80 }, (_, index) => index + 1);
 
 const DEFAULT_MARKDOWN_PATH = path.resolve(process.cwd(), "..", "hizlikurulum.md");
 const DEFAULT_BASE_URL = String(process.env.STARTER_SEED_BASE_URL || "").trim() ||
@@ -106,6 +106,7 @@ function extractBalancedJsonBlock(lines, startIndex) {
 function parseRequestBlocksFromMarkdown(content) {
   const lines = String(content || "").split(/\r?\n/);
   const requestByIndex = new Map();
+  const httpMethods = new Set(["GET", "POST", "PUT", "PATCH", "DELETE"]);
 
   let cursor = 0;
   while (cursor < lines.length) {
@@ -133,19 +134,33 @@ function parseRequestBlocksFromMarkdown(content) {
       continue;
     }
 
-    while (
-      cursor < lines.length &&
-      String(lines[cursor] || "").trim().toUpperCase() !== "REQUEST METHOD"
-    ) {
+    while (cursor < lines.length && String(lines[cursor] || "").trim() === "") {
       cursor += 1;
     }
-    if (cursor >= lines.length) {
-      break;
-    }
 
-    cursor += 1;
-    const method = String(lines[cursor] || "").trim().toUpperCase();
-    cursor += 1;
+    let method = "";
+    const methodMarker = String(lines[cursor] || "").trim().toUpperCase();
+    if (methodMarker === "REQUEST METHOD") {
+      cursor += 1;
+      method = String(lines[cursor] || "").trim().toUpperCase();
+      cursor += 1;
+    } else if (httpMethods.has(methodMarker)) {
+      method = methodMarker;
+      cursor += 1;
+    } else {
+      while (
+        cursor < lines.length &&
+        String(lines[cursor] || "").trim().toUpperCase() !== "REQUEST METHOD"
+      ) {
+        cursor += 1;
+      }
+      if (cursor >= lines.length) {
+        break;
+      }
+      cursor += 1;
+      method = String(lines[cursor] || "").trim().toUpperCase();
+      cursor += 1;
+    }
 
     while (cursor < lines.length && String(lines[cursor] || "").trim() === "") {
       cursor += 1;
@@ -694,6 +709,62 @@ async function findCashRegisterId(tenantId, code) {
     [tenantId, String(code || "").trim().toUpperCase()]
   );
   return parsePositiveInt(row?.id);
+}
+
+async function findOpenCashSessionId(tenantId, registerId) {
+  const row = await queryOptional(
+    `SELECT id
+     FROM cash_sessions
+     WHERE tenant_id = ?
+       AND cash_register_id = ?
+       AND status = 'OPEN'
+     LIMIT 1`,
+    [tenantId, registerId]
+  );
+  return parsePositiveInt(row?.id);
+}
+
+async function findSettlementCashControlAccountId({
+  tenantId,
+  legalEntityId,
+  direction,
+}) {
+  const normalizedDirection = String(direction || "").trim().toUpperCase();
+  if (normalizedDirection !== "AP" && normalizedDirection !== "AR") {
+    throw new Error(`Unsupported settlement direction: ${direction}`);
+  }
+  const prefix = normalizedDirection === "AP" ? "CARI_AP" : "CARI_AR";
+  const purposeCandidates = [
+    `${prefix}_CONTROL_CASH`,
+    `${prefix}_CONTROL`,
+    `${prefix}_CONTROL_MANUAL`,
+  ];
+
+  for (const purpose of purposeCandidates) {
+    const row = await queryOptional(
+      `SELECT a.id
+       FROM journal_purpose_accounts jpa
+       JOIN accounts a ON a.id = jpa.account_id
+       JOIN charts_of_accounts c ON c.id = a.coa_id
+       WHERE jpa.tenant_id = ?
+         AND jpa.legal_entity_id = ?
+         AND jpa.purpose_code = ?
+         AND c.tenant_id = ?
+         AND c.legal_entity_id = ?
+         AND a.is_active = TRUE
+         AND a.allow_posting = TRUE
+       LIMIT 1`,
+      [tenantId, legalEntityId, purpose, tenantId, legalEntityId]
+    );
+    const accountId = parsePositiveInt(row?.id);
+    if (accountId) {
+      return accountId;
+    }
+  }
+
+  throw new Error(
+    `Settlement cash control account not found for legalEntityId=${legalEntityId}, direction=${normalizedDirection}`
+  );
 }
 
 async function hasOpenSession(tenantId, registerId) {
@@ -1808,6 +1879,24 @@ export async function seedStarter(options = {}) {
       body: fxRateBulkUpsertDay2,
     });
 
+    const fxRateBulkUpsertDay3 = getRequestBody(requests, 72);
+    await requestJson({
+      baseUrl,
+      cookie: authCookie,
+      method: "POST",
+      pathName: "/api/v1/fx/rates/bulk-upsert",
+      body: fxRateBulkUpsertDay3,
+    });
+
+    const fxRateBulkUpsertDay4 = getRequestBody(requests, 73);
+    await requestJson({
+      baseUrl,
+      cookie: authCookie,
+      method: "POST",
+      pathName: "/api/v1/fx/rates/bulk-upsert",
+      body: fxRateBulkUpsertDay4,
+    });
+
     const account10002BRequest = getRequestBody(requests, 68);
     account10002BRequest.coaId = coaB.id;
     account10002BRequest.parentAccountId = await findAccountIdByCoaId(
@@ -1868,6 +1957,216 @@ export async function seedStarter(options = {}) {
       throw new Error("Unable to resolve PKR USD settlement batch id");
     }
     settlementBatchIds.push(pkrUsdSettlementBatchId);
+
+    const afnAfgSettlementPayload = getRequestBody(requests, 74);
+    afnAfgSettlementPayload.legalEntityId = legalEntityA.id;
+    afnAfgSettlementPayload.counterpartyId = counterpartyAfgVendorId;
+    afnAfgSettlementPayload.linkedCashTransaction = {
+      ...afnAfgSettlementPayload.linkedCashTransaction,
+      registerId: registerA1Id,
+    };
+    delete afnAfgSettlementPayload.linkedCashTransaction.cashSessionId;
+    afnAfgSettlementPayload.linkedCashTransaction.counterAccountId =
+      await findSettlementCashControlAccountId({
+        tenantId: tenantContext.tenantId,
+        legalEntityId: legalEntityA.id,
+        direction: afnAfgSettlementPayload.direction,
+      });
+    const afnAfgSessionId = await findOpenCashSessionId(
+      tenantContext.tenantId,
+      registerA1Id
+    );
+    if (afnAfgSessionId) {
+      afnAfgSettlementPayload.linkedCashTransaction.cashSessionId = afnAfgSessionId;
+    }
+    const afnAfgSettlementResult = await requestJson({
+      baseUrl,
+      cookie: authCookie,
+      method: "POST",
+      pathName: "/api/v1/cari/settlements/apply",
+      body: afnAfgSettlementPayload,
+    });
+    const afnAfgSettlementBatchId = parsePositiveInt(
+      afnAfgSettlementResult?.row?.id ?? afnAfgSettlementResult?.row?.settlementBatchId
+    );
+    if (!afnAfgSettlementBatchId) {
+      throw new Error("Unable to resolve AFG AFN cash settlement batch id");
+    }
+    settlementBatchIds.push(afnAfgSettlementBatchId);
+
+    const usdAfgSettlementPayload = getRequestBody(requests, 75);
+    usdAfgSettlementPayload.legalEntityId = legalEntityA.id;
+    usdAfgSettlementPayload.counterpartyId = counterpartyAfgVendorId;
+    usdAfgSettlementPayload.linkedCashTransaction = {
+      ...usdAfgSettlementPayload.linkedCashTransaction,
+      registerId: registerA2Id,
+    };
+    delete usdAfgSettlementPayload.linkedCashTransaction.cashSessionId;
+    usdAfgSettlementPayload.linkedCashTransaction.counterAccountId =
+      await findSettlementCashControlAccountId({
+        tenantId: tenantContext.tenantId,
+        legalEntityId: legalEntityA.id,
+        direction: usdAfgSettlementPayload.direction,
+      });
+    const usdAfgSessionId = await findOpenCashSessionId(
+      tenantContext.tenantId,
+      registerA2Id
+    );
+    if (usdAfgSessionId) {
+      usdAfgSettlementPayload.linkedCashTransaction.cashSessionId = usdAfgSessionId;
+    }
+    const usdAfgSettlementResult = await requestJson({
+      baseUrl,
+      cookie: authCookie,
+      method: "POST",
+      pathName: "/api/v1/cari/settlements/apply",
+      body: usdAfgSettlementPayload,
+    });
+    const usdAfgSettlementBatchId = parsePositiveInt(
+      usdAfgSettlementResult?.row?.id ?? usdAfgSettlementResult?.row?.settlementBatchId
+    );
+    if (!usdAfgSettlementBatchId) {
+      throw new Error("Unable to resolve AFG USD cash settlement batch id");
+    }
+    settlementBatchIds.push(usdAfgSettlementBatchId);
+
+    const arCustomerAfgSettlementPayload = getRequestBody(requests, 76);
+    arCustomerAfgSettlementPayload.legalEntityId = legalEntityA.id;
+    arCustomerAfgSettlementPayload.counterpartyId = counterpartyAfgCustomerId;
+    arCustomerAfgSettlementPayload.linkedCashTransaction = {
+      ...arCustomerAfgSettlementPayload.linkedCashTransaction,
+      registerId: registerA2Id,
+    };
+    delete arCustomerAfgSettlementPayload.linkedCashTransaction.cashSessionId;
+    arCustomerAfgSettlementPayload.linkedCashTransaction.counterAccountId =
+      await findSettlementCashControlAccountId({
+        tenantId: tenantContext.tenantId,
+        legalEntityId: legalEntityA.id,
+        direction: arCustomerAfgSettlementPayload.direction,
+      });
+    const arCustomerAfgSessionId = await findOpenCashSessionId(
+      tenantContext.tenantId,
+      registerA2Id
+    );
+    if (arCustomerAfgSessionId) {
+      arCustomerAfgSettlementPayload.linkedCashTransaction.cashSessionId =
+        arCustomerAfgSessionId;
+    }
+    const arCustomerAfgSettlementResult = await requestJson({
+      baseUrl,
+      cookie: authCookie,
+      method: "POST",
+      pathName: "/api/v1/cari/settlements/apply",
+      body: arCustomerAfgSettlementPayload,
+    });
+    const arCustomerAfgSettlementBatchId = parsePositiveInt(
+      arCustomerAfgSettlementResult?.row?.id ??
+        arCustomerAfgSettlementResult?.row?.settlementBatchId
+    );
+    if (!arCustomerAfgSettlementBatchId) {
+      throw new Error("Unable to resolve AFG AR cash settlement batch id");
+    }
+    settlementBatchIds.push(arCustomerAfgSettlementBatchId);
+
+    const arAfgAfnSettlementPayload = getRequestBody(requests, 77);
+    arAfgAfnSettlementPayload.legalEntityId = legalEntityA.id;
+    arAfgAfnSettlementPayload.counterpartyId = counterpartyAfgCustomerId;
+    arAfgAfnSettlementPayload.linkedCashTransaction = {
+      ...arAfgAfnSettlementPayload.linkedCashTransaction,
+      registerId: registerA1Id,
+    };
+    delete arAfgAfnSettlementPayload.linkedCashTransaction.cashSessionId;
+    arAfgAfnSettlementPayload.linkedCashTransaction.counterAccountId =
+      await findSettlementCashControlAccountId({
+        tenantId: tenantContext.tenantId,
+        legalEntityId: legalEntityA.id,
+        direction: arAfgAfnSettlementPayload.direction,
+      });
+    const arAfgAfnSessionId = await findOpenCashSessionId(
+      tenantContext.tenantId,
+      registerA1Id
+    );
+    if (arAfgAfnSessionId) {
+      arAfgAfnSettlementPayload.linkedCashTransaction.cashSessionId = arAfgAfnSessionId;
+    }
+    const arAfgAfnSettlementResult = await requestJson({
+      baseUrl,
+      cookie: authCookie,
+      method: "POST",
+      pathName: "/api/v1/cari/settlements/apply",
+      body: arAfgAfnSettlementPayload,
+    });
+    const arAfgAfnSettlementBatchId = parsePositiveInt(
+      arAfgAfnSettlementResult?.row?.id ?? arAfgAfnSettlementResult?.row?.settlementBatchId
+    );
+    if (!arAfgAfnSettlementBatchId) {
+      throw new Error("Unable to resolve AFG AR AFN cash settlement batch id");
+    }
+    settlementBatchIds.push(arAfgAfnSettlementBatchId);
+
+    const interRegisterTransitPayload = getRequestBody(requests, 78);
+    const branchTransitAccountPayload = getRequestBody(requests, 49);
+    interRegisterTransitPayload.registerId = registerA1Id;
+    interRegisterTransitPayload.targetRegisterId = registerA3Id;
+    interRegisterTransitPayload.cashSessionId = await findOpenCashSessionId(
+      tenantContext.tenantId,
+      registerA1Id
+    );
+    if (!interRegisterTransitPayload.cashSessionId) {
+      throw new Error("Unable to resolve open cash session for register A1");
+    }
+    interRegisterTransitPayload.transitAccountId = await findAccountIdByCoaId(
+      coaA.id,
+      String(branchTransitAccountPayload.code || "").trim()
+    );
+    const interRegisterTransitResult = await requestJson({
+      baseUrl,
+      cookie: authCookie,
+      method: "POST",
+      pathName: "/api/v1/cash/transactions/transit/initiate",
+      body: interRegisterTransitPayload,
+    });
+    const interRegisterTransitTransferId = parsePositiveInt(
+      interRegisterTransitResult?.transfer?.id ??
+        interRegisterTransitResult?.id ??
+        interRegisterTransitResult?.result?.id
+    );
+    if (!interRegisterTransitTransferId) {
+      throw new Error("Unable to resolve inter-register transit transfer id");
+    }
+
+    const interRegisterTransitTransferOutTransactionId = parsePositiveInt(
+      interRegisterTransitResult?.transferOutTransaction?.id ??
+        interRegisterTransitResult?.transfer?.transfer_out_cash_transaction_id
+    );
+    if (!interRegisterTransitTransferOutTransactionId) {
+      throw new Error("Unable to resolve inter-register transit transfer-out cash transaction id");
+    }
+
+    const interRegisterTransitPostPayload = getRequestBody(requests, 79);
+    await requestJson({
+      baseUrl,
+      cookie: authCookie,
+      method: "POST",
+      pathName: `/api/v1/cash/transactions/${interRegisterTransitTransferOutTransactionId}/post`,
+      body: interRegisterTransitPostPayload,
+    });
+
+    const interRegisterTransitReceivePayload = getRequestBody(requests, 80);
+    interRegisterTransitReceivePayload.cashSessionId = await findOpenCashSessionId(
+      tenantContext.tenantId,
+      registerA3Id
+    );
+    if (!interRegisterTransitReceivePayload.cashSessionId) {
+      throw new Error("Unable to resolve open cash session for register A3");
+    }
+    await requestJson({
+      baseUrl,
+      cookie: authCookie,
+      method: "POST",
+      pathName: `/api/v1/cash/transactions/transit/${interRegisterTransitTransferId}/receive`,
+      body: interRegisterTransitReceivePayload,
+    });
 
     return {
       ok: true,

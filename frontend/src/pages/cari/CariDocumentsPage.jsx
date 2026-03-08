@@ -27,6 +27,7 @@ import { listCariPaymentTerms } from "../../api/cariPaymentTerms.js";
 import { getCariCounterpartyStatementReport } from "../../api/cariReports.js";
 import { getJournal, listAccounts } from "../../api/glAdmin.js";
 import { listExceptionWorkbench } from "../../api/exceptionsWorkbench.js";
+import { listOperatingUnits } from "../../api/orgAdmin.js";
 import { listCariAudit } from "../../api/cariAudit.js";
 import {
   createMeSavedView,
@@ -282,6 +283,7 @@ function buildTemplateSafeDraftForm(input = {}) {
   const documentType = normalizeText(input?.documentType).toUpperCase();
   const next = {
     legalEntityId: normalizePositiveIntText(input?.legalEntityId),
+    operatingUnitId: normalizePositiveIntText(input?.operatingUnitId),
     counterpartyId: normalizePositiveIntText(input?.counterpartyId),
     paymentTermId: normalizePositiveIntText(input?.paymentTermId),
     direction: DOCUMENT_DIRECTIONS.includes(direction) ? direction : baseline.direction,
@@ -336,6 +338,7 @@ function buildCloneDraftFormFromRow(row, fallbackForm) {
   const fallbackDocumentDate = normalizeText(fallbackForm?.documentDate) || todayIsoDate();
   const sourceForm = {
     legalEntityId: firstDefinedRowValue(row, "legalEntityId", "legal_entity_id"),
+    operatingUnitId: firstDefinedRowValue(row, "operatingUnitId", "operating_unit_id"),
     counterpartyId: firstDefinedRowValue(row, "counterpartyId", "counterparty_id"),
     paymentTermId: firstDefinedRowValue(row, "paymentTermId", "payment_term_id"),
     direction: firstDefinedRowValue(row, "direction"),
@@ -424,6 +427,7 @@ function resolveDocumentSavedViewState(savedView, columnIds) {
 function createInitialDraftForm() {
   return {
     legalEntityId: "",
+    operatingUnitId: "",
     counterpartyId: "",
     paymentTermId: "",
     direction: "AR",
@@ -556,6 +560,20 @@ function mapPaymentTermLookupOption(row) {
     value: id ? String(id) : "",
     label: name ? `${code || id} - ${name}` : String(code || id || "-"),
     description: [dueDaysText, statusText].filter(Boolean).join(" | "),
+  };
+}
+
+function mapOperatingUnitLookupOption(row) {
+  const id = toPositiveInt(row?.id);
+  const code = normalizeText(row?.code);
+  const name = normalizeText(row?.name);
+  const status = normalizeText(row?.status).toUpperCase();
+  const statusText = status && status !== "ACTIVE" ? status : "";
+
+  return {
+    value: id ? String(id) : "",
+    label: name ? `${code || id} - ${name}` : String(code || id || "-"),
+    description: statusText,
   };
 }
 
@@ -758,6 +776,7 @@ export default function CariDocumentsPage() {
   const canReadGlAccounts = hasPermission("gl.account.read");
   const canReadExceptions = hasPermission("ops.exceptions.read");
   const canReadCariAudit = hasPermission("cari.audit.read");
+  const canReadOrgTree = hasPermission("org.tree.read");
 
   const [filters, setFilters, resetFilters] = usePersistedFilters(
     DOCUMENT_FILTERS_STORAGE_SCOPE,
@@ -782,6 +801,9 @@ export default function CariDocumentsPage() {
   const [createPaymentTermOptions, setCreatePaymentTermOptions] = useState([]);
   const [createPaymentTermsLoading, setCreatePaymentTermsLoading] = useState(false);
   const [createPaymentTermsError, setCreatePaymentTermsError] = useState("");
+  const [createOperatingUnitOptions, setCreateOperatingUnitOptions] = useState([]);
+  const [createOperatingUnitsLoading, setCreateOperatingUnitsLoading] = useState(false);
+  const [createOperatingUnitsError, setCreateOperatingUnitsError] = useState("");
   const [createInlineCounterpartySaving, setCreateInlineCounterpartySaving] = useState(false);
   const [createInlineCounterpartyError, setCreateInlineCounterpartyError] = useState("");
   const [createInlineCounterpartyMessage, setCreateInlineCounterpartyMessage] = useState("");
@@ -809,6 +831,9 @@ export default function CariDocumentsPage() {
   const [editCounterpartyOptions, setEditCounterpartyOptions] = useState([]);
   const [editCounterpartyLoading, setEditCounterpartyLoading] = useState(false);
   const [editCounterpartyLookupQuery, setEditCounterpartyLookupQuery] = useState("");
+  const [editOperatingUnitOptions, setEditOperatingUnitOptions] = useState([]);
+  const [editOperatingUnitsLoading, setEditOperatingUnitsLoading] = useState(false);
+  const [editOperatingUnitsError, setEditOperatingUnitsError] = useState("");
   const [editInlineCounterpartySaving, setEditInlineCounterpartySaving] = useState(false);
   const [editInlineCounterpartyError, setEditInlineCounterpartyError] = useState("");
   const [editInlineCounterpartyMessage, setEditInlineCounterpartyMessage] = useState("");
@@ -1243,6 +1268,23 @@ export default function CariDocumentsPage() {
     }
     return rows;
   }, [createForm.paymentTermId, createPaymentTermOptions]);
+  const createOperatingUnitLookupOptions = useMemo(() => {
+    const selectedOperatingUnitId = normalizeText(createForm.operatingUnitId);
+    const rows = (createOperatingUnitOptions || [])
+      .map(mapOperatingUnitLookupOption)
+      .filter((row) => row.value);
+    if (
+      selectedOperatingUnitId &&
+      !rows.some((row) => String(row.value) === selectedOperatingUnitId)
+    ) {
+      rows.unshift({
+        value: selectedOperatingUnitId,
+        label: `Operating unit #${selectedOperatingUnitId}`,
+        description: "Selected value is outside current lookup scope.",
+      });
+    }
+    return rows;
+  }, [createForm.operatingUnitId, createOperatingUnitOptions]);
   const selectedCreateCounterparty = useMemo(() => {
     const selectedCounterpartyId = toPositiveInt(createForm.counterpartyId);
     if (!selectedCounterpartyId) {
@@ -1258,6 +1300,23 @@ export default function CariDocumentsPage() {
     () => (editCounterpartyOptions || []).map(mapCounterpartyLookupOption).filter((row) => row.value),
     [editCounterpartyOptions]
   );
+  const editOperatingUnitLookupOptions = useMemo(() => {
+    const selectedOperatingUnitId = normalizeText(editForm.operatingUnitId);
+    const rows = (editOperatingUnitOptions || [])
+      .map(mapOperatingUnitLookupOption)
+      .filter((row) => row.value);
+    if (
+      selectedOperatingUnitId &&
+      !rows.some((row) => String(row.value) === selectedOperatingUnitId)
+    ) {
+      rows.unshift({
+        value: selectedOperatingUnitId,
+        label: `Operating unit #${selectedOperatingUnitId}`,
+        description: "Selected value is outside current lookup scope.",
+      });
+    }
+    return rows;
+  }, [editForm.operatingUnitId, editOperatingUnitOptions]);
   const createInlineCounterpartyName = normalizeLookupQuery(createCounterpartyLookupQuery);
   const editInlineCounterpartyName = normalizeLookupQuery(editCounterpartyLookupQuery);
   const canInlineCreateCounterpartyInCreateForm = Boolean(
@@ -1286,6 +1345,7 @@ export default function CariDocumentsPage() {
     return {
       ...baseline,
       legalEntityId: normalizeText(previousForm?.legalEntityId) || baseline.legalEntityId,
+      operatingUnitId: normalizeText(previousForm?.operatingUnitId) || baseline.operatingUnitId,
       direction: normalizeText(previousForm?.direction) || baseline.direction,
       documentType: normalizeText(previousForm?.documentType) || baseline.documentType,
       documentDate: normalizeText(previousForm?.documentDate) || baseline.documentDate,
@@ -1368,6 +1428,7 @@ export default function CariDocumentsPage() {
       return {
         ...previous,
         legalEntityId: normalizedLegalEntityId,
+        operatingUnitId: "",
         counterpartyId: "",
         paymentTermId: "",
       };
@@ -1376,6 +1437,7 @@ export default function CariDocumentsPage() {
     setCreateCounterpartyLookupQuery("");
     setCreateInlineCounterpartyError("");
     setCreateInlineCounterpartyMessage("");
+    setCreateOperatingUnitsError("");
     setCreatePaymentTermsError("");
   }
 
@@ -1738,6 +1800,70 @@ export default function CariDocumentsPage() {
   }, [canReadCards, createForm.direction, createForm.legalEntityId]);
 
   useEffect(() => {
+    if (!canReadOrgTree) {
+      setCreateOperatingUnitOptions([]);
+      setCreateOperatingUnitsLoading(false);
+      setCreateOperatingUnitsError("");
+      return;
+    }
+
+    const legalEntityId = toPositiveInt(createForm.legalEntityId);
+    if (!legalEntityId) {
+      setCreateOperatingUnitOptions([]);
+      setCreateOperatingUnitsLoading(false);
+      setCreateOperatingUnitsError("");
+      return;
+    }
+
+    let active = true;
+    async function loadCreateOperatingUnits() {
+      setCreateOperatingUnitsLoading(true);
+      setCreateOperatingUnitsError("");
+      try {
+        const response = await listOperatingUnits({
+          legalEntityId,
+          limit: 500,
+          includeInactive: true,
+        });
+        if (!active) return;
+        const rows = Array.isArray(response?.rows) ? response.rows : [];
+        setCreateOperatingUnitOptions(rows);
+        setCreateForm((previousForm) => {
+          const selectedOperatingUnitId = normalizeText(previousForm.operatingUnitId);
+          if (!selectedOperatingUnitId) {
+            return previousForm;
+          }
+          const selectedStillVisible = rows.some(
+            (row) => String(toPositiveInt(row?.id) || "") === selectedOperatingUnitId
+          );
+          return selectedStillVisible
+            ? previousForm
+            : { ...previousForm, operatingUnitId: "" };
+        });
+      } catch (error) {
+        if (!active) return;
+        setCreateOperatingUnitOptions([]);
+        setCreateOperatingUnitsError(
+          normalizeApiError(
+            error,
+            l(
+              "Failed to load operating units for selected legal entity.",
+              "Secili tuzel kisilik icin operasyon birimleri yuklenemedi."
+            )
+          )
+        );
+      } finally {
+        if (active) setCreateOperatingUnitsLoading(false);
+      }
+    }
+
+    loadCreateOperatingUnits();
+    return () => {
+      active = false;
+    };
+  }, [canReadOrgTree, createForm.legalEntityId, l]);
+
+  useEffect(() => {
     if (!canReadCards) {
       setCreatePaymentTermOptions([]);
       setCreatePaymentTermsLoading(false);
@@ -1822,6 +1948,67 @@ export default function CariDocumentsPage() {
       return changed ? nextForm : previousForm;
     });
   }, [createCurrencyTouched, createPaymentTermTouched, selectedCreateCounterparty]);
+
+  useEffect(() => {
+    if (!canReadOrgTree) {
+      setEditOperatingUnitOptions([]);
+      setEditOperatingUnitsLoading(false);
+      setEditOperatingUnitsError("");
+      return;
+    }
+    const legalEntityId = toPositiveInt(editForm.legalEntityId);
+    if (!legalEntityId) {
+      setEditOperatingUnitOptions([]);
+      setEditOperatingUnitsLoading(false);
+      setEditOperatingUnitsError("");
+      return;
+    }
+    let active = true;
+    async function loadEditOperatingUnits() {
+      setEditOperatingUnitsLoading(true);
+      setEditOperatingUnitsError("");
+      try {
+        const response = await listOperatingUnits({
+          legalEntityId,
+          limit: 500,
+          includeInactive: true,
+        });
+        if (!active) return;
+        const rows = Array.isArray(response?.rows) ? response.rows : [];
+        setEditOperatingUnitOptions(rows);
+        setEditForm((previousForm) => {
+          const selectedOperatingUnitId = normalizeText(previousForm.operatingUnitId);
+          if (!selectedOperatingUnitId) {
+            return previousForm;
+          }
+          const selectedStillVisible = rows.some(
+            (row) => String(toPositiveInt(row?.id) || "") === selectedOperatingUnitId
+          );
+          return selectedStillVisible
+            ? previousForm
+            : { ...previousForm, operatingUnitId: "" };
+        });
+      } catch (error) {
+        if (!active) return;
+        setEditOperatingUnitOptions([]);
+        setEditOperatingUnitsError(
+          normalizeApiError(
+            error,
+            l(
+              "Failed to load operating units for selected legal entity.",
+              "Secili tuzel kisilik icin operasyon birimleri yuklenemedi."
+            )
+          )
+        );
+      } finally {
+        if (active) setEditOperatingUnitsLoading(false);
+      }
+    }
+    loadEditOperatingUnits();
+    return () => {
+      active = false;
+    };
+  }, [canReadOrgTree, editForm.legalEntityId, l]);
 
   useEffect(() => {
     if (!canReadCards) {
@@ -3809,6 +3996,61 @@ export default function CariDocumentsPage() {
                 </p>
               ) : null}
             </div>
+            {canReadOrgTree ? (
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                <label className="block">
+                  {l("Operating Unit (optional)", "Operasyon Birimi (opsiyonel)")}
+                  <select
+                    className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                    value={createForm.operatingUnitId}
+                    onChange={(event) =>
+                      setCreateForm((prev) => ({
+                        ...prev,
+                        operatingUnitId: event.target.value,
+                      }))
+                    }
+                    disabled={
+                      !toPositiveInt(createForm.legalEntityId) ||
+                      createSaving ||
+                      createOperatingUnitsLoading
+                    }
+                  >
+                    <option value="">
+                      {toPositiveInt(createForm.legalEntityId)
+                        ? l("No operating unit", "Operasyon birimi yok")
+                        : l("Select legal entity first", "Once tuzel kisilik secin")}
+                    </option>
+                    {createOperatingUnitLookupOptions.map((row) => (
+                      <option key={`create-operating-unit-${row.value}`} value={row.value}>
+                        {row.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {createOperatingUnitsError ? (
+                  <p className="mt-1 text-[11px] normal-case text-amber-700">
+                    {createOperatingUnitsError}
+                  </p>
+                ) : null}
+              </div>
+            ) : (
+              <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                {l("Operating Unit ID (optional)", "Operasyon Birimi ID (opsiyonel)")}
+                <input
+                  type="number"
+                  min="1"
+                  className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                  value={createForm.operatingUnitId}
+                  onChange={(event) =>
+                    setCreateForm((prev) => ({
+                      ...prev,
+                      operatingUnitId: event.target.value,
+                    }))
+                  }
+                  disabled={createSaving}
+                />
+              </label>
+            )}
             <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">{l("Direction", "Yon")}<select className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={createForm.direction} onChange={(event) => handleCreateDirectionChange(event.target.value)} required>{DOCUMENT_DIRECTIONS.map((direction) => <option key={`create-direction-${direction}`} value={direction}>{direction}</option>)}</select></label>
             {canReadCards ? (
               <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">
@@ -4567,7 +4809,48 @@ export default function CariDocumentsPage() {
                 {editError ? <div className="mt-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{editError}</div> : null}
                 {editMessage ? <div className="mt-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{editMessage}</div> : null}
                 <form className="mt-3 grid gap-2 md:grid-cols-2" onSubmit={handleUpdateDraft}>
-                  <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">{l("Legal Entity ID", "Tuzel Kisilik ID")}<input type="number" min="1" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={editForm.legalEntityId} onChange={(event) => setEditForm((prev) => ({ ...prev, legalEntityId: event.target.value }))} disabled={!canEditOrCancelSelected || editSaving} /></label>
+                  <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">{l("Legal Entity ID", "Tuzel Kisilik ID")}<input type="number" min="1" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={editForm.legalEntityId} onChange={(event) => setEditForm((prev) => ({ ...prev, legalEntityId: event.target.value, operatingUnitId: normalizeText(prev.legalEntityId) === normalizeText(event.target.value) ? prev.operatingUnitId : "" }))} disabled={!canEditOrCancelSelected || editSaving} /></label>
+                  {canReadOrgTree ? (
+                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                      <label className="block">
+                        {l("Operating Unit (optional)", "Operasyon Birimi (opsiyonel)")}
+                        <select
+                          className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                          value={editForm.operatingUnitId}
+                          onChange={(event) =>
+                            setEditForm((prev) => ({
+                              ...prev,
+                              operatingUnitId: event.target.value,
+                            }))
+                          }
+                          disabled={
+                            !canEditOrCancelSelected ||
+                            !toPositiveInt(editForm.legalEntityId) ||
+                            editSaving ||
+                            editOperatingUnitsLoading
+                          }
+                        >
+                          <option value="">
+                            {toPositiveInt(editForm.legalEntityId)
+                              ? l("No operating unit", "Operasyon birimi yok")
+                              : l("Select legal entity first", "Once tuzel kisilik secin")}
+                          </option>
+                          {editOperatingUnitLookupOptions.map((row) => (
+                            <option key={`edit-operating-unit-${row.value}`} value={row.value}>
+                              {row.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      {editOperatingUnitsError ? (
+                        <p className="mt-1 text-[11px] normal-case text-amber-700">
+                          {editOperatingUnitsError}
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">{l("Operating Unit ID (optional)", "Operasyon Birimi ID (opsiyonel)")}<input type="number" min="1" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={editForm.operatingUnitId} onChange={(event) => setEditForm((prev) => ({ ...prev, operatingUnitId: event.target.value }))} disabled={!canEditOrCancelSelected || editSaving} /></label>
+                  )}
                   <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">{l("Counterparty ID", "Cari ID")}<input type="number" min="1" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={editForm.counterpartyId} onChange={(event) => setEditForm((prev) => ({ ...prev, counterpartyId: event.target.value }))} disabled={!canEditOrCancelSelected || editSaving} /></label>
                   {canReadCards ? (
                     <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">

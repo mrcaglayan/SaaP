@@ -203,6 +203,7 @@ async function findBankAccountForImport({ tenantId, bankAccountId, runQuery = qu
         ba.id,
         ba.tenant_id,
         ba.legal_entity_id,
+        ba.operating_unit_id,
         ba.code,
         ba.name,
         ba.currency_code,
@@ -517,6 +518,7 @@ export async function importBankStatementCsv({
             `INSERT INTO bank_statement_lines (
                 tenant_id,
                 legal_entity_id,
+                operating_unit_id,
                 import_id,
                 bank_account_id,
                 line_no,
@@ -531,10 +533,11 @@ export async function importBankStatementCsv({
                 recon_status,
                 raw_row_json
               )
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'UNMATCHED', ?)`,
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'UNMATCHED', ?)`,
             [
               payload.tenantId,
               bankAccount.legal_entity_id,
+              bankAccount.operating_unit_id || null,
               importId,
               payload.bankAccountId,
               row.line_no,
@@ -711,6 +714,7 @@ export async function importNormalizedBankStatementLines({
             `INSERT INTO bank_statement_lines (
                 tenant_id,
                 legal_entity_id,
+                operating_unit_id,
                 import_id,
                 bank_account_id,
                 line_no,
@@ -725,10 +729,11 @@ export async function importNormalizedBankStatementLines({
                 recon_status,
                 raw_row_json
               )
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'UNMATCHED', ?)`,
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'UNMATCHED', ?)`,
             [
               tenantId,
               bankAccount.legal_entity_id,
+              bankAccount.operating_unit_id || null,
               importId,
               bankAccountId,
               row.line_no,

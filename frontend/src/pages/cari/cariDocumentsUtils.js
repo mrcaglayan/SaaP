@@ -58,6 +58,7 @@ export function mapDocumentRowToForm(row) {
         ? ""
         : String(row.rowVersion),
     legalEntityId: String(row?.legalEntityId || ""),
+    operatingUnitId: String(row?.operatingUnitId ?? row?.operating_unit_id ?? ""),
     counterpartyId: String(row?.counterpartyId || ""),
     paymentTermId: String(row?.paymentTermId || ""),
     direction: String(row?.direction || "AR"),
@@ -83,6 +84,7 @@ export function mapDocumentRowToForm(row) {
 export function buildDocumentMutationPayload(form) {
   const rowVersion = toPositiveInt(form.rowVersion);
   const legalEntityId = toPositiveInt(form.legalEntityId);
+  const operatingUnitId = toPositiveInt(form.operatingUnitId);
   const counterpartyId = toPositiveInt(form.counterpartyId);
   const paymentTermId = toPositiveInt(form.paymentTermId);
   const amountTxn = toOptionalNumber(form.amountTxn);
@@ -99,6 +101,7 @@ export function buildDocumentMutationPayload(form) {
   return {
     rowVersion: rowVersion || undefined,
     legalEntityId,
+    operatingUnitId: operatingUnitId || undefined,
     counterpartyId,
     paymentTermId,
     direction,

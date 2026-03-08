@@ -90,6 +90,8 @@ import migration099CariCheckConstraintCompatGuards from "./m099_cari_check_const
 import migration100CariCheckConstraintCompatGuardCleanup from "./m100_cari_check_constraint_compat_guard_cleanup.js";
 import migration101CariSettlementAllocationDualCurrencyFoundation from "./m101_cari_settlement_allocation_dual_currency_foundation.js";
 import migration102CariSettlementBatchDirection from "./m102_cari_settlement_batch_direction.js";
+import migration103CariDocumentsOperatingUnit from "./m103_cari_documents_operating_unit.js";
+import migration104BankStatementLinesOperatingUnit from "./m104_bank_statement_lines_operating_unit.js";
 
 const migrations = [
   migration001GlobalMultiEntity,
@@ -184,6 +186,8 @@ const migrations = [
   migration100CariCheckConstraintCompatGuardCleanup,
   migration101CariSettlementAllocationDualCurrencyFoundation,
   migration102CariSettlementBatchDirection,
+  migration103CariDocumentsOperatingUnit,
+  migration104BankStatementLinesOperatingUnit,
 ];
 
 export default migrations;

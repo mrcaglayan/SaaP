@@ -42,6 +42,10 @@ router.use("/:documentId/comments", cariDocumentCommentsRoutes);
 router.use("/:documentId/ops-status", cariDocumentOpsStatusRoutes);
 
 function resolveLegalEntityScopeFromQuery(req) {
+  const operatingUnitId = parsePositiveInt(req.query?.operatingUnitId);
+  if (operatingUnitId) {
+    return { scopeType: "OPERATING_UNIT", scopeId: operatingUnitId };
+  }
   const legalEntityId = parsePositiveInt(req.query?.legalEntityId);
   if (!legalEntityId) {
     return null;
@@ -50,6 +54,10 @@ function resolveLegalEntityScopeFromQuery(req) {
 }
 
 function resolveLegalEntityScopeFromBody(req) {
+  const operatingUnitId = parsePositiveInt(req.body?.operatingUnitId);
+  if (operatingUnitId) {
+    return { scopeType: "OPERATING_UNIT", scopeId: operatingUnitId };
+  }
   const legalEntityId = parsePositiveInt(req.body?.legalEntityId);
   if (!legalEntityId) {
     return null;

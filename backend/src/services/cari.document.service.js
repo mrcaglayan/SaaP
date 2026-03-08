@@ -225,6 +225,7 @@ function mapDocumentRow(row) {
     id: parsePositiveInt(row.id),
     tenantId: parsePositiveInt(row.tenant_id),
     legalEntityId: parsePositiveInt(row.legal_entity_id),
+    operatingUnitId: parsePositiveInt(row.operating_unit_id),
     counterpartyId: parsePositiveInt(row.counterparty_id),
     paymentTermId: parsePositiveInt(row.payment_term_id),
     paymentTermCode: row.payment_term_code || null,
@@ -266,6 +267,49 @@ function optimisticLockConflictError(message = "Document was modified by another
   err.status = 409;
   err.code = "OPTIMISTIC_LOCK_CONFLICT";
   return err;
+}
+
+async function validateDocumentOperatingUnit({
+  tenantId,
+  legalEntityId,
+  operatingUnitId,
+  runQuery = query,
+}) {
+  const normalizedOperatingUnitId = parsePositiveInt(operatingUnitId);
+  if (!normalizedOperatingUnitId) {
+    return null;
+  }
+
+  const result = await runQuery(
+    `SELECT id, legal_entity_id
+     FROM operating_units
+     WHERE tenant_id = ?
+       AND id = ?
+     LIMIT 1`,
+    [tenantId, normalizedOperatingUnitId]
+  );
+  const row = result.rows?.[0] || null;
+  if (!row) {
+    throw badRequest("operatingUnitId must belong to tenant");
+  }
+  if (parsePositiveInt(row.legal_entity_id) !== parsePositiveInt(legalEntityId)) {
+    throw badRequest("operatingUnitId must belong to legalEntityId");
+  }
+  return normalizedOperatingUnitId;
+}
+
+function assertDocumentScopeAccess(req, assertScopeAccess, row, fieldName = "documentId") {
+  const operatingUnitId = parsePositiveInt(row?.operating_unit_id);
+  if (operatingUnitId) {
+    assertScopeAccess(req, "operating_unit", operatingUnitId, fieldName);
+    return;
+  }
+  assertScopeAccess(
+    req,
+    "legal_entity",
+    parsePositiveInt(row?.legal_entity_id),
+    fieldName
+  );
 }
 
 function mapOpenItemRow(row) {
@@ -1052,13 +1096,14 @@ async function insertPostedJournalWithLinesTx(tx, payload) {
           amount_txn,
           debit_base,
           credit_base,
-          tax_code
+       tax_code
        )
-       VALUES (?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)`,
       [
         journalEntryId,
         i + 1,
         parsePositiveInt(line.accountId),
+        parsePositiveInt(line.operatingUnitId ?? payload.operatingUnitId) || null,
         line.description || null,
         line.subledgerReferenceNo || null,
         line.currencyCode,
@@ -1304,7 +1349,7 @@ export async function resolveCariDocumentScope(documentId, tenantId) {
   }
 
   const result = await query(
-    `SELECT legal_entity_id
+    `SELECT legal_entity_id, operating_unit_id
      FROM cari_documents
      WHERE tenant_id = ?
        AND id = ?
@@ -1314,6 +1359,14 @@ export async function resolveCariDocumentScope(documentId, tenantId) {
   const row = result.rows?.[0] || null;
   if (!row) {
     return null;
+  }
+
+  const operatingUnitId = parsePositiveInt(row.operating_unit_id);
+  if (operatingUnitId) {
+    return {
+      scopeType: "OPERATING_UNIT",
+      scopeId: operatingUnitId,
+    };
   }
 
   return {
@@ -1331,12 +1384,21 @@ export async function listCariDocuments({
 }) {
   const params = [tenantId];
   const conditions = ["d.tenant_id = ?"];
-  conditions.push(buildScopeFilter(req, "legal_entity", "d.legal_entity_id", params));
+  if (filters.operatingUnitId) {
+    conditions.push(buildScopeFilter(req, "operating_unit", "d.operating_unit_id", params));
+  } else {
+    conditions.push(buildScopeFilter(req, "legal_entity", "d.legal_entity_id", params));
+  }
 
   if (filters.legalEntityId) {
     assertScopeAccess(req, "legal_entity", filters.legalEntityId, "legalEntityId");
     conditions.push("d.legal_entity_id = ?");
     params.push(filters.legalEntityId);
+  }
+  if (filters.operatingUnitId) {
+    assertScopeAccess(req, "operating_unit", filters.operatingUnitId, "operatingUnitId");
+    conditions.push("d.operating_unit_id = ?");
+    params.push(filters.operatingUnitId);
   }
 
   if (filters.counterpartyId) {
@@ -1419,7 +1481,7 @@ export async function getCariDocumentByIdForTenant({
   if (!row) {
     throw badRequest("Document not found");
   }
-  assertScopeAccess(req, "legal_entity", row.legal_entity_id, "documentId");
+  assertDocumentScopeAccess(req, assertScopeAccess, row, "documentId");
   return mapDocumentRow(row);
 }
 
@@ -1435,7 +1497,7 @@ export async function listCariDocumentOpenItemsByIdForTenant({
   }
 
   const legalEntityId = parsePositiveInt(row.legal_entity_id);
-  assertScopeAccess(req, "legal_entity", legalEntityId, "documentId");
+  assertDocumentScopeAccess(req, assertScopeAccess, row, "documentId");
 
   const result = await query(
     `SELECT
@@ -1476,11 +1538,21 @@ export async function createCariDraftDocument({
   const tenantId = payload.tenantId;
   const legalEntityId = payload.legalEntityId;
   const counterpartyId = payload.counterpartyId;
+  const requestedOperatingUnitId = payload.operatingUnitId;
 
   assertFrozenTransactionType(payload.direction, payload.documentType);
   await assertLegalEntityBelongsToTenant(tenantId, legalEntityId, "legalEntityId");
-  assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
   await assertCurrencyExists(payload.currencyCode, "currencyCode");
+  const operatingUnitId = await validateDocumentOperatingUnit({
+    tenantId,
+    legalEntityId,
+    operatingUnitId: requestedOperatingUnitId,
+  });
+  if (operatingUnitId) {
+    assertScopeAccess(req, "operating_unit", operatingUnitId, "operatingUnitId");
+  } else {
+    assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
+  }
 
   const created = await withTransaction(async (tx) => {
     const counterparty = await fetchCounterpartyRow({
@@ -1527,6 +1599,7 @@ export async function createCariDraftDocument({
       `INSERT INTO cari_documents (
           tenant_id,
           legal_entity_id,
+          operating_unit_id,
           counterparty_id,
           payment_term_id,
           direction,
@@ -1551,10 +1624,11 @@ export async function createCariDraftDocument({
           currency_code_snapshot,
           fx_rate_snapshot
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         tenantId,
         legalEntityId,
+        operatingUnitId,
         counterpartyId,
         payload.paymentTermId,
         payload.direction,
@@ -1631,7 +1705,8 @@ export async function updateCariDraftDocumentById({
   }
 
   const existingLegalEntityId = parsePositiveInt(existing.legal_entity_id);
-  assertScopeAccess(req, "legal_entity", existingLegalEntityId, "documentId");
+  const existingOperatingUnitId = parsePositiveInt(existing.operating_unit_id);
+  assertDocumentScopeAccess(req, assertScopeAccess, existing, "documentId");
   if (existing.status !== DRAFT_STATUS) {
     throw badRequest("Only DRAFT documents can be updated");
   }
@@ -1644,6 +1719,10 @@ export async function updateCariDraftDocumentById({
     throw badRequest("legalEntityId cannot be changed for existing documents");
   }
   const legalEntityId = existingLegalEntityId;
+  const nextOperatingUnitId =
+    payload.operatingUnitId === undefined
+      ? existingOperatingUnitId
+      : payload.operatingUnitId;
   const expectedRowVersion = Number(payload.rowVersion || 0);
   if (!Number.isInteger(expectedRowVersion) || expectedRowVersion <= 0) {
     throw badRequest("rowVersion is required");
@@ -1672,6 +1751,14 @@ export async function updateCariDraftDocumentById({
   assertFrozenTransactionType(nextDirection, nextDocumentType);
   await assertLegalEntityBelongsToTenant(tenantId, legalEntityId, "legalEntityId");
   await assertCurrencyExists(nextCurrencyCode, "currencyCode");
+  const operatingUnitId = await validateDocumentOperatingUnit({
+    tenantId,
+    legalEntityId,
+    operatingUnitId: nextOperatingUnitId,
+  });
+  if (payload.operatingUnitId !== undefined && operatingUnitId) {
+    assertScopeAccess(req, "operating_unit", operatingUnitId, "operatingUnitId");
+  }
 
   const updated = await withTransaction(async (tx) => {
     const counterparty = await fetchCounterpartyRow({
@@ -1736,7 +1823,8 @@ export async function updateCariDraftDocumentById({
 
     await tx.query(
       `UPDATE cari_documents
-       SET counterparty_id = ?,
+       SET operating_unit_id = ?,
+           counterparty_id = ?,
            payment_term_id = ?,
            direction = ?,
            document_type = ?,
@@ -1763,6 +1851,7 @@ export async function updateCariDraftDocumentById({
          AND id = ?
          AND row_version = ?`,
       [
+        operatingUnitId,
         nextCounterpartyId,
         nextPaymentTermId,
         nextDirection,
@@ -1859,7 +1948,7 @@ export async function cancelCariDraftDocumentById({
   }
 
   const legalEntityId = parsePositiveInt(existing.legal_entity_id);
-  assertScopeAccess(req, "legal_entity", legalEntityId, "documentId");
+  assertDocumentScopeAccess(req, assertScopeAccess, existing, "documentId");
   if (existing.status !== DRAFT_STATUS) {
     throw badRequest("Only DRAFT documents can be cancelled");
   }
@@ -1921,7 +2010,7 @@ export async function postCariDocumentById({
   }
 
   const legalEntityId = parsePositiveInt(existing.legal_entity_id);
-  assertScopeAccess(req, "legal_entity", legalEntityId, "documentId");
+  assertDocumentScopeAccess(req, assertScopeAccess, existing, "documentId");
   if (normalizeUpperText(existing.status) !== DRAFT_STATUS) {
     throw badRequest("Only DRAFT documents can be posted");
   }
@@ -1937,6 +2026,7 @@ export async function postCariDocumentById({
     }
 
     const lockedLegalEntityId = parsePositiveInt(lockedDocument.legal_entity_id);
+    const documentOperatingUnitId = parsePositiveInt(lockedDocument.operating_unit_id) || null;
     if (normalizeUpperText(lockedDocument.status) !== DRAFT_STATUS) {
       throw badRequest("Only DRAFT documents can be posted");
     }
@@ -2218,6 +2308,7 @@ export async function postCariDocumentById({
     const journalResult = await insertPostedJournalWithLinesTx(tx, {
       tenantId,
       legalEntityId: lockedLegalEntityId,
+      operatingUnitId: documentOperatingUnitId,
       bookId: journalContext.bookId,
       fiscalPeriodId: journalContext.fiscalPeriodId,
       userId: payload.userId,
@@ -2423,7 +2514,7 @@ export async function reverseCariPostedDocumentById({
   }
 
   const legalEntityId = parsePositiveInt(existing.legal_entity_id);
-  assertScopeAccess(req, "legal_entity", legalEntityId, "documentId");
+  assertDocumentScopeAccess(req, assertScopeAccess, existing, "documentId");
   if (normalizeUpperText(existing.status) !== POSTED_STATUS) {
     throw badRequest("Only POSTED documents can be reversed");
   }
@@ -2492,6 +2583,7 @@ export async function reverseCariPostedDocumentById({
       const reversalSubledgerReferenceNo = `${CARI_SUBLEDGER_REVERSE_REFERENCE_PREFIX}${documentId}`;
       const reversalLines = originalJournalLines.map((line) => ({
         accountId: parsePositiveInt(line.account_id),
+        operatingUnitId: parsePositiveInt(line.operating_unit_id) || null,
         debitBase: Number(line.credit_base || 0),
         creditBase: Number(line.debit_base || 0),
         amountTxn: Number((Number(line.amount_txn || 0) * -1).toFixed(AMOUNT_PRECISION_SCALE)),
@@ -2507,6 +2599,7 @@ export async function reverseCariPostedDocumentById({
       const reversalJournalResult = await insertPostedJournalWithLinesTx(tx, {
         tenantId,
         legalEntityId: lockedLegalEntityId,
+        operatingUnitId: parsePositiveInt(original.operating_unit_id) || null,
         bookId: reversalPeriodContext.bookId,
         fiscalPeriodId: reversalPeriodContext.fiscalPeriodId,
         userId: payload.userId,
@@ -2565,6 +2658,7 @@ export async function reverseCariPostedDocumentById({
         `INSERT INTO cari_documents (
             tenant_id,
             legal_entity_id,
+            operating_unit_id,
             counterparty_id,
             payment_term_id,
             direction,
@@ -2593,10 +2687,11 @@ export async function reverseCariPostedDocumentById({
             posted_at,
             reversed_at
          )
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0.000000, 0.000000, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0.000000, 0.000000, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
         [
           tenantId,
           lockedLegalEntityId,
+          parsePositiveInt(original.operating_unit_id) || null,
           parsePositiveInt(original.counterparty_id),
           parsePositiveInt(original.payment_term_id),
           normalizeUpperText(original.direction),

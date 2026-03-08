@@ -2078,6 +2078,9 @@ export async function createCashTransaction({
         bookDate: payload.bookDate,
         runQuery: tx.query,
       });
+      const transferReferenceNo = TRANSFER_TXN_TYPES.has(payload.txnType)
+        ? `TRANSFER-${payload.txnType}-${txnNo}`.slice(0, 100)
+        : null;
 
       const transactionId = await insertCashTransaction({
         payload: {
@@ -2098,7 +2101,7 @@ export async function createCashTransaction({
           fxFallbackMode: fxPolicy.fxFallbackMode,
           fxFallbackMaxDays: fxPolicy.fxFallbackMaxDays,
           description: payload.description,
-          referenceNo: payload.referenceNo,
+          referenceNo: payload.referenceNo || transferReferenceNo,
           sourceDocType: payload.sourceDocType,
           sourceDocId: payload.sourceDocId,
           sourceModule: integrationDefaults.sourceModule,

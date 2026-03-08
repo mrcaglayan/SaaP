@@ -76,6 +76,7 @@ async function getStatementLineCore({ tenantId, lineId, runQuery = query }) {
         l.id,
         l.tenant_id,
         l.legal_entity_id,
+        l.operating_unit_id,
         l.import_id,
         l.bank_account_id,
         l.line_no,
@@ -118,6 +119,176 @@ async function getStatementLineCore({ tenantId, lineId, runQuery = query }) {
     [tenantId, lineId]
   );
   return result.rows?.[0] || null;
+}
+
+function pickSingleOperatingUnitId(row) {
+  if (Number(row?.distinct_operating_unit_count || 0) !== 1) {
+    return null;
+  }
+  return parsePositiveInt(row?.operating_unit_id) || null;
+}
+
+async function resolveSingleOperatingUnitFromJournalLines({
+  tenantId,
+  legalEntityId,
+  journalEntryId,
+  runQuery = query,
+}) {
+  const result = await runQuery(
+    `SELECT
+        MIN(jl.operating_unit_id) AS operating_unit_id,
+        COUNT(DISTINCT jl.operating_unit_id) AS distinct_operating_unit_count
+     FROM journal_entries je
+     JOIN journal_lines jl
+       ON jl.journal_entry_id = je.id
+     WHERE je.tenant_id = ?
+       AND je.legal_entity_id = ?
+       AND je.id = ?
+       AND jl.operating_unit_id IS NOT NULL`,
+    [tenantId, legalEntityId, journalEntryId]
+  );
+  return pickSingleOperatingUnitId(result.rows?.[0] || null);
+}
+
+async function resolveSingleOperatingUnitFromCariDocuments({
+  tenantId,
+  legalEntityId,
+  documentIds,
+  runQuery = query,
+}) {
+  const ids = Array.from(
+    new Set((documentIds || []).map((value) => parsePositiveInt(value)).filter(Boolean))
+  );
+  if (ids.length === 0) {
+    return null;
+  }
+
+  const result = await runQuery(
+    `SELECT
+        MIN(d.operating_unit_id) AS operating_unit_id,
+        COUNT(DISTINCT d.operating_unit_id) AS distinct_operating_unit_count
+     FROM cari_documents d
+     WHERE d.tenant_id = ?
+       AND d.legal_entity_id = ?
+       AND d.id IN (${ids.map(() => "?").join(", ")})
+       AND d.operating_unit_id IS NOT NULL`,
+    [tenantId, legalEntityId, ...ids]
+  );
+  return pickSingleOperatingUnitId(result.rows?.[0] || null);
+}
+
+async function resolveSingleOperatingUnitFromSettlementBatches({
+  tenantId,
+  legalEntityId,
+  settlementBatchIds,
+  runQuery = query,
+}) {
+  const ids = Array.from(
+    new Set((settlementBatchIds || []).map((value) => parsePositiveInt(value)).filter(Boolean))
+  );
+  if (ids.length === 0) {
+    return null;
+  }
+
+  const result = await runQuery(
+    `SELECT
+        MIN(d.operating_unit_id) AS operating_unit_id,
+        COUNT(DISTINCT d.operating_unit_id) AS distinct_operating_unit_count
+     FROM cari_settlement_allocations a
+     JOIN cari_open_items oi
+       ON oi.tenant_id = a.tenant_id
+      AND oi.legal_entity_id = a.legal_entity_id
+      AND oi.id = a.open_item_id
+     JOIN cari_documents d
+       ON d.tenant_id = oi.tenant_id
+      AND d.legal_entity_id = oi.legal_entity_id
+      AND d.id = oi.document_id
+     WHERE a.tenant_id = ?
+       AND a.legal_entity_id = ?
+       AND a.settlement_batch_id IN (${ids.map(() => "?").join(", ")})
+       AND d.operating_unit_id IS NOT NULL`,
+    [tenantId, legalEntityId, ...ids]
+  );
+  return pickSingleOperatingUnitId(result.rows?.[0] || null);
+}
+
+async function resolveJournalDerivedOperatingUnitId({
+  tenantId,
+  legalEntityId,
+  journalEntryId,
+  runQuery = query,
+}) {
+  const directJournalOuId = await resolveSingleOperatingUnitFromJournalLines({
+    tenantId,
+    legalEntityId,
+    journalEntryId,
+    runQuery,
+  });
+  if (directJournalOuId) {
+    return directJournalOuId;
+  }
+
+  const linkResult = await runQuery(
+    `SELECT source_ref_type, source_ref_id
+     FROM journal_source_links
+     WHERE tenant_id = ?
+       AND legal_entity_id = ?
+       AND journal_entry_id = ?
+     ORDER BY id ASC`,
+    [tenantId, legalEntityId, journalEntryId]
+  );
+  const sourceLinks = linkResult.rows || [];
+  const cariDocumentIds = sourceLinks
+    .filter((row) => normalizeUpperText(row?.source_ref_type) === "CARI_DOCUMENT")
+    .map((row) => parsePositiveInt(row?.source_ref_id));
+  const settlementBatchIds = sourceLinks
+    .filter((row) => normalizeUpperText(row?.source_ref_type) === "CARI_SETTLEMENT_BATCH")
+    .map((row) => parsePositiveInt(row?.source_ref_id));
+
+  const directDocumentOuId = await resolveSingleOperatingUnitFromCariDocuments({
+    tenantId,
+    legalEntityId,
+    documentIds: cariDocumentIds,
+    runQuery,
+  });
+  if (directDocumentOuId) {
+    return directDocumentOuId;
+  }
+
+  return resolveSingleOperatingUnitFromSettlementBatches({
+    tenantId,
+    legalEntityId,
+    settlementBatchIds,
+    runQuery,
+  });
+}
+
+async function inheritStatementLineOperatingUnitFromJournalMatchTx({
+  tenantId,
+  legalEntityId,
+  lineId,
+  journalEntryId,
+  runQuery = query,
+}) {
+  const operatingUnitId = await resolveJournalDerivedOperatingUnitId({
+    tenantId,
+    legalEntityId,
+    journalEntryId,
+    runQuery,
+  });
+  if (!operatingUnitId) {
+    return null;
+  }
+
+  await runQuery(
+    `UPDATE bank_statement_lines
+     SET operating_unit_id = COALESCE(operating_unit_id, ?)
+     WHERE tenant_id = ?
+       AND legal_entity_id = ?
+       AND id = ?`,
+    [operatingUnitId, tenantId, legalEntityId, lineId]
+  );
+  return operatingUnitId;
 }
 
 async function getActiveMatchesForLine({ tenantId, lineId, runQuery = query }) {
@@ -700,6 +871,16 @@ export async function matchReconciliationLine({
         userId,
       ]
     );
+
+    if (normalizeUpperText(matchInput.matchedEntityType) === "JOURNAL") {
+      await inheritStatementLineOperatingUnitFromJournalMatchTx({
+        tenantId,
+        legalEntityId: line.legal_entity_id,
+        lineId,
+        journalEntryId: parsePositiveInt(matchInput.matchedEntityId),
+        runQuery: tx.query,
+      });
+    }
 
     if (reconciliationMethod || reconciliationRuleId || reconciliationConfidence !== null) {
       await tx.query(

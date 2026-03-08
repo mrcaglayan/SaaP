@@ -229,6 +229,7 @@ export function parseDocumentIdParam(req) {
 export function parseDocumentReadFilters(req) {
   const tenantId = requireTenantId(req);
   const legalEntityId = optionalPositiveInt(req.query?.legalEntityId, "legalEntityId");
+  const operatingUnitId = optionalPositiveInt(req.query?.operatingUnitId, "operatingUnitId");
   const counterpartyId = optionalPositiveInt(req.query?.counterpartyId, "counterpartyId");
   const q = normalizeText(req.query?.q, "q", 120);
   const dateFrom = parseOptionalFilterDate(
@@ -268,6 +269,7 @@ export function parseDocumentReadFilters(req) {
   return {
     tenantId,
     legalEntityId,
+    operatingUnitId,
     counterpartyId,
     dateFrom,
     dateTo,
@@ -287,6 +289,12 @@ export function parseDocumentCreateInput(req) {
     req.body?.legalEntityId,
     "legalEntityId"
   );
+  const operatingUnitIdInput = parseOptionalPositiveIntField(
+    req.body?.operatingUnitId,
+    "operatingUnitId"
+  );
+  const operatingUnitId =
+    operatingUnitIdInput === undefined ? null : operatingUnitIdInput;
   const counterpartyId = parseRequiredPositiveIntField(
     req.body?.counterpartyId,
     "counterpartyId"
@@ -321,6 +329,7 @@ export function parseDocumentCreateInput(req) {
     tenantId,
     userId,
     legalEntityId,
+    operatingUnitId,
     counterpartyId,
     paymentTermId,
     direction,
@@ -343,6 +352,10 @@ export function parseDocumentUpdateInput(req) {
   const legalEntityId = parseOptionalPositiveIntField(
     req.body?.legalEntityId,
     "legalEntityId"
+  );
+  const operatingUnitId = parseOptionalPositiveIntField(
+    req.body?.operatingUnitId,
+    "operatingUnitId"
   );
   const counterpartyId = parseOptionalPositiveIntField(
     req.body?.counterpartyId,
@@ -386,6 +399,7 @@ export function parseDocumentUpdateInput(req) {
 
   const hasAnyMutationField =
     legalEntityId !== undefined ||
+    operatingUnitId !== undefined ||
     counterpartyId !== undefined ||
     paymentTermId !== undefined ||
     direction !== undefined ||
@@ -407,6 +421,7 @@ export function parseDocumentUpdateInput(req) {
     documentId,
     rowVersion,
     legalEntityId,
+    operatingUnitId,
     counterpartyId,
     paymentTermId,
     direction,

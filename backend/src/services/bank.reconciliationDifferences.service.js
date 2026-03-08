@@ -59,6 +59,7 @@ async function getStatementLineWithBank({ tenantId, lineId, runQuery = query }) 
         l.reference_no,
         l.amount,
         l.currency_code,
+        l.operating_unit_id,
         l.recon_status,
         l.reconciliation_difference_type,
         l.reconciliation_difference_amount,
@@ -364,11 +365,12 @@ async function createOrReuseDifferenceJournalAndTrace({
           `INSERT INTO journal_lines (
               journal_entry_id, line_no, account_id, operating_unit_id, counterparty_legal_entity_id,
               description, subledger_reference_no, currency_code, amount_txn, debit_base, credit_base, tax_code
-            ) VALUES (?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, NULL)`,
+            ) VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, NULL)`,
           [
             journalEntryId,
             jl.lineNo,
             jl.accountId,
+            parsePositiveInt(statementLine.operating_unit_id) || null,
             jl.memo,
             `BANKDIFF:${statementLine.id}:${jl.lineNo}`,
             u(statementLine.currency_code),
