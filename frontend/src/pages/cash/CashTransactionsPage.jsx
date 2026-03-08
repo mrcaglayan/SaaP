@@ -823,6 +823,7 @@ export default function CashTransactionsPage() {
   const [message, setMessage] = useToastMessage("", { toastType: "success" });
   const [infoMessage, setInfoMessage] = useState("");
   const [lookupWarning, setLookupWarning] = useState("");
+  const [accountLookupWarning, setAccountLookupWarning] = useState("");
 
   const [rows, setRows] = useState([]);
   const [registers, setRegisters] = useState([]);
@@ -901,20 +902,15 @@ export default function CashTransactionsPage() {
     () => toPositiveInt(selectedRegister?.legal_entity_id),
     [selectedRegister]
   );
-  const scopedAccountOptions = useMemo(() => {
-    if (!selectedRegisterLegalEntityId) {
-      return accountOptions;
-    }
-    return accountOptions.filter(
-      (row) => toPositiveInt(row?.legal_entity_id) === selectedRegisterLegalEntityId
-    );
-  }, [accountOptions, selectedRegisterLegalEntityId]);
+  const scopedAccountOptions = accountOptions;
   const counterAccountIsTransfer = isTransferTxnType(form.txnType);
   const counterAccountIsRequired =
     requiresCounterAccountTxnType(form.txnType) || selectedIsCrossOuTransfer;
+  const counterAccountNeedsLookup =
+    requiresCounterAccountTxnType(form.txnType) || counterAccountIsTransfer;
   const showCounterAccountPicker =
-    scopedAccountOptions.length > 0 &&
-    (requiresCounterAccountTxnType(form.txnType) || counterAccountIsTransfer);
+    canReadAccounts && counterAccountNeedsLookup;
+  const counterAccountPickerDisabled = !selectedRegisterLegalEntityId;
   const filteredCounterAccountOptions = useMemo(() => {
     const normalizedQuery = toUpper(accountQuery);
     const filtered = normalizedQuery
@@ -935,6 +931,10 @@ export default function CashTransactionsPage() {
       return String(a?.code || "").localeCompare(String(b?.code || ""));
     });
   }, [scopedAccountOptions, accountQuery, counterAccountIsTransfer]);
+  const combinedLookupWarning = useMemo(
+    () => [lookupWarning, accountLookupWarning].filter(Boolean).join(" "),
+    [accountLookupWarning, lookupWarning]
+  );
   const selectedRegisterId = useMemo(() => toPositiveInt(form.registerId), [form.registerId]);
   const selectedRegisterOpenSessions = useMemo(() => {
     if (!selectedRegisterId) {
@@ -1878,6 +1878,7 @@ export default function CashTransactionsPage() {
       setRegisters([]);
       setOpenSessions([]);
       setAccounts([]);
+      setAccountLookupWarning("");
       return;
     }
 
@@ -1886,16 +1887,11 @@ export default function CashTransactionsPage() {
     setErrorRequestId(null);
     setLookupWarning("");
     try {
-      const accountPromise = canReadAccounts
-        ? listAccounts({ includeInactive: true, limit: 600 })
-        : Promise.resolve({ rows: [] });
-      const [listResult, registerResult, sessionResult, accountResult] =
-        await Promise.allSettled([
-          listCashTransactions(toListQuery(nextFilters)),
-          listCashRegisters({ limit: 300, offset: 0 }),
-          listCashSessions({ status: "OPEN", limit: 300, offset: 0 }),
-          accountPromise,
-        ]);
+      const [listResult, registerResult, sessionResult] = await Promise.allSettled([
+        listCashTransactions(toListQuery(nextFilters)),
+        listCashRegisters({ limit: 300, offset: 0 }),
+        listCashSessions({ status: "OPEN", limit: 300, offset: 0 }),
+      ]);
 
       if (listResult.status !== "fulfilled") {
         throw listResult.reason;
@@ -1922,17 +1918,6 @@ export default function CashTransactionsPage() {
             t("cashTransactions.warnings.sessionLookupUnavailable")
         );
       }
-
-      if (accountResult.status === "fulfilled") {
-        setAccounts(accountResult.value?.rows || []);
-      } else {
-        setAccounts([]);
-        warnings.push(
-          accountResult.reason?.response?.data?.message ||
-            t("cashTransactions.warnings.accountLookupUnavailable")
-        );
-      }
-
       setRows(listResult.value?.rows || []);
       setLookupWarning(warnings.join(" "));
     } catch (err) {
@@ -1958,7 +1943,45 @@ export default function CashTransactionsPage() {
   useEffect(() => {
     loadPageData(filters);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canRead, presetTxnType, canReadAccounts]);
+  }, [canRead, presetTxnType]);
+
+  useEffect(() => {
+    if (!canRead || !canReadAccounts || !selectedRegisterLegalEntityId) {
+      setAccounts([]);
+      setAccountLookupWarning("");
+      return;
+    }
+
+    let active = true;
+
+    async function loadScopedAccounts() {
+      try {
+        const result = await listAccounts({
+          legalEntityId: selectedRegisterLegalEntityId,
+          includeInactive: true,
+          limit: 600,
+        });
+        if (!active) {
+          return;
+        }
+        setAccounts(result?.rows || []);
+        setAccountLookupWarning("");
+      } catch (err) {
+        if (!active) {
+          return;
+        }
+        setAccounts([]);
+        setAccountLookupWarning(
+          err?.response?.data?.message || t("cashTransactions.warnings.accountLookupUnavailable")
+        );
+      }
+    }
+
+    loadScopedAccounts();
+    return () => {
+      active = false;
+    };
+  }, [canRead, canReadAccounts, selectedRegisterLegalEntityId, t]);
 
   useEffect(() => {
     if (!canRead) {
@@ -2876,9 +2899,9 @@ export default function CashTransactionsPage() {
           {infoMessage}
         </div>
       ) : null}
-      {lookupWarning ? (
+      {combinedLookupWarning ? (
         <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-          {lookupWarning}
+          {combinedLookupWarning}
         </div>
       ) : null}
       {counterpartyWarning ? (
@@ -3521,6 +3544,7 @@ export default function CashTransactionsPage() {
                   value={accountQuery}
                   onChange={(event) => setAccountQuery(event.target.value)}
                   className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  disabled={counterAccountPickerDisabled}
                   placeholder={t(
                     counterAccountIsTransfer
                       ? "cashTransactions.placeholders.searchTransitAccount"
@@ -3533,6 +3557,7 @@ export default function CashTransactionsPage() {
                     setForm((prev) => ({ ...prev, counterAccountId: event.target.value }))
                   }
                   className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  disabled={counterAccountPickerDisabled}
                   required={counterAccountIsRequired}
                 >
                   <option value="">
