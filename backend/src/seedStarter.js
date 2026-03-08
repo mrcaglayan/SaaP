@@ -1343,6 +1343,8 @@ export async function seedStarter(options = {}) {
 
     const counterpartyAfgCustomer = getRequestBody(requests, 22);
     counterpartyAfgCustomer.legalEntityId = legalEntityA.id;
+    counterpartyAfgCustomer.primaryOperatingUnitId = operatingUnitA1Id;
+    counterpartyAfgCustomer.operatingUnitIds = [operatingUnitA1Id];
     counterpartyAfgCustomer.defaultPaymentTermId = paymentTermAId;
     counterpartyAfgCustomer.arAccountId = afgCustomerAccountId;
     counterpartyAfgCustomer.apAccountId = null;
@@ -1373,6 +1375,8 @@ export async function seedStarter(options = {}) {
 
     const counterpartyPkrCustomer = getRequestBody(requests, 24);
     counterpartyPkrCustomer.legalEntityId = legalEntityB.id;
+    counterpartyPkrCustomer.primaryOperatingUnitId = operatingUnitB1Id;
+    counterpartyPkrCustomer.operatingUnitIds = [operatingUnitB1Id];
     counterpartyPkrCustomer.arAccountId = pkrCustomerAccountId;
     counterpartyPkrCustomer.apAccountId = null;
     counterpartyPkrCustomer.defaultPaymentTermId = null;
@@ -1403,6 +1407,8 @@ export async function seedStarter(options = {}) {
 
     const counterpartyAfgVendor = getRequestBody(requests, 26);
     counterpartyAfgVendor.legalEntityId = legalEntityA.id;
+    counterpartyAfgVendor.primaryOperatingUnitId = operatingUnitA1Id;
+    counterpartyAfgVendor.operatingUnitIds = [operatingUnitA1Id];
     counterpartyAfgVendor.defaultPaymentTermId = paymentTermAId;
     counterpartyAfgVendor.arAccountId = null;
     counterpartyAfgVendor.apAccountId = afgVendorAccountId;
@@ -1433,6 +1439,8 @@ export async function seedStarter(options = {}) {
 
     const counterpartyPkrVendor = getRequestBody(requests, 27);
     counterpartyPkrVendor.legalEntityId = legalEntityB.id;
+    counterpartyPkrVendor.primaryOperatingUnitId = operatingUnitB1Id;
+    counterpartyPkrVendor.operatingUnitIds = [operatingUnitB1Id];
     counterpartyPkrVendor.defaultPaymentTermId = null;
     counterpartyPkrVendor.arAccountId = null;
     counterpartyPkrVendor.apAccountId = pkrVendorAccountId;
@@ -1768,6 +1776,7 @@ export async function seedStarter(options = {}) {
         postRequestId: 51,
         errorLabel: "first AP",
         legalEntityId: legalEntityA.id,
+        operatingUnitId: operatingUnitA1Id,
         counterpartyId: counterpartyAfgVendorId,
         paymentTermId: paymentTermAId,
         offsetAccountCode: CARI_OFFSET_ACCOUNT_CODE,
@@ -1777,6 +1786,7 @@ export async function seedStarter(options = {}) {
         postRequestId: 53,
         errorLabel: "second AP",
         legalEntityId: legalEntityA.id,
+        operatingUnitId: operatingUnitA1Id,
         counterpartyId: counterpartyAfgVendorId,
         paymentTermId: paymentTermAId,
         offsetAccountCode: CARI_OFFSET_ACCOUNT_CODE,
@@ -1786,6 +1796,7 @@ export async function seedStarter(options = {}) {
         postRequestId: 55,
         errorLabel: "first AR",
         legalEntityId: legalEntityA.id,
+        operatingUnitId: operatingUnitA1Id,
         counterpartyId: counterpartyAfgCustomerId,
         paymentTermId: paymentTermAId,
       },
@@ -1794,6 +1805,7 @@ export async function seedStarter(options = {}) {
         postRequestId: 57,
         errorLabel: "second AR",
         legalEntityId: legalEntityA.id,
+        operatingUnitId: operatingUnitA1Id,
         counterpartyId: counterpartyAfgCustomerId,
         paymentTermId: paymentTermAId,
       },
@@ -1802,6 +1814,7 @@ export async function seedStarter(options = {}) {
         postRequestId: 59,
         errorLabel: "third AP",
         legalEntityId: legalEntityB.id,
+        operatingUnitId: operatingUnitB1Id,
         counterpartyId: counterpartyPkrVendorId,
         paymentTermId: paymentTermBId,
         offsetAccountCode: CARI_OFFSET_ACCOUNT_CODE,
@@ -1811,6 +1824,7 @@ export async function seedStarter(options = {}) {
         postRequestId: 61,
         errorLabel: "fourth AP",
         legalEntityId: legalEntityB.id,
+        operatingUnitId: operatingUnitB1Id,
         counterpartyId: counterpartyPkrVendorId,
         paymentTermId: null,
         offsetAccountCode: CARI_OFFSET_ACCOUNT_CODE,
@@ -1820,6 +1834,7 @@ export async function seedStarter(options = {}) {
         postRequestId: 63,
         errorLabel: "third AR",
         legalEntityId: legalEntityB.id,
+        operatingUnitId: operatingUnitB1Id,
         counterpartyId: counterpartyPkrCustomerId,
         paymentTermId: paymentTermBId,
       },
@@ -1828,6 +1843,7 @@ export async function seedStarter(options = {}) {
         postRequestId: 65,
         errorLabel: "fourth AR",
         legalEntityId: legalEntityB.id,
+        operatingUnitId: operatingUnitB1Id,
         counterpartyId: counterpartyPkrCustomerId,
         paymentTermId: null,
       },
@@ -1836,6 +1852,7 @@ export async function seedStarter(options = {}) {
     for (const plan of cariDocumentPlans) {
       const documentCreatePayload = getRequestBody(requests, plan.createRequestId);
       documentCreatePayload.legalEntityId = plan.legalEntityId;
+      documentCreatePayload.operatingUnitId = plan.operatingUnitId;
       documentCreatePayload.counterpartyId = plan.counterpartyId;
       documentCreatePayload.paymentTermId = plan.paymentTermId;
 
@@ -1942,6 +1959,7 @@ export async function seedStarter(options = {}) {
 
     const pkrUsdSettlementPayload = getRequestBody(requests, 71);
     pkrUsdSettlementPayload.legalEntityId = legalEntityB.id;
+    pkrUsdSettlementPayload.operatingUnitId = operatingUnitB1Id;
     pkrUsdSettlementPayload.counterpartyId = counterpartyPkrCustomerId;
     const pkrUsdSettlementResult = await requestJson({
       baseUrl,
@@ -1960,6 +1978,7 @@ export async function seedStarter(options = {}) {
 
     const afnAfgSettlementPayload = getRequestBody(requests, 74);
     afnAfgSettlementPayload.legalEntityId = legalEntityA.id;
+    afnAfgSettlementPayload.operatingUnitId = operatingUnitA1Id;
     afnAfgSettlementPayload.counterpartyId = counterpartyAfgVendorId;
     afnAfgSettlementPayload.linkedCashTransaction = {
       ...afnAfgSettlementPayload.linkedCashTransaction,
@@ -1996,6 +2015,7 @@ export async function seedStarter(options = {}) {
 
     const usdAfgSettlementPayload = getRequestBody(requests, 75);
     usdAfgSettlementPayload.legalEntityId = legalEntityA.id;
+    usdAfgSettlementPayload.operatingUnitId = operatingUnitA1Id;
     usdAfgSettlementPayload.counterpartyId = counterpartyAfgVendorId;
     usdAfgSettlementPayload.linkedCashTransaction = {
       ...usdAfgSettlementPayload.linkedCashTransaction,
@@ -2032,6 +2052,7 @@ export async function seedStarter(options = {}) {
 
     const arCustomerAfgSettlementPayload = getRequestBody(requests, 76);
     arCustomerAfgSettlementPayload.legalEntityId = legalEntityA.id;
+    arCustomerAfgSettlementPayload.operatingUnitId = operatingUnitA1Id;
     arCustomerAfgSettlementPayload.counterpartyId = counterpartyAfgCustomerId;
     arCustomerAfgSettlementPayload.linkedCashTransaction = {
       ...arCustomerAfgSettlementPayload.linkedCashTransaction,
@@ -2070,6 +2091,7 @@ export async function seedStarter(options = {}) {
 
     const arAfgAfnSettlementPayload = getRequestBody(requests, 77);
     arAfgAfnSettlementPayload.legalEntityId = legalEntityA.id;
+    arAfgAfnSettlementPayload.operatingUnitId = operatingUnitA1Id;
     arAfgAfnSettlementPayload.counterpartyId = counterpartyAfgCustomerId;
     arAfgAfnSettlementPayload.linkedCashTransaction = {
       ...arAfgAfnSettlementPayload.linkedCashTransaction,

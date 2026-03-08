@@ -4360,6 +4360,8 @@ Request Method
 POST
 {
 "legalEntityId": 1,
+"primaryOperatingUnitId": 1,
+"operatingUnitIds": [1],
 "code": "AHM",
 "name": "AHMET BALLI",
 "isCustomer": true,
@@ -4395,6 +4397,8 @@ Request Method
 POST
 {
 "legalEntityId": 2,
+"primaryOperatingUnitId": 3,
+"operatingUnitIds": [3],
 "code": "SFK",
 "name": "NAIL AYYAS",
 "isCustomer": true,
@@ -4430,6 +4434,8 @@ Request Method
 POST
 {
 "legalEntityId": 1,
+"primaryOperatingUnitId": 1,
+"operatingUnitIds": [1],
 "code": "TTNET",
 "name": "TÜRK TELEKOM",
 "isCustomer": false,
@@ -4452,6 +4458,8 @@ Request Method
 POST
 {
 "legalEntityId": 2,
+"primaryOperatingUnitId": 3,
+"operatingUnitIds": [3],
 "code": "PKMRK",
 "name": "PAK MARKET",
 "isCustomer": false,
@@ -4812,6 +4820,7 @@ Request Method
 POST
 {
 "legalEntityId": 1,
+"operatingUnitId": 1,
 "counterpartyId": 5,
 "paymentTermId": 3,
 "direction": "AP",
@@ -4838,6 +4847,7 @@ Request Method
 POST
 {
 "legalEntityId": 1,
+"operatingUnitId": 1,
 "counterpartyId": 5,
 "paymentTermId": 3,
 "direction": "AP",
@@ -4864,6 +4874,7 @@ Request Method
 POST
 {
 "legalEntityId": 1,
+"operatingUnitId": 1,
 "counterpartyId": 1,
 "paymentTermId": 3,
 "direction": "AR",
@@ -4890,6 +4901,7 @@ Request Method
 POST
 {
 "legalEntityId": 1,
+"operatingUnitId": 1,
 "counterpartyId": 1,
 "paymentTermId": 3,
 "direction": "AR",
@@ -4916,6 +4928,7 @@ Request Method
 POST
 {
 "legalEntityId": 2,
+"operatingUnitId": 3,
 "counterpartyId": 4,
 "paymentTermId": 8,
 "direction": "AP",
@@ -4942,6 +4955,7 @@ Request Method
 POST
 {
 "legalEntityId": 2,
+"operatingUnitId": 3,
 "counterpartyId": 4,
 "paymentTermId": null,
 "direction": "AP",
@@ -4968,6 +4982,7 @@ Request Method
 POST
 {
 "legalEntityId": 2,
+"operatingUnitId": 3,
 "counterpartyId": 2,
 "paymentTermId": 8,
 "direction": "AR",
@@ -4994,6 +5009,7 @@ Request Method
 POST
 {
 "legalEntityId": 2,
+"operatingUnitId": 3,
 "counterpartyId": 2,
 "paymentTermId": null,
 "direction": "AR",
@@ -5090,6 +5106,7 @@ Request Method
 POST
 {
 "legalEntityId": 2,
+"operatingUnitId": 3,
 "counterpartyId": 2,
 "direction": "AR",
 "settlementDate": "2026-03-08",
@@ -5137,6 +5154,7 @@ Request Method
 POST
 {
 "legalEntityId": 1,
+"operatingUnitId": 1,
 "counterpartyId": 3,
 "direction": "AP",
 "settlementDate": "2026-03-09",
@@ -5163,6 +5181,7 @@ Request Method
 POST
 {
 "legalEntityId": 1,
+"operatingUnitId": 1,
 "counterpartyId": 3,
 "direction": "AP",
 "settlementDate": "2026-03-09",
@@ -5189,6 +5208,7 @@ Request Method
 POST
 {
 "legalEntityId": 1,
+"operatingUnitId": 1,
 "counterpartyId": 1,
 "direction": "AR",
 "settlementDate": "2026-03-09",
@@ -5215,6 +5235,7 @@ Request Method
 POST
 {
 "legalEntityId": 1,
+"operatingUnitId": 1,
 "counterpartyId": 1,
 "direction": "AR",
 "settlementDate": "2026-03-09",
