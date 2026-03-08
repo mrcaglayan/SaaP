@@ -336,6 +336,7 @@ export function registerGlWriteJournalRoutes(router, deps = {}) {
     ensurePeriodOpen,
     generateJournalNo,
     insertDraftJournalEntry,
+    loadCentralEquityJournalValidationContext,
     loadIntercompanyJournalCluster,
     loadJournal,
     normalizeJournalSourceType,
@@ -364,6 +365,11 @@ export function registerGlWriteJournalRoutes(router, deps = {}) {
   }
   if (typeof insertDraftJournalEntry !== "function") {
     throw new Error("registerGlWriteJournalRoutes requires insertDraftJournalEntry");
+  }
+  if (typeof loadCentralEquityJournalValidationContext !== "function") {
+    throw new Error(
+      "registerGlWriteJournalRoutes requires loadCentralEquityJournalValidationContext"
+    );
   }
   if (typeof loadIntercompanyJournalCluster !== "function") {
     throw new Error("registerGlWriteJournalRoutes requires loadIntercompanyJournalCluster");
@@ -483,13 +489,19 @@ export function registerGlWriteJournalRoutes(router, deps = {}) {
 
       await ensurePeriodOpen(bookId, fiscalPeriodId, "create draft journal");
 
+      const centralEquityPolicy = await loadCentralEquityJournalValidationContext({
+        tenantId,
+        legalEntityId,
+      });
       let totalDebit = 0;
       let totalCredit = 0;
       for (let i = 0; i < lines.length; i += 1) {
         const line = lines[i];
         totalDebit += toAmount(line.debitBase);
         totalCredit += toAmount(line.creditBase);
-        await validateJournalLineScope(req, tenantId, legalEntityId, line, i);
+        await validateJournalLineScope(req, tenantId, legalEntityId, line, i, {
+          centralEquityPolicy,
+        });
       }
 
       const controlledAccounts = await loadCashControlledAccounts({
@@ -723,6 +735,10 @@ export function registerGlWriteJournalRoutes(router, deps = {}) {
 
       await ensurePeriodOpen(bookId, fiscalPeriodId, "update draft journal");
 
+      const centralEquityPolicy = await loadCentralEquityJournalValidationContext({
+        tenantId,
+        legalEntityId,
+      });
       let totalDebit = 0;
       let totalCredit = 0;
       for (let i = 0; i < lines.length; i += 1) {
@@ -730,7 +746,9 @@ export function registerGlWriteJournalRoutes(router, deps = {}) {
         totalDebit += toAmount(line.debitBase);
         totalCredit += toAmount(line.creditBase);
         // eslint-disable-next-line no-await-in-loop
-        await validateJournalLineScope(req, tenantId, legalEntityId, line, i);
+        await validateJournalLineScope(req, tenantId, legalEntityId, line, i, {
+          centralEquityPolicy,
+        });
       }
 
       const controlledAccounts = await loadCashControlledAccounts({

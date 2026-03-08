@@ -3,6 +3,7 @@ import { badRequest, parsePositiveInt } from "../routes/_utils.js";
 
 const PURPOSE_MODULE_KEYS = Object.freeze({
   CARI: "CARI",
+  CASH: "CASH",
   REVREC: "REVREC",
 });
 
@@ -34,6 +35,12 @@ const CARI_PURPOSE_CODES = Object.freeze([
 ]);
 const CARI_PURPOSE_CODE_SET = new Set(CARI_PURPOSE_CODES);
 
+const CASH_PURPOSE_CODES = Object.freeze([
+  "CASH_EXCHANGE_CLEARING",
+  "CASH_TRANSIT_CLEARING",
+]);
+const CASH_PURPOSE_CODE_SET = new Set(CASH_PURPOSE_CODES);
+
 const REVREC_PURPOSE_CODES = Object.freeze([
   "DEFREV_SHORT_LIABILITY",
   "DEFREV_LONG_LIABILITY",
@@ -56,11 +63,13 @@ const REVREC_PURPOSE_CODE_SET = new Set(REVREC_PURPOSE_CODES);
 
 const PURPOSE_CODES_BY_MODULE = Object.freeze({
   [PURPOSE_MODULE_KEYS.CARI]: CARI_PURPOSE_CODES,
+  [PURPOSE_MODULE_KEYS.CASH]: CASH_PURPOSE_CODES,
   [PURPOSE_MODULE_KEYS.REVREC]: REVREC_PURPOSE_CODES,
 });
 
 const PURPOSE_CODE_SET_BY_MODULE = Object.freeze({
   [PURPOSE_MODULE_KEYS.CARI]: CARI_PURPOSE_CODE_SET,
+  [PURPOSE_MODULE_KEYS.CASH]: CASH_PURPOSE_CODE_SET,
   [PURPOSE_MODULE_KEYS.REVREC]: REVREC_PURPOSE_CODE_SET,
 });
 
@@ -98,7 +107,7 @@ function normalizePurposeModuleKey(value, { defaultValue = PURPOSE_MODULE_KEYS.C
   if (!normalized) {
     return defaultValue;
   }
-  if (normalized === PURPOSE_MODULE_KEYS.CARI || normalized === PURPOSE_MODULE_KEYS.REVREC) {
+  if (Object.values(PURPOSE_MODULE_KEYS).includes(normalized)) {
     return normalized;
   }
   throw badRequest(

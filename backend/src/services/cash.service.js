@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { badRequest, parsePositiveInt } from "../routes/_utils.js";
 import {
   ensurePeriodOpen,
+  loadCentralEquityJournalValidationContext,
   toAmount,
   toIsoDate,
   validateJournalLineScope,
@@ -515,9 +516,16 @@ export async function createAndPostCashJournalTx(tx, payload) {
         })
       )
     : buildCashPostingLines(cashTxn);
+  const centralEquityPolicy = await loadCentralEquityJournalValidationContext({
+    tenantId,
+    legalEntityId,
+    runQuery: tx.query.bind(tx),
+  });
   for (let i = 0; i < lines.length; i += 1) {
     // eslint-disable-next-line no-await-in-loop
-    await validateJournalLineScope(req, tenantId, legalEntityId, lines[i], i);
+    await validateJournalLineScope(req, tenantId, legalEntityId, lines[i], i, {
+      centralEquityPolicy,
+    });
   }
 
   const totals = ensureBalanced(lines);

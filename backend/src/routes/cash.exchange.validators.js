@@ -134,9 +134,6 @@ export function parseCashExchangeCreateInput(req) {
   if (!targetRegisterId) {
     throw badRequest("targetRegisterId is required");
   }
-  if (!clearingAccountId) {
-    throw badRequest("clearingAccountId is required");
-  }
   if (sourceRegisterId === targetRegisterId) {
     throw badRequest("sourceRegisterId and targetRegisterId must be different");
   }

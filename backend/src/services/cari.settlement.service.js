@@ -395,6 +395,7 @@ function resolvePurposeAccountByCandidates({
 
 function buildSettlementJournalLine({
   accountId,
+  operatingUnitId = null,
   debitBase = 0,
   creditBase = 0,
   amountTxn = 0,
@@ -409,6 +410,7 @@ function buildSettlementJournalLine({
 
   return {
     accountId: parsedAccountId,
+    operatingUnitId: parsePositiveInt(operatingUnitId) || null,
     debitBase: normalizeAmount(debitBase, "journalLine.debitBase", {
       allowZero: true,
     }),
@@ -1990,11 +1992,12 @@ async function insertPostedJournalWithLinesTx(tx, payload) {
           credit_base,
           tax_code
        )
-       VALUES (?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)`,
       [
         journalEntryId,
         i + 1,
         parsePositiveInt(line.accountId),
+        parsePositiveInt(line.operatingUnitId) || null,
         line.description || null,
         line.subledgerReferenceNo || null,
         line.currencyCode,
@@ -2049,16 +2052,17 @@ async function fetchPostedJournalWithLines({
 
   const lineResult = await runQuery(
     `SELECT
-       id,
-       line_no,
-       account_id,
-       description,
-       subledger_reference_no,
-       currency_code,
-       amount_txn,
-       debit_base,
-       credit_base,
-       tax_code
+        id,
+        line_no,
+        account_id,
+        operating_unit_id,
+        description,
+        subledger_reference_no,
+        currency_code,
+        amount_txn,
+        debit_base,
+        credit_base,
+        tax_code
      FROM journal_lines
      WHERE journal_entry_id = ?
      ORDER BY line_no ASC`,
@@ -3498,6 +3502,7 @@ async function fetchApplyAuditPayloadForSettlement({
 
 function buildSettlementPostingLines({
   direction,
+  operatingUnitId = null,
   totalAmountTxn,
   totalAmountBaseSettlement,
   totalAmountBaseHistorical,
@@ -3538,6 +3543,7 @@ function buildSettlementPostingLines({
     const lines = [
       buildSettlementJournalLine({
         accountId: offsetAccountId,
+        operatingUnitId,
         debitBase: settlementAmountBase,
         creditBase: 0,
         amountTxn,
@@ -3547,6 +3553,7 @@ function buildSettlementPostingLines({
       }),
       buildSettlementJournalLine({
         accountId: controlAccountId,
+        operatingUnitId,
         debitBase: 0,
         creditBase: hasRealizedFx ? historicalAmountBase : settlementAmountBase,
         amountTxn: roundAmount(0 - controlAmountTxn),
@@ -3559,6 +3566,7 @@ function buildSettlementPostingLines({
       lines.push(
         buildSettlementJournalLine({
           accountId: fxGainAccountId,
+          operatingUnitId,
           debitBase: 0,
           creditBase: realizedFx.gainBase,
           amountTxn: roundAmount(0 - fxAmountTxnRaw),
@@ -3571,6 +3579,7 @@ function buildSettlementPostingLines({
       lines.push(
         buildSettlementJournalLine({
           accountId: fxLossAccountId,
+          operatingUnitId,
           debitBase: realizedFx.lossBase,
           creditBase: 0,
           amountTxn: roundAmount(0 - fxAmountTxnRaw),
@@ -3588,6 +3597,7 @@ function buildSettlementPostingLines({
     const lines = [
       buildSettlementJournalLine({
         accountId: controlAccountId,
+        operatingUnitId,
         debitBase: hasRealizedFx ? historicalAmountBase : settlementAmountBase,
         creditBase: 0,
         amountTxn: controlAmountTxn,
@@ -3600,6 +3610,7 @@ function buildSettlementPostingLines({
       lines.push(
         buildSettlementJournalLine({
           accountId: fxLossAccountId,
+          operatingUnitId,
           debitBase: realizedFx.lossBase,
           creditBase: 0,
           amountTxn: fxAmountTxnRaw,
@@ -3612,6 +3623,7 @@ function buildSettlementPostingLines({
       lines.push(
         buildSettlementJournalLine({
           accountId: fxGainAccountId,
+          operatingUnitId,
           debitBase: 0,
           creditBase: realizedFx.gainBase,
           amountTxn: fxAmountTxnRaw,
@@ -3624,6 +3636,7 @@ function buildSettlementPostingLines({
     lines.push(
       buildSettlementJournalLine({
         accountId: offsetAccountId,
+        operatingUnitId,
         debitBase: 0,
         creditBase: settlementAmountBase,
         amountTxn: roundAmount(amountTxn * -1),
@@ -3644,14 +3657,15 @@ function buildUnifiedCashLinkedSettlementPostingLines({
   ...payload
 }) {
   const resolvedOperatingUnitId = parsePositiveInt(operatingUnitId) || null;
-  return buildSettlementPostingLines(payload).map((line) => ({
-    ...line,
+  return buildSettlementPostingLines({
+    ...payload,
     operatingUnitId: resolvedOperatingUnitId,
-  }));
+  });
 }
 
 function buildCashLinkedSettlementFxAdjustmentLines({
   direction,
+  operatingUnitId = null,
   totalAmountTxn,
   totalAmountBaseSettlement,
   totalAmountBaseHistorical,
@@ -3691,6 +3705,7 @@ function buildCashLinkedSettlementFxAdjustmentLines({
     const lines = [
       buildSettlementJournalLine({
         accountId: controlAccountId,
+        operatingUnitId,
         debitBase: realizedFx.gainBase,
         creditBase: 0,
         amountTxn: fxEquivalentTxn,
@@ -3700,6 +3715,7 @@ function buildCashLinkedSettlementFxAdjustmentLines({
       }),
       buildSettlementJournalLine({
         accountId: fxGainAccountId,
+        operatingUnitId,
         debitBase: 0,
         creditBase: realizedFx.gainBase,
         amountTxn: roundAmount(0 - fxEquivalentTxn),
@@ -3715,6 +3731,7 @@ function buildCashLinkedSettlementFxAdjustmentLines({
   const lines = [
     buildSettlementJournalLine({
       accountId: fxLossAccountId,
+      operatingUnitId,
       debitBase: realizedFx.lossBase,
       creditBase: 0,
       amountTxn: fxEquivalentTxn,
@@ -3724,6 +3741,7 @@ function buildCashLinkedSettlementFxAdjustmentLines({
     }),
     buildSettlementJournalLine({
       accountId: controlAccountId,
+      operatingUnitId,
       debitBase: 0,
       creditBase: realizedFx.lossBase,
       amountTxn: roundAmount(0 - fxEquivalentTxn),
@@ -4628,6 +4646,7 @@ export async function applyCariSettlement({
         const postingLines = [
           ...buildSettlementPostingLines({
             direction,
+            operatingUnitId: settlementOperatingUnitId,
             totalAmountTxn: totalAllocatedTxn,
             totalAmountBaseSettlement: totalAllocatedBaseSettlement,
             totalAmountBaseHistorical: totalAllocatedBaseHistorical,
@@ -4655,7 +4674,12 @@ export async function applyCariSettlement({
           runQuery: tx.query,
         });
         if (taxAugmentation.lines.length > 0) {
-          postingLines.push(...taxAugmentation.lines);
+          postingLines.push(
+            ...taxAugmentation.lines.map((line) => ({
+              ...line,
+              operatingUnitId: settlementOperatingUnitId,
+            }))
+          );
         }
         journalResult = await insertPostedJournalWithLinesTx(tx, {
           tenantId,
@@ -4744,6 +4768,8 @@ export async function applyCariSettlement({
           const subledgerReferenceNo = `${CARI_SETTLEMENT_REFERENCE_PREFIX}${sequence.settlementNo}`;
           const postingLines = buildCashLinkedSettlementFxAdjustmentLines({
             direction,
+            operatingUnitId:
+              parsePositiveInt(lockedCashTransaction?.operating_unit_id) || settlementOperatingUnitId,
             totalAmountTxn: totalAllocatedTxn,
             totalAmountBaseSettlement: totalAllocatedBaseSettlement,
             totalAmountBaseHistorical: totalAllocatedBaseHistorical,
@@ -6174,6 +6200,7 @@ export async function reverseCariSettlementById({
         const reversalSubledgerReferenceNo = `${CARI_SETTLEMENT_REVERSE_REFERENCE_PREFIX}${settlementBatchId}`;
         const reversalLines = originalJournalLines.map((line) => ({
           accountId: parsePositiveInt(line.account_id),
+          operatingUnitId: parsePositiveInt(line.operating_unit_id),
           debitBase: Number(line.credit_base || 0),
           creditBase: Number(line.debit_base || 0),
           amountTxn: roundAmount(Number(line.amount_txn || 0) * -1),

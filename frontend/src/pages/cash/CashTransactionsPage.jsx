@@ -1203,13 +1203,6 @@ export default function CashTransactionsPage() {
     if (requiresCounterAccountTxnType(normalizedTxnType) && !toPositiveInt(form.counterAccountId)) {
       warnings.push(t("cashTransactions.errors.counterAccountRequired"));
     }
-    if (
-      (normalizedTxnType === "TRANSFER_IN" || normalizedTxnType === "TRANSFER_OUT") &&
-      selectedIsCrossOuTransfer &&
-      !toPositiveInt(form.counterAccountId)
-    ) {
-      warnings.push(t("cashTransactions.warnings.crossOuTransitCounterRequired"));
-    }
     if (normalizedTxnType === "TRANSFER_IN" && selectedIsCrossOuTransfer) {
       warnings.push(t("cashTransactions.warnings.crossOuTransferInUseTransitReceive"));
     }
@@ -2393,7 +2386,7 @@ export default function CashTransactionsPage() {
       setSimpleError(t("cashTransactions.errors.counterRegisterRequired"));
       return;
     }
-    if ((requiresCounterAccountTxnType(txnType) || crossOuTransfer) && !counterAccountId) {
+    if (requiresCounterAccountTxnType(txnType) && !counterAccountId) {
       setSimpleError(t("cashTransactions.errors.counterAccountRequired"));
       return;
     }
@@ -2445,7 +2438,7 @@ export default function CashTransactionsPage() {
         const response = await initiateCashTransitTransfer({
           registerId,
           targetRegisterId: counterCashRegisterId,
-          transitAccountId: counterAccountId,
+          transitAccountId: counterAccountId || undefined,
           cashSessionId: cashSessionId || undefined,
           txnDatetime,
           bookDate,

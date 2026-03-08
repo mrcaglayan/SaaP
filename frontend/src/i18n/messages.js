@@ -2039,7 +2039,7 @@ export const messages = {
         "/app/demirbas-amortisman-ayarlar": "Depreciation Settings",
         "/app/donem-sonu-islemler": "Period End Operations",
         "/app/donem-sonu-islemler/aylik": "Month-End Operations",
-        "/app/donem-sonu-islemler/aylik/degerleme-islemleri": "Valuation Transactions",
+        "/app/donem-sonu-islemler/aylik/degerleme-islemleri": "Revaluation Transactions",
         "/app/donem-sonu-islemler/aylik/amortisman-islemleri": "Depreciation Transactions",
         "/app/donem-sonu-islemler/aylik/beyanname-islemleri": "Declaration Transactions",
         "/app/donem-sonu-islemler/aylik/intercompany-mutabakat": "Intercompany Reconciliation",

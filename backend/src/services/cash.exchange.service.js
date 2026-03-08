@@ -16,6 +16,10 @@ import {
   reverseCashTransactionById,
 } from "./cash.transaction.service.js";
 import { getCashFxLotMovementSummaryByTransaction } from "./cash.fx.position.service.js";
+import {
+  CASH_PURPOSE_CODES,
+  resolveCashPurposeAccountId,
+} from "./cash.purpose-mappings.service.js";
 
 const EXCHANGE_STATUS_DRAFT = "DRAFT";
 const EXCHANGE_STATUS_POSTED = "POSTED";
@@ -675,6 +679,8 @@ export async function createCashExchangeBatch({
     throw badRequest("source and target registers must belong to the same legal entity");
   }
 
+  const legalEntityId = parsePositiveInt(sourceRegister.legal_entity_id);
+
   const sourceCurrency = normalizeCurrency(sourceRegister.currency_code);
   const targetCurrency = normalizeCurrency(targetRegister.currency_code);
   if (!sourceCurrency || sourceCurrency.length !== 3) {
@@ -689,9 +695,22 @@ export async function createCashExchangeBatch({
     );
   }
 
+  const resolvedClearingAccountId = await resolveCashPurposeAccountId({
+    tenantId: payload.tenantId,
+    legalEntityId,
+    purposeCode: CASH_PURPOSE_CODES.EXCHANGE_CLEARING,
+    providedAccountId: payload.clearingAccountId,
+    fieldLabel: "clearingAccountId",
+  });
+  const effectivePayload = {
+    ...payload,
+    clearingAccountId: resolvedClearingAccountId,
+  };
+  const hasExplicitClearingAccount = Boolean(parsePositiveInt(payload.clearingAccountId));
+
   await assertAccountBelongsToTenant(
-    payload.tenantId,
-    payload.clearingAccountId,
+    effectivePayload.tenantId,
+    effectivePayload.clearingAccountId,
     "clearingAccountId"
   );
   if (feeAmountTxn && !parsePositiveInt(payload.feeAccountId)) {
@@ -708,12 +727,19 @@ export async function createCashExchangeBatch({
   }
 
   const replayByIdempotency = await findExchangeBatchByIdempotency({
-    tenantId: payload.tenantId,
-    sourceRegisterId: payload.sourceRegisterId,
-    idempotencyKey: payload.idempotencyKey,
+    tenantId: effectivePayload.tenantId,
+    sourceRegisterId: effectivePayload.sourceRegisterId,
+    idempotencyKey: effectivePayload.idempotencyKey,
   });
   if (replayByIdempotency) {
-    assertBatchRequestFingerprint(replayByIdempotency, payload);
+    const replayFingerprintPayload =
+      !hasExplicitClearingAccount && parsePositiveInt(replayByIdempotency.clearing_account_id)
+        ? {
+            ...effectivePayload,
+            clearingAccountId: parsePositiveInt(replayByIdempotency.clearing_account_id),
+          }
+        : effectivePayload;
+    assertBatchRequestFingerprint(replayByIdempotency, replayFingerprintPayload);
     assertExchangeScopeAccess(req, replayByIdempotency, assertScopeAccess, "sourceRegisterId");
     if (
       asUpper(replayByIdempotency.status) === EXCHANGE_STATUS_POSTED ||
@@ -723,18 +749,25 @@ export async function createCashExchangeBatch({
       return {
         batch: mapExchangeBatchRow(replayByIdempotency),
         ...replayTransactions,
-        fxLot: await buildExchangeBatchFxLotSummary(payload.tenantId, replayTransactions),
+        fxLot: await buildExchangeBatchFxLotSummary(effectivePayload.tenantId, replayTransactions),
         idempotentReplay: true,
       };
     }
   }
 
   const replayByEvent = await findExchangeBatchByIntegrationEventUid({
-    tenantId: payload.tenantId,
+    tenantId: effectivePayload.tenantId,
     integrationEventUid,
   });
   if (replayByEvent) {
-    assertBatchRequestFingerprint(replayByEvent, payload);
+    const replayFingerprintPayload =
+      !hasExplicitClearingAccount && parsePositiveInt(replayByEvent.clearing_account_id)
+        ? {
+            ...effectivePayload,
+            clearingAccountId: parsePositiveInt(replayByEvent.clearing_account_id),
+          }
+        : effectivePayload;
+    assertBatchRequestFingerprint(replayByEvent, replayFingerprintPayload);
     assertExchangeScopeAccess(req, replayByEvent, assertScopeAccess, "sourceRegisterId");
     if (
       asUpper(replayByEvent.status) === EXCHANGE_STATUS_POSTED ||
@@ -744,7 +777,7 @@ export async function createCashExchangeBatch({
       return {
         batch: mapExchangeBatchRow(replayByEvent),
         ...replayTransactions,
-        fxLot: await buildExchangeBatchFxLotSummary(payload.tenantId, replayTransactions),
+        fxLot: await buildExchangeBatchFxLotSummary(effectivePayload.tenantId, replayTransactions),
         idempotentReplay: true,
       };
     }
@@ -752,9 +785,9 @@ export async function createCashExchangeBatch({
 
   const draftBatch = await withTransaction(async (tx) => {
     const existing = await findExchangeBatchByIdempotency({
-      tenantId: payload.tenantId,
-      sourceRegisterId: payload.sourceRegisterId,
-      idempotencyKey: payload.idempotencyKey,
+      tenantId: effectivePayload.tenantId,
+      sourceRegisterId: effectivePayload.sourceRegisterId,
+      idempotencyKey: effectivePayload.idempotencyKey,
       runQuery: tx.query,
       forUpdate: true,
     });
@@ -790,20 +823,20 @@ export async function createCashExchangeBatch({
          source_entity_type,
          note,
          created_by_user_id
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'CASH', 'cash_exchange_batch', ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'CASH', 'cash_exchange_batch', ?, ?)`,
       [
-        payload.tenantId,
+        effectivePayload.tenantId,
         sourceRegister.legal_entity_id,
-        payload.sourceRegisterId,
-        payload.targetRegisterId,
+        effectivePayload.sourceRegisterId,
+        effectivePayload.targetRegisterId,
         sourceCurrency,
         targetCurrency,
         sourceAmountTxn,
         targetAmountTxn,
         feeAmountTxn,
         feeAmountBaseInput,
-        payload.clearingAccountId,
-        parsePositiveInt(payload.feeAccountId) || null,
+        effectivePayload.clearingAccountId,
+        parsePositiveInt(effectivePayload.feeAccountId) || null,
         effectiveFxRate,
         effectiveFxRateSource,
         effectiveFxRateDate,
@@ -812,10 +845,10 @@ export async function createCashExchangeBatch({
         spreadRateDelta,
         spreadAmountBase,
         EXCHANGE_STATUS_DRAFT,
-        payload.idempotencyKey,
+        effectivePayload.idempotencyKey,
         integrationEventUid,
-        payload.note || null,
-        payload.userId,
+        effectivePayload.note || null,
+        effectivePayload.userId,
       ]
     );
     const exchangeBatchId = parsePositiveInt(insertResult.rows?.insertId);
@@ -823,7 +856,7 @@ export async function createCashExchangeBatch({
       throw badRequest("Failed to create cash exchange batch");
     }
     const inserted = await findExchangeBatchById({
-      tenantId: payload.tenantId,
+      tenantId: effectivePayload.tenantId,
       exchangeBatchId,
       runQuery: tx.query,
       forUpdate: true,
@@ -842,10 +875,10 @@ export async function createCashExchangeBatch({
   const outTxnCreate = await createCashTransaction({
     req,
     payload: {
-      tenantId: payload.tenantId,
-      userId: payload.userId,
-      registerId: payload.sourceRegisterId,
-      cashSessionId: payload.sourceCashSessionId,
+      tenantId: effectivePayload.tenantId,
+      userId: effectivePayload.userId,
+      registerId: effectivePayload.sourceRegisterId,
+      cashSessionId: effectivePayload.sourceCashSessionId,
       txnType: "PAYOUT",
       txnDatetime,
       bookDate,
@@ -858,13 +891,14 @@ export async function createCashExchangeBatch({
       fxFallbackMode: null,
       fxFallbackMaxDays: null,
       description:
-        payload.description || `Cash exchange out to ${targetRegister.code || targetRegister.id}`,
-      referenceNo: payload.referenceNo || `EXCH-${exchangeBatchId}`,
+        effectivePayload.description ||
+        `Cash exchange out to ${targetRegister.code || targetRegister.id}`,
+      referenceNo: effectivePayload.referenceNo || `EXCH-${exchangeBatchId}`,
       sourceDocType: null,
       sourceDocId: null,
       counterpartyType: null,
       counterpartyId: null,
-      counterAccountId: payload.clearingAccountId,
+      counterAccountId: effectivePayload.clearingAccountId,
       counterCashRegisterId: null,
       linkedCariSettlementBatchId: null,
       linkedCariUnappliedCashId: null,
@@ -884,7 +918,7 @@ export async function createCashExchangeBatch({
 
   const sourceAmountBase = normalizePositiveAmount(outTxnCreate.row.amount_base, "sourceAmountBase");
   const baseCurrencyCode = await resolveBaseCurrencyCodeForLegalEntity({
-    tenantId: payload.tenantId,
+    tenantId: effectivePayload.tenantId,
     legalEntityId: parsePositiveInt(sourceRegister.legal_entity_id),
   });
 
@@ -908,10 +942,10 @@ export async function createCashExchangeBatch({
   const inTxnCreate = await createCashTransaction({
     req,
     payload: {
-      tenantId: payload.tenantId,
-      userId: payload.userId,
-      registerId: payload.targetRegisterId,
-      cashSessionId: payload.targetCashSessionId,
+      tenantId: effectivePayload.tenantId,
+      userId: effectivePayload.userId,
+      registerId: effectivePayload.targetRegisterId,
+      cashSessionId: effectivePayload.targetCashSessionId,
       txnType: "RECEIPT",
       txnDatetime,
       bookDate,
@@ -924,13 +958,14 @@ export async function createCashExchangeBatch({
       fxFallbackMode: null,
       fxFallbackMaxDays: null,
       description:
-        payload.description || `Cash exchange in from ${sourceRegister.code || sourceRegister.id}`,
-      referenceNo: payload.referenceNo || `EXCH-${exchangeBatchId}`,
+        effectivePayload.description ||
+        `Cash exchange in from ${sourceRegister.code || sourceRegister.id}`,
+      referenceNo: effectivePayload.referenceNo || `EXCH-${exchangeBatchId}`,
       sourceDocType: null,
       sourceDocId: null,
       counterpartyType: null,
       counterpartyId: null,
-      counterAccountId: payload.clearingAccountId,
+      counterAccountId: effectivePayload.clearingAccountId,
       counterCashRegisterId: null,
       linkedCariSettlementBatchId: null,
       linkedCariUnappliedCashId: null,
@@ -951,8 +986,8 @@ export async function createCashExchangeBatch({
   const postOut = await postCashTransactionById({
     req,
     payload: {
-      tenantId: payload.tenantId,
-      userId: payload.userId,
+      tenantId: effectivePayload.tenantId,
+      userId: effectivePayload.userId,
       transactionId: outTxnId,
       overrideCashControl: false,
       overrideReason: null,
@@ -962,8 +997,8 @@ export async function createCashExchangeBatch({
   const postIn = await postCashTransactionById({
     req,
     payload: {
-      tenantId: payload.tenantId,
-      userId: payload.userId,
+      tenantId: effectivePayload.tenantId,
+      userId: effectivePayload.userId,
       transactionId: inTxnId,
       overrideCashControl: false,
       overrideReason: null,
@@ -980,7 +1015,7 @@ export async function createCashExchangeBatch({
     "exchangeIn.posted.amountBase"
   );
   const exchangeOutFxLotSummary = await getCashFxLotMovementSummaryByTransaction({
-    tenantId: payload.tenantId,
+    tenantId: effectivePayload.tenantId,
     cashTransactionId: outTxnId,
   });
   const realizedFxBase = roundAmount(exchangeOutFxLotSummary?.realizedFxBase || 0);
@@ -1016,10 +1051,10 @@ export async function createCashExchangeBatch({
     const feeCreate = await createCashTransaction({
       req,
       payload: {
-        tenantId: payload.tenantId,
-        userId: payload.userId,
-        registerId: payload.targetRegisterId,
-        cashSessionId: payload.targetCashSessionId,
+        tenantId: effectivePayload.tenantId,
+        userId: effectivePayload.userId,
+        registerId: effectivePayload.targetRegisterId,
+        cashSessionId: effectivePayload.targetCashSessionId,
         txnType: "PAYOUT",
         txnDatetime,
         bookDate,
@@ -1032,14 +1067,14 @@ export async function createCashExchangeBatch({
         fxFallbackMode: null,
         fxFallbackMaxDays: null,
         description:
-          payload.description ||
+          effectivePayload.description ||
           `Cash exchange fee (${providerRef || targetRegister.code || targetRegister.id})`,
-        referenceNo: payload.referenceNo || `EXCH-${exchangeBatchId}`,
+        referenceNo: effectivePayload.referenceNo || `EXCH-${exchangeBatchId}`,
         sourceDocType: null,
         sourceDocId: null,
         counterpartyType: null,
         counterpartyId: null,
-        counterAccountId: parsePositiveInt(payload.feeAccountId),
+        counterAccountId: parsePositiveInt(effectivePayload.feeAccountId),
         counterCashRegisterId: null,
         linkedCariSettlementBatchId: null,
         linkedCariUnappliedCashId: null,
@@ -1060,8 +1095,8 @@ export async function createCashExchangeBatch({
     const postFee = await postCashTransactionById({
       req,
       payload: {
-        tenantId: payload.tenantId,
-        userId: payload.userId,
+        tenantId: effectivePayload.tenantId,
+        userId: effectivePayload.userId,
         transactionId: feeTxnId,
         overrideCashControl: false,
         overrideReason: null,
@@ -1108,7 +1143,7 @@ export async function createCashExchangeBatch({
         inTxnId,
         feeTxnId,
         EXCHANGE_STATUS_POSTED,
-        payload.userId,
+        effectivePayload.userId,
         effectiveFxRate,
         effectiveFxRateSource,
         effectiveFxRateDate,
@@ -1116,14 +1151,14 @@ export async function createCashExchangeBatch({
         spreadReferenceRate,
         spreadRateDelta,
         spreadAmountBase,
-        payload.tenantId,
+        effectivePayload.tenantId,
         exchangeBatchId,
       ]
     );
   });
 
   const saved = await findExchangeBatchById({
-    tenantId: payload.tenantId,
+    tenantId: effectivePayload.tenantId,
     exchangeBatchId,
   });
   if (!saved) {
@@ -1133,7 +1168,7 @@ export async function createCashExchangeBatch({
   return {
     batch: mapExchangeBatchRow(saved),
     ...transactions,
-    fxLot: await buildExchangeBatchFxLotSummary(payload.tenantId, transactions),
+    fxLot: await buildExchangeBatchFxLotSummary(effectivePayload.tenantId, transactions),
     idempotentReplay: false,
   };
 }

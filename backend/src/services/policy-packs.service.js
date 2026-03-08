@@ -12,6 +12,59 @@ const SHAREHOLDER_REQUIRED_PURPOSE_CODES = Object.freeze([
   "SHAREHOLDER_COMMITMENT_DEBIT_PARENT",
 ]);
 
+const CASH_CLEARING_PURPOSE_CODES = Object.freeze([
+  "CASH_EXCHANGE_CLEARING",
+  "CASH_TRANSIT_CLEARING",
+]);
+
+function buildCashClearingTarget({ purposeCode, matchCodes, suggestCode, suggestName }) {
+  return Object.freeze({
+    purposeCode,
+    rules: Object.freeze({
+      allowPosting: true,
+      accountType: "ASSET",
+      normalSide: "DEBIT",
+    }),
+    match: Object.freeze({
+      codeExact: Object.freeze(matchCodes),
+    }),
+    suggestCreate: Object.freeze({
+      code: suggestCode,
+      name: suggestName,
+      accountType: "ASSET",
+      normalSide: "DEBIT",
+      allowPosting: true,
+    }),
+  });
+}
+
+function buildCashClearingModule({
+  exchangeMatchCodes,
+  transitMatchCodes,
+  exchangeSuggestCode,
+  transitSuggestCode,
+}) {
+  return Object.freeze({
+    moduleKey: "cashClearing",
+    label: "Cash clearing defaults",
+    requiredPurposeCodes: Object.freeze([]),
+    purposeTargets: Object.freeze([
+      buildCashClearingTarget({
+        purposeCode: CASH_CLEARING_PURPOSE_CODES[0],
+        matchCodes: exchangeMatchCodes,
+        suggestCode: exchangeSuggestCode,
+        suggestName: "FX Clearing",
+      }),
+      buildCashClearingTarget({
+        purposeCode: CASH_CLEARING_PURPOSE_CODES[1],
+        matchCodes: transitMatchCodes,
+        suggestCode: transitSuggestCode,
+        suggestName: "Cash Transit Clearing",
+      }),
+    ]),
+  });
+}
+
 const STARTER_ACCOUNT_TREES_BY_PACK_ID = Object.freeze({
   TR_UNIFORM_V1: Object.freeze([
     Object.freeze({
@@ -2485,6 +2538,12 @@ const PACKS = Object.freeze([
           }),
         ]),
       }),
+      buildCashClearingModule({
+        exchangeMatchCodes: Object.freeze(["108.01", "108"]),
+        transitMatchCodes: Object.freeze(["108.02", "108"]),
+        exchangeSuggestCode: "108.01",
+        transitSuggestCode: "108.02",
+      }),
     ]),
   }),
   Object.freeze({
@@ -2649,6 +2708,12 @@ const PACKS = Object.freeze([
           }),
         ]),
       }),
+      buildCashClearingModule({
+        exchangeMatchCodes: Object.freeze(["1151", "1150"]),
+        transitMatchCodes: Object.freeze(["1152", "1150"]),
+        exchangeSuggestCode: "1151",
+        transitSuggestCode: "1152",
+      }),
     ]),
   }),
   Object.freeze({
@@ -2812,6 +2877,12 @@ const PACKS = Object.freeze([
             }),
           }),
         ]),
+      }),
+      buildCashClearingModule({
+        exchangeMatchCodes: Object.freeze(["1151", "1150"]),
+        transitMatchCodes: Object.freeze(["1152", "1150"]),
+        exchangeSuggestCode: "1151",
+        transitSuggestCode: "1152",
       }),
     ]),
   }),

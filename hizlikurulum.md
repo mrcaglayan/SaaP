@@ -4711,8 +4711,6 @@ POST
 },
 {
 "accountId": 1156,
-"operatingUnitId": 1,
-"subledgerReferenceNo": "SLR-KEO-20260305-2301STLYC",
 "description": "TAAHÜT ÖDEMESİ",
 "currencyCode": "AFN",
 "amountTxn": -1000000,
@@ -4757,8 +4755,6 @@ POST
 },
 {
 "accountId": 1154,
-"operatingUnitId": 3,
-"subledgerReferenceNo": "SLR-ISL-20260305-666BBEVX9",
 "description": "TAAHÜT ÖDEMESİ",
 "currencyCode": "PKR",
 "amountTxn": -1500000,

@@ -42,6 +42,69 @@ function toDateOnly(value) {
   return String(value || "").trim().slice(0, 10);
 }
 
+function isDescendantOfAccount(parentById, accountId, ancestorId) {
+  const normalizedAccountId = toPositiveInt(accountId);
+  const normalizedAncestorId = toPositiveInt(ancestorId);
+  if (!normalizedAccountId || !normalizedAncestorId) {
+    return false;
+  }
+
+  const visited = new Set();
+  let currentParentId = toPositiveInt(parentById.get(normalizedAccountId));
+  while (currentParentId) {
+    if (currentParentId === normalizedAncestorId) {
+      return true;
+    }
+    if (visited.has(currentParentId)) {
+      break;
+    }
+    visited.add(currentParentId);
+    currentParentId = toPositiveInt(parentById.get(currentParentId));
+  }
+
+  return false;
+}
+
+function buildCentralEquityAccountIds(accounts) {
+  const parentById = new Map();
+  const rowsById = new Map();
+  for (const row of accounts || []) {
+    const accountId = toPositiveInt(row?.id);
+    if (!accountId) {
+      continue;
+    }
+    rowsById.set(accountId, row);
+    parentById.set(accountId, toPositiveInt(row?.parent_account_id));
+  }
+
+  const parentAccountIds = new Set();
+  for (const [accountId, row] of rowsById.entries()) {
+    const code = String(row?.code || "").trim();
+    if (code === "500" || code === "501") {
+      parentAccountIds.add(accountId);
+    }
+  }
+
+  if (parentAccountIds.size === 0) {
+    return new Set();
+  }
+
+  const restrictedAccountIds = new Set(parentAccountIds);
+  for (const accountId of rowsById.keys()) {
+    for (const parentAccountId of parentAccountIds) {
+      if (
+        accountId === parentAccountId ||
+        isDescendantOfAccount(parentById, accountId, parentAccountId)
+      ) {
+        restrictedAccountIds.add(accountId);
+        break;
+      }
+    }
+  }
+
+  return restrictedAccountIds;
+}
+
 function isIsoDateOnly(value) {
   return /^\d{4}-\d{2}-\d{2}$/.test(String(value || ""));
 }
@@ -180,6 +243,14 @@ export default function AcilisFisiOlustur() {
       return allowPosting && !parentIds.has(accountId);
     });
   }, [accounts]);
+  const centralEquityAccountIds = useMemo(
+    () => buildCentralEquityAccountIds(accounts),
+    [accounts]
+  );
+  const isCentralEquityAccountId = useCallback(
+    (accountIdRaw) => centralEquityAccountIds.has(toPositiveInt(accountIdRaw)),
+    [centralEquityAccountIds]
+  );
   const resolvedFiscalPeriod = useMemo(
     () => findPeriodByDate(periods, toDateOnly(form.periodDate)),
     [periods, form.periodDate]
@@ -545,6 +616,27 @@ export default function AcilisFisiOlustur() {
   const canCopyFirstUnitToAll = Boolean(toPositiveInt(lines[0]?.operatingUnitId));
 
   useEffect(() => {
+    setLines((prev) => {
+      let changed = false;
+      const next = prev.map((line) => {
+        if (!isCentralEquityAccountId(line.accountId)) {
+          return line;
+        }
+        if (!String(line.operatingUnitId || "").trim() && !String(line.subledgerReferenceNo || "").trim()) {
+          return line;
+        }
+        changed = true;
+        return {
+          ...line,
+          operatingUnitId: "",
+          subledgerReferenceNo: "",
+        };
+      });
+      return changed ? next : prev;
+    });
+  }, [isCentralEquityAccountId]);
+
+  useEffect(() => {
     function handleKeyDown(event) {
       const isSaveShortcut =
         (event.ctrlKey || event.metaKey) &&
@@ -581,19 +673,7 @@ export default function AcilisFisiOlustur() {
       if (!inheritedUnitId) {
         return [...prev, nextLine];
       }
-
-      const inheritedUnit = unitsById.get(inheritedUnitId) || null;
-      const requiresSubledgerReference = Boolean(inheritedUnit?.has_subledger);
-      return [
-        ...prev,
-        {
-          ...nextLine,
-          operatingUnitId: inheritedOperatingUnitId,
-          subledgerReferenceNo: requiresSubledgerReference
-            ? buildSubledgerReferenceNo(nextLine.id, inheritedOperatingUnitId)
-            : "",
-        },
-      ];
+      return [...prev, applyOperatingUnitSelection(nextLine, nextLine.id, inheritedOperatingUnitId)];
     });
   }
 
@@ -609,6 +689,28 @@ export default function AcilisFisiOlustur() {
   function updateLine(lineId, field, value) {
     setLines((prev) =>
       prev.map((line) => (line.id === lineId ? { ...line, [field]: value } : line))
+    );
+  }
+
+  function updateLineAccount(lineId, nextAccountId) {
+    setLines((prev) =>
+      prev.map((line) => {
+        if (line.id !== lineId) {
+          return line;
+        }
+        if (!isCentralEquityAccountId(nextAccountId)) {
+          return {
+            ...line,
+            accountId: nextAccountId,
+          };
+        }
+        return {
+          ...line,
+          accountId: nextAccountId,
+          operatingUnitId: "",
+          subledgerReferenceNo: "",
+        };
+      })
     );
   }
 
@@ -746,6 +848,13 @@ export default function AcilisFisiOlustur() {
   }
 
   function applyOperatingUnitSelection(line, lineId, nextOperatingUnitId) {
+    if (isCentralEquityAccountId(line.accountId)) {
+      return {
+        ...line,
+        operatingUnitId: "",
+        subledgerReferenceNo: "",
+      };
+    }
     const unitId = toPositiveInt(nextOperatingUnitId);
     const selectedUnit = unitId ? unitsById.get(unitId) || null : null;
     const hasSubledger = Boolean(selectedUnit?.has_subledger);
@@ -811,19 +920,9 @@ export default function AcilisFisiOlustur() {
       if (!firstUnitId) {
         return prev;
       }
-
-      const firstUnit = unitsById.get(firstUnitId) || null;
-      const requiresSubledgerReference = Boolean(firstUnit?.has_subledger);
-      return prev.map((line) => {
-        const currentSubledgerReferenceNo = String(line.subledgerReferenceNo || "").trim();
-        return {
-          ...line,
-          operatingUnitId: firstOperatingUnitId,
-          subledgerReferenceNo: requiresSubledgerReference
-            ? currentSubledgerReferenceNo || buildSubledgerReferenceNo(line.id, firstOperatingUnitId)
-            : "",
-        };
-      });
+      return prev.map((line) =>
+        applyOperatingUnitSelection(line, line.id, firstOperatingUnitId)
+      );
     });
   }
 
@@ -910,6 +1009,15 @@ export default function AcilisFisiOlustur() {
           l(
             `${lineLabel}: operating unit must be a positive integer.`,
             `Satir ${i + 1}: birim pozitif bir tam sayi olmali.`
+          )
+        );
+        return;
+      }
+      if (operatingUnitId && isCentralEquityAccountId(accountId)) {
+        setError(
+          l(
+            `${lineLabel}: operating unit is not allowed for capital/equity lines.`,
+            `Satir ${i + 1}: sermaye/ozkaynak satirlarinda birim kullanilamaz.`
           )
         );
         return;
@@ -1340,7 +1448,9 @@ export default function AcilisFisiOlustur() {
                       </tr>
                     </thead>
                     <tbody>
-                      {lines.map((line, index) => (
+                      {lines.map((line, index) => {
+                        const lineDisallowsOperatingUnit = isCentralEquityAccountId(line.accountId);
+                        return (
                         <tr key={line.id} className="border-t border-slate-100">
                           <td className="px-3 py-2">
                             <Combobox
@@ -1355,11 +1465,7 @@ export default function AcilisFisiOlustur() {
                               optionClassName="text-xs"
                               renderOption={renderAccountOption}
                               onChange={(nextValue) =>
-                                updateLine(
-                                  line.id,
-                                  "accountId",
-                                  nextValue ? String(nextValue) : ""
-                                )
+                                updateLineAccount(line.id, nextValue ? String(nextValue) : "")
                               }
                             />
                             <div className="mt-1 text-[10px] text-slate-500">
@@ -1390,16 +1496,28 @@ export default function AcilisFisiOlustur() {
                           <select
                             value={line.operatingUnitId}
                             onChange={(event) => handleLineOperatingUnitChange(line.id, event.target.value)}
-                            className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs"
-                            disabled={!canReadOrgTree}
+                            className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs disabled:bg-slate-50 disabled:text-slate-400"
+                            disabled={!canReadOrgTree || lineDisallowsOperatingUnit}
                           >
-                              <option value="">{l("Optional", "Opsiyonel")}</option>
+                              <option value="">
+                                {lineDisallowsOperatingUnit
+                                  ? l("Legal entity scope", "Tuzel kisi seviyesi")
+                                  : l("Optional", "Opsiyonel")}
+                              </option>
                               {operatingUnits.map((unit) => (
                                 <option key={unit.id} value={unit.id}>
                                   {unit.code} - {unit.name}
                                 </option>
                               ))}
                             </select>
+                            {lineDisallowsOperatingUnit ? (
+                              <div className="mt-1 text-[10px] text-amber-700">
+                                {l(
+                                  "Capital/equity lines post at legal-entity scope.",
+                                  "Sermaye/ozkaynak satirlari tuzel kisi seviyesinde kaydedilir."
+                                )}
+                              </div>
+                            ) : null}
                           </td>
                           <td className="px-3 py-2">
                             <input
@@ -1407,13 +1525,19 @@ export default function AcilisFisiOlustur() {
                               onChange={(event) =>
                                 updateLine(line.id, "subledgerReferenceNo", event.target.value)
                               }
-                              className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs"
+                              className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs disabled:bg-slate-50 disabled:text-slate-400"
                               placeholder={
-                                (unitsById.get(toPositiveInt(line.operatingUnitId))?.has_subledger ?? false)
+                                lineDisallowsOperatingUnit
+                                  ? l("Not applicable", "Uygulanmaz")
+                                  : (unitsById.get(toPositiveInt(line.operatingUnitId))?.has_subledger ?? false)
                                   ? l("Required", "Zorunlu")
                                   : l("Optional", "Opsiyonel")
                               }
-                              required={unitsById.get(toPositiveInt(line.operatingUnitId))?.has_subledger ?? false}
+                              required={
+                                !lineDisallowsOperatingUnit &&
+                                (unitsById.get(toPositiveInt(line.operatingUnitId))?.has_subledger ?? false)
+                              }
+                              disabled={lineDisallowsOperatingUnit}
                             />
                           </td>
                           <td className="px-3 py-2">
@@ -1502,7 +1626,8 @@ export default function AcilisFisiOlustur() {
                             </button>
                           </td>
                         </tr>
-                      ))}
+                      );
+                      })}
                     </tbody>
                   </table>
                 </div>

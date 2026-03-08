@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   createCashExchangeBatch,
   getCashExchangeBatch,
@@ -8,6 +8,7 @@ import {
   reverseCashExchangeBatch,
 } from "../../api/cashAdmin.js";
 import { listAccounts, upsertAccount } from "../../api/glAdmin.js";
+import { listJournalPurposeAccounts } from "../../api/glPurposeMappings.js";
 import { listLegalEntities } from "../../api/orgAdmin.js";
 import { useAuth } from "../../auth/useAuth.js";
 import Combobox from "../../components/Combobox.jsx";
@@ -16,6 +17,7 @@ import { resolveContextBaseCurrencyCode } from "../../utils/money.js";
 import CashControlModeBanner from "./CashControlModeBanner.jsx";
 
 const EXCHANGE_STATUSES = ["DRAFT", "POSTED", "REVERSED", "CANCELLED"];
+const CASH_EXCHANGE_CLEARING_PURPOSE_CODE = "CASH_EXCHANGE_CLEARING";
 
 const INITIAL_FILTERS = {
   legalEntityId: "",
@@ -259,6 +261,18 @@ function buildAccountLookupOptions(rows) {
   }));
 }
 
+function buildPurposeMappingMap(rows) {
+  const byPurposeCode = {};
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const purposeCode = toUpper(row?.purposeCode || row?.purpose_code);
+    if (!purposeCode) {
+      continue;
+    }
+    byPurposeCode[purposeCode] = row;
+  }
+  return byPurposeCode;
+}
+
 function deriveSearchCodeCandidate(value) {
   const normalized = normalizeAccountCode(value);
   if (!normalized || /\s/.test(normalized)) {
@@ -384,6 +398,7 @@ export default function CashExchangesPage() {
   const [warning, setWarning] = useState("");
   const [message, setMessage] = useState("");
   const [createForm, setCreateForm] = useState(() => buildCreateDefaultForm());
+  const [cashPurposeMappingsByPurpose, setCashPurposeMappingsByPurpose] = useState({});
   const [clearingAccountLookupQuery, setClearingAccountLookupQuery] = useState("");
   const [clearingInlineChildParentAccountId, setClearingInlineChildParentAccountId] =
     useState("");
@@ -396,6 +411,7 @@ export default function CashExchangesPage() {
   const [postTargetSessionByBatchId, setPostTargetSessionByBatchId] = useState({});
   const [reverseReasonByBatchId, setReverseReasonByBatchId] = useState({});
   const [fxDisplayMode, setFxDisplayMode] = useState("TARGET_TO_SOURCE");
+  const lastSuggestedClearingAccountIdRef = useRef(null);
 
   const selectedLegalEntityId = toPositiveInt(filters.legalEntityId);
   const selectedCreateSourceRegisterId = toPositiveInt(createForm.sourceRegisterId);
@@ -462,10 +478,17 @@ export default function CashExchangesPage() {
   }, [accountRows, selectedCreateLegalEntityId]);
 
   const selectedClearingAccountId = toPositiveInt(createForm.clearingAccountId);
+  const defaultExchangeClearingAccountId = toPositiveInt(
+    cashPurposeMappingsByPurpose[CASH_EXCHANGE_CLEARING_PURPOSE_CODE]?.accountId ||
+      cashPurposeMappingsByPurpose[CASH_EXCHANGE_CLEARING_PURPOSE_CODE]?.account_id
+  );
   const selectedClearingAccountOption = useMemo(
     () =>
       resolveSelectedAccountOption(accountOptions, accountRows, selectedClearingAccountId),
     [accountOptions, accountRows, selectedClearingAccountId]
+  );
+  const selectedClearingAccountLegalEntityId = toPositiveInt(
+    selectedClearingAccountOption?.legal_entity_id ?? selectedClearingAccountOption?.legalEntityId
   );
   const clearingAccountPickerRows = useMemo(
     () => buildAccountPickerRows(accountOptions, selectedClearingAccountOption),
@@ -695,6 +718,101 @@ export default function CashExchangesPage() {
   }, [selectedCreateLegalEntityId]);
 
   useEffect(() => {
+    let cancelled = false;
+
+    async function loadCashPurposeMappings() {
+      if (!selectedCreateLegalEntityId) {
+        setCashPurposeMappingsByPurpose({});
+        return;
+      }
+      try {
+        const response = await listJournalPurposeAccounts({
+          legalEntityId: selectedCreateLegalEntityId,
+          moduleKey: "CASH",
+        });
+        if (cancelled) {
+          return;
+        }
+        setCashPurposeMappingsByPurpose(buildPurposeMappingMap(response?.rows || []));
+      } catch {
+        if (!cancelled) {
+          setCashPurposeMappingsByPurpose({});
+        }
+      }
+    }
+
+    loadCashPurposeMappings();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedCreateLegalEntityId]);
+
+  useEffect(() => {
+    const previousSuggestedClearingAccountId = toPositiveInt(
+      lastSuggestedClearingAccountIdRef.current
+    );
+    const nextSuggestedClearingAccountId = defaultExchangeClearingAccountId;
+
+    if (!selectedCreateLegalEntityId) {
+      lastSuggestedClearingAccountIdRef.current = null;
+      return;
+    }
+
+    setCreateForm((prev) => {
+      const currentClearingAccountId = toPositiveInt(prev.clearingAccountId);
+      const currentBelongsToSelectedLegalEntity =
+        !currentClearingAccountId ||
+        selectedClearingAccountLegalEntityId === selectedCreateLegalEntityId;
+
+      if (!currentBelongsToSelectedLegalEntity) {
+        return {
+          ...prev,
+          clearingAccountId: nextSuggestedClearingAccountId
+            ? String(nextSuggestedClearingAccountId)
+            : "",
+        };
+      }
+
+      if (!nextSuggestedClearingAccountId) {
+        if (
+          previousSuggestedClearingAccountId &&
+          currentClearingAccountId === previousSuggestedClearingAccountId
+        ) {
+          return {
+            ...prev,
+            clearingAccountId: "",
+          };
+        }
+        return prev;
+      }
+
+      if (
+        !currentClearingAccountId ||
+        (previousSuggestedClearingAccountId &&
+          currentClearingAccountId === previousSuggestedClearingAccountId)
+      ) {
+        if (currentClearingAccountId === nextSuggestedClearingAccountId) {
+          return prev;
+        }
+        return {
+          ...prev,
+          clearingAccountId: String(nextSuggestedClearingAccountId),
+        };
+      }
+
+      return prev;
+    });
+
+    lastSuggestedClearingAccountIdRef.current = nextSuggestedClearingAccountId
+      ? String(nextSuggestedClearingAccountId)
+      : null;
+  }, [
+    defaultExchangeClearingAccountId,
+    selectedClearingAccountLegalEntityId,
+    selectedCreateLegalEntityId,
+  ]);
+
+  useEffect(() => {
     if (!showInlineClearingChildCreate) {
       return;
     }
@@ -905,8 +1023,8 @@ export default function CashExchangesPage() {
     const sourceAmountTxn = toOptionalPositiveNumber(createForm.sourceAmountTxn);
     const targetAmountTxn = toOptionalPositiveNumber(createForm.targetAmountTxn);
 
-    if (!sourceRegisterId || !targetRegisterId || !clearingAccountId) {
-      setError("sourceRegisterId, targetRegisterId and clearingAccountId are required.");
+    if (!sourceRegisterId || !targetRegisterId) {
+      setError("sourceRegisterId and targetRegisterId are required.");
       setErrorRequestId(null);
       return;
     }
@@ -931,7 +1049,7 @@ export default function CashExchangesPage() {
       targetRegisterId,
       sourceCashSessionId: toPositiveInt(createForm.sourceCashSessionId) || undefined,
       targetCashSessionId: toPositiveInt(createForm.targetCashSessionId) || undefined,
-      clearingAccountId,
+      clearingAccountId: clearingAccountId || undefined,
       txnDatetime: createForm.txnDatetime || undefined,
       bookDate: createForm.bookDate || undefined,
       sourceAmountTxn,
@@ -1540,7 +1658,8 @@ export default function CashExchangesPage() {
               }}
             />
             <p className="text-[11px] font-normal normal-case tracking-normal text-slate-500">
-              Tip: 108.xx (under 108 - DIGER HAZIR DEGERLER) is a good fit for clearing.
+              If `CASH_EXCHANGE_CLEARING` is configured in GL setup it prefills here. Tip:
+              108.xx (under 108 - DIGER HAZIR DEGERLER) is a good fit for clearing.
             </p>
             {showInlineClearingChildCreate ? (
               <div className="space-y-2 rounded-md border border-cyan-200 bg-cyan-50 p-2">

@@ -336,6 +336,69 @@ function isDraftStatus(status) {
   return String(status || "").trim().toUpperCase() === "DRAFT";
 }
 
+function isDescendantOfAccount(parentById, accountId, ancestorId) {
+  const normalizedAccountId = toInt(accountId);
+  const normalizedAncestorId = toInt(ancestorId);
+  if (!normalizedAccountId || !normalizedAncestorId) {
+    return false;
+  }
+
+  const visited = new Set();
+  let currentParentId = toInt(parentById.get(normalizedAccountId));
+  while (currentParentId) {
+    if (currentParentId === normalizedAncestorId) {
+      return true;
+    }
+    if (visited.has(currentParentId)) {
+      break;
+    }
+    visited.add(currentParentId);
+    currentParentId = toInt(parentById.get(currentParentId));
+  }
+
+  return false;
+}
+
+function buildCentralEquityAccountIds(accounts) {
+  const parentById = new Map();
+  const rowsById = new Map();
+  for (const row of accounts || []) {
+    const accountId = toInt(row?.id);
+    if (!accountId) {
+      continue;
+    }
+    rowsById.set(accountId, row);
+    parentById.set(accountId, toInt(row?.parent_account_id));
+  }
+
+  const parentAccountIds = new Set();
+  for (const [accountId, row] of rowsById.entries()) {
+    const code = String(row?.code || "").trim();
+    if (code === "500" || code === "501") {
+      parentAccountIds.add(accountId);
+    }
+  }
+
+  if (parentAccountIds.size === 0) {
+    return new Set();
+  }
+
+  const restrictedAccountIds = new Set(parentAccountIds);
+  for (const accountId of rowsById.keys()) {
+    for (const parentAccountId of parentAccountIds) {
+      if (
+        accountId === parentAccountId ||
+        isDescendantOfAccount(parentById, accountId, parentAccountId)
+      ) {
+        restrictedAccountIds.add(accountId);
+        break;
+      }
+    }
+  }
+
+  return restrictedAccountIds;
+}
+
 function toJournalSummary(row) {
   const id = toInt(row?.id);
   if (!id) return null;
@@ -560,6 +623,14 @@ export default function JournalWorkbenchPage() {
       return allowPosting && !parentIds.has(accountId);
     });
   }, [accounts]);
+  const centralEquityAccountIds = useMemo(
+    () => buildCentralEquityAccountIds(accounts),
+    [accounts]
+  );
+  const isCentralEquityAccountId = useCallback(
+    (accountIdRaw) => centralEquityAccountIds.has(toInt(accountIdRaw)),
+    [centralEquityAccountIds]
+  );
   const retainedEarningsAccounts = useMemo(
     () =>
       postableAccounts.filter(
@@ -611,6 +682,27 @@ export default function JournalWorkbenchPage() {
       })),
     [books]
   );
+
+  useEffect(() => {
+    setLines((prev) => {
+      let changed = false;
+      const next = prev.map((line) => {
+        if (!isCentralEquityAccountId(line.accountId)) {
+          return line;
+        }
+        if (!String(line.operatingUnitId || "").trim() && !String(line.subledgerReferenceNo || "").trim()) {
+          return line;
+        }
+        changed = true;
+        return {
+          ...line,
+          operatingUnitId: "",
+          subledgerReferenceNo: "",
+        };
+      });
+      return changed ? next : prev;
+    });
+  }, [isCentralEquityAccountId]);
   const historyBookOptions = useMemo(
     () =>
       historyBooks.map((book) => ({
@@ -1940,6 +2032,60 @@ export default function JournalWorkbenchPage() {
     );
   }
 
+  function normalizeLineForAccountScope(line, nextAccountIdRaw = line.accountId) {
+    const nextAccountId = String(nextAccountIdRaw || "");
+    if (!isCentralEquityAccountId(nextAccountId)) {
+      return {
+        ...line,
+        accountId: nextAccountId,
+      };
+    }
+    return {
+      ...line,
+      accountId: nextAccountId,
+      operatingUnitId: "",
+      subledgerReferenceNo: "",
+    };
+  }
+
+  function applyCreateLineOperatingUnitSelection(line, nextOperatingUnitId) {
+    if (isCentralEquityAccountId(line.accountId)) {
+      return {
+        ...line,
+        operatingUnitId: "",
+        subledgerReferenceNo: "",
+      };
+    }
+    const normalizedOperatingUnitId = String(nextOperatingUnitId || "");
+    if (!toOptionalInt(normalizedOperatingUnitId)) {
+      return {
+        ...line,
+        operatingUnitId: normalizedOperatingUnitId,
+        subledgerReferenceNo: "",
+      };
+    }
+    return {
+      ...line,
+      operatingUnitId: normalizedOperatingUnitId,
+    };
+  }
+
+  function updateLineAccount(lineId, nextAccountId) {
+    setLines((prev) =>
+      prev.map((line) =>
+        line.id === lineId ? normalizeLineForAccountScope(line, nextAccountId) : line
+      )
+    );
+  }
+
+  function updateLineOperatingUnit(lineId, nextOperatingUnitId) {
+    setLines((prev) =>
+      prev.map((line) =>
+        line.id === lineId ? applyCreateLineOperatingUnitSelection(line, nextOperatingUnitId) : line
+      )
+    );
+  }
+
   function resolveCreateLineBalanceAmount(accountIdRaw) {
     if (
       !canReadTrialBalance ||
@@ -2003,14 +2149,17 @@ export default function JournalWorkbenchPage() {
   }
 
   function addLine() {
-    setLines((prev) => [
-      ...prev,
-      createLine(
-        journal.currencyCode || "USD",
-        String(postableAccounts[0]?.id || ""),
-        String(units[0]?.id || "")
-      ),
-    ]);
+    setLines((prev) => {
+      const defaultAccountId = String(postableAccounts[0]?.id || "");
+      const nextLine = normalizeLineForAccountScope(
+        createLine(journal.currencyCode || "USD", defaultAccountId, ""),
+        defaultAccountId
+      );
+      return [
+        ...prev,
+        applyCreateLineOperatingUnitSelection(nextLine, String(units[0]?.id || "")),
+      ];
+    });
   }
 
   function removeLine(lineId) {
@@ -2228,6 +2377,15 @@ export default function JournalWorkbenchPage() {
           l(
             `Line ${index + 1}: operatingUnitId must be a positive integer.`,
             `Satir ${index + 1}: operatingUnitId pozitif bir tam sayi olmali.`
+          )
+        );
+        return;
+      }
+      if (operatingUnitId && isCentralEquityAccountId(accountId)) {
+        setError(
+          l(
+            `Line ${index + 1}: operating unit is not allowed for capital/equity lines.`,
+            `Satir ${index + 1}: sermaye/ozkaynak satirlarinda birim kullanilamaz.`
           )
         );
         return;
@@ -2965,7 +3123,9 @@ export default function JournalWorkbenchPage() {
                 </tr>
               </thead>
               <tbody>
-                {lines.map((line, index) => (
+                {lines.map((line, index) => {
+                  const lineDisallowsOperatingUnit = isCentralEquityAccountId(line.accountId);
+                  return (
                   <tr key={line.id} className="border-t border-slate-100">
                     <td className="px-2 py-2 text-slate-500">{index + 1}</td>
                     <td className="px-2 py-2">
@@ -2982,17 +3142,13 @@ export default function JournalWorkbenchPage() {
                           optionClassName="text-xs"
                           renderOption={renderPostableAccountOption}
                           onChange={(nextValue) =>
-                            updateLine(
-                              line.id,
-                              "accountId",
-                              nextValue ? String(nextValue) : ""
-                            )
+                            updateLineAccount(line.id, nextValue ? String(nextValue) : "")
                           }
                           onInputChange={(text, { reason }) => {
                             if (reason === "input") {
-                              updateLine(line.id, "accountId", keepDigits(text));
+                              updateLineAccount(line.id, keepDigits(text));
                             } else if (reason === "clear") {
-                              updateLine(line.id, "accountId", "");
+                              updateLineAccount(line.id, "");
                             }
                           }}
                         />
@@ -3026,24 +3182,33 @@ export default function JournalWorkbenchPage() {
                         value={line.operatingUnitId || null}
                         options={operatingUnitOptions}
                         onChange={(nextValue) =>
-                          updateLine(
-                            line.id,
-                            "operatingUnitId",
-                            nextValue ? String(nextValue) : ""
-                          )
+                          updateLineOperatingUnit(line.id, nextValue ? String(nextValue) : "")
                         }
                         onInputChange={(text, { reason }) => {
                           if (reason === "input") {
-                            updateLine(line.id, "operatingUnitId", keepDigits(text));
+                            updateLineOperatingUnit(line.id, keepDigits(text));
                           } else if (reason === "clear") {
-                            updateLine(line.id, "operatingUnitId", "");
+                            updateLineOperatingUnit(line.id, "");
                           }
                         }}
-                        placeholder={l("Optional", "Opsiyonel")}
+                        placeholder={
+                          lineDisallowsOperatingUnit
+                            ? l("Legal entity scope", "Tuzel kisi seviyesi")
+                            : l("Optional", "Opsiyonel")
+                        }
                         inputClassName="px-2 py-1.5 pr-14 text-xs"
                         listClassName="text-xs"
                         optionClassName="text-xs"
+                        disabled={!canReadOrgTree || lineDisallowsOperatingUnit}
                       />
+                      {lineDisallowsOperatingUnit ? (
+                        <div className="mt-1 text-[10px] text-amber-700">
+                          {l(
+                            "Capital/equity lines post at legal-entity scope.",
+                            "Sermaye/ozkaynak satirlari tuzel kisi seviyesinde kaydedilir."
+                          )}
+                        </div>
+                      ) : null}
                     </td>
                     <td className="px-2 py-2">
                       <input
@@ -3051,13 +3216,19 @@ export default function JournalWorkbenchPage() {
                         onChange={(event) =>
                           updateLine(line.id, "subledgerReferenceNo", event.target.value)
                         }
-                        className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs"
+                        className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs disabled:bg-slate-50 disabled:text-slate-400"
                         placeholder={
-                          (unitsById.get(toOptionalInt(line.operatingUnitId))?.has_subledger ?? false)
+                          lineDisallowsOperatingUnit
+                            ? l("Not applicable", "Uygulanmaz")
+                            : (unitsById.get(toOptionalInt(line.operatingUnitId))?.has_subledger ?? false)
                             ? l("Required", "Zorunlu")
                             : l("Optional", "Opsiyonel")
                         }
-                        required={unitsById.get(toOptionalInt(line.operatingUnitId))?.has_subledger ?? false}
+                        required={
+                          !lineDisallowsOperatingUnit &&
+                          (unitsById.get(toOptionalInt(line.operatingUnitId))?.has_subledger ?? false)
+                        }
+                        disabled={lineDisallowsOperatingUnit}
                       />
                     </td>
                     <td className="px-2 py-2">
@@ -3100,7 +3271,8 @@ export default function JournalWorkbenchPage() {
                     <td className="px-2 py-2"><input value={line.taxCode} onChange={(event) => updateLine(line.id, "taxCode", event.target.value)} className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs" /></td>
                     <td className="px-2 py-2"><button type="button" onClick={() => removeLine(line.id)} disabled={lines.length <= 2} className="rounded border border-rose-200 px-2 py-1 text-xs font-semibold text-rose-700 disabled:opacity-50">{l("Remove", "Kaldir")}</button></td>
                   </tr>
-                ))}
+                );
+                })}
               </tbody>
             </table>
           </div>

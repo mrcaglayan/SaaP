@@ -42,6 +42,10 @@ import {
   CARI_SETTLEMENT_FOLLOW_UP_RISKS,
   applyCariSettlement,
 } from "./cari.settlement.service.js";
+import {
+  CASH_PURPOSE_CODES,
+  resolveCashPurposeAccountId,
+} from "./cash.purpose-mappings.service.js";
 
 const TRANSFER_TXN_TYPES = new Set(["TRANSFER_OUT", "TRANSFER_IN"]);
 const BANK_TXN_TYPES = new Set(["DEPOSIT_TO_BANK", "WITHDRAWAL_FROM_BANK"]);
@@ -1418,6 +1422,8 @@ export async function initiateCashTransitTransfer({
         throw badRequest("Cross-legal-entity cash transit transfer is not supported");
       }
 
+      const legalEntityId = parsePositiveInt(sourceRegister.legal_entity_id);
+
       const sourceOuId = parsePositiveInt(sourceRegister.operating_unit_id);
       const targetOuId = parsePositiveInt(targetRegister.operating_unit_id);
       if (!sourceOuId || !targetOuId || sourceOuId === targetOuId) {
@@ -1442,9 +1448,18 @@ export async function initiateCashTransitTransfer({
         }
       }
 
+      const resolvedTransitAccountId = await resolveCashPurposeAccountId({
+        tenantId: payload.tenantId,
+        legalEntityId,
+        purposeCode: CASH_PURPOSE_CODES.TRANSIT_CLEARING,
+        providedAccountId: payload.transitAccountId,
+        fieldLabel: "transitAccountId",
+        runQuery: tx.query,
+      });
+
       await assertAccountBelongsToTenant(
         payload.tenantId,
-        payload.transitAccountId,
+        resolvedTransitAccountId,
         "transitAccountId"
       );
 
@@ -1475,7 +1490,7 @@ export async function initiateCashTransitTransfer({
         description: transferOutDescription,
         referenceNo: transferOutReferenceNo.slice(0, 100),
         counterCashRegisterId: parsePositiveInt(targetRegister.id),
-        counterAccountId: payload.transitAccountId,
+        counterAccountId: resolvedTransitAccountId,
         sourceModule: "CASH",
         sourceEntityType: "cash_transit_transfer",
         sourceEntityId: "PENDING",
@@ -1501,7 +1516,7 @@ export async function initiateCashTransitTransfer({
           status: TRANSIT_STATUS_INITIATED,
           amount: normalizeMoney(payload.amount),
           currencyCode: requestedCurrency,
-          transitAccountId: payload.transitAccountId,
+          transitAccountId: resolvedTransitAccountId,
           initiatedByUserId: payload.userId,
           idempotencyKey: payload.idempotencyKey,
           integrationEventUid,

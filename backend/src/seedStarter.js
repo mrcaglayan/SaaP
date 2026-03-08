@@ -9,7 +9,7 @@ import { query } from "./db.js";
 import { runMigrations } from "./migrationRunner.js";
 import { seedCore } from "./seedCore.js";
 
-const REQUIRED_REQUEST_IDS = Array.from({ length: 80 }, (_, index) => index + 1);
+const REQUIRED_REQUEST_IDS = Array.from({ length: 84 }, (_, index) => index + 1);
 
 const DEFAULT_MARKDOWN_PATH = path.resolve(process.cwd(), "..", "hizlikurulum.md");
 const DEFAULT_BASE_URL = String(process.env.STARTER_SEED_BASE_URL || "").trim() ||
@@ -20,6 +20,7 @@ const SHAREHOLDER_PARENT_CAPITAL_CODE = "500";
 const SHAREHOLDER_PARENT_COMMITMENT_CODE = "501";
 const FX_CLEARANCE_PARENT_CODE = "108";
 const CASH_PARENT_CODE = "100";
+const BANK_PARENT_CODE = "102";
 const AR_PARENT_CODE = "120";
 const AP_PARENT_CODE = "320";
 const CARI_OFFSET_ACCOUNT_CODE = "770";
@@ -707,6 +708,19 @@ async function findCashRegisterId(tenantId, code) {
        AND code = ?
      LIMIT 1`,
     [tenantId, String(code || "").trim().toUpperCase()]
+  );
+  return parsePositiveInt(row?.id);
+}
+
+async function findBankAccountId(tenantId, legalEntityId, code) {
+  const row = await queryOptional(
+    `SELECT id
+     FROM bank_accounts
+     WHERE tenant_id = ?
+       AND legal_entity_id = ?
+       AND code = ?
+     LIMIT 1`,
+    [tenantId, legalEntityId, String(code || "").trim().toUpperCase()]
   );
   return parsePositiveInt(row?.id);
 }
@@ -1672,7 +1686,8 @@ export async function seedStarter(options = {}) {
       openingJournalA.lines[0].accountId = account10001AId;
       openingJournalA.lines[0].operatingUnitId = operatingUnitA1Id;
       openingJournalA.lines[1].accountId = shareholderA.commitmentDebitSubAccountId;
-      openingJournalA.lines[1].operatingUnitId = operatingUnitA1Id;
+      delete openingJournalA.lines[1].operatingUnitId;
+      delete openingJournalA.lines[1].subledgerReferenceNo;
     }
     const openingJournalAResult = await requestJson({
       baseUrl,
@@ -1703,7 +1718,8 @@ export async function seedStarter(options = {}) {
       openingJournalB.lines[0].accountId = account10001BId;
       openingJournalB.lines[0].operatingUnitId = operatingUnitB1Id;
       openingJournalB.lines[1].accountId = shareholderB.commitmentDebitSubAccountId;
-      openingJournalB.lines[1].operatingUnitId = operatingUnitB1Id;
+      delete openingJournalB.lines[1].operatingUnitId;
+      delete openingJournalB.lines[1].subledgerReferenceNo;
     }
     const openingJournalBResult = await requestJson({
       baseUrl,
@@ -2190,6 +2206,77 @@ export async function seedStarter(options = {}) {
       body: interRegisterTransitReceivePayload,
     });
 
+    const account10201ARequest = getRequestBody(requests, 81);
+    account10201ARequest.coaId = coaA.id;
+    account10201ARequest.parentAccountId = await findAccountIdByCoaId(
+      coaA.id,
+      BANK_PARENT_CODE
+    );
+    await requestJson({
+      baseUrl,
+      cookie: authCookie,
+      method: "POST",
+      pathName: "/api/v1/gl/accounts",
+      body: account10201ARequest,
+    });
+    const account10201AId = await findAccountIdByCoaId(
+      coaA.id,
+      account10201ARequest.code
+    );
+
+    const bankAccountAfgPayload = getRequestBody(requests, 82);
+    bankAccountAfgPayload.legalEntityId = legalEntityA.id;
+    bankAccountAfgPayload.glAccountId = account10201AId;
+    let bankAccountAfgId = await findBankAccountId(
+      tenantContext.tenantId,
+      legalEntityA.id,
+      bankAccountAfgPayload.code
+    );
+    if (!bankAccountAfgId) {
+      const bankAccountAfgResult = await requestJson({
+        baseUrl,
+        cookie: authCookie,
+        method: "POST",
+        pathName: "/api/v1/bank/accounts",
+        body: bankAccountAfgPayload,
+      });
+      bankAccountAfgId = parsePositiveInt(bankAccountAfgResult?.row?.id);
+      if (!bankAccountAfgId) {
+        throw new Error("Unable to resolve AFG bank account id");
+      }
+    }
+
+    const depositToBankPayload = getRequestBody(requests, 83);
+    depositToBankPayload.registerId = registerA1Id;
+    depositToBankPayload.cashSessionId = await findOpenCashSessionId(
+      tenantContext.tenantId,
+      registerA1Id
+    );
+    if (!depositToBankPayload.cashSessionId) {
+      throw new Error("Unable to resolve open cash session for register A1 bank deposit");
+    }
+    depositToBankPayload.counterAccountId = account10201AId;
+    const depositToBankResult = await requestJson({
+      baseUrl,
+      cookie: authCookie,
+      method: "POST",
+      pathName: "/api/v1/cash/transactions",
+      body: depositToBankPayload,
+    });
+    const depositToBankTransactionId = parsePositiveInt(depositToBankResult?.row?.id);
+    if (!depositToBankTransactionId) {
+      throw new Error("Unable to resolve deposit-to-bank cash transaction id");
+    }
+
+    const depositToBankPostPayload = getRequestBody(requests, 84);
+    await requestJson({
+      baseUrl,
+      cookie: authCookie,
+      method: "POST",
+      pathName: `/api/v1/cash/transactions/${depositToBankTransactionId}/post`,
+      body: depositToBankPostPayload,
+    });
+
     return {
       ok: true,
       tenantId: tenantContext.tenantId,
@@ -2222,6 +2309,12 @@ export async function seedStarter(options = {}) {
         [registerA4Payload.code]: registerA4Id,
         [registerB1Payload.code]: registerB1Id,
         [registerB2Payload.code]: registerB2Id,
+      },
+      bankAccountIds: {
+        [bankAccountAfgPayload.code]: bankAccountAfgId,
+      },
+      cashTransactionIds: {
+        depositToBank: depositToBankTransactionId,
       },
       periods: {
         fiscalCalendarId: fiscalCalendar.id,

@@ -464,9 +464,6 @@ export function parseCashTransitTransferInitiateInput(req) {
   if (!targetRegisterId) {
     throw badRequest("targetRegisterId is required");
   }
-  if (!transitAccountId) {
-    throw badRequest("transitAccountId is required");
-  }
   if (registerId === targetRegisterId) {
     throw badRequest("registerId and targetRegisterId must be different");
   }

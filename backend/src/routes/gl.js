@@ -32,6 +32,10 @@ import { registerGlWriteJournalRoutes } from "./gl.write.journal.routes.js";
 import { registerGlReclassificationRoutes } from "./gl.reclass.routes.js";
 import { registerGlPeriodClosingRoutes } from "./gl.period-closing.routes.js";
 import { registerGlPurposeMappingsRoutes } from "./gl.purpose-mappings.routes.js";
+import {
+  isDescendantOfParentAccount,
+  loadLegalEntityAccountHierarchy,
+} from "../services/org.shareholder.helpers.js";
 
 const router = express.Router();
 const CLOSE_RUN_STATUSES = new Set(["IN_PROGRESS", "COMPLETED", "FAILED", "REOPENED"]);
@@ -45,6 +49,11 @@ const JOURNAL_SOURCE_TYPES = new Set([
   "ADJUSTMENT",
   "CASH",
 ]);
+const CENTRAL_EQUITY_PURPOSE_CODES = Object.freeze([
+  "SHAREHOLDER_CAPITAL_CREDIT_PARENT",
+  "SHAREHOLDER_COMMITMENT_DEBIT_PARENT",
+]);
+const CENTRAL_EQUITY_FALLBACK_CODES = Object.freeze(["500", "501"]);
 const RECLASS_ALLOCATION_MODES = new Set(["PERCENT", "AMOUNT"]);
 const BALANCE_EPSILON = 0.0001;
 
@@ -1097,6 +1106,129 @@ function parseOptionalPositiveInt(value, fieldLabel) {
   return parsed;
 }
 
+function createEmptyCentralEquityJournalValidationContext() {
+  return {
+    parentById: new Map(),
+    restrictedParentAccountIds: new Set(),
+  };
+}
+
+async function loadCentralEquityJournalValidationContext({
+  tenantId,
+  legalEntityId,
+  runQuery = query,
+}) {
+  const parsedTenantId = parsePositiveInt(tenantId);
+  const parsedLegalEntityId = parsePositiveInt(legalEntityId);
+  if (!parsedTenantId || !parsedLegalEntityId) {
+    return createEmptyCentralEquityJournalValidationContext();
+  }
+
+  const parentById = await loadLegalEntityAccountHierarchy(
+    { query: runQuery },
+    parsedTenantId,
+    parsedLegalEntityId
+  );
+  const restrictedParentAccountIds = new Set();
+  const purposePlaceholders = CENTRAL_EQUITY_PURPOSE_CODES.map(() => "?").join(", ");
+  const mappedParentResult = await runQuery(
+    `SELECT account_id
+     FROM journal_purpose_accounts
+     WHERE tenant_id = ?
+       AND legal_entity_id = ?
+       AND purpose_code IN (${purposePlaceholders})
+       AND account_id IS NOT NULL`,
+    [parsedTenantId, parsedLegalEntityId, ...CENTRAL_EQUITY_PURPOSE_CODES]
+  );
+  for (const row of mappedParentResult.rows || []) {
+    const accountId = parsePositiveInt(row.account_id);
+    if (accountId) {
+      restrictedParentAccountIds.add(accountId);
+    }
+  }
+
+  const fallbackPlaceholders = CENTRAL_EQUITY_FALLBACK_CODES.map(() => "?").join(", ");
+  const fallbackParentResult = await runQuery(
+    `SELECT a.id
+     FROM accounts a
+     JOIN charts_of_accounts c ON c.id = a.coa_id
+     WHERE c.tenant_id = ?
+       AND c.legal_entity_id = ?
+       AND a.code IN (${fallbackPlaceholders})`,
+    [parsedTenantId, parsedLegalEntityId, ...CENTRAL_EQUITY_FALLBACK_CODES]
+  );
+  for (const row of fallbackParentResult.rows || []) {
+    const accountId = parsePositiveInt(row.id);
+    if (accountId) {
+      restrictedParentAccountIds.add(accountId);
+    }
+  }
+
+  return {
+    parentById,
+    restrictedParentAccountIds,
+  };
+}
+
+async function resolveCentralEquityJournalValidationContext(
+  req,
+  tenantId,
+  legalEntityId,
+  providedPolicy = null
+) {
+  if (providedPolicy) {
+    return providedPolicy;
+  }
+  const parsedTenantId = parsePositiveInt(tenantId);
+  const parsedLegalEntityId = parsePositiveInt(legalEntityId);
+  if (!parsedTenantId || !parsedLegalEntityId) {
+    return createEmptyCentralEquityJournalValidationContext();
+  }
+
+  const cacheKey = `${parsedTenantId}:${parsedLegalEntityId}`;
+  if (
+    req &&
+    req._centralEquityJournalValidationContextKey === cacheKey &&
+    req._centralEquityJournalValidationContext
+  ) {
+    return req._centralEquityJournalValidationContext;
+  }
+
+  const contextPromise = loadCentralEquityJournalValidationContext({
+    tenantId: parsedTenantId,
+    legalEntityId: parsedLegalEntityId,
+  });
+  if (req) {
+    req._centralEquityJournalValidationContextKey = cacheKey;
+    req._centralEquityJournalValidationContext = contextPromise;
+  }
+  return contextPromise;
+}
+
+function isCentralEquityPostingAccount(centralEquityPolicy, accountId) {
+  const normalizedAccountId = parsePositiveInt(accountId);
+  if (!normalizedAccountId) {
+    return false;
+  }
+  const restrictedParentAccountIds = centralEquityPolicy?.restrictedParentAccountIds;
+  if (!(restrictedParentAccountIds instanceof Set) || restrictedParentAccountIds.size === 0) {
+    return false;
+  }
+  const parentById = centralEquityPolicy?.parentById;
+  if (!(parentById instanceof Map)) {
+    return false;
+  }
+  for (const parentAccountId of restrictedParentAccountIds) {
+    if (
+      normalizedAccountId === parentAccountId ||
+      isDescendantOfParentAccount(parentById, normalizedAccountId, parentAccountId)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function normalizeOptionalShortText(value, fieldLabel, maxLength = 100) {
   if (value === undefined || value === null) {
     return null;
@@ -1917,7 +2049,7 @@ async function loadIntercompanyJournalCluster(tenantId, anchorJournal) {
   };
 }
 
-async function validateJournalLineScope(req, tenantId, legalEntityId, line, index) {
+async function validateJournalLineScope(req, tenantId, legalEntityId, line, index, options = {}) {
   const lineLabel = `lines[${index}]`;
   const accountId = parsePositiveInt(line?.accountId);
   if (!accountId) {
@@ -1968,6 +2100,12 @@ async function validateJournalLineScope(req, tenantId, legalEntityId, line, inde
   if (accountLegalEntityId) {
     assertScopeAccess(req, "legal_entity", accountLegalEntityId, `${lineLabel}.accountId`);
   }
+  const centralEquityPolicy = await resolveCentralEquityJournalValidationContext(
+    req,
+    tenantId,
+    legalEntityId,
+    options?.centralEquityPolicy || null
+  );
 
   const operatingUnitId = parseOptionalPositiveInt(
     line?.operatingUnitId,
@@ -1979,6 +2117,11 @@ async function validateJournalLineScope(req, tenantId, legalEntityId, line, inde
     100
   );
   let selectedUnitHasSubledger = false;
+  if (operatingUnitId && isCentralEquityPostingAccount(centralEquityPolicy, accountId)) {
+    throw badRequest(
+      `${lineLabel}.operatingUnitId is not allowed for central equity lines. Post 500/501 and shareholder capital/commitment lines at legal-entity scope.`
+    );
+  }
   if (operatingUnitId) {
     const unitResult = await query(
       `SELECT id, legal_entity_id, has_subledger
@@ -2065,6 +2208,7 @@ registerGlWriteJournalRoutes(router, {
   ensurePeriodOpen,
   generateJournalNo,
   insertDraftJournalEntry,
+  loadCentralEquityJournalValidationContext,
   loadIntercompanyJournalCluster,
   loadJournal,
   normalizeJournalSourceType,
@@ -2113,6 +2257,7 @@ registerGlPeriodClosingRoutes(router, {
 
 export {
   ensurePeriodOpen,
+  loadCentralEquityJournalValidationContext,
   toAmount,
   toIsoDate,
   validateJournalLineScope,

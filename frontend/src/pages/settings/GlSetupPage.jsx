@@ -495,8 +495,13 @@ const CARI_MANUAL_PURPOSE_CODES = Object.freeze([
 ]);
 const PURPOSE_MAPPING_MODULE_KEYS = Object.freeze({
   CARI: "CARI",
+  CASH: "CASH",
   REVREC: "REVREC",
 });
+const CASH_PURPOSE_CODES = Object.freeze([
+  "CASH_EXCHANGE_CLEARING",
+  "CASH_TRANSIT_CLEARING",
+]);
 const REVREC_REQUIRED_PURPOSE_CODES = Object.freeze([
   "DEFREV_SHORT_LIABILITY",
   "DEFREV_LONG_LIABILITY",
@@ -517,6 +522,7 @@ const REVREC_REQUIRED_PURPOSE_CODES = Object.freeze([
 ]);
 const CARI_REQUIRED_PURPOSE_CODE_SET = new Set(CARI_REQUIRED_PURPOSE_CODES);
 const CARI_OPTIONAL_PURPOSE_CODE_SET = new Set(CARI_OPTIONAL_CONTEXT_PURPOSE_CODES);
+const CASH_PURPOSE_CODE_SET = new Set(CASH_PURPOSE_CODES);
 const REVREC_REQUIRED_PURPOSE_CODE_SET = new Set(REVREC_REQUIRED_PURPOSE_CODES);
 const CARI_PURPOSE_UI_META = Object.freeze({
   CARI_AR_CONTROL: Object.freeze({
@@ -726,6 +732,20 @@ const REVREC_PURPOSE_UI_META = Object.freeze({
     exampleTr: "Otomatik 481->381 aktarma fisinde kullanilir.",
   }),
 });
+const CASH_PURPOSE_UI_META = Object.freeze({
+  CASH_EXCHANGE_CLEARING: Object.freeze({
+    en: "Optional default clearing account for FX cash exchange batches.",
+    tr: "Kur/doviz kasa degisim fisleri icin opsiyonel varsayilan clearing hesabi.",
+    exampleEn: "Example: 108.01 / dedicated FX clearing asset account.",
+    exampleTr: "Ornek: 108.01 / ozel doviz clearing varlik hesabi.",
+  }),
+  CASH_TRANSIT_CLEARING: Object.freeze({
+    en: "Optional default clearing account for cross-OU cash transit transfers.",
+    tr: "Unitler arasi kasa transferleri icin opsiyonel varsayilan clearing hesabi.",
+    exampleEn: "Example: 108.02 / branch transit clearing account.",
+    exampleTr: "Ornek: 108.02 / sube transfer clearing hesabi.",
+  }),
+});
 const SHAREHOLDER_REQUIRED_PURPOSE_CODES = Object.freeze([
   "SHAREHOLDER_CAPITAL_CREDIT_PARENT",
   "SHAREHOLDER_COMMITMENT_DEBIT_PARENT",
@@ -805,6 +825,13 @@ function getRevrecPurposeUiMeta(purposeCode) {
     .trim()
     .toUpperCase();
   return REVREC_PURPOSE_UI_META[normalized] || null;
+}
+
+function getCashPurposeUiMeta(purposeCode) {
+  const normalized = String(purposeCode || "")
+    .trim()
+    .toUpperCase();
+  return CASH_PURPOSE_UI_META[normalized] || null;
 }
 
 function toBoolean(value) {
@@ -1256,6 +1283,7 @@ export default function GlSetupPage({ mode = "full" } = {}) {
     PURPOSE_MAPPING_MODULE_KEYS.CARI
   );
   const [manualCariMappingsByPurpose, setManualCariMappingsByPurpose] = useState({});
+  const [manualCashMappingsByPurpose, setManualCashMappingsByPurpose] = useState({});
   const [manualRevrecMappingsByPurpose, setManualRevrecMappingsByPurpose] = useState({});
   const [showOptionalCariMappings, setShowOptionalCariMappings] = useState(false);
   const [loadingManualMappings, setLoadingManualMappings] = useState(false);
@@ -1516,19 +1544,25 @@ export default function GlSetupPage({ mode = "full" } = {}) {
     "shareholderCommitment",
     selectedManualLegalEntityId
   );
+  const isManualRevrecModule = manualPurposeModuleKey === PURPOSE_MAPPING_MODULE_KEYS.REVREC;
+  const isManualCashModule = manualPurposeModuleKey === PURPOSE_MAPPING_MODULE_KEYS.CASH;
   const manualPurposeMappingsByPurpose =
-    manualPurposeModuleKey === PURPOSE_MAPPING_MODULE_KEYS.REVREC
+    isManualRevrecModule
       ? manualRevrecMappingsByPurpose
+      : isManualCashModule
+      ? manualCashMappingsByPurpose
       : manualCariMappingsByPurpose;
   const manualPurposeAccountOptions = manualCariAccountOptions;
-  const visibleManualPurposeCodes =
-    manualPurposeModuleKey === PURPOSE_MAPPING_MODULE_KEYS.REVREC
-      ? REVREC_REQUIRED_PURPOSE_CODES
-      : showOptionalCariMappings
-      ? CARI_MANUAL_PURPOSE_CODES
-      : CARI_REQUIRED_PURPOSE_CODES;
+  const visibleManualPurposeCodes = isManualRevrecModule
+    ? REVREC_REQUIRED_PURPOSE_CODES
+    : isManualCashModule
+    ? CASH_PURPOSE_CODES
+    : showOptionalCariMappings
+    ? CARI_MANUAL_PURPOSE_CODES
+    : CARI_REQUIRED_PURPOSE_CODES;
   const isSavingManualPurposeMappings =
     saving === "manual-cari-purpose-mappings" ||
+    saving === "manual-cash-purpose-mappings" ||
     saving === "manual-revrec-purpose-mappings";
   const accountTreeTableRows = selectedCoaTreeGroups.map(
     ({ accountType, totalCount, visibleRows }) => {
@@ -1871,6 +1905,7 @@ export default function GlSetupPage({ mode = "full" } = {}) {
     );
     if (!legalEntityId || !canReadLegalEntities || !canReadAccounts) {
       setManualCariMappingsByPurpose({});
+      setManualCashMappingsByPurpose({});
       setManualRevrecMappingsByPurpose({});
       setManualMappingsForm((prev) => ({
         ...prev,
@@ -1882,10 +1917,14 @@ export default function GlSetupPage({ mode = "full" } = {}) {
 
     setLoadingManualMappings(true);
     try {
-      const [cariResponse, revrecResponse, shareholderResponse] = await Promise.all([
+      const [cariResponse, cashResponse, revrecResponse, shareholderResponse] = await Promise.all([
         listJournalPurposeAccounts({
           legalEntityId,
           moduleKey: PURPOSE_MAPPING_MODULE_KEYS.CARI,
+        }),
+        listJournalPurposeAccounts({
+          legalEntityId,
+          moduleKey: PURPOSE_MAPPING_MODULE_KEYS.CASH,
         }),
         listJournalPurposeAccounts({
           legalEntityId,
@@ -1895,6 +1934,7 @@ export default function GlSetupPage({ mode = "full" } = {}) {
       ]);
 
       setManualCariMappingsByPurpose(toQueryMapByPurpose(cariResponse?.rows || []));
+      setManualCashMappingsByPurpose(toQueryMapByPurpose(cashResponse?.rows || []));
       setManualRevrecMappingsByPurpose(toQueryMapByPurpose(revrecResponse?.rows || []));
       const shareholderRows = Array.isArray(shareholderResponse?.rows)
         ? shareholderResponse.rows
@@ -2165,8 +2205,12 @@ export default function GlSetupPage({ mode = "full" } = {}) {
         accountId: nextAccountId,
       },
     });
-    if (manualPurposeModuleKey === PURPOSE_MAPPING_MODULE_KEYS.REVREC) {
+    if (isManualRevrecModule) {
       setManualRevrecMappingsByPurpose(updater);
+      return;
+    }
+    if (isManualCashModule) {
+      setManualCashMappingsByPurpose(updater);
       return;
     }
     setManualCariMappingsByPurpose(updater);
@@ -2184,20 +2228,32 @@ export default function GlSetupPage({ mode = "full" } = {}) {
       return;
     }
 
-    const moduleKey =
-      manualPurposeModuleKey === PURPOSE_MAPPING_MODULE_KEYS.REVREC
-        ? PURPOSE_MAPPING_MODULE_KEYS.REVREC
-        : PURPOSE_MAPPING_MODULE_KEYS.CARI;
+    const moduleKey = isManualRevrecModule
+      ? PURPOSE_MAPPING_MODULE_KEYS.REVREC
+      : isManualCashModule
+      ? PURPOSE_MAPPING_MODULE_KEYS.CASH
+      : PURPOSE_MAPPING_MODULE_KEYS.CARI;
     const isRevrec = moduleKey === PURPOSE_MAPPING_MODULE_KEYS.REVREC;
+    const isCash = moduleKey === PURPOSE_MAPPING_MODULE_KEYS.CASH;
     const requiredPurposeCodes = isRevrec
       ? REVREC_REQUIRED_PURPOSE_CODES
+      : isCash
+      ? []
       : CARI_REQUIRED_PURPOSE_CODES;
-    const optionalPurposeCodes = isRevrec ? [] : CARI_OPTIONAL_CONTEXT_PURPOSE_CODES;
+    const optionalPurposeCodes = isRevrec
+      ? []
+      : isCash
+      ? CASH_PURPOSE_CODES
+      : CARI_OPTIONAL_CONTEXT_PURPOSE_CODES;
     const mappingsByPurpose = isRevrec
       ? manualRevrecMappingsByPurpose
+      : isCash
+      ? manualCashMappingsByPurpose
       : manualCariMappingsByPurpose;
     const savingKey = isRevrec
       ? "manual-revrec-purpose-mappings"
+      : isCash
+      ? "manual-cash-purpose-mappings"
       : "manual-cari-purpose-mappings";
 
     const payloadRows = [];
@@ -2221,6 +2277,15 @@ export default function GlSetupPage({ mode = "full" } = {}) {
       }
       payloadRows.push({ purposeCode, accountId });
     }
+    if (payloadRows.length === 0) {
+      setError(
+        l(
+          "Select at least one account before saving.",
+          "Kaydetmeden once en az bir hesap secin."
+        )
+      );
+      return;
+    }
 
     setSaving(savingKey);
     setError("");
@@ -2241,6 +2306,11 @@ export default function GlSetupPage({ mode = "full" } = {}) {
               "Manual REVREC purpose mappings saved.",
               "Manuel REVREC amac eslemeleri kaydedildi."
             )
+          : isCash
+          ? l(
+              "Manual CASH purpose mappings saved.",
+              "Manuel CASH amac eslemeleri kaydedildi."
+            )
           : l(
               "Manual CARI purpose mappings saved.",
               "Manuel CARI amac eslemeleri kaydedildi."
@@ -2254,6 +2324,11 @@ export default function GlSetupPage({ mode = "full" } = {}) {
             ? l(
                 "Failed to save manual REVREC purpose mappings.",
                 "Manuel REVREC amac eslemeleri kaydedilemedi."
+              )
+            : isCash
+            ? l(
+                "Failed to save manual CASH purpose mappings.",
+                "Manuel CASH amac eslemeleri kaydedilemedi."
               )
             : l(
                 "Failed to save manual CARI purpose mappings.",
@@ -3469,11 +3544,15 @@ export default function GlSetupPage({ mode = "full" } = {}) {
           {l("Purpose mapping module:", "Amac esleme modulu:")}{" "}
           <span className="font-semibold text-slate-900">{manualPurposeModuleKey}</span>
           <br />
-          {manualPurposeModuleKey === PURPOSE_MAPPING_MODULE_KEYS.REVREC
+          {isManualRevrecModule
             ? l("Required REVREC purpose codes:", "Zorunlu REVREC amac kodlari:")
+            : isManualCashModule
+            ? l("Optional CASH purpose codes:", "Opsiyonel CASH amac kodlari:")
             : l("Required CARI purpose codes:", "Zorunlu CARI amac kodlari:")}{" "}
-          {manualPurposeModuleKey === PURPOSE_MAPPING_MODULE_KEYS.REVREC
+          {isManualRevrecModule
             ? REVREC_REQUIRED_PURPOSE_CODES.join(", ")
+            : isManualCashModule
+            ? CASH_PURPOSE_CODES.join(", ")
             : CARI_REQUIRED_PURPOSE_CODES.join(", ")}
           {manualPurposeModuleKey === PURPOSE_MAPPING_MODULE_KEYS.CARI ? (
             <>
@@ -3500,8 +3579,10 @@ export default function GlSetupPage({ mode = "full" } = {}) {
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-              {manualPurposeModuleKey === PURPOSE_MAPPING_MODULE_KEYS.REVREC
+              {isManualRevrecModule
                 ? l("REVREC mappings", "REVREC eslemeleri")
+                : isManualCashModule
+                ? l("CASH mappings", "CASH eslemeleri")
                 : l("CARI mappings", "CARI eslemeleri")}
             </h3>
             <select
@@ -3510,6 +3591,7 @@ export default function GlSetupPage({ mode = "full" } = {}) {
                 const nextValue = toUpper(event.target.value);
                 if (
                   nextValue !== PURPOSE_MAPPING_MODULE_KEYS.CARI &&
+                  nextValue !== PURPOSE_MAPPING_MODULE_KEYS.CASH &&
                   nextValue !== PURPOSE_MAPPING_MODULE_KEYS.REVREC
                 ) {
                   return;
@@ -3519,6 +3601,7 @@ export default function GlSetupPage({ mode = "full" } = {}) {
               className="rounded-lg border border-slate-300 px-2 py-1 text-xs"
             >
               <option value={PURPOSE_MAPPING_MODULE_KEYS.CARI}>CARI</option>
+              <option value={PURPOSE_MAPPING_MODULE_KEYS.CASH}>CASH</option>
               <option value={PURPOSE_MAPPING_MODULE_KEYS.REVREC}>REVREC</option>
             </select>
           </div>
@@ -3537,11 +3620,18 @@ export default function GlSetupPage({ mode = "full" } = {}) {
             </button>
           ) : null}
         </div>
-        {manualPurposeModuleKey === PURPOSE_MAPPING_MODULE_KEYS.REVREC ? (
+        {isManualRevrecModule ? (
           <p className="mb-2 text-xs text-slate-500">
             {l(
               "Map all REVREC purpose codes so deferred/prepaid/accrual postings and long-short reclass entries can run automatically.",
               "Tum REVREC amac kodlarini esleyin; ertelenmis/pesin/tahakkuk kayitlari ile uzun-kisa vade aktarmalari otomatik calissin."
+            )}
+          </p>
+        ) : isManualCashModule ? (
+          <p className="mb-2 text-xs text-slate-500">
+            {l(
+              "CASH rows are optional defaults for FX exchange and cross-unit transit clearing. If left blank, users can still pick accounts manually.",
+              "CASH satirlari kur degisimi ve unitler arasi nakit transferi icin opsiyonel varsayilanlardir. Bos birakilirsa kullanici hesaplari manuel secmeye devam edebilir."
             )}
           </p>
         ) : (
@@ -3566,18 +3656,21 @@ export default function GlSetupPage({ mode = "full" } = {}) {
                 const row = manualPurposeMappingsByPurpose[purposeCode] || null;
                 const selectedAccountId = String(toPositiveInt(row?.accountId) || "");
                 const isRequiredPurpose =
-                  manualPurposeModuleKey === PURPOSE_MAPPING_MODULE_KEYS.REVREC
+                  isManualRevrecModule
                     ? REVREC_REQUIRED_PURPOSE_CODE_SET.has(purposeCode)
                     : CARI_REQUIRED_PURPOSE_CODE_SET.has(purposeCode);
                 const isOptionalPurpose =
-                  manualPurposeModuleKey === PURPOSE_MAPPING_MODULE_KEYS.CARI &&
-                  CARI_OPTIONAL_PURPOSE_CODE_SET.has(purposeCode);
+                  (manualPurposeModuleKey === PURPOSE_MAPPING_MODULE_KEYS.CARI &&
+                    CARI_OPTIONAL_PURPOSE_CODE_SET.has(purposeCode)) ||
+                  (isManualCashModule && CASH_PURPOSE_CODE_SET.has(purposeCode));
                 const purposeMeta =
-                  manualPurposeModuleKey === PURPOSE_MAPPING_MODULE_KEYS.REVREC
+                  isManualRevrecModule
                     ? getRevrecPurposeUiMeta(purposeCode)
+                    : isManualCashModule
+                    ? getCashPurposeUiMeta(purposeCode)
                     : getCariPurposeUiMeta(purposeCode);
                 const readinessStatus =
-                  manualPurposeModuleKey === PURPOSE_MAPPING_MODULE_KEYS.REVREC
+                  isManualRevrecModule
                     ? getRevrecPurposeMappingStatus(row)
                     : isRequiredPurpose
                     ? getPurposeReadinessStatus(selectedManualCariReadiness, purposeCode)
@@ -3590,8 +3683,10 @@ export default function GlSetupPage({ mode = "full" } = {}) {
                         ),
                       };
                 const optionalTagLabel =
-                  manualPurposeModuleKey === PURPOSE_MAPPING_MODULE_KEYS.REVREC
+                  isManualRevrecModule
                     ? l("Required", "Zorunlu")
+                    : isManualCashModule
+                    ? l("Default", "Varsayilan")
                     : l("Context override", "Baglam override");
                 return (
                   <tr key={purposeCode} className="border-t border-slate-100">
@@ -3658,11 +3753,15 @@ export default function GlSetupPage({ mode = "full" } = {}) {
             className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60"
           >
             {isSavingManualPurposeMappings
-              ? manualPurposeModuleKey === PURPOSE_MAPPING_MODULE_KEYS.REVREC
+              ? isManualRevrecModule
                 ? l("Saving REVREC mappings...", "REVREC eslemeleri kaydediliyor...")
+                : isManualCashModule
+                ? l("Saving CASH mappings...", "CASH eslemeleri kaydediliyor...")
                 : l("Saving CARI mappings...", "CARI eslemeleri kaydediliyor...")
-              : manualPurposeModuleKey === PURPOSE_MAPPING_MODULE_KEYS.REVREC
+              : isManualRevrecModule
               ? l("Save REVREC mappings", "REVREC eslemelerini kaydet")
+              : isManualCashModule
+              ? l("Save CASH mappings", "CASH eslemelerini kaydet")
               : l("Save CARI mappings", "CARI eslemelerini kaydet")}
           </button>
         </div>
