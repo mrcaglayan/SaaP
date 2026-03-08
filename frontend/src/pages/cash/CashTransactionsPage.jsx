@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import {
   applyCariForCashTransaction,
@@ -754,7 +754,7 @@ export default function CashTransactionsPage() {
   const { pathname } = useLocation();
   const { hasPermission } = useAuth();
   const { language, t } = useI18n();
-  const l = (en, tr) => (language === "tr" ? tr : en);
+  const l = useCallback((en, tr) => (language === "tr" ? tr : en), [language]);
   const localizeTxnStatus = (status) => {
     const normalized = toUpper(status);
     if (!normalized) {
@@ -1121,11 +1121,11 @@ export default function CashTransactionsPage() {
   const effectiveTxnTypeFilter = presetTxnType || filters.txnType || "";
   const selectedTransactionLifecycleMeta = useMemo(
     () => getLifecycleStatusMeta("cashTransaction", selectedLifecycleTransactionRow?.status, l),
-    [language, selectedLifecycleTransactionRow?.status]
+    [l, selectedLifecycleTransactionRow?.status]
   );
   const selectedTransactionLifecycleActions = useMemo(
     () => getLifecycleAllowedActions("cashTransaction", selectedLifecycleTransactionRow?.status, l),
-    [language, selectedLifecycleTransactionRow?.status]
+    [l, selectedLifecycleTransactionRow?.status]
   );
   const selectedTransactionLifecycleActionLabels = useMemo(() => {
     const labelsByAction = {
@@ -1147,7 +1147,7 @@ export default function CashTransactionsPage() {
         buildCashTransactionLifecycleEvents(selectedLifecycleTransactionRow, t),
         l
       ),
-    [language, selectedLifecycleTransactionRow, t]
+    [l, selectedLifecycleTransactionRow, t]
   );
 
   const createWarnings = useMemo(() => {

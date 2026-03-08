@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   closeCashSession,
   listCashRegisters,
@@ -175,7 +175,7 @@ function toSessionErrorState(err, t, fallbackKey) {
 export default function CashSessionsPage() {
   const { hasPermission } = useAuth();
   const { language, t } = useI18n();
-  const l = (en, tr) => (language === "tr" ? tr : en);
+  const l = useCallback((en, tr) => (language === "tr" ? tr : en), [language]);
   const localizeSessionStatus = (status) => {
     const normalized = toUpper(status);
     if (!normalized) {
@@ -278,11 +278,11 @@ export default function CashSessionsPage() {
   }, [closeForm.sessionId, historyRows, openSessions, selectedLifecycleSessionId]);
   const selectedSessionLifecycleMeta = useMemo(
     () => getLifecycleStatusMeta("cashSession", selectedLifecycleSession?.status, l),
-    [language, selectedLifecycleSession?.status]
+    [l, selectedLifecycleSession?.status]
   );
   const selectedSessionLifecycleActions = useMemo(
     () => getLifecycleAllowedActions("cashSession", selectedLifecycleSession?.status, l),
-    [language, selectedLifecycleSession?.status]
+    [l, selectedLifecycleSession?.status]
   );
   const selectedSessionLifecycleActionLabels = useMemo(() => {
     const labelsByAction = {
@@ -300,7 +300,7 @@ export default function CashSessionsPage() {
         buildCashSessionLifecycleEvents(selectedLifecycleSession),
         l
       ),
-    [language, selectedLifecycleSession]
+    [l, selectedLifecycleSession]
   );
 
   async function loadData() {

@@ -205,6 +205,31 @@ function formatAmount(value) {
   });
 }
 
+function formatOperatingUnitDisplay(unitId, unitCode, unitName) {
+  const code = String(unitCode || "").trim();
+  const name = String(unitName || "").trim();
+  if (code && name) {
+    return `${code} - ${name}`;
+  }
+  if (code) {
+    return code;
+  }
+  if (name) {
+    return name;
+  }
+  return unitId ? `#${unitId}` : "-";
+}
+
+function getJournalLineOperatingUnitLabel(line, unitsById) {
+  const unitId = toInt(line?.operating_unit_id || line?.operatingUnitId);
+  const lookupUnit = unitId ? unitsById.get(unitId) || null : null;
+  return formatOperatingUnitDisplay(
+    unitId,
+    line?.operating_unit_code || line?.operatingUnitCode || lookupUnit?.code,
+    line?.operating_unit_name || line?.operatingUnitName || lookupUnit?.name
+  );
+}
+
 function getJournalLineSide(line) {
   const debit = toAmount(line?.debit_base ?? line?.debitBase);
   const credit = toAmount(line?.credit_base ?? line?.creditBase);
@@ -830,6 +855,34 @@ export default function JournalWorkbenchPage() {
     () => sortJournalDetailLines(selectedJournal?.lines || []),
     [selectedJournal]
   );
+  const selectedJournalOperatingUnitLabels = useMemo(() => {
+    const byKey = new Map();
+    for (const line of selectedJournalDetailLines) {
+      const unitId = toInt(line?.operating_unit_id || line?.operatingUnitId);
+      const label = getJournalLineOperatingUnitLabel(line, unitsById);
+      if (label === "-") {
+        continue;
+      }
+      byKey.set(unitId ? `id:${unitId}` : `label:${label}`, label);
+    }
+
+    if (byKey.size > 0) {
+      return Array.from(byKey.values());
+    }
+
+    const journalUnitId = toInt(selectedJournal?.operating_unit_id || selectedJournal?.operatingUnitId);
+    if (!journalUnitId && !selectedJournal?.operating_unit_code && !selectedJournal?.operating_unit_name) {
+      return [];
+    }
+
+    return [
+      formatOperatingUnitDisplay(
+        journalUnitId,
+        selectedJournal?.operating_unit_code || selectedJournal?.operatingUnitCode,
+        selectedJournal?.operating_unit_name || selectedJournal?.operatingUnitName
+      ),
+    ].filter((label) => label && label !== "-");
+  }, [selectedJournal, selectedJournalDetailLines, unitsById]);
   const isReverseBlockedForSelectedJournal = useMemo(() => {
     const selectedId = toInt(selectedJournal?.id);
     const reverseJournalId = toInt(reverseForm.journalId);
@@ -3697,6 +3750,7 @@ export default function JournalWorkbenchPage() {
                 <div>{l("Status", "Durum")}: {selectedJournal.status}</div>
                 <div>{l("Entity", "Birim")}: {selectedJournal.legal_entity_code}</div>
                 <div>{l("Book", "Defter")}: {selectedJournal.book_code}</div>
+                <div>{l("Operating Units", "Operasyon Birimleri")}: {selectedJournalOperatingUnitLabels.join(", ") || "-"}</div>
                 <div>{l("Period", "Donem")}: {selectedJournal.fiscal_year}-P{String(selectedJournal.period_no || "").padStart(2, "0")}</div>
                 <div>{l("Lines", "Satirlar")}: {(selectedJournal.lines || []).length}</div>
                 {Array.isArray(selectedJournal.source_links) &&
@@ -3924,11 +3978,12 @@ export default function JournalWorkbenchPage() {
                 ) : null}
                 <div className="max-h-52 overflow-auto rounded border border-slate-200">
                   <table className="min-w-full text-[11px]">
-                    <thead className="bg-slate-50 text-left text-slate-600"><tr><th className="px-2 py-1.5">#</th><th className="px-2 py-1.5">{l("Account", "Hesap")}</th><th className="px-2 py-1.5">{l("Subledger Ref", "Alt Defter Ref")}</th><th className="px-2 py-1.5">{l("Debit", "Borc")}</th><th className="px-2 py-1.5">{l("Credit", "Alacak")}</th></tr></thead>
+                    <thead className="bg-slate-50 text-left text-slate-600"><tr><th className="px-2 py-1.5">#</th><th className="px-2 py-1.5">{l("Account", "Hesap")}</th><th className="px-2 py-1.5">{l("Unit", "Birim")}</th><th className="px-2 py-1.5">{l("Subledger Ref", "Alt Defter Ref")}</th><th className="px-2 py-1.5">{l("Debit", "Borc")}</th><th className="px-2 py-1.5">{l("Credit", "Alacak")}</th></tr></thead>
                     <tbody>
                       {selectedJournalDetailLines.map((line, index) => {
                         const lineSide = getJournalLineSide(line);
                         const accountPrefix = lineSide === "CREDIT" ? " " : "";
+                        const operatingUnitLabel = getJournalLineOperatingUnitLabel(line, unitsById);
                         const rowKey =
                           line?.id ||
                           `${line?.line_no || index}-${line?.account_code || ""}-${line?.account_name || ""}`;
@@ -3939,6 +3994,7 @@ export default function JournalWorkbenchPage() {
                             {accountPrefix}
                             {line.account_code} - {line.account_name}
                           </td>
+                          <td className="px-2 py-1.5">{operatingUnitLabel}</td>
                           <td className="px-2 py-1.5">{line.subledger_reference_no || "-"}</td>
                           <td className="px-2 py-1.5">
                             <MoneyText

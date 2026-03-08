@@ -80,6 +80,11 @@ function findInitialHighlightedIndex(options, selectedValue) {
   return findFirstEnabledIndex(options);
 }
 
+function buildSelectionToken(option) {
+  if (!option) return "__empty__";
+  return `${String(option.value)}::${normalizeText(option.label)}`;
+}
+
 export default function Combobox({
   id = "",
   name = "",
@@ -140,20 +145,23 @@ export default function Combobox({
     [normalizedOptions, value]
   );
 
-  const [localInputValue, setLocalInputValue] = useState(() => normalizeText(selectedOption?.label));
+  const selectedLabel = normalizeText(selectedOption?.label);
+  const selectedOptionToken = buildSelectionToken(selectedOption);
+  const [localInputState, setLocalInputState] = useState(() => ({
+    value: selectedLabel,
+    selectedOptionToken,
+  }));
   const [isOpen, setIsOpen] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState(-1);
 
-  useEffect(() => {
-    if (isInputControlled) return;
-    setLocalInputValue(normalizeText(selectedOption?.label));
-  }, [isInputControlled, selectedOption?.label, value]);
+  const localInputValue =
+    localInputState.selectedOptionToken === selectedOptionToken ? localInputState.value : selectedLabel;
 
   const query = isInputControlled
     ? normalizeText(inputValue)
     : isOpen
       ? localInputValue
-      : normalizeText(selectedOption?.label, localInputValue);
+      : normalizeText(selectedLabel, localInputValue);
   const filteredOptions = useMemo(() => {
     if (!filterOptions) return normalizedOptions;
     const normalizedQuery = normalizeText(query).toLowerCase();
@@ -188,7 +196,10 @@ export default function Combobox({
   function setInputText(nextValue, reason, option = null) {
     const text = String(nextValue ?? "");
     if (!isInputControlled) {
-      setLocalInputValue(text);
+      setLocalInputState({
+        value: text,
+        selectedOptionToken,
+      });
     }
     if (typeof onInputChange === "function") {
       onInputChange(text, { reason, option });

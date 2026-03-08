@@ -1,5 +1,6 @@
 ﻿import { useEffect, useMemo, useState } from "react";
 import { useRef } from "react";
+import { useCallback } from "react";
 import {
   cancelCariDocument,
   createCariDocumentComment,
@@ -452,12 +453,6 @@ function normalizeApiError(error, fallback = "Operation failed.") {
   return requestId ? `${message} (requestId: ${requestId})` : message || fallback;
 }
 
-function formatAmount(value) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) return "-";
-  return parsed.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
-
 function formatDateTime(value) {
   if (!value) {
     return "-";
@@ -716,7 +711,7 @@ export default function CariDocumentsPage() {
   const { hasPermission } = useAuth();
   const { language } = useI18n();
   const { getModuleRow } = useModuleReadiness();
-  const l = (en, tr) => (language === "tr" ? tr : en);
+  const l = useCallback((en, tr) => (language === "tr" ? tr : en), [language]);
   const translateDocumentMutationError = (message) => {
     switch (String(message || "").trim()) {
       case "legalEntityId is required.":
@@ -1193,11 +1188,11 @@ export default function CariDocumentsPage() {
   );
   const selectedDocumentLifecycleMeta = useMemo(
     () => getLifecycleStatusMeta("cariDocument", selectedSnapshot?.status, l),
-    [language, selectedSnapshot?.status]
+    [l, selectedSnapshot?.status]
   );
   const selectedDocumentLifecycleActions = useMemo(
     () => getLifecycleAllowedActions("cariDocument", selectedSnapshot?.status, l),
-    [language, selectedSnapshot?.status]
+    [l, selectedSnapshot?.status]
   );
   const selectedDocumentLifecycleTimeline = useMemo(
     () =>
@@ -1207,7 +1202,7 @@ export default function CariDocumentsPage() {
         buildDocumentLifecycleEvents(selectedSnapshot, l),
         l
       ),
-    [language, selectedSnapshot]
+    [l, selectedSnapshot]
   );
   const deepLinkedDocumentIdRaw = String(
     searchParams.get("documentId") || searchParams.get("document_id") || ""
@@ -2019,7 +2014,7 @@ export default function CariDocumentsPage() {
     return () => {
       active = false;
     };
-  }, [canReadCards, createForm.legalEntityId]);
+  }, [canReadCards, createForm.legalEntityId, l]);
 
   useEffect(() => {
     if (!selectedCreateCounterparty) {
@@ -2226,7 +2221,7 @@ export default function CariDocumentsPage() {
     return () => {
       active = false;
     };
-  }, [canReadReports, selectedSnapshot?.counterpartyId, selectedSnapshot?.id, selectedSnapshot?.legalEntityId]);
+  }, [canReadReports, l, selectedSnapshot?.counterpartyId, selectedSnapshot?.id, selectedSnapshot?.legalEntityId]);
 
   useEffect(() => {
     const documentId = toPositiveInt(selectedSnapshot?.id);
@@ -2345,6 +2340,7 @@ export default function CariDocumentsPage() {
     canReadCariAudit,
     canReadExceptions,
     canReadGlJournals,
+    l,
     selectedPostedJournalEntryId,
     selectedSnapshot?.id,
     selectedSnapshot?.legalEntityId,
@@ -2422,6 +2418,7 @@ export default function CariDocumentsPage() {
     };
   }, [
     canReadGlAccounts,
+    l,
     selectedSnapshot?.legalEntityId,
     selectedSnapshot?.legal_entity_id,
   ]);
@@ -2523,7 +2520,7 @@ export default function CariDocumentsPage() {
     return () => {
       active = false;
     };
-  }, [canRead, selectedDocumentNumericId]);
+  }, [canRead, l, selectedDocumentNumericId]);
 
   useEffect(() => {
     const nextInitial = buildInitialPostForm(selectedSnapshot);
@@ -2577,7 +2574,7 @@ export default function CariDocumentsPage() {
     return () => {
       active = false;
     };
-  }, [canRead, selectedDocumentNumericId]);
+  }, [canRead, l, selectedDocumentNumericId]);
 
   useEffect(() => {
     const documentId = selectedDocumentNumericId;
@@ -2623,7 +2620,7 @@ export default function CariDocumentsPage() {
     return () => {
       active = false;
     };
-  }, [canRead, selectedDocumentNumericId]);
+  }, [canRead, l, selectedDocumentNumericId]);
 
   useEffect(() => {
     if (documentListPage <= documentListTotalPages) {

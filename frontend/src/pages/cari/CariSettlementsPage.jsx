@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
   applyCariSettlement,
@@ -460,7 +460,7 @@ export default function CariSettlementsPage() {
   const { hasPermission } = useAuth();
   const { language } = useI18n();
   const { getModuleRow } = useModuleReadiness();
-  const l = (en, tr) => (language === "tr" ? tr : en);
+  const l = useCallback((en, tr) => (language === "tr" ? tr : en), [language]);
   const translateLinkedCashValidationError = (message) => {
     switch (String(message || "").trim()) {
       case "Missing permission: cash.txn.create":
@@ -731,7 +731,7 @@ export default function CariSettlementsPage() {
       `One-off override only. Enter as 1 ${applySettlementCurrencyCode} = X ${applyFunctionalCurrencyCode}. Not saved to FX Rate Management.`,
       `Sadece tek seferlik gecersiz kilma. 1 ${applySettlementCurrencyCode} = X ${applyFunctionalCurrencyCode} olarak girin. Kur Yonetimine kaydedilmez.`
     );
-  }, [applyFunctionalCurrencyCode, applySettlementCurrencyCode, language]);
+  }, [applyFunctionalCurrencyCode, applySettlementCurrencyCode, l]);
   const applyOffsetAccountChoices = useMemo(
     () =>
       (Array.isArray(applyOffsetAccountOptions) ? applyOffsetAccountOptions : []).filter(
@@ -879,7 +879,7 @@ export default function CariSettlementsPage() {
     applyForm.counterpartyId,
     applyForm.direction,
     counterpartyOptions,
-    language,
+    l,
     linkedCashAccountOptions,
     linkedCashForm.counterAccountId,
   ]);
@@ -939,7 +939,7 @@ export default function CariSettlementsPage() {
     );
   }, [
     applyForm.direction,
-    language,
+    l,
     linkedCashCounterAccountInLookup,
     linkedCashForm.counterAccountId,
     selectedApplyCounterparty,
@@ -979,7 +979,7 @@ export default function CariSettlementsPage() {
     linkedCashForm.paymentChannel,
     applyForm.counterpartyId,
     applyForm.direction,
-    language,
+    l,
     selectedApplyCounterparty,
     selectedApplyCounterpartyAccountId,
   ]);
@@ -1156,6 +1156,7 @@ export default function CariSettlementsPage() {
     };
   }, [
     canReadReports,
+    l,
     previewLegalEntityId,
     previewCounterpartyId,
     previewAsOfDate,
@@ -1243,6 +1244,7 @@ export default function CariSettlementsPage() {
     applyForm.settlementDate,
     canReadFxRates,
     canReadReports,
+    l,
     previewFxCurrencyKey,
   ]);
 
@@ -1297,7 +1299,7 @@ export default function CariSettlementsPage() {
     return () => {
       active = false;
     };
-  }, [canReadCashRegisters, canReadCashSessions, canReadOrg]);
+  }, [canReadCashRegisters, canReadCashSessions, canReadOrg, l]);
 
   useEffect(() => {
     if (applyCurrencyManuallyEdited) {
@@ -1419,7 +1421,7 @@ export default function CariSettlementsPage() {
     return () => {
       active = false;
     };
-  }, [applyForm.legalEntityId, canReadGlAccounts]);
+  }, [applyForm.legalEntityId, canReadGlAccounts, l]);
 
   useEffect(() => {
     const availableOptionIds = new Set(
@@ -1516,6 +1518,7 @@ export default function CariSettlementsPage() {
     linkedCashForm.createLinkedCashTransaction,
     linkedCashForm.paymentChannel,
     linkedCashAccountQuery,
+    l,
   ]);
 
   useEffect(() => {
@@ -1694,6 +1697,7 @@ export default function CariSettlementsPage() {
     reverseLookupFilters.asOfDate,
     reverseLookupFilters.counterpartyId,
     reverseLookupFilters.legalEntityId,
+    l,
   ]);
 
   useEffect(() => {
