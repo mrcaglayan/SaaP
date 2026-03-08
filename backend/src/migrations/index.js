@@ -95,6 +95,8 @@ import migration104BankStatementLinesOperatingUnit from "./m104_bank_statement_l
 import migration105CounterpartyOperatingUnits from "./m105_counterparty_operating_units.js";
 import migration106CashExchangePostingMode from "./m106_cash_exchange_posting_mode.js";
 import migration107CashTxnSharedPostedJournal from "./m107_cash_txn_shared_posted_journal.js";
+import migration108OperatingUnitInternalCurrentAccounts from "./m108_operating_unit_internal_current_accounts.js";
+import migration109ShareholderCapitalFulfillments from "./m109_shareholder_capital_fulfillments.js";
 
 const migrations = [
   migration001GlobalMultiEntity,
@@ -194,6 +196,8 @@ const migrations = [
   migration105CounterpartyOperatingUnits,
   migration106CashExchangePostingMode,
   migration107CashTxnSharedPostedJournal,
+  migration108OperatingUnitInternalCurrentAccounts,
+  migration109ShareholderCapitalFulfillments,
 ];
 
 export default migrations;

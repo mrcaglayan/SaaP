@@ -83,16 +83,29 @@ export async function upsertOperatingUnitRow({
   name,
   unitType,
   hasSubledger,
+  centralDueFromAccountId,
+  ouDueToCentralAccountId,
+  runQuery = query,
 }) {
-  const result = await query(
+  const result = await runQuery(
     `INSERT INTO operating_units (
-        tenant_id, legal_entity_id, code, name, unit_type, has_subledger
+        tenant_id,
+        legal_entity_id,
+        code,
+        name,
+        unit_type,
+        has_subledger,
+        central_due_from_account_id,
+        ou_due_to_central_account_id
       )
-     VALUES (?, ?, ?, ?, ?, ?)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE
+       id = LAST_INSERT_ID(id),
        name = VALUES(name),
        unit_type = VALUES(unit_type),
-       has_subledger = VALUES(has_subledger)`,
+       has_subledger = VALUES(has_subledger),
+       central_due_from_account_id = VALUES(central_due_from_account_id),
+       ou_due_to_central_account_id = VALUES(ou_due_to_central_account_id)`,
     [
       tenantId,
       legalEntityId,
@@ -100,6 +113,8 @@ export async function upsertOperatingUnitRow({
       name,
       unitType,
       hasSubledger,
+      centralDueFromAccountId || null,
+      ouDueToCentralAccountId || null,
     ]
   );
 

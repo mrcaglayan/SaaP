@@ -12,6 +12,7 @@ import {
   parsePositiveInt,
   resolveTenantId,
 } from "./_utils.js";
+import { reverseJournalEntryTx } from "../services/gl.journal-reversal.service.js";
 
 const CASH_CONTROL_MODES = new Set(["OFF", "WARN", "ENFORCE"]);
 const JOURNAL_REVERSE_SOURCE_DESTINATIONS = Object.freeze({
@@ -1299,18 +1300,6 @@ export function registerGlWriteJournalRoutes(router, deps = {}) {
 
       await ensurePeriodOpen(bookId, reversalPeriodId, "reverse journal");
 
-      const lineResult = await query(
-        `SELECT
-           account_id, operating_unit_id, counterparty_legal_entity_id, description,
-           subledger_reference_no, currency_code, amount_txn, debit_base, credit_base, tax_code
-         FROM journal_lines
-         WHERE journal_entry_id = ?
-         ORDER BY line_no`,
-        [journalId]
-      );
-      const lines = lineResult.rows || [];
-      if (lines.length === 0) throw badRequest("Journal has no lines to reverse");
-
       const reversalJournalNo = req.body?.journalNo || `${original.journal_no}-REV`;
       const entryDate = toIsoDate(req.body?.entryDate || original.entry_date, "entryDate");
       const documentDate = toIsoDate(
@@ -1319,89 +1308,17 @@ export function registerGlWriteJournalRoutes(router, deps = {}) {
       );
 
       const { reversalJournalId, originalUpdated } = await withTransaction(async (tx) => {
-        const reversalResult = await tx.query(
-          `INSERT INTO journal_entries (
-              tenant_id, legal_entity_id, book_id, fiscal_period_id, journal_no,
-              source_type, status, entry_date, document_date, currency_code,
-              description, reference_no, total_debit_base, total_credit_base,
-              created_by_user_id, posted_by_user_id, posted_at, reverse_reason
-           )
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            tenantId,
-            parsePositiveInt(original.legal_entity_id),
-            bookId,
-            reversalPeriodId,
-            reversalJournalNo,
-            String(original.source_type || "MANUAL").toUpperCase(),
-            autoPost ? "POSTED" : "DRAFT",
-            entryDate,
-            documentDate,
-            String(original.currency_code).toUpperCase(),
-            `Reversal of ${original.journal_no}`,
-            original.reference_no ? String(original.reference_no) : null,
-            Number(original.total_credit_base || 0),
-            Number(original.total_debit_base || 0),
-            userId,
-            autoPost ? userId : null,
-            autoPost ? new Date() : null,
-            reason,
-          ]
-        );
-
-        const createdReversalJournalId = parsePositiveInt(reversalResult.rows.insertId);
-        if (!createdReversalJournalId) {
-          throw badRequest("Failed to create reversal journal");
-        }
-
-        for (let i = 0; i < lines.length; i += 1) {
-          const line = lines[i];
-          // eslint-disable-next-line no-await-in-loop
-          await tx.query(
-            `INSERT INTO journal_lines (
-                journal_entry_id, line_no, account_id, operating_unit_id,
-                counterparty_legal_entity_id, description, subledger_reference_no, currency_code,
-                amount_txn, debit_base, credit_base, tax_code
-             )
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [
-              createdReversalJournalId,
-              i + 1,
-              parsePositiveInt(line.account_id),
-              parsePositiveInt(line.operating_unit_id),
-              parsePositiveInt(line.counterparty_legal_entity_id),
-              line.description ? String(line.description) : null,
-              normalizeOptionalShortText(line.subledger_reference_no, "subledger_reference_no", 100),
-              String(line.currency_code || original.currency_code).toUpperCase(),
-              Number(line.amount_txn || 0) * -1,
-              Number(line.credit_base || 0),
-              Number(line.debit_base || 0),
-              line.tax_code ? String(line.tax_code) : null,
-            ]
-          );
-        }
-
-        let markedReversed = false;
-        if (autoPost) {
-          const updateResult = await tx.query(
-            `UPDATE journal_entries
-             SET status = 'REVERSED',
-                 reversed_by_user_id = ?,
-                 reversed_at = CURRENT_TIMESTAMP,
-                 reversal_journal_entry_id = ?,
-                 reverse_reason = ?
-             WHERE id = ?
-               AND tenant_id = ?
-               AND status = 'POSTED'`,
-            [userId, createdReversalJournalId, reason, journalId, tenantId]
-          );
-          markedReversed = Number(updateResult.rows.affectedRows || 0) > 0;
-        }
-
-        return {
-          reversalJournalId: createdReversalJournalId,
-          originalUpdated: markedReversed,
-        };
+        return reverseJournalEntryTx(tx, {
+          tenantId,
+          journalId,
+          userId,
+          reason,
+          reversalPeriodId,
+          entryDate,
+          documentDate,
+          journalNo: reversalJournalNo,
+          autoPost,
+        });
       });
 
       return res.status(201).json({

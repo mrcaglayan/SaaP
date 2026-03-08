@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   autoProvisionShareholderSubAccounts,
+  createShareholderCapitalFulfillment,
   createShareholderCommitmentBatchJournal,
   generateFiscalPeriods,
   listCountries,
@@ -11,9 +12,12 @@ import {
   listGroupCompanies,
   listLegalEntities,
   listOperatingUnits,
+  listShareholderCapitalFulfillments,
   listShareholderJournalConfigs,
   listShareholders,
+  previewShareholderCapitalFulfillment,
   previewShareholderCommitmentBatchJournal,
+  reverseShareholderCapitalFulfillment,
   upsertFiscalCalendar,
   upsertGroupCompany,
   upsertLegalEntity,
@@ -21,6 +25,7 @@ import {
   upsertShareholderJournalConfig,
   upsertShareholder,
 } from "../../api/orgAdmin.js";
+import { listBankAccounts } from "../../api/bankAccounts.js";
 import { listAccounts } from "../../api/glAdmin.js";
 import { useAuth } from "../../auth/useAuth.js";
 import { useI18n } from "../../i18n/useI18n.js";
@@ -45,6 +50,26 @@ const DEFAULT_ENTITY_FORM = {
   useCustomPaymentTerms: false,
   paymentTermsJson: "",
 };
+const DEFAULT_UNIT_FORM = {
+  legalEntityId: "",
+  code: "",
+  name: "",
+  unitType: "BRANCH",
+  hasSubledger: false,
+  centralDueFromAccountId: "",
+  ouDueToCentralAccountId: "",
+};
+const DEFAULT_CAPITAL_FULFILLMENT_FORM = {
+  legalEntityId: "",
+  shareholderId: "",
+  contributionDate: new Date().toISOString().slice(0, 10),
+  amount: "",
+  destinationMode: "BANK_ACCOUNT",
+  bankAccountId: "",
+  destinationAccountId: "",
+  operatingUnitId: "",
+  note: "",
+};
 
 function toNumber(value) {
   const parsed = Number(value);
@@ -64,6 +89,52 @@ function formatAmount(value) {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
+}
+
+function formatAccountOptionLabel(account) {
+  const breadcrumb = String(account?.account_breadcrumb || "").trim();
+  if (breadcrumb) {
+    return breadcrumb;
+  }
+  const code = String(account?.code || "").trim();
+  const name = String(account?.name || "").trim();
+  if (code && name) {
+    return `${code} - ${name}`;
+  }
+  return code || name || "-";
+}
+
+function formatBankAccountOptionLabel(account) {
+  const code = String(account?.code || "").trim();
+  const name = String(account?.name || "").trim();
+  const glCode = String(account?.gl_account_code || "").trim();
+  const glName = String(account?.gl_account_name || "").trim();
+  const ouCode = String(account?.operating_unit_code || "").trim();
+  const parts = [];
+  if (code || name) {
+    parts.push([code, name].filter(Boolean).join(" - "));
+  }
+  if (glCode || glName) {
+    parts.push([glCode, glName].filter(Boolean).join(" - "));
+  }
+  if (ouCode) {
+    parts.push(`OU ${ouCode}`);
+  } else {
+    parts.push("HQ");
+  }
+  return parts.filter(Boolean).join(" | ") || "-";
+}
+
+function formatCapitalFulfillmentDestination(row) {
+  const mode = String(row?.destination_mode || "").trim().toUpperCase();
+  if (mode === "BANK_ACCOUNT") {
+    const code = String(row?.bank_account_code || "").trim();
+    const name = String(row?.bank_account_name || "").trim();
+    return [code, name].filter(Boolean).join(" - ") || "-";
+  }
+  const code = String(row?.destination_account_code || "").trim();
+  const name = String(row?.destination_account_name || "").trim();
+  return [code, name].filter(Boolean).join(" - ") || "-";
 }
 
 function getAccountNormalSide(account) {
@@ -182,6 +253,7 @@ export default function OrganizationManagementPage() {
   const canUpsertAccounts = hasPermission("gl.account.upsert");
   const canUpsertFiscalCalendar = hasPermission("org.fiscal_calendar.upsert");
   const canGenerateFiscalPeriods = hasPermission("org.fiscal_period.generate");
+  const canReadBanks = hasPermission("bank.accounts.read");
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState("");
@@ -207,6 +279,30 @@ export default function OrganizationManagementPage() {
     commitmentDate: new Date().toISOString().slice(0, 10),
     increaseAmount: "0",
   });
+  const [capitalFulfillmentModalOpen, setCapitalFulfillmentModalOpen] =
+    useState(false);
+  const [capitalFulfillmentForm, setCapitalFulfillmentForm] = useState(
+    DEFAULT_CAPITAL_FULFILLMENT_FORM
+  );
+  const [capitalFulfillmentPreview, setCapitalFulfillmentPreview] =
+    useState(null);
+  const [capitalFulfillmentPreviewLoading, setCapitalFulfillmentPreviewLoading] =
+    useState(false);
+  const [capitalFulfillmentSaving, setCapitalFulfillmentSaving] =
+    useState(false);
+  const [capitalFulfillmentBankAccounts, setCapitalFulfillmentBankAccounts] =
+    useState([]);
+  const [capitalFulfillmentBankLoading, setCapitalFulfillmentBankLoading] =
+    useState(false);
+  const [capitalFulfillmentBankError, setCapitalFulfillmentBankError] =
+    useState("");
+  const [capitalFulfillmentHistory, setCapitalFulfillmentHistory] = useState([]);
+  const [capitalFulfillmentHistoryLoading, setCapitalFulfillmentHistoryLoading] =
+    useState(false);
+  const [capitalFulfillmentHistoryError, setCapitalFulfillmentHistoryError] =
+    useState("");
+  const [capitalFulfillmentReversingId, setCapitalFulfillmentReversingId] =
+    useState(null);
   const [batchCommitmentDate, setBatchCommitmentDate] = useState(
     new Date().toISOString().slice(0, 10)
   );
@@ -229,14 +325,9 @@ export default function OrganizationManagementPage() {
   const [groupForm, setGroupForm] = useState({ code: "", name: "" });
   const [groupEditingCode, setGroupEditingCode] = useState("");
   const [legalEntityEditingCode, setLegalEntityEditingCode] = useState("");
+  const [unitEditingKey, setUnitEditingKey] = useState("");
   const [entityForm, setEntityForm] = useState(DEFAULT_ENTITY_FORM);
-  const [unitForm, setUnitForm] = useState({
-    legalEntityId: "",
-    code: "",
-    name: "",
-    unitType: "BRANCH",
-    hasSubledger: false,
-  });
+  const [unitForm, setUnitForm] = useState(DEFAULT_UNIT_FORM);
   const [shareholderForm, setShareholderForm] = useState({
     legalEntityId: "",
     code: "",
@@ -394,6 +485,34 @@ export default function OrganizationManagementPage() {
     }
   }
 
+  async function loadCapitalFulfillmentHistory(legalEntityId) {
+    if (!canReadShareholders || !legalEntityId) {
+      setCapitalFulfillmentHistory([]);
+      setCapitalFulfillmentHistoryError("");
+      return;
+    }
+
+    setCapitalFulfillmentHistoryLoading(true);
+    setCapitalFulfillmentHistoryError("");
+    try {
+      const response = await listShareholderCapitalFulfillments({
+        legalEntityId,
+      });
+      setCapitalFulfillmentHistory(response?.rows || []);
+    } catch (err) {
+      setCapitalFulfillmentHistory([]);
+      setCapitalFulfillmentHistoryError(
+        err?.response?.data?.message ||
+          l(
+            "Failed to load capital fulfillment history.",
+            "Sermaye karsilama gecmisi yuklenemedi."
+          )
+      );
+    } finally {
+      setCapitalFulfillmentHistoryLoading(false);
+    }
+  }
+
   useEffect(() => {
     loadCoreData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -456,6 +575,57 @@ export default function OrganizationManagementPage() {
         label: `${String(row.code || "").toUpperCase()} - ${row.name}`,
       })),
     [currencies]
+  );
+  const selectedUnitLegalEntityId = toNumber(unitForm.legalEntityId);
+  const selectedUnitEntityAccounts = useMemo(
+    () =>
+      accounts.filter(
+        (row) => Number(row.legal_entity_id) === Number(selectedUnitLegalEntityId)
+      ),
+    [accounts, selectedUnitLegalEntityId]
+  );
+  const selectedUnitEntityParentIds = useMemo(() => {
+    const next = new Set();
+    for (const account of selectedUnitEntityAccounts) {
+      const parentId = toNumber(account.parent_account_id);
+      if (parentId) {
+        next.add(parentId);
+      }
+    }
+    return next;
+  }, [selectedUnitEntityAccounts]);
+  const unitEligibleLeafAccounts = useMemo(
+    () =>
+      selectedUnitEntityAccounts.filter((account) => {
+        const accountId = toNumber(account.id);
+        if (!accountId) {
+          return false;
+        }
+        return (
+          Boolean(account.is_active) &&
+          isPostingEnabled(account) &&
+          !selectedUnitEntityParentIds.has(accountId)
+        );
+      }),
+    [selectedUnitEntityAccounts, selectedUnitEntityParentIds]
+  );
+  const unitCentralDueFromAccountOptions = useMemo(
+    () =>
+      unitEligibleLeafAccounts.filter(
+        (account) =>
+          String(account.account_type || "").toUpperCase() === "ASSET" &&
+          getAccountNormalSide(account) === "DEBIT"
+      ),
+    [unitEligibleLeafAccounts]
+  );
+  const unitOuDueToCentralAccountOptions = useMemo(
+    () =>
+      unitEligibleLeafAccounts.filter(
+        (account) =>
+          String(account.account_type || "").toUpperCase() === "LIABILITY" &&
+          getAccountNormalSide(account) === "CREDIT"
+      ),
+    [unitEligibleLeafAccounts]
   );
 
   const selectedShareholderLegalEntityId = toNumber(
@@ -991,6 +1161,196 @@ export default function OrganizationManagementPage() {
       ) || null,
     [legalEntities, selectedShareholderLegalEntityId]
   );
+  const capitalFulfillmentLegalEntityId = toNumber(
+    capitalFulfillmentForm.legalEntityId
+  );
+  const capitalFulfillmentOperatingUnitId = toNumber(
+    capitalFulfillmentForm.operatingUnitId
+  );
+  const capitalFulfillmentEntityAccounts = useMemo(
+    () =>
+      accounts.filter(
+        (row) => Number(row.legal_entity_id) === Number(capitalFulfillmentLegalEntityId)
+      ),
+    [accounts, capitalFulfillmentLegalEntityId]
+  );
+  const capitalFulfillmentEntityParentIds = useMemo(() => {
+    const next = new Set();
+    for (const account of capitalFulfillmentEntityAccounts) {
+      const parentId = toNumber(account.parent_account_id);
+      if (parentId) {
+        next.add(parentId);
+      }
+    }
+    return next;
+  }, [capitalFulfillmentEntityAccounts]);
+  const capitalFulfillmentAssetAccounts = useMemo(
+    () =>
+      capitalFulfillmentEntityAccounts.filter((account) => {
+        const accountId = toNumber(account.id);
+        if (!accountId) {
+          return false;
+        }
+        return (
+          String(account.account_type || "").toUpperCase() === "ASSET" &&
+          Boolean(account.is_active) &&
+          isPostingEnabled(account) &&
+          !capitalFulfillmentEntityParentIds.has(accountId)
+        );
+      }),
+    [capitalFulfillmentEntityAccounts, capitalFulfillmentEntityParentIds]
+  );
+  const capitalFulfillmentEligibleShareholders = useMemo(
+    () =>
+      shareholders.filter(
+        (row) =>
+          Number(row.legal_entity_id) === Number(capitalFulfillmentLegalEntityId) &&
+          Boolean(toNumber(row.capital_sub_account_id)) &&
+          Boolean(toNumber(row.commitment_debit_sub_account_id))
+      ),
+    [shareholders, capitalFulfillmentLegalEntityId]
+  );
+  const selectedCapitalFulfillmentShareholder = useMemo(
+    () =>
+      capitalFulfillmentEligibleShareholders.find(
+        (row) => toNumber(row.id) === toNumber(capitalFulfillmentForm.shareholderId)
+      ) || null,
+    [capitalFulfillmentEligibleShareholders, capitalFulfillmentForm.shareholderId]
+  );
+  const capitalFulfillmentAssetAccountOptions = useMemo(() => {
+    const blockedIds = new Set(
+      [
+        toNumber(selectedCapitalFulfillmentShareholder?.capital_sub_account_id),
+        toNumber(selectedCapitalFulfillmentShareholder?.commitment_debit_sub_account_id),
+      ].filter(Boolean)
+    );
+    return capitalFulfillmentAssetAccounts.filter(
+      (account) => !blockedIds.has(toNumber(account.id))
+    );
+  }, [capitalFulfillmentAssetAccounts, selectedCapitalFulfillmentShareholder]);
+  const capitalFulfillmentOperatingUnits = useMemo(
+    () =>
+      operatingUnits.filter(
+        (row) => Number(row.legal_entity_id) === Number(capitalFulfillmentLegalEntityId)
+      ),
+    [operatingUnits, capitalFulfillmentLegalEntityId]
+  );
+  const selectedCapitalFulfillmentOperatingUnit = useMemo(
+    () =>
+      capitalFulfillmentOperatingUnits.find(
+        (row) => toNumber(row.id) === capitalFulfillmentOperatingUnitId
+      ) || null,
+    [capitalFulfillmentOperatingUnitId, capitalFulfillmentOperatingUnits]
+  );
+  const capitalFulfillmentBankAccountOptions = useMemo(() => {
+    return capitalFulfillmentBankAccounts.filter((row) => {
+      if (Number(row.legal_entity_id) !== Number(capitalFulfillmentLegalEntityId)) {
+        return false;
+      }
+      if (capitalFulfillmentOperatingUnitId) {
+        return Number(row.operating_unit_id) === Number(capitalFulfillmentOperatingUnitId);
+      }
+      return !toNumber(row.operating_unit_id);
+    });
+  }, [
+    capitalFulfillmentBankAccounts,
+    capitalFulfillmentLegalEntityId,
+    capitalFulfillmentOperatingUnitId,
+  ]);
+  const capitalFulfillmentCanOpen = Boolean(
+    selectedShareholderLegalEntityId &&
+      canUpsertShareholder &&
+      (canReadBanks || canReadAccounts) &&
+      eligibleShareholdersForCommitmentIncrease.length > 0
+  );
+  const capitalFulfillmentSelectedLegalEntity = useMemo(
+    () => legalEntityById.get(capitalFulfillmentLegalEntityId) || null,
+    [legalEntityById, capitalFulfillmentLegalEntityId]
+  );
+  const capitalFulfillmentOuReady =
+    !selectedCapitalFulfillmentOperatingUnit ||
+    Boolean(selectedCapitalFulfillmentOperatingUnit.capital_self_balancing_ready);
+  const capitalFulfillmentOperationalModelLabel = useMemo(() => {
+    const operationalModel = String(
+      capitalFulfillmentPreview?.operational_model || ""
+    ).toUpperCase();
+    if (operationalModel === "DIRECT_OU_TARGETED") {
+      return l("Direct OU-targeted", "Dogrudan OU hedefli");
+    }
+    if (operationalModel === "HQ_FIRST_CENTRAL_ONLY") {
+      return l("HQ-first central-only", "Merkez once merkezi");
+    }
+    return selectedCapitalFulfillmentOperatingUnit
+      ? l("Direct OU-targeted", "Dogrudan OU hedefli")
+      : l("HQ-first central-only", "Merkez once merkezi");
+  }, [capitalFulfillmentPreview?.operational_model, l, selectedCapitalFulfillmentOperatingUnit]);
+  useEffect(() => {
+    if (
+      !capitalFulfillmentModalOpen ||
+      !canReadBanks ||
+      capitalFulfillmentForm.destinationMode !== "BANK_ACCOUNT" ||
+      !capitalFulfillmentLegalEntityId
+    ) {
+      if (!capitalFulfillmentModalOpen) {
+        setCapitalFulfillmentBankAccounts([]);
+        setCapitalFulfillmentBankError("");
+      }
+      return undefined;
+    }
+
+    let active = true;
+    setCapitalFulfillmentBankLoading(true);
+    setCapitalFulfillmentBankError("");
+
+    listBankAccounts({
+      legalEntityId: capitalFulfillmentLegalEntityId,
+      operatingUnitId: capitalFulfillmentOperatingUnitId || undefined,
+      isActive: true,
+      limit: 300,
+      offset: 0,
+    })
+      .then((response) => {
+        if (!active) {
+          return;
+        }
+        setCapitalFulfillmentBankAccounts(response?.rows || []);
+      })
+      .catch((err) => {
+        if (!active) {
+          return;
+        }
+        setCapitalFulfillmentBankAccounts([]);
+        setCapitalFulfillmentBankError(
+          err?.response?.data?.message ||
+            l("Failed to load bank accounts.", "Banka hesaplari yuklenemedi.")
+        );
+      })
+      .finally(() => {
+        if (active) {
+          setCapitalFulfillmentBankLoading(false);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [
+    canReadBanks,
+    capitalFulfillmentForm.destinationMode,
+    capitalFulfillmentLegalEntityId,
+    capitalFulfillmentModalOpen,
+    capitalFulfillmentOperatingUnitId,
+    l,
+  ]);
+  useEffect(() => {
+    if (!selectedShareholderLegalEntityId) {
+      setCapitalFulfillmentHistory([]);
+      setCapitalFulfillmentHistoryError("");
+      return;
+    }
+    loadCapitalFulfillmentHistory(selectedShareholderLegalEntityId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedShareholderLegalEntityId, canReadShareholders]);
   const selectedShareholderCommitmentReadiness = getModuleRow(
     "shareholderCommitment",
     selectedShareholderLegalEntityId
@@ -1328,6 +1688,16 @@ export default function OrganizationManagementPage() {
     setMessage("");
   }
 
+  function resetUnitForm() {
+    setUnitForm((prev) => ({
+      ...DEFAULT_UNIT_FORM,
+      legalEntityId: prev.legalEntityId || String(legalEntities[0]?.id || ""),
+    }));
+    setUnitEditingKey("");
+    setError("");
+    setMessage("");
+  }
+
   function handleLegalEntityEdit(row) {
     const code = String(row?.code || "").trim();
     if (!code) {
@@ -1352,6 +1722,27 @@ export default function OrganizationManagementPage() {
       useCustomPaymentTerms: false,
       paymentTermsJson: "",
     }));
+    setError("");
+    setMessage("");
+  }
+
+  function handleOperatingUnitEdit(row) {
+    const code = String(row?.code || "").trim();
+    const legalEntityId = String(row?.legal_entity_id || "").trim();
+    if (!code || !legalEntityId) {
+      return;
+    }
+    setUnitEditingKey(`${legalEntityId}:${code}`);
+    setUnitForm({
+      ...DEFAULT_UNIT_FORM,
+      legalEntityId,
+      code,
+      name: String(row?.name || "").trim(),
+      unitType: String(row?.unit_type || "BRANCH").trim().toUpperCase() || "BRANCH",
+      hasSubledger: Boolean(row?.has_subledger),
+      centralDueFromAccountId: String(row?.central_due_from_account_id || ""),
+      ouDueToCentralAccountId: String(row?.ou_due_to_central_account_id || ""),
+    });
     setError("");
     setMessage("");
   }
@@ -1506,8 +1897,23 @@ export default function OrganizationManagementPage() {
     }
 
     const legalEntityId = toNumber(unitForm.legalEntityId);
+    const centralDueFromAccountId = toNumber(unitForm.centralDueFromAccountId);
+    const ouDueToCentralAccountId = toNumber(unitForm.ouDueToCentralAccountId);
     if (!legalEntityId) {
       setError(l("legalEntityId is required.", "legalEntityId zorunludur."));
+      return;
+    }
+    if (
+      centralDueFromAccountId &&
+      ouDueToCentralAccountId &&
+      centralDueFromAccountId === ouDueToCentralAccountId
+    ) {
+      setError(
+        l(
+          "HQ due-from and OU due-to accounts must be different.",
+          "Merkez alacak ve OU borc hesaplari farkli olmalidir."
+        )
+      );
       return;
     }
 
@@ -1521,13 +1927,14 @@ export default function OrganizationManagementPage() {
         name: unitForm.name.trim(),
         unitType: unitForm.unitType,
         hasSubledger: Boolean(unitForm.hasSubledger),
+        centralDueFromAccountId: centralDueFromAccountId || undefined,
+        ouDueToCentralAccountId: ouDueToCentralAccountId || undefined,
       });
-      setUnitForm((prev) => ({
-        ...prev,
-        code: "",
-        name: "",
-      }));
-      setMessage(l("Operating unit saved.", "Operasyon birimi kaydedildi."));
+      const successMessage = unitEditingKey
+        ? l("Operating unit updated.", "Operasyon birimi guncellendi.")
+        : l("Operating unit saved.", "Operasyon birimi kaydedildi.");
+      resetUnitForm();
+      setMessage(successMessage);
       await loadCoreData();
     } catch (err) {
       setError(err?.response?.data?.message || l("Failed to save operating unit.", "Operasyon birimi kaydedilemedi."));
@@ -1886,6 +2293,348 @@ export default function OrganizationManagementPage() {
       );
     } finally {
       setBatchCommitmentSaving(false);
+    }
+  }
+
+  function resetCapitalFulfillmentModal() {
+    setCapitalFulfillmentModalOpen(false);
+    setCapitalFulfillmentForm(DEFAULT_CAPITAL_FULFILLMENT_FORM);
+    setCapitalFulfillmentPreview(null);
+    setCapitalFulfillmentBankAccounts([]);
+    setCapitalFulfillmentBankError("");
+    setCapitalFulfillmentPreviewLoading(false);
+    setCapitalFulfillmentSaving(false);
+  }
+
+  function updateCapitalFulfillmentForm(updater) {
+    setCapitalFulfillmentForm((prev) => {
+      const next =
+        typeof updater === "function" ? updater(prev) : { ...prev, ...(updater || {}) };
+      return next;
+    });
+    setCapitalFulfillmentPreview(null);
+  }
+
+  function openCapitalFulfillmentModal() {
+    if (!selectedShareholderLegalEntityId) {
+      setError(
+        l("Select legal entity first.", "Once istirak / bagli ortak secin.")
+      );
+      return;
+    }
+    if (eligibleShareholdersForCommitmentIncrease.length === 0) {
+      setError(
+        l(
+          "No eligible shareholder found. Shareholder must have both capital and commitment sub-accounts.",
+          "Uygun ortak bulunamadi. Ortakta hem sermaye hem taahhut alt hesap tanimli olmalidir."
+        )
+      );
+      return;
+    }
+
+    const defaultMode = canReadBanks ? "BANK_ACCOUNT" : "ASSET_GL";
+    const defaultShareholderId = toNumber(
+      eligibleShareholdersForCommitmentIncrease[0]?.id
+    );
+
+    setError("");
+    setMessage("");
+    setCapitalFulfillmentPreview(null);
+    setCapitalFulfillmentBankError("");
+    setCapitalFulfillmentForm({
+      ...DEFAULT_CAPITAL_FULFILLMENT_FORM,
+      legalEntityId: String(selectedShareholderLegalEntityId),
+      shareholderId: defaultShareholderId ? String(defaultShareholderId) : "",
+      destinationMode: defaultMode,
+      contributionDate:
+        shareholderForm.commitmentDate || new Date().toISOString().slice(0, 10),
+    });
+    setCapitalFulfillmentModalOpen(true);
+  }
+
+  function buildCapitalFulfillmentPayload() {
+    if (!canUpsertShareholder) {
+      setError(
+        l(
+          "Missing permission: org.legal_entity.upsert",
+          "Eksik yetki: org.legal_entity.upsert"
+        )
+      );
+      return null;
+    }
+
+    const legalEntityId = toNumber(capitalFulfillmentForm.legalEntityId);
+    const shareholderId = toNumber(capitalFulfillmentForm.shareholderId);
+    const operatingUnitId = toNumber(capitalFulfillmentForm.operatingUnitId);
+    const amount = Number(capitalFulfillmentForm.amount || 0);
+    const contributionDate = String(
+      capitalFulfillmentForm.contributionDate || ""
+    ).trim();
+    const destinationMode = String(
+      capitalFulfillmentForm.destinationMode || ""
+    ).trim()
+      .toUpperCase();
+
+    if (!legalEntityId || !shareholderId) {
+      setError(
+        l(
+          "Select legal entity and shareholder first.",
+          "Once legal entity ve ortak secin."
+        )
+      );
+      return null;
+    }
+    if (!contributionDate) {
+      setError(
+        l(
+          "Contribution date is required.",
+          "Katki tarihi zorunludur."
+        )
+      );
+      return null;
+    }
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setError(
+        l(
+          "Fulfillment amount must be greater than 0.",
+          "Karsilama tutari 0'dan buyuk olmalidir."
+        )
+      );
+      return null;
+    }
+    if (operatingUnitId && !capitalFulfillmentOuReady) {
+      setError(
+        l(
+          "Selected operating unit is missing internal current-account setup.",
+          "Secilen operasyon biriminde ic cari hesap kurulumu eksik."
+        )
+      );
+      return null;
+    }
+    if (destinationMode === "BANK_ACCOUNT") {
+      if (!canReadBanks) {
+        setError(
+          l(
+            "Missing permission: bank.accounts.read",
+            "Eksik yetki: bank.accounts.read"
+          )
+        );
+        return null;
+      }
+      if (!toNumber(capitalFulfillmentForm.bankAccountId)) {
+        setError(
+          l(
+            "Select a bank account destination first.",
+            "Once banka hesabi hedefini secin."
+          )
+        );
+        return null;
+      }
+    } else if (destinationMode === "ASSET_GL") {
+      if (!canReadAccounts) {
+        setError(
+          l("Missing permission: gl.account.read", "Eksik yetki: gl.account.read")
+        );
+        return null;
+      }
+      if (!toNumber(capitalFulfillmentForm.destinationAccountId)) {
+        setError(
+          l(
+            "Select an asset GL destination first.",
+            "Once varlik GL hedefini secin."
+          )
+        );
+        return null;
+      }
+    } else {
+      setError(
+        l("Destination mode is invalid.", "Hedef modu gecersiz.")
+      );
+      return null;
+    }
+
+    return {
+      legalEntityId,
+      shareholderId,
+      operatingUnitId: operatingUnitId || undefined,
+      destinationMode,
+      bankAccountId:
+        destinationMode === "BANK_ACCOUNT"
+          ? toNumber(capitalFulfillmentForm.bankAccountId)
+          : undefined,
+      destinationAccountId:
+        destinationMode === "ASSET_GL"
+          ? toNumber(capitalFulfillmentForm.destinationAccountId)
+          : undefined,
+      amount,
+      contributionDate,
+      note: String(capitalFulfillmentForm.note || "").trim() || undefined,
+    };
+  }
+
+  async function handlePreviewCapitalFulfillment() {
+    const payload = buildCapitalFulfillmentPayload();
+    if (!payload) {
+      return null;
+    }
+
+    setCapitalFulfillmentPreviewLoading(true);
+    setError("");
+    setMessage("");
+    try {
+      const preview = await previewShareholderCapitalFulfillment(payload);
+      setCapitalFulfillmentPreview(preview || null);
+      return preview || null;
+    } catch (err) {
+      setCapitalFulfillmentPreview(null);
+      setError(
+        err?.response?.data?.message ||
+          l(
+            "Failed to load capital fulfillment preview.",
+            "Sermaye karsilama onizlemesi yuklenemedi."
+          )
+      );
+      return null;
+    } finally {
+      setCapitalFulfillmentPreviewLoading(false);
+    }
+  }
+
+  async function handleCreateCapitalFulfillment() {
+    if (capitalFulfillmentSaving) {
+      return;
+    }
+    const payload = buildCapitalFulfillmentPayload();
+    if (!payload) {
+      return;
+    }
+    if (!capitalFulfillmentPreview) {
+      setError(
+        l(
+          "Preview the fulfillment before posting.",
+          "Post etmeden once karsilamayi onizleyin."
+        )
+      );
+      return;
+    }
+
+    setCapitalFulfillmentSaving(true);
+    setError("");
+    setMessage("");
+    try {
+      const response = await createShareholderCapitalFulfillment(payload);
+      const preview = response?.preview || capitalFulfillmentPreview;
+      const amountLabel = formatAmount(preview?.amount_base || payload.amount);
+      setMessage(
+        l(
+          "Capital fulfillment posted.",
+          "Sermaye karsilamasi post edildi."
+        )
+      );
+      setShareholderJournalModal({
+        title: l(
+          "Capital Fulfillment Posted",
+          "Sermaye Karsilamasi Post Edildi"
+        ),
+        message: l(
+          `Journal ${response?.journalNo || "-"} posted for ${amountLabel}.`,
+          `${response?.journalNo || "-"} numarali fis ${amountLabel} tutar ile post edildi.`
+        ),
+        journalNo: response?.journalNo || "-",
+        journalEntryId: response?.journalEntryId || "-",
+        bookCode: preview?.journal_context?.book_code || "-",
+        fiscalPeriodId: preview?.journal_context?.fiscal_period_id || "-",
+      });
+      resetCapitalFulfillmentModal();
+      await Promise.all([
+        loadCoreData(),
+        loadCapitalFulfillmentHistory(payload.legalEntityId),
+      ]);
+    } catch (err) {
+      setError(
+        err?.response?.data?.message ||
+          l(
+            "Failed to post capital fulfillment.",
+            "Sermaye karsilamasi post edilemedi."
+          )
+      );
+    } finally {
+      setCapitalFulfillmentSaving(false);
+    }
+  }
+
+  async function handleReverseCapitalFulfillment(row) {
+    const fulfillmentId = toNumber(row?.id);
+    if (!fulfillmentId) {
+      setError(
+        l(
+          "Capital fulfillment id is missing.",
+          "Sermaye karsilama id eksik."
+        )
+      );
+      return;
+    }
+    if (!canUpsertShareholder) {
+      setError(
+        l(
+          "Missing permission: org.legal_entity.upsert",
+          "Eksik yetki: org.legal_entity.upsert"
+        )
+      );
+      return;
+    }
+    const confirmed = window.confirm(
+      l(
+        `Reverse capital fulfillment ${row?.journal_no || `#${fulfillmentId}`}?`,
+        `${row?.journal_no || `#${fulfillmentId}`} sermaye karsilamasi ters cevrilsin mi?`
+      )
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setCapitalFulfillmentReversingId(fulfillmentId);
+    setError("");
+    setMessage("");
+    try {
+      const response = await reverseShareholderCapitalFulfillment(fulfillmentId);
+      setMessage(
+        l(
+          "Capital fulfillment reversed.",
+          "Sermaye karsilamasi ters cevrildi."
+        )
+      );
+      await Promise.all([
+        loadCoreData(),
+        loadCapitalFulfillmentHistory(capitalFulfillmentLegalEntityId),
+      ]);
+      const reversalJournalId = toNumber(response?.reversalJournalEntryId);
+      if (reversalJournalId) {
+        setShareholderJournalModal({
+          title: l(
+            "Capital Fulfillment Reversed",
+            "Sermaye Karsilamasi Ters Cevrildi"
+          ),
+          message: l(
+            `Reversal journal ${reversalJournalId} was posted.`,
+            `${reversalJournalId} numarali ters kayit yevmiyesi post edildi.`
+          ),
+          journalNo: row?.reversal_journal_no || "-",
+          journalEntryId: reversalJournalId,
+          bookCode: "-",
+          fiscalPeriodId: "-",
+        });
+      }
+    } catch (err) {
+      setError(
+        err?.response?.data?.message ||
+          l(
+            "Failed to reverse capital fulfillment.",
+            "Sermaye karsilamasi ters cevrilemedi."
+          )
+      );
+    } finally {
+      setCapitalFulfillmentReversingId(null);
     }
   }
 
@@ -2664,13 +3413,15 @@ export default function OrganizationManagementPage() {
           <h2 className="mb-3 text-sm font-semibold text-slate-700">
             {l("Operating Units / Branches", "Operasyon Birimleri / Subeler")}
           </h2>
-          <form onSubmit={handleOperatingUnitSubmit} className="grid gap-2 md:grid-cols-5">
+          <form onSubmit={handleOperatingUnitSubmit} className="grid gap-2 md:grid-cols-6">
             <select
               value={unitForm.legalEntityId}
               onChange={(event) =>
                 setUnitForm((prev) => ({
                   ...prev,
                   legalEntityId: event.target.value,
+                  centralDueFromAccountId: "",
+                  ouDueToCentralAccountId: "",
                 }))
               }
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm md:col-span-2"
@@ -2727,13 +3478,73 @@ export default function OrganizationManagementPage() {
               />
               {l("Has subledger", "Alt defter var")}
             </label>
-            <button
-              type="submit"
-              disabled={saving === "unit" || !canUpsertOperatingUnit}
-              className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60"
+            <select
+              value={unitForm.centralDueFromAccountId}
+              onChange={(event) =>
+                setUnitForm((prev) => ({
+                  ...prev,
+                  centralDueFromAccountId: event.target.value,
+                }))
+              }
+              className="rounded-lg border border-slate-300 px-3 py-2 text-sm md:col-span-3"
             >
-              {saving === "unit" ? l("Saving...", "Kaydediliyor...") : l("Save", "Kaydet")}
-            </button>
+              <option value="">
+                {l("HQ Due From OU (optional)", "Merkez OU Alacagi (opsiyonel)")}
+              </option>
+              {unitCentralDueFromAccountOptions.map((account) => (
+                <option key={account.id} value={account.id}>
+                  {formatAccountOptionLabel(account)}
+                </option>
+              ))}
+            </select>
+            <select
+              value={unitForm.ouDueToCentralAccountId}
+              onChange={(event) =>
+                setUnitForm((prev) => ({
+                  ...prev,
+                  ouDueToCentralAccountId: event.target.value,
+                }))
+              }
+              className="rounded-lg border border-slate-300 px-3 py-2 text-sm md:col-span-3"
+            >
+              <option value="">
+                {l("OU Due To HQ (optional)", "OU Merkeze Borc (opsiyonel)")}
+              </option>
+              {unitOuDueToCentralAccountOptions.map((account) => (
+                <option key={account.id} value={account.id}>
+                  {formatAccountOptionLabel(account)}
+                </option>
+              ))}
+            </select>
+            <div className="text-xs text-slate-500 md:col-span-6">
+              {l(
+                "Only active, postable, leaf legal-entity accounts are shown. Configure both fields to make the OU capital-self-balancing ready.",
+                "Sadece aktif, post edilebilir, leaf legal-entity hesaplari gosterilir. OU'yu sermaye icin self-balancing hazir yapmak icin iki alani da doldurun."
+              )}
+            </div>
+            <div className="flex flex-wrap gap-2 md:col-span-6">
+              <button
+                type="submit"
+                disabled={saving === "unit" || !canUpsertOperatingUnit}
+                className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60"
+              >
+                {saving === "unit"
+                  ? l("Saving...", "Kaydediliyor...")
+                  : unitEditingKey
+                    ? l("Update", "Guncelle")
+                    : l("Save", "Kaydet")}
+              </button>
+              {unitEditingKey ? (
+                <button
+                  type="button"
+                  onClick={resetUnitForm}
+                  disabled={saving === "unit"}
+                  className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                >
+                  {l("Cancel edit", "Duzenlemeyi iptal et")}
+                </button>
+              ) : null}
+            </div>
           </form>
 
           <div className="mt-3 overflow-x-auto">
@@ -2746,6 +3557,10 @@ export default function OrganizationManagementPage() {
                   <th className="px-3 py-2">{l("Name", "Ad")}</th>
                   <th className="px-3 py-2">{l("Type", "Tur")}</th>
                   <th className="px-3 py-2">{l("Subledger", "Alt Defter")}</th>
+                  <th className="px-3 py-2">{l("HQ Due From", "Merkez Alacagi")}</th>
+                  <th className="px-3 py-2">{l("OU Due To HQ", "OU Merkeze Borc")}</th>
+                  <th className="px-3 py-2">{l("Ready", "Hazir")}</th>
+                  <th className="px-3 py-2">{l("Actions", "Islemler")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -2764,12 +3579,59 @@ export default function OrganizationManagementPage() {
                       <td className="px-3 py-2">{row.name}</td>
                       <td className="px-3 py-2">{row.unit_type}</td>
                       <td className="px-3 py-2">{row.has_subledger ? l("Yes", "Evet") : l("No", "Hayir")}</td>
+                      <td className="px-3 py-2">
+                        <div className="font-medium text-slate-700">
+                          {row.central_due_from_account_id
+                            ? l("Configured", "Yapilandirildi")
+                            : l("Missing", "Eksik")}
+                        </div>
+                        <div className="text-xs text-slate-500">
+                          {row.central_due_from_account_code
+                            ? `${row.central_due_from_account_code} - ${row.central_due_from_account_name || ""}`.trim()
+                            : "-"}
+                        </div>
+                      </td>
+                      <td className="px-3 py-2">
+                        <div className="font-medium text-slate-700">
+                          {row.ou_due_to_central_account_id
+                            ? l("Configured", "Yapilandirildi")
+                            : l("Missing", "Eksik")}
+                        </div>
+                        <div className="text-xs text-slate-500">
+                          {row.ou_due_to_central_account_code
+                            ? `${row.ou_due_to_central_account_code} - ${row.ou_due_to_central_account_name || ""}`.trim()
+                            : "-"}
+                        </div>
+                      </td>
+                      <td className="px-3 py-2">
+                        <span
+                          className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${
+                            row.capital_self_balancing_ready
+                              ? "bg-emerald-100 text-emerald-700"
+                              : "bg-amber-100 text-amber-700"
+                          }`}
+                        >
+                          {row.capital_self_balancing_ready
+                            ? l("Ready", "Hazir")
+                            : l("Missing setup", "Kurulum eksik")}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2">
+                        <button
+                          type="button"
+                          onClick={() => handleOperatingUnitEdit(row)}
+                          disabled={saving === "unit" || !canUpsertOperatingUnit}
+                          className="rounded border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                        >
+                          {l("Edit", "Duzenle")}
+                        </button>
+                      </td>
                     </tr>
                   );
                 })}
                 {operatingUnits.length === 0 && !loading && (
                   <tr>
-                    <td colSpan={6} className="px-3 py-3 text-slate-500">
+                    <td colSpan={10} className="px-3 py-3 text-slate-500">
                       {l("No operating units found.", "Operasyon birimi bulunamadi.")}
                     </td>
                   </tr>
@@ -3001,6 +3863,14 @@ export default function OrganizationManagementPage() {
                 </button>
                 <button
                   type="button"
+                  onClick={openCapitalFulfillmentModal}
+                  disabled={!capitalFulfillmentCanOpen}
+                  className="rounded border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 disabled:opacity-50"
+                >
+                  {l("Record capital fulfillment", "Sermaye karsilamasi kaydet")}
+                </button>
+                <button
+                  type="button"
                   onClick={async () => {
                     setBatchCommitmentDate(
                       shareholderForm.commitmentDate ||
@@ -3229,6 +4099,155 @@ export default function OrganizationManagementPage() {
                   </div>
                 </div>
               ) : null}
+            </div>
+          ) : null}
+          {selectedShareholderLegalEntityId ? (
+            <div className="mb-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-3">
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <div className="text-xs font-semibold text-slate-700">
+                    {l(
+                      "Capital fulfillment history",
+                      "Sermaye karsilama gecmisi"
+                    )}
+                  </div>
+                  <p className="mt-1 text-xs text-slate-600">
+                    {l(
+                      "Posted and reversed fulfillments for the selected legal entity.",
+                      "Secilen legal entity icin post edilen ve ters cevrilen karsilamalar."
+                    )}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => loadCapitalFulfillmentHistory(selectedShareholderLegalEntityId)}
+                  className="rounded border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700"
+                >
+                  {l("Reload", "Yenile")}
+                </button>
+              </div>
+              {capitalFulfillmentHistoryError ? (
+                <div className="mt-2 rounded border border-rose-200 bg-rose-50 px-2 py-2 text-xs text-rose-700">
+                  {capitalFulfillmentHistoryError}
+                </div>
+              ) : null}
+              <div className="mt-3 overflow-x-auto">
+                <table className="min-w-full text-xs">
+                  <thead className="bg-white text-left text-slate-600">
+                    <tr>
+                      <th className="px-2 py-1.5">{l("Date", "Tarih")}</th>
+                      <th className="px-2 py-1.5">{l("Shareholder", "Ortak")}</th>
+                      <th className="px-2 py-1.5">{l("Amount", "Tutar")}</th>
+                      <th className="px-2 py-1.5">OU</th>
+                      <th className="px-2 py-1.5">{l("Destination type", "Hedef tipi")}</th>
+                      <th className="px-2 py-1.5">{l("Destination", "Hedef")}</th>
+                      <th className="px-2 py-1.5">{l("Status", "Durum")}</th>
+                      <th className="px-2 py-1.5">{l("Original journal", "Ilk yevmiye")}</th>
+                      <th className="px-2 py-1.5">{l("Reversal journal", "Ters cevirme yevmiyesi")}</th>
+                      <th className="px-2 py-1.5">{l("Action", "Islem")}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {capitalFulfillmentHistory.map((row) => {
+                      const fulfillmentId = toNumber(row.id);
+                      const isReversing = capitalFulfillmentReversingId === fulfillmentId;
+                      return (
+                        <tr
+                          key={`capital-fulfillment-history-${row.id}`}
+                          className="border-t border-slate-200"
+                        >
+                          <td className="px-2 py-1.5">{row.contribution_date || "-"}</td>
+                          <td className="px-2 py-1.5">
+                            {[row.shareholder_code, row.shareholder_name]
+                              .filter(Boolean)
+                              .join(" - ") || "-"}
+                          </td>
+                          <td className="px-2 py-1.5">
+                            {formatAmount(row.amount_base || 0)} {row.currency_code || ""}
+                          </td>
+                          <td className="px-2 py-1.5">
+                            {row.operating_unit_code || l("Central", "Merkezi")}
+                          </td>
+                          <td className="px-2 py-1.5">{row.destination_mode || "-"}</td>
+                          <td className="px-2 py-1.5">
+                            {formatCapitalFulfillmentDestination(row)}
+                          </td>
+                          <td className="px-2 py-1.5">
+                            <span
+                              className={`inline-flex rounded-full px-2 py-0.5 font-semibold ${
+                                String(row.status || "").toUpperCase() === "REVERSED"
+                                  ? "bg-amber-100 text-amber-800"
+                                  : "bg-emerald-100 text-emerald-700"
+                              }`}
+                            >
+                              {row.status || "-"}
+                            </span>
+                          </td>
+                          <td className="px-2 py-1.5">
+                            <div className="font-mono text-[11px] text-slate-800">
+                              {row.journal_no || row.journal_entry_id || "-"}
+                            </div>
+                            <div className="text-[11px] text-slate-500">
+                              ID {row.journal_entry_id || "-"}
+                            </div>
+                          </td>
+                          <td className="px-2 py-1.5">
+                            {row.reversal_journal_entry_id ? (
+                              <>
+                                <div className="font-mono text-[11px] text-slate-800">
+                                  {row.reversal_journal_no || row.reversal_journal_entry_id}
+                                </div>
+                                <div className="text-[11px] text-slate-500">
+                                  ID {row.reversal_journal_entry_id}
+                                </div>
+                              </>
+                            ) : (
+                              "-"
+                            )}
+                          </td>
+                          <td className="px-2 py-1.5">
+                            <button
+                              type="button"
+                              onClick={() => handleReverseCapitalFulfillment(row)}
+                              disabled={
+                                !canUpsertShareholder ||
+                                !fulfillmentId ||
+                                String(row.status || "").toUpperCase() === "REVERSED" ||
+                                isReversing
+                              }
+                              className="rounded border border-slate-300 bg-white px-2 py-1 font-semibold text-slate-700 disabled:opacity-50"
+                            >
+                              {isReversing
+                                ? l("Reversing...", "Ters cevriliyor...")
+                                : l("Reverse", "Ters cevir")}
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    {capitalFulfillmentHistory.length === 0 && !capitalFulfillmentHistoryLoading ? (
+                      <tr>
+                        <td colSpan={10} className="px-2 py-3 text-slate-500">
+                          {l(
+                            "No capital fulfillment history found for the selected legal entity.",
+                            "Secilen legal entity icin sermaye karsilama gecmisi bulunamadi."
+                          )}
+                        </td>
+                      </tr>
+                    ) : null}
+                    {capitalFulfillmentHistoryLoading ? (
+                      <tr>
+                        <td colSpan={10} className="px-2 py-3 text-slate-500">
+                          {l(
+                            "Loading capital fulfillment history...",
+                            "Sermaye karsilama gecmisi yukleniyor..."
+                          )}
+                        </td>
+                      </tr>
+                    ) : null}
+                  </tbody>
+                </table>
+              </div>
             </div>
           ) : null}
           {selectedShareholderLegalEntityId &&
@@ -3616,6 +4635,7 @@ export default function OrganizationManagementPage() {
                   </th>
                   <th className="px-3 py-2">{l("Committed", "Taahhut")}</th>
                   <th className="px-3 py-2">{l("Paid", "Odenen")}</th>
+                  <th className="px-3 py-2">{l("Unpaid", "Kalan")}</th>
                   <th className="px-3 py-2">{l("Currency", "Para birimi")}</th>
                   <th className="px-3 py-2">{l("Status", "Durum")}</th>
                   <th className="px-3 py-2">{l("Queue", "Kuyruk")}</th>
@@ -3674,6 +4694,12 @@ export default function OrganizationManagementPage() {
                           maximumFractionDigits: 2,
                         })}
                       </td>
+                      <td className="px-3 py-2">
+                        {Number(row.unpaid_capital || 0).toLocaleString(undefined, {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })}
+                      </td>
                       <td className="px-3 py-2">{row.currency_code}</td>
                       <td className="px-3 py-2">
                         {getShareholderStatusLabel(row.status, l)}
@@ -3701,7 +4727,7 @@ export default function OrganizationManagementPage() {
                 })}
                 {visibleShareholders.length === 0 && !loading && (
                   <tr>
-                    <td colSpan={13} className="px-3 py-3 text-slate-500">
+                    <td colSpan={14} className="px-3 py-3 text-slate-500">
                       {l("No shareholders found.", "Ortak bulunamadi.")}
                     </td>
                   </tr>
@@ -3852,6 +4878,466 @@ export default function OrganizationManagementPage() {
           </div>
         </section>
       </div>
+
+      {capitalFulfillmentModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 px-4">
+          <div className="w-full max-w-4xl rounded-xl border border-slate-200 bg-white p-4 shadow-xl">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="text-base font-semibold text-slate-900">
+                  {l(
+                    "Record Capital Fulfillment",
+                    "Sermaye Karsilamasi Kaydet"
+                  )}
+                </h3>
+                <p className="mt-1 text-sm text-slate-700">
+                  {l(
+                    "This is a post-setup action. Create the bank account or asset destination first, then preview and post the fulfillment here.",
+                    "Bu islem kurulum sonrasi bir aksiyondur. Once banka hesabi veya varlik hedefini olusturun, sonra burada onizleyip post edin."
+                  )}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={resetCapitalFulfillmentModal}
+                className="rounded border border-slate-300 px-2 py-1 text-xs font-semibold text-slate-700"
+              >
+                {l("Close", "Kapat")}
+              </button>
+            </div>
+
+            <div className="mt-3 grid gap-2 md:grid-cols-2">
+              <label className="block">
+                <span className="mb-1 block text-[11px] font-semibold text-slate-600">
+                  {l("Legal entity", "Legal entity")}
+                </span>
+                <select
+                  value={capitalFulfillmentForm.legalEntityId}
+                  onChange={(event) => {
+                    const nextLegalEntityId = event.target.value;
+                    const nextEligibleShareholders = shareholders.filter(
+                      (row) =>
+                        Number(row.legal_entity_id) === Number(nextLegalEntityId) &&
+                        Boolean(toNumber(row.capital_sub_account_id)) &&
+                        Boolean(toNumber(row.commitment_debit_sub_account_id))
+                    );
+                    updateCapitalFulfillmentForm({
+                      legalEntityId: nextLegalEntityId,
+                      shareholderId: nextEligibleShareholders[0]?.id
+                        ? String(nextEligibleShareholders[0].id)
+                        : "",
+                      destinationMode: canReadBanks ? "BANK_ACCOUNT" : "ASSET_GL",
+                      bankAccountId: "",
+                      destinationAccountId: "",
+                      operatingUnitId: "",
+                    });
+                    setCapitalFulfillmentBankError("");
+                  }}
+                  className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs"
+                  required
+                >
+                  <option value="">
+                    {l("Select legal entity", "Legal entity secin")}
+                  </option>
+                  {legalEntities.map((row) => (
+                    <option key={row.id} value={row.id}>
+                      {row.code} - {row.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="block">
+                <span className="mb-1 block text-[11px] font-semibold text-slate-600">
+                  {l("Shareholder", "Ortak")}
+                </span>
+                <select
+                  value={capitalFulfillmentForm.shareholderId}
+                  onChange={(event) =>
+                    updateCapitalFulfillmentForm({
+                      shareholderId: event.target.value,
+                      destinationAccountId: "",
+                    })
+                  }
+                  className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs"
+                  required
+                >
+                  <option value="">
+                    {l("Select shareholder", "Ortak secin")}
+                  </option>
+                  {capitalFulfillmentEligibleShareholders.map((row) => (
+                    <option key={row.id} value={row.id}>
+                      {row.code} - {row.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="block">
+                <span className="mb-1 block text-[11px] font-semibold text-slate-600">
+                  {l("Contribution date", "Katki tarihi")}
+                </span>
+                <input
+                  type="date"
+                  value={capitalFulfillmentForm.contributionDate}
+                  onChange={(event) =>
+                    updateCapitalFulfillmentForm({
+                      contributionDate: event.target.value,
+                    })
+                  }
+                  className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs"
+                  required
+                />
+              </label>
+              <label className="block">
+                <span className="mb-1 block text-[11px] font-semibold text-slate-600">
+                  {l("Amount", "Tutar")}
+                </span>
+                <input
+                  type="number"
+                  min={0.01}
+                  step="0.01"
+                  value={capitalFulfillmentForm.amount}
+                  onChange={(event) =>
+                    updateCapitalFulfillmentForm({ amount: event.target.value })
+                  }
+                  className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs"
+                  placeholder={l("Fulfillment amount", "Karsilama tutari")}
+                  required
+                />
+              </label>
+              <label className="block">
+                <span className="mb-1 block text-[11px] font-semibold text-slate-600">
+                  {l("Destination mode", "Hedef modu")}
+                </span>
+                <select
+                  value={capitalFulfillmentForm.destinationMode}
+                  onChange={(event) =>
+                    updateCapitalFulfillmentForm({
+                      destinationMode: event.target.value,
+                      bankAccountId: "",
+                      destinationAccountId: "",
+                    })
+                  }
+                  className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs"
+                >
+                  {canReadBanks ? (
+                    <option value="BANK_ACCOUNT">
+                      {l("Bank account", "Banka hesabi")}
+                    </option>
+                  ) : null}
+                  {canReadAccounts ? (
+                    <option value="ASSET_GL">
+                      {l("Asset GL", "Varlik GL")}
+                    </option>
+                  ) : null}
+                </select>
+              </label>
+              <label className="block">
+                <span className="mb-1 block text-[11px] font-semibold text-slate-600">
+                  {l("Operating unit (optional)", "Operasyon birimi (opsiyonel)")}
+                </span>
+                <select
+                  value={capitalFulfillmentForm.operatingUnitId}
+                  onChange={(event) =>
+                    updateCapitalFulfillmentForm({
+                      operatingUnitId: event.target.value,
+                      bankAccountId: "",
+                    })
+                  }
+                  className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs"
+                >
+                  <option value="">
+                    {l("No OU (central / HQ first)", "OU yok (merkezi / merkez once)")}
+                  </option>
+                  {capitalFulfillmentOperatingUnits.map((row) => (
+                    <option key={row.id} value={row.id}>
+                      {row.code} - {row.name}{" "}
+                      {row.capital_self_balancing_ready
+                        ? l("(ready)", "(hazir)")
+                        : l("(setup missing)", "(kurulum eksik)")}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              {capitalFulfillmentForm.destinationMode === "BANK_ACCOUNT" ? (
+                <label className="block md:col-span-2">
+                  <span className="mb-1 block text-[11px] font-semibold text-slate-600">
+                    {l("Bank account destination", "Banka hesabi hedefi")}
+                  </span>
+                  <select
+                    value={capitalFulfillmentForm.bankAccountId}
+                    onChange={(event) =>
+                      updateCapitalFulfillmentForm({
+                        bankAccountId: event.target.value,
+                      })
+                    }
+                    className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs"
+                    disabled={!canReadBanks || capitalFulfillmentBankLoading}
+                    required
+                  >
+                    <option value="">
+                      {capitalFulfillmentBankLoading
+                        ? l("Loading bank accounts...", "Banka hesaplari yukleniyor...")
+                        : l("Select bank account", "Banka hesabi secin")}
+                    </option>
+                    {capitalFulfillmentBankAccountOptions.map((row) => (
+                      <option key={row.id} value={row.id}>
+                        {formatBankAccountOptionLabel(row)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : (
+                <label className="block md:col-span-2">
+                  <span className="mb-1 block text-[11px] font-semibold text-slate-600">
+                    {l("Asset GL destination", "Varlik GL hedefi")}
+                  </span>
+                  <select
+                    value={capitalFulfillmentForm.destinationAccountId}
+                    onChange={(event) =>
+                      updateCapitalFulfillmentForm({
+                        destinationAccountId: event.target.value,
+                      })
+                    }
+                    className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs"
+                    disabled={!canReadAccounts}
+                    required
+                  >
+                    <option value="">
+                      {l("Select asset account", "Varlik hesabi secin")}
+                    </option>
+                    {capitalFulfillmentAssetAccountOptions.map((account) => (
+                      <option key={account.id} value={account.id}>
+                        {formatAccountOptionLabel(account)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+
+              <label className="block md:col-span-2">
+                <span className="mb-1 block text-[11px] font-semibold text-slate-600">
+                  {l("Note (optional)", "Not (opsiyonel)")}
+                </span>
+                <input
+                  value={capitalFulfillmentForm.note}
+                  onChange={(event) =>
+                    updateCapitalFulfillmentForm({ note: event.target.value })
+                  }
+                  className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs"
+                  placeholder={l(
+                    "Example: capital fulfillment after bank setup",
+                    "Ornek: banka kurulumu sonrasi sermaye karsilamasi"
+                  )}
+                />
+              </label>
+            </div>
+
+            <div className="mt-3 grid gap-2 md:grid-cols-2">
+              <div className="rounded border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
+                <div className="font-semibold text-slate-900">
+                  {l("Operational model", "Operasyon modeli")}
+                </div>
+                <div className="mt-1">{capitalFulfillmentOperationalModelLabel}</div>
+                <div className="mt-2 text-slate-600">
+                  {selectedCapitalFulfillmentOperatingUnit
+                    ? l(
+                        "Selected OU means direct OU-targeted fulfillment with self-balancing internal current lines.",
+                        "Secilen OU, ic cari hesap satirlari ile dogrudan OU hedefli karsilama anlamina gelir."
+                      )
+                    : l(
+                        "No OU means central fulfillment first. Later HQ -> OU allocation can be posted separately.",
+                        "OU secilmezse once merkezi karsilama yapilir. Sonra merkez -> OU dagitimi ayri post edilebilir."
+                      )}
+                </div>
+              </div>
+              <div className="rounded border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-900">
+                <div className="font-semibold">
+                  {l("Accounting note", "Muhasebe notu")}
+                </div>
+                <div className="mt-1">
+                  {l(
+                    "Paid capital updates because the shareholder commitment debit sub-account is credited in the posted journal.",
+                    "Odenen sermaye, post edilen yevmiyede ortak taahhut borc alt hesabina alacak yazildigi icin guncellenir."
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {selectedCapitalFulfillmentOperatingUnit && !capitalFulfillmentOuReady ? (
+              <div className="mt-3 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                {l(
+                  "Selected operating unit is not capital-self-balancing ready. Configure HQ Due From and OU Due To HQ first.",
+                  "Secilen operasyon birimi sermaye icin self-balancing hazir degil. Once Merkez Alacagi ve OU Merkeze Borc hesaplarini tanimlayin."
+                )}
+              </div>
+            ) : null}
+
+            {capitalFulfillmentForm.destinationMode === "BANK_ACCOUNT" &&
+            capitalFulfillmentBankError ? (
+              <div className="mt-3 rounded border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                {capitalFulfillmentBankError}
+              </div>
+            ) : null}
+
+            {capitalFulfillmentForm.destinationMode === "BANK_ACCOUNT" &&
+            !capitalFulfillmentBankLoading &&
+            capitalFulfillmentLegalEntityId &&
+            capitalFulfillmentBankAccountOptions.length === 0 ? (
+              <div className="mt-3 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                {selectedCapitalFulfillmentOperatingUnit
+                  ? l(
+                      "No active bank account found for the selected legal entity and OU. Create the branch bank account first.",
+                      "Secilen legal entity ve OU icin aktif banka hesabi bulunamadi. Once sube banka hesabini olusturun."
+                    )
+                  : l(
+                      "No central active bank account found for the selected legal entity. Create the HQ bank account first.",
+                      "Secilen legal entity icin merkezi aktif banka hesabi bulunamadi. Once merkez banka hesabini olusturun."
+                    )}
+              </div>
+            ) : null}
+
+            {capitalFulfillmentPreview ? (
+              <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-sm font-semibold text-slate-900">
+                    {l("Preview", "Onizleme")}
+                  </div>
+                  <div className="text-xs text-slate-600">
+                    {l("Contribution kind", "Katki turu")}:{" "}
+                    <span className="font-semibold text-slate-900">
+                      {capitalFulfillmentPreview.contribution_kind || "-"}
+                    </span>
+                  </div>
+                </div>
+                <div className="mt-2 grid gap-2 text-xs text-slate-700 md:grid-cols-3">
+                  <div>
+                    <span className="font-semibold">
+                      {l("Legal entity", "Legal entity")}:
+                    </span>{" "}
+                    {capitalFulfillmentSelectedLegalEntity
+                      ? `${capitalFulfillmentSelectedLegalEntity.code} - ${capitalFulfillmentSelectedLegalEntity.name}`
+                      : "-"}
+                  </div>
+                  <div>
+                    <span className="font-semibold">
+                      {l("Shareholder", "Ortak")}:
+                    </span>{" "}
+                    {selectedCapitalFulfillmentShareholder
+                      ? `${selectedCapitalFulfillmentShareholder.code} - ${selectedCapitalFulfillmentShareholder.name}`
+                      : "-"}
+                  </div>
+                  <div>
+                    <span className="font-semibold">{l("Amount", "Tutar")}:</span>{" "}
+                    {formatAmount(capitalFulfillmentPreview.amount_base)}
+                  </div>
+                  <div>
+                    <span className="font-semibold">
+                      {l("Destination", "Hedef")}:
+                    </span>{" "}
+                    {capitalFulfillmentPreview?.destination?.display_name || "-"}
+                  </div>
+                  <div>
+                    <span className="font-semibold">
+                      {l("OU", "OU")}:
+                    </span>{" "}
+                    {capitalFulfillmentPreview?.operating_unit?.code || l("None", "Yok")}
+                  </div>
+                  <div>
+                    <span className="font-semibold">
+                      {l("Journal total", "Fis toplami")}:
+                    </span>{" "}
+                    {formatAmount(
+                      capitalFulfillmentPreview?.totals?.total_debit_base || 0
+                    )}
+                  </div>
+                </div>
+
+                <div className="mt-3 overflow-x-auto">
+                  <table className="min-w-full text-xs">
+                    <thead className="bg-white text-left text-slate-600">
+                      <tr>
+                        <th className="px-2 py-1.5">#</th>
+                        <th className="px-2 py-1.5">{l("Account", "Hesap")}</th>
+                        <th className="px-2 py-1.5">{l("OU", "OU")}</th>
+                        <th className="px-2 py-1.5">{l("Debit", "Borc")}</th>
+                        <th className="px-2 py-1.5">{l("Credit", "Alacak")}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(capitalFulfillmentPreview.lines || []).map((line) => (
+                        <tr
+                          key={`capital-fulfillment-preview-${line.line_no}`}
+                          className="border-t border-slate-200"
+                        >
+                          <td className="px-2 py-1.5">{line.line_no}</td>
+                          <td className="px-2 py-1.5">
+                            <div className="font-medium text-slate-900">
+                              {[line.account_code, line.account_name]
+                                .filter(Boolean)
+                                .join(" - ") || "-"}
+                            </div>
+                            <div className="text-[11px] text-slate-500">
+                              {line.description || "-"}
+                            </div>
+                          </td>
+                          <td className="px-2 py-1.5">
+                            {line.operating_unit_code || l("Central", "Merkezi")}
+                          </td>
+                          <td className="px-2 py-1.5">
+                            {line.debit_base
+                              ? formatAmount(line.debit_base)
+                              : "-"}
+                          </td>
+                          <td className="px-2 py-1.5">
+                            {line.credit_base
+                              ? formatAmount(line.credit_base)
+                              : "-"}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ) : null}
+
+            <div className="mt-4 flex flex-wrap justify-end gap-2">
+              <button
+                type="button"
+                onClick={resetCapitalFulfillmentModal}
+                className="rounded border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700"
+              >
+                {l("Cancel", "Iptal")}
+              </button>
+              <button
+                type="button"
+                onClick={handlePreviewCapitalFulfillment}
+                disabled={capitalFulfillmentPreviewLoading || capitalFulfillmentSaving}
+                className="rounded border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 disabled:opacity-50"
+              >
+                {capitalFulfillmentPreviewLoading
+                  ? l("Previewing...", "Onizleniyor...")
+                  : l("Preview fulfillment", "Karsilamayi onizle")}
+              </button>
+              <button
+                type="button"
+                onClick={handleCreateCapitalFulfillment}
+                disabled={
+                  capitalFulfillmentSaving ||
+                  capitalFulfillmentPreviewLoading ||
+                  !capitalFulfillmentPreview
+                }
+                className="rounded bg-slate-900 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
+              >
+                {capitalFulfillmentSaving
+                  ? l("Posting...", "Post ediliyor...")
+                  : l("Post fulfillment", "Karsilamayi post et")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {commitmentIncreaseModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 px-4">

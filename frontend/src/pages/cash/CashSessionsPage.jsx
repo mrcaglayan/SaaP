@@ -219,16 +219,6 @@ export default function CashSessionsPage() {
   });
   const [selectedLifecycleSessionId, setSelectedLifecycleSessionId] = useState(null);
 
-  const openableRegisters = useMemo(() => {
-    return [...registers]
-      .filter((row) => {
-        const status = toUpper(row?.status);
-        const sessionMode = toUpper(row?.session_mode);
-        return status === "ACTIVE" && sessionMode !== "NONE";
-      })
-      .sort((a, b) => Number(a?.id || 0) - Number(b?.id || 0));
-  }, [registers]);
-
   const openSessions = useMemo(() => {
     return [...openSessionRows].sort((a, b) => Number(b?.id || 0) - Number(a?.id || 0));
   }, [openSessionRows]);
@@ -244,6 +234,22 @@ export default function CashSessionsPage() {
         .filter(Boolean)
     );
   }, [openSessions]);
+
+  const openableRegisters = useMemo(() => {
+    return [...registers]
+      .filter((row) => {
+        const status = toUpper(row?.status);
+        const sessionMode = toUpper(row?.session_mode);
+        const registerId = toPositiveInt(row?.id);
+        return (
+          status === "ACTIVE" &&
+          sessionMode !== "NONE" &&
+          registerId &&
+          !openRegisterIds.has(registerId)
+        );
+      })
+      .sort((a, b) => Number(a?.id || 0) - Number(b?.id || 0));
+  }, [openRegisterIds, registers]);
 
   const requiredModeWithoutOpen = useMemo(() => {
     return registers.filter((row) => {
@@ -330,14 +336,34 @@ export default function CashSessionsPage() {
       setOpenSessionRows(openedSessions);
 
       setOpenForm((prev) => {
+        const openedRegisterIds = new Set(
+          openedSessions
+            .map((row) => toPositiveInt(row?.cash_register_id))
+            .filter(Boolean)
+        );
         const currentId = toPositiveInt(prev.registerId);
-        if (currentId && registerRows.some((row) => toPositiveInt(row?.id) === currentId)) {
+        if (
+          currentId &&
+          registerRows.some(
+            (row) =>
+              toPositiveInt(row?.id) === currentId &&
+              toUpper(row?.status) === "ACTIVE" &&
+              toUpper(row?.session_mode) !== "NONE" &&
+              !openedRegisterIds.has(currentId)
+          )
+        ) {
           return prev;
         }
         const defaultRegister = registerRows.find((row) => {
           const status = toUpper(row?.status);
           const sessionMode = toUpper(row?.session_mode);
-          return status === "ACTIVE" && sessionMode !== "NONE";
+          const registerId = toPositiveInt(row?.id);
+          return (
+            status === "ACTIVE" &&
+            sessionMode !== "NONE" &&
+            registerId &&
+            !openedRegisterIds.has(registerId)
+          );
         });
         return {
           ...prev,
@@ -371,6 +397,23 @@ export default function CashSessionsPage() {
     loadData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canRead]);
+
+  useEffect(() => {
+    const selectedRegisterId = toPositiveInt(openForm.registerId);
+    if (
+      selectedRegisterId &&
+      openableRegisters.some((row) => toPositiveInt(row?.id) === selectedRegisterId)
+    ) {
+      return;
+    }
+    const nextRegisterId = openableRegisters[0]?.id ? String(openableRegisters[0].id) : "";
+    if (openForm.registerId !== nextRegisterId) {
+      setOpenForm((prev) => ({
+        ...prev,
+        registerId: nextRegisterId,
+      }));
+    }
+  }, [openForm.registerId, openableRegisters]);
 
   useEffect(() => {
     const closeSessionId = toPositiveInt(closeForm.sessionId);

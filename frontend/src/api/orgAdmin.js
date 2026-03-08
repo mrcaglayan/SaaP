@@ -76,6 +76,37 @@ export async function previewShareholderCommitmentBatchJournal(payload) {
   return response.data;
 }
 
+export async function previewShareholderCapitalFulfillment(payload) {
+  const response = await api.post(
+    "/api/v1/org/shareholders/capital-fulfillments/preview",
+    payload
+  );
+  return response.data;
+}
+
+export async function createShareholderCapitalFulfillment(payload) {
+  const response = await api.post(
+    "/api/v1/org/shareholders/capital-fulfillments",
+    payload
+  );
+  return response.data;
+}
+
+export async function listShareholderCapitalFulfillments(params = {}) {
+  const response = await api.get(
+    `/api/v1/org/shareholders/capital-fulfillments${toQueryString(params)}`
+  );
+  return response.data;
+}
+
+export async function reverseShareholderCapitalFulfillment(fulfillmentId, payload = {}) {
+  const response = await api.post(
+    `/api/v1/org/shareholders/capital-fulfillments/${fulfillmentId}/reverse`,
+    payload
+  );
+  return response.data;
+}
+
 export async function autoProvisionShareholderSubAccounts(payload) {
   const response = await api.post(
     "/api/v1/org/shareholders/auto-provision-sub-accounts",

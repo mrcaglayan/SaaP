@@ -59,18 +59,58 @@ export async function fetchLegalEntityRows({ conditions, params }) {
 export async function fetchOperatingUnitRows({ conditions, params }) {
   const result = await query(
     `SELECT
-       id,
-       tenant_id,
-       legal_entity_id,
-       code,
-       name,
-       unit_type,
-       has_subledger,
-       status,
-       created_at
-     FROM operating_units
+       ou.id,
+       ou.tenant_id,
+       ou.legal_entity_id,
+       ou.code,
+       ou.name,
+       ou.unit_type,
+       ou.has_subledger,
+       ou.status,
+       ou.created_at,
+       ou.central_due_from_account_id,
+       cdfa.code AS central_due_from_account_code,
+       cdfa.name AS central_due_from_account_name,
+       ou.ou_due_to_central_account_id,
+       odtq.code AS ou_due_to_central_account_code,
+       odtq.name AS ou_due_to_central_account_name,
+       CASE
+         WHEN ou.central_due_from_account_id IS NOT NULL
+           AND ou.ou_due_to_central_account_id IS NOT NULL
+           AND cdfa.id IS NOT NULL
+           AND odtq.id IS NOT NULL
+           AND cdfc.scope = 'LEGAL_ENTITY'
+           AND odtqc.scope = 'LEGAL_ENTITY'
+           AND cdfc.legal_entity_id = ou.legal_entity_id
+           AND odtqc.legal_entity_id = ou.legal_entity_id
+           AND cdfa.is_active = TRUE
+           AND odtq.is_active = TRUE
+           AND cdfa.allow_posting = TRUE
+           AND odtq.allow_posting = TRUE
+           AND cdfa.account_type = 'ASSET'
+           AND odtq.account_type = 'LIABILITY'
+           AND cdfa.normal_side = 'DEBIT'
+           AND odtq.normal_side = 'CREDIT'
+           AND NOT EXISTS (
+             SELECT 1
+             FROM accounts child
+             WHERE child.parent_account_id = cdfa.id
+           )
+           AND NOT EXISTS (
+             SELECT 1
+             FROM accounts child
+             WHERE child.parent_account_id = odtq.id
+           )
+         THEN TRUE
+         ELSE FALSE
+       END AS capital_self_balancing_ready
+     FROM operating_units ou
+     LEFT JOIN accounts cdfa ON cdfa.id = ou.central_due_from_account_id
+     LEFT JOIN charts_of_accounts cdfc ON cdfc.id = cdfa.coa_id
+     LEFT JOIN accounts odtq ON odtq.id = ou.ou_due_to_central_account_id
+     LEFT JOIN charts_of_accounts odtqc ON odtqc.id = odtq.coa_id
      WHERE ${conditions.join(" AND ")}
-     ORDER BY id`,
+     ORDER BY ou.id`,
     params
   );
   return result.rows || [];
@@ -157,11 +197,58 @@ export async function fetchTreeLegalEntityRows({ tenantId, scopeFilter, params }
 
 export async function fetchTreeOperatingUnitRows({ tenantId, scopeFilter, params }) {
   const result = await query(
-    `SELECT id, legal_entity_id, code, name, unit_type, has_subledger, status
-     FROM operating_units
-     WHERE tenant_id = ?
+    `SELECT
+       ou.id,
+       ou.legal_entity_id,
+       ou.code,
+       ou.name,
+       ou.unit_type,
+       ou.has_subledger,
+       ou.status,
+       ou.central_due_from_account_id,
+       cdfa.code AS central_due_from_account_code,
+       cdfa.name AS central_due_from_account_name,
+       ou.ou_due_to_central_account_id,
+       odtq.code AS ou_due_to_central_account_code,
+       odtq.name AS ou_due_to_central_account_name,
+       CASE
+         WHEN ou.central_due_from_account_id IS NOT NULL
+           AND ou.ou_due_to_central_account_id IS NOT NULL
+           AND cdfa.id IS NOT NULL
+           AND odtq.id IS NOT NULL
+           AND cdfc.scope = 'LEGAL_ENTITY'
+           AND odtqc.scope = 'LEGAL_ENTITY'
+           AND cdfc.legal_entity_id = ou.legal_entity_id
+           AND odtqc.legal_entity_id = ou.legal_entity_id
+           AND cdfa.is_active = TRUE
+           AND odtq.is_active = TRUE
+           AND cdfa.allow_posting = TRUE
+           AND odtq.allow_posting = TRUE
+           AND cdfa.account_type = 'ASSET'
+           AND odtq.account_type = 'LIABILITY'
+           AND cdfa.normal_side = 'DEBIT'
+           AND odtq.normal_side = 'CREDIT'
+           AND NOT EXISTS (
+             SELECT 1
+             FROM accounts child
+             WHERE child.parent_account_id = cdfa.id
+           )
+           AND NOT EXISTS (
+             SELECT 1
+             FROM accounts child
+             WHERE child.parent_account_id = odtq.id
+           )
+         THEN TRUE
+         ELSE FALSE
+       END AS capital_self_balancing_ready
+     FROM operating_units ou
+     LEFT JOIN accounts cdfa ON cdfa.id = ou.central_due_from_account_id
+     LEFT JOIN charts_of_accounts cdfc ON cdfc.id = cdfa.coa_id
+     LEFT JOIN accounts odtq ON odtq.id = ou.ou_due_to_central_account_id
+     LEFT JOIN charts_of_accounts odtqc ON odtqc.id = odtq.coa_id
+     WHERE ou.tenant_id = ?
        AND ${scopeFilter}
-     ORDER BY id`,
+     ORDER BY ou.id`,
     [tenantId, ...params]
   );
   return result.rows || [];
@@ -213,6 +300,11 @@ export async function fetchShareholderRows({ conditions, params }) {
          WHEN dc.id IS NULL THEN 0
          ELSE COALESCE(pc.paid_capital_calculated, 0)
        END AS paid_capital,
+       COALESCE(s.committed_capital, 0) -
+       CASE
+         WHEN dc.id IS NULL THEN 0
+         ELSE COALESCE(pc.paid_capital_calculated, 0)
+       END AS unpaid_capital,
        CASE WHEN c.id IS NULL THEN NULL ELSE s.capital_sub_account_id END AS capital_sub_account_id,
        CASE
          WHEN dc.id IS NULL THEN NULL

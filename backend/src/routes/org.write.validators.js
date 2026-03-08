@@ -5,6 +5,28 @@ import {
   resolveTenantId,
 } from "./_utils.js";
 
+function parseOptionalPositiveIntField(rawValue, fieldLabel) {
+  if (rawValue === undefined || rawValue === null || rawValue === "") {
+    return null;
+  }
+  const parsed = parsePositiveInt(rawValue);
+  if (!parsed) {
+    throw badRequest(`${fieldLabel} must be a positive integer`);
+  }
+  return parsed;
+}
+
+function normalizeOptionalUpperEnum(rawValue, allowedValues, fieldLabel) {
+  if (rawValue === undefined || rawValue === null || rawValue === "") {
+    return null;
+  }
+  const normalized = String(rawValue).trim().toUpperCase();
+  if (!allowedValues.includes(normalized)) {
+    throw badRequest(`${fieldLabel} must be one of: ${allowedValues.join(", ")}`);
+  }
+  return normalized;
+}
+
 export function parseGroupCompanyUpsertInput(req) {
   const tenantId = resolveTenantId(req);
   if (!tenantId) {
@@ -78,6 +100,14 @@ export function parseOperatingUnitUpsertInput(req) {
     name,
     unitType,
     hasSubledger,
+    centralDueFromAccountId: parseOptionalPositiveIntField(
+      req.body.centralDueFromAccountId,
+      "centralDueFromAccountId"
+    ),
+    ouDueToCentralAccountId: parseOptionalPositiveIntField(
+      req.body.ouDueToCentralAccountId,
+      "ouDueToCentralAccountId"
+    ),
   };
 }
 
@@ -263,5 +293,125 @@ export function parseShareholderUpsertInput(req) {
     notes: req.body.notes,
     commitmentDate: req.body.commitmentDate,
     autoCommitmentJournal: req.body.autoCommitmentJournal,
+  };
+}
+
+function parseShareholderCapitalFulfillmentBaseInput(req) {
+  const tenantId = resolveTenantId(req);
+  if (!tenantId) {
+    throw badRequest("tenantId is required");
+  }
+
+  const legalEntityId = parsePositiveInt(req.body?.legalEntityId);
+  const shareholderId = parsePositiveInt(req.body?.shareholderId);
+  const operatingUnitId = parseOptionalPositiveIntField(
+    req.body?.operatingUnitId,
+    "operatingUnitId"
+  );
+  const destinationMode = normalizeOptionalUpperEnum(
+    req.body?.destinationMode,
+    ["BANK_ACCOUNT", "ASSET_GL"],
+    "destinationMode"
+  );
+  const bankAccountId = parseOptionalPositiveIntField(
+    req.body?.bankAccountId,
+    "bankAccountId"
+  );
+  const destinationAccountId = parseOptionalPositiveIntField(
+    req.body?.destinationAccountId,
+    "destinationAccountId"
+  );
+
+  if (!legalEntityId || !shareholderId) {
+    throw badRequest("legalEntityId and shareholderId must be positive integers");
+  }
+  if (!destinationMode) {
+    throw badRequest("destinationMode is required");
+  }
+  if (req.body?.amount === undefined || req.body?.amount === null || req.body?.amount === "") {
+    throw badRequest("amount is required");
+  }
+  if (!req.body?.contributionDate) {
+    throw badRequest("contributionDate is required");
+  }
+  if (destinationMode === "BANK_ACCOUNT") {
+    if (!bankAccountId || destinationAccountId) {
+      throw badRequest(
+        "BANK_ACCOUNT mode requires bankAccountId and does not allow destinationAccountId"
+      );
+    }
+  }
+  if (destinationMode === "ASSET_GL") {
+    if (!destinationAccountId || bankAccountId) {
+      throw badRequest(
+        "ASSET_GL mode requires destinationAccountId and does not allow bankAccountId"
+      );
+    }
+  }
+
+  return {
+    tenantId,
+    legalEntityId,
+    shareholderId,
+    operatingUnitId,
+    destinationMode,
+    bankAccountId,
+    destinationAccountId,
+    amount: req.body.amount,
+    contributionDate: req.body.contributionDate,
+    note: req.body.note,
+  };
+}
+
+export function parseShareholderCapitalFulfillmentPreviewInput(req) {
+  return parseShareholderCapitalFulfillmentBaseInput(req);
+}
+
+export function parseShareholderCapitalFulfillmentCreateInput(req) {
+  const userId = parsePositiveInt(req.user?.userId);
+  if (!userId) {
+    throw badRequest("Authenticated user is required");
+  }
+
+  return {
+    ...parseShareholderCapitalFulfillmentBaseInput(req),
+    userId,
+  };
+}
+
+export function parseShareholderCapitalFulfillmentListFilters(req) {
+  const tenantId = resolveTenantId(req);
+  if (!tenantId) {
+    throw badRequest("tenantId is required");
+  }
+
+  return {
+    tenantId,
+    legalEntityId: parseOptionalPositiveIntField(req.query?.legalEntityId, "legalEntityId"),
+    shareholderId: parseOptionalPositiveIntField(req.query?.shareholderId, "shareholderId"),
+    operatingUnitId: parseOptionalPositiveIntField(req.query?.operatingUnitId, "operatingUnitId"),
+    status: normalizeOptionalUpperEnum(req.query?.status, ["POSTED", "REVERSED"], "status"),
+  };
+}
+
+export function parseShareholderCapitalFulfillmentReverseInput(req) {
+  const tenantId = resolveTenantId(req);
+  if (!tenantId) {
+    throw badRequest("tenantId is required");
+  }
+  const fulfillmentId = parsePositiveInt(req.params?.id);
+  if (!fulfillmentId) {
+    throw badRequest("id must be a positive integer");
+  }
+  const userId = parsePositiveInt(req.user?.userId);
+  if (!userId) {
+    throw badRequest("Authenticated user is required");
+  }
+
+  return {
+    tenantId,
+    fulfillmentId,
+    userId,
+    reason: req.body?.reason,
   };
 }

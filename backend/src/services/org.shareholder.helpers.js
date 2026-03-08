@@ -283,7 +283,7 @@ function toLocalYyyyMmDd(date) {
   ).padStart(2, "0")}`;
 }
 
-function toIsoDate(value, fieldLabel = "date") {
+export function toIsoDate(value, fieldLabel = "date") {
   if (value === undefined || value === null || value === "") {
     throw badRequest(`${fieldLabel} is required`);
   }
@@ -430,7 +430,12 @@ function toJournalContextRow(row) {
   };
 }
 
-async function resolveOpenBookPeriodForLegalEntity(tx, tenantId, legalEntityId, asOfDate) {
+export async function resolveOpenBookPeriodForLegalEntity(
+  tx,
+  tenantId,
+  legalEntityId,
+  asOfDate
+) {
   const currentResult = await tx.query(
     `SELECT
        b.id AS book_id,

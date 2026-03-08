@@ -108,6 +108,93 @@ function parseBooleanFlag(value, fallback = false, fieldName = "value") {
   throw badRequest(`${fieldName} must be a boolean`);
 }
 
+function parseDbBoolean(value) {
+  return value === true || value === 1 || value === "1";
+}
+
+function normalizeUpperText(value) {
+  return String(value || "")
+    .trim()
+    .toUpperCase();
+}
+
+async function assertOperatingUnitInternalCurrentAccountTx(
+  tx,
+  {
+    tenantId,
+    legalEntityId,
+    accountId,
+    fieldLabel,
+    expectedAccountType,
+    expectedNormalSide,
+  }
+) {
+  const normalizedAccountId = parsePositiveInt(accountId);
+  if (!normalizedAccountId) {
+    return null;
+  }
+
+  const result = await tx.query(
+    `SELECT
+       a.id,
+       a.code,
+       a.name,
+       a.account_type,
+       a.normal_side,
+       a.allow_posting,
+       a.is_active,
+       c.scope AS coa_scope,
+       c.legal_entity_id AS coa_legal_entity_id,
+       EXISTS(
+         SELECT 1
+         FROM accounts child
+         WHERE child.parent_account_id = a.id
+       ) AS has_children
+     FROM accounts a
+     JOIN charts_of_accounts c ON c.id = a.coa_id
+     WHERE a.id = ?
+       AND c.tenant_id = ?
+     LIMIT 1`,
+    [normalizedAccountId, tenantId]
+  );
+
+  const row = result.rows?.[0] || null;
+  if (!row) {
+    throw badRequest(`${fieldLabel} not found for tenant`);
+  }
+  if (normalizeUpperText(row.coa_scope) !== "LEGAL_ENTITY") {
+    throw badRequest(`${fieldLabel} must belong to a LEGAL_ENTITY chart`);
+  }
+  if (parsePositiveInt(row.coa_legal_entity_id) !== parsePositiveInt(legalEntityId)) {
+    throw badRequest(`${fieldLabel} must belong to selected legalEntityId`);
+  }
+  if (!parseDbBoolean(row.is_active)) {
+    throw badRequest(`${fieldLabel} must reference an active account`);
+  }
+  if (!parseDbBoolean(row.allow_posting)) {
+    throw badRequest(`${fieldLabel} must reference a postable account`);
+  }
+  if (parseDbBoolean(row.has_children)) {
+    throw badRequest(`${fieldLabel} must reference a leaf account`);
+  }
+  if (normalizeUpperText(row.account_type) !== normalizeUpperText(expectedAccountType)) {
+    throw badRequest(
+      `${fieldLabel} must reference an ${normalizeUpperText(expectedAccountType)} account`
+    );
+  }
+  if (normalizeUpperText(row.normal_side) !== normalizeUpperText(expectedNormalSide)) {
+    throw badRequest(
+      `${fieldLabel} must reference a ${normalizeUpperText(expectedNormalSide)} normal-side account`
+    );
+  }
+
+  return {
+    id: normalizedAccountId,
+    code: String(row.code || ""),
+    name: String(row.name || ""),
+  };
+}
+
 function normalizePaymentTermTemplate(rawTerm, index) {
   const term = rawTerm || {};
   const code = normalizeCode(term.code, `TERM_${index + 1}`, 50);
@@ -371,19 +458,52 @@ export async function upsertOperatingUnit({
   name,
   unitType,
   hasSubledger,
+  centralDueFromAccountId,
+  ouDueToCentralAccountId,
   assertLegalEntityBelongsToTenant,
   assertScopeAccess,
 }) {
   await assertLegalEntityBelongsToTenant(tenantId, legalEntityId, "legalEntityId");
   assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
 
-  const id = await upsertOperatingUnitRow({
-    tenantId,
-    legalEntityId,
-    code: String(code).trim(),
-    name: String(name).trim(),
-    unitType: String(unitType).toUpperCase(),
-    hasSubledger: Boolean(hasSubledger),
+  if (
+    parsePositiveInt(centralDueFromAccountId) &&
+    parsePositiveInt(centralDueFromAccountId) === parsePositiveInt(ouDueToCentralAccountId)
+  ) {
+    throw badRequest(
+      "ouDueToCentralAccountId must be different from centralDueFromAccountId"
+    );
+  }
+
+  const id = await withTransaction(async (tx) => {
+    await assertOperatingUnitInternalCurrentAccountTx(tx, {
+      tenantId,
+      legalEntityId,
+      accountId: centralDueFromAccountId,
+      fieldLabel: "centralDueFromAccountId",
+      expectedAccountType: "ASSET",
+      expectedNormalSide: "DEBIT",
+    });
+    await assertOperatingUnitInternalCurrentAccountTx(tx, {
+      tenantId,
+      legalEntityId,
+      accountId: ouDueToCentralAccountId,
+      fieldLabel: "ouDueToCentralAccountId",
+      expectedAccountType: "LIABILITY",
+      expectedNormalSide: "CREDIT",
+    });
+
+    return upsertOperatingUnitRow({
+      tenantId,
+      legalEntityId,
+      code: String(code).trim(),
+      name: String(name).trim(),
+      unitType: String(unitType).toUpperCase(),
+      hasSubledger: Boolean(hasSubledger),
+      centralDueFromAccountId: parsePositiveInt(centralDueFromAccountId),
+      ouDueToCentralAccountId: parsePositiveInt(ouDueToCentralAccountId),
+      runQuery: (sql, params) => tx.query(sql, params),
+    });
   });
 
   return {

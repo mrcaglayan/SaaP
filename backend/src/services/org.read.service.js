@@ -84,11 +84,11 @@ export async function listOperatingUnits({
   }
 
   const params = [tenantId];
-  const conditions = ["tenant_id = ?"];
-  conditions.push(buildScopeFilter(req, "operating_unit", "id", params));
+  const conditions = ["ou.tenant_id = ?"];
+  conditions.push(buildScopeFilter(req, "operating_unit", "ou.id", params));
 
   if (legalEntityId) {
-    conditions.push("legal_entity_id = ?");
+    conditions.push("ou.legal_entity_id = ?");
     params.push(legalEntityId);
   }
 
@@ -140,7 +140,7 @@ export async function listOrgTree({ req, tenantId, buildScopeFilter }) {
   const entityFilter = buildScopeFilter(req, "legal_entity", "id", entityParams);
 
   const unitParams = [];
-  const unitFilter = buildScopeFilter(req, "operating_unit", "id", unitParams);
+  const unitFilter = buildScopeFilter(req, "operating_unit", "ou.id", unitParams);
 
   const countryParams = [];
   const countryFilter = buildScopeFilter(req, "country", "c.id", countryParams);

@@ -63,6 +63,12 @@ import {
   upsertShareholder,
   upsertShareholderJournalConfig,
 } from "../services/org.write.service.js";
+import {
+  createShareholderCapitalFulfillment as createShareholderCapitalFulfillmentService,
+  listShareholderCapitalFulfillments as listShareholderCapitalFulfillmentsService,
+  previewShareholderCapitalFulfillment as previewShareholderCapitalFulfillmentService,
+  reverseShareholderCapitalFulfillment as reverseShareholderCapitalFulfillmentService,
+} from "../services/org.capital-fulfillment.service.js";
 import { recalculateShareholderOwnershipPctTx } from "../services/shareholderOwnership.js";
 import {
   parseFiscalCalendarPeriodFilters,
@@ -76,6 +82,10 @@ import {
   parseFiscalCalendarUpsertInput,
   parseFiscalPeriodGenerateInput,
   parseGroupCompanyUpsertInput,
+  parseShareholderCapitalFulfillmentCreateInput,
+  parseShareholderCapitalFulfillmentListFilters,
+  parseShareholderCapitalFulfillmentPreviewInput,
+  parseShareholderCapitalFulfillmentReverseInput,
   parseShareholderAutoProvisionSubAccountsInput,
   parseShareholderCommitmentBatchExecuteInput,
   parseLegalEntityUpsertInput,
@@ -921,6 +931,135 @@ router.post(
       }
       throw err;
     }
+  })
+);
+
+router.get(
+  "/shareholders/capital-fulfillments",
+  requirePermission("org.tree.read", {
+    resolveScope: (req) => {
+      const legalEntityId = parsePositiveInt(req.query?.legalEntityId);
+      if (legalEntityId) {
+        return { scopeType: "LEGAL_ENTITY", scopeId: legalEntityId };
+      }
+      return null;
+    },
+  }),
+  asyncHandler(async (req, res) => {
+    const filters = parseShareholderCapitalFulfillmentListFilters(req);
+    const rows = await listShareholderCapitalFulfillmentsService({
+      req,
+      tenantId: filters.tenantId,
+      filters,
+      buildScopeFilter,
+      assertLegalEntityBelongsToTenant,
+      assertScopeAccess,
+    });
+
+    return res.json({
+      ok: true,
+      tenantId: filters.tenantId,
+      rows,
+    });
+  })
+);
+
+router.post(
+  "/shareholders/capital-fulfillments/preview",
+  requirePermission("org.legal_entity.upsert", {
+    resolveScope: (req, tenantId) => {
+      const legalEntityId = parsePositiveInt(req.body?.legalEntityId);
+      if (legalEntityId) {
+        return { scopeType: "LEGAL_ENTITY", scopeId: legalEntityId };
+      }
+      return { scopeType: "TENANT", scopeId: tenantId };
+    },
+  }),
+  asyncHandler(async (req, res) => {
+    const input = parseShareholderCapitalFulfillmentPreviewInput(req);
+    const preview = await previewShareholderCapitalFulfillmentService({
+      req,
+      ...input,
+      assertLegalEntityBelongsToTenant,
+      assertScopeAccess,
+    });
+
+    return res.json({
+      ok: true,
+      ...preview,
+    });
+  })
+);
+
+router.post(
+  "/shareholders/capital-fulfillments",
+  requirePermission("org.legal_entity.upsert", {
+    resolveScope: (req, tenantId) => {
+      const legalEntityId = parsePositiveInt(req.body?.legalEntityId);
+      if (legalEntityId) {
+        return { scopeType: "LEGAL_ENTITY", scopeId: legalEntityId };
+      }
+      return { scopeType: "TENANT", scopeId: tenantId };
+    },
+  }),
+  asyncHandler(async (req, res) => {
+    const input = parseShareholderCapitalFulfillmentCreateInput(req);
+    const operation = await createShareholderCapitalFulfillmentService({
+      req,
+      ...input,
+      assertLegalEntityBelongsToTenant,
+      assertScopeAccess,
+    });
+
+    return res.status(201).json({
+      ok: true,
+      ...operation,
+    });
+  })
+);
+
+router.post(
+  "/shareholders/capital-fulfillments/:id/reverse",
+  requirePermission("org.legal_entity.upsert", {
+    resolveScope: async (req) => {
+      const fulfillmentId = parsePositiveInt(req.params?.id);
+      if (!fulfillmentId) {
+        return null;
+      }
+      const tenantId = resolveTenantId(req);
+      if (!tenantId) {
+        return null;
+      }
+      const result = await query(
+        `SELECT legal_entity_id
+         FROM shareholder_capital_fulfillments
+         WHERE id = ?
+           AND tenant_id = ?
+         LIMIT 1`,
+        [fulfillmentId, tenantId]
+      );
+      const legalEntityId = parsePositiveInt(result.rows?.[0]?.legal_entity_id);
+      if (!legalEntityId) {
+        return null;
+      }
+      return { scopeType: "LEGAL_ENTITY", scopeId: legalEntityId };
+    },
+  }),
+  asyncHandler(async (req, res) => {
+    const input = parseShareholderCapitalFulfillmentReverseInput(req);
+    const operation = await reverseShareholderCapitalFulfillmentService({
+      req,
+      tenantId: input.tenantId,
+      fulfillmentId: input.fulfillmentId,
+      userId: input.userId,
+      reason: input.reason,
+      assertScopeAccess,
+    });
+
+    return res.json({
+      ok: true,
+      ...operation,
+    });
   })
 );
 
