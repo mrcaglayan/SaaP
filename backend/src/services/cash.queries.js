@@ -417,7 +417,7 @@ export async function insertCashRegister({ payload, runQuery = query }) {
        max_txn_amount,
        requires_approval_over_amount,
        created_by_user_id
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       payload.tenantId,
       payload.legalEntityId,
