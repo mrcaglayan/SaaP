@@ -901,7 +901,15 @@ export const messages = {
         code: "Kod",
         name: "Ad",
         legalEntityId: "Legal entity ID",
+        ownershipScope: "Sahiplik",
+        ownershipCentralHelp:
+          "Merkez / HQ register'lari OU boyutu olmadan merkezi baglamda calisir.",
+        ownershipOperatingUnitHelp:
+          "Operating Unit register'lari secilen subeye baglidir ve sube baglaminda isler.",
         operatingUnitIdOptional: "Operating unit ID (opsiyonel)",
+        operatingUnitIdRequired: "Operating unit ID (zorunlu)",
+        operatingUnitHiddenForCentral:
+          "Merkez / HQ sahipliginde operating unit secimi kullanilmaz.",
         accountId: "Hesap ID",
         currencyCode: "Para birimi (USD)",
         allowNegative: "Negatif bakiyeye izin ver",
@@ -914,7 +922,7 @@ export const messages = {
       placeholders: {
         legalEntity: "Legal entity secin",
         sessionMode: "Oturum modu secin",
-        operatingUnit: "Operating unit secin (opsiyonel)",
+        operatingUnit: "Operating unit secin",
         account: "Hesap secin",
         currencyCode: "Para birimi secin",
         varianceGainAccount: "Fazla fark hesabi secin (opsiyonel)",
@@ -942,6 +950,7 @@ export const messages = {
       table: {
         code: "Kod",
         name: "Ad",
+        ownership: "Sahiplik",
         registerType: "Register Tipi",
         sessionMode: "Oturum Modu",
         legalEntity: "Legal Entity",
@@ -955,6 +964,9 @@ export const messages = {
       values: {
         yes: "Evet",
         no: "Hayir",
+        ownershipCentral: "Merkez / HQ",
+        ownershipOperatingUnit: "Operating Unit",
+        centralHq: "Merkez / HQ",
       },
       errors: {
         missingReadPermission:
@@ -976,6 +988,8 @@ export const messages = {
         requiredSessionMode: "sessionMode zorunludur.",
         requiredEntityAccount: "legalEntityId ve accountId zorunludur.",
         requiredCurrency: "currencyCode zorunludur.",
+        operatingUnitRequiredForOwnership:
+          "Operating Unit sahipliginde operatingUnitId secilmelidir.",
         invalidAmount: "Tutar alanlarinda gecersiz deger var.",
         parentAccountRequired: "Alt hesap olusturmak icin parent hesap secin.",
         childAccountCodeRequired: "Alt hesap kodu zorunludur.",
@@ -1326,9 +1340,9 @@ export const messages = {
         maxAmountExceeded:
           "Islem tutari register maxTxnAmount limitini asiyor (max: {{max}}).",
         crossOuTransitCounterRequired:
-          "Cross-OU transfer icin transit karsi hesap (CASH_IN_TRANSIT) zorunludur.",
+          "Farkli operating-unit baglamlari arasindaki transfer icin transit karsi hesap (CASH_IN_TRANSIT) zorunludur.",
         crossOuTransferInUseTransitReceive:
-          "Cross-OU transfer-in icin Transit Teslim Al aksiyonunu kullanin.",
+          "Farkli operating-unit baglamlari arasindaki transfer-in icin Transit Teslim Al aksiyonunu kullanin.",
         expectedCounterpartyTypeForTxn:
           "{{txnType}} icin beklenen muhatap tipi {{expected}}.",
         recommendCounterpartyType:
@@ -1376,7 +1390,7 @@ export const messages = {
           "counterCashRegisterId registerId ile ayni olamaz.",
         registerInactive: "Secili register ACTIVE degil.",
         crossOuTransferInMustUseTransitReceive:
-          "Cross-OU transfer-in, Transit Teslim Al aksiyonu ile olusturulmalidir.",
+          "Farkli operating-unit baglamlari arasindaki transfer-in, Transit Teslim Al aksiyonu ile olusturulmalidir.",
         missingApplyCariPermission:
           "Bu islem icin cari.settlement.apply yetkisi gerekir.",
         transitTransferLinkMissing:
@@ -1427,7 +1441,7 @@ export const messages = {
         systemGeneratedOnly:
           "Bu islem tipi yalnizca sistem tarafindan olusturulabilir.",
         transitSourceTargetOuMismatch:
-          "Transit akisi, kaynak ve hedef register'in farkli operating unit'lerde olmasini gerektirir.",
+          "Transit akisi, kaynak ve hedef register'in farkli operating-unit baglamlarinda olmasini gerektirir.",
         transitCrossLegalEntityNotSupported:
           "Cross-legal-entity transit transfer desteklenmiyor.",
         transitMustBeInTransitBeforeReceive:
@@ -2670,7 +2684,15 @@ export const messages = {
         code: "Code",
         name: "Name",
         legalEntityId: "Legal entity ID",
+        ownershipScope: "Ownership",
+        ownershipCentralHelp:
+          "Central / HQ registers stay in central context and do not carry an operating-unit dimension.",
+        ownershipOperatingUnitHelp:
+          "Operating-unit registers belong to the selected branch and run in branch context.",
         operatingUnitIdOptional: "Operating unit ID (optional)",
+        operatingUnitIdRequired: "Operating unit ID (required)",
+        operatingUnitHiddenForCentral:
+          "Operating unit selection is not used for Central / HQ ownership.",
         accountId: "Account ID",
         currencyCode: "Currency code (USD)",
         allowNegative: "Allow negative balance",
@@ -2683,7 +2705,7 @@ export const messages = {
       placeholders: {
         legalEntity: "Select legal entity",
         sessionMode: "Select session mode",
-        operatingUnit: "Select operating unit (optional)",
+        operatingUnit: "Select operating unit",
         account: "Select account",
         currencyCode: "Select currency",
         varianceGainAccount: "Select variance gain account (optional)",
@@ -2711,6 +2733,7 @@ export const messages = {
       table: {
         code: "Code",
         name: "Name",
+        ownership: "Ownership",
         registerType: "Register Type",
         sessionMode: "Session Mode",
         legalEntity: "Legal Entity",
@@ -2724,6 +2747,9 @@ export const messages = {
       values: {
         yes: "Yes",
         no: "No",
+        ownershipCentral: "Central / HQ",
+        ownershipOperatingUnit: "Operating Unit",
+        centralHq: "Central / HQ",
       },
       errors: {
         missingReadPermission:
@@ -2745,6 +2771,8 @@ export const messages = {
         requiredSessionMode: "sessionMode is required.",
         requiredEntityAccount: "legalEntityId and accountId are required.",
         requiredCurrency: "currencyCode is required.",
+        operatingUnitRequiredForOwnership:
+          "operatingUnitId is required when Ownership is Operating Unit.",
         invalidAmount: "An invalid numeric value exists in amount fields.",
         parentAccountRequired: "Select a parent account to create a child account.",
         childAccountCodeRequired: "Child account code is required.",
@@ -3095,9 +3123,9 @@ export const messages = {
         maxAmountExceeded:
           "Transaction amount exceeds register maxTxnAmount limit (max: {{max}}).",
         crossOuTransitCounterRequired:
-          "Cross-OU transfer requires transit counter account (CASH_IN_TRANSIT).",
+          "Transfers between different operating-unit contexts require transit counter account (CASH_IN_TRANSIT).",
         crossOuTransferInUseTransitReceive:
-          "Use Transit Receive action for cross-OU transfer-in.",
+          "Use Transit Receive action for transfer-in between different operating-unit contexts.",
         expectedCounterpartyTypeForTxn:
           "Expected counterparty type {{expected}} for {{txnType}}.",
         recommendCounterpartyType:
@@ -3146,7 +3174,7 @@ export const messages = {
           "counterCashRegisterId cannot be the same as registerId.",
         registerInactive: "Selected register is not ACTIVE.",
         crossOuTransferInMustUseTransitReceive:
-          "Cross-OU transfer-in must be created from Transit Receive action.",
+          "Transfer-in between different operating-unit contexts must be created from Transit Receive action.",
         missingApplyCariPermission:
           "Missing permission: cari.settlement.apply",
         transitTransferLinkMissing:
@@ -3198,7 +3226,7 @@ export const messages = {
         systemGeneratedOnly:
           "This transaction type can only be system-generated.",
         transitSourceTargetOuMismatch:
-          "Transit workflow requires source and target registers in different operating units.",
+          "Transit workflow requires source and target registers in different operating-unit contexts.",
         transitCrossLegalEntityNotSupported:
           "Cross-legal-entity transit transfer is not supported.",
         transitMustBeInTransitBeforeReceive:

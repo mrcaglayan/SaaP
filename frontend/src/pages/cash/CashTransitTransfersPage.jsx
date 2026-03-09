@@ -151,12 +151,74 @@ function statusClassName(status) {
   return "bg-slate-200 text-slate-700";
 }
 
-function toRegisterLabel(row) {
-  return `${row?.code || row?.id || "-"} - ${row?.name || "-"}`;
+function toOwnershipContextLabel({ explicitValue, operatingUnitCode, operatingUnitId, l }) {
+  const explicit = String(explicitValue || "").trim();
+  if (
+    explicit &&
+    (explicit === "Central / HQ" || explicit === "Merkez / HQ" || explicit.startsWith("OU:"))
+  ) {
+    return explicit;
+  }
+  const code = String(operatingUnitCode || "").trim();
+  if (code) {
+    return `OU: ${code}`;
+  }
+  const normalizedOperatingUnitId = toPositiveInt(operatingUnitId);
+  if (normalizedOperatingUnitId) {
+    return `OU: ${normalizedOperatingUnitId}`;
+  }
+  if (explicit) {
+    return explicit;
+  }
+  return l("Central / HQ", "Merkez / HQ");
+}
+
+function toRegisterLabel(row, l) {
+  const baseLabel = `${row?.code || row?.id || "-"} - ${row?.name || "-"}`;
+  return [
+    baseLabel,
+    toOwnershipContextLabel({
+      explicitValue: row?.ownership_context_label,
+      operatingUnitCode: row?.operating_unit_code,
+      operatingUnitId: row?.operating_unit_id,
+      l,
+    }),
+  ]
+    .filter(Boolean)
+    .join(" | ");
 }
 
 function toLegalEntityLabel(row) {
   return `${row?.code || row?.id || "-"} - ${row?.name || "-"}`;
+}
+
+function toTransitRegisterSummary(row, side, l) {
+  const keyPrefix = side === "target" ? "target" : "source";
+  return {
+    registerLabel: `${
+      row?.[`${keyPrefix}_cash_register_code`] ||
+      row?.[`${keyPrefix}_cash_register_id`] ||
+      "-"
+    } - ${row?.[`${keyPrefix}_cash_register_name`] || "-"}`,
+    ownershipContext: toOwnershipContextLabel({
+      explicitValue: row?.[`${keyPrefix}_ownership_context_label`],
+      operatingUnitCode: row?.[`${keyPrefix}_operating_unit_code`],
+      operatingUnitId: row?.[`${keyPrefix}_operating_unit_id`],
+      l,
+    }),
+  };
+}
+
+function formatCashSessionOptionLabel(session, l) {
+  const sessionId = toPositiveInt(session?.id);
+  const registerCode = String(session?.cash_register_code || session?.cash_register_id || "").trim();
+  const ownershipContext = toOwnershipContextLabel({
+    explicitValue: session?.ownership_context_label,
+    operatingUnitCode: session?.operating_unit_code,
+    operatingUnitId: session?.operating_unit_id,
+    l,
+  });
+  return [`#${sessionId || "-"}`, registerCode || "-", ownershipContext].join(" | ");
 }
 
 export default function CashTransitTransfersPage() {
@@ -513,8 +575,8 @@ export default function CashTransitTransfersPage() {
             </h1>
             <p className="mt-1 text-sm text-slate-600">
               {l(
-                "Monitor cross-OU transfer lifecycle and complete receive/cancel actions safely.",
-                "OU'lar arasi transfer yasam dongusunu izleyin, teslim alma/iptal islemlerini guvenle tamamlayin."
+                "Monitor transfer lifecycle for different operating-unit contexts and complete receive/cancel actions safely.",
+                "Farkli operating-unit baglamlari arasindaki transfer yasam dongusunu izleyin, teslim alma/iptal islemlerini guvenle tamamlayin."
               )}
             </p>
           </div>
@@ -572,10 +634,7 @@ export default function CashTransitTransfersPage() {
                     <option value="">{l("No session", "Oturum yok")}</option>
                     {selectedTargetOpenSessions.map((session) => (
                       <option key={`transit-receive-session-${session.id}`} value={session.id}>
-                        {l(
-                          `Session #${session.id} (${session.cash_register_code || session.cash_register_id})`,
-                          `Oturum #${session.id} (${session.cash_register_code || session.cash_register_id})`
-                        )}
+                        {formatCashSessionOptionLabel(session, l)}
                       </option>
                     ))}
                   </select>
@@ -740,7 +799,7 @@ export default function CashTransitTransfersPage() {
               <option value="">{l("All", "Tum")}</option>
               {sourceRegisterOptions.map((register) => (
                 <option key={`transit-source-register-${register.id}`} value={register.id}>
-                  {toRegisterLabel(register)}
+                  {toRegisterLabel(register, l)}
                 </option>
               ))}
             </select>
@@ -761,7 +820,7 @@ export default function CashTransitTransfersPage() {
               <option value="">{l("All", "Tum")}</option>
               {targetRegisterOptions.map((register) => (
                 <option key={`transit-target-register-${register.id}`} value={register.id}>
-                  {toRegisterLabel(register)}
+                  {toRegisterLabel(register, l)}
                 </option>
               ))}
             </select>
@@ -852,6 +911,13 @@ export default function CashTransitTransfersPage() {
           </div>
         ) : null}
 
+        <div className="mt-4 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900">
+          {l(
+            "Different operating-unit contexts use transit: Central / HQ -> branch, branch -> Central / HQ, and branch -> branch. Same ownership context pairs can stay direct from Cash Transactions.",
+            "Farkli operating-unit baglamlari transit kullanir: Merkez / HQ -> sube, sube -> Merkez / HQ ve sube -> sube. Ayni sahiplik baglamindaki ciftler Cash Transactions ekraninda dogrudan kalabilir."
+          )}
+        </div>
+
         {message ? (
           <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
             {message}
@@ -900,6 +966,8 @@ export default function CashTransitTransfersPage() {
                   const status = toUpper(row?.status);
                   const canReceive = canReceiveRow(row);
                   const canCancelTransit = canCancelRow(row);
+                  const sourceSummary = toTransitRegisterSummary(row, "source", l);
+                  const targetSummary = toTransitRegisterSummary(row, "target", l);
 
                   return (
                     <tr key={`transit-row-${transferId || index}`}>
@@ -919,19 +987,14 @@ export default function CashTransitTransfersPage() {
 
                       <td className="px-3 py-2 align-top">
                         <div>
-                          <span className="font-medium">
-                            {row?.source_cash_register_code || row?.source_cash_register_id || "-"}
-                          </span>
+                          <span className="font-medium">{sourceSummary.registerLabel}</span>
                           <span className="mx-1 text-slate-400">-&gt;</span>
-                          <span className="font-medium">
-                            {row?.target_cash_register_code || row?.target_cash_register_id || "-"}
-                          </span>
+                          <span className="font-medium">{targetSummary.registerLabel}</span>
                         </div>
                         <div className="text-xs text-slate-500">
-                          {l("OU", "OU")}:{" "}
-                          {row?.source_operating_unit_code || row?.source_operating_unit_id || "-"}
+                          {sourceSummary.ownershipContext}
                           <span className="mx-1">-&gt;</span>
-                          {row?.target_operating_unit_code || row?.target_operating_unit_id || "-"}
+                          {targetSummary.ownershipContext}
                         </div>
                       </td>
 

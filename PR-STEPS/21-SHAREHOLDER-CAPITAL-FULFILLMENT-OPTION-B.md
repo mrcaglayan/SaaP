@@ -61,8 +61,9 @@
   smoke: `backend/scripts/test-shareholder-capital-cf03-frontend-smoke.js`
 - [x] `PR-CF04` acceptance: reversal and reporting are consistent, and shareholder paid/unpaid balances remain correct after post and reverse flows.
   smoke: `backend/scripts/test-shareholder-capital-cf04-reversal-reporting.js`
-- [ ] `PR-CF05` acceptance: cash/safe destinations use the existing cash subledger, respect register/session controls, and preserve central capital logic without direct GL posting to cash-controlled accounts.
+- [x] `PR-CF05` acceptance: cash/safe destinations use the existing cash subledger, respect register/session controls, and preserve central capital logic without direct GL posting to cash-controlled accounts.
   smoke: `backend/scripts/test-shareholder-capital-cf05-cash-register-fulfillment.js`
+  integration: `backend/scripts/test-shareholder-capital-integration.js`
 
 ## PR-CF01
 Goal:

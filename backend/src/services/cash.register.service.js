@@ -24,6 +24,16 @@ function parseDbBoolean(value) {
   return value === true || value === 1 || value === "1";
 }
 
+function deriveEffectiveOwnershipScope(row) {
+  const normalized = String(row?.ownership_scope || "")
+    .trim()
+    .toUpperCase();
+  if (normalized === "CENTRAL" || normalized === "OPERATING_UNIT") {
+    return normalized;
+  }
+  return parsePositiveInt(row?.operating_unit_id) ? "OPERATING_UNIT" : "CENTRAL";
+}
+
 export async function assertRegisterOperationalConfig(
   register,
   {
@@ -157,6 +167,11 @@ export async function listCashRegisterRows({
     params.push(filters.operatingUnitId);
   }
 
+  if (filters.ownershipScope) {
+    conditions.push("cr.ownership_scope = ?");
+    params.push(filters.ownershipScope);
+  }
+
   if (filters.status) {
     conditions.push("cr.status = ?");
     params.push(filters.status);
@@ -213,6 +228,13 @@ export async function upsertCashRegister({
   await assertLegalEntityBelongsToTenant(tenantId, payload.legalEntityId, "legalEntityId");
   assertScopeAccess(req, "legal_entity", payload.legalEntityId, "legalEntityId");
 
+  if (payload.ownershipScope === "CENTRAL" && payload.operatingUnitId) {
+    throw badRequest("operatingUnitId must be empty when ownershipScope=CENTRAL");
+  }
+  if (payload.ownershipScope === "OPERATING_UNIT" && !payload.operatingUnitId) {
+    throw badRequest("operatingUnitId is required when ownershipScope=OPERATING_UNIT");
+  }
+
   if (payload.operatingUnitId) {
     const operatingUnit = await assertOperatingUnitBelongsToTenant(
       tenantId,
@@ -267,12 +289,15 @@ export async function upsertCashRegister({
 
   if (existingById) {
     assertScopeAccess(req, "legal_entity", existingById.legal_entity_id, "id");
-    if (existingById.operating_unit_id) {
+    if (deriveEffectiveOwnershipScope(existingById) === "OPERATING_UNIT" && existingById.operating_unit_id) {
       assertScopeAccess(req, "operating_unit", existingById.operating_unit_id, "id");
     }
   } else if (existingByCode) {
     assertScopeAccess(req, "legal_entity", existingByCode.legal_entity_id, "code");
-    if (existingByCode.operating_unit_id) {
+    if (
+      deriveEffectiveOwnershipScope(existingByCode) === "OPERATING_UNIT" &&
+      existingByCode.operating_unit_id
+    ) {
       assertScopeAccess(req, "operating_unit", existingByCode.operating_unit_id, "code");
     }
   }

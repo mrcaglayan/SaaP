@@ -1426,9 +1426,9 @@ export async function initiateCashTransitTransfer({
 
       const sourceOuId = parsePositiveInt(sourceRegister.operating_unit_id);
       const targetOuId = parsePositiveInt(targetRegister.operating_unit_id);
-      if (!sourceOuId || !targetOuId || sourceOuId === targetOuId) {
+      if ((!sourceOuId && !targetOuId) || sourceOuId === targetOuId) {
         throw badRequest(
-          "Cash transit workflow requires source and target registers from different operating units"
+          "Cash transit workflow requires source and target registers from different operating-unit contexts"
         );
       }
 
@@ -1904,13 +1904,38 @@ export async function createCashTransaction({
     await assertAccountBelongsToTenant(payload.tenantId, payload.counterAccountId, "counterAccountId");
   }
 
+  let counterRegister = null;
   if (payload.counterCashRegisterId) {
-    const counterRegister = await findCashRegisterById({
+    counterRegister = await findCashRegisterById({
       tenantId: payload.tenantId,
       registerId: payload.counterCashRegisterId,
     });
     if (!counterRegister) {
       throw badRequest("counterCashRegisterId not found for tenant");
+    }
+  }
+
+  if (TRANSFER_TXN_TYPES.has(payload.txnType) && counterRegister) {
+    if (
+      parsePositiveInt(register.legal_entity_id) !==
+      parsePositiveInt(counterRegister.legal_entity_id)
+    ) {
+      throw badRequest("Direct transfer is only supported within the same legal entity in v1");
+    }
+    if (
+      normalizeCurrency(register.currency_code) !==
+      normalizeCurrency(counterRegister.currency_code)
+    ) {
+      throw badRequest("Transfer register currencies must match");
+    }
+    const sourceOuId = parsePositiveInt(register.operating_unit_id);
+    const targetOuId = parsePositiveInt(counterRegister.operating_unit_id);
+    const isTransitLinked =
+      asUpper(integrationDefaults.sourceEntityType) === "CASH_TRANSIT_TRANSFER";
+    if (sourceOuId !== targetOuId && !isTransitLinked) {
+      throw badRequest(
+        "Transfers between different operating-unit contexts must use CASH_IN_TRANSIT workflow"
+      );
     }
   }
 

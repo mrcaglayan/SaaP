@@ -52,12 +52,23 @@ async function main() {
     "submit validation must enforce requiresCounterAccountTxnType(txnType)"
   );
   assert(
-    cashPage.includes("required={requiresCounterAccountTxnType(form.txnType)}"),
-    "counterAccount input required rule must be requiresCounterAccountTxnType(form.txnType)"
+    cashPage.includes("required={counterAccountIsRequired}") ||
+      cashPage.includes("required={requiresCounterAccountTxnType(form.txnType)}"),
+    "counterAccount input required rule must reflect the computed counter-account requirement"
   );
   assert(
-    cashPage.includes("counterAccountId: requiresCounterAccount ? prev.counterAccountId : \"\""),
-    "txn type switch should keep/clear counterAccountId by requiresCounterAccountTxnType"
+    cashPage.includes(
+      "counterAccountId: requiresCounterAccount || isTransfer ? prev.counterAccountId : \"\""
+    ) || cashPage.includes("counterAccountId: requiresCounterAccount ? prev.counterAccountId : \"\""),
+    "txn type switch should keep/clear counterAccountId by the counter-account requirement logic"
+  );
+  assert(
+    cashPage.includes("return sourceOu !== targetOu && Boolean(sourceOu || targetOu);"),
+    "cross-context register detection should treat HQ/null<->OU and OU<->OU as transit-required"
+  );
+  assert(
+    !cashPage.includes("if (!sourceOu || !targetOu)"),
+    "cross-context register detection must not require both registers to have OU ownership"
   );
 
   const requiredPhraseIndex = cashPageLower.indexOf('includes("requires counteraccountid")');

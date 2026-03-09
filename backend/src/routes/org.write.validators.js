@@ -310,7 +310,7 @@ function parseShareholderCapitalFulfillmentBaseInput(req) {
   );
   const destinationMode = normalizeOptionalUpperEnum(
     req.body?.destinationMode,
-    ["BANK_ACCOUNT", "ASSET_GL"],
+    ["BANK_ACCOUNT", "ASSET_GL", "CASH_REGISTER"],
     "destinationMode"
   );
   const bankAccountId = parseOptionalPositiveIntField(
@@ -320,6 +320,14 @@ function parseShareholderCapitalFulfillmentBaseInput(req) {
   const destinationAccountId = parseOptionalPositiveIntField(
     req.body?.destinationAccountId,
     "destinationAccountId"
+  );
+  const cashRegisterId = parseOptionalPositiveIntField(
+    req.body?.cashRegisterId,
+    "cashRegisterId"
+  );
+  const cashSessionId = parseOptionalPositiveIntField(
+    req.body?.cashSessionId,
+    "cashSessionId"
   );
 
   if (!legalEntityId || !shareholderId) {
@@ -335,16 +343,23 @@ function parseShareholderCapitalFulfillmentBaseInput(req) {
     throw badRequest("contributionDate is required");
   }
   if (destinationMode === "BANK_ACCOUNT") {
-    if (!bankAccountId || destinationAccountId) {
+    if (!bankAccountId || destinationAccountId || cashRegisterId || cashSessionId) {
       throw badRequest(
-        "BANK_ACCOUNT mode requires bankAccountId and does not allow destinationAccountId"
+        "BANK_ACCOUNT mode requires bankAccountId and does not allow destinationAccountId, cashRegisterId, or cashSessionId"
       );
     }
   }
   if (destinationMode === "ASSET_GL") {
-    if (!destinationAccountId || bankAccountId) {
+    if (!destinationAccountId || bankAccountId || cashRegisterId || cashSessionId) {
       throw badRequest(
-        "ASSET_GL mode requires destinationAccountId and does not allow bankAccountId"
+        "ASSET_GL mode requires destinationAccountId and does not allow bankAccountId, cashRegisterId, or cashSessionId"
+      );
+    }
+  }
+  if (destinationMode === "CASH_REGISTER") {
+    if (!cashRegisterId || bankAccountId || destinationAccountId) {
+      throw badRequest(
+        "CASH_REGISTER mode requires cashRegisterId and does not allow bankAccountId or destinationAccountId"
       );
     }
   }
@@ -357,6 +372,8 @@ function parseShareholderCapitalFulfillmentBaseInput(req) {
     destinationMode,
     bankAccountId,
     destinationAccountId,
+    cashRegisterId,
+    cashSessionId,
     amount: req.body.amount,
     contributionDate: req.body.contributionDate,
     note: req.body.note,

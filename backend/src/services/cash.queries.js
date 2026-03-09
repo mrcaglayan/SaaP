@@ -5,6 +5,7 @@ const CASH_REGISTER_BASE_SELECT = `
     cr.id,
     cr.tenant_id,
     cr.legal_entity_id,
+    cr.ownership_scope,
     cr.operating_unit_id,
     cr.account_id,
     cr.code,
@@ -25,6 +26,14 @@ const CASH_REGISTER_BASE_SELECT = `
     le.name AS legal_entity_name,
     ou.code AS operating_unit_code,
     ou.name AS operating_unit_name,
+    CASE
+      WHEN cr.ownership_scope = 'CENTRAL' THEN 'Central / HQ'
+      ELSE CONCAT(
+        COALESCE(ou.code, CAST(ou.id AS CHAR)),
+        ' - ',
+        COALESCE(ou.name, '-')
+      )
+    END AS ownership_context_label,
     a.code AS account_code,
     a.name AS account_name,
     a.allow_posting AS account_allow_posting,
@@ -67,6 +76,7 @@ const CASH_SESSION_BASE_SELECT = `
     cs.created_at,
     cs.updated_at,
     cr.legal_entity_id,
+    cr.ownership_scope,
     cr.operating_unit_id,
     cr.account_id AS register_account_id,
     cr.variance_gain_account_id,
@@ -79,12 +89,19 @@ const CASH_SESSION_BASE_SELECT = `
     cr.status AS register_status,
     le.code AS legal_entity_code,
     le.name AS legal_entity_name,
+    ou.code AS operating_unit_code,
+    ou.name AS operating_unit_name,
+    CASE
+      WHEN cr.operating_unit_id IS NULL THEN 'Central / HQ'
+      ELSE CONCAT('OU: ', COALESCE(ou.code, CAST(cr.operating_unit_id AS CHAR)))
+    END AS ownership_context_label,
     openu.email AS opened_by_email,
     closeu.email AS closed_by_email,
     approveu.email AS approved_by_email
   FROM cash_sessions cs
   JOIN cash_registers cr ON cr.id = cs.cash_register_id
   JOIN legal_entities le ON le.id = cr.legal_entity_id
+  LEFT JOIN operating_units ou ON ou.id = cr.operating_unit_id
   LEFT JOIN users openu ON openu.id = cs.opened_by_user_id
   LEFT JOIN users closeu ON closeu.id = cs.closed_by_user_id
   LEFT JOIN users approveu ON approveu.id = cs.approved_by_user_id
@@ -144,12 +161,19 @@ const CASH_TXN_BASE_SELECT = `
     ct.created_at,
     ct.updated_at,
     cr.legal_entity_id,
+    cr.ownership_scope,
     cr.operating_unit_id,
     cr.account_id AS register_account_id,
     cr.variance_gain_account_id AS register_variance_gain_account_id,
     cr.variance_loss_account_id AS register_variance_loss_account_id,
     le.code AS legal_entity_code,
     le.name AS legal_entity_name,
+    ou.code AS operating_unit_code,
+    ou.name AS operating_unit_name,
+    CASE
+      WHEN cr.operating_unit_id IS NULL THEN 'Central / HQ'
+      ELSE CONCAT('OU: ', COALESCE(ou.code, CAST(cr.operating_unit_id AS CHAR)))
+    END AS ownership_context_label,
     cr.code AS cash_register_code,
     cr.name AS cash_register_name,
     cr.session_mode AS register_session_mode,
@@ -160,11 +184,22 @@ const CASH_TXN_BASE_SELECT = `
     ca.name AS counter_account_name,
     ccr.id AS counter_cash_register_id_resolved,
     ccr.legal_entity_id AS counter_cash_register_legal_entity_id,
+    ccr.ownership_scope AS counter_cash_register_ownership_scope,
     ccr.operating_unit_id AS counter_cash_register_operating_unit_id,
     ccr.account_id AS counter_cash_register_account_id,
     ccr.currency_code AS counter_cash_register_currency_code,
     ccr.code AS counter_cash_register_code,
     ccr.name AS counter_cash_register_name,
+    ccrou.code AS counter_cash_register_operating_unit_code,
+    ccrou.name AS counter_cash_register_operating_unit_name,
+    CASE
+      WHEN ccr.id IS NULL THEN NULL
+      WHEN ccr.operating_unit_id IS NULL THEN 'Central / HQ'
+      ELSE CONCAT(
+        'OU: ',
+        COALESCE(ccrou.code, CAST(ccr.operating_unit_id AS CHAR))
+      )
+    END AS counter_cash_register_ownership_context_label,
     ctt.id AS cash_transit_transfer_id,
     ctt.status AS cash_transit_status,
     ctt.source_cash_register_id AS cash_transit_source_register_id,
@@ -183,9 +218,11 @@ const CASH_TXN_BASE_SELECT = `
   FROM cash_transactions ct
   JOIN cash_registers cr ON cr.id = ct.cash_register_id
   JOIN legal_entities le ON le.id = cr.legal_entity_id
+  LEFT JOIN operating_units ou ON ou.id = cr.operating_unit_id
   LEFT JOIN cash_sessions s ON s.id = ct.cash_session_id
   LEFT JOIN accounts ca ON ca.id = ct.counter_account_id
   LEFT JOIN cash_registers ccr ON ccr.id = ct.counter_cash_register_id
+  LEFT JOIN operating_units ccrou ON ccrou.id = ccr.operating_unit_id
   LEFT JOIN cash_transit_transfers ctt
     ON ctt.tenant_id = ct.tenant_id
    AND (
@@ -232,12 +269,28 @@ const CASH_TRANSIT_BASE_SELECT = `
     le.name AS legal_entity_name,
     sr.code AS source_cash_register_code,
     sr.name AS source_cash_register_name,
+    sr.ownership_scope AS source_cash_register_ownership_scope,
     sou.code AS source_operating_unit_code,
     sou.name AS source_operating_unit_name,
+    CASE
+      WHEN ctt.source_operating_unit_id IS NULL THEN 'Central / HQ'
+      ELSE CONCAT(
+        'OU: ',
+        COALESCE(sou.code, CAST(ctt.source_operating_unit_id AS CHAR))
+      )
+    END AS source_ownership_context_label,
     tr.code AS target_cash_register_code,
     tr.name AS target_cash_register_name,
+    tr.ownership_scope AS target_cash_register_ownership_scope,
     tou.code AS target_operating_unit_code,
     tou.name AS target_operating_unit_name,
+    CASE
+      WHEN ctt.target_operating_unit_id IS NULL THEN 'Central / HQ'
+      ELSE CONCAT(
+        'OU: ',
+        COALESCE(tou.code, CAST(ctt.target_operating_unit_id AS CHAR))
+      )
+    END AS target_ownership_context_label,
     ta.code AS transit_account_code,
     ta.name AS transit_account_name,
     out_txn.txn_no AS transfer_out_txn_no,
@@ -349,6 +402,7 @@ export async function insertCashRegister({ payload, runQuery = query }) {
     `INSERT INTO cash_registers (
        tenant_id,
        legal_entity_id,
+       ownership_scope,
        operating_unit_id,
        account_id,
        code,
@@ -367,6 +421,7 @@ export async function insertCashRegister({ payload, runQuery = query }) {
     [
       payload.tenantId,
       payload.legalEntityId,
+      payload.ownershipScope,
       payload.operatingUnitId,
       payload.accountId,
       payload.code,
@@ -391,6 +446,7 @@ export async function updateCashRegister({ id, payload, runQuery = query }) {
     `UPDATE cash_registers
      SET
        legal_entity_id = ?,
+       ownership_scope = ?,
        operating_unit_id = ?,
        account_id = ?,
        code = ?,
@@ -408,6 +464,7 @@ export async function updateCashRegister({ id, payload, runQuery = query }) {
        AND id = ?`,
     [
       payload.legalEntityId,
+      payload.ownershipScope,
       payload.operatingUnitId,
       payload.accountId,
       payload.code,

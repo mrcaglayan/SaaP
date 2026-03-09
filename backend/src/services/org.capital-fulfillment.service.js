@@ -14,6 +14,19 @@ toIsoDate,
 } from "./org.shareholder.helpers.js";
 import { getBankAccountByIdForTenant } from "./bank.accounts.service.js";
 import { reverseJournalEntryTx } from "./gl.journal-reversal.service.js";
+import {
+findCashRegisterById,
+findCashSessionById,
+findCashTransactionById,
+findCashTransactionByReversalOf,
+generateCashTxnNoForLegalEntityYearTx,
+insertCashTransaction,
+markCashTransactionAsReversed,
+postCashTransaction,
+} from "./cash.queries.js";
+import { assertRegisterOperationalConfig } from "./cash.register.service.js";
+import { createAndPostCashJournalTx } from "./cash.service.js";
+import { applyCashFxPositionForPostedTransactionTx } from "./cash.fx.position.service.js";
 function parseDbBoolean(value) {
 return value === true || value === 1 || value === "1";
 }
@@ -22,12 +35,21 @@ return String(value || "")
   .trim()
   .toUpperCase();
 }
+function nowMysqlDateTime() {
+return new Date().toISOString().slice(0, 19).replace("T", " ");
+}
 function clipText(value, maxLength) {
 const normalized = String(value || "").trim();
 if (!normalized) {
   return null;
 }
 return normalized.slice(0, maxLength);
+}
+function buildCashFulfillmentToken({ tenantId, shareholderId, registerId, contributionDate }) {
+return `SCF-CASH:${tenantId}:${shareholderId}:${registerId}:${contributionDate}:${Date.now()}`.slice(
+  0,
+  100
+);
 }
 
 async function countChildAccountsTx(tx, accountId) {
@@ -351,6 +373,115 @@ return {
 };
 }
 
+async function resolveCashSessionForFulfillmentTx(tx, {
+tenantId,
+cashRegister,
+cashSessionId,
+}) {
+const parsedCashSessionId = parsePositiveInt(cashSessionId);
+const sessionMode = normalizeUpperText(cashRegister?.session_mode);
+if (sessionMode === "REQUIRED" && !parsedCashSessionId) {
+  throw badRequest(
+    "cashSessionId is required because selected cash register has session_mode=REQUIRED."
+  );
+}
+if (!parsedCashSessionId) {
+  return null;
+}
+const session = await findCashSessionById({
+  tenantId,
+  sessionId: parsedCashSessionId,
+  runQuery: tx.query,
+});
+if (!session) {
+  throw badRequest("cashSessionId not found for tenant");
+}
+if (parsePositiveInt(session.cash_register_id) !== parsePositiveInt(cashRegister?.id)) {
+  throw badRequest("cashSessionId must belong to cashRegisterId");
+}
+if (normalizeUpperText(session.status) !== "OPEN") {
+  throw badRequest("cashSessionId must be OPEN");
+}
+return {
+  id: parsedCashSessionId,
+  status: normalizeUpperText(session.status),
+};
+}
+
+async function loadCashRegisterDestinationTx(tx, {
+req,
+tenantId,
+legalEntityId,
+cashRegisterId,
+cashSessionId,
+amountBase,
+journalContext,
+operatingUnit,
+assertScopeAccess,
+}) {
+const parsedCashRegisterId = parsePositiveInt(cashRegisterId);
+if (!parsedCashRegisterId) {
+  throw badRequest("cashRegisterId must be a positive integer");
+}
+const register = await findCashRegisterById({
+  tenantId,
+  registerId: parsedCashRegisterId,
+  runQuery: tx.query,
+});
+if (!register) {
+  throw badRequest("cashRegisterId not found for tenant");
+}
+assertScopeAccess(req, "legal_entity", register.legal_entity_id, "cashRegisterId");
+await assertRegisterOperationalConfig(register, {
+  requireActive: true,
+  requireCashControlledAccount: true,
+  label: "cashRegisterId",
+  runQuery: tx.query,
+});
+if (parsePositiveInt(register.legal_entity_id) !== parsePositiveInt(legalEntityId)) {
+  throw badRequest("cashRegisterId must belong to legalEntityId");
+}
+const registerOperatingUnitId = parsePositiveInt(register.operating_unit_id);
+if (registerOperatingUnitId) {
+  assertScopeAccess(req, "operating_unit", registerOperatingUnitId, "cashRegisterId");
+}
+if (operatingUnit) {
+  if (registerOperatingUnitId !== parsePositiveInt(operatingUnit.id)) {
+    throw badRequest("cashRegisterId must belong to operatingUnitId");
+  }
+} else if (registerOperatingUnitId) {
+  throw badRequest("Central fulfillment requires a cashRegisterId without OU ownership");
+}
+if (Number(register.max_txn_amount || 0) > 0 && Number(amountBase) > Number(register.max_txn_amount)) {
+  throw badRequest("amount exceeds register max_txn_amount");
+}
+const registerCurrencyCode = normalizeCurrencyCode(register.currency_code || "");
+if (registerCurrencyCode !== normalizeCurrencyCode(journalContext.baseCurrencyCode || "")) {
+  throw badRequest(
+    "cashRegisterId currency must match the legalEntity base currency for shareholder capital fulfillment"
+  );
+}
+const session = await resolveCashSessionForFulfillmentTx(tx, {
+  tenantId,
+  cashRegister: register,
+  cashSessionId,
+});
+return {
+  mode: "CASH_REGISTER",
+  bankAccountId: null,
+  cashRegisterId: parsedCashRegisterId,
+  cashRegisterCode: String(register.code || ""),
+  cashRegisterName: String(register.name || ""),
+  cashSessionId: session?.id || null,
+  legalEntityCode: String(register.legal_entity_code || ""),
+  accountId: parsePositiveInt(register.account_id),
+  accountCode: String(register.account_code || ""),
+  accountName: String(register.account_name || ""),
+  currencyCode: registerCurrencyCode,
+  displayName: `${String(register.code || "").trim()} - ${String(register.name || "").trim()}`.trim(),
+};
+}
+
 async function buildCapitalFulfillmentPlanTx(tx, payload) {
 const amountBase = normalizeMoney(payload.amount);
 if (amountBase <= 0) {
@@ -441,6 +572,18 @@ if (payload.destinationMode === "BANK_ACCOUNT") {
     destinationAccountId: payload.destinationAccountId,
     shareholder,
   });
+} else if (payload.destinationMode === "CASH_REGISTER") {
+  destination = await loadCashRegisterDestinationTx(tx, {
+    req: payload.req,
+    tenantId: payload.tenantId,
+    legalEntityId: payload.legalEntityId,
+    cashRegisterId: payload.cashRegisterId,
+    cashSessionId: payload.cashSessionId,
+    amountBase,
+    journalContext,
+    operatingUnit,
+    assertScopeAccess: payload.assertScopeAccess,
+  });
 } else {
   throw badRequest("destinationMode is invalid");
 }
@@ -455,7 +598,7 @@ if (
 }
 const currencyCode = normalizeCurrencyCode(journalContext.baseCurrencyCode || "USD");
 const note = clipText(payload.note, 500);
-const contributionKind = payload.destinationMode === "BANK_ACCOUNT" ? "CASH" : "IN_KIND";
+const contributionKind = payload.destinationMode === "ASSET_GL" ? "IN_KIND" : "CASH";
 const subledgerReferenceNo = operatingUnit?.hasSubledger
   ? buildSubledgerReferenceNo({
       journalNo: payload.preview ? "PREVIEW" : payload.journalNo,
@@ -628,6 +771,10 @@ return {
   destination: {
     mode: plan.destination.mode,
     bank_account_id: plan.destination.bankAccountId,
+    cash_register_id: plan.destination.cashRegisterId || null,
+    cash_register_code: plan.destination.cashRegisterCode || null,
+    cash_register_name: plan.destination.cashRegisterName || null,
+    cash_session_id: plan.destination.cashSessionId || null,
     destination_account_id: plan.destination.accountId,
     destination_account_code: plan.destination.accountCode,
     destination_account_name: plan.destination.accountName,
@@ -655,16 +802,75 @@ return {
 };
 }
 
-async function insertJournalForCapitalFulfillmentTx(tx, plan, userId) {
+function buildCapitalFulfillmentCentralJournalLines(plan) {
+if (!plan?.operatingUnit) {
+  throw badRequest("Central capital journal requires an operating unit fulfillment plan");
+}
+return [
+  {
+    lineNo: 1,
+    accountId: plan.operatingUnit.centralDueFromAccountId,
+    accountCode: plan.operatingUnit.centralDueFromAccountCode,
+    accountName: plan.operatingUnit.centralDueFromAccountName,
+    operatingUnitId: null,
+    operatingUnitCode: null,
+    description: clipText(`HQ due from OU (${plan.operatingUnit.code})`, 500),
+    subledgerReferenceNo: null,
+    currencyCode: plan.currencyCode,
+    amountTxn: plan.amountBase,
+    debitBase: plan.amountBase,
+    creditBase: 0,
+  },
+  {
+    lineNo: 2,
+    accountId: plan.shareholder.commitmentDebitSubAccountId,
+    accountCode: plan.shareholder.commitmentDebitSubAccountCode,
+    accountName: plan.shareholder.commitmentDebitSubAccountName,
+    operatingUnitId: null,
+    operatingUnitCode: null,
+    description: clipText(
+      `Capital fulfillment against commitment (${plan.shareholder.code})`,
+      500
+    ),
+    subledgerReferenceNo: null,
+    currencyCode: plan.currencyCode,
+    amountTxn: plan.amountBase * -1,
+    debitBase: 0,
+    creditBase: plan.amountBase,
+  },
+];
+}
+
+async function insertJournalForCapitalFulfillmentTx(
+tx,
+plan,
+userId,
+{ descriptionOverride = null, journalLines = null, referenceSuffix = null } = {}
+) {
 const journalNo = generateAutoJournalNo("SERFUL");
 const description = clipText(
-  plan.operatingUnit
-    ? `Capital fulfillment - ${plan.shareholder.code} - OU ${plan.operatingUnit.code}`
-    : `Capital fulfillment - ${plan.shareholder.code}`,
+  descriptionOverride ||
+    (plan.operatingUnit
+      ? `Capital fulfillment - ${plan.shareholder.code} - OU ${plan.operatingUnit.code}`
+      : `Capital fulfillment - ${plan.shareholder.code}`),
   500
 );
+const postingLines = (Array.isArray(journalLines) && journalLines.length ? journalLines : plan.lines).map(
+  (line, index) => ({
+    ...line,
+    lineNo: index + 1,
+  })
+);
+let totalDebitBase = 0;
+let totalCreditBase = 0;
+for (const line of postingLines) {
+  totalDebitBase += Number(line.debitBase || 0);
+  totalCreditBase += Number(line.creditBase || 0);
+}
 const referenceNo = clipText(
-  `SHAREHOLDER_CAPITAL_FULFILLMENT:${plan.shareholder.id}:${Date.now()}`,
+  `SHAREHOLDER_CAPITAL_FULFILLMENT:${plan.shareholder.id}:${
+    referenceSuffix || Date.now()
+  }`,
   100
 );
 await ensurePeriodOpen(
@@ -705,8 +911,8 @@ const entryResult = await tx.query(
     plan.currencyCode,
     description,
     referenceNo,
-    plan.totalDebitBase,
-    plan.totalCreditBase,
+    totalDebitBase,
+    totalCreditBase,
     userId,
     userId,
   ]
@@ -715,7 +921,7 @@ const journalEntryId = parsePositiveInt(entryResult.rows?.insertId);
 if (!journalEntryId) {
   throw new Error("Failed to create shareholder capital fulfillment journal");
 }
-for (const sourceLine of plan.lines) {
+for (const sourceLine of postingLines) {
   const subledgerReferenceNo =
     sourceLine.operatingUnitId && plan.operatingUnit?.hasSubledger
       ? buildSubledgerReferenceNo({
@@ -761,7 +967,310 @@ return {
 };
 }
 
-async function insertCapitalFulfillmentRowTx(tx, { plan, userId, journalEntryId }) {
+async function loadJournalEntryHeaderTx(tx, { tenantId, journalEntryId }) {
+const result = await tx.query(
+  `SELECT id, journal_no
+   FROM journal_entries
+   WHERE id = ?
+     AND tenant_id = ?
+   LIMIT 1`,
+  [journalEntryId, tenantId]
+);
+const row = result.rows?.[0] || null;
+if (!row) {
+  throw badRequest("Capital fulfillment journal not found");
+}
+return {
+  journalEntryId: parsePositiveInt(row.id),
+  journalNo: String(row.journal_no || ""),
+};
+}
+
+async function createCashRegisterFulfillmentPostingTx(tx, { req, plan, userId }) {
+const idempotencyKey = buildCashFulfillmentToken({
+  tenantId: plan.tenantId,
+  shareholderId: plan.shareholder.id,
+  registerId: plan.destination.cashRegisterId,
+  contributionDate: plan.contributionDate,
+});
+const integrationEventUid = `EV:${idempotencyKey}`.slice(0, 100);
+const txnNo = await generateCashTxnNoForLegalEntityYearTx({
+  tenantId: plan.tenantId,
+  legalEntityId: plan.legalEntityId,
+  legalEntityCode: plan.destination.legalEntityCode || "",
+  bookDate: plan.contributionDate,
+  runQuery: tx.query,
+});
+const transactionId = await insertCashTransaction({
+  payload: {
+    tenantId: plan.tenantId,
+    registerId: plan.destination.cashRegisterId,
+    cashSessionId: plan.destination.cashSessionId || null,
+    txnNo,
+    txnType: "RECEIPT",
+    status: "DRAFT",
+    txnDatetime: `${plan.contributionDate} 12:00:00`,
+    bookDate: plan.contributionDate,
+    amount: Number(plan.amountBase).toFixed(6),
+    amountBase: Number(plan.amountBase).toFixed(6),
+    currencyCode: plan.destination.currencyCode || plan.currencyCode,
+    fxRate: Number(1).toFixed(10),
+    fxRateSource: "PARITY",
+    fxRateDate: plan.contributionDate,
+    fxFallbackMode: null,
+    fxFallbackMaxDays: null,
+    description: clipText(
+      plan.operatingUnit
+        ? `Shareholder capital fulfillment (${plan.shareholder.code} -> ${plan.operatingUnit.code})`
+        : `Shareholder capital fulfillment (${plan.shareholder.code})`,
+      255
+    ),
+    referenceNo: clipText(
+      `SCF:${plan.shareholder.id}:${plan.destination.cashRegisterId}:${plan.contributionDate}`,
+      100
+    ),
+    sourceDocType: null,
+    sourceDocId: null,
+    sourceModule: "SYSTEM",
+    sourceEntityType: "shareholder_capital_fulfillment",
+    sourceEntityId: "PENDING",
+    integrationLinkStatus: "LINKED",
+    counterpartyType: null,
+    counterpartyId: null,
+    counterAccountId: plan.operatingUnit
+      ? plan.operatingUnit.ouDueToCentralAccountId
+      : plan.shareholder.commitmentDebitSubAccountId,
+    counterCashRegisterId: null,
+    linkedCariSettlementBatchId: null,
+    linkedCariUnappliedCashId: null,
+    reversalOfTransactionId: null,
+    overrideCashControl: false,
+    overrideReason: null,
+    idempotencyKey,
+    integrationEventUid,
+    userId,
+    postedByUserId: null,
+    postedAt: null,
+  },
+  runQuery: tx.query,
+});
+const draftCashTransaction = await findCashTransactionById({
+  tenantId: plan.tenantId,
+  transactionId,
+  runQuery: tx.query,
+});
+if (!draftCashTransaction) {
+  throw badRequest("Failed to create capital fulfillment cash transaction");
+}
+const posting = await createAndPostCashJournalTx(tx, {
+  tenantId: plan.tenantId,
+  userId,
+  legalEntityId: plan.legalEntityId,
+  cashTxn: draftCashTransaction,
+  req,
+});
+await postCashTransaction({
+  tenantId: plan.tenantId,
+  transactionId,
+  userId,
+  postedJournalEntryId: posting.journalEntryId,
+  overrideCashControl: false,
+  overrideReason: null,
+  runQuery: tx.query,
+});
+const postedCashTransaction = await findCashTransactionById({
+  tenantId: plan.tenantId,
+  transactionId,
+  runQuery: tx.query,
+});
+if (!postedCashTransaction) {
+  throw badRequest("Failed to load posted capital fulfillment cash transaction");
+}
+await applyCashFxPositionForPostedTransactionTx({
+  tenantId: plan.tenantId,
+  cashTransactionId: transactionId,
+  cashTransactionRow: postedCashTransaction,
+  runQuery: tx.query,
+});
+const journalHeader = await loadJournalEntryHeaderTx(tx, {
+  tenantId: plan.tenantId,
+  journalEntryId: posting.journalEntryId,
+});
+if (!plan.operatingUnit) {
+  return {
+    cashTransactionId: transactionId,
+    journalEntryId: journalHeader.journalEntryId,
+    journalNo: journalHeader.journalNo,
+  };
+}
+const capitalJournal = await insertJournalForCapitalFulfillmentTx(tx, plan, userId, {
+  descriptionOverride: clipText(
+    `Capital fulfillment - ${plan.shareholder.code} - central capital layer for OU ${plan.operatingUnit.code}`,
+    500
+  ),
+  journalLines: buildCapitalFulfillmentCentralJournalLines(plan),
+  referenceSuffix: `CENTRAL:${plan.operatingUnit.id}:${Date.now()}`,
+});
+return {
+  cashTransactionId: transactionId,
+  cashJournalEntryId: journalHeader.journalEntryId,
+  cashJournalNo: journalHeader.journalNo,
+  journalEntryId: capitalJournal.journalEntryId,
+  journalNo: capitalJournal.journalNo,
+};
+}
+
+async function reverseCashRegisterFulfillmentTx(tx, {
+req,
+tenantId,
+cashTransactionId,
+userId,
+reason,
+}) {
+const original = await findCashTransactionById({
+  tenantId,
+  transactionId: cashTransactionId,
+  runQuery: tx.query,
+  forUpdate: true,
+});
+if (!original) {
+  throw badRequest("Capital fulfillment cash transaction not found");
+}
+const existingReversal = await findCashTransactionByReversalOf({
+  tenantId,
+  transactionId: cashTransactionId,
+  runQuery: tx.query,
+});
+if (normalizeUpperText(original.status) === "REVERSED" && existingReversal) {
+  await applyCashFxPositionForPostedTransactionTx({
+    tenantId,
+    cashTransactionId: parsePositiveInt(existingReversal.id),
+    cashTransactionRow: existingReversal,
+    runQuery: tx.query,
+  });
+  return {
+    reversalCashTransactionId: parsePositiveInt(existingReversal.id),
+    reversalJournalId: parsePositiveInt(existingReversal.posted_journal_entry_id),
+    idempotentReplay: true,
+  };
+}
+if (parsePositiveInt(original.reversal_of_transaction_id)) {
+  throw badRequest("Reversal transactions cannot be reversed");
+}
+if (normalizeUpperText(original.status) !== "POSTED") {
+  throw badRequest("Only POSTED cash transactions can be reversed");
+}
+const reversalBookDate = new Date().toISOString().slice(0, 10);
+const reversalReason = clipText(reason || "Shareholder capital fulfillment reversal", 255);
+const reversalTxnNo = await generateCashTxnNoForLegalEntityYearTx({
+  tenantId,
+  legalEntityId: parsePositiveInt(original.legal_entity_id),
+  legalEntityCode: String(original.legal_entity_code || ""),
+  bookDate: reversalBookDate,
+  runQuery: tx.query,
+});
+const reversalId = await insertCashTransaction({
+  payload: {
+    tenantId,
+    registerId: parsePositiveInt(original.cash_register_id),
+    cashSessionId: parsePositiveInt(original.cash_session_id) || null,
+    txnNo: reversalTxnNo,
+    txnType: original.txn_type,
+    status: "DRAFT",
+    txnDatetime: nowMysqlDateTime(),
+    bookDate: reversalBookDate,
+    amount: Number(original.amount || 0).toFixed(6),
+    amountBase: Number(original.amount_base || original.amount || 0).toFixed(6),
+    currencyCode: String(original.currency_code || ""),
+    fxRate: Number(original.fx_rate || 1).toFixed(10),
+    fxRateSource: String(original.fx_rate_source || "PARITY"),
+    fxRateDate: original.fx_rate_date || reversalBookDate,
+    fxFallbackMode: original.fx_fallback_mode || null,
+    fxFallbackMaxDays:
+      original.fx_fallback_max_days === undefined ? null : original.fx_fallback_max_days,
+    description: clipText(
+      `Reversal of ${original.txn_no}: ${reversalReason}`,
+      255
+    ),
+    referenceNo: clipText(original.reference_no, 100),
+    sourceDocType: original.source_doc_type || null,
+    sourceDocId: original.source_doc_id || null,
+    sourceModule: "CASH",
+    sourceEntityType: "cash_transaction_reversal",
+    sourceEntityId: String(original.id),
+    integrationLinkStatus: "UNLINKED",
+    counterpartyType: original.counterparty_type || null,
+    counterpartyId: parsePositiveInt(original.counterparty_id) || null,
+    counterAccountId: parsePositiveInt(original.counter_account_id) || null,
+    counterCashRegisterId: parsePositiveInt(original.counter_cash_register_id) || null,
+    linkedCariSettlementBatchId: null,
+    linkedCariUnappliedCashId: null,
+    reversalOfTransactionId: original.id,
+    overrideCashControl: false,
+    overrideReason: null,
+    idempotencyKey: `REV-${original.id}`.slice(0, 100),
+    integrationEventUid: `REV-${original.id}`.slice(0, 100),
+    userId,
+    postedByUserId: null,
+    postedAt: null,
+  },
+  runQuery: tx.query,
+});
+let reversal = await findCashTransactionById({
+  tenantId,
+  transactionId: reversalId,
+  runQuery: tx.query,
+});
+if (!reversal) {
+  throw badRequest("Failed to create reversal cash transaction");
+}
+const posting = await createAndPostCashJournalTx(tx, {
+  tenantId,
+  userId,
+  legalEntityId: parsePositiveInt(reversal.legal_entity_id),
+  cashTxn: reversal,
+  req,
+});
+await postCashTransaction({
+  tenantId,
+  transactionId: reversalId,
+  userId,
+  postedJournalEntryId: posting.journalEntryId,
+  overrideCashControl: false,
+  overrideReason: null,
+  runQuery: tx.query,
+});
+reversal = await findCashTransactionById({
+  tenantId,
+  transactionId: reversalId,
+  runQuery: tx.query,
+});
+if (!reversal) {
+  throw badRequest("Failed to load posted reversal cash transaction");
+}
+await applyCashFxPositionForPostedTransactionTx({
+  tenantId,
+  cashTransactionId: reversalId,
+  cashTransactionRow: reversal,
+  runQuery: tx.query,
+});
+await markCashTransactionAsReversed({
+  tenantId,
+  transactionId: cashTransactionId,
+  userId,
+  runQuery: tx.query,
+});
+return {
+  reversalCashTransactionId: reversalId,
+  reversalJournalId: parsePositiveInt(reversal.posted_journal_entry_id),
+  idempotentReplay: false,
+};
+}
+
+async function insertCapitalFulfillmentRowTx(
+tx,
+{ plan, userId, journalEntryId, cashTransactionId = null, cashReversalTransactionId = null }
+) {
 const result = await tx.query(
   `INSERT INTO shareholder_capital_fulfillments (
       tenant_id,
@@ -770,6 +1279,10 @@ const result = await tx.query(
       operating_unit_id,
       destination_mode,
       bank_account_id,
+      cash_register_id,
+      cash_session_id,
+      cash_transaction_id,
+      cash_reversal_transaction_id,
       destination_account_id,
       amount_base,
       currency_code,
@@ -782,7 +1295,7 @@ const result = await tx.query(
       created_by_user_id,
       posted_by_user_id
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'POSTED', ?, NULL, ?, ?, ?, ?)`,
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'POSTED', ?, NULL, ?, ?, ?, ?)`,
   [
     plan.tenantId,
     plan.legalEntityId,
@@ -790,6 +1303,10 @@ const result = await tx.query(
     plan.operatingUnit?.id || null,
     plan.destination.mode,
     plan.destination.bankAccountId || null,
+    plan.destination.cashRegisterId || null,
+    plan.destination.cashSessionId || null,
+    cashTransactionId,
+    cashReversalTransactionId,
     plan.destination.mode === "ASSET_GL" ? plan.destination.accountId : null,
     plan.amountBase,
     plan.currencyCode,
@@ -876,6 +1393,8 @@ operatingUnitId,
 destinationMode,
 bankAccountId,
 destinationAccountId,
+cashRegisterId,
+cashSessionId,
 amount,
 contributionDate,
 note,
@@ -894,6 +1413,8 @@ const preview = await withTransaction(async (tx) => {
     destinationMode,
     bankAccountId,
     destinationAccountId,
+    cashRegisterId,
+    cashSessionId,
     amount,
     contributionDate,
     note,
@@ -914,6 +1435,8 @@ operatingUnitId,
 destinationMode,
 bankAccountId,
 destinationAccountId,
+cashRegisterId,
+cashSessionId,
 amount,
 contributionDate,
 note,
@@ -933,26 +1456,47 @@ return withTransaction(async (tx) => {
     destinationMode,
     bankAccountId,
     destinationAccountId,
+    cashRegisterId,
+    cashSessionId,
     amount,
     contributionDate,
     note,
     preview: false,
     assertScopeAccess,
   });
-  const journal = await insertJournalForCapitalFulfillmentTx(tx, plan, userId);
+  const journal =
+    plan.destination.mode === "CASH_REGISTER"
+      ? await createCashRegisterFulfillmentPostingTx(tx, {
+          req,
+          plan,
+          userId,
+        })
+      : await insertJournalForCapitalFulfillmentTx(tx, plan, userId);
   const fulfillmentId = await insertCapitalFulfillmentRowTx(tx, {
     plan,
     userId,
     journalEntryId: journal.journalEntryId,
+    cashTransactionId:
+      plan.destination.mode === "CASH_REGISTER" ? journal.cashTransactionId : null,
   });
   if (!fulfillmentId) {
     throw new Error("Failed to create shareholder capital fulfillment row");
+  }
+  if (plan.destination.mode === "CASH_REGISTER") {
+    await tx.query(
+      `UPDATE cash_transactions
+       SET source_entity_id = ?
+       WHERE tenant_id = ?
+         AND id = ?`,
+      [String(fulfillmentId), tenantId, journal.cashTransactionId]
+    );
   }
   return {
     fulfillmentId,
     status: "POSTED",
     journalEntryId: journal.journalEntryId,
     journalNo: journal.journalNo,
+    cashTransactionId: journal.cashTransactionId || null,
     preview: formatPreviewResponse(plan),
   };
 });
@@ -1013,6 +1557,10 @@ const result = await query(
      scf.operating_unit_id,
      scf.destination_mode,
      scf.bank_account_id,
+     scf.cash_register_id,
+     scf.cash_session_id,
+     scf.cash_transaction_id,
+     scf.cash_reversal_transaction_id,
      scf.destination_account_id,
      scf.amount_base,
      scf.currency_code,
@@ -1036,6 +1584,14 @@ const result = await query(
      ou.name AS operating_unit_name,
      ba.code AS bank_account_code,
      ba.name AS bank_account_name,
+     cr.code AS cash_register_code,
+     cr.name AS cash_register_name,
+     ct.txn_no AS cash_transaction_no,
+     ct.posted_journal_entry_id AS cash_journal_entry_id,
+     cje.journal_no AS cash_journal_no,
+     rct.txn_no AS cash_reversal_transaction_no,
+     rct.posted_journal_entry_id AS cash_reversal_journal_entry_id,
+     rcje.journal_no AS cash_reversal_journal_no,
      da.code AS destination_account_code,
      da.name AS destination_account_name,
      je.journal_no AS journal_no,
@@ -1053,6 +1609,21 @@ const result = await query(
    LEFT JOIN bank_accounts ba
      ON ba.id = scf.bank_account_id
     AND ba.tenant_id = scf.tenant_id
+   LEFT JOIN cash_registers cr
+     ON cr.id = scf.cash_register_id
+    AND cr.tenant_id = scf.tenant_id
+   LEFT JOIN cash_transactions ct
+     ON ct.id = scf.cash_transaction_id
+    AND ct.tenant_id = scf.tenant_id
+   LEFT JOIN journal_entries cje
+     ON cje.id = ct.posted_journal_entry_id
+    AND cje.tenant_id = scf.tenant_id
+   LEFT JOIN cash_transactions rct
+     ON rct.id = scf.cash_reversal_transaction_id
+    AND rct.tenant_id = scf.tenant_id
+   LEFT JOIN journal_entries rcje
+     ON rcje.id = rct.posted_journal_entry_id
+    AND rcje.tenant_id = scf.tenant_id
    LEFT JOIN accounts da
      ON da.id = scf.destination_account_id
    JOIN journal_entries je
@@ -1091,32 +1662,72 @@ return withTransaction(async (tx) => {
       status: "REVERSED",
       journalEntryId: parsePositiveInt(fulfillment.journal_entry_id),
       reversalJournalEntryId: existingReversalJournalId,
+      cashReversalTransactionId:
+        parsePositiveInt(fulfillment.cash_reversal_transaction_id) || null,
       idempotentReplay: true,
     };
   }
-  const reversal = await reverseJournalEntryForFulfillmentTx(tx, {
-    tenantId,
-    journalId: parsePositiveInt(fulfillment.journal_entry_id),
-    userId,
-    reason,
-  });
+  const isCashRegisterFulfillment =
+    normalizeUpperText(fulfillment.destination_mode) === "CASH_REGISTER";
+  let reversal = null;
+  if (isCashRegisterFulfillment) {
+    const cashReversal = await reverseCashRegisterFulfillmentTx(tx, {
+      req,
+      tenantId,
+      cashTransactionId: parsePositiveInt(fulfillment.cash_transaction_id),
+      userId,
+      reason,
+    });
+    if (parsePositiveInt(fulfillment.operating_unit_id)) {
+      const centralJournalReversal = await reverseJournalEntryForFulfillmentTx(tx, {
+        tenantId,
+        journalId: parsePositiveInt(fulfillment.journal_entry_id),
+        userId,
+        reason,
+      });
+      reversal = {
+        reversalJournalId: centralJournalReversal.reversalJournalId,
+        reversalCashTransactionId: cashReversal.reversalCashTransactionId || null,
+        idempotentReplay:
+          Boolean(cashReversal.idempotentReplay) &&
+          Boolean(centralJournalReversal.idempotentReplay),
+      };
+    } else {
+      reversal = cashReversal;
+    }
+  } else {
+    reversal = await reverseJournalEntryForFulfillmentTx(tx, {
+      tenantId,
+      journalId: parsePositiveInt(fulfillment.journal_entry_id),
+      userId,
+      reason,
+    });
+  }
   const reversalReason = clipText(reason || "Shareholder capital fulfillment reversal", 255);
   await tx.query(
     `UPDATE shareholder_capital_fulfillments
      SET status = 'REVERSED',
          reversal_journal_entry_id = ?,
+         cash_reversal_transaction_id = ?,
          reversed_by_user_id = ?,
          reversed_at = CURRENT_TIMESTAMP,
          updated_at = CURRENT_TIMESTAMP
      WHERE id = ?
        AND tenant_id = ?`,
-    [reversal.reversalJournalId, userId, fulfillmentId, tenantId]
+    [
+      reversal.reversalJournalId,
+      reversal.reversalCashTransactionId || null,
+      userId,
+      fulfillmentId,
+      tenantId,
+    ]
   );
   return {
     fulfillmentId,
     status: "REVERSED",
     journalEntryId: parsePositiveInt(fulfillment.journal_entry_id),
     reversalJournalEntryId: reversal.reversalJournalId,
+    cashReversalTransactionId: reversal.reversalCashTransactionId || null,
     reverseReason: reversalReason,
     idempotentReplay: reversal.idempotentReplay,
   };

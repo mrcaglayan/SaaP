@@ -18,7 +18,7 @@ const ENV_DRY_RUN = "RELEASE_GATE_DRY_RUN";
 const RELEASE_GATE_STAGES = Object.freeze([
   {
     id: "CORE",
-    title: "Core platform and accounting gates",
+    title: "Core platform, accounting, and cash ownership rollout gates",
     script: CORE_SCRIPT,
     skipEnv: ENV_SKIP_CORE,
   },

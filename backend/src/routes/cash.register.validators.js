@@ -15,6 +15,7 @@ import {
 const REGISTER_TYPES = ["VAULT", "DRAWER", "TILL"];
 const SESSION_MODES = ["REQUIRED", "OPTIONAL", "NONE"];
 const REGISTER_STATUSES = ["ACTIVE", "INACTIVE"];
+const OWNERSHIP_SCOPES = ["CENTRAL", "OPERATING_UNIT"];
 
 export function parseCashRegisterIdParam(req) {
   const registerId = parsePositiveInt(req.params?.registerId);
@@ -28,6 +29,14 @@ export function parseCashRegisterReadFilters(req) {
   const tenantId = requireTenantId(req);
   const legalEntityId = optionalPositiveInt(req.query?.legalEntityId, "legalEntityId");
   const operatingUnitId = optionalPositiveInt(req.query?.operatingUnitId, "operatingUnitId");
+  const ownershipScopeRaw = String(
+    req.query?.ownershipScope ?? req.query?.ownership_scope ?? ""
+  )
+    .trim()
+    .toUpperCase();
+  const ownershipScope = ownershipScopeRaw
+    ? normalizeEnum(ownershipScopeRaw, "ownershipScope", OWNERSHIP_SCOPES)
+    : null;
   const statusRaw = String(req.query?.status || "")
     .trim()
     .toUpperCase();
@@ -39,6 +48,7 @@ export function parseCashRegisterReadFilters(req) {
     tenantId,
     legalEntityId,
     operatingUnitId,
+    ownershipScope,
     status,
     q,
     limit: pagination.limit,
@@ -62,8 +72,26 @@ export function parseCashRegisterUpsertInput(req) {
     "varianceLossAccountId"
   );
 
+  const ownershipScopeRaw = String(
+    req.body?.ownershipScope ?? req.body?.ownership_scope ?? ""
+  )
+    .trim()
+    .toUpperCase();
+  const ownershipScope = ownershipScopeRaw
+    ? normalizeEnum(ownershipScopeRaw, "ownershipScope", OWNERSHIP_SCOPES)
+    : operatingUnitId
+      ? "OPERATING_UNIT"
+      : "CENTRAL";
+
   if (!legalEntityId || !accountId) {
     throw badRequest("legalEntityId and accountId are required");
+  }
+
+  if (ownershipScope === "CENTRAL" && operatingUnitId) {
+    throw badRequest("operatingUnitId must be empty when ownershipScope=CENTRAL");
+  }
+  if (ownershipScope === "OPERATING_UNIT" && !operatingUnitId) {
+    throw badRequest("operatingUnitId is required when ownershipScope=OPERATING_UNIT");
   }
 
   const code = normalizeCode(req.body?.code, "code", 60);
@@ -103,6 +131,7 @@ export function parseCashRegisterUpsertInput(req) {
     userId,
     id,
     legalEntityId,
+    ownershipScope,
     operatingUnitId,
     accountId,
     code,

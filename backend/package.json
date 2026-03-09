@@ -233,6 +233,9 @@
     "test:contracts-revenue-pr18-fetch-gating": "node scripts/test-contracts-revenue-pr18-fetch-gating.js",
     "test:contracts-revenue-pr18": "node scripts/test-contracts-revenue-pr18.js",
     "test:contracts-revenue-gate": "node scripts/test-contracts-revenue-gate.js",
+    "test:cash-register-ownership:rollout": "node scripts/test-cash-register-ownership-cro04-rollout.js",
+    "test:cash-register-ownership": "node scripts/test-cash-register-ownership-cro01.js && node scripts/test-cash-register-ownership-cro02-frontend-smoke.js && node scripts/test-cash-register-ownership-cro03-workflow-routing.js && npm run test:cash-register-ownership:rollout",
+    "test:shareholder-capital": "node scripts/test-shareholder-capital-cf01-ou-current-mappings.js && node scripts/test-shareholder-capital-cf02-fulfillment-posting.js && node scripts/test-shareholder-capital-cf03-frontend-smoke.js && node scripts/test-shareholder-capital-cf04-reversal-reporting.js && node scripts/test-shareholder-capital-cf05-cash-register-fulfillment.js && node scripts/test-shareholder-capital-integration.js",
     "test:cari-payment-terms-bootstrap": "node scripts/test-cari-payment-terms-bootstrap.js",
     "test:policy-packs-readonly": "node scripts/test-policy-packs-readonly.js",
     "test:policy-pack-resolve": "node scripts/test-policy-pack-resolve.js",
@@ -244,7 +247,7 @@
     "test:tenant-safety": "node scripts/test-tenant-safety-and-transactions.js",
     "test:period-close": "node scripts/test-period-close-process.js",
     "test:intercompany-consolidation": "node scripts/test-intercompany-and-consolidation-reports.js",
-    "test:release-gate:core": "npm run test:permission-matrix && npm run test:ux:rswire02 && npm run test:ux:rswire03 && npm run test:ux:consolidation-prcm && npm run test:ux:consolidation-fup-cm02 && npm run test:ux:consolidation-fup-cm03 && npm run test:ux:consolidation-fup-cm04 && npm run test:ux:consolidation-fup-cm05 && npm run test:ux:consolidation-fup-cm06 && npm run test:ux:consolidation-fup-cm07 && npm run test:cash-fx-full-release-gate && npm run test:cash-characterization && npm run test:cash-idempotency-double-post && npm run test:cash-exceptions && npm run test:tenant-safety && npm run test:period-close && npm run test:intercompany-consolidation && npm run test:cari-quality-gate",
+    "test:release-gate:core": "npm run test:permission-matrix && npm run test:ux:rswire02 && npm run test:ux:rswire03 && npm run test:ux:consolidation-prcm && npm run test:ux:consolidation-fup-cm02 && npm run test:ux:consolidation-fup-cm03 && npm run test:ux:consolidation-fup-cm04 && npm run test:ux:consolidation-fup-cm05 && npm run test:ux:consolidation-fup-cm06 && npm run test:ux:consolidation-fup-cm07 && npm run test:cash-fx-full-release-gate && npm run test:cash-characterization && npm run test:cash-idempotency-double-post && npm run test:cash-exceptions && npm run test:cash-register-ownership && npm run test:shareholder-capital && npm run test:tenant-safety && npm run test:period-close && npm run test:intercompany-consolidation && npm run test:cari-quality-gate",
     "test:release-gate": "node scripts/test-release-gate.js"
   },
   "keywords": [],

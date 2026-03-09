@@ -197,6 +197,79 @@ function firstDefinedRowValue(row, ...keys) {
   return "";
 }
 
+function buildOwnershipContextLabel(
+  row,
+  l,
+  {
+    explicitKeys = ["ownership_context_label", "ownershipContextLabel"],
+    operatingUnitCodeKeys = ["operating_unit_code", "operatingUnitCode"],
+    operatingUnitIdKeys = ["operating_unit_id", "operatingUnitId"],
+  } = {}
+) {
+  const explicit = String(firstDefinedRowValue(row, ...explicitKeys) || "").trim();
+  if (
+    explicit &&
+    (explicit === "Central / HQ" || explicit === "Merkez / HQ" || explicit.startsWith("OU:"))
+  ) {
+    return explicit;
+  }
+  const operatingUnitCode = String(
+    firstDefinedRowValue(row, ...operatingUnitCodeKeys) || ""
+  ).trim();
+  if (operatingUnitCode) {
+    return `OU: ${operatingUnitCode}`;
+  }
+  const operatingUnitId = toPositiveInt(firstDefinedRowValue(row, ...operatingUnitIdKeys));
+  if (operatingUnitId) {
+    return `OU: ${operatingUnitId}`;
+  }
+  if (explicit) {
+    return explicit;
+  }
+  return l("Central / HQ", "Merkez / HQ");
+}
+
+function formatRegisterDisplayLabel(
+  row,
+  l,
+  {
+    codeKeys = ["code", "cash_register_code", "cashRegisterCode"],
+    idKeys = ["id", "cash_register_id", "cashRegisterId"],
+    nameKeys = ["name", "cash_register_name", "cashRegisterName"],
+    explicitOwnershipKeys,
+    operatingUnitCodeKeys,
+    operatingUnitIdKeys,
+  } = {}
+) {
+  const code = String(firstDefinedRowValue(row, ...codeKeys) || "").trim();
+  const name = String(firstDefinedRowValue(row, ...nameKeys) || "").trim();
+  const fallbackId = firstDefinedRowValue(row, ...idKeys);
+  const baseLabel = [code || fallbackId, name].filter(Boolean).join(" - ") || "-";
+  return {
+    baseLabel,
+    ownershipContext: buildOwnershipContextLabel(row, l, {
+      explicitKeys: explicitOwnershipKeys,
+      operatingUnitCodeKeys,
+      operatingUnitIdKeys,
+    }),
+  };
+}
+
+function formatSessionDisplayLabel(row, l) {
+  const sessionId = toPositiveInt(
+    firstDefinedRowValue(row, "id", "cash_session_id", "cashSessionId")
+  );
+  const registerLabel = formatRegisterDisplayLabel(row, l);
+  return [`#${sessionId || "-"}`, registerLabel.baseLabel, registerLabel.ownershipContext]
+    .filter(Boolean)
+    .join(" | ");
+}
+
+function formatRegisterOptionText(row, l, options) {
+  const registerLabel = formatRegisterDisplayLabel(row, l, options);
+  return `${registerLabel.baseLabel} | ${registerLabel.ownershipContext}`;
+}
+
 function normalizeVisibleColumnIds(candidateIds, defaultIds) {
   const fallback = Array.isArray(defaultIds) ? defaultIds.map(String) : [];
   const allowedIds = new Set(fallback);
@@ -402,10 +475,7 @@ function buildTransitReceiveIdempotencyKey() {
 function isCrossOuRegisterPair(sourceRegister, targetRegister) {
   const sourceOu = toPositiveInt(sourceRegister?.operating_unit_id);
   const targetOu = toPositiveInt(targetRegister?.operating_unit_id);
-  if (!sourceOu || !targetOu) {
-    return false;
-  }
-  return sourceOu !== targetOu;
+  return sourceOu !== targetOu && Boolean(sourceOu || targetOu);
 }
 
 function buildInitialForm(presetTxnType) {
@@ -515,6 +585,72 @@ function buildCashTransactionTemplateDefinition({ form }) {
   return {
     version: 1,
     createForm: buildCashTransactionTemplateSafeForm(form),
+  };
+}
+
+function buildCapitalFulfillmentTransitPrefill(search, presetTxnType = null) {
+  const params = new URLSearchParams(String(search || ""));
+  const prefillMode = toUpper(
+    params.get("prefillMode") || params.get("prefill_mode") || params.get("shortcut")
+  );
+  if (prefillMode !== "CAPITAL_FULFILLMENT_TRANSIT") {
+    return null;
+  }
+
+  const registerId =
+    params.get("registerId") ||
+    params.get("sourceRegisterId") ||
+    params.get("source_register_id");
+  const counterCashRegisterId =
+    params.get("counterCashRegisterId") ||
+    params.get("counter_cash_register_id") ||
+    params.get("targetRegisterId") ||
+    params.get("target_register_id");
+  const amount = params.get("amount");
+  const currencyCode = params.get("currencyCode") || params.get("currency_code");
+  const referenceNo = params.get("referenceNo") || params.get("reference_no");
+  const description = params.get("description");
+  const bookDate = params.get("bookDate") || params.get("book_date");
+  const sourceDocType =
+    params.get("sourceDocType") || params.get("source_doc_type") || "OTHER";
+  const sourceDocId = params.get("sourceDocId") || params.get("source_doc_id");
+  const fulfillmentId = String(
+    params.get("fulfillmentId") || params.get("fulfillment_id") || ""
+  ).trim();
+  const sourceRegisterCode = String(params.get("sourceRegisterCode") || "").trim();
+  const targetRegisterCode = String(params.get("targetRegisterCode") || "").trim();
+
+  return {
+    prefillKey: [
+      prefillMode,
+      registerId,
+      counterCashRegisterId,
+      amount,
+      currencyCode,
+      referenceNo,
+      description,
+      bookDate,
+      sourceDocId,
+      fulfillmentId,
+    ].join("|"),
+    fulfillmentId,
+    sourceRegisterCode,
+    targetRegisterCode,
+    form: buildCashTransactionTemplateSafeForm(
+      {
+        txnType: presetTxnType || "TRANSFER_OUT",
+        registerId,
+        counterCashRegisterId,
+        amount,
+        currencyCode,
+        referenceNo,
+        description,
+        bookDate,
+        sourceDocType,
+        sourceDocId,
+      },
+      presetTxnType
+    ),
   };
 }
 
@@ -681,7 +817,10 @@ function mapTransactionErrorMessage(rawMessage, t) {
   if (lower.includes("cash register is not active")) {
     return t("cashTransactions.errors.registerInactive");
   }
-  if (lower.includes("cash transit workflow requires")) {
+  if (
+    lower.includes("cash transit workflow requires") ||
+    lower.includes("cash_in_transit workflow")
+  ) {
     return t("cashTransactions.errorsMapped.transitSourceTargetOuMismatch");
   }
   if (lower.includes("cross-legal-entity cash transit transfer is not supported")) {
@@ -765,7 +904,7 @@ function toTransactionErrorState(err, t, fallbackKey) {
 }
 
 export default function CashTransactionsPage() {
-  const { pathname } = useLocation();
+  const { pathname, search } = useLocation();
   const { hasPermission } = useAuth();
   const { language, t } = useI18n();
   const l = useCallback((en, tr) => (language === "tr" ? tr : en), [language]);
@@ -818,6 +957,10 @@ export default function CashTransactionsPage() {
   };
 
   const presetTxnType = useMemo(() => resolvePresetTxnType(pathname), [pathname]);
+  const capitalFulfillmentTransitPrefill = useMemo(
+    () => buildCapitalFulfillmentTransitPrefill(search, presetTxnType),
+    [presetTxnType, search]
+  );
   const canRead = hasPermission("cash.txn.read");
   const canCreate = hasPermission("cash.txn.create");
   const canPost = hasPermission("cash.txn.post");
@@ -876,6 +1019,7 @@ export default function CashTransactionsPage() {
   const [selectedPresetCode, setSelectedPresetCode] = useState("");
   const [cashPurposeMappingsByPurpose, setCashPurposeMappingsByPurpose] = useState({});
   const lastSuggestedCounterAccountIdRef = useRef(null);
+  const appliedCapitalFulfillmentTransitPrefillRef = useRef("");
 
   useWorkingContextDefaults(setFilters, CASH_TRANSACTION_FILTER_CONTEXT_MAPPINGS, [
     filters.bookDateFrom,
@@ -914,6 +1058,60 @@ export default function CashTransactionsPage() {
   const selectedIsCrossOuTransfer = useMemo(() => {
     return isCrossOuRegisterPair(selectedRegister, selectedCounterRegister);
   }, [selectedCounterRegister, selectedRegister]);
+  const selectedRegisterDisplay = useMemo(
+    () => (selectedRegister ? formatRegisterDisplayLabel(selectedRegister, l) : null),
+    [l, selectedRegister]
+  );
+  const selectedCounterRegisterDisplay = useMemo(
+    () =>
+      selectedCounterRegister ? formatRegisterDisplayLabel(selectedCounterRegister, l) : null,
+    [l, selectedCounterRegister]
+  );
+  const selectedTransferRouteMeta = useMemo(() => {
+    if (!isTransferTxnType(form.txnType) || !selectedRegisterDisplay) {
+      return null;
+    }
+    if (!selectedCounterRegisterDisplay) {
+      return {
+        modeLabel: l("Select target register", "Hedef kasa secin"),
+        routeLabel: selectedRegisterDisplay.ownershipContext,
+        description: l(
+          "Select the target register to confirm whether this move stays direct or must use transit.",
+          "Bu hareketin dogrudan mi kalacagini yoksa transit mi kullanacagini onaylamak icin hedef kasayi secin."
+        ),
+      };
+    }
+    if (selectedIsCrossOuTransfer) {
+      return {
+        modeLabel: l("Transit workflow required", "Transit akisi zorunlu"),
+        routeLabel: `${selectedRegisterDisplay.ownershipContext} -> ${selectedCounterRegisterDisplay.ownershipContext}`,
+        description:
+          toUpper(form.txnType) === "TRANSFER_IN"
+            ? l(
+                "Different operating-unit contexts must be completed from Transit Receive instead of creating TRANSFER_IN directly.",
+                "Farkli operating-unit baglamlari, TRANSFER_IN kaydini dogrudan olusturmak yerine Transit Receive ile tamamlanmalidir."
+              )
+            : l(
+                "Different operating-unit contexts route through cash transit. Creating TRANSFER_OUT starts the transit workflow instead of a direct register-to-register post.",
+                "Farkli operating-unit baglamlari kasa transitinden gecer. TRANSFER_OUT olusturma, dogrudan register'dan register'a post yerine transit akislarini baslatir."
+              ),
+      };
+    }
+    return {
+      modeLabel: l("Direct transfer", "Dogrudan transfer"),
+      routeLabel: `${selectedRegisterDisplay.ownershipContext} -> ${selectedCounterRegisterDisplay.ownershipContext}`,
+      description: l(
+        "Source and target share the same ownership context, so the transfer can be created directly on this screen.",
+        "Kaynak ve hedef ayni sahiplik baglamini paylastigi icin transfer bu ekranda dogrudan olusturulabilir."
+      ),
+    };
+  }, [
+    form.txnType,
+    l,
+    selectedCounterRegisterDisplay,
+    selectedIsCrossOuTransfer,
+    selectedRegisterDisplay,
+  ]);
   const selectedRegisterLegalEntityId = useMemo(
     () => toPositiveInt(selectedRegister?.legal_entity_id),
     [selectedRegister]
@@ -2079,6 +2277,58 @@ export default function CashTransactionsPage() {
   }, [presetTxnType]);
 
   useEffect(() => {
+    if (!capitalFulfillmentTransitPrefill) {
+      appliedCapitalFulfillmentTransitPrefillRef.current = "";
+      return;
+    }
+    if (
+      appliedCapitalFulfillmentTransitPrefillRef.current ===
+      capitalFulfillmentTransitPrefill.prefillKey
+    ) {
+      return;
+    }
+
+    setForm(capitalFulfillmentTransitPrefill.form);
+    setActionForm(null);
+    setSelectedLifecycleTransactionId(null);
+    setCounterpartyQuery("");
+    setCounterpartyOptions([]);
+    setSelectedPresetCode("");
+    setTemplatesError("");
+    setTemplatesMessage("");
+
+    const transferRouteMessage = l(
+      `Prefilled HQ-to-branch cash transit transfer${
+        capitalFulfillmentTransitPrefill.fulfillmentId
+          ? ` for capital fulfillment ${capitalFulfillmentTransitPrefill.fulfillmentId}`
+          : ""
+      }.${
+        capitalFulfillmentTransitPrefill.sourceRegisterCode ||
+        capitalFulfillmentTransitPrefill.targetRegisterCode
+          ? ` ${capitalFulfillmentTransitPrefill.sourceRegisterCode || "HQ"} -> ${
+              capitalFulfillmentTransitPrefill.targetRegisterCode || "branch register"
+            }.`
+          : ""
+      } Review book date and session before creating the transfer.`,
+      `Merkezden subeye kasa transit transferi${
+        capitalFulfillmentTransitPrefill.fulfillmentId
+          ? ` sermaye karsilamasi ${capitalFulfillmentTransitPrefill.fulfillmentId} icin`
+          : ""
+      } onceden dolduruldu.${
+        capitalFulfillmentTransitPrefill.sourceRegisterCode ||
+        capitalFulfillmentTransitPrefill.targetRegisterCode
+          ? ` ${capitalFulfillmentTransitPrefill.sourceRegisterCode || "Merkez"} -> ${
+              capitalFulfillmentTransitPrefill.targetRegisterCode || "sube kasasi"
+            }.`
+          : ""
+      } Transferi olusturmadan once tarih ve oturum alanlarini gozden gecirin.`
+    );
+    setInfoMessage(transferRouteMessage);
+    appliedCapitalFulfillmentTransitPrefillRef.current =
+      capitalFulfillmentTransitPrefill.prefillKey;
+  }, [capitalFulfillmentTransitPrefill, l]);
+
+  useEffect(() => {
     loadPageData(filters);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canRead, presetTxnType]);
@@ -3094,7 +3344,7 @@ export default function CashTransactionsPage() {
               <option value="">{t("cashTransactions.placeholders.allRegisters")}</option>
               {registerOptions.map((row) => (
                 <option key={`filter-register-${row.id}`} value={row.id}>
-                  {`${row.code || row.id} - ${row.name || "-"}`}
+                  {formatRegisterOptionText(row, l)}
                 </option>
               ))}
             </select>
@@ -3416,7 +3666,7 @@ export default function CashTransactionsPage() {
                 <option value="">{t("cashTransactions.placeholders.register")}</option>
                 {registerOptions.map((row) => (
                   <option key={`form-register-${row.id}`} value={row.id}>
-                    {`${row.code || row.id} - ${row.name || "-"}`}
+                    {formatRegisterOptionText(row, l)}
                   </option>
                 ))}
               </select>
@@ -3457,7 +3707,7 @@ export default function CashTransactionsPage() {
                 <option value="">{createSessionPlaceholder}</option>
                 {selectedRegisterOpenSessions.map((session) => (
                   <option key={`form-session-${session.id}`} value={session.id}>
-                    {`#${session.id} - ${session.cash_register_code || session.cash_register_id}`}
+                    {formatSessionDisplayLabel(session, l)}
                   </option>
                 ))}
               </select>
@@ -3753,7 +4003,7 @@ export default function CashTransactionsPage() {
                     .filter((row) => String(row.id) !== String(form.registerId))
                     .map((row) => (
                       <option key={`counter-register-${row.id}`} value={row.id}>
-                        {`${row.code || row.id} - ${row.name || "-"}`}
+                        {formatRegisterOptionText(row, l)}
                       </option>
                     ))}
                 </select>
@@ -3781,6 +4031,16 @@ export default function CashTransactionsPage() {
                 className="rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm text-slate-500"
               />
             )}
+
+            {isTransferTxnType(form.txnType) && selectedTransferRouteMeta ? (
+              <div className="md:col-span-3 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-900">
+                <div className="font-semibold">{selectedTransferRouteMeta.modeLabel}</div>
+                <div className="mt-1 text-xs font-medium text-sky-950">
+                  {selectedTransferRouteMeta.routeLabel}
+                </div>
+                <div className="mt-1 text-xs">{selectedTransferRouteMeta.description}</div>
+              </div>
+            ) : null}
 
             <textarea
               value={form.description}
@@ -3962,7 +4222,7 @@ export default function CashTransactionsPage() {
                       <option value="">{t("cashTransactions.placeholders.autoOrNone")}</option>
                       {selectedTransitTargetOpenSessions.map((session) => (
                         <option key={`receive-transit-session-${session.id}`} value={session.id}>
-                          #{session.id} - {session.status || "OPEN"}
+                          {formatSessionDisplayLabel(session, l)}
                         </option>
                       ))}
                     </select>
@@ -4388,6 +4648,26 @@ export default function CashTransactionsPage() {
                 const rowIsPosted = rowStatus === "POSTED";
                 const rowIsLifecycleSelected =
                   toPositiveInt(row.id) === toPositiveInt(selectedLifecycleTransactionId);
+                const rowRegisterLabel = formatRegisterDisplayLabel(row, l);
+                const rowCounterRegisterLabel = row.counter_cash_register_id
+                  ? formatRegisterDisplayLabel(row, l, {
+                      codeKeys: ["counter_cash_register_code", "counterCashRegisterCode"],
+                      idKeys: ["counter_cash_register_id", "counterCashRegisterId"],
+                      nameKeys: ["counter_cash_register_name", "counterCashRegisterName"],
+                      explicitOwnershipKeys: [
+                        "counter_cash_register_ownership_context_label",
+                        "counterCashRegisterOwnershipContextLabel",
+                      ],
+                      operatingUnitCodeKeys: [
+                        "counter_cash_register_operating_unit_code",
+                        "counterCashRegisterOperatingUnitCode",
+                      ],
+                      operatingUnitIdKeys: [
+                        "counter_cash_register_operating_unit_id",
+                        "counterCashRegisterOperatingUnitId",
+                      ],
+                    })
+                  : null;
                 return (
                   <tr
                     key={`cash-transaction-row-${row.id}`}
@@ -4417,8 +4697,10 @@ export default function CashTransactionsPage() {
                     ) : null}
                     {transactionVisibleColumnSet.has("register") ? (
                       <td className="px-3 py-2">
-                        {(row.cash_register_code || row.cash_register_id) + " - " +
-                          (row.cash_register_name || "-")}
+                        <div>{rowRegisterLabel.baseLabel}</div>
+                        <div className="text-xs text-slate-500">
+                          {rowRegisterLabel.ownershipContext}
+                        </div>
                       </td>
                     ) : null}
                     {transactionVisibleColumnSet.has("session") ? (
@@ -4453,11 +4735,16 @@ export default function CashTransactionsPage() {
                     ) : null}
                     {transactionVisibleColumnSet.has("counterRegister") ? (
                       <td className="px-3 py-2">
-                        {row.counter_cash_register_id
-                          ? `${row.counter_cash_register_code || row.counter_cash_register_id} - ${
-                              row.counter_cash_register_name || "-"
-                            }`
-                          : "-"}
+                        {rowCounterRegisterLabel ? (
+                          <>
+                            <div>{rowCounterRegisterLabel.baseLabel}</div>
+                            <div className="text-xs text-slate-500">
+                              {rowCounterRegisterLabel.ownershipContext}
+                            </div>
+                          </>
+                        ) : (
+                          "-"
+                        )}
                       </td>
                     ) : null}
                     {transactionVisibleColumnSet.has("links") ? (

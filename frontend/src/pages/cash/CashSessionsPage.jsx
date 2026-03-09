@@ -57,6 +57,49 @@ function formatDateTime(value) {
   return `${date.toLocaleDateString()} ${date.toLocaleTimeString()}`;
 }
 
+function buildRegisterOwnershipContextLabel(row, l) {
+  const explicit = String(row?.ownership_context_label || row?.ownershipContextLabel || "").trim();
+  if (
+    explicit &&
+    (explicit === "Central / HQ" || explicit === "Merkez / HQ" || explicit.startsWith("OU:"))
+  ) {
+    return explicit;
+  }
+  const operatingUnitCode = String(
+    row?.operating_unit_code || row?.operatingUnitCode || ""
+  ).trim();
+  if (operatingUnitCode) {
+    return `OU: ${operatingUnitCode}`;
+  }
+  const operatingUnitId = toPositiveInt(row?.operating_unit_id || row?.operatingUnitId);
+  if (operatingUnitId) {
+    return `OU: ${operatingUnitId}`;
+  }
+  if (explicit) {
+    return explicit;
+  }
+  return l("Central / HQ", "Merkez / HQ");
+}
+
+function formatCashRegisterLabel(row, l) {
+  const code = String(row?.code || row?.cash_register_code || row?.id || row?.cash_register_id || "").trim();
+  const name = String(row?.name || row?.cash_register_name || "").trim();
+  const baseLabel = [code, name].filter(Boolean).join(" - ") || "-";
+  return [baseLabel, buildRegisterOwnershipContextLabel(row, l)].filter(Boolean).join(" | ");
+}
+
+function formatCashSessionPickerLabel(row, l) {
+  const sessionId = toPositiveInt(row?.id);
+  const openedAt = formatDateTime(row?.opened_at || row?.openedAt);
+  return [
+    `#${sessionId || "-"}`,
+    formatCashRegisterLabel(row, l),
+    openedAt !== "-" ? openedAt : "",
+  ]
+    .filter(Boolean)
+    .join(" | ");
+}
+
 function buildCashSessionLifecycleEvents(row) {
   if (!row) {
     return [];
@@ -601,7 +644,7 @@ export default function CashSessionsPage() {
           <ul className="mt-2 list-disc pl-5">
             {requiredModeWithoutOpen.map((row) => (
               <li key={`required-warning-${row.id}`}>
-                {(row.code || row.id) + " - " + (row.name || "-")}
+                {formatCashRegisterLabel(row, l)}
               </li>
             ))}
           </ul>
@@ -626,7 +669,7 @@ export default function CashSessionsPage() {
               <option value="">{t("cashSessions.placeholders.register")}</option>
               {openableRegisters.map((row) => (
                 <option key={`open-register-${row.id}`} value={row.id}>
-                  {(row.code || row.id) + " - " + (row.name || "-")}
+                  {formatCashRegisterLabel(row, l)}
                 </option>
               ))}
             </select>
@@ -676,7 +719,7 @@ export default function CashSessionsPage() {
               <option value="">{t("cashSessions.placeholders.openSession")}</option>
               {openSessions.map((row) => (
                 <option key={`close-session-${row.id}`} value={row.id}>
-                  {`#${row.id} - ${row.cash_register_code || row.cash_register_id} (${row.cash_register_name || "-"})`}
+                  {formatCashSessionPickerLabel(row, l)}
                 </option>
               ))}
             </select>
@@ -765,18 +808,24 @@ export default function CashSessionsPage() {
 
         {selectedCloseSession ? (
           <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
-            {t("cashSessions.selectedSessionSummary", {
-              id: selectedCloseSession.id,
-              registerCode:
-                selectedCloseSession.cash_register_code ||
-                selectedCloseSession.cash_register_id,
-              opening: formatAmount(selectedCloseSession.opening_amount),
-              expected:
-                selectedCloseSession.expected_closing_amount === null ||
-                selectedCloseSession.expected_closing_amount === undefined
-                  ? "-"
-                  : formatAmount(selectedCloseSession.expected_closing_amount),
-            })}
+            <div>
+              {t("cashSessions.selectedSessionSummary", {
+                id: selectedCloseSession.id,
+                registerCode:
+                  selectedCloseSession.cash_register_code ||
+                  selectedCloseSession.cash_register_id,
+                opening: formatAmount(selectedCloseSession.opening_amount),
+                expected:
+                  selectedCloseSession.expected_closing_amount === null ||
+                  selectedCloseSession.expected_closing_amount === undefined
+                    ? "-"
+                    : formatAmount(selectedCloseSession.expected_closing_amount),
+              })}
+            </div>
+            <div className="mt-1 text-slate-500">
+              {l("Ownership context", "Sahiplik baglami")}:{" "}
+              {buildRegisterOwnershipContextLabel(selectedCloseSession, l)}
+            </div>
           </div>
         ) : null}
       </section>
@@ -806,6 +855,10 @@ export default function CashSessionsPage() {
                   {selectedSessionLifecycleMeta.description}
                 </p>
               ) : null}
+              <p className="mt-1 text-xs text-slate-600">
+                {l("Ownership context", "Sahiplik baglami")}:{" "}
+                {buildRegisterOwnershipContextLabel(selectedLifecycleSession, l)}
+              </p>
               {selectedSessionLifecycleActionLabels.length > 0 ? (
                 <p className="mt-1 text-xs text-slate-600">
                   {t("cashSessions.lifecycle.nextTransitions", {
@@ -871,8 +924,13 @@ export default function CashSessionsPage() {
                 >
                   <td className="px-3 py-2">{row.id}</td>
                   <td className="px-3 py-2">
-                    {(row.cash_register_code || row.cash_register_id) + " - " +
-                      (row.cash_register_name || "-")}
+                    <div>
+                      {(row.cash_register_code || row.cash_register_id) + " - " +
+                        (row.cash_register_name || "-")}
+                    </div>
+                    <div className="text-xs text-slate-500">
+                      {buildRegisterOwnershipContextLabel(row, l)}
+                    </div>
                   </td>
                   <td className="px-3 py-2">{localizeSessionStatus(row.status)}</td>
                   <td className="px-3 py-2">{formatDateTime(row.opened_at)}</td>
@@ -967,8 +1025,13 @@ export default function CashSessionsPage() {
                 >
                   <td className="px-3 py-2">{row.id}</td>
                   <td className="px-3 py-2">
-                    {(row.cash_register_code || row.cash_register_id) + " - " +
-                      (row.cash_register_name || "-")}
+                    <div>
+                      {(row.cash_register_code || row.cash_register_id) + " - " +
+                        (row.cash_register_name || "-")}
+                    </div>
+                    <div className="text-xs text-slate-500">
+                      {buildRegisterOwnershipContextLabel(row, l)}
+                    </div>
                   </td>
                   <td className="px-3 py-2">{localizeSessionStatus(row.status)}</td>
                   <td className="px-3 py-2">{formatDateTime(row.opened_at)}</td>

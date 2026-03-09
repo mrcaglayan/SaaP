@@ -21,6 +21,7 @@ import CashControlModeBanner from "./CashControlModeBanner.jsx";
 const REGISTER_TYPES = ["VAULT", "DRAWER", "TILL"];
 const SESSION_MODES = ["REQUIRED", "OPTIONAL", "NONE"];
 const REGISTER_STATUSES = ["ACTIVE", "INACTIVE"];
+const OWNERSHIP_SCOPES = ["CENTRAL", "OPERATING_UNIT"];
 
 const EMPTY_FORM = {
   id: "",
@@ -29,6 +30,7 @@ const EMPTY_FORM = {
   registerType: "DRAWER",
   sessionMode: "",
   legalEntityId: "",
+  ownershipScope: "CENTRAL",
   operatingUnitId: "",
   accountId: "",
   currencyCode: "",
@@ -43,11 +45,30 @@ const EMPTY_FORM = {
 const CASH_REGISTER_CONTEXT_MAPPINGS = [
   { stateKey: "legalEntityId" },
   {
-    stateKey: "operatingUnitId",
+    stateKey: "ownershipScope",
+    selectContextValue: (workingContext) => {
+      return String(workingContext?.operatingUnitId || "").trim()
+        ? "OPERATING_UNIT"
+        : "";
+    },
     allowContextValue: (_contextValue, previousState, workingContext) => {
       const selectedLegalEntityId = String(previousState?.legalEntityId || "").trim();
       const contextLegalEntityId = String(workingContext?.legalEntityId || "").trim();
       return !selectedLegalEntityId || selectedLegalEntityId === contextLegalEntityId;
+    },
+  },
+  {
+    stateKey: "operatingUnitId",
+    allowContextValue: (_contextValue, previousState, workingContext) => {
+      const selectedLegalEntityId = String(previousState?.legalEntityId || "").trim();
+      const contextLegalEntityId = String(workingContext?.legalEntityId || "").trim();
+      const allowContextScope =
+        String(previousState?.ownershipScope || "").trim().toUpperCase() === "OPERATING_UNIT" ||
+        String(workingContext?.operatingUnitId || "").trim();
+      return (
+        allowContextScope &&
+        (!selectedLegalEntityId || selectedLegalEntityId === contextLegalEntityId)
+      );
     },
   },
 ];
@@ -67,6 +88,47 @@ function toOptionalAmount(value) {
 
 function parseDbBoolean(value) {
   return value === true || value === 1 || value === "1";
+}
+
+function normalizeOwnershipScope(value, fallbackOperatingUnitId = null) {
+  const normalized = String(value || "")
+    .trim()
+    .toUpperCase();
+  if (normalized === "CENTRAL" || normalized === "OPERATING_UNIT") {
+    return normalized;
+  }
+  return toPositiveInt(fallbackOperatingUnitId) ? "OPERATING_UNIT" : "CENTRAL";
+}
+
+function resolveOwnershipMeta(row, t) {
+  const scope = normalizeOwnershipScope(
+    row?.ownership_scope ?? row?.ownershipScope,
+    row?.operating_unit_id ?? row?.operatingUnitId
+  );
+  const isCentral = scope === "CENTRAL";
+  const contextLabel = isCentral
+    ? t("cashRegisters.values.centralHq")
+    : String(
+        row?.ownership_context_label ||
+          row?.ownershipContextLabel ||
+          [
+            row?.operating_unit_code || row?.operatingUnitCode || row?.operating_unit_id,
+            row?.operating_unit_name || row?.operatingUnitName,
+          ]
+            .filter(Boolean)
+            .join(" - ") ||
+          "-"
+      );
+  return {
+    scope,
+    label: isCentral
+      ? t("cashRegisters.values.ownershipCentral")
+      : t("cashRegisters.values.ownershipOperatingUnit"),
+    contextLabel,
+    badgeClass: isCentral
+      ? "bg-slate-900 text-white"
+      : "bg-cyan-100 text-cyan-800",
+  };
 }
 
 function parseBreadcrumbCodes(value) {
@@ -257,6 +319,10 @@ function mapRowToForm(row) {
     registerType: String(row?.register_type || "DRAWER").toUpperCase(),
     sessionMode: String(row?.session_mode || "REQUIRED").toUpperCase(),
     legalEntityId: String(row?.legal_entity_id || ""),
+    ownershipScope: normalizeOwnershipScope(
+      row?.ownership_scope ?? row?.ownershipScope,
+      row?.operating_unit_id ?? row?.operatingUnitId
+    ),
     operatingUnitId: String(row?.operating_unit_id || ""),
     accountId: String(row?.account_id || ""),
     currencyCode: String(row?.currency_code || "").toUpperCase(),
@@ -321,10 +387,16 @@ export default function CashRegistersPage() {
 
   useWorkingContextDefaults(setForm, CASH_REGISTER_CONTEXT_MAPPINGS, [
     form.legalEntityId,
+    form.ownershipScope,
     form.operatingUnitId,
   ]);
 
   const selectedLegalEntityId = toPositiveInt(form.legalEntityId);
+  const normalizedOwnershipScope = normalizeOwnershipScope(
+    form.ownershipScope,
+    form.operatingUnitId
+  );
+  const isOperatingUnitOwned = normalizedOwnershipScope === "OPERATING_UNIT";
 
   const legalEntityOptions = useMemo(
     () =>
@@ -627,6 +699,28 @@ export default function CashRegistersPage() {
     selectedLegalEntityFunctionalCurrencyCode,
     currencySeedEntityId,
   ]);
+
+  useEffect(() => {
+    if (!isOperatingUnitOwned && String(form.operatingUnitId || "").trim()) {
+      setForm((prev) => ({ ...prev, operatingUnitId: "" }));
+    }
+  }, [form.operatingUnitId, isOperatingUnitOwned]);
+
+  useEffect(() => {
+    if (!isOperatingUnitOwned) {
+      return;
+    }
+    const currentOperatingUnitId = toPositiveInt(form.operatingUnitId);
+    if (!currentOperatingUnitId) {
+      return;
+    }
+    const existsInScope = operatingUnitOptions.some(
+      (row) => toPositiveInt(row?.id) === currentOperatingUnitId
+    );
+    if (!existsInScope) {
+      setForm((prev) => ({ ...prev, operatingUnitId: "" }));
+    }
+  }, [form.operatingUnitId, isOperatingUnitOwned, operatingUnitOptions]);
 
   useEffect(() => {
     setAccountLookupQuery("");
@@ -1140,7 +1234,7 @@ export default function CashRegistersPage() {
 
     const legalEntityId = toPositiveInt(form.legalEntityId);
     const accountId = toPositiveInt(form.accountId);
-    const operatingUnitId = toPositiveInt(form.operatingUnitId);
+    const operatingUnitId = isOperatingUnitOwned ? toPositiveInt(form.operatingUnitId) : null;
     const varianceGainAccountId = toPositiveInt(form.varianceGainAccountId);
     const varianceLossAccountId = toPositiveInt(form.varianceLossAccountId);
     const maxTxnAmount = toOptionalAmount(form.maxTxnAmount);
@@ -1162,6 +1256,10 @@ export default function CashRegistersPage() {
       setError(t("cashRegisters.errors.requiredCurrency"));
       return;
     }
+    if (isOperatingUnitOwned && !operatingUnitId) {
+      setError(t("cashRegisters.errors.operatingUnitRequiredForOwnership"));
+      return;
+    }
     if (Number.isNaN(maxTxnAmount) || Number.isNaN(requiresApprovalOverAmount)) {
       setError(t("cashRegisters.errors.invalidAmount"));
       return;
@@ -1169,6 +1267,7 @@ export default function CashRegistersPage() {
 
     const payload = {
       legalEntityId,
+      ownershipScope: normalizedOwnershipScope,
       operatingUnitId,
       accountId,
       code: form.code.trim().toUpperCase(),
@@ -1474,6 +1573,46 @@ export default function CashRegistersPage() {
               />
             )}
 
+            <div className="rounded-lg border border-slate-300 px-3 py-2 md:col-span-2">
+              <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                {t("cashRegisters.form.ownershipScope")}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {OWNERSHIP_SCOPES.map((scope) => {
+                  const selected = normalizedOwnershipScope === scope;
+                  return (
+                    <button
+                      key={scope}
+                      type="button"
+                      onClick={() =>
+                        setForm((prev) => ({
+                          ...prev,
+                          ownershipScope: scope,
+                          operatingUnitId:
+                            scope === "CENTRAL" ? "" : prev.operatingUnitId,
+                        }))
+                      }
+                      className={[
+                        "rounded-full border px-3 py-1.5 text-xs font-semibold transition",
+                        selected
+                          ? "border-slate-900 bg-slate-900 text-white"
+                          : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50",
+                      ].join(" ")}
+                    >
+                      {scope === "CENTRAL"
+                        ? t("cashRegisters.values.ownershipCentral")
+                        : t("cashRegisters.values.ownershipOperatingUnit")}
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="mt-2 text-xs text-slate-500">
+                {isOperatingUnitOwned
+                  ? t("cashRegisters.form.ownershipOperatingUnitHelp")
+                  : t("cashRegisters.form.ownershipCentralHelp")}
+              </p>
+            </div>
+
             {currencyOptions.length > 0 ? (
               <select
                 value={form.currencyCode}
@@ -1509,32 +1648,45 @@ export default function CashRegistersPage() {
               />
             )}
 
-            {operatingUnitOptions.length > 0 ? (
-              <select
-                value={form.operatingUnitId}
-                onChange={(event) =>
-                  setForm((prev) => ({ ...prev, operatingUnitId: event.target.value }))
-                }
-                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              >
-                <option value="">{t("cashRegisters.placeholders.operatingUnit")}</option>
-                {operatingUnitOptions.map((unit) => (
-                  <option key={unit.id} value={unit.id}>
-                    {unit.code} - {unit.name}
-                  </option>
-                ))}
-              </select>
+            {isOperatingUnitOwned ? (
+              operatingUnitOptions.length > 0 ? (
+                <select
+                  value={form.operatingUnitId}
+                  onChange={(event) =>
+                    setForm((prev) => ({ ...prev, operatingUnitId: event.target.value }))
+                  }
+                  className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  required
+                >
+                  <option value="">{t("cashRegisters.placeholders.operatingUnit")}</option>
+                  {operatingUnitOptions.map((unit) => (
+                    <option key={unit.id} value={unit.id}>
+                      {unit.code} - {unit.name}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  type="number"
+                  min={1}
+                  value={form.operatingUnitId}
+                  onChange={(event) =>
+                    setForm((prev) => ({ ...prev, operatingUnitId: event.target.value }))
+                  }
+                  className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  placeholder={t("cashRegisters.form.operatingUnitIdRequired")}
+                  required
+                />
+              )
             ) : (
-              <input
-                type="number"
-                min={1}
-                value={form.operatingUnitId}
-                onChange={(event) =>
-                  setForm((prev) => ({ ...prev, operatingUnitId: event.target.value }))
-                }
-                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                placeholder={t("cashRegisters.form.operatingUnitIdOptional")}
-              />
+              <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-2 text-sm text-slate-600">
+                <div className="font-medium text-slate-700">
+                  {t("cashRegisters.values.centralHq")}
+                </div>
+                <div className="mt-1 text-xs text-slate-500">
+                  {t("cashRegisters.form.operatingUnitHiddenForCentral")}
+                </div>
+              </div>
             )}
 
             {canReadAccounts ? (
@@ -1822,6 +1974,7 @@ export default function CashRegistersPage() {
                 <th className="px-3 py-2">ID</th>
                 <th className="px-3 py-2">{t("cashRegisters.table.code")}</th>
                 <th className="px-3 py-2">{t("cashRegisters.table.name")}</th>
+                <th className="px-3 py-2">{t("cashRegisters.table.ownership")}</th>
                 <th className="px-3 py-2">{t("cashRegisters.table.registerType")}</th>
                 <th className="px-3 py-2">{t("cashRegisters.table.sessionMode")}</th>
                 <th className="px-3 py-2">{t("cashRegisters.table.legalEntity")}</th>
@@ -1837,6 +1990,7 @@ export default function CashRegistersPage() {
               {rows.map((row) => {
                 const rowId = toPositiveInt(row?.id);
                 const rowStatus = String(row?.status || "").toUpperCase();
+                const ownershipMeta = resolveOwnershipMeta(row, t);
                 const isStatusBusy = rowId && updatingStatusId === rowId;
                 const statusBadgeClass =
                   rowStatus === "ACTIVE"
@@ -1848,19 +2002,20 @@ export default function CashRegistersPage() {
                     <td className="px-3 py-2">{row.id}</td>
                     <td className="px-3 py-2">{row.code}</td>
                     <td className="px-3 py-2">{row.name}</td>
+                    <td className="px-3 py-2">
+                      <span
+                        className={`inline-flex rounded-full px-2 py-1 text-xs font-semibold ${ownershipMeta.badgeClass}`}
+                      >
+                        {ownershipMeta.label}
+                      </span>
+                    </td>
                     <td className="px-3 py-2">{row.register_type}</td>
                     <td className="px-3 py-2">{row.session_mode}</td>
                     <td className="px-3 py-2">
                       {row.legal_entity_code || row.legal_entity_id} -{" "}
                       {row.legal_entity_name || "-"}
                     </td>
-                    <td className="px-3 py-2">
-                      {row.operating_unit_id
-                        ? `${row.operating_unit_code || row.operating_unit_id} - ${
-                            row.operating_unit_name || "-"
-                          }`
-                        : "-"}
-                    </td>
+                    <td className="px-3 py-2">{ownershipMeta.contextLabel}</td>
                     <td className="px-3 py-2">
                       {row.account_code || row.account_id} - {row.account_name || "-"}
                     </td>

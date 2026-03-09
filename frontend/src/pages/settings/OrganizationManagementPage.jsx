@@ -26,6 +26,7 @@ import {
   upsertShareholder,
 } from "../../api/orgAdmin.js";
 import { listBankAccounts } from "../../api/bankAccounts.js";
+import { listCashRegisters, listCashSessions } from "../../api/cashAdmin.js";
 import { listAccounts } from "../../api/glAdmin.js";
 import { useAuth } from "../../auth/useAuth.js";
 import { useI18n } from "../../i18n/useI18n.js";
@@ -66,6 +67,8 @@ const DEFAULT_CAPITAL_FULFILLMENT_FORM = {
   amount: "",
   destinationMode: "BANK_ACCOUNT",
   bankAccountId: "",
+  cashRegisterId: "",
+  cashSessionId: "",
   destinationAccountId: "",
   operatingUnitId: "",
   note: "",
@@ -125,11 +128,123 @@ function formatBankAccountOptionLabel(account) {
   return parts.filter(Boolean).join(" | ") || "-";
 }
 
+function formatCashRegisterOptionLabel(register) {
+  const code = String(register?.code || "").trim();
+  const name = String(register?.name || "").trim();
+  const currencyCode = String(register?.currency_code || "").trim().toUpperCase();
+  const sessionMode = String(register?.session_mode || "").trim().toUpperCase();
+  const explicitOwnershipContext = String(register?.ownership_context_label || "").trim();
+  const ownershipContext = explicitOwnershipContext
+    ? explicitOwnershipContext === "Central / HQ" ||
+      explicitOwnershipContext === "Merkez / HQ" ||
+      explicitOwnershipContext.startsWith("OU:")
+      ? explicitOwnershipContext
+      : register?.operating_unit_code
+        ? `OU: ${register.operating_unit_code}`
+        : explicitOwnershipContext
+    : register?.operating_unit_code
+      ? `OU: ${register.operating_unit_code}`
+      : "Central / HQ";
+  const parts = [];
+  if (code || name) {
+    parts.push([code, name].filter(Boolean).join(" - "));
+  }
+  if (currencyCode) {
+    parts.push(currencyCode);
+  }
+  if (sessionMode) {
+    parts.push(`session=${sessionMode}`);
+  }
+  parts.push(ownershipContext);
+  return parts.filter(Boolean).join(" | ") || "-";
+}
+
+function formatCashSessionOptionLabel(session) {
+  const sessionId = toNumber(session?.id);
+  const registerCode = String(session?.cash_register_code || "").trim();
+  const explicitOwnershipContext = String(session?.ownership_context_label || "").trim();
+  const ownershipContext = explicitOwnershipContext
+    ? explicitOwnershipContext === "Central / HQ" ||
+      explicitOwnershipContext === "Merkez / HQ" ||
+      explicitOwnershipContext.startsWith("OU:")
+      ? explicitOwnershipContext
+      : session?.operating_unit_code
+        ? `OU: ${session.operating_unit_code}`
+        : explicitOwnershipContext
+    : session?.operating_unit_code
+      ? `OU: ${session.operating_unit_code}`
+      : "Central / HQ";
+  const openedAt = String(session?.opened_at || "").trim();
+  return [`#${sessionId || "-"}`, registerCode, ownershipContext, openedAt]
+    .filter(Boolean)
+    .join(" | ");
+}
+
+function todayIsoDate() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function buildCapitalFulfillmentTransitShortcutPath(shortcut) {
+  const params = new URLSearchParams();
+  params.set("prefillMode", "capitalFulfillmentTransit");
+  params.set("txnType", "TRANSFER_OUT");
+
+  const sourceRegisterId = toNumber(shortcut?.sourceRegisterId);
+  const targetRegisterId = toNumber(shortcut?.targetRegisterId);
+  const amountBase = normalizeAmount(shortcut?.amountBase);
+  const currencyCode = String(shortcut?.currencyCode || "").trim().toUpperCase();
+  const referenceNo = String(shortcut?.referenceNo || "").trim();
+  const description = String(shortcut?.description || "").trim();
+  const fulfillmentId = toNumber(shortcut?.fulfillmentId);
+  const bookDate = String(shortcut?.bookDate || "").trim();
+  const sourceRegisterCode = String(shortcut?.sourceRegisterCode || "").trim();
+  const targetRegisterCode = String(shortcut?.targetRegisterCode || "").trim();
+
+  if (sourceRegisterId) {
+    params.set("registerId", String(sourceRegisterId));
+  }
+  if (targetRegisterId) {
+    params.set("counterCashRegisterId", String(targetRegisterId));
+  }
+  if (amountBase > 0) {
+    params.set("amount", String(amountBase));
+  }
+  if (currencyCode) {
+    params.set("currencyCode", currencyCode);
+  }
+  if (referenceNo) {
+    params.set("referenceNo", referenceNo);
+  }
+  if (description) {
+    params.set("description", description);
+  }
+  if (bookDate) {
+    params.set("bookDate", bookDate);
+  }
+  if (fulfillmentId) {
+    params.set("fulfillmentId", String(fulfillmentId));
+  }
+  if (sourceRegisterCode) {
+    params.set("sourceRegisterCode", sourceRegisterCode);
+  }
+  if (targetRegisterCode) {
+    params.set("targetRegisterCode", targetRegisterCode);
+  }
+  params.set("sourceDocType", "OTHER");
+
+  return `/app/kasa-islemleri?${params.toString()}`;
+}
+
 function formatCapitalFulfillmentDestination(row) {
   const mode = String(row?.destination_mode || "").trim().toUpperCase();
   if (mode === "BANK_ACCOUNT") {
     const code = String(row?.bank_account_code || "").trim();
     const name = String(row?.bank_account_name || "").trim();
+    return [code, name].filter(Boolean).join(" - ") || "-";
+  }
+  if (mode === "CASH_REGISTER") {
+    const code = String(row?.cash_register_code || "").trim();
+    const name = String(row?.cash_register_name || "").trim();
     return [code, name].filter(Boolean).join(" - ") || "-";
   }
   const code = String(row?.destination_account_code || "").trim();
@@ -254,6 +369,8 @@ export default function OrganizationManagementPage() {
   const canUpsertFiscalCalendar = hasPermission("org.fiscal_calendar.upsert");
   const canGenerateFiscalPeriods = hasPermission("org.fiscal_period.generate");
   const canReadBanks = hasPermission("bank.accounts.read");
+  const canReadCashRegisters = hasPermission("cash.register.read");
+  const canReadCashSessions = canReadCashRegisters;
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState("");
@@ -295,6 +412,18 @@ export default function OrganizationManagementPage() {
   const [capitalFulfillmentBankLoading, setCapitalFulfillmentBankLoading] =
     useState(false);
   const [capitalFulfillmentBankError, setCapitalFulfillmentBankError] =
+    useState("");
+  const [capitalFulfillmentCashRegisters, setCapitalFulfillmentCashRegisters] =
+    useState([]);
+  const [capitalFulfillmentCashRegistersLoading, setCapitalFulfillmentCashRegistersLoading] =
+    useState(false);
+  const [capitalFulfillmentCashRegistersError, setCapitalFulfillmentCashRegistersError] =
+    useState("");
+  const [capitalFulfillmentOpenCashSessions, setCapitalFulfillmentOpenCashSessions] =
+    useState([]);
+  const [capitalFulfillmentCashSessionsLoading, setCapitalFulfillmentCashSessionsLoading] =
+    useState(false);
+  const [capitalFulfillmentCashSessionsError, setCapitalFulfillmentCashSessionsError] =
     useState("");
   const [capitalFulfillmentHistory, setCapitalFulfillmentHistory] = useState([]);
   const [capitalFulfillmentHistoryLoading, setCapitalFulfillmentHistoryLoading] =
@@ -503,10 +632,10 @@ export default function OrganizationManagementPage() {
       setCapitalFulfillmentHistory([]);
       setCapitalFulfillmentHistoryError(
         err?.response?.data?.message ||
-          l(
-            "Failed to load capital fulfillment history.",
-            "Sermaye karsilama gecmisi yuklenemedi."
-          )
+        l(
+          "Failed to load capital fulfillment history.",
+          "Sermaye karsilama gecmisi yuklenemedi."
+        )
       );
     } finally {
       setCapitalFulfillmentHistoryLoading(false);
@@ -1075,8 +1204,8 @@ export default function OrganizationManagementPage() {
     () =>
       Boolean(
         batchPreviewData &&
-          Array.isArray(batchPreviewData?.validation?.mixed_currency) &&
-          batchPreviewData.validation.mixed_currency.length > 1
+        Array.isArray(batchPreviewData?.validation?.mixed_currency) &&
+        batchPreviewData.validation.mixed_currency.length > 1
       ),
     [batchPreviewData]
   );
@@ -1257,11 +1386,54 @@ export default function OrganizationManagementPage() {
     capitalFulfillmentLegalEntityId,
     capitalFulfillmentOperatingUnitId,
   ]);
+  const capitalFulfillmentCashRegisterOptions = useMemo(() => {
+    return capitalFulfillmentCashRegisters.filter((row) => {
+      if (Number(row.legal_entity_id) !== Number(capitalFulfillmentLegalEntityId)) {
+        return false;
+      }
+      if (capitalFulfillmentOperatingUnitId) {
+        return Number(row.operating_unit_id) === Number(capitalFulfillmentOperatingUnitId);
+      }
+      return !toNumber(row.operating_unit_id);
+    });
+  }, [
+    capitalFulfillmentCashRegisters,
+    capitalFulfillmentLegalEntityId,
+    capitalFulfillmentOperatingUnitId,
+  ]);
+  const selectedCapitalFulfillmentCashRegister = useMemo(
+    () =>
+      capitalFulfillmentCashRegisterOptions.find(
+        (row) => toNumber(row.id) === toNumber(capitalFulfillmentForm.cashRegisterId)
+      ) || null,
+    [capitalFulfillmentCashRegisterOptions, capitalFulfillmentForm.cashRegisterId]
+  );
+  const capitalFulfillmentCashSessionOptions = useMemo(() => {
+    const registerId = toNumber(capitalFulfillmentForm.cashRegisterId);
+    if (!registerId) {
+      return [];
+    }
+    return capitalFulfillmentOpenCashSessions.filter(
+      (row) => toNumber(row.cash_register_id) === registerId
+    );
+  }, [capitalFulfillmentForm.cashRegisterId, capitalFulfillmentOpenCashSessions]);
+  const capitalFulfillmentCashSessionRequired =
+    String(selectedCapitalFulfillmentCashRegister?.session_mode || "")
+      .trim()
+      .toUpperCase() === "REQUIRED";
+  const capitalFulfillmentCashSessionMissingOpenSession =
+    capitalFulfillmentCashSessionRequired &&
+    toNumber(capitalFulfillmentForm.cashRegisterId) &&
+    capitalFulfillmentCashSessionOptions.length === 0 &&
+    !capitalFulfillmentCashSessionsLoading;
+  const capitalFulfillmentCashSessionValueMissing =
+    capitalFulfillmentCashSessionRequired &&
+    !toNumber(capitalFulfillmentForm.cashSessionId);
   const capitalFulfillmentCanOpen = Boolean(
     selectedShareholderLegalEntityId &&
-      canUpsertShareholder &&
-      (canReadBanks || canReadAccounts) &&
-      eligibleShareholdersForCommitmentIncrease.length > 0
+    canUpsertShareholder &&
+    (canReadBanks || canReadAccounts || canReadCashRegisters) &&
+    eligibleShareholdersForCommitmentIncrease.length > 0
   );
   const capitalFulfillmentSelectedLegalEntity = useMemo(
     () => legalEntityById.get(capitalFulfillmentLegalEntityId) || null,
@@ -1322,7 +1494,7 @@ export default function OrganizationManagementPage() {
         setCapitalFulfillmentBankAccounts([]);
         setCapitalFulfillmentBankError(
           err?.response?.data?.message ||
-            l("Failed to load bank accounts.", "Banka hesaplari yuklenemedi.")
+          l("Failed to load bank accounts.", "Banka hesaplari yuklenemedi.")
         );
       })
       .finally(() => {
@@ -1343,6 +1515,185 @@ export default function OrganizationManagementPage() {
     l,
   ]);
   useEffect(() => {
+    if (
+      !capitalFulfillmentModalOpen ||
+      !canReadCashRegisters ||
+      capitalFulfillmentForm.destinationMode !== "CASH_REGISTER" ||
+      !capitalFulfillmentLegalEntityId
+    ) {
+      if (!capitalFulfillmentModalOpen) {
+        setCapitalFulfillmentCashRegisters([]);
+        setCapitalFulfillmentCashRegistersError("");
+        setCapitalFulfillmentOpenCashSessions([]);
+        setCapitalFulfillmentCashSessionsError("");
+      }
+      return undefined;
+    }
+
+    let active = true;
+    setCapitalFulfillmentCashRegistersLoading(true);
+    setCapitalFulfillmentCashRegistersError("");
+
+    listCashRegisters({
+      legalEntityId: capitalFulfillmentLegalEntityId,
+      status: "ACTIVE",
+      limit: 300,
+      offset: 0,
+    })
+      .then((response) => {
+        if (!active) {
+          return;
+        }
+        setCapitalFulfillmentCashRegisters(response?.rows || []);
+      })
+      .catch((err) => {
+        if (!active) {
+          return;
+        }
+        setCapitalFulfillmentCashRegisters([]);
+        setCapitalFulfillmentCashRegistersError(
+          err?.response?.data?.message ||
+          l("Failed to load cash registers.", "Kasalar yuklenemedi.")
+        );
+      })
+      .finally(() => {
+        if (active) {
+          setCapitalFulfillmentCashRegistersLoading(false);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [
+    canReadCashRegisters,
+    capitalFulfillmentForm.destinationMode,
+    capitalFulfillmentLegalEntityId,
+    capitalFulfillmentModalOpen,
+    l,
+  ]);
+  useEffect(() => {
+    if (
+      !capitalFulfillmentModalOpen ||
+      !canReadCashSessions ||
+      capitalFulfillmentForm.destinationMode !== "CASH_REGISTER" ||
+      !capitalFulfillmentCashSessionRequired ||
+      !toNumber(capitalFulfillmentForm.cashRegisterId)
+    ) {
+      setCapitalFulfillmentOpenCashSessions([]);
+      setCapitalFulfillmentCashSessionsError("");
+      setCapitalFulfillmentCashSessionsLoading(false);
+      return undefined;
+    }
+
+    let active = true;
+    setCapitalFulfillmentCashSessionsLoading(true);
+    setCapitalFulfillmentCashSessionsError("");
+
+    listCashSessions({
+      registerId: toNumber(capitalFulfillmentForm.cashRegisterId),
+      status: "OPEN",
+      limit: 300,
+      offset: 0,
+    })
+      .then((response) => {
+        if (!active) {
+          return;
+        }
+        setCapitalFulfillmentOpenCashSessions(response?.rows || []);
+      })
+      .catch((err) => {
+        if (!active) {
+          return;
+        }
+        setCapitalFulfillmentOpenCashSessions([]);
+        setCapitalFulfillmentCashSessionsError(
+          err?.response?.data?.message ||
+          l("Failed to load open cash sessions.", "Acik kasa oturumlari yuklenemedi.")
+        );
+      })
+      .finally(() => {
+        if (active) {
+          setCapitalFulfillmentCashSessionsLoading(false);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [
+    canReadCashSessions,
+    capitalFulfillmentCashSessionRequired,
+    capitalFulfillmentForm.cashRegisterId,
+    capitalFulfillmentForm.destinationMode,
+    capitalFulfillmentModalOpen,
+    l,
+  ]);
+  useEffect(() => {
+    if (
+      capitalFulfillmentForm.destinationMode !== "CASH_REGISTER" ||
+      capitalFulfillmentCashSessionRequired
+    ) {
+      return;
+    }
+    if (!capitalFulfillmentForm.cashSessionId) {
+      return;
+    }
+    updateCapitalFulfillmentForm({
+      cashSessionId: "",
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [capitalFulfillmentCashSessionRequired, capitalFulfillmentForm.destinationMode]);
+  useEffect(() => {
+    if (capitalFulfillmentForm.destinationMode !== "CASH_REGISTER") {
+      return;
+    }
+    const cashRegisterId = toNumber(capitalFulfillmentForm.cashRegisterId);
+    if (!cashRegisterId) {
+      return;
+    }
+    const registerStillVisible = capitalFulfillmentCashRegisterOptions.some(
+      (row) => toNumber(row.id) === cashRegisterId
+    );
+    if (registerStillVisible) {
+      return;
+    }
+    updateCapitalFulfillmentForm({
+      cashRegisterId: "",
+      cashSessionId: "",
+    });
+  }, [
+    capitalFulfillmentCashRegisterOptions,
+    capitalFulfillmentForm.cashRegisterId,
+    capitalFulfillmentForm.destinationMode,
+  ]);
+  useEffect(() => {
+    if (
+      capitalFulfillmentForm.destinationMode !== "CASH_REGISTER" ||
+      !capitalFulfillmentCashSessionRequired
+    ) {
+      return;
+    }
+    const cashSessionId = toNumber(capitalFulfillmentForm.cashSessionId);
+    if (!cashSessionId) {
+      return;
+    }
+    const sessionStillVisible = capitalFulfillmentCashSessionOptions.some(
+      (row) => toNumber(row.id) === cashSessionId
+    );
+    if (sessionStillVisible) {
+      return;
+    }
+    updateCapitalFulfillmentForm({
+      cashSessionId: "",
+    });
+  }, [
+    capitalFulfillmentCashSessionOptions,
+    capitalFulfillmentCashSessionRequired,
+    capitalFulfillmentForm.cashSessionId,
+    capitalFulfillmentForm.destinationMode,
+  ]);
+  useEffect(() => {
     if (!selectedShareholderLegalEntityId) {
       setCapitalFulfillmentHistory([]);
       setCapitalFulfillmentHistoryError("");
@@ -1357,7 +1708,7 @@ export default function OrganizationManagementPage() {
   );
   const shareholderCommitmentModuleNotReady = Boolean(
     selectedShareholderCommitmentReadiness &&
-      !selectedShareholderCommitmentReadiness.ready
+    !selectedShareholderCommitmentReadiness.ready
   );
   const shareholderSetupSteps = useMemo(() => {
     const queueCount = pendingBatchCommitmentShareholders.length;
@@ -1457,7 +1808,7 @@ export default function OrganizationManagementPage() {
     : [];
   const batchPreviewHasBlockingErrors = Boolean(
     batchPreviewData?.validation?.has_blocking_errors ||
-      batchPreviewBlockingErrors.length > 0
+    batchPreviewBlockingErrors.length > 0
   );
 
   useEffect(() => {
@@ -1546,7 +1897,7 @@ export default function OrganizationManagementPage() {
           filteredIds.length !== (Array.isArray(ids) ? ids.length : 0) ||
           (filteredIds.length > 0 &&
             JSON.stringify(filteredIds) !==
-              JSON.stringify(Array.isArray(ids) ? ids : []))
+            JSON.stringify(Array.isArray(ids) ? ids : []))
         ) {
           changed = true;
         }
@@ -1866,15 +2217,15 @@ export default function OrganizationManagementPage() {
         const paymentTermsProvisioning = response?.paymentTermsProvisioning || null;
         const glSummary = created
           ? l(
-              `Defaults created: calendar ${created.fiscalCalendars}, periods ${created.fiscalPeriods}, CoA ${created.chartsOfAccounts}, accounts ${created.accounts}, books ${created.books}.`,
-              `Varsayilanlar olusturuldu: takvim ${created.fiscalCalendars}, donem ${created.fiscalPeriods}, hesap plani ${created.chartsOfAccounts}, hesap ${created.accounts}, defter ${created.books}.`
-            )
+            `Defaults created: calendar ${created.fiscalCalendars}, periods ${created.fiscalPeriods}, CoA ${created.chartsOfAccounts}, accounts ${created.accounts}, books ${created.books}.`,
+            `Varsayilanlar olusturuldu: takvim ${created.fiscalCalendars}, donem ${created.fiscalPeriods}, hesap plani ${created.chartsOfAccounts}, hesap ${created.accounts}, defter ${created.books}.`
+          )
           : "";
         const paymentTermsSummary = paymentTermsProvisioning
           ? l(
-              `Payment terms: created ${paymentTermsProvisioning.createdCount}, skipped ${paymentTermsProvisioning.skippedCount}.`,
-              `Odeme kosullari: olusturulan ${paymentTermsProvisioning.createdCount}, atlanan ${paymentTermsProvisioning.skippedCount}.`
-            )
+            `Payment terms: created ${paymentTermsProvisioning.createdCount}, skipped ${paymentTermsProvisioning.skippedCount}.`,
+            `Odeme kosullari: olusturulan ${paymentTermsProvisioning.createdCount}, atlanan ${paymentTermsProvisioning.skippedCount}.`
+          )
           : "";
         const detailMessage = [glSummary, paymentTermsSummary].filter(Boolean).join(" ");
         setMessage(`${baseSuccessMessage} ${detailMessage}`.trim());
@@ -2005,10 +2356,10 @@ export default function OrganizationManagementPage() {
     } catch (err) {
       setError(
         err?.response?.data?.message ||
-          l(
-            "Failed to save shareholder parent account mapping.",
-            "Ortak parent hesap eslesmesi kaydedilemedi."
-          )
+        l(
+          "Failed to save shareholder parent account mapping.",
+          "Ortak parent hesap eslesmesi kaydedilemedi."
+        )
       );
     } finally {
       setSaving("");
@@ -2103,11 +2454,11 @@ export default function OrganizationManagementPage() {
     } catch (err) {
       setError(
         err?.response?.data?.message ||
-          err?.message ||
-          l(
-            "Failed to auto-create shareholder sub-accounts.",
-            "Ortak alt hesaplari otomatik olusturulamadi."
-          )
+        err?.message ||
+        l(
+          "Failed to auto-create shareholder sub-accounts.",
+          "Ortak alt hesaplari otomatik olusturulamadi."
+        )
       );
     } finally {
       setAutoSubAccountSetupSaving(false);
@@ -2158,10 +2509,10 @@ export default function OrganizationManagementPage() {
       setBatchPreviewData(null);
       setError(
         err?.response?.data?.message ||
-          l(
-            "Failed to load batch commitment preview.",
-            "Toplu taahhut onizlemesi yuklenemedi."
-          )
+        l(
+          "Failed to load batch commitment preview.",
+          "Toplu taahhut onizlemesi yuklenemedi."
+        )
       );
       return null;
     } finally {
@@ -2286,10 +2637,10 @@ export default function OrganizationManagementPage() {
     } catch (err) {
       setError(
         err?.response?.data?.message ||
-          l(
-            "Failed to create batch commitment journal.",
-            "Toplu taahhut yevmiyesi olusturulamadi."
-          )
+        l(
+          "Failed to create batch commitment journal.",
+          "Toplu taahhut yevmiyesi olusturulamadi."
+        )
       );
     } finally {
       setBatchCommitmentSaving(false);
@@ -2302,6 +2653,12 @@ export default function OrganizationManagementPage() {
     setCapitalFulfillmentPreview(null);
     setCapitalFulfillmentBankAccounts([]);
     setCapitalFulfillmentBankError("");
+    setCapitalFulfillmentCashRegisters([]);
+    setCapitalFulfillmentCashRegistersError("");
+    setCapitalFulfillmentOpenCashSessions([]);
+    setCapitalFulfillmentCashSessionsError("");
+    setCapitalFulfillmentCashRegistersLoading(false);
+    setCapitalFulfillmentCashSessionsLoading(false);
     setCapitalFulfillmentPreviewLoading(false);
     setCapitalFulfillmentSaving(false);
   }
@@ -2332,7 +2689,11 @@ export default function OrganizationManagementPage() {
       return;
     }
 
-    const defaultMode = canReadBanks ? "BANK_ACCOUNT" : "ASSET_GL";
+    const defaultMode = canReadBanks
+      ? "BANK_ACCOUNT"
+      : canReadCashRegisters
+        ? "CASH_REGISTER"
+        : "ASSET_GL";
     const defaultShareholderId = toNumber(
       eligibleShareholdersForCommitmentIncrease[0]?.id
     );
@@ -2341,6 +2702,8 @@ export default function OrganizationManagementPage() {
     setMessage("");
     setCapitalFulfillmentPreview(null);
     setCapitalFulfillmentBankError("");
+    setCapitalFulfillmentCashRegistersError("");
+    setCapitalFulfillmentCashSessionsError("");
     setCapitalFulfillmentForm({
       ...DEFAULT_CAPITAL_FULFILLMENT_FORM,
       legalEntityId: String(selectedShareholderLegalEntityId),
@@ -2430,6 +2793,46 @@ export default function OrganizationManagementPage() {
         );
         return null;
       }
+    } else if (destinationMode === "CASH_REGISTER") {
+      if (!canReadCashRegisters) {
+        setError(
+          l(
+            "Missing permission: cash.register.read",
+            "Eksik yetki: cash.register.read"
+          )
+        );
+        return null;
+      }
+      if (!toNumber(capitalFulfillmentForm.cashRegisterId)) {
+        setError(
+          l(
+            "Select a cash register destination first.",
+            "Once kasa hedefini secin."
+          )
+        );
+        return null;
+      }
+      if (capitalFulfillmentCashSessionMissingOpenSession) {
+        setError(
+          l(
+            "Selected cash register requires an OPEN cash session. Open one from Cash Sessions first.",
+            "Secili kasa icin OPEN durumunda bir kasa oturumu gerekir. Once Cash Sessions ekranindan acin."
+          )
+        );
+        return null;
+      }
+      if (
+        capitalFulfillmentCashSessionRequired &&
+        !toNumber(capitalFulfillmentForm.cashSessionId)
+      ) {
+        setError(
+          l(
+            "Selected cash register requires an OPEN cash session.",
+            "Secili kasa bir OPEN kasa oturumu gerektirir."
+          )
+        );
+        return null;
+      }
     } else if (destinationMode === "ASSET_GL") {
       if (!canReadAccounts) {
         setError(
@@ -2462,6 +2865,14 @@ export default function OrganizationManagementPage() {
         destinationMode === "BANK_ACCOUNT"
           ? toNumber(capitalFulfillmentForm.bankAccountId)
           : undefined,
+      cashRegisterId:
+        destinationMode === "CASH_REGISTER"
+          ? toNumber(capitalFulfillmentForm.cashRegisterId)
+          : undefined,
+      cashSessionId:
+        destinationMode === "CASH_REGISTER"
+          ? toNumber(capitalFulfillmentForm.cashSessionId) || undefined
+          : undefined,
       destinationAccountId:
         destinationMode === "ASSET_GL"
           ? toNumber(capitalFulfillmentForm.destinationAccountId)
@@ -2489,10 +2900,10 @@ export default function OrganizationManagementPage() {
       setCapitalFulfillmentPreview(null);
       setError(
         err?.response?.data?.message ||
-          l(
-            "Failed to load capital fulfillment preview.",
-            "Sermaye karsilama onizlemesi yuklenemedi."
-          )
+        l(
+          "Failed to load capital fulfillment preview.",
+          "Sermaye karsilama onizlemesi yuklenemedi."
+        )
       );
       return null;
     } finally {
@@ -2525,6 +2936,34 @@ export default function OrganizationManagementPage() {
       const response = await createShareholderCapitalFulfillment(payload);
       const preview = response?.preview || capitalFulfillmentPreview;
       const amountLabel = formatAmount(preview?.amount_base || payload.amount);
+      const shouldOfferTransitShortcut =
+        String(payload.destinationMode || "").toUpperCase() === "CASH_REGISTER" &&
+        !toNumber(payload.operatingUnitId);
+      const sourceCashRegisterId = toNumber(
+        preview?.destination?.cash_register_id || payload.cashRegisterId
+      );
+      const branchRegisterOptions = shouldOfferTransitShortcut
+        ? capitalFulfillmentCashRegisters
+          .filter(
+            (row) =>
+              Number(row.legal_entity_id) === Number(payload.legalEntityId) &&
+              toNumber(row.operating_unit_id) &&
+              toNumber(row.id) !== sourceCashRegisterId
+          )
+          .sort((left, right) =>
+            String(left?.code || "").localeCompare(String(right?.code || ""))
+          )
+          .map((row) => ({
+            id: toNumber(row.id),
+            code: String(row.code || "").trim(),
+            name: String(row.name || "").trim(),
+            operatingUnitCode: String(row.operating_unit_code || "").trim(),
+            label: formatCashRegisterOptionLabel(row),
+          }))
+        : [];
+      const defaultTargetRegisterId = toNumber(branchRegisterOptions[0]?.id);
+      const selectedTargetRegister =
+        branchRegisterOptions.find((row) => toNumber(row.id) === defaultTargetRegisterId) || null;
       setMessage(
         l(
           "Capital fulfillment posted.",
@@ -2544,6 +2983,38 @@ export default function OrganizationManagementPage() {
         journalEntryId: response?.journalEntryId || "-",
         bookCode: preview?.journal_context?.book_code || "-",
         fiscalPeriodId: preview?.journal_context?.fiscal_period_id || "-",
+        transitShortcut:
+          shouldOfferTransitShortcut && sourceCashRegisterId
+            ? {
+              fulfillmentId: toNumber(response?.fulfillmentId) || null,
+              sourceRegisterId: sourceCashRegisterId,
+              sourceRegisterCode: String(preview?.destination?.cash_register_code || "").trim(),
+              sourceRegisterLabel:
+                formatCashRegisterOptionLabel({
+                  code: String(preview?.destination?.cash_register_code || "").trim(),
+                  name: String(preview?.destination?.cash_register_name || "").trim(),
+                  currency_code: String(preview?.currency_code || "").trim().toUpperCase(),
+                  session_mode: "",
+                  ownership_context_label: "Central / HQ",
+                }) || "-",
+              targetRegisterId: defaultTargetRegisterId
+                ? String(defaultTargetRegisterId)
+                : "",
+              targetRegisterCode: String(selectedTargetRegister?.code || "").trim(),
+              targetRegisterOptions: branchRegisterOptions,
+              amountBase: preview?.amount_base || payload.amount || 0,
+              currencyCode: String(preview?.currency_code || "").trim().toUpperCase(),
+              bookDate: todayIsoDate(),
+              referenceNo: `SCF-HQ-TRANSFER:${toNumber(response?.fulfillmentId) || "NEW"}`.slice(
+                0,
+                100
+              ),
+              description: l(
+                `HQ to branch cash transit for shareholder capital fulfillment ${response?.journalNo || "-"}`,
+                `${response?.journalNo || "-"} icin merkezden subeye kasa transit transferi`
+              ),
+            }
+            : null,
       });
       resetCapitalFulfillmentModal();
       await Promise.all([
@@ -2553,10 +3024,10 @@ export default function OrganizationManagementPage() {
     } catch (err) {
       setError(
         err?.response?.data?.message ||
-          l(
-            "Failed to post capital fulfillment.",
-            "Sermaye karsilamasi post edilemedi."
-          )
+        l(
+          "Failed to post capital fulfillment.",
+          "Sermaye karsilamasi post edilemedi."
+        )
       );
     } finally {
       setCapitalFulfillmentSaving(false);
@@ -2628,10 +3099,10 @@ export default function OrganizationManagementPage() {
     } catch (err) {
       setError(
         err?.response?.data?.message ||
-          l(
-            "Failed to reverse capital fulfillment.",
-            "Sermaye karsilamasi ters cevrilemedi."
-          )
+        l(
+          "Failed to reverse capital fulfillment.",
+          "Sermaye karsilamasi ters cevrilemedi."
+        )
       );
     } finally {
       setCapitalFulfillmentReversingId(null);
@@ -2790,10 +3261,10 @@ export default function OrganizationManagementPage() {
     } catch (err) {
       setError(
         err?.response?.data?.message ||
-          l(
-            "Failed to save commitment increase.",
-            "Taahhut artisi kaydedilemedi."
-          )
+        l(
+          "Failed to save commitment increase.",
+          "Taahhut artisi kaydedilemedi."
+        )
       );
     } finally {
       setSaving("");
@@ -2849,10 +3320,10 @@ export default function OrganizationManagementPage() {
     if (committedCapital > 0 && !hasShareholderParentMapping) {
       setError(
         parentMappingStatus?.reasons?.[0] ||
-          l(
-            "Save valid shareholder parent account mapping before entering commitment increase.",
-            "Taahhut artisi girmeden once gecerli ortak parent hesap eslesmesini kaydedin."
-          )
+        l(
+          "Save valid shareholder parent account mapping before entering commitment increase.",
+          "Taahhut artisi girmeden once gecerli ortak parent hesap eslesmesini kaydedin."
+        )
       );
       return;
     }
@@ -2950,7 +3421,7 @@ export default function OrganizationManagementPage() {
     } catch (err) {
       setError(
         err?.response?.data?.message ||
-          l("Failed to save shareholder.", "Ortak kaydedilemedi.")
+        l("Failed to save shareholder.", "Ortak kaydedilemedi.")
       );
     } finally {
       setSaving("");
@@ -3149,9 +3620,9 @@ export default function OrganizationManagementPage() {
               </tbody>
             </table>
           </div>
-            </section>
+        </section>
 
-            <section className="rounded-xl border border-slate-200 bg-white p-4">
+        <section className="rounded-xl border border-slate-200 bg-white p-4">
           <h2 className="mb-3 text-sm font-semibold text-slate-700">
             {l("Legal Entities", "Istirakler / Bagli Ortaklar")}
           </h2>
@@ -3409,7 +3880,7 @@ export default function OrganizationManagementPage() {
           </div>
         </section>
 
-            <section className="rounded-xl border border-slate-200 bg-white p-4">
+        <section className="rounded-xl border border-slate-200 bg-white p-4">
           <h2 className="mb-3 text-sm font-semibold text-slate-700">
             {l("Operating Units / Branches", "Operasyon Birimleri / Subeler")}
           </h2>
@@ -3605,11 +4076,10 @@ export default function OrganizationManagementPage() {
                       </td>
                       <td className="px-3 py-2">
                         <span
-                          className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${
-                            row.capital_self_balancing_ready
+                          className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${row.capital_self_balancing_ready
                               ? "bg-emerald-100 text-emerald-700"
                               : "bg-amber-100 text-amber-700"
-                          }`}
+                            }`}
                         >
                           {row.capital_self_balancing_ready
                             ? l("Ready", "Hazir")
@@ -3649,11 +4119,10 @@ export default function OrganizationManagementPage() {
         )}
 
         <section
-          className={`border border-slate-200 bg-white p-4 ${
-            shareholderCardExpanded
+          className={`border border-slate-200 bg-white p-4 ${shareholderCardExpanded
               ? "fixed inset-4 z-50 overflow-auto rounded-xl shadow-2xl"
               : "relative rounded-xl"
-          }`}
+            }`}
         >
           <div className="mb-3 flex items-center justify-between gap-2">
             <h2 className="text-sm font-semibold text-slate-700">
@@ -3716,13 +4185,12 @@ export default function OrganizationManagementPage() {
                   >
                     <span className="text-slate-700">{step.label}</span>
                     <span
-                      className={`rounded px-2 py-0.5 font-semibold ${
-                        step.status === "DONE"
+                      className={`rounded px-2 py-0.5 font-semibold ${step.status === "DONE"
                           ? "bg-emerald-100 text-emerald-700"
                           : step.status === "CURRENT"
                             ? "bg-sky-100 text-sky-800"
                             : "bg-slate-100 text-slate-700"
-                      }`}
+                        }`}
                     >
                       {step.status === "DONE"
                         ? l("Done", "Tamam")
@@ -3743,11 +4211,10 @@ export default function OrganizationManagementPage() {
               ) : null}
               {selectedShareholderCommitmentReadiness ? (
                 <div
-                  className={`mt-2 rounded border px-2 py-2 text-xs ${
-                    selectedShareholderCommitmentReadiness.ready
+                  className={`mt-2 rounded border px-2 py-2 text-xs ${selectedShareholderCommitmentReadiness.ready
                       ? "border-emerald-200 bg-emerald-50 text-emerald-900"
                       : "border-amber-200 bg-amber-50 text-amber-900"
-                  }`}
+                    }`}
                 >
                   <div className="flex items-center justify-between gap-2">
                     <span className="font-semibold">
@@ -3757,11 +4224,10 @@ export default function OrganizationManagementPage() {
                       )}
                     </span>
                     <span
-                      className={`rounded px-2 py-0.5 font-semibold ${
-                        selectedShareholderCommitmentReadiness.ready
+                      className={`rounded px-2 py-0.5 font-semibold ${selectedShareholderCommitmentReadiness.ready
                           ? "bg-emerald-100 text-emerald-700"
                           : "bg-amber-100 text-amber-800"
-                      }`}
+                        }`}
                     >
                       {selectedShareholderCommitmentReadiness.ready
                         ? l("READY", "HAZIR")
@@ -3773,7 +4239,7 @@ export default function OrganizationManagementPage() {
                       {Array.isArray(
                         selectedShareholderCommitmentReadiness.missingPurposeCodes
                       ) &&
-                      selectedShareholderCommitmentReadiness.missingPurposeCodes.length > 0 ? (
+                        selectedShareholderCommitmentReadiness.missingPurposeCodes.length > 0 ? (
                         <p className="mt-1">
                           {l("Missing purpose codes:", "Eksik amac kodlari:")}{" "}
                           {selectedShareholderCommitmentReadiness.missingPurposeCodes.join(
@@ -3784,7 +4250,7 @@ export default function OrganizationManagementPage() {
                       {Array.isArray(
                         selectedShareholderCommitmentReadiness.invalidMappings
                       ) &&
-                      selectedShareholderCommitmentReadiness.invalidMappings.length > 0 ? (
+                        selectedShareholderCommitmentReadiness.invalidMappings.length > 0 ? (
                         <ul className="mt-1 list-disc space-y-0.5 pl-4">
                           {selectedShareholderCommitmentReadiness.invalidMappings.map(
                             (row, index) => (
@@ -3874,7 +4340,7 @@ export default function OrganizationManagementPage() {
                   onClick={async () => {
                     setBatchCommitmentDate(
                       shareholderForm.commitmentDate ||
-                        new Date().toISOString().slice(0, 10)
+                      new Date().toISOString().slice(0, 10)
                     );
                     setBatchCommitmentModalOpen(true);
                     await handlePreviewBatchCommitmentJournal();
@@ -3896,11 +4362,10 @@ export default function OrganizationManagementPage() {
                   >
                     <span className="text-slate-700">{check.label}</span>
                     <span
-                      className={`rounded px-2 py-0.5 font-semibold ${
-                        check.ready
+                      className={`rounded px-2 py-0.5 font-semibold ${check.ready
                           ? "bg-emerald-100 text-emerald-700"
                           : "bg-amber-100 text-amber-800"
-                      }`}
+                        }`}
                     >
                       {check.ready ? l("OK", "Tamam") : l("Missing", "Eksik")}
                     </span>
@@ -3985,9 +4450,9 @@ export default function OrganizationManagementPage() {
                   <option value="">
                     {canReadAccounts
                       ? l(
-                          "Capital credit parent (CREDIT/EQUITY)",
-                          "Sermaye alacak parent (CREDIT/EQUITY)"
-                        )
+                        "Capital credit parent (CREDIT/EQUITY)",
+                        "Sermaye alacak parent (CREDIT/EQUITY)"
+                      )
                       : l("Need gl.account.read", "gl.account.read yetkisi gerekli")}
                   </option>
                   {equityCreditParentShareholderAccounts.map((account) => (
@@ -4010,9 +4475,9 @@ export default function OrganizationManagementPage() {
                   <option value="">
                     {canReadAccounts
                       ? l(
-                          "Commitment debit parent (DEBIT/EQUITY)",
-                          "Taahhut borc parent (DEBIT/EQUITY)"
-                        )
+                        "Commitment debit parent (DEBIT/EQUITY)",
+                        "Taahhut borc parent (DEBIT/EQUITY)"
+                      )
                       : l("Need gl.account.read", "gl.account.read yetkisi gerekli")}
                   </option>
                   {equityDebitParentShareholderAccounts.map((account) => (
@@ -4053,7 +4518,7 @@ export default function OrganizationManagementPage() {
                   onClick={async () => {
                     setBatchCommitmentDate(
                       shareholderForm.commitmentDate ||
-                        new Date().toISOString().slice(0, 10)
+                      new Date().toISOString().slice(0, 10)
                     );
                     setBatchCommitmentModalOpen(true);
                     await handlePreviewBatchCommitmentJournal();
@@ -4151,6 +4616,19 @@ export default function OrganizationManagementPage() {
                     {capitalFulfillmentHistory.map((row) => {
                       const fulfillmentId = toNumber(row.id);
                       const isReversing = capitalFulfillmentReversingId === fulfillmentId;
+                      const isCashRegisterDestination =
+                        String(row.destination_mode || "").toUpperCase() ===
+                        "CASH_REGISTER";
+                      const showSeparateCashJournal =
+                        isCashRegisterDestination &&
+                        toNumber(row.cash_journal_entry_id) &&
+                        toNumber(row.cash_journal_entry_id) !==
+                        toNumber(row.journal_entry_id);
+                      const showSeparateCashReversalJournal =
+                        isCashRegisterDestination &&
+                        toNumber(row.cash_reversal_journal_entry_id) &&
+                        toNumber(row.cash_reversal_journal_entry_id) !==
+                        toNumber(row.reversal_journal_entry_id);
                       return (
                         <tr
                           key={`capital-fulfillment-history-${row.id}`}
@@ -4174,11 +4652,10 @@ export default function OrganizationManagementPage() {
                           </td>
                           <td className="px-2 py-1.5">
                             <span
-                              className={`inline-flex rounded-full px-2 py-0.5 font-semibold ${
-                                String(row.status || "").toUpperCase() === "REVERSED"
+                              className={`inline-flex rounded-full px-2 py-0.5 font-semibold ${String(row.status || "").toUpperCase() === "REVERSED"
                                   ? "bg-amber-100 text-amber-800"
                                   : "bg-emerald-100 text-emerald-700"
-                              }`}
+                                }`}
                             >
                               {row.status || "-"}
                             </span>
@@ -4190,6 +4667,22 @@ export default function OrganizationManagementPage() {
                             <div className="text-[11px] text-slate-500">
                               ID {row.journal_entry_id || "-"}
                             </div>
+                            {isCashRegisterDestination && row.cash_transaction_id ? (
+                              <div className="mt-1 text-[11px] text-slate-500">
+                                {l("Cash txn", "Kasa islemi")}:{" "}
+                                <span className="font-mono text-slate-800">
+                                  {row.cash_transaction_no || row.cash_transaction_id}
+                                </span>
+                              </div>
+                            ) : null}
+                            {showSeparateCashJournal ? (
+                              <div className="text-[11px] text-slate-500">
+                                {l("Cash journal", "Kasa yevmiyesi")}:{" "}
+                                <span className="font-mono text-slate-800">
+                                  {row.cash_journal_no || row.cash_journal_entry_id}
+                                </span>
+                              </div>
+                            ) : null}
                           </td>
                           <td className="px-2 py-1.5">
                             {row.reversal_journal_entry_id ? (
@@ -4200,6 +4693,24 @@ export default function OrganizationManagementPage() {
                                 <div className="text-[11px] text-slate-500">
                                   ID {row.reversal_journal_entry_id}
                                 </div>
+                                {isCashRegisterDestination && row.cash_reversal_transaction_id ? (
+                                  <div className="mt-1 text-[11px] text-slate-500">
+                                    {l("Reverse cash txn", "Ters kasa islemi")}:{" "}
+                                    <span className="font-mono text-slate-800">
+                                      {row.cash_reversal_transaction_no ||
+                                        row.cash_reversal_transaction_id}
+                                    </span>
+                                  </div>
+                                ) : null}
+                                {showSeparateCashReversalJournal ? (
+                                  <div className="text-[11px] text-slate-500">
+                                    {l("Cash reversal journal", "Kasa ters yevmiyesi")}:{" "}
+                                    <span className="font-mono text-slate-800">
+                                      {row.cash_reversal_journal_no ||
+                                        row.cash_reversal_journal_entry_id}
+                                    </span>
+                                  </div>
+                                ) : null}
                               </>
                             ) : (
                               "-"
@@ -4251,8 +4762,8 @@ export default function OrganizationManagementPage() {
             </div>
           ) : null}
           {selectedShareholderLegalEntityId &&
-          canReadAccounts &&
-          (hasMissingCreditEquitySubAccount || hasMissingDebitEquitySubAccount) ? (
+            canReadAccounts &&
+            (hasMissingCreditEquitySubAccount || hasMissingDebitEquitySubAccount) ? (
             <div className="mb-3 rounded-lg border border-cyan-200 bg-cyan-50 px-3 py-3 text-xs text-cyan-900">
               <div className="font-semibold">
                 {l(
@@ -4410,22 +4921,22 @@ export default function OrganizationManagementPage() {
                 {canReadAccounts
                   ? !hasShareholderParentMapping
                     ? l(
-                        "Save parent mapping first",
-                        "Once parent eslesmesini kaydedin"
-                      )
+                      "Save parent mapping first",
+                      "Once parent eslesmesini kaydedin"
+                    )
                     : availableCapitalCreditShareholderAccounts.length > 0
                       ? l(
-                          `Capital credit sub-account (child of ${selectedCapitalCreditParentAccount?.code || "-"})`,
-                          `${selectedCapitalCreditParentAccount?.code || "-"} altinda sermaye alacak alt hesap`
-                        )
+                        `Capital credit sub-account (child of ${selectedCapitalCreditParentAccount?.code || "-"})`,
+                        `${selectedCapitalCreditParentAccount?.code || "-"} altinda sermaye alacak alt hesap`
+                      )
                       : l(
-                          "No available mapped capital credit sub-account found",
-                          "Eslenmis kullanilabilir sermaye alacak alt hesap bulunamadi"
-                        )
+                        "No available mapped capital credit sub-account found",
+                        "Eslenmis kullanilabilir sermaye alacak alt hesap bulunamadi"
+                      )
                   : l(
-                      "Need gl.account.read",
-                      "gl.account.read yetkisi gerekli"
-                    )}
+                    "Need gl.account.read",
+                    "gl.account.read yetkisi gerekli"
+                  )}
               </option>
               {availableCapitalCreditShareholderAccounts.map((account) => (
                 <option key={account.id} value={account.id}>
@@ -4448,22 +4959,22 @@ export default function OrganizationManagementPage() {
                 {canReadAccounts
                   ? !hasShareholderParentMapping
                     ? l(
-                        "Save parent mapping first",
-                        "Once parent eslesmesini kaydedin"
-                      )
+                      "Save parent mapping first",
+                      "Once parent eslesmesini kaydedin"
+                    )
                     : availableCommitmentDebitShareholderAccounts.length > 0
                       ? l(
-                          `Commitment debit sub-account (child of ${selectedCommitmentDebitParentAccount?.code || "-"})`,
-                          `${selectedCommitmentDebitParentAccount?.code || "-"} altinda taahhut borc alt hesap`
-                        )
+                        `Commitment debit sub-account (child of ${selectedCommitmentDebitParentAccount?.code || "-"})`,
+                        `${selectedCommitmentDebitParentAccount?.code || "-"} altinda taahhut borc alt hesap`
+                      )
                       : l(
-                          "No available mapped commitment debit sub-account found",
-                          "Eslenmis kullanilabilir taahhut borc alt hesap bulunamadi"
-                        )
+                        "No available mapped commitment debit sub-account found",
+                        "Eslenmis kullanilabilir taahhut borc alt hesap bulunamadi"
+                      )
                   : l(
-                      "Need gl.account.read",
-                      "gl.account.read yetkisi gerekli"
-                    )}
+                    "Need gl.account.read",
+                    "gl.account.read yetkisi gerekli"
+                  )}
               </option>
               {availableCommitmentDebitShareholderAccounts.map((account) => (
                 <option key={account.id} value={account.id}>
@@ -4522,25 +5033,25 @@ export default function OrganizationManagementPage() {
             <div className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-900 md:col-span-2">
               {existingShareholderForForm
                 ? l(
-                    `Existing committed total: ${formatAmount(
-                      formExistingCommittedCapitalAmount
-                    )}. This entry increase: ${formatAmount(
-                      formCommitmentIncreaseAmount
-                    )}. New committed total: ${formatAmount(
-                      formProjectedCommittedCapitalAmount
-                    )}.`,
-                    `Mevcut taahhut toplami: ${formatAmount(
-                      formExistingCommittedCapitalAmount
-                    )}. Bu kayit artisi: ${formatAmount(
-                      formCommitmentIncreaseAmount
-                    )}. Yeni taahhut toplami: ${formatAmount(
-                      formProjectedCommittedCapitalAmount
-                    )}.`
-                  )
+                  `Existing committed total: ${formatAmount(
+                    formExistingCommittedCapitalAmount
+                  )}. This entry increase: ${formatAmount(
+                    formCommitmentIncreaseAmount
+                  )}. New committed total: ${formatAmount(
+                    formProjectedCommittedCapitalAmount
+                  )}.`,
+                  `Mevcut taahhut toplami: ${formatAmount(
+                    formExistingCommittedCapitalAmount
+                  )}. Bu kayit artisi: ${formatAmount(
+                    formCommitmentIncreaseAmount
+                  )}. Yeni taahhut toplami: ${formatAmount(
+                    formProjectedCommittedCapitalAmount
+                  )}.`
+                )
                 : l(
-                    "Enter only the increase amount. For a new shareholder, this becomes the initial commitment.",
-                    "Sadece artis tutarini girin. Yeni ortakta bu tutar ilk taahhut olur."
-                  )}
+                  "Enter only the increase amount. For a new shareholder, this becomes the initial commitment.",
+                  "Sadece artis tutarini girin. Yeni ortakta bu tutar ilk taahhut olur."
+                )}
             </div>
             <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
               {l(
@@ -4711,11 +5222,10 @@ export default function OrganizationManagementPage() {
                             handleQueueShareholderToggle(shareholderId, !isQueued)
                           }
                           disabled={!shareholderId || !hasMappedSubAccounts}
-                          className={`rounded border px-2 py-1 text-[11px] font-semibold disabled:opacity-50 ${
-                            isQueued
+                          className={`rounded border px-2 py-1 text-[11px] font-semibold disabled:opacity-50 ${isQueued
                               ? "border-rose-300 bg-rose-50 text-rose-800"
                               : "border-slate-300 bg-white text-slate-700"
-                          }`}
+                            }`}
                         >
                           {isQueued
                             ? l("Remove", "Kuyruktan cikar")
@@ -4926,12 +5436,20 @@ export default function OrganizationManagementPage() {
                       shareholderId: nextEligibleShareholders[0]?.id
                         ? String(nextEligibleShareholders[0].id)
                         : "",
-                      destinationMode: canReadBanks ? "BANK_ACCOUNT" : "ASSET_GL",
+                      destinationMode: canReadBanks
+                        ? "BANK_ACCOUNT"
+                        : canReadCashRegisters
+                          ? "CASH_REGISTER"
+                          : "ASSET_GL",
                       bankAccountId: "",
+                      cashRegisterId: "",
+                      cashSessionId: "",
                       destinationAccountId: "",
                       operatingUnitId: "",
                     });
                     setCapitalFulfillmentBankError("");
+                    setCapitalFulfillmentCashRegistersError("");
+                    setCapitalFulfillmentCashSessionsError("");
                   }}
                   className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs"
                   required
@@ -5014,6 +5532,8 @@ export default function OrganizationManagementPage() {
                     updateCapitalFulfillmentForm({
                       destinationMode: event.target.value,
                       bankAccountId: "",
+                      cashRegisterId: "",
+                      cashSessionId: "",
                       destinationAccountId: "",
                     })
                   }
@@ -5022,6 +5542,11 @@ export default function OrganizationManagementPage() {
                   {canReadBanks ? (
                     <option value="BANK_ACCOUNT">
                       {l("Bank account", "Banka hesabi")}
+                    </option>
+                  ) : null}
+                  {canReadCashRegisters ? (
+                    <option value="CASH_REGISTER">
+                      {l("Cash register", "Kasa")}
                     </option>
                   ) : null}
                   {canReadAccounts ? (
@@ -5041,6 +5566,8 @@ export default function OrganizationManagementPage() {
                     updateCapitalFulfillmentForm({
                       operatingUnitId: event.target.value,
                       bankAccountId: "",
+                      cashRegisterId: "",
+                      cashSessionId: "",
                     })
                   }
                   className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs"
@@ -5087,6 +5614,68 @@ export default function OrganizationManagementPage() {
                     ))}
                   </select>
                 </label>
+              ) : capitalFulfillmentForm.destinationMode === "CASH_REGISTER" ? (
+                <>
+                  <label className="block md:col-span-2">
+                    <span className="mb-1 block text-[11px] font-semibold text-slate-600">
+                      {l("Cash register destination", "Kasa hedefi")}
+                    </span>
+                    <select
+                      value={capitalFulfillmentForm.cashRegisterId}
+                      onChange={(event) =>
+                        updateCapitalFulfillmentForm({
+                          cashRegisterId: event.target.value,
+                          cashSessionId: "",
+                        })
+                      }
+                      className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs"
+                      disabled={!canReadCashRegisters || capitalFulfillmentCashRegistersLoading}
+                      required
+                    >
+                      <option value="">
+                        {capitalFulfillmentCashRegistersLoading
+                          ? l("Loading cash registers...", "Kasalar yukleniyor...")
+                          : l("Select cash register", "Kasa secin")}
+                      </option>
+                      {capitalFulfillmentCashRegisterOptions.map((row) => (
+                        <option key={row.id} value={row.id}>
+                          {formatCashRegisterOptionLabel(row)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  {capitalFulfillmentCashSessionRequired ? (
+                    <label className="block md:col-span-2">
+                      <span className="mb-1 block text-[11px] font-semibold text-slate-600">
+                        {l("Open cash session", "Acik kasa oturumu")} *
+                      </span>
+                      <select
+                        value={capitalFulfillmentForm.cashSessionId}
+                        onChange={(event) =>
+                          updateCapitalFulfillmentForm({
+                            cashSessionId: event.target.value,
+                          })
+                        }
+                        className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs"
+                        disabled={
+                          !canReadCashSessions || capitalFulfillmentCashSessionsLoading
+                        }
+                        required
+                      >
+                        <option value="">
+                          {capitalFulfillmentCashSessionsLoading
+                            ? l("Loading open sessions...", "Acik oturumlar yukleniyor...")
+                            : l("Select open session", "Acik oturum secin")}
+                        </option>
+                        {capitalFulfillmentCashSessionOptions.map((row) => (
+                          <option key={row.id} value={row.id}>
+                            {formatCashSessionOptionLabel(row)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  ) : null}
+                </>
               ) : (
                 <label className="block md:col-span-2">
                   <span className="mb-1 block text-[11px] font-semibold text-slate-600">
@@ -5140,12 +5729,22 @@ export default function OrganizationManagementPage() {
                 </div>
                 <div className="mt-1">{capitalFulfillmentOperationalModelLabel}</div>
                 <div className="mt-2 text-slate-600">
-                  {selectedCapitalFulfillmentOperatingUnit
-                    ? l(
+                  {capitalFulfillmentForm.destinationMode === "CASH_REGISTER"
+                    ? selectedCapitalFulfillmentOperatingUnit
+                      ? l(
+                        "Selected OU uses a two-layer flow: the branch cash receipt posts in the cash subledger, and a separate central capital journal credits the shareholder commitment account.",
+                        "Secilen OU iki katmanli akis kullanir: sube kasa tahsilati kasa alt defterinde post edilir, ortak taahhut hesabini alacaklayan ayri bir merkezi sermaye yevmiyesi olusur."
+                      )
+                      : l(
+                        "No OU means central cash-register fulfillment. The posted cash journal itself credits the shareholder commitment account.",
+                        "OU secilmezse merkezi kasa uzerinden karsilama yapilir. Post edilen kasa yevmiyesi ortak taahhut hesabini dogrudan alacaklar."
+                      )
+                    : selectedCapitalFulfillmentOperatingUnit
+                      ? l(
                         "Selected OU means direct OU-targeted fulfillment with self-balancing internal current lines.",
                         "Secilen OU, ic cari hesap satirlari ile dogrudan OU hedefli karsilama anlamina gelir."
                       )
-                    : l(
+                      : l(
                         "No OU means central fulfillment first. Later HQ -> OU allocation can be posted separately.",
                         "OU secilmezse once merkezi karsilama yapilir. Sonra merkez -> OU dagitimi ayri post edilebilir."
                       )}
@@ -5156,10 +5755,20 @@ export default function OrganizationManagementPage() {
                   {l("Accounting note", "Muhasebe notu")}
                 </div>
                 <div className="mt-1">
-                  {l(
-                    "Paid capital updates because the shareholder commitment debit sub-account is credited in the posted journal.",
-                    "Odenen sermaye, post edilen yevmiyede ortak taahhut borc alt hesabina alacak yazildigi icin guncellenir."
-                  )}
+                  {capitalFulfillmentForm.destinationMode === "CASH_REGISTER"
+                    ? selectedCapitalFulfillmentOperatingUnit
+                      ? l(
+                        "Branch cash mode stores two linked postings: the branch cash transaction for the register movement and a separate central journal for paid-capital recognition.",
+                        "Sube kasa modu iki bagli posting saklar: kasa hareketi icin sube kasa islemi ve odenen sermayenin taninmasi icin ayri bir merkezi yevmiye."
+                      )
+                      : l(
+                        "Central cash mode preserves paid capital by crediting the shareholder commitment account inside the posted cash journal.",
+                        "Merkezi kasa modu, post edilen kasa yevmiyesinde ortak taahhut hesabini alacaklandirarak odenen sermayeyi korur."
+                      )
+                    : l(
+                      "Paid capital updates because the shareholder commitment debit sub-account is credited in the posted journal.",
+                      "Odenen sermaye, post edilen yevmiyede ortak taahhut borc alt hesabina alacak yazildigi icin guncellenir."
+                    )}
                 </div>
               </div>
             </div>
@@ -5174,26 +5783,78 @@ export default function OrganizationManagementPage() {
             ) : null}
 
             {capitalFulfillmentForm.destinationMode === "BANK_ACCOUNT" &&
-            capitalFulfillmentBankError ? (
+              capitalFulfillmentBankError ? (
               <div className="mt-3 rounded border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
                 {capitalFulfillmentBankError}
               </div>
             ) : null}
 
+            {capitalFulfillmentForm.destinationMode === "CASH_REGISTER" &&
+              capitalFulfillmentCashRegistersError ? (
+              <div className="mt-3 rounded border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                {capitalFulfillmentCashRegistersError}
+              </div>
+            ) : null}
+
+            {capitalFulfillmentForm.destinationMode === "CASH_REGISTER" &&
+              capitalFulfillmentCashSessionsError ? (
+              <div className="mt-3 rounded border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                {capitalFulfillmentCashSessionsError}
+              </div>
+            ) : null}
+
             {capitalFulfillmentForm.destinationMode === "BANK_ACCOUNT" &&
-            !capitalFulfillmentBankLoading &&
-            capitalFulfillmentLegalEntityId &&
-            capitalFulfillmentBankAccountOptions.length === 0 ? (
+              !capitalFulfillmentBankLoading &&
+              capitalFulfillmentLegalEntityId &&
+              capitalFulfillmentBankAccountOptions.length === 0 ? (
               <div className="mt-3 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
                 {selectedCapitalFulfillmentOperatingUnit
                   ? l(
-                      "No active bank account found for the selected legal entity and OU. Create the branch bank account first.",
-                      "Secilen legal entity ve OU icin aktif banka hesabi bulunamadi. Once sube banka hesabini olusturun."
-                    )
+                    "No active bank account found for the selected legal entity and OU. Create the branch bank account first.",
+                    "Secilen legal entity ve OU icin aktif banka hesabi bulunamadi. Once sube banka hesabini olusturun."
+                  )
                   : l(
-                      "No central active bank account found for the selected legal entity. Create the HQ bank account first.",
-                      "Secilen legal entity icin merkezi aktif banka hesabi bulunamadi. Once merkez banka hesabini olusturun."
-                    )}
+                    "No central active bank account found for the selected legal entity. Create the HQ bank account first.",
+                    "Secilen legal entity icin merkezi aktif banka hesabi bulunamadi. Once merkez banka hesabini olusturun."
+                  )}
+              </div>
+            ) : null}
+
+            {capitalFulfillmentForm.destinationMode === "CASH_REGISTER" &&
+              !capitalFulfillmentCashRegistersLoading &&
+              capitalFulfillmentLegalEntityId &&
+              capitalFulfillmentCashRegisterOptions.length === 0 ? (
+              <div className="mt-3 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                {selectedCapitalFulfillmentOperatingUnit
+                  ? l(
+                    "No active cash register was found for the selected legal entity and OU. Create the branch cash register first.",
+                    "Secilen legal entity ve OU icin aktif kasa bulunamadi. Once sube kasasini olusturun."
+                  )
+                  : l(
+                    "No active central cash register was found for the selected legal entity. Create an HQ cash register first.",
+                    "Secilen legal entity icin aktif merkezi kasa bulunamadi. Once merkez kasasini olusturun."
+                  )}
+              </div>
+            ) : null}
+
+            {capitalFulfillmentForm.destinationMode === "CASH_REGISTER" &&
+              capitalFulfillmentCashSessionMissingOpenSession ? (
+              <div className="mt-3 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                {l(
+                  "Selected cash register has session_mode=REQUIRED but no OPEN session exists. Open one from Cash Sessions first.",
+                  "Secilen kasada session_mode=REQUIRED ancak OPEN durumunda oturum yok. Once Cash Sessions ekranindan bir oturum acin."
+                )}
+              </div>
+            ) : null}
+
+            {capitalFulfillmentForm.destinationMode === "CASH_REGISTER" &&
+              capitalFulfillmentCashSessionValueMissing &&
+              !capitalFulfillmentCashSessionMissingOpenSession ? (
+              <div className="mt-3 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                {l(
+                  "This cash register requires an OPEN cash session. Select one before preview/post.",
+                  "Bu kasa bir OPEN kasa oturumu gerektirir. Onizleme/post oncesi birini secin."
+                )}
               </div>
             ) : null}
 
@@ -5531,7 +6192,7 @@ export default function OrganizationManagementPage() {
                 </span>
               </div>
               <div className="mt-2 flex flex-wrap items-end gap-2">
-                <label className="block min-w-[220px] flex-1">
+                <label className="block min-w-55 flex-1">
                   <span className="mb-1 block text-[11px] font-semibold text-slate-600">
                     {l("Commitment date", "Taahhut tarihi")}
                   </span>
@@ -5854,7 +6515,116 @@ export default function OrganizationManagementPage() {
                 </span>
               </div>
             </div>
-            <div className="mt-4 flex justify-end">
+            {shareholderJournalModal.transitShortcut ? (
+              <div className="mt-3 rounded-lg border border-sky-200 bg-sky-50 p-3 text-xs text-sky-900">
+                <div className="font-semibold text-sky-950">
+                  {l("HQ -> Branch cash transit", "Merkez -> Sube kasa transiti")}
+                </div>
+                <p className="mt-1">
+                  {l(
+                    "If this cash was received at HQ first, open the existing cash transit workflow with source register and amount prefilled.",
+                    "Nakit once merkez kasasina alindiyse, kaynak kasa ve tutari onceden doldurulmus mevcut kasa transit akisina gecin."
+                  )}
+                </p>
+                <div className="mt-2 grid gap-2 md:grid-cols-2">
+                  <div>
+                    <span className="font-semibold">
+                      {l("Source register", "Kaynak kasa")}:
+                    </span>{" "}
+                    {shareholderJournalModal.transitShortcut.sourceRegisterLabel}
+                  </div>
+                  <div>
+                    <span className="font-semibold">{l("Amount", "Tutar")}:</span>{" "}
+                    {formatAmount(shareholderJournalModal.transitShortcut.amountBase || 0)}{" "}
+                    {shareholderJournalModal.transitShortcut.currencyCode || ""}
+                  </div>
+                </div>
+                {shareholderJournalModal.transitShortcut.targetRegisterOptions?.length ? (
+                  <>
+                    <label className="mt-3 block">
+                      <span className="mb-1 block font-semibold text-sky-950">
+                        {l("Target branch register", "Hedef sube kasasi")}
+                      </span>
+                      <select
+                        value={shareholderJournalModal.transitShortcut.targetRegisterId || ""}
+                        onChange={(event) =>
+                          setShareholderJournalModal((prev) => {
+                            if (!prev?.transitShortcut) {
+                              return prev;
+                            }
+                            const nextTargetRegister =
+                              prev.transitShortcut.targetRegisterOptions.find(
+                                (row) =>
+                                  String(row.id) === String(event.target.value || "")
+                              ) || null;
+                            return {
+                              ...prev,
+                              transitShortcut: {
+                                ...prev.transitShortcut,
+                                targetRegisterId: event.target.value,
+                                targetRegisterCode: String(
+                                  nextTargetRegister?.code || ""
+                                ).trim(),
+                              },
+                            };
+                          })
+                        }
+                        className="w-full rounded border border-sky-200 bg-white px-2 py-1.5 text-xs text-slate-800"
+                      >
+                        <option value="">
+                          {l("Select branch register", "Sube kasasi secin")}
+                        </option>
+                        {shareholderJournalModal.transitShortcut.targetRegisterOptions.map(
+                          (row) => (
+                            <option key={`capital-fulfillment-transit-${row.id}`} value={row.id}>
+                              {row.label}
+                            </option>
+                          )
+                        )}
+                      </select>
+                    </label>
+                    <div className="mt-2 text-sky-950">
+                      {l(
+                        "This shortcut opens the existing cash transfer form. Review book date/session before creating the transfer.",
+                        "Bu kisayol mevcut kasa transfer formunu acar. Transferi olusturmadan once tarih/oturum alanlarini gozden gecirin."
+                      )}
+                    </div>
+                  </>
+                ) : (
+                  <div className="mt-3 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-amber-900">
+                    {l(
+                      "No active branch cash register is available for this legal entity yet. Create one first, then use the existing cash transit workflow.",
+                      "Bu legal entity icin henuz aktif sube kasasi yok. Once birini olusturun, sonra mevcut kasa transit akisina gecin."
+                    )}
+                  </div>
+                )}
+              </div>
+            ) : null}
+            <div
+              className={`mt-4 flex gap-2 ${shareholderJournalModal.transitShortcut
+                  ? "justify-between"
+                  : "justify-end"
+                }`}
+            >
+              {shareholderJournalModal.transitShortcut?.targetRegisterId ? (
+                <Link
+                  to={buildCapitalFulfillmentTransitShortcutPath(
+                    shareholderJournalModal.transitShortcut
+                  )}
+                  onClick={() => setShareholderJournalModal(null)}
+                  className="rounded-lg border border-sky-300 bg-sky-600 px-4 py-2 text-sm font-semibold text-white"
+                >
+                  {l("Open cash transit transfer", "Kasa transit transfer ac")}
+                </Link>
+              ) : shareholderJournalModal.transitShortcut ? (
+                <button
+                  type="button"
+                  disabled
+                  className="rounded-lg border border-slate-300 bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-400"
+                >
+                  {l("Open cash transit transfer", "Kasa transit transfer ac")}
+                </button>
+              ) : null}
               <button
                 type="button"
                 onClick={() => setShareholderJournalModal(null)}

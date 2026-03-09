@@ -105,7 +105,9 @@ function resolveTransferPostingMode(cashTxn) {
   const sourceEntityType = asUpper(cashTxn.source_entity_type);
   const hasTransitLink = sourceEntityType === "CASH_TRANSIT_TRANSFER";
   if (!hasTransitLink) {
-    throw badRequest("Cross-OU transfer requires CASH_IN_TRANSIT workflow");
+    throw badRequest(
+      "Transfers between different operating-unit contexts must use CASH_IN_TRANSIT workflow"
+    );
   }
 
   requireAccountId(cashTxn.counter_account_id, "counterAccountId (CASH_IN_TRANSIT)");
@@ -139,6 +141,14 @@ function buildBaseLine({
 
 function normalizeOptionalId(value) {
   return parsePositiveInt(value) || null;
+}
+
+function resolveTransitClearingOperatingUnitId(cashTxn) {
+  return (
+    parsePositiveInt(cashTxn.operating_unit_id) ||
+    parsePositiveInt(cashTxn.counter_cash_register_operating_unit_id) ||
+    null
+  );
 }
 
 function normalizeCashJournalOverrideLine(line, { currencyCode, postingReference }) {
@@ -341,7 +351,7 @@ function buildCashPostingLines(cashTxn) {
             counterAccountId,
             "counterAccountId (CASH_IN_TRANSIT)"
           ),
-          operatingUnitId: cashTxn.operating_unit_id,
+          operatingUnitId: resolveTransitClearingOperatingUnitId(cashTxn),
           debitBase: amountBase,
           creditBase: 0,
           description: lineDescription,
@@ -396,7 +406,7 @@ function buildCashPostingLines(cashTxn) {
             counterAccountId,
             "counterAccountId (CASH_IN_TRANSIT)"
           ),
-          operatingUnitId: cashTxn.operating_unit_id,
+          operatingUnitId: resolveTransitClearingOperatingUnitId(cashTxn),
           debitBase: 0,
           creditBase: amountBase,
           description: lineDescription,

@@ -842,7 +842,7 @@ async function main() {
       "Manual sourceType=CASH must be blocked on GL journal create endpoint"
     );
 
-    // Cross-OU transfer is blocked in v1 (CASH_IN_TRANSIT planned for v2).
+    // Different register ownership contexts must use the transit workflow.
     const crossOuCreate = await createCashTransaction({
       token: adminToken,
       tenantId: identity.tenantId,
@@ -852,21 +852,12 @@ async function main() {
       currencyCode: setup.currencyCode,
       counterCashRegisterId: setup.registerCrossOuId,
       idempotencyKey: `PR08-CROSS-OU-${identity.stamp}`,
-      description: "Cross OU transfer should fail in v1",
-      expectedStatus: 200,
-    });
-    const crossOuTxnId = toNumber(crossOuCreate.json?.row?.id);
-    assert(crossOuTxnId > 0, "Cross-OU transfer txn create must succeed before post checks");
-
-    const crossOuPost = await postCashTransaction({
-      token: adminToken,
-      tenantId: identity.tenantId,
-      transactionId: crossOuTxnId,
+      description: "Cross-context transfer must require transit workflow",
       expectedStatus: 400,
     });
     assert(
-      toErrorText(crossOuPost.json).includes("CASH_IN_TRANSIT"),
-      "Cross-OU transfer post must direct to CASH_IN_TRANSIT flow"
+      toErrorText(crossOuCreate.json).includes("CASH_IN_TRANSIT"),
+      "Cross-context transfer create must direct users to CASH_IN_TRANSIT flow"
     );
 
     // GL line/scope validation is reused: wrong legal-entity account fails at post time.

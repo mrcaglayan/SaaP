@@ -97,6 +97,8 @@ import migration106CashExchangePostingMode from "./m106_cash_exchange_posting_mo
 import migration107CashTxnSharedPostedJournal from "./m107_cash_txn_shared_posted_journal.js";
 import migration108OperatingUnitInternalCurrentAccounts from "./m108_operating_unit_internal_current_accounts.js";
 import migration109ShareholderCapitalFulfillments from "./m109_shareholder_capital_fulfillments.js";
+import migration110ShareholderCapitalFulfillmentsCashRegisterLinks from "./m110_shareholder_capital_fulfillments_cash_register_links.js";
+import migration111CashRegisterOwnershipScope from "./m111_cash_register_ownership_scope.js";
 
 const migrations = [
   migration001GlobalMultiEntity,
@@ -198,6 +200,8 @@ const migrations = [
   migration107CashTxnSharedPostedJournal,
   migration108OperatingUnitInternalCurrentAccounts,
   migration109ShareholderCapitalFulfillments,
+  migration110ShareholderCapitalFulfillmentsCashRegisterLinks,
+  migration111CashRegisterOwnershipScope,
 ];
 
 export default migrations;

@@ -10172,14 +10172,83 @@
           "Cash"
         ],
         "operationId": "getApiV1CashRegisters",
-        "summary": "Auto-generated: GET /api/v1/cash/registers",
+        "summary": "List cash registers with explicit Central / HQ vs Operating Unit ownership context",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "legalEntityId",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "operatingUnitId",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "ownershipScope",
+            "required": false,
+            "description": "Explicit ownership filter for Central / HQ vs Operating Unit registers.",
+            "schema": {
+              "$ref": "#/components/schemas/CashRegisterOwnershipScope"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "ACTIVE",
+                "INACTIVE"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 120
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful response",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/CashRegisterListResponse"
                 }
               }
             }
@@ -10200,14 +10269,14 @@
           "Cash"
         ],
         "operationId": "postApiV1CashRegisters",
-        "summary": "Auto-generated: POST /api/v1/cash/registers",
+        "summary": "Create or update a cash register with explicit ownership scope",
         "responses": {
           "200": {
             "description": "Successful response",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/CashRegisterResponse"
                 }
               }
             }
@@ -10223,11 +10292,11 @@
           }
         },
         "requestBody": {
-          "required": false,
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/AnyObject"
+                "$ref": "#/components/schemas/CashRegisterUpsertRequest"
               }
             }
           }
@@ -10240,14 +10309,14 @@
           "Cash"
         ],
         "operationId": "getApiV1CashRegistersRegisterid",
-        "summary": "Auto-generated: GET /api/v1/cash/registers/{registerId}",
+        "summary": "Get one cash register with explicit ownership context",
         "responses": {
           "200": {
             "description": "Successful response",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/CashRegisterResponse"
                 }
               }
             }
@@ -10282,14 +10351,14 @@
           "Cash"
         ],
         "operationId": "postApiV1CashRegistersRegisteridStatus",
-        "summary": "Auto-generated: POST /api/v1/cash/registers/{registerId}/status",
+        "summary": "Update cash register active/inactive status",
         "responses": {
           "200": {
             "description": "Successful response",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/CashRegisterResponse"
                 }
               }
             }
@@ -10317,11 +10386,11 @@
           }
         ],
         "requestBody": {
-          "required": false,
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/AnyObject"
+                "$ref": "#/components/schemas/CashRegisterStatusUpdateRequest"
               }
             }
           }
@@ -11324,7 +11393,8 @@
           "Cash"
         ],
         "operationId": "postApiV1CashTransactionsTransitInitiate",
-        "summary": "Initiate cross-OU cash transit transfer (creates transfer-out)",
+        "summary": "Initiate cash transit transfer for different operating-unit contexts (creates transfer-out)",
+        "description": "Use this workflow when the source and target registers are in different operating-unit contexts, including Central / HQ to branch, branch to Central / HQ, or branch-to-branch moves between different operating units.",
         "responses": {
           "200": {
             "description": "Idempotent replay response",
@@ -14650,6 +14720,166 @@
         ],
         "operationId": "postApiV1OrgShareholdersAutoProvisionSubAccounts",
         "summary": "Auto-generated: POST /api/v1/org/shareholders/auto-provision-sub-accounts",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/org/shareholders/capital-fulfillments": {
+      "get": {
+        "tags": [
+          "Org"
+        ],
+        "operationId": "getApiV1OrgShareholdersCapitalFulfillments",
+        "summary": "Auto-generated: GET /api/v1/org/shareholders/capital-fulfillments",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Org"
+        ],
+        "operationId": "postApiV1OrgShareholdersCapitalFulfillments",
+        "summary": "Auto-generated: POST /api/v1/org/shareholders/capital-fulfillments",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/org/shareholders/capital-fulfillments/{id}/reverse": {
+      "post": {
+        "tags": [
+          "Org"
+        ],
+        "operationId": "postApiV1OrgShareholdersCapitalFulfillmentsIdReverse",
+        "summary": "Auto-generated: POST /api/v1/org/shareholders/capital-fulfillments/{id}/reverse",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "description": "id identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/org/shareholders/capital-fulfillments/preview": {
+      "post": {
+        "tags": [
+          "Org"
+        ],
+        "operationId": "postApiV1OrgShareholdersCapitalFulfillmentsPreview",
+        "summary": "Auto-generated: POST /api/v1/org/shareholders/capital-fulfillments/preview",
         "responses": {
           "200": {
             "description": "Successful response",
@@ -20515,6 +20745,361 @@
       "AnyObject": {
         "type": "object",
         "additionalProperties": true
+      },
+      "CashRegisterOwnershipScope": {
+        "type": "string",
+        "description": "Explicit ownership scope for a cash register. CENTRAL keeps operating_unit_id null and preserves central/no-OU cash posting context.",
+        "enum": [
+          "CENTRAL",
+          "OPERATING_UNIT"
+        ]
+      },
+      "CashRegisterRow": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "tenant_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "legal_entity_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "ownership_scope": {
+            "$ref": "#/components/schemas/CashRegisterOwnershipScope"
+          },
+          "operating_unit_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "account_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "code": {
+            "type": "string",
+            "nullable": true
+          },
+          "name": {
+            "type": "string",
+            "nullable": true
+          },
+          "register_type": {
+            "type": "string",
+            "enum": [
+              "VAULT",
+              "DRAWER",
+              "TILL"
+            ],
+            "nullable": true
+          },
+          "session_mode": {
+            "type": "string",
+            "enum": [
+              "REQUIRED",
+              "OPTIONAL",
+              "NONE"
+            ],
+            "nullable": true
+          },
+          "currency_code": {
+            "type": "string",
+            "maxLength": 3,
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ACTIVE",
+              "INACTIVE"
+            ],
+            "nullable": true
+          },
+          "allow_negative": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "variance_gain_account_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "variance_loss_account_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "max_txn_amount": {
+            "type": "number",
+            "nullable": true
+          },
+          "requires_approval_over_amount": {
+            "type": "number",
+            "nullable": true
+          },
+          "created_by_user_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "legal_entity_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "legal_entity_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "operating_unit_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "operating_unit_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "ownership_context_label": {
+            "type": "string",
+            "description": "Operator-facing ownership label rendered as Central / HQ or OU code/name context.",
+            "nullable": true
+          },
+          "account_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "account_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "account_allow_posting": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "account_parent_account_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "account_is_active": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "account_is_cash_controlled": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "account_scope": {
+            "type": "string",
+            "nullable": true
+          },
+          "account_legal_entity_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "variance_gain_account_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "variance_gain_account_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "variance_loss_account_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "variance_loss_account_name": {
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
+      "CashRegisterListResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CashRegisterRow"
+            }
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "tenantId",
+          "rows",
+          "total",
+          "limit",
+          "offset"
+        ]
+      },
+      "CashRegisterResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "row": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CashRegisterRow"
+              }
+            ],
+            "nullable": true
+          }
+        },
+        "required": [
+          "tenantId",
+          "row"
+        ]
+      },
+      "CashRegisterUpsertRequest": {
+        "type": "object",
+        "description": "Create or update a cash register. During rollout, ownershipScope may be omitted for backward compatibility and will be derived from operatingUnitId; new clients should send ownershipScope explicitly.",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "legalEntityId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "ownershipScope": {
+            "$ref": "#/components/schemas/CashRegisterOwnershipScope"
+          },
+          "operatingUnitId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true,
+            "description": "Must be empty for CENTRAL ownership and required for OPERATING_UNIT ownership."
+          },
+          "accountId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "code": {
+            "type": "string",
+            "maxLength": 60
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 255
+          },
+          "registerType": {
+            "type": "string",
+            "enum": [
+              "VAULT",
+              "DRAWER",
+              "TILL"
+            ],
+            "nullable": true
+          },
+          "sessionMode": {
+            "type": "string",
+            "enum": [
+              "REQUIRED",
+              "OPTIONAL",
+              "NONE"
+            ],
+            "nullable": true
+          },
+          "currencyCode": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 3
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ACTIVE",
+              "INACTIVE"
+            ],
+            "nullable": true
+          },
+          "allowNegative": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "varianceGainAccountId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "varianceLossAccountId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "maxTxnAmount": {
+            "type": "number",
+            "nullable": true
+          },
+          "requiresApprovalOverAmount": {
+            "type": "number",
+            "nullable": true
+          }
+        },
+        "required": [
+          "legalEntityId",
+          "accountId",
+          "code",
+          "name",
+          "currencyCode"
+        ]
+      },
+      "CashRegisterStatusUpdateRequest": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ACTIVE",
+              "INACTIVE"
+            ]
+          }
+        },
+        "required": [
+          "status"
+        ]
       },
       "CashExchangePostingMode": {
         "type": "string",

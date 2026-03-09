@@ -96,6 +96,12 @@ FX resolution baseline (exact + prior-date fallback):
   - verify manual flows remain cash-agnostic
   - verify on-account consumption leaves a traceable unapplied-cash history
 
+## Cash Register Ownership Context
+
+- Cash-linked settlement selectors must show register ownership explicitly as `Central / HQ` or `OU: <code>`.
+- `Central / HQ` remains a central/no-OU posting context; do not use a blank operating-unit selector as the operator-facing signal for HQ ownership.
+- If cash needs to move between different operating-unit contexts, use the transit workflow with `CASH_IN_TRANSIT` instead of a direct transfer.
+
 ## Operational Troubleshooting
 
 ### Audit visibility endpoint
