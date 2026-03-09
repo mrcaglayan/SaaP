@@ -4615,27 +4615,6 @@
         ],
         "operationId": "getBankAccount",
         "summary": "Get bank account",
-        "responses": {
-          "200": {
-            "description": "Bank account detail",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BankAccountEnvelopeResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "401": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "403": {
-            "$ref": "#/components/responses/ErrorResponse"
-          }
-        },
         "parameters": [
           {
             "in": "path",
@@ -4657,17 +4636,10 @@
               "minimum": 1
             }
           }
-        ]
-      },
-      "put": {
-        "tags": [
-          "Bank"
         ],
-        "operationId": "updateBankAccount",
-        "summary": "Update bank account",
         "responses": {
           "200": {
-            "description": "Bank account updated",
+            "description": "Bank account detail",
             "content": {
               "application/json": {
                 "schema": {
@@ -4685,7 +4657,14 @@
           "403": {
             "$ref": "#/components/responses/ErrorResponse"
           }
-        },
+        }
+      },
+      "put": {
+        "tags": [
+          "Bank"
+        ],
+        "operationId": "updateBankAccount",
+        "summary": "Update bank account",
         "parameters": [
           {
             "in": "path",
@@ -4707,6 +4686,27 @@
               }
             }
           }
+        },
+        "responses": {
+          "200": {
+            "description": "Bank account updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BankAccountEnvelopeResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
         }
       }
     },
@@ -4717,6 +4717,18 @@
         ],
         "operationId": "activateBankAccount",
         "summary": "Activate bank account",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bankAccountId",
+            "required": true,
+            "description": "Bank account identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Bank account activated",
@@ -4737,7 +4749,16 @@
           "403": {
             "$ref": "#/components/responses/ErrorResponse"
           }
-        },
+        }
+      }
+    },
+    "/api/v1/bank/accounts/{bankAccountId}/deactivate": {
+      "post": {
+        "tags": [
+          "Bank"
+        ],
+        "operationId": "deactivateBankAccount",
+        "summary": "Deactivate bank account",
         "parameters": [
           {
             "in": "path",
@@ -4749,16 +4770,7 @@
               "minimum": 1
             }
           }
-        ]
-      }
-    },
-    "/api/v1/bank/accounts/{bankAccountId}/deactivate": {
-      "post": {
-        "tags": [
-          "Bank"
         ],
-        "operationId": "deactivateBankAccount",
-        "summary": "Deactivate bank account",
         "responses": {
           "200": {
             "description": "Bank account deactivated",
@@ -4779,19 +4791,7 @@
           "403": {
             "$ref": "#/components/responses/ErrorResponse"
           }
-        },
-        "parameters": [
-          {
-            "in": "path",
-            "name": "bankAccountId",
-            "required": true,
-            "description": "Bank account identifier",
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          }
-        ]
+        }
       }
     },
     "/api/v1/bank/accounts/provision-102-child": {
@@ -4813,6 +4813,16 @@
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BankAccountProvision102ChildRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Idempotent replay response",
@@ -4842,16 +4852,6 @@
           },
           "403": {
             "$ref": "#/components/responses/ErrorResponse"
-          }
-        },
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/BankAccountProvision102ChildRequest"
-              }
-            }
           }
         }
       }
@@ -15190,27 +15190,6 @@
         ],
         "operationId": "reverseShareholderCapitalFulfillment",
         "summary": "Reverse shareholder capital fulfillment",
-        "responses": {
-          "200": {
-            "description": "Capital fulfillment reversed",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ShareholderCapitalFulfillmentReverseResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "401": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "403": {
-            "$ref": "#/components/responses/ErrorResponse"
-          }
-        },
         "parameters": [
           {
             "in": "path",
@@ -15232,6 +15211,27 @@
               }
             }
           }
+        },
+        "responses": {
+          "200": {
+            "description": "Capital fulfillment reversed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShareholderCapitalFulfillmentReverseResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
         }
       }
     },
@@ -15242,6 +15242,16 @@
         ],
         "operationId": "previewShareholderCapitalFulfillment",
         "summary": "Preview shareholder capital fulfillment",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ShareholderCapitalFulfillmentRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Capital fulfillment preview",
@@ -15261,16 +15271,6 @@
           },
           "403": {
             "$ref": "#/components/responses/ErrorResponse"
-          }
-        },
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ShareholderCapitalFulfillmentRequest"
-              }
-            }
           }
         }
       }
