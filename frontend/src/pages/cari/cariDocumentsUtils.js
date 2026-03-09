@@ -18,6 +18,17 @@ export const DOCUMENT_TYPES = [
 ];
 
 export const DUE_DATE_REQUIRED_TYPES = new Set(["INVOICE", "DEBIT_NOTE"]);
+const DOCUMENT_AMOUNT_PRECISION = 6;
+
+function normalizeCurrencyCode(value) {
+  return String(value || "")
+    .trim()
+    .toUpperCase();
+}
+
+function roundDocumentAmount(value) {
+  return Number.isFinite(value) ? Number(value.toFixed(DOCUMENT_AMOUNT_PRECISION)) : null;
+}
 
 export function buildDocumentListQuery(filters) {
   return {
@@ -82,22 +93,53 @@ export function mapDocumentRowToForm(row) {
   };
 }
 
-export function buildDocumentMutationPayload(form) {
+export function getDocumentFxComputation(form, options = {}) {
+  const amountTxn = toOptionalNumber(form?.amountTxn);
+  const amountBaseInput = toOptionalNumber(form?.amountBase);
+  const fxRateInput = toOptionalNumber(form?.fxRate);
+  const currencyCode = normalizeCurrencyCode(form?.currencyCode);
+  const functionalCurrencyCode = normalizeCurrencyCode(options?.functionalCurrencyCode);
+  const hasFunctionalCurrency = /^[A-Z]{3}$/.test(functionalCurrencyCode);
+  const isLocalCurrency = hasFunctionalCurrency && currencyCode === functionalCurrencyCode;
+  const isForeignCurrency =
+    hasFunctionalCurrency &&
+    /^[A-Z]{3}$/.test(currencyCode) &&
+    currencyCode !== functionalCurrencyCode;
+  const resolvedFxRate = isLocalCurrency ? 1 : fxRateInput;
+  let derivedAmountBase = null;
+
+  if (amountTxn !== null && amountTxn > 0) {
+    if (isLocalCurrency) {
+      derivedAmountBase = roundDocumentAmount(amountTxn);
+    } else if (resolvedFxRate !== null && resolvedFxRate > 0) {
+      derivedAmountBase = roundDocumentAmount(amountTxn * resolvedFxRate);
+    }
+  }
+
+  return {
+    functionalCurrencyCode: hasFunctionalCurrency ? functionalCurrencyCode : "",
+    isLocalCurrency,
+    isForeignCurrency,
+    fxRateRequired: isForeignCurrency,
+    resolvedFxRate,
+    derivedAmountBase,
+    resolvedAmountBase: derivedAmountBase ?? amountBaseInput,
+  };
+}
+
+export function buildDocumentMutationPayload(form, options = {}) {
   const rowVersion = toPositiveInt(form.rowVersion);
   const legalEntityId = toPositiveInt(form.legalEntityId);
   const operatingUnitId = toPositiveInt(form.operatingUnitId);
   const counterpartyId = toPositiveInt(form.counterpartyId);
   const paymentTermId = toPositiveInt(form.paymentTermId);
   const amountTxn = toOptionalNumber(form.amountTxn);
-  const amountBase = toOptionalNumber(form.amountBase);
-  const fxRate = toOptionalNumber(form.fxRate);
+  const fxComputation = getDocumentFxComputation(form, options);
   const direction = String(form.direction || "").trim().toUpperCase();
   const documentType = String(form.documentType || "").trim().toUpperCase();
   const documentDate = String(form.documentDate || "").trim();
   const dueDate = String(form.dueDate || "").trim();
-  const currencyCode = String(form.currencyCode || "")
-    .trim()
-    .toUpperCase();
+  const currencyCode = normalizeCurrencyCode(form.currencyCode);
 
   return {
     rowVersion: rowVersion || undefined,
@@ -110,14 +152,16 @@ export function buildDocumentMutationPayload(form) {
     documentDate,
     dueDate: dueDate || null,
     amountTxn,
-    amountBase,
+    amountBase: fxComputation.resolvedAmountBase,
     currencyCode,
-    fxRate,
+    fxRate: fxComputation.resolvedFxRate,
   };
 }
 
-export function validateDocumentMutationForm(form) {
-  const payload = buildDocumentMutationPayload(form);
+export function validateDocumentMutationForm(form, options = {}) {
+  const payload = buildDocumentMutationPayload(form, options);
+  const fxComputation = getDocumentFxComputation(form, options);
+  const rawFxRate = toOptionalNumber(form.fxRate);
   const errors = [];
   if (!payload.legalEntityId) {
     errors.push("legalEntityId is required.");
@@ -140,13 +184,12 @@ export function validateDocumentMutationForm(form) {
   if (payload.amountTxn === null || payload.amountTxn <= 0) {
     errors.push("amountTxn must be > 0.");
   }
-  if (payload.amountBase === null || payload.amountBase <= 0) {
-    errors.push("amountBase must be > 0.");
-  }
   if (!/^[A-Z]{3}$/.test(payload.currencyCode)) {
     errors.push("currencyCode must be a 3-letter code.");
   }
-  if (String(form.fxRate || "").trim() && (payload.fxRate === null || payload.fxRate <= 0)) {
+  if (fxComputation.fxRateRequired && (payload.fxRate === null || payload.fxRate <= 0)) {
+    errors.push("fxRate is required when currencyCode differs from legal entity functional currency.");
+  } else if (String(form.fxRate || "").trim() && (rawFxRate === null || rawFxRate <= 0)) {
     errors.push("fxRate must be > 0 when provided.");
   }
 

@@ -61,6 +61,7 @@ import {
   DOCUMENT_DIRECTIONS,
   DOCUMENT_STATUSES,
   DOCUMENT_TYPES,
+  getDocumentFxComputation,
   mapDocumentRowToForm,
   requiresDueDate,
   validateDocumentMutationForm,
@@ -800,6 +801,26 @@ export default function CariDocumentsPage() {
         return l("amountTxn must be > 0.", "amountTxn 0'dan buyuk olmali.");
       case "amountBase must be > 0.":
         return l("amountBase must be > 0.", "amountBase 0'dan buyuk olmali.");
+      case "fxRate is required when currencyCode differs from legal entity functional currency.":
+        return l(
+          "fxRate is required when invoice currency differs from the legal entity functional currency.",
+          "Fatura para birimi, tuzel kisilik fonksiyonel para biriminden farkliysa fxRate zorunludur."
+        );
+      case "fxRate must be 1 when currencyCode matches legal entity functional currency":
+        return l(
+          "fxRate must be 1 when invoice currency matches the legal entity functional currency.",
+          "Fatura para birimi, tuzel kisilik fonksiyonel para birimiyle ayniysa fxRate 1 olmalidir."
+        );
+      case "amountBase must equal amountTxn when currencyCode matches legal entity functional currency":
+        return l(
+          "Base amount must match invoice amount when invoice currency matches the legal entity functional currency.",
+          "Fatura para birimi, tuzel kisilik fonksiyonel para birimiyle ayniysa baz tutar fatura tutarina esit olmalidir."
+        );
+      case "amountBase must equal amountTxn * fxRate when currencyCode differs from legal entity functional currency":
+        return l(
+          "Base amount must equal invoice amount x FX rate for foreign-currency invoices.",
+          "Yabanci para faturalarda baz tutar, fatura tutari x kur olmalidir."
+        );
       case "currencyCode must be a 3-letter code.":
         return l(
           "currencyCode must be a 3-letter code.",
@@ -1450,6 +1471,15 @@ export default function CariDocumentsPage() {
         .filter((row) => row.value),
     [workingContextLegalEntities]
   );
+  const legalEntityRowsById = useMemo(
+    () =>
+      new Map(
+        (workingContextLegalEntities || [])
+          .map((row) => [toPositiveInt(row?.id), row])
+          .filter(([id]) => id)
+      ),
+    [workingContextLegalEntities]
+  );
   const filterLegalEntityLookupOptions = useMemo(() => {
     const selectedLegalEntityId = normalizeText(filters.legalEntityId);
     const rows = [...legalEntityLookupOptions];
@@ -1480,6 +1510,50 @@ export default function CariDocumentsPage() {
     }
     return rows;
   }, [createForm.legalEntityId, legalEntityLookupOptions]);
+  const createSelectedLegalEntity = useMemo(
+    () => legalEntityRowsById.get(toPositiveInt(createForm.legalEntityId)) || null,
+    [createForm.legalEntityId, legalEntityRowsById]
+  );
+  const editSelectedLegalEntity = useMemo(
+    () => legalEntityRowsById.get(toPositiveInt(editForm.legalEntityId)) || null,
+    [editForm.legalEntityId, legalEntityRowsById]
+  );
+  const createFunctionalCurrencyCode = useMemo(
+    () =>
+      normalizeCurrencyCode(
+        createSelectedLegalEntity?.functional_currency_code ||
+          createSelectedLegalEntity?.functionalCurrencyCode
+      ),
+    [createSelectedLegalEntity]
+  );
+  const editFunctionalCurrencyCode = useMemo(
+    () =>
+      normalizeCurrencyCode(
+        editSelectedLegalEntity?.functional_currency_code ||
+          editSelectedLegalEntity?.functionalCurrencyCode
+      ),
+    [editSelectedLegalEntity]
+  );
+  const createDocumentMutationOptions = useMemo(
+    () => ({
+      functionalCurrencyCode: createFunctionalCurrencyCode || null,
+    }),
+    [createFunctionalCurrencyCode]
+  );
+  const editDocumentMutationOptions = useMemo(
+    () => ({
+      functionalCurrencyCode: editFunctionalCurrencyCode || null,
+    }),
+    [editFunctionalCurrencyCode]
+  );
+  const createDocumentFxComputation = useMemo(
+    () => getDocumentFxComputation(createForm, createDocumentMutationOptions),
+    [createDocumentMutationOptions, createForm]
+  );
+  const createResolvedAmountBaseText = useMemo(
+    () => normalizeOptionalDecimalText(createDocumentFxComputation.resolvedAmountBase),
+    [createDocumentFxComputation.resolvedAmountBase]
+  );
   const createCounterpartyLookupOptions = useMemo(
     () => {
       const selectedCounterpartyId = normalizeText(createForm.counterpartyId);
@@ -3264,12 +3338,12 @@ export default function CariDocumentsPage() {
     setCreateError("");
     setCreateMessage("");
     try {
-      const { errors } = validateDocumentMutationForm(createForm);
+      const { errors } = validateDocumentMutationForm(createForm, createDocumentMutationOptions);
       if (errors.length > 0) {
         setCreateError(translateDocumentMutationErrors(errors));
         return;
       }
-      const payload = buildDocumentMutationPayload(createForm);
+      const payload = buildDocumentMutationPayload(createForm, createDocumentMutationOptions);
       const response = await createCariDocument(payload);
       setCreateMessage(
         l(
@@ -3304,12 +3378,16 @@ export default function CariDocumentsPage() {
     setEditError("");
     setEditMessage("");
     try {
-      const { errors } = validateDocumentMutationForm(editForm);
+      const { errors } = validateDocumentMutationForm(editForm, editDocumentMutationOptions);
       if (errors.length > 0) {
         setEditError(translateDocumentMutationErrors(errors));
         return;
       }
-      const payload = buildDocumentMutationPayload(editForm);
+      const payload = buildDocumentMutationPayload(editForm, editDocumentMutationOptions);
+      delete payload.amountTxn;
+      delete payload.amountBase;
+      delete payload.currencyCode;
+      delete payload.fxRate;
       if (!payload.rowVersion) {
         payload.rowVersion = Number(selectedDetail?.rowVersion || 0) || undefined;
       }
@@ -4592,8 +4670,21 @@ export default function CariDocumentsPage() {
               setCreateCurrencyTouched(true);
               setCreateForm((prev) => ({ ...prev, currencyCode: event.target.value }));
             }} required /></label>
-            <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">{l("Base Amount (Legal Entity Currency)", "Baz Tutar (Tuzel Kisilik Para Birimi)")}<input type="number" min="0.000001" step="0.000001" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={createForm.amountBase} onChange={(event) => setCreateForm((prev) => ({ ...prev, amountBase: event.target.value }))} required /></label>
-            <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">{l("FX Rate (optional)", "Kur (opsiyonel)")}<input type="number" min="0.0000000001" step="0.0000000001" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={createForm.fxRate} onChange={(event) => setCreateForm((prev) => ({ ...prev, fxRate: event.target.value }))} /></label>
+            <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">{l("Base Amount (calculated)", "Baz Tutar (otomatik hesaplanir)")}<input type="number" min="0.000001" step="0.000001" className="mt-1 w-full rounded-md border border-slate-300 bg-slate-50 px-3 py-2 text-sm font-normal text-slate-700" value={createResolvedAmountBaseText} readOnly disabled={createSaving} /></label>
+            <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">{createDocumentFxComputation.fxRateRequired ? l("FX Rate (required)", "Kur (zorunlu)") : l("FX Rate", "Kur")}<input type="number" min="0.0000000001" step="0.0000000001" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={createDocumentFxComputation.isLocalCurrency ? "1" : createForm.fxRate || ""} onChange={(event) => setCreateForm((prev) => ({ ...prev, fxRate: event.target.value }))} readOnly={createDocumentFxComputation.isLocalCurrency} required={createDocumentFxComputation.fxRateRequired} /></label>
+            {createFunctionalCurrencyCode ? (
+              <p className="md:col-span-4 -mt-1 text-[11px] text-slate-500">
+                {createDocumentFxComputation.isLocalCurrency
+                  ? l(
+                      `Functional currency is ${createFunctionalCurrencyCode}. FX rate is fixed to 1 and base amount follows the invoice amount.`,
+                      `Fonksiyonel para birimi ${createFunctionalCurrencyCode}. Kur 1 olarak sabitlenir ve baz tutar fatura tutarindan gelir.`
+                    )
+                  : l(
+                      `Functional currency is ${createFunctionalCurrencyCode}. Base amount is calculated automatically from invoice amount x FX rate.`,
+                      `Fonksiyonel para birimi ${createFunctionalCurrencyCode}. Baz tutar, fatura tutari x kur ile otomatik hesaplanir.`
+                    )}
+              </p>
+            ) : null}
             <div className="md:col-span-4 flex gap-2">
               <button type="submit" className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white" disabled={createSaving}>{createSaving ? l("Creating...", "Olusturuluyor...") : l("Create Draft Document", "Belge Taslagi Olustur")}</button>
               <button

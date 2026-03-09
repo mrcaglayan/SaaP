@@ -12,6 +12,7 @@ import {
   receiveCashTransitTransfer,
   reverseCashTransaction,
 } from "../../api/cashAdmin.js";
+import { listBankAccounts } from "../../api/bankAccounts.js";
 import { listCariCounterparties } from "../../api/cariCounterparty.js";
 import { getCariOpenItemsReport } from "../../api/cariReports.js";
 import { listAccounts } from "../../api/glAdmin.js";
@@ -51,6 +52,7 @@ const MANUAL_TXN_TYPES = [
   "CLOSING_ADJUSTMENT",
 ];
 const FILTER_TXN_TYPES = [...MANUAL_TXN_TYPES, "VARIANCE"];
+const BANK_TXN_TYPES = new Set(["DEPOSIT_TO_BANK", "WITHDRAWAL_FROM_BANK"]);
 const COUNTER_ACCOUNT_REQUIRED_TXN_TYPES = new Set([
   "RECEIPT",
   "PAYOUT",
@@ -76,6 +78,7 @@ const SOURCE_DOC_TYPES = [
 const CARI_SETTLEMENT_LINKED_TXN_TYPES = new Set(["RECEIPT", "PAYOUT"]);
 const CASH_REGISTER_SETUP_PATH = "/app/kasa-tanimlari";
 const CASH_SESSION_SETUP_PATH = "/app/kasa-oturumlari";
+const BANK_ACCOUNTS_SETUP_PATH = "/app/banka-tanimla";
 const CASH_TRANSIT_CLEARING_PURPOSE_CODE = "CASH_TRANSIT_CLEARING";
 
 const CASH_TRANSACTION_FILTER_CONTEXT_MAPPINGS = [
@@ -348,6 +351,10 @@ function isTransferTxnType(txnType) {
   return normalized === "TRANSFER_IN" || normalized === "TRANSFER_OUT";
 }
 
+function isBankTxnType(txnType) {
+  return BANK_TXN_TYPES.has(toUpper(txnType));
+}
+
 function requiresCounterAccountTxnType(txnType) {
   return COUNTER_ACCOUNT_REQUIRED_TXN_TYPES.has(toUpper(txnType));
 }
@@ -362,6 +369,18 @@ function todayIsoDate() {
 
 function formatAccountOptionLabel(account) {
   return `${account?.code || account?.id || "-"} - ${account?.name || "-"}`;
+}
+
+function toBankAccountGlAccountId(bankAccount) {
+  return toPositiveInt(bankAccount?.gl_account_id ?? bankAccount?.glAccountId);
+}
+
+function formatBankAccountOptionLabel(bankAccount) {
+  const glCode = String(
+    bankAccount?.gl_account_code ?? bankAccount?.glAccountCode ?? ""
+  ).trim();
+  const label = `${bankAccount?.code || bankAccount?.id || "-"} - ${bankAccount?.name || "-"}`;
+  return glCode ? `${label} | ${glCode}` : label;
 }
 
 function buildPurposeMappingMap(rows) {
@@ -805,6 +824,12 @@ function mapTransactionErrorMessage(rawMessage, t) {
   if (lower.includes("counteraccountid not found for tenant")) {
     return t("cashTransactions.errorsMapped.counterAccountInvalid");
   }
+  if (
+    lower.includes("must reference an active bank account gl") ||
+    lower.includes("same as register account for bank transactions")
+  ) {
+    return t("cashTransactions.errorsMapped.counterAccountInvalidBank");
+  }
   if (lower.includes("an open cash session is required for this register")) {
     return t("cashTransactions.errors.sessionRequiredNoOpen");
   }
@@ -839,6 +864,9 @@ function mapTransactionErrorMessage(rawMessage, t) {
     return t("cashTransactions.errorsMapped.transitReverseTransferInFirst");
   }
   if (lower.includes("transaction currency must match register currency")) {
+    return t("cashTransactions.errorsMapped.currencyMismatchGeneric");
+  }
+  if (lower.includes("bank currency must match transaction currency")) {
     return t("cashTransactions.errorsMapped.currencyMismatchGeneric");
   }
   if (lower.includes("amount exceeds register max_txn_amount")) {
@@ -968,6 +996,7 @@ export default function CashTransactionsPage() {
   const canReverse = hasPermission("cash.txn.reverse");
   const canOverridePost = hasPermission("cash.override.post");
   const canReadAccounts = hasPermission("gl.account.read");
+  const canReadBanks = hasPermission("bank.accounts.read");
   const canReadCariCards = hasPermission("cari.card.read");
   const canReadCariReports = hasPermission("cari.report.read");
   const canApplyCari = hasPermission("cari.settlement.apply");
@@ -981,11 +1010,14 @@ export default function CashTransactionsPage() {
   const [infoMessage, setInfoMessage] = useState("");
   const [lookupWarning, setLookupWarning] = useState("");
   const [accountLookupWarning, setAccountLookupWarning] = useState("");
+  const [bankAccountLookupWarning, setBankAccountLookupWarning] = useState("");
 
   const [rows, setRows] = useState([]);
   const [registers, setRegisters] = useState([]);
   const [openSessions, setOpenSessions] = useState([]);
   const [accounts, setAccounts] = useState([]);
+  const [bankAccounts, setBankAccounts] = useState([]);
+  const [bankAccountsLoading, setBankAccountsLoading] = useState(false);
   const [filters, setFilters, resetFilters] = usePersistedFilters(
     CASH_TRANSACTION_FILTERS_STORAGE_SCOPE,
     () => buildInitialFilters(presetTxnType)
@@ -1039,6 +1071,13 @@ export default function CashTransactionsPage() {
         .filter((row) => parseDbBoolean(row?.allow_posting) && parseDbBoolean(row?.is_active))
         .sort((a, b) => String(a?.code || "").localeCompare(String(b?.code || ""))),
     [accounts]
+  );
+  const bankAccountOptions = useMemo(
+    () =>
+      [...bankAccounts]
+        .filter((row) => parseDbBoolean(row?.is_active))
+        .sort((a, b) => String(a?.code || "").localeCompare(String(b?.code || ""))),
+    [bankAccounts]
   );
   const selectedRegister = useMemo(() => {
     const registerId = toPositiveInt(form.registerId);
@@ -1117,13 +1156,14 @@ export default function CashTransactionsPage() {
     [selectedRegister]
   );
   const scopedAccountOptions = accountOptions;
+  const counterAccountIsBank = isBankTxnType(form.txnType);
   const counterAccountIsTransfer = isTransferTxnType(form.txnType);
   const counterAccountIsRequired =
     requiresCounterAccountTxnType(form.txnType) || selectedIsCrossOuTransfer;
   const counterAccountNeedsLookup =
     requiresCounterAccountTxnType(form.txnType) || counterAccountIsTransfer;
   const showCounterAccountPicker =
-    canReadAccounts && counterAccountNeedsLookup;
+    counterAccountIsBank ? canReadBanks : canReadAccounts && counterAccountNeedsLookup;
   const counterAccountPickerDisabled = !selectedRegisterLegalEntityId;
   const filteredCounterAccountOptions = useMemo(() => {
     const normalizedQuery = toUpper(accountQuery);
@@ -1145,9 +1185,42 @@ export default function CashTransactionsPage() {
       return String(a?.code || "").localeCompare(String(b?.code || ""));
     });
   }, [scopedAccountOptions, accountQuery, counterAccountIsTransfer]);
+  const filteredBankCounterAccountOptions = useMemo(() => {
+    const normalizedQuery = toUpper(accountQuery);
+    const registerCurrency = toUpper(selectedRegister?.currency_code);
+    const filtered = [...bankAccountOptions]
+      .filter((row) => !registerCurrency || toUpper(row?.currency_code) === registerCurrency)
+      .filter((row) => {
+        if (!normalizedQuery) {
+          return true;
+        }
+        const haystack = [
+          row?.id,
+          row?.code,
+          row?.name,
+          row?.bank_name,
+          row?.gl_account_code,
+          row?.glAccountCode,
+        ]
+          .filter(Boolean)
+          .join(" ");
+        return toUpper(haystack).includes(normalizedQuery);
+      });
+
+    return filtered.sort((a, b) =>
+      String(a?.code || "").localeCompare(String(b?.code || ""))
+    );
+  }, [accountQuery, bankAccountOptions, selectedRegister?.currency_code]);
   const combinedLookupWarning = useMemo(
-    () => [lookupWarning, accountLookupWarning].filter(Boolean).join(" "),
-    [accountLookupWarning, lookupWarning]
+    () =>
+      [
+        lookupWarning,
+        accountLookupWarning,
+        counterAccountIsBank ? bankAccountLookupWarning : "",
+      ]
+        .filter(Boolean)
+        .join(" "),
+    [accountLookupWarning, bankAccountLookupWarning, counterAccountIsBank, lookupWarning]
   );
   const selectedRegisterId = useMemo(() => toPositiveInt(form.registerId), [form.registerId]);
   const selectedRegisterOpenSessions = useMemo(() => {
@@ -1239,6 +1312,13 @@ export default function CashTransactionsPage() {
     }
     return scopedAccountOptions.find((row) => toPositiveInt(row?.id) === accountId) || null;
   }, [scopedAccountOptions, form.counterAccountId]);
+  const selectedCounterBankAccountOption = useMemo(() => {
+    const accountId = toPositiveInt(form.counterAccountId);
+    if (!accountId) {
+      return null;
+    }
+    return bankAccountOptions.find((row) => toBankAccountGlAccountId(row) === accountId) || null;
+  }, [bankAccountOptions, form.counterAccountId]);
   const selectedCounterAccountLegalEntityId = useMemo(
     () =>
       toPositiveInt(
@@ -1267,6 +1347,36 @@ export default function CashTransactionsPage() {
     }
     return t("cashTransactions.warnings.counterpartyPickerNeedsLegalEntity");
   }, [canReadCariCards, counterpartyPickerReady, selectedRegisterId, t]);
+  const counterAccountLookupHint = useMemo(() => {
+    if (!counterAccountIsBank) {
+      return "";
+    }
+    if (!canReadBanks) {
+      return t("cashTransactions.warnings.bankCounterAccountPermissionMissing");
+    }
+    if (!selectedRegisterId) {
+      return t("cashTransactions.warnings.bankCounterAccountNeedsRegister");
+    }
+    if (!selectedRegisterLegalEntityId) {
+      return t("cashTransactions.warnings.bankCounterAccountNeedsLegalEntity");
+    }
+    if (bankAccountLookupWarning) {
+      return bankAccountLookupWarning;
+    }
+    if (!bankAccountsLoading && bankAccountOptions.length === 0) {
+      return t("cashTransactions.warnings.noActiveBankAccountsForRegister");
+    }
+    return "";
+  }, [
+    bankAccountLookupWarning,
+    bankAccountOptions.length,
+    bankAccountsLoading,
+    canReadBanks,
+    counterAccountIsBank,
+    selectedRegisterId,
+    selectedRegisterLegalEntityId,
+    t,
+  ]);
   const sessionFallbackHint = useMemo(() => {
     if (!selectedRegisterId) {
       return t("cashTransactions.warnings.sessionPickerNeedsRegister");
@@ -2370,6 +2480,85 @@ export default function CashTransactionsPage() {
       active = false;
     };
   }, [canRead, canReadAccounts, selectedRegisterLegalEntityId, t]);
+
+  useEffect(() => {
+    if (!canRead || !canReadBanks || !counterAccountIsBank || !selectedRegisterLegalEntityId) {
+      setBankAccounts([]);
+      setBankAccountLookupWarning("");
+      setBankAccountsLoading(false);
+      return;
+    }
+
+    let active = true;
+    setBankAccountsLoading(true);
+    setBankAccountLookupWarning("");
+
+    listBankAccounts({
+      legalEntityId: selectedRegisterLegalEntityId,
+      isActive: true,
+      limit: 300,
+      offset: 0,
+    })
+      .then((result) => {
+        if (!active) {
+          return;
+        }
+        setBankAccounts(result?.rows || []);
+      })
+      .catch((err) => {
+        if (!active) {
+          return;
+        }
+        setBankAccounts([]);
+        setBankAccountLookupWarning(
+          err?.response?.data?.message ||
+            t("cashTransactions.warnings.bankAccountLookupUnavailable")
+        );
+      })
+      .finally(() => {
+        if (active) {
+          setBankAccountsLoading(false);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [canRead, canReadBanks, counterAccountIsBank, selectedRegisterLegalEntityId, t]);
+
+  useEffect(() => {
+    if (!counterAccountIsBank || !canReadBanks || bankAccountsLoading) {
+      return;
+    }
+
+    const currentCounterAccountId = toPositiveInt(form.counterAccountId);
+    if (!currentCounterAccountId) {
+      return;
+    }
+    if (
+      bankAccountOptions.some(
+        (row) => toBankAccountGlAccountId(row) === currentCounterAccountId
+      )
+    ) {
+      return;
+    }
+
+    setForm((prev) => {
+      if (toPositiveInt(prev.counterAccountId) !== currentCounterAccountId) {
+        return prev;
+      }
+      return {
+        ...prev,
+        counterAccountId: "",
+      };
+    });
+  }, [
+    bankAccountOptions,
+    bankAccountsLoading,
+    canReadBanks,
+    counterAccountIsBank,
+    form.counterAccountId,
+  ]);
 
   useEffect(() => {
     if (!canRead) {
@@ -3936,7 +4125,9 @@ export default function CashTransactionsPage() {
                   placeholder={t(
                     counterAccountIsTransfer
                       ? "cashTransactions.placeholders.searchTransitAccount"
-                      : "cashTransactions.placeholders.searchAccount"
+                      : counterAccountIsBank
+                        ? "cashTransactions.placeholders.searchBankAccount"
+                        : "cashTransactions.placeholders.searchAccount"
                   )}
                 />
                 <select
@@ -3952,14 +4143,25 @@ export default function CashTransactionsPage() {
                     {t(
                       counterAccountIsTransfer
                         ? "cashTransactions.placeholders.transitCounterAccount"
-                        : "cashTransactions.placeholders.counterAccount"
+                        : counterAccountIsBank
+                          ? "cashTransactions.placeholders.bankCounterAccount"
+                          : "cashTransactions.placeholders.counterAccount"
                     )}
                   </option>
-                  {filteredCounterAccountOptions.map((account) => (
-                    <option key={`counter-account-${account.id}`} value={account.id}>
-                      {formatAccountOptionLabel(account)}
-                    </option>
-                  ))}
+                  {counterAccountIsBank
+                    ? filteredBankCounterAccountOptions.map((bankAccount) => (
+                        <option
+                          key={`counter-bank-account-${bankAccount.id}`}
+                          value={toBankAccountGlAccountId(bankAccount)}
+                        >
+                          {formatBankAccountOptionLabel(bankAccount)}
+                        </option>
+                      ))
+                    : filteredCounterAccountOptions.map((account) => (
+                        <option key={`counter-account-${account.id}`} value={account.id}>
+                          {formatAccountOptionLabel(account)}
+                        </option>
+                      ))}
                 </select>
               </div>
             ) : (
@@ -3971,11 +4173,47 @@ export default function CashTransactionsPage() {
                   setForm((prev) => ({ ...prev, counterAccountId: event.target.value }))
                 }
                 className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                placeholder={t("cashTransactions.form.counterAccountIdManualFallback")}
+                placeholder={t(
+                  counterAccountIsBank
+                    ? "cashTransactions.form.bankCounterAccountIdManualFallback"
+                    : "cashTransactions.form.counterAccountIdManualFallback"
+                )}
                 required={counterAccountIsRequired}
               />
             )}
-            {selectedCounterAccountOption ? (
+            {counterAccountLookupHint ? (
+              <div className="md:col-span-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                <p>{counterAccountLookupHint}</p>
+                {counterAccountIsBank &&
+                canReadBanks &&
+                selectedRegisterLegalEntityId &&
+                !bankAccountsLoading &&
+                bankAccountOptions.length === 0 ? (
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <Link
+                      to={BANK_ACCOUNTS_SETUP_PATH}
+                      className="inline-flex items-center rounded border border-amber-400 bg-amber-100 px-2 py-1 text-xs font-medium text-amber-900 hover:bg-amber-200"
+                    >
+                      {t("cashTransactions.actions.openBankAccountSetup")}
+                    </Link>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+            {counterAccountIsBank && selectedCounterBankAccountOption ? (
+              <div className="md:col-span-3 rounded-lg border border-cyan-200 bg-cyan-50 px-3 py-2 text-xs text-cyan-800">
+                {t("cashTransactions.values.selectedBankCounterAccount", {
+                  code:
+                    selectedCounterBankAccountOption.code ||
+                    selectedCounterBankAccountOption.id,
+                  name: selectedCounterBankAccountOption.name || "-",
+                  glCode:
+                    selectedCounterBankAccountOption.gl_account_code ||
+                    selectedCounterBankAccountOption.glAccountCode ||
+                    form.counterAccountId,
+                })}
+              </div>
+            ) : selectedCounterAccountOption ? (
               <div className="md:col-span-3 rounded-lg border border-cyan-200 bg-cyan-50 px-3 py-2 text-xs text-cyan-800">
                 {t("cashTransactions.values.selectedCounterAccount", {
                   code:

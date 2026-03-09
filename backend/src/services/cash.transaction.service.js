@@ -88,6 +88,10 @@ function isActive(value) {
   return asUpper(value) === "ACTIVE";
 }
 
+function parseDbBoolean(value) {
+  return value === true || value === 1 || value === "1";
+}
+
 function assertStatusAllowed(actual, allowedSet, message) {
   if (!allowedSet.has(asUpper(actual))) {
     throw badRequest(message);
@@ -477,6 +481,93 @@ async function resolveSessionForCreate({
   }
 
   return openSession || null;
+}
+
+async function findActiveBankAccountByGlAccount({
+  tenantId,
+  legalEntityId,
+  glAccountId,
+  runQuery = query,
+}) {
+  const parsedLegalEntityId = parsePositiveInt(legalEntityId);
+  const parsedGlAccountId = parsePositiveInt(glAccountId);
+  if (!parsedLegalEntityId || !parsedGlAccountId) {
+    return null;
+  }
+
+  const result = await runQuery(
+    `SELECT
+       id,
+       legal_entity_id,
+       operating_unit_id,
+       code,
+       name,
+       currency_code,
+       gl_account_id,
+       is_active
+     FROM bank_accounts
+     WHERE tenant_id = ?
+       AND legal_entity_id = ?
+       AND gl_account_id = ?
+     LIMIT 1`,
+    [tenantId, parsedLegalEntityId, parsedGlAccountId]
+  );
+  const row = result.rows?.[0] || null;
+  if (!row || !parseDbBoolean(row.is_active)) {
+    return null;
+  }
+  return row;
+}
+
+async function assertValidBankCounterAccount({
+  tenantId,
+  register,
+  counterAccountId,
+  transactionCurrencyCode,
+  fieldLabel = "counterAccountId",
+  runQuery = query,
+}) {
+  const parsedCounterAccountId = parsePositiveInt(counterAccountId);
+  if (!parsedCounterAccountId) {
+    throw badRequest(`${fieldLabel} is required`);
+  }
+
+  const registerAccountId = parsePositiveInt(
+    register?.account_id ?? register?.register_account_id
+  );
+  if (registerAccountId && registerAccountId === parsedCounterAccountId) {
+    throw badRequest(
+      `${fieldLabel} cannot be the same as register account for bank transactions`
+    );
+  }
+
+  const bankAccount = await findActiveBankAccountByGlAccount({
+    tenantId,
+    legalEntityId: register?.legal_entity_id,
+    glAccountId: parsedCounterAccountId,
+    runQuery,
+  });
+  if (!bankAccount) {
+    throw badRequest(
+      `${fieldLabel} must reference an ACTIVE bank account GL for register legalEntityId`
+    );
+  }
+
+  const normalizedTxnCurrency = normalizeCurrency(
+    transactionCurrencyCode ||
+      register?.currency_code ||
+      register?.register_currency_code
+  );
+  const normalizedBankCurrency = normalizeCurrency(bankAccount.currency_code);
+  if (
+    normalizedTxnCurrency &&
+    normalizedBankCurrency &&
+    normalizedTxnCurrency !== normalizedBankCurrency
+  ) {
+    throw badRequest(`${fieldLabel} bank currency must match transaction currency`);
+  }
+
+  return bankAccount;
 }
 
 function validateTxnTypeSpecificRules(payload) {
@@ -1903,6 +1994,14 @@ export async function createCashTransaction({
   if (payload.counterAccountId) {
     await assertAccountBelongsToTenant(payload.tenantId, payload.counterAccountId, "counterAccountId");
   }
+  if (BANK_TXN_TYPES.has(payload.txnType)) {
+    await assertValidBankCounterAccount({
+      tenantId: payload.tenantId,
+      register,
+      counterAccountId: payload.counterAccountId,
+      transactionCurrencyCode: payload.currencyCode,
+    });
+  }
 
   let counterRegister = null;
   if (payload.counterCashRegisterId) {
@@ -2809,6 +2908,15 @@ export async function postCashTransactionById({
       if (asUpper(row.cash_session_status) !== "OPEN") {
         throw badRequest("Posting requires cash_session_id to be OPEN");
       }
+    }
+    if (BANK_TXN_TYPES.has(asUpper(row.txn_type))) {
+      await assertValidBankCounterAccount({
+        tenantId: payload.tenantId,
+        register: row,
+        counterAccountId: row.counter_account_id,
+        transactionCurrencyCode: row.currency_code,
+        runQuery: tx.query,
+      });
     }
 
     const posting = await createAndPostCashJournalTx(tx, {

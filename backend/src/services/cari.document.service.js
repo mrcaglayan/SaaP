@@ -1348,6 +1348,69 @@ async function resolveFxPostingPolicy({
   };
 }
 
+function resolveDraftDocumentAmounts({
+  amountTxn,
+  amountBase,
+  currencyCode,
+  fxRate,
+  functionalCurrencyCode,
+}) {
+  const normalizedAmountTxn = normalizeAmount(amountTxn, "amountTxn");
+  const documentCurrency = normalizeUpperText(currencyCode);
+  const functionalCurrency = normalizeUpperText(functionalCurrencyCode);
+  const normalizedAmountBase =
+    amountBase === null || amountBase === undefined || amountBase === ""
+      ? null
+      : normalizeAmount(amountBase, "amountBase");
+  const normalizedFxRate = normalizeOptionalPositiveDecimal(fxRate, "fxRate");
+
+  if (!documentCurrency || !functionalCurrency) {
+    throw badRequest("Document and legal entity functional currencies are required");
+  }
+
+  if (documentCurrency === functionalCurrency) {
+    if (normalizedFxRate !== null && !amountsAreEqual(normalizedFxRate, 1)) {
+      throw badRequest("fxRate must be 1 when currencyCode matches legal entity functional currency");
+    }
+    if (
+      normalizedAmountBase !== null &&
+      !amountsAreEqual(normalizedAmountBase, normalizedAmountTxn, AMOUNT_BALANCE_EPSILON)
+    ) {
+      throw badRequest("amountBase must equal amountTxn when currencyCode matches legal entity functional currency");
+    }
+    return {
+      amountTxn: normalizedAmountTxn,
+      amountBase: normalizedAmountTxn,
+      currencyCode: documentCurrency,
+      fxRate: 1,
+    };
+  }
+
+  if (!normalizedFxRate) {
+    throw badRequest("fxRate is required when currencyCode differs from legal entity functional currency");
+  }
+
+  const derivedAmountBase = normalizeAmount(
+    normalizedAmountTxn * normalizedFxRate,
+    "amountBase"
+  );
+  if (
+    normalizedAmountBase !== null &&
+    !amountsAreEqual(normalizedAmountBase, derivedAmountBase, AMOUNT_BALANCE_EPSILON)
+  ) {
+    throw badRequest(
+      "amountBase must equal amountTxn * fxRate when currencyCode differs from legal entity functional currency"
+    );
+  }
+
+  return {
+    amountTxn: normalizedAmountTxn,
+    amountBase: derivedAmountBase,
+    currencyCode: documentCurrency,
+    fxRate: normalizedFxRate,
+  };
+}
+
 async function findReversalDocumentByOriginalId({
   tenantId,
   originalDocumentId,
@@ -1619,7 +1682,11 @@ export async function createCariDraftDocument({
   const requestedOperatingUnitId = payload.operatingUnitId;
 
   assertFrozenTransactionType(payload.direction, payload.documentType);
-  await assertLegalEntityBelongsToTenant(tenantId, legalEntityId, "legalEntityId");
+  const legalEntity = await assertLegalEntityBelongsToTenant(
+    tenantId,
+    legalEntityId,
+    "legalEntityId"
+  );
   await assertCurrencyExists(payload.currencyCode, "currencyCode");
 
   const created = await withTransaction(async (tx) => {
@@ -1666,6 +1733,13 @@ export async function createCariDraftDocument({
     assertDueDateByDocumentType({
       documentType: payload.documentType,
       dueDate: resolvedDueDate,
+    });
+    const resolvedAmounts = resolveDraftDocumentAmounts({
+      amountTxn: payload.amountTxn,
+      amountBase: payload.amountBase,
+      currencyCode: payload.currencyCode,
+      fxRate: payload.fxRate,
+      functionalCurrencyCode: legalEntity.functional_currency_code,
     });
 
     const draftNumbering = await reserveDraftSequence({
@@ -1721,18 +1795,18 @@ export async function createCariDraftDocument({
         DRAFT_STATUS,
         payload.documentDate,
         resolvedDueDate,
-        payload.amountTxn,
-        payload.amountBase,
-        payload.amountTxn,
-        payload.amountBase,
-        payload.currencyCode,
-        payload.fxRate,
+        resolvedAmounts.amountTxn,
+        resolvedAmounts.amountBase,
+        resolvedAmounts.amountTxn,
+        resolvedAmounts.amountBase,
+        resolvedAmounts.currencyCode,
+        resolvedAmounts.fxRate,
         counterparty.code,
         counterparty.name,
         paymentTerm?.code || null,
         resolvedDueDate,
-        payload.currencyCode,
-        payload.fxRate,
+        resolvedAmounts.currencyCode,
+        resolvedAmounts.fxRate,
       ]
     );
     const documentId = parsePositiveInt(insertResult.rows?.insertId);
@@ -1828,9 +1902,18 @@ export async function updateCariDraftDocumentById({
   const nextCurrencyCode =
     payload.currencyCode === undefined ? existing.currency_code : payload.currencyCode;
   const nextFxRate = payload.fxRate === undefined ? existing.fx_rate : payload.fxRate;
+  const financialFieldsTouched =
+    payload.amountTxn !== undefined ||
+    payload.amountBase !== undefined ||
+    payload.currencyCode !== undefined ||
+    payload.fxRate !== undefined;
 
   assertFrozenTransactionType(nextDirection, nextDocumentType);
-  await assertLegalEntityBelongsToTenant(tenantId, legalEntityId, "legalEntityId");
+  const legalEntity = await assertLegalEntityBelongsToTenant(
+    tenantId,
+    legalEntityId,
+    "legalEntityId"
+  );
   await assertCurrencyExists(nextCurrencyCode, "currencyCode");
 
   const updated = await withTransaction(async (tx) => {
@@ -1882,6 +1965,20 @@ export async function updateCariDraftDocumentById({
       documentType: nextDocumentType,
       dueDate: resolvedDueDate,
     });
+    const resolvedAmounts = financialFieldsTouched
+      ? resolveDraftDocumentAmounts({
+          amountTxn: nextAmountTxn,
+          amountBase: nextAmountBase,
+          currencyCode: nextCurrencyCode,
+          fxRate: nextFxRate,
+          functionalCurrencyCode: legalEntity.functional_currency_code,
+        })
+      : {
+          amountTxn: normalizeAmount(nextAmountTxn, "amountTxn"),
+          amountBase: normalizeAmount(nextAmountBase, "amountBase"),
+          currencyCode: normalizeUpperText(nextCurrencyCode),
+          fxRate: normalizeOptionalPositiveDecimal(nextFxRate, "fxRate"),
+        };
 
     let sequenceNamespace = existing.sequence_namespace;
     let fiscalYear = Number(existing.fiscal_year);
@@ -1948,18 +2045,18 @@ export async function updateCariDraftDocumentById({
         documentNo,
         nextDocumentDate,
         resolvedDueDate,
-        nextAmountTxn,
-        nextAmountBase,
-        nextAmountTxn,
-        nextAmountBase,
-        nextCurrencyCode,
-        nextFxRate,
+        resolvedAmounts.amountTxn,
+        resolvedAmounts.amountBase,
+        resolvedAmounts.amountTxn,
+        resolvedAmounts.amountBase,
+        resolvedAmounts.currencyCode,
+        resolvedAmounts.fxRate,
         counterparty.code,
         counterparty.name,
         paymentTerm?.code || null,
         resolvedDueDate,
-        nextCurrencyCode,
-        nextFxRate,
+        resolvedAmounts.currencyCode,
+        resolvedAmounts.fxRate,
         tenantId,
         documentId,
         expectedRowVersion,

@@ -320,7 +320,7 @@ export function parseDocumentCreateInput(req) {
   assertDueDateRule({ documentType, dueDate });
 
   const amountTxn = parseRequiredAmount(req.body?.amountTxn, "amountTxn");
-  const amountBase = parseRequiredAmount(req.body?.amountBase, "amountBase");
+  const amountBase = parseOptionalAmount(req.body?.amountBase, "amountBase");
   const currencyCode = normalizeCurrencyCode(req.body?.currencyCode, "currencyCode");
   const fxRateInput = parseOptionalDecimal(req.body?.fxRate, "fxRate");
   const fxRate = fxRateInput === undefined ? null : fxRateInput;

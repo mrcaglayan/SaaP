@@ -1168,9 +1168,11 @@ export const messages = {
         autoOrNone: "Otomatik / yok",
         searchCounterparty: "Muhatap kodu/adi ara",
         searchAccount: "Hesap kodu/adi ara",
+        searchBankAccount: "Banka hesabi / GL kodu ara",
         searchTransitAccount: "Transit hesap kodu/adi ara",
         selectCounterparty: "Muhatap secin",
         counterAccount: "Karsi hesap secin",
+        bankCounterAccount: "Banka hesabi secin",
         transitCounterAccount: "Transit / karsi hesap secin",
         counterRegister: "Karsi register secin",
       },
@@ -1194,6 +1196,7 @@ export const messages = {
         counterpartyIdOptional: "Muhatap ID (opsiyonel)",
         counterpartyIdManualFallback: "Muhatap ID (manuel)",
         counterAccountIdOptional: "counterAccountId (opsiyonel)",
+        bankCounterAccountIdManualFallback: "Banka GL hesap ID (manuel)",
         counterAccountIdManualFallback: "Karsi hesap ID (manuel)",
         counterCashRegisterIdOptional: "counterCashRegisterId (opsiyonel)",
         descriptionOptional: "Aciklama (opsiyonel)",
@@ -1219,6 +1222,7 @@ export const messages = {
         loading: "Yukleniyor...",
         openRegisterSetup: "Kasa Tanimlari'na git",
         openSessionSetup: "Kasa Oturumlari'na git",
+        openBankAccountSetup: "Banka Tanimla'ya git",
         fillAll: "Tumunu Doldur",
         create: "Islem Olustur",
         creating: "Olusturuluyor...",
@@ -1287,6 +1291,8 @@ export const messages = {
         loadingCounterparties: "Muhataplar yukleniyor...",
         selectedCounterparty: "Secili muhatap: {{code}} - {{name}} ({{type}})",
         selectedCounterAccount: "Secili hesap: {{code}} - {{name}}",
+        selectedBankCounterAccount:
+          "Secili banka hesabi: {{code}} - {{name}} (GL: {{glCode}})",
         linked: "Bagli",
         transitStatusInitiated: "Baslatildi",
         transitStatusInTransit: "Yolda",
@@ -1320,10 +1326,20 @@ export const messages = {
           "Oturum lookup verileri yuklenemedi; cashSessionId alanini manuel doldurmaniz gerekebilir.",
         accountLookupUnavailable:
           "Hesap lookup verileri yuklenemedi; counterAccountId alanini manuel doldurmaniz gerekebilir.",
+        bankAccountLookupUnavailable:
+          "Banka hesabi lookup verileri yuklenemedi; banka GL hesabini manuel girmeniz gerekebilir.",
         counterpartyPickerUnavailableManual:
           "Muhatap secici kullanilamiyor; muhatap ID'yi manuel girin.",
         noRegisterList:
           "Register listesi bulunamadi. Kasa Tanimlari ekranindan en az bir register olusturup aktif hale getirin.",
+        bankCounterAccountPermissionMissing:
+          "Banka hesabi secici kullanilamiyor: bank.accounts.read yetkisi eksik. Banka GL hesabini manuel girin.",
+        bankCounterAccountNeedsRegister:
+          "Banka hesabi secmek icin once register secin.",
+        bankCounterAccountNeedsLegalEntity:
+          "Banka hesabi secici baslatilamadi; secili register legal entity baglami tasimiyor.",
+        noActiveBankAccountsForRegister:
+          "Secili legal entity icin aktif banka hesabi bulunamadi. Once banka hesabi tanimlayin.",
         sessionPickerNeedsRegister:
           "Oturum secmek icin once register secin. Register yoksa Kasa Tanimlari ekranindan olusturun.",
         noOpenSessionForRegister:
@@ -1430,6 +1446,8 @@ export const messages = {
         sessionNotOpen: "Secilen oturum OPEN degil.",
         counterRegisterNotFound: "Karsi register bulunamadi.",
         counterAccountInvalid: "Karsi hesap gecersiz veya tenant kapsaminda degil.",
+        counterAccountInvalidBank:
+          "Banka islemleri icin karsi hesap, secili legal entity icindeki aktif bir banka GL hesabi olmalidir.",
         postRequiresOpenSession: "Post islemi icin OPEN oturum gereklidir.",
         currencyMismatchGeneric:
           "Islem para birimi register para birimi ile uyusmuyor.",
@@ -2951,9 +2969,11 @@ export const messages = {
         autoOrNone: "Auto / none",
         searchCounterparty: "Search counterparty code/name",
         searchAccount: "Search account code/name",
+        searchBankAccount: "Search bank account / GL code",
         searchTransitAccount: "Search transit account code/name",
         selectCounterparty: "Select counterparty",
         counterAccount: "Select counter account",
+        bankCounterAccount: "Select bank account",
         transitCounterAccount: "Select transit / counter account",
         counterRegister: "Select counter register",
       },
@@ -2977,6 +2997,7 @@ export const messages = {
         counterpartyIdOptional: "Counterparty ID (optional)",
         counterpartyIdManualFallback: "Counterparty ID (manual)",
         counterAccountIdOptional: "counterAccountId (optional)",
+        bankCounterAccountIdManualFallback: "Bank GL account ID (manual)",
         counterAccountIdManualFallback: "Counter account ID (manual)",
         counterCashRegisterIdOptional: "counterCashRegisterId (optional)",
         descriptionOptional: "Description (optional)",
@@ -3002,6 +3023,7 @@ export const messages = {
         loading: "Loading...",
         openRegisterSetup: "Go to Cash Registers",
         openSessionSetup: "Go to Cash Sessions",
+        openBankAccountSetup: "Go to Bank Accounts",
         fillAll: "Fill All",
         create: "Create Transaction",
         creating: "Creating...",
@@ -3070,6 +3092,8 @@ export const messages = {
         loadingCounterparties: "Loading counterparties...",
         selectedCounterparty: "Selected counterparty: {{code}} - {{name}} ({{type}})",
         selectedCounterAccount: "Selected account: {{code}} - {{name}}",
+        selectedBankCounterAccount:
+          "Selected bank account: {{code}} - {{name}} (GL: {{glCode}})",
         linked: "Linked",
         transitStatusInitiated: "Initiated",
         transitStatusInTransit: "In transit",
@@ -3103,10 +3127,20 @@ export const messages = {
           "Session lookups could not be loaded; you may need to enter cashSessionId manually.",
         accountLookupUnavailable:
           "Account lookups could not be loaded; you may need to enter counterAccountId manually.",
+        bankAccountLookupUnavailable:
+          "Bank account lookups could not be loaded; you may need to enter the bank GL account manually.",
         counterpartyPickerUnavailableManual:
           "Counterparty picker is unavailable; use manual counterparty ID.",
         noRegisterList:
           "No register list is available. Go to Cash Registers and create/activate at least one register.",
+        bankCounterAccountPermissionMissing:
+          "Bank account picker is unavailable because bank.accounts.read permission is missing. Enter the bank GL account manually.",
+        bankCounterAccountNeedsRegister:
+          "Select a register first before choosing a bank account.",
+        bankCounterAccountNeedsLegalEntity:
+          "Bank account picker could not start because selected register has no legal entity context.",
+        noActiveBankAccountsForRegister:
+          "No active bank accounts were found for the selected legal entity. Create one first.",
         sessionPickerNeedsRegister:
           "Select a register first before choosing a session. If none exists, create one in Cash Registers.",
         noOpenSessionForRegister:
@@ -3215,6 +3249,8 @@ export const messages = {
         counterRegisterNotFound: "Counter register was not found.",
         counterAccountInvalid:
           "Counter account is invalid or outside tenant scope.",
+        counterAccountInvalidBank:
+          "For bank transactions, the counter account must be an active bank-linked GL account in the selected legal entity.",
         postRequiresOpenSession: "Posting requires an OPEN cash session.",
         currencyMismatchGeneric:
           "Transaction currency must match register currency.",
