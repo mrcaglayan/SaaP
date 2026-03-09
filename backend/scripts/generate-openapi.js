@@ -105,6 +105,59 @@ const TAG_DESCRIPTION_MAP = new Map([
   ["System", "System health and operational endpoints."],
 ]);
 
+const CASH_REGISTER_OWNERSHIP_SCOPES = ["CENTRAL", "OPERATING_UNIT"];
+const CASH_REGISTER_TYPES = ["VAULT", "DRAWER", "TILL"];
+const CASH_SESSION_MODES = ["REQUIRED", "OPTIONAL", "NONE"];
+const CASH_REGISTER_STATUSES = ["ACTIVE", "INACTIVE"];
+const CASH_SESSION_STATUSES = ["OPEN", "CLOSED", "CANCELLED"];
+const CASH_SESSION_CLOSE_REASONS = ["END_SHIFT", "FORCED_CLOSE", "COUNT_CORRECTION"];
+const CASH_TRANSACTION_TYPES = [
+  "RECEIPT",
+  "PAYOUT",
+  "DEPOSIT_TO_BANK",
+  "WITHDRAWAL_FROM_BANK",
+  "TRANSFER_OUT",
+  "TRANSFER_IN",
+  "VARIANCE",
+  "OPENING_FLOAT",
+  "CLOSING_ADJUSTMENT",
+];
+const CASH_TRANSACTION_STATUSES = [
+  "DRAFT",
+  "SUBMITTED",
+  "APPROVED",
+  "POSTED",
+  "REVERSED",
+  "CANCELLED",
+];
+const CASH_SOURCE_DOC_TYPES = [
+  "AP_PAYMENT",
+  "AR_RECEIPT",
+  "EXPENSE_CLAIM",
+  "PETTY_CASH_VOUCHER",
+  "BANK_DEPOSIT_SLIP",
+  "OTHER",
+];
+const CASH_COUNTERPARTY_TYPES = ["CUSTOMER", "VENDOR", "EMPLOYEE", "LEGAL_ENTITY", "OTHER"];
+const CASH_SOURCE_MODULES = [
+  "MANUAL",
+  "CARI",
+  "CONTRACTS",
+  "REVREC",
+  "CASH",
+  "SYSTEM",
+  "OTHER",
+];
+const CASH_INTEGRATION_LINK_STATUSES = [
+  "UNLINKED",
+  "PENDING",
+  "LINKED",
+  "PARTIALLY_LINKED",
+  "FAILED",
+];
+const CASH_FX_FALLBACK_MODES = ["EXACT_ONLY", "PRIOR_DATE"];
+const CASH_TRANSIT_STATUSES = ["INITIATED", "IN_TRANSIT", "RECEIVED", "CANCELED", "REVERSED"];
+
 function normalizeApiPath(input) {
   const normalized = String(input || "")
     .trim()
@@ -847,6 +900,330 @@ function applyCashOperationOverrides(specObject) {
   ensureTagPresent(specObject, "Cash");
   const paths = specObject.paths || {};
 
+  const registerListOperation = paths["/api/v1/cash/registers"]?.get;
+  if (registerListOperation) {
+    registerListOperation.summary =
+      "List cash registers with Central / HQ vs Operating Unit ownership context";
+    registerListOperation.description =
+      "Central / HQ registers stay in a central/no-OU posting context; OPERATING_UNIT registers carry explicit operating-unit scope.";
+    registerListOperation.tags = ["Cash"];
+    registerListOperation.parameters = [
+      queryParamInt(
+        "tenantId",
+        false,
+        "Tenant identifier when not implied by authenticated session"
+      ),
+      queryParamInt("legalEntityId", false, "Legal entity filter"),
+      queryParamInt("operatingUnitId", false, "Operating unit filter"),
+      queryParam(
+        "ownershipScope",
+        { $ref: "#/components/schemas/CashRegisterOwnershipScope" },
+        false,
+        "Ownership scope filter"
+      ),
+      queryParam(
+        "status",
+        { $ref: "#/components/schemas/CashRegisterStatus" },
+        false,
+        "Register status filter"
+      ),
+      queryParam("q", { type: "string", maxLength: 120 }, false, "Code/name search"),
+      queryParam(
+        "limit",
+        { type: "integer", minimum: 1, maximum: 200 },
+        false,
+        "Page size"
+      ),
+      queryParam("offset", nonNegativeInt, false, "Page offset"),
+    ];
+    registerListOperation.responses = withStandardResponses(
+      "200",
+      "Cash register list",
+      "#/components/schemas/CashRegisterListResponse"
+    );
+  }
+
+  const registerUpsertOperation = paths["/api/v1/cash/registers"]?.post;
+  if (registerUpsertOperation) {
+    registerUpsertOperation.summary =
+      "Create or update a cash register with explicit ownership context";
+    registerUpsertOperation.tags = ["Cash"];
+    registerUpsertOperation.requestBody = bodyFromRef(
+      "#/components/schemas/CashRegisterUpsertRequest"
+    );
+    registerUpsertOperation.responses = withStandardResponses(
+      "200",
+      "Cash register saved",
+      "#/components/schemas/CashRegisterResponse"
+    );
+  }
+
+  const registerDetailOperation = paths["/api/v1/cash/registers/{registerId}"]?.get;
+  if (registerDetailOperation) {
+    registerDetailOperation.summary = "Get one cash register with ownership-aware context";
+    registerDetailOperation.tags = ["Cash"];
+    registerDetailOperation.parameters = [
+      pathParam("registerId", "Cash register identifier"),
+      queryParamInt(
+        "tenantId",
+        false,
+        "Tenant identifier when not implied by authenticated session"
+      ),
+    ];
+    registerDetailOperation.responses = withStandardResponses(
+      "200",
+      "Cash register detail",
+      "#/components/schemas/CashRegisterResponse"
+    );
+  }
+
+  const registerStatusOperation = paths["/api/v1/cash/registers/{registerId}/status"]?.post;
+  if (registerStatusOperation) {
+    registerStatusOperation.summary = "Update cash register ACTIVE/INACTIVE status";
+    registerStatusOperation.tags = ["Cash"];
+    registerStatusOperation.parameters = [pathParam("registerId", "Cash register identifier")];
+    registerStatusOperation.requestBody = bodyFromRef(
+      "#/components/schemas/CashRegisterStatusUpdateRequest"
+    );
+    registerStatusOperation.responses = withStandardResponses(
+      "200",
+      "Cash register status updated",
+      "#/components/schemas/CashRegisterResponse"
+    );
+  }
+
+  const sessionListOperation = paths["/api/v1/cash/sessions"]?.get;
+  if (sessionListOperation) {
+    sessionListOperation.summary = "List cash sessions with register ownership context";
+    sessionListOperation.tags = ["Cash"];
+    sessionListOperation.parameters = [
+      queryParamInt(
+        "tenantId",
+        false,
+        "Tenant identifier when not implied by authenticated session"
+      ),
+      queryParamInt("legalEntityId", false, "Legal entity filter"),
+      queryParamInt("registerId", false, "Cash register filter"),
+      queryParam(
+        "status",
+        { $ref: "#/components/schemas/CashSessionStatus" },
+        false,
+        "Session status filter"
+      ),
+      queryParam(
+        "openedFrom",
+        { type: "string", format: "date" },
+        false,
+        "Open-date lower bound"
+      ),
+      queryParam(
+        "openedTo",
+        { type: "string", format: "date" },
+        false,
+        "Open-date upper bound"
+      ),
+      queryParam(
+        "limit",
+        { type: "integer", minimum: 1, maximum: 200 },
+        false,
+        "Page size"
+      ),
+      queryParam("offset", nonNegativeInt, false, "Page offset"),
+    ];
+    sessionListOperation.responses = withStandardResponses(
+      "200",
+      "Cash session list",
+      "#/components/schemas/CashSessionListResponse"
+    );
+  }
+
+  const sessionDetailOperation = paths["/api/v1/cash/sessions/{sessionId}"]?.get;
+  if (sessionDetailOperation) {
+    sessionDetailOperation.summary = "Get one cash session with ownership-aware context";
+    sessionDetailOperation.tags = ["Cash"];
+    sessionDetailOperation.parameters = [
+      pathParam("sessionId", "Cash session identifier"),
+      queryParamInt(
+        "tenantId",
+        false,
+        "Tenant identifier when not implied by authenticated session"
+      ),
+    ];
+    sessionDetailOperation.responses = withStandardResponses(
+      "200",
+      "Cash session detail",
+      "#/components/schemas/CashSessionResponse"
+    );
+  }
+
+  const sessionOpenOperation = paths["/api/v1/cash/sessions/open"]?.post;
+  if (sessionOpenOperation) {
+    sessionOpenOperation.summary = "Open a cash session for a register";
+    sessionOpenOperation.tags = ["Cash"];
+    sessionOpenOperation.requestBody = bodyFromRef(
+      "#/components/schemas/CashSessionOpenRequest"
+    );
+    sessionOpenOperation.responses = withStandardResponses(
+      "200",
+      "Cash session opened",
+      "#/components/schemas/CashSessionResponse"
+    );
+  }
+
+  const sessionCloseOperation = paths["/api/v1/cash/sessions/{sessionId}/close"]?.post;
+  if (sessionCloseOperation) {
+    sessionCloseOperation.summary =
+      "Close an OPEN cash session and optionally approve variance";
+    sessionCloseOperation.tags = ["Cash"];
+    sessionCloseOperation.parameters = [pathParam("sessionId", "Cash session identifier")];
+    sessionCloseOperation.requestBody = bodyFromRef(
+      "#/components/schemas/CashSessionCloseRequest"
+    );
+    sessionCloseOperation.responses = withStandardResponses(
+      "200",
+      "Cash session closed",
+      "#/components/schemas/CashSessionResponse"
+    );
+  }
+
+  const transactionListOperation = paths["/api/v1/cash/transactions"]?.get;
+  if (transactionListOperation) {
+    transactionListOperation.summary = "List cash transactions with ownership and transit context";
+    transactionListOperation.tags = ["Cash"];
+    transactionListOperation.parameters = [
+      queryParamInt(
+        "tenantId",
+        false,
+        "Tenant identifier when not implied by authenticated session"
+      ),
+      queryParamInt("legalEntityId", false, "Legal entity filter"),
+      queryParamInt("registerId", false, "Cash register filter"),
+      queryParamInt("sessionId", false, "Cash session filter"),
+      queryParam(
+        "txnType",
+        { $ref: "#/components/schemas/CashTransactionType" },
+        false,
+        "Transaction type filter"
+      ),
+      queryParam(
+        "status",
+        { $ref: "#/components/schemas/CashTransactionStatus" },
+        false,
+        "Transaction status filter"
+      ),
+      queryParam(
+        "bookDateFrom",
+        { type: "string", format: "date" },
+        false,
+        "Book-date lower bound"
+      ),
+      queryParam(
+        "bookDateTo",
+        { type: "string", format: "date" },
+        false,
+        "Book-date upper bound"
+      ),
+      queryParam(
+        "limit",
+        { type: "integer", minimum: 1, maximum: 200 },
+        false,
+        "Page size"
+      ),
+      queryParam("offset", nonNegativeInt, false, "Page offset"),
+    ];
+    transactionListOperation.responses = withStandardResponses(
+      "200",
+      "Cash transaction list",
+      "#/components/schemas/CashTransactionListResponse"
+    );
+  }
+
+  const transactionCreateOperation = paths["/api/v1/cash/transactions"]?.post;
+  if (transactionCreateOperation) {
+    transactionCreateOperation.summary = "Create a cash transaction";
+    transactionCreateOperation.tags = ["Cash"];
+    transactionCreateOperation.requestBody = bodyFromRef(
+      "#/components/schemas/CashTransactionCreateRequest"
+    );
+    transactionCreateOperation.responses = withStandardResponses(
+      "200",
+      "Cash transaction created or replayed",
+      "#/components/schemas/CashTransactionMutationResponse"
+    );
+  }
+
+  const transactionDetailOperation = paths["/api/v1/cash/transactions/{transactionId}"]?.get;
+  if (transactionDetailOperation) {
+    transactionDetailOperation.summary = "Get one cash transaction with ownership-aware context";
+    transactionDetailOperation.tags = ["Cash"];
+    transactionDetailOperation.parameters = [
+      pathParam("transactionId", "Cash transaction identifier"),
+      queryParamInt(
+        "tenantId",
+        false,
+        "Tenant identifier when not implied by authenticated session"
+      ),
+    ];
+    transactionDetailOperation.responses = withStandardResponses(
+      "200",
+      "Cash transaction detail",
+      "#/components/schemas/CashTransactionResponse"
+    );
+  }
+
+  const transactionCancelOperation =
+    paths["/api/v1/cash/transactions/{transactionId}/cancel"]?.post;
+  if (transactionCancelOperation) {
+    transactionCancelOperation.summary = "Cancel a draft cash transaction";
+    transactionCancelOperation.tags = ["Cash"];
+    transactionCancelOperation.parameters = [
+      pathParam("transactionId", "Cash transaction identifier"),
+    ];
+    transactionCancelOperation.requestBody = bodyFromRef(
+      "#/components/schemas/CashTransactionCancelRequest"
+    );
+    transactionCancelOperation.responses = withStandardResponses(
+      "200",
+      "Cash transaction cancelled",
+      "#/components/schemas/CashTransactionResponse"
+    );
+  }
+
+  const transactionPostOperation =
+    paths["/api/v1/cash/transactions/{transactionId}/post"]?.post;
+  if (transactionPostOperation) {
+    transactionPostOperation.summary = "Post a cash transaction";
+    transactionPostOperation.tags = ["Cash"];
+    transactionPostOperation.parameters = [pathParam("transactionId", "Cash transaction identifier")];
+    transactionPostOperation.requestBody = bodyFromRef(
+      "#/components/schemas/CashTransactionPostRequest",
+      false
+    );
+    transactionPostOperation.responses = withStandardResponses(
+      "200",
+      "Cash transaction posted",
+      "#/components/schemas/CashTransactionMutationResponse"
+    );
+  }
+
+  const transactionReverseOperation =
+    paths["/api/v1/cash/transactions/{transactionId}/reverse"]?.post;
+  if (transactionReverseOperation) {
+    transactionReverseOperation.summary = "Reverse a posted cash transaction";
+    transactionReverseOperation.tags = ["Cash"];
+    transactionReverseOperation.parameters = [
+      pathParam("transactionId", "Cash transaction identifier"),
+    ];
+    transactionReverseOperation.requestBody = bodyFromRef(
+      "#/components/schemas/CashTransactionReverseRequest"
+    );
+    transactionReverseOperation.responses = withStandardResponses(
+      "200",
+      "Cash transaction reversed",
+      "#/components/schemas/CashTransactionReverseResponse"
+    );
+  }
+
   const exchangeListOperation = paths["/api/v1/cash/exchanges"]?.get;
   if (exchangeListOperation) {
     exchangeListOperation.summary = "List cash exchange batches";
@@ -1042,7 +1419,10 @@ function applyCashOperationOverrides(specObject) {
 
   const transitInitiateOperation = paths["/api/v1/cash/transactions/transit/initiate"]?.post;
   if (transitInitiateOperation) {
-    transitInitiateOperation.summary = "Initiate cross-OU cash transit transfer (creates transfer-out)";
+    transitInitiateOperation.summary =
+      "Initiate cash transit transfer for different operating-unit contexts (creates transfer-out)";
+    transitInitiateOperation.description =
+      "Use this workflow when the source and target registers are in different operating-unit contexts, including Central / HQ to branch, branch to Central / HQ, or branch-to-branch moves between different operating units.";
     transitInitiateOperation.tags = ["Cash"];
     transitInitiateOperation.requestBody = bodyFromRef(
       "#/components/schemas/CashTransitTransferInitiateRequest"
@@ -2821,6 +3201,559 @@ const spec = {
         type: "object",
         additionalProperties: true,
       },
+      CashRegisterOwnershipScope: {
+        type: "string",
+        description:
+          "Explicit ownership scope for a cash register. CENTRAL keeps operating_unit_id empty and preserves the central/no-OU posting context.",
+        enum: CASH_REGISTER_OWNERSHIP_SCOPES,
+      },
+      CashRegisterType: {
+        type: "string",
+        enum: CASH_REGISTER_TYPES,
+      },
+      CashSessionMode: {
+        type: "string",
+        enum: CASH_SESSION_MODES,
+      },
+      CashRegisterStatus: {
+        type: "string",
+        enum: CASH_REGISTER_STATUSES,
+      },
+      CashSessionStatus: {
+        type: "string",
+        enum: CASH_SESSION_STATUSES,
+      },
+      CashSessionCloseReason: {
+        type: "string",
+        enum: CASH_SESSION_CLOSE_REASONS,
+      },
+      CashTransactionType: {
+        type: "string",
+        enum: CASH_TRANSACTION_TYPES,
+      },
+      CashTransactionStatus: {
+        type: "string",
+        enum: CASH_TRANSACTION_STATUSES,
+      },
+      CashSourceDocType: {
+        type: "string",
+        enum: CASH_SOURCE_DOC_TYPES,
+      },
+      CashCounterpartyType: {
+        type: "string",
+        enum: CASH_COUNTERPARTY_TYPES,
+      },
+      CashSourceModule: {
+        type: "string",
+        enum: CASH_SOURCE_MODULES,
+      },
+      CashIntegrationLinkStatus: {
+        type: "string",
+        enum: CASH_INTEGRATION_LINK_STATUSES,
+      },
+      CashFxFallbackMode: {
+        type: "string",
+        enum: CASH_FX_FALLBACK_MODES,
+      },
+      CashTransitStatus: {
+        type: "string",
+        enum: CASH_TRANSIT_STATUSES,
+      },
+      CashRegisterRow: {
+        type: "object",
+        additionalProperties: true,
+        properties: {
+          id: { ...intId, nullable: true },
+          tenant_id: { ...intId, nullable: true },
+          legal_entity_id: { ...intId, nullable: true },
+          ownership_scope: { $ref: "#/components/schemas/CashRegisterOwnershipScope" },
+          operating_unit_id: { ...intId, nullable: true },
+          account_id: { ...intId, nullable: true },
+          code: { type: "string", nullable: true },
+          name: { type: "string", nullable: true },
+          register_type: { $ref: "#/components/schemas/CashRegisterType" },
+          session_mode: { $ref: "#/components/schemas/CashSessionMode" },
+          currency_code: { type: "string", maxLength: 3, nullable: true },
+          status: { $ref: "#/components/schemas/CashRegisterStatus" },
+          allow_negative: { type: "boolean", nullable: true },
+          variance_gain_account_id: { ...intId, nullable: true },
+          variance_loss_account_id: { ...intId, nullable: true },
+          max_txn_amount: { type: "number", nullable: true },
+          requires_approval_over_amount: { type: "number", nullable: true },
+          created_by_user_id: { ...intId, nullable: true },
+          created_at: { type: "string", format: "date-time", nullable: true },
+          updated_at: { type: "string", format: "date-time", nullable: true },
+          legal_entity_code: { type: "string", nullable: true },
+          legal_entity_name: { type: "string", nullable: true },
+          operating_unit_code: { type: "string", nullable: true },
+          operating_unit_name: { type: "string", nullable: true },
+          ownership_context_label: {
+            type: "string",
+            description:
+              "Operator-facing ownership label rendered as Central / HQ or OU code/name context.",
+            nullable: true,
+          },
+          account_code: { type: "string", nullable: true },
+          account_name: { type: "string", nullable: true },
+          account_allow_posting: { type: "boolean", nullable: true },
+          account_parent_account_id: { ...intId, nullable: true },
+          account_is_active: { type: "boolean", nullable: true },
+          account_is_cash_controlled: { type: "boolean", nullable: true },
+          account_scope: { type: "string", nullable: true },
+          account_legal_entity_id: { ...intId, nullable: true },
+          variance_gain_account_code: { type: "string", nullable: true },
+          variance_gain_account_name: { type: "string", nullable: true },
+          variance_loss_account_code: { type: "string", nullable: true },
+          variance_loss_account_name: { type: "string", nullable: true },
+        },
+      },
+      CashRegisterListResponse: {
+        type: "object",
+        properties: {
+          tenantId: intId,
+          rows: {
+            type: "array",
+            items: { $ref: "#/components/schemas/CashRegisterRow" },
+          },
+          total: nonNegativeInt,
+          limit: { type: "integer", minimum: 1 },
+          offset: nonNegativeInt,
+        },
+        required: ["tenantId", "rows", "total", "limit", "offset"],
+      },
+      CashRegisterResponse: {
+        type: "object",
+        properties: {
+          tenantId: intId,
+          row: {
+            allOf: [{ $ref: "#/components/schemas/CashRegisterRow" }],
+            nullable: true,
+          },
+        },
+        required: ["tenantId", "row"],
+      },
+      CashRegisterUpsertRequest: {
+        type: "object",
+        description:
+          "Create or update a cash register with explicit ownership scope. CENTRAL remains a central/no-OU posting context and OPERATING_UNIT requires an operating unit.",
+        properties: {
+          tenantId: { ...intId, nullable: true },
+          id: { ...intId, nullable: true },
+          legalEntityId: intId,
+          ownershipScope: { $ref: "#/components/schemas/CashRegisterOwnershipScope" },
+          operatingUnitId: {
+            ...intId,
+            nullable: true,
+            description:
+              "Must be empty for CENTRAL ownership and required for OPERATING_UNIT ownership.",
+          },
+          accountId: intId,
+          code: { type: "string", maxLength: 60 },
+          name: { type: "string", maxLength: 255 },
+          registerType: {
+            allOf: [{ $ref: "#/components/schemas/CashRegisterType" }],
+            nullable: true,
+          },
+          sessionMode: {
+            allOf: [{ $ref: "#/components/schemas/CashSessionMode" }],
+            nullable: true,
+          },
+          currencyCode: currencyCode,
+          status: {
+            allOf: [{ $ref: "#/components/schemas/CashRegisterStatus" }],
+            nullable: true,
+          },
+          allowNegative: { type: "boolean", nullable: true },
+          varianceGainAccountId: { ...intId, nullable: true },
+          varianceLossAccountId: { ...intId, nullable: true },
+          maxTxnAmount: { type: "number", nullable: true },
+          requiresApprovalOverAmount: { type: "number", nullable: true },
+        },
+        required: [
+          "legalEntityId",
+          "ownershipScope",
+          "accountId",
+          "code",
+          "name",
+          "currencyCode",
+        ],
+      },
+      CashRegisterStatusUpdateRequest: {
+        type: "object",
+        properties: {
+          tenantId: { ...intId, nullable: true },
+          status: { $ref: "#/components/schemas/CashRegisterStatus" },
+        },
+        required: ["status"],
+      },
+      CashSessionRow: {
+        type: "object",
+        additionalProperties: true,
+        properties: {
+          id: { ...intId, nullable: true },
+          tenant_id: { ...intId, nullable: true },
+          cash_register_id: { ...intId, nullable: true },
+          status: { $ref: "#/components/schemas/CashSessionStatus" },
+          opening_amount: { type: "number", nullable: true },
+          expected_closing_amount: { type: "number", nullable: true },
+          counted_closing_amount: { type: "number", nullable: true },
+          variance_amount: { type: "number", nullable: true },
+          opened_at: { type: "string", format: "date-time", nullable: true },
+          opened_by_user_id: { ...intId, nullable: true },
+          closed_at: { type: "string", format: "date-time", nullable: true },
+          closed_by_user_id: { ...intId, nullable: true },
+          closed_reason: {
+            allOf: [{ $ref: "#/components/schemas/CashSessionCloseReason" }],
+            nullable: true,
+          },
+          close_note: { type: "string", nullable: true },
+          approved_by_user_id: { ...intId, nullable: true },
+          approved_at: { type: "string", format: "date-time", nullable: true },
+          created_at: { type: "string", format: "date-time", nullable: true },
+          updated_at: { type: "string", format: "date-time", nullable: true },
+          legal_entity_id: { ...intId, nullable: true },
+          ownership_scope: { $ref: "#/components/schemas/CashRegisterOwnershipScope" },
+          operating_unit_id: { ...intId, nullable: true },
+          register_account_id: { ...intId, nullable: true },
+          variance_gain_account_id: { ...intId, nullable: true },
+          variance_loss_account_id: { ...intId, nullable: true },
+          requires_approval_over_amount: { type: "number", nullable: true },
+          cash_register_code: { type: "string", nullable: true },
+          cash_register_name: { type: "string", nullable: true },
+          register_session_mode: { $ref: "#/components/schemas/CashSessionMode" },
+          register_currency_code: { type: "string", maxLength: 3, nullable: true },
+          register_status: { $ref: "#/components/schemas/CashRegisterStatus" },
+          legal_entity_code: { type: "string", nullable: true },
+          legal_entity_name: { type: "string", nullable: true },
+          operating_unit_code: { type: "string", nullable: true },
+          operating_unit_name: { type: "string", nullable: true },
+          ownership_context_label: {
+            type: "string",
+            description: "Operator-facing ownership label rendered as Central / HQ or OU: <code>.",
+            nullable: true,
+          },
+          opened_by_email: { type: "string", nullable: true },
+          closed_by_email: { type: "string", nullable: true },
+          approved_by_email: { type: "string", nullable: true },
+        },
+      },
+      CashSessionListResponse: {
+        type: "object",
+        properties: {
+          tenantId: intId,
+          rows: {
+            type: "array",
+            items: { $ref: "#/components/schemas/CashSessionRow" },
+          },
+          total: nonNegativeInt,
+          limit: { type: "integer", minimum: 1 },
+          offset: nonNegativeInt,
+        },
+        required: ["tenantId", "rows", "total", "limit", "offset"],
+      },
+      CashSessionResponse: {
+        type: "object",
+        properties: {
+          tenantId: intId,
+          row: {
+            allOf: [{ $ref: "#/components/schemas/CashSessionRow" }],
+            nullable: true,
+          },
+        },
+        required: ["tenantId", "row"],
+      },
+      CashSessionOpenRequest: {
+        type: "object",
+        properties: {
+          tenantId: { ...intId, nullable: true },
+          registerId: intId,
+          openingAmount: { type: "number", minimum: 0, nullable: true },
+        },
+        required: ["registerId"],
+      },
+      CashSessionCloseRequest: {
+        type: "object",
+        properties: {
+          tenantId: { ...intId, nullable: true },
+          countedClosingAmount: { type: "number", minimum: 0 },
+          closedReason: {
+            allOf: [{ $ref: "#/components/schemas/CashSessionCloseReason" }],
+            nullable: true,
+          },
+          closeNote: { type: "string", maxLength: 500, nullable: true },
+          approveVariance: { type: "boolean", nullable: true },
+        },
+        required: ["countedClosingAmount"],
+      },
+      CashTransactionRow: {
+        type: "object",
+        additionalProperties: true,
+        properties: {
+          id: { ...intId, nullable: true },
+          tenant_id: { ...intId, nullable: true },
+          cash_register_id: { ...intId, nullable: true },
+          cash_session_id: { ...intId, nullable: true },
+          txn_no: { type: "string", nullable: true },
+          txn_type: { $ref: "#/components/schemas/CashTransactionType" },
+          status: { $ref: "#/components/schemas/CashTransactionStatus" },
+          txn_datetime: { type: "string", format: "date-time", nullable: true },
+          book_date: { type: "string", format: "date", nullable: true },
+          amount: { type: "number", nullable: true },
+          amount_base: { type: "number", nullable: true },
+          currency_code: { type: "string", maxLength: 3, nullable: true },
+          fx_rate: { type: "number", nullable: true },
+          fx_rate_source: { type: "string", nullable: true },
+          fx_rate_date: { type: "string", format: "date", nullable: true },
+          fx_fallback_mode: {
+            allOf: [{ $ref: "#/components/schemas/CashFxFallbackMode" }],
+            nullable: true,
+          },
+          fx_fallback_max_days: { type: "integer", minimum: 0, nullable: true },
+          description: { type: "string", nullable: true },
+          reference_no: { type: "string", nullable: true },
+          source_doc_type: {
+            allOf: [{ $ref: "#/components/schemas/CashSourceDocType" }],
+            nullable: true,
+          },
+          source_doc_id: { type: "string", nullable: true },
+          source_module: {
+            allOf: [{ $ref: "#/components/schemas/CashSourceModule" }],
+            nullable: true,
+          },
+          source_entity_type: { type: "string", nullable: true },
+          source_entity_id: { type: "string", nullable: true },
+          integration_link_status: {
+            allOf: [{ $ref: "#/components/schemas/CashIntegrationLinkStatus" }],
+            nullable: true,
+          },
+          counterparty_type: {
+            allOf: [{ $ref: "#/components/schemas/CashCounterpartyType" }],
+            nullable: true,
+          },
+          counterparty_id: { ...intId, nullable: true },
+          counter_account_id: { ...intId, nullable: true },
+          counter_cash_register_id: { ...intId, nullable: true },
+          linked_cari_settlement_batch_id: { ...intId, nullable: true },
+          linked_cari_unapplied_cash_id: { ...intId, nullable: true },
+          posted_journal_entry_id: { ...intId, nullable: true },
+          reversal_of_transaction_id: { ...intId, nullable: true },
+          cancel_reason: { type: "string", nullable: true },
+          override_cash_control: { type: "boolean", nullable: true },
+          override_reason: { type: "string", nullable: true },
+          idempotency_key: { type: "string", nullable: true },
+          integration_event_uid: { type: "string", nullable: true },
+          created_by_user_id: { ...intId, nullable: true },
+          submitted_by_user_id: { ...intId, nullable: true },
+          approved_by_user_id: { ...intId, nullable: true },
+          posted_by_user_id: { ...intId, nullable: true },
+          reversed_by_user_id: { ...intId, nullable: true },
+          cancelled_by_user_id: { ...intId, nullable: true },
+          submitted_at: { type: "string", format: "date-time", nullable: true },
+          approved_at: { type: "string", format: "date-time", nullable: true },
+          posted_at: { type: "string", format: "date-time", nullable: true },
+          reversed_at: { type: "string", format: "date-time", nullable: true },
+          cancelled_at: { type: "string", format: "date-time", nullable: true },
+          created_at: { type: "string", format: "date-time", nullable: true },
+          updated_at: { type: "string", format: "date-time", nullable: true },
+          legal_entity_id: { ...intId, nullable: true },
+          ownership_scope: { $ref: "#/components/schemas/CashRegisterOwnershipScope" },
+          operating_unit_id: { ...intId, nullable: true },
+          register_account_id: { ...intId, nullable: true },
+          register_variance_gain_account_id: { ...intId, nullable: true },
+          register_variance_loss_account_id: { ...intId, nullable: true },
+          legal_entity_code: { type: "string", nullable: true },
+          legal_entity_name: { type: "string", nullable: true },
+          operating_unit_code: { type: "string", nullable: true },
+          operating_unit_name: { type: "string", nullable: true },
+          ownership_context_label: {
+            type: "string",
+            description: "Operator-facing ownership label rendered as Central / HQ or OU: <code>.",
+            nullable: true,
+          },
+          cash_register_code: { type: "string", nullable: true },
+          cash_register_name: { type: "string", nullable: true },
+          register_session_mode: { $ref: "#/components/schemas/CashSessionMode" },
+          register_currency_code: { type: "string", maxLength: 3, nullable: true },
+          register_status: { $ref: "#/components/schemas/CashRegisterStatus" },
+          cash_session_status: {
+            allOf: [{ $ref: "#/components/schemas/CashSessionStatus" }],
+            nullable: true,
+          },
+          counter_account_code: { type: "string", nullable: true },
+          counter_account_name: { type: "string", nullable: true },
+          counter_cash_register_id_resolved: { ...intId, nullable: true },
+          counter_cash_register_legal_entity_id: { ...intId, nullable: true },
+          counter_cash_register_ownership_scope: {
+            allOf: [{ $ref: "#/components/schemas/CashRegisterOwnershipScope" }],
+            nullable: true,
+          },
+          counter_cash_register_operating_unit_id: { ...intId, nullable: true },
+          counter_cash_register_account_id: { ...intId, nullable: true },
+          counter_cash_register_currency_code: {
+            type: "string",
+            maxLength: 3,
+            nullable: true,
+          },
+          counter_cash_register_code: { type: "string", nullable: true },
+          counter_cash_register_name: { type: "string", nullable: true },
+          counter_cash_register_operating_unit_code: { type: "string", nullable: true },
+          counter_cash_register_operating_unit_name: { type: "string", nullable: true },
+          counter_cash_register_ownership_context_label: { type: "string", nullable: true },
+          cash_transit_transfer_id: { ...intId, nullable: true },
+          cash_transit_status: {
+            allOf: [{ $ref: "#/components/schemas/CashTransitStatus" }],
+            nullable: true,
+          },
+          cash_transit_source_register_id: { ...intId, nullable: true },
+          cash_transit_target_register_id: { ...intId, nullable: true },
+          cash_transit_transfer_out_transaction_id: { ...intId, nullable: true },
+          cash_transit_transfer_in_transaction_id: { ...intId, nullable: true },
+          cash_transit_account_id: { ...intId, nullable: true },
+          cash_transit_initiated_at: { type: "string", format: "date-time", nullable: true },
+          cash_transit_in_transit_at: { type: "string", format: "date-time", nullable: true },
+          cash_transit_received_at: { type: "string", format: "date-time", nullable: true },
+          cash_transit_canceled_at: { type: "string", format: "date-time", nullable: true },
+          cash_transit_reversed_at: { type: "string", format: "date-time", nullable: true },
+          cash_transit_cancel_reason: { type: "string", nullable: true },
+          cash_transit_reverse_reason: { type: "string", nullable: true },
+          cash_transit_note: { type: "string", nullable: true },
+        },
+      },
+      CashTransactionListResponse: {
+        type: "object",
+        properties: {
+          tenantId: intId,
+          rows: {
+            type: "array",
+            items: { $ref: "#/components/schemas/CashTransactionRow" },
+          },
+          total: nonNegativeInt,
+          limit: { type: "integer", minimum: 1 },
+          offset: nonNegativeInt,
+          hasMore: { type: "boolean" },
+          pagination: { $ref: "#/components/schemas/OffsetPaginationMeta" },
+        },
+        required: ["tenantId", "rows", "total", "limit", "offset", "hasMore", "pagination"],
+      },
+      CashTransactionResponse: {
+        type: "object",
+        properties: {
+          tenantId: intId,
+          row: {
+            allOf: [{ $ref: "#/components/schemas/CashTransactionRow" }],
+            nullable: true,
+          },
+        },
+        required: ["tenantId", "row"],
+      },
+      CashTransactionMutationResponse: {
+        type: "object",
+        properties: {
+          tenantId: intId,
+          row: {
+            allOf: [{ $ref: "#/components/schemas/CashTransactionRow" }],
+            nullable: true,
+          },
+          idempotentReplay: { type: "boolean" },
+        },
+        required: ["tenantId", "row", "idempotentReplay"],
+      },
+      CashTransactionReverseResponse: {
+        type: "object",
+        properties: {
+          tenantId: intId,
+          original: {
+            allOf: [{ $ref: "#/components/schemas/CashTransactionRow" }],
+            nullable: true,
+          },
+          reversal: {
+            allOf: [{ $ref: "#/components/schemas/CashTransactionRow" }],
+            nullable: true,
+          },
+          idempotentReplay: { type: "boolean" },
+        },
+        required: ["tenantId", "original", "reversal", "idempotentReplay"],
+      },
+      CashTransactionCreateRequest: {
+        type: "object",
+        properties: {
+          tenantId: { ...intId, nullable: true },
+          registerId: intId,
+          cashSessionId: { ...intId, nullable: true },
+          txnType: { $ref: "#/components/schemas/CashTransactionType" },
+          txnDatetime: { type: "string", format: "date-time", nullable: true },
+          bookDate: { type: "string", format: "date", nullable: true },
+          amount: positiveNumber(),
+          amountBase: positiveNumber(true),
+          currencyCode: currencyCode,
+          fxRate: positiveNumber(true),
+          fxRateSource: { type: "string", maxLength: 40, nullable: true },
+          fxRateDate: { type: "string", format: "date", nullable: true },
+          fxFallbackMode: {
+            allOf: [{ $ref: "#/components/schemas/CashFxFallbackMode" }],
+            nullable: true,
+          },
+          fxFallbackMaxDays: { type: "integer", minimum: 0, nullable: true },
+          description: { type: "string", maxLength: 500, nullable: true },
+          referenceNo: { type: "string", maxLength: 100, nullable: true },
+          sourceDocType: {
+            allOf: [{ $ref: "#/components/schemas/CashSourceDocType" }],
+            nullable: true,
+          },
+          sourceDocId: { type: "string", maxLength: 80, nullable: true },
+          counterpartyType: {
+            allOf: [{ $ref: "#/components/schemas/CashCounterpartyType" }],
+            nullable: true,
+          },
+          counterpartyId: { ...intId, nullable: true },
+          counterAccountId: { ...intId, nullable: true },
+          counterCashRegisterId: { ...intId, nullable: true },
+          linkedCariSettlementBatchId: { ...intId, nullable: true },
+          linkedCariUnappliedCashId: { ...intId, nullable: true },
+          sourceModule: {
+            allOf: [{ $ref: "#/components/schemas/CashSourceModule" }],
+            nullable: true,
+          },
+          sourceEntityType: { type: "string", maxLength: 60, nullable: true },
+          sourceEntityId: { type: "string", maxLength: 120, nullable: true },
+          integrationLinkStatus: {
+            allOf: [{ $ref: "#/components/schemas/CashIntegrationLinkStatus" }],
+            nullable: true,
+          },
+          integrationEventUid: { type: "string", maxLength: 100, nullable: true },
+          idempotencyKey: { type: "string", maxLength: 100 },
+        },
+        required: ["registerId", "txnType", "amount", "currencyCode", "idempotencyKey"],
+      },
+      CashTransactionCancelRequest: {
+        type: "object",
+        properties: {
+          tenantId: { ...intId, nullable: true },
+          cancelReason: { type: "string", maxLength: 255 },
+        },
+        required: ["cancelReason"],
+      },
+      CashTransactionPostRequest: {
+        type: "object",
+        properties: {
+          tenantId: { ...intId, nullable: true },
+          overrideCashControl: { type: "boolean", nullable: true },
+          overrideReason: {
+            type: "string",
+            maxLength: 500,
+            nullable: true,
+            description: "Required when overrideCashControl=true.",
+          },
+        },
+      },
+      CashTransactionReverseRequest: {
+        type: "object",
+        properties: {
+          tenantId: { ...intId, nullable: true },
+          reverseReason: { type: "string", maxLength: 255 },
+        },
+        required: ["reverseReason"],
+      },
       CashExchangePostingMode: {
         type: "string",
         enum: ["CLEARING", "DIRECT"],
@@ -3226,9 +4159,15 @@ const spec = {
       CashTransitTransferInitiateRequest: {
         type: "object",
         properties: {
+          tenantId: { ...intId, nullable: true },
           registerId: intId,
           targetRegisterId: intId,
-          transitAccountId: intId,
+          transitAccountId: {
+            ...intId,
+            nullable: true,
+            description:
+              "Optional transit-clearing account override. If omitted, the backend resolves the CASH_IN_TRANSIT purpose mapping.",
+          },
           cashSessionId: { ...intId, nullable: true },
           txnDatetime: { type: "string", format: "date-time", nullable: true },
           bookDate: { type: "string", format: "date", nullable: true },
@@ -3243,7 +4182,6 @@ const spec = {
         required: [
           "registerId",
           "targetRegisterId",
-          "transitAccountId",
           "amount",
           "currencyCode",
           "idempotencyKey",
@@ -3252,6 +4190,7 @@ const spec = {
       CashTransitTransferReceiveRequest: {
         type: "object",
         properties: {
+          tenantId: { ...intId, nullable: true },
           cashSessionId: { ...intId, nullable: true },
           txnDatetime: { type: "string", format: "date-time", nullable: true },
           bookDate: { type: "string", format: "date", nullable: true },
@@ -3265,23 +4204,104 @@ const spec = {
       CashTransitTransferCancelRequest: {
         type: "object",
         properties: {
+          tenantId: { ...intId, nullable: true },
           cancelReason: { type: "string", maxLength: 255 },
         },
         required: ["cancelReason"],
+      },
+      CashTransitTransferRow: {
+        type: "object",
+        additionalProperties: true,
+        properties: {
+          id: { ...intId, nullable: true },
+          tenant_id: { ...intId, nullable: true },
+          legal_entity_id: { ...intId, nullable: true },
+          source_cash_register_id: { ...intId, nullable: true },
+          target_cash_register_id: { ...intId, nullable: true },
+          source_operating_unit_id: { ...intId, nullable: true },
+          target_operating_unit_id: { ...intId, nullable: true },
+          transfer_out_cash_transaction_id: { ...intId, nullable: true },
+          transfer_in_cash_transaction_id: { ...intId, nullable: true },
+          status: { $ref: "#/components/schemas/CashTransitStatus" },
+          amount: { type: "number", nullable: true },
+          currency_code: { type: "string", maxLength: 3, nullable: true },
+          transit_account_id: { ...intId, nullable: true },
+          initiated_by_user_id: { ...intId, nullable: true },
+          received_by_user_id: { ...intId, nullable: true },
+          canceled_by_user_id: { ...intId, nullable: true },
+          reversed_by_user_id: { ...intId, nullable: true },
+          initiated_at: { type: "string", format: "date-time", nullable: true },
+          in_transit_at: { type: "string", format: "date-time", nullable: true },
+          received_at: { type: "string", format: "date-time", nullable: true },
+          canceled_at: { type: "string", format: "date-time", nullable: true },
+          reversed_at: { type: "string", format: "date-time", nullable: true },
+          cancel_reason: { type: "string", nullable: true },
+          reverse_reason: { type: "string", nullable: true },
+          idempotency_key: { type: "string", nullable: true },
+          integration_event_uid: { type: "string", nullable: true },
+          source_module: {
+            allOf: [{ $ref: "#/components/schemas/CashSourceModule" }],
+            nullable: true,
+          },
+          source_entity_type: { type: "string", nullable: true },
+          source_entity_id: { type: "string", nullable: true },
+          note: { type: "string", nullable: true },
+          created_at: { type: "string", format: "date-time", nullable: true },
+          updated_at: { type: "string", format: "date-time", nullable: true },
+          legal_entity_code: { type: "string", nullable: true },
+          legal_entity_name: { type: "string", nullable: true },
+          source_cash_register_code: { type: "string", nullable: true },
+          source_cash_register_name: { type: "string", nullable: true },
+          source_cash_register_ownership_scope: {
+            allOf: [{ $ref: "#/components/schemas/CashRegisterOwnershipScope" }],
+            nullable: true,
+          },
+          source_operating_unit_code: { type: "string", nullable: true },
+          source_operating_unit_name: { type: "string", nullable: true },
+          source_ownership_context_label: { type: "string", nullable: true },
+          target_cash_register_code: { type: "string", nullable: true },
+          target_cash_register_name: { type: "string", nullable: true },
+          target_cash_register_ownership_scope: {
+            allOf: [{ $ref: "#/components/schemas/CashRegisterOwnershipScope" }],
+            nullable: true,
+          },
+          target_operating_unit_code: { type: "string", nullable: true },
+          target_operating_unit_name: { type: "string", nullable: true },
+          target_ownership_context_label: { type: "string", nullable: true },
+          transit_account_code: { type: "string", nullable: true },
+          transit_account_name: { type: "string", nullable: true },
+          transfer_out_txn_no: { type: "string", nullable: true },
+          transfer_out_book_date: { type: "string", format: "date", nullable: true },
+          transfer_out_posted_at: { type: "string", format: "date-time", nullable: true },
+          transfer_out_txn_status: {
+            allOf: [{ $ref: "#/components/schemas/CashTransactionStatus" }],
+            nullable: true,
+          },
+          transfer_out_posted_journal_entry_id: { ...intId, nullable: true },
+          transfer_in_txn_no: { type: "string", nullable: true },
+          transfer_in_book_date: { type: "string", format: "date", nullable: true },
+          transfer_in_posted_at: { type: "string", format: "date-time", nullable: true },
+          transfer_in_txn_status: {
+            allOf: [{ $ref: "#/components/schemas/CashTransactionStatus" }],
+            nullable: true,
+          },
+          transfer_in_posted_journal_entry_id: { ...intId, nullable: true },
+        },
       },
       CashTransitTransferResponse: {
         type: "object",
         properties: {
           tenantId: intId,
-          transfer: { type: "object", additionalProperties: true, nullable: true },
+          transfer: {
+            allOf: [{ $ref: "#/components/schemas/CashTransitTransferRow" }],
+            nullable: true,
+          },
           transferOutTransaction: {
-            type: "object",
-            additionalProperties: true,
+            allOf: [{ $ref: "#/components/schemas/CashTransactionRow" }],
             nullable: true,
           },
           transferInTransaction: {
-            type: "object",
-            additionalProperties: true,
+            allOf: [{ $ref: "#/components/schemas/CashTransactionRow" }],
             nullable: true,
           },
           idempotentReplay: { type: "boolean" },
@@ -3300,13 +4320,15 @@ const spec = {
           tenantId: intId,
           rows: {
             type: "array",
-            items: { $ref: "#/components/schemas/AnyObject" },
+            items: { $ref: "#/components/schemas/CashTransitTransferRow" },
           },
           total: nonNegativeInt,
           limit: { type: "integer", minimum: 1 },
           offset: nonNegativeInt,
+          hasMore: { type: "boolean" },
+          pagination: { $ref: "#/components/schemas/OffsetPaginationMeta" },
         },
-        required: ["tenantId", "rows", "total", "limit", "offset"],
+        required: ["tenantId", "rows", "total", "limit", "offset", "hasMore", "pagination"],
       },
       CariSettlementApplyAllocationInput: {
         type: "object",
