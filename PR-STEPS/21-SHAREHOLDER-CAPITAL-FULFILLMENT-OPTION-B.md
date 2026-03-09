@@ -61,6 +61,8 @@
   smoke: `backend/scripts/test-shareholder-capital-cf03-frontend-smoke.js`
 - [x] `PR-CF04` acceptance: reversal and reporting are consistent, and shareholder paid/unpaid balances remain correct after post and reverse flows.
   smoke: `backend/scripts/test-shareholder-capital-cf04-reversal-reporting.js`
+- [ ] `PR-CF05` acceptance: cash/safe destinations use the existing cash subledger, respect register/session controls, and preserve central capital logic without direct GL posting to cash-controlled accounts.
+  smoke: `backend/scripts/test-shareholder-capital-cf05-cash-register-fulfillment.js`
 
 ## PR-CF01
 Goal:
@@ -332,15 +334,163 @@ Test coverage:
 
 ## PR-CF05
 Goal:
-- Later integration only.
+- Add cash register / safe support without bypassing the existing cash subledger.
+
+Core rule:
+- Do not let shareholder capital fulfillment post directly to a cash-controlled GL account.
+- All safe/register destinations must go through `cash_transactions` and the existing cash posting pipeline.
+
+Why this needs a separate PR:
+- Cash registers are not plain GL destinations in this repo.
+- They have:
+  - `cash_registers`
+  - `cash_sessions`
+  - `cash_transactions`
+  - posted/reversed cash journals
+  - cash-control/session rules
+- A direct `Dr safe account / Cr commitment` journal from the org module would drift the cash subledger and break operational controls.
+
+Destination mode addition:
+- Add `CASH_REGISTER` as a later destination mode for shareholder capital fulfillment.
+
+Posting model:
+- Use `RECEIPT` cash transactions for capital received into a safe/register.
+- Do not use `OPENING_FLOAT` for this workflow.
+- `OPENING_FLOAT` is session-operational, while capital fulfillment is a funding event.
+
+### PR-CF05-A
+Goal:
+- Support central/HQ-first capital fulfillment into a central cash register.
 
 Scope:
-- Cash register destination support
-- Cash-session aware posting
-- Cash-control and approval integration
+- Only cash registers that are valid for central use under repo rules.
+- In practice, this should start with registers that have no OU ownership.
+
+Schema:
+- Migration `m110_shareholder_capital_fulfillments_cash_register_links.js`
+- Extend `shareholder_capital_fulfillments` with nullable:
+  - `cash_register_id`
+  - `cash_session_id`
+  - `cash_transaction_id`
+  - `cash_reversal_transaction_id`
+- Extend `destination_mode` enum to include:
+  - `CASH_REGISTER`
+
+Behavior:
+- When `destinationMode = CASH_REGISTER` and no OU is selected:
+  - create a `cash_transactions` row with:
+    - `txnType = RECEIPT`
+    - `sourceModule = SYSTEM`
+    - `sourceEntityType = shareholder_capital_fulfillment`
+    - `sourceEntityId = fulfillment id`
+    - `counterAccountId = shareholder.commitment_debit_sub_account_id`
+  - post it through the existing cash transaction post flow
+  - use the posted cash journal as the fulfillment `journal_entry_id`
+- This keeps:
+  - safe/register balances correct
+  - paid capital correct because the posted journal still credits the mapped commitment account
+
+Validation:
+- `cashRegisterId` is required
+- `cashRegisterId` must belong to the same tenant and legal entity
+- register must be `ACTIVE`
+- register account must be valid under existing cash-register rules
+- if the register requires an open session:
+  - require `cashSessionId`
+  - validate that it belongs to the selected register and is `OPEN`
+
+Reversal:
+- Do not reverse the posted journal directly from org service.
+- Call the existing cash reverse flow for `cash_transaction_id`.
+- Update fulfillment row with:
+  - `status = REVERSED`
+  - `cash_reversal_transaction_id`
+  - `reversal_journal_entry_id` from the reversal cash transaction's posted journal
+
+### PR-CF05-B
+Goal:
+- Support direct OU-targeted capital fulfillment into a branch cash register while keeping Option B self-balancing intact.
+
+Why this is harder:
+- A branch register cash transaction cannot credit the shareholder commitment account directly because the cash journal lines follow the register OU context.
+- The central shareholder commitment credit still has to stay central/no-OU.
+
+Posting model:
+- Use two coordinated accounting layers:
+  - Cash layer:
+    - create and post a `RECEIPT` cash transaction on the selected register
+    - `Dr register account` `(with OU from register)`
+    - `Cr ou_due_to_central_account_id` `(with OU from register)`
+  - Central capital layer:
+    - create and post a central `SYSTEM` journal
+    - `Dr central_due_from_account_id` `(no OU)`
+    - `Cr shareholder.commitment_debit_sub_account_id` `(no OU)`
+
+Result:
+- branch safe/register is correct in the cash subledger
+- branch OU self-balances
+- shareholder paid capital remains correct
+
+Validation:
+- selected cash register must belong to the selected OU exactly
+- selected OU must have both internal current accounts configured
+- register/session validation must still follow existing cash module rules
+
+Data model note:
+- In OU-targeted cash mode, `journal_entry_id` should continue to point to the central capital journal
+- `cash_transaction_id` stores the cash-subledger movement
+- Reporting should show both links
+
+Reversal:
+- Reverse both layers:
+  - reverse `cash_transaction_id` through the existing cash reverse flow
+  - reverse the central fulfillment journal through shared GL reverse behavior
+- The orchestration service must be idempotent and should not invent a separate cash reversal model
+
+### PR-CF05-C
+Goal:
+- Keep HQ-first physical cash movement to branches on the existing cash-transfer model.
 
 Rule:
-- Do not include this in the first rollout.
+- Do not invent a separate capital-specific cash transfer workflow.
+- If capital is first received into an HQ register, later physical movement to a branch register should use the existing cash transit transfer workflow between registers.
+
+UX:
+- Optional later enhancement:
+  - after a central `CASH_REGISTER` fulfillment, offer a shortcut/deep-link to create a prefilled cash transit transfer from HQ register to branch register
+- That is a UX helper only, not a new accounting model.
+
+Backend files:
+- `backend/src/migrations/m110_shareholder_capital_fulfillments_cash_register_links.js`
+- `backend/src/migrations/index.js`
+- `backend/src/routes/org.write.validators.js`
+- `backend/src/routes/org.js`
+- `backend/src/services/org.capital-fulfillment.service.js`
+- `backend/src/services/cash.transaction.service.js`
+- `backend/src/services/cash.register.service.js`
+
+Frontend files:
+- `frontend/src/api/orgAdmin.js`
+- `frontend/src/api/cashAdmin.js`
+- `frontend/src/pages/settings/OrganizationManagementPage.jsx`
+- `frontend/src/i18n/messages.js`
+
+Test coverage:
+- Central `CASH_REGISTER` fulfillment creates and posts a linked cash transaction
+- Missing/closed session is rejected when the register requires an open session
+- Direct OU-targeted `CASH_REGISTER` fulfillment creates both:
+  - the cash transaction
+  - the central capital journal
+- Reversal updates both the cash and central accounting layers correctly
+- HQ-first follow-up funding to a branch can continue through the existing cash transit workflow without changing capital logic
+
+Recommended rollout inside PR-CF05:
+1. `PR-CF05-A` first
+   - central/HQ register only
+2. `PR-CF05-B` second
+   - direct OU-targeted branch register support
+3. `PR-CF05-C` later UX helper
+   - optional prefilled transit transfer shortcut
 
 ## Recommended first implementation slice
 1. `m108_operating_unit_internal_current_accounts`
