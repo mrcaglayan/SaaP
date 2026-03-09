@@ -4475,15 +4475,85 @@
         "tags": [
           "Bank"
         ],
-        "operationId": "getApiV1BankAccounts",
-        "summary": "Auto-generated: GET /api/v1/bank/accounts",
+        "operationId": "listBankAccounts",
+        "summary": "List bank accounts",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "tenantId",
+            "required": false,
+            "description": "Tenant identifier; optional if available in JWT",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "legalEntityId",
+            "required": false,
+            "description": "Legal entity identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "operatingUnitId",
+            "required": false,
+            "description": "Operating unit identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "isActive",
+            "required": false,
+            "description": "Filter active/inactive bank accounts",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "description": "Case-insensitive code/name/bank/IBAN/account search text",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "description": "Maximum rows to return",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "description": "Row offset",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ],
         "responses": {
           "200": {
-            "description": "Successful response",
+            "description": "Bank account list",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/BankAccountListResponse"
                 }
               }
             }
@@ -4503,15 +4573,25 @@
         "tags": [
           "Bank"
         ],
-        "operationId": "postApiV1BankAccounts",
-        "summary": "Auto-generated: POST /api/v1/bank/accounts",
+        "operationId": "createBankAccount",
+        "summary": "Create bank account",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BankAccountUpsertRequest"
+              }
+            }
+          }
+        },
         "responses": {
-          "200": {
-            "description": "Successful response",
+          "201": {
+            "description": "Bank account created",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/BankAccountEnvelopeResponse"
                 }
               }
             }
@@ -4525,16 +4605,6 @@
           "403": {
             "$ref": "#/components/responses/ErrorResponse"
           }
-        },
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AnyObject"
-              }
-            }
-          }
         }
       }
     },
@@ -4543,15 +4613,15 @@
         "tags": [
           "Bank"
         ],
-        "operationId": "getApiV1BankAccountsBankaccountid",
-        "summary": "Auto-generated: GET /api/v1/bank/accounts/{bankAccountId}",
+        "operationId": "getBankAccount",
+        "summary": "Get bank account",
         "responses": {
           "200": {
-            "description": "Successful response",
+            "description": "Bank account detail",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/BankAccountEnvelopeResponse"
                 }
               }
             }
@@ -4571,7 +4641,17 @@
             "in": "path",
             "name": "bankAccountId",
             "required": true,
-            "description": "bankAccountId identifier",
+            "description": "Bank account identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "tenantId",
+            "required": false,
+            "description": "Tenant identifier; optional if available in JWT",
             "schema": {
               "type": "integer",
               "minimum": 1
@@ -4583,15 +4663,15 @@
         "tags": [
           "Bank"
         ],
-        "operationId": "putApiV1BankAccountsBankaccountid",
-        "summary": "Auto-generated: PUT /api/v1/bank/accounts/{bankAccountId}",
+        "operationId": "updateBankAccount",
+        "summary": "Update bank account",
         "responses": {
           "200": {
-            "description": "Successful response",
+            "description": "Bank account updated",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/BankAccountEnvelopeResponse"
                 }
               }
             }
@@ -4611,7 +4691,7 @@
             "in": "path",
             "name": "bankAccountId",
             "required": true,
-            "description": "bankAccountId identifier",
+            "description": "Bank account identifier",
             "schema": {
               "type": "integer",
               "minimum": 1
@@ -4619,11 +4699,11 @@
           }
         ],
         "requestBody": {
-          "required": false,
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/AnyObject"
+                "$ref": "#/components/schemas/BankAccountUpsertRequest"
               }
             }
           }
@@ -4635,15 +4715,15 @@
         "tags": [
           "Bank"
         ],
-        "operationId": "postApiV1BankAccountsBankaccountidActivate",
-        "summary": "Auto-generated: POST /api/v1/bank/accounts/{bankAccountId}/activate",
+        "operationId": "activateBankAccount",
+        "summary": "Activate bank account",
         "responses": {
           "200": {
-            "description": "Successful response",
+            "description": "Bank account activated",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/BankAccountEnvelopeResponse"
                 }
               }
             }
@@ -4663,23 +4743,13 @@
             "in": "path",
             "name": "bankAccountId",
             "required": true,
-            "description": "bankAccountId identifier",
+            "description": "Bank account identifier",
             "schema": {
               "type": "integer",
               "minimum": 1
             }
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AnyObject"
-              }
-            }
-          }
-        }
+        ]
       }
     },
     "/api/v1/bank/accounts/{bankAccountId}/deactivate": {
@@ -4687,15 +4757,15 @@
         "tags": [
           "Bank"
         ],
-        "operationId": "postApiV1BankAccountsBankaccountidDeactivate",
-        "summary": "Auto-generated: POST /api/v1/bank/accounts/{bankAccountId}/deactivate",
+        "operationId": "deactivateBankAccount",
+        "summary": "Deactivate bank account",
         "responses": {
           "200": {
-            "description": "Successful response",
+            "description": "Bank account deactivated",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/BankAccountEnvelopeResponse"
                 }
               }
             }
@@ -4715,23 +4785,13 @@
             "in": "path",
             "name": "bankAccountId",
             "required": true,
-            "description": "bankAccountId identifier",
+            "description": "Bank account identifier",
             "schema": {
               "type": "integer",
               "minimum": 1
             }
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AnyObject"
-              }
-            }
-          }
-        }
+        ]
       }
     },
     "/api/v1/bank/accounts/provision-102-child": {
@@ -4739,15 +4799,37 @@
         "tags": [
           "Bank"
         ],
-        "operationId": "postApiV1BankAccountsProvision102Child",
-        "summary": "Auto-generated: POST /api/v1/bank/accounts/provision-102-child",
+        "operationId": "provisionBankAccount102Child",
+        "summary": "Provision bank account and auto-create 102 child GL account",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "description": "Optional idempotency key for replay-safe 102-child bank provisioning",
+            "schema": {
+              "type": "string",
+              "maxLength": 190
+            }
+          }
+        ],
         "responses": {
           "200": {
-            "description": "Successful response",
+            "description": "Idempotent replay response",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/BankAccountProvision102ChildResponse"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Provisioned bank account created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BankAccountProvision102ChildResponse"
                 }
               }
             }
@@ -4763,11 +4845,11 @@
           }
         },
         "requestBody": {
-          "required": false,
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/AnyObject"
+                "$ref": "#/components/schemas/BankAccountProvision102ChildRequest"
               }
             }
           }
@@ -14984,15 +15066,69 @@
         "tags": [
           "Org"
         ],
-        "operationId": "getApiV1OrgShareholdersCapitalFulfillments",
-        "summary": "Auto-generated: GET /api/v1/org/shareholders/capital-fulfillments",
+        "operationId": "listShareholderCapitalFulfillments",
+        "summary": "List shareholder capital fulfillments",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "tenantId",
+            "required": false,
+            "description": "Tenant identifier; optional if available in JWT",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "legalEntityId",
+            "required": false,
+            "description": "Legal entity identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "shareholderId",
+            "required": false,
+            "description": "Shareholder identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "operatingUnitId",
+            "required": false,
+            "description": "Operating unit identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "POSTED",
+                "REVERSED"
+              ]
+            }
+          }
+        ],
         "responses": {
           "200": {
-            "description": "Successful response",
+            "description": "Capital fulfillment list",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/ShareholderCapitalFulfillmentListResponse"
                 }
               }
             }
@@ -15012,15 +15148,25 @@
         "tags": [
           "Org"
         ],
-        "operationId": "postApiV1OrgShareholdersCapitalFulfillments",
-        "summary": "Auto-generated: POST /api/v1/org/shareholders/capital-fulfillments",
+        "operationId": "createShareholderCapitalFulfillment",
+        "summary": "Create shareholder capital fulfillment",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ShareholderCapitalFulfillmentRequest"
+              }
+            }
+          }
+        },
         "responses": {
-          "200": {
-            "description": "Successful response",
+          "201": {
+            "description": "Capital fulfillment created",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/ShareholderCapitalFulfillmentCreateResponse"
                 }
               }
             }
@@ -15034,16 +15180,6 @@
           "403": {
             "$ref": "#/components/responses/ErrorResponse"
           }
-        },
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AnyObject"
-              }
-            }
-          }
         }
       }
     },
@@ -15052,15 +15188,15 @@
         "tags": [
           "Org"
         ],
-        "operationId": "postApiV1OrgShareholdersCapitalFulfillmentsIdReverse",
-        "summary": "Auto-generated: POST /api/v1/org/shareholders/capital-fulfillments/{id}/reverse",
+        "operationId": "reverseShareholderCapitalFulfillment",
+        "summary": "Reverse shareholder capital fulfillment",
         "responses": {
           "200": {
-            "description": "Successful response",
+            "description": "Capital fulfillment reversed",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/ShareholderCapitalFulfillmentReverseResponse"
                 }
               }
             }
@@ -15080,7 +15216,7 @@
             "in": "path",
             "name": "id",
             "required": true,
-            "description": "id identifier",
+            "description": "Capital fulfillment identifier",
             "schema": {
               "type": "integer",
               "minimum": 1
@@ -15092,7 +15228,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/AnyObject"
+                "$ref": "#/components/schemas/ShareholderCapitalFulfillmentReverseRequest"
               }
             }
           }
@@ -15104,15 +15240,15 @@
         "tags": [
           "Org"
         ],
-        "operationId": "postApiV1OrgShareholdersCapitalFulfillmentsPreview",
-        "summary": "Auto-generated: POST /api/v1/org/shareholders/capital-fulfillments/preview",
+        "operationId": "previewShareholderCapitalFulfillment",
+        "summary": "Preview shareholder capital fulfillment",
         "responses": {
           "200": {
-            "description": "Successful response",
+            "description": "Capital fulfillment preview",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/ShareholderCapitalFulfillmentPreviewResponse"
                 }
               }
             }
@@ -15128,11 +15264,11 @@
           }
         },
         "requestBody": {
-          "required": false,
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/AnyObject"
+                "$ref": "#/components/schemas/ShareholderCapitalFulfillmentRequest"
               }
             }
           }
@@ -29549,6 +29685,1139 @@
           "generatedLineCount",
           "skippedLineCount",
           "rows"
+        ]
+      },
+      "BankAccountRow": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "tenant_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "legal_entity_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "operating_unit_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "code": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "currency_code": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 3
+          },
+          "gl_account_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "bank_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "branch_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "iban": {
+            "type": "string",
+            "nullable": true
+          },
+          "account_no": {
+            "type": "string",
+            "nullable": true
+          },
+          "is_active": {
+            "type": "boolean"
+          },
+          "created_by_user_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "legal_entity_code": {
+            "type": "string"
+          },
+          "legal_entity_name": {
+            "type": "string"
+          },
+          "operating_unit_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "operating_unit_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "gl_account_code": {
+            "type": "string"
+          },
+          "gl_account_name": {
+            "type": "string"
+          },
+          "gl_account_type": {
+            "type": "string",
+            "nullable": true
+          },
+          "gl_account_allow_posting": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "gl_account_is_active": {
+            "type": "boolean",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "tenant_id",
+          "legal_entity_id",
+          "code",
+          "name",
+          "currency_code",
+          "gl_account_id",
+          "is_active",
+          "created_by_user_id",
+          "created_at",
+          "updated_at",
+          "legal_entity_code",
+          "legal_entity_name",
+          "gl_account_code",
+          "gl_account_name"
+        ]
+      },
+      "BankAccountListResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BankAccountRow"
+            }
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "tenantId",
+          "rows",
+          "total",
+          "limit",
+          "offset"
+        ]
+      },
+      "BankAccountEnvelopeResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "row": {
+            "$ref": "#/components/schemas/BankAccountRow"
+          }
+        },
+        "required": [
+          "tenantId",
+          "row"
+        ]
+      },
+      "BankAccountUpsertRequest": {
+        "type": "object",
+        "properties": {
+          "legalEntityId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "operatingUnitId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "code": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 60
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255
+          },
+          "currencyCode": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 3
+          },
+          "glAccountId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "bankName": {
+            "type": "string",
+            "maxLength": 255,
+            "nullable": true
+          },
+          "branchName": {
+            "type": "string",
+            "maxLength": 255,
+            "nullable": true
+          },
+          "iban": {
+            "type": "string",
+            "maxLength": 64,
+            "nullable": true
+          },
+          "accountNo": {
+            "type": "string",
+            "maxLength": 80,
+            "nullable": true
+          },
+          "isActive": {
+            "type": "boolean",
+            "default": true
+          }
+        },
+        "required": [
+          "legalEntityId",
+          "code",
+          "name",
+          "currencyCode",
+          "glAccountId"
+        ]
+      },
+      "BankAccountProvision102ChildRequest": {
+        "type": "object",
+        "properties": {
+          "legalEntityId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "operatingUnitId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "code": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 60
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255
+          },
+          "currencyCode": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 3
+          },
+          "bankName": {
+            "type": "string",
+            "maxLength": 255,
+            "nullable": true
+          },
+          "branchName": {
+            "type": "string",
+            "maxLength": 255,
+            "nullable": true
+          },
+          "iban": {
+            "type": "string",
+            "maxLength": 64,
+            "nullable": true
+          },
+          "accountNo": {
+            "type": "string",
+            "maxLength": 80,
+            "nullable": true
+          },
+          "isActive": {
+            "type": "boolean",
+            "default": true
+          },
+          "glAccountName": {
+            "type": "string",
+            "maxLength": 255,
+            "nullable": true,
+            "description": "Optional display name for the auto-created 102 child GL account"
+          }
+        },
+        "required": [
+          "legalEntityId",
+          "code",
+          "name",
+          "currencyCode"
+        ]
+      },
+      "BankProvisionedGlAccount": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "code": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "parentAccountId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "parentAccountCode": {
+            "type": "string"
+          },
+          "allocationSequence": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "id",
+          "code",
+          "name",
+          "parentAccountId",
+          "parentAccountCode",
+          "allocationSequence"
+        ]
+      },
+      "BankAccountProvision102ChildResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "row": {
+            "$ref": "#/components/schemas/BankAccountRow"
+          },
+          "glAccount": {
+            "$ref": "#/components/schemas/BankProvisionedGlAccount"
+          },
+          "idempotentReplay": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "tenantId",
+          "row",
+          "glAccount",
+          "idempotentReplay"
+        ]
+      },
+      "ShareholderCapitalFulfillmentRequest": {
+        "type": "object",
+        "properties": {
+          "legalEntityId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "shareholderId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "operatingUnitId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "destinationMode": {
+            "type": "string",
+            "enum": [
+              "BANK_ACCOUNT",
+              "ASSET_GL",
+              "CASH_REGISTER"
+            ]
+          },
+          "bankAccountId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true,
+            "description": "Required when destinationMode is BANK_ACCOUNT"
+          },
+          "destinationAccountId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true,
+            "description": "Required when destinationMode is ASSET_GL"
+          },
+          "cashRegisterId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true,
+            "description": "Required when destinationMode is CASH_REGISTER"
+          },
+          "cashSessionId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true,
+            "description": "Optional unless the selected cash register requires an open session"
+          },
+          "amount": {
+            "description": "Contribution amount in legal-entity base currency",
+            "oneOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "contributionDate": {
+            "type": "string",
+            "format": "date"
+          },
+          "note": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "legalEntityId",
+          "shareholderId",
+          "destinationMode",
+          "amount",
+          "contributionDate"
+        ]
+      },
+      "ShareholderCapitalFulfillmentJournalContext": {
+        "type": "object",
+        "properties": {
+          "book_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "book_code": {
+            "type": "string"
+          },
+          "fiscal_period_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "base_currency_code": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 3
+          },
+          "start_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "end_date": {
+            "type": "string",
+            "format": "date"
+          }
+        },
+        "required": [
+          "book_id",
+          "book_code",
+          "fiscal_period_id",
+          "base_currency_code",
+          "start_date",
+          "end_date"
+        ]
+      },
+      "ShareholderCapitalFulfillmentShareholder": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "code": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "commitment_debit_sub_account_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "commitment_debit_sub_account_code": {
+            "type": "string"
+          },
+          "commitment_debit_sub_account_name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "code",
+          "name",
+          "commitment_debit_sub_account_id",
+          "commitment_debit_sub_account_code",
+          "commitment_debit_sub_account_name"
+        ]
+      },
+      "ShareholderCapitalFulfillmentOperatingUnit": {
+        "type": "object",
+        "nullable": true,
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "code": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "has_subledger": {
+            "type": "boolean"
+          },
+          "central_due_from_account_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "central_due_from_account_code": {
+            "type": "string"
+          },
+          "central_due_from_account_name": {
+            "type": "string"
+          },
+          "ou_due_to_central_account_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "ou_due_to_central_account_code": {
+            "type": "string"
+          },
+          "ou_due_to_central_account_name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "code",
+          "name",
+          "has_subledger",
+          "central_due_from_account_id",
+          "central_due_from_account_code",
+          "central_due_from_account_name",
+          "ou_due_to_central_account_id",
+          "ou_due_to_central_account_code",
+          "ou_due_to_central_account_name"
+        ]
+      },
+      "ShareholderCapitalFulfillmentDestination": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "BANK_ACCOUNT",
+              "ASSET_GL",
+              "CASH_REGISTER"
+            ]
+          },
+          "bank_account_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "cash_register_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "cash_register_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "cash_register_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "cash_session_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "destination_account_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "destination_account_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "destination_account_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "display_name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "mode",
+          "display_name"
+        ]
+      },
+      "ShareholderCapitalFulfillmentTotals": {
+        "type": "object",
+        "properties": {
+          "total_debit_base": {
+            "type": "number"
+          },
+          "total_credit_base": {
+            "type": "number"
+          },
+          "currency_code": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 3
+          }
+        },
+        "required": [
+          "total_debit_base",
+          "total_credit_base",
+          "currency_code"
+        ]
+      },
+      "ShareholderCapitalFulfillmentPreviewLine": {
+        "type": "object",
+        "properties": {
+          "line_no": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "account_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "account_code": {
+            "type": "string"
+          },
+          "account_name": {
+            "type": "string"
+          },
+          "operating_unit_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "operating_unit_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "description": {
+            "type": "string"
+          },
+          "subledger_reference_no": {
+            "type": "string",
+            "nullable": true
+          },
+          "currency_code": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 3
+          },
+          "amount_txn": {
+            "type": "number"
+          },
+          "debit_base": {
+            "type": "number"
+          },
+          "credit_base": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "line_no",
+          "account_id",
+          "account_code",
+          "account_name",
+          "description",
+          "currency_code",
+          "amount_txn",
+          "debit_base",
+          "credit_base"
+        ]
+      },
+      "ShareholderCapitalFulfillmentPreviewPayload": {
+        "type": "object",
+        "properties": {
+          "operational_model": {
+            "type": "string",
+            "enum": [
+              "HQ_FIRST_CENTRAL_ONLY",
+              "DIRECT_OU_TARGETED"
+            ]
+          },
+          "contribution_kind": {
+            "type": "string",
+            "enum": [
+              "CASH",
+              "IN_KIND"
+            ]
+          },
+          "contribution_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "amount_base": {
+            "type": "number"
+          },
+          "currency_code": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 3
+          },
+          "journal_context": {
+            "$ref": "#/components/schemas/ShareholderCapitalFulfillmentJournalContext"
+          },
+          "shareholder": {
+            "$ref": "#/components/schemas/ShareholderCapitalFulfillmentShareholder"
+          },
+          "operating_unit": {
+            "$ref": "#/components/schemas/ShareholderCapitalFulfillmentOperatingUnit"
+          },
+          "destination": {
+            "$ref": "#/components/schemas/ShareholderCapitalFulfillmentDestination"
+          },
+          "totals": {
+            "$ref": "#/components/schemas/ShareholderCapitalFulfillmentTotals"
+          },
+          "lines": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ShareholderCapitalFulfillmentPreviewLine"
+            }
+          }
+        },
+        "required": [
+          "operational_model",
+          "contribution_kind",
+          "contribution_date",
+          "amount_base",
+          "currency_code",
+          "journal_context",
+          "shareholder",
+          "operating_unit",
+          "destination",
+          "totals",
+          "lines"
+        ]
+      },
+      "ShareholderCapitalFulfillmentPreviewResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ShareholderCapitalFulfillmentPreviewPayload"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "type": "boolean",
+                "enum": [
+                  true
+                ]
+              }
+            },
+            "required": [
+              "ok"
+            ]
+          }
+        ]
+      },
+      "ShareholderCapitalFulfillmentCreateResponse": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "fulfillmentId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "POSTED"
+            ]
+          },
+          "journalEntryId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "journalNo": {
+            "type": "string"
+          },
+          "cashTransactionId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "preview": {
+            "$ref": "#/components/schemas/ShareholderCapitalFulfillmentPreviewPayload"
+          }
+        },
+        "required": [
+          "ok",
+          "fulfillmentId",
+          "status",
+          "journalEntryId",
+          "journalNo",
+          "cashTransactionId",
+          "preview"
+        ]
+      },
+      "ShareholderCapitalFulfillmentRow": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "tenant_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "legal_entity_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "shareholder_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "operating_unit_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "destination_mode": {
+            "type": "string",
+            "enum": [
+              "BANK_ACCOUNT",
+              "ASSET_GL",
+              "CASH_REGISTER"
+            ]
+          },
+          "bank_account_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "cash_register_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "cash_session_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "cash_transaction_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "cash_reversal_transaction_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "destination_account_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "amount_base": {
+            "type": "number"
+          },
+          "currency_code": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 3
+          },
+          "contribution_kind": {
+            "type": "string",
+            "enum": [
+              "CASH",
+              "IN_KIND"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "POSTED",
+              "REVERSED"
+            ]
+          },
+          "journal_entry_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "reversal_journal_entry_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "contribution_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "note": {
+            "type": "string",
+            "nullable": true
+          },
+          "created_by_user_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "posted_by_user_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "reversed_by_user_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "reversed_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "legal_entity_code": {
+            "type": "string"
+          },
+          "legal_entity_name": {
+            "type": "string"
+          },
+          "shareholder_code": {
+            "type": "string"
+          },
+          "shareholder_name": {
+            "type": "string"
+          },
+          "operating_unit_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "operating_unit_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "bank_account_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "bank_account_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "cash_register_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "cash_register_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "cash_transaction_no": {
+            "type": "string",
+            "nullable": true
+          },
+          "cash_journal_entry_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "cash_journal_no": {
+            "type": "string",
+            "nullable": true
+          },
+          "cash_reversal_transaction_no": {
+            "type": "string",
+            "nullable": true
+          },
+          "cash_reversal_journal_entry_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "cash_reversal_journal_no": {
+            "type": "string",
+            "nullable": true
+          },
+          "destination_account_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "destination_account_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "journal_no": {
+            "type": "string"
+          },
+          "reversal_journal_no": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "tenant_id",
+          "legal_entity_id",
+          "shareholder_id",
+          "destination_mode",
+          "amount_base",
+          "currency_code",
+          "contribution_kind",
+          "status",
+          "journal_entry_id",
+          "contribution_date",
+          "created_by_user_id",
+          "posted_by_user_id",
+          "created_at",
+          "updated_at",
+          "legal_entity_code",
+          "legal_entity_name",
+          "shareholder_code",
+          "shareholder_name",
+          "journal_no"
+        ]
+      },
+      "ShareholderCapitalFulfillmentListResponse": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ShareholderCapitalFulfillmentRow"
+            }
+          }
+        },
+        "required": [
+          "ok",
+          "tenantId",
+          "rows"
+        ]
+      },
+      "ShareholderCapitalFulfillmentReverseRequest": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": "string",
+            "maxLength": 255,
+            "nullable": true
+          }
+        }
+      },
+      "ShareholderCapitalFulfillmentReverseResponse": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "fulfillmentId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "REVERSED"
+            ]
+          },
+          "journalEntryId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "reversalJournalEntryId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "cashReversalTransactionId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "reverseReason": {
+            "type": "string"
+          },
+          "idempotentReplay": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok",
+          "fulfillmentId",
+          "status",
+          "journalEntryId",
+          "reversalJournalEntryId",
+          "cashReversalTransactionId",
+          "idempotentReplay"
         ]
       }
     }

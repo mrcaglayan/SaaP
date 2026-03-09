@@ -25,7 +25,8 @@ This runbook covers setup, posting, reversal, and cash-transfer follow-up for sh
 - OU-targeted fulfillment requires OU internal current accounts:
   - `central_due_from_account_id`
   - `ou_due_to_central_account_id`
-- Bank destinations must be configured in `bank_accounts`.
+- Bank destinations can be preconfigured in `bank_accounts`.
+- If no bank account exists for the selected legal entity / OU scope, Organization Management can create it inline during capital fulfillment without leaving the modal.
 - Cash-register destinations must be configured in `cash_registers`.
 
 ## Posting Rules

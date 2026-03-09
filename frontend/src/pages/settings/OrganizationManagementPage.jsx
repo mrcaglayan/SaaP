@@ -25,7 +25,11 @@ import {
   upsertShareholderJournalConfig,
   upsertShareholder,
 } from "../../api/orgAdmin.js";
-import { listBankAccounts } from "../../api/bankAccounts.js";
+import {
+  createBankAccount,
+  listBankAccounts,
+  provisionBankAccount102Child,
+} from "../../api/bankAccounts.js";
 import { listCashRegisters, listCashSessions } from "../../api/cashAdmin.js";
 import { listAccounts } from "../../api/glAdmin.js";
 import { useAuth } from "../../auth/useAuth.js";
@@ -72,6 +76,19 @@ const DEFAULT_CAPITAL_FULFILLMENT_FORM = {
   destinationAccountId: "",
   operatingUnitId: "",
   note: "",
+};
+const DEFAULT_CAPITAL_FULFILLMENT_BANK_FORM = {
+  code: "",
+  name: "",
+  currencyCode: "",
+  glAccountId: "",
+  bankName: "",
+  branchName: "",
+  iban: "",
+  accountNo: "",
+  isActive: true,
+  autoProvision102: true,
+  glAccountName: "",
 };
 
 function toNumber(value) {
@@ -182,6 +199,22 @@ function formatCashSessionOptionLabel(session) {
 
 function todayIsoDate() {
   return new Date().toISOString().slice(0, 10);
+}
+
+function buildCapitalFulfillmentBankForm(defaultCurrencyCode = "") {
+  return {
+    ...DEFAULT_CAPITAL_FULFILLMENT_BANK_FORM,
+    currencyCode: String(defaultCurrencyCode || "").trim().toUpperCase(),
+  };
+}
+
+function generateProvisionIdempotencyKey() {
+  if (globalThis.crypto && typeof globalThis.crypto.randomUUID === "function") {
+    return `org-capital-fulfillment-bank-${globalThis.crypto.randomUUID()}`;
+  }
+  return `org-capital-fulfillment-bank-${Date.now()}-${Math.random()
+    .toString(36)
+    .slice(2, 10)}`;
 }
 
 function buildCapitalFulfillmentTransitShortcutPath(shortcut) {
@@ -369,6 +402,7 @@ export default function OrganizationManagementPage() {
   const canUpsertFiscalCalendar = hasPermission("org.fiscal_calendar.upsert");
   const canGenerateFiscalPeriods = hasPermission("org.fiscal_period.generate");
   const canReadBanks = hasPermission("bank.accounts.read");
+  const canWriteBanks = hasPermission("bank.accounts.write");
   const canReadCashRegisters = hasPermission("cash.register.read");
   const canReadCashSessions = canReadCashRegisters;
 
@@ -412,6 +446,14 @@ export default function OrganizationManagementPage() {
   const [capitalFulfillmentBankLoading, setCapitalFulfillmentBankLoading] =
     useState(false);
   const [capitalFulfillmentBankError, setCapitalFulfillmentBankError] =
+    useState("");
+  const [capitalFulfillmentCreateBankModalOpen, setCapitalFulfillmentCreateBankModalOpen] =
+    useState(false);
+  const [capitalFulfillmentCreateBankForm, setCapitalFulfillmentCreateBankForm] =
+    useState(() => buildCapitalFulfillmentBankForm());
+  const [capitalFulfillmentCreateBankSaving, setCapitalFulfillmentCreateBankSaving] =
+    useState(false);
+  const [capitalFulfillmentCreateBankError, setCapitalFulfillmentCreateBankError] =
     useState("");
   const [capitalFulfillmentCashRegisters, setCapitalFulfillmentCashRegisters] =
     useState([]);
@@ -1357,6 +1399,13 @@ export default function OrganizationManagementPage() {
       (account) => !blockedIds.has(toNumber(account.id))
     );
   }, [capitalFulfillmentAssetAccounts, selectedCapitalFulfillmentShareholder]);
+  const capitalFulfillmentBankGlAccountOptions = useMemo(
+    () =>
+      [...capitalFulfillmentAssetAccounts].sort((left, right) =>
+        String(left?.code || "").localeCompare(String(right?.code || ""))
+      ),
+    [capitalFulfillmentAssetAccounts]
+  );
   const capitalFulfillmentOperatingUnits = useMemo(
     () =>
       operatingUnits.filter(
@@ -1439,6 +1488,12 @@ export default function OrganizationManagementPage() {
     () => legalEntityById.get(capitalFulfillmentLegalEntityId) || null,
     [legalEntityById, capitalFulfillmentLegalEntityId]
   );
+  const capitalFulfillmentNeedsBankSetup =
+    capitalFulfillmentForm.destinationMode === "BANK_ACCOUNT" &&
+    !capitalFulfillmentBankLoading &&
+    !capitalFulfillmentBankError &&
+    capitalFulfillmentLegalEntityId &&
+    capitalFulfillmentBankAccountOptions.length === 0;
   const capitalFulfillmentOuReady =
     !selectedCapitalFulfillmentOperatingUnit ||
     Boolean(selectedCapitalFulfillmentOperatingUnit.capital_self_balancing_ready);
@@ -2653,14 +2708,67 @@ export default function OrganizationManagementPage() {
     setCapitalFulfillmentPreview(null);
     setCapitalFulfillmentBankAccounts([]);
     setCapitalFulfillmentBankError("");
+    setCapitalFulfillmentCreateBankModalOpen(false);
+    setCapitalFulfillmentCreateBankForm(buildCapitalFulfillmentBankForm());
+    setCapitalFulfillmentCreateBankSaving(false);
+    setCapitalFulfillmentCreateBankError("");
     setCapitalFulfillmentCashRegisters([]);
     setCapitalFulfillmentCashRegistersError("");
     setCapitalFulfillmentOpenCashSessions([]);
     setCapitalFulfillmentCashSessionsError("");
+    setCapitalFulfillmentBankLoading(false);
     setCapitalFulfillmentCashRegistersLoading(false);
     setCapitalFulfillmentCashSessionsLoading(false);
     setCapitalFulfillmentPreviewLoading(false);
     setCapitalFulfillmentSaving(false);
+  }
+
+  function closeCapitalFulfillmentCreateBankModal() {
+    setCapitalFulfillmentCreateBankModalOpen(false);
+    setCapitalFulfillmentCreateBankSaving(false);
+    setCapitalFulfillmentCreateBankError("");
+    setCapitalFulfillmentCreateBankForm(buildCapitalFulfillmentBankForm());
+  }
+
+  function openCapitalFulfillmentCreateBankModal() {
+    if (!capitalFulfillmentLegalEntityId) {
+      setError(
+        l("Select legal entity first.", "Once legal entity secin.")
+      );
+      return;
+    }
+    if (!canWriteBanks) {
+      setError(
+        l(
+          "Missing permission: bank.accounts.write",
+          "Eksik yetki: bank.accounts.write"
+        )
+      );
+      return;
+    }
+
+    const defaultCurrencyCode =
+      String(
+        capitalFulfillmentSelectedLegalEntity?.functional_currency_code ||
+        currencySelectOptions[0]?.code ||
+        "USD"
+      )
+        .trim()
+        .toUpperCase() || "USD";
+
+    setCapitalFulfillmentCreateBankError("");
+    setCapitalFulfillmentCreateBankForm(
+      buildCapitalFulfillmentBankForm(defaultCurrencyCode)
+    );
+    setCapitalFulfillmentCreateBankModalOpen(true);
+  }
+
+  function updateCapitalFulfillmentCreateBankForm(updater) {
+    setCapitalFulfillmentCreateBankForm((prev) => {
+      const next =
+        typeof updater === "function" ? updater(prev) : { ...prev, ...(updater || {}) };
+      return next;
+    });
   }
 
   function updateCapitalFulfillmentForm(updater) {
@@ -2713,6 +2821,141 @@ export default function OrganizationManagementPage() {
         shareholderForm.commitmentDate || new Date().toISOString().slice(0, 10),
     });
     setCapitalFulfillmentModalOpen(true);
+  }
+
+  async function handleCapitalFulfillmentCreateBank(event) {
+    event.preventDefault();
+    if (capitalFulfillmentCreateBankSaving) {
+      return;
+    }
+    if (!canWriteBanks) {
+      setCapitalFulfillmentCreateBankError(
+        l(
+          "Missing permission: bank.accounts.write",
+          "Eksik yetki: bank.accounts.write"
+        )
+      );
+      return;
+    }
+
+    const legalEntityId = toNumber(capitalFulfillmentForm.legalEntityId);
+    const operatingUnitId = toNumber(capitalFulfillmentForm.operatingUnitId);
+    const code = String(capitalFulfillmentCreateBankForm.code || "").trim();
+    const name = String(capitalFulfillmentCreateBankForm.name || "").trim();
+    const currencyCode = String(capitalFulfillmentCreateBankForm.currencyCode || "")
+      .trim()
+      .toUpperCase();
+    const glAccountId = toNumber(capitalFulfillmentCreateBankForm.glAccountId);
+    const autoProvision102 = Boolean(capitalFulfillmentCreateBankForm.autoProvision102);
+    const glAccountName = String(capitalFulfillmentCreateBankForm.glAccountName || "").trim();
+
+    if (!legalEntityId) {
+      setCapitalFulfillmentCreateBankError(
+        l("Legal entity is required.", "Legal entity zorunludur.")
+      );
+      return;
+    }
+    if (!code) {
+      setCapitalFulfillmentCreateBankError(
+        l("Bank code is required.", "Banka kodu zorunludur.")
+      );
+      return;
+    }
+    if (!name) {
+      setCapitalFulfillmentCreateBankError(
+        l("Bank account name is required.", "Banka hesap adi zorunludur.")
+      );
+      return;
+    }
+    if (!currencyCode) {
+      setCapitalFulfillmentCreateBankError(
+        l("Currency is required.", "Para birimi zorunludur.")
+      );
+      return;
+    }
+    if (!autoProvision102 && !glAccountId) {
+      setCapitalFulfillmentCreateBankError(
+        l(
+          "Select a GL account or turn on 102 auto-provisioning.",
+          "Bir GL hesap secin veya 102 otomatik olusturmayi acin."
+        )
+      );
+      return;
+    }
+
+    setCapitalFulfillmentCreateBankSaving(true);
+    setCapitalFulfillmentCreateBankError("");
+    try {
+      const basePayload = {
+        legalEntityId,
+        operatingUnitId: operatingUnitId || undefined,
+        code,
+        name,
+        currencyCode,
+        bankName: String(capitalFulfillmentCreateBankForm.bankName || "").trim() || null,
+        branchName: String(capitalFulfillmentCreateBankForm.branchName || "").trim() || null,
+        iban: String(capitalFulfillmentCreateBankForm.iban || "").trim() || null,
+        accountNo: String(capitalFulfillmentCreateBankForm.accountNo || "").trim() || null,
+        isActive: Boolean(capitalFulfillmentCreateBankForm.isActive),
+      };
+
+      const response = autoProvision102
+        ? await provisionBankAccount102Child(
+          {
+            ...basePayload,
+            glAccountName: glAccountName || undefined,
+          },
+          { idempotencyKey: generateProvisionIdempotencyKey() }
+        )
+        : await createBankAccount({
+          ...basePayload,
+          glAccountId,
+        });
+
+      const createdRow = response?.row || null;
+      const createdBankAccountId = toNumber(createdRow?.id);
+      if (createdRow) {
+        setCapitalFulfillmentBankAccounts((prev) => {
+          const next = Array.isArray(prev)
+            ? prev.filter((row) => toNumber(row?.id) !== createdBankAccountId)
+            : [];
+          next.push(createdRow);
+          next.sort((left, right) =>
+            formatBankAccountOptionLabel(left).localeCompare(
+              formatBankAccountOptionLabel(right)
+            )
+          );
+          return next;
+        });
+      }
+      if (createdBankAccountId) {
+        updateCapitalFulfillmentForm({
+          bankAccountId: String(createdBankAccountId),
+        });
+      }
+      setCapitalFulfillmentBankError("");
+      setCapitalFulfillmentCreateBankModalOpen(false);
+      setCapitalFulfillmentCreateBankForm(buildCapitalFulfillmentBankForm());
+      setMessage(
+        autoProvision102
+          ? l(
+            "Bank account created, linked, and selected for this fulfillment.",
+            "Banka hesabi olusturuldu, baglandi ve bu karsilama icin secildi."
+          )
+          : l(
+            "Bank account created and selected for this fulfillment.",
+            "Banka hesabi olusturuldu ve bu karsilama icin secildi."
+          )
+      );
+    } catch (err) {
+      setCapitalFulfillmentCreateBankError(
+        err?.response?.data?.message ||
+        err?.message ||
+        l("Failed to create bank account.", "Banka hesabi olusturulamadi.")
+      );
+    } finally {
+      setCapitalFulfillmentCreateBankSaving(false);
+    }
   }
 
   function buildCapitalFulfillmentPayload() {
@@ -5402,8 +5645,8 @@ export default function OrganizationManagementPage() {
                 </h3>
                 <p className="mt-1 text-sm text-slate-700">
                   {l(
-                    "This is a post-setup action. Create the bank account or asset destination first, then preview and post the fulfillment here.",
-                    "Bu islem kurulum sonrasi bir aksiyondur. Once banka hesabi veya varlik hedefini olusturun, sonra burada onizleyip post edin."
+                    "This is a post-setup action. If the bank destination is missing, create it here without leaving the fulfillment flow, then preview and post.",
+                    "Bu islem kurulum sonrasi bir aksiyondur. Banka hedefi eksikse karsilama akisindan cikmadan burada olusturun, sonra onizleyip post edin."
                   )}
                 </p>
               </div>
@@ -5587,10 +5830,21 @@ export default function OrganizationManagementPage() {
               </label>
 
               {capitalFulfillmentForm.destinationMode === "BANK_ACCOUNT" ? (
-                <label className="block md:col-span-2">
-                  <span className="mb-1 block text-[11px] font-semibold text-slate-600">
-                    {l("Bank account destination", "Banka hesabi hedefi")}
-                  </span>
+                <div className="block md:col-span-2">
+                  <div className="mb-1 flex items-center justify-between gap-2">
+                    <span className="block text-[11px] font-semibold text-slate-600">
+                      {l("Bank account destination", "Banka hesabi hedefi")}
+                    </span>
+                    {capitalFulfillmentNeedsBankSetup && canWriteBanks ? (
+                      <button
+                        type="button"
+                        onClick={openCapitalFulfillmentCreateBankModal}
+                        className="rounded border border-slate-300 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700"
+                      >
+                        {l("Create bank", "Banka olustur")}
+                      </button>
+                    ) : null}
+                  </div>
                   <select
                     value={capitalFulfillmentForm.bankAccountId}
                     onChange={(event) =>
@@ -5613,7 +5867,7 @@ export default function OrganizationManagementPage() {
                       </option>
                     ))}
                   </select>
-                </label>
+                </div>
               ) : capitalFulfillmentForm.destinationMode === "CASH_REGISTER" ? (
                 <>
                   <label className="block md:col-span-2">
@@ -5803,19 +6057,24 @@ export default function OrganizationManagementPage() {
               </div>
             ) : null}
 
-            {capitalFulfillmentForm.destinationMode === "BANK_ACCOUNT" &&
-              !capitalFulfillmentBankLoading &&
-              capitalFulfillmentLegalEntityId &&
-              capitalFulfillmentBankAccountOptions.length === 0 ? (
+            {capitalFulfillmentNeedsBankSetup ? (
               <div className="mt-3 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
                 {selectedCapitalFulfillmentOperatingUnit
                   ? l(
-                    "No active bank account found for the selected legal entity and OU. Create the branch bank account first.",
-                    "Secilen legal entity ve OU icin aktif banka hesabi bulunamadi. Once sube banka hesabini olusturun."
+                    canWriteBanks
+                      ? "No active bank account found for the selected legal entity and OU. Use Create bank to define the branch bank here."
+                      : "No active bank account found for the selected legal entity and OU. A user with bank account write permission must create the branch bank first.",
+                    canWriteBanks
+                      ? "Secilen legal entity ve OU icin aktif banka hesabi bulunamadi. Sube bankasini burada tanimlamak icin Banka olustur'u kullanin."
+                      : "Secilen legal entity ve OU icin aktif banka hesabi bulunamadi. Sube bankasini once banka hesap yazma yetkisi olan bir kullanici tanimlamalidir."
                   )
                   : l(
-                    "No central active bank account found for the selected legal entity. Create the HQ bank account first.",
-                    "Secilen legal entity icin merkezi aktif banka hesabi bulunamadi. Once merkez banka hesabini olusturun."
+                    canWriteBanks
+                      ? "No central active bank account found for the selected legal entity. Use Create bank to define the HQ bank here."
+                      : "No central active bank account found for the selected legal entity. A user with bank account write permission must create the HQ bank first.",
+                    canWriteBanks
+                      ? "Secilen legal entity icin merkezi aktif banka hesabi bulunamadi. Merkez bankasini burada tanimlamak icin Banka olustur'u kullanin."
+                      : "Secilen legal entity icin merkezi aktif banka hesabi bulunamadi. Merkez bankasini once banka hesap yazma yetkisi olan bir kullanici tanimlamalidir."
                   )}
               </div>
             ) : null}
@@ -5996,6 +6255,321 @@ export default function OrganizationManagementPage() {
                   : l("Post fulfillment", "Karsilamayi post et")}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {capitalFulfillmentCreateBankModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 px-4">
+          <div className="w-full max-w-2xl rounded-xl border border-slate-200 bg-white p-4 shadow-xl">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="text-base font-semibold text-slate-900">
+                  {l("Create bank account", "Banka hesabi olustur")}
+                </h3>
+                <p className="mt-1 text-sm text-slate-700">
+                  {l(
+                    "Define the missing bank destination here and stay in the capital fulfillment flow.",
+                    "Eksik banka hedefini burada tanimlayin ve sermaye karsilama akisinda kalin."
+                  )}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closeCapitalFulfillmentCreateBankModal}
+                disabled={capitalFulfillmentCreateBankSaving}
+                className="rounded border border-slate-300 px-2 py-1 text-xs font-semibold text-slate-700 disabled:opacity-60"
+              >
+                {l("Close", "Kapat")}
+              </button>
+            </div>
+
+            <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
+              <div>
+                <span className="font-semibold text-slate-900">
+                  {l("Legal entity", "Legal entity")}:
+                </span>{" "}
+                {capitalFulfillmentSelectedLegalEntity
+                  ? `${capitalFulfillmentSelectedLegalEntity.code} - ${capitalFulfillmentSelectedLegalEntity.name}`
+                  : "-"}
+              </div>
+              <div className="mt-1">
+                <span className="font-semibold text-slate-900">
+                  {l("Ownership context", "Sahiplik baglami")}:
+                </span>{" "}
+                {selectedCapitalFulfillmentOperatingUnit
+                  ? `${selectedCapitalFulfillmentOperatingUnit.code} - ${selectedCapitalFulfillmentOperatingUnit.name}`
+                  : l("Central / HQ", "Merkez / HQ")}
+              </div>
+            </div>
+
+            {capitalFulfillmentCreateBankError ? (
+              <div className="mt-3 rounded border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                {capitalFulfillmentCreateBankError}
+              </div>
+            ) : null}
+
+            <form
+              onSubmit={handleCapitalFulfillmentCreateBank}
+              className="mt-3 grid gap-3 md:grid-cols-2"
+            >
+              <label className="block">
+                <span className="mb-1 block text-[11px] font-semibold text-slate-600">
+                  {l("Code", "Kod")}
+                </span>
+                <input
+                  value={capitalFulfillmentCreateBankForm.code}
+                  onChange={(event) =>
+                    updateCapitalFulfillmentCreateBankForm({
+                      code: event.target.value,
+                    })
+                  }
+                  className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs"
+                  placeholder="BANK_TRY_MAIN"
+                  disabled={capitalFulfillmentCreateBankSaving}
+                  required
+                />
+              </label>
+
+              <label className="block">
+                <span className="mb-1 block text-[11px] font-semibold text-slate-600">
+                  {l("Currency", "Para birimi")}
+                </span>
+                <select
+                  value={capitalFulfillmentCreateBankForm.currencyCode}
+                  onChange={(event) =>
+                    updateCapitalFulfillmentCreateBankForm({
+                      currencyCode: event.target.value,
+                    })
+                  }
+                  className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs"
+                  disabled={capitalFulfillmentCreateBankSaving}
+                  required
+                >
+                  <option value="">
+                    {l("Select currency", "Para birimi secin")}
+                  </option>
+                  {currencySelectOptions.map((option) => (
+                    <option key={option.code} value={option.code}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="block md:col-span-2">
+                <span className="mb-1 block text-[11px] font-semibold text-slate-600">
+                  {l("Name", "Ad")}
+                </span>
+                <input
+                  value={capitalFulfillmentCreateBankForm.name}
+                  onChange={(event) =>
+                    updateCapitalFulfillmentCreateBankForm({
+                      name: event.target.value,
+                    })
+                  }
+                  className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs"
+                  placeholder={l("Main bank account", "Ana banka hesabi")}
+                  disabled={capitalFulfillmentCreateBankSaving}
+                  required
+                />
+              </label>
+
+              <div className="rounded-md border border-cyan-200 bg-cyan-50 p-3 md:col-span-2">
+                <label className="flex items-center gap-2 text-xs font-semibold text-cyan-900">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(capitalFulfillmentCreateBankForm.autoProvision102)}
+                    onChange={(event) =>
+                      updateCapitalFulfillmentCreateBankForm({
+                        autoProvision102: event.target.checked,
+                        glAccountId: event.target.checked
+                          ? ""
+                          : capitalFulfillmentCreateBankForm.glAccountId,
+                      })
+                    }
+                    disabled={
+                      capitalFulfillmentCreateBankSaving || !canReadAccounts
+                    }
+                  />
+                  {l(
+                    "Auto-create 102 child GL account and link it",
+                    "102 alt GL hesabini otomatik olustur ve bagla"
+                  )}
+                </label>
+                <p className="mt-1 text-[11px] text-cyan-800">
+                  {l(
+                    "Recommended when this scope has no bank destination yet. The system provisions a child under control account 102 and links it automatically.",
+                    "Bu kapsama ait banka hedefi henuz yoksa onerilir. Sistem 102 kontrol hesabi altinda bir cocuk hesap olusturur ve otomatik baglar."
+                  )}
+                </p>
+                {!canReadAccounts ? (
+                  <p className="mt-2 text-[11px] text-amber-700">
+                    {l(
+                      "Manual GL selection is unavailable without gl.account.read. Auto-provision remains available.",
+                      "gl.account.read olmadan manuel GL secimi kullanilamaz. Otomatik olusturma kullanilmaya devam eder."
+                    )}
+                  </p>
+                ) : null}
+                {capitalFulfillmentCreateBankForm.autoProvision102 ? (
+                  <label className="mt-3 block">
+                    <span className="mb-1 block text-[11px] font-semibold text-cyan-900">
+                      {l("Child GL name (optional)", "Cocuk GL adi (opsiyonel)")}
+                    </span>
+                    <input
+                      value={capitalFulfillmentCreateBankForm.glAccountName}
+                      onChange={(event) =>
+                        updateCapitalFulfillmentCreateBankForm({
+                          glAccountName: event.target.value,
+                        })
+                      }
+                      className="w-full rounded border border-cyan-300 bg-white px-2 py-1.5 text-xs"
+                      placeholder={l(
+                        "If empty, bank account name is used",
+                        "Bos ise banka hesap adi kullanilir"
+                      )}
+                      disabled={capitalFulfillmentCreateBankSaving}
+                    />
+                  </label>
+                ) : null}
+              </div>
+
+              {!capitalFulfillmentCreateBankForm.autoProvision102 ? (
+                <label className="block md:col-span-2">
+                  <span className="mb-1 block text-[11px] font-semibold text-slate-600">
+                    {l("GL account", "GL hesap")}
+                  </span>
+                  <select
+                    value={capitalFulfillmentCreateBankForm.glAccountId}
+                    onChange={(event) =>
+                      updateCapitalFulfillmentCreateBankForm({
+                        glAccountId: event.target.value,
+                      })
+                    }
+                    className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs"
+                    disabled={capitalFulfillmentCreateBankSaving || !canReadAccounts}
+                    required={!capitalFulfillmentCreateBankForm.autoProvision102}
+                  >
+                    <option value="">
+                      {capitalFulfillmentBankGlAccountOptions.length > 0
+                        ? l("Select GL account", "GL hesap secin")
+                        : l("No eligible GL account found", "Uygun GL hesap bulunamadi")}
+                    </option>
+                    {capitalFulfillmentBankGlAccountOptions.map((account) => (
+                      <option key={account.id} value={account.id}>
+                        {formatAccountOptionLabel(account)}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="mt-1 text-[11px] text-slate-500">
+                    {l(
+                      "Only ACTIVE, postable, leaf ASSET accounts are listed. In strict mode, keep auto-provision on or choose a 102 child account.",
+                      "Sadece AKTIF, post edilebilir, yaprak ASSET hesaplar listelenir. Strict modda otomatik olusturmayi acik tutun veya 102 alt hesabi secin."
+                    )}
+                  </p>
+                </label>
+              ) : null}
+
+              <label className="block">
+                <span className="mb-1 block text-[11px] font-semibold text-slate-600">
+                  {l("Bank name", "Banka adi")}
+                </span>
+                <input
+                  value={capitalFulfillmentCreateBankForm.bankName}
+                  onChange={(event) =>
+                    updateCapitalFulfillmentCreateBankForm({
+                      bankName: event.target.value,
+                    })
+                  }
+                  className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs"
+                  disabled={capitalFulfillmentCreateBankSaving}
+                />
+              </label>
+
+              <label className="block">
+                <span className="mb-1 block text-[11px] font-semibold text-slate-600">
+                  {l("Branch name", "Sube adi")}
+                </span>
+                <input
+                  value={capitalFulfillmentCreateBankForm.branchName}
+                  onChange={(event) =>
+                    updateCapitalFulfillmentCreateBankForm({
+                      branchName: event.target.value,
+                    })
+                  }
+                  className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs"
+                  disabled={capitalFulfillmentCreateBankSaving}
+                />
+              </label>
+
+              <label className="block">
+                <span className="mb-1 block text-[11px] font-semibold text-slate-600">
+                  {l("IBAN", "IBAN")}
+                </span>
+                <input
+                  value={capitalFulfillmentCreateBankForm.iban}
+                  onChange={(event) =>
+                    updateCapitalFulfillmentCreateBankForm({
+                      iban: event.target.value,
+                    })
+                  }
+                  className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs"
+                  disabled={capitalFulfillmentCreateBankSaving}
+                />
+              </label>
+
+              <label className="block">
+                <span className="mb-1 block text-[11px] font-semibold text-slate-600">
+                  {l("Account no", "Hesap no")}
+                </span>
+                <input
+                  value={capitalFulfillmentCreateBankForm.accountNo}
+                  onChange={(event) =>
+                    updateCapitalFulfillmentCreateBankForm({
+                      accountNo: event.target.value,
+                    })
+                  }
+                  className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs"
+                  disabled={capitalFulfillmentCreateBankSaving}
+                />
+              </label>
+
+              <label className="flex items-center gap-2 text-xs text-slate-700 md:col-span-2">
+                <input
+                  type="checkbox"
+                  checked={Boolean(capitalFulfillmentCreateBankForm.isActive)}
+                  onChange={(event) =>
+                    updateCapitalFulfillmentCreateBankForm({
+                      isActive: event.target.checked,
+                    })
+                  }
+                  disabled={capitalFulfillmentCreateBankSaving}
+                />
+                {l("Create as active", "Aktif olarak olustur")}
+              </label>
+
+              <div className="flex flex-wrap justify-end gap-2 md:col-span-2">
+                <button
+                  type="button"
+                  onClick={closeCapitalFulfillmentCreateBankModal}
+                  disabled={capitalFulfillmentCreateBankSaving}
+                  className="rounded border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 disabled:opacity-60"
+                >
+                  {l("Cancel", "Iptal")}
+                </button>
+                <button
+                  type="submit"
+                  disabled={!canWriteBanks || capitalFulfillmentCreateBankSaving}
+                  className="rounded bg-slate-900 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
+                >
+                  {capitalFulfillmentCreateBankSaving
+                    ? l("Creating...", "Olusturuluyor...")
+                    : capitalFulfillmentCreateBankForm.autoProvision102
+                      ? l("Create bank (102 auto)", "Banka olustur (102 otomatik)")
+                      : l("Create bank", "Banka olustur")}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
