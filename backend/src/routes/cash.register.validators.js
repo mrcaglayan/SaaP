@@ -77,11 +77,10 @@ export function parseCashRegisterUpsertInput(req) {
   )
     .trim()
     .toUpperCase();
-  const ownershipScope = ownershipScopeRaw
-    ? normalizeEnum(ownershipScopeRaw, "ownershipScope", OWNERSHIP_SCOPES)
-    : operatingUnitId
-      ? "OPERATING_UNIT"
-      : "CENTRAL";
+  if (!ownershipScopeRaw) {
+    throw badRequest("ownershipScope is required");
+  }
+  const ownershipScope = normalizeEnum(ownershipScopeRaw, "ownershipScope", OWNERSHIP_SCOPES);
 
   if (!legalEntityId || !accountId) {
     throw badRequest("legalEntityId and accountId are required");

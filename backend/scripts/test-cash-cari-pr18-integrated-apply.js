@@ -342,6 +342,7 @@ async function createRegister({
     body: {
       tenantId,
       legalEntityId,
+      ownershipScope: "CENTRAL",
       accountId,
       code,
       name,

@@ -533,6 +533,7 @@ async function main() {
       body: {
         tenantId: identity.tenantId,
         legalEntityId: context.legalEntityId,
+        ownershipScope: context.operatingUnitId ? "OPERATING_UNIT" : "CENTRAL",
         operatingUnitId: context.operatingUnitId,
         accountId: registerAccountId,
         code: `REG${identity.stamp}`,

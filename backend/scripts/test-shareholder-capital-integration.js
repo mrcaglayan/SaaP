@@ -115,6 +115,7 @@ async function createCashRegister({
     requestPath: "/api/v1/cash/registers",
     body: {
       legalEntityId,
+      ownershipScope: operatingUnitId ? "OPERATING_UNIT" : "CENTRAL",
       operatingUnitId,
       accountId,
       code,

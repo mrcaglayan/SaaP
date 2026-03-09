@@ -10627,14 +10627,79 @@
           "Cash"
         ],
         "operationId": "getApiV1CashSessions",
-        "summary": "Auto-generated: GET /api/v1/cash/sessions",
+        "summary": "List cash sessions with register ownership context",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "registerId",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "legalEntityId",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/CashSessionStatus"
+            }
+          },
+          {
+            "in": "query",
+            "name": "openedFrom",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "in": "query",
+            "name": "openedTo",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful response",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/CashSessionListResponse"
                 }
               }
             }
@@ -10657,14 +10722,14 @@
           "Cash"
         ],
         "operationId": "getApiV1CashSessionsSessionid",
-        "summary": "Auto-generated: GET /api/v1/cash/sessions/{sessionId}",
+        "summary": "Get one cash session with explicit register ownership context",
         "responses": {
           "200": {
             "description": "Successful response",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/CashSessionResponse"
                 }
               }
             }
@@ -10699,14 +10764,14 @@
           "Cash"
         ],
         "operationId": "postApiV1CashSessionsSessionidClose",
-        "summary": "Auto-generated: POST /api/v1/cash/sessions/{sessionId}/close",
+        "summary": "Close an open cash session",
         "responses": {
           "200": {
             "description": "Successful response",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/CashSessionResponse"
                 }
               }
             }
@@ -10734,11 +10799,11 @@
           }
         ],
         "requestBody": {
-          "required": false,
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/AnyObject"
+                "$ref": "#/components/schemas/CashSessionCloseRequest"
               }
             }
           }
@@ -10751,14 +10816,14 @@
           "Cash"
         ],
         "operationId": "postApiV1CashSessionsOpen",
-        "summary": "Auto-generated: POST /api/v1/cash/sessions/open",
+        "summary": "Open a cash session for a register",
         "responses": {
           "200": {
             "description": "Successful response",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/CashSessionResponse"
                 }
               }
             }
@@ -10774,11 +10839,11 @@
           }
         },
         "requestBody": {
-          "required": false,
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/AnyObject"
+                "$ref": "#/components/schemas/CashSessionOpenRequest"
               }
             }
           }
@@ -10791,14 +10856,96 @@
           "Cash"
         ],
         "operationId": "getApiV1CashTransactions",
-        "summary": "Auto-generated: GET /api/v1/cash/transactions",
+        "summary": "List cash transactions with ownership-aware register and transit context",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "registerId",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "legalEntityId",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "sessionId",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "txnType",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/CashTransactionType"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/CashTransactionStatus"
+            }
+          },
+          {
+            "in": "query",
+            "name": "bookDateFrom",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "in": "query",
+            "name": "bookDateTo",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful response",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/CashTransactionListResponse"
                 }
               }
             }
@@ -10819,14 +10966,14 @@
           "Cash"
         ],
         "operationId": "postApiV1CashTransactions",
-        "summary": "Auto-generated: POST /api/v1/cash/transactions",
+        "summary": "Create a cash transaction",
         "responses": {
           "200": {
             "description": "Successful response",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/CashTransactionMutationResponse"
                 }
               }
             }
@@ -10842,11 +10989,11 @@
           }
         },
         "requestBody": {
-          "required": false,
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/AnyObject"
+                "$ref": "#/components/schemas/CashTransactionCreateRequest"
               }
             }
           }
@@ -10859,14 +11006,14 @@
           "Cash"
         ],
         "operationId": "getApiV1CashTransactionsTransactionid",
-        "summary": "Auto-generated: GET /api/v1/cash/transactions/{transactionId}",
+        "summary": "Get one cash transaction with ownership-aware context",
         "responses": {
           "200": {
             "description": "Successful response",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/CashTransactionResponse"
                 }
               }
             }
@@ -10963,14 +11110,14 @@
           "Cash"
         ],
         "operationId": "postApiV1CashTransactionsTransactionidCancel",
-        "summary": "Auto-generated: POST /api/v1/cash/transactions/{transactionId}/cancel",
+        "summary": "Cancel a draft cash transaction",
         "responses": {
           "200": {
             "description": "Successful response",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/CashTransactionResponse"
                 }
               }
             }
@@ -10998,11 +11145,11 @@
           }
         ],
         "requestBody": {
-          "required": false,
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/AnyObject"
+                "$ref": "#/components/schemas/CashTransactionCancelRequest"
               }
             }
           }
@@ -11015,14 +11162,14 @@
           "Cash"
         ],
         "operationId": "postApiV1CashTransactionsTransactionidPost",
-        "summary": "Auto-generated: POST /api/v1/cash/transactions/{transactionId}/post",
+        "summary": "Post a cash transaction",
         "responses": {
           "200": {
             "description": "Successful response",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/CashTransactionMutationResponse"
                 }
               }
             }
@@ -11054,7 +11201,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/AnyObject"
+                "$ref": "#/components/schemas/CashTransactionPostRequest"
               }
             }
           }
@@ -11067,14 +11214,14 @@
           "Cash"
         ],
         "operationId": "postApiV1CashTransactionsTransactionidReverse",
-        "summary": "Auto-generated: POST /api/v1/cash/transactions/{transactionId}/reverse",
+        "summary": "Reverse a posted cash transaction",
         "responses": {
           "200": {
             "description": "Successful response",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/CashTransactionReverseResponse"
                 }
               }
             }
@@ -11102,11 +11249,11 @@
           }
         ],
         "requestBody": {
-          "required": false,
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/AnyObject"
+                "$ref": "#/components/schemas/CashTransactionReverseRequest"
               }
             }
           }
@@ -20992,7 +21139,7 @@
       },
       "CashRegisterUpsertRequest": {
         "type": "object",
-        "description": "Create or update a cash register. During rollout, ownershipScope may be omitted for backward compatibility and will be derived from operatingUnitId; new clients should send ownershipScope explicitly.",
+        "description": "Create or update a cash register with explicit ownership scope. ownershipScope is required and CENTRAL ownership still posts with no operating-unit dimension.",
         "properties": {
           "id": {
             "type": "integer",
@@ -21080,6 +21227,7 @@
         },
         "required": [
           "legalEntityId",
+          "ownershipScope",
           "accountId",
           "code",
           "name",
@@ -21100,6 +21248,1327 @@
         "required": [
           "status"
         ]
+      },
+      "CashSessionStatus": {
+        "type": "string",
+        "enum": [
+          "OPEN",
+          "CLOSED",
+          "CANCELLED"
+        ]
+      },
+      "CashSessionCloseReason": {
+        "type": "string",
+        "enum": [
+          "END_SHIFT",
+          "FORCED_CLOSE",
+          "COUNT_CORRECTION"
+        ]
+      },
+      "CashSessionRow": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "tenant_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "cash_register_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "status": {
+            "$ref": "#/components/schemas/CashSessionStatus"
+          },
+          "opening_amount": {
+            "type": "number",
+            "nullable": true
+          },
+          "expected_closing_amount": {
+            "type": "number",
+            "nullable": true
+          },
+          "counted_closing_amount": {
+            "type": "number",
+            "nullable": true
+          },
+          "variance_amount": {
+            "type": "number",
+            "nullable": true
+          },
+          "opened_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "opened_by_user_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "closed_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "closed_by_user_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "closed_reason": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CashSessionCloseReason"
+              }
+            ],
+            "nullable": true
+          },
+          "close_note": {
+            "type": "string",
+            "nullable": true
+          },
+          "approved_by_user_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "approved_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "legal_entity_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "ownership_scope": {
+            "$ref": "#/components/schemas/CashRegisterOwnershipScope"
+          },
+          "operating_unit_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "register_account_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "variance_gain_account_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "variance_loss_account_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "requires_approval_over_amount": {
+            "type": "number",
+            "nullable": true
+          },
+          "cash_register_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "cash_register_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "register_session_mode": {
+            "type": "string",
+            "enum": [
+              "REQUIRED",
+              "OPTIONAL",
+              "NONE"
+            ],
+            "nullable": true
+          },
+          "register_currency_code": {
+            "type": "string",
+            "maxLength": 3,
+            "nullable": true
+          },
+          "register_status": {
+            "type": "string",
+            "enum": [
+              "ACTIVE",
+              "INACTIVE"
+            ],
+            "nullable": true
+          },
+          "legal_entity_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "legal_entity_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "operating_unit_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "operating_unit_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "ownership_context_label": {
+            "type": "string",
+            "nullable": true
+          },
+          "opened_by_email": {
+            "type": "string",
+            "nullable": true
+          },
+          "closed_by_email": {
+            "type": "string",
+            "nullable": true
+          },
+          "approved_by_email": {
+            "type": "string",
+            "nullable": true
+          },
+          "varianceAutoPosted": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "varianceTransactionId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "varianceApprovalRequired": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "varianceApprovalThreshold": {
+            "type": "number",
+            "nullable": true
+          }
+        }
+      },
+      "CashSessionListResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CashSessionRow"
+            }
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "tenantId",
+          "rows",
+          "total",
+          "limit",
+          "offset"
+        ]
+      },
+      "CashSessionResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "row": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CashSessionRow"
+              }
+            ],
+            "nullable": true
+          }
+        },
+        "required": [
+          "tenantId",
+          "row"
+        ]
+      },
+      "CashSessionOpenRequest": {
+        "type": "object",
+        "properties": {
+          "registerId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "openingAmount": {
+            "type": "number",
+            "minimum": 0,
+            "nullable": true
+          }
+        },
+        "required": [
+          "registerId"
+        ]
+      },
+      "CashSessionCloseRequest": {
+        "type": "object",
+        "properties": {
+          "countedClosingAmount": {
+            "type": "number"
+          },
+          "closedReason": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CashSessionCloseReason"
+              }
+            ],
+            "nullable": true
+          },
+          "closeNote": {
+            "type": "string",
+            "maxLength": 500,
+            "nullable": true
+          },
+          "approveVariance": {
+            "type": "boolean",
+            "nullable": true
+          }
+        },
+        "required": [
+          "countedClosingAmount"
+        ]
+      },
+      "CashTransactionType": {
+        "type": "string",
+        "enum": [
+          "RECEIPT",
+          "PAYOUT",
+          "DEPOSIT_TO_BANK",
+          "WITHDRAWAL_FROM_BANK",
+          "TRANSFER_OUT",
+          "TRANSFER_IN",
+          "VARIANCE",
+          "OPENING_FLOAT",
+          "CLOSING_ADJUSTMENT"
+        ]
+      },
+      "CashTransactionStatus": {
+        "type": "string",
+        "enum": [
+          "DRAFT",
+          "SUBMITTED",
+          "APPROVED",
+          "POSTED",
+          "REVERSED",
+          "CANCELLED"
+        ]
+      },
+      "CashTransactionRow": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "tenant_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "cash_register_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "cash_session_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "txn_no": {
+            "type": "string",
+            "nullable": true
+          },
+          "txn_type": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CashTransactionType"
+              }
+            ],
+            "nullable": true
+          },
+          "status": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CashTransactionStatus"
+              }
+            ],
+            "nullable": true
+          },
+          "txn_datetime": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "book_date": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "amount": {
+            "type": "number",
+            "nullable": true
+          },
+          "amount_base": {
+            "type": "number",
+            "nullable": true
+          },
+          "currency_code": {
+            "type": "string",
+            "maxLength": 3,
+            "nullable": true
+          },
+          "fx_rate": {
+            "type": "number",
+            "nullable": true
+          },
+          "fx_rate_source": {
+            "type": "string",
+            "nullable": true
+          },
+          "fx_rate_date": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "fx_fallback_mode": {
+            "type": "string",
+            "enum": [
+              "EXACT_ONLY",
+              "PRIOR_DATE"
+            ],
+            "nullable": true
+          },
+          "fx_fallback_max_days": {
+            "type": "integer",
+            "minimum": 0,
+            "nullable": true
+          },
+          "description": {
+            "type": "string",
+            "nullable": true
+          },
+          "reference_no": {
+            "type": "string",
+            "nullable": true
+          },
+          "source_doc_type": {
+            "type": "string",
+            "nullable": true
+          },
+          "source_doc_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "source_module": {
+            "type": "string",
+            "nullable": true
+          },
+          "source_entity_type": {
+            "type": "string",
+            "nullable": true
+          },
+          "source_entity_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "integration_link_status": {
+            "type": "string",
+            "nullable": true
+          },
+          "counterparty_type": {
+            "type": "string",
+            "nullable": true
+          },
+          "counterparty_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "counter_account_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "counter_cash_register_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "linked_cari_settlement_batch_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "linked_cari_unapplied_cash_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "posted_journal_entry_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "reversal_of_transaction_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "cancel_reason": {
+            "type": "string",
+            "nullable": true
+          },
+          "override_cash_control": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "override_reason": {
+            "type": "string",
+            "nullable": true
+          },
+          "idempotency_key": {
+            "type": "string",
+            "nullable": true
+          },
+          "integration_event_uid": {
+            "type": "string",
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "legal_entity_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "ownership_scope": {
+            "$ref": "#/components/schemas/CashRegisterOwnershipScope"
+          },
+          "operating_unit_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "register_account_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "register_variance_gain_account_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "register_variance_loss_account_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "legal_entity_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "legal_entity_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "operating_unit_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "operating_unit_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "ownership_context_label": {
+            "type": "string",
+            "nullable": true
+          },
+          "cash_register_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "cash_register_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "register_session_mode": {
+            "type": "string",
+            "nullable": true
+          },
+          "register_currency_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "register_status": {
+            "type": "string",
+            "nullable": true
+          },
+          "cash_session_status": {
+            "type": "string",
+            "nullable": true
+          },
+          "counter_account_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "counter_account_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "counter_cash_register_id_resolved": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "counter_cash_register_ownership_scope": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CashRegisterOwnershipScope"
+              }
+            ],
+            "nullable": true
+          },
+          "counter_cash_register_operating_unit_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "counter_cash_register_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "counter_cash_register_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "counter_cash_register_operating_unit_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "counter_cash_register_operating_unit_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "counter_cash_register_ownership_context_label": {
+            "type": "string",
+            "nullable": true
+          },
+          "cash_transit_transfer_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "cash_transit_status": {
+            "type": "string",
+            "nullable": true
+          },
+          "cash_transit_source_register_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "cash_transit_target_register_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "cash_transit_transfer_out_transaction_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "cash_transit_transfer_in_transaction_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "cash_transit_account_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "cash_transit_initiated_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "cash_transit_in_transit_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "cash_transit_received_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "cash_transit_canceled_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "cash_transit_reversed_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "cash_transit_cancel_reason": {
+            "type": "string",
+            "nullable": true
+          },
+          "cash_transit_reverse_reason": {
+            "type": "string",
+            "nullable": true
+          },
+          "cash_transit_note": {
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
+      "CashTransactionListResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CashTransactionRow"
+            }
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "tenantId",
+          "rows",
+          "total",
+          "limit",
+          "offset"
+        ]
+      },
+      "CashTransactionResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "row": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CashTransactionRow"
+              }
+            ],
+            "nullable": true
+          }
+        },
+        "required": [
+          "tenantId",
+          "row"
+        ]
+      },
+      "CashTransactionMutationResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "row": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CashTransactionRow"
+              }
+            ],
+            "nullable": true
+          },
+          "idempotentReplay": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "tenantId",
+          "row",
+          "idempotentReplay"
+        ]
+      },
+      "CashTransactionCreateRequest": {
+        "type": "object",
+        "properties": {
+          "registerId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "cashSessionId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "txnType": {
+            "$ref": "#/components/schemas/CashTransactionType"
+          },
+          "txnDatetime": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "bookDate": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "amount": {
+            "type": "number",
+            "minimum": 0,
+            "exclusiveMinimum": true
+          },
+          "amountBase": {
+            "type": "number",
+            "nullable": true
+          },
+          "currencyCode": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 3
+          },
+          "fxRate": {
+            "type": "number",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "nullable": true
+          },
+          "fxRateSource": {
+            "type": "string",
+            "maxLength": 40,
+            "nullable": true
+          },
+          "fxRateDate": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "fxFallbackMode": {
+            "type": "string",
+            "enum": [
+              "EXACT_ONLY",
+              "PRIOR_DATE"
+            ],
+            "nullable": true
+          },
+          "fxFallbackMaxDays": {
+            "type": "integer",
+            "minimum": 0,
+            "nullable": true
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 500,
+            "nullable": true
+          },
+          "referenceNo": {
+            "type": "string",
+            "maxLength": 100,
+            "nullable": true
+          },
+          "sourceDocType": {
+            "type": "string",
+            "nullable": true
+          },
+          "sourceDocId": {
+            "type": "string",
+            "maxLength": 80,
+            "nullable": true
+          },
+          "counterpartyType": {
+            "type": "string",
+            "nullable": true
+          },
+          "counterpartyId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "counterAccountId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "counterCashRegisterId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "linkedCariSettlementBatchId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "linkedCariUnappliedCashId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "sourceModule": {
+            "type": "string",
+            "nullable": true
+          },
+          "sourceEntityType": {
+            "type": "string",
+            "maxLength": 60,
+            "nullable": true
+          },
+          "sourceEntityId": {
+            "type": "string",
+            "maxLength": 120,
+            "nullable": true
+          },
+          "integrationLinkStatus": {
+            "type": "string",
+            "nullable": true
+          },
+          "integrationEventUid": {
+            "type": "string",
+            "maxLength": 100,
+            "nullable": true
+          },
+          "idempotencyKey": {
+            "type": "string",
+            "maxLength": 100
+          }
+        },
+        "required": [
+          "registerId",
+          "txnType",
+          "amount",
+          "currencyCode",
+          "idempotencyKey"
+        ]
+      },
+      "CashTransactionCancelRequest": {
+        "type": "object",
+        "properties": {
+          "cancelReason": {
+            "type": "string",
+            "maxLength": 255
+          }
+        },
+        "required": [
+          "cancelReason"
+        ]
+      },
+      "CashTransactionPostRequest": {
+        "type": "object",
+        "properties": {
+          "overrideCashControl": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "overrideReason": {
+            "type": "string",
+            "maxLength": 500,
+            "nullable": true
+          }
+        }
+      },
+      "CashTransactionReverseRequest": {
+        "type": "object",
+        "properties": {
+          "reverseReason": {
+            "type": "string",
+            "maxLength": 255
+          }
+        },
+        "required": [
+          "reverseReason"
+        ]
+      },
+      "CashTransactionReverseResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "original": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CashTransactionRow"
+              }
+            ],
+            "nullable": true
+          },
+          "reversal": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CashTransactionRow"
+              }
+            ],
+            "nullable": true
+          },
+          "idempotentReplay": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "tenantId",
+          "original",
+          "reversal",
+          "idempotentReplay"
+        ]
+      },
+      "CashTransitStatus": {
+        "type": "string",
+        "enum": [
+          "INITIATED",
+          "IN_TRANSIT",
+          "RECEIVED",
+          "CANCELED",
+          "REVERSED"
+        ]
+      },
+      "CashTransitTransferRow": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "tenant_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "legal_entity_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "source_cash_register_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "target_cash_register_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "source_operating_unit_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "target_operating_unit_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "transfer_out_cash_transaction_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "transfer_in_cash_transaction_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "status": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CashTransitStatus"
+              }
+            ],
+            "nullable": true
+          },
+          "amount": {
+            "type": "number",
+            "nullable": true
+          },
+          "currency_code": {
+            "type": "string",
+            "maxLength": 3,
+            "nullable": true
+          },
+          "transit_account_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "initiated_by_user_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "received_by_user_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "canceled_by_user_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "reversed_by_user_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "initiated_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "in_transit_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "received_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "canceled_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "reversed_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "cancel_reason": {
+            "type": "string",
+            "nullable": true
+          },
+          "reverse_reason": {
+            "type": "string",
+            "nullable": true
+          },
+          "idempotency_key": {
+            "type": "string",
+            "nullable": true
+          },
+          "integration_event_uid": {
+            "type": "string",
+            "nullable": true
+          },
+          "source_module": {
+            "type": "string",
+            "nullable": true
+          },
+          "source_entity_type": {
+            "type": "string",
+            "nullable": true
+          },
+          "source_entity_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "note": {
+            "type": "string",
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "legal_entity_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "legal_entity_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "source_cash_register_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "source_cash_register_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "source_cash_register_ownership_scope": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CashRegisterOwnershipScope"
+              }
+            ],
+            "nullable": true
+          },
+          "source_operating_unit_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "source_operating_unit_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "source_ownership_context_label": {
+            "type": "string",
+            "nullable": true
+          },
+          "target_cash_register_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "target_cash_register_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "target_cash_register_ownership_scope": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CashRegisterOwnershipScope"
+              }
+            ],
+            "nullable": true
+          },
+          "target_operating_unit_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "target_operating_unit_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "target_ownership_context_label": {
+            "type": "string",
+            "nullable": true
+          },
+          "transit_account_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "transit_account_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "transfer_out_txn_no": {
+            "type": "string",
+            "nullable": true
+          },
+          "transfer_out_book_date": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "transfer_out_posted_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "transfer_out_txn_status": {
+            "type": "string",
+            "nullable": true
+          },
+          "transfer_out_posted_journal_entry_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "transfer_in_txn_no": {
+            "type": "string",
+            "nullable": true
+          },
+          "transfer_in_book_date": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "transfer_in_posted_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "transfer_in_txn_status": {
+            "type": "string",
+            "nullable": true
+          },
+          "transfer_in_posted_journal_entry_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          }
+        }
       },
       "CashExchangePostingMode": {
         "type": "string",
@@ -22311,18 +23780,27 @@
             "minimum": 1
           },
           "transfer": {
-            "type": "object",
-            "additionalProperties": true,
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CashTransitTransferRow"
+              }
+            ],
             "nullable": true
           },
           "transferOutTransaction": {
-            "type": "object",
-            "additionalProperties": true,
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CashTransactionRow"
+              }
+            ],
             "nullable": true
           },
           "transferInTransaction": {
-            "type": "object",
-            "additionalProperties": true,
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CashTransactionRow"
+              }
+            ],
             "nullable": true
           },
           "idempotentReplay": {
@@ -22347,7 +23825,7 @@
           "rows": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/AnyObject"
+              "$ref": "#/components/schemas/CashTransitTransferRow"
             }
           },
           "total": {

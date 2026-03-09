@@ -12,9 +12,9 @@
 - Backfill existing cash registers:
   - `operating_unit_id IS NULL` -> `ownership_scope = CENTRAL`
   - `operating_unit_id IS NOT NULL` -> `ownership_scope = OPERATING_UNIT`
-- Preserve backward compatibility during rollout:
-  - old clients that omit `ownershipScope` may still be accepted temporarily
-  - backend derives a default from `operatingUnitId` only during the transition period
+- Rollout completion state:
+  - cash-register writes now require explicit `ownershipScope`
+  - legacy blank-OU ownership derivation has been removed from write validation
 - All register tables, selectors, and downstream workflows must show explicit ownership labels or badges.
 - Transfer routing must use ownership-context differences, including:
   - `CENTRAL -> OPERATING_UNIT`
@@ -87,10 +87,9 @@ Read API additions:
 - `ownership_context_label`
 
 Compatibility rule:
-- During rollout only:
-  - if `ownershipScope` is omitted and `operatingUnitId` is empty, treat as `CENTRAL`
-  - if `ownershipScope` is omitted and `operatingUnitId` is present, treat as `OPERATING_UNIT`
-- After frontend rollout is stable, write validation may be tightened to require explicit `ownershipScope`
+- Rollout compatibility is complete:
+  - `ownershipScope` is now required on writes
+  - old clients must send explicit `CENTRAL` or `OPERATING_UNIT`
 
 Files:
 - `backend/src/migrations/m111_cash_register_ownership_scope.js`

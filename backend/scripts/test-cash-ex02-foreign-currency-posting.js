@@ -253,6 +253,7 @@ async function createRegister({
     body: {
       tenantId,
       legalEntityId,
+      ownershipScope: operatingUnitId ? "OPERATING_UNIT" : "CENTRAL",
       operatingUnitId,
       accountId,
       code,

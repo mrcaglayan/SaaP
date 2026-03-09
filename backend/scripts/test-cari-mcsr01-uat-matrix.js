@@ -304,6 +304,7 @@ async function createRegister(
     {
       tenantId,
       legalEntityId,
+      ownershipScope: operatingUnitId ? "OPERATING_UNIT" : "CENTRAL",
       operatingUnitId,
       accountId,
       code,

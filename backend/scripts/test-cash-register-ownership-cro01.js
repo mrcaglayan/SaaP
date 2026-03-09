@@ -39,41 +39,20 @@ function makeReq({ body = {}, query = {} } = {}) {
 }
 
 async function main() {
-  const centralPayload = parseCashRegisterUpsertInput(
-    makeReq({
-      body: {
-        legalEntityId: 10,
-        accountId: 99,
-        code: "hqafn",
-        name: "HQ AFN",
-        currencyCode: "AFN",
-      },
-    })
-  );
-  assert(
-    centralPayload.ownershipScope === "CENTRAL",
-    "Omitted ownershipScope + empty operatingUnitId should derive CENTRAL"
-  );
-  assert(
-    centralPayload.operatingUnitId === null,
-    "Central register payload should keep operatingUnitId null"
-  );
-
-  const ouPayload = parseCashRegisterUpsertInput(
-    makeReq({
-      body: {
-        legalEntityId: 10,
-        operatingUnitId: 55,
-        accountId: 100,
-        code: "keoafn",
-        name: "KEO AFN",
-        currencyCode: "AFN",
-      },
-    })
-  );
-  assert(
-    ouPayload.ownershipScope === "OPERATING_UNIT",
-    "Omitted ownershipScope + operatingUnitId should derive OPERATING_UNIT"
+  assertThrows(
+    () =>
+      parseCashRegisterUpsertInput(
+        makeReq({
+          body: {
+            legalEntityId: 10,
+            accountId: 99,
+            code: "hqafn",
+            name: "HQ AFN",
+            currencyCode: "AFN",
+          },
+        })
+      ),
+    "ownershipScope is required"
   );
 
   const explicitCentralPayload = parseCashRegisterUpsertInput(
@@ -91,6 +70,28 @@ async function main() {
   assert(
     explicitCentralPayload.ownershipScope === "CENTRAL",
     "Explicit CENTRAL ownershipScope should parse successfully"
+  );
+  assert(
+    explicitCentralPayload.operatingUnitId === null,
+    "Central register payload should keep operatingUnitId null"
+  );
+
+  const explicitOuPayload = parseCashRegisterUpsertInput(
+    makeReq({
+      body: {
+        legalEntityId: 10,
+        ownershipScope: "OPERATING_UNIT",
+        operatingUnitId: 55,
+        accountId: 100,
+        code: "keoafn",
+        name: "KEO AFN",
+        currencyCode: "AFN",
+      },
+    })
+  );
+  assert(
+    explicitOuPayload.ownershipScope === "OPERATING_UNIT",
+    "Explicit OPERATING_UNIT ownershipScope should parse successfully"
   );
 
   assertThrows(

@@ -1485,6 +1485,7 @@ export async function seedStarter(options = {}) {
 
     const registerA1Payload = getRequestBody(requests, 30);
     registerA1Payload.legalEntityId = legalEntityA.id;
+    registerA1Payload.ownershipScope = "OPERATING_UNIT";
     registerA1Payload.operatingUnitId = operatingUnitA1Id;
     registerA1Payload.accountId = account10001AId;
     await requestJson({
@@ -1519,6 +1520,7 @@ export async function seedStarter(options = {}) {
 
     const registerA2Payload = getRequestBody(requests, 32);
     registerA2Payload.legalEntityId = legalEntityA.id;
+    registerA2Payload.ownershipScope = "OPERATING_UNIT";
     registerA2Payload.operatingUnitId = operatingUnitA1Id;
     registerA2Payload.accountId = account10002AId;
     await requestJson({
@@ -1553,6 +1555,7 @@ export async function seedStarter(options = {}) {
 
     const registerA3Payload = getRequestBody(requests, 34);
     registerA3Payload.legalEntityId = legalEntityA.id;
+    registerA3Payload.ownershipScope = "OPERATING_UNIT";
     registerA3Payload.operatingUnitId = operatingUnitA2Id;
     registerA3Payload.accountId = account10003AId;
     await requestJson({
@@ -1587,6 +1590,7 @@ export async function seedStarter(options = {}) {
 
     const registerA4Payload = getRequestBody(requests, 36);
     registerA4Payload.legalEntityId = legalEntityA.id;
+    registerA4Payload.ownershipScope = "OPERATING_UNIT";
     registerA4Payload.operatingUnitId = operatingUnitA2Id;
     registerA4Payload.accountId = account10004AId;
     await requestJson({
@@ -1621,6 +1625,7 @@ export async function seedStarter(options = {}) {
 
     const registerB1Payload = getRequestBody(requests, 38);
     registerB1Payload.legalEntityId = legalEntityB.id;
+    registerB1Payload.ownershipScope = "OPERATING_UNIT";
     registerB1Payload.operatingUnitId = operatingUnitB1Id;
     registerB1Payload.accountId = account10001BId;
     await requestJson({
@@ -1950,6 +1955,7 @@ export async function seedStarter(options = {}) {
 
     const registerB2Payload = getRequestBody(requests, 69);
     registerB2Payload.legalEntityId = legalEntityB.id;
+    registerB2Payload.ownershipScope = "OPERATING_UNIT";
     registerB2Payload.operatingUnitId = operatingUnitB1Id;
     registerB2Payload.accountId = account10002BId;
     await requestJson({

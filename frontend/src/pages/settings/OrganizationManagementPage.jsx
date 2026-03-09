@@ -5573,7 +5573,7 @@ export default function OrganizationManagementPage() {
                   className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs"
                 >
                   <option value="">
-                    {l("No OU (central / HQ first)", "OU yok (merkezi / merkez once)")}
+                    {l("Central / HQ", "Merkez / HQ")}
                   </option>
                   {capitalFulfillmentOperatingUnits.map((row) => (
                     <option key={row.id} value={row.id}>
@@ -5736,8 +5736,8 @@ export default function OrganizationManagementPage() {
                         "Secilen OU iki katmanli akis kullanir: sube kasa tahsilati kasa alt defterinde post edilir, ortak taahhut hesabini alacaklayan ayri bir merkezi sermaye yevmiyesi olusur."
                       )
                       : l(
-                        "No OU means central cash-register fulfillment. The posted cash journal itself credits the shareholder commitment account.",
-                        "OU secilmezse merkezi kasa uzerinden karsilama yapilir. Post edilen kasa yevmiyesi ortak taahhut hesabini dogrudan alacaklar."
+                        "Central / HQ means central cash-register fulfillment. The posted cash journal itself credits the shareholder commitment account.",
+                        "Merkez / HQ secimi merkezi kasa uzerinden karsilama yapilacagi anlamina gelir. Post edilen kasa yevmiyesi ortak taahhut hesabini dogrudan alacaklar."
                       )
                     : selectedCapitalFulfillmentOperatingUnit
                       ? l(
@@ -5745,8 +5745,8 @@ export default function OrganizationManagementPage() {
                         "Secilen OU, ic cari hesap satirlari ile dogrudan OU hedefli karsilama anlamina gelir."
                       )
                       : l(
-                        "No OU means central fulfillment first. Later HQ -> OU allocation can be posted separately.",
-                        "OU secilmezse once merkezi karsilama yapilir. Sonra merkez -> OU dagitimi ayri post edilebilir."
+                        "Central / HQ means central fulfillment first. Later HQ -> OU allocation can be posted separately.",
+                        "Merkez / HQ secimi once merkezi karsilama yapilacagi anlamina gelir. Sonra merkez -> OU dagitimi ayri post edilebilir."
                       )}
                 </div>
               </div>

@@ -832,6 +832,7 @@ async function createCashRegister({
     body: {
       tenantId,
       legalEntityId,
+      ownershipScope: "CENTRAL",
       accountId,
       code,
       name,
