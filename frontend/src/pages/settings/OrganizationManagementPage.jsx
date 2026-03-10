@@ -124,6 +124,15 @@ function formatAccountOptionLabel(account) {
   return code || name || "-";
 }
 
+function formatOperatingUnitLabel(unit) {
+  const code = String(unit?.code || "").trim();
+  const name = String(unit?.name || "").trim();
+  if (code && name) {
+    return `${code} - ${name}`;
+  }
+  return code || name || "-";
+}
+
 function formatBankAccountOptionLabel(account) {
   const code = String(account?.code || "").trim();
   const name = String(account?.name || "").trim();
@@ -140,12 +149,12 @@ function formatBankAccountOptionLabel(account) {
   if (ouCode) {
     parts.push(`OU ${ouCode}`);
   } else {
-    parts.push("HQ");
+    parts.push("Central");
   }
   return parts.filter(Boolean).join(" | ") || "-";
 }
 
-function formatCashRegisterOptionLabel(register) {
+function formatCashRegisterOptionLabel(register, l = (en) => en) {
   const code = String(register?.code || "").trim();
   const name = String(register?.name || "").trim();
   const currencyCode = String(register?.currency_code || "").trim().toUpperCase();
@@ -154,14 +163,17 @@ function formatCashRegisterOptionLabel(register) {
   const ownershipContext = explicitOwnershipContext
     ? explicitOwnershipContext === "Central / HQ" ||
       explicitOwnershipContext === "Merkez / HQ" ||
-      explicitOwnershipContext.startsWith("OU:")
-      ? explicitOwnershipContext
+      explicitOwnershipContext === "Central" ||
+      explicitOwnershipContext === "Merkez"
+      ? l("Central", "Merkez")
+      : explicitOwnershipContext.startsWith("OU:")
+        ? explicitOwnershipContext
       : register?.operating_unit_code
         ? `OU: ${register.operating_unit_code}`
         : explicitOwnershipContext
     : register?.operating_unit_code
       ? `OU: ${register.operating_unit_code}`
-      : "Central / HQ";
+      : l("Central", "Merkez");
   const parts = [];
   if (code || name) {
     parts.push([code, name].filter(Boolean).join(" - "));
@@ -176,21 +188,24 @@ function formatCashRegisterOptionLabel(register) {
   return parts.filter(Boolean).join(" | ") || "-";
 }
 
-function formatCashSessionOptionLabel(session) {
+function formatCashSessionOptionLabel(session, l = (en) => en) {
   const sessionId = toNumber(session?.id);
   const registerCode = String(session?.cash_register_code || "").trim();
   const explicitOwnershipContext = String(session?.ownership_context_label || "").trim();
   const ownershipContext = explicitOwnershipContext
     ? explicitOwnershipContext === "Central / HQ" ||
       explicitOwnershipContext === "Merkez / HQ" ||
-      explicitOwnershipContext.startsWith("OU:")
-      ? explicitOwnershipContext
+      explicitOwnershipContext === "Central" ||
+      explicitOwnershipContext === "Merkez"
+      ? l("Central", "Merkez")
+      : explicitOwnershipContext.startsWith("OU:")
+        ? explicitOwnershipContext
       : session?.operating_unit_code
         ? `OU: ${session.operating_unit_code}`
         : explicitOwnershipContext
     : session?.operating_unit_code
       ? `OU: ${session.operating_unit_code}`
-      : "Central / HQ";
+      : l("Central", "Merkez");
   const openedAt = String(session?.opened_at || "").trim();
   return [`#${sessionId || "-"}`, registerCode, ownershipContext, openedAt]
     .filter(Boolean)
@@ -1505,11 +1520,11 @@ export default function OrganizationManagementPage() {
       return l("Direct OU-targeted", "Dogrudan OU hedefli");
     }
     if (operationalModel === "HQ_FIRST_CENTRAL_ONLY") {
-      return l("HQ-first central-only", "Merkez once merkezi");
+      return l("Central-first / central-only", "Merkez once / sadece merkez");
     }
     return selectedCapitalFulfillmentOperatingUnit
       ? l("Direct OU-targeted", "Dogrudan OU hedefli")
-      : l("HQ-first central-only", "Merkez once merkezi");
+      : l("Central-first / central-only", "Merkez once / sadece merkez");
   }, [capitalFulfillmentPreview?.operational_model, l, selectedCapitalFulfillmentOperatingUnit]);
   useEffect(() => {
     if (
@@ -2316,8 +2331,46 @@ export default function OrganizationManagementPage() {
     ) {
       setError(
         l(
-          "HQ due-from and OU due-to accounts must be different.",
-          "Merkez alacak ve OU borc hesaplari farkli olmalidir."
+          "Central due-from and OU due-to-central accounts must be different.",
+          "Merkez alacak ve OU merkeze borc hesaplari farkli olmalidir."
+        )
+      );
+      return;
+    }
+    const conflictingCentralDueFromUnit = centralDueFromAccountId
+      ? (operatingUnits || []).find((row) => {
+          const rowKey = `${row?.legal_entity_id || ""}:${String(row?.code || "").trim()}`;
+          return (
+            rowKey !== unitEditingKey &&
+            toNumber(row?.legal_entity_id) === legalEntityId &&
+            toNumber(row?.central_due_from_account_id) === centralDueFromAccountId
+          );
+        })
+      : null;
+    if (conflictingCentralDueFromUnit) {
+      setError(
+        l(
+          `Central due-from account is already assigned to operating unit ${formatOperatingUnitLabel(conflictingCentralDueFromUnit)}. Use a branch-specific account.`,
+          `Merkez alacak hesabi zaten ${formatOperatingUnitLabel(conflictingCentralDueFromUnit)} operasyon birimine atanmis. Subeye ozel bir hesap kullanin.`
+        )
+      );
+      return;
+    }
+    const conflictingOuDueToUnit = ouDueToCentralAccountId
+      ? (operatingUnits || []).find((row) => {
+          const rowKey = `${row?.legal_entity_id || ""}:${String(row?.code || "").trim()}`;
+          return (
+            rowKey !== unitEditingKey &&
+            toNumber(row?.legal_entity_id) === legalEntityId &&
+            toNumber(row?.ou_due_to_central_account_id) === ouDueToCentralAccountId
+          );
+        })
+      : null;
+    if (conflictingOuDueToUnit) {
+      setError(
+        l(
+          `OU due-to-central account is already assigned to operating unit ${formatOperatingUnitLabel(conflictingOuDueToUnit)}. Use a branch-specific account.`,
+          `OU merkeze borc hesabi zaten ${formatOperatingUnitLabel(conflictingOuDueToUnit)} operasyon birimine atanmis. Subeye ozel bir hesap kullanin.`
         )
       );
       return;
@@ -3201,7 +3254,7 @@ export default function OrganizationManagementPage() {
             code: String(row.code || "").trim(),
             name: String(row.name || "").trim(),
             operatingUnitCode: String(row.operating_unit_code || "").trim(),
-            label: formatCashRegisterOptionLabel(row),
+            label: formatCashRegisterOptionLabel(row, l),
           }))
         : [];
       const defaultTargetRegisterId = toNumber(branchRegisterOptions[0]?.id);
@@ -3238,7 +3291,7 @@ export default function OrganizationManagementPage() {
                   name: String(preview?.destination?.cash_register_name || "").trim(),
                   currency_code: String(preview?.currency_code || "").trim().toUpperCase(),
                   session_mode: "",
-                  ownership_context_label: "Central / HQ",
+                  ownership_context_label: "Central",
                 }) || "-",
               targetRegisterId: defaultTargetRegisterId
                 ? String(defaultTargetRegisterId)
@@ -3253,7 +3306,7 @@ export default function OrganizationManagementPage() {
                 100
               ),
               description: l(
-                `HQ to branch cash transit for shareholder capital fulfillment ${response?.journalNo || "-"}`,
+                `Central to branch cash transit for shareholder capital fulfillment ${response?.journalNo || "-"}`,
                 `${response?.journalNo || "-"} icin merkezden subeye kasa transit transferi`
               ),
             }
@@ -4203,7 +4256,7 @@ export default function OrganizationManagementPage() {
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm md:col-span-3"
             >
               <option value="">
-                {l("HQ Due From OU (optional)", "Merkez OU Alacagi (opsiyonel)")}
+                {l("Central Due From OU (optional)", "Merkez OU Alacagi (opsiyonel)")}
               </option>
               {unitCentralDueFromAccountOptions.map((account) => (
                 <option key={account.id} value={account.id}>
@@ -4222,7 +4275,7 @@ export default function OrganizationManagementPage() {
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm md:col-span-3"
             >
               <option value="">
-                {l("OU Due To HQ (optional)", "OU Merkeze Borc (opsiyonel)")}
+                {l("OU Due To Central (optional)", "OU Merkeze Borc (opsiyonel)")}
               </option>
               {unitOuDueToCentralAccountOptions.map((account) => (
                 <option key={account.id} value={account.id}>
@@ -4271,8 +4324,8 @@ export default function OrganizationManagementPage() {
                   <th className="px-3 py-2">{l("Name", "Ad")}</th>
                   <th className="px-3 py-2">{l("Type", "Tur")}</th>
                   <th className="px-3 py-2">{l("Subledger", "Alt Defter")}</th>
-                  <th className="px-3 py-2">{l("HQ Due From", "Merkez Alacagi")}</th>
-                  <th className="px-3 py-2">{l("OU Due To HQ", "OU Merkeze Borc")}</th>
+                  <th className="px-3 py-2">{l("Central Due From", "Merkez Alacagi")}</th>
+                  <th className="px-3 py-2">{l("OU Due To Central", "OU Merkeze Borc")}</th>
                   <th className="px-3 py-2">{l("Ready", "Hazir")}</th>
                   <th className="px-3 py-2">{l("Actions", "Islemler")}</th>
                 </tr>
@@ -5816,7 +5869,7 @@ export default function OrganizationManagementPage() {
                   className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs"
                 >
                   <option value="">
-                    {l("Central / HQ", "Merkez / HQ")}
+                    {l("Central", "Merkez")}
                   </option>
                   {capitalFulfillmentOperatingUnits.map((row) => (
                     <option key={row.id} value={row.id}>
@@ -5893,7 +5946,7 @@ export default function OrganizationManagementPage() {
                       </option>
                       {capitalFulfillmentCashRegisterOptions.map((row) => (
                         <option key={row.id} value={row.id}>
-                          {formatCashRegisterOptionLabel(row)}
+                          {formatCashRegisterOptionLabel(row, l)}
                         </option>
                       ))}
                     </select>
@@ -5923,7 +5976,7 @@ export default function OrganizationManagementPage() {
                         </option>
                         {capitalFulfillmentCashSessionOptions.map((row) => (
                           <option key={row.id} value={row.id}>
-                            {formatCashSessionOptionLabel(row)}
+                            {formatCashSessionOptionLabel(row, l)}
                           </option>
                         ))}
                       </select>
@@ -5990,8 +6043,8 @@ export default function OrganizationManagementPage() {
                         "Secilen OU iki katmanli akis kullanir: sube kasa tahsilati kasa alt defterinde post edilir, ortak taahhut hesabini alacaklayan ayri bir merkezi sermaye yevmiyesi olusur."
                       )
                       : l(
-                        "Central / HQ means central cash-register fulfillment. The posted cash journal itself credits the shareholder commitment account.",
-                        "Merkez / HQ secimi merkezi kasa uzerinden karsilama yapilacagi anlamina gelir. Post edilen kasa yevmiyesi ortak taahhut hesabini dogrudan alacaklar."
+                        "Central means central cash-register fulfillment. The posted cash journal itself credits the shareholder commitment account.",
+                        "Merkez secimi merkezi kasa uzerinden karsilama yapilacagi anlamina gelir. Post edilen kasa yevmiyesi ortak taahhut hesabini dogrudan alacaklar."
                       )
                     : selectedCapitalFulfillmentOperatingUnit
                       ? l(
@@ -5999,8 +6052,8 @@ export default function OrganizationManagementPage() {
                         "Secilen OU, ic cari hesap satirlari ile dogrudan OU hedefli karsilama anlamina gelir."
                       )
                       : l(
-                        "Central / HQ means central fulfillment first. Later HQ -> OU allocation can be posted separately.",
-                        "Merkez / HQ secimi once merkezi karsilama yapilacagi anlamina gelir. Sonra merkez -> OU dagitimi ayri post edilebilir."
+                        "Central means central fulfillment first. Later central -> OU allocation can be posted separately.",
+                        "Merkez secimi once merkezi karsilama yapilacagi anlamina gelir. Sonra merkez -> OU dagitimi ayri post edilebilir."
                       )}
                 </div>
               </div>
@@ -6030,7 +6083,7 @@ export default function OrganizationManagementPage() {
             {selectedCapitalFulfillmentOperatingUnit && !capitalFulfillmentOuReady ? (
               <div className="mt-3 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
                 {l(
-                  "Selected operating unit is not capital-self-balancing ready. Configure HQ Due From and OU Due To HQ first.",
+                  "Selected operating unit is not capital-self-balancing ready. Configure Central Due From and OU Due To Central first.",
                   "Secilen operasyon birimi sermaye icin self-balancing hazir degil. Once Merkez Alacagi ve OU Merkeze Borc hesaplarini tanimlayin."
                 )}
               </div>
@@ -6070,8 +6123,8 @@ export default function OrganizationManagementPage() {
                   )
                   : l(
                     canWriteBanks
-                      ? "No central active bank account found for the selected legal entity. Use Create bank to define the HQ bank here."
-                      : "No central active bank account found for the selected legal entity. A user with bank account write permission must create the HQ bank first.",
+                      ? "No central active bank account found for the selected legal entity. Use Create bank to define the central bank here."
+                      : "No central active bank account found for the selected legal entity. A user with bank account write permission must create the central bank first.",
                     canWriteBanks
                       ? "Secilen legal entity icin merkezi aktif banka hesabi bulunamadi. Merkez bankasini burada tanimlamak icin Banka olustur'u kullanin."
                       : "Secilen legal entity icin merkezi aktif banka hesabi bulunamadi. Merkez bankasini once banka hesap yazma yetkisi olan bir kullanici tanimlamalidir."
@@ -6090,7 +6143,7 @@ export default function OrganizationManagementPage() {
                     "Secilen legal entity ve OU icin aktif kasa bulunamadi. Once sube kasasini olusturun."
                   )
                   : l(
-                    "No active central cash register was found for the selected legal entity. Create an HQ cash register first.",
+                    "No active central cash register was found for the selected legal entity. Create a central cash register first.",
                     "Secilen legal entity icin aktif merkezi kasa bulunamadi. Once merkez kasasini olusturun."
                   )}
               </div>
@@ -6299,7 +6352,7 @@ export default function OrganizationManagementPage() {
                 </span>{" "}
                 {selectedCapitalFulfillmentOperatingUnit
                   ? `${selectedCapitalFulfillmentOperatingUnit.code} - ${selectedCapitalFulfillmentOperatingUnit.name}`
-                  : l("Central / HQ", "Merkez / HQ")}
+                  : l("Central", "Merkez")}
               </div>
             </div>
 
@@ -7092,11 +7145,11 @@ export default function OrganizationManagementPage() {
             {shareholderJournalModal.transitShortcut ? (
               <div className="mt-3 rounded-lg border border-sky-200 bg-sky-50 p-3 text-xs text-sky-900">
                 <div className="font-semibold text-sky-950">
-                  {l("HQ -> Branch cash transit", "Merkez -> Sube kasa transiti")}
+                  {l("Central -> Branch cash transit", "Merkez -> Sube kasa transiti")}
                 </div>
                 <p className="mt-1">
                   {l(
-                    "If this cash was received at HQ first, open the existing cash transit workflow with source register and amount prefilled.",
+                    "If this cash was received in the central register first, open the existing cash transit workflow with source register and amount prefilled.",
                     "Nakit once merkez kasasina alindiyse, kaynak kasa ve tutari onceden doldurulmus mevcut kasa transit akisina gecin."
                   )}
                 </p>

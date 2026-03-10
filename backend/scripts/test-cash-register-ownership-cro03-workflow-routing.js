@@ -18,7 +18,7 @@ async function main() {
   assert(
     querySource.includes("ou.code AS operating_unit_code") &&
       querySource.includes("ou.name AS operating_unit_name") &&
-      querySource.includes("WHEN cr.operating_unit_id IS NULL THEN 'Central / HQ'"),
+      querySource.includes("WHEN cr.operating_unit_id IS NULL THEN 'Central'"),
     "cash.queries should expose explicit ownership context on cash session rows"
   );
   assert(
@@ -97,8 +97,8 @@ async function main() {
     "utf8"
   );
   assert(
-    orgManagementSource.includes("formatCashRegisterOptionLabel(register)") &&
-      orgManagementSource.includes('ownership_context_label: "Central / HQ"') &&
+    orgManagementSource.includes("formatCashRegisterOptionLabel(") &&
+      orgManagementSource.includes('ownership_context_label: "Central"') &&
       orgManagementSource.includes("OU: ${register.operating_unit_code}"),
     "OrganizationManagementPage should keep shareholder-capital cash shortcuts aligned with explicit ownership labels"
   );

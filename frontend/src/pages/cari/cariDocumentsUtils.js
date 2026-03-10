@@ -69,26 +69,42 @@ export function mapDocumentRowToForm(row) {
       row?.rowVersion === null || row?.rowVersion === undefined
         ? ""
         : String(row.rowVersion),
-    legalEntityId: String(row?.legalEntityId || ""),
+    legalEntityId: String(row?.legalEntityId ?? row?.legal_entity_id ?? ""),
     operatingUnitId: String(row?.operatingUnitId ?? row?.operating_unit_id ?? ""),
-    counterpartyId: String(row?.counterpartyId || ""),
-    paymentTermId: String(row?.paymentTermId || ""),
+    counterpartyId: String(row?.counterpartyId ?? row?.counterparty_id ?? ""),
+    paymentTermId: String(row?.paymentTermId ?? row?.payment_term_id ?? ""),
     direction: String(row?.direction || "AR"),
-    documentType: String(row?.documentType || "INVOICE"),
-    documentDate: String(row?.documentDate || ""),
-    dueDate: String(row?.dueDate || ""),
+    documentType: String(row?.documentType ?? row?.document_type ?? "INVOICE"),
+    documentDate: String(row?.documentDate ?? row?.document_date ?? ""),
+    dueDate: String(row?.dueDate ?? row?.due_date ?? row?.dueDateSnapshot ?? row?.due_date_snapshot ?? ""),
     amountTxn:
       row?.amountTxn === null || row?.amountTxn === undefined
-        ? ""
+        ? row?.amount_txn === null || row?.amount_txn === undefined
+          ? ""
+          : String(row.amount_txn)
         : String(row.amountTxn),
     amountBase:
       row?.amountBase === null || row?.amountBase === undefined
-        ? ""
+        ? row?.amount_base === null || row?.amount_base === undefined
+          ? ""
+          : String(row.amount_base)
         : String(row.amountBase),
-    currencyCode: String(row?.currencyCode || ""),
+    currencyCode: String(
+      row?.currencyCode ??
+        row?.currency_code ??
+        row?.currencyCodeSnapshot ??
+        row?.currency_code_snapshot ??
+        ""
+    ),
     fxRate:
       row?.fxRate === null || row?.fxRate === undefined
-        ? ""
+        ? row?.fx_rate === null || row?.fx_rate === undefined
+          ? row?.fxRateSnapshot === null || row?.fxRateSnapshot === undefined
+            ? row?.fx_rate_snapshot === null || row?.fx_rate_snapshot === undefined
+              ? ""
+              : String(row.fx_rate_snapshot)
+            : String(row.fxRateSnapshot)
+          : String(row.fx_rate)
         : String(row.fxRate),
   };
 }

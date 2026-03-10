@@ -55,7 +55,9 @@ async function main() {
   );
   assert(
     writeServiceSource.includes("assertOperatingUnitInternalCurrentAccountTx") &&
-      writeServiceSource.includes("ouDueToCentralAccountId must be different from centralDueFromAccountId"),
+      writeServiceSource.includes("ouDueToCentralAccountId must be different from centralDueFromAccountId") &&
+      writeServiceSource.includes("assertUniqueOperatingUnitInternalCurrentMappingTx") &&
+      writeServiceSource.includes("must be unique per operating unit within the legal entity"),
     "OU write service should validate both accounts and reject duplicate mapping ids"
   );
 
@@ -75,10 +77,11 @@ async function main() {
     "utf8"
   );
   assert(
-    frontendSource.includes("HQ Due From OU (optional)") &&
-      frontendSource.includes("OU Due To HQ (optional)") &&
+    frontendSource.includes("Central Due From OU (optional)") &&
+      frontendSource.includes("OU Due To Central (optional)") &&
       frontendSource.includes("handleOperatingUnitEdit") &&
-      frontendSource.includes("capital_self_balancing_ready"),
+      frontendSource.includes("capital_self_balancing_ready") &&
+      frontendSource.includes("Use a branch-specific account."),
     "OrganizationManagementPage should surface OU mapping form fields, edit flow, and readiness"
   );
 

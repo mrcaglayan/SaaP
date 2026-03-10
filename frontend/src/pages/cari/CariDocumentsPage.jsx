@@ -1480,6 +1480,18 @@ export default function CariDocumentsPage() {
       ),
     [workingContextLegalEntities]
   );
+  const selectedDocumentLegalEntity = useMemo(
+    () => legalEntityRowsById.get(selectedDocumentLegalEntityId) || null,
+    [legalEntityRowsById, selectedDocumentLegalEntityId]
+  );
+  const selectedDocumentFunctionalCurrencyCode = useMemo(
+    () =>
+      normalizeCurrencyCode(
+        selectedDocumentLegalEntity?.functional_currency_code ||
+          selectedDocumentLegalEntity?.functionalCurrencyCode
+      ),
+    [selectedDocumentLegalEntity]
+  );
   const filterLegalEntityLookupOptions = useMemo(() => {
     const selectedLegalEntityId = normalizeText(filters.legalEntityId);
     const rows = [...legalEntityLookupOptions];
@@ -1554,6 +1566,20 @@ export default function CariDocumentsPage() {
     () => normalizeOptionalDecimalText(createDocumentFxComputation.resolvedAmountBase),
     [createDocumentFxComputation.resolvedAmountBase]
   );
+  const editDocumentFxComputation = useMemo(
+    () => getDocumentFxComputation(editForm, editDocumentMutationOptions),
+    [editDocumentMutationOptions, editForm]
+  );
+  const editResolvedAmountBaseText = useMemo(() => {
+    if (editFunctionalCurrencyCode) {
+      return normalizeOptionalDecimalText(editDocumentFxComputation.derivedAmountBase);
+    }
+    return normalizeOptionalDecimalText(editForm.amountBase);
+  }, [
+    editDocumentFxComputation.derivedAmountBase,
+    editForm.amountBase,
+    editFunctionalCurrencyCode,
+  ]);
   const createCounterpartyLookupOptions = useMemo(
     () => {
       const selectedCounterpartyId = normalizeText(createForm.counterpartyId);
@@ -3384,10 +3410,6 @@ export default function CariDocumentsPage() {
         return;
       }
       const payload = buildDocumentMutationPayload(editForm, editDocumentMutationOptions);
-      delete payload.amountTxn;
-      delete payload.amountBase;
-      delete payload.currencyCode;
-      delete payload.fxRate;
       if (!payload.rowVersion) {
         payload.rowVersion = Number(selectedDetail?.rowVersion || 0) || undefined;
       }
@@ -4830,6 +4852,26 @@ export default function CariDocumentsPage() {
                 <dt className="font-semibold text-slate-600">counterpartyCodeSnapshot</dt><dd>{selectedSnapshot.counterpartyCodeSnapshot || "-"}</dd>
                 <dt className="font-semibold text-slate-600">counterpartyNameSnapshot</dt><dd>{selectedSnapshot.counterpartyNameSnapshot || "-"}</dd>
                 <dt className="font-semibold text-slate-600">dueDateSnapshot</dt><dd>{selectedSnapshot.dueDateSnapshot || "-"}</dd>
+                <dt className="font-semibold text-slate-600">amountTxn</dt>
+                <dd>
+                  <MoneyText
+                    amount={firstDefinedRowValue(selectedSnapshot, "amountTxn", "amount_txn")}
+                    currencyCode={firstDefinedRowValue(
+                      selectedSnapshot,
+                      "currencyCode",
+                      "currency_code",
+                      "currencyCodeSnapshot",
+                      "currency_code_snapshot"
+                    )}
+                  />
+                </dd>
+                <dt className="font-semibold text-slate-600">amountBase</dt>
+                <dd>
+                  <MoneyText
+                    amount={firstDefinedRowValue(selectedSnapshot, "amountBase", "amount_base")}
+                    currencyCode={selectedDocumentFunctionalCurrencyCode}
+                  />
+                </dd>
                 <dt className="font-semibold text-slate-600">currencyCodeSnapshot</dt><dd>{selectedSnapshot.currencyCodeSnapshot || "-"}</dd>
                 <dt className="font-semibold text-slate-600">fxRateSnapshot</dt><dd>{selectedSnapshot.fxRateSnapshot || "-"}</dd>
               </dl>
@@ -5467,6 +5509,85 @@ export default function CariDocumentsPage() {
                   ) : null}
                   <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">{l("Document Type", "Belge Turu")}<select className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={editForm.documentType} onChange={(event) => setEditForm((prev) => ({ ...prev, documentType: event.target.value }))} disabled={!canEditOrCancelSelected || editSaving}>{DOCUMENT_TYPES.map((documentType) => <option key={`edit-document-type-${documentType}`} value={documentType}>{documentType}</option>)}</select></label>
                   <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">{l("Due Date", "Vade Tarihi")}<input type="date" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={editForm.dueDate} onChange={(event) => setEditForm((prev) => ({ ...prev, dueDate: event.target.value }))} disabled={!canEditOrCancelSelected || editSaving} required={requiresDueDate(editForm.documentType)} /></label>
+                  <div className="md:col-span-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-3">
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-700">
+                      {l("Amounts + Currency", "Tutar + Para Birimi")}
+                    </p>
+                    <div className="mt-2 grid gap-2 md:grid-cols-2">
+                      <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                        {l("Invoice Amount (Invoice Currency)", "Fatura Tutari (Fatura Para Birimi)")}
+                        <input
+                          type="number"
+                          min="0.000001"
+                          step="0.000001"
+                          className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                          value={editForm.amountTxn}
+                          onChange={(event) =>
+                            setEditForm((prev) => ({ ...prev, amountTxn: event.target.value }))
+                          }
+                          disabled={!canEditOrCancelSelected || editSaving}
+                          required
+                        />
+                      </label>
+                      <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                        {l("Invoice Currency", "Fatura Para Birimi")}
+                        <input
+                          type="text"
+                          maxLength={3}
+                          className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal uppercase"
+                          value={editForm.currencyCode}
+                          onChange={(event) =>
+                            setEditForm((prev) => ({ ...prev, currencyCode: event.target.value }))
+                          }
+                          disabled={!canEditOrCancelSelected || editSaving}
+                          required
+                        />
+                      </label>
+                      <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                        {l("Base Amount (calculated)", "Baz Tutar (otomatik hesaplanir)")}
+                        <input
+                          type="number"
+                          min="0.000001"
+                          step="0.000001"
+                          className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-normal text-slate-700"
+                          value={editResolvedAmountBaseText}
+                          readOnly
+                          disabled={!canEditOrCancelSelected || editSaving}
+                        />
+                      </label>
+                      <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                        {editDocumentFxComputation.fxRateRequired
+                          ? l("FX Rate (required)", "Kur (zorunlu)")
+                          : l("FX Rate", "Kur")}
+                        <input
+                          type="number"
+                          min="0.0000000001"
+                          step="0.0000000001"
+                          className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                          value={editDocumentFxComputation.isLocalCurrency ? "1" : editForm.fxRate || ""}
+                          onChange={(event) =>
+                            setEditForm((prev) => ({ ...prev, fxRate: event.target.value }))
+                          }
+                          readOnly={editDocumentFxComputation.isLocalCurrency}
+                          disabled={!canEditOrCancelSelected || editSaving}
+                          required={editDocumentFxComputation.fxRateRequired}
+                        />
+                      </label>
+                    </div>
+                    {editFunctionalCurrencyCode ? (
+                      <p className="mt-2 text-[11px] text-slate-500">
+                        {editDocumentFxComputation.isLocalCurrency
+                          ? l(
+                              `Functional currency is ${editFunctionalCurrencyCode}. FX rate is fixed to 1 and base amount follows the invoice amount.`,
+                              `Fonksiyonel para birimi ${editFunctionalCurrencyCode}. Kur 1 olarak sabitlenir ve baz tutar fatura tutarindan gelir.`
+                            )
+                          : l(
+                              `Functional currency is ${editFunctionalCurrencyCode}. Base amount is calculated automatically from invoice amount x FX rate.`,
+                              `Fonksiyonel para birimi ${editFunctionalCurrencyCode}. Baz tutar, fatura tutari x kur ile otomatik hesaplanir.`
+                            )}
+                      </p>
+                    ) : null}
+                  </div>
                   <button type="submit" className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50" disabled={!canEditOrCancelSelected || editSaving}>{editSaving ? l("Saving...", "Kaydediliyor...") : l("Update Draft Document", "Taslak Belgeyi Guncelle")}</button>
                   <button type="button" className="rounded-md border border-rose-300 px-4 py-2 text-sm font-semibold text-rose-700 disabled:opacity-50" onClick={handleCancelDraft} disabled={!canEditOrCancelSelected || cancelSaving}>{cancelSaving ? l("Cancelling...", "Iptal ediliyor...") : l("Cancel Draft", "Taslagi Iptal Et")}</button>
                 </form>

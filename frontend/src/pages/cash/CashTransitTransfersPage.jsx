@@ -127,6 +127,15 @@ function mapTransitErrorMessage(rawMessage, l) {
       "Sadece INITIATED durumundaki transferler iptal edilebilir."
     );
   }
+  if (
+    lower.includes("self-balancing setup is invalid") &&
+    lower.includes("organization management")
+  ) {
+    return l(
+      "Cross-context transfer posting is blocked because OU self-balancing accounts are not configured. Complete Central Due From OU and OU Due To Central in Organization Management first.",
+      "OU self-balancing hesaplari tanimli olmadigi icin farkli baglam transfer post islemi engellendi. Once Organizasyon Yonetimi icinde Central Due From OU ve OU Due To Central alanlarini tamamlayin."
+    );
+  }
 
   return "";
 }
@@ -155,9 +164,15 @@ function toOwnershipContextLabel({ explicitValue, operatingUnitCode, operatingUn
   const explicit = String(explicitValue || "").trim();
   if (
     explicit &&
-    (explicit === "Central / HQ" || explicit === "Merkez / HQ" || explicit.startsWith("OU:"))
+    (
+      explicit === "Central / HQ" ||
+      explicit === "Merkez / HQ" ||
+      explicit === "Central" ||
+      explicit === "Merkez" ||
+      explicit.startsWith("OU:")
+    )
   ) {
-    return explicit;
+    return explicit.startsWith("OU:") ? explicit : l("Central", "Merkez");
   }
   const code = String(operatingUnitCode || "").trim();
   if (code) {
@@ -170,7 +185,7 @@ function toOwnershipContextLabel({ explicitValue, operatingUnitCode, operatingUn
   if (explicit) {
     return explicit;
   }
-  return l("Central / HQ", "Merkez / HQ");
+  return l("Central", "Merkez");
 }
 
 function toRegisterLabel(row, l) {
@@ -913,8 +928,8 @@ export default function CashTransitTransfersPage() {
 
         <div className="mt-4 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900">
           {l(
-            "Different operating-unit contexts use transit: Central / HQ -> branch, branch -> Central / HQ, and branch -> branch. Same ownership context pairs can stay direct from Cash Transactions.",
-            "Farkli operating-unit baglamlari transit kullanir: Merkez / HQ -> sube, sube -> Merkez / HQ ve sube -> sube. Ayni sahiplik baglamindaki ciftler Cash Transactions ekraninda dogrudan kalabilir."
+            "Different operating-unit contexts use transit: Central -> branch, branch -> Central, and branch -> branch. Same ownership context pairs can stay direct from Cash Transactions.",
+            "Farkli operating-unit baglamlari transit kullanir: Merkez -> sube, sube -> Merkez ve sube -> sube. Ayni sahiplik baglamindaki ciftler Cash Transactions ekraninda dogrudan kalabilir."
           )}
         </div>
 

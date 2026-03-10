@@ -156,7 +156,7 @@ async function main() {
   );
 
   assert(
-    String(registerListOp.summary || "").includes("Central / HQ vs Operating Unit"),
+    String(registerListOp.summary || "").includes("Central vs Operating Unit"),
     "Cash register list summary should document explicit ownership context"
   );
   const registerListParams = new Set(
@@ -214,7 +214,7 @@ async function main() {
   );
   assert(
     String(schemas.CashRegisterRow?.properties?.ownership_context_label?.description || "").includes(
-      "Central / HQ"
+      "Central"
     ),
     "CashRegisterRow should document ownership_context_label"
   );
@@ -241,16 +241,16 @@ async function main() {
   assert(
     openapiSource.includes("ownership_scope") &&
       openapiSource.includes("ownership_context_label") &&
-      openapiSource.includes("Central / HQ"),
-    "OpenAPI should expose ownership fields and Central / HQ copy"
+      openapiSource.includes("Central"),
+    "OpenAPI should expose ownership fields and Central copy"
   );
   assert(
     String(transitInitiateOp.summary || "").includes("different operating-unit contexts"),
     "Transit initiate summary should use different operating-unit contexts wording"
   );
   assert(
-    String(transitInitiateOp.description || "").includes("Central / HQ"),
-    "Transit initiate description should explain Central / HQ vs OU routing"
+    String(transitInitiateOp.description || "").includes("Central"),
+    "Transit initiate description should explain Central vs OU routing"
   );
   assert(
     !openapiSource.includes("Initiate cross-OU cash transit transfer"),
@@ -387,7 +387,7 @@ async function main() {
   );
   for (const requiredToken of [
     "## Cash Register Ownership Context",
-    "`Central / HQ`",
+    "`Central`",
     "blank operating-unit selector",
     "different operating-unit contexts",
     "`CASH_IN_TRANSIT`",
@@ -404,10 +404,10 @@ async function main() {
   );
   for (const requiredToken of [
     "## Cash Register Ownership Context",
-    "`Central / HQ`",
+    "`Central`",
     "`OU: <code>`",
     "different operating-unit contexts",
-    "no synthetic HQ operating unit",
+    "no synthetic central operating unit",
   ]) {
     assert(
       shareholderRunbook.includes(requiredToken),
@@ -425,7 +425,7 @@ async function main() {
   );
   assert(
     !organizationManagementSource.includes("No OU (central / HQ first)"),
-    "OrganizationManagementPage should not present Central / HQ as a missing OU label"
+    "OrganizationManagementPage should not present Central as a missing OU label"
   );
   assert(
     !organizationManagementSource.includes("No OU means central cash-register fulfillment"),
@@ -436,12 +436,12 @@ async function main() {
     "OrganizationManagementPage should not explain central fulfillment through a No OU label"
   );
   assert(
-    organizationManagementSource.includes("Central / HQ means central cash-register fulfillment"),
-    "OrganizationManagementPage should use Central / HQ wording for shareholder-capital cash fulfillment"
+    organizationManagementSource.includes("Central means central cash-register fulfillment"),
+    "OrganizationManagementPage should use Central wording for shareholder-capital cash fulfillment"
   );
   assert(
-    organizationManagementSource.includes("Central / HQ means central fulfillment first"),
-    "OrganizationManagementPage should use Central / HQ wording for shareholder-capital HQ-first guidance"
+    organizationManagementSource.includes("Central means central fulfillment first"),
+    "OrganizationManagementPage should use Central wording for shareholder-capital central-first guidance"
   );
 
   console.log("Cash register ownership CRO04 rollout smoke passed.");

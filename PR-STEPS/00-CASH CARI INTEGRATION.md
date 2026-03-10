@@ -623,6 +623,13 @@ Use these as non-negotiable acceptance rules:
 
 Implement proper **CASH_IN_TRANSIT** flow for transfers between registers/OUs.
 
+Clarification:
+
+* `CASH_IN_TRANSIT` is the operational workflow/state machine for different-context transfers.
+* Transit routing and final GL accounting are separate concerns.
+* When OU self-balancing accounting is enabled, different-context transfers may still use the transit workflow while final GL resolves through OU internal current accounts instead of posting the transit-clearing account itself.
+* This PR is separate from shareholder capital fulfillment: `PR-26` governs physical cash movement between ownership contexts, while direct branch-targeted capital fulfillment may use central/no-OU balancing lines without implying a physical HQ transit step.
+
 ### Scope
 
 * Pair transfer-out and transfer-in transactions
@@ -649,12 +656,14 @@ This is important, but not needed for the first integration wave of tahsilat/ted
 * Transfer-out creates transit record
 * Transfer-in closes the same transit record
 * Reversal rules are controlled and auditable
+* Workflow remains valid even when final GL for different-context transfers later resolves through OU internal current accounts rather than transit-clearing GL lines
 
 ### Smoke test
 
 * Register A → Register B transfer completes with two linked txns + transit state
 * Duplicate receive is blocked
 * Reversal preserves audit trail
+* Transit workflow checks do not require final GL to debit/credit the transit-clearing account once cross-context self-balancing accounting is enabled
 
 ---
 Use these as non-negotiable acceptance rules:

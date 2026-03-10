@@ -903,13 +903,13 @@ export const messages = {
         legalEntityId: "Legal entity ID",
         ownershipScope: "Sahiplik",
         ownershipCentralHelp:
-          "Merkez / HQ register'lari OU boyutu olmadan merkezi baglamda calisir.",
+          "Merkez register'lari OU boyutu olmadan merkezi baglamda calisir.",
         ownershipOperatingUnitHelp:
           "Operating Unit register'lari secilen subeye baglidir ve sube baglaminda isler.",
         operatingUnitIdOptional: "Operating unit ID (opsiyonel)",
         operatingUnitIdRequired: "Operating unit ID (zorunlu)",
         operatingUnitHiddenForCentral:
-          "Merkez / HQ sahipliginde operating unit secimi kullanilmaz.",
+          "Merkez sahipliginde operating unit secimi kullanilmaz.",
         accountId: "Hesap ID",
         currencyCode: "Para birimi (USD)",
         allowNegative: "Negatif bakiyeye izin ver",
@@ -964,9 +964,9 @@ export const messages = {
       values: {
         yes: "Evet",
         no: "Hayir",
-        ownershipCentral: "Merkez / HQ",
+        ownershipCentral: "Merkez",
         ownershipOperatingUnit: "Operating Unit",
-        centralHq: "Merkez / HQ",
+        centralHq: "Merkez",
       },
       errors: {
         missingReadPermission:
@@ -1470,6 +1470,8 @@ export const messages = {
           "Transit transfer zaten teslim alinmis.",
         transitReverseTransferInFirst:
           "Transfer-out ters kaydi oncesi once transfer-in ters kaydini alin.",
+        ouSelfBalancingSetupInvalid:
+          "Farkli baglam transfer post islemi engellendi. Once Organizasyon Yonetimi icinde Central Due From OU ve OU Due To Central hesaplarini tamamlayin.",
         applyRequiresPostedTxn:
           "Cari apply icin kasa islemi POSTED olmalidir.",
         applyCounterpartyInvalid:
@@ -2704,13 +2706,13 @@ export const messages = {
         legalEntityId: "Legal entity ID",
         ownershipScope: "Ownership",
         ownershipCentralHelp:
-          "Central / HQ registers stay in central context and do not carry an operating-unit dimension.",
+          "Central registers stay in central context and do not carry an operating-unit dimension.",
         ownershipOperatingUnitHelp:
           "Operating-unit registers belong to the selected branch and run in branch context.",
         operatingUnitIdOptional: "Operating unit ID (optional)",
         operatingUnitIdRequired: "Operating unit ID (required)",
         operatingUnitHiddenForCentral:
-          "Operating unit selection is not used for Central / HQ ownership.",
+          "Operating unit selection is not used for Central ownership.",
         accountId: "Account ID",
         currencyCode: "Currency code (USD)",
         allowNegative: "Allow negative balance",
@@ -2765,9 +2767,9 @@ export const messages = {
       values: {
         yes: "Yes",
         no: "No",
-        ownershipCentral: "Central / HQ",
+        ownershipCentral: "Central",
         ownershipOperatingUnit: "Operating Unit",
-        centralHq: "Central / HQ",
+        centralHq: "Central",
       },
       errors: {
         missingReadPermission:
@@ -3273,6 +3275,8 @@ export const messages = {
           "Transit transfer is already received.",
         transitReverseTransferInFirst:
           "Reverse transfer-in first; transfer-out cannot be reversed after receive.",
+        ouSelfBalancingSetupInvalid:
+          "Cross-context transfer posting is blocked until Central Due From OU and OU Due To Central accounts are configured in Organization Management.",
         applyRequiresPostedTxn:
           "Cash transaction must be POSTED before apply.",
         applyCounterpartyInvalid:

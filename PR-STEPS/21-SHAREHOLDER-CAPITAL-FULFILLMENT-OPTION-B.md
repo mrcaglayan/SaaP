@@ -10,9 +10,12 @@
 - Paid capital must continue to come from posted credits to each shareholder's exact mapped `commitment_debit_sub_account_id`.
 - Do not weaken existing central-equity validation in GL.
 - OU internal current account mappings must be per operating unit, not per legal entity purpose mapping.
+- `central_due_from_account_id` and `ou_due_to_central_account_id` should be branch-specific mappings; do not reuse the same internal current account across multiple operating units in the same legal entity.
+- The OU internal current-account mappings are shared setup fields reused by other flows, but in this PR they only bridge a central shareholder-capital / commitment layer into an OU-targeted destination.
 - The design must support both operational models:
-  - `HQ-first funding`, where capital is fulfilled centrally first and allocated to the OU later
+  - `central-first funding`, where capital is fulfilled centrally first and allocated to the OU later
   - `direct OU-targeted fulfillment`, where the branch-targeted 4-line journal is posted immediately
+- `Direct OU-targeted fulfillment` does not mean cash or bank movement physically passes through HQ first; it means the destination asset is posted directly to the branch while the shareholder commitment / paid-capital side remains central and `no OU`.
 - For v1 destination modes use only `BANK_ACCOUNT` and `ASSET_GL`.
 - `ASSET_GL` means asset accounts only in v1.
 - Do not support cash register destination in v1.
@@ -22,6 +25,10 @@
 ## Revised target design
 - Company capital and shareholder commitment remain central.
 - OU self-balance is achieved through OU-specific internal current accounts.
+- In practice, OU-specific means branch-specific mapped accounts, not one shared generic due-from / due-to account for every OU.
+- Keep the two business cases separate:
+  - `shareholder capital fulfillment`: this PR; shareholder commitment and paid-capital recognition stay central, even when fulfillment is targeted directly to a branch
+  - `cash transfer between ownership contexts`: covered by `PR-CRO05`; that flow reuses the same OU internal current setup but has no shareholder capital / commitment lines
 - Bank fulfillment must go through `bank_accounts` master, not a raw GL picker.
 - Branch cash/register destinations are out of scope for v1.
 - Journal source type stays `SYSTEM` in v1, with linkage held in the fulfillment table.
@@ -36,14 +43,16 @@
 - This keeps the installation flow lighter and avoids forcing bank-account setup before commitment can be recorded.
 
 ## Supported operational models
-- `HQ-first funding`
+- `central-first funding`
   - Step 1: post a central-only fulfillment with no OU
   - Step 2: allocate from HQ to the operating unit using the configured internal current accounts
 - `Direct OU-targeted fulfillment`
   - Post the Option B 4-line fulfillment journal in one step when an OU is selected
+  - This is an accounting shortcut for direct branch-targeted fulfillment, not a physical `central -> branch` cash-transfer workflow
 - V1 productizes central-only fulfillment and direct OU-targeted fulfillment in the shareholder workflow.
-- In v1, the later `HQ -> OU` allocation step can use the existing journal tooling with the configured internal current accounts.
-- If users need a dedicated `HQ -> OU` allocation workflow later, that can be added as a separate finance UX/API slice without changing the capital-fulfillment accounting model.
+- In v1, the later `central -> OU` allocation step can use the existing journal tooling with the configured internal current accounts.
+- If users need a dedicated `central -> OU` allocation workflow later, that can be added as a separate finance UX/API slice without changing the capital-fulfillment accounting model.
+- Branch-to-branch cash transfer accounting is not defined by this PR; see `PR-CRO05`.
 
 ## Unified execution order
 1. `PR-CF01` - OU internal current account mapping foundation
@@ -53,9 +62,9 @@
 5. `PR-CF05` - Cash/register integration later
 
 ## Master tracker
-- [x] `PR-CF01` acceptance: `operating_units` supports internal HQ/branch current account mappings with backend and UI validation, including readiness surfacing on OU rows.
+- [x] `PR-CF01` acceptance: `operating_units` supports internal central/branch current account mappings with backend and UI validation, including readiness surfacing on OU rows.
   smoke: `backend/scripts/test-shareholder-capital-cf01-ou-current-mappings.js`
-- [x] `PR-CF02` acceptance: fulfillment preview/create/list/reverse APIs generate correct central-only or Option B 4-line journals, use `BANK_ACCOUNT` or asset-only `ASSET_GL`, preserve current paid-capital logic, and support both HQ-first and direct OU-targeted operating patterns.
+- [x] `PR-CF02` acceptance: fulfillment preview/create/list/reverse APIs generate correct central-only or Option B 4-line journals, use `BANK_ACCOUNT` or asset-only `ASSET_GL`, preserve current paid-capital logic, and support both central-first and direct OU-targeted operating patterns.
   smoke: `backend/scripts/test-shareholder-capital-cf02-fulfillment-posting.js`
 - [x] `PR-CF03` acceptance: finance users can record and preview capital fulfillment from Organization Management without manual journal construction.
   smoke: `backend/scripts/test-shareholder-capital-cf03-frontend-smoke.js`
@@ -85,6 +94,7 @@ Validation rules:
 - `ou_due_to_central_account_id` must be liability-side and credit-normal appropriate
 - The two accounts cannot be the same
 - Neither account can be a central-equity posting account
+- Duplicate use of the same `central_due_from_account_id` or `ou_due_to_central_account_id` across multiple OUs in one legal entity must be blocked; branch-specific mappings are required for readable later cross-context accounting as well.
 - Automatic fulfillment posting must satisfy the same operating-unit reference rules the journal engine already enforces for the selected OU context
 
 Read API additions:
@@ -207,11 +217,13 @@ Journal logic:
   - `Cr ou_due_to_central_account_id` `(with OU)`
   - `Dr central_due_from_account_id` `(no OU)`
   - `Cr shareholder.commitment_debit_sub_account_id` `(no OU)`
+- This OU-targeted 4-line journal is not a branch-to-branch transfer and does not require a physical HQ cash/register step.
+- The `no OU` side exists because shareholder commitment and paid-capital recognition remain central in this design.
 
 Operational model support:
 - `Direct OU-targeted fulfillment`
   - use the OU-targeted 4-line journal above
-- `HQ-first funding`
+- `central-first funding`
   - first post the central-only fulfillment above with no OU
   - later allocate from HQ to the target OU using the configured internal current accounts
   - the later allocation entry is:
@@ -316,7 +328,7 @@ Reporting:
   - unpaid capital
 - In OU list show readiness:
   - `Central Due From: configured/missing`
-  - `OU Due To HQ: configured/missing`
+  - `OU Due To Central: configured/missing`
 
 Files:
 - `backend/src/routes/org.js`
@@ -361,7 +373,7 @@ Posting model:
 
 ### PR-CF05-A
 Goal:
-- Support central/HQ-first capital fulfillment into a central cash register.
+- Support central-first capital fulfillment into a central cash register.
 
 Scope:
 - Only cash registers that are valid for central use under repo rules.
@@ -450,7 +462,7 @@ Reversal:
 
 ### PR-CF05-C
 Goal:
-- Keep HQ-first physical cash movement to branches on the existing cash-transfer model.
+- Keep central-first physical cash movement to branches on the existing cash-transfer model.
 
 Rule:
 - Do not invent a separate capital-specific cash transfer workflow.
@@ -483,7 +495,7 @@ Test coverage:
   - the cash transaction
   - the central capital journal
 - Reversal updates both the cash and central accounting layers correctly
-- HQ-first follow-up funding to a branch can continue through the existing cash transit workflow without changing capital logic
+- Central-first follow-up funding to a branch can continue through the existing cash transit workflow without changing capital logic
 
 Recommended rollout inside PR-CF05:
 1. `PR-CF05-A` first

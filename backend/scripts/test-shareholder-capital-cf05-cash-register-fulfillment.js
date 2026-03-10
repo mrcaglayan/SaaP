@@ -86,9 +86,9 @@ async function main() {
       frontendSource.includes("Create the branch cash register first") &&
       frontendSource.includes("Cash txn") &&
       frontendSource.includes("Open cash transit transfer") &&
-      frontendSource.includes("HQ -> Branch cash transit") &&
+      frontendSource.includes("Central -> Branch cash transit") &&
       !frontendSource.includes("No OU (central / HQ register only)"),
-    "OrganizationManagementPage should expose central and OU-targeted cash register fulfillment with branch-aware guidance and the HQ-to-branch transit shortcut"
+    "OrganizationManagementPage should expose central and OU-targeted cash register fulfillment with branch-aware guidance and the central-to-branch transit shortcut"
   );
 
   const cashTransactionsSource = await readFile(
@@ -98,7 +98,7 @@ async function main() {
   assert(
     cashTransactionsSource.includes("buildCapitalFulfillmentTransitPrefill") &&
       cashTransactionsSource.includes("CAPITAL_FULFILLMENT_TRANSIT") &&
-      cashTransactionsSource.includes("Prefilled HQ-to-branch cash transit transfer") &&
+      cashTransactionsSource.includes("Prefilled central-to-branch cash transit transfer") &&
       cashTransactionsSource.includes("counterCashRegisterId") &&
       cashTransactionsSource.includes("TRANSFER_OUT"),
     "CashTransactionsPage should accept the capital fulfillment transit shortcut and prefill the existing transfer workflow"

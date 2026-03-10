@@ -903,9 +903,9 @@ function applyCashOperationOverrides(specObject) {
   const registerListOperation = paths["/api/v1/cash/registers"]?.get;
   if (registerListOperation) {
     registerListOperation.summary =
-      "List cash registers with Central / HQ vs Operating Unit ownership context";
+      "List cash registers with Central vs Operating Unit ownership context";
     registerListOperation.description =
-      "Central / HQ registers stay in a central/no-OU posting context; OPERATING_UNIT registers carry explicit operating-unit scope.";
+      "Central registers stay in a central/no-OU posting context; OPERATING_UNIT registers carry explicit operating-unit scope.";
     registerListOperation.tags = ["Cash"];
     registerListOperation.parameters = [
       queryParamInt(
@@ -1422,7 +1422,7 @@ function applyCashOperationOverrides(specObject) {
     transitInitiateOperation.summary =
       "Initiate cash transit transfer for different operating-unit contexts (creates transfer-out)";
     transitInitiateOperation.description =
-      "Use this workflow when the source and target registers are in different operating-unit contexts, including Central / HQ to branch, branch to Central / HQ, or branch-to-branch moves between different operating units.";
+      "Use this workflow when the source and target registers are in different operating-unit contexts, including Central to branch, branch to Central, or branch-to-branch moves between different operating units.";
     transitInitiateOperation.tags = ["Cash"];
     transitInitiateOperation.requestBody = bodyFromRef(
       "#/components/schemas/CashTransitTransferInitiateRequest"
@@ -4017,7 +4017,7 @@ const spec = {
           ownership_context_label: {
             type: "string",
             description:
-              "Operator-facing ownership label rendered as Central / HQ or OU code/name context.",
+              "Operator-facing ownership label rendered as Central or OU code/name context.",
             nullable: true,
           },
           account_code: { type: "string", nullable: true },
@@ -4156,7 +4156,7 @@ const spec = {
           operating_unit_name: { type: "string", nullable: true },
           ownership_context_label: {
             type: "string",
-            description: "Operator-facing ownership label rendered as Central / HQ or OU: <code>.",
+            description: "Operator-facing ownership label rendered as Central or OU: <code>.",
             nullable: true,
           },
           opened_by_email: { type: "string", nullable: true },
@@ -4294,7 +4294,7 @@ const spec = {
           operating_unit_name: { type: "string", nullable: true },
           ownership_context_label: {
             type: "string",
-            description: "Operator-facing ownership label rendered as Central / HQ or OU: <code>.",
+            description: "Operator-facing ownership label rendered as Central or OU: <code>.",
             nullable: true,
           },
           cash_register_code: { type: "string", nullable: true },

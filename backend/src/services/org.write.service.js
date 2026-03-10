@@ -195,6 +195,50 @@ async function assertOperatingUnitInternalCurrentAccountTx(
   };
 }
 
+async function assertUniqueOperatingUnitInternalCurrentMappingTx(
+  tx,
+  {
+    tenantId,
+    legalEntityId,
+    code,
+    accountId,
+    fieldLabel,
+    columnName,
+    roleLabel,
+  }
+) {
+  const normalizedAccountId = parsePositiveInt(accountId);
+  if (!normalizedAccountId) {
+    return;
+  }
+
+  const result = await tx.query(
+    `SELECT id, code, name
+     FROM operating_units
+     WHERE tenant_id = ?
+       AND legal_entity_id = ?
+       AND ${columnName} = ?
+       AND code <> ?
+     LIMIT 1`,
+    [tenantId, legalEntityId, normalizedAccountId, String(code || "").trim()]
+  );
+  const row = result.rows?.[0] || null;
+  if (!row) {
+    return;
+  }
+
+  const conflictingCode = String(row.code || "").trim();
+  const conflictingName = String(row.name || "").trim();
+  const conflictingLabel =
+    conflictingCode && conflictingName
+      ? `${conflictingCode} - ${conflictingName}`
+      : conflictingCode || conflictingName || `#${parsePositiveInt(row.id)}`;
+
+  throw badRequest(
+    `${fieldLabel} is already assigned to operating unit ${conflictingLabel}. ${roleLabel} must be unique per operating unit within the legal entity; configure a branch-specific internal current account.`
+  );
+}
+
 function normalizePaymentTermTemplate(rawTerm, index) {
   const term = rawTerm || {};
   const code = normalizeCode(term.code, `TERM_${index + 1}`, 50);
@@ -491,6 +535,24 @@ export async function upsertOperatingUnit({
       fieldLabel: "ouDueToCentralAccountId",
       expectedAccountType: "LIABILITY",
       expectedNormalSide: "CREDIT",
+    });
+    await assertUniqueOperatingUnitInternalCurrentMappingTx(tx, {
+      tenantId,
+      legalEntityId,
+      code,
+      accountId: centralDueFromAccountId,
+      fieldLabel: "centralDueFromAccountId",
+      columnName: "central_due_from_account_id",
+      roleLabel: "Central Due From OU account mapping",
+    });
+    await assertUniqueOperatingUnitInternalCurrentMappingTx(tx, {
+      tenantId,
+      legalEntityId,
+      code,
+      accountId: ouDueToCentralAccountId,
+      fieldLabel: "ouDueToCentralAccountId",
+      columnName: "ou_due_to_central_account_id",
+      roleLabel: "OU Due To Central account mapping",
     });
 
     return upsertOperatingUnitRow({

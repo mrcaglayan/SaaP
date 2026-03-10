@@ -212,9 +212,15 @@ function buildOwnershipContextLabel(
   const explicit = String(firstDefinedRowValue(row, ...explicitKeys) || "").trim();
   if (
     explicit &&
-    (explicit === "Central / HQ" || explicit === "Merkez / HQ" || explicit.startsWith("OU:"))
+    (
+      explicit === "Central / HQ" ||
+      explicit === "Merkez / HQ" ||
+      explicit === "Central" ||
+      explicit === "Merkez" ||
+      explicit.startsWith("OU:")
+    )
   ) {
-    return explicit;
+    return explicit.startsWith("OU:") ? explicit : l("Central", "Merkez");
   }
   const operatingUnitCode = String(
     firstDefinedRowValue(row, ...operatingUnitCodeKeys) || ""
@@ -229,7 +235,7 @@ function buildOwnershipContextLabel(
   if (explicit) {
     return explicit;
   }
-  return l("Central / HQ", "Merkez / HQ");
+  return l("Central", "Merkez");
 }
 
 function formatRegisterDisplayLabel(
@@ -862,6 +868,12 @@ function mapTransactionErrorMessage(rawMessage, t) {
   }
   if (lower.includes("cannot reverse transfer-out after transit is received")) {
     return t("cashTransactions.errorsMapped.transitReverseTransferInFirst");
+  }
+  if (
+    lower.includes("self-balancing setup is invalid") &&
+    lower.includes("organization management")
+  ) {
+    return t("cashTransactions.errorsMapped.ouSelfBalancingSetupInvalid");
   }
   if (lower.includes("transaction currency must match register currency")) {
     return t("cashTransactions.errorsMapped.currencyMismatchGeneric");
@@ -2408,14 +2420,14 @@ export default function CashTransactionsPage() {
     setTemplatesMessage("");
 
     const transferRouteMessage = l(
-      `Prefilled HQ-to-branch cash transit transfer${
+      `Prefilled central-to-branch cash transit transfer${
         capitalFulfillmentTransitPrefill.fulfillmentId
           ? ` for capital fulfillment ${capitalFulfillmentTransitPrefill.fulfillmentId}`
           : ""
       }.${
         capitalFulfillmentTransitPrefill.sourceRegisterCode ||
         capitalFulfillmentTransitPrefill.targetRegisterCode
-          ? ` ${capitalFulfillmentTransitPrefill.sourceRegisterCode || "HQ"} -> ${
+          ? ` ${capitalFulfillmentTransitPrefill.sourceRegisterCode || "CENTRAL"} -> ${
               capitalFulfillmentTransitPrefill.targetRegisterCode || "branch register"
             }.`
           : ""

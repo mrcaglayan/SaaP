@@ -327,38 +327,6 @@ async function bootstrapTransitContext(token, identity) {
   const legalEntityId = toNumber(legalEntityRes.json?.id);
   assert(legalEntityId > 0, "legalEntityId not created");
 
-  const ouARes = await apiRequest({
-    token,
-    method: "POST",
-    path: "/api/v1/org/operating-units",
-    body: {
-      legalEntityId,
-      code: `OUA${identity.stamp}`,
-      name: "Transit OU A",
-      unitType: "BRANCH",
-      hasSubledger: true,
-    },
-    expectedStatus: 201,
-  });
-  const operatingUnitAId = toNumber(ouARes.json?.id);
-  assert(operatingUnitAId > 0, "operatingUnitAId not created");
-
-  const ouBRes = await apiRequest({
-    token,
-    method: "POST",
-    path: "/api/v1/org/operating-units",
-    body: {
-      legalEntityId,
-      code: `OUB${identity.stamp}`,
-      name: "Transit OU B",
-      unitType: "BRANCH",
-      hasSubledger: true,
-    },
-    expectedStatus: 201,
-  });
-  const operatingUnitBId = toNumber(ouBRes.json?.id);
-  assert(operatingUnitBId > 0, "operatingUnitBId not created");
-
   await apiRequest({
     token,
     method: "POST",
@@ -389,6 +357,38 @@ async function bootstrapTransitContext(token, identity) {
   const coaId = toNumber(coaRes.json?.id);
   assert(coaId > 0, "coaId not created");
 
+  const sourceCentralDueFromAccountId = await createAccount({
+    token,
+    coaId,
+    code: `CDA${identity.stamp}`,
+    name: "OU A HQ Due From",
+    accountType: "ASSET",
+    normalSide: "DEBIT",
+  });
+  const sourceOuDueToAccountId = await createAccount({
+    token,
+    coaId,
+    code: `ODA${identity.stamp}`,
+    name: "OU A Due To HQ",
+    accountType: "LIABILITY",
+    normalSide: "CREDIT",
+  });
+  const targetCentralDueFromAccountId = await createAccount({
+    token,
+    coaId,
+    code: `CDB${identity.stamp}`,
+    name: "OU B HQ Due From",
+    accountType: "ASSET",
+    normalSide: "DEBIT",
+  });
+  const targetOuDueToAccountId = await createAccount({
+    token,
+    coaId,
+    code: `ODB${identity.stamp}`,
+    name: "OU B Due To HQ",
+    accountType: "LIABILITY",
+    normalSide: "CREDIT",
+  });
   const registerAccountAId = await createAccount({
     token,
     coaId,
@@ -409,6 +409,42 @@ async function bootstrapTransitContext(token, identity) {
     accountType: "ASSET",
     normalSide: "DEBIT",
   });
+
+  const ouARes = await apiRequest({
+    token,
+    method: "POST",
+    path: "/api/v1/org/operating-units",
+    body: {
+      legalEntityId,
+      code: `OUA${identity.stamp}`,
+      name: "Transit OU A",
+      unitType: "BRANCH",
+      hasSubledger: true,
+      centralDueFromAccountId: sourceCentralDueFromAccountId,
+      ouDueToCentralAccountId: sourceOuDueToAccountId,
+    },
+    expectedStatus: 201,
+  });
+  const operatingUnitAId = toNumber(ouARes.json?.id);
+  assert(operatingUnitAId > 0, "operatingUnitAId not created");
+
+  const ouBRes = await apiRequest({
+    token,
+    method: "POST",
+    path: "/api/v1/org/operating-units",
+    body: {
+      legalEntityId,
+      code: `OUB${identity.stamp}`,
+      name: "Transit OU B",
+      unitType: "BRANCH",
+      hasSubledger: true,
+      centralDueFromAccountId: targetCentralDueFromAccountId,
+      ouDueToCentralAccountId: targetOuDueToAccountId,
+    },
+    expectedStatus: 201,
+  });
+  const operatingUnitBId = toNumber(ouBRes.json?.id);
+  assert(operatingUnitBId > 0, "operatingUnitBId not created");
 
   const sourceRegisterId = await createRegister({
     token,
@@ -451,6 +487,12 @@ async function bootstrapTransitContext(token, identity) {
     targetRegisterId,
     sourceRegisterAccountId: registerAccountAId,
     targetRegisterAccountId: registerAccountBId,
+    sourceCentralDueFromAccountId,
+    sourceOuDueToAccountId,
+    targetCentralDueFromAccountId,
+    targetOuDueToAccountId,
+    operatingUnitAId,
+    operatingUnitBId,
     transitAccountId,
   };
 }
@@ -495,12 +537,16 @@ async function reverseCashTransaction({
   });
 }
 
-async function assertTransferOutPostingUsesTransitAccount({
+async function assertTransferOutPostingUsesSelfBalancingAccounts({
   tenantId,
   transactionId,
-  transitAccountId,
   sourceRegisterAccountId,
+  sourceCentralDueFromAccountId,
+  sourceOuDueToAccountId,
+  targetCentralDueFromAccountId,
+  sourceOperatingUnitId,
   amount,
+  transitAccountId,
 }) {
   const txnResult = await query(
     `SELECT posted_journal_entry_id
@@ -514,26 +560,102 @@ async function assertTransferOutPostingUsesTransitAccount({
   assert(journalEntryId > 0, "transfer-out posted_journal_entry_id is missing");
 
   const lineResult = await query(
-    `SELECT account_id, debit_base, credit_base
+    `SELECT account_id, operating_unit_id, debit_base, credit_base
      FROM journal_lines
      WHERE journal_entry_id = ?`,
     [journalEntryId]
   );
   const lines = lineResult.rows || [];
-  assert(lines.length >= 2, "Expected at least 2 journal lines for transfer-out posting");
+  assert(lines.length >= 4, "Expected self-balancing transfer-out journal lines");
 
-  const hasTransitDebit = lines.some(
+  const hasSourceOuDebit = lines.some(
     (line) =>
-      toNumber(line.account_id) === transitAccountId &&
+      toNumber(line.account_id) === sourceOuDueToAccountId &&
+      toNumber(line.operating_unit_id) === sourceOperatingUnitId &&
+      Number(line.debit_base || 0) >= Number(amount) - 0.000001
+  );
+  const hasTargetCentralDebit = lines.some(
+    (line) =>
+      toNumber(line.account_id) === targetCentralDueFromAccountId &&
+      !toNumber(line.operating_unit_id) &&
       Number(line.debit_base || 0) >= Number(amount) - 0.000001
   );
   const hasSourceCredit = lines.some(
     (line) =>
       toNumber(line.account_id) === sourceRegisterAccountId &&
+      toNumber(line.operating_unit_id) === sourceOperatingUnitId &&
       Number(line.credit_base || 0) >= Number(amount) - 0.000001
   );
-  assert(hasTransitDebit, "Transfer-out journal must debit transit account");
+  const hasSourceCentralCredit = lines.some(
+    (line) =>
+      toNumber(line.account_id) === sourceCentralDueFromAccountId &&
+      !toNumber(line.operating_unit_id) &&
+      Number(line.credit_base || 0) >= Number(amount) - 0.000001
+  );
+  const usesTransitAccount = lines.some(
+    (line) => toNumber(line.account_id) === transitAccountId
+  );
+  assert(hasSourceOuDebit, "Transfer-out journal must debit source OU due-to account");
+  assert(
+    hasTargetCentralDebit,
+    "Transfer-out journal must debit target OU HQ due-from account at no-OU scope"
+  );
   assert(hasSourceCredit, "Transfer-out journal must credit source register account");
+  assert(
+    hasSourceCentralCredit,
+    "Transfer-out journal must credit source OU HQ due-from account at no-OU scope"
+  );
+  assert(!usesTransitAccount, "Transfer-out journal should not post the transit clearing account");
+}
+
+async function assertTransferInPostingUsesSelfBalancingAccounts({
+  tenantId,
+  transactionId,
+  targetRegisterAccountId,
+  targetOuDueToAccountId,
+  targetOperatingUnitId,
+  amount,
+  transitAccountId,
+}) {
+  const txnResult = await query(
+    `SELECT posted_journal_entry_id
+     FROM cash_transactions
+     WHERE tenant_id = ?
+       AND id = ?
+     LIMIT 1`,
+    [tenantId, transactionId]
+  );
+  const journalEntryId = toNumber(txnResult.rows[0]?.posted_journal_entry_id);
+  assert(journalEntryId > 0, "transfer-in posted_journal_entry_id is missing");
+
+  const lineResult = await query(
+    `SELECT account_id, operating_unit_id, debit_base, credit_base
+     FROM journal_lines
+     WHERE journal_entry_id = ?`,
+    [journalEntryId]
+  );
+  const lines = lineResult.rows || [];
+  assert(lines.length >= 2, "Expected self-balancing transfer-in journal lines");
+
+  const hasTargetRegisterDebit = lines.some(
+    (line) =>
+      toNumber(line.account_id) === targetRegisterAccountId &&
+      toNumber(line.operating_unit_id) === targetOperatingUnitId &&
+      Number(line.debit_base || 0) >= Number(amount) - 0.000001
+  );
+  const hasTargetOuCredit = lines.some(
+    (line) =>
+      toNumber(line.account_id) === targetOuDueToAccountId &&
+      toNumber(line.operating_unit_id) === targetOperatingUnitId &&
+      Number(line.credit_base || 0) >= Number(amount) - 0.000001
+  );
+  const usesTransitAccount = lines.some(
+    (line) => toNumber(line.account_id) === transitAccountId
+  );
+
+  assert(hasTargetRegisterDebit, "Transfer-in journal must debit target register account");
+  assert(hasTargetOuCredit, "Transfer-in journal must credit target OU due-to account");
+  assert(!usesTransitAccount, "Transfer-in journal should not post the transit clearing account");
 }
 
 async function main() {
@@ -587,12 +709,16 @@ async function main() {
       "Transit transfer must move to IN_TRANSIT after transfer-out post"
     );
 
-    await assertTransferOutPostingUsesTransitAccount({
+    await assertTransferOutPostingUsesSelfBalancingAccounts({
       tenantId: identity.tenantId,
       transactionId: transferOutTxnId,
-      transitAccountId: setup.transitAccountId,
       sourceRegisterAccountId: setup.sourceRegisterAccountId,
+      sourceCentralDueFromAccountId: setup.sourceCentralDueFromAccountId,
+      sourceOuDueToAccountId: setup.sourceOuDueToAccountId,
+      targetCentralDueFromAccountId: setup.targetCentralDueFromAccountId,
+      sourceOperatingUnitId: setup.operatingUnitAId,
       amount: 110.5,
+      transitAccountId: setup.transitAccountId,
     });
 
     const receiveRes = await apiRequest({
@@ -616,6 +742,15 @@ async function main() {
       String(receiveRes.json?.transferInTransaction?.status || "").toUpperCase() === "POSTED",
       "Transit receive should create a POSTED transfer-in transaction"
     );
+    await assertTransferInPostingUsesSelfBalancingAccounts({
+      tenantId: identity.tenantId,
+      transactionId: transferInTxnId,
+      targetRegisterAccountId: setup.targetRegisterAccountId,
+      targetOuDueToAccountId: setup.targetOuDueToAccountId,
+      targetOperatingUnitId: setup.operatingUnitBId,
+      amount: 110.5,
+      transitAccountId: setup.transitAccountId,
+    });
 
     const duplicateReceiveRes = await apiRequest({
       token: adminToken,

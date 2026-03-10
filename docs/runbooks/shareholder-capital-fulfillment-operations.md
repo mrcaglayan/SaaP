@@ -14,7 +14,7 @@ This runbook covers setup, posting, reversal, and cash-transfer follow-up for sh
   - branch `BANK_ACCOUNT`
   - branch `ASSET_GL`
   - branch `CASH_REGISTER`
-- HQ-first cash movement after central cash receipt via the existing cash transit transfer workflow
+- Central-first cash movement after central cash receipt via the existing cash transit transfer workflow
 
 ## Required Setup
 
@@ -45,9 +45,9 @@ This runbook covers setup, posting, reversal, and cash-transfer follow-up for sh
 
 ## Cash Register Ownership Context
 
-- Cash register selectors must show ownership explicitly as `Central / HQ` or `OU: <code>`.
-- `Central / HQ` remains the central/no-OU posting context; there is no synthetic HQ operating unit behind these cash flows.
-- A blank operating-unit selector must not be treated as the user-facing signal for HQ ownership.
+- Cash register selectors must show ownership explicitly as `Central` or `OU: <code>`.
+- `Central` remains the central/no-OU posting context; there is no synthetic central operating unit behind these cash flows.
+- A blank operating-unit selector must not be treated as the user-facing signal for central ownership.
 - Follow-up cash movement is required whenever source and target sit in different operating-unit contexts.
 
 ## Central Cash Flow
@@ -76,11 +76,11 @@ This runbook covers setup, posting, reversal, and cash-transfer follow-up for sh
   - `reversal_journal_entry_id` populated
   - `cash_reversal_transaction_id` populated for cash destinations
 
-## HQ To Branch Cash Movement
+## Central To Branch Cash Movement
 
 - After central `CASH_REGISTER` fulfillment, physical movement to a branch register must use the existing cash transit workflow.
 - The Organization Management success modal offers a shortcut that prefills:
-  - source HQ register
+  - source central register
   - target branch register
   - amount
   - reference/description
@@ -108,8 +108,8 @@ This runbook covers setup, posting, reversal, and cash-transfer follow-up for sh
 - Confirm source and target registers belong to the same legal entity.
 - Confirm source and target are not the same register.
 - Confirm the transfer uses different operating-unit contexts:
-  - HQ central register to branch register, or
-  - branch to a different branch/HQ context
+  - central register to branch register, or
+  - branch to a different branch/central context
 
 ### Paid capital looks wrong after reverse
 
@@ -130,5 +130,5 @@ This runbook covers setup, posting, reversal, and cash-transfer follow-up for sh
   - branch cash transaction
   - central capital journal
 - Reverse OU cash fulfillment and confirm both layers reverse cleanly.
-- Use the HQ-to-branch shortcut after central cash fulfillment and complete a cash transit transfer.
+- Use the central-to-branch shortcut after central cash fulfillment and complete a cash transit transfer.
 - Confirm shareholder `paid_capital` and `unpaid_capital` reflect posted fulfillments net of reversals.

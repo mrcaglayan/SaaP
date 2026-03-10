@@ -34,6 +34,26 @@ function buildCode(suffix, prefix) {
   return `${prefix}${suffix}`.slice(0, 50);
 }
 
+function toErrorText(jsonPayload) {
+  if (jsonPayload === null || jsonPayload === undefined) {
+    return "";
+  }
+  if (typeof jsonPayload === "string") {
+    return jsonPayload;
+  }
+  if (typeof jsonPayload.message === "string") {
+    return jsonPayload.message;
+  }
+  if (typeof jsonPayload.error === "string") {
+    return jsonPayload.error;
+  }
+  try {
+    return JSON.stringify(jsonPayload);
+  } catch {
+    return String(jsonPayload);
+  }
+}
+
 async function createGlAccount({
   token,
   coaId,
@@ -156,8 +176,9 @@ async function upsertOperatingUnitCurrentAccounts({
   name,
   centralDueFromAccountId,
   ouDueToCentralAccountId,
+  expectedStatus = 201,
 }) {
-  await apiRequest({
+  return apiRequest({
     baseUrl: BASE_URL,
     token,
     method: "POST",
@@ -171,7 +192,7 @@ async function upsertOperatingUnitCurrentAccounts({
       centralDueFromAccountId,
       ouDueToCentralAccountId,
     },
-    expectedStatus: 201,
+    expectedStatus,
   });
 }
 
@@ -533,6 +554,54 @@ async function main() {
       ouDueToCentralAccountId,
     });
 
+    const duplicateOuDueToCentralAccountId = await createGlAccount({
+      token,
+      coaId: org.coaId,
+      code: buildCode(suffix, "339B"),
+      name: "Branch Due To HQ Alt",
+      accountType: "LIABILITY",
+      normalSide: "CREDIT",
+    });
+    const duplicateCentralDueFromAttempt = await upsertOperatingUnitCurrentAccounts({
+      token,
+      legalEntityId: org.legalEntityId,
+      code: `EX05DFA${suffix}`.slice(0, 50),
+      name: `EX05 Duplicate Due From ${suffix}`,
+      centralDueFromAccountId,
+      ouDueToCentralAccountId: duplicateOuDueToCentralAccountId,
+      expectedStatus: 400,
+    });
+    assert(
+      toErrorText(duplicateCentralDueFromAttempt.json).includes(
+        "centralDueFromAccountId is already assigned to operating unit"
+      ),
+      "Second OU should not be allowed to reuse the same centralDueFromAccountId"
+    );
+
+    const duplicateCentralDueFromAccountId2 = await createGlAccount({
+      token,
+      coaId: org.coaId,
+      code: buildCode(suffix, "136B"),
+      name: "HQ Due From Branch Alt",
+      accountType: "ASSET",
+      normalSide: "DEBIT",
+    });
+    const duplicateOuDueToAttempt = await upsertOperatingUnitCurrentAccounts({
+      token,
+      legalEntityId: org.legalEntityId,
+      code: `EX05DTO${suffix}`.slice(0, 50),
+      name: `EX05 Duplicate Due To ${suffix}`,
+      centralDueFromAccountId: duplicateCentralDueFromAccountId2,
+      ouDueToCentralAccountId,
+      expectedStatus: 400,
+    });
+    assert(
+      toErrorText(duplicateOuDueToAttempt.json).includes(
+        "ouDueToCentralAccountId is already assigned to operating unit"
+      ),
+      "Second OU should not be allowed to reuse the same ouDueToCentralAccountId"
+    );
+
     const shareholder = await createShareholderFixture({
       token,
       legalEntityId: org.legalEntityId,
@@ -718,14 +787,23 @@ async function main() {
       "Transit transfer-out posting should create a journal"
     );
     const transferOutLines = await loadJournalLines(transferOutPostedJournalEntryId);
-    const transferOutTransitLine = transferOutLines.find(
+    const transferOutDueFromLine = transferOutLines.find(
       (line) =>
-        toNumber(line.account_id) === transitClearingAccountId &&
+        toNumber(line.account_id) === centralDueFromAccountId &&
         Number(line.debit_base || 0) > 0
     );
+    const transferOutCashCreditLine = transferOutLines.find(
+      (line) =>
+        toNumber(line.account_id) === centralRegisterAccountId &&
+        Number(line.credit_base || 0) > 0
+    );
     assert(
-      toNumber(transferOutTransitLine?.operating_unit_id) === org.operatingUnitId,
-      "Transit clearing debit should inherit the branch OU when the source register is central"
+      toNumber(transferOutDueFromLine?.operating_unit_id) === 0,
+      "Central -> branch transfer-out should debit HQ due-from at no-OU scope"
+    );
+    assert(
+      toNumber(transferOutCashCreditLine?.operating_unit_id) === 0,
+      "Central -> branch transfer-out should credit the central register at no-OU scope"
     );
 
     const transferAfterPost = await getTransitTransfer(token, transitTransferId);
@@ -744,9 +822,28 @@ async function main() {
       String(transitReceive.json?.transfer?.status || "").toUpperCase() === "RECEIVED",
       "Transit transfer should become RECEIVED after receive"
     );
+    const transferInPostedJournalEntryId = readPostedJournalEntryId(
+      transitReceive.json?.transferInTransaction
+    );
+    assert(transferInPostedJournalEntryId > 0, "Transit receive should post transfer-in transaction");
+    const transferInLines = await loadJournalLines(transferInPostedJournalEntryId);
+    const transferInCashDebitLine = transferInLines.find(
+      (line) =>
+        toNumber(line.account_id) === branchRegisterAccountId &&
+        Number(line.debit_base || 0) > 0
+    );
+    const transferInOuDueToLine = transferInLines.find(
+      (line) =>
+        toNumber(line.account_id) === ouDueToCentralAccountId &&
+        Number(line.credit_base || 0) > 0
+    );
     assert(
-      readPostedJournalEntryId(transitReceive.json?.transferInTransaction) > 0,
-      "Transit receive should post transfer-in transaction"
+      toNumber(transferInCashDebitLine?.operating_unit_id) === org.operatingUnitId,
+      "Central -> branch transfer-in should debit the branch register on the branch OU"
+    );
+    assert(
+      toNumber(transferInOuDueToLine?.operating_unit_id) === org.operatingUnitId,
+      "Central -> branch transfer-in should credit OU due-to on the branch OU"
     );
 
     const branchCashMissingSession = await previewCapitalFulfillment(

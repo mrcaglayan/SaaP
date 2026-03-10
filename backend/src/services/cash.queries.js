@@ -27,7 +27,7 @@ const CASH_REGISTER_BASE_SELECT = `
     ou.code AS operating_unit_code,
     ou.name AS operating_unit_name,
     CASE
-      WHEN cr.ownership_scope = 'CENTRAL' THEN 'Central / HQ'
+      WHEN cr.ownership_scope = 'CENTRAL' THEN 'Central'
       ELSE CONCAT(
         COALESCE(ou.code, CAST(ou.id AS CHAR)),
         ' - ',
@@ -92,7 +92,7 @@ const CASH_SESSION_BASE_SELECT = `
     ou.code AS operating_unit_code,
     ou.name AS operating_unit_name,
     CASE
-      WHEN cr.operating_unit_id IS NULL THEN 'Central / HQ'
+      WHEN cr.operating_unit_id IS NULL THEN 'Central'
       ELSE CONCAT('OU: ', COALESCE(ou.code, CAST(cr.operating_unit_id AS CHAR)))
     END AS ownership_context_label,
     openu.email AS opened_by_email,
@@ -171,7 +171,7 @@ const CASH_TXN_BASE_SELECT = `
     ou.code AS operating_unit_code,
     ou.name AS operating_unit_name,
     CASE
-      WHEN cr.operating_unit_id IS NULL THEN 'Central / HQ'
+      WHEN cr.operating_unit_id IS NULL THEN 'Central'
       ELSE CONCAT('OU: ', COALESCE(ou.code, CAST(cr.operating_unit_id AS CHAR)))
     END AS ownership_context_label,
     cr.code AS cash_register_code,
@@ -194,7 +194,7 @@ const CASH_TXN_BASE_SELECT = `
     ccrou.name AS counter_cash_register_operating_unit_name,
     CASE
       WHEN ccr.id IS NULL THEN NULL
-      WHEN ccr.operating_unit_id IS NULL THEN 'Central / HQ'
+      WHEN ccr.operating_unit_id IS NULL THEN 'Central'
       ELSE CONCAT(
         'OU: ',
         COALESCE(ccrou.code, CAST(ccr.operating_unit_id AS CHAR))
@@ -273,7 +273,7 @@ const CASH_TRANSIT_BASE_SELECT = `
     sou.code AS source_operating_unit_code,
     sou.name AS source_operating_unit_name,
     CASE
-      WHEN ctt.source_operating_unit_id IS NULL THEN 'Central / HQ'
+      WHEN ctt.source_operating_unit_id IS NULL THEN 'Central'
       ELSE CONCAT(
         'OU: ',
         COALESCE(sou.code, CAST(ctt.source_operating_unit_id AS CHAR))
@@ -285,7 +285,7 @@ const CASH_TRANSIT_BASE_SELECT = `
     tou.code AS target_operating_unit_code,
     tou.name AS target_operating_unit_name,
     CASE
-      WHEN ctt.target_operating_unit_id IS NULL THEN 'Central / HQ'
+      WHEN ctt.target_operating_unit_id IS NULL THEN 'Central'
       ELSE CONCAT(
         'OU: ',
         COALESCE(tou.code, CAST(ctt.target_operating_unit_id AS CHAR))

@@ -138,6 +138,16 @@ function resolveLegalEntityCurrencyCode(legalEntities, legalEntityId) {
   );
 }
 
+function hasSelectableLegalEntity(legalEntities, legalEntityId) {
+  const resolvedLegalEntityId = toPositiveInt(legalEntityId);
+  if (!resolvedLegalEntityId) {
+    return true;
+  }
+  return (Array.isArray(legalEntities) ? legalEntities : []).some(
+    (row) => toPositiveInt(row?.id) === resolvedLegalEntityId
+  );
+}
+
 function resolveCounterpartyRoleFromDirection(direction) {
   const normalized = toUpper(direction);
   if (normalized === "AR") return "CUSTOMER";
@@ -1300,6 +1310,25 @@ export default function CariSettlementsPage() {
       active = false;
     };
   }, [canReadCashRegisters, canReadCashSessions, canReadOrg, l]);
+
+  useEffect(() => {
+    if (!Array.isArray(legalEntities) || legalEntities.length === 0) {
+      return;
+    }
+    if (hasSelectableLegalEntity(legalEntities, previewFilters.legalEntityId)) {
+      return;
+    }
+    setPreviewFilters((prev) => {
+      if (hasSelectableLegalEntity(legalEntities, prev.legalEntityId)) {
+        return prev;
+      }
+      return {
+        ...prev,
+        legalEntityId: "",
+        counterpartyId: "",
+      };
+    });
+  }, [legalEntities, previewFilters.legalEntityId, setPreviewFilters]);
 
   useEffect(() => {
     if (applyCurrencyManuallyEdited) {

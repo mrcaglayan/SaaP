@@ -21,6 +21,9 @@
   - `OPERATING_UNIT -> CENTRAL`
   - `OPERATING_UNIT A -> OPERATING_UNIT B`
 - Do not weaken existing cash-transit controls.
+- Cross-context transfer accounting must use configured OU internal current-account mappings when different ownership contexts are involved.
+- Do not hardcode `136` / `339`; those are chart-specific examples only.
+- This PR is about generic cross-context cash movement only; it must stay separate from shareholder-capital fulfillment logic and must not introduce shareholder commitment / paid-capital lines.
 
 ## Why this PR exists
 - Today, leaving the OU selector empty effectively creates a central/HQ cash register.
@@ -30,32 +33,41 @@
   - cash-register setup
   - transfer behavior
   - HQ vs branch mental model
-  - shareholder-capital HQ-first cash transit follow-up flow
+  - shareholder-capital central-first cash transit follow-up flow
 
 ## Revised target design
 - `cash_registers` explicitly declare ownership through `ownership_scope`.
-- Central/HQ remains a business label, not a real OU dimension on central ledger lines.
+- Central remains a business label, not a real OU dimension on central ledger lines.
 - `operating_unit_id` remains nullable and continues to drive OU-aware posting rules.
-- The UI must render central ownership explicitly as `Central / HQ` instead of `-` or blank.
+- The UI must render central ownership explicitly as `Central` instead of `-` or blank.
 - Register selection UX must make transfer behavior understandable before create:
   - same ownership context -> direct transfer
   - different ownership context -> transit workflow
+- Physical transfer routing and balance-sheet self-balancing are separate concerns:
+  - transit workflow controls the operational movement
+  - internal current accounts determine the cross-context accounting result
+- Reuse the same OU internal current-account setup that capital-fulfillment uses, but keep the business meaning separate:
+  - `PR-CF02`: direct branch-targeted capital fulfillment can post to a branch directly while keeping shareholder commitment central
+  - `PR-CRO05`: branch-to-branch or central-to-branch cash transfer has no shareholder-capital logic; the `no OU` rows are only a central bridge for self-balancing
 
 ## Unified execution order
 1. `PR-CRO01` - ownership schema and API foundation
 2. `PR-CRO02` - cash-register UI explicit ownership
 3. `PR-CRO03` - downstream workflow clarity and transfer routing UX
 4. `PR-CRO04` - rollout hardening, docs, and compatibility cleanup
+5. `PR-CRO05` - cross-context transfer accounting and OU self-balancing
 
 ## Master tracker
 - [x] `PR-CRO01` acceptance: cash registers persist explicit ownership without changing central/no-OU accounting semantics.
   smoke: `backend/scripts/test-cash-register-ownership-cro01.js`
-- [x] `PR-CRO02` acceptance: cash register create/edit/list UI uses explicit `Central / HQ` vs `Operating Unit` ownership instead of blank OU semantics.
+- [x] `PR-CRO02` acceptance: cash register create/edit/list UI uses explicit `Central` vs `Operating Unit` ownership instead of blank OU semantics.
   smoke: `backend/scripts/test-cash-register-ownership-cro02-frontend-smoke.js`
 - [x] `PR-CRO03` acceptance: cash transaction, session, transit, and shareholder-capital flows show ownership clearly and route cross-context movements through transit.
   smoke: `backend/scripts/test-cash-register-ownership-cro03-workflow-routing.js`
 - [x] `PR-CRO04` acceptance: rollout is documented, contracts are updated, and legacy blank-OU assumptions are removed from user-facing flows.
   smoke: `backend/scripts/test-cash-register-ownership-cro04-rollout.js`
+- [x] `PR-CRO05` acceptance: completed cross-context transfer accounting resolves through configured OU internal current accounts, keeps `Central` as `no OU`, and leaves OU balance-sheet slices self-balanced without hardcoded chart codes.
+  smoke: `backend/scripts/test-cash-register-ownership-cro05-self-balancing.js`
 
 ## PR-CRO01
 Goal:
@@ -113,16 +125,16 @@ Goal:
 
 Deliverables:
 - Add an ownership selector on cash register forms:
-  - `Central / HQ`
+  - `Central`
   - `Operating Unit`
 - Show OU picker only when `Operating Unit` is selected
-- Clear OU automatically when switching to `Central / HQ`
-- Render `Central / HQ` in tables instead of `-`
+- Clear OU automatically when switching to `Central`
+- Render `Central` in tables instead of `-`
 - Add ownership badges or labels in register cards and selectors
 
 UX rules:
 - An empty OU field must no longer be the primary user-facing way to choose central ownership
-- The form must explain that `Central / HQ` still posts with no OU dimension
+- The form must explain that `Central` still posts with no OU dimension
 - When editing existing rows, ownership selector must reflect persisted state
 - Existing account and legal-entity filtering behavior remains intact
 
@@ -132,10 +144,10 @@ Files:
 - `frontend/src/i18n/messages.js`
 
 Test coverage:
-- Create form can save a `Central / HQ` register without OU
+- Create form can save a `Central` register without OU
 - Create form requires OU for `Operating Unit`
 - Edit form preserves ownership correctly
-- Table/list renders `Central / HQ` instead of blank OU
+- Table/list renders `Central` instead of blank OU
 
 ## PR-CRO03
 Goal:
@@ -148,7 +160,7 @@ Deliverables:
   - cash transit transfers
   - shareholder-capital fulfillment cash shortcut flows
 - Show explicit ownership context on source and target registers:
-  - `Central / HQ`
+  - `Central`
   - `OU: <code>`
 - Show transfer-mode guidance before create:
   - `Direct transfer`
@@ -179,11 +191,11 @@ Files:
 - `backend/src/services/cash.service.js`
 
 Test coverage:
-- `Central / HQ -> branch` create routes to transit workflow
-- `branch -> Central / HQ` create routes to transit workflow
+- `Central -> branch` create routes to transit workflow
+- `branch -> Central` create routes to transit workflow
 - same-context direct transfer stays direct
 - UI copy warns users before they create a transit-required move
-- shareholder-capital HQ-first follow-up shortcut shows branch-only destination choices explicitly
+- shareholder-capital central-first follow-up shortcut shows branch-only destination choices explicitly
 
 ## PR-CRO04
 Goal:
@@ -197,9 +209,9 @@ Deliverables:
 - Add migration/backfill rollback notes
 
 Docs and rollout notes:
-- Cash-register setup docs must say `Central / HQ` explicitly
+- Cash-register setup docs must say `Central` explicitly
 - Transit workflow docs must refer to `different operating-unit contexts`, not only `cross-OU`
-- Shareholder-capital HQ-first runbook should reference the same ownership language
+- Shareholder-capital central-first runbook should reference the same ownership language
 
 Files:
 - `docs/runbooks/cari-v1-operations.md`
@@ -211,7 +223,87 @@ Files:
 Test coverage:
 - Release gate includes ownership-scope smoke coverage
 - OpenAPI reflects new cash-register payload and response fields
-- Docs mention `Central / HQ` ownership explicitly
+- Docs mention `Central` ownership explicitly
+
+## PR-CRO05
+Goal:
+- Define the missing accounting rule for completed cross-context transfers so branch / OU balance-sheet slices can self-balance without hardcoded chart codes.
+
+Deliverables:
+- Reuse the existing OU setup mappings from `Organization Management`:
+  - `operating_units.central_due_from_account_id`
+  - `operating_units.ou_due_to_central_account_id`
+- Treat those mappings as shared setup reused across modules; in this PR they represent the central bridge needed for cross-context cash-transfer accounting, not a requirement that cash physically moves through an HQ register.
+- Extend cross-context cash transfer posting logic so operational transit and final accounting result are both explicit.
+- Block completion of cross-context transfers when the required source/target OU internal current-account setup is missing.
+- Enforce branch-specific uniqueness for OU internal current-account mappings within the same legal entity.
+- Surface resolved internal-current-account usage in transfer details, previews, or diagnostics where helpful.
+- Document this as the canonical accounting pattern for any later OU-owned bank-to-bank transfer workflow as well.
+
+Accounting rules:
+- Do not hardcode `136` / `339`.
+- Use mapped `account_id` values; `136` / `339` are only common chart examples.
+- Keep the accounting case distinct from shareholder capital fulfillment:
+  - `PR-CF02` may post a direct branch-targeted fulfillment while the shareholder commitment credit stays central / `no OU`
+  - `PR-CRO05` posts generic cross-context cash movement only; no shareholder capital / commitment accounts appear in these transfer journals
+- Same-context transfers remain on current behavior:
+  - `CENTRAL -> CENTRAL`
+  - `same OU -> same OU`
+- Different-context transfers still use transit operationally, but the completed economic result must be equivalent to these self-balancing patterns:
+  - `CENTRAL -> OPERATING_UNIT`
+    - `Cr source central cash/register`
+    - `Dr target OU's central_due_from_account_id` `(no OU)`
+    - `Dr target OU cash/register` `(with OU)`
+    - `Cr target OU's ou_due_to_central_account_id` `(with OU)`
+  - `OPERATING_UNIT -> CENTRAL`
+    - `Cr source OU cash/register` `(with OU)`
+    - `Dr source OU's ou_due_to_central_account_id` `(with OU)`
+    - `Dr target central cash/register`
+    - `Cr source OU's central_due_from_account_id` `(no OU)`
+  - `OPERATING_UNIT A -> OPERATING_UNIT B`
+    - `Cr source OU A cash/register` `(with OU A)`
+    - `Dr OU A's ou_due_to_central_account_id` `(with OU A)`
+    - `Cr OU A's central_due_from_account_id` `(no OU)`
+    - `Dr OU B's central_due_from_account_id` `(no OU)`
+    - `Dr target OU B cash/register` `(with OU B)`
+    - `Cr OU B's ou_due_to_central_account_id` `(with OU B)`
+- Central lines remain `operating_unit_id = null`.
+- OU-targeted lines continue to carry the exact source or target OU context.
+- For `OPERATING_UNIT A -> OPERATING_UNIT B`, the `no OU` bridge lines do not mean cash physically went through HQ; they only keep each OU balance-sheet slice self-balanced in GL.
+
+Validation rules:
+- `CENTRAL -> OPERATING_UNIT` requires the target OU to be self-balancing ready.
+- `OPERATING_UNIT -> CENTRAL` requires the source OU to be self-balancing ready.
+- `OPERATING_UNIT A -> OPERATING_UNIT B` requires both OUs to be self-balancing ready.
+- Source and target registers must still obey current ownership-context routing rules.
+- Missing OU internal-current-account mapping must fail with an actionable error that points users back to `Organization Management`.
+- `central_due_from_account_id` must not be shared by multiple operating units in the same legal entity.
+- `ou_due_to_central_account_id` should not be shared by multiple operating units in the same legal entity; block duplicates in setup and posting.
+- Cross-context transfer accounting must not invent a synthetic HQ OU row.
+- `no OU` bridge lines must not carry `subledger_reference_no`; only OU-scoped cash/internal-current lines should carry the cash subledger reference.
+
+Files:
+- `backend/src/services/cash.transaction.service.js`
+- `backend/src/services/cash.service.js`
+- `backend/src/services/cash.queries.js`
+- `backend/src/services/org.write.service.js`
+- `backend/src/routes/cash.transaction.validators.js`
+- `frontend/src/pages/cash/CashTransactionsPage.jsx`
+- `frontend/src/pages/cash/CashTransitTransfersPage.jsx`
+- `frontend/src/pages/settings/OrganizationManagementPage.jsx`
+- `frontend/src/i18n/messages.js`
+- `docs/runbooks/cari-v1-operations.md`
+
+Test coverage:
+- `CENTRAL -> CENTRAL` stays on direct/current behavior with no internal-current lines.
+- `same OU -> same OU` stays on direct/current behavior with no internal-current lines.
+- `CENTRAL -> OU` resolves through the selected OU's configured internal current accounts.
+- `OU -> CENTRAL` resolves through the selected OU's configured internal current accounts.
+- `OU A -> OU B` resolves through both OUs' configured internal current accounts.
+- Missing source/target OU setup blocks completion with actionable error text.
+- Duplicate OU internal-current mappings are rejected at setup time and also block posting if legacy bad data already exists.
+- Posted lines keep central rows `no OU` and branch rows on the correct OU.
+- Posted `no OU` bridge lines keep `subledger_reference_no = null`.
 
 ## Recommended first implementation slice
 1. Add `ownership_scope` with backfill

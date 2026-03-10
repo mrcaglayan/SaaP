@@ -61,9 +61,15 @@ function buildRegisterOwnershipContextLabel(row, l) {
   const explicit = String(row?.ownership_context_label || row?.ownershipContextLabel || "").trim();
   if (
     explicit &&
-    (explicit === "Central / HQ" || explicit === "Merkez / HQ" || explicit.startsWith("OU:"))
+    (
+      explicit === "Central / HQ" ||
+      explicit === "Merkez / HQ" ||
+      explicit === "Central" ||
+      explicit === "Merkez" ||
+      explicit.startsWith("OU:")
+    )
   ) {
-    return explicit;
+    return explicit.startsWith("OU:") ? explicit : l("Central", "Merkez");
   }
   const operatingUnitCode = String(
     row?.operating_unit_code || row?.operatingUnitCode || ""
@@ -78,7 +84,7 @@ function buildRegisterOwnershipContextLabel(row, l) {
   if (explicit) {
     return explicit;
   }
-  return l("Central / HQ", "Merkez / HQ");
+  return l("Central", "Merkez");
 }
 
 function formatCashRegisterLabel(row, l) {
