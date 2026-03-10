@@ -121,6 +121,68 @@ export async function upsertOperatingUnitRow({
   return result.rows?.insertId || null;
 }
 
+export async function updateOperatingUnitInternalCurrentAccountsRow({
+  tenantId,
+  operatingUnitId,
+  centralDueFromAccountId,
+  ouDueToCentralAccountId,
+  runQuery = query,
+}) {
+  await runQuery(
+    `UPDATE operating_units
+     SET central_due_from_account_id = ?,
+         ou_due_to_central_account_id = ?
+     WHERE tenant_id = ?
+       AND id = ?
+     LIMIT 1`,
+    [
+      centralDueFromAccountId || null,
+      ouDueToCentralAccountId || null,
+      tenantId,
+      operatingUnitId,
+    ]
+  );
+
+  return operatingUnitId;
+}
+
+export async function upsertOperatingUnitPartnerCurrentAccountRow({
+  tenantId,
+  legalEntityId,
+  operatingUnitId,
+  partnerOperatingUnitId,
+  dueFromAccountId,
+  dueToAccountId,
+  runQuery = query,
+}) {
+  const result = await runQuery(
+    `INSERT INTO operating_unit_partner_current_accounts (
+        tenant_id,
+        legal_entity_id,
+        operating_unit_id,
+        partner_operating_unit_id,
+        due_from_account_id,
+        due_to_account_id
+      )
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE
+       id = LAST_INSERT_ID(id),
+       legal_entity_id = VALUES(legal_entity_id),
+       due_from_account_id = VALUES(due_from_account_id),
+       due_to_account_id = VALUES(due_to_account_id)`,
+    [
+      tenantId,
+      legalEntityId,
+      operatingUnitId,
+      partnerOperatingUnitId,
+      dueFromAccountId,
+      dueToAccountId,
+    ]
+  );
+
+  return result.rows?.insertId || null;
+}
+
 export async function upsertFiscalCalendarRow({
   tenantId,
   code,

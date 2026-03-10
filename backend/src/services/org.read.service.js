@@ -6,6 +6,7 @@ import {
   fetchCurrencyRows,
   fetchGroupCompanyRows,
   fetchLegalEntityRows,
+  fetchOperatingUnitPartnerCurrentAccountRows,
   fetchOperatingUnitRows,
   fetchShareholderJournalConfigRows,
   fetchShareholderRows,
@@ -77,10 +78,13 @@ export async function listOperatingUnits({
   buildScopeFilter,
   assertScopeAccess,
 }) {
-  const { legalEntityId } = filters;
+  const { legalEntityId, operatingUnitId } = filters;
 
   if (legalEntityId) {
     assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
+  }
+  if (operatingUnitId) {
+    assertScopeAccess(req, "operating_unit", operatingUnitId, "operatingUnitId");
   }
 
   const params = [tenantId];
@@ -91,8 +95,56 @@ export async function listOperatingUnits({
     conditions.push("ou.legal_entity_id = ?");
     params.push(legalEntityId);
   }
+  if (operatingUnitId) {
+    conditions.push("ou.id = ?");
+    params.push(operatingUnitId);
+  }
 
   return fetchOperatingUnitRows({
+    conditions,
+    params,
+  });
+}
+
+export async function listOperatingUnitPartnerCurrentAccounts({
+  req,
+  tenantId,
+  filters,
+  buildScopeFilter,
+  assertLegalEntityBelongsToTenant,
+  assertScopeAccess,
+}) {
+  const { legalEntityId, operatingUnitId, partnerOperatingUnitId } = filters;
+
+  if (legalEntityId) {
+    await assertLegalEntityBelongsToTenant(tenantId, legalEntityId, "legalEntityId");
+    assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
+  }
+  if (operatingUnitId) {
+    assertScopeAccess(req, "operating_unit", operatingUnitId, "operatingUnitId");
+  }
+  if (partnerOperatingUnitId) {
+    assertScopeAccess(req, "operating_unit", partnerOperatingUnitId, "partnerOperatingUnitId");
+  }
+
+  const params = [tenantId];
+  const conditions = ["map.tenant_id = ?"];
+  conditions.push(buildScopeFilter(req, "operating_unit", "map.operating_unit_id", params));
+
+  if (legalEntityId) {
+    conditions.push("map.legal_entity_id = ?");
+    params.push(legalEntityId);
+  }
+  if (operatingUnitId) {
+    conditions.push("map.operating_unit_id = ?");
+    params.push(operatingUnitId);
+  }
+  if (partnerOperatingUnitId) {
+    conditions.push("map.partner_operating_unit_id = ?");
+    params.push(partnerOperatingUnitId);
+  }
+
+  return fetchOperatingUnitPartnerCurrentAccountRows({
     conditions,
     params,
   });

@@ -40,6 +40,16 @@ async function main() {
     "backend/package.json missing test:cash-register-ownership:rollout script"
   );
   assert(
+    scripts["test:cash-register-ownership:cro06"] ===
+      "node scripts/test-cash-register-ownership-cro06-auto-provision.js",
+    "backend/package.json missing test:cash-register-ownership:cro06 script"
+  );
+  assert(
+    scripts["test:cash-register-ownership:cro07"] ===
+      "node scripts/test-cash-register-ownership-cro07-central-auto-provision.js",
+    "backend/package.json missing test:cash-register-ownership:cro07 script"
+  );
+  assert(
     scripts["test:cash-register-ownership"]?.includes(
       "test-cash-register-ownership-cro01.js"
     ) &&
@@ -50,9 +60,15 @@ async function main() {
         "test-cash-register-ownership-cro03-workflow-routing.js"
       ) &&
       scripts["test:cash-register-ownership"]?.includes(
+        "test:cash-register-ownership:cro06"
+      ) &&
+      scripts["test:cash-register-ownership"]?.includes(
+        "test:cash-register-ownership:cro07"
+      ) &&
+      scripts["test:cash-register-ownership"]?.includes(
         "test:cash-register-ownership:rollout"
       ),
-    "backend/package.json should aggregate CRO01-CRO04 ownership smoke coverage"
+    "backend/package.json should aggregate CRO01-CRO07 ownership smoke coverage"
   );
   assert(
     scripts["test:release-gate:core"]?.includes("npm run test:cash-register-ownership"),

@@ -29,6 +29,7 @@ import {
   listGroupCompanies,
   listLegalEntities,
   listOrgTree,
+  listOperatingUnitPartnerCurrentAccounts,
   listShareholderJournalConfigs,
   listShareholders,
   listOperatingUnits,
@@ -52,6 +53,8 @@ import {
   validateShareholderMappedLeafAccount,
 } from "../services/org.shareholder.helpers.js";
 import {
+  autoProvisionOperatingUnitCentralCurrentAccounts,
+  autoProvisionOperatingUnitPartnerCurrentAccounts,
   autoProvisionShareholderSubAccounts,
   executeShareholderCommitmentJournalBatch,
   generateFiscalPeriods,
@@ -60,6 +63,7 @@ import {
   upsertGroupCompany,
   upsertLegalEntity,
   upsertOperatingUnit,
+  upsertOperatingUnitPartnerCurrentAccount,
   upsertShareholder,
   upsertShareholderJournalConfig,
 } from "../services/org.write.service.js";
@@ -73,15 +77,19 @@ import { recalculateShareholderOwnershipPctTx } from "../services/shareholderOwn
 import {
   parseFiscalCalendarPeriodFilters,
   parseLegalEntityReadFilters,
+  parseOperatingUnitPartnerCurrentAccountReadFilters,
   parseOperatingUnitReadFilters,
   parseShareholderJournalConfigFilters,
   parseShareholderReadFilters,
   requireOrgTenantId,
 } from "./org.read.validators.js";
 import {
+  parseOperatingUnitCentralCurrentAccountAutoProvisionInput,
   parseFiscalCalendarUpsertInput,
   parseFiscalPeriodGenerateInput,
   parseGroupCompanyUpsertInput,
+  parseOperatingUnitPartnerCurrentAccountAutoProvisionInput,
+  parseOperatingUnitPartnerCurrentAccountUpsertInput,
   parseShareholderCapitalFulfillmentCreateInput,
   parseShareholderCapitalFulfillmentListFilters,
   parseShareholderCapitalFulfillmentPreviewInput,
@@ -638,6 +646,28 @@ router.get(
 );
 
 router.get(
+  "/operating-unit-partner-current-accounts",
+  requirePermission("org.tree.read"),
+  asyncHandler(async (req, res) => {
+    const tenantId = requireOrgTenantId(req);
+    const filters = parseOperatingUnitPartnerCurrentAccountReadFilters(req.query);
+    const rows = await listOperatingUnitPartnerCurrentAccounts({
+      req,
+      tenantId,
+      filters,
+      buildScopeFilter,
+      assertLegalEntityBelongsToTenant,
+      assertScopeAccess,
+    });
+
+    return res.json({
+      tenantId,
+      rows,
+    });
+  })
+);
+
+router.get(
   "/fiscal-calendars",
   requirePermission("org.fiscal_calendar.read"),
   asyncHandler(async (req, res) => {
@@ -1117,6 +1147,102 @@ router.post(
       assertScopeAccess,
     });
     await invalidateRbacCache(input.tenantId);
+
+    return res.status(201).json({ ok: true, id: result.id });
+  })
+);
+
+router.post(
+  "/operating-units/central-current-accounts/auto-provision",
+  requirePermission("gl.account.upsert", {
+    resolveScope: (req, tenantId) => {
+      const legalEntityId = parsePositiveInt(req.body?.legalEntityId);
+      if (legalEntityId) {
+        return { scopeType: "LEGAL_ENTITY", scopeId: legalEntityId };
+      }
+      return { scopeType: "TENANT", scopeId: tenantId };
+    },
+  }),
+  requirePermission("org.operating_unit.upsert", {
+    resolveScope: (req, tenantId) => {
+      const legalEntityId = parsePositiveInt(req.body?.legalEntityId);
+      if (legalEntityId) {
+        return { scopeType: "LEGAL_ENTITY", scopeId: legalEntityId };
+      }
+      return { scopeType: "TENANT", scopeId: tenantId };
+    },
+  }),
+  asyncHandler(async (req, res) => {
+    const input = parseOperatingUnitCentralCurrentAccountAutoProvisionInput(req);
+    const operation = await autoProvisionOperatingUnitCentralCurrentAccounts({
+      req,
+      ...input,
+      assertLegalEntityBelongsToTenant,
+      assertScopeAccess,
+    });
+
+    return res.status(201).json({
+      ok: true,
+      ...operation,
+    });
+  })
+);
+
+router.post(
+  "/operating-unit-partner-current-accounts/auto-provision",
+  requirePermission("gl.account.upsert", {
+    resolveScope: (req, tenantId) => {
+      const legalEntityId = parsePositiveInt(req.body?.legalEntityId);
+      if (legalEntityId) {
+        return { scopeType: "LEGAL_ENTITY", scopeId: legalEntityId };
+      }
+      return { scopeType: "TENANT", scopeId: tenantId };
+    },
+  }),
+  requirePermission("org.operating_unit.upsert", {
+    resolveScope: (req, tenantId) => {
+      const legalEntityId = parsePositiveInt(req.body?.legalEntityId);
+      if (legalEntityId) {
+        return { scopeType: "LEGAL_ENTITY", scopeId: legalEntityId };
+      }
+      return { scopeType: "TENANT", scopeId: tenantId };
+    },
+  }),
+  asyncHandler(async (req, res) => {
+    const input = parseOperatingUnitPartnerCurrentAccountAutoProvisionInput(req);
+    const operation = await autoProvisionOperatingUnitPartnerCurrentAccounts({
+      req,
+      ...input,
+      assertLegalEntityBelongsToTenant,
+      assertScopeAccess,
+    });
+
+    return res.status(201).json({
+      ok: true,
+      ...operation,
+    });
+  })
+);
+
+router.post(
+  "/operating-unit-partner-current-accounts",
+  requirePermission("org.operating_unit.upsert", {
+    resolveScope: (req, tenantId) => {
+      const legalEntityId = parsePositiveInt(req.body?.legalEntityId);
+      if (legalEntityId) {
+        return { scopeType: "LEGAL_ENTITY", scopeId: legalEntityId };
+      }
+      return { scopeType: "TENANT", scopeId: tenantId };
+    },
+  }),
+  asyncHandler(async (req, res) => {
+    const input = parseOperatingUnitPartnerCurrentAccountUpsertInput(req);
+    const result = await upsertOperatingUnitPartnerCurrentAccount({
+      req,
+      ...input,
+      assertLegalEntityBelongsToTenant,
+      assertScopeAccess,
+    });
 
     return res.status(201).json({ ok: true, id: result.id });
   })

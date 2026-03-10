@@ -256,6 +256,32 @@ async function createOperatingUnit({
   return operatingUnitId;
 }
 
+async function createOperatingUnitPartnerCurrentAccount({
+  token,
+  legalEntityId,
+  operatingUnitId,
+  partnerOperatingUnitId,
+  dueFromAccountId,
+  dueToAccountId,
+}) {
+  const response = await apiRequest({
+    token,
+    method: "POST",
+    path: "/api/v1/org/operating-unit-partner-current-accounts",
+    body: {
+      legalEntityId,
+      operatingUnitId,
+      partnerOperatingUnitId,
+      dueFromAccountId,
+      dueToAccountId,
+    },
+    expectedStatus: 201,
+  });
+  const id = toNumber(response.json?.id);
+  assert(id > 0, "Operating unit partner current account mapping not created");
+  return id;
+}
+
 async function createRegister({
   token,
   tenantId,
@@ -451,6 +477,38 @@ async function bootstrapSelfBalancingContext(token, identity) {
     accountType: "LIABILITY",
     normalSide: "CREDIT",
   });
+  const dueFromAccountABId = await createAccount({
+    token,
+    coaId,
+    code: `DFAB${identity.stamp}`,
+    name: "OU A Due From OU B",
+    accountType: "ASSET",
+    normalSide: "DEBIT",
+  });
+  const dueToAccountABId = await createAccount({
+    token,
+    coaId,
+    code: `DTAB${identity.stamp}`,
+    name: "OU A Due To OU B",
+    accountType: "LIABILITY",
+    normalSide: "CREDIT",
+  });
+  const dueFromAccountBAId = await createAccount({
+    token,
+    coaId,
+    code: `DFBA${identity.stamp}`,
+    name: "OU B Due From OU A",
+    accountType: "ASSET",
+    normalSide: "DEBIT",
+  });
+  const dueToAccountBAId = await createAccount({
+    token,
+    coaId,
+    code: `DTBA${identity.stamp}`,
+    name: "OU B Due To OU A",
+    accountType: "LIABILITY",
+    normalSide: "CREDIT",
+  });
 
   const operatingUnitAId = await createOperatingUnit({
     token,
@@ -475,6 +533,23 @@ async function bootstrapSelfBalancingContext(token, identity) {
     name: "Branch Missing Setup",
     centralDueFromAccountId: undefined,
     ouDueToCentralAccountId: undefined,
+  });
+
+  await createOperatingUnitPartnerCurrentAccount({
+    token,
+    legalEntityId,
+    operatingUnitId: operatingUnitAId,
+    partnerOperatingUnitId: operatingUnitBId,
+    dueFromAccountId: dueFromAccountABId,
+    dueToAccountId: dueToAccountABId,
+  });
+  await createOperatingUnitPartnerCurrentAccount({
+    token,
+    legalEntityId,
+    operatingUnitId: operatingUnitBId,
+    partnerOperatingUnitId: operatingUnitAId,
+    dueFromAccountId: dueFromAccountBAId,
+    dueToAccountId: dueToAccountBAId,
   });
 
   const centralRegisterId = await createRegister({
@@ -550,6 +625,10 @@ async function bootstrapSelfBalancingContext(token, identity) {
     ouDueToAccountAId,
     centralDueFromAccountBId,
     ouDueToAccountBId,
+    dueFromAccountABId,
+    dueToAccountABId,
+    dueFromAccountBAId,
+    dueToAccountBAId,
   };
 }
 
@@ -932,26 +1011,16 @@ async function runOuToOuScenario(token, setup, stamp) {
     tenantId: setup.tenantId,
     transactionId: transferOutTxnId,
   });
-  assert(transferOutLines.length === 4, "OU -> OU transfer-out should post 4 journal lines");
+  assert(transferOutLines.length === 2, "OU -> OU transfer-out should post 2 journal lines");
   assertHasLine(
     transferOutLines,
     {
-      accountId: setup.ouDueToAccountAId,
+      accountId: setup.dueFromAccountABId,
       operatingUnitId: setup.operatingUnitAId,
       side: "debit",
       amount: 77,
     },
-    "OU -> OU transfer-out should debit source OU due-to account"
-  );
-  assertHasLine(
-    transferOutLines,
-    {
-      accountId: setup.centralDueFromAccountBId,
-      operatingUnitId: null,
-      side: "debit",
-      amount: 77,
-    },
-    "OU -> OU transfer-out should debit target OU HQ due-from account at no-OU scope"
+    "OU -> OU transfer-out should debit source OU due-from-partner account"
   );
   assertHasLine(
     transferOutLines,
@@ -963,24 +1032,10 @@ async function runOuToOuScenario(token, setup, stamp) {
     },
     "OU -> OU transfer-out should credit source register"
   );
-  assertHasLine(
-    transferOutLines,
-    {
-      accountId: setup.centralDueFromAccountAId,
-      operatingUnitId: null,
-      side: "credit",
-      amount: 77,
-    },
-    "OU -> OU transfer-out should credit source OU HQ due-from account at no-OU scope"
-  );
   assertNoAccount(
     transferOutLines,
     setup.transitAccountId,
     "OU -> OU transfer-out should not post transit clearing"
-  );
-  assertNoOuLinesHaveNoSubledgerRef(
-    transferOutLines,
-    "OU -> OU transfer-out no-OU lines should not carry subledger reference metadata"
   );
 
   const receiveRes = await receiveTransitTransfer({
@@ -1012,12 +1067,12 @@ async function runOuToOuScenario(token, setup, stamp) {
   assertHasLine(
     transferInLines,
     {
-      accountId: setup.ouDueToAccountBId,
+      accountId: setup.dueToAccountBAId,
       operatingUnitId: setup.operatingUnitBId,
       side: "credit",
       amount: 77,
     },
-    "OU -> OU transfer-in should credit target OU due-to account"
+    "OU -> OU transfer-in should credit target OU due-to-partner account"
   );
   assertNoAccount(
     transferInLines,
@@ -1070,11 +1125,12 @@ async function runMissingSetupScenario(token, setup, stamp) {
 
 async function runDuplicateMappingScenario(token, setup, stamp) {
   await query(
-    `UPDATE operating_units
-     SET central_due_from_account_id = ?
+    `UPDATE operating_unit_partner_current_accounts
+     SET due_from_account_id = ?
      WHERE tenant_id = ?
-       AND id = ?`,
-    [setup.centralDueFromAccountAId, setup.tenantId, setup.operatingUnitBId]
+       AND operating_unit_id = ?
+       AND partner_operating_unit_id = ?`,
+    [setup.dueFromAccountABId, setup.tenantId, setup.operatingUnitBId, setup.operatingUnitAId]
   );
 
   const initiateRes = await initiateTransitTransfer({
@@ -1099,9 +1155,9 @@ async function runDuplicateMappingScenario(token, setup, stamp) {
   });
   const errorText = toErrorText(failedPost.json);
   assert(
-    errorText.includes("self-balancing setup is invalid") &&
-      errorText.includes("also assigned to operating unit"),
-    "Duplicate OU mappings should block cross-context posting with actionable error text"
+    errorText.includes("direct inter-branch current-account setup is invalid") &&
+      errorText.includes("also assigned to operating unit pair"),
+    "Duplicate branch-pair mappings should block cross-context posting with actionable error text"
   );
   await assertTransferState(token, transferId, "INITIATED");
 

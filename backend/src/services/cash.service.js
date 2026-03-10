@@ -177,6 +177,36 @@ function buildOperatingUnitSelfBalancingError(row, operatingUnitId, detail) {
   );
 }
 
+function describeOperatingUnitPair(row, operatingUnitId, partnerOperatingUnitId) {
+  const operatingUnitLabel = describeOperatingUnit(
+    {
+      code: row?.operating_unit_code,
+      name: row?.operating_unit_name,
+    },
+    operatingUnitId
+  );
+  const partnerOperatingUnitLabel = describeOperatingUnit(
+    {
+      code: row?.partner_operating_unit_code,
+      name: row?.partner_operating_unit_name,
+    },
+    partnerOperatingUnitId
+  );
+  return `${operatingUnitLabel} -> ${partnerOperatingUnitLabel}`;
+}
+
+function buildOperatingUnitPartnerCurrentError(
+  row,
+  operatingUnitId,
+  partnerOperatingUnitId,
+  detail
+) {
+  const label = describeOperatingUnitPair(row, operatingUnitId, partnerOperatingUnitId);
+  return badRequest(
+    `Operating unit pair ${label} direct inter-branch current-account setup is invalid for cross-context cash transfers: ${detail}. Configure "Due From Partner OU" and "Due To Partner OU" in Organization Management before posting.`
+  );
+}
+
 async function loadOperatingUnitSelfBalancingConfigTx(
   tx,
   { tenantId, legalEntityId, operatingUnitId, cache }
@@ -420,6 +450,349 @@ async function loadOperatingUnitSelfBalancingConfigTx(
   return resolved;
 }
 
+async function loadOperatingUnitPartnerCurrentConfigTx(
+  tx,
+  {
+    tenantId,
+    legalEntityId,
+    operatingUnitId,
+    partnerOperatingUnitId,
+    cache,
+  }
+) {
+  const resolvedOperatingUnitId = parsePositiveInt(operatingUnitId);
+  const resolvedPartnerOperatingUnitId = parsePositiveInt(partnerOperatingUnitId);
+  if (!resolvedOperatingUnitId || !resolvedPartnerOperatingUnitId) {
+    return null;
+  }
+  if (resolvedOperatingUnitId === resolvedPartnerOperatingUnitId) {
+    throw buildOperatingUnitPartnerCurrentError(
+      null,
+      resolvedOperatingUnitId,
+      resolvedPartnerOperatingUnitId,
+      "source and partner operating units must be different"
+    );
+  }
+
+  const cacheKey = `${resolvedOperatingUnitId}:${resolvedPartnerOperatingUnitId}`;
+  if (cache?.has(cacheKey)) {
+    return cache.get(cacheKey);
+  }
+
+  const result = await tx.query(
+    `SELECT
+       map.id,
+       map.tenant_id,
+       map.legal_entity_id,
+       map.operating_unit_id,
+       map.partner_operating_unit_id,
+       ou.code AS operating_unit_code,
+       ou.name AS operating_unit_name,
+       ou.status AS operating_unit_status,
+       ou.legal_entity_id AS operating_unit_legal_entity_id,
+       partner.code AS partner_operating_unit_code,
+       partner.name AS partner_operating_unit_name,
+       partner.status AS partner_operating_unit_status,
+       partner.legal_entity_id AS partner_operating_unit_legal_entity_id,
+       map.due_from_account_id,
+       dfa.code AS due_from_account_code,
+       dfa.name AS due_from_account_name,
+       dfa.account_type AS due_from_account_type,
+       dfa.normal_side AS due_from_account_normal_side,
+       dfa.allow_posting AS due_from_account_allow_posting,
+       dfa.is_active AS due_from_account_is_active,
+       dfac.legal_entity_id AS due_from_account_legal_entity_id,
+       EXISTS(
+         SELECT 1
+         FROM accounts child
+         WHERE child.parent_account_id = dfa.id
+           AND child.is_active = TRUE
+       ) AS due_from_account_has_children,
+       map.due_to_account_id,
+       dta.code AS due_to_account_code,
+       dta.name AS due_to_account_name,
+       dta.account_type AS due_to_account_type,
+       dta.normal_side AS due_to_account_normal_side,
+       dta.allow_posting AS due_to_account_allow_posting,
+       dta.is_active AS due_to_account_is_active,
+       dtac.legal_entity_id AS due_to_account_legal_entity_id,
+       EXISTS(
+         SELECT 1
+         FROM accounts child
+         WHERE child.parent_account_id = dta.id
+           AND child.is_active = TRUE
+       ) AS due_to_account_has_children
+     FROM operating_unit_partner_current_accounts map
+     JOIN operating_units ou
+       ON ou.id = map.operating_unit_id
+     JOIN operating_units partner
+       ON partner.id = map.partner_operating_unit_id
+     LEFT JOIN accounts dfa
+       ON dfa.id = map.due_from_account_id
+     LEFT JOIN charts_of_accounts dfac
+       ON dfac.id = dfa.coa_id
+     LEFT JOIN accounts dta
+       ON dta.id = map.due_to_account_id
+     LEFT JOIN charts_of_accounts dtac
+       ON dtac.id = dta.coa_id
+     WHERE map.tenant_id = ?
+       AND map.operating_unit_id = ?
+       AND map.partner_operating_unit_id = ?
+     LIMIT 1`,
+    [tenantId, resolvedOperatingUnitId, resolvedPartnerOperatingUnitId]
+  );
+
+  const row = result.rows?.[0] || null;
+  if (!row) {
+    throw buildOperatingUnitPartnerCurrentError(
+      null,
+      resolvedOperatingUnitId,
+      resolvedPartnerOperatingUnitId,
+      "required partner-specific current-account mappings are missing"
+    );
+  }
+  if (parsePositiveInt(row.legal_entity_id) !== parsePositiveInt(legalEntityId)) {
+    throw buildOperatingUnitPartnerCurrentError(
+      row,
+      resolvedOperatingUnitId,
+      resolvedPartnerOperatingUnitId,
+      "mapping does not belong to the transfer legal entity"
+    );
+  }
+  if (
+    parsePositiveInt(row.operating_unit_legal_entity_id) !== parsePositiveInt(legalEntityId) ||
+    parsePositiveInt(row.partner_operating_unit_legal_entity_id) !== parsePositiveInt(legalEntityId)
+  ) {
+    throw buildOperatingUnitPartnerCurrentError(
+      row,
+      resolvedOperatingUnitId,
+      resolvedPartnerOperatingUnitId,
+      "operating unit pair must belong to the transfer legal entity"
+    );
+  }
+  if (asUpper(row.operating_unit_status) !== "ACTIVE") {
+    throw buildOperatingUnitPartnerCurrentError(
+      row,
+      resolvedOperatingUnitId,
+      resolvedPartnerOperatingUnitId,
+      "source operating unit must be ACTIVE"
+    );
+  }
+  if (asUpper(row.partner_operating_unit_status) !== "ACTIVE") {
+    throw buildOperatingUnitPartnerCurrentError(
+      row,
+      resolvedOperatingUnitId,
+      resolvedPartnerOperatingUnitId,
+      "partner operating unit must be ACTIVE"
+    );
+  }
+
+  const dueFromAccountId = parsePositiveInt(row.due_from_account_id);
+  const dueToAccountId = parsePositiveInt(row.due_to_account_id);
+  if (!dueFromAccountId || !dueToAccountId) {
+    throw buildOperatingUnitPartnerCurrentError(
+      row,
+      resolvedOperatingUnitId,
+      resolvedPartnerOperatingUnitId,
+      "required partner-specific current-account mappings are missing"
+    );
+  }
+  if (
+    parsePositiveInt(row.due_from_account_legal_entity_id) !== parsePositiveInt(legalEntityId)
+  ) {
+    throw buildOperatingUnitPartnerCurrentError(
+      row,
+      resolvedOperatingUnitId,
+      resolvedPartnerOperatingUnitId,
+      "Due From Partner OU account must belong to the same legal entity"
+    );
+  }
+  if (parsePositiveInt(row.due_to_account_legal_entity_id) !== parsePositiveInt(legalEntityId)) {
+    throw buildOperatingUnitPartnerCurrentError(
+      row,
+      resolvedOperatingUnitId,
+      resolvedPartnerOperatingUnitId,
+      "Due To Partner OU account must belong to the same legal entity"
+    );
+  }
+  if (asUpper(row.due_from_account_type) !== "ASSET") {
+    throw buildOperatingUnitPartnerCurrentError(
+      row,
+      resolvedOperatingUnitId,
+      resolvedPartnerOperatingUnitId,
+      "Due From Partner OU account must be an ASSET account"
+    );
+  }
+  if (asUpper(row.due_from_account_normal_side) !== "DEBIT") {
+    throw buildOperatingUnitPartnerCurrentError(
+      row,
+      resolvedOperatingUnitId,
+      resolvedPartnerOperatingUnitId,
+      "Due From Partner OU account must have DEBIT normal side"
+    );
+  }
+  if (!parseDbBoolean(row.due_from_account_is_active)) {
+    throw buildOperatingUnitPartnerCurrentError(
+      row,
+      resolvedOperatingUnitId,
+      resolvedPartnerOperatingUnitId,
+      "Due From Partner OU account must be active"
+    );
+  }
+  if (!parseDbBoolean(row.due_from_account_allow_posting)) {
+    throw buildOperatingUnitPartnerCurrentError(
+      row,
+      resolvedOperatingUnitId,
+      resolvedPartnerOperatingUnitId,
+      "Due From Partner OU account must be postable"
+    );
+  }
+  if (parseDbBoolean(row.due_from_account_has_children)) {
+    throw buildOperatingUnitPartnerCurrentError(
+      row,
+      resolvedOperatingUnitId,
+      resolvedPartnerOperatingUnitId,
+      "Due From Partner OU account must be a leaf account"
+    );
+  }
+  if (asUpper(row.due_to_account_type) !== "LIABILITY") {
+    throw buildOperatingUnitPartnerCurrentError(
+      row,
+      resolvedOperatingUnitId,
+      resolvedPartnerOperatingUnitId,
+      "Due To Partner OU account must be a LIABILITY account"
+    );
+  }
+  if (asUpper(row.due_to_account_normal_side) !== "CREDIT") {
+    throw buildOperatingUnitPartnerCurrentError(
+      row,
+      resolvedOperatingUnitId,
+      resolvedPartnerOperatingUnitId,
+      "Due To Partner OU account must have CREDIT normal side"
+    );
+  }
+  if (!parseDbBoolean(row.due_to_account_is_active)) {
+    throw buildOperatingUnitPartnerCurrentError(
+      row,
+      resolvedOperatingUnitId,
+      resolvedPartnerOperatingUnitId,
+      "Due To Partner OU account must be active"
+    );
+  }
+  if (!parseDbBoolean(row.due_to_account_allow_posting)) {
+    throw buildOperatingUnitPartnerCurrentError(
+      row,
+      resolvedOperatingUnitId,
+      resolvedPartnerOperatingUnitId,
+      "Due To Partner OU account must be postable"
+    );
+  }
+  if (parseDbBoolean(row.due_to_account_has_children)) {
+    throw buildOperatingUnitPartnerCurrentError(
+      row,
+      resolvedOperatingUnitId,
+      resolvedPartnerOperatingUnitId,
+      "Due To Partner OU account must be a leaf account"
+    );
+  }
+
+  const duplicateDueFromResult = await tx.query(
+    `SELECT
+       map.operating_unit_id,
+       map.partner_operating_unit_id,
+       ou.code AS operating_unit_code,
+       partner.code AS partner_operating_unit_code
+     FROM operating_unit_partner_current_accounts map
+     JOIN operating_units ou ON ou.id = map.operating_unit_id
+     JOIN operating_units partner ON partner.id = map.partner_operating_unit_id
+     WHERE map.tenant_id = ?
+       AND map.legal_entity_id = ?
+       AND map.due_from_account_id = ?
+       AND NOT (
+         map.operating_unit_id = ?
+         AND map.partner_operating_unit_id = ?
+       )
+     LIMIT 1`,
+    [
+      tenantId,
+      legalEntityId,
+      dueFromAccountId,
+      resolvedOperatingUnitId,
+      resolvedPartnerOperatingUnitId,
+    ]
+  );
+  const duplicateDueFrom = duplicateDueFromResult.rows?.[0] || null;
+  if (duplicateDueFrom) {
+    throw buildOperatingUnitPartnerCurrentError(
+      row,
+      resolvedOperatingUnitId,
+      resolvedPartnerOperatingUnitId,
+      `Due From Partner OU account is also assigned to operating unit pair ${describeOperatingUnitPair(
+        duplicateDueFrom,
+        parsePositiveInt(duplicateDueFrom.operating_unit_id),
+        parsePositiveInt(duplicateDueFrom.partner_operating_unit_id)
+      )}; partner-specific current-account mappings must be unique within the legal entity`
+    );
+  }
+
+  const duplicateDueToResult = await tx.query(
+    `SELECT
+       map.operating_unit_id,
+       map.partner_operating_unit_id,
+       ou.code AS operating_unit_code,
+       partner.code AS partner_operating_unit_code
+     FROM operating_unit_partner_current_accounts map
+     JOIN operating_units ou ON ou.id = map.operating_unit_id
+     JOIN operating_units partner ON partner.id = map.partner_operating_unit_id
+     WHERE map.tenant_id = ?
+       AND map.legal_entity_id = ?
+       AND map.due_to_account_id = ?
+       AND NOT (
+         map.operating_unit_id = ?
+         AND map.partner_operating_unit_id = ?
+       )
+     LIMIT 1`,
+    [
+      tenantId,
+      legalEntityId,
+      dueToAccountId,
+      resolvedOperatingUnitId,
+      resolvedPartnerOperatingUnitId,
+    ]
+  );
+  const duplicateDueTo = duplicateDueToResult.rows?.[0] || null;
+  if (duplicateDueTo) {
+    throw buildOperatingUnitPartnerCurrentError(
+      row,
+      resolvedOperatingUnitId,
+      resolvedPartnerOperatingUnitId,
+      `Due To Partner OU account is also assigned to operating unit pair ${describeOperatingUnitPair(
+        duplicateDueTo,
+        parsePositiveInt(duplicateDueTo.operating_unit_id),
+        parsePositiveInt(duplicateDueTo.partner_operating_unit_id)
+      )}; partner-specific current-account mappings must be unique within the legal entity`
+    );
+  }
+
+  const resolved = {
+    operatingUnitId: resolvedOperatingUnitId,
+    partnerOperatingUnitId: resolvedPartnerOperatingUnitId,
+    operatingUnitCode: String(row.operating_unit_code || ""),
+    operatingUnitName: String(row.operating_unit_name || ""),
+    partnerOperatingUnitCode: String(row.partner_operating_unit_code || ""),
+    partnerOperatingUnitName: String(row.partner_operating_unit_name || ""),
+    dueFromAccountId,
+    dueFromAccountCode: String(row.due_from_account_code || ""),
+    dueFromAccountName: String(row.due_from_account_name || ""),
+    dueToAccountId,
+    dueToAccountCode: String(row.due_to_account_code || ""),
+    dueToAccountName: String(row.due_to_account_name || ""),
+  };
+
+  cache?.set(cacheKey, resolved);
+  return resolved;
+}
+
 function resolveTransferParticipants(cashTxn) {
   const txnType = asUpper(cashTxn?.txn_type);
   const registerParty = {
@@ -532,6 +905,7 @@ async function buildCashPostingLinesTx(tx, { tenantId, legalEntityId, cashTxn })
 
   let lines;
   const operatingUnitCache = new Map();
+  const partnerCurrentCache = new Map();
 
   if (txnType === "RECEIPT" || txnType === "WITHDRAWAL_FROM_BANK" || txnType === "OPENING_FLOAT") {
     lines = [
@@ -660,18 +1034,24 @@ async function buildCashPostingLinesTx(tx, { tenantId, legalEntityId, cashTxn })
       requireAccountId(counterAccountId, "counterAccountId (CASH_IN_TRANSIT)");
       const participants = resolveTransferParticipants(cashTxn);
       const routeType = resolveCrossContextTransferRoute(participants);
-      const sourceUnit = await loadOperatingUnitSelfBalancingConfigTx(tx, {
-        tenantId,
-        legalEntityId,
-        operatingUnitId: participants.source.operatingUnitId,
-        cache: operatingUnitCache,
-      });
-      const targetUnit = await loadOperatingUnitSelfBalancingConfigTx(tx, {
-        tenantId,
-        legalEntityId,
-        operatingUnitId: participants.target.operatingUnitId,
-        cache: operatingUnitCache,
-      });
+      const sourceUnit =
+        routeType === "OU_TO_CENTRAL"
+          ? await loadOperatingUnitSelfBalancingConfigTx(tx, {
+              tenantId,
+              legalEntityId,
+              operatingUnitId: participants.source.operatingUnitId,
+              cache: operatingUnitCache,
+            })
+          : null;
+      const targetUnit =
+        routeType === "CENTRAL_TO_OU"
+          ? await loadOperatingUnitSelfBalancingConfigTx(tx, {
+              tenantId,
+              legalEntityId,
+              operatingUnitId: participants.target.operatingUnitId,
+              cache: operatingUnitCache,
+            })
+          : null;
 
       if (routeType === "CENTRAL_TO_OU") {
         lines = [
@@ -723,24 +1103,27 @@ async function buildCashPostingLinesTx(tx, { tenantId, legalEntityId, cashTxn })
           }),
         ];
       } else if (routeType === "OU_TO_OU") {
+        const sourcePartnerConfig = await loadOperatingUnitPartnerCurrentConfigTx(tx, {
+          tenantId,
+          legalEntityId,
+          operatingUnitId: participants.source.operatingUnitId,
+          partnerOperatingUnitId: participants.target.operatingUnitId,
+          cache: partnerCurrentCache,
+        });
+        await loadOperatingUnitPartnerCurrentConfigTx(tx, {
+          tenantId,
+          legalEntityId,
+          operatingUnitId: participants.target.operatingUnitId,
+          partnerOperatingUnitId: participants.source.operatingUnitId,
+          cache: partnerCurrentCache,
+        });
         lines = [
           buildBaseLine({
             accountId: requireAccountId(
-              sourceUnit?.ouDueToCentralAccountId,
-              "source operating unit OU Due To Central account"
+              sourcePartnerConfig?.dueFromAccountId,
+              "source operating unit Due From Partner OU account"
             ),
             operatingUnitId: participants.source.operatingUnitId,
-            debitBase: amountBase,
-            creditBase: 0,
-            description: lineDescription,
-            subledgerReferenceNo,
-          }),
-          buildBaseLine({
-            accountId: requireAccountId(
-              targetUnit?.centralDueFromAccountId,
-              "target operating unit Central Due From OU account"
-            ),
-            operatingUnitId: null,
             debitBase: amountBase,
             creditBase: 0,
             description: lineDescription,
@@ -752,17 +1135,6 @@ async function buildCashPostingLinesTx(tx, { tenantId, legalEntityId, cashTxn })
               "source register account"
             ),
             operatingUnitId: participants.source.operatingUnitId,
-            debitBase: 0,
-            creditBase: amountBase,
-            description: lineDescription,
-            subledgerReferenceNo,
-          }),
-          buildBaseLine({
-            accountId: requireAccountId(
-              sourceUnit?.centralDueFromAccountId,
-              "source operating unit Central Due From OU account"
-            ),
-            operatingUnitId: null,
             debitBase: 0,
             creditBase: amountBase,
             description: lineDescription,
@@ -803,18 +1175,24 @@ async function buildCashPostingLinesTx(tx, { tenantId, legalEntityId, cashTxn })
       requireAccountId(counterAccountId, "counterAccountId (CASH_IN_TRANSIT)");
       const participants = resolveTransferParticipants(cashTxn);
       const routeType = resolveCrossContextTransferRoute(participants);
-      const sourceUnit = await loadOperatingUnitSelfBalancingConfigTx(tx, {
-        tenantId,
-        legalEntityId,
-        operatingUnitId: participants.source.operatingUnitId,
-        cache: operatingUnitCache,
-      });
-      const targetUnit = await loadOperatingUnitSelfBalancingConfigTx(tx, {
-        tenantId,
-        legalEntityId,
-        operatingUnitId: participants.target.operatingUnitId,
-        cache: operatingUnitCache,
-      });
+      const sourceUnit =
+        routeType === "OU_TO_CENTRAL"
+          ? await loadOperatingUnitSelfBalancingConfigTx(tx, {
+              tenantId,
+              legalEntityId,
+              operatingUnitId: participants.source.operatingUnitId,
+              cache: operatingUnitCache,
+            })
+          : null;
+      const targetUnit =
+        routeType === "CENTRAL_TO_OU"
+          ? await loadOperatingUnitSelfBalancingConfigTx(tx, {
+              tenantId,
+              legalEntityId,
+              operatingUnitId: participants.target.operatingUnitId,
+              cache: operatingUnitCache,
+            })
+          : null;
 
       if (routeType === "CENTRAL_TO_OU") {
         lines = [
@@ -864,6 +1242,13 @@ async function buildCashPostingLinesTx(tx, { tenantId, legalEntityId, cashTxn })
           }),
         ];
       } else if (routeType === "OU_TO_OU") {
+        const targetPartnerConfig = await loadOperatingUnitPartnerCurrentConfigTx(tx, {
+          tenantId,
+          legalEntityId,
+          operatingUnitId: participants.target.operatingUnitId,
+          partnerOperatingUnitId: participants.source.operatingUnitId,
+          cache: partnerCurrentCache,
+        });
         lines = [
           buildBaseLine({
             accountId: requireAccountId(
@@ -878,8 +1263,8 @@ async function buildCashPostingLinesTx(tx, { tenantId, legalEntityId, cashTxn })
           }),
           buildBaseLine({
             accountId: requireAccountId(
-              targetUnit?.ouDueToCentralAccountId,
-              "target operating unit OU Due To Central account"
+              targetPartnerConfig?.dueToAccountId,
+              "target operating unit Due To Partner OU account"
             ),
             operatingUnitId: participants.target.operatingUnitId,
             debitBase: 0,

@@ -142,6 +142,37 @@ export async function upsertOperatingUnit(payload) {
   return response.data;
 }
 
+export async function autoProvisionOperatingUnitCentralCurrentAccounts(payload) {
+  const response = await api.post(
+    "/api/v1/org/operating-units/central-current-accounts/auto-provision",
+    payload
+  );
+  return response.data;
+}
+
+export async function listOperatingUnitPartnerCurrentAccounts(params = {}) {
+  const response = await api.get(
+    `/api/v1/org/operating-unit-partner-current-accounts${toQueryString(params)}`
+  );
+  return response.data;
+}
+
+export async function upsertOperatingUnitPartnerCurrentAccount(payload) {
+  const response = await api.post(
+    "/api/v1/org/operating-unit-partner-current-accounts",
+    payload
+  );
+  return response.data;
+}
+
+export async function autoProvisionOperatingUnitPartnerCurrentAccounts(payload) {
+  const response = await api.post(
+    "/api/v1/org/operating-unit-partner-current-accounts/auto-provision",
+    payload
+  );
+  return response.data;
+}
+
 export async function listFiscalCalendars(params = {}) {
   const response = await api.get(
     `/api/v1/org/fiscal-calendars${toQueryString(params)}`

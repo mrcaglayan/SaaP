@@ -116,6 +116,41 @@ export async function fetchOperatingUnitRows({ conditions, params }) {
   return result.rows || [];
 }
 
+export async function fetchOperatingUnitPartnerCurrentAccountRows({
+  conditions,
+  params,
+}) {
+  const result = await query(
+    `SELECT
+       map.id,
+       map.tenant_id,
+       map.legal_entity_id,
+       map.operating_unit_id,
+       ou.code AS operating_unit_code,
+       ou.name AS operating_unit_name,
+       map.partner_operating_unit_id,
+       partner.code AS partner_operating_unit_code,
+       partner.name AS partner_operating_unit_name,
+       map.due_from_account_id,
+       dfa.code AS due_from_account_code,
+       dfa.name AS due_from_account_name,
+       map.due_to_account_id,
+       dta.code AS due_to_account_code,
+       dta.name AS due_to_account_name,
+       map.created_at,
+       map.updated_at
+     FROM operating_unit_partner_current_accounts map
+     JOIN operating_units ou ON ou.id = map.operating_unit_id
+     JOIN operating_units partner ON partner.id = map.partner_operating_unit_id
+     LEFT JOIN accounts dfa ON dfa.id = map.due_from_account_id
+     LEFT JOIN accounts dta ON dta.id = map.due_to_account_id
+     WHERE ${conditions.join(" AND ")}
+     ORDER BY map.legal_entity_id, ou.code, partner.code, map.id`,
+    params
+  );
+  return result.rows || [];
+}
+
 export async function fetchFiscalCalendarRows({ tenantId }) {
   const result = await query(
     `SELECT id, code, name, year_start_month, year_start_day, created_at

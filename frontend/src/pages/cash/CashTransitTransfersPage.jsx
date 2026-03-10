@@ -128,12 +128,13 @@ function mapTransitErrorMessage(rawMessage, l) {
     );
   }
   if (
-    lower.includes("self-balancing setup is invalid") &&
+    (lower.includes("self-balancing setup is invalid") ||
+      lower.includes("direct inter-branch current-account setup is invalid")) &&
     lower.includes("organization management")
   ) {
     return l(
-      "Cross-context transfer posting is blocked because OU self-balancing accounts are not configured. Complete Central Due From OU and OU Due To Central in Organization Management first.",
-      "OU self-balancing hesaplari tanimli olmadigi icin farkli baglam transfer post islemi engellendi. Once Organizasyon Yonetimi icinde Central Due From OU ve OU Due To Central alanlarini tamamlayin."
+      "Cross-context transfer posting is blocked because the required central or branch-pair current-account mappings are not configured. Complete the setup in Organization Management first.",
+      "Gerekli merkez veya sube-cifti cari hesap kurulumlari tanimli olmadigi icin farkli baglam transfer post islemi engellendi. Once Organizasyon Yonetimi icinde kurulumu tamamlayin."
     );
   }
 

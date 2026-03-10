@@ -380,6 +380,132 @@ function parseShareholderCapitalFulfillmentBaseInput(req) {
   };
 }
 
+export function parseOperatingUnitPartnerCurrentAccountUpsertInput(req) {
+  const tenantId = resolveTenantId(req);
+  if (!tenantId) {
+    throw badRequest("tenantId is required");
+  }
+
+  assertRequiredFields(req.body, [
+    "legalEntityId",
+    "operatingUnitId",
+    "partnerOperatingUnitId",
+    "dueFromAccountId",
+    "dueToAccountId",
+  ]);
+
+  const legalEntityId = parsePositiveInt(req.body.legalEntityId);
+  const operatingUnitId = parsePositiveInt(req.body.operatingUnitId);
+  const partnerOperatingUnitId = parsePositiveInt(req.body.partnerOperatingUnitId);
+  const dueFromAccountId = parsePositiveInt(req.body.dueFromAccountId);
+  const dueToAccountId = parsePositiveInt(req.body.dueToAccountId);
+
+  if (
+    !legalEntityId ||
+    !operatingUnitId ||
+    !partnerOperatingUnitId ||
+    !dueFromAccountId ||
+    !dueToAccountId
+  ) {
+    throw badRequest(
+      "legalEntityId, operatingUnitId, partnerOperatingUnitId, dueFromAccountId, and dueToAccountId must be positive integers"
+    );
+  }
+
+  return {
+    tenantId,
+    legalEntityId,
+    operatingUnitId,
+    partnerOperatingUnitId,
+    dueFromAccountId,
+    dueToAccountId,
+  };
+}
+
+export function parseOperatingUnitPartnerCurrentAccountAutoProvisionInput(req) {
+  const tenantId = resolveTenantId(req);
+  if (!tenantId) {
+    throw badRequest("tenantId is required");
+  }
+
+  assertRequiredFields(req.body, [
+    "legalEntityId",
+    "operatingUnitId",
+    "partnerOperatingUnitId",
+    "dueFromParentAccountId",
+    "dueToParentAccountId",
+  ]);
+
+  const legalEntityId = parsePositiveInt(req.body.legalEntityId);
+  const operatingUnitId = parsePositiveInt(req.body.operatingUnitId);
+  const partnerOperatingUnitId = parsePositiveInt(req.body.partnerOperatingUnitId);
+  const dueFromParentAccountId = parsePositiveInt(req.body.dueFromParentAccountId);
+  const dueToParentAccountId = parsePositiveInt(req.body.dueToParentAccountId);
+
+  if (
+    !legalEntityId ||
+    !operatingUnitId ||
+    !partnerOperatingUnitId ||
+    !dueFromParentAccountId ||
+    !dueToParentAccountId
+  ) {
+    throw badRequest(
+      "legalEntityId, operatingUnitId, partnerOperatingUnitId, dueFromParentAccountId, and dueToParentAccountId must be positive integers"
+    );
+  }
+
+  return {
+    tenantId,
+    legalEntityId,
+    operatingUnitId,
+    partnerOperatingUnitId,
+    dueFromParentAccountId,
+    dueToParentAccountId,
+  };
+}
+
+export function parseOperatingUnitCentralCurrentAccountAutoProvisionInput(req) {
+  const tenantId = resolveTenantId(req);
+  if (!tenantId) {
+    throw badRequest("tenantId is required");
+  }
+
+  assertRequiredFields(req.body, [
+    "legalEntityId",
+    "operatingUnitId",
+    "centralDueFromParentAccountId",
+    "ouDueToCentralParentAccountId",
+  ]);
+
+  const legalEntityId = parsePositiveInt(req.body.legalEntityId);
+  const operatingUnitId = parsePositiveInt(req.body.operatingUnitId);
+  const centralDueFromParentAccountId = parsePositiveInt(
+    req.body.centralDueFromParentAccountId
+  );
+  const ouDueToCentralParentAccountId = parsePositiveInt(
+    req.body.ouDueToCentralParentAccountId
+  );
+
+  if (
+    !legalEntityId ||
+    !operatingUnitId ||
+    !centralDueFromParentAccountId ||
+    !ouDueToCentralParentAccountId
+  ) {
+    throw badRequest(
+      "legalEntityId, operatingUnitId, centralDueFromParentAccountId, and ouDueToCentralParentAccountId must be positive integers"
+    );
+  }
+
+  return {
+    tenantId,
+    legalEntityId,
+    operatingUnitId,
+    centralDueFromParentAccountId,
+    ouDueToCentralParentAccountId,
+  };
+}
+
 export function parseShareholderCapitalFulfillmentPreviewInput(req) {
   return parseShareholderCapitalFulfillmentBaseInput(req);
 }

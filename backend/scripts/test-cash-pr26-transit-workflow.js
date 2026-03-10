@@ -226,6 +226,32 @@ async function createAccount({
   return accountId;
 }
 
+async function createOperatingUnitPartnerCurrentAccount({
+  token,
+  legalEntityId,
+  operatingUnitId,
+  partnerOperatingUnitId,
+  dueFromAccountId,
+  dueToAccountId,
+}) {
+  const response = await apiRequest({
+    token,
+    method: "POST",
+    path: "/api/v1/org/operating-unit-partner-current-accounts",
+    body: {
+      legalEntityId,
+      operatingUnitId,
+      partnerOperatingUnitId,
+      dueFromAccountId,
+      dueToAccountId,
+    },
+    expectedStatus: 201,
+  });
+  const id = toNumber(response.json?.id);
+  assert(id > 0, "Operating unit partner current account mapping not created");
+  return id;
+}
+
 async function createRegister({
   token,
   tenantId,
@@ -389,6 +415,38 @@ async function bootstrapTransitContext(token, identity) {
     accountType: "LIABILITY",
     normalSide: "CREDIT",
   });
+  const dueFromAccountABId = await createAccount({
+    token,
+    coaId,
+    code: `DFAB${identity.stamp}`,
+    name: "OU A Due From OU B",
+    accountType: "ASSET",
+    normalSide: "DEBIT",
+  });
+  const dueToAccountABId = await createAccount({
+    token,
+    coaId,
+    code: `DTAB${identity.stamp}`,
+    name: "OU A Due To OU B",
+    accountType: "LIABILITY",
+    normalSide: "CREDIT",
+  });
+  const dueFromAccountBAId = await createAccount({
+    token,
+    coaId,
+    code: `DFBA${identity.stamp}`,
+    name: "OU B Due From OU A",
+    accountType: "ASSET",
+    normalSide: "DEBIT",
+  });
+  const dueToAccountBAId = await createAccount({
+    token,
+    coaId,
+    code: `DTBA${identity.stamp}`,
+    name: "OU B Due To OU A",
+    accountType: "LIABILITY",
+    normalSide: "CREDIT",
+  });
   const registerAccountAId = await createAccount({
     token,
     coaId,
@@ -446,6 +504,23 @@ async function bootstrapTransitContext(token, identity) {
   const operatingUnitBId = toNumber(ouBRes.json?.id);
   assert(operatingUnitBId > 0, "operatingUnitBId not created");
 
+  await createOperatingUnitPartnerCurrentAccount({
+    token,
+    legalEntityId,
+    operatingUnitId: operatingUnitAId,
+    partnerOperatingUnitId: operatingUnitBId,
+    dueFromAccountId: dueFromAccountABId,
+    dueToAccountId: dueToAccountABId,
+  });
+  await createOperatingUnitPartnerCurrentAccount({
+    token,
+    legalEntityId,
+    operatingUnitId: operatingUnitBId,
+    partnerOperatingUnitId: operatingUnitAId,
+    dueFromAccountId: dueFromAccountBAId,
+    dueToAccountId: dueToAccountBAId,
+  });
+
   const sourceRegisterId = await createRegister({
     token,
     tenantId: identity.tenantId,
@@ -491,6 +566,10 @@ async function bootstrapTransitContext(token, identity) {
     sourceOuDueToAccountId,
     targetCentralDueFromAccountId,
     targetOuDueToAccountId,
+    dueFromAccountABId,
+    dueToAccountABId,
+    dueFromAccountBAId,
+    dueToAccountBAId,
     operatingUnitAId,
     operatingUnitBId,
     transitAccountId,
@@ -541,9 +620,7 @@ async function assertTransferOutPostingUsesSelfBalancingAccounts({
   tenantId,
   transactionId,
   sourceRegisterAccountId,
-  sourceCentralDueFromAccountId,
-  sourceOuDueToAccountId,
-  targetCentralDueFromAccountId,
+  sourceDueFromPartnerAccountId,
   sourceOperatingUnitId,
   amount,
   transitAccountId,
@@ -566,18 +643,12 @@ async function assertTransferOutPostingUsesSelfBalancingAccounts({
     [journalEntryId]
   );
   const lines = lineResult.rows || [];
-  assert(lines.length >= 4, "Expected self-balancing transfer-out journal lines");
+  assert(lines.length >= 2, "Expected direct branch transfer-out journal lines");
 
   const hasSourceOuDebit = lines.some(
     (line) =>
-      toNumber(line.account_id) === sourceOuDueToAccountId &&
+      toNumber(line.account_id) === sourceDueFromPartnerAccountId &&
       toNumber(line.operating_unit_id) === sourceOperatingUnitId &&
-      Number(line.debit_base || 0) >= Number(amount) - 0.000001
-  );
-  const hasTargetCentralDebit = lines.some(
-    (line) =>
-      toNumber(line.account_id) === targetCentralDueFromAccountId &&
-      !toNumber(line.operating_unit_id) &&
       Number(line.debit_base || 0) >= Number(amount) - 0.000001
   );
   const hasSourceCredit = lines.some(
@@ -586,25 +657,11 @@ async function assertTransferOutPostingUsesSelfBalancingAccounts({
       toNumber(line.operating_unit_id) === sourceOperatingUnitId &&
       Number(line.credit_base || 0) >= Number(amount) - 0.000001
   );
-  const hasSourceCentralCredit = lines.some(
-    (line) =>
-      toNumber(line.account_id) === sourceCentralDueFromAccountId &&
-      !toNumber(line.operating_unit_id) &&
-      Number(line.credit_base || 0) >= Number(amount) - 0.000001
-  );
   const usesTransitAccount = lines.some(
     (line) => toNumber(line.account_id) === transitAccountId
   );
-  assert(hasSourceOuDebit, "Transfer-out journal must debit source OU due-to account");
-  assert(
-    hasTargetCentralDebit,
-    "Transfer-out journal must debit target OU HQ due-from account at no-OU scope"
-  );
+  assert(hasSourceOuDebit, "Transfer-out journal must debit source OU due-from-partner account");
   assert(hasSourceCredit, "Transfer-out journal must credit source register account");
-  assert(
-    hasSourceCentralCredit,
-    "Transfer-out journal must credit source OU HQ due-from account at no-OU scope"
-  );
   assert(!usesTransitAccount, "Transfer-out journal should not post the transit clearing account");
 }
 
@@ -612,7 +669,7 @@ async function assertTransferInPostingUsesSelfBalancingAccounts({
   tenantId,
   transactionId,
   targetRegisterAccountId,
-  targetOuDueToAccountId,
+  targetDueToPartnerAccountId,
   targetOperatingUnitId,
   amount,
   transitAccountId,
@@ -645,7 +702,7 @@ async function assertTransferInPostingUsesSelfBalancingAccounts({
   );
   const hasTargetOuCredit = lines.some(
     (line) =>
-      toNumber(line.account_id) === targetOuDueToAccountId &&
+      toNumber(line.account_id) === targetDueToPartnerAccountId &&
       toNumber(line.operating_unit_id) === targetOperatingUnitId &&
       Number(line.credit_base || 0) >= Number(amount) - 0.000001
   );
@@ -654,7 +711,7 @@ async function assertTransferInPostingUsesSelfBalancingAccounts({
   );
 
   assert(hasTargetRegisterDebit, "Transfer-in journal must debit target register account");
-  assert(hasTargetOuCredit, "Transfer-in journal must credit target OU due-to account");
+  assert(hasTargetOuCredit, "Transfer-in journal must credit target OU due-to-partner account");
   assert(!usesTransitAccount, "Transfer-in journal should not post the transit clearing account");
 }
 
@@ -713,9 +770,7 @@ async function main() {
       tenantId: identity.tenantId,
       transactionId: transferOutTxnId,
       sourceRegisterAccountId: setup.sourceRegisterAccountId,
-      sourceCentralDueFromAccountId: setup.sourceCentralDueFromAccountId,
-      sourceOuDueToAccountId: setup.sourceOuDueToAccountId,
-      targetCentralDueFromAccountId: setup.targetCentralDueFromAccountId,
+      sourceDueFromPartnerAccountId: setup.dueFromAccountABId,
       sourceOperatingUnitId: setup.operatingUnitAId,
       amount: 110.5,
       transitAccountId: setup.transitAccountId,
@@ -746,7 +801,7 @@ async function main() {
       tenantId: identity.tenantId,
       transactionId: transferInTxnId,
       targetRegisterAccountId: setup.targetRegisterAccountId,
-      targetOuDueToAccountId: setup.targetOuDueToAccountId,
+      targetDueToPartnerAccountId: setup.dueToAccountBAId,
       targetOperatingUnitId: setup.operatingUnitBId,
       amount: 110.5,
       transitAccountId: setup.transitAccountId,

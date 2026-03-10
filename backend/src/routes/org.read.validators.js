@@ -19,6 +19,15 @@ export function parseLegalEntityReadFilters(rawQuery = {}) {
 export function parseOperatingUnitReadFilters(rawQuery = {}) {
   return {
     legalEntityId: parsePositiveInt(rawQuery.legalEntityId),
+    operatingUnitId: parsePositiveInt(rawQuery.operatingUnitId),
+  };
+}
+
+export function parseOperatingUnitPartnerCurrentAccountReadFilters(rawQuery = {}) {
+  return {
+    legalEntityId: parsePositiveInt(rawQuery.legalEntityId),
+    operatingUnitId: parsePositiveInt(rawQuery.operatingUnitId),
+    partnerOperatingUnitId: parsePositiveInt(rawQuery.partnerOperatingUnitId),
   };
 }
 

@@ -230,13 +230,16 @@ Goal:
 - Define the missing accounting rule for completed cross-context transfers so branch / OU balance-sheet slices can self-balance without hardcoded chart codes.
 
 Deliverables:
-- Reuse the existing OU setup mappings from `Organization Management`:
+- Reuse the existing OU setup mappings from `Organization Management` for `CENTRAL <-> OPERATING_UNIT`:
   - `operating_units.central_due_from_account_id`
   - `operating_units.ou_due_to_central_account_id`
-- Treat those mappings as shared setup reused across modules; in this PR they represent the central bridge needed for cross-context cash-transfer accounting, not a requirement that cash physically moves through an HQ register.
+- Add direct OU-pair current-account mappings for `OPERATING_UNIT <-> OPERATING_UNIT`:
+  - source OU + partner OU
+  - `due_from_account_id`
+  - `due_to_account_id`
 - Extend cross-context cash transfer posting logic so operational transit and final accounting result are both explicit.
 - Block completion of cross-context transfers when the required source/target OU internal current-account setup is missing.
-- Enforce branch-specific uniqueness for OU internal current-account mappings within the same legal entity.
+- Enforce branch-specific uniqueness for both OU central mappings and OU-pair mappings within the same legal entity.
 - Surface resolved internal-current-account usage in transfer details, previews, or diagnostics where helpful.
 - Document this as the canonical accounting pattern for any later OU-owned bank-to-bank transfer workflow as well.
 
@@ -262,25 +265,23 @@ Accounting rules:
     - `Cr source OU's central_due_from_account_id` `(no OU)`
   - `OPERATING_UNIT A -> OPERATING_UNIT B`
     - `Cr source OU A cash/register` `(with OU A)`
-    - `Dr OU A's ou_due_to_central_account_id` `(with OU A)`
-    - `Cr OU A's central_due_from_account_id` `(no OU)`
-    - `Dr OU B's central_due_from_account_id` `(no OU)`
+    - `Dr OU A's due_from_account_id for OU B` `(with OU A)`
     - `Dr target OU B cash/register` `(with OU B)`
-    - `Cr OU B's ou_due_to_central_account_id` `(with OU B)`
+    - `Cr OU B's due_to_account_id for OU A` `(with OU B)`
 - Central lines remain `operating_unit_id = null`.
 - OU-targeted lines continue to carry the exact source or target OU context.
-- For `OPERATING_UNIT A -> OPERATING_UNIT B`, the `no OU` bridge lines do not mean cash physically went through HQ; they only keep each OU balance-sheet slice self-balanced in GL.
+- For `OPERATING_UNIT A -> OPERATING_UNIT B`, no synthetic HQ / `no OU` bridge lines should appear; inter-branch receivable/payable stays directly on the source and target branches.
 
 Validation rules:
 - `CENTRAL -> OPERATING_UNIT` requires the target OU to be self-balancing ready.
 - `OPERATING_UNIT -> CENTRAL` requires the source OU to be self-balancing ready.
-- `OPERATING_UNIT A -> OPERATING_UNIT B` requires both OUs to be self-balancing ready.
+- `OPERATING_UNIT A -> OPERATING_UNIT B` requires direct OU-pair mappings in both directions before transfer-out is posted.
 - Source and target registers must still obey current ownership-context routing rules.
 - Missing OU internal-current-account mapping must fail with an actionable error that points users back to `Organization Management`.
 - `central_due_from_account_id` must not be shared by multiple operating units in the same legal entity.
 - `ou_due_to_central_account_id` should not be shared by multiple operating units in the same legal entity; block duplicates in setup and posting.
-- Cross-context transfer accounting must not invent a synthetic HQ OU row.
-- `no OU` bridge lines must not carry `subledger_reference_no`; only OU-scoped cash/internal-current lines should carry the cash subledger reference.
+- OU-pair `due_from_account_id` / `due_to_account_id` must be partner-specific and must not be reused across multiple branch pairs in the same legal entity.
+- Cross-context transfer accounting must not invent a synthetic HQ OU row for branch-to-branch transfers.
 
 Files:
 - `backend/src/services/cash.transaction.service.js`

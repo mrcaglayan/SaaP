@@ -11,6 +11,7 @@ import {
   listFiscalPeriods,
   listGroupCompanies,
   listLegalEntities,
+  listOperatingUnitPartnerCurrentAccounts,
   listOperatingUnits,
   listShareholderCapitalFulfillments,
   listShareholderJournalConfigs,
@@ -21,6 +22,7 @@ import {
   upsertFiscalCalendar,
   upsertGroupCompany,
   upsertLegalEntity,
+  upsertOperatingUnitPartnerCurrentAccount,
   upsertOperatingUnit,
   upsertShareholderJournalConfig,
   upsertShareholder,
@@ -63,6 +65,13 @@ const DEFAULT_UNIT_FORM = {
   hasSubledger: false,
   centralDueFromAccountId: "",
   ouDueToCentralAccountId: "",
+};
+const DEFAULT_UNIT_PARTNER_CURRENT_FORM = {
+  legalEntityId: "",
+  operatingUnitId: "",
+  partnerOperatingUnitId: "",
+  dueFromAccountId: "",
+  dueToAccountId: "",
 };
 const DEFAULT_CAPITAL_FULFILLMENT_FORM = {
   legalEntityId: "",
@@ -501,6 +510,8 @@ export default function OrganizationManagementPage() {
   const [accounts, setAccounts] = useState([]);
   const [legalEntities, setLegalEntities] = useState([]);
   const [operatingUnits, setOperatingUnits] = useState([]);
+  const [operatingUnitPartnerCurrentAccounts, setOperatingUnitPartnerCurrentAccounts] =
+    useState([]);
   const [shareholders, setShareholders] = useState([]);
   const [shareholderJournalConfigs, setShareholderJournalConfigs] = useState(
     []
@@ -512,8 +523,12 @@ export default function OrganizationManagementPage() {
   const [groupEditingCode, setGroupEditingCode] = useState("");
   const [legalEntityEditingCode, setLegalEntityEditingCode] = useState("");
   const [unitEditingKey, setUnitEditingKey] = useState("");
+  const [unitPartnerCurrentEditingKey, setUnitPartnerCurrentEditingKey] = useState("");
   const [entityForm, setEntityForm] = useState(DEFAULT_ENTITY_FORM);
   const [unitForm, setUnitForm] = useState(DEFAULT_UNIT_FORM);
+  const [unitPartnerCurrentForm, setUnitPartnerCurrentForm] = useState(
+    DEFAULT_UNIT_PARTNER_CURRENT_FORM
+  );
   const [shareholderForm, setShareholderForm] = useState({
     legalEntityId: "",
     code: "",
@@ -561,6 +576,7 @@ export default function OrganizationManagementPage() {
           accountsRes,
           entitiesRes,
           unitsRes,
+          unitPartnerAccountsRes,
           shareholdersRes,
           shareholderConfigsRes,
         ] =
@@ -573,6 +589,7 @@ export default function OrganizationManagementPage() {
               : Promise.resolve({ rows: [] }),
             listLegalEntities(),
             listOperatingUnits(),
+            listOperatingUnitPartnerCurrentAccounts(),
             canReadShareholders
               ? listShareholders()
               : Promise.resolve({ rows: [] }),
@@ -587,6 +604,7 @@ export default function OrganizationManagementPage() {
         const accountRows = accountsRes?.rows || [];
         const entityRows = entitiesRes?.rows || [];
         const unitRows = unitsRes?.rows || [];
+        const unitPartnerAccountRows = unitPartnerAccountsRes?.rows || [];
         const shareholderRows = shareholdersRes?.rows || [];
         const shareholderConfigRows = shareholderConfigsRes?.rows || [];
 
@@ -596,6 +614,7 @@ export default function OrganizationManagementPage() {
         setAccounts(accountRows);
         setLegalEntities(entityRows);
         setOperatingUnits(unitRows);
+        setOperatingUnitPartnerCurrentAccounts(unitPartnerAccountRows);
         setShareholders(shareholderRows);
         setShareholderJournalConfigs(shareholderConfigRows);
 
@@ -812,6 +831,71 @@ export default function OrganizationManagementPage() {
           getAccountNormalSide(account) === "CREDIT"
       ),
     [unitEligibleLeafAccounts]
+  );
+  const selectedUnitPartnerCurrentLegalEntityId = toNumber(
+    unitPartnerCurrentForm.legalEntityId
+  );
+  const selectedUnitPartnerCurrentEntityAccounts = useMemo(
+    () =>
+      accounts.filter(
+        (row) =>
+          Number(row.legal_entity_id) === Number(selectedUnitPartnerCurrentLegalEntityId)
+      ),
+    [accounts, selectedUnitPartnerCurrentLegalEntityId]
+  );
+  const selectedUnitPartnerCurrentEntityParentIds = useMemo(() => {
+    const next = new Set();
+    for (const account of selectedUnitPartnerCurrentEntityAccounts) {
+      const parentId = toNumber(account.parent_account_id);
+      if (parentId) {
+        next.add(parentId);
+      }
+    }
+    return next;
+  }, [selectedUnitPartnerCurrentEntityAccounts]);
+  const unitPartnerCurrentEligibleLeafAccounts = useMemo(
+    () =>
+      selectedUnitPartnerCurrentEntityAccounts.filter((account) => {
+        const accountId = toNumber(account.id);
+        if (!accountId) {
+          return false;
+        }
+        return (
+          Boolean(account.is_active) &&
+          isPostingEnabled(account) &&
+          !selectedUnitPartnerCurrentEntityParentIds.has(accountId)
+        );
+      }),
+    [
+      selectedUnitPartnerCurrentEntityAccounts,
+      selectedUnitPartnerCurrentEntityParentIds,
+    ]
+  );
+  const unitPartnerCurrentDueFromAccountOptions = useMemo(
+    () =>
+      unitPartnerCurrentEligibleLeafAccounts.filter(
+        (account) =>
+          String(account.account_type || "").toUpperCase() === "ASSET" &&
+          getAccountNormalSide(account) === "DEBIT"
+      ),
+    [unitPartnerCurrentEligibleLeafAccounts]
+  );
+  const unitPartnerCurrentDueToAccountOptions = useMemo(
+    () =>
+      unitPartnerCurrentEligibleLeafAccounts.filter(
+        (account) =>
+          String(account.account_type || "").toUpperCase() === "LIABILITY" &&
+          getAccountNormalSide(account) === "CREDIT"
+      ),
+    [unitPartnerCurrentEligibleLeafAccounts]
+  );
+  const selectedUnitPartnerCurrentOperatingUnits = useMemo(
+    () =>
+      operatingUnits.filter(
+        (row) =>
+          Number(row.legal_entity_id) === Number(selectedUnitPartnerCurrentLegalEntityId)
+      ),
+    [operatingUnits, selectedUnitPartnerCurrentLegalEntityId]
   );
 
   const selectedShareholderLegalEntityId = toNumber(
@@ -2119,6 +2203,16 @@ export default function OrganizationManagementPage() {
     setMessage("");
   }
 
+  function resetUnitPartnerCurrentForm() {
+    setUnitPartnerCurrentForm((prev) => ({
+      ...DEFAULT_UNIT_PARTNER_CURRENT_FORM,
+      legalEntityId: prev.legalEntityId || String(legalEntities[0]?.id || ""),
+    }));
+    setUnitPartnerCurrentEditingKey("");
+    setError("");
+    setMessage("");
+  }
+
   function handleLegalEntityEdit(row) {
     const code = String(row?.code || "").trim();
     if (!code) {
@@ -2163,6 +2257,26 @@ export default function OrganizationManagementPage() {
       hasSubledger: Boolean(row?.has_subledger),
       centralDueFromAccountId: String(row?.central_due_from_account_id || ""),
       ouDueToCentralAccountId: String(row?.ou_due_to_central_account_id || ""),
+    });
+    setError("");
+    setMessage("");
+  }
+
+  function handleOperatingUnitPartnerCurrentEdit(row) {
+    const legalEntityId = String(row?.legal_entity_id || "").trim();
+    const operatingUnitId = String(row?.operating_unit_id || "").trim();
+    const partnerOperatingUnitId = String(row?.partner_operating_unit_id || "").trim();
+    if (!legalEntityId || !operatingUnitId || !partnerOperatingUnitId) {
+      return;
+    }
+    setUnitPartnerCurrentEditingKey(`${operatingUnitId}:${partnerOperatingUnitId}`);
+    setUnitPartnerCurrentForm({
+      ...DEFAULT_UNIT_PARTNER_CURRENT_FORM,
+      legalEntityId,
+      operatingUnitId,
+      partnerOperatingUnitId,
+      dueFromAccountId: String(row?.due_from_account_id || ""),
+      dueToAccountId: String(row?.due_to_account_id || ""),
     });
     setError("");
     setMessage("");
@@ -2397,6 +2511,149 @@ export default function OrganizationManagementPage() {
       await loadCoreData();
     } catch (err) {
       setError(err?.response?.data?.message || l("Failed to save operating unit.", "Operasyon birimi kaydedilemedi."));
+    } finally {
+      setSaving("");
+    }
+  }
+
+  async function handleOperatingUnitPartnerCurrentSubmit(event) {
+    event.preventDefault();
+    if (!canUpsertOperatingUnit) {
+      setError(
+        l(
+          "Missing permission: org.operating_unit.upsert",
+          "Eksik yetki: org.operating_unit.upsert"
+        )
+      );
+      return;
+    }
+
+    const legalEntityId = toNumber(unitPartnerCurrentForm.legalEntityId);
+    const operatingUnitId = toNumber(unitPartnerCurrentForm.operatingUnitId);
+    const partnerOperatingUnitId = toNumber(unitPartnerCurrentForm.partnerOperatingUnitId);
+    const dueFromAccountId = toNumber(unitPartnerCurrentForm.dueFromAccountId);
+    const dueToAccountId = toNumber(unitPartnerCurrentForm.dueToAccountId);
+    if (!legalEntityId || !operatingUnitId || !partnerOperatingUnitId) {
+      setError(
+        l(
+          "legalEntityId, operatingUnitId, and partnerOperatingUnitId are required.",
+          "legalEntityId, operatingUnitId ve partnerOperatingUnitId zorunludur."
+        )
+      );
+      return;
+    }
+    if (!dueFromAccountId || !dueToAccountId) {
+      setError(
+        l(
+          "Both Due From Partner and Due To Partner accounts are required.",
+          "Partnerden Alacak ve Partnere Borc hesaplarinin ikisi de zorunludur."
+        )
+      );
+      return;
+    }
+    if (operatingUnitId === partnerOperatingUnitId) {
+      setError(
+        l(
+          "Source and partner operating units must be different.",
+          "Kaynak ve partner operasyon birimleri farkli olmalidir."
+        )
+      );
+      return;
+    }
+    if (dueFromAccountId === dueToAccountId) {
+      setError(
+        l(
+          "Due From Partner and Due To Partner accounts must be different.",
+          "Partnerden Alacak ve Partnere Borc hesaplari farkli olmalidir."
+        )
+      );
+      return;
+    }
+
+    const conflictingDueFromRow = (operatingUnitPartnerCurrentAccounts || []).find((row) => {
+      const rowKey = `${row?.operating_unit_id || ""}:${row?.partner_operating_unit_id || ""}`;
+      return (
+        rowKey !== unitPartnerCurrentEditingKey &&
+        toNumber(row?.legal_entity_id) === legalEntityId &&
+        toNumber(row?.due_from_account_id) === dueFromAccountId
+      );
+    });
+    if (conflictingDueFromRow) {
+      setError(
+        l(
+          `Due From Partner account is already assigned to ${formatOperatingUnitLabel({
+            code: conflictingDueFromRow.operating_unit_code,
+            name: conflictingDueFromRow.operating_unit_name,
+          })} -> ${formatOperatingUnitLabel({
+            code: conflictingDueFromRow.partner_operating_unit_code,
+            name: conflictingDueFromRow.partner_operating_unit_name,
+          })}. Use a partner-specific account.`,
+          `Partnerden Alacak hesabi zaten ${formatOperatingUnitLabel({
+            code: conflictingDueFromRow.operating_unit_code,
+            name: conflictingDueFromRow.operating_unit_name,
+          })} -> ${formatOperatingUnitLabel({
+            code: conflictingDueFromRow.partner_operating_unit_code,
+            name: conflictingDueFromRow.partner_operating_unit_name,
+          })} icin atanmis. Partnere ozel bir hesap kullanin.`
+        )
+      );
+      return;
+    }
+    const conflictingDueToRow = (operatingUnitPartnerCurrentAccounts || []).find((row) => {
+      const rowKey = `${row?.operating_unit_id || ""}:${row?.partner_operating_unit_id || ""}`;
+      return (
+        rowKey !== unitPartnerCurrentEditingKey &&
+        toNumber(row?.legal_entity_id) === legalEntityId &&
+        toNumber(row?.due_to_account_id) === dueToAccountId
+      );
+    });
+    if (conflictingDueToRow) {
+      setError(
+        l(
+          `Due To Partner account is already assigned to ${formatOperatingUnitLabel({
+            code: conflictingDueToRow.operating_unit_code,
+            name: conflictingDueToRow.operating_unit_name,
+          })} -> ${formatOperatingUnitLabel({
+            code: conflictingDueToRow.partner_operating_unit_code,
+            name: conflictingDueToRow.partner_operating_unit_name,
+          })}. Use a partner-specific account.`,
+          `Partnere Borc hesabi zaten ${formatOperatingUnitLabel({
+            code: conflictingDueToRow.operating_unit_code,
+            name: conflictingDueToRow.operating_unit_name,
+          })} -> ${formatOperatingUnitLabel({
+            code: conflictingDueToRow.partner_operating_unit_code,
+            name: conflictingDueToRow.partner_operating_unit_name,
+          })} icin atanmis. Partnere ozel bir hesap kullanin.`
+        )
+      );
+      return;
+    }
+
+    setSaving("unit-partner-current");
+    setError("");
+    setMessage("");
+    try {
+      await upsertOperatingUnitPartnerCurrentAccount({
+        legalEntityId,
+        operatingUnitId,
+        partnerOperatingUnitId,
+        dueFromAccountId,
+        dueToAccountId,
+      });
+      const successMessage = unitPartnerCurrentEditingKey
+        ? l("Branch pair current accounts updated.", "Sube cift cari hesaplari guncellendi.")
+        : l("Branch pair current accounts saved.", "Sube cift cari hesaplari kaydedildi.");
+      resetUnitPartnerCurrentForm();
+      setMessage(successMessage);
+      await loadCoreData();
+    } catch (err) {
+      setError(
+        err?.response?.data?.message ||
+          l(
+            "Failed to save branch pair current accounts.",
+            "Sube cift cari hesaplari kaydedilemedi."
+          )
+      );
     } finally {
       setSaving("");
     }
@@ -4402,6 +4659,222 @@ export default function OrganizationManagementPage() {
                     </td>
                   </tr>
                 )}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section className="rounded-xl border border-slate-200 bg-white p-4">
+          <h2 className="mb-3 text-sm font-semibold text-slate-700">
+            {l(
+              "Branch Pair Current Accounts",
+              "Sube Cift Cari Hesaplari"
+            )}
+          </h2>
+          <form
+            onSubmit={handleOperatingUnitPartnerCurrentSubmit}
+            className="grid gap-2 md:grid-cols-6"
+          >
+            <select
+              value={unitPartnerCurrentForm.legalEntityId}
+              onChange={(event) =>
+                setUnitPartnerCurrentForm((prev) => ({
+                  ...prev,
+                  legalEntityId: event.target.value,
+                  operatingUnitId: "",
+                  partnerOperatingUnitId: "",
+                  dueFromAccountId: "",
+                  dueToAccountId: "",
+                }))
+              }
+              className="rounded-lg border border-slate-300 px-3 py-2 text-sm md:col-span-2"
+              required
+            >
+              <option value="">{l("Select legal entity", "Istirak / bagli ortak secin")}</option>
+              {legalEntities.map((row) => (
+                <option key={row.id} value={row.id}>
+                  {row.code} - {row.name}
+                </option>
+              ))}
+            </select>
+            <select
+              value={unitPartnerCurrentForm.operatingUnitId}
+              onChange={(event) =>
+                setUnitPartnerCurrentForm((prev) => ({
+                  ...prev,
+                  operatingUnitId: event.target.value,
+                }))
+              }
+              className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              required
+            >
+              <option value="">{l("Source branch", "Kaynak sube")}</option>
+              {selectedUnitPartnerCurrentOperatingUnits.map((row) => (
+                <option key={row.id} value={row.id}>
+                  {formatOperatingUnitLabel(row)}
+                </option>
+              ))}
+            </select>
+            <select
+              value={unitPartnerCurrentForm.partnerOperatingUnitId}
+              onChange={(event) =>
+                setUnitPartnerCurrentForm((prev) => ({
+                  ...prev,
+                  partnerOperatingUnitId: event.target.value,
+                }))
+              }
+              className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              required
+            >
+              <option value="">{l("Partner branch", "Partner sube")}</option>
+              {selectedUnitPartnerCurrentOperatingUnits.map((row) => (
+                <option key={row.id} value={row.id}>
+                  {formatOperatingUnitLabel(row)}
+                </option>
+              ))}
+            </select>
+            <select
+              value={unitPartnerCurrentForm.dueFromAccountId}
+              onChange={(event) =>
+                setUnitPartnerCurrentForm((prev) => ({
+                  ...prev,
+                  dueFromAccountId: event.target.value,
+                }))
+              }
+              className="rounded-lg border border-slate-300 px-3 py-2 text-sm md:col-span-2"
+              required
+            >
+              <option value="">
+                {l("Due From Partner OU", "Partnerden Alacak OU")}
+              </option>
+              {unitPartnerCurrentDueFromAccountOptions.map((account) => (
+                <option key={account.id} value={account.id}>
+                  {formatAccountOptionLabel(account)}
+                </option>
+              ))}
+            </select>
+            <select
+              value={unitPartnerCurrentForm.dueToAccountId}
+              onChange={(event) =>
+                setUnitPartnerCurrentForm((prev) => ({
+                  ...prev,
+                  dueToAccountId: event.target.value,
+                }))
+              }
+              className="rounded-lg border border-slate-300 px-3 py-2 text-sm md:col-span-2"
+              required
+            >
+              <option value="">
+                {l("Due To Partner OU", "Partnere Borc OU")}
+              </option>
+              {unitPartnerCurrentDueToAccountOptions.map((account) => (
+                <option key={account.id} value={account.id}>
+                  {formatAccountOptionLabel(account)}
+                </option>
+              ))}
+            </select>
+            <div className="text-xs text-slate-500 md:col-span-6">
+              {l(
+                "Configure direct branch-pair current accounts for branch-to-branch cash transfers. Save both directions separately when cash can move both ways.",
+                "Subeler arasi nakit transferleri icin dogrudan sube cift cari hesaplarini tanimlayin. Nakit iki yone de gidecekse iki yonu ayri ayri kaydedin."
+              )}
+            </div>
+            <div className="flex flex-wrap gap-2 md:col-span-6">
+              <button
+                type="submit"
+                disabled={saving === "unit-partner-current" || !canUpsertOperatingUnit}
+                className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60"
+              >
+                {saving === "unit-partner-current"
+                  ? l("Saving...", "Kaydediliyor...")
+                  : unitPartnerCurrentEditingKey
+                    ? l("Update", "Guncelle")
+                    : l("Save", "Kaydet")}
+              </button>
+              {unitPartnerCurrentEditingKey ? (
+                <button
+                  type="button"
+                  onClick={resetUnitPartnerCurrentForm}
+                  disabled={saving === "unit-partner-current"}
+                  className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                >
+                  {l("Cancel edit", "Duzenlemeyi iptal et")}
+                </button>
+              ) : null}
+            </div>
+          </form>
+
+          <div className="mt-3 overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead className="bg-slate-50 text-left text-slate-600">
+                <tr>
+                  <th className="px-3 py-2">ID</th>
+                  <th className="px-3 py-2">{l("Entity", "Istirak / Bagli Ortak")}</th>
+                  <th className="px-3 py-2">{l("Source Branch", "Kaynak Sube")}</th>
+                  <th className="px-3 py-2">{l("Partner Branch", "Partner Sube")}</th>
+                  <th className="px-3 py-2">{l("Due From Partner", "Partnerden Alacak")}</th>
+                  <th className="px-3 py-2">{l("Due To Partner", "Partnere Borc")}</th>
+                  <th className="px-3 py-2">{l("Actions", "Islemler")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(operatingUnitPartnerCurrentAccounts || []).map((row) => {
+                  const legalEntity = legalEntityById.get(toNumber(row.legal_entity_id));
+                  const legalEntityLabel = legalEntity
+                    ? `${legalEntity.code} - ${legalEntity.name}`
+                    : "-";
+                  return (
+                    <tr
+                      key={`${row.id}-${row.operating_unit_id}-${row.partner_operating_unit_id}`}
+                      className="border-t border-slate-100"
+                    >
+                      <td className="px-3 py-2">{row.id}</td>
+                      <td className="px-3 py-2">{legalEntityLabel}</td>
+                      <td className="px-3 py-2">
+                        {formatOperatingUnitLabel({
+                          code: row.operating_unit_code,
+                          name: row.operating_unit_name,
+                        })}
+                      </td>
+                      <td className="px-3 py-2">
+                        {formatOperatingUnitLabel({
+                          code: row.partner_operating_unit_code,
+                          name: row.partner_operating_unit_name,
+                        })}
+                      </td>
+                      <td className="px-3 py-2">
+                        {row.due_from_account_code
+                          ? `${row.due_from_account_code} - ${row.due_from_account_name || ""}`.trim()
+                          : "-"}
+                      </td>
+                      <td className="px-3 py-2">
+                        {row.due_to_account_code
+                          ? `${row.due_to_account_code} - ${row.due_to_account_name || ""}`.trim()
+                          : "-"}
+                      </td>
+                      <td className="px-3 py-2">
+                        <button
+                          type="button"
+                          onClick={() => handleOperatingUnitPartnerCurrentEdit(row)}
+                          disabled={saving === "unit-partner-current" || !canUpsertOperatingUnit}
+                          className="rounded border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                        >
+                          {l("Edit", "Duzenle")}
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+                {operatingUnitPartnerCurrentAccounts.length === 0 && !loading ? (
+                  <tr>
+                    <td colSpan={7} className="px-3 py-3 text-slate-500">
+                      {l(
+                        "No branch pair current accounts found.",
+                        "Sube cift cari hesabi bulunamadi."
+                      )}
+                    </td>
+                  </tr>
+                ) : null}
               </tbody>
             </table>
           </div>

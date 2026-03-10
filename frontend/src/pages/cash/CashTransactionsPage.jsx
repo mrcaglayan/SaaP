@@ -23,6 +23,12 @@ import {
   listMeSavedViews,
   updateMeSavedView,
 } from "../../api/me.js";
+import {
+  autoProvisionOperatingUnitCentralCurrentAccounts,
+  autoProvisionOperatingUnitPartnerCurrentAccounts,
+  listOperatingUnits,
+  listOperatingUnitPartnerCurrentAccounts,
+} from "../../api/orgAdmin.js";
 import { useAuth } from "../../auth/useAuth.js";
 import MoneyText from "../../components/MoneyText.jsx";
 import StatusTimeline from "../../components/StatusTimeline.jsx";
@@ -375,6 +381,187 @@ function todayIsoDate() {
 
 function formatAccountOptionLabel(account) {
   return `${account?.code || account?.id || "-"} - ${account?.name || "-"}`;
+}
+
+function normalizeAccountCode(value) {
+  return String(value || "")
+    .trim()
+    .toUpperCase();
+}
+
+function parseChildCodeSequence(code, parentCode) {
+  const normalizedCode = normalizeAccountCode(code);
+  const normalizedParentCode = normalizeAccountCode(parentCode);
+  if (!normalizedCode || !normalizedParentCode) {
+    return null;
+  }
+
+  let suffix = "";
+  if (normalizedCode.startsWith(`${normalizedParentCode}.`)) {
+    suffix = normalizedCode.slice(normalizedParentCode.length + 1);
+  } else if (normalizedCode.startsWith(`${normalizedParentCode}-`)) {
+    suffix = normalizedCode.slice(normalizedParentCode.length + 1);
+  } else if (normalizedCode.startsWith(normalizedParentCode)) {
+    suffix = normalizedCode.slice(normalizedParentCode.length);
+  } else {
+    return null;
+  }
+
+  if (!/^\d+$/.test(suffix)) {
+    return null;
+  }
+
+  const parsed = Number(suffix);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    return null;
+  }
+
+  return {
+    value: parsed,
+    width: suffix.length,
+  };
+}
+
+function collectChildSequenceUsage(rows, parentAccount) {
+  const parentAccountId = toPositiveInt(parentAccount?.id);
+  const parentCode = normalizeAccountCode(parentAccount?.code);
+  const usedSequences = new Set();
+  let width = 2;
+  if (!parentAccountId || !parentCode) {
+    return { usedSequences, width };
+  }
+
+  for (const row of Array.isArray(rows) ? rows : []) {
+    if (
+      toPositiveInt(row?.parent_account_id ?? row?.parentAccountId) !== parentAccountId
+    ) {
+      continue;
+    }
+    const parsed = parseChildCodeSequence(row?.code, parentCode);
+    if (!parsed) {
+      continue;
+    }
+    usedSequences.add(parsed.value);
+    width = Math.max(width, parsed.width);
+  }
+
+  return {
+    usedSequences,
+    width,
+  };
+}
+
+function pickNextSharedChildSequence(assetUsage, liabilityUsage) {
+  const width = Math.max(assetUsage?.width || 2, liabilityUsage?.width || 2, 2);
+  const assetUsed = assetUsage?.usedSequences || new Set();
+  const liabilityUsed = liabilityUsage?.usedSequences || new Set();
+  for (let sequence = 1; sequence <= 999999; sequence += 1) {
+    if (!assetUsed.has(sequence) && !liabilityUsed.has(sequence)) {
+      return {
+        sequence,
+        width,
+      };
+    }
+  }
+  return null;
+}
+
+function pickNextAvailableChildSequence(usage, preferredSequence = null, preferredWidth = 2) {
+  const width = Math.max(
+    usage?.width || 2,
+    preferredWidth || 2,
+    Number.isInteger(preferredSequence) ? String(preferredSequence).length : 0,
+    2
+  );
+  const usedSequences = usage?.usedSequences || new Set();
+
+  if (
+    Number.isInteger(preferredSequence) &&
+    preferredSequence > 0 &&
+    !usedSequences.has(preferredSequence)
+  ) {
+    return {
+      sequence: preferredSequence,
+      width,
+    };
+  }
+
+  for (let sequence = 1; sequence <= 999999; sequence += 1) {
+    if (!usedSequences.has(sequence)) {
+      return {
+        sequence,
+        width,
+      };
+    }
+  }
+
+  return null;
+}
+
+function parseExistingChildSequence(code) {
+  const normalizedCode = normalizeAccountCode(code);
+  const match = normalizedCode.match(/[.-](\d+)$/);
+  if (!match?.[1]) {
+    return null;
+  }
+  const value = Number(match[1]);
+  if (!Number.isInteger(value) || value <= 0) {
+    return null;
+  }
+  return {
+    value,
+    width: match[1].length,
+  };
+}
+
+function buildChildAccountCode(parentCode, sequence, width) {
+  return `${normalizeAccountCode(parentCode)}.${String(sequence).padStart(width, "0")}`;
+}
+
+function buildOperatingUnitShortLabel(unit) {
+  const code = String(unit?.operating_unit_code || unit?.operatingUnitCode || unit?.code || "").trim();
+  const name = String(unit?.operating_unit_name || unit?.operatingUnitName || unit?.name || "").trim();
+  return (
+    code ||
+    name ||
+    `OU ${toPositiveInt(unit?.operating_unit_id || unit?.operatingUnitId || unit?.id) || "-"}`
+  );
+}
+
+function buildPartnerCurrentAccountName(operatingUnit, partnerOperatingUnit, role) {
+  const sourceLabel = buildOperatingUnitShortLabel(operatingUnit);
+  const partnerLabel = buildOperatingUnitShortLabel(partnerOperatingUnit);
+  if (role === "DUE_FROM") {
+    return `${sourceLabel} Due From ${partnerLabel}`;
+  }
+  return `${sourceLabel} Due To ${partnerLabel}`;
+}
+
+function buildCentralCurrentAccountName(operatingUnit, role) {
+  const operatingUnitLabel = buildOperatingUnitShortLabel(operatingUnit);
+  if (role === "CENTRAL_DUE_FROM") {
+    return `Central Due From ${operatingUnitLabel}`;
+  }
+  return `${operatingUnitLabel} Due To Central`;
+}
+
+function findPreferredParentAccount(rows, preferredRootCode) {
+  const normalizedPreferredRoot = normalizeAccountCode(preferredRootCode);
+  if (!normalizedPreferredRoot) {
+    return null;
+  }
+  const normalizedRows = Array.isArray(rows) ? rows : [];
+  const exact = normalizedRows.find(
+    (row) => normalizeAccountCode(row?.code) === normalizedPreferredRoot
+  );
+  if (exact) {
+    return exact;
+  }
+  return (
+    normalizedRows.find((row) =>
+      normalizeAccountCode(row?.code).startsWith(`${normalizedPreferredRoot}.`)
+    ) || null
+  );
 }
 
 function toBankAccountGlAccountId(bankAccount) {
@@ -870,7 +1057,8 @@ function mapTransactionErrorMessage(rawMessage, t) {
     return t("cashTransactions.errorsMapped.transitReverseTransferInFirst");
   }
   if (
-    lower.includes("self-balancing setup is invalid") &&
+    (lower.includes("self-balancing setup is invalid") ||
+      lower.includes("direct inter-branch current-account setup is invalid")) &&
     lower.includes("organization management")
   ) {
     return t("cashTransactions.errorsMapped.ouSelfBalancingSetupInvalid");
@@ -1008,10 +1196,13 @@ export default function CashTransactionsPage() {
   const canReverse = hasPermission("cash.txn.reverse");
   const canOverridePost = hasPermission("cash.override.post");
   const canReadAccounts = hasPermission("gl.account.read");
+  const canUpsertAccounts = hasPermission("gl.account.upsert");
   const canReadBanks = hasPermission("bank.accounts.read");
   const canReadCariCards = hasPermission("cari.card.read");
   const canReadCariReports = hasPermission("cari.report.read");
   const canApplyCari = hasPermission("cari.settlement.apply");
+  const canReadOrgTree = hasPermission("org.tree.read");
+  const canUpsertOperatingUnit = hasPermission("org.operating_unit.upsert");
 
   const [loading, setLoading] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -1030,6 +1221,25 @@ export default function CashTransactionsPage() {
   const [accounts, setAccounts] = useState([]);
   const [bankAccounts, setBankAccounts] = useState([]);
   const [bankAccountsLoading, setBankAccountsLoading] = useState(false);
+  const [centralCurrentLookupLoading, setCentralCurrentLookupLoading] = useState(false);
+  const [centralCurrentLookupWarning, setCentralCurrentLookupWarning] = useState("");
+  const [centralCurrentSetupSaving, setCentralCurrentSetupSaving] = useState(false);
+  const [selectedCentralOperatingUnitRow, setSelectedCentralOperatingUnitRow] = useState(null);
+  const [centralCurrentSetupForm, setCentralCurrentSetupForm] = useState({
+    centralDueFromParentAccountId: "",
+    ouDueToCentralParentAccountId: "",
+  });
+  const [partnerCurrentLookupLoading, setPartnerCurrentLookupLoading] = useState(false);
+  const [partnerCurrentLookupWarning, setPartnerCurrentLookupWarning] = useState("");
+  const [partnerCurrentSetupSaving, setPartnerCurrentSetupSaving] = useState(false);
+  const [selectedPartnerCurrentRows, setSelectedPartnerCurrentRows] = useState({
+    sourceToTarget: null,
+    targetToSource: null,
+  });
+  const [partnerCurrentSetupForm, setPartnerCurrentSetupForm] = useState({
+    dueFromParentAccountId: "",
+    dueToParentAccountId: "",
+  });
   const [filters, setFilters, resetFilters] = usePersistedFilters(
     CASH_TRANSACTION_FILTERS_STORAGE_SCOPE,
     () => buildInitialFilters(presetTxnType)
@@ -1105,10 +1315,76 @@ export default function CashTransactionsPage() {
     }
     return registers.find((row) => toPositiveInt(row?.id) === registerId) || null;
   }, [form.counterCashRegisterId, registers]);
+  const selectedSourceOperatingUnitId = useMemo(
+    () => toPositiveInt(selectedRegister?.operating_unit_id),
+    [selectedRegister]
+  );
+  const selectedTargetOperatingUnitId = useMemo(
+    () => toPositiveInt(selectedCounterRegister?.operating_unit_id),
+    [selectedCounterRegister]
+  );
+  const selectedCounterRegisterLegalEntityId = useMemo(
+    () => toPositiveInt(selectedCounterRegister?.legal_entity_id),
+    [selectedCounterRegister]
+  );
   const showCounterpartyFields = !isTransferTxnType(form.txnType);
   const selectedIsCrossOuTransfer = useMemo(() => {
     return isCrossOuRegisterPair(selectedRegister, selectedCounterRegister);
   }, [selectedCounterRegister, selectedRegister]);
+  const selectedCrossContextTransferRoute = useMemo(() => {
+    if (!selectedIsCrossOuTransfer) {
+      return "SAME_CONTEXT";
+    }
+    if (selectedSourceOperatingUnitId && selectedTargetOperatingUnitId) {
+      return "OU_TO_OU";
+    }
+    if (selectedSourceOperatingUnitId) {
+      return "OU_TO_CENTRAL";
+    }
+    if (selectedTargetOperatingUnitId) {
+      return "CENTRAL_TO_OU";
+    }
+    return "SAME_CONTEXT";
+  }, [
+    selectedIsCrossOuTransfer,
+    selectedSourceOperatingUnitId,
+    selectedTargetOperatingUnitId,
+  ]);
+  const selectedIsBranchToBranchTransfer = useMemo(
+    () =>
+      Boolean(
+        selectedSourceOperatingUnitId &&
+          selectedTargetOperatingUnitId &&
+          selectedSourceOperatingUnitId !== selectedTargetOperatingUnitId
+      ),
+    [selectedSourceOperatingUnitId, selectedTargetOperatingUnitId]
+  );
+  const selectedCentralCurrentOperatingUnitId = useMemo(() => {
+    if (selectedCrossContextTransferRoute === "OU_TO_CENTRAL") {
+      return selectedSourceOperatingUnitId;
+    }
+    if (selectedCrossContextTransferRoute === "CENTRAL_TO_OU") {
+      return selectedTargetOperatingUnitId;
+    }
+    return null;
+  }, [
+    selectedCrossContextTransferRoute,
+    selectedSourceOperatingUnitId,
+    selectedTargetOperatingUnitId,
+  ]);
+  const selectedCentralCurrentOperatingUnitRegister = useMemo(() => {
+    if (selectedCrossContextTransferRoute === "OU_TO_CENTRAL") {
+      return selectedRegister;
+    }
+    if (selectedCrossContextTransferRoute === "CENTRAL_TO_OU") {
+      return selectedCounterRegister;
+    }
+    return null;
+  }, [
+    selectedCounterRegister,
+    selectedCrossContextTransferRoute,
+    selectedRegister,
+  ]);
   const selectedRegisterDisplay = useMemo(
     () => (selectedRegister ? formatRegisterDisplayLabel(selectedRegister, l) : null),
     [l, selectedRegister]
@@ -1166,6 +1442,32 @@ export default function CashTransactionsPage() {
   const selectedRegisterLegalEntityId = useMemo(
     () => toPositiveInt(selectedRegister?.legal_entity_id),
     [selectedRegister]
+  );
+  const selectedTransferSharesLegalEntity = useMemo(
+    () =>
+      Boolean(
+        selectedRegisterLegalEntityId &&
+          selectedCounterRegisterLegalEntityId &&
+          selectedRegisterLegalEntityId === selectedCounterRegisterLegalEntityId
+      ),
+    [selectedCounterRegisterLegalEntityId, selectedRegisterLegalEntityId]
+  );
+  const selectedCentralCurrentSetupComplete = useMemo(
+    () =>
+      Boolean(
+        parseDbBoolean(
+          selectedCentralOperatingUnitRow?.capital_self_balancing_ready ??
+            selectedCentralOperatingUnitRow?.capitalSelfBalancingReady
+        )
+      ),
+    [selectedCentralOperatingUnitRow]
+  );
+  const selectedBranchPairCurrentSetupComplete = useMemo(
+    () =>
+      Boolean(
+        selectedPartnerCurrentRows.sourceToTarget && selectedPartnerCurrentRows.targetToSource
+      ),
+    [selectedPartnerCurrentRows]
   );
   const scopedAccountOptions = accountOptions;
   const counterAccountIsBank = isBankTxnType(form.txnType);
@@ -1346,6 +1648,404 @@ export default function CashTransactionsPage() {
       ),
     [cashPurposeMappingsByPurpose]
   );
+  const partnerCurrentDueFromParentOptions = useMemo(
+    () =>
+      [...accounts]
+        .filter((row) => {
+          const isActive = parseDbBoolean(row?.is_active ?? row?.isActive);
+          if (!isActive) {
+            return false;
+          }
+          return (
+            normalizeAccountCode(row?.account_type ?? row?.accountType) === "ASSET" &&
+            normalizeAccountCode(row?.normal_side ?? row?.normalSide) === "DEBIT"
+          );
+        })
+        .sort((a, b) => String(a?.code || "").localeCompare(String(b?.code || ""))),
+    [accounts]
+  );
+  const partnerCurrentDueToParentOptions = useMemo(
+    () =>
+      [...accounts]
+        .filter((row) => {
+          const isActive = parseDbBoolean(row?.is_active ?? row?.isActive);
+          if (!isActive) {
+            return false;
+          }
+          return (
+            normalizeAccountCode(row?.account_type ?? row?.accountType) === "LIABILITY" &&
+            normalizeAccountCode(row?.normal_side ?? row?.normalSide) === "CREDIT"
+          );
+        })
+        .sort((a, b) => String(a?.code || "").localeCompare(String(b?.code || ""))),
+    [accounts]
+  );
+  const suggestedPartnerCurrentDueFromParent = useMemo(
+    () => findPreferredParentAccount(partnerCurrentDueFromParentOptions, "132"),
+    [partnerCurrentDueFromParentOptions]
+  );
+  const suggestedPartnerCurrentDueToParent = useMemo(
+    () => findPreferredParentAccount(partnerCurrentDueToParentOptions, "339"),
+    [partnerCurrentDueToParentOptions]
+  );
+  const selectedCentralCurrentDueFromParent = useMemo(() => {
+    const parentId = toPositiveInt(centralCurrentSetupForm.centralDueFromParentAccountId);
+    if (!parentId) {
+      return null;
+    }
+    return (
+      partnerCurrentDueFromParentOptions.find((row) => toPositiveInt(row?.id) === parentId) ||
+      null
+    );
+  }, [
+    centralCurrentSetupForm.centralDueFromParentAccountId,
+    partnerCurrentDueFromParentOptions,
+  ]);
+  const selectedCentralCurrentDueToParent = useMemo(() => {
+    const parentId = toPositiveInt(centralCurrentSetupForm.ouDueToCentralParentAccountId);
+    if (!parentId) {
+      return null;
+    }
+    return (
+      partnerCurrentDueToParentOptions.find((row) => toPositiveInt(row?.id) === parentId) ||
+      null
+    );
+  }, [
+    centralCurrentSetupForm.ouDueToCentralParentAccountId,
+    partnerCurrentDueToParentOptions,
+  ]);
+  const selectedPartnerCurrentDueFromParent = useMemo(() => {
+    const parentId = toPositiveInt(partnerCurrentSetupForm.dueFromParentAccountId);
+    if (!parentId) {
+      return null;
+    }
+    return (
+      partnerCurrentDueFromParentOptions.find((row) => toPositiveInt(row?.id) === parentId) ||
+      null
+    );
+  }, [partnerCurrentDueFromParentOptions, partnerCurrentSetupForm.dueFromParentAccountId]);
+  const selectedPartnerCurrentDueToParent = useMemo(() => {
+    const parentId = toPositiveInt(partnerCurrentSetupForm.dueToParentAccountId);
+    if (!parentId) {
+      return null;
+    }
+    return (
+      partnerCurrentDueToParentOptions.find((row) => toPositiveInt(row?.id) === parentId) ||
+      null
+    );
+  }, [partnerCurrentDueToParentOptions, partnerCurrentSetupForm.dueToParentAccountId]);
+  const selectedCentralCurrentProvisionPreview = useMemo(() => {
+    if (!selectedCentralCurrentDueFromParent || !selectedCentralCurrentDueToParent) {
+      return null;
+    }
+
+    const operatingUnit =
+      selectedCentralOperatingUnitRow || selectedCentralCurrentOperatingUnitRegister;
+    if (!operatingUnit) {
+      return null;
+    }
+
+    const existingCentralDueFromCode = String(
+      firstDefinedRowValue(
+        selectedCentralOperatingUnitRow,
+        "central_due_from_account_code",
+        "centralDueFromAccountCode"
+      ) || ""
+    );
+    const existingCentralDueFromName = String(
+      firstDefinedRowValue(
+        selectedCentralOperatingUnitRow,
+        "central_due_from_account_name",
+        "centralDueFromAccountName"
+      ) || ""
+    );
+    const existingOuDueToCode = String(
+      firstDefinedRowValue(
+        selectedCentralOperatingUnitRow,
+        "ou_due_to_central_account_code",
+        "ouDueToCentralAccountCode"
+      ) || ""
+    );
+    const existingOuDueToName = String(
+      firstDefinedRowValue(
+        selectedCentralOperatingUnitRow,
+        "ou_due_to_central_account_name",
+        "ouDueToCentralAccountName"
+      ) || ""
+    );
+
+    if (selectedCentralCurrentSetupComplete) {
+      return {
+        centralDueFromCode: existingCentralDueFromCode,
+        centralDueFromName: existingCentralDueFromName,
+        ouDueToCode: existingOuDueToCode,
+        ouDueToName: existingOuDueToName,
+        centralDueFromCreated: false,
+        ouDueToCreated: false,
+      };
+    }
+
+    const centralDueFromUsage = collectChildSequenceUsage(
+      accounts,
+      selectedCentralCurrentDueFromParent
+    );
+    const ouDueToUsage = collectChildSequenceUsage(accounts, selectedCentralCurrentDueToParent);
+    const existingCentralDueFromSequence = parseExistingChildSequence(
+      existingCentralDueFromCode
+    );
+    const existingOuDueToSequence = parseExistingChildSequence(existingOuDueToCode);
+    const nextCentralDueFromSequence = existingCentralDueFromCode
+      ? null
+      : !existingOuDueToCode
+        ? pickNextSharedChildSequence(centralDueFromUsage, ouDueToUsage)
+        : pickNextAvailableChildSequence(
+            centralDueFromUsage,
+            existingOuDueToSequence?.value,
+            existingOuDueToSequence?.width
+          );
+    const nextOuDueToSequence = existingOuDueToCode
+      ? null
+      : !existingCentralDueFromCode
+        ? nextCentralDueFromSequence
+        : pickNextAvailableChildSequence(
+            ouDueToUsage,
+            existingCentralDueFromSequence?.value,
+            existingCentralDueFromSequence?.width
+          );
+
+    return {
+      centralDueFromCode:
+        existingCentralDueFromCode ||
+        buildChildAccountCode(
+          selectedCentralCurrentDueFromParent.code,
+          nextCentralDueFromSequence?.sequence || 1,
+          nextCentralDueFromSequence?.width || 2
+        ),
+      centralDueFromName:
+        existingCentralDueFromName ||
+        buildCentralCurrentAccountName(operatingUnit, "CENTRAL_DUE_FROM"),
+      ouDueToCode:
+        existingOuDueToCode ||
+        buildChildAccountCode(
+          selectedCentralCurrentDueToParent.code,
+          nextOuDueToSequence?.sequence || 1,
+          nextOuDueToSequence?.width || 2
+        ),
+      ouDueToName:
+        existingOuDueToName ||
+        buildCentralCurrentAccountName(operatingUnit, "OU_DUE_TO_CENTRAL"),
+      centralDueFromCreated: !existingCentralDueFromCode,
+      ouDueToCreated: !existingOuDueToCode,
+    };
+  }, [
+    accounts,
+    selectedCentralCurrentDueFromParent,
+    selectedCentralCurrentDueToParent,
+    selectedCentralCurrentOperatingUnitRegister,
+    selectedCentralCurrentSetupComplete,
+    selectedCentralOperatingUnitRow,
+  ]);
+  const selectedPartnerCurrentProvisionPreview = useMemo(() => {
+    if (!selectedPartnerCurrentDueFromParent || !selectedPartnerCurrentDueToParent) {
+      return null;
+    }
+
+    const dueFromUsage = collectChildSequenceUsage(accounts, selectedPartnerCurrentDueFromParent);
+    const dueToUsage = collectChildSequenceUsage(accounts, selectedPartnerCurrentDueToParent);
+    const previewRows = [];
+
+    const appendDirectionalPreview = ({
+      sourceOperatingUnit,
+      targetOperatingUnit,
+      existingMapping,
+    }) => {
+      if (existingMapping) {
+        previewRows.push({
+          key: `${firstDefinedRowValue(existingMapping, "operating_unit_id", "operatingUnitId") || ""}:${firstDefinedRowValue(existingMapping, "partner_operating_unit_id", "partnerOperatingUnitId") || ""}`,
+          sourceLabel: buildOperatingUnitShortLabel(sourceOperatingUnit),
+          targetLabel: buildOperatingUnitShortLabel(targetOperatingUnit),
+          dueFromCode: String(
+            firstDefinedRowValue(
+              existingMapping,
+              "due_from_account_code",
+              "dueFromAccountCode"
+            ) || ""
+          ),
+          dueFromName: String(
+            firstDefinedRowValue(
+              existingMapping,
+              "due_from_account_name",
+              "dueFromAccountName"
+            ) || ""
+          ),
+          dueToCode: String(
+            firstDefinedRowValue(
+              existingMapping,
+              "due_to_account_code",
+              "dueToAccountCode"
+            ) || ""
+          ),
+          dueToName: String(
+            firstDefinedRowValue(
+              existingMapping,
+              "due_to_account_name",
+              "dueToAccountName"
+            ) || ""
+          ),
+          created: false,
+        });
+        return;
+      }
+
+      const allocation = pickNextSharedChildSequence(dueFromUsage, dueToUsage);
+      if (!allocation) {
+        return;
+      }
+      dueFromUsage.usedSequences.add(allocation.sequence);
+      dueToUsage.usedSequences.add(allocation.sequence);
+
+      previewRows.push({
+        key: `${sourceOperatingUnit?.id || ""}:${targetOperatingUnit?.id || ""}`,
+        sourceLabel: buildOperatingUnitShortLabel(sourceOperatingUnit),
+        targetLabel: buildOperatingUnitShortLabel(targetOperatingUnit),
+        dueFromCode: buildChildAccountCode(
+          selectedPartnerCurrentDueFromParent.code,
+          allocation.sequence,
+          allocation.width
+        ),
+        dueFromName: buildPartnerCurrentAccountName(
+          sourceOperatingUnit,
+          targetOperatingUnit,
+          "DUE_FROM"
+        ),
+        dueToCode: buildChildAccountCode(
+          selectedPartnerCurrentDueToParent.code,
+          allocation.sequence,
+          allocation.width
+        ),
+        dueToName: buildPartnerCurrentAccountName(
+          sourceOperatingUnit,
+          targetOperatingUnit,
+          "DUE_TO"
+        ),
+        created: true,
+      });
+    };
+
+    appendDirectionalPreview({
+      sourceOperatingUnit: selectedRegister,
+      targetOperatingUnit: selectedCounterRegister,
+      existingMapping: selectedPartnerCurrentRows.sourceToTarget,
+    });
+    appendDirectionalPreview({
+      sourceOperatingUnit: selectedCounterRegister,
+      targetOperatingUnit: selectedRegister,
+      existingMapping: selectedPartnerCurrentRows.targetToSource,
+    });
+
+    return previewRows;
+  }, [
+    accounts,
+    selectedCounterRegister,
+    selectedPartnerCurrentDueFromParent,
+    selectedPartnerCurrentDueToParent,
+    selectedPartnerCurrentRows.sourceToTarget,
+    selectedPartnerCurrentRows.targetToSource,
+    selectedRegister,
+  ]);
+  const showPartnerCurrentAutoSetupPanel = useMemo(
+    () =>
+      toUpper(form.txnType) === "TRANSFER_OUT" &&
+      selectedIsBranchToBranchTransfer &&
+      selectedTransferSharesLegalEntity,
+    [
+      form.txnType,
+      selectedIsBranchToBranchTransfer,
+      selectedTransferSharesLegalEntity,
+    ]
+  );
+  const showCentralCurrentAutoSetupPanel = useMemo(
+    () =>
+      toUpper(form.txnType) === "TRANSFER_OUT" &&
+      selectedTransferSharesLegalEntity &&
+      (selectedCrossContextTransferRoute === "OU_TO_CENTRAL" ||
+        selectedCrossContextTransferRoute === "CENTRAL_TO_OU"),
+    [form.txnType, selectedCrossContextTransferRoute, selectedTransferSharesLegalEntity]
+  );
+  const centralCurrentSetupBlockedReason = useMemo(() => {
+    if (!showCentralCurrentAutoSetupPanel) {
+      return "";
+    }
+    if (!canReadOrgTree) {
+      return l(
+        "Inline central current setup needs org.tree.read permission.",
+        "Satir ici merkez cari kurulumu icin org.tree.read yetkisi gerekir."
+      );
+    }
+    if (!canReadAccounts) {
+      return l(
+        "Inline central current setup needs gl.account.read permission.",
+        "Satir ici merkez cari kurulumu icin gl.account.read yetkisi gerekir."
+      );
+    }
+    if (!canUpsertAccounts) {
+      return l(
+        "Inline central current setup needs gl.account.upsert permission.",
+        "Satir ici merkez cari kurulumu icin gl.account.upsert yetkisi gerekir."
+      );
+    }
+    if (!canUpsertOperatingUnit) {
+      return l(
+        "Inline central current setup needs org.operating_unit.upsert permission.",
+        "Satir ici merkez cari kurulumu icin org.operating_unit.upsert yetkisi gerekir."
+      );
+    }
+    return "";
+  }, [
+    canReadAccounts,
+    canReadOrgTree,
+    canUpsertAccounts,
+    canUpsertOperatingUnit,
+    l,
+    showCentralCurrentAutoSetupPanel,
+  ]);
+  const partnerCurrentSetupBlockedReason = useMemo(() => {
+    if (!showPartnerCurrentAutoSetupPanel) {
+      return "";
+    }
+    if (!canReadOrgTree) {
+      return l(
+        "Inline branch-pair setup needs org.tree.read permission.",
+        "Satir ici sube cift kurulumu icin org.tree.read yetkisi gerekir."
+      );
+    }
+    if (!canReadAccounts) {
+      return l(
+        "Inline branch-pair setup needs gl.account.read permission.",
+        "Satir ici sube cift kurulumu icin gl.account.read yetkisi gerekir."
+      );
+    }
+    if (!canUpsertAccounts) {
+      return l(
+        "Inline branch-pair setup needs gl.account.upsert permission.",
+        "Satir ici sube cift kurulumu icin gl.account.upsert yetkisi gerekir."
+      );
+    }
+    if (!canUpsertOperatingUnit) {
+      return l(
+        "Inline branch-pair setup needs org.operating_unit.upsert permission.",
+        "Satir ici sube cift kurulumu icin org.operating_unit.upsert yetkisi gerekir."
+      );
+    }
+    return "";
+  }, [
+    canReadAccounts,
+    canReadOrgTree,
+    canUpsertAccounts,
+    canUpsertOperatingUnit,
+    l,
+    showPartnerCurrentAutoSetupPanel,
+  ]);
   const counterpartyPickerReady = canReadCariCards && toPositiveInt(selectedRegister?.legal_entity_id);
   const counterpartyFallbackHint = useMemo(() => {
     if (counterpartyPickerReady) {
@@ -2494,6 +3194,216 @@ export default function CashTransactionsPage() {
   }, [canRead, canReadAccounts, selectedRegisterLegalEntityId, t]);
 
   useEffect(() => {
+    setSelectedCentralOperatingUnitRow(null);
+    setCentralCurrentSetupForm({
+      centralDueFromParentAccountId: "",
+      ouDueToCentralParentAccountId: "",
+    });
+  }, [
+    selectedCrossContextTransferRoute,
+    selectedCentralCurrentOperatingUnitId,
+    selectedRegisterLegalEntityId,
+  ]);
+
+  useEffect(() => {
+    if (
+      !showCentralCurrentAutoSetupPanel ||
+      !canRead ||
+      !canReadOrgTree ||
+      !selectedRegisterLegalEntityId ||
+      !selectedCentralCurrentOperatingUnitId
+    ) {
+      setSelectedCentralOperatingUnitRow(null);
+      setCentralCurrentLookupLoading(false);
+      setCentralCurrentLookupWarning("");
+      return;
+    }
+
+    let active = true;
+    setCentralCurrentLookupLoading(true);
+    setCentralCurrentLookupWarning("");
+
+    listOperatingUnits({
+      legalEntityId: selectedRegisterLegalEntityId,
+      operatingUnitId: selectedCentralCurrentOperatingUnitId,
+    })
+      .then((result) => {
+        if (!active) {
+          return;
+        }
+        const row = result?.rows?.[0] || null;
+        setSelectedCentralOperatingUnitRow(row);
+        if (!row) {
+          setCentralCurrentLookupWarning(
+            l(
+              "Selected branch current-account setup could not be loaded.",
+              "Secili sube cari hesap kurulumu yuklenemedi."
+            )
+          );
+        }
+      })
+      .catch((err) => {
+        if (!active) {
+          return;
+        }
+        setSelectedCentralOperatingUnitRow(null);
+        setCentralCurrentLookupWarning(
+          err?.response?.data?.message || err?.message || ""
+        );
+      })
+      .finally(() => {
+        if (active) {
+          setCentralCurrentLookupLoading(false);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [
+    canRead,
+    canReadOrgTree,
+    l,
+    selectedCentralCurrentOperatingUnitId,
+    selectedRegisterLegalEntityId,
+    showCentralCurrentAutoSetupPanel,
+  ]);
+
+  useEffect(() => {
+    if (!showCentralCurrentAutoSetupPanel || centralCurrentSetupBlockedReason) {
+      return;
+    }
+
+    setCentralCurrentSetupForm((prev) => ({
+      centralDueFromParentAccountId:
+        prev.centralDueFromParentAccountId ||
+        String(suggestedPartnerCurrentDueFromParent?.id || ""),
+      ouDueToCentralParentAccountId:
+        prev.ouDueToCentralParentAccountId ||
+        String(suggestedPartnerCurrentDueToParent?.id || ""),
+    }));
+  }, [
+    centralCurrentSetupBlockedReason,
+    showCentralCurrentAutoSetupPanel,
+    suggestedPartnerCurrentDueFromParent?.id,
+    suggestedPartnerCurrentDueToParent?.id,
+  ]);
+
+  useEffect(() => {
+    setSelectedPartnerCurrentRows({
+      sourceToTarget: null,
+      targetToSource: null,
+    });
+    setPartnerCurrentSetupForm({
+      dueFromParentAccountId: "",
+      dueToParentAccountId: "",
+    });
+  }, [
+    selectedRegisterLegalEntityId,
+    selectedSourceOperatingUnitId,
+    selectedTargetOperatingUnitId,
+  ]);
+
+  useEffect(() => {
+    if (
+      !showPartnerCurrentAutoSetupPanel ||
+      !canRead ||
+      !canReadOrgTree ||
+      !selectedRegisterLegalEntityId ||
+      !selectedSourceOperatingUnitId ||
+      !selectedTargetOperatingUnitId
+    ) {
+      setSelectedPartnerCurrentRows({
+        sourceToTarget: null,
+        targetToSource: null,
+      });
+      setPartnerCurrentLookupLoading(false);
+      setPartnerCurrentLookupWarning("");
+      return;
+    }
+
+    let active = true;
+    setPartnerCurrentLookupLoading(true);
+    setPartnerCurrentLookupWarning("");
+
+    Promise.allSettled([
+      listOperatingUnitPartnerCurrentAccounts({
+        legalEntityId: selectedRegisterLegalEntityId,
+        operatingUnitId: selectedSourceOperatingUnitId,
+        partnerOperatingUnitId: selectedTargetOperatingUnitId,
+      }),
+      listOperatingUnitPartnerCurrentAccounts({
+        legalEntityId: selectedRegisterLegalEntityId,
+        operatingUnitId: selectedTargetOperatingUnitId,
+        partnerOperatingUnitId: selectedSourceOperatingUnitId,
+      }),
+    ])
+      .then(([sourceResult, targetResult]) => {
+        if (!active) {
+          return;
+        }
+
+        const warnings = [];
+        const sourceToTarget =
+          sourceResult.status === "fulfilled"
+            ? sourceResult.value?.rows?.[0] || null
+            : null;
+        const targetToSource =
+          targetResult.status === "fulfilled"
+            ? targetResult.value?.rows?.[0] || null
+            : null;
+        if (sourceResult.status !== "fulfilled") {
+          warnings.push(sourceResult.reason?.response?.data?.message || sourceResult.reason?.message);
+        }
+        if (targetResult.status !== "fulfilled") {
+          warnings.push(targetResult.reason?.response?.data?.message || targetResult.reason?.message);
+        }
+
+        setSelectedPartnerCurrentRows({
+          sourceToTarget,
+          targetToSource,
+        });
+        setPartnerCurrentLookupWarning(warnings.filter(Boolean).join(" "));
+      })
+      .finally(() => {
+        if (active) {
+          setPartnerCurrentLookupLoading(false);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [
+    canRead,
+    canReadOrgTree,
+    selectedRegisterLegalEntityId,
+    selectedSourceOperatingUnitId,
+    selectedTargetOperatingUnitId,
+    showPartnerCurrentAutoSetupPanel,
+  ]);
+
+  useEffect(() => {
+    if (!showPartnerCurrentAutoSetupPanel || partnerCurrentSetupBlockedReason) {
+      return;
+    }
+
+    setPartnerCurrentSetupForm((prev) => ({
+      dueFromParentAccountId:
+        prev.dueFromParentAccountId ||
+        String(suggestedPartnerCurrentDueFromParent?.id || ""),
+      dueToParentAccountId:
+        prev.dueToParentAccountId ||
+        String(suggestedPartnerCurrentDueToParent?.id || ""),
+    }));
+  }, [
+    partnerCurrentSetupBlockedReason,
+    showPartnerCurrentAutoSetupPanel,
+    suggestedPartnerCurrentDueFromParent?.id,
+    suggestedPartnerCurrentDueToParent?.id,
+  ]);
+
+  useEffect(() => {
     if (!canRead || !canReadBanks || !counterAccountIsBank || !selectedRegisterLegalEntityId) {
       setBankAccounts([]);
       setBankAccountLookupWarning("");
@@ -2926,6 +3836,205 @@ export default function CashTransactionsPage() {
     });
   }
 
+  async function handleAutoProvisionCentralCurrentSetup() {
+    clearMessages();
+
+    if (!canUpsertAccounts) {
+      setSimpleError(
+        l(
+          "Missing permission: gl.account.upsert",
+          "Eksik yetki: gl.account.upsert"
+        )
+      );
+      return;
+    }
+    if (!canUpsertOperatingUnit) {
+      setSimpleError(
+        l(
+          "Missing permission: org.operating_unit.upsert",
+          "Eksik yetki: org.operating_unit.upsert"
+        )
+      );
+      return;
+    }
+    if (!selectedRegisterLegalEntityId || !selectedCentralCurrentOperatingUnitId) {
+      setSimpleError(
+        l(
+          "Select the center and branch registers first.",
+          "Once merkez ve sube kasalarini secin."
+        )
+      );
+      return;
+    }
+
+    const centralDueFromParentAccountId = toPositiveInt(
+      centralCurrentSetupForm.centralDueFromParentAccountId
+    );
+    const ouDueToCentralParentAccountId = toPositiveInt(
+      centralCurrentSetupForm.ouDueToCentralParentAccountId
+    );
+    if (!centralDueFromParentAccountId || !ouDueToCentralParentAccountId) {
+      setSimpleError(
+        l(
+          "Select Central Due From and OU Due To Central parent accounts first.",
+          "Once Merkezin Sube Alacagi ve Subenin Merkeze Borcu ebeveyn hesaplarini secin."
+        )
+      );
+      return;
+    }
+
+    setCentralCurrentSetupSaving(true);
+    try {
+      const response = await autoProvisionOperatingUnitCentralCurrentAccounts({
+        legalEntityId: selectedRegisterLegalEntityId,
+        operatingUnitId: selectedCentralCurrentOperatingUnitId,
+        centralDueFromParentAccountId,
+        ouDueToCentralParentAccountId,
+      });
+
+      if (canReadAccounts) {
+        const refreshedAccounts = await listAccounts({
+          legalEntityId: selectedRegisterLegalEntityId,
+          includeInactive: true,
+          limit: 600,
+        });
+        setAccounts(Array.isArray(refreshedAccounts?.rows) ? refreshedAccounts.rows : []);
+      }
+
+      setSelectedCentralOperatingUnitRow(response?.operatingUnit || null);
+      setCentralCurrentLookupWarning("");
+
+      const createdAccountsCount = Array.isArray(response?.createdAccounts)
+        ? response.createdAccounts.length
+        : 0;
+      setMessage(
+        l(
+          `Central current accounts are ready.${createdAccountsCount > 0 ? ` ${createdAccountsCount} child accounts created.` : " Existing setup reused."}`,
+          `Merkez cari hesaplari hazir.${createdAccountsCount > 0 ? ` ${createdAccountsCount} alt hesap olusturuldu.` : " Mevcut kurulum kullanildi."}`
+        )
+      );
+    } catch (err) {
+      const errorState = toTransactionErrorState(
+        err,
+        t,
+        "cashTransactions.errors.create"
+      );
+      setError(errorState.message);
+      setErrorRequestId(errorState.requestId || extractRequestId(err));
+    } finally {
+      setCentralCurrentSetupSaving(false);
+    }
+  }
+
+  async function handleAutoProvisionPartnerCurrentSetup() {
+    clearMessages();
+
+    if (!canUpsertAccounts) {
+      setSimpleError(
+        l(
+          "Missing permission: gl.account.upsert",
+          "Eksik yetki: gl.account.upsert"
+        )
+      );
+      return;
+    }
+    if (!canUpsertOperatingUnit) {
+      setSimpleError(
+        l(
+          "Missing permission: org.operating_unit.upsert",
+          "Eksik yetki: org.operating_unit.upsert"
+        )
+      );
+      return;
+    }
+    if (!selectedRegisterLegalEntityId || !selectedSourceOperatingUnitId || !selectedTargetOperatingUnitId) {
+      setSimpleError(
+        l(
+          "Select both branch registers first.",
+          "Once her iki sube kasasini secin."
+        )
+      );
+      return;
+    }
+
+    const dueFromParentAccountId = toPositiveInt(
+      partnerCurrentSetupForm.dueFromParentAccountId
+    );
+    const dueToParentAccountId = toPositiveInt(partnerCurrentSetupForm.dueToParentAccountId);
+    if (!dueFromParentAccountId || !dueToParentAccountId) {
+      setSimpleError(
+        l(
+          "Select Due From and Due To parent accounts first.",
+          "Once Partnerden Alacak ve Partnere Borc ebeveyn hesaplarini secin."
+        )
+      );
+      return;
+    }
+
+    setPartnerCurrentSetupSaving(true);
+    try {
+      const response = await autoProvisionOperatingUnitPartnerCurrentAccounts({
+        legalEntityId: selectedRegisterLegalEntityId,
+        operatingUnitId: selectedSourceOperatingUnitId,
+        partnerOperatingUnitId: selectedTargetOperatingUnitId,
+        dueFromParentAccountId,
+        dueToParentAccountId,
+      });
+
+      if (canReadAccounts) {
+        const refreshedAccounts = await listAccounts({
+          legalEntityId: selectedRegisterLegalEntityId,
+          includeInactive: true,
+          limit: 600,
+        });
+        setAccounts(Array.isArray(refreshedAccounts?.rows) ? refreshedAccounts.rows : []);
+      }
+
+      const mappingRows = Array.isArray(response?.mappings) ? response.mappings : [];
+      const sourceToTarget =
+        mappingRows.find(
+          (row) =>
+            toPositiveInt(row?.operatingUnitId ?? row?.operating_unit_id) ===
+              selectedSourceOperatingUnitId &&
+            toPositiveInt(row?.partnerOperatingUnitId ?? row?.partner_operating_unit_id) ===
+              selectedTargetOperatingUnitId
+        ) || null;
+      const targetToSource =
+        mappingRows.find(
+          (row) =>
+            toPositiveInt(row?.operatingUnitId ?? row?.operating_unit_id) ===
+              selectedTargetOperatingUnitId &&
+            toPositiveInt(row?.partnerOperatingUnitId ?? row?.partner_operating_unit_id) ===
+              selectedSourceOperatingUnitId
+        ) || null;
+      setSelectedPartnerCurrentRows({
+        sourceToTarget,
+        targetToSource,
+      });
+      setPartnerCurrentLookupWarning("");
+
+      const createdAccountsCount = Array.isArray(response?.createdAccounts)
+        ? response.createdAccounts.length
+        : 0;
+      setMessage(
+        l(
+          `Branch-pair current accounts are ready.${createdAccountsCount > 0 ? ` ${createdAccountsCount} child accounts created.` : " Existing setup reused."}`,
+          `Sube cift cari hesaplari hazir.${createdAccountsCount > 0 ? ` ${createdAccountsCount} alt hesap olusturuldu.` : " Mevcut kurulum kullanildi."}`
+        )
+      );
+    } catch (err) {
+      const errorState = toTransactionErrorState(
+        err,
+        t,
+        "cashTransactions.errors.create"
+      );
+      setError(errorState.message);
+      setErrorRequestId(errorState.requestId || extractRequestId(err));
+    } finally {
+      setPartnerCurrentSetupSaving(false);
+    }
+  }
+
   async function handleCreateTransaction(event) {
     event.preventDefault();
     clearMessages();
@@ -2992,6 +4101,39 @@ export default function CashTransactionsPage() {
     }
     if (counterCashRegisterId && counterCashRegisterId === registerId) {
       setSimpleError(t("cashTransactions.errors.counterRegisterSame"));
+      return;
+    }
+    if (
+      txnType === "TRANSFER_OUT" &&
+      showCentralCurrentAutoSetupPanel &&
+      canReadOrgTree &&
+      !centralCurrentLookupWarning &&
+      !centralCurrentLookupLoading &&
+      !selectedCentralCurrentSetupComplete
+    ) {
+      setSimpleError(
+        l(
+          "Central current accounts are missing for the selected branch. Create them from the inline setup panel below before starting the transfer.",
+          "Secili sube icin merkez cari hesaplari eksik. Transferi baslatmadan once asagidaki satir ici kurulum panelinden olusturun."
+        )
+      );
+      return;
+    }
+    if (
+      txnType === "TRANSFER_OUT" &&
+      selectedIsBranchToBranchTransfer &&
+      selectedTransferSharesLegalEntity &&
+      canReadOrgTree &&
+      !partnerCurrentLookupWarning &&
+      !partnerCurrentLookupLoading &&
+      !selectedBranchPairCurrentSetupComplete
+    ) {
+      setSimpleError(
+        l(
+          "Branch-pair current accounts are missing. Create them from the inline setup panel below before starting the transfer.",
+          "Sube cift cari hesaplari eksik. Transferi baslatmadan once asagidaki satir ici kurulum panelinden olusturun."
+        )
+      );
       return;
     }
 
@@ -4292,6 +5434,375 @@ export default function CashTransactionsPage() {
               </div>
             ) : null}
 
+            {showCentralCurrentAutoSetupPanel ? (
+              <div className="md:col-span-3 rounded-lg border border-teal-200 bg-teal-50 px-3 py-3 text-sm text-teal-950">
+                <div className="font-semibold">
+                  {l(
+                    "Center / Branch Current Accounts",
+                    "Merkez / Sube Cari Hesaplari"
+                  )}
+                </div>
+                <div className="mt-1 text-xs text-teal-900">
+                  {l(
+                    "Center-to-branch transfers still use the branch's Central Due From OU and OU Due To Central setup. This page can create the missing child accounts and update the selected branch mapping without leaving Kasa Islemleri.",
+                    "Merkezden subeye transferler hala subenin Merkezin Sube Alacagi ve Subenin Merkeze Borcu kurulumunu kullanir. Bu sayfa eksik alt hesaplari olusturup secili sube eslesmesini Kasa Islemleri icinden guncelleyebilir."
+                  )}
+                </div>
+
+                {centralCurrentLookupLoading ? (
+                  <div className="mt-2 rounded-md border border-teal-200 bg-white px-3 py-2 text-xs text-teal-900">
+                    {l(
+                      "Checking existing central current setup...",
+                      "Mevcut merkez cari kurulumu kontrol ediliyor..."
+                    )}
+                  </div>
+                ) : null}
+
+                {centralCurrentLookupWarning ? (
+                  <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                    {centralCurrentLookupWarning}
+                  </div>
+                ) : null}
+
+                {selectedCentralCurrentSetupComplete ? (
+                  <div className="mt-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
+                    <div className="font-semibold">
+                      {l("Setup ready", "Kurulum hazir")}
+                    </div>
+                    <div className="mt-1">
+                      {l("Branch", "Sube")}:{" "}
+                      {buildOperatingUnitShortLabel(
+                        selectedCentralOperatingUnitRow || selectedCentralCurrentOperatingUnitRegister
+                      )}
+                    </div>
+                    <div className="mt-1">
+                      {l("Central Due From OU", "Merkezin Sube Alacagi")}:{" "}
+                      {String(
+                        firstDefinedRowValue(
+                          selectedCentralOperatingUnitRow,
+                          "central_due_from_account_code",
+                          "centralDueFromAccountCode"
+                        ) || "-"
+                      )}
+                    </div>
+                    <div className="mt-1">
+                      {l("OU Due To Central", "Subenin Merkeze Borcu")}:{" "}
+                      {String(
+                        firstDefinedRowValue(
+                          selectedCentralOperatingUnitRow,
+                          "ou_due_to_central_account_code",
+                          "ouDueToCentralAccountCode"
+                        ) || "-"
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    {centralCurrentSetupBlockedReason ? (
+                      <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                        {centralCurrentSetupBlockedReason}
+                      </div>
+                    ) : (
+                      <>
+                        <div className="mt-3 grid gap-2 md:grid-cols-2">
+                          <label className="text-xs font-semibold uppercase tracking-wide text-teal-950">
+                            {l("Central Due From Parent", "Merkezin Sube Alacagi Ebeveyn")}
+                            <select
+                              value={centralCurrentSetupForm.centralDueFromParentAccountId}
+                              onChange={(event) =>
+                                setCentralCurrentSetupForm((prev) => ({
+                                  ...prev,
+                                  centralDueFromParentAccountId: event.target.value,
+                                }))
+                              }
+                              className="mt-1 w-full rounded-lg border border-teal-300 bg-white px-3 py-2 text-sm font-normal text-slate-900"
+                              disabled={centralCurrentSetupSaving}
+                            >
+                              <option value="">
+                                {l(
+                                  "Select asset parent account",
+                                  "Varlik ebeveyn hesabini secin"
+                                )}
+                              </option>
+                              {partnerCurrentDueFromParentOptions.map((account) => (
+                                <option key={`central-current-due-from-parent-${account.id}`} value={account.id}>
+                                  {formatAccountOptionLabel(account)}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <label className="text-xs font-semibold uppercase tracking-wide text-teal-950">
+                            {l("OU Due To Central Parent", "Subenin Merkeze Borcu Ebeveyn")}
+                            <select
+                              value={centralCurrentSetupForm.ouDueToCentralParentAccountId}
+                              onChange={(event) =>
+                                setCentralCurrentSetupForm((prev) => ({
+                                  ...prev,
+                                  ouDueToCentralParentAccountId: event.target.value,
+                                }))
+                              }
+                              className="mt-1 w-full rounded-lg border border-teal-300 bg-white px-3 py-2 text-sm font-normal text-slate-900"
+                              disabled={centralCurrentSetupSaving}
+                            >
+                              <option value="">
+                                {l(
+                                  "Select liability parent account",
+                                  "Yukumluluk ebeveyn hesabini secin"
+                                )}
+                              </option>
+                              {partnerCurrentDueToParentOptions.map((account) => (
+                                <option key={`central-current-due-to-parent-${account.id}`} value={account.id}>
+                                  {formatAccountOptionLabel(account)}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                        </div>
+
+                        {selectedCentralCurrentProvisionPreview ? (
+                          <div className="mt-3 rounded-md border border-teal-200 bg-white px-3 py-2 text-xs text-slate-700">
+                            <div className="font-semibold text-teal-900">
+                              {l("Provision preview", "Kurulum onizlemesi")}
+                            </div>
+                            <div className="mt-2 rounded border border-slate-200 bg-slate-50 px-2 py-2">
+                              <div className="font-semibold text-slate-900">
+                                {buildOperatingUnitShortLabel(
+                                  selectedCentralOperatingUnitRow || selectedCentralCurrentOperatingUnitRegister
+                                )}
+                              </div>
+                              <div className="mt-1">
+                                {l("Central Due From", "Merkezin Sube Alacagi")}:{" "}
+                                {selectedCentralCurrentProvisionPreview.centralDueFromCode} -{" "}
+                                {selectedCentralCurrentProvisionPreview.centralDueFromName}
+                                {selectedCentralCurrentProvisionPreview.centralDueFromCreated
+                                  ? ` | ${l("new", "yeni")}`
+                                  : ` | ${l("existing", "mevcut")}`}
+                              </div>
+                              <div className="mt-1">
+                                {l("OU Due To Central", "Subenin Merkeze Borcu")}:{" "}
+                                {selectedCentralCurrentProvisionPreview.ouDueToCode} -{" "}
+                                {selectedCentralCurrentProvisionPreview.ouDueToName}
+                                {selectedCentralCurrentProvisionPreview.ouDueToCreated
+                                  ? ` | ${l("new", "yeni")}`
+                                  : ` | ${l("existing", "mevcut")}`}
+                              </div>
+                            </div>
+                          </div>
+                        ) : null}
+
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            onClick={handleAutoProvisionCentralCurrentSetup}
+                            disabled={
+                              centralCurrentSetupSaving ||
+                              centralCurrentLookupLoading ||
+                              !centralCurrentSetupForm.centralDueFromParentAccountId ||
+                              !centralCurrentSetupForm.ouDueToCentralParentAccountId
+                            }
+                            className="rounded-lg bg-teal-700 px-3 py-2 text-sm font-semibold text-white hover:bg-teal-800 disabled:opacity-60"
+                          >
+                            {centralCurrentSetupSaving
+                              ? l("Creating central current accounts...", "Merkez cari hesaplari olusturuluyor...")
+                              : l("Create central current accounts", "Merkez cari hesaplarini olustur")}
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </>
+                )}
+              </div>
+            ) : null}
+
+            {showPartnerCurrentAutoSetupPanel ? (
+              <div className="md:col-span-3 rounded-lg border border-cyan-200 bg-cyan-50 px-3 py-3 text-sm text-cyan-900">
+                <div className="font-semibold">
+                  {l(
+                    "Branch Pair Current Accounts",
+                    "Sube Cift Cari Hesaplari"
+                  )}
+                </div>
+                <div className="mt-1 text-xs text-cyan-900">
+                  {l(
+                    "For direct branch-to-branch balancing, this transfer needs reciprocal Due From / Due To partner setup for both branches. The page can create the missing child accounts and save both pair mappings for the selected registers.",
+                    "Dogrudan subeden subeye denkleme icin bu transfer her iki sube icin de karsilikli Partnerden Alacak / Partnere Borc kurulumu ister. Bu sayfa secili kasalar icin eksik alt hesaplari olusturup her iki cift eslesmesini kaydedebilir."
+                  )}
+                </div>
+
+                {partnerCurrentLookupLoading ? (
+                  <div className="mt-2 rounded-md border border-cyan-200 bg-white px-3 py-2 text-xs text-cyan-800">
+                    {l(
+                      "Checking existing branch-pair setup...",
+                      "Mevcut sube cift kurulumu kontrol ediliyor..."
+                    )}
+                  </div>
+                ) : null}
+
+                {partnerCurrentLookupWarning ? (
+                  <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                    {partnerCurrentLookupWarning}
+                  </div>
+                ) : null}
+
+                {selectedBranchPairCurrentSetupComplete ? (
+                  <div className="mt-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
+                    <div className="font-semibold">
+                      {l("Setup ready", "Kurulum hazir")}
+                    </div>
+                    <div className="mt-1">
+                      {buildOperatingUnitShortLabel(selectedRegister)}{" "}
+                      {"->"}{" "}
+                      {buildOperatingUnitShortLabel(selectedCounterRegister)}:
+                      {" "}
+                      {String(
+                        firstDefinedRowValue(
+                          selectedPartnerCurrentRows.sourceToTarget,
+                          "due_from_account_code",
+                          "dueFromAccountCode"
+                        ) || "-"
+                      )}
+                      {" / "}
+                      {String(
+                        firstDefinedRowValue(
+                          selectedPartnerCurrentRows.sourceToTarget,
+                          "due_to_account_code",
+                          "dueToAccountCode"
+                        ) || "-"
+                      )}
+                    </div>
+                    <div className="mt-1">
+                      {buildOperatingUnitShortLabel(selectedCounterRegister)}{" "}
+                      {"->"}{" "}
+                      {buildOperatingUnitShortLabel(selectedRegister)}:
+                      {" "}
+                      {String(
+                        firstDefinedRowValue(
+                          selectedPartnerCurrentRows.targetToSource,
+                          "due_from_account_code",
+                          "dueFromAccountCode"
+                        ) || "-"
+                      )}
+                      {" / "}
+                      {String(
+                        firstDefinedRowValue(
+                          selectedPartnerCurrentRows.targetToSource,
+                          "due_to_account_code",
+                          "dueToAccountCode"
+                        ) || "-"
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    {partnerCurrentSetupBlockedReason ? (
+                      <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                        {partnerCurrentSetupBlockedReason}
+                      </div>
+                    ) : (
+                      <>
+                        <div className="mt-3 grid gap-2 md:grid-cols-2">
+                          <label className="text-xs font-semibold uppercase tracking-wide text-cyan-900">
+                            {l("Due From Parent", "Partnerden Alacak Ebeveyn")}
+                            <select
+                              value={partnerCurrentSetupForm.dueFromParentAccountId}
+                              onChange={(event) =>
+                                setPartnerCurrentSetupForm((prev) => ({
+                                  ...prev,
+                                  dueFromParentAccountId: event.target.value,
+                                }))
+                              }
+                              className="mt-1 w-full rounded-lg border border-cyan-300 bg-white px-3 py-2 text-sm font-normal text-slate-900"
+                              disabled={partnerCurrentSetupSaving}
+                            >
+                              <option value="">
+                                {l(
+                                  "Select asset parent account",
+                                  "Varlik ebeveyn hesabini secin"
+                                )}
+                              </option>
+                              {partnerCurrentDueFromParentOptions.map((account) => (
+                                <option key={`partner-current-due-from-parent-${account.id}`} value={account.id}>
+                                  {formatAccountOptionLabel(account)}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <label className="text-xs font-semibold uppercase tracking-wide text-cyan-900">
+                            {l("Due To Parent", "Partnere Borc Ebeveyn")}
+                            <select
+                              value={partnerCurrentSetupForm.dueToParentAccountId}
+                              onChange={(event) =>
+                                setPartnerCurrentSetupForm((prev) => ({
+                                  ...prev,
+                                  dueToParentAccountId: event.target.value,
+                                }))
+                              }
+                              className="mt-1 w-full rounded-lg border border-cyan-300 bg-white px-3 py-2 text-sm font-normal text-slate-900"
+                              disabled={partnerCurrentSetupSaving}
+                            >
+                              <option value="">
+                                {l(
+                                  "Select liability parent account",
+                                  "Yukumluluk ebeveyn hesabini secin"
+                                )}
+                              </option>
+                              {partnerCurrentDueToParentOptions.map((account) => (
+                                <option key={`partner-current-due-to-parent-${account.id}`} value={account.id}>
+                                  {formatAccountOptionLabel(account)}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                        </div>
+
+                        {selectedPartnerCurrentProvisionPreview?.length > 0 ? (
+                          <div className="mt-3 rounded-md border border-cyan-200 bg-white px-3 py-2 text-xs text-slate-700">
+                            <div className="font-semibold text-cyan-900">
+                              {l("Provision preview", "Kurulum onizlemesi")}
+                            </div>
+                            {selectedPartnerCurrentProvisionPreview.map((row) => (
+                              <div key={row.key} className="mt-2 rounded border border-slate-200 bg-slate-50 px-2 py-2">
+                                <div className="font-semibold text-slate-900">
+                                  {row.sourceLabel} {"->"} {row.targetLabel}
+                                  {row.created
+                                    ? ` | ${l("new", "yeni")}`
+                                    : ` | ${l("existing", "mevcut")}`}
+                                </div>
+                                <div className="mt-1">
+                                  {l("Due From", "Partnerden Alacak")}: {row.dueFromCode} - {row.dueFromName}
+                                </div>
+                                <div className="mt-1">
+                                  {l("Due To", "Partnere Borc")}: {row.dueToCode} - {row.dueToName}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : null}
+
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            onClick={handleAutoProvisionPartnerCurrentSetup}
+                            disabled={
+                              partnerCurrentSetupSaving ||
+                              partnerCurrentLookupLoading ||
+                              !partnerCurrentSetupForm.dueFromParentAccountId ||
+                              !partnerCurrentSetupForm.dueToParentAccountId
+                            }
+                            className="rounded-lg bg-cyan-700 px-3 py-2 text-sm font-semibold text-white hover:bg-cyan-800 disabled:opacity-60"
+                          >
+                            {partnerCurrentSetupSaving
+                              ? l("Creating branch pair accounts...", "Sube cift hesaplari olusturuluyor...")
+                              : l("Create branch pair accounts", "Sube cift hesaplarini olustur")}
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </>
+                )}
+              </div>
+            ) : null}
+
             <textarea
               value={form.description}
               onChange={(event) =>
@@ -4305,7 +5816,9 @@ export default function CashTransactionsPage() {
             <div className="md:col-span-3 flex flex-wrap gap-2">
               <button
                 type="submit"
-                disabled={creating}
+                disabled={
+                  creating || partnerCurrentSetupSaving || centralCurrentSetupSaving
+                }
                 className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
               >
                 {creating
