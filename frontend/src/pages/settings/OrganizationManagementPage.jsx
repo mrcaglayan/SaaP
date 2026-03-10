@@ -30,7 +30,7 @@ import {
 import {
   createBankAccount,
   listBankAccounts,
-  provisionBankAccount102Child,
+  provisionBankAccountControlParentChild,
 } from "../../api/bankAccounts.js";
 import { listCashRegisters, listCashSessions } from "../../api/cashAdmin.js";
 import { listAccounts } from "../../api/glAdmin.js";
@@ -96,7 +96,7 @@ const DEFAULT_CAPITAL_FULFILLMENT_BANK_FORM = {
   iban: "",
   accountNo: "",
   isActive: true,
-  autoProvision102: true,
+  autoProvisionControlParent: true,
   glAccountName: "",
 };
 
@@ -234,9 +234,9 @@ function buildCapitalFulfillmentBankForm(defaultCurrencyCode = "") {
 
 function generateProvisionIdempotencyKey() {
   if (globalThis.crypto && typeof globalThis.crypto.randomUUID === "function") {
-    return `org-capital-fulfillment-bank-${globalThis.crypto.randomUUID()}`;
+    return `org-capital-fulfillment-bank-control-parent-${globalThis.crypto.randomUUID()}`;
   }
-  return `org-capital-fulfillment-bank-${Date.now()}-${Math.random()
+  return `org-capital-fulfillment-bank-control-parent-${Date.now()}-${Math.random()
     .toString(36)
     .slice(2, 10)}`;
 }
@@ -1433,6 +1433,10 @@ export default function OrganizationManagementPage() {
   );
   const capitalFulfillmentLegalEntityId = toNumber(
     capitalFulfillmentForm.legalEntityId
+  );
+  const selectedBankControlParentReadiness = getModuleRow(
+    "bankControlParent",
+    capitalFulfillmentLegalEntityId
   );
   const capitalFulfillmentOperatingUnitId = toNumber(
     capitalFulfillmentForm.operatingUnitId
@@ -3156,7 +3160,9 @@ export default function OrganizationManagementPage() {
       .trim()
       .toUpperCase();
     const glAccountId = toNumber(capitalFulfillmentCreateBankForm.glAccountId);
-    const autoProvision102 = Boolean(capitalFulfillmentCreateBankForm.autoProvision102);
+    const autoProvisionControlParent = Boolean(
+      capitalFulfillmentCreateBankForm.autoProvisionControlParent
+    );
     const glAccountName = String(capitalFulfillmentCreateBankForm.glAccountName || "").trim();
 
     if (!legalEntityId) {
@@ -3183,11 +3189,11 @@ export default function OrganizationManagementPage() {
       );
       return;
     }
-    if (!autoProvision102 && !glAccountId) {
+    if (!autoProvisionControlParent && !glAccountId) {
       setCapitalFulfillmentCreateBankError(
         l(
-          "Select a GL account or turn on 102 auto-provisioning.",
-          "Bir GL hesap secin veya 102 otomatik olusturmayi acin."
+          "Select a GL account or turn on control-parent auto-provisioning.",
+          "Bir GL hesap secin veya kontrol-parent otomatik olusturmayi acin."
         )
       );
       return;
@@ -3209,8 +3215,8 @@ export default function OrganizationManagementPage() {
         isActive: Boolean(capitalFulfillmentCreateBankForm.isActive),
       };
 
-      const response = autoProvision102
-        ? await provisionBankAccount102Child(
+      const response = autoProvisionControlParent
+        ? await provisionBankAccountControlParentChild(
           {
             ...basePayload,
             glAccountName: glAccountName || undefined,
@@ -3247,7 +3253,7 @@ export default function OrganizationManagementPage() {
       setCapitalFulfillmentCreateBankModalOpen(false);
       setCapitalFulfillmentCreateBankForm(buildCapitalFulfillmentBankForm());
       setMessage(
-        autoProvision102
+        autoProvisionControlParent
           ? l(
             "Bank account created, linked, and selected for this fulfillment.",
             "Banka hesabi olusturuldu, baglandi ve bu karsilama icin secildi."
@@ -6901,14 +6907,39 @@ export default function OrganizationManagementPage() {
                 />
               </label>
 
+              {selectedBankControlParentReadiness ? (
+                <div
+                  className={`rounded-md border px-3 py-2 text-[11px] md:col-span-2 ${
+                    selectedBankControlParentReadiness.ready
+                      ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+                      : "border-amber-200 bg-amber-50 text-amber-900"
+                  }`}
+                >
+                  <div className="font-semibold">
+                    {l("Bank control-parent readiness", "Banka kontrol-parent hazirligi")}
+                  </div>
+                  <p className="mt-1">
+                    {selectedBankControlParentReadiness.ready
+                      ? l(
+                        "BANK_CONTROL_PARENT is configured for this legal entity.",
+                        "Bu legal entity icin BANK_CONTROL_PARENT yapilandirildi."
+                      )
+                      : l(
+                        "BANK_CONTROL_PARENT setup is incomplete. Configure the bank control parent in GL Setup before relying on automatic child creation.",
+                        "BANK_CONTROL_PARENT kurulumu eksik. Otomatik cocuk hesap olusturmaya guvenmeden once GL Setup ekraninda banka kontrol-parent hesabini tanimlayin."
+                      )}
+                  </p>
+                </div>
+              ) : null}
+
               <div className="rounded-md border border-cyan-200 bg-cyan-50 p-3 md:col-span-2">
                 <label className="flex items-center gap-2 text-xs font-semibold text-cyan-900">
                   <input
                     type="checkbox"
-                    checked={Boolean(capitalFulfillmentCreateBankForm.autoProvision102)}
+                    checked={Boolean(capitalFulfillmentCreateBankForm.autoProvisionControlParent)}
                     onChange={(event) =>
                       updateCapitalFulfillmentCreateBankForm({
-                        autoProvision102: event.target.checked,
+                        autoProvisionControlParent: event.target.checked,
                         glAccountId: event.target.checked
                           ? ""
                           : capitalFulfillmentCreateBankForm.glAccountId,
@@ -6919,14 +6950,14 @@ export default function OrganizationManagementPage() {
                     }
                   />
                   {l(
-                    "Auto-create 102 child GL account and link it",
-                    "102 alt GL hesabini otomatik olustur ve bagla"
+                    "Auto-create a control-parent child GL account and link it",
+                    "Kontrol-parent altinda GL cocuk hesabi otomatik olustur ve bagla"
                   )}
                 </label>
                 <p className="mt-1 text-[11px] text-cyan-800">
                   {l(
-                    "Recommended when this scope has no bank destination yet. The system provisions a child under control account 102 and links it automatically.",
-                    "Bu kapsama ait banka hedefi henuz yoksa onerilir. Sistem 102 kontrol hesabi altinda bir cocuk hesap olusturur ve otomatik baglar."
+                    "Recommended when this scope has no bank destination yet. The system provisions a child under the configured bank control parent and links it automatically.",
+                    "Bu kapsama ait banka hedefi henuz yoksa onerilir. Sistem yapilandirilmis banka kontrol-parent hesabi altinda bir cocuk hesap olusturur ve otomatik baglar."
                   )}
                 </p>
                 {!canReadAccounts ? (
@@ -6937,7 +6968,7 @@ export default function OrganizationManagementPage() {
                     )}
                   </p>
                 ) : null}
-                {capitalFulfillmentCreateBankForm.autoProvision102 ? (
+                {capitalFulfillmentCreateBankForm.autoProvisionControlParent ? (
                   <label className="mt-3 block">
                     <span className="mb-1 block text-[11px] font-semibold text-cyan-900">
                       {l("Child GL name (optional)", "Cocuk GL adi (opsiyonel)")}
@@ -6960,7 +6991,7 @@ export default function OrganizationManagementPage() {
                 ) : null}
               </div>
 
-              {!capitalFulfillmentCreateBankForm.autoProvision102 ? (
+              {!capitalFulfillmentCreateBankForm.autoProvisionControlParent ? (
                 <label className="block md:col-span-2">
                   <span className="mb-1 block text-[11px] font-semibold text-slate-600">
                     {l("GL account", "GL hesap")}
@@ -6974,7 +7005,7 @@ export default function OrganizationManagementPage() {
                     }
                     className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs"
                     disabled={capitalFulfillmentCreateBankSaving || !canReadAccounts}
-                    required={!capitalFulfillmentCreateBankForm.autoProvision102}
+                    required={!capitalFulfillmentCreateBankForm.autoProvisionControlParent}
                   >
                     <option value="">
                       {capitalFulfillmentBankGlAccountOptions.length > 0
@@ -6989,8 +7020,8 @@ export default function OrganizationManagementPage() {
                   </select>
                   <p className="mt-1 text-[11px] text-slate-500">
                     {l(
-                      "Only ACTIVE, postable, leaf ASSET accounts are listed. In strict mode, keep auto-provision on or choose a 102 child account.",
-                      "Sadece AKTIF, post edilebilir, yaprak ASSET hesaplar listelenir. Strict modda otomatik olusturmayi acik tutun veya 102 alt hesabi secin."
+                      "Only ACTIVE, postable, leaf ASSET accounts are listed. In strict mode, keep auto-provision on or choose a child account under the configured bank control parent.",
+                      "Sadece AKTIF, post edilebilir, yaprak ASSET hesaplar listelenir. Strict modda otomatik olusturmayi acik tutun veya yapilandirilmis banka kontrol-parent hesabi altindan bir cocuk hesap secin."
                     )}
                   </p>
                 </label>
@@ -7090,8 +7121,11 @@ export default function OrganizationManagementPage() {
                 >
                   {capitalFulfillmentCreateBankSaving
                     ? l("Creating...", "Olusturuluyor...")
-                    : capitalFulfillmentCreateBankForm.autoProvision102
-                      ? l("Create bank (102 auto)", "Banka olustur (102 otomatik)")
+                    : capitalFulfillmentCreateBankForm.autoProvisionControlParent
+                      ? l(
+                        "Create bank (control parent auto)",
+                        "Banka olustur (kontrol-parent otomatik)"
+                      )
                       : l("Create bank", "Banka olustur")}
                 </button>
               </div>

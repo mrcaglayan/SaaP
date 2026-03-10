@@ -1,6 +1,11 @@
 do 1 here old 1000+ content:  
 # 06 - CANONICAL IMPLEMENTATION PLAN (VERBATIM MERGE)
 
+## Archive Status Note
+- This file is historical archive content, not the current tracker/spec source.
+- For current implementation status use `06-CANONICAL-IMPLEMENTATION-PLAN.md`, `10-EXECUTION TRACKER.md`, and `23-BANK-CONTROL-PARENT-PURPOSE-MAPPING.md`.
+- Historical bank references to literal `102` in this archive were superseded by the BANK control-parent cutover on March 11, 2026.
+
 ## Unified Execution Order (Single Source of Truth)
 Use this order only for implementation planning and tracking:
 

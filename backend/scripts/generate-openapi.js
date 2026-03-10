@@ -2088,7 +2088,7 @@ function applyBankAccountOperationOverrides(specObject) {
       },
       required: ["legalEntityId", "code", "name", "currencyCode", "glAccountId"],
     },
-    BankAccountProvision102ChildRequest: {
+    BankAccountProvisionControlParentChildRequest: {
       type: "object",
       properties: {
         legalEntityId: intId,
@@ -2105,7 +2105,8 @@ function applyBankAccountOperationOverrides(specObject) {
           type: "string",
           maxLength: 255,
           nullable: true,
-          description: "Optional display name for the auto-created 102 child GL account",
+          description:
+            "Optional display name for the auto-created child GL account under the configured bank control parent",
         },
       },
       required: ["legalEntityId", "code", "name", "currencyCode"],
@@ -2129,7 +2130,7 @@ function applyBankAccountOperationOverrides(specObject) {
         "allocationSequence",
       ],
     },
-    BankAccountProvision102ChildResponse: {
+    BankAccountProvisionControlParentChildResponse: {
       type: "object",
       properties: {
         tenantId: intId,
@@ -2240,28 +2241,32 @@ function applyBankAccountOperationOverrides(specObject) {
     },
   };
 
-  paths["/api/v1/bank/accounts/provision-102-child"] = {
+  paths["/api/v1/bank/accounts/provision-control-parent-child"] = {
     post: {
       tags: ["Bank"],
-      operationId: "provisionBankAccount102Child",
-      summary: "Provision bank account and auto-create 102 child GL account",
+      operationId: "provisionBankAccountControlParentChild",
+      summary:
+        "Provision bank account and auto-create a child GL account under the configured bank control parent",
       parameters: [
         {
           in: "header",
           name: "Idempotency-Key",
           required: false,
-          description: "Optional idempotency key for replay-safe 102-child bank provisioning",
+          description:
+            "Optional idempotency key for replay-safe bank control-parent child provisioning",
           schema: { type: "string", maxLength: 190 },
         },
       ],
-      requestBody: bodyFromRef("#/components/schemas/BankAccountProvision102ChildRequest"),
+      requestBody: bodyFromRef(
+        "#/components/schemas/BankAccountProvisionControlParentChildRequest"
+      ),
       responses: {
         "200": jsonResponse(
-          "#/components/schemas/BankAccountProvision102ChildResponse",
+          "#/components/schemas/BankAccountProvisionControlParentChildResponse",
           "Idempotent replay response"
         ),
         "201": jsonResponse(
-          "#/components/schemas/BankAccountProvision102ChildResponse",
+          "#/components/schemas/BankAccountProvisionControlParentChildResponse",
           "Provisioned bank account created"
         ),
         "400": errorResponseRef,

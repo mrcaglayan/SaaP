@@ -219,6 +219,16 @@ function validateCariPurposeRow({ accountRow, definition, fieldLabel }) {
   }
 }
 
+function validateBankPurposeRow({ accountRow, definition, fieldLabel }) {
+  const rules = definition?.target?.rules || {};
+  if (rules.accountType && toUpper(accountRow.account_type) !== toUpper(rules.accountType)) {
+    throw badRequest(`${fieldLabel} must have accountType=${toUpper(rules.accountType)}`);
+  }
+  if (rules.normalSide && toUpper(accountRow.normal_side) !== toUpper(rules.normalSide)) {
+    throw badRequest(`${fieldLabel} must have normalSide=${toUpper(rules.normalSide)}`);
+  }
+}
+
 async function validateShareholderPurposeRow({
   tx,
   tenantId,
@@ -426,6 +436,12 @@ async function applyPolicyPackWithTx({
         legalEntityId: normalizedLegalEntityId,
         purposeCode: row.purposeCode,
         accountId: row.accountId,
+        fieldLabel,
+      });
+    } else if (definition?.moduleKey === "bankControlParent") {
+      validateBankPurposeRow({
+        accountRow,
+        definition,
         fieldLabel,
       });
     } else {

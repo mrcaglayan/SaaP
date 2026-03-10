@@ -17,6 +17,8 @@ const CASH_CLEARING_PURPOSE_CODES = Object.freeze([
   "CASH_TRANSIT_CLEARING",
 ]);
 
+const BANK_REQUIRED_PURPOSE_CODES = Object.freeze(["BANK_CONTROL_PARENT"]);
+
 function buildCashClearingTarget({ purposeCode, matchCodes, suggestCode, suggestName }) {
   return Object.freeze({
     purposeCode,
@@ -60,6 +62,36 @@ function buildCashClearingModule({
         matchCodes: transitMatchCodes,
         suggestCode: transitSuggestCode,
         suggestName: "Cash Transit Clearing",
+      }),
+    ]),
+  });
+}
+
+function buildBankControlParentModule({
+  matchCodes,
+  suggestCode,
+  suggestName,
+}) {
+  return Object.freeze({
+    moduleKey: "bankControlParent",
+    label: "Bank control parent",
+    requiredPurposeCodes: BANK_REQUIRED_PURPOSE_CODES,
+    purposeTargets: Object.freeze([
+      Object.freeze({
+        purposeCode: BANK_REQUIRED_PURPOSE_CODES[0],
+        rules: Object.freeze({
+          accountType: "ASSET",
+        }),
+        match: Object.freeze({
+          codeExact: Object.freeze(matchCodes),
+        }),
+        suggestCreate: Object.freeze({
+          code: suggestCode,
+          name: suggestName,
+          accountType: "ASSET",
+          normalSide: "DEBIT",
+          allowPosting: false,
+        }),
       }),
     ]),
   });
@@ -2538,6 +2570,11 @@ const PACKS = Object.freeze([
           }),
         ]),
       }),
+      buildBankControlParentModule({
+        matchCodes: Object.freeze(["102"]),
+        suggestCode: "102",
+        suggestName: "Bank Control Parent",
+      }),
       buildCashClearingModule({
         exchangeMatchCodes: Object.freeze(["108.01", "108"]),
         transitMatchCodes: Object.freeze(["108.02", "108"]),
@@ -2708,6 +2745,11 @@ const PACKS = Object.freeze([
           }),
         ]),
       }),
+      buildBankControlParentModule({
+        matchCodes: Object.freeze(["1150"]),
+        suggestCode: "1150",
+        suggestName: "Cash and Bank",
+      }),
       buildCashClearingModule({
         exchangeMatchCodes: Object.freeze(["1151", "1150"]),
         transitMatchCodes: Object.freeze(["1152", "1150"]),
@@ -2877,6 +2919,11 @@ const PACKS = Object.freeze([
             }),
           }),
         ]),
+      }),
+      buildBankControlParentModule({
+        matchCodes: Object.freeze(["1150"]),
+        suggestCode: "1150",
+        suggestName: "Cash and Bank",
       }),
       buildCashClearingModule({
         exchangeMatchCodes: Object.freeze(["1151", "1150"]),

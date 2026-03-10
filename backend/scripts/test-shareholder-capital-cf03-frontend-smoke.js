@@ -30,32 +30,40 @@ async function main() {
   assert(
     pageSource.includes("listBankAccounts") &&
       pageSource.includes("createBankAccount") &&
-      pageSource.includes("provisionBankAccount102Child") &&
+      pageSource.includes("provisionBankAccountControlParentChild") &&
       pageSource.includes("capitalFulfillmentModalOpen") &&
       pageSource.includes("Record capital fulfillment") &&
       pageSource.includes("Create bank") &&
+      pageSource.includes("control-parent") &&
+      !pageSource.includes("autoProvision102") &&
+      !pageSource.includes("102 auto") &&
       pageSource.includes("handleCapitalFulfillmentCreateBank") &&
       pageSource.includes("handlePreviewCapitalFulfillment") &&
       pageSource.includes("handleCreateCapitalFulfillment") &&
       pageSource.includes("Preview fulfillment") &&
       pageSource.includes("Post fulfillment"),
-    "OrganizationManagementPage should provide bank-backed capital fulfillment modal with inline bank creation plus preview/post actions"
+    "OrganizationManagementPage should provide bank-backed capital fulfillment modal with inline neutral control-parent bank creation plus preview/post actions"
   );
 
   const openapiSource = await readFile(path.resolve(root, "backend/openapi.yaml"), "utf8");
   assert(
     openapiSource.includes('"summary": "List bank accounts"') &&
-      openapiSource.includes('"summary": "Provision bank account and auto-create 102 child GL account"') &&
+      openapiSource.includes(
+        '"summary": "Provision bank account and auto-create a child GL account under the configured bank control parent"'
+      ) &&
       openapiSource.includes('"summary": "List shareholder capital fulfillments"') &&
       openapiSource.includes('"summary": "Preview shareholder capital fulfillment"') &&
       openapiSource.includes('"summary": "Create shareholder capital fulfillment"') &&
       openapiSource.includes('"summary": "Reverse shareholder capital fulfillment"') &&
-      openapiSource.includes("#/components/schemas/BankAccountProvision102ChildResponse") &&
+      openapiSource.includes(
+        "#/components/schemas/BankAccountProvisionControlParentChildResponse"
+      ) &&
       openapiSource.includes("#/components/schemas/ShareholderCapitalFulfillmentPreviewResponse") &&
+      !openapiSource.includes('"/api/v1/bank/accounts/provision-102-child"') &&
       !openapiSource.includes('Auto-generated: GET /api/v1/bank/accounts') &&
       !openapiSource.includes('Auto-generated: POST /api/v1/org/shareholders/capital-fulfillments') &&
       !openapiSource.includes('Auto-generated: POST /api/v1/org/shareholders/capital-fulfillments/preview'),
-    "OpenAPI should document bank-account provisioning and shareholder capital fulfillment endpoints with concrete schemas"
+    "OpenAPI should document neutral bank-account provisioning and shareholder capital fulfillment endpoints with concrete schemas"
   );
 
   const runbookSource = await readFile(

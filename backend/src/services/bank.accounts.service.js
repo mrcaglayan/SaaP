@@ -9,8 +9,9 @@ import {
 import { badRequest, parsePositiveInt } from "../routes/_utils.js";
 
 const FEATURE_SUBACCOUNTS_V1 = "FEATURE_SUBACCOUNTS_V1";
-const PROVISION_102_CHILD_SUFFIX_WIDTH = 3;
-const PROVISION_102_CHILD_MAX_ATTEMPTS = 500;
+const BANK_CONTROL_PARENT_PURPOSE_CODE = "BANK_CONTROL_PARENT";
+const PROVISION_CHILD_SUFFIX_WIDTH = 3;
+const PROVISION_CHILD_MAX_ATTEMPTS = 500;
 
 function parseDbBoolean(value) {
   return value === true || value === 1 || value === "1";
@@ -281,6 +282,145 @@ async function isTenantFeatureEnabled({
   }
 }
 
+function getStrictBankControlParentMissingMessage() {
+  return "Strict bank policy is enabled (feature_subaccounts_v1), but BANK_CONTROL_PARENT purpose mapping is missing for legalEntityId. Configure BANK_CONTROL_PARENT in GL Setup or disable strict mode for this tenant.";
+}
+
+function getStrictBankControlParentInvalidMessage() {
+  return "Strict bank policy is enabled (feature_subaccounts_v1), but BANK_CONTROL_PARENT mapping is invalid for legalEntityId. It must reference an ACTIVE ASSET account in the selected legal-entity chart.";
+}
+
+function getProvisionBankControlParentMissingMessage() {
+  return "BANK_CONTROL_PARENT purpose mapping is missing for legalEntityId. Configure BANK_CONTROL_PARENT before one-click provisioning.";
+}
+
+function getProvisionBankControlParentInvalidMessage() {
+  return "BANK_CONTROL_PARENT mapping must reference an ACTIVE ASSET account in the selected legal-entity chart before one-click provisioning.";
+}
+
+function evaluateBankControlParentMappingRow({
+  row,
+  tenantId,
+  legalEntityId,
+}) {
+  const mappedAccountId = parsePositiveInt(row?.mapped_account_id);
+  const accountId = parsePositiveInt(row?.id);
+  const coaTenantId = parsePositiveInt(row?.coa_tenant_id);
+  const coaLegalEntityId = parsePositiveInt(row?.coa_legal_entity_id);
+  const scope = normalizeUpperText(row?.coa_scope);
+  const accountType = normalizeUpperText(row?.account_type);
+  const isActive = parseDbBoolean(row?.is_active);
+
+  if (!mappedAccountId || !accountId) {
+    return { valid: false, reason: "MAPPED_ACCOUNT_MISSING" };
+  }
+  if (coaTenantId !== parsePositiveInt(tenantId)) {
+    return { valid: false, reason: "TENANT_MISMATCH" };
+  }
+  if (scope !== "LEGAL_ENTITY") {
+    return { valid: false, reason: "LEGAL_ENTITY_CHART_REQUIRED" };
+  }
+  if (coaLegalEntityId !== parsePositiveInt(legalEntityId)) {
+    return { valid: false, reason: "LEGAL_ENTITY_MISMATCH" };
+  }
+  if (!isActive) {
+    return { valid: false, reason: "INACTIVE_ACCOUNT" };
+  }
+  if (accountType !== "ASSET") {
+    return { valid: false, reason: "ASSET_REQUIRED" };
+  }
+  return { valid: true, reason: "" };
+}
+
+async function loadBankControlParentMappingRow({
+  tenantId,
+  legalEntityId,
+  runQuery = query,
+  forUpdate = false,
+}) {
+  try {
+    const lockClause = forUpdate ? " FOR UPDATE" : "";
+    const result = await runQuery(
+      `SELECT
+         jpa.account_id AS mapped_account_id,
+         a.id,
+         a.coa_id,
+         a.code,
+         a.name,
+         a.account_type,
+         a.normal_side,
+         a.allow_posting,
+         a.is_active,
+         c.tenant_id AS coa_tenant_id,
+         c.scope AS coa_scope,
+         c.legal_entity_id AS coa_legal_entity_id
+       FROM journal_purpose_accounts jpa
+       LEFT JOIN accounts a ON a.id = jpa.account_id
+       LEFT JOIN charts_of_accounts c ON c.id = a.coa_id
+       WHERE jpa.tenant_id = ?
+         AND jpa.legal_entity_id = ?
+         AND jpa.purpose_code = ?
+       LIMIT 1${lockClause}`,
+      [tenantId, legalEntityId, BANK_CONTROL_PARENT_PURPOSE_CODE]
+    );
+    return result.rows?.[0] || null;
+  } catch (err) {
+    if (isMissingTableError(err)) {
+      return null;
+    }
+    throw err;
+  }
+}
+
+async function resolveBankControlParentForStrictValidation({
+  tenantId,
+  legalEntityId,
+  runQuery = query,
+}) {
+  const row = await loadBankControlParentMappingRow({
+    tenantId,
+    legalEntityId,
+    runQuery,
+  });
+  if (!row) {
+    throw badRequest(getStrictBankControlParentMissingMessage());
+  }
+  const validation = evaluateBankControlParentMappingRow({
+    row,
+    tenantId,
+    legalEntityId,
+  });
+  if (!validation.valid) {
+    throw badRequest(getStrictBankControlParentInvalidMessage());
+  }
+  return row;
+}
+
+async function lockBankControlParentForProvision({
+  tenantId,
+  legalEntityId,
+  runQuery = query,
+}) {
+  const row = await loadBankControlParentMappingRow({
+    tenantId,
+    legalEntityId,
+    runQuery,
+    forUpdate: true,
+  });
+  if (!row) {
+    throw badRequest(getProvisionBankControlParentMissingMessage());
+  }
+  const validation = evaluateBankControlParentMappingRow({
+    row,
+    tenantId,
+    legalEntityId,
+  });
+  if (!validation.valid) {
+    throw badRequest(getProvisionBankControlParentInvalidMessage());
+  }
+  return row;
+}
+
 async function validateBankAccountOperatingUnit({
   tenantId,
   legalEntityId,
@@ -453,104 +593,39 @@ async function fetchBankLinkableGlAccount({
     throw badRequest(`${label} must reference a leaf account`);
   }
 
-  const strict102Mode = await isTenantFeatureEnabled({
+  const strictBankMode = await isTenantFeatureEnabled({
     tenantId,
     featureCode: FEATURE_SUBACCOUNTS_V1,
     runQuery,
   });
-  if (!strict102Mode) {
+  if (!strictBankMode) {
     // Fallback strategy: when strict mode is disabled, keep baseline ASSET+ACTIVE+postable+leaf checks only.
     return row;
   }
 
-  const control102 = await findControl102Account({
+  const bankControlParent = await resolveBankControlParentForStrictValidation({
     tenantId,
     legalEntityId,
     runQuery,
   });
-  if (!control102) {
+  if (parsePositiveInt(row.id) === parsePositiveInt(bankControlParent.id)) {
     throw badRequest(
-      "Strict bank policy is enabled (feature_subaccounts_v1), but control account code 102 is missing for legalEntityId. Create account 102 or disable strict mode for this tenant."
+      `${label} must be a postable leaf descendant under BANK_CONTROL_PARENT when strict bank policy is enabled (feature_subaccounts_v1)`
     );
   }
 
-  const under102 = await isAccountDescendantOf({
+  const underMappedParent = await isAccountDescendantOf({
     tenantId,
     accountId,
-    ancestorAccountId: control102.id,
+    ancestorAccountId: bankControlParent.id,
     runQuery,
   });
-  if (!under102) {
+  if (!underMappedParent) {
     throw badRequest(
-      `${label} must be a descendant/leaf under control account 102 when strict bank policy is enabled (feature_subaccounts_v1)`
+      `${label} must be a postable leaf descendant under BANK_CONTROL_PARENT when strict bank policy is enabled (feature_subaccounts_v1)`
     );
   }
 
-  return row;
-}
-
-async function findControl102Account({
-  tenantId,
-  legalEntityId,
-  runQuery = query,
-}) {
-  const result = await runQuery(
-    `SELECT
-       a.id,
-       a.code,
-       a.name,
-       a.allow_posting
-     FROM accounts a
-     JOIN charts_of_accounts c ON c.id = a.coa_id
-     WHERE c.tenant_id = ?
-       AND c.scope = 'LEGAL_ENTITY'
-       AND c.legal_entity_id = ?
-       AND a.code = '102'
-     ORDER BY a.id
-     LIMIT 1`,
-    [tenantId, legalEntityId]
-  );
-  return result.rows?.[0] || null;
-}
-
-async function lockControl102AccountForProvision({
-  tenantId,
-  legalEntityId,
-  runQuery = query,
-}) {
-  const result = await runQuery(
-    `SELECT
-       a.id,
-       a.coa_id,
-       a.code,
-       a.name,
-       a.account_type,
-       a.normal_side,
-       a.allow_posting,
-       a.is_active
-     FROM accounts a
-     JOIN charts_of_accounts c ON c.id = a.coa_id
-     WHERE c.tenant_id = ?
-       AND c.scope = 'LEGAL_ENTITY'
-       AND c.legal_entity_id = ?
-       AND a.code = '102'
-     ORDER BY a.id
-     LIMIT 1
-     FOR UPDATE`,
-    [tenantId, legalEntityId]
-  );
-  const row = result.rows?.[0] || null;
-  if (!row) {
-    throw badRequest(
-      "Control account code 102 is missing for legalEntityId. Create account 102 before one-click provisioning."
-    );
-  }
-  if (!parseDbBoolean(row.is_active)) {
-    throw badRequest("Control account code 102 must be ACTIVE");
-  }
-  if (normalizeUpperText(row.account_type) !== "ASSET") {
-    throw badRequest("Control account code 102 must be an ASSET account");
-  }
   return row;
 }
 
@@ -585,18 +660,18 @@ async function listChildCodeSequencesUnderParent({
   return sequences;
 }
 
-async function createProvisionedChildAccountUnder102({
-  control102,
+async function createProvisionedChildAccountUnderParent({
+  controlParent,
   tenantId,
   legalEntityId,
   accountName,
   runQuery = query,
 }) {
-  const parentAccountId = parsePositiveInt(control102?.id);
-  const coaId = parsePositiveInt(control102?.coa_id);
-  const parentCode = String(control102?.code || "").trim();
+  const parentAccountId = parsePositiveInt(controlParent?.id);
+  const coaId = parsePositiveInt(controlParent?.coa_id);
+  const parentCode = String(controlParent?.code || "").trim();
   if (!tenantId || !legalEntityId || !parentAccountId || !coaId || !parentCode) {
-    throw new Error("Invalid 102 control account context for provisioning");
+    throw new Error("Invalid bank control parent context for provisioning");
   }
 
   const usedSequences = await listChildCodeSequencesUnderParent({
@@ -607,17 +682,19 @@ async function createProvisionedChildAccountUnder102({
   const currentMax = usedSequences.length ? Math.max(...usedSequences) : 0;
   const startingSequence = currentMax + 1;
 
-  for (let attempt = 0; attempt < PROVISION_102_CHILD_MAX_ATTEMPTS; attempt += 1) {
+  for (let attempt = 0; attempt < PROVISION_CHILD_MAX_ATTEMPTS; attempt += 1) {
     const sequence = startingSequence + attempt;
-    const codeSuffix = String(sequence).padStart(PROVISION_102_CHILD_SUFFIX_WIDTH, "0");
+    const codeSuffix = String(sequence).padStart(PROVISION_CHILD_SUFFIX_WIDTH, "0");
     const childCode = `${parentCode}.${codeSuffix}`;
     if (childCode.length > 50) {
-      throw badRequest("Generated child account code under 102 exceeds 50 characters");
+      throw badRequest(
+        "Generated child account code under BANK_CONTROL_PARENT exceeds 50 characters"
+      );
     }
 
     const normalSide =
-      normalizeUpperText(control102?.normal_side) ||
-      defaultNormalSideForAccountType(control102?.account_type);
+      normalizeUpperText(controlParent?.normal_side) ||
+      defaultNormalSideForAccountType(controlParent?.account_type);
     try {
       const insertResult = await runQuery(
         `INSERT INTO accounts (
@@ -635,17 +712,17 @@ async function createProvisionedChildAccountUnder102({
           coaId,
           childCode,
           accountName,
-          normalizeUpperText(control102?.account_type) || "ASSET",
+          normalizeUpperText(controlParent?.account_type) || "ASSET",
           normalSide,
           parentAccountId,
         ]
       );
       const childAccountId = parsePositiveInt(insertResult.rows?.insertId);
       if (!childAccountId) {
-        throw new Error("Failed to create 102 child account");
+        throw new Error("Failed to create provisioned child account");
       }
 
-      // Control account 102 must remain a non-postable header account.
+      // Bank control parent must remain a non-postable header account.
       await runQuery(
         `UPDATE accounts
          SET allow_posting = FALSE
@@ -673,7 +750,7 @@ async function createProvisionedChildAccountUnder102({
     }
   }
 
-  throw new Error("Failed to allocate a unique child account code under 102");
+  throw new Error("Failed to allocate a unique child account code under BANK_CONTROL_PARENT");
 }
 
 async function isAccountDescendantOf({
@@ -973,7 +1050,7 @@ export async function createBankAccount({
   }
 }
 
-export async function provisionBankAccountWith102Child({
+export async function provisionBankAccountWithControlParentChild({
   req,
   payload,
   assertScopeAccess,
@@ -995,14 +1072,14 @@ export async function provisionBankAccountWith102Child({
 
   try {
     return await withTransaction(async (tx) => {
-      const control102 = await lockControl102AccountForProvision({
+      const bankControlParent = await lockBankControlParentForProvision({
         tenantId: payload.tenantId,
         legalEntityId: payload.legalEntityId,
         runQuery: tx.query,
       });
 
-      const allocation = await createProvisionedChildAccountUnder102({
-        control102,
+      const allocation = await createProvisionedChildAccountUnderParent({
+        controlParent: bankControlParent,
         tenantId: payload.tenantId,
         legalEntityId: payload.legalEntityId,
         accountName: normalizedChildAccountName,
@@ -1043,8 +1120,9 @@ export async function provisionBankAccountWith102Child({
           id: parsePositiveInt(childAccount.id),
           code: childAccount.code || allocation.childAccountCode,
           name: childAccount.name || normalizedChildAccountName,
-          parentAccountId: parsePositiveInt(control102.id),
-          parentAccountCode: control102.code || "102",
+          parentAccountId: parsePositiveInt(bankControlParent.id),
+          parentAccountCode:
+            String(bankControlParent.code || "").trim() || null,
           allocationSequence: allocation.childSequence,
         },
       };

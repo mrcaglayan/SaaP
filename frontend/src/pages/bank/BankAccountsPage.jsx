@@ -4,7 +4,7 @@ import {
   createBankAccount,
   deactivateBankAccount,
   listBankAccounts,
-  provisionBankAccount102Child,
+  provisionBankAccountControlParentChild,
   updateBankAccount,
 } from "../../api/bankAccounts.js";
 import {
@@ -13,9 +13,11 @@ import {
   testBankConnectorConnection,
 } from "../../api/bankConnectors.js";
 import { listAccounts, upsertAccount } from "../../api/glAdmin.js";
+import { listJournalPurposeAccounts } from "../../api/glPurposeMappings.js";
 import Combobox from "../../components/Combobox.jsx";
 import { listCurrencies, listLegalEntities, listOperatingUnits } from "../../api/orgAdmin.js";
 import { useAuth } from "../../auth/useAuth.js";
+import { useModuleReadiness } from "../../readiness/useModuleReadiness.js";
 
 const EMPTY_FORM = {
   id: "",
@@ -110,6 +112,15 @@ function formatAccountOptionDescription(row) {
     return breadcrumb;
   }
   return [getAccountType(row), getAccountNormalSide(row)].filter(Boolean).join(" | ");
+}
+
+function formatPurposeMappingAccountLabel(row) {
+  const code = String(row?.accountCode ?? row?.account_code ?? "").trim();
+  const name = String(row?.accountName ?? row?.account_name ?? "").trim();
+  if (code && name) {
+    return `${code} - ${name}`;
+  }
+  return code || name || "";
 }
 
 function parseChildCodeSequence(code, parentCode) {
@@ -211,9 +222,11 @@ function findBestParentAccount(candidateCode, parentAccountOptions) {
 
 function generateProvisionIdempotencyKey() {
   if (globalThis.crypto && typeof globalThis.crypto.randomUUID === "function") {
-    return `bank-provision-102-${globalThis.crypto.randomUUID()}`;
+    return `bank-provision-control-parent-${globalThis.crypto.randomUUID()}`;
   }
-  return `bank-provision-102-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  return `bank-provision-control-parent-${Date.now()}-${Math.random()
+    .toString(36)
+    .slice(2, 10)}`;
 }
 
 function mapRowToForm(row) {
@@ -235,6 +248,7 @@ function mapRowToForm(row) {
 
 export default function BankAccountsPage() {
   const { hasPermission } = useAuth();
+  const { getModuleRow } = useModuleReadiness();
   const canRead = hasPermission("bank.accounts.read");
   const canWrite = hasPermission("bank.accounts.write");
   const canReadConnectors = hasPermission("bank.connectors.read");
@@ -256,7 +270,7 @@ export default function BankAccountsPage() {
   });
 
   const [form, setForm] = useState(EMPTY_FORM);
-  const [autoProvision102, setAutoProvision102] = useState(false);
+  const [autoProvisionControlParent, setAutoProvisionControlParent] = useState(false);
   const [provisionGlAccountName, setProvisionGlAccountName] = useState("");
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -268,6 +282,7 @@ export default function BankAccountsPage() {
   const [connectorError, setConnectorError] = useState("");
   const [connectorMessage, setConnectorMessage] = useState("");
   const [lookupWarning, setLookupWarning] = useState("");
+  const [bankControlParentMapping, setBankControlParentMapping] = useState(null);
   const [glAccountLookupQuery, setGlAccountLookupQuery] = useState("");
   const [inlineChildParentAccountId, setInlineChildParentAccountId] = useState("");
   const [inlineChildCode, setInlineChildCode] = useState("");
@@ -275,6 +290,10 @@ export default function BankAccountsPage() {
   const [inlineChildSaving, setInlineChildSaving] = useState(false);
 
   const selectedLegalEntityId = toPositiveInt(form.legalEntityId);
+  const selectedBankControlParentReadiness = getModuleRow(
+    "bankControlParent",
+    selectedLegalEntityId
+  );
   const selectedFilterLegalEntityId = toPositiveInt(filters.legalEntityId);
 
   const legalEntityOptions = useMemo(
@@ -393,6 +412,22 @@ export default function BankAccountsPage() {
       })),
     [parentAccountOptions]
   );
+  const configuredControlParentAccountId = toPositiveInt(
+    bankControlParentMapping?.accountId ?? bankControlParentMapping?.account_id
+  );
+  const configuredControlParentAccount = useMemo(
+    () =>
+      parentAccountOptions.find(
+        (row) => getAccountId(row) === configuredControlParentAccountId
+      ) || null,
+    [configuredControlParentAccountId, parentAccountOptions]
+  );
+  const configuredControlParentLabel = useMemo(
+    () =>
+      formatPurposeMappingAccountLabel(bankControlParentMapping) ||
+      formatAccountOptionLabel(configuredControlParentAccount),
+    [bankControlParentMapping, configuredControlParentAccount]
+  );
   const selectedEntityAccountByCode = useMemo(() => {
     const byCode = new Map();
     for (const row of accounts) {
@@ -429,7 +464,7 @@ export default function BankAccountsPage() {
   }, [glAccountCodeCandidate, selectedEntityAccountByCode]);
   const hasTypedSearchText = Boolean(String(glAccountLookupQuery || "").trim());
   const showInlineChildCreate =
-    !autoProvision102 &&
+    !autoProvisionControlParent &&
     Boolean(selectedLegalEntityId) &&
     hasTypedSearchText &&
     !exactCodeMatchAccount;
@@ -477,14 +512,48 @@ export default function BankAccountsPage() {
   }, [form.legalEntityId]);
 
   useEffect(() => {
-    if (!autoProvision102) {
+    if (!autoProvisionControlParent) {
       return;
     }
     setGlAccountLookupQuery("");
     setInlineChildParentAccountId("");
     setInlineChildCode("");
     setInlineChildName("");
-  }, [autoProvision102]);
+  }, [autoProvisionControlParent]);
+
+  useEffect(() => {
+    let active = true;
+    if (!canReadAccounts || !selectedLegalEntityId) {
+      setBankControlParentMapping(null);
+      return undefined;
+    }
+
+    listJournalPurposeAccounts({
+      legalEntityId: selectedLegalEntityId,
+      moduleKey: "BANK",
+    })
+      .then((response) => {
+        if (!active) {
+          return;
+        }
+        const row =
+          (response?.rows || []).find(
+            (entry) =>
+              String(entry?.purposeCode || entry?.purpose_code || "").trim().toUpperCase() ===
+              "BANK_CONTROL_PARENT"
+          ) || null;
+        setBankControlParentMapping(row);
+      })
+      .catch(() => {
+        if (active) {
+          setBankControlParentMapping(null);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [canReadAccounts, selectedLegalEntityId]);
 
   useEffect(() => {
     if (!showInlineChildCreate) {
@@ -517,9 +586,9 @@ export default function BankAccountsPage() {
     const candidateCode = normalizeAccountCode(inlineChildCode || glAccountCodeCandidate);
     const bestParent = candidateCode
       ? findBestParentAccount(candidateCode, parentAccountOptions) ||
-        parentAccountOptions.find((row) => getAccountCode(row) === "102") ||
+        configuredControlParentAccount ||
         null
-      : parentAccountOptions.find((row) => getAccountCode(row) === "102") ||
+      : configuredControlParentAccount ||
         parentAccountOptions[0] ||
         null;
     if (getAccountId(bestParent)) {
@@ -530,6 +599,7 @@ export default function BankAccountsPage() {
     inlineChildParentAccountId,
     inlineChildCode,
     glAccountCodeCandidate,
+    configuredControlParentAccount,
     parentAccountOptions,
   ]);
 
@@ -639,7 +709,7 @@ export default function BankAccountsPage() {
       operatingUnitId: "",
       currencyCode: prev.currencyCode && !form.id ? prev.currencyCode : "",
     }));
-    setAutoProvision102(false);
+    setAutoProvisionControlParent(false);
     setProvisionGlAccountName("");
     setGlAccountLookupQuery("");
     setInlineChildParentAccountId("");
@@ -651,7 +721,7 @@ export default function BankAccountsPage() {
     setMessage("");
     setError("");
     setForm(mapRowToForm(row));
-    setAutoProvision102(false);
+    setAutoProvisionControlParent(false);
     setProvisionGlAccountName("");
     setGlAccountLookupQuery("");
     setInlineChildParentAccountId("");
@@ -813,15 +883,15 @@ export default function BankAccountsPage() {
         const payload = buildCreatePayloadFromForm();
         await updateBankAccount(form.id, payload);
         setMessage("Bank account updated");
-      } else if (autoProvision102) {
+      } else if (autoProvisionControlParent) {
         const payload = buildProvisionPayloadFromForm();
         const idempotencyKey = generateProvisionIdempotencyKey();
-        const response = await provisionBankAccount102Child(payload, { idempotencyKey });
+        const response = await provisionBankAccountControlParentChild(payload, { idempotencyKey });
         const provisionedCode = String(response?.glAccount?.code || "").trim();
         setMessage(
           provisionedCode
-            ? `Bank account + 102 child created (${provisionedCode})`
-            : "Bank account + 102 child created"
+            ? `Bank account + control-parent child created (${provisionedCode})`
+            : "Bank account + control-parent child created"
         );
       } else {
         const payload = buildCreatePayloadFromForm();
@@ -959,6 +1029,31 @@ export default function BankAccountsPage() {
         </div>
       ) : null}
 
+      {selectedLegalEntityId && selectedBankControlParentReadiness ? (
+        <div
+          className={`rounded-lg border px-3 py-2 text-sm ${
+            selectedBankControlParentReadiness.ready
+              ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+              : "border-amber-200 bg-amber-50 text-amber-900"
+          }`}
+        >
+          <div className="font-semibold">Bank control-parent readiness</div>
+          {selectedBankControlParentReadiness.ready ? (
+            <p className="mt-1">
+              {configuredControlParentLabel
+                ? `Configured bank control parent: ${configuredControlParentLabel}`
+                : "BANK_CONTROL_PARENT is configured for this legal entity."}
+            </p>
+          ) : (
+            <p className="mt-1">
+              Configure <code>BANK_CONTROL_PARENT</code> in GL Setup before relying on
+              control-parent provisioning. Manual bank creation can still use a selected GL child
+              account.
+            </p>
+          )}
+        </div>
+      ) : null}
+
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1.4fr)]">
         <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
           <div className="mb-3 flex items-center justify-between">
@@ -1076,23 +1171,23 @@ export default function BankAccountsPage() {
                 <label className="flex items-center gap-2 text-sm font-medium text-cyan-900">
                   <input
                     type="checkbox"
-                    checked={autoProvision102}
+                    checked={autoProvisionControlParent}
                     onChange={(event) => {
                       const nextChecked = event.target.checked;
-                      setAutoProvision102(nextChecked);
+                      setAutoProvisionControlParent(nextChecked);
                       if (nextChecked) {
                         setForm((prev) => ({ ...prev, glAccountId: "" }));
                       }
                     }}
                     disabled={!canWrite || saving}
                   />
-                  Auto-create 102 child GL account and link automatically
+                  Auto-create a bank control-parent child GL account and link automatically
                 </label>
                 <p className="mt-1 text-xs text-cyan-800">
-                  Uses one-click provisioning (`/provision-102-child`) with deterministic code
-                  allocation under `102` (`102.001`, `102.002`, ...).
+                  Uses one-click provisioning under the configured bank control parent
+                  {configuredControlParentLabel ? ` (${configuredControlParentLabel})` : ""}.
                 </p>
-                {autoProvision102 ? (
+                {autoProvisionControlParent ? (
                   <div className="mt-2">
                     <label className="mb-1 block text-xs font-medium text-cyan-900">
                       Child GL Name (Optional)
@@ -1120,12 +1215,12 @@ export default function BankAccountsPage() {
                       !canWrite ||
                       saving ||
                       !selectedLegalEntityId ||
-                      (!form.id && autoProvision102)
+                      (!form.id && autoProvisionControlParent)
                     }
                     placeholder={
                       !selectedLegalEntityId
                         ? "Select legal entity first"
-                        : !form.id && autoProvision102
+                        : !form.id && autoProvisionControlParent
                           ? "Auto-provisioning enabled (manual select disabled)"
                           : "Search GL account code/name"
                     }
@@ -1228,14 +1323,14 @@ export default function BankAccountsPage() {
                     setForm((prev) => ({ ...prev, glAccountId: event.target.value }))
                   }
                   className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
-                  disabled={!canWrite || saving || (!form.id && autoProvision102)}
-                  required={form.id || !autoProvision102}
+                  disabled={!canWrite || saving || (!form.id && autoProvisionControlParent)}
+                  required={form.id || !autoProvisionControlParent}
                 />
               )}
               <p className="mt-1 text-xs text-slate-500">
-                {!form.id && autoProvision102
-                  ? "GL account is generated automatically under control account 102."
-                  : "Only ACTIVE, postable, LEGAL_ENTITY-scoped ASSET accounts are listed. In strict mode, selected account must be under 102 subtree."}
+                {!form.id && autoProvisionControlParent
+                  ? "GL account is generated automatically under the configured bank control parent."
+                  : "Only ACTIVE, postable, LEGAL_ENTITY-scoped ASSET accounts are listed. In strict mode, the selected account must be a child under the configured bank control parent."}
               </p>
             </div>
 
@@ -1308,8 +1403,8 @@ export default function BankAccountsPage() {
                 ? "Kaydediliyor..."
                 : form.id
                   ? "Guncelle"
-                  : autoProvision102
-                    ? "Olustur (102 Otomatik)"
+                  : autoProvisionControlParent
+                    ? "Olustur (Kontrol Parent Otomatik)"
                     : "Olustur"}
             </button>
           </form>

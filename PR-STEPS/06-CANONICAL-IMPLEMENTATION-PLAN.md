@@ -7,8 +7,8 @@ Use this order only for implementation planning and tracking:
    Includes: global feature flags, `/me/features` known-flag defaults, readiness placeholders.
 2. PR-F02: Subaccounts schema hardening (`m081`) + bank OU ownership (Bank Foundation)
    Includes: `bank_accounts.operating_unit_id`, OU validations, bank API/service/UI OU support.
-3. PR-F03: `102` subtree enforcement + post-usage immutability (Bank Controls)
-   Includes: bank GL link under `102`, strict-mode checks, block unsafe bank identity mutation after usage.
+3. PR-F03: bank control-parent subtree enforcement + post-usage immutability (Bank Controls)
+   Includes: bank GL link under the configured bank control parent, strict-mode checks, block unsafe bank identity mutation after usage.
 4. PR-F05: Setup Wizard V2 + onboarding account-tree payload (Setup Foundation)
    Includes: country-first wizard, hierarchical onboarding account payload with parent/child support.
 5. PR-F06: Country pack expansion + onboarding binding (Setup Country Packs)
@@ -21,8 +21,8 @@ Use this order only for implementation planning and tracking:
    Includes: tax regimes/codes/rules/mappings schema and tax setup APIs.
 9. PR-F11: Tax runtime engine + CARI integration (Tax Runtime)
    Includes: tax calculation/resolution engine + CARI document/settlement integration.
-10. PR-F04: One-click bank auto-provision (`102` child + bank account) (Bank UX Automation)
-    Includes: atomic bank + `102` child creation, allocator, idempotent retries.
+10. PR-F04: One-click bank auto-provision (control-parent child + bank account) (Bank UX Automation)
+    Includes: atomic bank + control-parent child creation, allocator, idempotent retries.
 11. PR-F09: Workflow UI + readiness wiring (Workflow Operations UX)
     Includes: workflow setup screens, approval status indicators, readiness wiring.
 12. PR-F12: Canonical consolidation mapping convergence wiring (Consolidation Convergence)
@@ -41,78 +41,94 @@ Use this order only for implementation planning and tracking:
 - We will **not** introduce parallel `workflow_*` tables/endpoints as a second approval engine in this implementation wave.
 - `m082` scope is redefined as additive extension/indexing/backfill on existing approval engine, plus close/consolidation integration and UI/readiness wiring.
 
-## Master Tracker (Pending vs Implemented)
-Update rule:
-- `[ ]` = pending
-- `[x]` = implemented (merged)
-- After marking `[x]`, add:
-- `status: implemented (YYYY-MM-DD)`
-- `files: ...`
-- `smoke: ...`
-- `result: pass/fail`
-- Tracker line format after merge:
-  - `- [x] PR-F0X acceptance: ... (implemented)`
+## Implementation Status Note
+- `PR-F01` through `PR-F13` are implemented as of March 11, 2026.
+- Historical bank references to literal `102` below were superseded by `23-BANK-CONTROL-PARENT-PURPOSE-MAPPING.md`.
+- Current bank runtime uses `BANK_CONTROL_PARENT` purpose mapping and `POST /api/v1/bank/accounts/provision-control-parent-child`.
 
-- [ ] PR-F01 acceptance: platform prerequisites are in place with known tenant feature codes (`FEATURE_SUBACCOUNTS_V1`, `FEATURE_SETUP_WIZARD_V2`, `FEATURE_CONSOLIDATION_CANONICAL_MAPPING_V1`, `FEATURE_WORKFLOW_CLOSE_CONSOLIDATION_V1`, `FEATURE_TAX_ENGINE_V1`), `/me/features` returns known-but-unconfigured flags as disabled, and readiness exposes non-blocking upcoming placeholders.
-  smoke: `backend/scripts/test-followup-prf01-feature-flags-readiness-placeholders.js`
-- [ ] PR-F02 acceptance: `m081` adds `bank_accounts.operating_unit_id` + required indexes/FKs and bank accounts API/UI support optional OU ownership without breaking existing flows.
-  smoke: `backend/scripts/test-followup-prf02-bank-ou-ownership.js`
-- [ ] PR-F03 acceptance: bank GL link enforcement supports strict `102` subtree policy (feature-flagged) and blocks unsafe bank identity changes after first accounting usage/posting.
-  smoke: `backend/scripts/test-followup-prf03-102-subtree-and-immutability.js`
-- [ ] PR-F04 acceptance: one-click bank provisioning atomically creates `102` child account + bank account with idempotent retry safety and no orphan records on failure.
-  smoke: `backend/scripts/test-followup-prf04-bank-auto-provision-102-child.js`
-- [ ] PR-F05 acceptance: Setup Wizard v2 is country-first and onboarding payload supports hierarchical account tree creation (parent-aware) while preserving backward compatibility for current bootstrap payloads.
-  smoke: `backend/scripts/test-followup-prf05-country-first-wizard-and-account-tree.js`
-- [ ] PR-F06 acceptance: country pack expansion is wired into onboarding so selected pack can be previewed/applied in-flow and seeds starter account-tree + required mapping expectations.
-  smoke: `backend/scripts/test-followup-prf06-onboarding-country-pack-binding.js`
-- [ ] PR-F07 acceptance: `m082` extends existing approval engine for `PERIOD_CLOSE` and `CONSOLIDATION_RUN` (no parallel workflow engine), with scoped policy resolution and validation.
-  smoke: `backend/scripts/test-followup-prf07-workflow-foundation.js`
-- [ ] PR-F08 acceptance: staged approval gating is enforced for period close and consolidation execute/finalize paths (maker-checker + scope checks), returning explicit approval-required errors when not approved.
-  smoke: `backend/scripts/test-followup-prf08-close-consolidation-gating.js`
-- [ ] PR-F09 acceptance: workflow UI indicators + setup screens + readiness wiring are visible and actionable for finance/ops users, without changing unrelated module behavior.
-  smoke: `backend/scripts/test-followup-prf09-workflow-ui-readiness-wiring.js`
-- [ ] PR-F10 acceptance: `m083` tax engine foundation schema and tax setup APIs (`regimes`, `codes`, `rules`, `account mappings`) are implemented with tenant/legal-entity safe constraints.
-  smoke: `backend/scripts/test-followup-prf10-tax-foundation.js`
-- [ ] PR-F11 acceptance: runtime tax engine resolves regime/code/rules and integrates with CARI posting paths, generating deterministic tax journal lines or explicit setup errors when mappings are missing.
-  smoke: `backend/scripts/test-followup-prf11-tax-engine-cari-integration.js`
-- [ ] PR-F12 acceptance: canonical consolidation mapping layer removes same-code coupling across countries and safely converges with subaccounts, approval gating, and tax-posted lines in consolidated reporting.
-  smoke: `backend/scripts/test-followup-prf12-canonical-consolidation-wiring.js`
-- [ ] PR-F13 acceptance: rollout/backfill/release-gate hardening is complete with migration-safe scripts, pilot-flag strategy, runbooks, and expanded regression gates for combined tracks.
-  smoke: `backend/scripts/test-followup-prf13-rollout-backfill-release-gate.js`
+## Master Tracker (Implemented)
+- [x] PR-F01 acceptance: platform prerequisites are in place with known tenant feature codes (`FEATURE_SUBACCOUNTS_V1`, `FEATURE_SETUP_WIZARD_V2`, `FEATURE_CONSOLIDATION_CANONICAL_MAPPING_V1`, `FEATURE_WORKFLOW_CLOSE_CONSOLIDATION_V1`, `FEATURE_TAX_ENGINE_V1`), `/me/features` returns known-but-unconfigured flags as disabled, and readiness exposes non-blocking upcoming placeholders. (implemented)
+  status: implemented (confirmed 2026-03-11)
+  evidence: `10-EXECUTION TRACKER.md` rows `#1-#3`
+  smoke: `backend/scripts/test-followup-prf01-feature-flags.js`, `backend/scripts/test-followup-prf01-readiness-placeholders.js`
+  result: pass
+- [x] PR-F02 acceptance: `m081` adds `bank_accounts.operating_unit_id` + required indexes/FKs and bank accounts API/UI support optional OU ownership without breaking existing flows. (implemented)
+  status: implemented (confirmed 2026-03-11)
+  evidence: `10-EXECUTION TRACKER.md` rows `#4-#8`
+  smoke: `backend/scripts/test-hardening-prh09-tenant-entity-isolation.js`, `backend/scripts/test-followup-prf02-onboarding-defaultaccounts-backward.js`
+  result: pass
+- [x] PR-F03 acceptance: bank GL link enforcement uses the configured bank control parent in strict mode, blocks unsafe bank identity changes after first accounting usage/posting, and no longer depends on literal `102` at runtime. (implemented)
+  status: implemented (confirmed 2026-03-11)
+  evidence: `10-EXECUTION TRACKER.md` rows `#9-#12` plus `23-BANK-CONTROL-PARENT-PURPOSE-MAPPING.md`
+  smoke: `backend/scripts/test-hardening-prh09-tenant-entity-isolation.js`, `backend/scripts/test-bank-control-bpm02-service-cutover.js`
+  result: pass
+- [x] PR-F04 acceptance: one-click bank provisioning atomically creates a child under the configured bank control parent + linked bank account with idempotent retry safety and no orphan records on failure. (implemented)
+  status: implemented (confirmed 2026-03-11)
+  evidence: `10-EXECUTION TRACKER.md` rows `#13-#14` plus `23-BANK-CONTROL-PARENT-PURPOSE-MAPPING.md`
+  smoke: `backend/scripts/test-hardening-prh10-bank-provisioning.js`, `backend/scripts/test-bank-control-bpm03-readiness-api.js`, `backend/scripts/test-bank-control-bpm05-regression.js`
+  result: pass
+- [x] PR-F05 acceptance: Setup Wizard v2 is country-first and onboarding payload supports hierarchical account tree creation (parent-aware) while preserving backward compatibility for current bootstrap payloads. (implemented)
+  status: implemented (confirmed 2026-03-11)
+  evidence: `10-EXECUTION TRACKER.md` rows `#15-#17`
+  smoke: `backend/scripts/test-followup-prf13-setup-wizard-regression.js`, `backend/scripts/test-followup-prf02-onboarding-defaultaccounts-backward.js`
+  result: pass
+- [x] PR-F06 acceptance: country pack expansion is wired into onboarding so selected pack can be previewed/applied in-flow and seeds starter account-tree + required mapping expectations. (implemented)
+  status: implemented (confirmed 2026-03-11)
+  evidence: `10-EXECUTION TRACKER.md` rows `#18-#19`
+  smoke: `backend/scripts/test-followup-prf03-policy-pack-expansion.js`, `backend/scripts/test-followup-prf04-onboarding-policy-pack-bootstrap.js`
+  result: pass
+- [x] PR-F07 acceptance: `m082` extends existing approval engine for `PERIOD_CLOSE` and `CONSOLIDATION_RUN` (no parallel workflow engine), with scoped policy resolution and validation. (implemented)
+  status: implemented (confirmed 2026-03-11)
+  evidence: `10-EXECUTION TRACKER.md` rows `#20-#21`
+  smoke: `backend/scripts/test-followup-prf07-workflow-close-consolidation-gates.js`
+  result: pass
+- [x] PR-F08 acceptance: staged approval gating is enforced for period close and consolidation execute/finalize paths (maker-checker + scope checks), returning explicit approval-required errors when not approved. (implemented)
+  status: implemented (confirmed 2026-03-11)
+  evidence: `10-EXECUTION TRACKER.md` rows `#22-#23`
+  smoke: `backend/scripts/test-followup-prf07-workflow-close-consolidation-gates.js`
+  result: pass
+- [x] PR-F09 acceptance: workflow UI indicators + setup screens + readiness wiring are visible and actionable for finance/ops users, without changing unrelated module behavior. (implemented)
+  status: implemented (confirmed 2026-03-11)
+  evidence: `10-EXECUTION TRACKER.md` row `#24`
+  smoke: `backend/scripts/test-module-readiness.js`, `backend/scripts/test-followup-prf07-workflow-close-consolidation-gates.js`
+  result: pass
+- [x] PR-F10 acceptance: `m083` tax engine foundation schema and tax setup APIs (`regimes`, `codes`, `rules`, `account mappings`) are implemented with tenant/legal-entity safe constraints. (implemented)
+  status: implemented (confirmed 2026-03-11)
+  evidence: `10-EXECUTION TRACKER.md` rows `#25-#26`
+  smoke: `backend/scripts/test-followup-prf13-tax-engine-regression.js`
+  result: pass
+- [x] PR-F11 acceptance: runtime tax engine resolves regime/code/rules and integrates with CARI posting paths, generating deterministic tax journal lines or explicit setup errors when mappings are missing. (implemented)
+  status: implemented (confirmed 2026-03-11)
+  evidence: `10-EXECUTION TRACKER.md` rows `#27-#28`
+  smoke: `backend/scripts/test-followup-prf13-tax-engine-regression.js`
+  result: pass
+- [x] PR-F12 acceptance: canonical consolidation mapping layer removes same-code coupling across countries and safely converges with subaccounts, approval gating, and tax-posted lines in consolidated reporting. (implemented)
+  status: implemented (confirmed 2026-03-11)
+  evidence: `10-EXECUTION TRACKER.md` rows `#29-#31`
+  smoke: `backend/scripts/test-followup-prf12-canonical-mapping-foundation.js`, `backend/scripts/test-followup-prf12-cross-track-wiring.js`
+  result: pass
+- [x] PR-F13 acceptance: rollout/backfill/release-gate hardening is complete with migration-safe scripts, pilot-flag strategy, runbooks, and expanded regression gates for combined tracks. (implemented)
+  status: implemented (confirmed 2026-03-11)
+  evidence: `10-EXECUTION TRACKER.md` rows `#32-#53`
+  smoke: `backend/scripts/test-followup-prf13-rollout-backfill-release-gate.js`, `backend/scripts/test-followup-prf13-release-gate-expansion.js`, `backend/scripts/test-followup-prf13-operational-smoke.js`, `backend/scripts/test-followup-prf13-cross-track-idempotency.js`
+  result: pass
 
 ## Status Snapshot (Audit Baseline)
 - Audit date: `2026-03-01`
-- Implemented: `0 / 13` (`PR-F01..PR-F13`)
-- Current state: all tracker items remain `[ ]` (pending)
-- Start point: `PR-F01`
+- Current confirmation date: `2026-03-11`
+- Implemented: `13 / 13` (`PR-F01..PR-F13`)
+- Current state: all master-tracker items are implemented
+- Start point: completed
 
 ## Completion Log (Update After Each Merge)
-- Completed PRs: `none`
-- Current next PR: `PR-F01`
-- After each merged PR:
-  1. Change only that tracker line from `[ ]` to `[x]` and append `(implemented)`.
-  2. Add `status/files/smoke/result` directly under that same line.
-  3. Move `Current next PR` to the next pending item in Unified Execution Order.
-
-Example update:
-- before: `- [ ] PR-F01 acceptance: ...`
-- after: `- [x] PR-F01 acceptance: ... (implemented)`
-  - `status: implemented (YYYY-MM-DD)`
-  - `files: backend/src/services/features.catalog.js, backend/src/services/me.features.service.js, backend/src/routes/onboarding.js, frontend/src/readiness/TenantReadinessChecklist.jsx, frontend/src/i18n/messages.js, backend/scripts/test-followup-prf01-feature-flags-readiness-placeholders.js, backend/package.json`
-  - `smoke: backend/scripts/test-followup-prf01-feature-flags-readiness-placeholders.js`
-  - `result: pass`
+- Completed PRs: `PR-F01, PR-F02, PR-F03, PR-F04, PR-F05, PR-F06, PR-F07, PR-F08, PR-F09, PR-F10, PR-F11, PR-F12, PR-F13`
+- Current next PR: `none`
+- Detailed implementation evidence is recorded in `10-EXECUTION TRACKER.md`.
 
 ## Next Step Now
-1. Execute `PR-F01` end-to-end.
-2. Run smoke: `backend/scripts/test-followup-prf01-feature-flags-readiness-placeholders.js`.
-3. After merge, update the tracker line:
-   - from: `- [ ] PR-F01 acceptance: ...`
-   - to: `- [x] PR-F01 acceptance: ... (implemented)`
-4. Add evidence directly under the PR-F01 tracker line:
-   - `status: implemented (YYYY-MM-DD)`
-   - `files: ...`
-   - `smoke: backend/scripts/test-followup-prf01-feature-flags-readiness-placeholders.js`
-   - `result: pass/fail`
+1. Use this document as historical planning/reference only.
+2. Use `10-EXECUTION TRACKER.md` for step-by-step implementation evidence.
+3. Use `23-BANK-CONTROL-PARENT-PURPOSE-MAPPING.md` for the final bank control-parent cutover semantics.
 
 ## Mapping Note
 - Section A (`Subaccounts`) contributes mainly to `PR-F02`, `PR-F03`, `PR-F04`.
@@ -218,30 +234,30 @@ Acceptance:
 
 
 ### PR-F03
-## PR-F03: 102 subtree enforcement + immutability after posting
+## PR-F03: Bank control-parent subtree enforcement + immutability after posting
 Goal:
 - Complete `06-SUBACCOUNTS` integrity controls.
 
 Deliverables:
-- Enforce bank GL account under configured `102` subtree (flagged rollout).
+- Enforce bank GL account under the configured bank control-parent subtree (flagged rollout).
 - Block critical bank identity mutations once posted/consumed.
 - Add compatibility checks for payments/reconciliation/payroll consumers.
 
 Depends on: PR-F02
 Unblocks: PR-F04, PR-F12
 
-## PR-3: Enforce 102 Subtree Policy for Bank GL Link
+## PR-3: Enforce Bank Control-Parent Subtree Policy for Bank GL Link
 Goal: Ensure bank accounts only link to valid bank subaccounts.
 
 Changes:
-- In bank account GL validation, enforce selected `glAccountId` is descendant/leaf under configured `102` control account in same legal entity CoA.
+- In bank account GL validation, enforce selected `glAccountId` is descendant/leaf under the configured bank control parent in the same legal entity CoA.
 - Add policy fallback strategy:
-  - If strict mode enabled and `102` parent missing -> fail with actionable message.
+  - If strict mode enabled and the bank control parent mapping is missing/invalid -> fail with actionable message.
   - If strict mode disabled -> keep current ASSET+leaf checks.
 - Optional: attach/reuse `journal purpose mapping` for BANK control parent to avoid hardcoded code assumptions in non-TR packs.
 
 Acceptance:
-- Cannot link a bank account to non-102 leaf account when strict mode is on.
+- Cannot link a bank account to a leaf outside the configured bank control-parent subtree when strict mode is on.
 - Existing tenants can opt-in safely.
 
 ## PR-4: Bank Identity Immutability After First Posting
@@ -261,27 +277,27 @@ Acceptance:
 
 
 ### PR-F04
-## PR-F04: Bank one-click provisioning (auto-create 102 child + bank account)
+## PR-F04: Bank one-click provisioning (auto-create bank control-parent child + bank account)
 Goal:
 - Complete subaccounts usability path.
 
 Deliverables:
-- Transactional service/API to create `102` child + bank account atomically.
+- Transactional service/API to create a bank control-parent child + bank account atomically.
 - Frontend action in Bank Accounts page.
 - Idempotency-safe retry semantics.
 
 Depends on: PR-F03
 Unblocks: PR-F12
 
-## PR-5: Auto-Create 102 Child + Bank Account (UX/API)
+## PR-5: Auto-Create Bank Control-Parent Child + Bank Account (UX/API)
 Goal: Remove manual two-step setup friction.
 
 Changes:
 - Add endpoint (or transactional service method) to:
-  1) create GL leaf under `102` with deterministic code policy,
+  1) create GL leaf under the configured bank control parent with deterministic code policy,
   2) create `bank_accounts` row linked to that new account,
   3) rollback all on failure.
-- Add duplicate-safe code allocator under `102` (e.g. `102.001`, `102.002`, ...).
+- Add duplicate-safe child code allocation under the configured control parent (for example `102.001`, `1000.001`).
 - Add idempotency key support for safe retries.
 
 Acceptance:
@@ -826,7 +842,7 @@ Goal: lock behavior and prevent regressions.
 Changes:
 - Add/extend backend scripts for:
   - OU ownership validations,
-  - 102 subtree enforcement,
+  - configured bank control-parent subtree enforcement,
   - immutability after first posting,
   - auto-create transactional rollback.
 - Add frontend smoke tests for Bank Accounts form/list updates.

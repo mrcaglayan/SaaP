@@ -27,7 +27,7 @@ export async function createBankAccount(payload) {
   return response.data;
 }
 
-export async function provisionBankAccount102Child(payload, options = {}) {
+export async function provisionBankAccountControlParentChild(payload, options = {}) {
   const idempotencyKey = String(options?.idempotencyKey || "").trim();
   const config = idempotencyKey
     ? {
@@ -36,7 +36,11 @@ export async function provisionBankAccount102Child(payload, options = {}) {
         },
       }
     : undefined;
-  const response = await api.post("/api/v1/bank/accounts/provision-102-child", payload, config);
+  const response = await api.post(
+    "/api/v1/bank/accounts/provision-control-parent-child",
+    payload,
+    config
+  );
   return response.data;
 }
 

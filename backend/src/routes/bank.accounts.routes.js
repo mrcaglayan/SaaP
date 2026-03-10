@@ -14,7 +14,7 @@ import {
   createBankAccount,
   getBankAccountByIdForTenant,
   listBankAccountRows,
-  provisionBankAccountWith102Child,
+  provisionBankAccountWithControlParentChild,
   resolveBankAccountScope,
   setBankAccountActive,
   updateBankAccountById,
@@ -22,6 +22,57 @@ import {
 import { executeIdempotentRequest } from "../services/idempotency.service.js";
 
 const router = express.Router();
+
+function resolveProvisionBankAccountScope(req) {
+  const legalEntityId = parsePositiveInt(req.body?.legalEntityId);
+  if (legalEntityId) {
+    return { scopeType: "LEGAL_ENTITY", scopeId: legalEntityId };
+  }
+  return null;
+}
+
+async function handleProvisionControlParentChild(req, res) {
+  const payload = parseBankAccountProvisionInput(req);
+  const idempotencyKey = parseIdempotencyKey(req, { required: false });
+  const result = await executeIdempotentRequest({
+    scopeCode: `BANK_PROVISION_CONTROL_PARENT_CHILD_T${payload.tenantId}_LE${payload.legalEntityId}`,
+    idempotencyKey,
+    requestFingerprintInput: {
+      tenantId: payload.tenantId,
+      legalEntityId: payload.legalEntityId,
+      operatingUnitId: payload.operatingUnitId || null,
+      code: payload.code,
+      name: payload.name,
+      currencyCode: payload.currencyCode,
+      bankName: payload.bankName || null,
+      branchName: payload.branchName || null,
+      iban: payload.iban || null,
+      accountNo: payload.accountNo || null,
+      isActive: Boolean(payload.isActive),
+      glAccountName: payload.glAccountName || null,
+    },
+    execute: async () => {
+      const provisioned = await provisionBankAccountWithControlParentChild({
+        req,
+        payload,
+        assertScopeAccess,
+      });
+      return {
+        status: 201,
+        payload: {
+          tenantId: payload.tenantId,
+          row: provisioned.row,
+          glAccount: provisioned.glAccount,
+        },
+      };
+    },
+  });
+
+  return res.status(result.status).json({
+    ...result.payload,
+    idempotentReplay: Boolean(result.idempotentReplay),
+  });
+}
 
 router.get(
   "/",
@@ -99,58 +150,11 @@ router.post(
 );
 
 router.post(
-  "/provision-102-child",
+  "/provision-control-parent-child",
   requirePermission("bank.accounts.write", {
-    resolveScope: async (req) => {
-      const legalEntityId = parsePositiveInt(req.body?.legalEntityId);
-      if (legalEntityId) {
-        return { scopeType: "LEGAL_ENTITY", scopeId: legalEntityId };
-      }
-      return null;
-    },
+    resolveScope: resolveProvisionBankAccountScope,
   }),
-  asyncHandler(async (req, res) => {
-    const payload = parseBankAccountProvisionInput(req);
-    const idempotencyKey = parseIdempotencyKey(req, { required: false });
-    const result = await executeIdempotentRequest({
-      scopeCode: `BANK_PROVISION_102_T${payload.tenantId}_LE${payload.legalEntityId}`,
-      idempotencyKey,
-      requestFingerprintInput: {
-        tenantId: payload.tenantId,
-        legalEntityId: payload.legalEntityId,
-        operatingUnitId: payload.operatingUnitId || null,
-        code: payload.code,
-        name: payload.name,
-        currencyCode: payload.currencyCode,
-        bankName: payload.bankName || null,
-        branchName: payload.branchName || null,
-        iban: payload.iban || null,
-        accountNo: payload.accountNo || null,
-        isActive: Boolean(payload.isActive),
-        glAccountName: payload.glAccountName || null,
-      },
-      execute: async () => {
-        const provisioned = await provisionBankAccountWith102Child({
-          req,
-          payload,
-          assertScopeAccess,
-        });
-        return {
-          status: 201,
-          payload: {
-            tenantId: payload.tenantId,
-            row: provisioned.row,
-            glAccount: provisioned.glAccount,
-          },
-        };
-      },
-    });
-
-    return res.status(result.status).json({
-      ...result.payload,
-      idempotentReplay: Boolean(result.idempotentReplay),
-    });
-  })
+  asyncHandler(handleProvisionControlParentChild)
 );
 
 router.put(

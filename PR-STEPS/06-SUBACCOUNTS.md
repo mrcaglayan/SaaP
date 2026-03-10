@@ -4,6 +4,11 @@
 - This is a source/spec file.
 - Execution status is tracked only in 11-PROJECT-FOLLOWING-TRACKER.md.
 
+## Implementation Status Note
+- Section A is implemented.
+- Literal `102` references in PR-3, PR-5, PR-6, PR-7, and PR-8 are historical source-plan text.
+- Current bank-control-parent behavior is defined by `23-BANK-CONTROL-PARENT-PURPOSE-MAPPING.md`: runtime resolution uses `BANK_CONTROL_PARENT`, the neutral provisioning endpoint is `/provision-control-parent-child`, and the deprecated `/provision-102-child` alias was removed on March 11, 2026.
+
 ## Audit Summary (Current State)
 
 ### What already aligns
@@ -12,17 +17,17 @@
 - `bank_accounts` already maps 1:1 to GL account with unique `(tenant_id, legal_entity_id, gl_account_id)`.
 - Bank account API/UI already enforce legal entity + active + postable + leaf + ASSET account selection.
 
-### Gaps found against target model
+### Historical gaps found against target model
 - No `bank_accounts.operating_unit_id` exists yet in schema/service/API/UI.
-- No explicit enforcement that bank-linked GL account must be under `102` subtree (TDHP control account policy).
+- No explicit enforcement that bank-linked GL account must be under the configured bank control-parent subtree (historically `102` for TDHP-style charts).
 - `iban`/`account_no` uniqueness is not enforced at DB level.
 - Update flow allows changing key identity fields (e.g. `gl_account_id`, `iban`, `currency`) without "has-postings" guardrails.
-- No guided "create bank + auto-create 102 child account" flow.
+- No guided "create bank + auto-create mapped control-parent child account" flow.
 - OpenAPI for bank accounts remains generic (`AnyObject`) and does not document strong request/response contract.
 
 ## Implementation Principles
-- Keep `102` as non-postable control account.
-- Each real bank account (IBAN/account no) maps 1:1 to one postable leaf subaccount under `102`.
+- Keep the configured bank control parent as a non-postable control account.
+- Each real bank account (IBAN/account no) maps 1:1 to one postable leaf subaccount under the configured bank control parent.
 - Operating Unit is optional ownership/reporting dimension only (not identity).
 - Do not break existing bank/payments/reconciliation flows; rollout with backward compatibility.
 
@@ -66,18 +71,18 @@ Acceptance:
 - Create/update/list/get endpoints support OU owner cleanly.
 - Cross-entity OU assignment fails with clear 400 error.
 
-## PR-3: Enforce 102 Subtree Policy for Bank GL Link
+## PR-3: Enforce Bank Control-Parent Subtree Policy for Bank GL Link
 Goal: Ensure bank accounts only link to valid bank subaccounts.
 
 Changes:
-- In bank account GL validation, enforce selected `glAccountId` is descendant/leaf under configured `102` control account in same legal entity CoA.
+- In bank account GL validation, enforce selected `glAccountId` is descendant/leaf under the configured bank control parent in the same legal entity CoA.
 - Add policy fallback strategy:
-  - If strict mode enabled and `102` parent missing -> fail with actionable message.
+  - If strict mode enabled and the bank control parent mapping is missing/invalid -> fail with actionable message.
   - If strict mode disabled -> keep current ASSET+leaf checks.
 - Optional: attach/reuse `journal purpose mapping` for BANK control parent to avoid hardcoded code assumptions in non-TR packs.
 
 Acceptance:
-- Cannot link a bank account to non-102 leaf account when strict mode is on.
+- Cannot link a bank account to a leaf outside the configured bank control-parent subtree when strict mode is on.
 - Existing tenants can opt-in safely.
 
 ## PR-4: Bank Identity Immutability After First Posting
@@ -95,15 +100,15 @@ Acceptance:
 - Mutable before usage, guarded after usage.
 - Error messages state why update is blocked and recommended next action.
 
-## PR-5: Auto-Create 102 Child + Bank Account (UX/API)
+## PR-5: Auto-Create Bank Control-Parent Child + Bank Account (UX/API)
 Goal: Remove manual two-step setup friction.
 
 Changes:
 - Add endpoint (or transactional service method) to:
-  1) create GL leaf under `102` with deterministic code policy,
+  1) create GL leaf under the configured bank control parent with deterministic code policy,
   2) create `bank_accounts` row linked to that new account,
   3) rollback all on failure.
-- Add duplicate-safe code allocator under `102` (e.g. `102.001`, `102.002`, ...).
+- Add duplicate-safe child code allocation under the configured control parent (for example `102.001`, `1000.001`).
 - Add idempotency key support for safe retries.
 
 Acceptance:
@@ -117,8 +122,8 @@ Changes:
 - `BankAccountsPage`:
   - Add optional Operating Unit dropdown.
   - Show OU column/label in list.
-  - Add optional "Auto-create 102 child" action in create flow.
-  - Improve GL dropdown hints to indicate `102` subtree constraints.
+  - Add optional "Auto-create control-parent child" action in create flow.
+  - Improve GL dropdown hints to indicate configured bank control-parent subtree constraints.
 - Add list filtering by OU.
 
 Acceptance:
@@ -131,7 +136,7 @@ Goal: lock behavior and prevent regressions.
 Changes:
 - Add/extend backend scripts for:
   - OU ownership validations,
-  - 102 subtree enforcement,
+  - configured bank control-parent subtree enforcement,
   - immutability after first posting,
   - auto-create transactional rollback.
 - Add frontend smoke tests for Bank Accounts form/list updates.
@@ -146,7 +151,7 @@ Goal: operationalize safely.
 Changes:
 - Update user guide sections for bank account setup.
 - Add migration/backfill runbook:
-  - identify accounts not under `102`,
+  - identify accounts not under the configured bank control parent,
   - remediation strategy,
   - feature-flag rollout order (tenant pilot -> general availability).
 - Update architecture docs with "control account + subledger" pattern.

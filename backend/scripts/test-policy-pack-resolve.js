@@ -421,6 +421,38 @@ async function buildResolveFixtures(tenantId, stamp) {
   });
   await createAccount({
     coaId: goodCoaId,
+    code: "646",
+    name: "FX Gain",
+    accountType: "REVENUE",
+    normalSide: "CREDIT",
+    allowPosting: true,
+  });
+  await createAccount({
+    coaId: goodCoaId,
+    code: "656",
+    name: "FX Loss",
+    accountType: "EXPENSE",
+    normalSide: "DEBIT",
+    allowPosting: true,
+  });
+  await createAccount({
+    coaId: goodCoaId,
+    code: "108.01",
+    name: "FX Clearing",
+    accountType: "ASSET",
+    normalSide: "DEBIT",
+    allowPosting: true,
+  });
+  await createAccount({
+    coaId: goodCoaId,
+    code: "108.02",
+    name: "Cash Transit Clearing",
+    accountType: "ASSET",
+    normalSide: "DEBIT",
+    allowPosting: true,
+  });
+  await createAccount({
+    coaId: goodCoaId,
     code: "500",
     name: "Capital Parent",
     accountType: "EQUITY",
@@ -601,14 +633,23 @@ async function main() {
       expectedStatus: 200,
     });
     assert(
-      toNumber(goodResolve.json?.summary?.total) === 18,
-      "Good resolve should evaluate 18 purpose rows"
+      toNumber(goodResolve.json?.summary?.total) === 23,
+      "Good resolve should evaluate 23 purpose rows"
     );
     assert(
       toNumber(goodResolve.json?.summary?.missing) === 0,
       "Good resolve should have zero missing rows"
     );
     const goodRows = goodResolve.json?.rows || [];
+    const goodBankControlParent = findRow(goodRows, "BANK_CONTROL_PARENT");
+    assert(
+      goodBankControlParent?.missing === false,
+      "Good resolve BANK_CONTROL_PARENT must resolve"
+    );
+    assert(
+      String(goodBankControlParent?.accountCode || "") === "102",
+      "BANK_CONTROL_PARENT should resolve to 102 for TR pack"
+    );
     const goodApOffset = findRow(goodRows, "CARI_AP_OFFSET");
     assert(
       goodApOffset?.missing === false,

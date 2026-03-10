@@ -28,11 +28,13 @@ async function main() {
     "utf8"
   );
   assert(
-    bankAccountsRouteSource.includes('"/provision-102-child"') &&
+    bankAccountsRouteSource.includes('"/provision-control-parent-child"') &&
+      !bankAccountsRouteSource.includes('"/provision-102-child"') &&
+      bankAccountsRouteSource.includes("BANK_PROVISION_CONTROL_PARENT_CHILD") &&
       bankAccountsRouteSource.includes("parseIdempotencyKey") &&
       bankAccountsRouteSource.includes("executeIdempotentRequest") &&
       bankAccountsRouteSource.includes("idempotentReplay"),
-    "Bank provisioning route should keep idempotent replay protection"
+    "Bank provisioning route should keep neutral idempotent replay protection without the deprecated alias"
   );
 
   const cariRouteSource = await readFile(

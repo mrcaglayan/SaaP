@@ -5,6 +5,12 @@ const PURPOSE_MODULE_KEYS = Object.freeze({
   CARI: "CARI",
   CASH: "CASH",
   REVREC: "REVREC",
+  BANK: "BANK",
+});
+
+const PURPOSE_VALIDATION_PROFILES = Object.freeze({
+  POSTABLE_ACCOUNT: "POSTABLE_ACCOUNT",
+  BANK_CONTROL_PARENT: "BANK_CONTROL_PARENT",
 });
 
 const CARI_REQUIRED_PURPOSE_CODES = Object.freeze([
@@ -41,6 +47,9 @@ const CASH_PURPOSE_CODES = Object.freeze([
 ]);
 const CASH_PURPOSE_CODE_SET = new Set(CASH_PURPOSE_CODES);
 
+const BANK_PURPOSE_CODES = Object.freeze(["BANK_CONTROL_PARENT"]);
+const BANK_PURPOSE_CODE_SET = new Set(BANK_PURPOSE_CODES);
+
 const REVREC_PURPOSE_CODES = Object.freeze([
   "DEFREV_SHORT_LIABILITY",
   "DEFREV_LONG_LIABILITY",
@@ -65,12 +74,14 @@ const PURPOSE_CODES_BY_MODULE = Object.freeze({
   [PURPOSE_MODULE_KEYS.CARI]: CARI_PURPOSE_CODES,
   [PURPOSE_MODULE_KEYS.CASH]: CASH_PURPOSE_CODES,
   [PURPOSE_MODULE_KEYS.REVREC]: REVREC_PURPOSE_CODES,
+  [PURPOSE_MODULE_KEYS.BANK]: BANK_PURPOSE_CODES,
 });
 
 const PURPOSE_CODE_SET_BY_MODULE = Object.freeze({
   [PURPOSE_MODULE_KEYS.CARI]: CARI_PURPOSE_CODE_SET,
   [PURPOSE_MODULE_KEYS.CASH]: CASH_PURPOSE_CODE_SET,
   [PURPOSE_MODULE_KEYS.REVREC]: REVREC_PURPOSE_CODE_SET,
+  [PURPOSE_MODULE_KEYS.BANK]: BANK_PURPOSE_CODE_SET,
 });
 
 const PURPOSE_CODE_TO_MODULE = (() => {
@@ -143,28 +154,93 @@ function resolvePurposeModuleKeyForUpsert(purposeCode, moduleKeyInput) {
   return inferred;
 }
 
-function mapPurposeMappingRow(row, legalEntityId) {
-  if (!row) {
-    return null;
+function resolvePurposeValidationProfile(purposeCode) {
+  const normalizedPurposeCode = normalizePurposeCode(purposeCode);
+  if (normalizedPurposeCode === "BANK_CONTROL_PARENT") {
+    return PURPOSE_VALIDATION_PROFILES.BANK_CONTROL_PARENT;
   }
+  return PURPOSE_VALIDATION_PROFILES.POSTABLE_ACCOUNT;
+}
 
+function buildPurposeValidationState({
+  tenantId,
+  legalEntityId,
+  purposeCode,
+  row,
+}) {
+  const profile = resolvePurposeValidationProfile(purposeCode);
   const accountId = parsePositiveInt(row.account_id);
   const accountTenantId = parsePositiveInt(row.tenant_id);
   const accountLegalEntityId = parsePositiveInt(row.coa_legal_entity_id);
   const scope = String(row.coa_scope || "").toUpperCase();
   const isActive = toDbBoolean(row.is_active);
   const allowPosting = toDbBoolean(row.allow_posting);
+  const accountType = String(row.account_type || "").trim().toUpperCase();
+  const sameTenant = accountTenantId === tenantId;
   const accountInLegalEntityChart =
-    scope === "LEGAL_ENTITY" && accountLegalEntityId === legalEntityId;
+    sameTenant &&
+    scope === "LEGAL_ENTITY" &&
+    accountLegalEntityId === legalEntityId;
   const validForPurposePosting =
     Boolean(accountId) &&
-    Boolean(accountTenantId) &&
     accountInLegalEntityChart &&
     isActive &&
     allowPosting;
+  const validForBankControlParent =
+    Boolean(accountId) &&
+    accountInLegalEntityChart &&
+    isActive &&
+    accountType === "ASSET";
+  const validForPurposeMapping =
+    profile === PURPOSE_VALIDATION_PROFILES.BANK_CONTROL_PARENT
+      ? validForBankControlParent
+      : validForPurposePosting;
+
+  let purposeValidationIssue = "";
+  if (!accountId) {
+    purposeValidationIssue = "MISSING_ACCOUNT";
+  } else if (!sameTenant) {
+    purposeValidationIssue = "TENANT_MISMATCH";
+  } else if (scope !== "LEGAL_ENTITY") {
+    purposeValidationIssue = "LEGAL_ENTITY_CHART_REQUIRED";
+  } else if (accountLegalEntityId !== legalEntityId) {
+    purposeValidationIssue = "LEGAL_ENTITY_MISMATCH";
+  } else if (!isActive) {
+    purposeValidationIssue = "INACTIVE_ACCOUNT";
+  } else if (
+    profile === PURPOSE_VALIDATION_PROFILES.BANK_CONTROL_PARENT &&
+    accountType !== "ASSET"
+  ) {
+    purposeValidationIssue = "ASSET_REQUIRED";
+  } else if (
+    profile === PURPOSE_VALIDATION_PROFILES.POSTABLE_ACCOUNT &&
+    !allowPosting
+  ) {
+    purposeValidationIssue = "POSTABLE_REQUIRED";
+  }
 
   return {
-    purposeCode: String(row.purpose_code || "").trim().toUpperCase(),
+    purposeValidationProfile: profile,
+    purposeValidationIssue: validForPurposeMapping ? "" : purposeValidationIssue,
+    validForPurposeMapping,
+    validForPurposePosting,
+    validForCariPosting: validForPurposePosting,
+    validForBankControlParent,
+  };
+}
+
+function mapPurposeMappingRow(row, { tenantId, legalEntityId }) {
+  if (!row) {
+    return null;
+  }
+
+  const purposeCode = String(row.purpose_code || "").trim().toUpperCase();
+  const accountId = parsePositiveInt(row.account_id);
+  const isActive = toDbBoolean(row.is_active);
+  const allowPosting = toDbBoolean(row.allow_posting);
+
+  return {
+    purposeCode,
     accountId,
     accountCode: String(row.account_code || ""),
     accountName: String(row.account_name || ""),
@@ -172,14 +248,19 @@ function mapPurposeMappingRow(row, legalEntityId) {
     normalSide: String(row.normal_side || "").toUpperCase(),
     isActive,
     allowPosting,
-    validForPurposePosting,
-    validForCariPosting: validForPurposePosting,
+    ...buildPurposeValidationState({
+      tenantId,
+      legalEntityId,
+      purposeCode,
+      row,
+    }),
   };
 }
 
 async function loadAccountForPurposeMapping({
   tenantId,
   legalEntityId,
+  purposeCode,
   accountId,
   runQuery = query,
 }) {
@@ -208,22 +289,30 @@ async function loadAccountForPurposeMapping({
     throw badRequest("accountId not found for tenant");
   }
 
-  const scope = String(row.coa_scope || "").toUpperCase();
-  if (scope !== "LEGAL_ENTITY") {
-    throw badRequest("accountId must belong to a LEGAL_ENTITY chart");
-  }
-
-  const accountLegalEntityId = parsePositiveInt(row.coa_legal_entity_id);
-  if (accountLegalEntityId !== legalEntityId) {
-    throw badRequest("accountId must belong to selected legalEntityId");
-  }
-
-  if (!toDbBoolean(row.is_active)) {
-    throw badRequest("accountId must reference an active account");
-  }
-
-  if (!toDbBoolean(row.allow_posting)) {
-    throw badRequest("accountId must reference a postable account");
+  const validation = buildPurposeValidationState({
+    tenantId,
+    legalEntityId,
+    purposeCode,
+    row: {
+      ...row,
+      purpose_code: purposeCode,
+    },
+  });
+  if (!validation.validForPurposeMapping) {
+    switch (validation.purposeValidationIssue) {
+      case "LEGAL_ENTITY_CHART_REQUIRED":
+        throw badRequest("accountId must belong to a LEGAL_ENTITY chart");
+      case "LEGAL_ENTITY_MISMATCH":
+        throw badRequest("accountId must belong to selected legalEntityId");
+      case "INACTIVE_ACCOUNT":
+        throw badRequest("accountId must reference an active account");
+      case "ASSET_REQUIRED":
+        throw badRequest(`accountId must reference an ASSET account for ${purposeCode}`);
+      case "POSTABLE_REQUIRED":
+        throw badRequest("accountId must reference a postable account");
+      default:
+        throw badRequest("accountId is not valid for selected purposeCode");
+    }
   }
 
   return row;
@@ -279,7 +368,10 @@ export async function listPurposeMappings({
   const byPurposeCode = new Map(
     (result.rows || []).map((row) => [
       String(row.purpose_code || "").trim().toUpperCase(),
-      mapPurposeMappingRow(row, normalizedLegalEntityId),
+      mapPurposeMappingRow(row, {
+        tenantId: normalizedTenantId,
+        legalEntityId: normalizedLegalEntityId,
+      }),
     ])
   );
 
@@ -297,8 +389,12 @@ export async function listPurposeMappings({
       normalSide: null,
       isActive: false,
       allowPosting: false,
+      purposeValidationProfile: resolvePurposeValidationProfile(purposeCode),
+      purposeValidationIssue: "MISSING_ACCOUNT",
+      validForPurposeMapping: false,
       validForPurposePosting: false,
       validForCariPosting: false,
+      validForBankControlParent: false,
     };
   });
 }
@@ -333,6 +429,7 @@ export async function upsertPurposeMapping({
   const accountRow = await loadAccountForPurposeMapping({
     tenantId: normalizedTenantId,
     legalEntityId: normalizedLegalEntityId,
+    purposeCode: normalizedPurposeCode,
     accountId: normalizedAccountId,
     runQuery,
   });
@@ -358,15 +455,15 @@ export async function upsertPurposeMapping({
 
   return {
     moduleKey: normalizedModuleKey,
-    purposeCode: normalizedPurposeCode,
-    accountId: normalizedAccountId,
-    accountCode: String(accountRow.account_code || ""),
-    accountName: String(accountRow.account_name || ""),
-    accountType: String(accountRow.account_type || "").toUpperCase(),
-    normalSide: String(accountRow.normal_side || "").toUpperCase(),
-    isActive: true,
-    allowPosting: true,
-    validForPurposePosting: true,
-    validForCariPosting: true,
+    ...mapPurposeMappingRow(
+      {
+        ...accountRow,
+        purpose_code: normalizedPurposeCode,
+      },
+      {
+        tenantId: normalizedTenantId,
+        legalEntityId: normalizedLegalEntityId,
+      }
+    ),
   };
 }

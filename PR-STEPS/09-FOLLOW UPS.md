@@ -5,6 +5,11 @@
 - This is a source/spec file.
 - Execution status is tracked only in 11-PROJECT-FOLLOWING-TRACKER.md.
 
+## Implementation Status Note
+- `PR-F01` through `PR-F13` are implemented.
+- Execution evidence lives in `10-EXECUTION TRACKER.md`.
+- Literal `102` wording in `PR-F03` and `PR-F04` is historical source text. Current bank-control-parent behavior is defined by `23-BANK-CONTROL-PARENT-PURPOSE-MAPPING.md`.
+
 ## Combined Audit Result
 
 ## What is already mostly implemented (from 00..05)
@@ -13,9 +18,9 @@
 - Bank + Payroll roadmap (`04-*`) is largely implemented (`m031..m080`, PR-B/PR-P/PR-H script coverage present).
 - UX/Hardening roadmap (`05-IMPROVEMENTS.md`) is largely implemented (PR-UX/PR-CORE scripts exist).
 
-## Open work concentrated in 06..08
-Not implemented yet in repo:
-- `m081` Subaccounts hardening + bank OU ownership and strict 102 subtree controls.
+## Historical Audit Baseline (March 1, 2026)
+At audit time, the following items were identified as not yet implemented in repo:
+- `m081` Subaccounts hardening + bank OU ownership and strict bank control-parent subtree controls.
 - Setup Wizard V2 / country-first + onboarding account tree payload.
 - Canonical consolidation mapping layer for different local chart codes.
 - Explicit close/consolidation staged workflow approvals (`m082` track).
@@ -55,24 +60,24 @@ Deliverables:
 Depends on: PR-F01
 Unblocks: PR-F03, PR-F04, PR-F12
 
-## PR-F03: 102 subtree enforcement + immutability after posting
+## PR-F03: Bank control-parent subtree enforcement + immutability after posting
 Goal:
 - Complete `06-SUBACCOUNTS` integrity controls.
 
 Deliverables:
-- Enforce bank GL account under configured `102` subtree (flagged rollout).
+- Enforce bank GL account under the configured bank control-parent subtree (flagged rollout).
 - Block critical bank identity mutations once posted/consumed.
 - Add compatibility checks for payments/reconciliation/payroll consumers.
 
 Depends on: PR-F02
 Unblocks: PR-F04, PR-F12
 
-## PR-F04: Bank one-click provisioning (auto-create 102 child + bank account)
+## PR-F04: Bank one-click provisioning (auto-create bank control-parent child + bank account)
 Goal:
 - Complete subaccounts usability path.
 
 Deliverables:
-- Transactional service/API to create `102` child + bank account atomically.
+- Transactional service/API to create a bank control-parent child + bank account atomically.
 - Frontend action in Bank Accounts page.
 - Idempotency-safe retry semantics.
 

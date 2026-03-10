@@ -2,8 +2,10 @@ import bcrypt from "bcrypt";
 import { closePool, query } from "../src/db.js";
 import { seedCore } from "../src/seedCore.js";
 import { assertScopeAccess } from "../src/middleware/rbac.js";
-import { provisionBankAccountWith102Child } from "../src/services/bank.accounts.service.js";
+import { provisionBankAccountWithControlParentChild } from "../src/services/bank.accounts.service.js";
 import { executeIdempotentRequest } from "../src/services/idempotency.service.js";
+
+const CONTROL_PARENT_CODE = "102";
 
 function assert(condition, message) {
   if (!condition) {
@@ -147,22 +149,33 @@ async function createProvisionFixture({ stamp }) {
   await query(
     `INSERT INTO accounts (
         coa_id, code, name, account_type, normal_side, allow_posting, parent_account_id, is_active
-      ) VALUES (?, '102', ?, 'ASSET', 'DEBIT', FALSE, NULL, TRUE)`,
-    [coaId, `Bank Control 102 ${stamp}`]
+      ) VALUES (?, ?, ?, 'ASSET', 'DEBIT', FALSE, NULL, TRUE)`,
+    [coaId, CONTROL_PARENT_CODE, `Bank Control Parent ${stamp}`]
   );
-  const control102Id = toInt(
+  const controlParentId = toInt(
     (
       await query(
         `SELECT id
          FROM accounts
          WHERE coa_id = ?
-           AND code = '102'
+           AND code = ?
          LIMIT 1`,
-        [coaId]
+        [coaId, CONTROL_PARENT_CODE]
       )
     ).rows?.[0]?.id
   );
-  assert(control102Id > 0, "Failed to create 102 control account");
+  assert(controlParentId > 0, "Failed to create mapped control-parent account");
+
+  await query(
+    `INSERT INTO journal_purpose_accounts (
+        tenant_id,
+        legal_entity_id,
+        purpose_code,
+        account_id
+     ) VALUES (?, ?, 'BANK_CONTROL_PARENT', ?)
+     ON DUPLICATE KEY UPDATE account_id = VALUES(account_id), updated_at = CURRENT_TIMESTAMP`,
+    [tenantId, legalEntityId, controlParentId]
+  );
 
   return {
     tenantId,
@@ -170,16 +183,16 @@ async function createProvisionFixture({ stamp }) {
     userId,
     currencyCode,
     coaId,
-    control102Id,
+    controlParentId,
   };
 }
 
-async function count102Children({ control102Id }) {
+async function countControlParentChildren({ controlParentId }) {
   const result = await query(
     `SELECT COUNT(*) AS total
      FROM accounts
      WHERE parent_account_id = ?`,
-    [control102Id]
+    [controlParentId]
   );
   return toInt(result.rows?.[0]?.total, 0);
 }
@@ -191,7 +204,7 @@ async function main() {
   const fixture = await createProvisionFixture({ stamp });
   const req = buildScopedReq({ legalEntityIds: [fixture.legalEntityId] });
 
-  const first = await provisionBankAccountWith102Child({
+  const first = await provisionBankAccountWithControlParentChild({
     req,
     payload: {
       tenantId: fixture.tenantId,
@@ -213,12 +226,17 @@ async function main() {
   assert(toInt(first?.row?.id) > 0, "Provision should create bank account row");
   assert(toInt(first?.glAccount?.id) > 0, "Provision should create child GL account");
   assert(
-    String(first?.glAccount?.code || "").startsWith("102."),
-    "Provisioned GL account code should be under 102 subtree"
+    String(first?.glAccount?.code || "").startsWith(`${CONTROL_PARENT_CODE}.`),
+    "Provisioned GL account code should be created under the mapped control parent"
   );
 
-  const afterFirstCount = await count102Children({ control102Id: fixture.control102Id });
-  assert(afterFirstCount === 1, `Expected 1 child under 102 after first provisioning, got ${afterFirstCount}`);
+  const afterFirstCount = await countControlParentChildren({
+    controlParentId: fixture.controlParentId,
+  });
+  assert(
+    afterFirstCount === 1,
+    `Expected 1 child under mapped control parent after first provisioning, got ${afterFirstCount}`
+  );
 
   const idempotencyPayload = {
     tenantId: fixture.tenantId,
@@ -235,7 +253,7 @@ async function main() {
     isActive: true,
     glAccountName: `PRH10 Idem GL ${stamp}`,
   };
-  const idemScope = `BANK_PROVISION_102_T${fixture.tenantId}_LE${fixture.legalEntityId}`;
+  const idemScope = `BANK_PROVISION_CONTROL_PARENT_CHILD_T${fixture.tenantId}_LE${fixture.legalEntityId}`;
   const idemKey = `PRH10-IDEM-${stamp}`;
 
   const idemFirst = await executeIdempotentRequest({
@@ -244,7 +262,7 @@ async function main() {
     requestFingerprintInput: idempotencyPayload,
     execute: async () => ({
       status: 201,
-      payload: await provisionBankAccountWith102Child({
+      payload: await provisionBankAccountWithControlParentChild({
         req,
         payload: idempotencyPayload,
         assertScopeAccess,
@@ -253,10 +271,12 @@ async function main() {
   });
   assert(!idemFirst.idempotentReplay, "First idempotent call should not be replay");
 
-  const childCountAfterIdemFirst = await count102Children({ control102Id: fixture.control102Id });
+  const childCountAfterIdemFirst = await countControlParentChildren({
+    controlParentId: fixture.controlParentId,
+  });
   assert(
     childCountAfterIdemFirst === 2,
-    `Expected 2 children under 102 after first idempotent execution, got ${childCountAfterIdemFirst}`
+    `Expected 2 children under mapped control parent after first idempotent execution, got ${childCountAfterIdemFirst}`
   );
 
   const idemSecond = await executeIdempotentRequest({
@@ -265,7 +285,7 @@ async function main() {
     requestFingerprintInput: idempotencyPayload,
     execute: async () => ({
       status: 201,
-      payload: await provisionBankAccountWith102Child({
+      payload: await provisionBankAccountWithControlParentChild({
         req,
         payload: idempotencyPayload,
         assertScopeAccess,
@@ -277,17 +297,24 @@ async function main() {
     toInt(idemSecond.payload?.row?.id) === toInt(idemFirst.payload?.row?.id),
     "Idempotent replay should return the original provisioned bank account"
   );
-  const childCountAfterIdemReplay = await count102Children({ control102Id: fixture.control102Id });
+  const childCountAfterIdemReplay = await countControlParentChildren({
+    controlParentId: fixture.controlParentId,
+  });
   assert(
     childCountAfterIdemReplay === 2,
-    `Idempotent replay must not create new children under 102 (got ${childCountAfterIdemReplay})`
+    `Idempotent replay must not create new children under mapped control parent (got ${childCountAfterIdemReplay})`
   );
 
   await query(
     `INSERT INTO accounts (
         coa_id, code, name, account_type, normal_side, allow_posting, parent_account_id, is_active
       ) VALUES (?, ?, ?, 'ASSET', 'DEBIT', TRUE, ?, TRUE)`,
-    [fixture.coaId, "102.900", `PRH10 Existing Child ${stamp}`, fixture.control102Id]
+    [
+      fixture.coaId,
+      `${CONTROL_PARENT_CODE}.900`,
+      `PRH10 Existing Child ${stamp}`,
+      fixture.controlParentId,
+    ]
   );
   const duplicateGl = toInt(
     (
@@ -295,9 +322,9 @@ async function main() {
         `SELECT id
          FROM accounts
          WHERE coa_id = ?
-           AND code = '102.900'
+           AND code = ?
          LIMIT 1`,
-        [fixture.coaId]
+        [fixture.coaId, `${CONTROL_PARENT_CODE}.900`]
       )
     ).rows?.[0]?.id
   );
@@ -324,10 +351,12 @@ async function main() {
     ]
   );
 
-  const childCountBeforeRollback = await count102Children({ control102Id: fixture.control102Id });
+  const childCountBeforeRollback = await countControlParentChildren({
+    controlParentId: fixture.controlParentId,
+  });
   let rollbackFailureSeen = false;
   try {
-    await provisionBankAccountWith102Child({
+    await provisionBankAccountWithControlParentChild({
       req,
       payload: {
         tenantId: fixture.tenantId,
@@ -355,14 +384,16 @@ async function main() {
   }
   assert(rollbackFailureSeen, "Duplicate bank code should fail provisioning");
 
-  const childCountAfterRollback = await count102Children({ control102Id: fixture.control102Id });
+  const childCountAfterRollback = await countControlParentChildren({
+    controlParentId: fixture.controlParentId,
+  });
   assert(
     childCountAfterRollback === childCountBeforeRollback,
-    "Failed provisioning should roll back and not leave orphan 102 child account"
+    "Failed provisioning should roll back and not leave an orphan control-parent child account"
   );
 
   console.log(
-    "PR-H10 smoke test passed (one-click 102 provisioning + idempotent replay + rollback safety)."
+    "PR-H10 smoke test passed (one-click control-parent provisioning + idempotent replay + rollback safety)."
   );
 }
 

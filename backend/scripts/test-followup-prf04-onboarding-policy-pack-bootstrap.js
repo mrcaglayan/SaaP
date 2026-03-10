@@ -55,6 +55,10 @@ async function main() {
     requiredMappings.length > 0,
     "TR_UNIFORM_V1 must expose required purpose mappings"
   );
+  assert(
+    requiredMappings.some((row) => toUpper(row?.purposeCode) === "BANK_CONTROL_PARENT"),
+    "TR_UNIFORM_V1 required purpose mappings must include BANK_CONTROL_PARENT"
+  );
 
   const missingRequiredPurposeCode = toUpper(requiredMappings[0]?.purposeCode);
   const resolvedRequiredPurposeCode = toUpper(

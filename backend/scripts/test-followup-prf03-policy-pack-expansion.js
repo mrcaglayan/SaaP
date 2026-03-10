@@ -101,10 +101,29 @@ async function main() {
   }
 
   const trPack = getPolicyPack("TR_UNIFORM_V1");
+  const afPack = getPolicyPack("AF_STARTER_V1");
+  const usPack = getPolicyPack("US_GAAP_STARTER_V1");
   const optionalRows = (trPack?.requiredPurposeMappings || []).filter(
     (row) => row?.required === false
   );
   assert(optionalRows.length > 0, "TR_UNIFORM_V1 should include optional context mappings");
+
+  const trBank = findByPurposeCode(trPack?.requiredPurposeMappings, "BANK_CONTROL_PARENT");
+  const afBank = findByPurposeCode(afPack?.requiredPurposeMappings, "BANK_CONTROL_PARENT");
+  const usBank = findByPurposeCode(usPack?.requiredPurposeMappings, "BANK_CONTROL_PARENT");
+  assert(trBank?.required === true, "TR_UNIFORM_V1 must require BANK_CONTROL_PARENT");
+  assert(
+    String(trBank?.recommendedCode || "") === "102",
+    "TR_UNIFORM_V1 BANK_CONTROL_PARENT should recommend 102"
+  );
+  assert(
+    String(afBank?.recommendedCode || "") === "1150",
+    "AF_STARTER_V1 BANK_CONTROL_PARENT should recommend 1150"
+  );
+  assert(
+    String(usBank?.recommendedCode || "") === "1150",
+    "US_GAAP_STARTER_V1 BANK_CONTROL_PARENT should recommend 1150"
+  );
 
   console.log("PR-F03 policy pack expansion test passed.");
 }
@@ -113,4 +132,3 @@ main().catch((error) => {
   console.error(error);
   process.exit(1);
 });
-

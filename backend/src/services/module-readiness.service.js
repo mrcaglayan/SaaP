@@ -22,6 +22,10 @@ const CASH_CLEARING_REQUIRED_PURPOSE_CODES = Object.freeze([
   CASH_PURPOSE_CODES.TRANSIT_CLEARING,
 ]);
 
+const BANK_CONTROL_PARENT_REQUIRED_PURPOSE_CODES = Object.freeze([
+  "BANK_CONTROL_PARENT",
+]);
+
 const SHAREHOLDER_EXPECTED_NORMAL_SIDE = Object.freeze({
   SHAREHOLDER_CAPITAL_CREDIT_PARENT: "CREDIT",
   SHAREHOLDER_COMMITMENT_DEBIT_PARENT: "DEBIT",
@@ -944,6 +948,44 @@ function evaluateCashClearingPurposeRow({
   return invalids;
 }
 
+function evaluateBankControlParentPurposeRow({
+  tenantId,
+  legalEntityId,
+  purposeCode,
+  row,
+}) {
+  const invalids = evaluateCommonMappingValidity({
+    tenantId,
+    legalEntityId,
+    row,
+  }).map((invalid) => ({
+    purposeCode,
+    ...invalid,
+  }));
+
+  const accountExists = parsePositiveInt(row?.account_id);
+  const accountId = accountExists || parsePositiveInt(row?.mapped_account_id);
+  const accountCode = String(row?.account_code || "");
+  if (!row || !accountExists) {
+    return invalids;
+  }
+
+  if (toUpper(row?.account_type) !== "ASSET") {
+    invalids.push({
+      purposeCode,
+      reason: "ACCOUNT_TYPE_MISMATCH",
+      accountId: accountId || null,
+      accountCode: accountCode || null,
+      details: {
+        expectedAccountType: "ASSET",
+        actualAccountType: toUpper(row?.account_type) || null,
+      },
+    });
+  }
+
+  return invalids;
+}
+
 function evaluateDistinctPurposePairs({
   purposeMap,
   distinctPairs,
@@ -1151,6 +1193,38 @@ export async function getCashClearingReadiness(
   };
 }
 
+export async function getBankControlParentReadiness(
+  tenantId,
+  legalEntityId = null,
+  { runQuery = query } = {}
+) {
+  const legalEntityIds = await resolveTargetLegalEntityIds({
+    tenantId,
+    legalEntityId,
+    runQuery,
+  });
+  const purposeMapByLegalEntity = await loadPurposeMappingsByLegalEntity({
+    tenantId,
+    legalEntityIds,
+    requiredPurposeCodes: BANK_CONTROL_PARENT_REQUIRED_PURPOSE_CODES,
+    runQuery,
+  });
+
+  const byLegalEntity = buildModuleReadinessByLegalEntity({
+    tenantId,
+    legalEntityIds,
+    requiredPurposeCodes: BANK_CONTROL_PARENT_REQUIRED_PURPOSE_CODES,
+    purposeMapByLegalEntity,
+    distinctPairs: [],
+    evaluatePurposeRow: evaluateBankControlParentPurposeRow,
+  });
+
+  return {
+    moduleKey: "bankControlParent",
+    byLegalEntity,
+  };
+}
+
 export async function getModuleReadiness(
   tenantId,
   legalEntityId = null,
@@ -1162,25 +1236,34 @@ export async function getModuleReadiness(
   }
 
   const normalizedLegalEntityId = parsePositiveInt(legalEntityId);
-  const [cariPosting, shareholderCommitment, cashClearing, closeConsolidationWorkflow] =
+  const [
+    cariPosting,
+    shareholderCommitment,
+    cashClearing,
+    bankControlParent,
+    closeConsolidationWorkflow,
+  ] =
     await Promise.all([
-    getCariPostingReadiness(normalizedTenantId, normalizedLegalEntityId, {
-      runQuery,
-    }),
-    getShareholderCommitmentReadiness(normalizedTenantId, normalizedLegalEntityId, {
-      runQuery,
-    }),
-    getCashClearingReadiness(normalizedTenantId, normalizedLegalEntityId, {
-      runQuery,
-    }),
-    getCloseConsolidationWorkflowReadiness(
-      normalizedTenantId,
-      normalizedLegalEntityId,
-      {
+      getCariPostingReadiness(normalizedTenantId, normalizedLegalEntityId, {
         runQuery,
-      }
-    ),
-  ]);
+      }),
+      getShareholderCommitmentReadiness(normalizedTenantId, normalizedLegalEntityId, {
+        runQuery,
+      }),
+      getCashClearingReadiness(normalizedTenantId, normalizedLegalEntityId, {
+        runQuery,
+      }),
+      getBankControlParentReadiness(normalizedTenantId, normalizedLegalEntityId, {
+        runQuery,
+      }),
+      getCloseConsolidationWorkflowReadiness(
+        normalizedTenantId,
+        normalizedLegalEntityId,
+        {
+          runQuery,
+        }
+      ),
+    ]);
 
   return {
     tenantId: normalizedTenantId,
@@ -1194,6 +1277,9 @@ export async function getModuleReadiness(
       },
       cashClearing: {
         byLegalEntity: cashClearing.byLegalEntity,
+      },
+      bankControlParent: {
+        byLegalEntity: bankControlParent.byLegalEntity,
       },
       closeConsolidationWorkflow: {
         byLegalEntity: closeConsolidationWorkflow.byLegalEntity,
