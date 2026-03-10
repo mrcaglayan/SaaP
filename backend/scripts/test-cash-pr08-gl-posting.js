@@ -208,6 +208,7 @@ async function createAccount({
   accountType = "ASSET",
   normalSide = "DEBIT",
   allowPosting = true,
+  parentAccountId = null,
 }) {
   const response = await apiRequest({
     token,
@@ -220,12 +221,45 @@ async function createAccount({
       accountType,
       normalSide,
       allowPosting,
+      parentAccountId,
     },
     expectedStatus: 201,
   });
   const accountId = toNumber(response.json?.id);
   assert(accountId > 0, `Account not created for code=${code}`);
   return accountId;
+}
+
+async function createBankAccount({
+  token,
+  legalEntityId,
+  operatingUnitId = null,
+  glAccountId,
+  code,
+  name,
+  currencyCode,
+}) {
+  const response = await apiRequest({
+    token,
+    method: "POST",
+    path: "/api/v1/bank/accounts",
+    body: {
+      legalEntityId,
+      operatingUnitId,
+      glAccountId,
+      code,
+      name,
+      currencyCode,
+      bankName: name,
+      branchName: operatingUnitId ? "Branch" : "HQ",
+      accountNo: `${code}-001`,
+      isActive: true,
+    },
+    expectedStatus: 201,
+  });
+  const bankAccountId = toNumber(response.json?.row?.id);
+  assert(bankAccountId > 0, `Bank account not created for code=${code}`);
+  return bankAccountId;
 }
 
 async function createRegister({
@@ -605,13 +639,22 @@ async function bootstrapCashPostingContext(token, identity) {
     accountType: "EXPENSE",
     normalSide: "DEBIT",
   });
-  const bankAccountId = await createAccount({
+  const bankControlAccountId = await createAccount({
     token,
     coaId: coaAId,
-    code: `CBK${identity.stamp}`,
-    name: "Bank Account",
+    code: "102",
+    name: "Bank Accounts Control",
     accountType: "ASSET",
     normalSide: "DEBIT",
+  });
+  const bankGlAccountId = await createAccount({
+    token,
+    coaId: coaAId,
+    code: `102.${String(identity.stamp).slice(-3).padStart(3, "0")}`,
+    name: "Bank Account GL",
+    accountType: "ASSET",
+    normalSide: "DEBIT",
+    parentAccountId: bankControlAccountId,
   });
   const foreignCounterAccountId = await createAccount({
     token,
@@ -652,6 +695,15 @@ async function bootstrapCashPostingContext(token, identity) {
     name: "Register Cross OU",
     currencyCode,
   });
+  await createBankAccount({
+    token,
+    legalEntityId: legalEntityAId,
+    operatingUnitId: operatingUnitA1Id,
+    glAccountId: bankGlAccountId,
+    code: `BANK${identity.stamp}`,
+    name: "PR08 Bank Account",
+    currencyCode,
+  });
 
   const openPeriodId = await resolvePeriodIdForDate({
     calendarId,
@@ -672,7 +724,7 @@ async function bootstrapCashPostingContext(token, identity) {
     registerBId,
     registerCrossOuId,
     counterExpenseAccountId,
-    bankAccountId,
+    bankGlAccountId,
     foreignCounterAccountId,
   };
 }
@@ -755,13 +807,13 @@ async function main() {
       {
         txnType: "DEPOSIT_TO_BANK",
         amount: "60.00",
-        counterAccountId: setup.bankAccountId,
+        counterAccountId: setup.bankGlAccountId,
         idempotencySuffix: "DEPOSIT",
       },
       {
         txnType: "WITHDRAWAL_FROM_BANK",
         amount: "25.00",
-        counterAccountId: setup.bankAccountId,
+        counterAccountId: setup.bankGlAccountId,
         idempotencySuffix: "WITHDRAW",
       },
       {
