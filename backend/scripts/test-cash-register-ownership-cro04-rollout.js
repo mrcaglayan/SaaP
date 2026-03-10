@@ -117,6 +117,15 @@ async function main() {
     spec?.paths?.["/api/v1/cash/transactions/transit/{transitTransferId}/receive"]?.post;
   const transitInitiateOp =
     spec?.paths?.["/api/v1/cash/transactions/transit/initiate"]?.post;
+  const operatingUnitListOp = spec?.paths?.["/api/v1/org/operating-units"]?.get;
+  const partnerCurrentListOp =
+    spec?.paths?.["/api/v1/org/operating-unit-partner-current-accounts"]?.get;
+  const partnerCurrentUpsertOp =
+    spec?.paths?.["/api/v1/org/operating-unit-partner-current-accounts"]?.post;
+  const centralCurrentAutoProvisionOp =
+    spec?.paths?.["/api/v1/org/operating-units/central-current-accounts/auto-provision"]?.post;
+  const partnerCurrentAutoProvisionOp =
+    spec?.paths?.["/api/v1/org/operating-unit-partner-current-accounts/auto-provision"]?.post;
 
   assert(registerListOp, "OpenAPI missing GET /api/v1/cash/registers");
   assert(registerUpsertOp, "OpenAPI missing POST /api/v1/cash/registers");
@@ -169,6 +178,23 @@ async function main() {
   assert(
     transitReceiveOp,
     "OpenAPI missing POST /api/v1/cash/transactions/transit/{transitTransferId}/receive"
+  );
+  assert(operatingUnitListOp, "OpenAPI missing GET /api/v1/org/operating-units");
+  assert(
+    partnerCurrentListOp,
+    "OpenAPI missing GET /api/v1/org/operating-unit-partner-current-accounts"
+  );
+  assert(
+    partnerCurrentUpsertOp,
+    "OpenAPI missing POST /api/v1/org/operating-unit-partner-current-accounts"
+  );
+  assert(
+    centralCurrentAutoProvisionOp,
+    "OpenAPI missing POST /api/v1/org/operating-units/central-current-accounts/auto-provision"
+  );
+  assert(
+    partnerCurrentAutoProvisionOp,
+    "OpenAPI missing POST /api/v1/org/operating-unit-partner-current-accounts/auto-provision"
   );
 
   assert(
@@ -259,6 +285,67 @@ async function main() {
       openapiSource.includes("ownership_context_label") &&
       openapiSource.includes("Central"),
     "OpenAPI should expose ownership fields and Central copy"
+  );
+  const operatingUnitListParams = new Set(
+    (operatingUnitListOp.parameters || []).map((parameter) =>
+      String(parameter?.name || "").trim()
+    )
+  );
+  for (const name of ["tenantId", "legalEntityId", "operatingUnitId"]) {
+    assert(
+      operatingUnitListParams.has(name),
+      `Operating unit list query param missing: ${name}`
+    );
+  }
+  assert(
+    getSchemaRef(operatingUnitListOp) === "#/components/schemas/OperatingUnitListResponse",
+    "Operating unit list response should use OperatingUnitListResponse"
+  );
+  const partnerCurrentListParams = new Set(
+    (partnerCurrentListOp.parameters || []).map((parameter) =>
+      String(parameter?.name || "").trim()
+    )
+  );
+  for (const name of [
+    "tenantId",
+    "legalEntityId",
+    "operatingUnitId",
+    "partnerOperatingUnitId",
+  ]) {
+    assert(
+      partnerCurrentListParams.has(name),
+      `Partner current-account list query param missing: ${name}`
+    );
+  }
+  assert(
+    getSchemaRef(partnerCurrentListOp) ===
+      "#/components/schemas/OperatingUnitPartnerCurrentAccountListResponse",
+    "Partner current-account list response should use OperatingUnitPartnerCurrentAccountListResponse"
+  );
+  assert(
+    getRequestBodyRef(partnerCurrentUpsertOp) ===
+      "#/components/schemas/OperatingUnitPartnerCurrentAccountInput",
+    "Partner current-account upsert request should use OperatingUnitPartnerCurrentAccountInput"
+  );
+  assert(
+    getRequestBodyRef(centralCurrentAutoProvisionOp) ===
+      "#/components/schemas/OperatingUnitCentralCurrentAccountAutoProvisionInput",
+    "Central current-account auto-provision request should use OperatingUnitCentralCurrentAccountAutoProvisionInput"
+  );
+  assert(
+    getAnySchemaRef(centralCurrentAutoProvisionOp, ["201"]) ===
+      "#/components/schemas/OperatingUnitCentralCurrentAccountAutoProvisionResponse",
+    "Central current-account auto-provision response should use OperatingUnitCentralCurrentAccountAutoProvisionResponse"
+  );
+  assert(
+    getRequestBodyRef(partnerCurrentAutoProvisionOp) ===
+      "#/components/schemas/OperatingUnitPartnerCurrentAccountAutoProvisionInput",
+    "Partner current-account auto-provision request should use OperatingUnitPartnerCurrentAccountAutoProvisionInput"
+  );
+  assert(
+    getAnySchemaRef(partnerCurrentAutoProvisionOp, ["201"]) ===
+      "#/components/schemas/OperatingUnitPartnerCurrentAccountAutoProvisionResponse",
+    "Partner current-account auto-provision response should use OperatingUnitPartnerCurrentAccountAutoProvisionResponse"
   );
   assert(
     String(transitInitiateOp.summary || "").includes("different operating-unit contexts"),
@@ -396,6 +483,27 @@ async function main() {
       "#/components/schemas/CashTransactionRow",
     "CashTransitTransferResponse transferInTransaction should use CashTransactionRow"
   );
+  assert(
+    Object.prototype.hasOwnProperty.call(
+      schemas.OperatingUnitInput?.properties || {},
+      "centralDueFromAccountId"
+    ) &&
+      Object.prototype.hasOwnProperty.call(
+        schemas.OperatingUnitInput?.properties || {},
+        "ouDueToCentralAccountId"
+      ),
+    "OperatingUnitInput should document central current-account mapping fields"
+  );
+  assert(
+    schemas.OperatingUnitListResponse?.properties?.rows?.items?.$ref ===
+      "#/components/schemas/OperatingUnitRow",
+    "OperatingUnitListResponse rows should use OperatingUnitRow"
+  );
+  assert(
+    schemas.OperatingUnitPartnerCurrentAccountListResponse?.properties?.rows?.items?.$ref ===
+      "#/components/schemas/OperatingUnitPartnerCurrentAccountRow",
+    "OperatingUnitPartnerCurrentAccountListResponse rows should use OperatingUnitPartnerCurrentAccountRow"
+  );
 
   const cariRunbook = await readFile(
     path.resolve(root, "docs/runbooks/cari-v1-operations.md"),
@@ -407,6 +515,10 @@ async function main() {
     "blank operating-unit selector",
     "different operating-unit contexts",
     "`CASH_IN_TRANSIT`",
+    "`Kasa Islemleri`",
+    "`Transfer Out`",
+    "Center / Branch Current Accounts",
+    "Branch Pair Current Accounts",
   ]) {
     assert(
       cariRunbook.includes(requiredToken),
@@ -459,6 +571,23 @@ async function main() {
     organizationManagementSource.includes("Central means central fulfillment first"),
     "OrganizationManagementPage should use Central wording for shareholder-capital central-first guidance"
   );
+
+  const prStepsSource = await readFile(
+    path.resolve(root, "PR-STEPS/22-CASH-REGISTER-OWNERSHIP-EXPLICITNESS.md"),
+    "utf8"
+  );
+  for (const requiredToken of [
+    "`PR-CRO06`",
+    "`PR-CRO07`",
+    "`Kasa Islemleri`",
+    "Branch Pair Current Accounts",
+    "Center / Branch Current Accounts",
+  ]) {
+    assert(
+      prStepsSource.includes(requiredToken),
+      `PR-STEPS/22-CASH-REGISTER-OWNERSHIP-EXPLICITNESS.md missing: ${requiredToken}`
+    );
+  }
 
   console.log("Cash register ownership CRO04 rollout smoke passed.");
 }

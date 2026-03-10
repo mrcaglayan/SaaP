@@ -173,7 +173,7 @@ function describeOperatingUnit(row, fallbackId) {
 function buildOperatingUnitSelfBalancingError(row, operatingUnitId, detail) {
   const label = describeOperatingUnit(row, operatingUnitId);
   return badRequest(
-    `Operating unit ${label} self-balancing setup is invalid for cross-context cash transfers: ${detail}. Configure "Central Due From OU" and "OU Due To Central" in Organization Management before posting.`
+    `Operating unit ${label} self-balancing setup is invalid for cross-context cash transfers: ${detail}. Complete "Central Due From OU" and "OU Due To Central" from Kasa Islemleri during Transfer Out or in Organization Management before posting.`
   );
 }
 
@@ -203,7 +203,7 @@ function buildOperatingUnitPartnerCurrentError(
 ) {
   const label = describeOperatingUnitPair(row, operatingUnitId, partnerOperatingUnitId);
   return badRequest(
-    `Operating unit pair ${label} direct inter-branch current-account setup is invalid for cross-context cash transfers: ${detail}. Configure "Due From Partner OU" and "Due To Partner OU" in Organization Management before posting.`
+    `Operating unit pair ${label} direct inter-branch current-account setup is invalid for cross-context cash transfers: ${detail}. Complete "Due From Partner OU" and "Due To Partner OU" from Kasa Islemleri during Transfer Out or in Organization Management before posting.`
   );
 }
 

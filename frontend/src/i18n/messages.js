@@ -1471,7 +1471,7 @@ export const messages = {
         transitReverseTransferInFirst:
           "Transfer-out ters kaydi oncesi once transfer-in ters kaydini alin.",
         ouSelfBalancingSetupInvalid:
-          "Farkli baglam transfer post islemi engellendi. Once Organizasyon Yonetimi icinde merkez-OU veya sube-cifti cari hesap kurulumunu tamamlayin.",
+          "Gerekli merkez-OU veya sube-cifti cari hesap kurulumlari hazir olmadigi icin farkli baglam transfer post islemi engellendi. Kurulumu Transfer Out sirasinda Kasa Islemleri ekranindan veya Organizasyon Yonetimi icinden tamamlayin.",
         applyRequiresPostedTxn:
           "Cari apply icin kasa islemi POSTED olmalidir.",
         applyCounterpartyInvalid:
@@ -3276,7 +3276,7 @@ export const messages = {
         transitReverseTransferInFirst:
           "Reverse transfer-in first; transfer-out cannot be reversed after receive.",
         ouSelfBalancingSetupInvalid:
-          "Cross-context transfer posting is blocked until the required central or branch-pair current-account mappings are configured in Organization Management.",
+          "Cross-context transfer posting is blocked until the required central or branch-pair current-account mappings are ready. Complete the setup during Transfer Out in Kasa Islemleri or in Organization Management.",
         applyRequiresPostedTxn:
           "Cash transaction must be POSTED before apply.",
         applyCounterpartyInvalid:

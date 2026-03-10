@@ -48,7 +48,11 @@
   - internal current accounts determine the cross-context accounting result
 - Reuse the same OU internal current-account setup that capital-fulfillment uses, but keep the business meaning separate:
   - `PR-CF02`: direct branch-targeted capital fulfillment can post to a branch directly while keeping shareholder commitment central
-  - `PR-CRO05`: branch-to-branch or central-to-branch cash transfer has no shareholder-capital logic; the `no OU` rows are only a central bridge for self-balancing
+  - `PR-CRO05`: branch-to-branch or central-to-branch cash transfer has no shareholder-capital logic
+- Missing current-account setup can now be completed from `Kasa Islemleri` during `Transfer Out`:
+  - `Center / Branch Current Accounts` for `CENTRAL <-> OPERATING_UNIT`
+  - `Branch Pair Current Accounts` for `OPERATING_UNIT <-> OPERATING_UNIT`
+- `Organization Management` remains the source-of-truth maintenance screen for OU internal-current mappings.
 
 ## Unified execution order
 1. `PR-CRO01` - ownership schema and API foundation
@@ -56,6 +60,8 @@
 3. `PR-CRO03` - downstream workflow clarity and transfer routing UX
 4. `PR-CRO04` - rollout hardening, docs, and compatibility cleanup
 5. `PR-CRO05` - cross-context transfer accounting and OU self-balancing
+6. `PR-CRO06` - inline branch-pair account auto-provision from `Kasa Islemleri`
+7. `PR-CRO07` - inline central current-account auto-provision from `Kasa Islemleri`
 
 ## Master tracker
 - [x] `PR-CRO01` acceptance: cash registers persist explicit ownership without changing central/no-OU accounting semantics.
@@ -68,6 +74,10 @@
   smoke: `backend/scripts/test-cash-register-ownership-cro04-rollout.js`
 - [x] `PR-CRO05` acceptance: completed cross-context transfer accounting resolves through configured OU internal current accounts, keeps `Central` as `no OU`, and leaves OU balance-sheet slices self-balanced without hardcoded chart codes.
   smoke: `backend/scripts/test-cash-register-ownership-cro05-self-balancing.js`
+- [x] `PR-CRO06` acceptance: `OU -> OU` transfer-out can create missing branch-pair child accounts and both directional partner mappings inline from `Kasa Islemleri`.
+  smoke: `backend/scripts/test-cash-register-ownership-cro06-auto-provision.js`
+- [x] `PR-CRO07` acceptance: `Central <-> OU` transfer-out can create missing central current child accounts and update the OU mapping inline from `Kasa Islemleri`.
+  smoke: `backend/scripts/test-cash-register-ownership-cro07-central-auto-provision.js`
 
 ## PR-CRO01
 Goal:
@@ -242,6 +252,7 @@ Deliverables:
 - Enforce branch-specific uniqueness for both OU central mappings and OU-pair mappings within the same legal entity.
 - Surface resolved internal-current-account usage in transfer details, previews, or diagnostics where helpful.
 - Document this as the canonical accounting pattern for any later OU-owned bank-to-bank transfer workflow as well.
+- Allow finance users to create missing current-account child accounts inline from `Kasa Islemleri` `Transfer Out` without leaving the page.
 
 Accounting rules:
 - Do not hardcode `136` / `339`.
@@ -277,7 +288,7 @@ Validation rules:
 - `OPERATING_UNIT -> CENTRAL` requires the source OU to be self-balancing ready.
 - `OPERATING_UNIT A -> OPERATING_UNIT B` requires direct OU-pair mappings in both directions before transfer-out is posted.
 - Source and target registers must still obey current ownership-context routing rules.
-- Missing OU internal-current-account mapping must fail with an actionable error that points users back to `Organization Management`.
+- Missing OU internal-current-account mapping must fail with an actionable error that points users to `Kasa Islemleri` `Transfer Out` or `Organization Management`.
 - `central_due_from_account_id` must not be shared by multiple operating units in the same legal entity.
 - `ou_due_to_central_account_id` should not be shared by multiple operating units in the same legal entity; block duplicates in setup and posting.
 - OU-pair `due_from_account_id` / `due_to_account_id` must be partner-specific and must not be reused across multiple branch pairs in the same legal entity.
@@ -292,8 +303,11 @@ Files:
 - `frontend/src/pages/cash/CashTransactionsPage.jsx`
 - `frontend/src/pages/cash/CashTransitTransfersPage.jsx`
 - `frontend/src/pages/settings/OrganizationManagementPage.jsx`
+- `frontend/src/api/orgAdmin.js`
 - `frontend/src/i18n/messages.js`
 - `docs/runbooks/cari-v1-operations.md`
+- `backend/src/routes/org.js`
+- `backend/src/routes/org.write.validators.js`
 
 Test coverage:
 - `CENTRAL -> CENTRAL` stays on direct/current behavior with no internal-current lines.
@@ -305,6 +319,56 @@ Test coverage:
 - Duplicate OU internal-current mappings are rejected at setup time and also block posting if legacy bad data already exists.
 - Posted lines keep central rows `no OU` and branch rows on the correct OU.
 - Posted `no OU` bridge lines keep `subledger_reference_no = null`.
+- `Kasa Islemleri` inline setup can auto-create missing central current child accounts from selected parents.
+- `Kasa Islemleri` inline setup can auto-create both directional branch-pair child-account mappings from selected parents.
+
+## PR-CRO06
+Goal:
+- Let finance users create missing `OU <-> OU` partner current accounts inline from `Kasa Islemleri` while preparing `Transfer Out`.
+
+Deliverables:
+- Detect missing direct branch-pair mappings after source and target safes are selected.
+- Show the `Branch Pair Current Accounts` helper card on `Kasa Islemleri`.
+- Let the user choose parent asset/liability accounts, auto-create the next child accounts under those parents, and save both directional mappings in one operation.
+- Reuse existing mappings without creating duplicates.
+
+Files:
+- `frontend/src/pages/cash/CashTransactionsPage.jsx`
+- `frontend/src/api/orgAdmin.js`
+- `backend/src/routes/org.js`
+- `backend/src/routes/org.write.validators.js`
+- `backend/src/services/org.write.service.js`
+- `backend/scripts/test-cash-register-ownership-cro06-auto-provision.js`
+
+Test coverage:
+- Fresh inline branch-pair auto-provision creates both directional mappings.
+- Existing mappings are reused without duplicate child-account creation.
+- Partial legacy setup is completed safely.
+- Invalid parent-account types are rejected.
+
+## PR-CRO07
+Goal:
+- Let finance users create missing `Central <-> OU` current accounts inline from `Kasa Islemleri` while preparing `Transfer Out`.
+
+Deliverables:
+- Detect missing OU-level central current mappings after source and target safes are selected.
+- Show the `Center / Branch Current Accounts` helper card on `Kasa Islemleri`.
+- Let the user choose parent asset/liability accounts, auto-create missing child accounts, and update the selected OU mapping in one operation.
+- Reuse existing child accounts/mappings without duplicate creation.
+
+Files:
+- `frontend/src/pages/cash/CashTransactionsPage.jsx`
+- `frontend/src/api/orgAdmin.js`
+- `backend/src/routes/org.js`
+- `backend/src/routes/org.write.validators.js`
+- `backend/src/services/org.write.service.js`
+- `backend/scripts/test-cash-register-ownership-cro07-central-auto-provision.js`
+
+Test coverage:
+- Fresh inline central auto-provision creates both mapped child accounts.
+- Existing central mappings are reused without duplicate child-account creation.
+- Partial legacy setup is completed safely.
+- Invalid parent-account types are rejected.
 
 ## Recommended first implementation slice
 1. Add `ownership_scope` with backfill

@@ -1057,9 +1057,8 @@ function mapTransactionErrorMessage(rawMessage, t) {
     return t("cashTransactions.errorsMapped.transitReverseTransferInFirst");
   }
   if (
-    (lower.includes("self-balancing setup is invalid") ||
-      lower.includes("direct inter-branch current-account setup is invalid")) &&
-    lower.includes("organization management")
+    lower.includes("self-balancing setup is invalid") ||
+    lower.includes("direct inter-branch current-account setup is invalid")
   ) {
     return t("cashTransactions.errorsMapped.ouSelfBalancingSetupInvalid");
   }

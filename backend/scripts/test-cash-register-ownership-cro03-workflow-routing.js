@@ -66,7 +66,11 @@ async function main() {
     transactionsPageSource.includes("selectedTransferRouteMeta") &&
       transactionsPageSource.includes('modeLabel: l("Transit workflow required"') &&
       transactionsPageSource.includes("formatRegisterOptionText(row, l)") &&
-      transactionsPageSource.includes("formatSessionDisplayLabel(session, l)"),
+      transactionsPageSource.includes("formatSessionDisplayLabel(session, l)") &&
+      transactionsPageSource.includes("Center / Branch Current Accounts") &&
+      transactionsPageSource.includes("Create central current accounts") &&
+      transactionsPageSource.includes("Branch Pair Current Accounts") &&
+      transactionsPageSource.includes("Create branch pair accounts"),
     "CashTransactionsPage should show ownership-aware register labels and transfer-mode guidance"
   );
 
@@ -88,8 +92,23 @@ async function main() {
   assert(
     transitPageSource.includes("toTransitRegisterSummary") &&
       transitPageSource.includes("formatCashSessionOptionLabel") &&
-      transitPageSource.includes("Different operating-unit contexts use transit"),
+      transitPageSource.includes("Different operating-unit contexts use transit") &&
+      transitPageSource.includes(
+        "Complete the setup during Transfer Out in Kasa Islemleri or in Organization Management."
+      ),
     "CashTransitTransfersPage should show ownership-aware route context and routing guidance"
+  );
+
+  const messagesSource = await readFile(
+    path.resolve(root, "frontend/src/i18n/messages.js"),
+    "utf8"
+  );
+  assert(
+    messagesSource.includes(
+      "Complete the setup during Transfer Out in Kasa Islemleri or in Organization Management."
+    ) &&
+      messagesSource.includes("Kasa Islemleri ekranindan veya Organizasyon Yonetimi icinden"),
+    "messages.js should align cross-context setup errors with inline Kasa Islemleri guidance"
   );
 
   const orgManagementSource = await readFile(

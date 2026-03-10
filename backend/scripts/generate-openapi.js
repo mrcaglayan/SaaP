@@ -2826,12 +2826,17 @@ const spec = {
       get: {
         tags: ["Org"],
         operationId: "listOperatingUnits",
-        summary: "List operating units",
+        summary: "List operating units with central current-account readiness",
         parameters: [
           queryParamInt("tenantId", false, "Tenant identifier"),
           queryParamInt("legalEntityId", false, "Legal entity identifier"),
+          queryParamInt("operatingUnitId", false, "Operating unit identifier"),
         ],
-        responses: withStandardResponses("200", "Operating unit list"),
+        responses: withStandardResponses(
+          "200",
+          "Operating unit list",
+          "#/components/schemas/OperatingUnitListResponse"
+        ),
       },
       post: {
         tags: ["Org"],
@@ -2843,6 +2848,76 @@ const spec = {
           "400": errorResponseRef,
           "401": errorResponseRef,
         },
+      },
+    },
+    "/api/v1/org/operating-unit-partner-current-accounts": {
+      get: {
+        tags: ["Org"],
+        operationId: "listOperatingUnitPartnerCurrentAccounts",
+        summary: "List directional branch-pair current-account mappings",
+        parameters: [
+          queryParamInt("tenantId", false, "Tenant identifier"),
+          queryParamInt("legalEntityId", false, "Legal entity identifier"),
+          queryParamInt("operatingUnitId", false, "Source operating unit identifier"),
+          queryParamInt(
+            "partnerOperatingUnitId",
+            false,
+            "Partner operating unit identifier"
+          ),
+        ],
+        responses: withStandardResponses(
+          "200",
+          "Operating unit partner current-account mapping list",
+          "#/components/schemas/OperatingUnitPartnerCurrentAccountListResponse"
+        ),
+      },
+      post: {
+        tags: ["Org"],
+        operationId: "upsertOperatingUnitPartnerCurrentAccount",
+        summary: "Create or update a directional branch-pair current-account mapping",
+        requestBody: bodyFromRef(
+          "#/components/schemas/OperatingUnitPartnerCurrentAccountInput"
+        ),
+        responses: {
+          "201": createdResponseRef,
+          "400": errorResponseRef,
+          "401": errorResponseRef,
+          "403": errorResponseRef,
+        },
+      },
+    },
+    "/api/v1/org/operating-units/central-current-accounts/auto-provision": {
+      post: {
+        tags: ["Org"],
+        operationId: "autoProvisionOperatingUnitCentralCurrentAccounts",
+        summary: "Create or reuse Central <-> Branch current child accounts for one operating unit",
+        description:
+          "Creates missing branch-specific child accounts under the selected parent accounts and updates the operating unit's Central Due From OU / OU Due To Central mapping.",
+        requestBody: bodyFromRef(
+          "#/components/schemas/OperatingUnitCentralCurrentAccountAutoProvisionInput"
+        ),
+        responses: withStandardResponses(
+          "201",
+          "Central current accounts provisioned",
+          "#/components/schemas/OperatingUnitCentralCurrentAccountAutoProvisionResponse"
+        ),
+      },
+    },
+    "/api/v1/org/operating-unit-partner-current-accounts/auto-provision": {
+      post: {
+        tags: ["Org"],
+        operationId: "autoProvisionOperatingUnitPartnerCurrentAccounts",
+        summary: "Create or reuse direct branch-pair current child accounts for both directions",
+        description:
+          "Creates missing branch-specific Due From Partner OU / Due To Partner OU child accounts under the selected parents and saves both directional mappings for the branch pair.",
+        requestBody: bodyFromRef(
+          "#/components/schemas/OperatingUnitPartnerCurrentAccountAutoProvisionInput"
+        ),
+        responses: withStandardResponses(
+          "201",
+          "Operating unit partner current accounts provisioned",
+          "#/components/schemas/OperatingUnitPartnerCurrentAccountAutoProvisionResponse"
+        ),
       },
     },
     "/api/v1/org/countries": {
@@ -5909,8 +5984,274 @@ const spec = {
           name: shortText,
           unitType: { type: "string", enum: ["BRANCH", "PLANT", "STORE", "DEPARTMENT", "OTHER"] },
           hasSubledger: { type: "boolean" },
+          centralDueFromAccountId: { ...intId, nullable: true },
+          ouDueToCentralAccountId: { ...intId, nullable: true },
         },
         required: ["legalEntityId", "code", "name"],
+      },
+      OperatingUnitRow: {
+        type: "object",
+        additionalProperties: true,
+        properties: {
+          id: { ...intId, nullable: true },
+          tenant_id: { ...intId, nullable: true },
+          legal_entity_id: { ...intId, nullable: true },
+          code: { type: "string", nullable: true },
+          name: { type: "string", nullable: true },
+          unit_type: {
+            type: "string",
+            enum: ["BRANCH", "PLANT", "STORE", "DEPARTMENT", "OTHER"],
+            nullable: true,
+          },
+          has_subledger: { type: "boolean", nullable: true },
+          status: {
+            type: "string",
+            enum: ["ACTIVE", "INACTIVE"],
+            nullable: true,
+          },
+          created_at: { type: "string", format: "date-time", nullable: true },
+          central_due_from_account_id: { ...intId, nullable: true },
+          central_due_from_account_code: { type: "string", nullable: true },
+          central_due_from_account_name: { type: "string", nullable: true },
+          ou_due_to_central_account_id: { ...intId, nullable: true },
+          ou_due_to_central_account_code: { type: "string", nullable: true },
+          ou_due_to_central_account_name: { type: "string", nullable: true },
+          capital_self_balancing_ready: { type: "boolean", nullable: true },
+        },
+      },
+      OperatingUnitListResponse: {
+        type: "object",
+        properties: {
+          tenantId: intId,
+          rows: {
+            type: "array",
+            items: { $ref: "#/components/schemas/OperatingUnitRow" },
+          },
+        },
+        required: ["tenantId", "rows"],
+      },
+      OperatingUnitPartnerCurrentAccountInput: {
+        type: "object",
+        properties: {
+          tenantId: { ...intId, nullable: true },
+          legalEntityId: intId,
+          operatingUnitId: intId,
+          partnerOperatingUnitId: intId,
+          dueFromAccountId: intId,
+          dueToAccountId: intId,
+        },
+        required: [
+          "legalEntityId",
+          "operatingUnitId",
+          "partnerOperatingUnitId",
+          "dueFromAccountId",
+          "dueToAccountId",
+        ],
+      },
+      OperatingUnitPartnerCurrentAccountRow: {
+        type: "object",
+        additionalProperties: true,
+        properties: {
+          id: { ...intId, nullable: true },
+          tenant_id: { ...intId, nullable: true },
+          legal_entity_id: { ...intId, nullable: true },
+          operating_unit_id: { ...intId, nullable: true },
+          operating_unit_code: { type: "string", nullable: true },
+          operating_unit_name: { type: "string", nullable: true },
+          partner_operating_unit_id: { ...intId, nullable: true },
+          partner_operating_unit_code: { type: "string", nullable: true },
+          partner_operating_unit_name: { type: "string", nullable: true },
+          due_from_account_id: { ...intId, nullable: true },
+          due_from_account_code: { type: "string", nullable: true },
+          due_from_account_name: { type: "string", nullable: true },
+          due_to_account_id: { ...intId, nullable: true },
+          due_to_account_code: { type: "string", nullable: true },
+          due_to_account_name: { type: "string", nullable: true },
+          created_at: { type: "string", format: "date-time", nullable: true },
+          updated_at: { type: "string", format: "date-time", nullable: true },
+        },
+      },
+      OperatingUnitPartnerCurrentAccountListResponse: {
+        type: "object",
+        properties: {
+          tenantId: intId,
+          rows: {
+            type: "array",
+            items: {
+              $ref: "#/components/schemas/OperatingUnitPartnerCurrentAccountRow",
+            },
+          },
+        },
+        required: ["tenantId", "rows"],
+      },
+      OperatingUnitCurrentProvisionedAccount: {
+        type: "object",
+        properties: {
+          id: intId,
+          code: { type: "string" },
+          name: { type: "string" },
+          role: {
+            type: "string",
+            enum: [
+              "CENTRAL_DUE_FROM",
+              "OU_DUE_TO_CENTRAL",
+              "DUE_FROM",
+              "DUE_TO",
+            ],
+          },
+          operatingUnitId: intId,
+          partnerOperatingUnitId: { ...intId, nullable: true },
+        },
+        required: ["id", "code", "name", "role", "operatingUnitId"],
+      },
+      OperatingUnitCentralCurrentAccountState: {
+        type: "object",
+        properties: {
+          id: intId,
+          code: { type: "string" },
+          name: { type: "string" },
+          centralDueFromAccountId: intId,
+          centralDueFromAccountCode: { type: "string" },
+          centralDueFromAccountName: { type: "string" },
+          ouDueToCentralAccountId: intId,
+          ouDueToCentralAccountCode: { type: "string" },
+          ouDueToCentralAccountName: { type: "string" },
+          capitalSelfBalancingReady: { type: "boolean" },
+        },
+        required: [
+          "id",
+          "code",
+          "name",
+          "centralDueFromAccountId",
+          "centralDueFromAccountCode",
+          "centralDueFromAccountName",
+          "ouDueToCentralAccountId",
+          "ouDueToCentralAccountCode",
+          "ouDueToCentralAccountName",
+          "capitalSelfBalancingReady",
+        ],
+      },
+      OperatingUnitCentralCurrentAccountAutoProvisionInput: {
+        type: "object",
+        properties: {
+          tenantId: { ...intId, nullable: true },
+          legalEntityId: intId,
+          operatingUnitId: intId,
+          centralDueFromParentAccountId: intId,
+          ouDueToCentralParentAccountId: intId,
+        },
+        required: [
+          "legalEntityId",
+          "operatingUnitId",
+          "centralDueFromParentAccountId",
+          "ouDueToCentralParentAccountId",
+        ],
+      },
+      OperatingUnitCentralCurrentAccountAutoProvisionResponse: {
+        type: "object",
+        properties: {
+          ok: { type: "boolean", enum: [true] },
+          legalEntityId: intId,
+          operatingUnitId: intId,
+          centralDueFromParentAccountId: intId,
+          ouDueToCentralParentAccountId: intId,
+          createdAccounts: {
+            type: "array",
+            items: {
+              $ref: "#/components/schemas/OperatingUnitCurrentProvisionedAccount",
+            },
+          },
+          operatingUnit: {
+            $ref: "#/components/schemas/OperatingUnitCentralCurrentAccountState",
+          },
+        },
+        required: [
+          "ok",
+          "legalEntityId",
+          "operatingUnitId",
+          "centralDueFromParentAccountId",
+          "ouDueToCentralParentAccountId",
+          "createdAccounts",
+          "operatingUnit",
+        ],
+      },
+      OperatingUnitPartnerCurrentAccountAutoProvisionInput: {
+        type: "object",
+        properties: {
+          tenantId: { ...intId, nullable: true },
+          legalEntityId: intId,
+          operatingUnitId: intId,
+          partnerOperatingUnitId: intId,
+          dueFromParentAccountId: intId,
+          dueToParentAccountId: intId,
+        },
+        required: [
+          "legalEntityId",
+          "operatingUnitId",
+          "partnerOperatingUnitId",
+          "dueFromParentAccountId",
+          "dueToParentAccountId",
+        ],
+      },
+      OperatingUnitPartnerCurrentAccountMappingResult: {
+        type: "object",
+        properties: {
+          id: intId,
+          operatingUnitId: intId,
+          partnerOperatingUnitId: intId,
+          dueFromAccountId: intId,
+          dueFromAccountCode: { type: "string" },
+          dueFromAccountName: { type: "string" },
+          dueToAccountId: intId,
+          dueToAccountCode: { type: "string" },
+          dueToAccountName: { type: "string" },
+          created: { type: "boolean" },
+        },
+        required: [
+          "id",
+          "operatingUnitId",
+          "partnerOperatingUnitId",
+          "dueFromAccountId",
+          "dueFromAccountCode",
+          "dueFromAccountName",
+          "dueToAccountId",
+          "dueToAccountCode",
+          "dueToAccountName",
+          "created",
+        ],
+      },
+      OperatingUnitPartnerCurrentAccountAutoProvisionResponse: {
+        type: "object",
+        properties: {
+          ok: { type: "boolean", enum: [true] },
+          legalEntityId: intId,
+          operatingUnitId: intId,
+          partnerOperatingUnitId: intId,
+          dueFromParentAccountId: intId,
+          dueToParentAccountId: intId,
+          createdAccounts: {
+            type: "array",
+            items: {
+              $ref: "#/components/schemas/OperatingUnitCurrentProvisionedAccount",
+            },
+          },
+          mappings: {
+            type: "array",
+            items: {
+              $ref: "#/components/schemas/OperatingUnitPartnerCurrentAccountMappingResult",
+            },
+          },
+        },
+        required: [
+          "ok",
+          "legalEntityId",
+          "operatingUnitId",
+          "partnerOperatingUnitId",
+          "dueFromParentAccountId",
+          "dueToParentAccountId",
+          "createdAccounts",
+          "mappings",
+        ],
       },
       FiscalCalendarInput: {
         type: "object",

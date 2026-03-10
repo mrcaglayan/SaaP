@@ -1111,8 +1111,9 @@ async function runMissingSetupScenario(token, setup, stamp) {
   const errorText = toErrorText(failedPost.json);
   assert(
     errorText.includes("self-balancing setup is invalid") &&
+      errorText.includes("Kasa Islemleri") &&
       errorText.includes("Organization Management"),
-    "Missing setup post failure should direct users to Organization Management"
+    "Missing setup post failure should direct users to Kasa Islemleri or Organization Management"
   );
   await assertTransferState(token, transferId, "INITIATED");
 

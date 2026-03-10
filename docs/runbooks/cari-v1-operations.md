@@ -104,7 +104,11 @@ FX resolution baseline (exact + prior-date fallback):
 - Posting completion for different-context transfers depends on the right current-account setup:
   - `Central Due From OU` + `OU Due To Central` for `Central <-> OU`
   - partner-specific `Due From Partner OU` + `Due To Partner OU` mappings for `OU <-> OU`
-- Configure those accounts in `Organization Management` before posting or receiving cross-context cash movements.
+- `Kasa Islemleri` can now create the missing child accounts and save the required mappings inline during `Transfer Out`:
+  - `Center / Branch Current Accounts` card for `Central <-> OU`
+  - `Branch Pair Current Accounts` card for `OU <-> OU`
+- `Organization Management` remains the canonical setup screen for reviewing and editing those mappings outside the transfer flow.
+- `Cash Transit Transfers` still expects that setup to already exist; if receive/post fails there, return to `Kasa Islemleri` `Transfer Out` or use `Organization Management`.
 
 ## Operational Troubleshooting
 
