@@ -29,6 +29,11 @@
       "routePath": "/app/kasa-kur-raporlari",
       "smokeScriptPath": "backend/scripts/test-cash-exf01-position-lots-realized-fx.js",
       "packageScriptName": "test:cash:exf01"
+    },
+    {
+      "routePath": "/app/ayarlar/rbac/raw-audit-logs",
+      "smokeScriptPath": "backend/scripts/test-rbac-raw-audit-logs-smoke.js",
+      "packageScriptName": "test:ux:raw-audit-logs-smoke"
     }
   ]
 }

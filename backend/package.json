@@ -167,6 +167,7 @@
     "test:ux:rswire01": "node scripts/test-ux-rswire01-cross-file-wiring.js",
     "test:ux:rswire02": "node scripts/test-ux-rswire02-implemented-routes-ci-guard.js",
     "test:ux:rswire03": "node scripts/test-ux-rswire03-release-gate-smoke-coverage.js",
+    "test:ux:raw-audit-logs-smoke": "node scripts/test-rbac-raw-audit-logs-smoke.js",
     "test:ux:consolidation-prcm01": "node scripts/test-consolidation-prcm01-execute-preflight-gate.js",
     "test:ux:consolidation-prcm02": "node scripts/test-consolidation-prcm02-canonical-workbench.js",
     "test:ux:consolidation-prcm03": "node scripts/test-consolidation-prcm03-candidate-generator.js",

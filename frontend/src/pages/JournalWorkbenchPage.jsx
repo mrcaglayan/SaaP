@@ -205,6 +205,10 @@ function formatAmount(value) {
   });
 }
 
+function renderMoneyOrDash(amount, currencyCode) {
+  return toAmount(amount) === 0 ? "-" : <MoneyText amount={amount} currencyCode={currencyCode} />;
+}
+
 function formatOperatingUnitDisplay(unitId, unitCode, unitName) {
   const code = String(unitCode || "").trim();
   const name = String(unitName || "").trim();
@@ -4169,16 +4173,16 @@ export default function JournalWorkbenchPage() {
                           <td className="px-2 py-1.5">{operatingUnitLabel}</td>
                           <td className="px-2 py-1.5">{line.subledger_reference_no || "-"}</td>
                           <td className="px-2 py-1.5">
-                            <MoneyText
-                              amount={line.debit_base}
-                              currencyCode={selectedJournalBookBaseCurrencyCode}
-                            />
+                            {renderMoneyOrDash(
+                              line.debit_base,
+                              selectedJournalBookBaseCurrencyCode
+                            )}
                           </td>
                           <td className="px-2 py-1.5">
-                            <MoneyText
-                              amount={line.credit_base}
-                              currencyCode={selectedJournalBookBaseCurrencyCode}
-                            />
+                            {renderMoneyOrDash(
+                              line.credit_base,
+                              selectedJournalBookBaseCurrencyCode
+                            )}
                           </td>
                         </tr>
                       )})}
