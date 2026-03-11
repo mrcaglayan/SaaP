@@ -31,6 +31,74 @@ async function main() {
     "Missing buildTaxJournalLines tax engine export"
   );
 
+  const stubRows = {
+    regime: {
+      id: 701,
+      tenant_id: 1,
+      country_id: 1,
+      legal_entity_id: 11,
+      status: "ACTIVE",
+      effective_from: "2000-01-01",
+      effective_to: null,
+    },
+    taxCode: {
+      id: 702,
+      tenant_id: 1,
+      tax_regime_id: 701,
+      code: "VAT8",
+      status: "ACTIVE",
+      rate_pct: 8,
+      calculation_mode: "EXCLUSIVE",
+      recoverability: "FULL",
+    },
+    taxRule: {
+      id: 703,
+      tenant_id: 1,
+      tax_regime_id: 701,
+      tax_code_id: 702,
+      module_code: "CARI",
+      document_type: "INVOICE",
+      counterparty_type: "CUSTOMER",
+      threshold_amount: null,
+      formula_json: JSON.stringify({ type: "RATE" }),
+      status: "ACTIVE",
+      effective_from: "2000-01-01",
+      effective_to: null,
+      apply_priority: 1,
+    },
+  };
+  const resolved = await taxEngine.resolveTaxCodeAndRule({
+    tenantId: 1,
+    legalEntityId: 11,
+    postingDate: "2026-03-11",
+    regimeId: stubRows.regime.id,
+    moduleCode: "CARI",
+    documentType: "INVOICE",
+    counterpartyType: "CUSTOMER",
+    taxCodeId: stubRows.taxCode.id,
+    runQuery: async (sql) => {
+      if (sql.includes("FROM tax_regimes")) {
+        return { rows: [stubRows.regime] };
+      }
+      if (sql.includes("FROM tax_codes tc")) {
+        return { rows: [stubRows.taxCode] };
+      }
+      if (sql.includes("FROM tax_rule_sets trs")) {
+        return { rows: [stubRows.taxRule] };
+      }
+      throw new Error(`Unexpected stub query: ${sql}`);
+    },
+  });
+  assert(
+    resolved.threshold === null,
+    "Null threshold_amount must stay null and not trigger threshold rule handling"
+  );
+  assert(
+    resolved.taxCodeRow?.id === stubRows.taxCode.id &&
+      resolved.taxRuleRow?.id === stubRows.taxRule.id,
+    "Tax resolver must keep selected regime/code/rule rows"
+  );
+
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
   const taxEngineSource = await readFile(

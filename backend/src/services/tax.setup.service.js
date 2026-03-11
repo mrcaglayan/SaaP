@@ -37,6 +37,12 @@ function toDateOnly(value) {
   return parsed.toISOString().slice(0, 10);
 }
 function toAmount(value, scale = 6) {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (typeof value === "string" && value.trim() === "") {
+    return null;
+  }
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) {
     return null;
