@@ -777,52 +777,32 @@ async function ensureTaxPipelineFixture({
   }
   assert(taxCodeId, `Unable to resolve VAT8 tax code fixture for tenant ${tenantId}`);
 
-  const ruleRes = await query(
-    `SELECT id
-     FROM tax_rule_sets
+  await query(
+    `DELETE FROM tax_rule_sets
      WHERE tenant_id = ?
        AND tax_regime_id = ?
        AND tax_code_id = ?
-       AND module_code = 'CARI'
-       AND document_type = 'INVOICE'
-       AND counterparty_type = 'CUSTOMER'
-     ORDER BY apply_priority ASC, id ASC
-     LIMIT 1`,
+       AND module_code = 'CARI'`,
     [tenantId, regimeId, taxCodeId]
   );
-  const ruleId = parsePositiveInt(ruleRes.rows?.[0]?.id);
-  if (!ruleId) {
-    await query(
-      `INSERT INTO tax_rule_sets (
-         tenant_id,
-         tax_regime_id,
-         tax_code_id,
-         module_code,
-         document_type,
-         counterparty_type,
-         apply_priority,
-         threshold_amount,
-         formula_json,
-         status,
-         effective_from,
-         effective_to
-       )
-       VALUES (?, ?, ?, 'CARI', 'INVOICE', 'CUSTOMER', 1, NULL, JSON_OBJECT('type', 'RATE'), 'ACTIVE', '2000-01-01', NULL)`,
-      [tenantId, regimeId, taxCodeId]
-    );
-  } else {
-    await query(
-      `UPDATE tax_rule_sets
-       SET status = 'ACTIVE',
-           effective_from = '2000-01-01',
-           effective_to = NULL,
-           threshold_amount = NULL,
-           formula_json = JSON_OBJECT('type', 'RATE')
-       WHERE tenant_id = ?
-         AND id = ?`,
-      [tenantId, ruleId]
-    );
-  }
+  await query(
+    `INSERT INTO tax_rule_sets (
+       tenant_id,
+       tax_regime_id,
+       tax_code_id,
+       module_code,
+       document_type,
+       counterparty_type,
+       apply_priority,
+       threshold_amount,
+       formula_json,
+       status,
+       effective_from,
+       effective_to
+     )
+     VALUES (?, ?, ?, 'CARI', 'INVOICE', 'CUSTOMER', 1, NULL, JSON_OBJECT('type', 'RATE'), 'ACTIVE', '2000-01-01', NULL)`,
+    [tenantId, regimeId, taxCodeId]
+  );
 
   await query(
     `INSERT INTO tax_account_mappings (
@@ -844,7 +824,6 @@ async function ensureTaxPipelineFixture({
   return {
     regimeId,
     taxCodeId,
-    taxCode: "VAT8",
   };
 }
 
@@ -1126,7 +1105,7 @@ async function approveGateToCompletion({
   };
 }
 
-async function runTaxPipelineSmoke({ tenantId, legalEntityId, regimeId, taxCodeId, taxCode }) {
+async function runTaxPipelineSmoke({ tenantId, legalEntityId, regimeId, taxCodeId }) {
   const postingDate = new Date().toISOString().slice(0, 10);
   const resolved = await resolveTaxCodeAndRule({
     tenantId,
@@ -1135,7 +1114,6 @@ async function runTaxPipelineSmoke({ tenantId, legalEntityId, regimeId, taxCodeI
     regimeId,
     moduleCode: "CARI",
     taxCodeId,
-    taxCode,
     documentType: "INVOICE",
     counterpartyType: "CUSTOMER",
   });
@@ -1287,7 +1265,6 @@ async function runTenantSmoke(tenantId) {
       legalEntityId: core.legalEntityId,
       regimeId: taxFixture.regimeId,
       taxCodeId: taxFixture.taxCodeId,
-      taxCode: taxFixture.taxCode,
     });
 
     return {
