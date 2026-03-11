@@ -30,7 +30,7 @@ const EMPTY_FORM = {
   registerType: "DRAWER",
   sessionMode: "",
   legalEntityId: "",
-  ownershipScope: "CENTRAL",
+  ownershipScope: "OPERATING_UNIT",
   operatingUnitId: "",
   accountId: "",
   currencyCode: "",
@@ -42,36 +42,8 @@ const EMPTY_FORM = {
   status: "ACTIVE",
 };
 
-const CASH_REGISTER_CONTEXT_MAPPINGS = [
-  { stateKey: "legalEntityId" },
-  {
-    stateKey: "ownershipScope",
-    selectContextValue: (workingContext) => {
-      return String(workingContext?.operatingUnitId || "").trim()
-        ? "OPERATING_UNIT"
-        : "";
-    },
-    allowContextValue: (_contextValue, previousState, workingContext) => {
-      const selectedLegalEntityId = String(previousState?.legalEntityId || "").trim();
-      const contextLegalEntityId = String(workingContext?.legalEntityId || "").trim();
-      return !selectedLegalEntityId || selectedLegalEntityId === contextLegalEntityId;
-    },
-  },
-  {
-    stateKey: "operatingUnitId",
-    allowContextValue: (_contextValue, previousState, workingContext) => {
-      const selectedLegalEntityId = String(previousState?.legalEntityId || "").trim();
-      const contextLegalEntityId = String(workingContext?.legalEntityId || "").trim();
-      const allowContextScope =
-        String(previousState?.ownershipScope || "").trim().toUpperCase() === "OPERATING_UNIT" ||
-        String(workingContext?.operatingUnitId || "").trim();
-      return (
-        allowContextScope &&
-        (!selectedLegalEntityId || selectedLegalEntityId === contextLegalEntityId)
-      );
-    },
-  },
-];
+// Ownership scope should remain an explicit operator decision on this page.
+const CASH_REGISTER_CONTEXT_MAPPINGS = [{ stateKey: "legalEntityId" }];
 
 function toPositiveInt(value) {
   const parsed = Number(value);
@@ -387,8 +359,6 @@ export default function CashRegistersPage() {
 
   useWorkingContextDefaults(setForm, CASH_REGISTER_CONTEXT_MAPPINGS, [
     form.legalEntityId,
-    form.ownershipScope,
-    form.operatingUnitId,
   ]);
 
   const selectedLegalEntityId = toPositiveInt(form.legalEntityId);
