@@ -229,6 +229,35 @@ function normalizeEntityPolicyPackSelection(entity) {
   };
 }
 
+function normalizeGroupCoaSelection(groupCoa, groupCompany) {
+  const normalizedGroupCompanyCode = normalizeCode(
+    groupCompany?.code,
+    "GLOBAL"
+  );
+  const normalizedGroupCompanyName = normalizeName(
+    groupCompany?.name,
+    "Group"
+  );
+  return {
+    code: normalizeCode(
+      groupCoa?.code ?? groupCoa?.coaCode ?? `GRP_${normalizedGroupCompanyCode}`,
+      `GRP_${normalizedGroupCompanyCode}`
+    ),
+    name: normalizeName(
+      groupCoa?.name ??
+        groupCoa?.coaName ??
+        `${normalizedGroupCompanyName} Group CoA`,
+      "Group CoA"
+    ),
+    starterPackId: normalizeOptionalCode(
+      groupCoa?.starterPackId ??
+        groupCoa?.starter_pack_id ??
+        groupCoa?.policyPackId ??
+        groupCoa?.policy_pack_id
+    ),
+  };
+}
+
 function buildPolicyPackBootstrapApplyPlan(pack, previewRows) {
   const requiredPurposeCodeSet = new Set(
     (pack?.requiredPurposeMappings || [])
@@ -934,6 +963,72 @@ async function getCoaId(tenantId, code, runQuery = query) {
   return parsePositiveInt(result.rows[0]?.id);
 }
 
+async function upsertGroupCoaForCompanyBootstrap(
+  tenantId,
+  normalizedGroupCoa,
+  runQuery = query
+) {
+  const existingResult = await runQuery(
+    `SELECT id, scope
+     FROM charts_of_accounts
+     WHERE tenant_id = ?
+       AND code = ?
+     LIMIT 1`,
+    [tenantId, normalizedGroupCoa.code]
+  );
+  const existing = existingResult.rows[0];
+  if (existing && String(existing.scope || "").toUpperCase() !== "GROUP") {
+    throw badRequest(
+      `groupCoa.code ${normalizedGroupCoa.code} already belongs to a non-GROUP chart of accounts`
+    );
+  }
+
+  await runQuery(
+    `INSERT INTO charts_of_accounts (
+        tenant_id, legal_entity_id, scope, code, name
+     )
+     VALUES (?, NULL, 'GROUP', ?, ?)
+     ON DUPLICATE KEY UPDATE
+       name = VALUES(name),
+       scope = VALUES(scope),
+       legal_entity_id = NULL`,
+    [tenantId, normalizedGroupCoa.code, normalizedGroupCoa.name]
+  );
+
+  const id = await getCoaId(tenantId, normalizedGroupCoa.code, runQuery);
+  if (!id) {
+    throw new Error(`Unable to resolve GROUP CoA for ${normalizedGroupCoa.code}`);
+  }
+
+  let starterAccountCount = 0;
+  if (normalizedGroupCoa.starterPackId) {
+    const pack = getPolicyPack(normalizedGroupCoa.starterPackId);
+    if (!pack) {
+      throw badRequest(
+        `Unknown groupCoa starter pack: ${normalizedGroupCoa.starterPackId}`
+      );
+    }
+    if (!Array.isArray(pack.starterAccountTree) || pack.starterAccountTree.length === 0) {
+      throw badRequest(
+        `Starter pack ${pack.packId} does not provide a starterAccountTree`
+      );
+    }
+    starterAccountCount = await upsertOnboardingDefaultAccountsForCoa(
+      id,
+      pack.starterAccountTree,
+      runQuery
+    );
+  }
+
+  return {
+    id,
+    code: normalizedGroupCoa.code,
+    name: normalizedGroupCoa.name,
+    starterPackId: normalizedGroupCoa.starterPackId,
+    starterAccountCount,
+  };
+}
+
 async function getPrimaryCountry(runQuery = query) {
   const preferredResult = await runQuery(
     `SELECT id, default_currency_code
@@ -1500,6 +1595,7 @@ router.post(
     ]);
 
     const groupCompany = req.body.groupCompany || {};
+    const groupCoa = req.body.groupCoa || {};
     const fiscalCalendar = req.body.fiscalCalendar || {};
     const fiscalYear = parsePositiveInt(req.body.fiscalYear);
     const legalEntities = Array.isArray(req.body.legalEntities)
@@ -1522,6 +1618,7 @@ router.post(
     }
 
     assertRequiredFields(groupCompany, ["code", "name"]);
+    const normalizedGroupCoa = normalizeGroupCoaSelection(groupCoa, groupCompany);
     assertRequiredFields(fiscalCalendar, [
       "code",
       "name",
@@ -1554,6 +1651,11 @@ router.post(
       if (!groupCompanyId) {
         throw new Error("Unable to resolve group company id");
       }
+      const groupCoaSummary = await upsertGroupCoaForCompanyBootstrap(
+        tenantId,
+        normalizedGroupCoa,
+        tx.query
+      );
 
       await tx.query(
         `INSERT INTO fiscal_calendars (
@@ -1830,6 +1932,7 @@ router.post(
 
       return {
         groupCompanyId,
+        groupCoa: groupCoaSummary,
         calendarId,
         entitySummaries,
         paymentTermBootstrap,
@@ -1841,6 +1944,7 @@ router.post(
       ok: true,
       tenantId,
       groupCompanyId: bootstrapResult.groupCompanyId,
+      groupCoa: bootstrapResult.groupCoa,
       calendarId: bootstrapResult.calendarId,
       fiscalYear,
       periodsGenerated: 12,
@@ -1859,6 +1963,7 @@ router.post(
 export const __testOnboardingInternals = {
   normalizeOnboardingDefaultAccounts,
   normalizeEntityPolicyPackSelection,
+  normalizeGroupCoaSelection,
   buildPolicyPackBootstrapApplyPlan,
 };
 

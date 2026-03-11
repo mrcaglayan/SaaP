@@ -177,6 +177,22 @@ return {
   branches: [createBranchDraft()],
 };
 }
+function buildDefaultGroupCoaCode(groupCompanyCode) {
+const normalizedCode = toUpper(groupCompanyCode)
+  .replace(/[^A-Z0-9_-]/g, "_")
+  .replace(/_+/g, "_")
+  .replace(/^_+|_+$/g, "");
+return `GRP_${normalizedCode || "GLOBAL"}`;
+}
+function buildDefaultGroupCoaName(groupCompanyName) {
+const normalizedName = String(groupCompanyName || "").trim();
+return normalizedName ? `${normalizedName} Group CoA` : "Group CoA";
+}
+function createGroupCoaDraft(seed = {}) {
+return {
+  starterPackId: toUpper(seed.starterPackId ?? seed.starter_pack_id),
+};
+}
 function createInitialForm() {
 const now = new Date();
 return {
@@ -184,6 +200,7 @@ return {
     code: "",
     name: "",
   },
+  groupCoa: createGroupCoaDraft(),
   fiscalCalendar: {
     code: "MAIN",
     name: "Main Calendar",
@@ -335,6 +352,10 @@ return {
   ...(defaultAccounts.length > 0 ? { defaultAccounts } : {}),
   ...(branches.length > 0 ? { branches } : {}),
 };
+}
+function compactGroupCoaPayload(groupCoa) {
+const starterPackId = toUpper(groupCoa?.starterPackId ?? groupCoa?.starter_pack_id);
+return starterPackId ? { starterPackId } : {};
 }
 function validateAccountTreeRows(defaultAccounts, prefix, l) {
 const rows = sanitizeDefaultAccounts(defaultAccounts);
@@ -615,6 +636,21 @@ const policyPackOptions = useMemo(() => {
     return String(left?.packId || "").localeCompare(String(right?.packId || ""));
   });
 }, [policyPacks]);
+const defaultGroupCoaCode = useMemo(
+  () => buildDefaultGroupCoaCode(form.groupCompany.code),
+  [form.groupCompany.code]
+);
+const defaultGroupCoaName = useMemo(
+  () => buildDefaultGroupCoaName(form.groupCompany.name),
+  [form.groupCompany.name]
+);
+const selectedGroupCoaPack = useMemo(
+  () =>
+    policyPackOptions.find(
+      (row) => toUpper(row?.packId) === toUpper(form.groupCoa?.starterPackId)
+    ) || null,
+  [form.groupCoa?.starterPackId, policyPackOptions]
+);
 useEffect(() => {
   let active = true;
   async function loadLookups() {
@@ -664,6 +700,15 @@ function setGroupCompanyField(field, value) {
     ...prev,
     groupCompany: {
       ...prev.groupCompany,
+      [field]: value,
+    },
+  }));
+}
+function setGroupCoaField(field, value) {
+  setForm((prev) => ({
+    ...prev,
+    groupCoa: {
+      ...prev.groupCoa,
       [field]: value,
     },
   }));
@@ -970,6 +1015,7 @@ function loadSample() {
       code: "GLOBAL",
       name: "Global Holdings",
     },
+    groupCoa: createGroupCoaDraft(),
     fiscalCalendar: {
       code: "MAIN",
       name: "Main Calendar",
@@ -1054,6 +1100,7 @@ async function handleSubmit(event) {
       code: form.groupCompany.code.trim(),
       name: form.groupCompany.name.trim(),
     },
+    groupCoa: compactGroupCoaPayload(form.groupCoa),
     fiscalCalendar: {
       code: form.fiscalCalendar.code.trim(),
       name: form.fiscalCalendar.name.trim(),
@@ -1458,6 +1505,68 @@ return (
               "Sihirbaz secilen ulkeye gore bir policy pack onerir; ardindan baslangic hesaplarini uygulayabilir veya manuel devam edebilirsiniz."
             )}
           </p>
+          <section className="mb-3 rounded-xl border border-emerald-200 bg-emerald-50/70 p-3">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-semibold text-emerald-900">
+                  {l("Group CoA (auto-created)", "Grup Hesap Plani (otomatik olusturulur)")}
+                </h3>
+                <p className="mt-1 text-xs text-emerald-800">
+                  {l(
+                    "Company bootstrap always creates a GROUP-scoped CoA. Use the selector only if you also want to preload starter accounts.",
+                    "Sirket kurulumu her zaman GROUP scope'lu bir hesap plani olusturur. Asagidaki secici yalnizca baslangic hesaplarini da yuklemek istiyorsaniz kullanilir."
+                  )}
+                </p>
+              </div>
+              <div className="grid gap-2 text-xs text-emerald-900 md:grid-cols-3">
+                <div className="rounded-lg border border-emerald-200 bg-white px-3 py-2">
+                  <span className="font-semibold">{l("Scope", "Scope")}:</span> GROUP
+                </div>
+                <div className="rounded-lg border border-emerald-200 bg-white px-3 py-2">
+                  <span className="font-semibold">{l("Code", "Kod")}:</span> {defaultGroupCoaCode}
+                </div>
+                <div className="rounded-lg border border-emerald-200 bg-white px-3 py-2">
+                  <span className="font-semibold">{l("Name", "Ad")}:</span> {defaultGroupCoaName}
+                </div>
+              </div>
+            </div>
+            <div className="mt-3 grid gap-2 md:grid-cols-4">
+              <select
+                value={form.groupCoa?.starterPackId || ""}
+                onChange={(event) =>
+                  setGroupCoaField("starterPackId", event.target.value)
+                }
+                className="rounded-lg border border-emerald-300 bg-white px-3 py-2 text-sm md:col-span-2"
+              >
+                <option value="">
+                  {l(
+                    "Do not preload group accounts",
+                    "Grup hesaplarini otomatik yukleme"
+                  )}
+                </option>
+                {policyPackOptions.map((row) => (
+                  <option key={`group-${row.packId}`} value={row.packId}>
+                    {row.packId} - {row.label} ({toUpper(row.countryIso2) || "--"})
+                  </option>
+                ))}
+              </select>
+              <div className="rounded-lg border border-emerald-200 bg-white px-3 py-2 text-xs text-emerald-900">
+                <span className="font-semibold">
+                  {l("Selected preload", "Secili yukleme")}:
+                </span>{" "}
+                {selectedGroupCoaPack?.packId || l("None", "Yok")}
+              </div>
+              <div className="rounded-lg border border-emerald-200 bg-white px-3 py-2 text-xs text-emerald-900">
+                <span className="font-semibold">
+                  {l("Purpose", "Amac")}:
+                </span>{" "}
+                {l(
+                  "Optional starter tree only; GROUP CoA itself is created either way.",
+                  "Yalnizca opsiyonel baslangic agaci; GROUP hesap plani her durumda olusturulur."
+                )}
+              </div>
+            </div>
+          </section>
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
             <label className="inline-flex items-center gap-2">
               <input
@@ -2150,6 +2259,28 @@ return (
             +{Number(result?.paymentTerms?.createdCount || 0)} /{" "}
             {l("skipped", "atlandi")}{" "}
             {Number(result?.paymentTerms?.skippedCount || 0)}
+          </div>
+        </div>
+        <div className="mt-3 grid gap-2 text-xs text-emerald-900 md:grid-cols-4">
+          <div className="rounded-lg border border-emerald-200 bg-white px-3 py-2">
+            <span className="font-semibold">{l("Group CoA ID:", "Grup Hesap Plani ID:")}</span>{" "}
+            {result?.groupCoa?.id || "-"}
+          </div>
+          <div className="rounded-lg border border-emerald-200 bg-white px-3 py-2">
+            <span className="font-semibold">{l("Group CoA Code:", "Grup Hesap Plani Kodu:")}</span>{" "}
+            {result?.groupCoa?.code || "-"}
+          </div>
+          <div className="rounded-lg border border-emerald-200 bg-white px-3 py-2">
+            <span className="font-semibold">
+              {l("Starter preload:", "Baslangic yukleme:")}
+            </span>{" "}
+            {result?.groupCoa?.starterPackId || l("None", "Yok")}
+          </div>
+          <div className="rounded-lg border border-emerald-200 bg-white px-3 py-2">
+            <span className="font-semibold">
+              {l("Starter rows loaded:", "Yuklenen baslangic satiri:")}
+            </span>{" "}
+            {Number(result?.groupCoa?.starterAccountCount || 0)}
           </div>
         </div>
         <div className="mt-3 overflow-x-auto rounded-lg border border-emerald-200 bg-white">

@@ -55,6 +55,16 @@ function padPeriod(value) {
   return String(value || "").padStart(2, "0");
 }
 
+function optionListHasValue(options, value) {
+  const normalizedValue = String(value || "").trim();
+  if (!normalizedValue) {
+    return false;
+  }
+  return (Array.isArray(options) ? options : []).some(
+    (option) => String(option?.value || "").trim() === normalizedValue
+  );
+}
+
 function isLocked(status) {
   return String(status || "").toUpperCase() === "LOCKED";
 }
@@ -364,6 +374,48 @@ export default function ConsolidationSetupPage() {
     ],
     []
   );
+
+  useEffect(() => {
+    setMappingForm((prev) => {
+      if (!prev.localCoaId || optionListHasValue(localCoaSelectOptions, prev.localCoaId)) {
+        return prev;
+      }
+      return {
+        ...prev,
+        localCoaId: "",
+      };
+    });
+  }, [localCoaSelectOptions]);
+
+  useEffect(() => {
+    setCanonicalLocalForm((prev) => {
+      if (
+        !prev.localAccountId ||
+        optionListHasValue(canonicalLocalAccountSelectOptions, prev.localAccountId)
+      ) {
+        return prev;
+      }
+      return {
+        ...prev,
+        localAccountId: "",
+      };
+    });
+  }, [canonicalLocalAccountSelectOptions]);
+
+  useEffect(() => {
+    setCanonicalGroupForm((prev) => {
+      if (
+        !prev.groupAccountId ||
+        optionListHasValue(canonicalGroupAccountSelectOptions, prev.groupAccountId)
+      ) {
+        return prev;
+      }
+      return {
+        ...prev,
+        groupAccountId: "",
+      };
+    });
+  }, [canonicalGroupAccountSelectOptions]);
 
   async function loadLookups() {
     const results = await Promise.allSettled([

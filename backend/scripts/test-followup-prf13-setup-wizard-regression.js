@@ -32,8 +32,9 @@ async function main() {
   assert(
     onboardingPageSource.includes("policyPackId") &&
       onboardingPageSource.includes("parentCode") &&
-      onboardingPageSource.includes("compactEntityPayload"),
-    "Setup wizard payload should include policyPackId and parentCode tree support"
+      onboardingPageSource.includes("compactEntityPayload") &&
+      onboardingPageSource.includes("groupCoa"),
+    "Setup wizard payload should include policyPackId, groupCoa, and parentCode tree support"
   );
 
   const onboardingRouteSource = await readFile(
@@ -51,8 +52,9 @@ async function main() {
   assert(
     onboardingRouteSource.includes("defaultAccounts") &&
       onboardingRouteSource.includes("parentCode") &&
-      onboardingRouteSource.includes("entity.default_accounts"),
-    "Onboarding backend should keep tree payload + backward compatibility support"
+      onboardingRouteSource.includes("entity.default_accounts") &&
+      onboardingRouteSource.includes("groupCoa"),
+    "Onboarding backend should keep groupCoa + tree payload + backward compatibility support"
   );
 
   console.log("PR-F13 setup wizard regression checks passed.");

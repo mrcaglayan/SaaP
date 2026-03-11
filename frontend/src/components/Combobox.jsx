@@ -150,17 +150,44 @@ export default function Combobox({
   const [localInputState, setLocalInputState] = useState(() => ({
     value: selectedLabel,
     selectedOptionToken,
+    hasTypedQuery: false,
   }));
   const [isOpen, setIsOpen] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState(-1);
 
   const localInputValue =
     localInputState.selectedOptionToken === selectedOptionToken ? localInputState.value : selectedLabel;
+  const hasTypedQuery =
+    localInputState.selectedOptionToken === selectedOptionToken
+      ? Boolean(localInputState.hasTypedQuery)
+      : false;
+
+  useEffect(() => {
+    if (isInputControlled) {
+      return;
+    }
+    setLocalInputState((prev) => {
+      if (
+        prev.selectedOptionToken === selectedOptionToken &&
+        prev.value === selectedLabel &&
+        !prev.hasTypedQuery
+      ) {
+        return prev;
+      }
+      return {
+        value: selectedLabel,
+        selectedOptionToken,
+        hasTypedQuery: false,
+      };
+    });
+  }, [isInputControlled, selectedLabel, selectedOptionToken]);
 
   const query = isInputControlled
     ? normalizeText(inputValue)
     : isOpen
-      ? localInputValue
+      ? hasTypedQuery
+        ? localInputValue
+        : ""
       : normalizeText(selectedLabel, localInputValue);
   const filteredOptions = useMemo(() => {
     if (!filterOptions) return normalizedOptions;
@@ -199,6 +226,7 @@ export default function Combobox({
       setLocalInputState({
         value: text,
         selectedOptionToken,
+        hasTypedQuery: reason === "input",
       });
     }
     if (typeof onInputChange === "function") {
@@ -208,7 +236,16 @@ export default function Combobox({
 
   function handleSelect(option) {
     if (!option || option.disabled) return;
-    setInputText(option.label, "select", option.raw);
+    if (!isInputControlled) {
+      setLocalInputState({
+        value: option.label,
+        selectedOptionToken: buildSelectionToken(option),
+        hasTypedQuery: false,
+      });
+    }
+    if (typeof onInputChange === "function") {
+      onInputChange(option.label, { reason: "select", option: option.raw });
+    }
     setHighlightedIndex(-1);
     emitOpenChange(false);
     if (typeof onChange === "function") {
