@@ -11,6 +11,12 @@ const CANDIDATE_CLASSIFICATIONS = Object.freeze([
   "MISSING_GROUP_MATCH",
   "AMBIGUOUS_GROUP_MATCH",
 ]);
+const BULK_RULE_TYPES = new Set(["DESCENDANTS_OF_ACCOUNT", "CODE_PREFIX"]);
+const BULK_RULE_PREVIEW_CLASSIFICATIONS = Object.freeze([
+  "READY_TO_APPLY",
+  "ALREADY_ALIGNED",
+  "CONFLICTING_LOCAL_MAPPING",
+]);
 const MAX_CANDIDATE_LIMIT = 5000;
 const MAX_GOVERNANCE_REVIEW_LIMIT = 1000;
 const DEFAULT_GOVERNANCE_REVIEW_LIMIT = 200;
@@ -22,6 +28,11 @@ const GOVERNANCE_GROUP_MAPPING_AUDIT_ACTIONS = Object.freeze([
   "consolidation.canonical_mapping.group.create",
   "consolidation.canonical_mapping.group.update",
 ]);
+const GOVERNANCE_RULE_MAPPING_AUDIT_ACTIONS = Object.freeze([
+  "consolidation.canonical_mapping.rule.create",
+  "consolidation.canonical_mapping.rule.deactivate",
+  "consolidation.canonical_mapping.rules.apply",
+]);
 const GOVERNANCE_CANDIDATE_APPLY_AUDIT_ACTION =
   "consolidation.canonical_mapping.candidates.apply";
 
@@ -29,6 +40,19 @@ function normalizeUpperText(value) {
   return String(value || "")
     .trim()
     .toUpperCase();
+}
+
+function parseDbBoolean(value) {
+  if (value === true || value === false) {
+    return value;
+  }
+  if (typeof value === "number") {
+    return value !== 0;
+  }
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes";
 }
 
 function toNullableString(value, maxLength = 255) {
@@ -445,6 +469,24 @@ function normalizeCandidateLimit(value, fallback = 500) {
   return parsed;
 }
 
+function normalizeBulkRuleType(value) {
+  const normalized = normalizeUpperText(value);
+  if (!BULK_RULE_TYPES.has(normalized)) {
+    throw badRequest(
+      "ruleType must be DESCENDANTS_OF_ACCOUNT or CODE_PREFIX"
+    );
+  }
+  return normalized;
+}
+
+function normalizeCodePrefix(value) {
+  const normalized = normalizeUpperText(value);
+  if (!normalized) {
+    throw badRequest("codePrefix is required for CODE_PREFIX ruleType");
+  }
+  return normalized;
+}
+
 function normalizeGovernanceReviewLimit(
   value,
   fallback = DEFAULT_GOVERNANCE_REVIEW_LIMIT
@@ -828,6 +870,524 @@ function buildCandidateSummary(rows = []) {
   return summary;
 }
 
+function mapRuleRootAccountRow(row) {
+  if (!row) {
+    return null;
+  }
+  return {
+    accountId: parsePositiveInt(row.account_id),
+    accountCode: row.account_code || null,
+    accountName: row.account_name || null,
+    accountType: row.account_type || null,
+    normalSide: row.normal_side || null,
+    coaId: parsePositiveInt(row.coa_id),
+    legalEntityId: parsePositiveInt(row.coa_legal_entity_id),
+    allowPosting: parseDbBoolean(row.allow_posting),
+    hasActiveChildren: parseDbBoolean(row.has_active_children),
+  };
+}
+
+function mapRuleSelectedGroupAccountRow(row) {
+  if (!row) {
+    return null;
+  }
+  return {
+    groupAccountId: parsePositiveInt(row.account_id),
+    groupAccountCode: row.account_code || null,
+    groupAccountName: row.account_name || null,
+    groupAccountType: row.account_type || null,
+    groupNormalSide: row.normal_side || null,
+    coaId: parsePositiveInt(row.coa_id),
+    allowPosting: parseDbBoolean(row.allow_posting),
+    hasActiveChildren: parseDbBoolean(row.has_active_children),
+  };
+}
+
+async function assertLocalRuleRootAccountCompatible({
+  tenantId,
+  consolidationGroupId,
+  legalEntityId,
+  localAccountId,
+  runQuery = query,
+}) {
+  const result = await runQuery(
+    `SELECT
+       a.id AS account_id,
+       a.code AS account_code,
+       a.name AS account_name,
+       a.account_type AS account_type,
+       a.normal_side AS normal_side,
+       a.allow_posting AS allow_posting,
+       EXISTS(
+         SELECT 1
+         FROM accounts child
+         WHERE child.parent_account_id = a.id
+           AND child.is_active = TRUE
+       ) AS has_active_children,
+       a.coa_id,
+       c.legal_entity_id AS coa_legal_entity_id
+     FROM accounts a
+     JOIN charts_of_accounts c
+       ON c.id = a.coa_id
+      AND c.tenant_id = ?
+     JOIN group_coa_mappings gcm
+       ON gcm.tenant_id = ?
+      AND gcm.consolidation_group_id = ?
+      AND gcm.legal_entity_id = ?
+      AND gcm.local_coa_id = a.coa_id
+      AND gcm.status = 'ACTIVE'
+     WHERE a.id = ?
+       AND a.is_active = TRUE
+     LIMIT 1`,
+    [tenantId, tenantId, consolidationGroupId, legalEntityId, localAccountId]
+  );
+  const row = result.rows?.[0] || null;
+  if (!row) {
+    throw badRequest(
+      "parentLocalAccountId must belong to an ACTIVE local CoA mapping for legalEntityId in this consolidation group"
+    );
+  }
+  if (parsePositiveInt(row.coa_legal_entity_id) !== parsePositiveInt(legalEntityId)) {
+    throw badRequest("parentLocalAccountId must belong to legalEntityId");
+  }
+  return row;
+}
+
+async function listActiveAccountsForCoa({
+  tenantId,
+  coaId,
+  runQuery = query,
+}) {
+  const result = await runQuery(
+    `SELECT
+       a.id,
+       a.code,
+       a.name,
+       a.account_type,
+       a.normal_side,
+       a.allow_posting,
+       a.parent_account_id
+     FROM accounts a
+     JOIN charts_of_accounts c
+       ON c.id = a.coa_id
+      AND c.tenant_id = ?
+     WHERE a.coa_id = ?
+       AND a.is_active = TRUE
+     ORDER BY a.parent_account_id ASC, a.code ASC, a.id ASC`,
+    [tenantId, coaId]
+  );
+  return result.rows || [];
+}
+
+function resolveDescendantAccountSelection(accounts = [], rootAccountId) {
+  const items = Array.isArray(accounts) ? accounts : [];
+  const childrenByParentId = new Map();
+  for (const row of items) {
+    const parentId = parsePositiveInt(row?.parent_account_id) || 0;
+    if (!childrenByParentId.has(parentId)) {
+      childrenByParentId.set(parentId, []);
+    }
+    childrenByParentId.get(parentId).push(row);
+  }
+
+  const allDescendantAccountIds = [];
+  const leafAccountIds = [];
+  const stack = [...(childrenByParentId.get(parsePositiveInt(rootAccountId) || 0) || [])];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    const currentId = parsePositiveInt(current?.id);
+    if (!currentId) {
+      continue;
+    }
+    allDescendantAccountIds.push(currentId);
+    const children = childrenByParentId.get(currentId) || [];
+    if (children.length > 0) {
+      stack.push(...children);
+      continue;
+    }
+    if (parseDbBoolean(current?.allow_posting)) {
+      leafAccountIds.push(currentId);
+    }
+  }
+
+  return {
+    descendantAccountIds: allDescendantAccountIds,
+    leafAccountIds,
+    descendantCount: allDescendantAccountIds.length,
+    leafCount: leafAccountIds.length,
+  };
+}
+
+async function listBulkRulePreviewLocalLeafRows({
+  tenantId,
+  consolidationGroupId,
+  legalEntityId,
+  localCoaId = null,
+  codePrefix = null,
+  runQuery = query,
+}) {
+  const params = [tenantId, consolidationGroupId, legalEntityId];
+  const where = [
+    "gcm.tenant_id = ?",
+    "gcm.consolidation_group_id = ?",
+    "gcm.legal_entity_id = ?",
+    "gcm.status = 'ACTIVE'",
+  ];
+
+  const parsedLocalCoaId = parsePositiveInt(localCoaId) || null;
+  if (parsedLocalCoaId) {
+    where.push("gcm.local_coa_id = ?");
+    params.push(parsedLocalCoaId);
+  }
+
+  const normalizedPrefix = codePrefix ? normalizeCodePrefix(codePrefix) : null;
+  if (normalizedPrefix) {
+    where.push("UPPER(TRIM(local_acc.code)) LIKE ?");
+    params.push(`${normalizedPrefix}%`);
+  }
+
+  const result = await runQuery(
+    `SELECT DISTINCT
+       gcm.tenant_id,
+       gcm.consolidation_group_id,
+       gcm.legal_entity_id,
+       le.code AS legal_entity_code,
+       le.name AS legal_entity_name,
+       local_acc.id AS local_account_id,
+       local_acc.code AS local_account_code,
+       local_acc.name AS local_account_name,
+       local_acc.account_type AS local_account_type,
+       local_acc.normal_side AS local_normal_side,
+       local_acc.coa_id AS local_coa_id,
+       clm.id AS existing_local_mapping_id,
+       clm.canonical_key_id AS existing_local_canonical_key_id,
+       clm.status AS existing_local_mapping_status,
+       clm.effective_from AS existing_local_effective_from,
+       clm.effective_to AS existing_local_effective_to,
+       ck_local.canonical_key AS existing_local_canonical_key,
+       ck_local.canonical_name AS existing_local_canonical_name,
+       ck_local.status AS existing_local_canonical_key_status,
+       cgm_local.id AS existing_group_mapping_id,
+       cgm_local.group_account_id AS existing_group_account_id,
+       cgm_local.status AS existing_group_mapping_status,
+       cgm_local.effective_from AS existing_group_effective_from,
+       cgm_local.effective_to AS existing_group_effective_to,
+       group_acc_existing.code AS existing_group_account_code,
+       group_acc_existing.name AS existing_group_account_name,
+       group_acc_existing.account_type AS existing_group_account_type,
+       group_acc_existing.normal_side AS existing_group_normal_side
+     FROM group_coa_mappings gcm
+     JOIN legal_entities le
+       ON le.id = gcm.legal_entity_id
+     JOIN accounts local_acc
+       ON local_acc.coa_id = gcm.local_coa_id
+      AND local_acc.is_active = TRUE
+      AND local_acc.allow_posting = TRUE
+      AND NOT EXISTS (
+        SELECT 1
+        FROM accounts local_child
+        WHERE local_child.parent_account_id = local_acc.id
+          AND local_child.is_active = TRUE
+      )
+     LEFT JOIN consolidation_canonical_local_account_mappings clm
+       ON clm.tenant_id = gcm.tenant_id
+      AND clm.consolidation_group_id = gcm.consolidation_group_id
+      AND clm.legal_entity_id = gcm.legal_entity_id
+      AND clm.local_account_id = local_acc.id
+     LEFT JOIN consolidation_canonical_keys ck_local
+       ON ck_local.id = clm.canonical_key_id
+      AND ck_local.tenant_id = clm.tenant_id
+      AND ck_local.consolidation_group_id = clm.consolidation_group_id
+     LEFT JOIN consolidation_canonical_group_account_mappings cgm_local
+       ON cgm_local.tenant_id = clm.tenant_id
+      AND cgm_local.consolidation_group_id = clm.consolidation_group_id
+      AND cgm_local.canonical_key_id = clm.canonical_key_id
+     LEFT JOIN accounts group_acc_existing
+       ON group_acc_existing.id = cgm_local.group_account_id
+     WHERE ${where.join(" AND ")}
+     ORDER BY local_acc.code ASC, local_acc.id ASC`,
+    params
+  );
+
+  return result.rows || [];
+}
+
+function buildBulkRulePreviewReason({
+  classification,
+  existingLocalCanonicalKey,
+  requestedCanonicalKey,
+  existingLocalMappingStatus,
+  requestedCanonicalKeyStatus,
+}) {
+  if (classification === "READY_TO_APPLY") {
+    if (
+      existingLocalCanonicalKey &&
+      existingLocalCanonicalKey === requestedCanonicalKey &&
+      existingLocalMappingStatus &&
+      existingLocalMappingStatus !== "ACTIVE"
+    ) {
+      return `Local account already points to ${requestedCanonicalKey} but mapping is ${existingLocalMappingStatus} and can be reactivated.`;
+    }
+    if (
+      existingLocalCanonicalKey &&
+      existingLocalCanonicalKey === requestedCanonicalKey &&
+      requestedCanonicalKeyStatus &&
+      requestedCanonicalKeyStatus !== "ACTIVE"
+    ) {
+      return `Requested canonical key ${requestedCanonicalKey} exists but is ${requestedCanonicalKeyStatus}; apply will reactivate it.`;
+    }
+    return "Leaf account is in scope and currently has no conflicting local canonical mapping.";
+  }
+  if (classification === "ALREADY_ALIGNED") {
+    return "Local account is already mapped to the requested canonical key.";
+  }
+  if (existingLocalCanonicalKey && existingLocalCanonicalKey !== requestedCanonicalKey) {
+    return `Local account already points to a different canonical key (${existingLocalCanonicalKey}).`;
+  }
+  if (existingLocalMappingStatus && existingLocalMappingStatus !== "ACTIVE") {
+    return `Existing local mapping is ${existingLocalMappingStatus}.`;
+  }
+  if (requestedCanonicalKeyStatus && requestedCanonicalKeyStatus !== "ACTIVE") {
+    return `Requested canonical key exists but is ${requestedCanonicalKeyStatus}.`;
+  }
+  return "Existing local mapping state requires manual review before bulk apply.";
+}
+
+function classifyBulkRulePreviewRow({
+  row,
+  requestedCanonicalKey,
+  requestedCanonicalKeyRow = null,
+  selectedGroupAccountRow = null,
+}) {
+  const existingLocalMappingId = parsePositiveInt(row?.existing_local_mapping_id);
+  const existingLocalCanonicalKeyId = parsePositiveInt(
+    row?.existing_local_canonical_key_id
+  );
+  const existingLocalCanonicalKey = row?.existing_local_canonical_key || null;
+  const existingLocalMappingStatus = normalizeUpperText(
+    row?.existing_local_mapping_status || ""
+  );
+  const requestedCanonicalKeyId = parsePositiveInt(requestedCanonicalKeyRow?.id);
+  const requestedCanonicalKeyStatus = normalizeUpperText(
+    requestedCanonicalKeyRow?.status || ""
+  );
+
+  let classification = "READY_TO_APPLY";
+  if (existingLocalMappingId) {
+    const keyAligned = existingLocalCanonicalKey === requestedCanonicalKey;
+    const localActive = existingLocalMappingStatus === "ACTIVE";
+    const requestedKeyActive =
+      !requestedCanonicalKeyRow || requestedCanonicalKeyStatus === "ACTIVE";
+    classification =
+      keyAligned && localActive && requestedKeyActive
+        ? "ALREADY_ALIGNED"
+        : keyAligned
+          ? "READY_TO_APPLY"
+          : "CONFLICTING_LOCAL_MAPPING";
+  }
+
+  const semanticWarnings = selectedGroupAccountRow
+    ? buildSemanticWarnings({
+        localAccountType: row?.local_account_type,
+        localNormalSide: row?.local_normal_side,
+        localAccountName: row?.local_account_name,
+        groupAccountType: selectedGroupAccountRow?.groupAccountType,
+        groupNormalSide: selectedGroupAccountRow?.groupNormalSide,
+        groupAccountName: selectedGroupAccountRow?.groupAccountName,
+      })
+    : [];
+  const semanticSummary = summarizeSemanticWarnings(semanticWarnings);
+
+  return {
+    tenantId: parsePositiveInt(row?.tenant_id),
+    consolidationGroupId: parsePositiveInt(row?.consolidation_group_id),
+    legalEntityId: parsePositiveInt(row?.legal_entity_id),
+    legalEntityCode: row?.legal_entity_code || null,
+    legalEntityName: row?.legal_entity_name || null,
+    localCoaId: parsePositiveInt(row?.local_coa_id),
+    localAccountId: parsePositiveInt(row?.local_account_id),
+    localAccountCode: row?.local_account_code || null,
+    localAccountName: row?.local_account_name || null,
+    classification,
+    reasonCode: classification,
+    reason: buildBulkRulePreviewReason({
+      classification,
+      existingLocalCanonicalKey,
+      requestedCanonicalKey,
+      existingLocalMappingStatus,
+      requestedCanonicalKeyStatus,
+    }),
+    canApply: classification === "READY_TO_APPLY",
+    semanticWarnings,
+    semanticRisk: {
+      warningCount: semanticSummary.count,
+      highRisk: semanticSummary.highRisk,
+      requiresReason: semanticSummary.highRisk === true,
+      codes: semanticSummary.codes,
+    },
+    currentMapping: {
+      localMappingId: existingLocalMappingId,
+      localCanonicalKeyId: existingLocalCanonicalKeyId,
+      localCanonicalKey: existingLocalCanonicalKey,
+      localCanonicalName: row?.existing_local_canonical_name || null,
+      localCanonicalKeyStatus:
+        normalizeUpperText(row?.existing_local_canonical_key_status || "") || null,
+      localStatus: existingLocalMappingStatus || null,
+      localEffectiveFrom: row?.existing_local_effective_from || null,
+      localEffectiveTo: row?.existing_local_effective_to || null,
+      groupMappingId: parsePositiveInt(row?.existing_group_mapping_id),
+      groupAccountId: parsePositiveInt(row?.existing_group_account_id),
+      groupAccountCode: row?.existing_group_account_code || null,
+      groupAccountName: row?.existing_group_account_name || null,
+      groupStatus:
+        normalizeUpperText(row?.existing_group_mapping_status || "") || null,
+      groupEffectiveFrom: row?.existing_group_effective_from || null,
+      groupEffectiveTo: row?.existing_group_effective_to || null,
+    },
+    requestedTarget: {
+      canonicalKeyId: requestedCanonicalKeyId,
+      canonicalKey: requestedCanonicalKey,
+      canonicalName:
+        toNullableString(requestedCanonicalKeyRow?.canonical_name, 255) ||
+        requestedCanonicalKey,
+      canonicalKeyStatus: requestedCanonicalKeyStatus || null,
+      selectedGroupAccountId: parsePositiveInt(
+        selectedGroupAccountRow?.groupAccountId
+      ),
+      selectedGroupAccountCode:
+        selectedGroupAccountRow?.groupAccountCode || null,
+      selectedGroupAccountName:
+        selectedGroupAccountRow?.groupAccountName || null,
+    },
+  };
+}
+
+function buildBulkRulePreviewSummary(rows = []) {
+  const summary = {
+    total: rows.length,
+    readyToApplyCount: 0,
+    alreadyAlignedCount: 0,
+    conflictCount: 0,
+    applyableCount: 0,
+    semanticWarningCount: 0,
+    semanticHighRiskCount: 0,
+  };
+
+  for (const row of rows) {
+    const classification = String(row?.classification || "").toUpperCase();
+    if (classification === "READY_TO_APPLY") {
+      summary.readyToApplyCount += 1;
+    } else if (classification === "ALREADY_ALIGNED") {
+      summary.alreadyAlignedCount += 1;
+    } else if (classification === "CONFLICTING_LOCAL_MAPPING") {
+      summary.conflictCount += 1;
+    }
+
+    const warningCount = Number(row?.semanticRisk?.warningCount || 0);
+    if (warningCount > 0) {
+      summary.semanticWarningCount += 1;
+      if (row?.semanticRisk?.highRisk === true) {
+        summary.semanticHighRiskCount += 1;
+      }
+    }
+  }
+
+  summary.applyableCount = summary.readyToApplyCount;
+  return summary;
+}
+
+function buildBulkRulePreviewBuckets(rows = []) {
+  const matched = [];
+  const alreadyAligned = [];
+  const conflicts = [];
+
+  for (const row of rows) {
+    const classification = String(row?.classification || "").toUpperCase();
+    if (classification === "READY_TO_APPLY") {
+      matched.push(row);
+      continue;
+    }
+    if (classification === "ALREADY_ALIGNED") {
+      alreadyAligned.push(row);
+      continue;
+    }
+    if (classification === "CONFLICTING_LOCAL_MAPPING") {
+      conflicts.push(row);
+    }
+  }
+
+  return {
+    matched,
+    alreadyAligned,
+    conflicts,
+  };
+}
+
+function buildBulkRuleGroupMappingPreview({
+  requestedCanonicalKey,
+  requestedCanonicalName = null,
+  requestedCanonicalKeyRow = null,
+  existingGroupMapping = null,
+  selectedGroupAccountRow = null,
+}) {
+  const currentGroupAccountId = parsePositiveInt(existingGroupMapping?.group_account_id);
+  const currentGroupMappingStatus = normalizeUpperText(existingGroupMapping?.status || "");
+  const selectedGroupAccountId = parsePositiveInt(
+    selectedGroupAccountRow?.groupAccountId
+  );
+
+  let status = "NONE_SELECTED";
+  let reason = "No group account selected for bulk-rule preview.";
+  if (selectedGroupAccountId) {
+    if (!currentGroupAccountId) {
+      status = "READY_FOR_GROUP_MAPPING";
+      reason =
+        "Requested canonical key does not yet have a group mapping for the selected group account.";
+    } else if (
+      currentGroupAccountId === selectedGroupAccountId &&
+      currentGroupMappingStatus === "ACTIVE"
+    ) {
+      status = "ALREADY_ALIGNED";
+      reason =
+        "Requested canonical key is already aligned to the selected group account.";
+    } else if (currentGroupAccountId === selectedGroupAccountId) {
+      status = "INACTIVE_GROUP_MAPPING";
+      reason = `Requested canonical key group mapping exists but is ${currentGroupMappingStatus}.`;
+    } else {
+      status = "CONFLICTING_GROUP_MAPPING";
+      reason = `Requested canonical key already points to a different group account (${existingGroupMapping?.group_account_code || "unknown"}).`;
+    }
+  }
+
+  return {
+    canonicalKeyId: parsePositiveInt(requestedCanonicalKeyRow?.id),
+    canonicalKey: requestedCanonicalKey,
+    canonicalName:
+      toNullableString(requestedCanonicalKeyRow?.canonical_name, 255) ||
+      toNullableString(requestedCanonicalName, 255) ||
+      requestedCanonicalKey,
+    canonicalKeyStatus:
+      normalizeUpperText(requestedCanonicalKeyRow?.status || "") || null,
+    selectedGroupAccount: selectedGroupAccountRow || null,
+    currentGroupMapping: existingGroupMapping
+      ? {
+          groupMappingId: parsePositiveInt(existingGroupMapping?.id),
+          groupAccountId: currentGroupAccountId,
+          groupAccountCode: existingGroupMapping?.group_account_code || null,
+          groupAccountName: existingGroupMapping?.group_account_name || null,
+          groupAccountType: existingGroupMapping?.group_account_type || null,
+          groupNormalSide: existingGroupMapping?.group_normal_side || null,
+          status: currentGroupMappingStatus || null,
+          effectiveFrom: existingGroupMapping?.effective_from || null,
+          effectiveTo: existingGroupMapping?.effective_to || null,
+        }
+      : null,
+    status,
+    reason,
+    blocking: status === "CONFLICTING_GROUP_MAPPING",
+  };
+}
+
 function mapCanonicalKeyRow(row) {
   if (!row) {
     return null;
@@ -892,6 +1452,13 @@ async function assertLocalAccountCompatible({
        a.name AS account_name,
        a.account_type AS account_type,
        a.normal_side AS normal_side,
+       a.allow_posting AS allow_posting,
+       EXISTS(
+         SELECT 1
+         FROM accounts child
+         WHERE child.parent_account_id = a.id
+           AND child.is_active = TRUE
+       ) AS has_active_children,
        a.coa_id,
        c.legal_entity_id AS coa_legal_entity_id
      FROM accounts a
@@ -918,6 +1485,12 @@ async function assertLocalAccountCompatible({
   if (parsePositiveInt(row.coa_legal_entity_id) !== parsePositiveInt(legalEntityId)) {
     throw badRequest("localAccountId must belong to legalEntityId");
   }
+  if (!parseDbBoolean(row.allow_posting)) {
+    throw badRequest("localAccountId must reference a postable account");
+  }
+  if (parseDbBoolean(row.has_active_children)) {
+    throw badRequest("localAccountId must reference a leaf account");
+  }
   return row;
 }
 
@@ -934,6 +1507,13 @@ async function assertGroupAccountCompatible({
        a.name AS account_name,
        a.account_type AS account_type,
        a.normal_side AS normal_side,
+       a.allow_posting AS allow_posting,
+       EXISTS(
+         SELECT 1
+         FROM accounts child
+         WHERE child.parent_account_id = a.id
+           AND child.is_active = TRUE
+       ) AS has_active_children,
        a.coa_id,
        c.scope AS coa_scope
      FROM accounts a
@@ -958,6 +1538,12 @@ async function assertGroupAccountCompatible({
   }
   if (normalizeUpperText(row.coa_scope) !== "GROUP") {
     throw badRequest("groupAccountId must belong to a GROUP chart of accounts");
+  }
+  if (!parseDbBoolean(row.allow_posting)) {
+    throw badRequest("groupAccountId must reference a postable account");
+  }
+  if (parseDbBoolean(row.has_active_children)) {
+    throw badRequest("groupAccountId must reference a leaf account");
   }
   return row;
 }
@@ -1827,6 +2413,13 @@ export async function listCanonicalMappingCandidates({
      JOIN accounts local_acc
        ON local_acc.coa_id = gcm.local_coa_id
       AND local_acc.is_active = TRUE
+      AND local_acc.allow_posting = TRUE
+      AND NOT EXISTS (
+        SELECT 1
+        FROM accounts local_child
+        WHERE local_child.parent_account_id = local_acc.id
+          AND local_child.is_active = TRUE
+      )
      LEFT JOIN consolidation_canonical_local_account_mappings clm
        ON clm.tenant_id = gcm.tenant_id
       AND clm.consolidation_group_id = gcm.consolidation_group_id
@@ -1856,6 +2449,13 @@ export async function listCanonicalMappingCandidates({
        ON group_acc_match.coa_id = gcm.group_coa_id
       AND group_acc_match.code = local_acc.code
       AND group_acc_match.is_active = TRUE
+      AND group_acc_match.allow_posting = TRUE
+      AND NOT EXISTS (
+        SELECT 1
+        FROM accounts group_child
+        WHERE group_child.parent_account_id = group_acc_match.id
+          AND group_child.is_active = TRUE
+      )
      WHERE ${where.join(" AND ")}
      GROUP BY
        gcm.tenant_id,
@@ -1897,6 +2497,985 @@ export async function listCanonicalMappingCandidates({
     legalEntityId: parsedLegalEntityId,
     summary: buildCandidateSummary(rows),
     rows,
+  };
+}
+
+function mapCanonicalMappingRuleRow(row) {
+  return {
+    id: parsePositiveInt(row?.id),
+    tenantId: parsePositiveInt(row?.tenant_id),
+    consolidationGroupId: parsePositiveInt(row?.consolidation_group_id),
+    legalEntityId: parsePositiveInt(row?.legal_entity_id),
+    legalEntityCode: row?.legal_entity_code || null,
+    legalEntityName: row?.legal_entity_name || null,
+    ruleType: row?.rule_type || null,
+    parentLocalAccountId: parsePositiveInt(row?.parent_local_account_id),
+    parentLocalAccountCode: row?.parent_local_account_code || null,
+    parentLocalAccountName: row?.parent_local_account_name || null,
+    codePrefix: row?.code_prefix || null,
+    canonicalKeyId: parsePositiveInt(row?.canonical_key_id),
+    canonicalKey: row?.canonical_key || null,
+    canonicalName: row?.canonical_name || null,
+    canonicalType: row?.canonical_type || null,
+    canonicalKeyStatus: row?.canonical_key_status || null,
+    groupAccountId: parsePositiveInt(row?.group_account_id),
+    groupAccountCode: row?.group_account_code || null,
+    groupAccountName: row?.group_account_name || null,
+    status: row?.status || null,
+    effectiveFrom: row?.effective_from || null,
+    effectiveTo: row?.effective_to || null,
+    reason: row?.reason || null,
+    createdByUserId: parsePositiveInt(row?.created_by_user_id),
+    createdAt: row?.created_at || null,
+    updatedAt: row?.updated_at || null,
+  };
+}
+
+export async function previewCanonicalMappingRule({
+  tenantId,
+  consolidationGroupId,
+  legalEntityId,
+  ruleType,
+  parentLocalAccountId = null,
+  codePrefix = null,
+  canonicalKey,
+  canonicalName = null,
+  groupAccountId = null,
+  effectiveFrom = null,
+  effectiveTo = null,
+  runQuery = query,
+}) {
+  const parsedTenantId = parsePositiveInt(tenantId);
+  const parsedGroupId = parsePositiveInt(consolidationGroupId);
+  const parsedLegalEntityId = parsePositiveInt(legalEntityId);
+  if (!parsedTenantId || !parsedGroupId || !parsedLegalEntityId) {
+    throw badRequest(
+      "tenantId, consolidationGroupId, and legalEntityId are required"
+    );
+  }
+
+  const normalizedRuleType = normalizeBulkRuleType(ruleType);
+  const normalizedCanonicalKey = normalizeUpperText(canonicalKey);
+  if (!normalizedCanonicalKey) {
+    throw badRequest("canonicalKey is required");
+  }
+
+  const normalizedCanonicalName =
+    toNullableString(canonicalName, 255) || normalizedCanonicalKey;
+  const normalizedEffectiveFrom = toDateOnlyString(
+    effectiveFrom,
+    "effectiveFrom"
+  );
+  const normalizedEffectiveTo = toDateOnlyString(effectiveTo, "effectiveTo");
+  if (
+    normalizedEffectiveFrom &&
+    normalizedEffectiveTo &&
+    normalizedEffectiveTo < normalizedEffectiveFrom
+  ) {
+    throw badRequest("effectiveTo must be >= effectiveFrom");
+  }
+
+  const parsedGroupAccountId = parsePositiveInt(groupAccountId) || null;
+  const selectedGroupAccountRow = parsedGroupAccountId
+    ? mapRuleSelectedGroupAccountRow(
+        await assertGroupAccountCompatible({
+          tenantId: parsedTenantId,
+          consolidationGroupId: parsedGroupId,
+          groupAccountId: parsedGroupAccountId,
+          runQuery,
+        })
+      )
+    : null;
+
+  let resolvedRows = [];
+  let context = {
+    selectedRootAccount: null,
+    codePrefix:
+      normalizedRuleType === "CODE_PREFIX" ? normalizeCodePrefix(codePrefix) : null,
+    descendantAccountCount: 0,
+    descendantLeafCount: 0,
+  };
+
+  if (normalizedRuleType === "DESCENDANTS_OF_ACCOUNT") {
+    const parsedParentLocalAccountId = parsePositiveInt(parentLocalAccountId);
+    if (!parsedParentLocalAccountId) {
+      throw badRequest(
+        "parentLocalAccountId is required for DESCENDANTS_OF_ACCOUNT ruleType"
+      );
+    }
+
+    const rootAccountRow = await assertLocalRuleRootAccountCompatible({
+      tenantId: parsedTenantId,
+      consolidationGroupId: parsedGroupId,
+      legalEntityId: parsedLegalEntityId,
+      localAccountId: parsedParentLocalAccountId,
+      runQuery,
+    });
+    const rootAccount = mapRuleRootAccountRow(rootAccountRow);
+    const allActiveAccounts = await listActiveAccountsForCoa({
+      tenantId: parsedTenantId,
+      coaId: rootAccount.coaId,
+      runQuery,
+    });
+    const descendantSelection = resolveDescendantAccountSelection(
+      allActiveAccounts,
+      rootAccount.accountId
+    );
+    const leafRowsInCoa = await listBulkRulePreviewLocalLeafRows({
+      tenantId: parsedTenantId,
+      consolidationGroupId: parsedGroupId,
+      legalEntityId: parsedLegalEntityId,
+      localCoaId: rootAccount.coaId,
+      runQuery,
+    });
+    const allowedLeafIds = new Set(descendantSelection.leafAccountIds);
+    resolvedRows = leafRowsInCoa.filter((row) =>
+      allowedLeafIds.has(parsePositiveInt(row?.local_account_id))
+    );
+    context = {
+      selectedRootAccount: rootAccount,
+      codePrefix: null,
+      descendantAccountCount: descendantSelection.descendantCount,
+      descendantLeafCount: descendantSelection.leafCount,
+    };
+  } else {
+    resolvedRows = await listBulkRulePreviewLocalLeafRows({
+      tenantId: parsedTenantId,
+      consolidationGroupId: parsedGroupId,
+      legalEntityId: parsedLegalEntityId,
+      codePrefix,
+      runQuery,
+    });
+  }
+
+  const requestedCanonicalKeyRow = await getCanonicalKeyByCode({
+    tenantId: parsedTenantId,
+    consolidationGroupId: parsedGroupId,
+    canonicalKey: normalizedCanonicalKey,
+    runQuery,
+  });
+  const requestedGroupMapping = parsePositiveInt(requestedCanonicalKeyRow?.id)
+    ? await getGroupMappingForCanonicalKey({
+        tenantId: parsedTenantId,
+        consolidationGroupId: parsedGroupId,
+        canonicalKeyId: requestedCanonicalKeyRow.id,
+        runQuery,
+      })
+    : null;
+
+  const rows = resolvedRows.map((row) =>
+    classifyBulkRulePreviewRow({
+      row,
+      requestedCanonicalKey: normalizedCanonicalKey,
+      requestedCanonicalKeyRow,
+      selectedGroupAccountRow,
+    })
+  );
+  const summary = buildBulkRulePreviewSummary(rows);
+
+  return {
+    rule: {
+      ruleType: normalizedRuleType,
+      legalEntityId: parsedLegalEntityId,
+      parentLocalAccountId:
+        normalizedRuleType === "DESCENDANTS_OF_ACCOUNT"
+          ? parsePositiveInt(parentLocalAccountId)
+          : null,
+      codePrefix: context.codePrefix,
+      canonicalKey: normalizedCanonicalKey,
+      canonicalName: normalizedCanonicalName,
+      groupAccountId: parsedGroupAccountId,
+      effectiveFrom: normalizedEffectiveFrom,
+      effectiveTo: normalizedEffectiveTo,
+    },
+    context,
+    groupMappingPreview: buildBulkRuleGroupMappingPreview({
+      requestedCanonicalKey: normalizedCanonicalKey,
+      requestedCanonicalName: normalizedCanonicalName,
+      requestedCanonicalKeyRow,
+      existingGroupMapping: requestedGroupMapping,
+      selectedGroupAccountRow,
+    }),
+    summary,
+    buckets: buildBulkRulePreviewBuckets(rows),
+    rows,
+  };
+}
+
+export async function applyCanonicalMappingRule({
+  tenantId,
+  consolidationGroupId,
+  legalEntityId,
+  ruleType,
+  parentLocalAccountId = null,
+  codePrefix = null,
+  canonicalKey,
+  canonicalName = null,
+  groupAccountId = null,
+  effectiveFrom = null,
+  effectiveTo = null,
+  changeReason = null,
+  changeSource = "BULK_RULE_APPLY",
+  actedByUserId = null,
+  requestMeta = null,
+}) {
+  const parsedTenantId = parsePositiveInt(tenantId);
+  const parsedGroupId = parsePositiveInt(consolidationGroupId);
+  const parsedLegalEntityId = parsePositiveInt(legalEntityId);
+  if (!parsedTenantId || !parsedGroupId || !parsedLegalEntityId) {
+    throw badRequest(
+      "tenantId, consolidationGroupId, and legalEntityId are required"
+    );
+  }
+
+  const normalizedEffectiveFrom =
+    toDateOnlyString(effectiveFrom, "effectiveFrom") ||
+    toDateOnlyString(new Date(), "effectiveFrom");
+  const normalizedEffectiveTo = toDateOnlyString(effectiveTo, "effectiveTo");
+  if (
+    normalizedEffectiveTo &&
+    normalizedEffectiveTo < normalizedEffectiveFrom
+  ) {
+    throw badRequest("effectiveTo must be >= effectiveFrom");
+  }
+
+  const normalizedChangeReason = toNullableString(changeReason, 500);
+  const normalizedChangeSource =
+    normalizeUpperText(changeSource || "BULK_RULE_APPLY") || "BULK_RULE_APPLY";
+
+  const buildConflictError = (preview) => {
+    const localConflicts = Array.isArray(preview?.buckets?.conflicts)
+      ? preview.buckets.conflicts
+      : [];
+    const groupConflict =
+      preview?.groupMappingPreview?.blocking === true
+        ? preview.groupMappingPreview
+        : null;
+    const conflictCount = localConflicts.length + (groupConflict ? 1 : 0);
+    const err = badRequest(
+      "Bulk canonical rule apply blocked by conflicts. Resolve preview conflicts before apply."
+    );
+    err.details = {
+      code: "BULK_RULE_APPLY_CONFLICTS",
+      conflictCount,
+      groupMappingConflict: groupConflict,
+      localConflicts: localConflicts.slice(0, 50).map((row) => ({
+        legalEntityId: row.legalEntityId,
+        localAccountId: row.localAccountId,
+        localAccountCode: row.localAccountCode,
+        currentMapping: row.currentMapping,
+        requestedTarget: row.requestedTarget,
+        reason: row.reason || null,
+      })),
+    };
+    return err;
+  };
+
+  const buildHighRiskError = (rows = []) => {
+    const err = badRequest(
+      "High-risk bulk rule mappings require reason. Provide reason in payload.reason before apply."
+    );
+    err.details = {
+      code: "HIGH_RISK_BULK_RULE_APPLY_REASON_REQUIRED",
+      highRiskRowCount: rows.length,
+      sample: rows.slice(0, 20).map((row) => ({
+        legalEntityId: row.legalEntityId,
+        localAccountId: row.localAccountId,
+        localAccountCode: row.localAccountCode,
+        semanticRiskCodes: row?.semanticRisk?.codes || [],
+      })),
+    };
+    return err;
+  };
+
+  const previewRequest = {
+    tenantId: parsedTenantId,
+    consolidationGroupId: parsedGroupId,
+    legalEntityId: parsedLegalEntityId,
+    ruleType,
+    parentLocalAccountId,
+    codePrefix,
+    canonicalKey,
+    canonicalName,
+    groupAccountId,
+    effectiveFrom: normalizedEffectiveFrom,
+    effectiveTo: normalizedEffectiveTo,
+  };
+
+  const initialPreview = await previewCanonicalMappingRule(previewRequest);
+  if (
+    Number(initialPreview?.summary?.total || 0) <= 0 &&
+    Number(initialPreview?.summary?.alreadyAlignedCount || 0) <= 0
+  ) {
+    await insertCanonicalMappingAuditLog({
+      tenantId: parsedTenantId,
+      userId: parsePositiveInt(actedByUserId) || null,
+      action: "consolidation.canonical_mapping.rules.apply",
+      resourceType: "consolidation_canonical_rule_apply",
+      resourceId: `${parsedGroupId}:${parsedLegalEntityId}:${initialPreview?.rule?.ruleType || "RULE"}`,
+      scopeType: "GROUP",
+      scopeId: parsedGroupId,
+      requestId: requestMeta?.requestId || null,
+      ipAddress: requestMeta?.ipAddress || null,
+      userAgent: requestMeta?.userAgent || null,
+      payload: {
+        source: normalizedChangeSource,
+        reason: normalizedChangeReason,
+        rule: initialPreview?.rule || null,
+        appliedLocalMappings: 0,
+        createdLocalMappings: 0,
+        updatedLocalMappings: 0,
+        skippedAlreadyAligned: 0,
+        conflictCount: 0,
+        groupMappingAction: {
+          status: "SKIPPED_NO_MATCHES",
+        },
+      },
+    });
+    return {
+      rule: initialPreview.rule,
+      summary: initialPreview.summary,
+      createdLocalMappings: 0,
+      updatedLocalMappings: 0,
+      appliedLocalMappings: 0,
+      skippedAlreadyAligned: 0,
+      conflictCount: 0,
+      highRiskApplyCount: 0,
+      groupMappingAction: {
+        status: "SKIPPED_NO_MATCHES",
+      },
+      appliedSample: [],
+    };
+  }
+
+  if (
+    (initialPreview?.buckets?.conflicts || []).length > 0 ||
+    initialPreview?.groupMappingPreview?.blocking === true
+  ) {
+    throw buildConflictError(initialPreview);
+  }
+
+  const initialMatchedRows = Array.isArray(initialPreview?.buckets?.matched)
+    ? initialPreview.buckets.matched
+    : [];
+  const initialHighRiskRows = initialMatchedRows.filter(
+    (row) => row?.semanticRisk?.highRisk === true
+  );
+  if (initialHighRiskRows.length > 0 && !normalizedChangeReason) {
+    throw buildHighRiskError(initialHighRiskRows);
+  }
+  if (initialHighRiskRows.length > 0) {
+    const highRiskWarnings = initialHighRiskRows.flatMap((row) => {
+      const rowWarnings = Array.isArray(row?.semanticWarnings) ? row.semanticWarnings : [];
+      return rowWarnings.map((warning) => ({
+        ...warning,
+        legalEntityId: parsePositiveInt(row?.legalEntityId) || null,
+        localAccountId: parsePositiveInt(row?.localAccountId) || null,
+        localAccountCode: row?.localAccountCode || null,
+      }));
+    });
+    emitSemanticRiskOverrideUsageEvent({
+      tenantId: parsedTenantId,
+      consolidationGroupId: parsedGroupId,
+      legalEntityId: parsedLegalEntityId,
+      changeSource: normalizedChangeSource,
+      changeReason: normalizedChangeReason,
+      semanticWarnings:
+        highRiskWarnings.length > 0
+          ? highRiskWarnings
+          : [{ code: "HIGH_RISK_BULK_RULE_ROW", severity: "HIGH" }],
+      actedByUserId,
+      overrideContext: "BULK_RULE_APPLY",
+      highRiskCandidateCount: initialHighRiskRows.length,
+    });
+  }
+
+  const metrics = {
+    createdLocalMappings: 0,
+    updatedLocalMappings: 0,
+    appliedLocalMappings: 0,
+    skippedAlreadyAligned: Number(
+      initialPreview?.summary?.alreadyAlignedCount || 0
+    ),
+    conflictCount: 0,
+    highRiskApplyCount: initialHighRiskRows.length,
+  };
+  let finalPreview = initialPreview;
+  let groupMappingAction = {
+    status: "NOT_REQUESTED",
+  };
+  const appliedSample = [];
+
+  await withTransaction(async (tx) => {
+    finalPreview = await previewCanonicalMappingRule({
+      ...previewRequest,
+      runQuery: tx.query,
+    });
+
+    if (
+      (finalPreview?.buckets?.conflicts || []).length > 0 ||
+      finalPreview?.groupMappingPreview?.blocking === true
+    ) {
+      throw buildConflictError(finalPreview);
+    }
+
+    const matchedRows = Array.isArray(finalPreview?.buckets?.matched)
+      ? finalPreview.buckets.matched
+      : [];
+    const highRiskRows = matchedRows.filter(
+      (row) => row?.semanticRisk?.highRisk === true
+    );
+    if (highRiskRows.length > 0 && !normalizedChangeReason) {
+      throw buildHighRiskError(highRiskRows);
+    }
+
+    const previewGroupAction = finalPreview?.groupMappingPreview || null;
+    if (parsePositiveInt(finalPreview?.rule?.groupAccountId)) {
+      if (
+        previewGroupAction?.status === "READY_FOR_GROUP_MAPPING" ||
+        previewGroupAction?.status === "INACTIVE_GROUP_MAPPING"
+      ) {
+        const existingGroupMappingId = parsePositiveInt(
+          previewGroupAction?.currentGroupMapping?.groupMappingId
+        );
+        const groupResult = await upsertGroupAccountCanonicalMapping({
+          tenantId: parsedTenantId,
+          consolidationGroupId: parsedGroupId,
+          groupAccountId: finalPreview.rule.groupAccountId,
+          canonicalKey: finalPreview.rule.canonicalKey,
+          canonicalName: finalPreview.rule.canonicalName,
+          canonicalType: "ACCOUNT",
+          status: "ACTIVE",
+          effectiveFrom: normalizedEffectiveFrom,
+          effectiveTo: normalizedEffectiveTo,
+          changeReason: normalizedChangeReason,
+          changeSource: normalizedChangeSource,
+          actedByUserId,
+          requestMeta,
+          runQuery: tx.query,
+        });
+        groupMappingAction = {
+          status: existingGroupMappingId ? "UPDATED_EXISTING" : "CREATED",
+          groupMappingId: parsePositiveInt(groupResult?.id),
+          groupAccountId: parsePositiveInt(groupResult?.groupAccountId),
+          groupAccountCode: groupResult?.groupAccountCode || null,
+          groupAccountName: groupResult?.groupAccountName || null,
+        };
+      } else if (previewGroupAction?.status === "ALREADY_ALIGNED") {
+        groupMappingAction = {
+          status: "SKIPPED_ALREADY_ALIGNED",
+          groupMappingId: parsePositiveInt(
+            previewGroupAction?.currentGroupMapping?.groupMappingId
+          ),
+          groupAccountId: parsePositiveInt(
+            previewGroupAction?.currentGroupMapping?.groupAccountId
+          ),
+          groupAccountCode:
+            previewGroupAction?.currentGroupMapping?.groupAccountCode || null,
+          groupAccountName:
+            previewGroupAction?.currentGroupMapping?.groupAccountName || null,
+        };
+      } else {
+        groupMappingAction = {
+          status: previewGroupAction?.status || "NOT_REQUESTED",
+        };
+      }
+    }
+
+    for (const row of matchedRows) {
+      const localResult = await upsertLocalAccountCanonicalMapping({
+        tenantId: parsedTenantId,
+        consolidationGroupId: parsedGroupId,
+        legalEntityId: parsedLegalEntityId,
+        localAccountId: row.localAccountId,
+        canonicalKey: finalPreview.rule.canonicalKey,
+        canonicalName: finalPreview.rule.canonicalName,
+        canonicalType: "ACCOUNT",
+        status: "ACTIVE",
+        effectiveFrom: normalizedEffectiveFrom,
+        effectiveTo: normalizedEffectiveTo,
+        changeReason: normalizedChangeReason,
+        changeSource: normalizedChangeSource,
+        actedByUserId,
+        requestMeta,
+        runQuery: tx.query,
+      });
+
+      if (parsePositiveInt(row?.currentMapping?.localMappingId)) {
+        metrics.updatedLocalMappings += 1;
+      } else {
+        metrics.createdLocalMappings += 1;
+      }
+      metrics.appliedLocalMappings += 1;
+      if (appliedSample.length < 20) {
+        appliedSample.push({
+          legalEntityId: parsedLegalEntityId,
+          localAccountId: row.localAccountId,
+          localAccountCode: row.localAccountCode,
+          localAccountName: row.localAccountName,
+          canonicalKey: localResult?.canonicalKey || finalPreview.rule.canonicalKey,
+        });
+      }
+    }
+  });
+
+  await insertCanonicalMappingAuditLog({
+    tenantId: parsedTenantId,
+    userId: parsePositiveInt(actedByUserId) || null,
+    action: "consolidation.canonical_mapping.rules.apply",
+    resourceType: "consolidation_canonical_rule_apply",
+    resourceId: `${parsedGroupId}:${parsedLegalEntityId}:${finalPreview?.rule?.ruleType || "RULE"}`,
+    scopeType: "GROUP",
+    scopeId: parsedGroupId,
+    requestId: requestMeta?.requestId || null,
+    ipAddress: requestMeta?.ipAddress || null,
+    userAgent: requestMeta?.userAgent || null,
+    payload: {
+      source: normalizedChangeSource,
+      reason: normalizedChangeReason,
+      rule: finalPreview?.rule || null,
+      appliedLocalMappings: metrics.appliedLocalMappings,
+      createdLocalMappings: metrics.createdLocalMappings,
+      updatedLocalMappings: metrics.updatedLocalMappings,
+      skippedAlreadyAligned: metrics.skippedAlreadyAligned,
+      conflictCount: metrics.conflictCount,
+      highRiskApplyCount: metrics.highRiskApplyCount,
+      groupMappingAction,
+    },
+  });
+
+  return {
+    rule: finalPreview.rule,
+    summary: finalPreview.summary,
+    createdLocalMappings: metrics.createdLocalMappings,
+    updatedLocalMappings: metrics.updatedLocalMappings,
+    appliedLocalMappings: metrics.appliedLocalMappings,
+    skippedAlreadyAligned: metrics.skippedAlreadyAligned,
+    conflictCount: metrics.conflictCount,
+    highRiskApplyCount: metrics.highRiskApplyCount,
+    groupMappingAction,
+    appliedSample,
+  };
+}
+
+export async function getCanonicalMappingRuleById({
+  tenantId,
+  consolidationGroupId,
+  ruleId,
+  runQuery = query,
+}) {
+  const parsedTenantId = parsePositiveInt(tenantId);
+  const parsedGroupId = parsePositiveInt(consolidationGroupId);
+  const parsedRuleId = parsePositiveInt(ruleId);
+  if (!parsedTenantId || !parsedGroupId || !parsedRuleId) {
+    throw badRequest("tenantId, consolidationGroupId, and ruleId are required");
+  }
+
+  const result = await runQuery(
+    `SELECT
+       rule.*,
+       le.code AS legal_entity_code,
+       le.name AS legal_entity_name,
+       parent_acc.code AS parent_local_account_code,
+       parent_acc.name AS parent_local_account_name,
+       ck.canonical_key,
+       ck.canonical_name,
+       ck.canonical_type,
+       ck.status AS canonical_key_status,
+       group_acc.code AS group_account_code,
+       group_acc.name AS group_account_name
+     FROM consolidation_canonical_mapping_rules rule
+     JOIN legal_entities le
+       ON le.id = rule.legal_entity_id
+     JOIN consolidation_canonical_keys ck
+       ON ck.id = rule.canonical_key_id
+      AND ck.tenant_id = rule.tenant_id
+      AND ck.consolidation_group_id = rule.consolidation_group_id
+     LEFT JOIN accounts parent_acc
+       ON parent_acc.id = rule.parent_local_account_id
+     LEFT JOIN accounts group_acc
+       ON group_acc.id = rule.group_account_id
+     WHERE rule.tenant_id = ?
+       AND rule.consolidation_group_id = ?
+       AND rule.id = ?
+     LIMIT 1`,
+    [parsedTenantId, parsedGroupId, parsedRuleId]
+  );
+  const row = result.rows?.[0] || null;
+  return row ? mapCanonicalMappingRuleRow(row) : null;
+}
+
+export async function listCanonicalMappingRules({
+  tenantId,
+  consolidationGroupId,
+  legalEntityId = null,
+  status = "ALL",
+  runQuery = query,
+}) {
+  const parsedTenantId = parsePositiveInt(tenantId);
+  const parsedGroupId = parsePositiveInt(consolidationGroupId);
+  if (!parsedTenantId || !parsedGroupId) {
+    throw badRequest("tenantId and consolidationGroupId are required");
+  }
+
+  const parsedLegalEntityId = parsePositiveInt(legalEntityId) || null;
+  const normalizedStatus = normalizeListStatus(status);
+  const params = [parsedTenantId, parsedGroupId];
+  const where = ["rule.tenant_id = ?", "rule.consolidation_group_id = ?"];
+  if (parsedLegalEntityId) {
+    where.push("rule.legal_entity_id = ?");
+    params.push(parsedLegalEntityId);
+  }
+  if (normalizedStatus !== "ALL") {
+    where.push("rule.status = ?");
+    params.push(normalizedStatus);
+  }
+
+  const result = await runQuery(
+    `SELECT
+       rule.*,
+       le.code AS legal_entity_code,
+       le.name AS legal_entity_name,
+       parent_acc.code AS parent_local_account_code,
+       parent_acc.name AS parent_local_account_name,
+       ck.canonical_key,
+       ck.canonical_name,
+       ck.canonical_type,
+       ck.status AS canonical_key_status,
+       group_acc.code AS group_account_code,
+       group_acc.name AS group_account_name
+     FROM consolidation_canonical_mapping_rules rule
+     JOIN legal_entities le
+       ON le.id = rule.legal_entity_id
+     JOIN consolidation_canonical_keys ck
+       ON ck.id = rule.canonical_key_id
+      AND ck.tenant_id = rule.tenant_id
+      AND ck.consolidation_group_id = rule.consolidation_group_id
+     LEFT JOIN accounts parent_acc
+       ON parent_acc.id = rule.parent_local_account_id
+     LEFT JOIN accounts group_acc
+       ON group_acc.id = rule.group_account_id
+     WHERE ${where.join(" AND ")}
+     ORDER BY rule.updated_at DESC, rule.id DESC`,
+    params
+  );
+
+  const rows = (result.rows || []).map(mapCanonicalMappingRuleRow);
+  const summary = {
+    total: rows.length,
+    activeCount: rows.filter((row) => normalizeUpperText(row?.status) === "ACTIVE").length,
+    inactiveCount: rows.filter((row) => normalizeUpperText(row?.status) === "INACTIVE").length,
+  };
+  return {
+    summary,
+    rows,
+  };
+}
+
+export async function createCanonicalMappingRule({
+  tenantId,
+  consolidationGroupId,
+  legalEntityId,
+  ruleType,
+  parentLocalAccountId = null,
+  codePrefix = null,
+  canonicalKeyId = null,
+  canonicalKey = null,
+  canonicalName = null,
+  groupAccountId = null,
+  status = "ACTIVE",
+  effectiveFrom = null,
+  effectiveTo = null,
+  reason = null,
+  actedByUserId = null,
+  requestMeta = null,
+  runQuery = query,
+}) {
+  const parsedTenantId = parsePositiveInt(tenantId);
+  const parsedGroupId = parsePositiveInt(consolidationGroupId);
+  const parsedLegalEntityId = parsePositiveInt(legalEntityId);
+  if (!parsedTenantId || !parsedGroupId || !parsedLegalEntityId) {
+    throw badRequest(
+      "tenantId, consolidationGroupId, and legalEntityId are required"
+    );
+  }
+
+  const normalizedRuleType = normalizeBulkRuleType(ruleType);
+  let normalizedParentLocalAccountId = null;
+  let normalizedCodePrefix = null;
+  if (normalizedRuleType === "DESCENDANTS_OF_ACCOUNT") {
+    normalizedParentLocalAccountId = parsePositiveInt(parentLocalAccountId);
+    if (!normalizedParentLocalAccountId) {
+      throw badRequest(
+        "parentLocalAccountId is required for DESCENDANTS_OF_ACCOUNT ruleType"
+      );
+    }
+    await assertLocalRuleRootAccountCompatible({
+      tenantId: parsedTenantId,
+      consolidationGroupId: parsedGroupId,
+      legalEntityId: parsedLegalEntityId,
+      localAccountId: normalizedParentLocalAccountId,
+      runQuery,
+    });
+  } else {
+    normalizedCodePrefix = normalizeCodePrefix(codePrefix);
+  }
+
+  const parsedGroupAccountId = parsePositiveInt(groupAccountId) || null;
+  if (parsedGroupAccountId) {
+    await assertGroupAccountCompatible({
+      tenantId: parsedTenantId,
+      consolidationGroupId: parsedGroupId,
+      groupAccountId: parsedGroupAccountId,
+      runQuery,
+    });
+  }
+
+  const canonicalKeyRow = await resolveCanonicalKey({
+    tenantId: parsedTenantId,
+    consolidationGroupId: parsedGroupId,
+    canonicalKeyId,
+    canonicalKey,
+    canonicalName,
+    canonicalType: "ACCOUNT",
+    status: "ACTIVE",
+    runQuery,
+  });
+  const normalizedStatus = normalizeStatus(status);
+  const normalizedEffectiveFrom =
+    toDateOnlyString(effectiveFrom, "effectiveFrom") ||
+    toDateOnlyString(new Date(), "effectiveFrom");
+  const normalizedEffectiveTo = toDateOnlyString(effectiveTo, "effectiveTo");
+  if (normalizedEffectiveTo && normalizedEffectiveTo < normalizedEffectiveFrom) {
+    throw badRequest("effectiveTo must be >= effectiveFrom");
+  }
+  const normalizedReason = toNullableString(reason, 500);
+
+  await runQuery(
+    `INSERT INTO consolidation_canonical_mapping_rules (
+        tenant_id,
+        consolidation_group_id,
+        legal_entity_id,
+        rule_type,
+        parent_local_account_id,
+        code_prefix,
+        canonical_key_id,
+        group_account_id,
+        status,
+        effective_from,
+        effective_to,
+        reason,
+        created_by_user_id
+     )
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      parsedTenantId,
+      parsedGroupId,
+      parsedLegalEntityId,
+      normalizedRuleType,
+      normalizedParentLocalAccountId,
+      normalizedCodePrefix,
+      parsePositiveInt(canonicalKeyRow?.id),
+      parsedGroupAccountId,
+      normalizedStatus,
+      normalizedEffectiveFrom,
+      normalizedEffectiveTo,
+      normalizedReason,
+      parsePositiveInt(actedByUserId) || null,
+    ]
+  );
+
+  const createdIdResult = await runQuery("SELECT LAST_INSERT_ID() AS id");
+  const createdRuleId = parsePositiveInt(createdIdResult.rows?.[0]?.id);
+  const row = await getCanonicalMappingRuleById({
+    tenantId: parsedTenantId,
+    consolidationGroupId: parsedGroupId,
+    ruleId: createdRuleId,
+    runQuery,
+  });
+  if (!row) {
+    throw new Error("Saved canonical mapping rule readback failed");
+  }
+
+  await insertCanonicalMappingAuditLog({
+    runQuery,
+    tenantId: parsedTenantId,
+    userId: parsePositiveInt(actedByUserId) || null,
+    action: "consolidation.canonical_mapping.rule.create",
+    resourceType: "consolidation_canonical_mapping_rule",
+    resourceId: String(createdRuleId || ""),
+    scopeType: "GROUP",
+    scopeId: parsedGroupId,
+    requestId: requestMeta?.requestId || null,
+    ipAddress: requestMeta?.ipAddress || null,
+    userAgent: requestMeta?.userAgent || null,
+    payload: {
+      legalEntityId: parsedLegalEntityId,
+      ruleType: normalizedRuleType,
+      parentLocalAccountId: normalizedParentLocalAccountId,
+      codePrefix: normalizedCodePrefix,
+      canonicalKey: row.canonicalKey,
+      canonicalName: row.canonicalName,
+      groupAccountId: parsedGroupAccountId,
+      reason: normalizedReason,
+      status: normalizedStatus,
+      effectiveFrom: normalizedEffectiveFrom,
+      effectiveTo: normalizedEffectiveTo,
+    },
+  });
+
+  return row;
+}
+
+export async function deactivateCanonicalMappingRule({
+  tenantId,
+  consolidationGroupId,
+  ruleId,
+  reason = null,
+  actedByUserId = null,
+  requestMeta = null,
+  runQuery = query,
+}) {
+  const parsedTenantId = parsePositiveInt(tenantId);
+  const parsedGroupId = parsePositiveInt(consolidationGroupId);
+  const parsedRuleId = parsePositiveInt(ruleId);
+  if (!parsedTenantId || !parsedGroupId || !parsedRuleId) {
+    throw badRequest("tenantId, consolidationGroupId, and ruleId are required");
+  }
+
+  const existing = await getCanonicalMappingRuleById({
+    tenantId: parsedTenantId,
+    consolidationGroupId: parsedGroupId,
+    ruleId: parsedRuleId,
+    runQuery,
+  });
+  if (!existing) {
+    throw badRequest("ruleId not found in consolidation group");
+  }
+
+  if (normalizeUpperText(existing.status) !== "INACTIVE") {
+    await runQuery(
+      `UPDATE consolidation_canonical_mapping_rules
+       SET status = 'INACTIVE',
+           updated_at = CURRENT_TIMESTAMP
+       WHERE tenant_id = ?
+         AND consolidation_group_id = ?
+         AND id = ?`,
+      [parsedTenantId, parsedGroupId, parsedRuleId]
+    );
+  }
+
+  const row = await getCanonicalMappingRuleById({
+    tenantId: parsedTenantId,
+    consolidationGroupId: parsedGroupId,
+    ruleId: parsedRuleId,
+    runQuery,
+  });
+
+  await insertCanonicalMappingAuditLog({
+    runQuery,
+    tenantId: parsedTenantId,
+    userId: parsePositiveInt(actedByUserId) || null,
+    action: "consolidation.canonical_mapping.rule.deactivate",
+    resourceType: "consolidation_canonical_mapping_rule",
+    resourceId: String(parsedRuleId),
+    scopeType: "GROUP",
+    scopeId: parsedGroupId,
+    requestId: requestMeta?.requestId || null,
+    ipAddress: requestMeta?.ipAddress || null,
+    userAgent: requestMeta?.userAgent || null,
+    payload: {
+      legalEntityId: row?.legalEntityId || null,
+      ruleType: row?.ruleType || null,
+      canonicalKey: row?.canonicalKey || null,
+      reason: toNullableString(reason, 500),
+      previousStatus: existing.status || null,
+      currentStatus: row?.status || null,
+    },
+  });
+
+  return row;
+}
+
+export async function previewCanonicalMappingRuleById({
+  tenantId,
+  consolidationGroupId,
+  ruleId,
+  runQuery = query,
+}) {
+  const row = await getCanonicalMappingRuleById({
+    tenantId,
+    consolidationGroupId,
+    ruleId,
+    runQuery,
+  });
+  if (!row) {
+    throw badRequest("ruleId not found in consolidation group");
+  }
+
+  const preview = await previewCanonicalMappingRule({
+    tenantId,
+    consolidationGroupId,
+    legalEntityId: row.legalEntityId,
+    ruleType: row.ruleType,
+    parentLocalAccountId: row.parentLocalAccountId,
+    codePrefix: row.codePrefix,
+    canonicalKey: row.canonicalKey,
+    canonicalName: row.canonicalName,
+    groupAccountId: row.groupAccountId,
+    effectiveFrom: row.effectiveFrom,
+    effectiveTo: row.effectiveTo,
+    runQuery,
+  });
+
+  return {
+    savedRule: row,
+    ...preview,
+  };
+}
+
+export async function applyCanonicalMappingRuleById({
+  tenantId,
+  consolidationGroupId,
+  ruleId,
+  changeReason = null,
+  changeSource = "SAVED_RULE_APPLY",
+  actedByUserId = null,
+  requestMeta = null,
+}) {
+  const row = await getCanonicalMappingRuleById({
+    tenantId,
+    consolidationGroupId,
+    ruleId,
+  });
+  if (!row) {
+    throw badRequest("ruleId not found in consolidation group");
+  }
+  if (normalizeUpperText(row.status) !== "ACTIVE") {
+    throw badRequest("Saved canonical rule must be ACTIVE before apply");
+  }
+
+  const result = await applyCanonicalMappingRule({
+    tenantId,
+    consolidationGroupId,
+    legalEntityId: row.legalEntityId,
+    ruleType: row.ruleType,
+    parentLocalAccountId: row.parentLocalAccountId,
+    codePrefix: row.codePrefix,
+    canonicalKey: row.canonicalKey,
+    canonicalName: row.canonicalName,
+    groupAccountId: row.groupAccountId,
+    effectiveFrom: row.effectiveFrom,
+    effectiveTo: row.effectiveTo,
+    changeReason: toNullableString(changeReason, 500) || row.reason || null,
+    changeSource,
+    actedByUserId,
+    requestMeta,
+  });
+
+  return {
+    savedRule: row,
+    ...result,
   };
 }
 
@@ -2112,21 +3691,21 @@ export async function getCanonicalMappingGovernanceReview({
             AND cck.tenant_id = clm.tenant_id
             AND cck.consolidation_group_id = clm.consolidation_group_id
             AND cck.status = 'ACTIVE'
-           JOIN consolidation_canonical_group_account_mappings ccgm
-             ON ccgm.tenant_id = clm.tenant_id
-            AND ccgm.consolidation_group_id = clm.consolidation_group_id
-            AND ccgm.canonical_key_id = clm.canonical_key_id
-            AND ccgm.status = 'ACTIVE'
-            AND ccgm.effective_from <= je.entry_date
-            AND (ccgm.effective_to IS NULL OR ccgm.effective_to >= je.entry_date)
-           WHERE clm.tenant_id = je.tenant_id
-             AND clm.consolidation_group_id = cgm.consolidation_group_id
-             AND clm.legal_entity_id = je.legal_entity_id
-             AND clm.local_account_id = local_acc.id
-             AND clm.status = 'ACTIVE'
-             AND clm.effective_from <= je.entry_date
-             AND (clm.effective_to IS NULL OR clm.effective_to >= je.entry_date)
-         )
+            JOIN consolidation_canonical_group_account_mappings ccgm
+              ON ccgm.tenant_id = clm.tenant_id
+             AND ccgm.consolidation_group_id = clm.consolidation_group_id
+             AND ccgm.canonical_key_id = clm.canonical_key_id
+             AND ccgm.status = 'ACTIVE'
+            WHERE clm.tenant_id = je.tenant_id
+              AND clm.consolidation_group_id = cgm.consolidation_group_id
+              AND clm.legal_entity_id = je.legal_entity_id
+              AND clm.local_account_id = local_acc.id
+              AND clm.status = 'ACTIVE'
+              AND clm.effective_from <= je.entry_date
+              AND (clm.effective_to IS NULL OR clm.effective_to >= je.entry_date)
+              AND ccgm.effective_from <= je.entry_date
+              AND (ccgm.effective_to IS NULL OR ccgm.effective_to >= je.entry_date)
+          )
      ) uncovered_accounts`,
     [
       parsedTenantId,
@@ -2174,21 +3753,21 @@ export async function getCanonicalMappingGovernanceReview({
           AND cck.tenant_id = clm.tenant_id
           AND cck.consolidation_group_id = clm.consolidation_group_id
           AND cck.status = 'ACTIVE'
-         JOIN consolidation_canonical_group_account_mappings ccgm
-           ON ccgm.tenant_id = clm.tenant_id
-          AND ccgm.consolidation_group_id = clm.consolidation_group_id
-          AND ccgm.canonical_key_id = clm.canonical_key_id
-          AND ccgm.status = 'ACTIVE'
-          AND ccgm.effective_from <= je.entry_date
-          AND (ccgm.effective_to IS NULL OR ccgm.effective_to >= je.entry_date)
-         WHERE clm.tenant_id = je.tenant_id
-           AND clm.consolidation_group_id = cgm.consolidation_group_id
-           AND clm.legal_entity_id = je.legal_entity_id
-           AND clm.local_account_id = local_acc.id
-           AND clm.status = 'ACTIVE'
-           AND clm.effective_from <= je.entry_date
-           AND (clm.effective_to IS NULL OR clm.effective_to >= je.entry_date)
-       )
+          JOIN consolidation_canonical_group_account_mappings ccgm
+            ON ccgm.tenant_id = clm.tenant_id
+           AND ccgm.consolidation_group_id = clm.consolidation_group_id
+           AND ccgm.canonical_key_id = clm.canonical_key_id
+           AND ccgm.status = 'ACTIVE'
+          WHERE clm.tenant_id = je.tenant_id
+            AND clm.consolidation_group_id = cgm.consolidation_group_id
+            AND clm.legal_entity_id = je.legal_entity_id
+            AND clm.local_account_id = local_acc.id
+            AND clm.status = 'ACTIVE'
+            AND clm.effective_from <= je.entry_date
+            AND (clm.effective_to IS NULL OR clm.effective_to >= je.entry_date)
+            AND ccgm.effective_from <= je.entry_date
+            AND (ccgm.effective_to IS NULL OR ccgm.effective_to >= je.entry_date)
+        )
      GROUP BY
        je.legal_entity_id,
        le.code,
@@ -2256,6 +3835,71 @@ export async function getCanonicalMappingGovernanceReview({
       },
     }));
 
+  const savedRuleList = await listCanonicalMappingRules({
+    tenantId: parsedTenantId,
+    consolidationGroupId: parsedGroupId,
+    status: "ALL",
+    runQuery,
+  });
+  const activeSavedRuleRows = (savedRuleList?.rows || []).filter(
+    (row) => normalizeUpperText(row?.status) === "ACTIVE"
+  );
+  const savedRuleMatchesByLocalAccount = new Map();
+  const invalidSavedRulePreviews = [];
+  for (const rule of activeSavedRuleRows) {
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      const preview = await previewCanonicalMappingRule({
+        tenantId: parsedTenantId,
+        consolidationGroupId: parsedGroupId,
+        legalEntityId: rule.legalEntityId,
+        ruleType: rule.ruleType,
+        parentLocalAccountId: rule.parentLocalAccountId,
+        codePrefix: rule.codePrefix,
+        canonicalKey: rule.canonicalKey,
+        canonicalName: rule.canonicalName,
+        groupAccountId: rule.groupAccountId,
+        effectiveFrom: rule.effectiveFrom,
+        effectiveTo: rule.effectiveTo,
+        runQuery,
+      });
+      for (const previewRow of preview?.rows || []) {
+        const coverageKey = `${parsePositiveInt(previewRow?.legalEntityId)}:${parsePositiveInt(
+          previewRow?.localAccountId
+        )}`;
+        if (!savedRuleMatchesByLocalAccount.has(coverageKey)) {
+          savedRuleMatchesByLocalAccount.set(coverageKey, []);
+        }
+        savedRuleMatchesByLocalAccount.get(coverageKey).push({
+          ruleId: rule.id,
+          ruleType: rule.ruleType,
+          canonicalKey: rule.canonicalKey,
+          classification: previewRow?.classification || "UNKNOWN",
+        });
+      }
+    } catch (error) {
+      invalidSavedRulePreviews.push({
+        ruleId: rule.id,
+        legalEntityId: rule.legalEntityId,
+        canonicalKey: rule.canonicalKey,
+        message: String(error?.message || "Saved rule preview failed"),
+      });
+    }
+  }
+  const unmappedPostedAccountsWithSavedRuleContext = unmappedPostedAccounts.map((row) => {
+    const coverageKey = `${parsePositiveInt(row?.legalEntityId)}:${parsePositiveInt(
+      row?.localAccountId
+    )}`;
+    return {
+      ...row,
+      savedRuleMatches: savedRuleMatchesByLocalAccount.get(coverageKey) || [],
+    };
+  });
+  const unmappedPostedAccountsCoveredBySavedRulesCount =
+    unmappedPostedAccountsWithSavedRuleContext.filter(
+      (row) => (row?.savedRuleMatches || []).length > 0
+    ).length;
+
   let localChangeCount = 0;
   let localChangeRows = [];
   if (memberLegalEntityIds.length > 0) {
@@ -2315,6 +3959,7 @@ export async function getCanonicalMappingGovernanceReview({
 
   const governanceGroupActions = [
     ...GOVERNANCE_GROUP_MAPPING_AUDIT_ACTIONS,
+    ...GOVERNANCE_RULE_MAPPING_AUDIT_ACTIONS,
     GOVERNANCE_CANDIDATE_APPLY_AUDIT_ACTION,
   ];
   const groupActionPlaceholders = governanceGroupActions.map(() => "?").join(", ");
@@ -2437,13 +4082,24 @@ export async function getCanonicalMappingGovernanceReview({
     },
     summary: {
       unmappedPostedAccountCount,
-      unmappedPostedAccountSampleCount: unmappedPostedAccounts.length,
+      unmappedPostedAccountSampleCount: unmappedPostedAccountsWithSavedRuleContext.length,
       unmappedPostedAccountSampleTruncated:
-        unmappedPostedAccountCount > unmappedPostedAccounts.length,
+        unmappedPostedAccountCount > unmappedPostedAccountsWithSavedRuleContext.length,
+      unmappedPostedAccountSampleCoveredBySavedRulesCount:
+        unmappedPostedAccountsCoveredBySavedRulesCount,
+      unmappedPostedAccountSampleOutsideSavedRuleCoverageCount: Math.max(
+        0,
+        unmappedPostedAccountsWithSavedRuleContext.length -
+          unmappedPostedAccountsCoveredBySavedRulesCount
+      ),
       ambiguousCandidateCount,
       ambiguousCandidateSampleCount: ambiguousCandidates.length,
       ambiguousCandidateSampleTruncated:
         ambiguousCandidateCount > ambiguousCandidates.length,
+      savedRuleCount: Number(savedRuleList?.summary?.total || 0),
+      activeSavedRuleCount: Number(savedRuleList?.summary?.activeCount || 0),
+      inactiveSavedRuleCount: Number(savedRuleList?.summary?.inactiveCount || 0),
+      invalidSavedRulePreviewCount: invalidSavedRulePreviews.length,
       recentMappingChangeCount,
       recentMappingChangeSampleCount: recentMappingChanges.length,
       recentMappingChangeSampleTruncated:
@@ -2452,8 +4108,16 @@ export async function getCanonicalMappingGovernanceReview({
       pendingCheckerReviewSampleCount: pendingCheckerReview.length,
     },
     legalEntities,
-    unmappedPostedAccounts,
+    unmappedPostedAccounts: unmappedPostedAccountsWithSavedRuleContext,
     ambiguousCandidates,
+    savedRules: {
+      summary: {
+        ...savedRuleList.summary,
+        invalidPreviewCount: invalidSavedRulePreviews.length,
+      },
+      rows: savedRuleList.rows.slice(0, normalizedLimit),
+      invalidPreviewRules: invalidSavedRulePreviews.slice(0, normalizedLimit),
+    },
     recentMappingChanges,
     highRiskOverrides,
     pendingCheckerReview,
@@ -2698,6 +4362,14 @@ export default {
   upsertGroupAccountCanonicalMapping,
   listCanonicalAccountMappings,
   listCanonicalMappingCandidates,
+  previewCanonicalMappingRule,
+  applyCanonicalMappingRule,
+  getCanonicalMappingRuleById,
+  listCanonicalMappingRules,
+  createCanonicalMappingRule,
+  deactivateCanonicalMappingRule,
+  previewCanonicalMappingRuleById,
+  applyCanonicalMappingRuleById,
   applyCanonicalMappingCandidates,
   getCanonicalMappingReadiness,
   getCanonicalMappingGovernanceReview,

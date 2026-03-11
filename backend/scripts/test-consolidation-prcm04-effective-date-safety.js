@@ -60,6 +60,16 @@ async function main() {
       setupPageSource.includes("run period end for unresolved run"),
     "ConsolidationSetupPage must block obvious effectiveFrom > run period end mismatches"
   );
+  assert(
+    setupPageSource.includes("onApplySavedCanonicalRule") &&
+      setupPageSource.includes(
+        "Saved rule effectiveFrom"
+      ) &&
+      setupPageSource.includes(
+        "Reuse the rule in the workbench and set an effectiveFrom on/before those period end dates before apply."
+      ),
+    "ConsolidationSetupPage saved-rule apply path must reuse the effective date safety guard"
+  );
 
   console.log("PR-CM04 effective date safety smoke checks passed.");
 }

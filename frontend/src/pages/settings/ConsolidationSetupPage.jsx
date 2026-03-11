@@ -1,13 +1,20 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  applyConsolidationCanonicalRuleMappings,
   applyConsolidationCanonicalMappingCandidates,
+  applySavedConsolidationCanonicalMappingRule,
+  createConsolidationCanonicalMappingRule,
   createConsolidationRun,
+  deactivateConsolidationCanonicalMappingRule,
   executeConsolidationRun,
   finalizeConsolidationRun,
   getConsolidationCanonicalReadiness,
   getConsolidationRun,
   listConsolidationCanonicalMappings,
+  listConsolidationCanonicalMappingRules,
   previewConsolidationCanonicalMappingCandidates,
+  previewConsolidationCanonicalRuleMappings,
+  previewSavedConsolidationCanonicalMappingRule,
   listConsolidationCoaMappings,
   listConsolidationEliminationPlaceholders,
   listConsolidationGroupMembers,
@@ -35,6 +42,7 @@ import TenantReadinessChecklist from "../../readiness/TenantReadinessChecklist.j
 const METHODS = ["FULL", "PROPORTIONAL", "EQUITY"];
 const DIRECTIONS = ["AUTO", "DEBIT", "CREDIT"];
 const RATE_TYPES = ["CLOSING", "SPOT", "AVERAGE"];
+const BULK_CANONICAL_RULE_TYPES = ["DESCENDANTS_OF_ACCOUNT", "CODE_PREFIX"];
 
 function toPositiveInt(value) {
   const parsed = Number(value);
@@ -63,6 +71,64 @@ function optionListHasValue(options, value) {
   return (Array.isArray(options) ? options : []).some(
     (option) => String(option?.value || "").trim() === normalizedValue
   );
+}
+
+function isActiveAccount(account) {
+  const activeRaw = account?.is_active;
+  if (activeRaw === false || activeRaw === 0) {
+    return false;
+  }
+  const normalized = String(activeRaw ?? "true").trim().toLowerCase();
+  return normalized !== "false" && normalized !== "0" && normalized !== "no";
+}
+
+function isPostableLeafAccount(account) {
+  const allowPostingRaw = account?.allow_posting;
+  const allowPosting =
+    allowPostingRaw === true ||
+    allowPostingRaw === 1 ||
+    String(allowPostingRaw || "").trim().toLowerCase() === "true";
+  const hasActiveChildrenRaw = account?.has_active_children;
+  const hasActiveChildren =
+    hasActiveChildrenRaw === true ||
+    hasActiveChildrenRaw === 1 ||
+    String(hasActiveChildrenRaw || "").trim().toLowerCase() === "true";
+  return allowPosting && !hasActiveChildren;
+}
+
+function describeAccountShape(account) {
+  if (isPostableLeafAccount(account)) {
+    return "POSTABLE_LEAF";
+  }
+  const allowPostingRaw = account?.allow_posting;
+  const allowPosting =
+    allowPostingRaw === true ||
+    allowPostingRaw === 1 ||
+    String(allowPostingRaw || "").trim().toLowerCase() === "true";
+  return allowPosting ? "POSTABLE_PARENT" : "HEADER";
+}
+
+function bulkPreviewBadgeClass(classification) {
+  const normalized = String(classification || "").toUpperCase();
+  if (normalized === "READY_TO_APPLY") {
+    return "bg-emerald-100 text-emerald-700";
+  }
+  if (normalized === "ALREADY_ALIGNED") {
+    return "bg-slate-200 text-slate-700";
+  }
+  if (normalized === "CONFLICTING_LOCAL_MAPPING") {
+    return "bg-rose-100 text-rose-700";
+  }
+  if (normalized === "SKIPPED_ALREADY_ALIGNED") {
+    return "bg-slate-200 text-slate-700";
+  }
+  if (normalized.includes("CONFLICT")) {
+    return "bg-rose-100 text-rose-700";
+  }
+  if (normalized.includes("READY")) {
+    return "bg-cyan-100 text-cyan-700";
+  }
+  return "bg-amber-100 text-amber-700";
 }
 
 function isLocked(status) {
@@ -131,6 +197,8 @@ export default function ConsolidationSetupPage() {
   const [canonicalMappings, setCanonicalMappings] = useState([]);
   const [canonicalCandidatePreview, setCanonicalCandidatePreview] = useState(null);
   const [canonicalCandidateReason, setCanonicalCandidateReason] = useState("");
+  const [canonicalRulePreview, setCanonicalRulePreview] = useState(null);
+  const [canonicalSavedRules, setCanonicalSavedRules] = useState([]);
   const [canonicalReadiness, setCanonicalReadiness] = useState({
     isLoading: false,
     error: "",
@@ -181,6 +249,18 @@ export default function ConsolidationSetupPage() {
     canonicalName: "",
     reason: "",
     status: "ACTIVE",
+    effectiveFrom: todayIso(),
+    effectiveTo: "",
+  });
+  const [canonicalRuleForm, setCanonicalRuleForm] = useState({
+    legalEntityId: "",
+    ruleType: "DESCENDANTS_OF_ACCOUNT",
+    parentLocalAccountId: "",
+    codePrefix: "",
+    canonicalKey: "",
+    canonicalName: "",
+    groupAccountId: "",
+    reason: "",
     effectiveFrom: todayIso(),
     effectiveTo: "",
   });
@@ -245,6 +325,9 @@ export default function ConsolidationSetupPage() {
   const canonicalLocalAccountOptions = useMemo(() => {
     const legalEntityId = toPositiveInt(canonicalLocalForm.legalEntityId);
     return accounts.filter((row) => {
+      if (!isPostableLeafAccount(row)) {
+        return false;
+      }
       const coaId = toPositiveInt(row?.coa_id);
       const coa = coaById.get(coaId);
       const accountLegalEntityId =
@@ -259,6 +342,9 @@ export default function ConsolidationSetupPage() {
   const canonicalGroupAccountOptions = useMemo(
     () =>
       accounts.filter((row) => {
+        if (!isPostableLeafAccount(row)) {
+          return false;
+        }
         const coaId = toPositiveInt(row?.coa_id);
         const coa = coaById.get(coaId);
         return String(coa?.scope || row?.scope || "").toUpperCase() === "GROUP";
@@ -337,6 +423,40 @@ export default function ConsolidationSetupPage() {
       })),
     [canonicalGroupAccountOptions]
   );
+  const canonicalRuleTypeSelectOptions = useMemo(
+    () =>
+      BULK_CANONICAL_RULE_TYPES.map((value) => ({
+        value,
+        label: value,
+        description:
+          value === "DESCENDANTS_OF_ACCOUNT"
+            ? l("Expand posting descendants under a selected root.", "Secili kok altindaki posting descendant hesaplari genislet.")
+            : l("Match posting leaf accounts by local account code prefix.", "Lokal hesap kodu on ekiyle posting leaf hesaplari eslestir."),
+      })),
+    [l]
+  );
+  const canonicalRuleRootAccountOptions = useMemo(() => {
+    const legalEntityId = toPositiveInt(canonicalRuleForm.legalEntityId);
+    return accounts
+      .filter((row) => {
+        if (!isActiveAccount(row)) {
+          return false;
+        }
+        const coaId = toPositiveInt(row?.coa_id);
+        const coa = coaById.get(coaId);
+        if (String(coa?.scope || "").toUpperCase() !== "LEGAL_ENTITY") {
+          return false;
+        }
+        const accountLegalEntityId =
+          toPositiveInt(row?.legal_entity_id) || toPositiveInt(coa?.legal_entity_id);
+        return !legalEntityId || accountLegalEntityId === legalEntityId;
+      })
+      .map((row) => ({
+        value: String(row.id),
+        label: `${row.code} - ${row.name}`,
+        description: `#${row.id} · ${describeAccountShape(row)}`,
+      }));
+  }, [accounts, coaById, canonicalRuleForm.legalEntityId]);
   const accountSelectOptions = useMemo(
     () =>
       accounts.map((row) => ({
@@ -416,6 +536,21 @@ export default function ConsolidationSetupPage() {
       };
     });
   }, [canonicalGroupAccountSelectOptions]);
+
+  useEffect(() => {
+    setCanonicalRuleForm((prev) => {
+      if (
+        !prev.parentLocalAccountId ||
+        optionListHasValue(canonicalRuleRootAccountOptions, prev.parentLocalAccountId)
+      ) {
+        return prev;
+      }
+      return {
+        ...prev,
+        parentLocalAccountId: "",
+      };
+    });
+  }, [canonicalRuleRootAccountOptions]);
 
   async function loadLookups() {
     const results = await Promise.allSettled([
@@ -569,6 +704,8 @@ export default function ConsolidationSetupPage() {
       setCanonicalMappings([]);
       setCanonicalCandidatePreview(null);
       setCanonicalCandidateReason("");
+      setCanonicalRulePreview(null);
+      setCanonicalSavedRules([]);
       setCanonicalReadiness({ isLoading: false, error: "", snapshot: null });
       setPlaceholders([]);
       setRuns([]);
@@ -576,6 +713,7 @@ export default function ConsolidationSetupPage() {
       return;
     }
     setCanonicalCandidateReason("");
+    setCanonicalRulePreview(null);
     if (!canReadRuns) {
       setRuns([]);
       setRunPreflightById({});
@@ -584,6 +722,7 @@ export default function ConsolidationSetupPage() {
       setMappings([]);
       setCanonicalMappings([]);
       setCanonicalCandidatePreview(null);
+      setCanonicalSavedRules([]);
       setCanonicalReadiness({ isLoading: false, error: "", snapshot: null });
     } else {
       setCanonicalReadiness((prev) => ({
@@ -610,6 +749,11 @@ export default function ConsolidationSetupPage() {
       tasks.push(
         listConsolidationCanonicalMappings(id).then((response) =>
           setCanonicalMappings(response?.rows || [])
+        )
+      );
+      tasks.push(
+        listConsolidationCanonicalMappingRules(id).then((response) =>
+          setCanonicalSavedRules(response?.rows || [])
         )
       );
       tasks.push(
@@ -748,6 +892,24 @@ export default function ConsolidationSetupPage() {
       return {
         ...prev,
         legalEntityId: "",
+      };
+    });
+    setCanonicalRuleForm((prev) => {
+      const current = toPositiveInt(prev.legalEntityId);
+      const isValid =
+        current &&
+        filteredLegalEntities.some((row) => Number(row.id) === Number(current));
+      const nextLegalEntityId = isValid ? String(current) : fallbackLegalEntityId;
+      if (
+        String(prev.legalEntityId || "") === nextLegalEntityId &&
+        (nextLegalEntityId || !prev.parentLocalAccountId)
+      ) {
+        return prev;
+      }
+      return {
+        ...prev,
+        legalEntityId: nextLegalEntityId,
+        parentLocalAccountId: "",
       };
     });
   }, [filteredLegalEntities]);
@@ -1203,6 +1365,538 @@ export default function ConsolidationSetupPage() {
       setError(
         err?.response?.data?.message ||
           l("Failed to apply safe candidates.", "Guvenli adaylar uygulanamadi.")
+      );
+    } finally {
+      setSaving("");
+    }
+  }
+
+  function onEditCanonicalMapping(row) {
+    const canonicalKey = String(row?.canonicalKey || "").trim().toUpperCase();
+    const canonicalName = String(row?.canonicalName || "").trim();
+    const localEffectiveFrom = toDateOnly(row?.localMapping?.effectiveFrom || todayIso());
+    const groupEffectiveFrom = toDateOnly(row?.groupMapping?.effectiveFrom || todayIso());
+
+    setCanonicalLocalForm((prev) => ({
+      ...prev,
+      legalEntityId: row?.localMapping?.legalEntityId
+        ? String(row.localMapping.legalEntityId)
+        : prev.legalEntityId,
+      localAccountId: row?.localMapping?.localAccountId
+        ? String(row.localMapping.localAccountId)
+        : "",
+      canonicalKey,
+      canonicalName,
+      reason: "",
+      status: row?.localMapping?.status || "ACTIVE",
+      effectiveFrom: localEffectiveFrom || todayIso(),
+      effectiveTo: toDateOnly(row?.localMapping?.effectiveTo || ""),
+    }));
+    setCanonicalGroupForm((prev) => ({
+      ...prev,
+      groupAccountId: row?.groupMapping?.groupAccountId
+        ? String(row.groupMapping.groupAccountId)
+        : "",
+      canonicalKey,
+      canonicalName,
+      reason: "",
+      status: row?.groupMapping?.status || "ACTIVE",
+      effectiveFrom: groupEffectiveFrom || todayIso(),
+      effectiveTo: toDateOnly(row?.groupMapping?.effectiveTo || ""),
+    }));
+    setCanonicalRuleForm((prev) => ({
+      ...prev,
+      legalEntityId: row?.localMapping?.legalEntityId
+        ? String(row.localMapping.legalEntityId)
+        : prev.legalEntityId,
+      canonicalKey,
+      canonicalName,
+      groupAccountId: row?.groupMapping?.groupAccountId
+        ? String(row.groupMapping.groupAccountId)
+        : prev.groupAccountId,
+    }));
+    setCanonicalRulePreview(null);
+    setError("");
+    setMessage(
+      l(
+        `Prefilled canonical edit forms for ${canonicalKey || "selected mapping"}.`,
+        `${canonicalKey || "Secilen mapping"} icin canonical duzenleme formlari dolduruldu.`
+      )
+    );
+  }
+
+  async function onPreviewCanonicalRule() {
+    if (!canReadMappings) {
+      setError(
+        l(
+          "Missing permission: consolidation.coa_mapping.read",
+          "Eksik yetki: consolidation.coa_mapping.read"
+        )
+      );
+      return;
+    }
+
+    const groupId = toPositiveInt(selectedGroupId);
+    const legalEntityId = toPositiveInt(canonicalRuleForm.legalEntityId);
+    const ruleType = String(canonicalRuleForm.ruleType || "").trim().toUpperCase();
+    const parentLocalAccountId = toPositiveInt(canonicalRuleForm.parentLocalAccountId);
+    const codePrefix = String(canonicalRuleForm.codePrefix || "").trim().toUpperCase();
+    const canonicalKey = String(canonicalRuleForm.canonicalKey || "").trim().toUpperCase();
+    const groupAccountId = toPositiveInt(canonicalRuleForm.groupAccountId);
+
+    if (!groupId || !legalEntityId || !ruleType || !canonicalKey) {
+      setError(
+        l(
+          "Group, legal entity, rule type and canonical key are required.",
+          "Grup, istirak, kural tipi ve canonical key zorunludur."
+        )
+      );
+      return;
+    }
+    if (
+      legalEntityId &&
+      !filteredLegalEntities.some((row) => Number(row.id) === legalEntityId)
+    ) {
+      setError(
+        l(
+          "Selected legal entity must belong to selected group company.",
+          "Secilen istirak / bagli ortak secili grup sirketine ait olmalidir."
+        )
+      );
+      return;
+    }
+    if (ruleType === "DESCENDANTS_OF_ACCOUNT" && !parentLocalAccountId) {
+      setError(
+        l(
+          "Select a parent/root local account for descendant expansion.",
+          "Descendant genisletme icin parent/root lokal hesap secin."
+        )
+      );
+      return;
+    }
+    if (ruleType === "CODE_PREFIX" && !codePrefix) {
+      setError(
+        l(
+          "Enter a local account code prefix for prefix rule preview.",
+          "Prefix kural onizlemesi icin lokal hesap kodu on eki girin."
+        )
+      );
+      return;
+    }
+
+    setSaving("canonical-rule-preview");
+    setError("");
+    setMessage("");
+    try {
+      const response = await previewConsolidationCanonicalRuleMappings(groupId, {
+        legalEntityId,
+        ruleType,
+        parentLocalAccountId:
+          ruleType === "DESCENDANTS_OF_ACCOUNT"
+            ? parentLocalAccountId
+            : undefined,
+        codePrefix: ruleType === "CODE_PREFIX" ? codePrefix : undefined,
+        canonicalKey,
+        canonicalName: String(canonicalRuleForm.canonicalName || "").trim() || undefined,
+        groupAccountId: groupAccountId || undefined,
+        effectiveFrom: canonicalRuleForm.effectiveFrom || undefined,
+        effectiveTo: canonicalRuleForm.effectiveTo || undefined,
+      });
+      setCanonicalRulePreview(response || null);
+      setMessage(
+        l(
+          `Bulk rule preview ready: ${Number(response?.summary?.readyToApplyCount || 0)} ready, ${Number(response?.summary?.conflictCount || 0)} conflicts.`,
+          `Toplu kural onizlemesi hazir: ${Number(response?.summary?.readyToApplyCount || 0)} hazir, ${Number(response?.summary?.conflictCount || 0)} cakisma.`
+        )
+      );
+    } catch (err) {
+      setError(
+        err?.response?.data?.message ||
+          l("Failed to preview bulk rule mapping.", "Toplu kural eslemesi onizlenemedi.")
+      );
+    } finally {
+      setSaving("");
+    }
+  }
+
+  async function onApplyCanonicalRule() {
+    if (!canUpsertMappings) {
+      setError(
+        l(
+          "Missing permission: consolidation.coa_mapping.upsert",
+          "Eksik yetki: consolidation.coa_mapping.upsert"
+        )
+      );
+      return;
+    }
+
+    const groupId = toPositiveInt(selectedGroupId);
+    const legalEntityId = toPositiveInt(canonicalRuleForm.legalEntityId);
+    const ruleType = String(canonicalRuleForm.ruleType || "").trim().toUpperCase();
+    const parentLocalAccountId = toPositiveInt(canonicalRuleForm.parentLocalAccountId);
+    const codePrefix = String(canonicalRuleForm.codePrefix || "").trim().toUpperCase();
+    const canonicalKey = String(canonicalRuleForm.canonicalKey || "").trim().toUpperCase();
+    const groupAccountId = toPositiveInt(canonicalRuleForm.groupAccountId);
+    const effectiveFrom = toDateOnly(canonicalRuleForm.effectiveFrom || todayIso());
+    const applyReason = String(canonicalRuleForm.reason || "").trim();
+
+    if (!groupId || !legalEntityId || !ruleType || !canonicalKey) {
+      setError(
+        l(
+          "Group, legal entity, rule type and canonical key are required.",
+          "Grup, istirak, kural tipi ve canonical key zorunludur."
+        )
+      );
+      return;
+    }
+    if (
+      legalEntityId &&
+      !filteredLegalEntities.some((row) => Number(row.id) === legalEntityId)
+    ) {
+      setError(
+        l(
+          "Selected legal entity must belong to selected group company.",
+          "Secilen istirak / bagli ortak secili grup sirketine ait olmalidir."
+        )
+      );
+      return;
+    }
+    if (ruleType === "DESCENDANTS_OF_ACCOUNT" && !parentLocalAccountId) {
+      setError(
+        l(
+          "Select a parent/root local account for descendant expansion.",
+          "Descendant genisletme icin parent/root lokal hesap secin."
+        )
+      );
+      return;
+    }
+    if (ruleType === "CODE_PREFIX" && !codePrefix) {
+      setError(
+        l(
+          "Enter a local account code prefix for prefix rule apply.",
+          "Prefix kural uygulamasi icin lokal hesap kodu on eki girin."
+        )
+      );
+      return;
+    }
+    const misalignedRuns = findCanonicalDateMisalignedRuns(effectiveFrom);
+    if (misalignedRuns.length > 0) {
+      const runList = misalignedRuns
+        .slice(0, 3)
+        .map((row) => `#${row.runId}(${row.periodEndDate})`)
+        .join(", ");
+      setError(
+        l(
+          `effectiveFrom ${effectiveFrom} is after run period end for unresolved run(s): ${runList}. Use an effectiveFrom on/before those period end dates.`,
+          `effectiveFrom ${effectiveFrom}, cozumlenecek run(lar) icin period end tarihinden sonra: ${runList}. Bu runlar icin effectiveFrom tarihini period end veya oncesi yapin.`
+        )
+      );
+      return;
+    }
+
+    setSaving("canonical-rule-apply");
+    setError("");
+    setMessage("");
+    try {
+      const response = await applyConsolidationCanonicalRuleMappings(groupId, {
+        legalEntityId,
+        ruleType,
+        parentLocalAccountId:
+          ruleType === "DESCENDANTS_OF_ACCOUNT"
+            ? parentLocalAccountId
+            : undefined,
+        codePrefix: ruleType === "CODE_PREFIX" ? codePrefix : undefined,
+        canonicalKey,
+        canonicalName: String(canonicalRuleForm.canonicalName || "").trim() || undefined,
+        groupAccountId: groupAccountId || undefined,
+        effectiveFrom: canonicalRuleForm.effectiveFrom || undefined,
+        effectiveTo: canonicalRuleForm.effectiveTo || undefined,
+        reason: applyReason || undefined,
+        source: "UI_WORKBENCH_BULK_RULE_APPLY",
+      });
+      setMessage(
+        l(
+          `Bulk rule applied: ${Number(response?.appliedLocalMappings || 0)} local mapping(s), group action ${String(response?.groupMappingAction?.status || "NOT_REQUESTED")}.`,
+          `Toplu kural uygulandi: ${Number(response?.appliedLocalMappings || 0)} lokal esleme, grup aksiyonu ${String(response?.groupMappingAction?.status || "NOT_REQUESTED")}.`
+        )
+      );
+      setCanonicalRulePreview(null);
+      setCanonicalRuleForm((prev) => ({
+        ...prev,
+        reason: "",
+      }));
+      await loadGroupDetails(groupId);
+    } catch (err) {
+      setError(
+        err?.response?.data?.message ||
+          l("Failed to apply bulk rule mapping.", "Toplu kural eslemesi uygulanamadi.")
+      );
+    } finally {
+      setSaving("");
+    }
+  }
+
+  function onReuseSavedCanonicalRule(rule) {
+    setCanonicalRuleForm((prev) => ({
+      ...prev,
+      legalEntityId: rule?.legalEntityId ? String(rule.legalEntityId) : prev.legalEntityId,
+      ruleType: String(rule?.ruleType || "DESCENDANTS_OF_ACCOUNT"),
+      parentLocalAccountId: rule?.parentLocalAccountId
+        ? String(rule.parentLocalAccountId)
+        : "",
+      codePrefix: String(rule?.codePrefix || ""),
+      canonicalKey: String(rule?.canonicalKey || ""),
+      canonicalName: String(rule?.canonicalName || ""),
+      groupAccountId: rule?.groupAccountId ? String(rule.groupAccountId) : "",
+      reason: String(rule?.reason || ""),
+      effectiveFrom: toDateOnly(rule?.effectiveFrom || todayIso()),
+      effectiveTo: toDateOnly(rule?.effectiveTo || ""),
+    }));
+    setCanonicalRulePreview(null);
+    setMessage(
+      l(
+        `Saved rule ${rule?.id || ""} loaded into the bulk mapping form.`,
+        `Kayitli kural ${rule?.id || ""} toplu esleme formuna yuklendi.`
+      )
+    );
+  }
+
+  async function onSaveCanonicalRuleDefinition() {
+    if (!canUpsertMappings) {
+      setError(
+        l(
+          "Missing permission: consolidation.coa_mapping.upsert",
+          "Eksik yetki: consolidation.coa_mapping.upsert"
+        )
+      );
+      return;
+    }
+
+    const groupId = toPositiveInt(selectedGroupId);
+    const legalEntityId = toPositiveInt(canonicalRuleForm.legalEntityId);
+    const ruleType = String(canonicalRuleForm.ruleType || "").trim().toUpperCase();
+    const parentLocalAccountId = toPositiveInt(canonicalRuleForm.parentLocalAccountId);
+    const codePrefix = String(canonicalRuleForm.codePrefix || "").trim().toUpperCase();
+    const canonicalKey = String(canonicalRuleForm.canonicalKey || "").trim().toUpperCase();
+    const groupAccountId = toPositiveInt(canonicalRuleForm.groupAccountId);
+    if (!groupId || !legalEntityId || !ruleType || !canonicalKey) {
+      setError(
+        l(
+          "Group, legal entity, rule type and canonical key are required.",
+          "Grup, istirak, kural tipi ve canonical key zorunludur."
+        )
+      );
+      return;
+    }
+    if (
+      legalEntityId &&
+      !filteredLegalEntities.some((row) => Number(row.id) === legalEntityId)
+    ) {
+      setError(
+        l(
+          "Selected legal entity must belong to selected group company.",
+          "Secilen istirak / bagli ortak secili grup sirketine ait olmalidir."
+        )
+      );
+      return;
+    }
+    if (ruleType === "DESCENDANTS_OF_ACCOUNT" && !parentLocalAccountId) {
+      setError(
+        l(
+          "Select a parent/root local account for descendant rules before saving.",
+          "Kaydetmeden once descendant kural icin parent/root lokal hesap secin."
+        )
+      );
+      return;
+    }
+    if (ruleType === "CODE_PREFIX" && !codePrefix) {
+      setError(
+        l(
+          "Enter a local account code prefix before saving a prefix rule.",
+          "Prefix kural kaydetmeden once lokal hesap kodu on eki girin."
+        )
+      );
+      return;
+    }
+
+    await runAction(
+      "canonical-rule-save",
+      async () => {
+        await createConsolidationCanonicalMappingRule(groupId, {
+          legalEntityId,
+          ruleType,
+          parentLocalAccountId:
+            ruleType === "DESCENDANTS_OF_ACCOUNT"
+              ? parentLocalAccountId
+              : undefined,
+          codePrefix: ruleType === "CODE_PREFIX" ? codePrefix : undefined,
+          canonicalKey,
+          canonicalName: String(canonicalRuleForm.canonicalName || "").trim() || undefined,
+          groupAccountId: groupAccountId || undefined,
+          effectiveFrom: canonicalRuleForm.effectiveFrom || undefined,
+          effectiveTo: canonicalRuleForm.effectiveTo || undefined,
+          reason: String(canonicalRuleForm.reason || "").trim() || undefined,
+          status: "ACTIVE",
+        });
+      },
+      l(
+        "Failed to save canonical bulk rule.",
+        "Canonical toplu kural kaydedilemedi."
+      ),
+      l(
+        "Canonical bulk rule saved.",
+        "Canonical toplu kural kaydedildi."
+      )
+    );
+  }
+
+  async function onPreviewSavedCanonicalRule(rule) {
+    if (!canReadMappings) {
+      setError(
+        l(
+          "Missing permission: consolidation.coa_mapping.read",
+          "Eksik yetki: consolidation.coa_mapping.read"
+        )
+      );
+      return;
+    }
+
+    const groupId = toPositiveInt(selectedGroupId);
+    const ruleId = toPositiveInt(rule?.id);
+    if (!groupId || !ruleId) {
+      setError(l("Group and ruleId are required.", "Grup ve ruleId zorunludur."));
+      return;
+    }
+
+    setSaving(`canonical-rule-saved-preview-${ruleId}`);
+    setError("");
+    setMessage("");
+    try {
+      const response = await previewSavedConsolidationCanonicalMappingRule(
+        groupId,
+        ruleId
+      );
+      setCanonicalRulePreview(response || null);
+      setMessage(
+        l(
+          `Saved rule preview ready for rule #${ruleId}.`,
+          `Kayitli kural onizlemesi #${ruleId} icin hazir.`
+        )
+      );
+    } catch (err) {
+      setError(
+        err?.response?.data?.message ||
+          l("Failed to preview saved rule.", "Kayitli kural onizlenemedi.")
+      );
+    } finally {
+      setSaving("");
+    }
+  }
+
+  async function onApplySavedCanonicalRule(rule) {
+    if (!canUpsertMappings) {
+      setError(
+        l(
+          "Missing permission: consolidation.coa_mapping.upsert",
+          "Eksik yetki: consolidation.coa_mapping.upsert"
+        )
+      );
+      return;
+    }
+
+    const groupId = toPositiveInt(selectedGroupId);
+    const ruleId = toPositiveInt(rule?.id);
+    const effectiveFrom = toDateOnly(rule?.effectiveFrom || todayIso());
+    if (!groupId || !ruleId) {
+      setError(l("Group and ruleId are required.", "Grup ve ruleId zorunludur."));
+      return;
+    }
+    const misalignedRuns = findCanonicalDateMisalignedRuns(effectiveFrom);
+    if (misalignedRuns.length > 0) {
+      const runList = misalignedRuns
+        .slice(0, 3)
+        .map((row) => `#${row.runId}(${row.periodEndDate})`)
+        .join(", ");
+      setError(
+        l(
+          `Saved rule effectiveFrom ${effectiveFrom} is after run period end for unresolved run(s): ${runList}. Reuse the rule in the workbench and set an effectiveFrom on/before those period end dates before apply.`,
+          `Kayitli kural effectiveFrom ${effectiveFrom}, cozumlenecek run(lar) icin period end tarihinden sonra: ${runList}. Uygulamadan once kurali workbench formuna yukleyip effectiveFrom tarihini bu runlar icin period end veya oncesine cekin.`
+        )
+      );
+      return;
+    }
+
+    setSaving(`canonical-rule-saved-apply-${ruleId}`);
+    setError("");
+    setMessage("");
+    try {
+      const response = await applySavedConsolidationCanonicalMappingRule(groupId, ruleId, {
+        reason: String(rule?.reason || "").trim() || undefined,
+        source: "UI_SAVED_RULE_APPLY",
+      });
+      setCanonicalRulePreview(null);
+      setMessage(
+        l(
+          `Saved rule #${ruleId} applied: ${Number(response?.appliedLocalMappings || 0)} local mapping(s).`,
+          `Kayitli kural #${ruleId} uygulandi: ${Number(response?.appliedLocalMappings || 0)} lokal esleme.`
+        )
+      );
+      await loadGroupDetails(groupId);
+    } catch (err) {
+      setError(
+        err?.response?.data?.message ||
+          l("Failed to apply saved rule.", "Kayitli kural uygulanamadi.")
+      );
+    } finally {
+      setSaving("");
+    }
+  }
+
+  async function onDeactivateSavedCanonicalRule(rule) {
+    if (!canUpsertMappings) {
+      setError(
+        l(
+          "Missing permission: consolidation.coa_mapping.upsert",
+          "Eksik yetki: consolidation.coa_mapping.upsert"
+        )
+      );
+      return;
+    }
+
+    const groupId = toPositiveInt(selectedGroupId);
+    const ruleId = toPositiveInt(rule?.id);
+    if (!groupId || !ruleId) {
+      setError(l("Group and ruleId are required.", "Grup ve ruleId zorunludur."));
+      return;
+    }
+
+    setSaving(`canonical-rule-saved-deactivate-${ruleId}`);
+    setError("");
+    setMessage("");
+    try {
+      await deactivateConsolidationCanonicalMappingRule(groupId, ruleId, {
+        reason: l(
+          "Deactivated from canonical bulk mapping workbench.",
+          "Canonical toplu esleme workbench ekranindan deaktive edildi."
+        ),
+      });
+      if (
+        toPositiveInt(canonicalRulePreview?.savedRule?.id) === ruleId ||
+        toPositiveInt(canonicalRulePreview?.ruleId) === ruleId
+      ) {
+        setCanonicalRulePreview(null);
+      }
+      setMessage(
+        l(
+          `Saved rule #${ruleId} deactivated.`,
+          `Kayitli kural #${ruleId} deaktive edildi.`
+        )
+      );
+      await loadGroupDetails(groupId);
+    } catch (err) {
+      setError(
+        err?.response?.data?.message ||
+          l("Failed to deactivate saved rule.", "Kayitli kural deaktive edilemedi.")
       );
     } finally {
       setSaving("");
@@ -1849,6 +2543,452 @@ export default function ConsolidationSetupPage() {
               </div>
             )}
 
+            <div className="mb-3 rounded-lg border border-cyan-200 bg-cyan-50/60 p-3">
+              <div className="mb-2">
+                <div className="text-sm font-semibold text-cyan-900">
+                  {l("Bulk Canonical Mapping", "Toplu Canonical Esleme")}
+                </div>
+                <div className="mt-1 text-[11px] text-cyan-900/80">
+                  {l(
+                    "Select a parent/root account only as the selection root. The system previews and applies mappings on posting child leaf accounts, and many local leaves can converge into one group target.",
+                    "Parent/root hesap yalnizca secim koku olarak kullanilir. Sistem onizleme ve uygulamayi posting child leaf hesaplar uzerinde yapar; cok sayida lokal leaf ayni grup hedefine baglanabilir."
+                  )}
+                </div>
+              </div>
+
+              <div className="grid gap-2 md:grid-cols-6">
+                <Combobox
+                  value={canonicalRuleForm.legalEntityId || null}
+                  options={legalEntitySelectOptions}
+                  onChange={(nextValue) =>
+                    setCanonicalRuleForm((prev) => ({
+                      ...prev,
+                      legalEntityId: nextValue ? String(nextValue) : "",
+                      parentLocalAccountId: "",
+                    }))
+                  }
+                  className="md:col-span-2"
+                  placeholder={l("Select legal entity", "Istirak / bagli ortak secin")}
+                  noOptionsText={l("No legal entities found.", "Istirak bulunamadi.")}
+                  clearable={false}
+                />
+                <Combobox
+                  value={canonicalRuleForm.ruleType || null}
+                  options={canonicalRuleTypeSelectOptions}
+                  onChange={(nextValue) =>
+                    setCanonicalRuleForm((prev) => ({
+                      ...prev,
+                      ruleType: nextValue ? String(nextValue) : "DESCENDANTS_OF_ACCOUNT",
+                      parentLocalAccountId: "",
+                      codePrefix: "",
+                    }))
+                  }
+                  className="md:col-span-2"
+                  placeholder={l("Rule type", "Kural tipi")}
+                  noOptionsText={l("No rule types found.", "Kural tipi bulunamadi.")}
+                  clearable={false}
+                />
+                <Combobox
+                  value={canonicalRuleForm.groupAccountId || null}
+                  options={canonicalGroupAccountSelectOptions}
+                  onChange={(nextValue) =>
+                    setCanonicalRuleForm((prev) => ({
+                      ...prev,
+                      groupAccountId: nextValue ? String(nextValue) : "",
+                    }))
+                  }
+                  className="md:col-span-2"
+                  placeholder={l(
+                    "Select group account (optional)",
+                    "Grup hesap secin (opsiyonel)"
+                  )}
+                  noOptionsText={l("No group accounts found.", "Grup hesap bulunamadi.")}
+                />
+
+                {String(canonicalRuleForm.ruleType || "").toUpperCase() ===
+                "DESCENDANTS_OF_ACCOUNT" ? (
+                  <Combobox
+                    value={canonicalRuleForm.parentLocalAccountId || null}
+                    options={canonicalRuleRootAccountOptions}
+                    onChange={(nextValue) =>
+                      setCanonicalRuleForm((prev) => ({
+                        ...prev,
+                        parentLocalAccountId: nextValue ? String(nextValue) : "",
+                      }))
+                    }
+                    className="md:col-span-3"
+                    placeholder={l(
+                      "Select parent/root local account",
+                      "Parent/root lokal hesap secin"
+                    )}
+                    noOptionsText={l(
+                      "No local root accounts found.",
+                      "Lokal kok hesap bulunamadi."
+                    )}
+                    clearable={false}
+                  />
+                ) : (
+                  <input
+                    value={canonicalRuleForm.codePrefix}
+                    onChange={(event) =>
+                      setCanonicalRuleForm((prev) => ({
+                        ...prev,
+                        codePrefix: event.target.value.toUpperCase(),
+                      }))
+                    }
+                    className="rounded-lg border border-slate-300 px-3 py-2 text-sm md:col-span-3"
+                    placeholder={l(
+                      "Local account code prefix",
+                      "Lokal hesap kodu on eki"
+                    )}
+                  />
+                )}
+                <input
+                  value={canonicalRuleForm.canonicalKey}
+                  onChange={(event) =>
+                    setCanonicalRuleForm((prev) => ({
+                      ...prev,
+                      canonicalKey: event.target.value.toUpperCase(),
+                    }))
+                  }
+                  className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  placeholder={l("Canonical key", "Canonical anahtar")}
+                  required
+                />
+                <input
+                  value={canonicalRuleForm.canonicalName}
+                  onChange={(event) =>
+                    setCanonicalRuleForm((prev) => ({
+                      ...prev,
+                      canonicalName: event.target.value,
+                    }))
+                  }
+                  className="rounded-lg border border-slate-300 px-3 py-2 text-sm md:col-span-2"
+                  placeholder={l("Canonical name (optional)", "Canonical ad (opsiyonel)")}
+                />
+                <input
+                  type="date"
+                  value={canonicalRuleForm.effectiveFrom}
+                  onChange={(event) =>
+                    setCanonicalRuleForm((prev) => ({
+                      ...prev,
+                      effectiveFrom: event.target.value,
+                    }))
+                  }
+                  className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                />
+                <input
+                  type="date"
+                  value={canonicalRuleForm.effectiveTo}
+                  onChange={(event) =>
+                    setCanonicalRuleForm((prev) => ({
+                      ...prev,
+                      effectiveTo: event.target.value,
+                    }))
+                  }
+                  className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                />
+                <input
+                  value={canonicalRuleForm.reason}
+                  onChange={(event) =>
+                    setCanonicalRuleForm((prev) => ({
+                      ...prev,
+                      reason: event.target.value,
+                    }))
+                  }
+                  className="rounded-lg border border-slate-300 px-3 py-2 text-sm md:col-span-3"
+                  placeholder={l(
+                    "Reason/note (required when high-risk rows or remaps are applied)",
+                    "Neden/not (yuksek-risk satirlar veya remap uygulanirken zorunlu)"
+                  )}
+                />
+                <button
+                  type="button"
+                  onClick={onPreviewCanonicalRule}
+                  disabled={
+                    saving === "canonical-rule-save" ||
+                    saving === "canonical-rule-preview" ||
+                    saving === "canonical-rule-apply"
+                  }
+                  className="rounded-lg border border-cyan-300 px-3 py-2 text-sm font-semibold text-cyan-900 disabled:opacity-60"
+                >
+                  {saving === "canonical-rule-preview"
+                    ? l("Previewing...", "Onizleniyor...")
+                    : l("Preview bulk rule", "Toplu kurali onizle")}
+                </button>
+                <button
+                  type="button"
+                  onClick={onApplyCanonicalRule}
+                  disabled={
+                    saving === "canonical-rule-save" ||
+                    saving === "canonical-rule-preview" ||
+                    saving === "canonical-rule-apply"
+                  }
+                  className="rounded-lg bg-cyan-700 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60"
+                >
+                  {saving === "canonical-rule-apply"
+                    ? l("Applying...", "Uygulaniyor...")
+                    : l("Apply bulk rule", "Toplu kurali uygula")}
+                </button>
+                <button
+                  type="button"
+                  onClick={onSaveCanonicalRuleDefinition}
+                  disabled={
+                    saving === "canonical-rule-save" ||
+                    saving === "canonical-rule-preview" ||
+                    saving === "canonical-rule-apply"
+                  }
+                  className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 disabled:opacity-60"
+                >
+                  {saving === "canonical-rule-save"
+                    ? l("Saving rule...", "Kural kaydediliyor...")
+                    : l("Save rule", "Kurali kaydet")}
+                </button>
+              </div>
+
+              {canonicalRulePreview && (
+                <div className="mt-3 rounded-lg border border-cyan-200 bg-white p-3 text-xs text-slate-700">
+                  {canonicalRulePreview?.savedRule && (
+                    <div className="mb-2 rounded border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] text-slate-600">
+                      {l("Saved rule", "Kayitli kural")} #
+                      {canonicalRulePreview.savedRule.id} |{" "}
+                      {canonicalRulePreview.savedRule.ruleType} |{" "}
+                      {canonicalRulePreview.savedRule.canonicalKey}
+                    </div>
+                  )}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-semibold text-slate-800">
+                      {l("Bulk summary", "Toplu ozet")}:
+                    </span>
+                    <span>
+                      {l("total", "toplam")}{" "}
+                      {Number(canonicalRulePreview?.summary?.total || 0)}
+                    </span>
+                    <span>
+                      READY_TO_APPLY{" "}
+                      {Number(canonicalRulePreview?.summary?.readyToApplyCount || 0)}
+                    </span>
+                    <span>
+                      ALREADY_ALIGNED{" "}
+                      {Number(canonicalRulePreview?.summary?.alreadyAlignedCount || 0)}
+                    </span>
+                    <span>
+                      CONFLICTS{" "}
+                      {Number(canonicalRulePreview?.summary?.conflictCount || 0)}
+                    </span>
+                    <span>
+                      {l("semantic warned", "semantic uyarili")}{" "}
+                      {Number(canonicalRulePreview?.summary?.semanticWarningCount || 0)}
+                    </span>
+                  </div>
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <span
+                      className={`rounded px-2 py-0.5 text-[10px] font-semibold ${bulkPreviewBadgeClass(
+                        canonicalRulePreview?.groupMappingPreview?.status
+                      )}`}
+                    >
+                      {canonicalRulePreview?.groupMappingPreview?.status || "GROUP_STATE"}
+                    </span>
+                    <span>{canonicalRulePreview?.groupMappingPreview?.reason || "-"}</span>
+                  </div>
+                  <div className="mt-2 text-[11px] text-slate-600">
+                    {canonicalRulePreview?.context?.selectedRootAccount ? (
+                      <span>
+                        {l("Selection root", "Secim koku")}:{" "}
+                        {canonicalRulePreview.context.selectedRootAccount.accountCode} -{" "}
+                        {canonicalRulePreview.context.selectedRootAccount.accountName} |{" "}
+                        {l("descendants", "descendant")}{" "}
+                        {Number(
+                          canonicalRulePreview?.context?.descendantAccountCount || 0
+                        )}{" "}
+                        | {l("leaf targets", "leaf hedef")}{" "}
+                        {Number(
+                          canonicalRulePreview?.context?.descendantLeafCount || 0
+                        )}
+                      </span>
+                    ) : canonicalRulePreview?.context?.codePrefix ? (
+                      <span>
+                        {l("Code prefix", "Kod on eki")}:{" "}
+                        {canonicalRulePreview.context.codePrefix}
+                      </span>
+                    ) : null}
+                  </div>
+
+                  <div className="mt-3 grid gap-3 md:grid-cols-3">
+                    {[
+                      {
+                        key: "matched",
+                        title: l("Ready To Apply", "Uygulamaya Hazir"),
+                        rows: canonicalRulePreview?.buckets?.matched || [],
+                      },
+                      {
+                        key: "alreadyAligned",
+                        title: l("Already Aligned", "Zaten Hizali"),
+                        rows: canonicalRulePreview?.buckets?.alreadyAligned || [],
+                      },
+                      {
+                        key: "conflicts",
+                        title: l("Conflicts", "Cakismalar"),
+                        rows: canonicalRulePreview?.buckets?.conflicts || [],
+                      },
+                    ].map((bucket) => (
+                      <div
+                        key={bucket.key}
+                        className="rounded-lg border border-slate-200 p-2"
+                      >
+                        <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-600">
+                          {bucket.title} ({bucket.rows.length})
+                        </div>
+                        <div className="max-h-44 space-y-2 overflow-auto">
+                          {bucket.rows.length === 0 ? (
+                            <div className="text-slate-400">
+                              {l("No rows", "Satir yok")}
+                            </div>
+                          ) : (
+                            bucket.rows.map((row) => (
+                              <div
+                                key={`${bucket.key}-${row?.localAccountId || "na"}`}
+                                className="rounded border border-slate-100 p-2"
+                              >
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span
+                                    className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${bulkPreviewBadgeClass(
+                                      row?.classification
+                                    )}`}
+                                  >
+                                    {row?.classification || "ROW"}
+                                  </span>
+                                  <span className="font-medium text-slate-800">
+                                    {row?.localAccountCode || "-"} -{" "}
+                                    {row?.localAccountName || "-"}
+                                  </span>
+                                </div>
+                                <div className="mt-1 text-[11px] text-slate-600">
+                                  {row?.reason || "-"}
+                                </div>
+                                <div className="mt-1 flex flex-wrap items-center gap-1">
+                                  {(row?.semanticWarnings || []).map((warning, index) => (
+                                    <span
+                                      key={`${warning?.code || "warn"}-${index}`}
+                                      className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${
+                                        String(warning?.severity || "").toUpperCase() === "HIGH"
+                                          ? "bg-rose-100 text-rose-700"
+                                          : "bg-amber-100 text-amber-700"
+                                      }`}
+                                    >
+                                      {warning?.code || "SEMANTIC_WARNING"}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="mt-3 rounded-lg border border-slate-200 bg-white p-3 text-xs text-slate-700">
+                <div className="mb-2 text-sm font-semibold text-slate-800">
+                  {l("Saved bulk rules", "Kayitli toplu kurallar")}
+                </div>
+                <div className="mb-2 text-[11px] text-slate-500">
+                  {l(
+                    "Saved rules stay out of execute-time resolution. They are reusable authoring shortcuts that rerun the same explicit preview/apply flow later.",
+                    "Kayitli kurallar execute-time cozumlemeye girmez. Bunlar ayni explicit preview/apply akisinin daha sonra yeniden kullanilabilen authoring kisayollaridir."
+                  )}
+                </div>
+                {canonicalSavedRules.length === 0 ? (
+                  <div className="text-slate-400">
+                    {l("No saved rules yet.", "Henuz kayitli kural yok.")}
+                  </div>
+                ) : (
+                  <div className="max-h-56 space-y-2 overflow-auto">
+                    {canonicalSavedRules.map((rule) => {
+                      const ruleId = toPositiveInt(rule?.id);
+                      const previewSavingKey = `canonical-rule-saved-preview-${ruleId}`;
+                      const applySavingKey = `canonical-rule-saved-apply-${ruleId}`;
+                      const deactivateSavingKey = `canonical-rule-saved-deactivate-${ruleId}`;
+                      return (
+                        <div
+                          key={`saved-rule-${ruleId || "na"}`}
+                          className="rounded border border-slate-200 p-2"
+                        >
+                          <div className="flex flex-wrap items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <div className="font-medium text-slate-800">
+                                #{rule?.id || "-"} | {rule?.ruleType || "-"} |{" "}
+                                {rule?.canonicalKey || "-"}
+                              </div>
+                              <div className="text-slate-600">
+                                LE {rule?.legalEntityCode || rule?.legalEntityId || "-"} |{" "}
+                                {rule?.parentLocalAccountCode
+                                  ? `ROOT ${rule.parentLocalAccountCode}`
+                                  : `PREFIX ${rule?.codePrefix || "-"}`}{" "}
+                                | G:{rule?.groupAccountCode || "-"} | {rule?.status || "-"}
+                              </div>
+                              <div className="text-[11px] text-slate-500">
+                                {l("Effective", "Effective")} {rule?.effectiveFrom || "-"} /{" "}
+                                {rule?.effectiveTo || "-"} |{" "}
+                                {l("Reason", "Neden")} {rule?.reason || "-"}
+                              </div>
+                            </div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => onReuseSavedCanonicalRule(rule)}
+                                className="rounded border border-slate-300 px-2 py-1 text-[11px] font-semibold text-slate-700"
+                              >
+                                {l("Reuse", "Yeniden kullan")}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => onPreviewSavedCanonicalRule(rule)}
+                                disabled={saving === previewSavingKey}
+                                className="rounded border border-cyan-300 px-2 py-1 text-[11px] font-semibold text-cyan-900 disabled:opacity-60"
+                              >
+                                {saving === previewSavingKey
+                                  ? l("Previewing...", "Onizleniyor...")
+                                  : l("Preview", "Onizle")}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => onApplySavedCanonicalRule(rule)}
+                                disabled={
+                                  saving === applySavingKey ||
+                                  String(rule?.status || "").toUpperCase() !== "ACTIVE"
+                                }
+                                className="rounded bg-cyan-700 px-2 py-1 text-[11px] font-semibold text-white disabled:opacity-60"
+                              >
+                                {saving === applySavingKey
+                                  ? l("Applying...", "Uygulaniyor...")
+                                  : l("Apply", "Uygula")}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => onDeactivateSavedCanonicalRule(rule)}
+                                disabled={
+                                  saving === deactivateSavingKey ||
+                                  String(rule?.status || "").toUpperCase() !== "ACTIVE"
+                                }
+                                className="rounded border border-rose-300 px-2 py-1 text-[11px] font-semibold text-rose-700 disabled:opacity-60"
+                              >
+                                {saving === deactivateSavingKey
+                                  ? l("Deactivating...", "Deaktive ediliyor...")
+                                  : l("Deactivate", "Deaktive et")}
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+
             <div className="mb-2 text-[11px] text-amber-700">
               {l(
                 "Date safety: if unresolved runs exist, set mapping effectiveFrom on/before run period end.",
@@ -2077,9 +3217,35 @@ export default function ConsolidationSetupPage() {
                 canonicalMappings.map((row, index) => (
                   <div
                     key={`${row?.canonicalKeyId || "key"}-${row?.localMapping?.id || "local"}-${row?.groupMapping?.id || "group"}-${index}`}
-                    className="border-b border-slate-100 py-1 last:border-0"
+                    className="flex items-start justify-between gap-3 border-b border-slate-100 py-2 last:border-0"
                   >
-                    {row?.canonicalKey || "-"} | LE {row?.localMapping?.legalEntityId || "-"} | L:{row?.localMapping?.localAccountCode || "-"} | G:{row?.groupMapping?.groupAccountCode || "-"} | L:{row?.localMapping?.status || "-"} | G:{row?.groupMapping?.status || "-"}
+                    <div className="min-w-0">
+                      <div className="font-medium text-slate-800">
+                        {row?.canonicalKey || "-"}
+                      </div>
+                      <div className="text-slate-600">
+                        LE {row?.localMapping?.legalEntityId || "-"} | L:
+                        {row?.localMapping?.localAccountCode || "-"} | G:
+                        {row?.groupMapping?.groupAccountCode || "-"} | L:
+                        {row?.localMapping?.status || "-"} | G:
+                        {row?.groupMapping?.status || "-"}
+                      </div>
+                      <div className="text-[11px] text-slate-500">
+                        {l("Local effective", "Lokal effective")}{" "}
+                        {row?.localMapping?.effectiveFrom || "-"} /{" "}
+                        {row?.localMapping?.effectiveTo || "-"} |{" "}
+                        {l("Group effective", "Grup effective")}{" "}
+                        {row?.groupMapping?.effectiveFrom || "-"} /{" "}
+                        {row?.groupMapping?.effectiveTo || "-"}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => onEditCanonicalMapping(row)}
+                      className="shrink-0 rounded border border-slate-300 px-2 py-1 text-[11px] font-semibold text-slate-700"
+                    >
+                      {l("Edit", "Duzenle")}
+                    </button>
                   </div>
                 ))
               )}

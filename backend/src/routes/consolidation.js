@@ -21,12 +21,20 @@ import {
 import { logWarn } from "../observability/logger.js";
 import { evaluateWorkflowApprovalGate } from "../services/workflows.service.js";
 import {
+  applyCanonicalMappingRuleById,
+  applyCanonicalMappingRule,
   applyCanonicalMappingCandidates,
+  createCanonicalMappingRule,
+  deactivateCanonicalMappingRule,
+  getCanonicalMappingRuleById,
   getCanonicalMappingGovernanceReview,
   getCanonicalMappingReadiness,
   listCanonicalAccountMappings,
   listCanonicalMappingCandidates,
+  listCanonicalMappingRules,
   listCanonicalKeys,
+  previewCanonicalMappingRuleById,
+  previewCanonicalMappingRule,
   upsertCanonicalKey,
   upsertGroupAccountCanonicalMapping,
   upsertLocalAccountCanonicalMapping,
@@ -2714,6 +2722,238 @@ router.get(
   })
 );
 
+router.get(
+  "/groups/:groupId/canonical-mappings/rules",
+  requirePermission("consolidation.coa_mapping.read"),
+  asyncHandler(async (req, res) => {
+    const tenantId = resolveTenantId(req);
+    if (!tenantId) {
+      throw badRequest("tenantId is required");
+    }
+
+    const groupId = parsePositiveInt(req.params.groupId);
+    if (!groupId) {
+      throw badRequest("groupId must be a positive integer");
+    }
+    const group = await assertConsolidationGroupBelongsToTenant(tenantId, groupId, "groupId");
+    assertScopeAccess(req, "group", group.group_company_id, "groupCompanyId");
+
+    let legalEntityId = null;
+    if (req.query.legalEntityId !== undefined && req.query.legalEntityId !== "") {
+      legalEntityId = parsePositiveInt(req.query.legalEntityId);
+      if (!legalEntityId) {
+        throw badRequest("legalEntityId must be a positive integer");
+      }
+      const legalEntity = await assertLegalEntityBelongsToTenant(
+        tenantId,
+        legalEntityId,
+        "legalEntityId"
+      );
+      assertLegalEntityMatchesGroupCompany(
+        legalEntity,
+        group.group_company_id,
+        "legalEntityId"
+      );
+      assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
+    }
+
+    const result = await listCanonicalMappingRules({
+      tenantId,
+      consolidationGroupId: groupId,
+      legalEntityId,
+      status: req.query.status,
+    });
+
+    return res.json({
+      tenantId,
+      groupId,
+      legalEntityId: legalEntityId || null,
+      summary: result.summary,
+      rows: result.rows,
+    });
+  })
+);
+
+router.post(
+  "/groups/:groupId/canonical-mappings/rules",
+  requirePermission("consolidation.coa_mapping.upsert"),
+  asyncHandler(async (req, res) => {
+    const tenantId = resolveTenantId(req);
+    if (!tenantId) {
+      throw badRequest("tenantId is required");
+    }
+
+    const groupId = parsePositiveInt(req.params.groupId);
+    if (!groupId) {
+      throw badRequest("groupId must be a positive integer");
+    }
+    const group = await assertConsolidationGroupBelongsToTenant(tenantId, groupId, "groupId");
+    assertScopeAccess(req, "group", group.group_company_id, "groupCompanyId");
+
+    assertRequiredFields(req.body, ["legalEntityId", "ruleType", "canonicalKey"]);
+    const legalEntityId = parsePositiveInt(req.body.legalEntityId);
+    if (!legalEntityId) {
+      throw badRequest("legalEntityId must be a positive integer");
+    }
+    const legalEntity = await assertLegalEntityBelongsToTenant(
+      tenantId,
+      legalEntityId,
+      "legalEntityId"
+    );
+    assertLegalEntityMatchesGroupCompany(
+      legalEntity,
+      group.group_company_id,
+      "legalEntityId"
+    );
+    assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
+
+    const actedByUserId = parsePositiveInt(req.user?.userId) || null;
+    const auditRequestMeta = buildAuditRequestMeta(req);
+    const row = await createCanonicalMappingRule({
+      tenantId,
+      consolidationGroupId: groupId,
+      legalEntityId,
+      ruleType: req.body.ruleType,
+      parentLocalAccountId: req.body.parentLocalAccountId,
+      codePrefix: req.body.codePrefix,
+      canonicalKeyId: req.body.canonicalKeyId,
+      canonicalKey: req.body.canonicalKey,
+      canonicalName: req.body.canonicalName,
+      groupAccountId: req.body.groupAccountId,
+      status: req.body.status,
+      effectiveFrom: req.body.effectiveFrom,
+      effectiveTo: req.body.effectiveTo,
+      reason: req.body.reason,
+      actedByUserId,
+      requestMeta: auditRequestMeta,
+    });
+
+    return res.status(201).json({
+      ok: true,
+      row,
+    });
+  })
+);
+
+router.post(
+  "/groups/:groupId/canonical-mappings/rules/preview",
+  requirePermission("consolidation.coa_mapping.read"),
+  asyncHandler(async (req, res) => {
+    const tenantId = resolveTenantId(req);
+    if (!tenantId) {
+      throw badRequest("tenantId is required");
+    }
+
+    const groupId = parsePositiveInt(req.params.groupId);
+    if (!groupId) {
+      throw badRequest("groupId must be a positive integer");
+    }
+    const group = await assertConsolidationGroupBelongsToTenant(tenantId, groupId, "groupId");
+    assertScopeAccess(req, "group", group.group_company_id, "groupCompanyId");
+
+    assertRequiredFields(req.body, ["legalEntityId", "ruleType", "canonicalKey"]);
+    const legalEntityId = parsePositiveInt(req.body.legalEntityId);
+    if (!legalEntityId) {
+      throw badRequest("legalEntityId must be a positive integer");
+    }
+    const legalEntity = await assertLegalEntityBelongsToTenant(
+      tenantId,
+      legalEntityId,
+      "legalEntityId"
+    );
+    assertLegalEntityMatchesGroupCompany(
+      legalEntity,
+      group.group_company_id,
+      "legalEntityId"
+    );
+    assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
+
+    const preview = await previewCanonicalMappingRule({
+      tenantId,
+      consolidationGroupId: groupId,
+      legalEntityId,
+      ruleType: req.body.ruleType,
+      parentLocalAccountId: req.body.parentLocalAccountId,
+      codePrefix: req.body.codePrefix,
+      canonicalKey: req.body.canonicalKey,
+      canonicalName: req.body.canonicalName,
+      groupAccountId: req.body.groupAccountId,
+      effectiveFrom: req.body.effectiveFrom,
+      effectiveTo: req.body.effectiveTo,
+    });
+
+    return res.status(200).json({
+      tenantId,
+      groupId,
+      legalEntityId,
+      ...preview,
+    });
+  })
+);
+
+router.post(
+  "/groups/:groupId/canonical-mappings/rules/apply",
+  requirePermission("consolidation.coa_mapping.upsert"),
+  asyncHandler(async (req, res) => {
+    const tenantId = resolveTenantId(req);
+    if (!tenantId) {
+      throw badRequest("tenantId is required");
+    }
+
+    const groupId = parsePositiveInt(req.params.groupId);
+    if (!groupId) {
+      throw badRequest("groupId must be a positive integer");
+    }
+    const group = await assertConsolidationGroupBelongsToTenant(tenantId, groupId, "groupId");
+    assertScopeAccess(req, "group", group.group_company_id, "groupCompanyId");
+
+    assertRequiredFields(req.body, ["legalEntityId", "ruleType", "canonicalKey"]);
+    const legalEntityId = parsePositiveInt(req.body.legalEntityId);
+    if (!legalEntityId) {
+      throw badRequest("legalEntityId must be a positive integer");
+    }
+    const legalEntity = await assertLegalEntityBelongsToTenant(
+      tenantId,
+      legalEntityId,
+      "legalEntityId"
+    );
+    assertLegalEntityMatchesGroupCompany(
+      legalEntity,
+      group.group_company_id,
+      "legalEntityId"
+    );
+    assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
+
+    const actedByUserId = parsePositiveInt(req.user?.userId) || null;
+    const auditRequestMeta = buildAuditRequestMeta(req);
+    const result = await applyCanonicalMappingRule({
+      tenantId,
+      consolidationGroupId: groupId,
+      legalEntityId,
+      ruleType: req.body.ruleType,
+      parentLocalAccountId: req.body.parentLocalAccountId,
+      codePrefix: req.body.codePrefix,
+      canonicalKey: req.body.canonicalKey,
+      canonicalName: req.body.canonicalName,
+      groupAccountId: req.body.groupAccountId,
+      effectiveFrom: req.body.effectiveFrom,
+      effectiveTo: req.body.effectiveTo,
+      changeReason: req.body?.reason,
+      changeSource: req.body?.source,
+      actedByUserId,
+      requestMeta: auditRequestMeta,
+    });
+
+    return res.status(200).json({
+      ok: true,
+      tenantId,
+      groupId,
+      legalEntityId,
+      ...result,
+    });
+  })
+);
+
 router.post(
   "/groups/:groupId/canonical-mappings/candidates/apply",
   requirePermission("consolidation.coa_mapping.upsert"),
@@ -2776,6 +3016,142 @@ router.post(
       groupId,
       legalEntityId: legalEntityId || null,
       ...result,
+    });
+  })
+);
+
+router.post(
+  "/groups/:groupId/canonical-mappings/rules/:ruleId/preview",
+  requirePermission("consolidation.coa_mapping.read"),
+  asyncHandler(async (req, res) => {
+    const tenantId = resolveTenantId(req);
+    if (!tenantId) {
+      throw badRequest("tenantId is required");
+    }
+
+    const groupId = parsePositiveInt(req.params.groupId);
+    const ruleId = parsePositiveInt(req.params.ruleId);
+    if (!groupId || !ruleId) {
+      throw badRequest("groupId and ruleId must be positive integers");
+    }
+    const group = await assertConsolidationGroupBelongsToTenant(tenantId, groupId, "groupId");
+    assertScopeAccess(req, "group", group.group_company_id, "groupCompanyId");
+
+    const savedRule = await getCanonicalMappingRuleById({
+      tenantId,
+      consolidationGroupId: groupId,
+      ruleId,
+    });
+    if (!savedRule) {
+      throw badRequest("ruleId not found in consolidation group");
+    }
+    assertScopeAccess(req, "legal_entity", savedRule.legalEntityId, "legalEntityId");
+
+    const result = await previewCanonicalMappingRuleById({
+      tenantId,
+      consolidationGroupId: groupId,
+      ruleId,
+    });
+
+    return res.status(200).json({
+      tenantId,
+      groupId,
+      ruleId,
+      ...result,
+    });
+  })
+);
+
+router.post(
+  "/groups/:groupId/canonical-mappings/rules/:ruleId/apply",
+  requirePermission("consolidation.coa_mapping.upsert"),
+  asyncHandler(async (req, res) => {
+    const tenantId = resolveTenantId(req);
+    if (!tenantId) {
+      throw badRequest("tenantId is required");
+    }
+
+    const groupId = parsePositiveInt(req.params.groupId);
+    const ruleId = parsePositiveInt(req.params.ruleId);
+    if (!groupId || !ruleId) {
+      throw badRequest("groupId and ruleId must be positive integers");
+    }
+    const group = await assertConsolidationGroupBelongsToTenant(tenantId, groupId, "groupId");
+    assertScopeAccess(req, "group", group.group_company_id, "groupCompanyId");
+
+    const savedRule = await getCanonicalMappingRuleById({
+      tenantId,
+      consolidationGroupId: groupId,
+      ruleId,
+    });
+    if (!savedRule) {
+      throw badRequest("ruleId not found in consolidation group");
+    }
+    assertScopeAccess(req, "legal_entity", savedRule.legalEntityId, "legalEntityId");
+
+    const actedByUserId = parsePositiveInt(req.user?.userId) || null;
+    const auditRequestMeta = buildAuditRequestMeta(req);
+    const result = await applyCanonicalMappingRuleById({
+      tenantId,
+      consolidationGroupId: groupId,
+      ruleId,
+      changeReason: req.body?.reason,
+      changeSource: req.body?.source,
+      actedByUserId,
+      requestMeta: auditRequestMeta,
+    });
+
+    return res.status(200).json({
+      ok: true,
+      tenantId,
+      groupId,
+      ruleId,
+      ...result,
+    });
+  })
+);
+
+router.post(
+  "/groups/:groupId/canonical-mappings/rules/:ruleId/deactivate",
+  requirePermission("consolidation.coa_mapping.upsert"),
+  asyncHandler(async (req, res) => {
+    const tenantId = resolveTenantId(req);
+    if (!tenantId) {
+      throw badRequest("tenantId is required");
+    }
+
+    const groupId = parsePositiveInt(req.params.groupId);
+    const ruleId = parsePositiveInt(req.params.ruleId);
+    if (!groupId || !ruleId) {
+      throw badRequest("groupId and ruleId must be positive integers");
+    }
+    const group = await assertConsolidationGroupBelongsToTenant(tenantId, groupId, "groupId");
+    assertScopeAccess(req, "group", group.group_company_id, "groupCompanyId");
+
+    const savedRule = await getCanonicalMappingRuleById({
+      tenantId,
+      consolidationGroupId: groupId,
+      ruleId,
+    });
+    if (!savedRule) {
+      throw badRequest("ruleId not found in consolidation group");
+    }
+    assertScopeAccess(req, "legal_entity", savedRule.legalEntityId, "legalEntityId");
+
+    const actedByUserId = parsePositiveInt(req.user?.userId) || null;
+    const auditRequestMeta = buildAuditRequestMeta(req);
+    const row = await deactivateCanonicalMappingRule({
+      tenantId,
+      consolidationGroupId: groupId,
+      ruleId,
+      reason: req.body?.reason,
+      actedByUserId,
+      requestMeta: auditRequestMeta,
+    });
+
+    return res.status(200).json({
+      ok: true,
+      row,
     });
   })
 );

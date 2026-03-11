@@ -111,6 +111,87 @@ export async function applyConsolidationCanonicalMappingCandidates(
   return response.data;
 }
 
+export async function previewConsolidationCanonicalRuleMappings(
+  groupId,
+  payload = {}
+) {
+  const response = await api.post(
+    `/api/v1/consolidation/groups/${groupId}/canonical-mappings/rules/preview`,
+    payload
+  );
+  return response.data;
+}
+
+export async function applyConsolidationCanonicalRuleMappings(
+  groupId,
+  payload = {}
+) {
+  const response = await api.post(
+    `/api/v1/consolidation/groups/${groupId}/canonical-mappings/rules/apply`,
+    payload
+  );
+  return response.data;
+}
+
+export async function listConsolidationCanonicalMappingRules(
+  groupId,
+  params = {}
+) {
+  const response = await api.get(
+    `/api/v1/consolidation/groups/${groupId}/canonical-mappings/rules${toQueryString(
+      params
+    )}`
+  );
+  return response.data;
+}
+
+export async function createConsolidationCanonicalMappingRule(
+  groupId,
+  payload = {}
+) {
+  const response = await api.post(
+    `/api/v1/consolidation/groups/${groupId}/canonical-mappings/rules`,
+    payload
+  );
+  return response.data;
+}
+
+export async function previewSavedConsolidationCanonicalMappingRule(
+  groupId,
+  ruleId,
+  payload = {}
+) {
+  const response = await api.post(
+    `/api/v1/consolidation/groups/${groupId}/canonical-mappings/rules/${ruleId}/preview`,
+    payload
+  );
+  return response.data;
+}
+
+export async function applySavedConsolidationCanonicalMappingRule(
+  groupId,
+  ruleId,
+  payload = {}
+) {
+  const response = await api.post(
+    `/api/v1/consolidation/groups/${groupId}/canonical-mappings/rules/${ruleId}/apply`,
+    payload
+  );
+  return response.data;
+}
+
+export async function deactivateConsolidationCanonicalMappingRule(
+  groupId,
+  ruleId,
+  payload = {}
+) {
+  const response = await api.post(
+    `/api/v1/consolidation/groups/${groupId}/canonical-mappings/rules/${ruleId}/deactivate`,
+    payload
+  );
+  return response.data;
+}
+
 export async function listConsolidationEliminationPlaceholders(
   groupId,
   params = {}

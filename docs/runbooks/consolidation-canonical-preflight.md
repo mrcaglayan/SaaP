@@ -23,10 +23,73 @@ Scope
   - Local mapping endpoint: `POST /api/v1/consolidation/groups/:groupId/canonical-mappings/local`
   - Group mapping endpoint: `POST /api/v1/consolidation/groups/:groupId/canonical-mappings/group`
   - If remap is high-risk (type/normal-side mismatch), include `reason`.
-5. Re-check run compatibility snapshot.
+5. Use bulk rules when many posting leaves should converge into one canonical meaning.
+  - Preview endpoint: `POST /api/v1/consolidation/groups/:groupId/canonical-mappings/rules/preview`
+  - Apply endpoint: `POST /api/v1/consolidation/groups/:groupId/canonical-mappings/rules/apply`
+  - Use `DESCENDANTS_OF_ACCOUNT` when a parent/root account is only a selection root for many posting descendants.
+  - Use `CODE_PREFIX` when local posting leaf accounts share a deterministic code prefix.
+  - Parent/header accounts remain context only. The engine still writes explicit local mappings for the posting leaf accounts.
+6. Save reusable rules when new matching leaf accounts are expected later.
+  - Create/list endpoint: `POST` / `GET /api/v1/consolidation/groups/:groupId/canonical-mappings/rules`
+  - Rerun preview/apply endpoint: `POST /api/v1/consolidation/groups/:groupId/canonical-mappings/rules/:ruleId/preview`
+    and `POST /api/v1/consolidation/groups/:groupId/canonical-mappings/rules/:ruleId/apply`
+  - Deactivate endpoint: `POST /api/v1/consolidation/groups/:groupId/canonical-mappings/rules/:ruleId/deactivate`
+  - Saved rules are additive authoring shortcuts only. Execute/readiness still depend on explicit local/group canonical mappings.
+7. Re-check run compatibility snapshot.
   - Confirm missing count is zero before execute.
-6. Execute run.
+8. Execute run.
   - Endpoint: `POST /api/v1/consolidation/runs/:runId/execute`
+
+## Bulk Rule Mapping Guidance
+- Use bulk rules when:
+  - many local posting leaf accounts should roll into one group reporting target
+  - the matching logic is deterministic by parent/root selection or code prefix
+- Use manual mapping when:
+  - only one or two local accounts need attention
+  - semantic review is needed account by account
+  - one local account should not follow the same target as its siblings
+- Example: `120.* -> AR_TRADE`
+  - Use `CODE_PREFIX`
+  - `canonicalKey = AR_TRADE`
+  - group target = group receivables account
+- Example: descendants of `320` -> `AP_TRADE`
+  - Use `DESCENDANTS_OF_ACCOUNT`
+  - select root `320`
+  - `canonicalKey = AP_TRADE`
+  - group target = group payables account
+- Important:
+  - many local leaf accounts can converge into one canonical key and one group account
+  - you do not need one group subaccount per customer/vendor child leaf
+  - parent/header accounts are not valid final mapping targets
+
+## Saved Rule Operations
+- Saved rules are for rerun workflows:
+  - new local leaf accounts appear later under the same parent or prefix
+  - finance wants the same mapping rule reapplied without retyping it
+- Saved-rule lifecycle:
+  1. define and save the rule from Consolidation Setup
+  2. preview the saved rule again when new leaves appear
+  3. apply it to materialize new explicit local mappings
+  4. deactivate it when the rule should no longer be reused
+- Governance review now includes saved-rule visibility:
+  - `savedRules` summary and sample rows
+  - `unmappedPostedAccounts[*].savedRuleMatches`
+  - counts for unresolved sample rows already covered by active saved rules vs outside saved-rule coverage
+- Follow-up hardening:
+  - rerunning a saved rule can reactivate an existing inactive local mapping when it already points to the same canonical key
+  - saved-rule quick apply reuses the effective-date safety guard used by the bulk workbench
+  - if older unresolved runs exist before the chosen `effectiveFrom`, reuse the rule in the workbench and apply with an earlier date instead of forcing a quick apply
+
+## Rollout Notes
+- Existing tenants do not need a migration of current explicit canonical local/group mappings.
+- Run `cd backend && npm run db:migrate` to install saved-rule schema.
+- Bulk rules are additive:
+  - explicit mappings remain the runtime truth
+  - saved rules do not change execute-time resolution directly
+- Existing manual local/group mapping endpoints remain valid and supported.
+- Follow-up regression checks:
+  - `cd backend && npm run test:ux:consolidation-cbr06`
+  - `cd backend && npm run test:ux:consolidation-prcm04`
 
 ## Failure Handling
 - Execute `400` with canonical coverage error:
@@ -128,6 +191,9 @@ Scope
   - `recentMappingChanges`: canonical local/group/candidate-apply changes from audit logs.
   - `highRiskOverrides`: change rows with semantic high-risk warnings or high-risk safe candidate apply usage.
   - `pendingCheckerReview`: queue of maker-checker required items.
+- Saved-rule coverage notes:
+  - governance review evaluates the full active saved-rule set for the group; it is not capped to the first 50 active rules
+  - `savedRuleMatches` may explain why an unmapped posted account is already covered by reusable rule intent even before explicit mappings are materialized
 - Maker-checker policy baseline:
   - checker must be different from maker.
   - required reason codes:
