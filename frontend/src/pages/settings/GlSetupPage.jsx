@@ -32,6 +32,7 @@ import { useAuth } from "../../auth/useAuth.js";
 import { useI18n } from "../../i18n/useI18n.js";
 import { useModuleReadiness } from "../../readiness/useModuleReadiness.js";
 import TenantReadinessChecklist from "../../readiness/TenantReadinessChecklist.jsx";
+import { getPolicyPackStarterAccounts } from "../../utils/starterAccounts.js";
 
 const BOOK_TYPES = ["LOCAL", "GROUP"];
 const DEFAULT_BOOK_FORM = {
@@ -46,427 +47,8 @@ const COA_SCOPES = ["LEGAL_ENTITY", "GROUP"];
 const ACCOUNT_TYPES = ["ASSET", "LIABILITY", "EQUITY", "REVENUE", "EXPENSE"];
 const UNSPECIFIED_ACCOUNT_TYPE = "UNSPECIFIED";
 const NORMAL_SIDES = ["DEBIT", "CREDIT"];
-const TURKISH_DEFAULT_COA_ACCOUNTS = [
-  { code: "100", name: "Kasa", accountType: "ASSET", normalSide: "DEBIT" },
-  { code: "101", name: "Alinan Cekler", accountType: "ASSET", normalSide: "DEBIT" },
-  { code: "102", name: "Bankalar", accountType: "ASSET", normalSide: "DEBIT" },
-  {
-    code: "103",
-    name: "Verilen Cekler ve Odeme Emirleri (-)",
-    accountType: "ASSET",
-    normalSide: "CREDIT",
-  },
-  { code: "108", name: "Diger Hazir Degerler", accountType: "ASSET", normalSide: "DEBIT" },
-  { code: "110", name: "Hisse Senetleri", accountType: "ASSET", normalSide: "DEBIT" },
-  {
-    code: "111",
-    name: "Ozel Kesim Tahvil Senet ve Bonolari",
-    accountType: "ASSET",
-    normalSide: "DEBIT",
-  },
-  {
-    code: "112",
-    name: "Kamu Kesimi Tahvil Senet ve Bonolari",
-    accountType: "ASSET",
-    normalSide: "DEBIT",
-  },
-  { code: "118", name: "Diger Menkul Kiymetler", accountType: "ASSET", normalSide: "DEBIT" },
-  {
-    code: "119",
-    name: "Menkul Kiymetler Deger Dusuklugu Karsiligi (-)",
-    accountType: "ASSET",
-    normalSide: "CREDIT",
-  },
-  { code: "120", name: "Alicilar", accountType: "ASSET", normalSide: "DEBIT" },
-  { code: "121", name: "Alacak Senetleri", accountType: "ASSET", normalSide: "DEBIT" },
-  {
-    code: "122",
-    name: "Alacak Senetleri Reeskontu (-)",
-    accountType: "ASSET",
-    normalSide: "CREDIT",
-  },
-  {
-    code: "126",
-    name: "Verilen Depozito ve Teminatlar",
-    accountType: "ASSET",
-    normalSide: "DEBIT",
-  },
-  { code: "127", name: "Diger Ticari Alacaklar", accountType: "ASSET", normalSide: "DEBIT" },
-  { code: "128", name: "Supheli Ticari Alacaklar", accountType: "ASSET", normalSide: "DEBIT" },
-  {
-    code: "129",
-    name: "Supheli Ticari Alacaklar Karsiligi (-)",
-    accountType: "ASSET",
-    normalSide: "CREDIT",
-  },
-  { code: "131", name: "Ortaklardan Alacaklar", accountType: "ASSET", normalSide: "DEBIT" },
-  { code: "136", name: "Diger Cesitli Alacaklar", accountType: "ASSET", normalSide: "DEBIT" },
-  { code: "153", name: "Ticari Mallar", accountType: "ASSET", normalSide: "DEBIT" },
-  { code: "157", name: "Diger Stoklar", accountType: "ASSET", normalSide: "DEBIT" },
-  { code: "159", name: "Verilen Siparis Avanslari", accountType: "ASSET", normalSide: "DEBIT" },
-  {
-    code: "180",
-    name: "Gelecek Aylara Ait Giderler",
-    accountType: "ASSET",
-    normalSide: "DEBIT",
-  },
-  { code: "181", name: "Gelir Tahakkuklari", accountType: "ASSET", normalSide: "DEBIT" },
-  { code: "191", name: "Indirilecek KDV", accountType: "ASSET", normalSide: "DEBIT" },
-  {
-    code: "193",
-    name: "Pesin Odenen Vergi ve Fonlar",
-    accountType: "ASSET",
-    normalSide: "DEBIT",
-  },
-  { code: "240", name: "Bagli Menkul Kiymetler", accountType: "ASSET", normalSide: "DEBIT" },
-  { code: "242", name: "Istirakler", accountType: "ASSET", normalSide: "DEBIT" },
-  { code: "245", name: "Bagli Ortakliklar", accountType: "ASSET", normalSide: "DEBIT" },
-  { code: "250", name: "Arazi ve Arsalar", accountType: "ASSET", normalSide: "DEBIT" },
-  { code: "252", name: "Binalar", accountType: "ASSET", normalSide: "DEBIT" },
-  {
-    code: "253",
-    name: "Tesis Makine ve Cihazlar",
-    accountType: "ASSET",
-    normalSide: "DEBIT",
-  },
-  { code: "254", name: "Tasitlar", accountType: "ASSET", normalSide: "DEBIT" },
-  { code: "255", name: "Demirbaslar", accountType: "ASSET", normalSide: "DEBIT" },
-  {
-    code: "257",
-    name: "Birikmis Amortismanlar (-)",
-    accountType: "ASSET",
-    normalSide: "CREDIT",
-  },
-  {
-    code: "258",
-    name: "Yapilmakta Olan Yatirimlar",
-    accountType: "ASSET",
-    normalSide: "DEBIT",
-  },
-  { code: "260", name: "Haklar", accountType: "ASSET", normalSide: "DEBIT" },
-  {
-    code: "262",
-    name: "Kurulus ve Orgutlenme Giderleri",
-    accountType: "ASSET",
-    normalSide: "DEBIT",
-  },
-  {
-    code: "263",
-    name: "Arastirma ve Gelistirme Giderleri",
-    accountType: "ASSET",
-    normalSide: "DEBIT",
-  },
-  {
-    code: "267",
-    name: "Diger Maddi Olmayan Duran Varliklar",
-    accountType: "ASSET",
-    normalSide: "DEBIT",
-  },
-  {
-    code: "268",
-    name: "Birikmis Amortismanlar (-)",
-    accountType: "ASSET",
-    normalSide: "CREDIT",
-  },
-  {
-    code: "280",
-    name: "Gelecek Yillara Ait Giderler",
-    accountType: "ASSET",
-    normalSide: "DEBIT",
-  },
-  { code: "281", name: "Gelir Tahakkuklari", accountType: "ASSET", normalSide: "DEBIT" },
-  { code: "300", name: "Banka Kredileri", accountType: "LIABILITY", normalSide: "CREDIT" },
-  { code: "320", name: "Saticilar", accountType: "LIABILITY", normalSide: "CREDIT" },
-  { code: "321", name: "Borc Senetleri", accountType: "LIABILITY", normalSide: "CREDIT" },
-  {
-    code: "326",
-    name: "Alinan Depozito ve Teminatlar",
-    accountType: "LIABILITY",
-    normalSide: "CREDIT",
-  },
-  { code: "329", name: "Diger Ticari Borclar", accountType: "LIABILITY", normalSide: "CREDIT" },
-  { code: "331", name: "Ortaklara Borclar", accountType: "LIABILITY", normalSide: "CREDIT" },
-  { code: "335", name: "Personele Borclar", accountType: "LIABILITY", normalSide: "CREDIT" },
-  { code: "340", name: "Alinan Siparis Avanslari", accountType: "LIABILITY", normalSide: "CREDIT" },
-  {
-    code: "360",
-    name: "Odenecek Vergi ve Fonlar",
-    accountType: "LIABILITY",
-    normalSide: "CREDIT",
-  },
-  {
-    code: "361",
-    name: "Odenecek Sosyal Guvenlik Kesintileri",
-    accountType: "LIABILITY",
-    normalSide: "CREDIT",
-  },
-  {
-    code: "368",
-    name: "Vadesi Gecmis Vergi ve Diger Yukumlulukler",
-    accountType: "LIABILITY",
-    normalSide: "CREDIT",
-  },
-  {
-    code: "370",
-    name: "Donem Kari Vergi ve Diger Yasal Yukumluluk Karsiliklari",
-    accountType: "LIABILITY",
-    normalSide: "CREDIT",
-  },
-  {
-    code: "380",
-    name: "Gelecek Aylara Ait Gelirler",
-    accountType: "LIABILITY",
-    normalSide: "CREDIT",
-  },
-  { code: "381", name: "Gider Tahakkuklari", accountType: "LIABILITY", normalSide: "CREDIT" },
-  {
-    code: "391",
-    name: "Hesaplanan KDV",
-    accountType: "LIABILITY",
-    normalSide: "CREDIT",
-  },
-  {
-    code: "400",
-    name: "Banka Kredileri",
-    accountType: "LIABILITY",
-    normalSide: "CREDIT",
-  },
-  { code: "420", name: "Saticilar", accountType: "LIABILITY", normalSide: "CREDIT" },
-  { code: "421", name: "Borc Senetleri", accountType: "LIABILITY", normalSide: "CREDIT" },
-  { code: "431", name: "Ortaklara Borclar", accountType: "LIABILITY", normalSide: "CREDIT" },
-  {
-    code: "472",
-    name: "Kidem Tazminati Karsiligi",
-    accountType: "LIABILITY",
-    normalSide: "CREDIT",
-  },
-  {
-    code: "480",
-    name: "Gelecek Yillara Ait Gelirler",
-    accountType: "LIABILITY",
-    normalSide: "CREDIT",
-  },
-  { code: "481", name: "Gider Tahakkuklari", accountType: "LIABILITY", normalSide: "CREDIT" },
-  {
-    code: "500",
-    name: "Sermaye",
-    accountType: "EQUITY",
-    normalSide: "CREDIT",
-    allowPosting: false,
-  },
-  {
-    code: "501",
-    name: "Odenmemis Sermaye (-)",
-    accountType: "EQUITY",
-    normalSide: "DEBIT",
-    allowPosting: false,
-  },
-  {
-    code: "520",
-    name: "Hisse Senedi Ihrac Primleri",
-    accountType: "EQUITY",
-    normalSide: "CREDIT",
-  },
-  {
-    code: "529",
-    name: "Diger Sermaye Yedekleri",
-    accountType: "EQUITY",
-    normalSide: "CREDIT",
-  },
-  { code: "540", name: "Yasal Yedekler", accountType: "EQUITY", normalSide: "CREDIT" },
-  {
-    code: "542",
-    name: "Olaganustu Yedekler",
-    accountType: "EQUITY",
-    normalSide: "CREDIT",
-  },
-  {
-    code: "570",
-    name: "Gecmis Yillar Karlari",
-    accountType: "EQUITY",
-    normalSide: "CREDIT",
-  },
-  {
-    code: "580",
-    name: "Gecmis Yillar Zararlari (-)",
-    accountType: "EQUITY",
-    normalSide: "DEBIT",
-  },
-  { code: "590", name: "Donem Net Kari", accountType: "EQUITY", normalSide: "CREDIT" },
-  {
-    code: "591",
-    name: "Donem Net Zarari (-)",
-    accountType: "EQUITY",
-    normalSide: "DEBIT",
-  },
-  { code: "600", name: "Yurtici Satislar", accountType: "REVENUE", normalSide: "CREDIT" },
-  { code: "601", name: "Yurtdisi Satislar", accountType: "REVENUE", normalSide: "CREDIT" },
-  { code: "602", name: "Diger Gelirler", accountType: "REVENUE", normalSide: "CREDIT" },
-  {
-    code: "610",
-    name: "Satislardan Iadeler (-)",
-    accountType: "REVENUE",
-    normalSide: "DEBIT",
-  },
-  {
-    code: "611",
-    name: "Satis Iskontolari (-)",
-    accountType: "REVENUE",
-    normalSide: "DEBIT",
-  },
-  {
-    code: "612",
-    name: "Diger Indirimler (-)",
-    accountType: "REVENUE",
-    normalSide: "DEBIT",
-  },
-  {
-    code: "620",
-    name: "Satilan Mallar Maliyeti (-)",
-    accountType: "EXPENSE",
-    normalSide: "DEBIT",
-  },
-  {
-    code: "621",
-    name: "Satilan Ticari Mallar Maliyeti (-)",
-    accountType: "EXPENSE",
-    normalSide: "DEBIT",
-  },
-  {
-    code: "622",
-    name: "Satilan Hizmet Maliyeti (-)",
-    accountType: "EXPENSE",
-    normalSide: "DEBIT",
-  },
-  {
-    code: "630",
-    name: "Arastirma ve Gelistirme Giderleri",
-    accountType: "EXPENSE",
-    normalSide: "DEBIT",
-  },
-  {
-    code: "631",
-    name: "Pazarlama Satis ve Dagitim Giderleri",
-    accountType: "EXPENSE",
-    normalSide: "DEBIT",
-  },
-  {
-    code: "632",
-    name: "Genel Yonetim Giderleri",
-    accountType: "EXPENSE",
-    normalSide: "DEBIT",
-  },
-  {
-    code: "640",
-    name: "Istiraklerden Temettu Gelirleri",
-    accountType: "REVENUE",
-    normalSide: "CREDIT",
-  },
-  { code: "642", name: "Faiz Gelirleri", accountType: "REVENUE", normalSide: "CREDIT" },
-  { code: "646", name: "Kambiyo Karlari", accountType: "REVENUE", normalSide: "CREDIT" },
-  {
-    code: "649",
-    name: "Diger Olagan Gelir ve Karlar",
-    accountType: "REVENUE",
-    normalSide: "CREDIT",
-  },
-  {
-    code: "654",
-    name: "Karsilik Giderleri",
-    accountType: "EXPENSE",
-    normalSide: "DEBIT",
-  },
-  { code: "656", name: "Kambiyo Zararlari", accountType: "EXPENSE", normalSide: "DEBIT" },
-  {
-    code: "659",
-    name: "Diger Olagan Gider ve Zararlar",
-    accountType: "EXPENSE",
-    normalSide: "DEBIT",
-  },
-  {
-    code: "660",
-    name: "Kisa Vadeli Borclanma Giderleri",
-    accountType: "EXPENSE",
-    normalSide: "DEBIT",
-  },
-  {
-    code: "671",
-    name: "Onceki Donem Gider ve Zararlari",
-    accountType: "EXPENSE",
-    normalSide: "DEBIT",
-  },
-  {
-    code: "679",
-    name: "Diger Olagandisi Gelir ve Karlar",
-    accountType: "REVENUE",
-    normalSide: "CREDIT",
-  },
-  {
-    code: "689",
-    name: "Diger Olagandisi Gider ve Zararlar",
-    accountType: "EXPENSE",
-    normalSide: "DEBIT",
-  },
-  {
-    code: "700",
-    name: "Direkt Ilk Madde ve Malzeme Giderleri",
-    accountType: "EXPENSE",
-    normalSide: "DEBIT",
-  },
-  { code: "710", name: "Direkt Iscilik Giderleri", accountType: "EXPENSE", normalSide: "DEBIT" },
-  { code: "720", name: "Genel Uretim Giderleri", accountType: "EXPENSE", normalSide: "DEBIT" },
-  { code: "740", name: "Hizmet Uretim Maliyeti", accountType: "EXPENSE", normalSide: "DEBIT" },
-  {
-    code: "760",
-    name: "Pazarlama Satis ve Dagitim Giderleri",
-    accountType: "EXPENSE",
-    normalSide: "DEBIT",
-  },
-  { code: "770", name: "Genel Yonetim Giderleri", accountType: "EXPENSE", normalSide: "DEBIT" },
-  { code: "780", name: "Finansman Giderleri", accountType: "EXPENSE", normalSide: "DEBIT" },
-];
-const USA_DEFAULT_COA_ACCOUNTS = [
-  { code: "1000", name: "Cash and Cash Equivalents", accountType: "ASSET", normalSide: "DEBIT" },
-  { code: "1100", name: "Accounts Receivable", accountType: "ASSET", normalSide: "DEBIT" },
-  { code: "1200", name: "Inventory", accountType: "ASSET", normalSide: "DEBIT" },
-  { code: "1300", name: "Prepaid Expenses", accountType: "ASSET", normalSide: "DEBIT" },
-  { code: "1500", name: "Property Plant and Equipment", accountType: "ASSET", normalSide: "DEBIT" },
-  { code: "1590", name: "Accumulated Depreciation", accountType: "ASSET", normalSide: "CREDIT" },
-  { code: "2000", name: "Accounts Payable", accountType: "LIABILITY", normalSide: "CREDIT" },
-  { code: "2100", name: "Accrued Expenses", accountType: "LIABILITY", normalSide: "CREDIT" },
-  { code: "2200", name: "Taxes Payable", accountType: "LIABILITY", normalSide: "CREDIT" },
-  { code: "2300", name: "Deferred Revenue", accountType: "LIABILITY", normalSide: "CREDIT" },
-  { code: "3000", name: "Retained Earnings", accountType: "EQUITY", normalSide: "CREDIT" },
-  {
-    code: "3100",
-    name: "Capital Stock Parent",
-    accountType: "EQUITY",
-    normalSide: "CREDIT",
-    allowPosting: false,
-  },
-  { code: "3101", name: "Common Stock Class A", accountType: "EQUITY", normalSide: "CREDIT" },
-  {
-    code: "3110",
-    name: "Capital Commitment Parent",
-    accountType: "EQUITY",
-    normalSide: "DEBIT",
-    allowPosting: false,
-  },
-  {
-    code: "3111",
-    name: "Capital Commitment Receivable",
-    accountType: "EQUITY",
-    normalSide: "DEBIT",
-  },
-  { code: "4000", name: "Sales Revenue", accountType: "REVENUE", normalSide: "CREDIT" },
-  { code: "4100", name: "Service Revenue", accountType: "REVENUE", normalSide: "CREDIT" },
-  { code: "4050", name: "Foreign Exchange Gain", accountType: "REVENUE", normalSide: "CREDIT" },
-  { code: "5000", name: "Cost of Goods Sold", accountType: "EXPENSE", normalSide: "DEBIT" },
-  { code: "6100", name: "Operating Expenses", accountType: "EXPENSE", normalSide: "DEBIT" },
-  { code: "6200", name: "General and Administrative Expense", accountType: "EXPENSE", normalSide: "DEBIT" },
-  { code: "7000", name: "Interest Expense", accountType: "EXPENSE", normalSide: "DEBIT" },
-  { code: "7050", name: "Foreign Exchange Loss", accountType: "EXPENSE", normalSide: "DEBIT" },
-];
+const TURKISH_DEFAULT_COA_ACCOUNTS = getPolicyPackStarterAccounts("TR_UNIFORM_V1");
+const USA_DEFAULT_COA_ACCOUNTS = getPolicyPackStarterAccounts("US_GAAP_STARTER_V1");
 const CARI_REQUIRED_PURPOSE_CODES = Object.freeze([
   "CARI_AR_CONTROL",
   "CARI_AR_OFFSET",
@@ -3277,18 +2859,62 @@ export default function GlSetupPage({ mode = "full" } = {}) {
     setMessage("");
 
     try {
+      const accountIdByCode = new Map(
+        selectedCoaAccounts
+          .map((account) => [toUpper(account?.code), toPositiveInt(account?.id)])
+          .filter(([code, id]) => code && id)
+      );
+      let pendingAccounts = (Array.isArray(accountsToLoad) ? accountsToLoad : []).map((account) => ({
+        ...account,
+        code: toUpper(account?.code),
+        parentCode: toUpper(account?.parentCode ?? account?.parent_code),
+      }));
       let processed = 0;
-      for (const account of accountsToLoad) {
-        // Keep explicit non-postable defaults intact instead of forcing posting=true.
-        await upsertAccount({
-          coaId,
-          code: account.code,
-          name: account.name,
-          accountType: account.accountType,
-          normalSide: account.normalSide,
-          allowPosting: account.allowPosting ?? true,
-        });
-        processed += 1;
+      while (pendingAccounts.length > 0) {
+        let progressed = 0;
+        const deferredAccounts = [];
+        for (const account of pendingAccounts) {
+          const parentAccountId = account.parentCode
+            ? accountIdByCode.get(account.parentCode) || null
+            : null;
+          if (account.parentCode && !parentAccountId) {
+            deferredAccounts.push(account);
+            continue;
+          }
+
+          // Preserve explicit starter-account posting defaults and tree parents.
+          const response = await upsertAccount({
+            coaId,
+            code: account.code,
+            name: account.name,
+            accountType: account.accountType,
+            normalSide: account.normalSide,
+            allowPosting: account.allowPosting ?? true,
+            ...(parentAccountId ? { parentAccountId } : {}),
+          });
+          const savedAccountId = toPositiveInt(response?.id);
+          if (savedAccountId) {
+            accountIdByCode.set(account.code, savedAccountId);
+          }
+          processed += 1;
+          progressed += 1;
+        }
+        if (deferredAccounts.length === 0) {
+          break;
+        }
+        if (progressed === 0) {
+          const unresolvedSummary = deferredAccounts
+            .slice(0, 5)
+            .map((account) => `${account.code} -> ${account.parentCode}`)
+            .join(", ");
+          throw new Error(
+            l(
+              `Failed to resolve starter-account parents: ${unresolvedSummary}`,
+              `Baslangic hesaplari icin ust hesap baglari cozulmedi: ${unresolvedSummary}`
+            )
+          );
+        }
+        pendingAccounts = deferredAccounts;
       }
       setMessage(successMessage(processed));
       await loadData();
@@ -4210,7 +3836,12 @@ export default function GlSetupPage({ mode = "full" } = {}) {
             <select
               value={coaForm.scope}
               onChange={(event) =>
-                setCoaForm((prev) => ({ ...prev, scope: event.target.value }))
+                setCoaForm((prev) => ({
+                  ...prev,
+                  scope: event.target.value,
+                  legalEntityId:
+                    event.target.value === "LEGAL_ENTITY" ? prev.legalEntityId : "",
+                }))
               }
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
             >
@@ -4220,21 +3851,29 @@ export default function GlSetupPage({ mode = "full" } = {}) {
                 </option>
               ))}
             </select>
-            <select
-              value={coaForm.legalEntityId}
-              onChange={(event) =>
-                setCoaForm((prev) => ({ ...prev, legalEntityId: event.target.value }))
-              }
-              className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              disabled={coaForm.scope !== "LEGAL_ENTITY"}
-            >
-              <option value="">{l("Select legal entity", "Istirak / bagli ortak secin")}</option>
-              {legalEntities.map((entity) => (
-                <option key={entity.id} value={entity.id}>
-                  {entity.code} - {entity.name}
-                </option>
-              ))}
-            </select>
+            {coaForm.scope === "LEGAL_ENTITY" ? (
+              <select
+                value={coaForm.legalEntityId}
+                onChange={(event) =>
+                  setCoaForm((prev) => ({ ...prev, legalEntityId: event.target.value }))
+                }
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              >
+                <option value="">{l("Select legal entity", "Istirak / bagli ortak secin")}</option>
+                {legalEntities.map((entity) => (
+                  <option key={entity.id} value={entity.id}>
+                    {entity.code} - {entity.name}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
+                {l(
+                  "GROUP scope does not require legal entity selection.",
+                  "GROUP kapsaminda legal entity secimi gerekmez."
+                )}
+              </div>
+            )}
             <input
               value={coaForm.code}
               onChange={(event) =>

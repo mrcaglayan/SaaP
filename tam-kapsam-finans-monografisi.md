@@ -127,8 +127,21 @@ Not:
 6. `Kur Yonetimi` ekraninda AFN/USD icin gunluk kurlar ve en az bir ay sonu kuru gir.
    Beklenen: cari, cash FX ve revaluation akislari kur eksigi almadan calisabilir.
 
-7. `Hesap Plani Ayarlari` ekraninda GL hesaplarini, purpose mappinglerini ve retained earnings hesabini tanimla.
-   Beklenen: journal, revrec, settlement, year-end ve payroll postingleri setup hatasi almadan ilerler.
+7. `Hesap Plani Ayarlari` ekraninda chart of accounts yapisini, GL hesaplarini, purpose mappinglerini ve retained earnings hesabini tanimla.
+   Beklenen: journal, revrec, settlement, year-end ve payroll postingleri setup hatasi almadan ilerler. Ayrica `Konsolidasyon Kurulumu > CoA Mappings` alanindaki dropdownlar dolmaya baslar.
+
+Not:
+
+- Bu adimda yalniz hesap acmak yetmez; `Charts of Accounts` altinda en az su yapilar hazir olmali:
+  - 1 adet `GROUP` scope CoA
+  - `LE_AFG` icin 1 adet `LEGAL_ENTITY` scope CoA
+  - `LE_USA` icin 1 adet `LEGAL_ENTITY` scope CoA
+- `Charts of Accounts` formunda `Scope = GROUP` secilince `Select legal entity` alani bilincli olarak devre disi kalir; group CoA olustururken legal entity secilmez, alan bos birakilir.
+- `Scope = LEGAL_ENTITY` secilince `Select legal entity` aktif olur; burada ilgili entity secilip entity bazli CoA olusturulur.
+- `CoA Mappings` ekranindaki:
+  - `Select group CoA` yalniz `GROUP` scope CoA kayitlarini gosterir
+  - `Select local CoA` yalniz secili legal entity'ye ait `LEGAL_ENTITY` scope CoA kayitlarini gosterir
+- Bu CoA kayitlari yoksa step 10'da `CoA Mappings` dropdownlari bos gorunur ve `NO_ACTIVE_COA_SCOPE` warning'i temizlenemez.
 
 8. `Vergi Kurulumu` ekraninda en az bir satis ve bir alim vergi setup'i yap.
    Beklenen: cari belge ve ticari akislarda vergi baglamli test hazir olur.
@@ -137,7 +150,148 @@ Not:
    Beklenen: eksik yetki ve maker-checker denemeleri icin kullanilacak en az 3 kullanici olur.
 
 10. `Konsolidasyon Kurulumu` ekraninda `GRP_GLOBAL` groupunu ac, iki legal entity'yi bu gruba bagla ve canonical/group mapping hazirligini yap.
-    Beklenen: ileride consolidation execute oncesi coverage sifira indirilebilir.
+    Beklenen: yalniz group kaydi degil; iki active member ve iki active CoA mapping olustugunda canonical readiness coverage algilamaya baslar. Canonical local/group mappingler tamamlandiginda unresolved coverage ileride consolidation execute oncesi sifira indirilebilir.
+
+#### Adim 10 icin detayli uygulama notu
+
+Bu adim tek bir `Save` ile bitmez. Ekran mantigi 4 katmanli calisir:
+
+1. consolidation group kaydi
+2. group member kayitlari
+3. active CoA scope (`CoA Mappings`)
+4. canonical local + canonical group mappingleri
+
+Senin gordugun uyarinin anlami:
+
+- `SETUP_REQUIRED`: canonical coverage execute icin henuz hazir degil.
+- `coverage: missing`: sistem aday canonical coverage uretecek aktif kapsami bulamadi.
+- `blocked reason: NO_ACTIVE_COA_SCOPE`: secili group icin aktif `group_coa_mappings` satiri yok. Pratik anlami: sadece group olusturmak ve member eklemek yetmez; `CoA Mappings` bolumunde en az bir aktif group CoA <-> local CoA baglantisi gerekir.
+- `Summary: total 0 ...`: sistem karsilastiracagi local hesap evrenini henuz olusturamamis. Bu nedenle candidate preview sifir satir doner.
+- `No legal entity readiness rows`: readiness satirlari, ancak candidate dataseti olusursa legal entity bazli uretilir. `total 0` iken bu listenin bos gelmesi normaldir.
+
+Bu monografi icin onerilen tarih kullanimi:
+
+- Test periodleri `2026-01`, `2026-02`, `2026-03` oldugu icin `member effectiveFrom`, `canonical local effectiveFrom` ve `canonical group effectiveFrom` alanlarini `2026-01-01` yap.
+- `effectiveTo` alanlarini ilk kurulumda bos birak.
+- Varsayilan bugunun tarihi `2026-03-11` olarak kalirsa, `2026-01` veya `2026-02` periodleri icin olusacak runlar bu membership veya mappingleri kapsamayabilir.
+
+Uygulama sirasi:
+
+1. `Groups` bolumunde grup kaydini netlestir.
+2. `Members` bolumunde iki legal entity'yi bagla.
+3. `CoA Mappings` bolumunde her legal entity icin aktif CoA eslesmesi kur.
+4. `Canonical Readiness` kartinda `Refresh readiness` yap.
+5. Coverage artik algilaniyorsa `Canonical Mappings` bolumunde adaylari onizle veya manuel mapping gir.
+6. Tekrar `Refresh readiness` yap ve unresolved sayisini sifira indir.
+
+`Groups` bolumu inputlari:
+
+- `Select group company`: grubun bagli oldugu ust grup sirketini secer. `LE_AFG` ve `LE_USA` hangi group company altinda tanimliysa onu secmelisin. Eger bir legal entity dropdownlarda hic gelmiyorsa ilk bakilacak yer burasidir.
+- `Select calendar`: konsolidasyon runlarinin baglanacagi mali takvimdir. Monografide `2026` periodleri hangi takvimde aciksa onu sec.
+- `Code`: konsolidasyon grup kodu. Bu senaryo icin `GRP_GLOBAL`.
+- `Name`: ekranda gorunecek grup adi. Ornek: `Global Consolidation Group`.
+- `Currency`: grup raporlama/presentation para birimi. Bu monografide `USD` kullanmak en tutarli secimdir.
+
+Not:
+
+- Bu form sadece konsolidasyon grubunu olusturur; canonical readiness'i tek basina yesile cekmez.
+
+`Members` bolumu inputlari:
+
+- `Select legal entity`: gruba baglanacak legal entity. Bu adim iki kez yapilmali: once `LE_AFG`, sonra `LE_USA`.
+- `Consolidation method`: ilk geciste her iki entity icin de `FULL` kullan. Bu monografinin amaci coverage'i hizli acmak oldugu icin `EQUITY` veya oransal varyantlara bu adimda gerek yok.
+- `Ownership %`: ekran etiketi yuzde gibi gorunse de backend fiilen `0` ile `1` arasinda oran bekler. `1` = `%100`, `0.80` = `%80`. `FULL` kullaniyorsan en temiz deger `1` dir.
+- `effectiveFrom`: bu monografide `2026-01-01` gir.
+- `effectiveTo`: ilk kurulumda bos birak; uyelik acik uclu kalsin.
+
+Beklenen ara sonuc:
+
+- Kayit sonrasi listede iki satir gorunmeli:
+  - `LE_AFG`
+  - `LE_USA`
+- Sadece member kaydi yapildiysa `NO_ACTIVE_COA_SCOPE` uyarisi devam eder; bu normaldir.
+
+`CoA Mappings` bolumu inputlari:
+
+- `Select legal entity`: hangi entity'nin lokal hesap plani gruba baglaniyorsa onu sec.
+- `Select group CoA`: grubun ortak raporlama hesap plani. Iki entity icin de ayni group CoA secilmelidir.
+- `Select local CoA`: ilgili legal entity'ye ait lokal hesap plani. `LE_AFG` icin AFG chart, `LE_USA` icin USA chart sec.
+- `Status`: readiness'in bu mappingi gormesi icin `ACTIVE` olmalidir. `INACTIVE` satir coverage uretemez.
+
+Bu bolum warning'i kaldiran kritik katmandir:
+
+- En az iki aktif satir kaydet:
+  - `LE_AFG` -> `Group CoA` + `LE_AFG local CoA`
+  - `LE_USA` -> `Group CoA` + `LE_USA local CoA`
+- Bu satirlar yoksa canonical preview sorgusu local hesaplari hic taramaz.
+- Bu satirlar aktif olduktan sonra `Canonical Readiness` kartinda `coverage: detected` ve `total > 0` gormeye baslamalisin.
+
+`Canonical Readiness` kartini nasil okumalisin:
+
+- `READY`: candidate coverage var ve unresolved sayisi `0`.
+- `SETUP_REQUIRED`: ya aktif CoA scope yoktur ya da unresolved canonical mapping vardir.
+- `coverage: detected`: sistem artik local hesaplari group CoA kapsaminda goruyor.
+- `blocked reason: UNRESOLVED_CANDIDATE_MAPPINGS`: artik scope vardir ama canonical local/group mappinglerin eksigi veya uyumsuzlugu kalmistir.
+- `Summary total`: candidate olarak degerlendirilen hesap sayisi.
+- `SAFE`: ayni kod mantigiyla otomatik bootstrap edilebilecek satirlar.
+- `ALREADY_MAPPED`: zaten dogru canonical local + group mappinge sahip satirlar.
+- `PARTIAL`: canonical zincirin bir parcasi eksik veya pasif.
+- `MISSING`: local hesap icin group CoA tarafinda tekil karsilik bulunamamis.
+- `AMBIGUOUS`: ayni koda birden fazla group hesap adayi cikmis.
+
+`Canonical Mappings` bolumu, aday onizleme inputlari:
+
+- `Legal entity (optional)`: ilk daraltma filtresi. Once bos birakarak tum grup icin tabloyu gormek daha faydalidir; sorun buyukse entity bazinda daralt.
+- `Candidate limit`: preview'e alinacak azami satir sayisi. Iki entity'li bu monografide `500` yeterlidir.
+- `Preview candidates`: otomatik bootstrap adaylarini siniflandirir.
+- `Apply safe candidates`: sadece `SAFE` satirlari yazar. Ayni kodlu hesaplar duzgunse ilk bootstrap'i hizlandirir.
+- `Apply reason`: sadece `SAFE` olsa bile semantic olarak yuksek-riskli uyari varsa zorunlu olur. Ornek kullanim: `Initial canonical bootstrap for 2026 monograph`.
+
+Candidate summary sonucunu nasil yorumlamalisin:
+
+- `SAFE`: ilk tercih. Bunlari otomatik uygulatabilirsin.
+- `ALREADY_MAPPED`: ek is gerekmez.
+- `PARTIAL_MAPPING`: canonical anahtar, local mapping veya group mapping zincirinin bir parcasi eksik/pasif.
+- `MISSING_GROUP_MATCH`: local hesap kodu group CoA tarafinda tekil hesap bulamadi; manuel karar gerekir.
+- `AMBIGUOUS_GROUP_MATCH`: ayni local kod icin birden fazla group hesap bulundu; manuel karar gerekir.
+
+`Save Local Mapping` formu inputlari:
+
+- `Select legal entity`: local hesabin ait oldugu entity. Yanlis entity secersen backend kaydi reddeder.
+- `Select local account`: canonical'a baglanacak lokal hesap. Bu hesap, secili entity icin `ACTIVE` bir local CoA mapping kapsaminda olmali; aksi halde kayit kabul edilmez.
+- `Canonical key`: ortak normalize anahtar. Ilk bootstrap icin en guvenli kalip `ACC_CODE:<LOKAL_HESAP_KODU>` formatidir. Ornek: lokal hesap `100.01` ise `ACC_CODE:100.01`.
+- `Canonical name (optional)`: okunurluk icin aciklama. Ornek: `Cash and cash equivalents`.
+- `Reason/note`: yuksek-riskli remap yapiliyorsa zorunlu tutulur; diger durumlarda audit izi icin doldurmak yine faydalidir.
+- `Status`: ilk kurulumda `ACTIVE`.
+- `effectiveFrom`: bu monografide `2026-01-01`.
+- `effectiveTo`: ilk kurulumda bos.
+
+`Save Group Mapping` formu inputlari:
+
+- `Select group account`: canonical anahtarin grup tarafindaki hedef hesabi. Bu hesap, secili group icin `ACTIVE` group CoA mapping kapsaminda olmali.
+- `Canonical key`: local mappingte kullandigin canonical key ile bire bir ayni olmali. Zincir bu anahtar uzerinden kurulur.
+- `Canonical name (optional)`: local taraftaki canonical ad ile ayni veya uyumlu tutulmali.
+- `Reason/note`: ozellikle mevcut bir group hesabi baska bir hesaba remap ediliyorsa acik gerekce yaz.
+- `Status`: ilk kurulumda `ACTIVE`.
+- `effectiveFrom`: bu monografide `2026-01-01`.
+- `effectiveTo`: ilk kurulumda bos.
+
+Hizli teshis matrisi:
+
+- Yalniz group kaydettin, readiness bos: normal.
+- Group + members var, ama `NO_ACTIVE_COA_SCOPE` devam ediyor: `CoA Mappings` eksik veya `INACTIVE`.
+- `Save Local Mapping` denemesinde hata aliyorsan: secilen local account, aktif local CoA kapsaminda degildir.
+- `Save Group Mapping` denemesinde hata aliyorsan: secilen group account, aktif group CoA kapsaminda degildir.
+- `coverage: detected` oldu ama `READY` olmadiysa: artik sorun scope degil, canonical local/group mappinglerin kendisidir.
+
+Bu adim icin pratik hedef:
+
+1. `GRP_GLOBAL` grup kaydi tamam.
+2. `LE_AFG` ve `LE_USA` member olarak eklendi.
+3. Her iki entity icin `CoA Mappings` satiri `ACTIVE`.
+4. `Canonical Readiness` artik `coverage: detected` diyor.
+5. `SAFE` adaylar uygulatildi veya manuel local/group mappingler girildi.
+6. `Refresh readiness` sonrasi unresolved sayisi `0`.
 
 ## 6. Faz 2 - Sermaye ve Kurulus Islemleri
 

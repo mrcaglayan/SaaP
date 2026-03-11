@@ -6,6 +6,10 @@ import { getPolicyPack, listPolicyPacks } from "../../api/policyPacks.js";
 import { useAuth } from "../../auth/useAuth.js";
 import { useI18n } from "../../i18n/useI18n.js";
 import TenantReadinessChecklist from "../../readiness/TenantReadinessChecklist.jsx";
+import {
+  getCountryStarterAccountRows,
+  getDefaultPolicyPackIdForCountry,
+} from "../../utils/starterAccounts.js";
 
 const UNIT_TYPES = ["BRANCH", "PLANT", "STORE", "DEPARTMENT", "OTHER"];
 const ACCOUNT_TYPES = ["ASSET", "LIABILITY", "EQUITY", "REVENUE", "EXPENSE"];
@@ -78,169 +82,6 @@ Object.freeze({
   allowPosting: true,
 }),
 ]);
-
-const COUNTRY_STARTER_ACCOUNTS = Object.freeze({
-TR: Object.freeze([
-  Object.freeze({
-    code: "100",
-    name: "Kasa",
-    accountType: "ASSET",
-    normalSide: "DEBIT",
-    allowPosting: true,
-  }),
-  Object.freeze({
-    code: "102",
-    name: "Bankalar",
-    accountType: "ASSET",
-    normalSide: "DEBIT",
-    allowPosting: true,
-  }),
-  Object.freeze({
-    code: "120",
-    name: "Alicilar",
-    accountType: "ASSET",
-    normalSide: "DEBIT",
-    allowPosting: true,
-  }),
-  Object.freeze({
-    code: "320",
-    name: "Saticilar",
-    accountType: "LIABILITY",
-    normalSide: "CREDIT",
-    allowPosting: true,
-  }),
-  Object.freeze({
-    code: "500",
-    name: "Sermaye",
-    accountType: "EQUITY",
-    normalSide: "CREDIT",
-    allowPosting: false,
-  }),
-  Object.freeze({
-    code: "501",
-    name: "Odenmemis Sermaye (-)",
-    accountType: "EQUITY",
-    normalSide: "DEBIT",
-    allowPosting: false,
-  }),
-  Object.freeze({
-    code: "600",
-    name: "Yurtici Satislar",
-    accountType: "REVENUE",
-    normalSide: "CREDIT",
-    allowPosting: true,
-  }),
-  Object.freeze({
-    code: "770",
-    name: "Genel Yonetim Giderleri",
-    accountType: "EXPENSE",
-    normalSide: "DEBIT",
-    allowPosting: true,
-  }),
-]),
-AF: Object.freeze([
-  Object.freeze({
-    code: "1000",
-    name: "Cash and Cash Equivalents",
-    accountType: "ASSET",
-    normalSide: "DEBIT",
-    allowPosting: true,
-  }),
-  Object.freeze({
-    code: "1100",
-    name: "Accounts Receivable",
-    accountType: "ASSET",
-    normalSide: "DEBIT",
-    allowPosting: true,
-  }),
-  Object.freeze({
-    code: "2000",
-    name: "Accounts Payable",
-    accountType: "LIABILITY",
-    normalSide: "CREDIT",
-    allowPosting: true,
-  }),
-  Object.freeze({
-    code: "3100",
-    name: "Share Capital",
-    accountType: "EQUITY",
-    normalSide: "CREDIT",
-    allowPosting: false,
-  }),
-  Object.freeze({
-    code: "3110",
-    name: "Shareholder Commitment Receivable",
-    accountType: "EQUITY",
-    normalSide: "DEBIT",
-    allowPosting: false,
-  }),
-  Object.freeze({
-    code: "4000",
-    name: "Sales Revenue",
-    accountType: "REVENUE",
-    normalSide: "CREDIT",
-    allowPosting: true,
-  }),
-  Object.freeze({
-    code: "5000",
-    name: "Operating Expense",
-    accountType: "EXPENSE",
-    normalSide: "DEBIT",
-    allowPosting: true,
-  }),
-]),
-US: Object.freeze([
-  Object.freeze({
-    code: "1000",
-    name: "Cash and Cash Equivalents",
-    accountType: "ASSET",
-    normalSide: "DEBIT",
-    allowPosting: true,
-  }),
-  Object.freeze({
-    code: "1100",
-    name: "Accounts Receivable",
-    accountType: "ASSET",
-    normalSide: "DEBIT",
-    allowPosting: true,
-  }),
-  Object.freeze({
-    code: "2000",
-    name: "Accounts Payable",
-    accountType: "LIABILITY",
-    normalSide: "CREDIT",
-    allowPosting: true,
-  }),
-  Object.freeze({
-    code: "3100",
-    name: "Common Stock",
-    accountType: "EQUITY",
-    normalSide: "CREDIT",
-    allowPosting: false,
-  }),
-  Object.freeze({
-    code: "3110",
-    name: "Stock Subscription Receivable",
-    accountType: "EQUITY",
-    normalSide: "DEBIT",
-    allowPosting: false,
-  }),
-  Object.freeze({
-    code: "4000",
-    name: "Sales Revenue",
-    accountType: "REVENUE",
-    normalSide: "CREDIT",
-    allowPosting: true,
-  }),
-  Object.freeze({
-    code: "5000",
-    name: "Operating Expense",
-    accountType: "EXPENSE",
-    normalSide: "DEBIT",
-    allowPosting: true,
-  }),
-]),
-});
 function createId(prefix) {
 return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
@@ -263,9 +104,10 @@ function buildStarterAccountsFromCatalog(rows = []) {
 return rows.map((row) => createAccountDraft(row));
 }
 function getCountryStarterAccounts(countryIso2) {
-const normalizedCountryIso2 = toUpper(countryIso2);
-const starterRows =
-  COUNTRY_STARTER_ACCOUNTS[normalizedCountryIso2] || BASELINE_DEFAULT_ACCOUNTS;
+const starterRows = getCountryStarterAccountRows(
+  countryIso2,
+  BASELINE_DEFAULT_ACCOUNTS
+);
 return buildStarterAccountsFromCatalog(starterRows);
 }
 function deriveStarterAccountsFromPolicyPack(policyPack, countryIso2) {
@@ -315,22 +157,23 @@ return {
   hasSubledger: false,
 };
 }
-function createEntityDraft() {
+function createEntityDraft(seed = {}) {
+const countryIso2 = toUpper(seed.countryIso2 || "US");
 return {
   id: createId("entity"),
   code: "",
   name: "",
   taxId: "",
-  countryIso2: "",
+  countryIso2,
   functionalCurrencyCode: "USD",
   isIntercompanyEnabled: true,
   intercompanyPartnerRequired: false,
-  policyPackId: "",
+  policyPackId: getDefaultPolicyPackIdForCountry(countryIso2),
   coaCode: "",
   coaName: "",
   bookCode: "",
   bookName: "",
-  defaultAccounts: getCountryStarterAccounts("US"),
+  defaultAccounts: getCountryStarterAccounts(countryIso2),
   branches: [createBranchDraft()],
 };
 }
@@ -860,6 +703,10 @@ function setEntityCountry(entityId, rawIso2) {
       const shouldAutoSwitchPack =
         !toUpper(entity.policyPackId) ||
         toUpper(entity.policyPackId) === toUpper(previousRecommendedPackId);
+      const shouldRefreshStarterAccounts =
+        shouldAutoSwitchPack ||
+        !Array.isArray(entity.defaultAccounts) ||
+        entity.defaultAccounts.length === 0;
       return {
         ...entity,
         countryIso2: nextCountryIso2,
@@ -869,10 +716,9 @@ function setEntityCountry(entityId, rawIso2) {
         functionalCurrencyCode: countryRow?.default_currency_code
           ? toUpper(countryRow.default_currency_code)
           : entity.functionalCurrencyCode,
-        defaultAccounts:
-          entity.defaultAccounts && entity.defaultAccounts.length > 0
-            ? entity.defaultAccounts
-            : getCountryStarterAccounts(nextCountryIso2),
+        defaultAccounts: shouldRefreshStarterAccounts
+          ? getCountryStarterAccounts(nextCountryIso2)
+          : entity.defaultAccounts,
       };
     }),
   }));
