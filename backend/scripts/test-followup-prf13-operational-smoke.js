@@ -786,7 +786,7 @@ async function ensureTaxPipelineFixture({
        AND module_code = 'CARI'
        AND document_type = 'INVOICE'
        AND counterparty_type = 'CUSTOMER'
-     ORDER BY id DESC
+     ORDER BY apply_priority ASC, id ASC
      LIMIT 1`,
     [tenantId, regimeId, taxCodeId]
   );
@@ -801,12 +801,13 @@ async function ensureTaxPipelineFixture({
          document_type,
          counterparty_type,
          apply_priority,
+         threshold_amount,
          formula_json,
          status,
          effective_from,
          effective_to
        )
-       VALUES (?, ?, ?, 'CARI', 'INVOICE', 'CUSTOMER', 1, JSON_OBJECT('type', 'RATE'), 'ACTIVE', '2000-01-01', NULL)`,
+       VALUES (?, ?, ?, 'CARI', 'INVOICE', 'CUSTOMER', 1, NULL, JSON_OBJECT('type', 'RATE'), 'ACTIVE', '2000-01-01', NULL)`,
       [tenantId, regimeId, taxCodeId]
     );
   } else {
@@ -815,6 +816,7 @@ async function ensureTaxPipelineFixture({
        SET status = 'ACTIVE',
            effective_from = '2000-01-01',
            effective_to = NULL,
+           threshold_amount = NULL,
            formula_json = JSON_OBJECT('type', 'RATE')
        WHERE tenant_id = ?
          AND id = ?`,
