@@ -106,20 +106,25 @@ Beklenen: OU listeleri calisma baglaminda gelir.
 4. Her legal entity icin fiscal calendar, fiscal period ve book baglantilarini tamamla.
 Beklenen: `2026-01`, `2026-02`, `2026-03` periodleri `OPEN` olur.
 
-5. `Kur Yonetimi` ekraninda AFN/USD icin gunluk kurlar ve en az bir ay sonu kuru gir.
+5. `Workflow Kurulumu` ekraninda tenant readiness'i yesile cekmek icin asgari su iki workflow'u kur:
+- `PERIOD_CLOSE` icin aktif definition + steps + assignment
+- `CONSOLIDATION_RUN` icin aktif definition + steps + assignment
+- ilk geciste scope olarak `TENANT` fallback veya uygun ise `GROUP` kullan
+Beklenen: `Close/consolidation workflow readiness` iki legal entity icin de yesile doner ve readiness kartindaki `minimum 2` karsilanir.
+
+Not:
+- workflow readiness sayaci legal entity bazli calisir
+- iki legal entity varsa `0 / minimum 2` gormek normaldir
+- her legal entity icin hem `PERIOD_CLOSE` hem `CONSOLIDATION_RUN` cozulebilmelidir
+
+6. `Kur Yonetimi` ekraninda AFN/USD icin gunluk kurlar ve en az bir ay sonu kuru gir.
 Beklenen: cari, cash FX ve revaluation akislari kur eksigi almadan calisabilir.
 
-6. `Hesap Plani Ayarlari` ekraninda GL hesaplarini, purpose mappinglerini ve retained earnings hesabini tanimla.
+7. `Hesap Plani Ayarlari` ekraninda GL hesaplarini, purpose mappinglerini ve retained earnings hesabini tanimla.
 Beklenen: journal, revrec, settlement, year-end ve payroll postingleri setup hatasi almadan ilerler.
 
-7. `Vergi Kurulumu` ekraninda en az bir satis ve bir alim vergi setup'i yap.
+8. `Vergi Kurulumu` ekraninda en az bir satis ve bir alim vergi setup'i yap.
 Beklenen: cari belge ve ticari akislarda vergi baglamli test hazir olur.
-
-8. `Workflow Kurulumu` ekraninda su akislardan en az birinde onay zorunlulugu tanimla:
-- banka export
-- payroll close
-- consolidation run finalize/execute
-Beklenen: sadece CRUD degil, kontrol akisi da test edilir.
 
 9. `Roller ve Yetkiler` ile finance operator, checker ve auditor rol setlerini ayir.
 Beklenen: eksik yetki ve maker-checker denemeleri icin kullanilacak en az 3 kullanici olur.
