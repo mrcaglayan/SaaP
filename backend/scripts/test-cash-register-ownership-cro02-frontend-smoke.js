@@ -20,8 +20,8 @@ async function main() {
     "CashRegistersPage should define explicit ownership scope options"
   );
   assert(
-    page.includes('ownershipScope: "CENTRAL"'),
-    "CashRegistersPage empty form should default ownershipScope to CENTRAL"
+    page.includes('ownershipScope: "OPERATING_UNIT"'),
+    "CashRegistersPage empty form should default ownershipScope to OPERATING_UNIT"
   );
   assert(
     page.includes("normalizeOwnershipScope("),

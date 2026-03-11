@@ -105,6 +105,14 @@ function formatIsoDate(date) {
   return date.toISOString().slice(0, 10);
 }
 
+function formatLocalDate(date) {
+  const value = date instanceof Date && !Number.isNaN(date.getTime()) ? date : new Date();
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const day = String(value.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 function addDays(date, days) {
   const next = new Date(date.getTime());
   next.setUTCDate(next.getUTCDate() + Number(days || 0));
@@ -118,7 +126,7 @@ function normalizeWindow(filters = {}, defaultDays = DEFAULT_DASHBOARD_DAYS) {
 
   let dateFrom = parseIsoDate(filters.dateFrom, "dateFrom");
   let dateTo = parseIsoDate(filters.dateTo, "dateTo");
-  const today = parseIsoDate(formatIsoDate(new Date()), "today");
+  const today = parseIsoDate(formatLocalDate(new Date()), "today");
 
   if (!dateFrom && !dateTo) {
     dateTo = today;

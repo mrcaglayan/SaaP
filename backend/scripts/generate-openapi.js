@@ -3229,6 +3229,72 @@ const spec = {
         ),
       },
     },
+    "/api/v1/rbac/raw-audit-logs": {
+      get: {
+        tags: ["Security"],
+        operationId: "listRawAuditLogs",
+        summary: "List raw audit logs",
+        parameters: [
+          queryParamInt("tenantId", false, "Tenant identifier"),
+          queryParamInt("page", false, "Page number"),
+          queryParamInt("pageSize", false, "Page size"),
+          queryParamInt("scopeId", false, "Scope identifier"),
+          queryParamInt("userId", false, "Audit actor user identifier"),
+          {
+            in: "query",
+            name: "scopeType",
+            required: false,
+            schema: {
+              type: "string",
+              enum: [
+                "TENANT",
+                "GROUP",
+                "COUNTRY",
+                "LEGAL_ENTITY",
+                "OPERATING_UNIT",
+              ],
+            },
+          },
+          {
+            in: "query",
+            name: "action",
+            required: false,
+            schema: { type: "string" },
+          },
+          {
+            in: "query",
+            name: "resourceType",
+            required: false,
+            schema: { type: "string" },
+          },
+          {
+            in: "query",
+            name: "resourceId",
+            required: false,
+            schema: { type: "string" },
+          },
+          {
+            in: "query",
+            name: "requestId",
+            required: false,
+            schema: { type: "string" },
+          },
+          {
+            in: "query",
+            name: "createdFrom",
+            required: false,
+            schema: { type: "string", format: "date-time" },
+          },
+          {
+            in: "query",
+            name: "createdTo",
+            required: false,
+            schema: { type: "string", format: "date-time" },
+          },
+        ],
+        responses: withStandardResponses("200", "Raw audit log list"),
+      },
+    },
     "/api/v1/gl/books": {
       get: {
         tags: ["GL"],

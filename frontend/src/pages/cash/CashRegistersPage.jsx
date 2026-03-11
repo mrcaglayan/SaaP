@@ -30,7 +30,7 @@ const EMPTY_FORM = {
   registerType: "DRAWER",
   sessionMode: "",
   legalEntityId: "",
-  ownershipScope: "CENTRAL",
+  ownershipScope: "OPERATING_UNIT",
   operatingUnitId: "",
   accountId: "",
   currencyCode: "",
