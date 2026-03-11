@@ -384,6 +384,7 @@ export const messages = {
         "/app/ayarlar/rbac/user-assignments": "Kullanici Rol Atamalari",
         "/app/ayarlar/rbac/scope-assignments": "Scope Atamalari",
         "/app/ayarlar/rbac/audit-logs": "RBAC Denetim Loglari",
+        "/app/ayarlar/rbac/raw-audit-logs": "Ham Denetim Loglari",
         "/app/ayarlar/rbac/sensitive-data-audit":
           "Hassas Veri Denetim Kayitlari",
         "/app/ayarlar/sirket-ayarlari": "Sirket Ayarlari",
@@ -857,6 +858,47 @@ export const messages = {
         next: "Sonraki",
       },
     },
+    rawAuditLogs: {
+      title: "Ham Denetim Loglari",
+      subtitle:
+        "Sistemin audit_logs tablosunu okunabilir sekilde filtreleyin; aksiyon, kaynak, requestId ve payload detaylarini inceleyin.",
+      errors: {
+        loadFailed: "Ham denetim loglari yuklenemedi.",
+      },
+      filters: {
+        allScopeTypes: "Tum scope tipleri",
+        scopeId: "Scope ID",
+        userId: "Kullanici ID",
+        action: "Aksiyon ara",
+        resourceType: "Kaynak tipi ara",
+        resourceId: "Kaynak ID ara",
+        requestId: "Request ID ara",
+        apply: "Filtreleri Uygula",
+        reset: "Sifirla",
+      },
+      recordsTitle: "Ham Log Kayitlari",
+      loading: "Ham loglar yukleniyor...",
+      empty: "Ham denetim logu bulunamadi.",
+      columns: {
+        time: "Zaman",
+        action: "Aksiyon",
+        resource: "Kaynak",
+        user: "Kullanici",
+        scope: "Scope",
+        requestId: "Request ID",
+        details: "Detay",
+        ipAddress: "IP",
+        userAgent: "User agent",
+      },
+      actions: {
+        viewDetails: "Detayi gor",
+      },
+      pagination: {
+        summary: "Sayfa {{page}} / {{totalPages}} | Toplam kayit: {{total}}",
+        previous: "Onceki",
+        next: "Sonraki",
+      },
+    },
     cashControlMode: {
       title: "Kasa kontrol modu: {{mode}}",
       modes: {
@@ -891,6 +933,13 @@ export const messages = {
         update: "Guncelle",
         edit: "Duzenle",
         cancelEdit: "Duzenlemeyi Iptal Et",
+        quickSetup: "Hizli Kurulum",
+        closeQuickSetup: "Hizli Kurulumu Kapat",
+        runQuickSetup: "Secilenleri Olustur",
+        quickSetupSaving: "Hizli kurulum calisiyor...",
+        selectPreferredCurrency: "Tercih edileni sec",
+        selectAll: "Tumunu sec",
+        clearSelection: "Secimi temizle",
         activate: "Aktif Et",
         deactivate: "Pasif Et",
         refresh: "Yenile",
@@ -947,6 +996,33 @@ export const messages = {
         missingUpsertPermissionHint:
           "Alt hesap olusturmak icin gl.account.upsert yetkisi gerekir.",
       },
+      quickSetup: {
+        title: "Hizli Kasa Kurulumu",
+        description:
+          "Mevcut legal entity / sahiplik secimini kullanarak secilen para birimleri icin alt kasa hesaplari ve register kayitlari olusturun.",
+        selectedCount: "{{count}} para birimi secildi",
+        scopeLabel: "Kapsam",
+        scopeMissing: "Once kapsam secimini tamamlayin.",
+        defaultsLabel: "Kullanilacak Varsayilanlar",
+        defaultsHelp:
+          "Register type: {{registerType}} | session mode: {{sessionMode}} | status: {{status}}",
+        operatingUnitLabel: "Operating unit / sube",
+        operatingUnitHelp:
+          "Operating Unit sahipliginde quick setup'in hangi sube icin register acacagini buradan secin.",
+        noOperatingUnits:
+          "Secili legal entity icin operating unit kaydi bulunamadi. Once Organizasyon Yonetimi ekranindan sube/OU kaydi acin.",
+        parentAccountLabel: "Parent kasa hesabi",
+        parentAccountPlaceholder: "Alt hesaplarin acilacagi parent hesabi secin",
+        parentAccountHelp:
+          "Quick setup, her para birimi icin bu parent altinda postable child hesap acar ve register'i o hesaba baglar.",
+        currencyLabel: "Para birimleri",
+        blockerLegalEntity: "legal entity secin",
+        blockerOperatingUnit: "operating unit secin",
+        blockerParentAccount: "parent hesap secin",
+        blockerCurrency: "en az bir para birimi secin",
+        blockedBy: "Buton pasif: {{reasons}}",
+        readyHint: "Hazir. Secilen para birimleri icin child hesaplar ve register kayitlari olusturulacak.",
+      },
       table: {
         code: "Kod",
         name: "Ad",
@@ -999,6 +1075,17 @@ export const messages = {
         childAccountParentCoaMissing:
           "Secilen parent hesap icin coaId bulunamadi.",
         createChildAccount: "Alt hesap olusturulamadi.",
+        quickSetupRequiresAccountLookup:
+          "Hizli kurulum icin gl.account.read ve gl.account.upsert yetkileri gerekir.",
+        quickSetupParentMustBeAsset:
+          "Hizli kurulum parent hesabi aktif bir ASSET hesap olmali.",
+        quickSetupParentAlreadyRegister:
+          "Secilen parent hesap zaten bir kasa register'ina bagli. Bunun altina child acmak mevcut register yapisini bozar.",
+        quickSetupCurrencyRequired:
+          "Hizli kurulum icin en az bir para birimi secin.",
+        quickSetupNoChildCode:
+          "Secilen parent altinda yeni child hesap kodu uretilemedi.",
+        quickSetupFailed: "Hizli kurulum tamamlanamadi.",
         save: "Kasa kaydi kaydedilemedi.",
         statusUpdate: "Kasa kaydi durumu guncellenemedi.",
       },
@@ -1009,6 +1096,10 @@ export const messages = {
         accountExistsSelected: "{{code}} zaten mevcut. Mevcut hesap secildi.",
         childAccountCreatedAndSelected:
           "{{code}} alt hesabi olusturuldu (parent: {{parentCode}}) ve secildi.",
+        quickSetupCompleted:
+          "Hizli kurulum tamamlandi. {{createdCount}} register olusturuldu, {{existingCount}} mevcut register atlandi, {{accountCount}} child hesap olusturuldu.",
+        quickSetupPartial:
+          "Hizli kurulum kismen tamamlandi. {{createdCount}} register olusturuldu, {{existingCount}} mevcut register atlandi, {{accountCount}} child hesap olusturuldu, {{failedCount}} para biriminde hata var.",
       },
     },
     cashSessions: {
@@ -2187,6 +2278,7 @@ export const messages = {
         "/app/ayarlar/rbac/user-assignments": "User Role Assignments",
         "/app/ayarlar/rbac/scope-assignments": "Scope Assignments",
         "/app/ayarlar/rbac/audit-logs": "RBAC Audit Logs",
+        "/app/ayarlar/rbac/raw-audit-logs": "Raw Audit Logs",
         "/app/ayarlar/rbac/sensitive-data-audit":
           "Sensitive Data Audit",
         "/app/ayarlar/sirket-ayarlari": "Company Settings",
@@ -2660,6 +2752,47 @@ export const messages = {
         next: "Next",
       },
     },
+    rawAuditLogs: {
+      title: "Raw Audit Logs",
+      subtitle:
+        "Review the system audit_logs table in a readable format, including action, resource, request ID, and payload details.",
+      errors: {
+        loadFailed: "Failed to load raw audit logs.",
+      },
+      filters: {
+        allScopeTypes: "All scope types",
+        scopeId: "Scope ID",
+        userId: "User ID",
+        action: "Search action",
+        resourceType: "Search resource type",
+        resourceId: "Search resource ID",
+        requestId: "Search request ID",
+        apply: "Apply Filters",
+        reset: "Reset",
+      },
+      recordsTitle: "Raw Audit Records",
+      loading: "Loading raw audit logs...",
+      empty: "No raw audit logs found.",
+      columns: {
+        time: "Time",
+        action: "Action",
+        resource: "Resource",
+        user: "User",
+        scope: "Scope",
+        requestId: "Request ID",
+        details: "Details",
+        ipAddress: "IP address",
+        userAgent: "User agent",
+      },
+      actions: {
+        viewDetails: "View details",
+      },
+      pagination: {
+        summary: "Page {{page}} of {{totalPages}} | Total records: {{total}}",
+        previous: "Previous",
+        next: "Next",
+      },
+    },
     cashControlMode: {
       title: "Cash control mode: {{mode}}",
       modes: {
@@ -2694,6 +2827,13 @@ export const messages = {
         update: "Update",
         edit: "Edit",
         cancelEdit: "Cancel Edit",
+        quickSetup: "Quick Setup",
+        closeQuickSetup: "Close Quick Setup",
+        runQuickSetup: "Create Selected",
+        quickSetupSaving: "Running quick setup...",
+        selectPreferredCurrency: "Select preferred",
+        selectAll: "Select all",
+        clearSelection: "Clear selection",
         activate: "Activate",
         deactivate: "Deactivate",
         refresh: "Refresh",
@@ -2750,6 +2890,34 @@ export const messages = {
         missingUpsertPermissionHint:
           "gl.account.upsert permission is required to create child accounts.",
       },
+      quickSetup: {
+        title: "Quick Cash Setup",
+        description:
+          "Use the current legal entity / ownership selection to create child cash accounts and register definitions for the selected currencies.",
+        selectedCount: "{{count}} currencies selected",
+        scopeLabel: "Scope",
+        scopeMissing: "Complete the scope selection first.",
+        defaultsLabel: "Defaults Used",
+        defaultsHelp:
+          "Register type: {{registerType}} | session mode: {{sessionMode}} | status: {{status}}",
+        operatingUnitLabel: "Operating unit / branch",
+        operatingUnitHelp:
+          "When ownership is Operating Unit, choose the branch here for which quick setup should create registers.",
+        noOperatingUnits:
+          "No operating units exist for the selected legal entity. Create the branch / OU first in Organization Management.",
+        parentAccountLabel: "Parent cash account",
+        parentAccountPlaceholder: "Select the parent account for new child accounts",
+        parentAccountHelp:
+          "Quick setup opens one postable child account per currency under this parent and links the register to that account.",
+        currencyLabel: "Currencies",
+        blockerLegalEntity: "select legal entity",
+        blockerOperatingUnit: "select operating unit",
+        blockerParentAccount: "select parent account",
+        blockerCurrency: "select at least one currency",
+        blockedBy: "Button disabled: {{reasons}}",
+        readyHint:
+          "Ready. The selected currencies will create child accounts and cash registers.",
+      },
       table: {
         code: "Code",
         name: "Name",
@@ -2801,6 +2969,17 @@ export const messages = {
           "Child account code cannot be the same as the parent account code.",
         childAccountParentCoaMissing: "coaId could not be resolved for selected parent.",
         createChildAccount: "Failed to create child account.",
+        quickSetupRequiresAccountLookup:
+          "Quick setup requires both gl.account.read and gl.account.upsert permissions.",
+        quickSetupParentMustBeAsset:
+          "Quick setup parent account must be an active ASSET account.",
+        quickSetupParentAlreadyRegister:
+          "The selected parent account is already linked to a cash register. Creating children under it would break that register.",
+        quickSetupCurrencyRequired:
+          "Select at least one currency for quick setup.",
+        quickSetupNoChildCode:
+          "Unable to allocate a new child account code under the selected parent.",
+        quickSetupFailed: "Quick setup failed.",
         save: "Failed to save cash register.",
         statusUpdate: "Failed to update cash register status.",
       },
@@ -2811,6 +2990,10 @@ export const messages = {
         accountExistsSelected: "{{code}} already exists. Existing account selected.",
         childAccountCreatedAndSelected:
           "Child account {{code}} created under {{parentCode}} and selected.",
+        quickSetupCompleted:
+          "Quick setup completed. {{createdCount}} registers created, {{existingCount}} existing registers skipped, {{accountCount}} child accounts created.",
+        quickSetupPartial:
+          "Quick setup partially completed. {{createdCount}} registers created, {{existingCount}} existing registers skipped, {{accountCount}} child accounts created, {{failedCount}} currencies failed.",
       },
     },
     cashSessions: {

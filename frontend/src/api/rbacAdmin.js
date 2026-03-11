@@ -99,6 +99,11 @@ export async function listAuditLogs(params = {}) {
   return response.data;
 }
 
+export async function listRawAuditLogs(params = {}) {
+  const response = await api.get(`/api/v1/rbac/raw-audit-logs${toQueryString(params)}`);
+  return response.data;
+}
+
 export async function listGroupCompanies() {
   const response = await api.get("/api/v1/org/group-companies");
   return response.data;

@@ -43,6 +43,15 @@ const METHODS = ["FULL", "PROPORTIONAL", "EQUITY"];
 const DIRECTIONS = ["AUTO", "DEBIT", "CREDIT"];
 const RATE_TYPES = ["CLOSING", "SPOT", "AVERAGE"];
 const BULK_CANONICAL_RULE_TYPES = ["DESCENDANTS_OF_ACCOUNT", "CODE_PREFIX"];
+const CANONICAL_CANDIDATE_PREVIEW_FILTERS = [
+  "ALL",
+  "UNRESOLVED",
+  "MISSING_GROUP_MATCH",
+  "PARTIAL_MAPPING",
+  "AMBIGUOUS_GROUP_MATCH",
+  "SAFE",
+  "ALREADY_MAPPED",
+];
 
 function toPositiveInt(value) {
   const parsed = Number(value);
@@ -131,6 +140,48 @@ function bulkPreviewBadgeClass(classification) {
   return "bg-amber-100 text-amber-700";
 }
 
+function candidatePreviewFilterMatches(row, filterValue) {
+  const normalizedFilter = String(filterValue || "ALL").toUpperCase();
+  if (normalizedFilter === "ALL") {
+    return true;
+  }
+  const classification = String(row?.classification || "").toUpperCase();
+  if (normalizedFilter === "UNRESOLVED") {
+    return (
+      classification === "PARTIAL_MAPPING" ||
+      classification === "MISSING_GROUP_MATCH" ||
+      classification === "AMBIGUOUS_GROUP_MATCH"
+    );
+  }
+  return classification === normalizedFilter;
+}
+
+function getCandidatePreviewFilterCount(summary, filterValue) {
+  const normalizedFilter = String(filterValue || "ALL").toUpperCase();
+  if (normalizedFilter === "ALL") {
+    return Number(summary?.total || 0);
+  }
+  if (normalizedFilter === "UNRESOLVED") {
+    return Number(summary?.unresolvedCount || 0);
+  }
+  if (normalizedFilter === "SAFE") {
+    return Number(summary?.safeCount || 0);
+  }
+  if (normalizedFilter === "ALREADY_MAPPED") {
+    return Number(summary?.alreadyMappedCount || 0);
+  }
+  if (normalizedFilter === "PARTIAL_MAPPING") {
+    return Number(summary?.partialMappingCount || 0);
+  }
+  if (normalizedFilter === "MISSING_GROUP_MATCH") {
+    return Number(summary?.missingGroupMatchCount || 0);
+  }
+  if (normalizedFilter === "AMBIGUOUS_GROUP_MATCH") {
+    return Number(summary?.ambiguousGroupMatchCount || 0);
+  }
+  return 0;
+}
+
 function isLocked(status) {
   return String(status || "").toUpperCase() === "LOCKED";
 }
@@ -196,6 +247,9 @@ export default function ConsolidationSetupPage() {
   const [mappings, setMappings] = useState([]);
   const [canonicalMappings, setCanonicalMappings] = useState([]);
   const [canonicalCandidatePreview, setCanonicalCandidatePreview] = useState(null);
+  const [canonicalCandidatePreviewFilter, setCanonicalCandidatePreviewFilter] = useState(
+    "ALL"
+  );
   const [canonicalCandidateReason, setCanonicalCandidateReason] = useState("");
   const [canonicalRulePreview, setCanonicalRulePreview] = useState(null);
   const [canonicalSavedRules, setCanonicalSavedRules] = useState([]);
@@ -423,6 +477,14 @@ export default function ConsolidationSetupPage() {
       })),
     [canonicalGroupAccountOptions]
   );
+  const filteredCanonicalCandidateRows = useMemo(() => {
+    const rows = Array.isArray(canonicalCandidatePreview?.rows)
+      ? canonicalCandidatePreview.rows
+      : [];
+    return rows.filter((row) =>
+      candidatePreviewFilterMatches(row, canonicalCandidatePreviewFilter)
+    );
+  }, [canonicalCandidatePreview, canonicalCandidatePreviewFilter]);
   const canonicalRuleTypeSelectOptions = useMemo(
     () =>
       BULK_CANONICAL_RULE_TYPES.map((value) => ({
@@ -2502,13 +2564,59 @@ export default function ConsolidationSetupPage() {
                   | {l("semantic high-risk", "semantic yuksek-risk")}{" "}
                   {Number(canonicalCandidatePreview?.summary?.semanticHighRiskCount || 0)}
                 </div>
+                <div className="mt-2 flex flex-wrap gap-1">
+                  {CANONICAL_CANDIDATE_PREVIEW_FILTERS.map((filterValue) => {
+                    const isActive = canonicalCandidatePreviewFilter === filterValue;
+                    const count = getCandidatePreviewFilterCount(
+                      canonicalCandidatePreview?.summary,
+                      filterValue
+                    );
+                    const label =
+                      filterValue === "ALL"
+                        ? l("All", "Tum")
+                        : filterValue === "UNRESOLVED"
+                          ? l("Unresolved", "Cozumlenecek")
+                          : filterValue === "MISSING_GROUP_MATCH"
+                            ? l("Missing", "Eksik")
+                            : filterValue === "PARTIAL_MAPPING"
+                              ? l("Partial", "Kismi")
+                              : filterValue === "AMBIGUOUS_GROUP_MATCH"
+                                ? l("Ambiguous", "Belirsiz")
+                                : filterValue === "ALREADY_MAPPED"
+                                  ? l("Aligned", "Eslenmis")
+                                  : filterValue;
+                    return (
+                      <button
+                        key={filterValue}
+                        type="button"
+                        onClick={() => setCanonicalCandidatePreviewFilter(filterValue)}
+                        className={`rounded-full border px-2 py-1 text-[11px] font-semibold transition-colors ${
+                          isActive
+                            ? "border-cyan-300 bg-cyan-100 text-cyan-800"
+                            : "border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
+                        }`}
+                      >
+                        {label} {count}
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="mt-1 text-[11px] text-slate-600">
+                  {l("Showing", "Gosterilen")} {filteredCanonicalCandidateRows.length} /{" "}
+                  {Number(canonicalCandidatePreview?.summary?.total || 0)}
+                </div>
                 <div className="mt-2 max-h-40 overflow-auto rounded border border-slate-200 p-2">
-                  {(canonicalCandidatePreview?.rows || []).length === 0 ? (
+                  {filteredCanonicalCandidateRows.length === 0 ? (
                     <div className="text-slate-500">
-                      {l("No candidate rows", "Aday satiri yok")}
+                      {canonicalCandidatePreview?.rows?.length
+                        ? l(
+                            "No candidate rows for the selected filter.",
+                            "Secili filtre icin aday satiri yok."
+                          )
+                        : l("No candidate rows", "Aday satiri yok")}
                     </div>
                   ) : (
-                    (canonicalCandidatePreview?.rows || []).map((row) => (
+                    filteredCanonicalCandidateRows.map((row) => (
                       <div
                         key={`${row?.legalEntityId || "le"}-${row?.localAccountId || "acc"}-${row?.expectedCanonicalKey || "key"}`}
                         className="border-b border-slate-100 py-1 last:border-0"

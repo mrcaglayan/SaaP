@@ -24,6 +24,7 @@ import RolesPermissionsPage from "./pages/security/RolesPermissionsPage";
 import UserAssignmentsPage from "./pages/security/UserAssignmentsPage";
 import ScopeAssignmentsPage from "./pages/security/ScopeAssignmentsPage";
 import RbacAuditLogsPage from "./pages/security/RbacAuditLogsPage";
+import RawAuditLogsPage from "./pages/security/RawAuditLogsPage.jsx";
 import SensitiveDataAuditPage from "./pages/security/SensitiveDataAuditPage.jsx";
 import OpsDashboardPage from "./pages/OpsDashboardPage.jsx";
 import ExceptionsWorkbenchPage from "./pages/ExceptionsWorkbenchPage.jsx";
@@ -414,6 +415,11 @@ const implementedRoutes = [
     appPath: "/app/ayarlar/rbac/audit-logs",
     childPath: "ayarlar/rbac/audit-logs",
     element: <RbacAuditLogsPage />,
+  },
+  {
+    appPath: "/app/ayarlar/rbac/raw-audit-logs",
+    childPath: "ayarlar/rbac/raw-audit-logs",
+    element: <RawAuditLogsPage />,
   },
   {
     appPath: "/app/ayarlar/rbac/sensitive-data-audit",

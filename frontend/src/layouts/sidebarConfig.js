@@ -565,6 +565,12 @@ export const sidebarItems = [
         implemented: true,
       },
       {
+        label: "Ham Denetim Loglari",
+        to: "/app/ayarlar/rbac/raw-audit-logs",
+        requiredPermissions: AUDIT_LOGS_PAGE_PERMISSIONS,
+        implemented: true,
+      },
+      {
         label: "Hassas Veri Denetim Kayitlari",
         to: "/app/ayarlar/rbac/sensitive-data-audit",
         requiredPermissions: SENSITIVE_DATA_AUDIT_PAGE_PERMISSIONS,

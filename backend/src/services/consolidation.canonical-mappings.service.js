@@ -647,7 +647,7 @@ function buildCandidateReason({
     return "Deterministic one-to-one code match; safe for controlled auto-apply.";
   }
   if (classification === "ALREADY_MAPPED") {
-    return "Local and group canonical mappings are already active and aligned.";
+    return "Local and group canonical mappings are already active.";
   }
   if (classification === "MISSING_GROUP_MATCH") {
     return "No active group account has the same account code.";
@@ -716,23 +716,22 @@ function classifyCanonicalCandidate(row) {
   );
 
   let classification = "SAFE";
-  if (groupMatchCount <= 0) {
+  if (existingLocalMappingId) {
+    const localActive = existingLocalMappingStatus === "ACTIVE";
+    const groupActive = existingGroupMappingStatus === "ACTIVE";
+    const hasExistingResolvedGroup = Boolean(existingGroupAccountId);
+    const groupAligned =
+      hasExistingResolvedGroup &&
+      (!resolvedGroupAccountId || existingGroupAccountId === resolvedGroupAccountId);
+
+    classification =
+      localActive && groupActive && groupAligned
+        ? "ALREADY_MAPPED"
+        : "PARTIAL_MAPPING";
+  } else if (groupMatchCount <= 0) {
     classification = "MISSING_GROUP_MATCH";
   } else if (groupMatchCount > 1) {
     classification = "AMBIGUOUS_GROUP_MATCH";
-  } else if (existingLocalMappingId) {
-    const localMappedToExpected = existingLocalCanonicalKey === expectedCanonicalKey;
-    const localActive = existingLocalMappingStatus === "ACTIVE";
-    const groupActive = existingGroupMappingStatus === "ACTIVE";
-    const groupAligned =
-      existingGroupAccountId &&
-      resolvedGroupAccountId &&
-      existingGroupAccountId === resolvedGroupAccountId;
-
-    classification =
-      localMappedToExpected && localActive && groupActive && groupAligned
-        ? "ALREADY_MAPPED"
-        : "PARTIAL_MAPPING";
   } else if (expectedCanonicalKeyId && expectedCanonicalKeyStatus !== "ACTIVE") {
     classification = "PARTIAL_MAPPING";
   } else if (

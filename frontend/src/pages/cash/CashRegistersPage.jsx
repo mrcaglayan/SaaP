@@ -137,6 +137,16 @@ function normalizeAccountCode(value) {
   return String(value || "").trim().toUpperCase();
 }
 
+function normalizeCodeToken(value, fallback = "X", maxLength = 12) {
+  const normalized = String(value || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, maxLength);
+  return normalized || fallback;
+}
+
 function parseChildCodeSequence(code, parentCode) {
   const normalizedCode = normalizeAccountCode(code);
   const normalizedParentCode = normalizeAccountCode(parentCode);
@@ -283,6 +293,156 @@ function findBestParentAccount(candidateCode, parentAccountOptions) {
   return bestParent;
 }
 
+function findQuickSetupExistingRegister(
+  rows,
+  { legalEntityId, ownershipScope, operatingUnitId, currencyCode }
+) {
+  const normalizedOwnershipScope = normalizeOwnershipScope(
+    ownershipScope,
+    operatingUnitId
+  );
+  const normalizedCurrencyCode = normalizeAccountCode(currencyCode);
+  const normalizedOperatingUnitId =
+    normalizedOwnershipScope === "OPERATING_UNIT" ? toPositiveInt(operatingUnitId) : null;
+  return (
+    (Array.isArray(rows) ? rows : []).find((row) => {
+      const rowScope = normalizeOwnershipScope(
+        row?.ownership_scope ?? row?.ownershipScope,
+        row?.operating_unit_id ?? row?.operatingUnitId
+      );
+      if (toPositiveInt(row?.legal_entity_id ?? row?.legalEntityId) !== legalEntityId) {
+        return false;
+      }
+      if (rowScope !== normalizedOwnershipScope) {
+        return false;
+      }
+      if (rowScope === "OPERATING_UNIT") {
+        return (
+          toPositiveInt(row?.operating_unit_id ?? row?.operatingUnitId) ===
+            normalizedOperatingUnitId &&
+          normalizeAccountCode(row?.currency_code ?? row?.currencyCode) ===
+            normalizedCurrencyCode
+        );
+      }
+      return (
+        normalizeAccountCode(row?.currency_code ?? row?.currencyCode) ===
+        normalizedCurrencyCode
+      );
+    }) || null
+  );
+}
+
+function findQuickSetupExistingChildAccount(
+  rows,
+  { parentAccountId, accountName }
+) {
+  const normalizedName = String(accountName || "").trim().toUpperCase();
+  if (!parentAccountId || !normalizedName) {
+    return null;
+  }
+  return (
+    (Array.isArray(rows) ? rows : []).find((row) => {
+      if (
+        toPositiveInt(row?.parent_account_id ?? row?.parentAccountId) !== parentAccountId
+      ) {
+        return false;
+      }
+      if (!parseDbBoolean(row?.is_active)) {
+        return false;
+      }
+      return String(row?.name || "")
+        .trim()
+        .toUpperCase() === normalizedName;
+    }) || null
+  );
+}
+
+function buildQuickSetupRegisterCode({
+  legalEntity,
+  legalEntityId,
+  ownershipScope,
+  operatingUnit,
+  operatingUnitId,
+  currencyCode,
+}) {
+  const entityToken = normalizeCodeToken(
+    legalEntity?.code,
+    `LE${legalEntityId || "X"}`,
+    14
+  );
+  const scopeToken =
+    normalizeOwnershipScope(ownershipScope, operatingUnitId) === "CENTRAL"
+      ? "CTR"
+      : normalizeCodeToken(
+          operatingUnit?.code,
+          `OU${operatingUnitId || "X"}`,
+          14
+        );
+  return normalizeAccountCode(`CASH-${entityToken}-${scopeToken}-${currencyCode}`).slice(
+    0,
+    60
+  );
+}
+
+function buildUniqueQuickSetupRegisterCode(rows, baseCode) {
+  const usedCodes = new Set(
+    (Array.isArray(rows) ? rows : [])
+      .map((row) => normalizeAccountCode(row?.code))
+      .filter(Boolean)
+  );
+  const normalizedBaseCode = normalizeAccountCode(baseCode).slice(0, 60);
+  if (!normalizedBaseCode) {
+    return "";
+  }
+  if (!usedCodes.has(normalizedBaseCode)) {
+    return normalizedBaseCode;
+  }
+  for (let sequence = 2; sequence <= 999; sequence += 1) {
+    const suffix = `-${sequence}`;
+    const candidate = `${normalizedBaseCode.slice(0, 60 - suffix.length)}${suffix}`;
+    if (!usedCodes.has(candidate)) {
+      return candidate;
+    }
+  }
+  return normalizedBaseCode;
+}
+
+function buildQuickSetupRegisterName({
+  ownershipScope,
+  operatingUnit,
+  currencyCode,
+}) {
+  const scope = normalizeOwnershipScope(
+    ownershipScope,
+    operatingUnit?.id ?? operatingUnit?.operating_unit_id
+  );
+  const scopeLabel =
+    scope === "CENTRAL"
+      ? "Central Cash"
+      : `${String(operatingUnit?.code || operatingUnit?.name || "OU").trim()} Cash`;
+  return `${scopeLabel} ${normalizeAccountCode(currencyCode)}`.trim();
+}
+
+function buildQuickSetupAccountName({
+  parentAccount,
+  ownershipScope,
+  operatingUnit,
+  currencyCode,
+}) {
+  const baseName = String(parentAccount?.name || parentAccount?.code || "Cash").trim();
+  const scope = normalizeOwnershipScope(
+    ownershipScope,
+    operatingUnit?.id ?? operatingUnit?.operating_unit_id
+  );
+  const contextToken =
+    scope === "CENTRAL"
+      ? ""
+      : String(operatingUnit?.code || operatingUnit?.name || "").trim();
+  return [baseName, contextToken, normalizeAccountCode(currencyCode)]
+    .filter(Boolean)
+    .join(" ");
+}
+
 function mapRowToForm(row) {
   return {
     id: String(row?.id || ""),
@@ -356,6 +516,10 @@ export default function CashRegistersPage() {
   const [varianceLossInlineChildCode, setVarianceLossInlineChildCode] = useState("");
   const [varianceLossInlineChildName, setVarianceLossInlineChildName] = useState("");
   const [varianceLossInlineChildSaving, setVarianceLossInlineChildSaving] = useState(false);
+  const [quickSetupOpen, setQuickSetupOpen] = useState(false);
+  const [quickSetupParentAccountId, setQuickSetupParentAccountId] = useState("");
+  const [quickSetupCurrencyCodes, setQuickSetupCurrencyCodes] = useState([]);
+  const [quickSetupSaving, setQuickSetupSaving] = useState(false);
 
   useWorkingContextDefaults(setForm, CASH_REGISTER_CONTEXT_MAPPINGS, [
     form.legalEntityId,
@@ -504,6 +668,21 @@ export default function CashRegistersPage() {
       })),
     [parentAccountOptions]
   );
+  const cashParentAccountOptions = useMemo(
+    () =>
+      parentAccountOptions.filter(
+        (row) => normalizeAccountCode(row?.account_type) === "ASSET"
+      ),
+    [parentAccountOptions]
+  );
+  const cashParentAccountLookupOptions = useMemo(
+    () =>
+      cashParentAccountOptions.map((row) => ({
+        value: String(row?.id || ""),
+        label: formatAccountOptionLabel(row),
+      })),
+    [cashParentAccountOptions]
+  );
   const selectedEntityAccountByCode = useMemo(() => {
     const byCode = new Map();
     for (const row of accounts) {
@@ -605,6 +784,27 @@ export default function CashRegistersPage() {
     () => buildNextChildAccountCode(accounts, selectedVarianceLossInlineParentAccount),
     [accounts, selectedVarianceLossInlineParentAccount]
   );
+  const selectedQuickSetupParentAccount = useMemo(() => {
+    const selectedParentId = toPositiveInt(quickSetupParentAccountId);
+    if (!selectedParentId) {
+      return null;
+    }
+    return (
+      cashParentAccountOptions.find(
+        (row) => toPositiveInt(row?.id) === selectedParentId
+      ) || null
+    );
+  }, [cashParentAccountOptions, quickSetupParentAccountId]);
+  const selectedOperatingUnit = useMemo(
+    () =>
+      operatingUnits.find(
+        (row) => toPositiveInt(row?.id) === toPositiveInt(form.operatingUnitId)
+      ) || null,
+    [form.operatingUnitId, operatingUnits]
+  );
+  const hasOperatingUnitLookupOptions = operatingUnitOptions.length > 0;
+  const showOperatingUnitLookupEmptyState =
+    canReadOrgTree && selectedLegalEntityId && !hasOperatingUnitLookupOptions;
 
   const currencyOptions = useMemo(
     () =>
@@ -613,6 +813,27 @@ export default function CashRegistersPage() {
       ),
     [currencies]
   );
+  const selectedQuickSetupPreferredCurrencyCode =
+    selectedLegalEntityCountryDefaultCurrencyCode ||
+    selectedLegalEntityFunctionalCurrencyCode ||
+    String(currencyOptions[0]?.code || "").trim().toUpperCase();
+  const quickSetupBlockers = [];
+  if (!selectedLegalEntityId) {
+    quickSetupBlockers.push(t("cashRegisters.quickSetup.blockerLegalEntity"));
+  }
+  if (isOperatingUnitOwned) {
+    if (showOperatingUnitLookupEmptyState) {
+      quickSetupBlockers.push(t("cashRegisters.quickSetup.noOperatingUnits"));
+    } else if (!toPositiveInt(form.operatingUnitId)) {
+      quickSetupBlockers.push(t("cashRegisters.quickSetup.blockerOperatingUnit"));
+    }
+  }
+  if (!toPositiveInt(quickSetupParentAccountId)) {
+    quickSetupBlockers.push(t("cashRegisters.quickSetup.blockerParentAccount"));
+  }
+  if (quickSetupCurrencyCodes.length === 0) {
+    quickSetupBlockers.push(t("cashRegisters.quickSetup.blockerCurrency"));
+  }
 
   useEffect(() => {
     if (form.id) {
@@ -675,6 +896,10 @@ export default function CashRegistersPage() {
       setForm((prev) => ({ ...prev, operatingUnitId: "" }));
     }
   }, [form.operatingUnitId, isOperatingUnitOwned]);
+
+  useEffect(() => {
+    setQuickSetupParentAccountId("");
+  }, [selectedLegalEntityId]);
 
   useEffect(() => {
     if (!isOperatingUnitOwned) {
@@ -1005,6 +1230,9 @@ export default function CashRegistersPage() {
     setVarianceLossInlineChildParentAccountId("");
     setVarianceLossInlineChildCode("");
     setVarianceLossInlineChildName("");
+    setQuickSetupOpen(false);
+    setQuickSetupParentAccountId("");
+    setQuickSetupCurrencyCodes([]);
   }
 
   function handleEdit(row) {
@@ -1193,6 +1421,257 @@ export default function CashRegistersPage() {
         setVarianceLossInlineChildName("");
       },
     });
+  }
+
+  function toggleQuickSetupCurrency(currencyCode) {
+    const normalizedCurrencyCode = normalizeAccountCode(currencyCode);
+    if (!normalizedCurrencyCode) {
+      return;
+    }
+    setQuickSetupCurrencyCodes((prev) => {
+      const alreadySelected = prev.includes(normalizedCurrencyCode);
+      if (alreadySelected) {
+        return prev.filter((row) => row !== normalizedCurrencyCode);
+      }
+      return [...prev, normalizedCurrencyCode];
+    });
+  }
+
+  async function handleQuickSetupSubmit() {
+    if (!canUpsertRegisters) {
+      setError(t("cashRegisters.errors.missingUpsertPermission"));
+      return;
+    }
+    if (!canUpsertAccounts || !canReadAccounts) {
+      setError(t("cashRegisters.errors.quickSetupRequiresAccountLookup"));
+      return;
+    }
+
+    const legalEntityId = selectedLegalEntityId;
+    const operatingUnitId = isOperatingUnitOwned ? toPositiveInt(form.operatingUnitId) : null;
+    const parentAccountId = toPositiveInt(quickSetupParentAccountId);
+    const parentAccount = selectedQuickSetupParentAccount;
+    const normalizedCurrencyCodes = [...new Set(quickSetupCurrencyCodes)]
+      .map((row) => normalizeAccountCode(row))
+      .filter(Boolean);
+
+    if (!legalEntityId) {
+      setError(t("cashRegisters.errors.requiredEntityAccount"));
+      return;
+    }
+    if (isOperatingUnitOwned && !operatingUnitId) {
+      setError(t("cashRegisters.errors.operatingUnitRequiredForOwnership"));
+      return;
+    }
+    if (!parentAccountId || !parentAccount) {
+      setError(t("cashRegisters.errors.parentAccountRequired"));
+      return;
+    }
+    if (normalizeAccountCode(parentAccount?.account_type) !== "ASSET") {
+      setError(t("cashRegisters.errors.quickSetupParentMustBeAsset"));
+      return;
+    }
+    if (
+      rows.some((row) => toPositiveInt(row?.account_id ?? row?.accountId) === parentAccountId)
+    ) {
+      setError(t("cashRegisters.errors.quickSetupParentAlreadyRegister"));
+      return;
+    }
+    if (normalizedCurrencyCodes.length === 0) {
+      setError(t("cashRegisters.errors.quickSetupCurrencyRequired"));
+      return;
+    }
+
+    const coaId = toPositiveInt(parentAccount?.coa_id ?? parentAccount?.coaId);
+    if (!coaId) {
+      setError(t("cashRegisters.errors.childAccountParentCoaMissing"));
+      return;
+    }
+
+    setQuickSetupSaving(true);
+    setError("");
+    setMessage("");
+
+    let workingAccounts = Array.isArray(accounts) ? [...accounts] : [];
+    let workingRegisters = Array.isArray(rows) ? [...rows] : [];
+    let createdRegisterCount = 0;
+    let existingRegisterCount = 0;
+    let createdAccountCount = 0;
+    const failures = [];
+
+    const quickSetupRegisterType = String(form.registerType || "DRAWER").toUpperCase();
+    const quickSetupSessionMode = String(form.sessionMode || "REQUIRED").toUpperCase();
+    const quickSetupStatus = String(form.status || "ACTIVE").toUpperCase();
+    const accountType =
+      normalizeAccountCode(parentAccount?.account_type ?? parentAccount?.accountType) ||
+      "ASSET";
+    const normalSide =
+      normalizeAccountCode(parentAccount?.normal_side ?? parentAccount?.normalSide) ||
+      "DEBIT";
+
+    for (const currencyCode of normalizedCurrencyCodes) {
+      try {
+        const existingRegister = findQuickSetupExistingRegister(workingRegisters, {
+          legalEntityId,
+          ownershipScope: normalizedOwnershipScope,
+          operatingUnitId,
+          currencyCode,
+        });
+        if (existingRegister) {
+          existingRegisterCount += 1;
+          continue;
+        }
+
+        const accountName = buildQuickSetupAccountName({
+          parentAccount,
+          ownershipScope: normalizedOwnershipScope,
+          operatingUnit: selectedOperatingUnit,
+          currencyCode,
+        });
+
+        let registerAccount =
+          findQuickSetupExistingChildAccount(workingAccounts, {
+            parentAccountId,
+            accountName,
+          }) || null;
+        let registerAccountId = toPositiveInt(registerAccount?.id);
+
+        if (!registerAccountId) {
+          const childCode = buildNextChildAccountCode(workingAccounts, parentAccount);
+          if (!childCode) {
+            throw new Error(t("cashRegisters.errors.quickSetupNoChildCode"));
+          }
+          const accountResponse = await upsertAccount({
+            coaId,
+            code: childCode,
+            name: accountName,
+            accountType,
+            normalSide,
+            allowPosting: true,
+            parentAccountId,
+          });
+          registerAccountId = toPositiveInt(accountResponse?.id ?? accountResponse?.row?.id);
+          if (!registerAccountId) {
+            throw new Error(t("cashRegisters.errors.createChildAccount"));
+          }
+          registerAccount = {
+            id: registerAccountId,
+            coa_id: coaId,
+            code: childCode,
+            name: accountName,
+            account_type: accountType,
+            normal_side: normalSide,
+            allow_posting: true,
+            parent_account_id: parentAccountId,
+            is_active: true,
+            legal_entity_id: legalEntityId,
+          };
+          workingAccounts = [
+            ...workingAccounts.filter(
+              (row) => toPositiveInt(row?.id) !== registerAccountId
+            ),
+            registerAccount,
+          ];
+          createdAccountCount += 1;
+        }
+
+        const baseRegisterCode = buildQuickSetupRegisterCode({
+          legalEntity: selectedLegalEntity,
+          legalEntityId,
+          ownershipScope: normalizedOwnershipScope,
+          operatingUnit: selectedOperatingUnit,
+          operatingUnitId,
+          currencyCode,
+        });
+        const registerCode = buildUniqueQuickSetupRegisterCode(
+          workingRegisters,
+          baseRegisterCode
+        );
+        const registerPayload = {
+          legalEntityId,
+          ownershipScope: normalizedOwnershipScope,
+          operatingUnitId,
+          accountId: registerAccountId,
+          code: registerCode,
+          name: buildQuickSetupRegisterName({
+            ownershipScope: normalizedOwnershipScope,
+            operatingUnit: selectedOperatingUnit,
+            currencyCode,
+          }),
+          registerType: quickSetupRegisterType,
+          sessionMode: quickSetupSessionMode,
+          currencyCode,
+          status: quickSetupStatus,
+          allowNegative: Boolean(form.allowNegative),
+          varianceGainAccountId: toPositiveInt(form.varianceGainAccountId),
+          varianceLossAccountId: toPositiveInt(form.varianceLossAccountId),
+          maxTxnAmount: toOptionalAmount(form.maxTxnAmount),
+          requiresApprovalOverAmount: toOptionalAmount(form.requiresApprovalOverAmount),
+        };
+
+        if (
+          Number.isNaN(registerPayload.maxTxnAmount) ||
+          Number.isNaN(registerPayload.requiresApprovalOverAmount)
+        ) {
+          throw new Error(t("cashRegisters.errors.invalidAmount"));
+        }
+
+        const registerResponse = await upsertCashRegister(registerPayload);
+        const savedRegister = registerResponse?.row || {
+          ...registerPayload,
+          ownership_scope: registerPayload.ownershipScope,
+          operating_unit_id: registerPayload.operatingUnitId,
+          currency_code: registerPayload.currencyCode,
+          account_id: registerPayload.accountId,
+          legal_entity_id: registerPayload.legalEntityId,
+        };
+        workingRegisters = [
+          savedRegister,
+          ...workingRegisters.filter(
+            (row) =>
+              toPositiveInt(row?.id) !== toPositiveInt(savedRegister?.id) &&
+              normalizeAccountCode(row?.code) !== registerCode
+          ),
+        ];
+        createdRegisterCount += 1;
+      } catch (err) {
+        failures.push(
+          `${currencyCode}: ${
+            err?.response?.data?.message ||
+            err?.message ||
+            t("cashRegisters.errors.quickSetupFailed")
+          }`
+        );
+      }
+    }
+
+    await Promise.all([loadRegisters(), loadLookups()]);
+
+    if (createdRegisterCount || existingRegisterCount) {
+      setMessage(
+        failures.length > 0
+          ? t("cashRegisters.messages.quickSetupPartial", {
+              createdCount: createdRegisterCount,
+              existingCount: existingRegisterCount,
+              accountCount: createdAccountCount,
+              failedCount: failures.length,
+            })
+          : t("cashRegisters.messages.quickSetupCompleted", {
+              createdCount: createdRegisterCount,
+              existingCount: existingRegisterCount,
+              accountCount: createdAccountCount,
+            })
+      );
+    }
+
+    if (failures.length > 0) {
+      setError(failures.join(" "));
+    } else {
+      setQuickSetupCurrencyCodes([]);
+      setQuickSetupOpen(false);
+    }
+
+    setQuickSetupSaving(false);
   }
 
   async function handleSubmit(event) {
@@ -1444,16 +1923,253 @@ export default function CashRegistersPage() {
                 ? t("cashRegisters.sections.edit")
                 : t("cashRegisters.sections.create")}
             </h2>
-            {form.id ? (
-              <button
-                type="button"
-                onClick={resetForm}
-                className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-              >
-                {t("cashRegisters.actions.cancelEdit")}
-              </button>
-            ) : null}
+            <div className="flex items-center gap-2">
+              {!form.id && canReadAccounts && canUpsertAccounts ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!quickSetupOpen && !quickSetupCurrencyCodes.length) {
+                      setQuickSetupCurrencyCodes(
+                        selectedQuickSetupPreferredCurrencyCode
+                          ? [selectedQuickSetupPreferredCurrencyCode]
+                          : []
+                      );
+                    }
+                    setQuickSetupOpen((prev) => !prev);
+                  }}
+                  className="rounded-lg border border-cyan-300 px-3 py-1.5 text-xs font-semibold text-cyan-800 hover:bg-cyan-50"
+                >
+                  {quickSetupOpen
+                    ? t("cashRegisters.actions.closeQuickSetup")
+                    : t("cashRegisters.actions.quickSetup")}
+                </button>
+              ) : null}
+              {form.id ? (
+                <button
+                  type="button"
+                  onClick={resetForm}
+                  className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  {t("cashRegisters.actions.cancelEdit")}
+                </button>
+              ) : null}
+            </div>
           </div>
+
+          {quickSetupOpen ? (
+            <div className="mb-4 space-y-3 rounded-xl border border-cyan-200 bg-cyan-50 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h3 className="text-sm font-semibold text-cyan-900">
+                    {t("cashRegisters.quickSetup.title")}
+                  </h3>
+                  <p className="mt-1 text-xs text-cyan-800">
+                    {t("cashRegisters.quickSetup.description")}
+                  </p>
+                </div>
+                <div className="rounded-full bg-white px-3 py-1 text-[11px] font-semibold text-cyan-800">
+                  {t("cashRegisters.quickSetup.selectedCount", {
+                    count: quickSetupCurrencyCodes.length,
+                  })}
+                </div>
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="rounded-lg border border-cyan-200 bg-white px-3 py-2">
+                  <div className="text-[11px] font-semibold uppercase tracking-wide text-cyan-700">
+                    {t("cashRegisters.quickSetup.scopeLabel")}
+                  </div>
+                  <div className="mt-1 text-sm text-slate-700">
+                    {selectedLegalEntity
+                      ? `${selectedLegalEntity.code} - ${selectedLegalEntity.name}`
+                      : t("cashRegisters.quickSetup.scopeMissing")}
+                  </div>
+                  <div className="mt-1 text-xs text-slate-500">
+                    {normalizedOwnershipScope === "CENTRAL"
+                      ? t("cashRegisters.values.ownershipCentral")
+                      : selectedOperatingUnit
+                        ? `${t("cashRegisters.values.ownershipOperatingUnit")} | ${
+                            selectedOperatingUnit.code
+                          } - ${selectedOperatingUnit.name}`
+                        : t("cashRegisters.quickSetup.scopeMissing")}
+                  </div>
+                </div>
+
+                <div className="rounded-lg border border-cyan-200 bg-white px-3 py-2">
+                  <div className="text-[11px] font-semibold uppercase tracking-wide text-cyan-700">
+                    {t("cashRegisters.quickSetup.defaultsLabel")}
+                  </div>
+                  <div className="mt-1 text-xs text-slate-600">
+                    {t("cashRegisters.quickSetup.defaultsHelp", {
+                      registerType: form.registerType || "DRAWER",
+                      sessionMode: form.sessionMode || "REQUIRED",
+                      status: form.status || "ACTIVE",
+                    })}
+                  </div>
+                </div>
+              </div>
+
+              {isOperatingUnitOwned ? (
+                <div className="space-y-2">
+                  <label className="text-xs font-semibold uppercase tracking-wide text-cyan-800">
+                    {t("cashRegisters.quickSetup.operatingUnitLabel")}
+                  </label>
+                  {hasOperatingUnitLookupOptions ? (
+                    <select
+                      value={form.operatingUnitId}
+                      onChange={(event) =>
+                        setForm((prev) => ({ ...prev, operatingUnitId: event.target.value }))
+                      }
+                      className="w-full rounded-lg border border-cyan-300 bg-white px-3 py-2 text-sm"
+                      required
+                    >
+                      <option value="">
+                        {t("cashRegisters.placeholders.operatingUnit")}
+                      </option>
+                      {operatingUnitOptions.map((unit) => (
+                        <option key={unit.id} value={unit.id}>
+                          {unit.code} - {unit.name}
+                        </option>
+                      ))}
+                    </select>
+                  ) : showOperatingUnitLookupEmptyState ? (
+                    <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                      {t("cashRegisters.quickSetup.noOperatingUnits")}
+                    </div>
+                  ) : (
+                    <input
+                      type="number"
+                      min={1}
+                      value={form.operatingUnitId}
+                      onChange={(event) =>
+                        setForm((prev) => ({ ...prev, operatingUnitId: event.target.value }))
+                      }
+                      className="w-full rounded-lg border border-cyan-300 bg-white px-3 py-2 text-sm"
+                      placeholder={t("cashRegisters.form.operatingUnitIdRequired")}
+                      required
+                    />
+                  )}
+                  <p className="text-[11px] text-cyan-800">
+                    {t("cashRegisters.quickSetup.operatingUnitHelp")}
+                  </p>
+                </div>
+              ) : null}
+
+              <div className="space-y-2">
+                <label className="text-xs font-semibold uppercase tracking-wide text-cyan-800">
+                  {t("cashRegisters.quickSetup.parentAccountLabel")}
+                </label>
+                <Combobox
+                  value={quickSetupParentAccountId || null}
+                  options={cashParentAccountLookupOptions}
+                  disabled={quickSetupSaving || !selectedLegalEntityId}
+                  placeholder={
+                    selectedLegalEntityId
+                      ? t("cashRegisters.quickSetup.parentAccountPlaceholder")
+                      : t("cashRegisters.accountPicker.selectLegalEntityFirst")
+                  }
+                  noOptionsText={t("cashRegisters.accountPicker.parentNoOptions")}
+                  onChange={(nextValue) =>
+                    setQuickSetupParentAccountId(nextValue ? String(nextValue) : "")
+                  }
+                />
+                <p className="text-[11px] text-cyan-800">
+                  {t("cashRegisters.quickSetup.parentAccountHelp")}
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <label className="text-xs font-semibold uppercase tracking-wide text-cyan-800">
+                    {t("cashRegisters.quickSetup.currencyLabel")}
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setQuickSetupCurrencyCodes(
+                          selectedQuickSetupPreferredCurrencyCode
+                            ? [selectedQuickSetupPreferredCurrencyCode]
+                            : []
+                        )
+                      }
+                      className="rounded border border-cyan-300 bg-white px-2 py-1 text-[11px] font-semibold text-cyan-800 hover:bg-cyan-100"
+                    >
+                      {t("cashRegisters.actions.selectPreferredCurrency")}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setQuickSetupCurrencyCodes(
+                          currencyOptions.map((row) => normalizeAccountCode(row?.code))
+                        )
+                      }
+                      className="rounded border border-cyan-300 bg-white px-2 py-1 text-[11px] font-semibold text-cyan-800 hover:bg-cyan-100"
+                    >
+                      {t("cashRegisters.actions.selectAll")}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setQuickSetupCurrencyCodes([])}
+                      className="rounded border border-cyan-300 bg-white px-2 py-1 text-[11px] font-semibold text-cyan-800 hover:bg-cyan-100"
+                    >
+                      {t("cashRegisters.actions.clearSelection")}
+                    </button>
+                  </div>
+                </div>
+                <div className="grid max-h-56 gap-2 overflow-y-auto rounded-lg border border-cyan-200 bg-white p-3 sm:grid-cols-2 lg:grid-cols-3">
+                  {currencyOptions.map((currency) => {
+                    const currencyCode = normalizeAccountCode(currency?.code);
+                    const selected = quickSetupCurrencyCodes.includes(currencyCode);
+                    return (
+                      <label
+                        key={currencyCode}
+                        className={[
+                          "flex cursor-pointer items-start gap-2 rounded-lg border px-3 py-2 text-xs",
+                          selected
+                            ? "border-cyan-500 bg-cyan-100 text-cyan-900"
+                            : "border-slate-200 bg-slate-50 text-slate-700",
+                        ].join(" ")}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selected}
+                          onChange={() => toggleQuickSetupCurrency(currencyCode)}
+                          className="mt-0.5"
+                        />
+                        <span>
+                          <span className="block font-semibold">{currencyCode}</span>
+                          <span className="block text-[11px] text-slate-500">
+                            {currency?.name || currencyCode}
+                          </span>
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <p className="mr-auto text-[11px] text-cyan-900">
+                {quickSetupBlockers.length > 0
+                    ? t("cashRegisters.quickSetup.blockedBy", {
+                        reasons: quickSetupBlockers.join(" | "),
+                      })
+                    : t("cashRegisters.quickSetup.readyHint")}
+                </p>
+                <button
+                  type="button"
+                  onClick={handleQuickSetupSubmit}
+                  disabled={quickSetupSaving || quickSetupBlockers.length > 0}
+                  className="rounded-lg bg-cyan-700 px-3 py-2 text-xs font-semibold text-white hover:bg-cyan-800 disabled:opacity-60"
+                >
+                  {quickSetupSaving
+                    ? t("cashRegisters.actions.quickSetupSaving")
+                    : t("cashRegisters.actions.runQuickSetup")}
+                </button>
+              </div>
+            </div>
+          ) : null}
 
           <form onSubmit={handleSubmit} className="grid gap-2 md:grid-cols-3">
             <input
@@ -1619,7 +2335,7 @@ export default function CashRegistersPage() {
             )}
 
             {isOperatingUnitOwned ? (
-              operatingUnitOptions.length > 0 ? (
+              hasOperatingUnitLookupOptions ? (
                 <select
                   value={form.operatingUnitId}
                   onChange={(event) =>
@@ -1635,6 +2351,10 @@ export default function CashRegistersPage() {
                     </option>
                   ))}
                 </select>
+              ) : showOperatingUnitLookupEmptyState ? (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                  {t("cashRegisters.quickSetup.noOperatingUnits")}
+                </div>
               ) : (
                 <input
                   type="number"

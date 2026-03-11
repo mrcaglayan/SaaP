@@ -206,4 +206,138 @@ router.get(
   })
 );
 
+router.get(
+  "/raw-audit-logs",
+  requirePermission("security.audit.read"),
+  asyncHandler(async (req, res) => {
+    const tenantId = resolveTenantId(req);
+    if (!tenantId) {
+      throw badRequest("tenantId is required");
+    }
+
+    const { page, pageSize, offset } = parsePagination(req.query);
+    const scopeType =
+      normalizeScopeTypeOrNull(req.query.scopeType) ||
+      normalizeScopeTypeOrNull(req.query.orgScopeType, "orgScopeType");
+    const scopeId = parsePositiveInt(req.query.scopeId || req.query.orgScopeId);
+    const userId = parsePositiveInt(req.query.userId);
+    const action = req.query.action ? String(req.query.action).trim() : null;
+    const resourceType = req.query.resourceType
+      ? String(req.query.resourceType).trim()
+      : null;
+    const resourceId = req.query.resourceId
+      ? String(req.query.resourceId).trim()
+      : null;
+    const requestId = req.query.requestId
+      ? String(req.query.requestId).trim()
+      : null;
+    const createdFrom = req.query.createdFrom
+      ? String(req.query.createdFrom).trim()
+      : null;
+    const createdTo = req.query.createdTo
+      ? String(req.query.createdTo).trim()
+      : null;
+
+    const conditions = ["l.tenant_id = ?"];
+    const params = [tenantId];
+
+    const scopeContext = getScopeContext(req);
+    conditions.push(buildScopedVisibilityCondition(scopeContext, params));
+
+    if (scopeType) {
+      conditions.push("l.scope_type = ?");
+      params.push(scopeType);
+    }
+    if (scopeId) {
+      conditions.push("l.scope_id = ?");
+      params.push(scopeId);
+    }
+    if (userId) {
+      conditions.push("l.user_id = ?");
+      params.push(userId);
+    }
+    if (action) {
+      conditions.push("l.action LIKE ?");
+      params.push(`%${action}%`);
+    }
+    if (resourceType) {
+      conditions.push("l.resource_type LIKE ?");
+      params.push(`%${resourceType}%`);
+    }
+    if (resourceId) {
+      conditions.push("l.resource_id LIKE ?");
+      params.push(`%${resourceId}%`);
+    }
+    if (requestId) {
+      conditions.push("l.request_id LIKE ?");
+      params.push(`%${requestId}%`);
+    }
+    if (createdFrom) {
+      conditions.push("l.created_at >= ?");
+      params.push(createdFrom);
+    }
+    if (createdTo) {
+      conditions.push("l.created_at <= ?");
+      params.push(createdTo);
+    }
+
+    const whereClause = conditions.join(" AND ");
+    const countResult = await query(
+      `SELECT COUNT(*) AS total
+       FROM audit_logs l
+       WHERE ${whereClause}`,
+      params
+    );
+    const total = Number(countResult.rows[0]?.total || 0);
+
+    const rowsResult = await query(
+      `SELECT
+         l.id,
+         l.tenant_id,
+         l.user_id,
+         u.email AS user_email,
+         u.name AS user_name,
+         l.action,
+         l.resource_type,
+         l.resource_id,
+         l.scope_type,
+         l.scope_id,
+         l.request_id,
+         l.ip_address,
+         l.user_agent,
+         l.payload_json,
+         l.created_at
+       FROM audit_logs l
+       LEFT JOIN users u ON u.id = l.user_id
+       WHERE ${whereClause}
+       ORDER BY l.created_at DESC, l.id DESC
+       LIMIT ${pageSize}
+       OFFSET ${offset}`,
+      params
+    );
+
+    return res.json({
+      tenantId,
+      filters: {
+        scopeType: scopeType || null,
+        scopeId: scopeId || null,
+        userId: userId || null,
+        action,
+        resourceType,
+        resourceId,
+        requestId,
+        createdFrom,
+        createdTo,
+      },
+      pagination: {
+        page,
+        pageSize,
+        total,
+        totalPages: total > 0 ? Math.ceil(total / pageSize) : 0,
+      },
+      rows: rowsResult.rows,
+    });
+  })
+);
+
 export default router;
