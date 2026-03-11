@@ -1,0 +1,134 @@
+{
+  "meta": {
+    "document": "tam-kapsam-finans-monografisi",
+    "requiredFeatureCode": "FEATURE_WORKFLOW_CLOSE_CONSOLIDATION_V1",
+    "effectiveFrom": "2026-01-01",
+    "recommendedAssignmentMode": "TENANT_FALLBACK",
+    "notes": [
+      "Create definitions first, then replace assignment workflowDefinitionId placeholders with the returned IDs.",
+      "TENANT fallback is the safest first pass for readiness across both legal entities.",
+      "Do not start with OPERATING_UNIT-only assignments for PERIOD_CLOSE and CONSOLIDATION_RUN.",
+      "Maker-checker stays enabled because allowSelfApprove is false in all steps."
+    ]
+  },
+  "definitions": [
+    {
+      "code": "MONO_FIN_PERIOD_CLOSE_V1",
+      "name": "Tam Kapsam Finans Period Close Approval",
+      "processType": "PERIOD_CLOSE",
+      "isActive": true,
+      "versionNo": 1
+    },
+    {
+      "code": "MONO_FIN_CONSOLIDATION_RUN_V1",
+      "name": "Tam Kapsam Finans Consolidation Approval",
+      "processType": "CONSOLIDATION_RUN",
+      "isActive": true,
+      "versionNo": 1
+    }
+  ],
+  "stepsByDefinitionCode": {
+    "MONO_FIN_PERIOD_CLOSE_V1": {
+      "steps": [
+        {
+          "stepNo": 1,
+          "stageScopeType": "LEGAL_ENTITY",
+          "requiredPermissionCode": "gl.period.close",
+          "minApproverCount": 1,
+          "allowSelfApprove": false
+        },
+        {
+          "stepNo": 2,
+          "stageScopeType": "GROUP",
+          "requiredPermissionCode": "gl.period.close",
+          "minApproverCount": 1,
+          "allowSelfApprove": false
+        }
+      ]
+    },
+    "MONO_FIN_CONSOLIDATION_RUN_V1": {
+      "steps": [
+        {
+          "stepNo": 1,
+          "stageScopeType": "GROUP",
+          "requiredPermissionCode": "consolidation.run.finalize",
+          "minApproverCount": 2,
+          "allowSelfApprove": false
+        }
+      ]
+    }
+  },
+  "assignmentTemplates": {
+    "tenantFallback": [
+      {
+        "processType": "PERIOD_CLOSE",
+        "workflowDefinitionId": "$MONO_FIN_PERIOD_CLOSE_V1_ID",
+        "effectiveFrom": "2026-01-01",
+        "status": "ACTIVE"
+      },
+      {
+        "processType": "CONSOLIDATION_RUN",
+        "workflowDefinitionId": "$MONO_FIN_CONSOLIDATION_RUN_V1_ID",
+        "effectiveFrom": "2026-01-01",
+        "status": "ACTIVE"
+      }
+    ],
+    "groupScopedOptional": [
+      {
+        "processType": "PERIOD_CLOSE",
+        "workflowDefinitionId": "$MONO_FIN_PERIOD_CLOSE_V1_ID",
+        "groupCompanyId": "$GRP_GLOBAL_ID",
+        "effectiveFrom": "2026-01-01",
+        "status": "ACTIVE"
+      },
+      {
+        "processType": "CONSOLIDATION_RUN",
+        "workflowDefinitionId": "$MONO_FIN_CONSOLIDATION_RUN_V1_ID",
+        "groupCompanyId": "$GRP_GLOBAL_ID",
+        "effectiveFrom": "2026-01-01",
+        "status": "ACTIVE"
+      }
+    ]
+  },
+  "uiPasteTargets": {
+    "periodCloseDefinitionForm": {
+      "code": "MONO_FIN_PERIOD_CLOSE_V1",
+      "name": "Tam Kapsam Finans Period Close Approval",
+      "processType": "PERIOD_CLOSE",
+      "isActive": true,
+      "versionNo": 1
+    },
+    "periodCloseStepsJson": [
+      {
+        "stepNo": 1,
+        "stageScopeType": "LEGAL_ENTITY",
+        "requiredPermissionCode": "gl.period.close",
+        "minApproverCount": 1,
+        "allowSelfApprove": false
+      },
+      {
+        "stepNo": 2,
+        "stageScopeType": "GROUP",
+        "requiredPermissionCode": "gl.period.close",
+        "minApproverCount": 1,
+        "allowSelfApprove": false
+      }
+    ],
+    "consolidationDefinitionForm": {
+      "code": "MONO_FIN_CONSOLIDATION_RUN_V1",
+      "name": "Tam Kapsam Finans Consolidation Approval",
+      "processType": "CONSOLIDATION_RUN",
+      "isActive": true,
+      "versionNo": 1
+    },
+    "consolidationStepsJson": [
+      {
+        "stepNo": 1,
+        "stageScopeType": "GROUP",
+        "requiredPermissionCode": "consolidation.run.finalize",
+        "minApproverCount": 2,
+        "allowSelfApprove": false
+      }
+    ]
+  }
+}

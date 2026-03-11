@@ -179,6 +179,7 @@ function mapTaxRuleRow(row) {
     documentType: row.document_type || null,
     counterpartyType: row.counterparty_type ? u(row.counterparty_type) : null,
     applyPriority: Number(row.apply_priority || 0),
+    thresholdAmount: toAmount(row.threshold_amount),
     formulaJson: safeParseJson(row.formula_json),
     status: u(row.status),
     effectiveFrom: toDateOnly(row.effective_from),
@@ -377,6 +378,32 @@ function normalizeFormulaOrThrow(value) {
   }
   return value;
 }
+
+function assertSupportedThresholdRuleConfig({
+  moduleCode,
+  counterpartyType,
+  documentType,
+  thresholdAmount,
+}) {
+  if (thresholdAmount === null || thresholdAmount === undefined) {
+    return;
+  }
+  if (u(moduleCode) !== "CARI") {
+    throw badRequest("thresholdAmount is supported only for moduleCode=CARI");
+  }
+  if (u(counterpartyType) !== "VENDOR") {
+    throw badRequest("thresholdAmount requires counterpartyType=VENDOR");
+  }
+  if (
+    documentType &&
+    !["INVOICE", "DEBIT_NOTE", "CREDIT_NOTE"].includes(u(documentType))
+  ) {
+    throw badRequest(
+      "thresholdAmount supports documentType INVOICE, DEBIT_NOTE, CREDIT_NOTE, or blank"
+    );
+  }
+}
+
 function taxInvalidFormula(message) {
   return conflict(message, "TAX_INVALID_FORMULA");
 }
@@ -1263,6 +1290,12 @@ export async function createTaxRule({
   const regime = await assertTaxRegimeExists(tenantId, input.regimeId, runQuery);
   assertLegalEntityWriteScope(req, regime.legal_entity_id, assertScopeAccess, "regimeId");
   await assertTaxCodeInRegime(tenantId, input.taxCodeId, input.regimeId, runQuery);
+  assertSupportedThresholdRuleConfig({
+    moduleCode: input.moduleCode,
+    counterpartyType: input.counterpartyType,
+    documentType: input.documentType,
+    thresholdAmount: input.thresholdAmount,
+  });
   const formula = normalizeFormulaOrThrow(input.formulaJson);
   const formulaText = JSON.stringify(formula);
   const insertResult = await runQuery(
@@ -1274,11 +1307,12 @@ export async function createTaxRule({
        document_type,
        counterparty_type,
        apply_priority,
+       threshold_amount,
        formula_json,
        status,
        effective_from,
        effective_to
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, CAST(? AS JSON), ?, ?, ?)`,
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS JSON), ?, ?, ?)`,
     [
       tenantId,
       parsePositiveInt(input.regimeId),
@@ -1287,6 +1321,7 @@ export async function createTaxRule({
       input.documentType || null,
       input.counterpartyType || null,
       Number(input.applyPriority || 100),
+      input.thresholdAmount ?? null,
       formulaText,
       u(input.status || "ACTIVE"),
       input.effectiveFrom,
@@ -1349,6 +1384,10 @@ export async function updateTaxRule({
       input.applyPriority !== undefined
         ? Number(input.applyPriority)
         : Number(existing.apply_priority || 100),
+    thresholdAmount:
+      input.thresholdAmount !== undefined
+        ? input.thresholdAmount
+        : toAmount(existing.threshold_amount),
     formulaJson: JSON.stringify(nextFormula || existingFormula),
     status: input.status !== undefined ? u(input.status) : u(existing.status),
     effectiveFrom:
@@ -1361,6 +1400,12 @@ export async function updateTaxRule({
   if (next.effectiveFrom && next.effectiveTo && next.effectiveTo < next.effectiveFrom) {
     throw badRequest("effectiveTo cannot be earlier than effectiveFrom");
   }
+  assertSupportedThresholdRuleConfig({
+    moduleCode: next.moduleCode,
+    counterpartyType: next.counterpartyType,
+    documentType: next.documentType,
+    thresholdAmount: next.thresholdAmount,
+  });
   await runQuery(
     `UPDATE tax_rule_sets
      SET tax_regime_id = ?,
@@ -1369,6 +1414,7 @@ export async function updateTaxRule({
          document_type = ?,
          counterparty_type = ?,
          apply_priority = ?,
+         threshold_amount = ?,
          formula_json = CAST(? AS JSON),
          status = ?,
          effective_from = ?,
@@ -1382,6 +1428,7 @@ export async function updateTaxRule({
       next.documentType,
       next.counterpartyType,
       next.applyPriority,
+      next.thresholdAmount,
       next.formulaJson,
       next.status,
       next.effectiveFrom,
@@ -1678,14 +1725,17 @@ export async function previewTaxComputation({
     counterpartyType: input.counterpartyType,
     taxCodeId: input.taxCodeId,
     taxCode: input.taxCode,
+    baseAmount: input.baseAmount,
     calculationMode: input.calculationMode,
     recoverability: input.recoverability,
     recoverablePct: input.recoverablePct,
     runQuery,
   });
+  const taxableBaseAmount =
+    resolved.computation.taxableBaseAmount ?? input.baseAmount;
 
   const breakdown = computeTaxBreakdownFromEngine({
-    baseAmount: input.baseAmount,
+    baseAmount: taxableBaseAmount,
     mode: resolved.computation.calculationMode,
     ratePct: resolved.computation.ratePct,
     recoverability: resolved.computation.recoverability,
@@ -1720,6 +1770,7 @@ export async function previewTaxComputation({
       ...mapTaxAccountMappingRow(resolvedAccounts.mappingRow),
     },
     formula: resolved.formula,
+    threshold: resolved.threshold || null,
     breakdown,
     journalLines,
   };

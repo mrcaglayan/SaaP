@@ -232,6 +232,12 @@ export function registerGlReadCoreRoutes(router) {
         `SELECT
            a.id, c.tenant_id, a.coa_id, c.legal_entity_id, c.scope, c.code AS coa_code,
            a.code, a.name, a.account_type, a.normal_side, a.allow_posting,
+           EXISTS(
+             SELECT 1
+             FROM accounts child
+             WHERE child.parent_account_id = a.id
+               AND child.is_active = TRUE
+           ) AS has_active_children,
            a.parent_account_id, a.is_active, a.created_at
          FROM accounts a
          JOIN charts_of_accounts c ON c.id = a.coa_id

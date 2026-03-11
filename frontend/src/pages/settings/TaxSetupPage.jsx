@@ -1,6 +1,6 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { listAccounts } from "../../api/glAdmin.js";
+import { listAccounts, upsertAccount } from "../../api/glAdmin.js";
 import { listCountries, listLegalEntities } from "../../api/orgAdmin.js";
 import {
 createTaxAccountMapping,
@@ -47,10 +47,55 @@ const parsed = Number(value);
 return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 }
 function toUpper(value) {
-return String(value || "").trim().toUpperCase();
+  return String(value || "").trim().toUpperCase();
+}
+function parseDbBoolean(value) {
+  return value === true || value === 1 || value === "1";
+}
+function normalizeAccountCode(value) {
+  return String(value || "").trim().toUpperCase();
+}
+function getAccountId(row) {
+  return toPositiveInt(row?.id);
+}
+function getAccountCode(row) {
+  return normalizeAccountCode(row?.code);
+}
+function getAccountName(row) {
+  return String(row?.name || "").trim();
+}
+function getAccountCoaId(row) {
+  return toPositiveInt(row?.coa_id ?? row?.coaId);
+}
+function getAccountType(row) {
+  return toUpper(row?.account_type ?? row?.accountType);
+}
+function getAccountNormalSide(row) {
+  return toUpper(row?.normal_side ?? row?.normalSide);
+}
+function isActiveAccount(row) {
+  return parseDbBoolean(row?.is_active ?? row?.isActive);
+}
+function isPostingAccount(row) {
+  return parseDbBoolean(row?.allow_posting ?? row?.allowPosting);
+}
+function hasActiveChildren(row) {
+  return parseDbBoolean(row?.has_active_children ?? row?.hasActiveChildren);
+}
+function buildAccountOptionLabel(row) {
+  const breadcrumb = String(row?.account_breadcrumb || "").trim();
+  if (breadcrumb) {
+    return breadcrumb;
+  }
+  const code = getAccountCode(row);
+  const name = getAccountName(row);
+  if (code && name) {
+    return `${code} - ${name}`;
+  }
+  return code || name || "";
 }
 function todayIsoDate() {
-return new Date().toISOString().slice(0, 10);
+  return new Date().toISOString().slice(0, 10);
 }
 function toApiError(err, fallback) {
 return err?.response?.data?.message || fallback;
@@ -88,6 +133,7 @@ return {
   documentType: "",
   counterpartyType: "",
   applyPriority: "100",
+  thresholdAmount: "",
   formulaJson: JSON.stringify({ type: "RATE" }, null, 2),
   status: "ACTIVE",
   effectiveFrom: todayIsoDate(),
@@ -127,18 +173,23 @@ export default function TaxSetupPage() {
 const canRead = hasPermission("org.tree.read");
 const canWrite = hasPermission("onboarding.company.setup");
 const canReadAccounts = hasPermission("gl.account.read");
-const [loading, setLoading] = useState(false);
-const [saving, setSaving] = useState("");
-const [error, setError] = useState("");
-const [message, setMessage] = useState("");
+const canUpsertAccounts = hasPermission("gl.account.upsert");
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState("");
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
 const [countries, setCountries] = useState([]);
 const [legalEntities, setLegalEntities] = useState([]);
 const [accounts, setAccounts] = useState([]);
 const [selectedCountryId, setSelectedCountryId] = useState("");
 const [selectedLegalEntityId, setSelectedLegalEntityId] = useState("");
-const [selectedRegimeId, setSelectedRegimeId] = useState("");
-const [accountSearch, setAccountSearch] = useState("");
-const [regimes, setRegimes] = useState([]);
+  const [selectedRegimeId, setSelectedRegimeId] = useState("");
+  const [accountSearch, setAccountSearch] = useState("");
+  const [inlineChildParentAccountId, setInlineChildParentAccountId] = useState("");
+  const [inlineChildCode, setInlineChildCode] = useState("");
+  const [inlineChildName, setInlineChildName] = useState("");
+  const [inlineChildSaving, setInlineChildSaving] = useState(false);
+  const [regimes, setRegimes] = useState([]);
 const [codes, setCodes] = useState([]);
 const [rules, setRules] = useState([]);
 const [mappings, setMappings] = useState([]);
@@ -153,11 +204,47 @@ const activeRegime = useMemo(
   () => regimes.find((row) => toPositiveInt(row?.id) === activeRegimeId) || null,
   [regimes, activeRegimeId]
 );
-const activeRegimeTaxCodes = useMemo(
-  () => codes.filter((row) => toPositiveInt(row?.regimeId) === activeRegimeId),
-  [codes, activeRegimeId]
-);
-const countryById = useMemo(() => {
+  const activeRegimeTaxCodes = useMemo(
+    () => codes.filter((row) => toPositiveInt(row?.regimeId) === activeRegimeId),
+    [codes, activeRegimeId]
+  );
+  const accountById = useMemo(() => {
+    const map = new Map();
+    for (const row of accounts) {
+      const accountId = getAccountId(row);
+      if (!accountId) {
+        continue;
+      }
+      map.set(accountId, row);
+    }
+    return map;
+  }, [accounts]);
+  const accountByCode = useMemo(() => {
+    const map = new Map();
+    for (const row of accounts) {
+      const code = getAccountCode(row);
+      if (!code || map.has(code)) {
+        continue;
+      }
+      map.set(code, row);
+    }
+    return map;
+  }, [accounts]);
+  const postingLeafAccounts = useMemo(
+    () =>
+      accounts.filter(
+        (row) =>
+          isActiveAccount(row) &&
+          isPostingAccount(row) &&
+          !hasActiveChildren(row)
+      ),
+    [accounts]
+  );
+  const parentAccountOptions = useMemo(
+    () => accounts.filter((row) => isActiveAccount(row)),
+    [accounts]
+  );
+  const countryById = useMemo(() => {
   const map = new Map();
   for (const row of countries) {
     const id = toPositiveInt(row?.id);
@@ -281,37 +368,59 @@ useEffect(() => {
     legalEntityId: prev.legalEntityId || selectedLegalEntityId,
   }));
 }, [activeRegimeId, selectedLegalEntityId]);
-useEffect(() => {
-  if (!canReadAccounts) {
-    setAccounts([]);
-    return;
-  }
-  const legalEntityId = toPositiveInt(mappingForm.legalEntityId);
-  if (!legalEntityId) {
-    setAccounts([]);
-    return;
-  }
-  let cancelled = false;
-  (async () => {
-    try {
+  const fetchAccounts = useCallback(
+    async ({
+      legalEntityId,
+      q = accountSearch,
+      includeInactive = false,
+      limit = 250,
+    } = {}) => {
+      const resolvedLegalEntityId = toPositiveInt(legalEntityId);
+      if (!canReadAccounts || !resolvedLegalEntityId) {
+        return [];
+      }
       const response = await listAccounts({
-        legalEntityId,
-        limit: 250,
-        q: accountSearch || undefined,
+        legalEntityId: resolvedLegalEntityId,
+        limit,
+        q: q || undefined,
+        includeInactive: includeInactive ? true : undefined,
       });
-      if (!cancelled) {
-        setAccounts(Array.isArray(response?.rows) ? response.rows : []);
-      }
-    } catch {
-      if (!cancelled) {
-        setAccounts([]);
-      }
+      return Array.isArray(response?.rows) ? response.rows : [];
+    },
+    [accountSearch, canReadAccounts]
+  );
+  useEffect(() => {
+    if (!canReadAccounts) {
+      setAccounts([]);
+      return;
     }
-  })();
-  return () => {
-    cancelled = true;
-  };
-}, [accountSearch, canReadAccounts, mappingForm.legalEntityId]);
+    const legalEntityId = toPositiveInt(mappingForm.legalEntityId);
+    if (!legalEntityId) {
+      setAccounts([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const rows = await fetchAccounts({ legalEntityId });
+        if (!cancelled) {
+          setAccounts(rows);
+        }
+      } catch {
+        if (!cancelled) {
+          setAccounts([]);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [canReadAccounts, fetchAccounts, mappingForm.legalEntityId]);
+  useEffect(() => {
+    setInlineChildParentAccountId("");
+    setInlineChildCode("");
+    setInlineChildName("");
+  }, [mappingForm.legalEntityId]);
 async function onCreateRegime(event) {
   event.preventDefault();
   if (!canWrite) {
@@ -420,6 +529,10 @@ async function onCreateRule(event) {
       documentType: String(ruleForm.documentType || "").trim() || undefined,
       counterpartyType: toUpper(ruleForm.counterpartyType) || undefined,
       applyPriority: Number(ruleForm.applyPriority || 100),
+      thresholdAmount:
+        String(ruleForm.thresholdAmount || "").trim() === ""
+          ? undefined
+          : Number(ruleForm.thresholdAmount),
       formulaJson,
       status: toUpper(ruleForm.status || "ACTIVE"),
       effectiveFrom: ruleForm.effectiveFrom,
@@ -438,7 +551,7 @@ async function onCreateRule(event) {
     setSaving("");
   }
 }
-async function onCreateMapping(event) {
+  async function onCreateMapping(event) {
   event.preventDefault();
   if (!canWrite) {
     setError(l("Missing permission: onboarding.company.setup", "Eksik yetki: onboarding.company.setup"));
@@ -447,18 +560,33 @@ async function onCreateMapping(event) {
   const regimeId = toPositiveInt(mappingForm.regimeId) || activeRegimeId;
   const legalEntityId =
     toPositiveInt(mappingForm.legalEntityId) || toPositiveInt(selectedLegalEntityId);
-  const taxCodeId = toPositiveInt(mappingForm.taxCodeId);
-  const accountId = toPositiveInt(mappingForm.accountId);
-  if (!regimeId || !legalEntityId || !taxCodeId || !accountId) {
+    const taxCodeId = toPositiveInt(mappingForm.taxCodeId);
+    const accountId = toPositiveInt(mappingForm.accountId);
+    if (!regimeId || !legalEntityId || !taxCodeId || !accountId) {
     setError(
       l(
         "regimeId, legalEntityId, taxCodeId and accountId are required.",
         "regimeId, legalEntityId, taxCodeId ve accountId zorunludur."
       )
     );
-    return;
-  }
-  setSaving("mapping");
+      return;
+    }
+    const selectedAccount = accountById.get(accountId) || null;
+    if (
+      selectedAccount &&
+      (!isActiveAccount(selectedAccount) ||
+        !isPostingAccount(selectedAccount) ||
+        hasActiveChildren(selectedAccount))
+    ) {
+      setError(
+        l(
+          "Select an active posting leaf account for tax mapping.",
+          "Tax eslemesi icin aktif, postable ve alt hesabi olmayan bir hesap secin."
+        )
+      );
+      return;
+    }
+    setSaving("mapping");
   setError("");
   setMessage("");
   try {
@@ -480,9 +608,162 @@ async function onCreateMapping(event) {
       )
     );
   } finally {
-    setSaving("");
+      setSaving("");
+    }
   }
-}
+  async function handleCreateInlineChildAccount() {
+    if (!canUpsertAccounts) {
+      setError(
+        l(
+          "Missing permission: gl.account.upsert",
+          "Eksik yetki: gl.account.upsert"
+        )
+      );
+      return;
+    }
+    const legalEntityId =
+      toPositiveInt(mappingForm.legalEntityId) || toPositiveInt(selectedLegalEntityId);
+    if (!legalEntityId) {
+      setError(
+        l("legalEntityId is required.", "legalEntityId zorunludur.")
+      );
+      return;
+    }
+    const parentAccountId = toPositiveInt(inlineChildParentAccountId);
+    const parentAccount = parentAccountId
+      ? accountById.get(parentAccountId) || null
+      : null;
+    if (!parentAccountId || !parentAccount || !isActiveAccount(parentAccount)) {
+      setError(
+        l("Parent account is required.", "Ust hesap secilmelidir.")
+      );
+      return;
+    }
+
+    const childCode = normalizeAccountCode(inlineChildCode);
+    const childName = String(inlineChildName || "").trim();
+    if (!childCode) {
+      setError(
+        l("Child account code is required.", "Alt hesap kodu zorunludur.")
+      );
+      return;
+    }
+    if (!childName) {
+      setError(
+        l("Child account name is required.", "Alt hesap adi zorunludur.")
+      );
+      return;
+    }
+    const parentCode = getAccountCode(parentAccount);
+    if (parentCode && childCode === parentCode) {
+      setError(
+        l(
+          "Child account code must differ from parent account code.",
+          "Alt hesap kodu ust hesap kodu ile ayni olamaz."
+        )
+      );
+      return;
+    }
+
+    const existingAccount = accountByCode.get(childCode) || null;
+    const existingAccountId = getAccountId(existingAccount);
+    if (existingAccountId) {
+      if (
+        isActiveAccount(existingAccount) &&
+        isPostingAccount(existingAccount) &&
+        !hasActiveChildren(existingAccount)
+      ) {
+        setMappingForm((prev) => ({ ...prev, accountId: String(existingAccountId) }));
+        setInlineChildParentAccountId("");
+        setInlineChildCode("");
+        setInlineChildName("");
+        setError("");
+        setMessage(
+          l(
+            `Existing account selected: ${childCode}`,
+            `Mevcut hesap secildi: ${childCode}`
+          )
+        );
+        return;
+      }
+      setError(
+        l(
+          "This account code already exists but is not a posting leaf account.",
+          "Bu hesap kodu zaten var ancak postable leaf hesap degil."
+        )
+      );
+      return;
+    }
+
+    const coaId = getAccountCoaId(parentAccount);
+    if (!coaId) {
+      setError(
+        l(
+          "Selected parent account has no coaId.",
+          "Secilen ust hesap icin coaId bulunamadi."
+        )
+      );
+      return;
+    }
+
+    setInlineChildSaving(true);
+    setError("");
+    setMessage("");
+    try {
+      const response = await upsertAccount({
+        coaId,
+        code: childCode,
+        name: childName,
+        accountType: getAccountType(parentAccount) || "ASSET",
+        normalSide: getAccountNormalSide(parentAccount) || "DEBIT",
+        allowPosting: true,
+        parentAccountId,
+      });
+      const responseId = toPositiveInt(response?.id ?? response?.row?.id);
+      const refreshedRows = await fetchAccounts({
+        legalEntityId,
+        q: "",
+        includeInactive: true,
+        limit: 1000,
+      });
+      setAccounts(refreshedRows);
+      setAccountSearch("");
+
+      const resolvedRow =
+        refreshedRows.find(
+          (row) =>
+            getAccountCode(row) === childCode &&
+            isPostingAccount(row) &&
+            !hasActiveChildren(row)
+        ) || null;
+      const resolvedId = responseId || getAccountId(resolvedRow);
+      if (resolvedId) {
+        setMappingForm((prev) => ({ ...prev, accountId: String(resolvedId) }));
+      }
+
+      setInlineChildParentAccountId("");
+      setInlineChildCode("");
+      setInlineChildName("");
+      setMessage(
+        l(
+          `Child account created and selected: ${childCode}`,
+          `Alt hesap olusturuldu ve secildi: ${childCode}`
+        )
+      );
+    } catch (err) {
+      setError(
+        toApiError(
+          err,
+          l(
+            "Failed to create child account.",
+            "Alt hesap olusturulamadi."
+          )
+        )
+      );
+    } finally {
+      setInlineChildSaving(false);
+    }
+  }
 async function onPreview(event) {
   event.preventDefault();
   if (!canRead) {
@@ -980,6 +1261,20 @@ return (
             className="rounded border border-slate-300 px-3 py-2 text-sm"
             placeholder={l("Priority", "Oncelik")}
           />
+          <input
+            type="number"
+            min="0"
+            step="0.000001"
+            value={ruleForm.thresholdAmount}
+            onChange={(event) =>
+              setRuleForm((prev) => ({ ...prev, thresholdAmount: event.target.value }))
+            }
+            className="rounded border border-slate-300 px-3 py-2 text-sm"
+            placeholder={l(
+              "Threshold amount (optional)",
+              "Esik tutari (opsiyonel)"
+            )}
+          />
           <select
             value={ruleForm.status}
             onChange={(event) =>
@@ -1010,6 +1305,12 @@ return (
             }
             className="rounded border border-slate-300 px-3 py-2 text-sm"
           />
+          <p className="text-xs text-slate-500 md:col-span-2">
+            {l(
+              "Threshold is supported for CARI + VENDOR rules. It uses cumulative posted AP base in the fiscal period and taxes only the current excess.",
+              "Esik yalnizca CARI + VENDOR kurallarinda desteklenir. Mali donemdeki kayitli AP taban tutari birikir ve vergi sadece mevcut asan kisim icin uygulanir."
+            )}
+          </p>
           <textarea
             value={ruleForm.formulaJson}
             onChange={(event) =>
@@ -1095,29 +1396,104 @@ return (
           </select>
           {canReadAccounts ? (
             <>
-              <input
-                value={accountSearch}
-                onChange={(event) => setAccountSearch(event.target.value)}
-                className="rounded border border-slate-300 px-3 py-2 text-sm md:col-span-2"
-                placeholder={l("Search account code/name", "Hesap kod/adi ara")}
-              />
-              <select
-                value={mappingForm.accountId}
-                onChange={(event) =>
-                  setMappingForm((prev) => ({ ...prev, accountId: event.target.value }))
-                }
-                className="rounded border border-slate-300 px-3 py-2 text-sm md:col-span-2"
-                required
-              >
-                <option value="">{l("Select account", "Hesap secin")}</option>
-                {accounts.map((row) => (
-                  <option key={row.id} value={row.id}>
-                    {row.code} - {row.name}
-                  </option>
-                ))}
-              </select>
-            </>
-          ) : (
+               <input
+                 value={accountSearch}
+                 onChange={(event) => setAccountSearch(event.target.value)}
+                 className="rounded border border-slate-300 px-3 py-2 text-sm md:col-span-2"
+                 placeholder={l("Search account code/name", "Hesap kod/adi ara")}
+               />
+               <div className="rounded border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 md:col-span-2">
+                 {l(
+                   "Only active posting leaf accounts are shown for tax mapping. Use the helper below if you need to create a new child under a parent tax account.",
+                   "Tax eslemesi icin yalnizca aktif, postable ve alt hesabi olmayan hesaplar gosterilir. Ust vergi hesabi altina yeni alt hesap acmaniz gerekiyorsa asagidaki yardimci alani kullanin."
+                 )}
+               </div>
+               <select
+                 value={mappingForm.accountId}
+                 onChange={(event) =>
+                   setMappingForm((prev) => ({ ...prev, accountId: event.target.value }))
+                 }
+                 className="rounded border border-slate-300 px-3 py-2 text-sm md:col-span-2"
+                 required
+               >
+                 <option value="">{l("Select posting account", "Postable hesap secin")}</option>
+                 {postingLeafAccounts.map((row) => (
+                   <option key={row.id} value={row.id}>
+                     {buildAccountOptionLabel(row)}
+                   </option>
+                 ))}
+               </select>
+               {canUpsertAccounts ? (
+                 <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-3 md:col-span-2">
+                   <p className="text-xs font-semibold text-slate-700">
+                     {l(
+                       "Create posting child account",
+                       "Postable alt hesap olustur"
+                     )}
+                   </p>
+                   <p className="mt-1 text-xs text-slate-600">
+                     {l(
+                       "Pick a parent tax account, create a posting child under it, and the new child will be auto-selected for mapping.",
+                       "Ust vergi hesabini secin, altina postable alt hesap olusturun; yeni alt hesap esleme icin otomatik secilir."
+                     )}
+                   </p>
+                   <div className="mt-3 grid gap-2 md:grid-cols-3">
+                     <select
+                       value={inlineChildParentAccountId}
+                       onChange={(event) =>
+                         setInlineChildParentAccountId(event.target.value)
+                       }
+                       className="rounded border border-slate-300 px-3 py-2 text-sm"
+                     >
+                       <option value="">
+                         {l("Select parent account", "Ust hesap secin")}
+                       </option>
+                       {parentAccountOptions.map((row) => (
+                         <option key={row.id} value={row.id}>
+                           {buildAccountOptionLabel(row)}
+                         </option>
+                       ))}
+                     </select>
+                     <input
+                       value={inlineChildCode}
+                       onChange={(event) =>
+                         setInlineChildCode(event.target.value.toUpperCase())
+                       }
+                       className="rounded border border-slate-300 px-3 py-2 text-sm"
+                       placeholder={l("Child code", "Alt hesap kodu")}
+                     />
+                     <input
+                       value={inlineChildName}
+                       onChange={(event) =>
+                         setInlineChildName(event.target.value)
+                       }
+                       className="rounded border border-slate-300 px-3 py-2 text-sm"
+                       placeholder={l("Child name", "Alt hesap adi")}
+                     />
+                   </div>
+                   <div className="mt-3 flex justify-end">
+                     <button
+                       type="button"
+                       onClick={() => handleCreateInlineChildAccount()}
+                       disabled={inlineChildSaving || saving === "mapping"}
+                       className="rounded border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 disabled:opacity-60"
+                     >
+                       {inlineChildSaving
+                         ? l("Creating...", "Olusturuluyor...")
+                         : l("Create and select child", "Alt hesabi olustur ve sec")}
+                     </button>
+                   </div>
+                 </div>
+               ) : (
+                 <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 md:col-span-2">
+                   {l(
+                     "Need gl.account.upsert permission to create child accounts here.",
+                     "Burada alt hesap olusturmak icin gl.account.upsert yetkisi gerekir."
+                   )}
+                 </div>
+               )}
+             </>
+           ) : (
             <input
               value={mappingForm.accountId}
               onChange={(event) =>
@@ -1498,6 +1874,7 @@ return (
                 <th className="px-2 py-2">{l("Code", "Kod")}</th>
                 <th className="px-2 py-2">{l("Module", "Modul")}</th>
                 <th className="px-2 py-2">{l("Priority", "Oncelik")}</th>
+                <th className="px-2 py-2">{l("Threshold", "Esik")}</th>
                 <th className="px-2 py-2">{l("Status", "Durum")}</th>
                 <th className="px-2 py-2">{l("Action", "Islem")}</th>
               </tr>
@@ -1512,6 +1889,11 @@ return (
                     <td className="px-2 py-2">{row.taxCode || "-"}</td>
                     <td className="px-2 py-2">{row.moduleCode}</td>
                     <td className="px-2 py-2">{row.applyPriority}</td>
+                    <td className="px-2 py-2">
+                      {row.thresholdAmount === null || row.thresholdAmount === undefined
+                        ? "-"
+                        : row.thresholdAmount}
+                    </td>
                     <td className="px-2 py-2">{row.status}</td>
                     <td className="px-2 py-2">
                       <button
@@ -1532,7 +1914,7 @@ return (
               })}
               {rules.length === 0 && !loading ? (
                 <tr>
-                  <td colSpan={6} className="px-2 py-3 text-slate-500">
+                  <td colSpan={7} className="px-2 py-3 text-slate-500">
                     {l("No tax rules found.", "Tax kurali bulunamadi.")}
                   </td>
                 </tr>

@@ -177,9 +177,9 @@ function formatCashRegisterOptionLabel(register, l = (en) => en) {
       ? l("Central", "Merkez")
       : explicitOwnershipContext.startsWith("OU:")
         ? explicitOwnershipContext
-      : register?.operating_unit_code
-        ? `OU: ${register.operating_unit_code}`
-        : explicitOwnershipContext
+        : register?.operating_unit_code
+          ? `OU: ${register.operating_unit_code}`
+          : explicitOwnershipContext
     : register?.operating_unit_code
       ? `OU: ${register.operating_unit_code}`
       : l("Central", "Merkez");
@@ -209,9 +209,9 @@ function formatCashSessionOptionLabel(session, l = (en) => en) {
       ? l("Central", "Merkez")
       : explicitOwnershipContext.startsWith("OU:")
         ? explicitOwnershipContext
-      : session?.operating_unit_code
-        ? `OU: ${session.operating_unit_code}`
-        : explicitOwnershipContext
+        : session?.operating_unit_code
+          ? `OU: ${session.operating_unit_code}`
+          : explicitOwnershipContext
     : session?.operating_unit_code
       ? `OU: ${session.operating_unit_code}`
       : l("Central", "Merkez");
@@ -2457,13 +2457,13 @@ export default function OrganizationManagementPage() {
     }
     const conflictingCentralDueFromUnit = centralDueFromAccountId
       ? (operatingUnits || []).find((row) => {
-          const rowKey = `${row?.legal_entity_id || ""}:${String(row?.code || "").trim()}`;
-          return (
-            rowKey !== unitEditingKey &&
-            toNumber(row?.legal_entity_id) === legalEntityId &&
-            toNumber(row?.central_due_from_account_id) === centralDueFromAccountId
-          );
-        })
+        const rowKey = `${row?.legal_entity_id || ""}:${String(row?.code || "").trim()}`;
+        return (
+          rowKey !== unitEditingKey &&
+          toNumber(row?.legal_entity_id) === legalEntityId &&
+          toNumber(row?.central_due_from_account_id) === centralDueFromAccountId
+        );
+      })
       : null;
     if (conflictingCentralDueFromUnit) {
       setError(
@@ -2476,13 +2476,13 @@ export default function OrganizationManagementPage() {
     }
     const conflictingOuDueToUnit = ouDueToCentralAccountId
       ? (operatingUnits || []).find((row) => {
-          const rowKey = `${row?.legal_entity_id || ""}:${String(row?.code || "").trim()}`;
-          return (
-            rowKey !== unitEditingKey &&
-            toNumber(row?.legal_entity_id) === legalEntityId &&
-            toNumber(row?.ou_due_to_central_account_id) === ouDueToCentralAccountId
-          );
-        })
+        const rowKey = `${row?.legal_entity_id || ""}:${String(row?.code || "").trim()}`;
+        return (
+          rowKey !== unitEditingKey &&
+          toNumber(row?.legal_entity_id) === legalEntityId &&
+          toNumber(row?.ou_due_to_central_account_id) === ouDueToCentralAccountId
+        );
+      })
       : null;
     if (conflictingOuDueToUnit) {
       setError(
@@ -2653,10 +2653,10 @@ export default function OrganizationManagementPage() {
     } catch (err) {
       setError(
         err?.response?.data?.message ||
-          l(
-            "Failed to save branch pair current accounts.",
-            "Sube cift cari hesaplari kaydedilemedi."
-          )
+        l(
+          "Failed to save branch pair current accounts.",
+          "Sube cift cari hesaplari kaydedilemedi."
+        )
       );
     } finally {
       setSaving("");
@@ -3327,8 +3327,8 @@ export default function OrganizationManagementPage() {
     if (operatingUnitId && !capitalFulfillmentOuReady) {
       setError(
         l(
-          "Selected operating unit is missing internal current-account setup.",
-          "Secilen operasyon biriminde ic cari hesap kurulumu eksik."
+          "Selected operating unit is missing internal current-account setup. Configure Central Due From OU and OU Due To Central on that operating unit first.",
+          "Secilen operasyon biriminde ic cari hesap kurulumu eksik. Bu operasyon biriminde once Merkez OU Alacagi ve OU Merkeze Borc alanlarini tanimlayin."
         )
       );
       return null;
@@ -4546,11 +4546,25 @@ export default function OrganizationManagementPage() {
                 </option>
               ))}
             </select>
-            <div className="text-xs text-slate-500 md:col-span-6">
-              {l(
-                "Only active, postable, leaf legal-entity accounts are shown. Configure both fields to make the OU capital-self-balancing ready.",
-                "Sadece aktif, post edilebilir, leaf legal-entity hesaplari gosterilir. OU'yu sermaye icin self-balancing hazir yapmak icin iki alani da doldurun."
-              )}
+            <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 md:col-span-6">
+              <div>
+                {l(
+                  "For OU-targeted capital fulfillment, configure both fields on this operating unit.",
+                  "OU hedefli sermaye karsilamasi icin bu operasyon biriminde iki alani da tanimlayin."
+                )}
+              </div>
+              <div className="mt-1">
+                {l(
+                  "Central Due From OU must be an active, postable, leaf legal-entity account with ASSET type and DEBIT normal side.",
+                  "Merkez OU Alacagi, ayni legal entity icinde aktif, post edilebilir, leaf bir hesap olmali; hesap tipi ASSET ve normal bakiye yonu DEBIT olmalidir."
+                )}
+              </div>
+              <div className="mt-1">
+                {l(
+                  "OU Due To Central must be an active, postable, leaf legal-entity account with LIABILITY type and CREDIT normal side.",
+                  "OU Merkeze Borc, ayni legal entity icinde aktif, post edilebilir, leaf bir hesap olmali; hesap tipi LIABILITY ve normal bakiye yonu CREDIT olmalidir."
+                )}
+              </div>
             </div>
             <div className="flex flex-wrap gap-2 md:col-span-6">
               <button
@@ -4636,8 +4650,8 @@ export default function OrganizationManagementPage() {
                       <td className="px-3 py-2">
                         <span
                           className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${row.capital_self_balancing_ready
-                              ? "bg-emerald-100 text-emerald-700"
-                              : "bg-amber-100 text-amber-700"
+                            ? "bg-emerald-100 text-emerald-700"
+                            : "bg-amber-100 text-amber-700"
                             }`}
                         >
                           {row.capital_self_balancing_ready
@@ -4895,8 +4909,8 @@ export default function OrganizationManagementPage() {
 
         <section
           className={`border border-slate-200 bg-white p-4 ${shareholderCardExpanded
-              ? "fixed inset-4 z-50 overflow-auto rounded-xl shadow-2xl"
-              : "relative rounded-xl"
+            ? "fixed inset-4 z-50 overflow-auto rounded-xl shadow-2xl"
+            : "relative rounded-xl"
             }`}
         >
           <div className="mb-3 flex items-center justify-between gap-2">
@@ -4961,10 +4975,10 @@ export default function OrganizationManagementPage() {
                     <span className="text-slate-700">{step.label}</span>
                     <span
                       className={`rounded px-2 py-0.5 font-semibold ${step.status === "DONE"
-                          ? "bg-emerald-100 text-emerald-700"
-                          : step.status === "CURRENT"
-                            ? "bg-sky-100 text-sky-800"
-                            : "bg-slate-100 text-slate-700"
+                        ? "bg-emerald-100 text-emerald-700"
+                        : step.status === "CURRENT"
+                          ? "bg-sky-100 text-sky-800"
+                          : "bg-slate-100 text-slate-700"
                         }`}
                     >
                       {step.status === "DONE"
@@ -4987,8 +5001,8 @@ export default function OrganizationManagementPage() {
               {selectedShareholderCommitmentReadiness ? (
                 <div
                   className={`mt-2 rounded border px-2 py-2 text-xs ${selectedShareholderCommitmentReadiness.ready
-                      ? "border-emerald-200 bg-emerald-50 text-emerald-900"
-                      : "border-amber-200 bg-amber-50 text-amber-900"
+                    ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+                    : "border-amber-200 bg-amber-50 text-amber-900"
                     }`}
                 >
                   <div className="flex items-center justify-between gap-2">
@@ -5000,8 +5014,8 @@ export default function OrganizationManagementPage() {
                     </span>
                     <span
                       className={`rounded px-2 py-0.5 font-semibold ${selectedShareholderCommitmentReadiness.ready
-                          ? "bg-emerald-100 text-emerald-700"
-                          : "bg-amber-100 text-amber-800"
+                        ? "bg-emerald-100 text-emerald-700"
+                        : "bg-amber-100 text-amber-800"
                         }`}
                     >
                       {selectedShareholderCommitmentReadiness.ready
@@ -5138,8 +5152,8 @@ export default function OrganizationManagementPage() {
                     <span className="text-slate-700">{check.label}</span>
                     <span
                       className={`rounded px-2 py-0.5 font-semibold ${check.ready
-                          ? "bg-emerald-100 text-emerald-700"
-                          : "bg-amber-100 text-amber-800"
+                        ? "bg-emerald-100 text-emerald-700"
+                        : "bg-amber-100 text-amber-800"
                         }`}
                     >
                       {check.ready ? l("OK", "Tamam") : l("Missing", "Eksik")}
@@ -5428,8 +5442,8 @@ export default function OrganizationManagementPage() {
                           <td className="px-2 py-1.5">
                             <span
                               className={`inline-flex rounded-full px-2 py-0.5 font-semibold ${String(row.status || "").toUpperCase() === "REVERSED"
-                                  ? "bg-amber-100 text-amber-800"
-                                  : "bg-emerald-100 text-emerald-700"
+                                ? "bg-amber-100 text-amber-800"
+                                : "bg-emerald-100 text-emerald-700"
                                 }`}
                             >
                               {row.status || "-"}
@@ -5929,6 +5943,7 @@ export default function OrganizationManagementPage() {
               </thead>
               <tbody>
                 {visibleShareholders.map((row) => {
+                  console.log("Rendering shareholder row", { row });
                   const shareholderId = toNumber(row.id);
                   const isQueued = selectedEntityCommitmentQueueIdSet.has(shareholderId);
                   const legalEntity = legalEntityById.get(
@@ -5998,8 +6013,8 @@ export default function OrganizationManagementPage() {
                           }
                           disabled={!shareholderId || !hasMappedSubAccounts}
                           className={`rounded border px-2 py-1 text-[11px] font-semibold disabled:opacity-50 ${isQueued
-                              ? "border-rose-300 bg-rose-50 text-rose-800"
-                              : "border-slate-300 bg-white text-slate-700"
+                            ? "border-rose-300 bg-rose-50 text-rose-800"
+                            : "border-slate-300 bg-white text-slate-700"
                             }`}
                         >
                           {isQueued
@@ -6562,8 +6577,8 @@ export default function OrganizationManagementPage() {
             {selectedCapitalFulfillmentOperatingUnit && !capitalFulfillmentOuReady ? (
               <div className="mt-3 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
                 {l(
-                  "Selected operating unit is not capital-self-balancing ready. Configure Central Due From and OU Due To Central first.",
-                  "Secilen operasyon birimi sermaye icin self-balancing hazir degil. Once Merkez Alacagi ve OU Merkeze Borc hesaplarini tanimlayin."
+                  "Selected operating unit is not capital-self-balancing ready. Configure Central Due From OU and OU Due To Central on that operating unit first.",
+                  "Secilen operasyon birimi sermaye icin self-balancing hazir degil. Bu operasyon biriminde once Merkez OU Alacagi ve OU Merkeze Borc alanlarini tanimlayin."
                 )}
               </div>
             ) : null}
@@ -6909,11 +6924,10 @@ export default function OrganizationManagementPage() {
 
               {selectedBankControlParentReadiness ? (
                 <div
-                  className={`rounded-md border px-3 py-2 text-[11px] md:col-span-2 ${
-                    selectedBankControlParentReadiness.ready
-                      ? "border-emerald-200 bg-emerald-50 text-emerald-900"
-                      : "border-amber-200 bg-amber-50 text-amber-900"
-                  }`}
+                  className={`rounded-md border px-3 py-2 text-[11px] md:col-span-2 ${selectedBankControlParentReadiness.ready
+                    ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+                    : "border-amber-200 bg-amber-50 text-amber-900"
+                    }`}
                 >
                   <div className="font-semibold">
                     {l("Bank control-parent readiness", "Banka kontrol-parent hazirligi")}
@@ -7736,8 +7750,8 @@ export default function OrganizationManagementPage() {
             ) : null}
             <div
               className={`mt-4 flex gap-2 ${shareholderJournalModal.transitShortcut
-                  ? "justify-between"
-                  : "justify-end"
+                ? "justify-between"
+                : "justify-end"
                 }`}
             >
               {shareholderJournalModal.transitShortcut?.targetRegisterId ? (

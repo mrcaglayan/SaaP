@@ -45,8 +45,11 @@ async function main() {
     "utf8"
   );
   assert(
-    readQueriesSource.includes("AS unpaid_capital"),
-    "shareholder read query should expose unpaid_capital"
+    readQueriesSource.includes("AS unpaid_capital") &&
+      readQueriesSource.includes("FROM shareholder_capital_fulfillments scf") &&
+      readQueriesSource.includes("WHERE scf.status = 'POSTED'") &&
+      readQueriesSource.includes("SUM(scf.amount_base) AS paid_capital_calculated"),
+    "shareholder read query should derive paid/unpaid capital from posted fulfillment rows"
   );
 
   const orgAdminSource = await readFile(

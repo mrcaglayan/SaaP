@@ -97,6 +97,197 @@ async function getLegalEntityForTenant({
   return result.rows?.[0] || null;
 }
 
+async function resolvePreferredBookCalendarId({
+  tenantId,
+  legalEntityId,
+  runQuery = query,
+}) {
+  const result = await runQuery(
+    `SELECT calendar_id
+     FROM books
+     WHERE tenant_id = ?
+       AND legal_entity_id = ?
+     ORDER BY CASE WHEN book_type = 'LOCAL' THEN 0 ELSE 1 END, id ASC
+     LIMIT 1`,
+    [parsePositiveInt(tenantId), parsePositiveInt(legalEntityId)]
+  );
+  return parsePositiveInt(result.rows?.[0]?.calendar_id);
+}
+
+async function resolveFiscalPeriodForDate({
+  calendarId,
+  postingDate,
+  runQuery = query,
+}) {
+  const result = await runQuery(
+    `SELECT id, fiscal_year, period_no, start_date, end_date
+     FROM fiscal_periods
+     WHERE calendar_id = ?
+       AND ? BETWEEN start_date AND end_date
+     ORDER BY is_adjustment ASC, id ASC
+     LIMIT 1`,
+    [parsePositiveInt(calendarId), postingDate]
+  );
+  return result.rows?.[0] || null;
+}
+
+function resolveCariDirectionFromCounterpartyType(counterpartyType) {
+  const normalized = u(counterpartyType);
+  if (normalized === "VENDOR") {
+    return "AP";
+  }
+  if (normalized === "CUSTOMER") {
+    return "AR";
+  }
+  return null;
+}
+
+function resolveCariThresholdDocumentSign(documentType) {
+  const normalized = u(documentType);
+  if (["INVOICE", "DEBIT_NOTE"].includes(normalized)) {
+    return 1;
+  }
+  if (normalized === "CREDIT_NOTE") {
+    return -1;
+  }
+  return 0;
+}
+
+async function resolveThresholdBaseContext({
+  tenantId,
+  legalEntityId,
+  postingDate,
+  moduleCode,
+  documentType,
+  counterpartyType,
+  taxRuleRow,
+  baseAmount,
+  runQuery = query,
+}) {
+  const thresholdAmount = toAmount(taxRuleRow?.threshold_amount);
+  if (thresholdAmount === null) {
+    return null;
+  }
+
+  if (u(moduleCode) !== "CARI" || u(counterpartyType) !== "VENDOR") {
+    throw conflict(
+      "thresholdAmount is supported only for CARI vendor tax rules",
+      "TAX_RULE_UNSUPPORTED_THRESHOLD"
+    );
+  }
+
+  const parsedLegalEntityId = parsePositiveInt(legalEntityId);
+  if (!parsedLegalEntityId) {
+    throw badRequest("legalEntityId is required for threshold-based tax rules");
+  }
+
+  const normalizedBaseAmount = toAmount(baseAmount);
+  if (normalizedBaseAmount === null || normalizedBaseAmount <= 0) {
+    throw badRequest("baseAmount must be > 0 for threshold-based tax rules");
+  }
+
+  const currentDocumentSign = resolveCariThresholdDocumentSign(documentType);
+  if (currentDocumentSign === 0) {
+    return {
+      mode: "CUMULATIVE_FISCAL_PERIOD_EXCESS_ONLY",
+      thresholdAmount,
+      cumulativeBaseBefore: null,
+      cumulativeBaseAfter: null,
+      signedCurrentBaseAmount: 0,
+      signedAppliedBaseAmount: 0,
+      appliedBaseAmount: 0,
+      periodId: null,
+      fiscalYear: null,
+      periodNo: null,
+      periodStartDate: null,
+      periodEndDate: null,
+    };
+  }
+
+  const calendarId = await resolvePreferredBookCalendarId({
+    tenantId,
+    legalEntityId: parsedLegalEntityId,
+    runQuery,
+  });
+  if (!calendarId) {
+    throw conflict(
+      "Unable to resolve fiscal calendar for threshold-based tax rule",
+      "TAX_RULE_UNSUPPORTED_THRESHOLD"
+    );
+  }
+
+  const periodRow = await resolveFiscalPeriodForDate({
+    calendarId,
+    postingDate,
+    runQuery,
+  });
+  if (!periodRow) {
+    throw conflict(
+      "Unable to resolve fiscal period for threshold-based tax rule",
+      "TAX_RULE_UNSUPPORTED_THRESHOLD"
+    );
+  }
+
+  const conditions = [
+    "tenant_id = ?",
+    "legal_entity_id = ?",
+    "direction = ?",
+    "status IN ('POSTED', 'PARTIALLY_SETTLED', 'SETTLED')",
+    "document_date >= ?",
+    "document_date <= ?",
+  ];
+  const params = [
+    parsePositiveInt(tenantId),
+    parsedLegalEntityId,
+    resolveCariDirectionFromCounterpartyType(counterpartyType),
+    String(periodRow.start_date || ""),
+    postingDate,
+  ];
+
+  const cumulativeResult = await runQuery(
+    `SELECT COALESCE(
+        SUM(
+          CASE
+            WHEN document_type IN ('INVOICE', 'DEBIT_NOTE') THEN amount_base
+            WHEN document_type = 'CREDIT_NOTE' THEN amount_base * -1
+            ELSE 0
+          END
+        ),
+        0
+      ) AS cumulative_amount_base
+     FROM cari_documents
+     WHERE ${conditions.join(" AND ")}`,
+    params
+  );
+
+  const cumulativeBaseBefore = toAmount(
+    cumulativeResult.rows?.[0]?.cumulative_amount_base || 0
+  );
+  const signedCurrentBaseAmount = toAmount(normalizedBaseAmount * currentDocumentSign);
+  const cumulativeBaseAfter = toAmount(
+    Number(cumulativeBaseBefore || 0) + Number(signedCurrentBaseAmount || 0)
+  );
+  const excessBefore = Math.max(0, Number(cumulativeBaseBefore || 0) - thresholdAmount);
+  const excessAfter = Math.max(0, Number(cumulativeBaseAfter || 0) - thresholdAmount);
+  const signedAppliedBaseAmount = toAmount(excessAfter - excessBefore);
+  const appliedBaseAmount = toAmount(Math.abs(Number(signedAppliedBaseAmount || 0)));
+
+  return {
+    mode: "CUMULATIVE_FISCAL_PERIOD_EXCESS_ONLY",
+    thresholdAmount,
+    cumulativeBaseBefore,
+    cumulativeBaseAfter,
+    signedCurrentBaseAmount,
+    signedAppliedBaseAmount,
+    appliedBaseAmount,
+    periodId: parsePositiveInt(periodRow.id),
+    fiscalYear: Number(periodRow.fiscal_year || 0) || null,
+    periodNo: Number(periodRow.period_no || 0) || null,
+    periodStartDate: String(periodRow.start_date || "") || null,
+    periodEndDate: String(periodRow.end_date || "") || null,
+  };
+}
+
 async function resolveTaxCodeByInput({
   tenantId,
   regimeId,
@@ -342,6 +533,7 @@ export async function resolveTaxCodeAndRule({
   counterpartyType = null,
   taxCodeId = null,
   taxCode = null,
+  baseAmount = null,
   calculationMode = null,
   recoverability = null,
   recoverablePct = null,
@@ -419,6 +611,17 @@ export async function resolveTaxCodeAndRule({
     throw conflict("Resolved tax code is missing or inactive", "TAX_CODE_NOT_ACTIVE");
   }
 
+  const threshold = await resolveThresholdBaseContext({
+    tenantId: parsedTenantId,
+    legalEntityId,
+    postingDate,
+    moduleCode,
+    documentType,
+    counterpartyType,
+    taxRuleRow,
+    baseAmount,
+    runQuery,
+  });
   const computation = resolveComputationConfigFromFormula({
     taxCodeRow,
     taxRuleRow,
@@ -437,12 +640,26 @@ export async function resolveTaxCodeAndRule({
       type: computation.formulaType,
       source: computation.formula,
     },
+    threshold,
     computation: {
       formulaType: computation.formulaType,
       ratePct: computation.ratePct,
       calculationMode: computation.calculationMode,
       recoverability: computation.recoverability,
       recoverablePct: computation.recoverablePct,
+      taxableBaseAmount:
+        threshold?.appliedBaseAmount !== undefined && threshold?.appliedBaseAmount !== null
+          ? threshold.appliedBaseAmount
+          : baseAmount === null || baseAmount === undefined
+          ? null
+          : toAmount(baseAmount),
+      signedTaxableBaseAmount:
+        threshold?.signedAppliedBaseAmount !== undefined &&
+        threshold?.signedAppliedBaseAmount !== null
+          ? threshold.signedAppliedBaseAmount
+          : baseAmount === null || baseAmount === undefined
+          ? null
+          : toAmount(baseAmount),
     },
   };
 }
@@ -455,8 +672,8 @@ export function computeTaxBreakdown({
   recoverablePct = null,
 }) {
   const amount = Number(baseAmount);
-  if (!Number.isFinite(amount) || amount <= 0) {
-    throw taxInvalidFormula("baseAmount must be > 0");
+  if (!Number.isFinite(amount) || amount < 0) {
+    throw taxInvalidFormula("baseAmount must be >= 0");
   }
 
   const normalizedMode = u(mode);
@@ -478,12 +695,18 @@ export function computeTaxBreakdown({
     taxAmount = Number((amount * rateFraction).toFixed(6));
     grossAmount = Number((netAmount + taxAmount).toFixed(6));
   } else {
-    if (rateFraction <= 0) {
+    if (rateFraction <= 0 && amount > 0) {
       throw taxInvalidFormula("INCLUSIVE calculation requires a positive ratePct");
     }
-    netAmount = Number((amount / (1 + rateFraction)).toFixed(6));
-    taxAmount = Number((amount - netAmount).toFixed(6));
-    grossAmount = amount;
+    if (amount === 0) {
+      netAmount = 0;
+      taxAmount = 0;
+      grossAmount = 0;
+    } else {
+      netAmount = Number((amount / (1 + rateFraction)).toFixed(6));
+      taxAmount = Number((amount - netAmount).toFixed(6));
+      grossAmount = amount;
+    }
   }
 
   const normalizedRecoverability = u(recoverability || "FULL");

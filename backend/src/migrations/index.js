@@ -100,6 +100,7 @@ import migration109ShareholderCapitalFulfillments from "./m109_shareholder_capit
 import migration110ShareholderCapitalFulfillmentsCashRegisterLinks from "./m110_shareholder_capital_fulfillments_cash_register_links.js";
 import migration111CashRegisterOwnershipScope from "./m111_cash_register_ownership_scope.js";
 import migration112OperatingUnitPartnerCurrentAccounts from "./m112_operating_unit_partner_current_accounts.js";
+import migration113TaxRuleThresholdAmount from "./m113_tax_rule_threshold_amount.js";
 
 const migrations = [
   migration001GlobalMultiEntity,
@@ -204,6 +205,7 @@ const migrations = [
   migration110ShareholderCapitalFulfillmentsCashRegisterLinks,
   migration111CashRegisterOwnershipScope,
   migration112OperatingUnitPartnerCurrentAccounts,
+  migration113TaxRuleThresholdAmount,
 ];
 
 export default migrations;

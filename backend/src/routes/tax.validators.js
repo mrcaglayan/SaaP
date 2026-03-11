@@ -112,6 +112,27 @@ function parseNullableDateField(body, camelKey, snakeKey, label) {
   return { provided: true, value: parseOptionalDateOnly(raw, label) };
 }
 
+function parseNullableDecimalField(
+  body,
+  camelKey,
+  snakeKey,
+  label,
+  { min = null, max = null } = {}
+) {
+  const provided = hasOwn(body, camelKey) || hasOwn(body, snakeKey);
+  if (!provided) {
+    return { provided: false, value: undefined };
+  }
+  const raw = hasOwn(body, camelKey) ? body[camelKey] : body[snakeKey];
+  if (raw === null || raw === "") {
+    return { provided: true, value: null };
+  }
+  return {
+    provided: true,
+    value: parseOptionalDecimal(raw, label, { min, max }),
+  };
+}
+
 function parseJsonValue(value, label, { required = false } = {}) {
   if (value === undefined || value === null || value === "") {
     if (required) {
@@ -492,6 +513,11 @@ export function parseTaxRuleCreateInput(req) {
       body.applyPriority === undefined && body.apply_priority === undefined
         ? 100
         : requirePositiveInt(body.applyPriority ?? body.apply_priority, "applyPriority"),
+    thresholdAmount: parseOptionalDecimal(
+      body.thresholdAmount ?? body.threshold_amount,
+      "thresholdAmount",
+      { min: 0 }
+    ),
     formulaJson: parseJsonValue(body.formulaJson ?? body.formula_json, "formulaJson", {
       required: true,
     }),
@@ -517,6 +543,13 @@ export function parseTaxRuleUpdateInput(req) {
     "effectiveTo",
     "effective_to",
     "effectiveTo"
+  );
+  const thresholdAmountField = parseNullableDecimalField(
+    body,
+    "thresholdAmount",
+    "threshold_amount",
+    "thresholdAmount",
+    { min: 0 }
   );
 
   const patch = {
@@ -556,6 +589,9 @@ export function parseTaxRuleUpdateInput(req) {
       body.applyPriority ?? body.apply_priority,
       "applyPriority"
     );
+  }
+  if (thresholdAmountField.provided) {
+    patch.thresholdAmount = thresholdAmountField.value;
   }
   if (hasOwn(body, "formulaJson") || hasOwn(body, "formula_json")) {
     patch.formulaJson = parseJsonValue(body.formulaJson ?? body.formula_json, "formulaJson", {

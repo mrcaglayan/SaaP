@@ -243,7 +243,7 @@ const centralDueFromAccountId = parsePositiveInt(row.central_due_from_account_id
 const ouDueToCentralAccountId = parsePositiveInt(row.ou_due_to_central_account_id);
 if (!centralDueFromAccountId || !ouDueToCentralAccountId) {
   throw badRequest(
-    "selected operatingUnitId is missing internal current account mappings"
+    "selected operatingUnitId is missing internal current account mappings; configure Central Due From OU and OU Due To Central on that operating unit"
   );
 }
 if (

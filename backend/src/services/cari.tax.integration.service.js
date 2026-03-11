@@ -190,11 +190,14 @@ export async function buildCariTaxAugmentation({
     counterpartyType,
     taxCodeId: parsePositiveInt(taxCodeId),
     taxCode: toNullableString(taxCode, 40),
+    baseAmount: normalizedBaseAmount,
     runQuery,
   });
+  const taxableBaseAmount =
+    resolved.computation.taxableBaseAmount ?? normalizedBaseAmount;
 
   const breakdown = computeTaxBreakdown({
-    baseAmount: normalizedBaseAmount,
+    baseAmount: taxableBaseAmount,
     mode: resolved.computation.calculationMode,
     ratePct: resolved.computation.ratePct,
     recoverability: resolved.computation.recoverability,
@@ -218,6 +221,8 @@ export async function buildCariTaxAugmentation({
     taxRuleId: parsePositiveInt(resolved.taxRuleRow.id),
     taxPurposeCode: normalizeUpperText(resolvedAccounts.taxPurposeCode),
     taxDirection,
+    threshold: resolved.threshold || null,
+    taxableBaseAmount,
     taxAmount: toAmount(breakdown.taxAmount || 0),
     netAmount: toAmount(breakdown.netAmount || 0),
     grossAmount: toAmount(breakdown.grossAmount || 0),

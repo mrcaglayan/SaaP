@@ -1,0 +1,16 @@
+[
+  {
+    "stepNo": 1,
+    "stageScopeType": "LEGAL_ENTITY",
+    "requiredPermissionCode": "gl.period.close",
+    "minApproverCount": 1,
+    "allowSelfApprove": false
+  },
+  {
+    "stepNo": 2,
+    "stageScopeType": "GROUP",
+    "requiredPermissionCode": "gl.period.close",
+    "minApproverCount": 1,
+    "allowSelfApprove": false
+  }
+]

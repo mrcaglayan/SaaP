@@ -1,0 +1,9 @@
+[
+  {
+    "stepNo": 1,
+    "stageScopeType": "GROUP",
+    "requiredPermissionCode": "consolidation.run.finalize",
+    "minApproverCount": 2,
+    "allowSelfApprove": false
+  }
+]

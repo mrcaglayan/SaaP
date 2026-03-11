@@ -367,18 +367,17 @@ export async function fetchShareholderRows({ conditions, params }) {
       AND dc.tenant_id = s.tenant_id
      LEFT JOIN (
        SELECT
-         je.tenant_id,
-         je.legal_entity_id,
-         jl.account_id,
-         SUM(jl.credit_base) AS paid_capital_calculated
-       FROM journal_entries je
-       JOIN journal_lines jl ON jl.journal_entry_id = je.id
-       WHERE je.status = 'POSTED'
-       GROUP BY je.tenant_id, je.legal_entity_id, jl.account_id
+         scf.tenant_id,
+         scf.legal_entity_id,
+         scf.shareholder_id,
+         SUM(scf.amount_base) AS paid_capital_calculated
+       FROM shareholder_capital_fulfillments scf
+       WHERE scf.status = 'POSTED'
+       GROUP BY scf.tenant_id, scf.legal_entity_id, scf.shareholder_id
      ) pc
        ON pc.tenant_id = s.tenant_id
       AND pc.legal_entity_id = s.legal_entity_id
-      AND pc.account_id = s.commitment_debit_sub_account_id
+      AND pc.shareholder_id = s.id
      WHERE ${conditions.join(" AND ")}
      ORDER BY s.legal_entity_id, s.code`,
     params
