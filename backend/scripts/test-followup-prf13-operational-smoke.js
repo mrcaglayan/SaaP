@@ -840,6 +840,12 @@ async function ensureTaxPipelineFixture({
        status = 'ACTIVE'`,
     [tenantId, regimeId, legalEntityId, taxCodeId, accountId]
   );
+
+  return {
+    regimeId,
+    taxCodeId,
+    taxCode: "VAT8",
+  };
 }
 
 async function ensureApproverUserForTenant(tenantId) {
@@ -1120,14 +1126,16 @@ async function approveGateToCompletion({
   };
 }
 
-async function runTaxPipelineSmoke({ tenantId, legalEntityId }) {
+async function runTaxPipelineSmoke({ tenantId, legalEntityId, regimeId, taxCodeId, taxCode }) {
   const postingDate = new Date().toISOString().slice(0, 10);
   const resolved = await resolveTaxCodeAndRule({
     tenantId,
     legalEntityId,
     postingDate,
+    regimeId,
     moduleCode: "CARI",
-    taxCode: "VAT8",
+    taxCodeId,
+    taxCode,
     documentType: "INVOICE",
     counterpartyType: "CUSTOMER",
   });
@@ -1235,7 +1243,7 @@ async function runTenantSmoke(tenantId) {
       calendarId: core.calendarId,
       currencyCode: core.currencyCode,
     });
-    await ensureTaxPipelineFixture({
+    const taxFixture = await ensureTaxPipelineFixture({
       tenantId,
       requesterUserId: users.requesterUserId,
       legalEntityId: core.legalEntityId,
@@ -1277,6 +1285,9 @@ async function runTenantSmoke(tenantId) {
     const tax = await runTaxPipelineSmoke({
       tenantId,
       legalEntityId: core.legalEntityId,
+      regimeId: taxFixture.regimeId,
+      taxCodeId: taxFixture.taxCodeId,
+      taxCode: taxFixture.taxCode,
     });
 
     return {
