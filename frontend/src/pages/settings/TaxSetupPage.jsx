@@ -166,6 +166,44 @@ return {
   currencyCode: "",
 };
 }
+function resolvePreviewLineDirection(row, fallbackDirection = "") {
+  const explicitDirection = toUpper(row?.direction);
+  if (explicitDirection) {
+    return explicitDirection;
+  }
+  const amountTxn = Number(row?.amountTxn);
+  if (Number.isFinite(amountTxn) && amountTxn !== 0) {
+    return amountTxn < 0 ? "SALE" : "PURCHASE";
+  }
+  const creditBase = Number(row?.creditBase);
+  if (Number.isFinite(creditBase) && creditBase > 0) {
+    return "SALE";
+  }
+  const debitBase = Number(row?.debitBase);
+  if (Number.isFinite(debitBase) && debitBase > 0) {
+    return "PURCHASE";
+  }
+  return toUpper(fallbackDirection) || "-";
+}
+function resolvePreviewLineAmount(row) {
+  const explicitAmount = Number(row?.amount);
+  if (Number.isFinite(explicitAmount)) {
+    return explicitAmount;
+  }
+  const amountTxn = Number(row?.amountTxn);
+  if (Number.isFinite(amountTxn)) {
+    return Math.abs(amountTxn);
+  }
+  const creditBase = Number(row?.creditBase);
+  if (Number.isFinite(creditBase) && creditBase > 0) {
+    return creditBase;
+  }
+  const debitBase = Number(row?.debitBase);
+  if (Number.isFinite(debitBase) && debitBase > 0) {
+    return debitBase;
+  }
+  return "-";
+}
 export default function TaxSetupPage() {
   const { hasPermission } = useAuth();
   const { language } = useI18n();
@@ -1718,12 +1756,14 @@ return (
             <tbody>
               {previewLines.map((row, index) => (
                 <tr key={`preview-line-${index}`} className="border-t border-slate-100">
-                  <td className="px-2 py-2">{row.direction || "-"}</td>
+                  <td className="px-2 py-2">
+                    {resolvePreviewLineDirection(row, previewForm.direction)}
+                  </td>
                   <td className="px-2 py-2">{row.taxPurposeCode || "-"}</td>
                   <td className="px-2 py-2">
                     {row.accountCode || row.accountId || "-"} {row.accountName ? `- ${row.accountName}` : ""}
                   </td>
-                  <td className="px-2 py-2">{row.amount ?? "-"}</td>
+                  <td className="px-2 py-2">{resolvePreviewLineAmount(row)}</td>
                 </tr>
               ))}
             </tbody>

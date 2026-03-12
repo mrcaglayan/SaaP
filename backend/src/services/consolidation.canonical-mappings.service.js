@@ -781,7 +781,9 @@ function classifyCanonicalCandidate(row) {
     groupMatchCount,
     groupMatchAccountIds,
     resolvedGroupAccountId,
-    resolvedGroupAccountCode: resolvedGroupAccountId ? row.local_account_code || null : null,
+    resolvedGroupAccountCode: resolvedGroupAccountId
+      ? row.group_match_account_code || null
+      : null,
     classification,
     reasonCode: classification,
     reason,
@@ -2403,6 +2405,7 @@ export async function listCanonicalMappingCandidates({
          ORDER BY group_acc_match.id
          SEPARATOR ','
        ) AS group_match_ids,
+       MIN(group_acc_match.code) AS group_match_account_code,
        MIN(group_acc_match.name) AS group_match_account_name,
        MIN(group_acc_match.account_type) AS group_match_account_type,
        MIN(group_acc_match.normal_side) AS group_match_normal_side

@@ -124,7 +124,16 @@ Not:
 - iki legal entity varsa `0 / minimum 2` gormek normaldir
 - her legal entity icin hem `PERIOD_CLOSE` hem `CONSOLIDATION_RUN` cozulebilmelidir
 
-6. `Kur Yonetimi` ekraninda AFN/USD icin gunluk kurlar ve en az bir ay sonu kuru gir.
+Gecis notu:
+
+- `Kur Yonetimi` sayfasi tenant readiness guard arkasindadir ve setup allowlist'inde degildir.
+- Bu nedenle bu adima gecmeden once `Organizasyon Yonetimi > Shareholders` altinda en az su minimumu tamamla:
+  - her legal entity icin en az 1 shareholder
+  - shareholder parent account mappingleri (`capital credit` + `commitment debit`)
+  - en az 1 ornek sermaye taahhut kaydi
+- Beklenen: readiness checklist icindeki `shareholders` ve `shareholderCommitmentConfigs` eksikleri kapanir; aksi halde router kullaniciyi `Sirket Ayarlari` sayfasina geri yollar.
+
+6. Tenant readiness yesile dondukten sonra `Kur Yonetimi` ekraninda AFN/USD icin gunluk kurlar ve en az bir ay sonu kuru gir. HER AYIN SONUNA.
    Beklenen: cari, cash FX ve revaluation akislari kur eksigi almadan calisabilir.
 
 7. `Hesap Plani Ayarlari` ekraninda chart of accounts yapisini, GL hesaplarini, purpose mappinglerini ve retained earnings hesabini tanimla.
@@ -295,7 +304,7 @@ Bu adim icin pratik hedef:
 
 ## 6. Faz 2 - Sermaye ve Kurulus Islemleri
 
-Bu faz, kullanicinin ilk 12 maddesindeki sermaye taahhudu ve yerine getirme akislarini genisletir.
+Bu faz, Faz 1'de readiness guard'i gecmek icin minimum seviyede acilan shareholder / sermaye taahhudu kurulumunu genisletir.
 
 11. Her legal entity icin en az iki shareholder tanimla ve commitment debit sub-account baglantilarini yap.
     Beklenen: sermaye taahhut kaydi icin org setup tamamlanir.

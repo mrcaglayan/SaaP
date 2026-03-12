@@ -182,6 +182,73 @@ function getCandidatePreviewFilterCount(summary, filterValue) {
   return 0;
 }
 
+function resolveCandidatePreviewGroupAccount(row) {
+  const currentGroupAccountId = toPositiveInt(row?.currentMapping?.groupAccountId);
+  const currentGroupAccountCode = String(
+    row?.currentMapping?.groupAccountCode || ""
+  ).trim();
+  if (currentGroupAccountId || currentGroupAccountCode) {
+    return {
+      id: currentGroupAccountId,
+      code: currentGroupAccountCode,
+      source: "CURRENT_MAPPING",
+    };
+  }
+
+  const resolvedGroupAccountId = toPositiveInt(row?.resolvedGroupAccountId);
+  const resolvedGroupAccountCode = String(row?.resolvedGroupAccountCode || "").trim();
+  if (resolvedGroupAccountId || resolvedGroupAccountCode) {
+    return {
+      id: resolvedGroupAccountId,
+      code: resolvedGroupAccountCode,
+      source: "CODE_MATCH",
+    };
+  }
+
+  const expectedGroupAccountId = toPositiveInt(row?.expectedKeyState?.groupAccountId);
+  const expectedGroupAccountCode = String(
+    row?.expectedKeyState?.groupAccountCode || ""
+  ).trim();
+  if (expectedGroupAccountId || expectedGroupAccountCode) {
+    return {
+      id: expectedGroupAccountId,
+      code: expectedGroupAccountCode,
+      source: "EXPECTED_KEY",
+    };
+  }
+
+  return {
+    id: null,
+    code: "",
+    source: "",
+  };
+}
+
+function buildInitialCanonicalLocalForm() {
+  return {
+    legalEntityId: "",
+    localAccountId: "",
+    canonicalKey: "",
+    canonicalName: "",
+    reason: "",
+    status: "ACTIVE",
+    effectiveFrom: todayIso(),
+    effectiveTo: "",
+  };
+}
+
+function buildInitialCanonicalGroupForm() {
+  return {
+    groupAccountId: "",
+    canonicalKey: "",
+    canonicalName: "",
+    reason: "",
+    status: "ACTIVE",
+    effectiveFrom: todayIso(),
+    effectiveTo: "",
+  };
+}
+
 function isLocked(status) {
   return String(status || "").toUpperCase() === "LOCKED";
 }
@@ -287,25 +354,14 @@ export default function ConsolidationSetupPage() {
     localCoaId: "",
     status: "ACTIVE",
   });
-  const [canonicalLocalForm, setCanonicalLocalForm] = useState({
-    legalEntityId: "",
-    localAccountId: "",
-    canonicalKey: "",
-    canonicalName: "",
-    reason: "",
-    status: "ACTIVE",
-    effectiveFrom: todayIso(),
-    effectiveTo: "",
-  });
-  const [canonicalGroupForm, setCanonicalGroupForm] = useState({
-    groupAccountId: "",
-    canonicalKey: "",
-    canonicalName: "",
-    reason: "",
-    status: "ACTIVE",
-    effectiveFrom: todayIso(),
-    effectiveTo: "",
-  });
+  const [canonicalLocalForm, setCanonicalLocalForm] = useState(
+    buildInitialCanonicalLocalForm
+  );
+  const [canonicalGroupForm, setCanonicalGroupForm] = useState(
+    buildInitialCanonicalGroupForm
+  );
+  const [canonicalLocalEditTarget, setCanonicalLocalEditTarget] = useState(null);
+  const [canonicalGroupEditTarget, setCanonicalGroupEditTarget] = useState(null);
   const [canonicalRuleForm, setCanonicalRuleForm] = useState({
     legalEntityId: "",
     ruleType: "DESCENDANTS_OF_ACCOUNT",
@@ -376,10 +432,33 @@ export default function ConsolidationSetupPage() {
     return out;
   }, [coas]);
 
+  const activeCanonicalLocalMappingAccountIds = useMemo(() => {
+    const ids = new Set();
+    for (const row of canonicalMappings) {
+      if (String(row?.localMapping?.status || "").toUpperCase() !== "ACTIVE") {
+        continue;
+      }
+      const localAccountId = toPositiveInt(row?.localMapping?.localAccountId);
+      if (localAccountId) {
+        ids.add(localAccountId);
+      }
+    }
+    return ids;
+  }, [canonicalMappings]);
+
   const canonicalLocalAccountOptions = useMemo(() => {
     const legalEntityId = toPositiveInt(canonicalLocalForm.legalEntityId);
+    const selectedLocalAccountId = toPositiveInt(canonicalLocalForm.localAccountId);
     return accounts.filter((row) => {
       if (!isPostableLeafAccount(row)) {
+        return false;
+      }
+      const accountId = toPositiveInt(row?.id);
+      if (
+        accountId &&
+        activeCanonicalLocalMappingAccountIds.has(accountId) &&
+        accountId !== selectedLocalAccountId
+      ) {
         return false;
       }
       const coaId = toPositiveInt(row?.coa_id);
@@ -391,7 +470,13 @@ export default function ConsolidationSetupPage() {
       }
       return accountLegalEntityId === legalEntityId;
     });
-  }, [accounts, coaById, canonicalLocalForm.legalEntityId]);
+  }, [
+    accounts,
+    activeCanonicalLocalMappingAccountIds,
+    coaById,
+    canonicalLocalForm.legalEntityId,
+    canonicalLocalForm.localAccountId,
+  ]);
 
   const canonicalGroupAccountOptions = useMemo(
     () =>
@@ -1154,6 +1239,8 @@ export default function ConsolidationSetupPage() {
     const legalEntityId = toPositiveInt(canonicalLocalForm.legalEntityId);
     const localAccountId = toPositiveInt(canonicalLocalForm.localAccountId);
     const canonicalKey = String(canonicalLocalForm.canonicalKey || "").trim();
+    const editLegalEntityId = toPositiveInt(canonicalLocalEditTarget?.legalEntityId);
+    const editLocalAccountId = toPositiveInt(canonicalLocalEditTarget?.localAccountId);
 
     if (!groupId || !legalEntityId || !localAccountId || !canonicalKey) {
       setError(
@@ -1175,6 +1262,7 @@ export default function ConsolidationSetupPage() {
     }
     const effectiveFrom = toDateOnly(canonicalLocalForm.effectiveFrom || todayIso());
     const misalignedRuns = findCanonicalDateMisalignedRuns(effectiveFrom);
+    const isExistingActiveMapping = activeCanonicalLocalMappingAccountIds.has(localAccountId);
     if (misalignedRuns.length > 0) {
       const runList = misalignedRuns
         .slice(0, 3)
@@ -1188,7 +1276,20 @@ export default function ConsolidationSetupPage() {
       );
       return;
     }
+    if (
+      canonicalLocalEditTarget &&
+      (legalEntityId !== editLegalEntityId || localAccountId !== editLocalAccountId)
+    ) {
+      setError(
+        l(
+          "Changing legal entity or local account during edit would target a different mapping. Cancel edit, retire the current mapping, or create a new mapping intentionally.",
+          "Duzenleme sirasinda istirak veya lokal hesap degistirmek farkli bir eslemeyi hedefler. Duzenlemeyi iptal edin, mevcut eslemeyi pasife alin veya bilerek yeni bir esleme olusturun."
+        )
+      );
+      return;
+    }
 
+    let saveSucceeded = false;
     await runAction(
       "canonical-local",
       async () => {
@@ -1204,6 +1305,7 @@ export default function ConsolidationSetupPage() {
           reason: String(canonicalLocalForm.reason || "").trim() || undefined,
           source: "UI_WORKBENCH_MANUAL",
         });
+        saveSucceeded = true;
       },
       l(
         "Failed to save canonical local mapping.",
@@ -1214,6 +1316,20 @@ export default function ConsolidationSetupPage() {
         "Canonical local mapping kaydedildi."
       )
     );
+    if (saveSucceeded && !isExistingActiveMapping) {
+      setCanonicalLocalForm((prev) => ({
+        ...prev,
+        localAccountId: "",
+        canonicalKey: "",
+        canonicalName: "",
+        reason: "",
+        effectiveTo: "",
+      }));
+    }
+    if (saveSucceeded && canonicalLocalEditTarget) {
+      setCanonicalLocalEditTarget(null);
+      setCanonicalLocalForm(buildInitialCanonicalLocalForm());
+    }
   }
 
   async function onSaveCanonicalGroupMapping(event) {
@@ -1231,11 +1347,26 @@ export default function ConsolidationSetupPage() {
     const groupId = toPositiveInt(selectedGroupId);
     const groupAccountId = toPositiveInt(canonicalGroupForm.groupAccountId);
     const canonicalKey = String(canonicalGroupForm.canonicalKey || "").trim();
+    const editCanonicalKey = String(canonicalGroupEditTarget?.canonicalKey || "")
+      .trim()
+      .toUpperCase();
     if (!groupId || !groupAccountId || !canonicalKey) {
       setError(
         l(
           "Group, groupAccountId and canonicalKey are required.",
           "Grup, groupAccountId ve canonicalKey zorunludur."
+        )
+      );
+      return;
+    }
+    if (
+      canonicalGroupEditTarget &&
+      canonicalKey.toUpperCase() !== editCanonicalKey
+    ) {
+      setError(
+        l(
+          "Changing canonical key during group edit would target a different mapping. Cancel edit or update the current canonical key mapping in place.",
+          "Grup duzenlemesinde canonical anahtari degistirmek farkli bir eslemeyi hedefler. Duzenlemeyi iptal edin veya mevcut canonical anahtar eslemesini yerinde guncelleyin."
         )
       );
       return;
@@ -1256,6 +1387,7 @@ export default function ConsolidationSetupPage() {
       return;
     }
 
+    let saveSucceeded = false;
     await runAction(
       "canonical-group",
       async () => {
@@ -1270,6 +1402,7 @@ export default function ConsolidationSetupPage() {
           reason: String(canonicalGroupForm.reason || "").trim() || undefined,
           source: "UI_WORKBENCH_MANUAL",
         });
+        saveSucceeded = true;
       },
       l(
         "Failed to save canonical group mapping.",
@@ -1280,6 +1413,10 @@ export default function ConsolidationSetupPage() {
         "Canonical group mapping kaydedildi."
       )
     );
+    if (saveSucceeded && canonicalGroupEditTarget) {
+      setCanonicalGroupEditTarget(null);
+      setCanonicalGroupForm(buildInitialCanonicalGroupForm());
+    }
   }
 
   async function onPreviewCanonicalCandidates() {
@@ -1454,6 +1591,20 @@ export default function ConsolidationSetupPage() {
       effectiveFrom: localEffectiveFrom || todayIso(),
       effectiveTo: toDateOnly(row?.localMapping?.effectiveTo || ""),
     }));
+    setCanonicalLocalEditTarget(
+      row?.localMapping?.id
+        ? {
+            id: String(row.localMapping.id),
+            legalEntityId: row?.localMapping?.legalEntityId
+              ? String(row.localMapping.legalEntityId)
+              : "",
+            localAccountId: row?.localMapping?.localAccountId
+              ? String(row.localMapping.localAccountId)
+              : "",
+            localAccountCode: row?.localMapping?.localAccountCode || "",
+          }
+        : null
+    );
     setCanonicalGroupForm((prev) => ({
       ...prev,
       groupAccountId: row?.groupMapping?.groupAccountId
@@ -1466,6 +1617,14 @@ export default function ConsolidationSetupPage() {
       effectiveFrom: groupEffectiveFrom || todayIso(),
       effectiveTo: toDateOnly(row?.groupMapping?.effectiveTo || ""),
     }));
+    setCanonicalGroupEditTarget(
+      row?.groupMapping?.id
+        ? {
+            id: String(row.groupMapping.id),
+            canonicalKey: canonicalKey || "",
+          }
+        : null
+    );
     setCanonicalRuleForm((prev) => ({
       ...prev,
       legalEntityId: row?.localMapping?.legalEntityId
@@ -1485,6 +1644,18 @@ export default function ConsolidationSetupPage() {
         `${canonicalKey || "Secilen mapping"} icin canonical duzenleme formlari dolduruldu.`
       )
     );
+  }
+
+  function onCancelCanonicalLocalEdit() {
+    setCanonicalLocalEditTarget(null);
+    setCanonicalLocalForm(buildInitialCanonicalLocalForm());
+    setError("");
+  }
+
+  function onCancelCanonicalGroupEdit() {
+    setCanonicalGroupEditTarget(null);
+    setCanonicalGroupForm(buildInitialCanonicalGroupForm());
+    setError("");
   }
 
   async function onPreviewCanonicalRule() {
@@ -2605,9 +2776,15 @@ export default function ConsolidationSetupPage() {
                   {l("Showing", "Gosterilen")} {filteredCanonicalCandidateRows.length} /{" "}
                   {Number(canonicalCandidatePreview?.summary?.total || 0)}
                 </div>
-                <div className="mt-2 max-h-40 overflow-auto rounded border border-slate-200 p-2">
+                <div className="mt-1 text-[10px] text-slate-500">
+                  {l(
+                    "Headers: LE = Legal Entity, L = Local Account, G = Group Account, K = Canonical Key.",
+                    "Basliklar: LE = Istirak / Bagli Ortak, L = Lokal Hesap, G = Grup Hesabi, K = Canonical Anahtar."
+                  )}
+                </div>
+                <div className="mt-2 max-h-40 overflow-auto rounded border border-slate-200">
                   {filteredCanonicalCandidateRows.length === 0 ? (
-                    <div className="text-slate-500">
+                    <div className="p-2 text-slate-500">
                       {canonicalCandidatePreview?.rows?.length
                         ? l(
                             "No candidate rows for the selected filter.",
@@ -2616,36 +2793,139 @@ export default function ConsolidationSetupPage() {
                         : l("No candidate rows", "Aday satiri yok")}
                     </div>
                   ) : (
-                    filteredCanonicalCandidateRows.map((row) => (
-                      <div
-                        key={`${row?.legalEntityId || "le"}-${row?.localAccountId || "acc"}-${row?.expectedCanonicalKey || "key"}`}
-                        className="border-b border-slate-100 py-1 last:border-0"
-                      >
-                        [{row?.classification || "-"}] LE {row?.legalEntityId || "-"} |{" "}
-                        L:{row?.localAccountCode || "-"} ({row?.localAccountId || "-"}) | G:
-                        {row?.resolvedGroupAccountId || "-"} | K:
-                        {row?.expectedCanonicalKey || "-"} | {row?.reason || "-"}
-                        <div className="mt-1 flex flex-wrap items-center gap-1">
-                          {row?.semanticRisk?.highRisk === true && (
-                            <span className="rounded bg-rose-100 px-1.5 py-0.5 text-[10px] font-semibold text-rose-700">
-                              HIGH_RISK
-                            </span>
-                          )}
-                          {(row?.semanticWarnings || []).map((warning, index) => (
-                            <span
-                              key={`${warning?.code || "warn"}-${index}`}
-                              className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${
-                                String(warning?.severity || "").toUpperCase() === "HIGH"
-                                  ? "bg-rose-100 text-rose-700"
-                                  : "bg-amber-100 text-amber-700"
-                              }`}
+                    <table className="min-w-[900px] w-full text-[11px] text-slate-700">
+                      <thead className="text-left text-[10px] uppercase tracking-wide text-slate-600">
+                        <tr className="border-b border-slate-200">
+                          <th
+                            scope="col"
+                            className="sticky top-0 z-10 bg-slate-50 px-2 py-2 font-semibold"
+                          >
+                            {l("Status", "Durum")}
+                          </th>
+                          <th
+                            scope="col"
+                            className="sticky top-0 z-10 bg-slate-50 px-2 py-2 font-semibold"
+                          >
+                            {l("Legal Entity (LE)", "Istirak / Bagli Ortak (LE)")}
+                          </th>
+                          <th
+                            scope="col"
+                            className="sticky top-0 z-10 bg-slate-50 px-2 py-2 font-semibold"
+                          >
+                            {l("Local Account (L)", "Lokal Hesap (L)")}
+                          </th>
+                          <th
+                            scope="col"
+                            className="sticky top-0 z-10 bg-slate-50 px-2 py-2 font-semibold"
+                          >
+                            {l("Group Account (G)", "Grup Hesabi (G)")}
+                          </th>
+                          <th
+                            scope="col"
+                            className="sticky top-0 z-10 bg-slate-50 px-2 py-2 font-semibold"
+                          >
+                            {l("Canonical Key (K)", "Canonical Anahtar (K)")}
+                          </th>
+                          <th
+                            scope="col"
+                            className="sticky top-0 z-10 bg-slate-50 px-2 py-2 font-semibold"
+                          >
+                            {l("Reason", "Neden")}
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredCanonicalCandidateRows.map((row) => {
+                          const groupAccount = resolveCandidatePreviewGroupAccount(row);
+                          const groupAccountSourceLabel =
+                            groupAccount.source === "CURRENT_MAPPING"
+                              ? l("Active mapping", "Aktif esleme")
+                              : groupAccount.source === "CODE_MATCH"
+                                ? l("Code match", "Kod eslesmesi")
+                                : groupAccount.source === "EXPECTED_KEY"
+                                  ? l("Expected key", "Beklenen anahtar")
+                                  : "";
+                          return (
+                            <tr
+                              key={`${row?.legalEntityId || "le"}-${row?.localAccountId || "acc"}-${row?.expectedCanonicalKey || "key"}`}
+                              className="border-b border-slate-100 align-top last:border-0"
                             >
-                              {warning?.code || "SEMANTIC_WARNING"}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    ))
+                              <td className="px-2 py-2 align-top">
+                                <div className="font-semibold text-slate-800">
+                                  {row?.classification || "-"}
+                                </div>
+                              </td>
+                              <td className="px-2 py-2 align-top">
+                                <div className="font-medium text-slate-800">
+                                  {row?.legalEntityId || "-"}
+                                </div>
+                                {row?.legalEntityCode || row?.legalEntityName ? (
+                                  <div className="text-[10px] text-slate-500">
+                                    {[row?.legalEntityCode, row?.legalEntityName]
+                                      .filter(Boolean)
+                                      .join(" - ")}
+                                  </div>
+                                ) : null}
+                              </td>
+                              <td className="px-2 py-2 align-top">
+                                <div className="font-mono text-slate-800">
+                                  {row?.localAccountCode || "-"}
+                                </div>
+                                <div className="text-[10px] text-slate-500">
+                                  #{row?.localAccountId || "-"}
+                                  {row?.localAccountName
+                                    ? ` - ${row.localAccountName}`
+                                    : ""}
+                                </div>
+                              </td>
+                              <td className="px-2 py-2 align-top">
+                                <div className="font-mono text-slate-800">
+                                  {groupAccount.code ||
+                                    (groupAccount.id ? `#${groupAccount.id}` : "-")}
+                                </div>
+                                {groupAccount.id || groupAccountSourceLabel ? (
+                                  <div className="text-[10px] text-slate-500">
+                                    {groupAccount.id ? `#${groupAccount.id}` : ""}
+                                    {groupAccount.id && groupAccountSourceLabel
+                                      ? " - "
+                                      : ""}
+                                    {groupAccountSourceLabel}
+                                  </div>
+                                ) : null}
+                              </td>
+                              <td className="px-2 py-2 align-top">
+                                <div className="font-mono text-slate-800">
+                                  {row?.expectedCanonicalKey || "-"}
+                                </div>
+                              </td>
+                              <td className="px-2 py-2 align-top">
+                                <div>{row?.reason || "-"}</div>
+                                <div className="mt-1 flex flex-wrap items-center gap-1">
+                                  {row?.semanticRisk?.highRisk === true && (
+                                    <span className="rounded bg-rose-100 px-1.5 py-0.5 text-[10px] font-semibold text-rose-700">
+                                      HIGH_RISK
+                                    </span>
+                                  )}
+                                  {(row?.semanticWarnings || []).map((warning, index) => (
+                                    <span
+                                      key={`${warning?.code || "warn"}-${index}`}
+                                      className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${
+                                        String(warning?.severity || "").toUpperCase() ===
+                                        "HIGH"
+                                          ? "bg-rose-100 text-rose-700"
+                                          : "bg-amber-100 text-amber-700"
+                                      }`}
+                                    >
+                                      {warning?.code || "SEMANTIC_WARNING"}
+                                    </span>
+                                  ))}
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
                   )}
                 </div>
               </div>
@@ -3108,6 +3388,14 @@ export default function ConsolidationSetupPage() {
               onSubmit={onSaveCanonicalLocalMapping}
               className="grid gap-2 md:grid-cols-4"
             >
+              {canonicalLocalEditTarget ? (
+                <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-900 md:col-span-4">
+                  {l(
+                    "Editing an existing local mapping. Legal entity and local account are locked because they define the mapping scope. To retire this row, set Status to INACTIVE and save.",
+                    "Mevcut bir lokal esleme duzenleniyor. Istirak ve lokal hesap alanlari esleme kapsamini tanimladigi icin kilitlendi. Bu satiri devreden cikarmak icin Status alanini INACTIVE yapip kaydedin."
+                  )}
+                </div>
+              ) : null}
               <Combobox
                 value={canonicalLocalForm.legalEntityId || null}
                 options={legalEntitySelectOptions}
@@ -3121,6 +3409,7 @@ export default function ConsolidationSetupPage() {
                 placeholder={l("Select legal entity", "Istirak / bagli ortak secin")}
                 noOptionsText={l("No legal entities found.", "Istirak bulunamadi.")}
                 clearable={false}
+                disabled={Boolean(canonicalLocalEditTarget)}
               />
               <Combobox
                 id="canonical-local-account-options"
@@ -3135,7 +3424,14 @@ export default function ConsolidationSetupPage() {
                 placeholder={l("Select local account", "Lokal hesap secin")}
                 noOptionsText={l("No local accounts found.", "Lokal hesap bulunamadi.")}
                 clearable={false}
+                disabled={Boolean(canonicalLocalEditTarget)}
               />
+              <div className="text-[11px] text-slate-500 md:col-span-2">
+                {l(
+                  "Only local accounts without an active canonical local mapping are listed here. Use Edit below to update an existing mapping.",
+                  "Burada yalnizca aktif canonical lokal eslemesi olmayan hesaplar listelenir. Mevcut eslemeyi guncellemek icin asagidaki Duzenle aksiyonunu kullanin."
+                )}
+              </div>
               <input
                 value={canonicalLocalForm.canonicalKey}
                 onChange={(event) =>
@@ -3213,14 +3509,33 @@ export default function ConsolidationSetupPage() {
               >
                 {saving === "canonical-local"
                   ? l("Saving local...", "Lokal kaydediliyor...")
-                  : l("Save Local Mapping", "Lokal Eslemeyi Kaydet")}
+                  : canonicalLocalEditTarget
+                    ? l("Update Local Mapping", "Lokal Eslemeyi Guncelle")
+                    : l("Save Local Mapping", "Lokal Eslemeyi Kaydet")}
               </button>
+              {canonicalLocalEditTarget ? (
+                <button
+                  type="button"
+                  onClick={onCancelCanonicalLocalEdit}
+                  className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  {l("Cancel Local Edit", "Lokal Duzenlemeyi Iptal Et")}
+                </button>
+              ) : null}
             </form>
 
             <form
               onSubmit={onSaveCanonicalGroupMapping}
               className="mt-2 grid gap-2 md:grid-cols-4"
             >
+              {canonicalGroupEditTarget ? (
+                <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-900 md:col-span-4">
+                  {l(
+                    "Editing an existing group mapping. Canonical key is locked because it defines the mapping scope. To retire this row, set Status to INACTIVE and save.",
+                    "Mevcut bir grup eslemesi duzenleniyor. Canonical anahtar esleme kapsamini tanimladigi icin kilitlendi. Bu satiri devreden cikarmak icin Status alanini INACTIVE yapip kaydedin."
+                  )}
+                </div>
+              ) : null}
               <Combobox
                 id="canonical-group-account-options"
                 value={canonicalGroupForm.groupAccountId || null}
@@ -3246,6 +3561,7 @@ export default function ConsolidationSetupPage() {
                 className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
                 placeholder={l("Canonical key", "Canonical anahtar")}
                 required
+                disabled={Boolean(canonicalGroupEditTarget)}
               />
               <input
                 value={canonicalGroupForm.canonicalName}
@@ -3312,8 +3628,19 @@ export default function ConsolidationSetupPage() {
               >
                 {saving === "canonical-group"
                   ? l("Saving group...", "Grup kaydediliyor...")
-                  : l("Save Group Mapping", "Grup Eslemeyi Kaydet")}
+                  : canonicalGroupEditTarget
+                    ? l("Update Group Mapping", "Grup Eslemeyi Guncelle")
+                    : l("Save Group Mapping", "Grup Eslemeyi Kaydet")}
               </button>
+              {canonicalGroupEditTarget ? (
+                <button
+                  type="button"
+                  onClick={onCancelCanonicalGroupEdit}
+                  className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  {l("Cancel Group Edit", "Grup Duzenlemeyi Iptal Et")}
+                </button>
+              ) : null}
             </form>
 
             <div className="mt-3 max-h-56 overflow-auto rounded-lg border border-slate-200 p-2 text-xs">
