@@ -396,7 +396,7 @@ POST
 "name": "SAYIM VE TESELLUM NOKSANLARI",
 "accountType": "ASSET",
 "normalSide": "DEBIT",
-"allowPosting": false
+"allowPosting": true
 },
 {
 "code": "198",
@@ -1131,7 +1131,7 @@ POST
 "name": "SAYIM VE TESELLUM FAZLALARI",
 "accountType": "LIABILITY",
 "normalSide": "CREDIT",
-"allowPosting": false
+"allowPosting": true
 },
 {
 "code": "399",
@@ -2442,7 +2442,7 @@ POST
 "name": "SAYIM VE TESELLUM NOKSANLARI",
 "accountType": "ASSET",
 "normalSide": "DEBIT",
-"allowPosting": false
+"allowPosting": true
 },
 {
 "code": "198",
@@ -3177,7 +3177,7 @@ POST
 "name": "SAYIM VE TESELLUM FAZLALARI",
 "accountType": "LIABILITY",
 "normalSide": "CREDIT",
-"allowPosting": false
+"allowPosting": true
 },
 {
 "code": "399",

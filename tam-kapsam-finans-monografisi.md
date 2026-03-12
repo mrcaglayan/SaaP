@@ -302,53 +302,33 @@ Bu adim icin pratik hedef:
 5. `SAFE` adaylar uygulatildi veya manuel local/group mappingler girildi.
 6. `Refresh readiness` sonrasi unresolved sayisi `0`.
 
-## 6. Faz 2 - Sermaye ve Kurulus Islemleri
+## 6. Faz 2 - Kasa, Banka ve Clearing Kurulumlari
 
-Bu faz, Faz 1'de readiness guard'i gecmek icin minimum seviyede acilan shareholder / sermaye taahhudu kurulumunu genisletir.
+Bu kurulum fazi, fulfillment, transit transfer ve banka operasyonu senaryolarindan once tamamlanmalidir.
 
-11. Her legal entity icin en az iki shareholder tanimla ve commitment debit sub-account baglantilarini yap.
-    Beklenen: sermaye taahhut kaydi icin org setup tamamlanir.
-
-12. Her entity icin sermaye taahhut kaydi gir.
-    Beklenen: commitment journal olusur ve unpaid capital gorunur.
-
-13. `LE_AFG` icin bir sermaye taahhutunu merkezi banka hesabina fulfillment ile yerine getir.
-    Beklenen: bankaya giden fulfillment journal dogru hesaplarda olusur.
-
-14. `LE_AFG` icin ikinci bir fulfillment'i merkezi cash register ile yap, sonra ayni tutari branch kasasina `Kasa Transit Transferleri` ile gonder.
-    Beklenen: cash transaction linki, fulfillment linki ve transit zinciri birlikte gorunur.
-
-15. `LE_USA` icin branch bank account hedefli fulfillment yap.
-    Beklenen: OU-targeted fulfillment ve gerekiyorsa due from / due to self-balancing satirlari test edilir.
-
-16. Bir fulfillment kaydini reverse et, sonra duzeltilmis tutarla tekrar post et.
-    Beklenen: reversal linkleri, net paid/unpaid capital ve audit izi dogru kalir.
-
-## 7. Faz 3 - Kasa, Banka ve Clearing Kurulumlari
-
-17. Her legal entity icin merkezi local ve merkezi exchange kasa ac.
+11. Her legal entity icin merkezi local ve merkezi exchange kasa ac.
     Beklenen: base currency ve foreign currency nakit noktasi hazir olur.
 
-18. Her operating unit icin iki register ac:
+12. Her operating unit icin iki register ac:
 
 - local register
 - exchange register
   Beklenen: kullanicinin ilk maddesindeki "her branch icin local ve exchange kasa" kapsanir.
 
-19. Local registerlarda `sessionMode=REQUIRED`, exchange registerlarda `OPTIONAL` veya politika ne ise onu ayarla.
+13. Local registerlarda `sessionMode=REQUIRED`, exchange registerlarda `OPTIONAL` veya politika ne ise onu ayarla.
     Beklenen: session disiplin testi yapilabilir.
 
-20. Her register icin variance gain/loss, max transaction ve gerekiyorsa negative balance kurallarini ayarla.
+14. Her register icin variance gain/loss, max transaction ve gerekiyorsa negative balance kurallarini ayarla.
     Beklenen: session close ve istisna ekranlari anlamli veri uretir.
 
-21. Her legal entity icin su banka hesaplarini ac:
+15. Her legal entity icin su banka hesaplarini ac:
 
 - local currency banka
 - USD banka
 - en az bir OU bagli banka hesabi
   Beklenen: local, foreign ve branch-level banka hareketleri test edilebilir.
 
-22. Su clearing hesaplarini tanimla:
+16. Su clearing hesaplarini tanimla:
 
 - cash exchange clearing
 - bank transfer clearing
@@ -356,14 +336,36 @@ Bu faz, Faz 1'de readiness guard'i gecmek icin minimum seviyede acilan sharehold
 - intercompany clearing / due from / due to
   Beklenen: exchange, transfer, banka fark ve intercompany akislarinda ayri izleme yapilabilir.
 
-23. `Banka Onaylari` ekraninda `PAYMENT_BATCH / SUBMIT_EXPORT` icin maker-checker policy olustur.
+17. `Banka Onaylari` ekraninda `PAYMENT_BATCH / SUBMIT_EXPORT` icin maker-checker policy olustur.
     Beklenen: export adimi bir senaryoda dogrudan degil, onay kuyrugu uzerinden calisir.
 
-24. `Banka Mutabakat` setup'inda en az bir posting template ve iki difference profile olustur:
+18. `Banka Mutabakat` setup'inda en az bir posting template ve iki difference profile olustur:
 
 - `FEE`
 - `FX`
   Beklenen: banka masrafi ve kur farki satirlari mutabakatta otomatik veya yari otomatik kapatilabilir.
+
+## 7. Faz 3 - Sermaye ve Kurulus Islemleri
+
+Bu faz, Faz 1'de readiness guard'i gecmek icin minimum seviyede acilan shareholder / sermaye taahhudu kurulumunu genisletir ve Faz 2'de acilan kasa/banka altyapisini kullanir.
+
+19. Her legal entity icin en az iki shareholder tanimla ve commitment debit sub-account baglantilarini yap.
+    Beklenen: sermaye taahhut kaydi icin org setup tamamlanir.
+
+20. Her entity icin sermaye taahhut kaydi gir.
+    Beklenen: commitment journal olusur ve unpaid capital gorunur.
+
+21. `LE_AFG` icin bir sermaye taahhutunu merkezi banka hesabina fulfillment ile yerine getir.
+    Beklenen: bankaya giden fulfillment journal dogru hesaplarda olusur.
+
+22. `LE_AFG` icin ikinci bir fulfillment'i merkezi cash register ile yap, sonra ayni tutari branch kasasina `Kasa Transit Transferleri` ile gonder.
+    Beklenen: cash transaction linki, fulfillment linki ve transit zinciri birlikte gorunur.
+
+23. `LE_USA` icin branch bank account hedefli fulfillment yap.
+    Beklenen: OU-targeted fulfillment ve gerekiyorsa due from / due to self-balancing satirlari test edilir.
+
+24. Bir fulfillment kaydini reverse et, sonra duzeltilmis tutarla tekrar post et.
+    Beklenen: reversal linkleri, net paid/unpaid capital ve audit izi dogru kalir.
 
 ## 8. Faz 4 - Cari Kartlar ve Ticari Master Data
 
