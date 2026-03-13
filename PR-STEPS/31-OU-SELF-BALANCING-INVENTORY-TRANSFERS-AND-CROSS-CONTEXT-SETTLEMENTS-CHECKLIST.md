@@ -89,7 +89,7 @@
 - [x] `PR-OU03` - Reverse-direction OU internal-current-account foundation and balancing helper
 - [x] `PR-OU04` - Shipment-time transfer accounting and FIFO shipment valuation
 - [x] `PR-OU05` - Transfer receipt and receipt journal
-- [ ] `PR-OU06` - Transfer reversal, cancel discipline, and bypass hardening
+- [x] `PR-OU06` - Transfer reversal, cancel discipline, and bypass hardening
 - [ ] `PR-OU07` - Transfer evidence
 - [ ] `PR-OU08` - Cross-context settlement owner/collector persistence and resolution
 - [ ] `PR-OU09` - Cross-context settlement posting split
@@ -574,40 +574,43 @@
 ### Checklist
 
 #### Cancel and reversal discipline
-- [ ] Allow cancel only in `INITIATED` or `APPROVED`
-- [ ] Ensure no movements and no journals exist before cancel
-- [ ] Store cancel metadata
-- [ ] If transfer is `IN_TRANSIT` and no receipt exists, reverse shipment side directly through shipment reversal path
-- [ ] If receipt exists, reverse receipt side first
-- [ ] Reverse shipment side second
-- [ ] Reuse additive movement lineage discipline
-- [ ] Do not destroy original movement history
-- [ ] Reverse receipt journal
-- [ ] Reverse shipment journal
-- [ ] Store reversal metadata
-- [ ] Set status `REVERSED`
+- [x] Allow cancel only in `INITIATED` or `APPROVED`
+- [x] Ensure no movements and no journals exist before cancel
+- [x] Store cancel metadata
+- [x] If transfer is `IN_TRANSIT` and no receipt exists, reverse shipment side directly through shipment reversal path
+- [x] If receipt exists, reverse receipt side first
+- [x] Reverse shipment side second
+- [x] Reuse additive movement lineage discipline
+- [x] Shipment reversal creates an additive source-side return movement (`ADJUSTMENT_IN`)
+- [x] Receipt reversal creates an additive target-side undo movement (`ADJUSTMENT_OUT`)
+- [x] Do not destroy original movement history
+- [x] Reverse receipt journal
+- [x] Reverse shipment journal
+- [x] Store reversal metadata
+- [x] Set status `REVERSED`
 
 #### Backend bypass hardening
-- [ ] In all generic stock movement creation paths, load warehouse ownership context
-- [ ] In all generic stock movement creation paths, load commercial/source OU context when relevant
-- [ ] Reject generic movement when contexts differ
-- [ ] Return clear error: cross-context stock movement must use transfer workflow
-- [ ] Do not limit this protection only to stock-link materialization
+- [x] In all generic stock movement creation paths, load warehouse ownership context
+- [x] In all generic stock movement creation paths, load commercial/source OU context when relevant
+- [x] Reject generic movement when contexts differ
+- [x] Return clear error: cross-context stock movement must use transfer workflow
+- [x] Do not limit this protection only to stock-link materialization
 
 #### Frontend
-- [ ] Add cancel action UI
-- [ ] Add reverse action UI
+- [x] Add cancel action UI
+- [x] Add reverse action UI
 
 #### Regression
-- [ ] Create `backend/scripts/test-inventory-ou06-transfer-reversal-bypass.js`
-- [ ] Test cancel flow
-- [ ] Test reversal flow
-- [ ] Test generic cross-context bypass is blocked in backend
+- [x] Create `backend/scripts/test-inventory-ou06-transfer-reversal-bypass.js`
+- [x] Test cancel flow
+- [x] Test reversal flow
+- [x] Test generic cross-context bypass is blocked in backend
 
 ### Acceptance
-- [ ] Reversals are additive and auditable
-- [ ] Cancel rules are enforced safely
-- [ ] Generic inventory movement cannot fake cross-context transfer
+- [x] Reversals are additive and auditable
+- [x] Source and target warehouse movement history both show explicit reversal evidence
+- [x] Cancel rules are enforced safely
+- [x] Generic inventory movement cannot fake cross-context transfer
 
 ## PR-OU07 - Transfer evidence
 
@@ -963,8 +966,8 @@
 - [x] 10. Expose transit account in item-card backend/frontend
 - [x] 11. Implement transfer approval + shipment FIFO + accounting
 - [x] 12. Implement transfer receipt
-- [ ] 13. Implement transfer cancel / reverse
-- [ ] 14. Block generic cross-context movement bypass
+- [x] 13. Implement transfer cancel / reverse
+- [x] 14. Block generic cross-context movement bypass
 - [ ] 15. Generalize evidence service and transfer evidence routes/UI
 - [ ] 16. Create `m128_cari_settlement_owner_collector_contexts.js`
 - [ ] 17. Implement settlement owner / collector resolvers and persistence
@@ -976,12 +979,12 @@
 
 ## Done definition
 - [x] Warehouses are explicitly central or OU-owned
-- [ ] Cross-context stock transfers use dedicated transfer workflow only
-- [ ] Transfer lifecycle includes approval, shipment, receipt, and additive reversal
+- [x] Cross-context stock transfers use dedicated transfer workflow only
+- [x] Transfer lifecycle includes approval, shipment, receipt, and additive reversal
 - [x] Shipment-time internal balancing works and is auditable
 - [x] Reverse-direction central `<->` OU accounts exist and are configured
 - [ ] Receipt / cancel / reversal / evidence work
-- [ ] Generic inventory movement bypass is blocked in backend
+- [x] Generic inventory movement bypass is blocked in backend
 - [ ] Cross-context CARI settlement owner vs collector split works
 - [ ] Settlement reports and drilldowns surface owner vs collector context correctly
 - [ ] Non-self-balanced cross-context settlement is blocked

@@ -116,6 +116,9 @@ function mapPendingStockLinkRow(row) {
     documentLineId: parsePositiveInt(row.cari_document_line_id),
     documentNo: row.document_no || null,
     documentDate: row.document_date || null,
+    documentOperatingUnitId: parsePositiveInt(row.document_operating_unit_id),
+    documentOperatingUnitCode: row.document_operating_unit_code || null,
+    documentOperatingUnitName: row.document_operating_unit_name || null,
     direction: row.direction || null,
     stockImpactMode: row.stock_impact_mode || null,
     linkStatus: row.link_status || null,
@@ -138,6 +141,64 @@ function mapPendingStockLinkRow(row) {
     createdAt: row.created_at || null,
     updatedAt: row.updated_at || null,
   };
+}
+
+function deriveWarehouseOwnershipContext(row) {
+  const operatingUnitId = parsePositiveInt(row?.operating_unit_id) || null;
+  const ownershipScope =
+    String(row?.ownership_scope || "").trim().toUpperCase() === "OPERATING_UNIT" &&
+    operatingUnitId
+      ? "OPERATING_UNIT"
+      : "CENTRAL";
+  return {
+    ownershipScope,
+    operatingUnitId,
+  };
+}
+
+function deriveDocumentOwnershipContext(row) {
+  const operatingUnitId = parsePositiveInt(row?.document_operating_unit_id) || null;
+  return {
+    ownershipScope: operatingUnitId ? "OPERATING_UNIT" : "CENTRAL",
+    operatingUnitId,
+  };
+}
+
+function formatOwnershipContextLabel({
+  ownershipScope,
+  operatingUnitCode,
+  operatingUnitId,
+}) {
+  if (String(ownershipScope || "").trim().toUpperCase() !== "OPERATING_UNIT") {
+    return "CENTRAL";
+  }
+  return `OPERATING_UNIT ${String(operatingUnitCode || "").trim() || `#${operatingUnitId || "?"}`}`;
+}
+
+function assertGenericMovementContextMatch({ warehouseRow, stockLinkRow }) {
+  const warehouseContext = deriveWarehouseOwnershipContext(warehouseRow);
+  const documentContext = deriveDocumentOwnershipContext(stockLinkRow);
+  const sameScope = warehouseContext.ownershipScope === documentContext.ownershipScope;
+  const sameOu =
+    warehouseContext.ownershipScope !== "OPERATING_UNIT" ||
+    warehouseContext.operatingUnitId === documentContext.operatingUnitId;
+  if (sameScope && sameOu) {
+    return;
+  }
+
+  const warehouseLabel = formatOwnershipContextLabel({
+    ownershipScope: warehouseContext.ownershipScope,
+    operatingUnitCode: warehouseRow?.operating_unit_code,
+    operatingUnitId: warehouseContext.operatingUnitId,
+  });
+  const documentLabel = formatOwnershipContextLabel({
+    ownershipScope: documentContext.ownershipScope,
+    operatingUnitCode: stockLinkRow?.document_operating_unit_code,
+    operatingUnitId: documentContext.operatingUnitId,
+  });
+  throw badRequest(
+    `Cross-context stock movement must use inventory transfer workflow. Warehouse context ${warehouseLabel} does not match source document context ${documentLabel}.`
+  );
 }
 
 function mapMovementRow(row) {
@@ -293,6 +354,9 @@ async function fetchPendingStockLinkById({
         le.code AS legal_entity_code,
         d.document_no,
         d.document_date,
+        d.operating_unit_id AS document_operating_unit_id,
+        dou.code AS document_operating_unit_code,
+        dou.name AS document_operating_unit_name,
         d.direction,
         d.currency_code,
         l.line_no,
@@ -308,6 +372,9 @@ async function fetchPendingStockLinkById({
         ON d.tenant_id = sl.tenant_id
        AND d.legal_entity_id = sl.legal_entity_id
        AND d.id = sl.cari_document_id
+      LEFT JOIN operating_units dou
+        ON dou.tenant_id = d.tenant_id
+       AND dou.id = d.operating_unit_id
       JOIN cari_document_lines l
         ON l.tenant_id = sl.tenant_id
        AND l.legal_entity_id = sl.legal_entity_id
@@ -339,6 +406,9 @@ async function fetchSuccessorStockLinkByOriginalId({
         le.code AS legal_entity_code,
         d.document_no,
         d.document_date,
+        d.operating_unit_id AS document_operating_unit_id,
+        dou.code AS document_operating_unit_code,
+        dou.name AS document_operating_unit_name,
         d.direction,
         d.currency_code,
         l.line_no,
@@ -354,6 +424,9 @@ async function fetchSuccessorStockLinkByOriginalId({
         ON d.tenant_id = sl.tenant_id
        AND d.legal_entity_id = sl.legal_entity_id
        AND d.id = sl.cari_document_id
+      LEFT JOIN operating_units dou
+        ON dou.tenant_id = d.tenant_id
+       AND dou.id = d.operating_unit_id
       JOIN cari_document_lines l
         ON l.tenant_id = sl.tenant_id
        AND l.legal_entity_id = sl.legal_entity_id
@@ -392,7 +465,7 @@ async function fetchReceiptCostLayerBySourceMovementId({
   return result.rows?.[0] || null;
 }
 
-async function fetchReceiptReversalMovementByOriginalId({
+async function fetchReversalMovementByOriginalId({
   tenantId,
   originalMovementId,
   runQuery = query,
@@ -780,7 +853,7 @@ async function ensureReceiptUndoMovementTx({
     return null;
   }
 
-  let reversalMovementRow = await fetchReceiptReversalMovementByOriginalId({
+  let reversalMovementRow = await fetchReversalMovementByOriginalId({
     tenantId,
     originalMovementId,
     runQuery: tx.query,
@@ -900,6 +973,109 @@ async function ensureReceiptUndoMovementTx({
         [resolutionNote, tenantId, legalEntityId, stockLinkId]
       );
     }
+  }
+
+  return reversalMovementRow;
+}
+
+async function ensureIssueUndoMovementTx({
+  tx,
+  tenantId,
+  legalEntityId,
+  originalMovementRow,
+  reversalDate,
+  reason,
+}) {
+  const originalMovementId = parsePositiveInt(originalMovementRow?.id);
+  if (!originalMovementId) {
+    return null;
+  }
+
+  let reversalMovementRow = await fetchReversalMovementByOriginalId({
+    tenantId,
+    originalMovementId,
+    runQuery: tx.query,
+    forUpdate: true,
+  });
+
+  if (!reversalMovementRow) {
+    const quantity = normalizeAmount(originalMovementRow?.quantity, "issueQuantity");
+    const unitCostTxn = normalizeAmount(originalMovementRow?.unit_cost_txn, "issueUnitCostTxn", {
+      allowZero: true,
+    });
+    const unitCostBase = normalizeAmount(originalMovementRow?.unit_cost_base, "issueUnitCostBase", {
+      allowZero: true,
+    });
+    const totalCostTxn = normalizeAmount(originalMovementRow?.total_cost_txn, "issueTotalCostTxn", {
+      allowZero: true,
+    });
+    const totalCostBase = normalizeAmount(
+      originalMovementRow?.total_cost_base,
+      "issueTotalCostBase",
+      { allowZero: true }
+    );
+    const reversalNote = [
+      "Issue materialization return",
+      `of movement ${originalMovementId}`,
+      `on ${reversalDate}`,
+      normalizeText(reason, 120),
+    ]
+      .filter(Boolean)
+      .join(" | ")
+      .slice(0, 255);
+
+    const insertResult = await tx.query(
+      `INSERT INTO inventory_movements (
+          tenant_id,
+          legal_entity_id,
+          warehouse_id,
+          item_card_id,
+          movement_type,
+          source_type,
+          source_stock_link_id,
+          source_document_type,
+          source_document_id,
+          source_document_line_id,
+          reversal_of_movement_id,
+          movement_date,
+          quantity,
+          unit_cost_txn,
+          unit_cost_base,
+          total_cost_txn,
+          total_cost_base,
+          currency_code,
+          valuation_status,
+          note
+       ) VALUES (?, ?, ?, ?, 'ADJUSTMENT_IN', ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'VALUED', ?)`,
+      [
+        tenantId,
+        legalEntityId,
+        parsePositiveInt(originalMovementRow?.warehouse_id),
+        parsePositiveInt(originalMovementRow?.item_card_id),
+        normalizeUpperText(originalMovementRow?.source_type, 40, { required: true }),
+        normalizeText(originalMovementRow?.source_document_type, 60),
+        parsePositiveInt(originalMovementRow?.source_document_id) || null,
+        parsePositiveInt(originalMovementRow?.source_document_line_id) || null,
+        originalMovementId,
+        reversalDate,
+        quantity,
+        unitCostTxn,
+        unitCostBase,
+        totalCostTxn,
+        totalCostBase,
+        normalizeUpperText(originalMovementRow?.currency_code, 3, { required: true }),
+        reversalNote,
+      ]
+    );
+    const reversalMovementId = parsePositiveInt(insertResult.rows?.insertId);
+    if (!reversalMovementId) {
+      throw new Error("Issue undo movement create failed");
+    }
+    reversalMovementRow = await fetchInventoryMovementDbRowById({
+      movementId: reversalMovementId,
+      runQuery: tx.query,
+      forUpdate: true,
+    });
   }
 
   return reversalMovementRow;
@@ -1859,6 +2035,10 @@ export async function createInventoryMovementFromStockLink({
     if (!stockLinkRow) {
       throw badRequest("sourceStockLinkId not found for legalEntityId");
     }
+    assertGenericMovementContextMatch({
+      warehouseRow,
+      stockLinkRow,
+    });
     const stockLinkStatus = String(stockLinkRow.link_status || "").toUpperCase();
     if (
       stockLinkStatus === "LINKED" &&
@@ -2137,6 +2317,360 @@ export async function createInventoryMovementFromStockLink({
   });
 }
 
+export async function reverseInventoryMovementTx(
+  tx,
+  {
+    tenantId,
+    userId,
+    movementId,
+    reversalDate = todayDateOnly(),
+    reason = "Manual inventory movement reversal",
+  } = {}
+) {
+  const normalizedTenantId = parsePositiveInt(tenantId);
+  const normalizedUserId = parsePositiveInt(userId);
+  const normalizedMovementId = parsePositiveInt(movementId);
+  if (!tx || typeof tx.query !== "function") {
+    throw badRequest("Transaction handle is required");
+  }
+  if (!normalizedTenantId || !normalizedUserId || !normalizedMovementId) {
+    throw badRequest("tenantId, userId, and movementId are required");
+  }
+
+  const normalizedReversalDate = normalizeDateOnly(reversalDate, "reversalDate");
+  const normalizedReason =
+    normalizeText(reason, 255) || "Manual inventory movement reversal";
+
+  const movementRow = await fetchInventoryMovementDbRowById({
+    movementId: normalizedMovementId,
+    runQuery: tx.query,
+    forUpdate: true,
+  });
+  if (!movementRow || parsePositiveInt(movementRow.tenant_id) !== normalizedTenantId) {
+    throw badRequest("movementId not found for tenant");
+  }
+
+  const legalEntityId = parsePositiveInt(movementRow.legal_entity_id);
+  await assertLegalEntityBelongsToTenant(normalizedTenantId, legalEntityId, "legalEntityId", {
+    runQuery: tx.query,
+  });
+
+  const movementType = String(movementRow.movement_type || "").toUpperCase();
+  if (!["ISSUE", "RECEIPT"].includes(movementType)) {
+    throw badRequest("Only ISSUE and RECEIPT movements can be reversed");
+  }
+  if (String(movementRow.valuation_status || "").toUpperCase() !== "VALUED") {
+    throw badRequest("Only VALUED issue and receipt movements can be reversed");
+  }
+  const sourceStockLinkId = parsePositiveInt(movementRow.source_stock_link_id);
+  const stockLinkRow = sourceStockLinkId
+    ? await fetchPendingStockLinkById({
+        tenantId: normalizedTenantId,
+        legalEntityId,
+        stockLinkId: sourceStockLinkId,
+        runQuery: tx.query,
+        forUpdate: true,
+      })
+    : null;
+  if (
+    parsePositiveInt(movementRow.reversal_journal_entry_id) ||
+    normalizeText(movementRow.reversed_at)
+  ) {
+    if (movementType === "ISSUE" && stockLinkRow) {
+      await ensureIssueReopenedStockLinkTx({
+        tx,
+        tenantId: normalizedTenantId,
+        legalEntityId,
+        originalStockLinkRow: stockLinkRow,
+        movementRow,
+        reversalDate: normalizedReversalDate,
+      });
+      await ensureIssueUndoMovementTx({
+        tx,
+        tenantId: normalizedTenantId,
+        legalEntityId,
+        originalMovementRow: movementRow,
+        reversalDate: normalizedReversalDate,
+        reason: normalizedReason,
+      });
+    } else if (movementType === "ISSUE") {
+      await ensureIssueUndoMovementTx({
+        tx,
+        tenantId: normalizedTenantId,
+        legalEntityId,
+        originalMovementRow: movementRow,
+        reversalDate: normalizedReversalDate,
+        reason: normalizedReason,
+      });
+    } else if (movementType === "RECEIPT") {
+      const receiptCostLayerRow = await fetchReceiptCostLayerBySourceMovementId({
+        tenantId: normalizedTenantId,
+        movementId: normalizedMovementId,
+        runQuery: tx.query,
+        forUpdate: true,
+      });
+      if (receiptCostLayerRow) {
+        await ensureReceiptUndoMovementTx({
+          tx,
+          tenantId: normalizedTenantId,
+          legalEntityId,
+          originalMovementRow: movementRow,
+          receiptCostLayerRow,
+          stockLinkRow,
+          reversalDate: normalizedReversalDate,
+          reason: normalizedReason,
+        });
+      }
+    }
+    return fetchMovementById({
+      movementId: normalizedMovementId,
+      runQuery: async (sql, params = []) => tx.query(sql, [...params]),
+    });
+  }
+
+  if (movementType === "RECEIPT") {
+    const receiptCostLayerRow = await fetchReceiptCostLayerBySourceMovementId({
+      tenantId: normalizedTenantId,
+      movementId: normalizedMovementId,
+      runQuery: tx.query,
+      forUpdate: true,
+    });
+    if (!receiptCostLayerRow) {
+      throw badRequest("Receipt movement has no cost layer to reverse");
+    }
+
+    const quantityIn = normalizeAmount(receiptCostLayerRow.quantity_in, "quantityIn");
+    const quantityRemaining = normalizeAmount(
+      receiptCostLayerRow.quantity_remaining,
+      "quantityRemaining",
+      { allowZero: true }
+    );
+    if (quantityRemaining + BALANCE_EPSILON < quantityIn) {
+      throw badRequest(
+        "Cannot reverse this receipt while quantity is still consumed by later issue movements"
+      );
+    }
+
+    await ensureReceiptUndoMovementTx({
+      tx,
+      tenantId: normalizedTenantId,
+      legalEntityId,
+      originalMovementRow: movementRow,
+      receiptCostLayerRow,
+      stockLinkRow,
+      reversalDate: normalizedReversalDate,
+      reason: normalizedReason,
+    });
+
+    await tx.query(
+      `UPDATE inventory_cost_layers
+          SET quantity_remaining = 0,
+              layer_status = 'CLOSED'
+        WHERE tenant_id = ?
+          AND id = ?`,
+      [normalizedTenantId, parsePositiveInt(receiptCostLayerRow.id)]
+    );
+
+    await tx.query(
+      `UPDATE inventory_movements
+          SET reversed_at = COALESCE(reversed_at, CURRENT_TIMESTAMP)
+        WHERE id = ?`,
+      [normalizedMovementId]
+    );
+
+    return fetchMovementById({
+      movementId: normalizedMovementId,
+      runQuery: async (sql, params = []) => tx.query(sql, [...params]),
+    });
+  }
+
+  await assertNoLaterValuedIssueExistsForReverse({
+    tenantId: normalizedTenantId,
+    movementRow,
+    runQuery: tx.query,
+  });
+
+  const consumptions = await fetchIssueLayerConsumptionsForUpdate({
+    issueMovementId: normalizedMovementId,
+    runQuery: tx.query,
+  });
+  if (consumptions.length === 0) {
+    throw badRequest("Issue movement has no layer consumptions to reverse");
+  }
+
+  for (const consumptionRow of consumptions) {
+    const quantityIn = normalizeAmount(consumptionRow.quantity_in, "quantityIn");
+    const quantityRemaining = normalizeAmount(
+      consumptionRow.quantity_remaining,
+      "quantityRemaining",
+      { allowZero: true }
+    );
+    const quantityConsumed = normalizeAmount(
+      consumptionRow.quantity_consumed,
+      "quantityConsumed"
+    );
+    const restoredQuantity = roundAmount(quantityRemaining + quantityConsumed);
+    if (restoredQuantity - quantityIn > BALANCE_EPSILON) {
+      throw badRequest("Issue reversal would over-restore a cost layer");
+    }
+    await tx.query(
+      `UPDATE inventory_cost_layers
+          SET quantity_remaining = ?,
+              layer_status = 'OPEN'
+        WHERE id = ?`,
+      [restoredQuantity, parsePositiveInt(consumptionRow.cost_layer_id)]
+    );
+  }
+
+  const originalJournalEntryId = parsePositiveInt(movementRow.posted_journal_entry_id);
+  let reversalJournalEntryId = null;
+
+  if (originalJournalEntryId) {
+    const originalJournalWithLines = await fetchJournalEntryWithLines({
+      tenantId: normalizedTenantId,
+      journalEntryId: originalJournalEntryId,
+      runQuery: tx.query,
+    });
+    const originalJournal = originalJournalWithLines.journal;
+    const originalJournalLines = originalJournalWithLines.lines || [];
+    if (!originalJournal) {
+      throw badRequest("Posted inventory journal not found for movement reversal");
+    }
+
+    const existingJournalReversalId = parsePositiveInt(
+      originalJournal.reversal_journal_entry_id
+    );
+    if (existingJournalReversalId) {
+      reversalJournalEntryId = existingJournalReversalId;
+    } else {
+      if (String(originalJournal.status || "").toUpperCase() !== "POSTED") {
+        throw badRequest("Only POSTED inventory journals can be reversed");
+      }
+      if (originalJournalLines.length === 0) {
+        throw badRequest("Posted inventory journal has no lines to reverse");
+      }
+
+      const reversalJournalContext = await resolveBookAndOpenPeriodForDate({
+        tenantId: normalizedTenantId,
+        legalEntityId,
+        targetDate: normalizedReversalDate,
+        preferredBookId: parsePositiveInt(originalJournal.book_id),
+        runQuery: tx.query,
+      });
+
+      const reversalLines = originalJournalLines.map((line) => ({
+        accountId: parsePositiveInt(line.account_id),
+        debitBase: Number(line.credit_base || 0),
+        creditBase: Number(line.debit_base || 0),
+        amountTxn: Number((Number(line.amount_txn || 0) * -1).toFixed(AMOUNT_SCALE)),
+        description: line.description
+          ? String(line.description).slice(0, 255)
+          : `Reversal of inventory movement ${normalizedMovementId}`,
+        subledgerReferenceNo: `INVENTORY_MOVEMENT_REVERSE:${normalizedMovementId}`.slice(
+          0,
+          100
+        ),
+        currencyCode: normalizeUpperText(line.currency_code || movementRow.currency_code, 3, {
+          required: true,
+        }),
+      }));
+
+      const reversalJournalResult = await insertPostedJournalWithLinesTx(tx, {
+        tenantId: normalizedTenantId,
+        legalEntityId,
+        bookId: reversalJournalContext.bookId,
+        fiscalPeriodId: reversalJournalContext.fiscalPeriodId,
+        userId: normalizedUserId,
+        journalNo: buildInventoryJournalNo("INV-REV", normalizedMovementId),
+        entryDate: normalizedReversalDate,
+        documentDate: normalizedReversalDate,
+        currencyCode: normalizeUpperText(originalJournal.currency_code || movementRow.currency_code, 3, {
+          required: true,
+        }),
+        description: `Reversal of inventory movement ${normalizedMovementId}`.slice(0, 500),
+        referenceNo: `INV-REV:${normalizedMovementId}`.slice(0, 100),
+        lines: reversalLines,
+      });
+      reversalJournalEntryId = reversalJournalResult.journalEntryId;
+
+      await upsertJournalSourceLinkTx(tx, {
+        tenantId: normalizedTenantId,
+        legalEntityId,
+        journalEntryId: reversalJournalEntryId,
+        sourceRefType: "INVENTORY_MOVEMENT",
+        sourceRefId: normalizedMovementId,
+        linkRole: "PRIMARY",
+      });
+      if (sourceStockLinkId) {
+        await upsertJournalSourceLinkTx(tx, {
+          tenantId: normalizedTenantId,
+          legalEntityId,
+          journalEntryId: reversalJournalEntryId,
+          sourceRefType: "CARI_STOCK_LINK",
+          sourceRefId: sourceStockLinkId,
+          linkRole: "SUPPORTING",
+        });
+      }
+
+      const reverseJournalUpdateResult = await tx.query(
+        `UPDATE journal_entries
+            SET status = 'REVERSED',
+                reversed_by_user_id = ?,
+                reversed_at = CURRENT_TIMESTAMP,
+                reversal_journal_entry_id = ?,
+                reverse_reason = ?
+          WHERE tenant_id = ?
+            AND id = ?
+            AND status = 'POSTED'
+            AND reversal_journal_entry_id IS NULL`,
+        [
+          normalizedUserId,
+          reversalJournalEntryId,
+          normalizedReason,
+          normalizedTenantId,
+          originalJournalEntryId,
+        ]
+      );
+      if (Number(reverseJournalUpdateResult.rows?.affectedRows || 0) === 0) {
+        throw badRequest("Inventory journal is already reversed");
+      }
+    }
+  }
+
+  await tx.query(
+    `UPDATE inventory_movements
+        SET reversal_journal_entry_id = COALESCE(?, reversal_journal_entry_id),
+            reversed_at = COALESCE(reversed_at, CURRENT_TIMESTAMP)
+      WHERE id = ?`,
+    [reversalJournalEntryId, normalizedMovementId]
+  );
+
+  await ensureIssueUndoMovementTx({
+    tx,
+    tenantId: normalizedTenantId,
+    legalEntityId,
+    originalMovementRow: movementRow,
+    reversalDate: normalizedReversalDate,
+    reason: normalizedReason,
+  });
+
+  if (stockLinkRow) {
+    await ensureIssueReopenedStockLinkTx({
+      tx,
+      tenantId: normalizedTenantId,
+      legalEntityId,
+      originalStockLinkRow: stockLinkRow,
+      movementRow,
+      reversalDate: normalizedReversalDate,
+    });
+  }
+
+  return fetchMovementById({
+    movementId: normalizedMovementId,
+    runQuery: async (sql, params = []) => tx.query(sql, [...params]),
+  });
+}
+
 export async function reverseInventoryMovementById({
   payload,
 }) {
@@ -2153,306 +2687,13 @@ export async function reverseInventoryMovementById({
   const reason =
     normalizeText(payload?.reason, 255) || "Manual inventory movement reversal";
 
-  return withTransaction(async (tx) => {
-    const movementRow = await fetchInventoryMovementDbRowById({
-      movementId,
-      runQuery: tx.query,
-      forUpdate: true,
-    });
-    if (!movementRow || parsePositiveInt(movementRow.tenant_id) !== tenantId) {
-      throw badRequest("movementId not found for tenant");
-    }
-
-    const legalEntityId = parsePositiveInt(movementRow.legal_entity_id);
-    await assertLegalEntityBelongsToTenant(tenantId, legalEntityId, "legalEntityId", {
-      runQuery: tx.query,
-    });
-
-    const movementType = String(movementRow.movement_type || "").toUpperCase();
-    if (!["ISSUE", "RECEIPT"].includes(movementType)) {
-      throw badRequest("Only ISSUE and RECEIPT movements can be reversed");
-    }
-    if (String(movementRow.valuation_status || "").toUpperCase() !== "VALUED") {
-      throw badRequest("Only VALUED issue and receipt movements can be reversed");
-    }
-    const sourceStockLinkId = parsePositiveInt(movementRow.source_stock_link_id);
-    const stockLinkRow = sourceStockLinkId
-      ? await fetchPendingStockLinkById({
-          tenantId,
-          legalEntityId,
-          stockLinkId: sourceStockLinkId,
-          runQuery: tx.query,
-          forUpdate: true,
-        })
-      : null;
-    if (
-      parsePositiveInt(movementRow.reversal_journal_entry_id) ||
-      normalizeText(movementRow.reversed_at)
-    ) {
-      if (movementType === "ISSUE" && stockLinkRow) {
-        await ensureIssueReopenedStockLinkTx({
-          tx,
-          tenantId,
-          legalEntityId,
-          originalStockLinkRow: stockLinkRow,
-          movementRow,
-          reversalDate,
-        });
-      } else if (movementType === "RECEIPT") {
-        const receiptCostLayerRow = await fetchReceiptCostLayerBySourceMovementId({
-          tenantId,
-          movementId,
-          runQuery: tx.query,
-          forUpdate: true,
-        });
-        if (receiptCostLayerRow) {
-          await ensureReceiptUndoMovementTx({
-            tx,
-            tenantId,
-            legalEntityId,
-            originalMovementRow: movementRow,
-            receiptCostLayerRow,
-            stockLinkRow,
-            reversalDate,
-            reason,
-          });
-        }
-      }
-      return fetchMovementById({
-        movementId,
-        runQuery: async (sql, params = []) => tx.query(sql, [...params]),
-      });
-    }
-
-    if (movementType === "RECEIPT") {
-      const receiptCostLayerRow = await fetchReceiptCostLayerBySourceMovementId({
-        tenantId,
-        movementId,
-        runQuery: tx.query,
-        forUpdate: true,
-      });
-      if (!receiptCostLayerRow) {
-        throw badRequest("Receipt movement has no cost layer to reverse");
-      }
-
-      const quantityIn = normalizeAmount(
-        receiptCostLayerRow.quantity_in,
-        "quantityIn"
-      );
-      const quantityRemaining = normalizeAmount(
-        receiptCostLayerRow.quantity_remaining,
-        "quantityRemaining",
-        { allowZero: true }
-      );
-      if (quantityRemaining + BALANCE_EPSILON < quantityIn) {
-        throw badRequest(
-          "Cannot reverse this receipt while quantity is still consumed by later issue movements"
-        );
-      }
-
-      await ensureReceiptUndoMovementTx({
-        tx,
-        tenantId,
-        legalEntityId,
-        originalMovementRow: movementRow,
-        receiptCostLayerRow,
-        stockLinkRow,
-        reversalDate,
-        reason,
-      });
-
-      await tx.query(
-        `UPDATE inventory_cost_layers
-            SET quantity_remaining = 0,
-                layer_status = 'CLOSED'
-          WHERE tenant_id = ?
-            AND id = ?`,
-        [tenantId, parsePositiveInt(receiptCostLayerRow.id)]
-      );
-
-      await tx.query(
-        `UPDATE inventory_movements
-            SET reversed_at = COALESCE(reversed_at, CURRENT_TIMESTAMP)
-          WHERE id = ?`,
-        [movementId]
-      );
-
-      return fetchMovementById({
-        movementId,
-        runQuery: async (sql, params = []) => tx.query(sql, [...params]),
-      });
-    }
-
-    await assertNoLaterValuedIssueExistsForReverse({
+  return withTransaction((tx) =>
+    reverseInventoryMovementTx(tx, {
       tenantId,
-      movementRow,
-      runQuery: tx.query,
-    });
-
-    const consumptions = await fetchIssueLayerConsumptionsForUpdate({
-      issueMovementId: movementId,
-      runQuery: tx.query,
-    });
-    if (consumptions.length === 0) {
-      throw badRequest("Issue movement has no layer consumptions to reverse");
-    }
-
-    for (const consumptionRow of consumptions) {
-      const quantityIn = normalizeAmount(consumptionRow.quantity_in, "quantityIn");
-      const quantityRemaining = normalizeAmount(
-        consumptionRow.quantity_remaining,
-        "quantityRemaining",
-        { allowZero: true }
-      );
-      const quantityConsumed = normalizeAmount(
-        consumptionRow.quantity_consumed,
-        "quantityConsumed"
-      );
-      const restoredQuantity = roundAmount(quantityRemaining + quantityConsumed);
-      if (restoredQuantity - quantityIn > BALANCE_EPSILON) {
-        throw badRequest("Issue reversal would over-restore a cost layer");
-      }
-      await tx.query(
-        `UPDATE inventory_cost_layers
-            SET quantity_remaining = ?,
-                layer_status = 'OPEN'
-          WHERE id = ?`,
-        [restoredQuantity, parsePositiveInt(consumptionRow.cost_layer_id)]
-      );
-    }
-
-    const originalJournalEntryId = parsePositiveInt(movementRow.posted_journal_entry_id);
-    let reversalJournalEntryId = null;
-
-    if (originalJournalEntryId) {
-      const originalJournalWithLines = await fetchJournalEntryWithLines({
-        tenantId,
-        journalEntryId: originalJournalEntryId,
-        runQuery: tx.query,
-      });
-      const originalJournal = originalJournalWithLines.journal;
-      const originalJournalLines = originalJournalWithLines.lines || [];
-      if (!originalJournal) {
-        throw badRequest("Posted inventory journal not found for movement reversal");
-      }
-
-      const existingJournalReversalId = parsePositiveInt(
-        originalJournal.reversal_journal_entry_id
-      );
-      if (existingJournalReversalId) {
-        reversalJournalEntryId = existingJournalReversalId;
-      } else {
-        if (String(originalJournal.status || "").toUpperCase() !== "POSTED") {
-          throw badRequest("Only POSTED inventory journals can be reversed");
-        }
-        if (originalJournalLines.length === 0) {
-          throw badRequest("Posted inventory journal has no lines to reverse");
-        }
-
-        const reversalJournalContext = await resolveBookAndOpenPeriodForDate({
-          tenantId,
-          legalEntityId,
-          targetDate: reversalDate,
-          preferredBookId: parsePositiveInt(originalJournal.book_id),
-          runQuery: tx.query,
-        });
-
-        const reversalLines = originalJournalLines.map((line) => ({
-          accountId: parsePositiveInt(line.account_id),
-          debitBase: Number(line.credit_base || 0),
-          creditBase: Number(line.debit_base || 0),
-          amountTxn: Number((Number(line.amount_txn || 0) * -1).toFixed(AMOUNT_SCALE)),
-          description: line.description
-            ? String(line.description).slice(0, 255)
-            : `Reversal of inventory movement ${movementId}`,
-          subledgerReferenceNo: `INVENTORY_MOVEMENT_REVERSE:${movementId}`.slice(0, 100),
-          currencyCode: normalizeUpperText(
-            line.currency_code || movementRow.currency_code,
-            3,
-            { required: true }
-          ),
-        }));
-
-        const reversalJournalResult = await insertPostedJournalWithLinesTx(tx, {
-          tenantId,
-          legalEntityId,
-          bookId: reversalJournalContext.bookId,
-          fiscalPeriodId: reversalJournalContext.fiscalPeriodId,
-          userId,
-          journalNo: buildInventoryJournalNo("INV-REV", movementId),
-          entryDate: reversalDate,
-          documentDate: reversalDate,
-          currencyCode: normalizeUpperText(
-            originalJournal.currency_code || movementRow.currency_code,
-            3,
-            { required: true }
-          ),
-          description: `Reversal of inventory movement ${movementId}`.slice(0, 500),
-          referenceNo: `INV-REV:${movementId}`.slice(0, 100),
-          lines: reversalLines,
-        });
-        reversalJournalEntryId = reversalJournalResult.journalEntryId;
-
-        await upsertJournalSourceLinkTx(tx, {
-          tenantId,
-          legalEntityId,
-          journalEntryId: reversalJournalEntryId,
-          sourceRefType: "INVENTORY_MOVEMENT",
-          sourceRefId: movementId,
-          linkRole: "PRIMARY",
-        });
-        if (sourceStockLinkId) {
-          await upsertJournalSourceLinkTx(tx, {
-            tenantId,
-            legalEntityId,
-            journalEntryId: reversalJournalEntryId,
-            sourceRefType: "CARI_STOCK_LINK",
-            sourceRefId: sourceStockLinkId,
-            linkRole: "SUPPORTING",
-          });
-        }
-
-        const reverseJournalUpdateResult = await tx.query(
-          `UPDATE journal_entries
-              SET status = 'REVERSED',
-                  reversed_by_user_id = ?,
-                  reversed_at = CURRENT_TIMESTAMP,
-                  reversal_journal_entry_id = ?,
-                  reverse_reason = ?
-            WHERE tenant_id = ?
-              AND id = ?
-              AND status = 'POSTED'
-              AND reversal_journal_entry_id IS NULL`,
-          [userId, reversalJournalEntryId, reason, tenantId, originalJournalEntryId]
-        );
-        if (Number(reverseJournalUpdateResult.rows?.affectedRows || 0) === 0) {
-          throw badRequest("Inventory journal is already reversed");
-        }
-      }
-    }
-
-    await tx.query(
-      `UPDATE inventory_movements
-          SET reversal_journal_entry_id = COALESCE(?, reversal_journal_entry_id),
-              reversed_at = COALESCE(reversed_at, CURRENT_TIMESTAMP)
-        WHERE id = ?`,
-      [reversalJournalEntryId, movementId]
-    );
-
-    if (stockLinkRow) {
-      await ensureIssueReopenedStockLinkTx({
-        tx,
-        tenantId,
-        legalEntityId,
-        originalStockLinkRow: stockLinkRow,
-        movementRow,
-        reversalDate,
-      });
-    }
-
-    return fetchMovementById({
+      userId,
       movementId,
-      runQuery: async (sql, params = []) => tx.query(sql, [...params]),
-    });
-  });
+      reversalDate,
+      reason,
+    })
+  );
 }

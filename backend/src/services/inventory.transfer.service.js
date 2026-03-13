@@ -7,9 +7,11 @@ import {
   fetchLegalEntityBaseCurrencyCode,
   fetchOpenCostLayersForIssue,
   insertPostedJournalWithLinesTx,
+  reverseInventoryMovementTx,
   resolveBookAndOpenPeriodForDate,
   resolveInventoryPostingAccount,
 } from "./inventory.service.js";
+import { reverseJournalEntryTx } from "./gl.journal-reversal.service.js";
 import { upsertJournalSourceLinkTx } from "./journal.source-link.service.js";
 import { resolveOuSelfBalancingAccountsTx } from "./ou.self-balancing.service.js";
 
@@ -68,6 +70,166 @@ function normalizeAmount(value, fieldName, { allowZero = false } = {}) {
 
 function roundAmount(value) {
   return Number(Number(value || 0).toFixed(AMOUNT_SCALE));
+}
+
+function todayDateOnly() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function collectPositiveIds(values) {
+  return Array.from(
+    new Set(
+      (Array.isArray(values) ? values : [])
+        .map((value) => parsePositiveInt(value))
+        .filter(Boolean)
+    )
+  );
+}
+
+function hasNonZeroQuantity(value) {
+  return Math.abs(Number(value || 0)) > 0.000001;
+}
+
+function hasTransferShipmentArtifacts(transferRow, transferLineRows) {
+  return Boolean(
+    parsePositiveInt(transferRow?.shipmentJournalEntryId) ||
+      transferRow?.inTransitAt ||
+      parsePositiveInt(transferRow?.shippedByUserId) ||
+      (transferLineRows || []).some(
+        (row) =>
+          parsePositiveInt(row?.sourceIssueMovementId) || hasNonZeroQuantity(row?.quantityShipped)
+      )
+  );
+}
+
+function hasTransferReceiptArtifacts(transferRow, transferLineRows) {
+  return Boolean(
+    parsePositiveInt(transferRow?.receiptJournalEntryId) ||
+      transferRow?.receivedAt ||
+      parsePositiveInt(transferRow?.receivedByUserId) ||
+      (transferLineRows || []).some(
+        (row) =>
+          parsePositiveInt(row?.targetReceiptMovementId) || hasNonZeroQuantity(row?.quantityReceived)
+      )
+  );
+}
+
+async function queryTransferArtifactCountsTx(tx, { tenantId, transferId }) {
+  const movementResult = await tx.query(
+    `SELECT COUNT(*) AS movement_count
+       FROM inventory_movements
+      WHERE tenant_id = ?
+        AND source_document_type = 'INVENTORY_TRANSFER'
+        AND source_document_id = ?`,
+    [tenantId, transferId]
+  );
+  const journalLinkResult = await tx.query(
+    `SELECT COUNT(*) AS journal_link_count
+       FROM journal_source_links
+      WHERE tenant_id = ?
+        AND source_ref_type = 'INVENTORY_TRANSFER'
+        AND source_ref_id = ?`,
+    [tenantId, transferId]
+  );
+  return {
+    movementCount: Number(movementResult.rows?.[0]?.movement_count || 0),
+    journalLinkCount: Number(journalLinkResult.rows?.[0]?.journal_link_count || 0),
+  };
+}
+
+async function assertTransferCancelableWithoutArtifactsTx(tx, {
+  tenantId,
+  transferRow,
+  transferLineRows,
+}) {
+  const headerArtifacts =
+    parsePositiveInt(transferRow?.shipmentJournalEntryId) ||
+    parsePositiveInt(transferRow?.receiptJournalEntryId) ||
+    parsePositiveInt(transferRow?.reversalJournalEntryId) ||
+    transferRow?.inTransitAt ||
+    transferRow?.receivedAt ||
+    transferRow?.reversedAt ||
+    parsePositiveInt(transferRow?.shippedByUserId) ||
+    parsePositiveInt(transferRow?.receivedByUserId) ||
+    parsePositiveInt(transferRow?.reversedByUserId);
+  const lineArtifacts = (transferLineRows || []).some(
+    (row) =>
+      parsePositiveInt(row?.sourceIssueMovementId) ||
+      parsePositiveInt(row?.targetReceiptMovementId) ||
+      hasNonZeroQuantity(row?.quantityShipped) ||
+      hasNonZeroQuantity(row?.quantityReceived)
+  );
+  const artifactCounts = await queryTransferArtifactCountsTx(tx, {
+    tenantId,
+    transferId: transferRow.id,
+  });
+  if (
+    headerArtifacts ||
+    lineArtifacts ||
+    artifactCounts.movementCount > 0 ||
+    artifactCounts.journalLinkCount > 0
+  ) {
+    throw conflict("Transfer cannot be canceled after inventory movements or journals exist");
+  }
+}
+
+async function reverseTransferJournalTx(tx, {
+  tenantId,
+  legalEntityId,
+  transferId,
+  journalEntryId,
+  userId,
+  reason,
+  reversalDate,
+}) {
+  const normalizedJournalEntryId = parsePositiveInt(journalEntryId);
+  if (!normalizedJournalEntryId) {
+    throw conflict("Transfer reversal requires a posted transfer journal");
+  }
+  const originalJournalResult = await tx.query(
+    `SELECT id, book_id, journal_no
+       FROM journal_entries
+      WHERE tenant_id = ?
+        AND id = ?
+      LIMIT 1
+      FOR UPDATE`,
+    [tenantId, normalizedJournalEntryId]
+  );
+  const originalJournal = originalJournalResult.rows?.[0] || null;
+  if (!originalJournal) {
+    throw badRequest("Transfer journal not found");
+  }
+
+  const reversalContext = await resolveBookAndOpenPeriodForDate({
+    tenantId,
+    legalEntityId,
+    targetDate: reversalDate,
+    preferredBookId: parsePositiveInt(originalJournal.book_id),
+    runQuery: tx.query,
+  });
+  const result = await reverseJournalEntryTx(tx, {
+    tenantId,
+    journalId: normalizedJournalEntryId,
+    userId,
+    reason,
+    reversalPeriodId: reversalContext.fiscalPeriodId,
+    entryDate: reversalDate,
+    documentDate: reversalDate,
+    journalNo: `${String(originalJournal.journal_no || "").trim()}-REV`.slice(0, 40),
+    autoPost: true,
+    idempotentOnAlreadyReversed: true,
+  });
+
+  await upsertJournalSourceLinkTx(tx, {
+    tenantId,
+    legalEntityId,
+    journalEntryId: result.reversalJournalId,
+    sourceRefType: "INVENTORY_TRANSFER",
+    sourceRefId: transferId,
+    linkRole: "PRIMARY",
+  });
+
+  return result;
 }
 
 function describeTransferItem(itemCard, transferLineRow) {
@@ -1478,31 +1640,52 @@ export async function cancelInventoryTransferById({
   }
   const cancelReason = normalizeText(payload?.cancelReason, 255);
 
-  return withTransaction((tx) =>
-    updateTransferStatusTx({
+  return withTransaction(async (tx) => {
+    const lockedHeaderRow = await fetchTransferRowById({
       tenantId,
       transferId,
-      userId,
-      nextStatus: "CANCELED",
-      allowedStatuses: ["INITIATED", "APPROVED"],
-      statusFieldAssignmentsSql:
-        "canceled_by_user_id = ?, canceled_at = CURRENT_TIMESTAMP, cancel_reason = ?",
-      statusFieldParams: [userId, cancelReason || null],
       runQuery: tx.query,
-    })
-  );
-}
+      forUpdate: true,
+    });
+    if (!lockedHeaderRow) {
+      throw badRequest("Inventory transfer not found");
+    }
+    const transferRow = mapTransferRow(lockedHeaderRow);
+    const status = normalizeTransferStatus(transferRow?.status);
+    if (!["INITIATED", "APPROVED"].includes(status)) {
+      throw conflict(`Transfer cannot move to CANCELED from status ${status || "UNKNOWN"}`);
+    }
 
-async function getTransferStatusOrThrow({ tenantId, transferId, runQuery = query }) {
-  const row = await fetchTransferRowById({
-    tenantId,
-    transferId,
-    runQuery,
+    const transferLineRows = await fetchTransferLinesByTransferId({
+      tenantId,
+      transferId,
+      runQuery: tx.query,
+      forUpdate: true,
+    });
+    await assertTransferCancelableWithoutArtifactsTx(tx, {
+      tenantId,
+      transferRow,
+      transferLineRows,
+    });
+
+    await tx.query(
+      `UPDATE inventory_transfers
+          SET status = 'CANCELED',
+              canceled_by_user_id = ?,
+              canceled_at = CURRENT_TIMESTAMP,
+              cancel_reason = ?,
+              updated_at = CURRENT_TIMESTAMP
+        WHERE tenant_id = ?
+          AND id = ?`,
+      [userId, cancelReason || null, tenantId, transferId]
+    );
+
+    return getTransferDetailRow({
+      tenantId,
+      transferId,
+      runQuery: tx.query,
+    });
   });
-  if (!row) {
-    throw badRequest("Inventory transfer not found");
-  }
-  return String(row.status || "").toUpperCase();
 }
 
 export async function shipInventoryTransferById({
@@ -1656,16 +1839,140 @@ export async function reverseInventoryTransferById({
   payload,
 }) {
   const tenantId = parsePositiveInt(payload?.tenantId);
+  const userId = parsePositiveInt(payload?.userId);
   const transferId = parsePositiveInt(payload?.transferId);
-  if (!tenantId || !transferId) {
-    throw badRequest("tenantId and transferId are required");
+  if (!tenantId || !transferId || !userId) {
+    throw badRequest("tenantId, transferId, and userId are required");
   }
-  const status = await getTransferStatusOrThrow({ tenantId, transferId });
-  if (status === "CANCELED") {
-    throw conflict("Canceled transfer cannot be reversed");
-  }
-  if (!["IN_TRANSIT", "RECEIVED"].includes(status)) {
-    throw conflict(`Transfer cannot be reversed from status ${status}`);
-  }
-  throw conflict("Transfer reversal is scaffolded but not implemented yet");
+  const reverseReason =
+    normalizeText(payload?.reverseReason, 255) || "Inventory transfer reversal";
+  const reversalDate = todayDateOnly();
+
+  return withTransaction(async (tx) => {
+    const lockedHeaderRow = await fetchTransferRowById({
+      tenantId,
+      transferId,
+      runQuery: tx.query,
+      forUpdate: true,
+    });
+    if (!lockedHeaderRow) {
+      throw badRequest("Inventory transfer not found");
+    }
+    const transferRow = mapTransferRow(lockedHeaderRow);
+    const status = normalizeTransferStatus(transferRow?.status);
+    if (status === "CANCELED") {
+      throw conflict("Canceled transfer cannot be reversed");
+    }
+    if (status === "REVERSED") {
+      throw conflict("Transfer is already reversed");
+    }
+    if (!["IN_TRANSIT", "RECEIVED"].includes(status)) {
+      throw conflict(`Transfer cannot be reversed from status ${status}`);
+    }
+
+    const transferLineRows = await fetchTransferLinesByTransferId({
+      tenantId,
+      transferId,
+      runQuery: tx.query,
+      forUpdate: true,
+    });
+    if (transferLineRows.length === 0) {
+      throw badRequest("Inventory transfer must contain at least one line before reversal");
+    }
+
+    const shipmentMovementIds = collectPositiveIds(
+      transferLineRows.map((row) => row.sourceIssueMovementId)
+    );
+    const receiptMovementIds = collectPositiveIds(
+      transferLineRows.map((row) => row.targetReceiptMovementId)
+    );
+    const shipmentArtifactsPresent = hasTransferShipmentArtifacts(transferRow, transferLineRows);
+    const receiptArtifactsPresent = hasTransferReceiptArtifacts(transferRow, transferLineRows);
+
+    if (
+      !shipmentArtifactsPresent ||
+      !parsePositiveInt(transferRow.shipmentJournalEntryId) ||
+      shipmentMovementIds.length === 0
+    ) {
+      throw conflict("Transfer shipment reversal requires posted shipment movement and journal lineage");
+    }
+    if (status === "RECEIVED" && !receiptArtifactsPresent) {
+      throw conflict("Transfer receipt reversal requires posted receipt movement and journal lineage");
+    }
+    if (
+      receiptArtifactsPresent &&
+      (!parsePositiveInt(transferRow.receiptJournalEntryId) || receiptMovementIds.length === 0)
+    ) {
+      throw conflict("Transfer receipt reversal requires posted receipt movement and journal lineage");
+    }
+
+    if (receiptArtifactsPresent) {
+      const receiptReason = `${reverseReason} | transfer receipt reversal`.slice(0, 255);
+      for (const movementId of receiptMovementIds) {
+        // eslint-disable-next-line no-await-in-loop
+        await reverseInventoryMovementTx(tx, {
+          tenantId,
+          userId,
+          movementId,
+          reversalDate,
+          reason: receiptReason,
+        });
+      }
+      await reverseTransferJournalTx(tx, {
+        tenantId,
+        legalEntityId: transferRow.legalEntityId,
+        transferId,
+        journalEntryId: transferRow.receiptJournalEntryId,
+        userId,
+        reason: receiptReason,
+        reversalDate,
+      });
+    }
+
+    const shipmentReason = `${reverseReason} | transfer shipment reversal`.slice(0, 255);
+    for (const movementId of shipmentMovementIds) {
+      // eslint-disable-next-line no-await-in-loop
+      await reverseInventoryMovementTx(tx, {
+        tenantId,
+        userId,
+        movementId,
+        reversalDate,
+        reason: shipmentReason,
+      });
+    }
+    const shipmentJournalReversal = await reverseTransferJournalTx(tx, {
+      tenantId,
+      legalEntityId: transferRow.legalEntityId,
+      transferId,
+      journalEntryId: transferRow.shipmentJournalEntryId,
+      userId,
+      reason: shipmentReason,
+      reversalDate,
+    });
+
+    await tx.query(
+      `UPDATE inventory_transfers
+          SET status = 'REVERSED',
+              reversal_journal_entry_id = ?,
+              reversed_by_user_id = ?,
+              reversed_at = CURRENT_TIMESTAMP,
+              reverse_reason = ?,
+              updated_at = CURRENT_TIMESTAMP
+        WHERE tenant_id = ?
+          AND id = ?`,
+      [
+        shipmentJournalReversal.reversalJournalId,
+        userId,
+        reverseReason,
+        tenantId,
+        transferId,
+      ]
+    );
+
+    return getTransferDetailRow({
+      tenantId,
+      transferId,
+      runQuery: tx.query,
+    });
+  });
 }
