@@ -583,6 +583,23 @@ export async function upsertOperatingUnit({
   await assertLegalEntityBelongsToTenant(tenantId, legalEntityId, "legalEntityId");
   assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
 
+  if (
+    parsePositiveInt(centralDueFromAccountId) &&
+    parsePositiveInt(centralDueFromAccountId) === parsePositiveInt(ouDueToCentralAccountId)
+  ) {
+    throw badRequest(
+      "ouDueToCentralAccountId must be different from centralDueFromAccountId"
+    );
+  }
+  if (
+    parsePositiveInt(centralDueToAccountId) &&
+    parsePositiveInt(centralDueToAccountId) === parsePositiveInt(ouDueFromCentralAccountId)
+  ) {
+    throw badRequest(
+      "ouDueFromCentralAccountId must be different from centralDueToAccountId"
+    );
+  }
+
   const id = await withTransaction(async (tx) => {
     const fieldSpecs = [
       {

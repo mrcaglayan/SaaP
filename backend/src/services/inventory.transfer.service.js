@@ -488,6 +488,327 @@ async function createTransferShipmentJournalTx(tx, payload) {
   return journalResult;
 }
 
+async function createTransferReceiptMovementTx(tx, payload) {
+  const quantity = normalizeAmount(payload?.quantity, "receiptQuantity");
+  const currencyCode = normalizeUpperText(payload?.currencyCode, 3, {
+    required: true,
+  });
+  const unitCostTxn = normalizeAmount(payload?.unitCostTxn, "receiptUnitCostTxn", {
+    allowZero: true,
+  });
+  const unitCostBase = normalizeAmount(payload?.unitCostBase, "receiptUnitCostBase", {
+    allowZero: true,
+  });
+  const totalCostTxn = normalizeAmount(payload?.totalCostTxn, "receiptTotalCostTxn", {
+    allowZero: true,
+  });
+  const totalCostBase = normalizeAmount(payload?.totalCostBase, "receiptTotalCostBase", {
+    allowZero: true,
+  });
+  const note = normalizeText(payload?.note, 255) || null;
+
+  const insertResult = await tx.query(
+    `INSERT INTO inventory_movements (
+        tenant_id,
+        legal_entity_id,
+        warehouse_id,
+        item_card_id,
+        movement_type,
+        source_type,
+        source_stock_link_id,
+        source_document_type,
+        source_document_id,
+        source_document_line_id,
+        movement_date,
+        quantity,
+        unit_cost_txn,
+        unit_cost_base,
+        total_cost_txn,
+        total_cost_base,
+        currency_code,
+        valuation_status,
+        note
+     ) VALUES (?, ?, ?, ?, 'RECEIPT', 'INVENTORY_TRANSFER', NULL, 'INVENTORY_TRANSFER', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'VALUED', ?)`,
+    [
+      payload.tenantId,
+      payload.legalEntityId,
+      payload.warehouseId,
+      payload.itemCardId,
+      payload.transferId,
+      payload.transferLineId,
+      payload.movementDate,
+      quantity,
+      unitCostTxn,
+      unitCostBase,
+      totalCostTxn,
+      totalCostBase,
+      currencyCode,
+      note,
+    ]
+  );
+  const movementId = parsePositiveInt(insertResult.rows?.insertId);
+  if (!movementId) {
+    throw new Error("Transfer receipt movement create failed");
+  }
+
+  await tx.query(
+    `INSERT INTO inventory_cost_layers (
+        tenant_id,
+        legal_entity_id,
+        warehouse_id,
+        item_card_id,
+        source_movement_id,
+        valuation_method,
+        layer_status,
+        currency_code,
+        quantity_in,
+        quantity_remaining,
+        unit_cost_txn,
+        unit_cost_base,
+        total_cost_txn,
+        total_cost_base
+     ) VALUES (?, ?, ?, ?, ?, 'FIFO', 'OPEN', ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      payload.tenantId,
+      payload.legalEntityId,
+      payload.warehouseId,
+      payload.itemCardId,
+      movementId,
+      currencyCode,
+      quantity,
+      quantity,
+      unitCostTxn,
+      unitCostBase,
+      totalCostTxn,
+      totalCostBase,
+    ]
+  );
+
+  return movementId;
+}
+
+async function materializeTransferReceiptTx(tx, payload) {
+  const lineResults = [];
+  let totalCostBase = 0;
+
+  for (const transferLineRow of payload.transferLineRows || []) {
+    const lineNo = Number(transferLineRow?.lineNo || 0);
+    if (parsePositiveInt(transferLineRow?.targetReceiptMovementId)) {
+      throw conflict(`Transfer line ${lineNo || "?"} has already been received`);
+    }
+    if (
+      normalizeAmount(transferLineRow?.quantityReceived || 0, "quantityReceived", {
+        allowZero: true,
+      }) > 0
+    ) {
+      throw conflict(`Transfer line ${lineNo || "?"} has already been received`);
+    }
+
+    const quantityRequested = normalizeAmount(
+      transferLineRow.quantityRequested,
+      `lines[${lineNo || "?"}].quantityRequested`
+    );
+    const quantityShipped = normalizeAmount(
+      transferLineRow.quantityShipped,
+      `lines[${lineNo || "?"}].quantityShipped`
+    );
+    if (Math.abs(quantityRequested - quantityShipped) > 0.000001) {
+      throw conflict(`Transfer line ${lineNo || "?"} is not fully shipped for receipt`);
+    }
+    if (!parsePositiveInt(transferLineRow?.sourceIssueMovementId)) {
+      throw conflict(`Transfer line ${lineNo || "?"} has no source shipment movement`);
+    }
+
+    const itemCard = await assertItemCardAllowedForTransfer({
+      tenantId: payload.tenantId,
+      legalEntityId: payload.legalEntityId,
+      itemCardId: transferLineRow.itemCardId,
+      fieldName: `lines[${lineNo || "?"}].itemCardId`,
+      runQuery: tx.query,
+    });
+    const itemLabel = describeTransferItem(itemCard, transferLineRow);
+    if (normalizeUpperText(itemCard?.itemType, 30) !== "STOCK_ITEM") {
+      throw badRequest(
+        `Transfer receipt requires STOCK_ITEM item cards; ${itemLabel} is not stock-managed`
+      );
+    }
+
+    const shippedCurrencyCode = normalizeUpperText(
+      transferLineRow.shippedCurrencyCode,
+      3,
+      { required: true }
+    );
+    const shippedUnitCostTxn = normalizeAmount(
+      transferLineRow.shippedUnitCostTxn,
+      `lines[${lineNo || "?"}].shippedUnitCostTxn`,
+      { allowZero: true }
+    );
+    const shippedUnitCostBase = normalizeAmount(
+      transferLineRow.shippedUnitCostBase,
+      `lines[${lineNo || "?"}].shippedUnitCostBase`,
+      { allowZero: true }
+    );
+    const shippedTotalCostTxn = normalizeAmount(
+      transferLineRow.shippedTotalCostTxn,
+      `lines[${lineNo || "?"}].shippedTotalCostTxn`,
+      { allowZero: true }
+    );
+    const shippedTotalCostBase = normalizeAmount(
+      transferLineRow.shippedTotalCostBase,
+      `lines[${lineNo || "?"}].shippedTotalCostBase`,
+      { allowZero: true }
+    );
+
+    const inventoryAssetAccount = await resolveInventoryPostingAccount({
+      tenantId: payload.tenantId,
+      legalEntityId: payload.legalEntityId,
+      accountId: itemCard?.inventoryAssetAccountId,
+      fieldLabel: `inventoryAssetAccountId for ${itemLabel}`,
+      runQuery: tx.query,
+    });
+    const transitAccount = await resolveInventoryPostingAccount({
+      tenantId: payload.tenantId,
+      legalEntityId: payload.legalEntityId,
+      accountId: itemCard?.inventoryTransitAccountId,
+      fieldLabel: `inventoryTransitAccountId for ${itemLabel}`,
+      runQuery: tx.query,
+    });
+
+    const movementId = await createTransferReceiptMovementTx(tx, {
+      tenantId: payload.tenantId,
+      legalEntityId: payload.legalEntityId,
+      warehouseId: payload.transferRow.targetWarehouseId,
+      itemCardId: transferLineRow.itemCardId,
+      transferId: payload.transferRow.id,
+      transferLineId: transferLineRow.id,
+      movementDate: payload.transferRow.transferDate,
+      quantity: quantityShipped,
+      currencyCode: shippedCurrencyCode,
+      unitCostTxn: shippedUnitCostTxn,
+      unitCostBase: shippedUnitCostBase,
+      totalCostTxn: shippedTotalCostTxn,
+      totalCostBase: shippedTotalCostBase,
+      note: `Transfer receipt ${payload.transferRow.transferNo || payload.transferRow.id} line ${
+        lineNo || "?"
+      }`.slice(0, 255),
+    });
+
+    await tx.query(
+      `UPDATE inventory_transfer_lines
+          SET quantity_received = ?,
+              target_receipt_movement_id = ?,
+              updated_at = CURRENT_TIMESTAMP
+        WHERE tenant_id = ?
+          AND id = ?`,
+      [quantityShipped, movementId, payload.tenantId, transferLineRow.id]
+    );
+
+    totalCostBase = roundAmount(totalCostBase + shippedTotalCostBase);
+    lineResults.push({
+      transferLineId: transferLineRow.id,
+      lineNo,
+      itemCardId: transferLineRow.itemCardId,
+      itemLabel,
+      quantityReceived: quantityShipped,
+      receiptCurrencyCode: shippedCurrencyCode,
+      receiptUnitCostTxn: shippedUnitCostTxn,
+      receiptUnitCostBase: shippedUnitCostBase,
+      receiptTotalCostTxn: shippedTotalCostTxn,
+      receiptTotalCostBase: shippedTotalCostBase,
+      targetReceiptMovementId: movementId,
+      inventoryAssetAccount,
+      transitAccount,
+    });
+  }
+
+  return {
+    totalCostBase,
+    lineResults,
+  };
+}
+
+async function createTransferReceiptJournalTx(tx, payload) {
+  const totalCostBase = roundAmount(payload?.receiptResult?.totalCostBase);
+  if (!(totalCostBase > 0)) {
+    throw badRequest("Transfer receipt cost must be greater than zero to post");
+  }
+
+  const journalContext = await resolveBookAndOpenPeriodForDate({
+    tenantId: payload.tenantId,
+    legalEntityId: payload.transferRow.legalEntityId,
+    targetDate: payload.transferRow.transferDate,
+    runQuery: tx.query,
+  });
+  const journalCurrencyCode = normalizeUpperText(journalContext.baseCurrencyCode, 3, {
+    required: true,
+  });
+  const targetOperatingUnitId =
+    normalizeUpperText(payload.transferRow.targetOwnershipScope, 30) === "OPERATING_UNIT"
+      ? parsePositiveInt(payload.transferRow.targetOperatingUnitId)
+      : null;
+  const subledgerReferenceNo = `INVENTORY_TRANSFER:${payload.transferRow.id}`.slice(0, 100);
+  const transferRef = payload.transferRow.transferNo || `Transfer #${payload.transferRow.id}`;
+  const groupedLines = new Map();
+
+  for (const lineResult of payload.receiptResult.lineResults || []) {
+    const amountBase = roundAmount(lineResult.receiptTotalCostBase);
+    if (!(amountBase > 0)) {
+      continue;
+    }
+
+    addGroupedJournalLine(groupedLines, {
+      accountId: lineResult.inventoryAssetAccount.id,
+      operatingUnitId: targetOperatingUnitId,
+      description: `Inventory transfer receipt ${transferRef} | DR inventory`.slice(0, 255),
+      subledgerReferenceNo,
+      currencyCode: journalCurrencyCode,
+      amountTxn: amountBase,
+      debitBase: amountBase,
+      creditBase: 0,
+    });
+    addGroupedJournalLine(groupedLines, {
+      accountId: lineResult.transitAccount.id,
+      operatingUnitId: targetOperatingUnitId,
+      description: `Inventory transfer receipt ${transferRef} | CR transit`.slice(0, 255),
+      subledgerReferenceNo,
+      currencyCode: journalCurrencyCode,
+      amountTxn: amountBase * -1,
+      debitBase: 0,
+      creditBase: amountBase,
+    });
+  }
+
+  const lines = Array.from(groupedLines.values()).map((line, index) => ({
+    ...line,
+    lineNo: index + 1,
+  }));
+  const journalResult = await insertPostedJournalWithLinesTx(tx, {
+    tenantId: payload.tenantId,
+    legalEntityId: payload.transferRow.legalEntityId,
+    bookId: journalContext.bookId,
+    fiscalPeriodId: journalContext.fiscalPeriodId,
+    journalNo: `INVTRCV-${payload.transferRow.id}`.slice(0, 40),
+    entryDate: payload.transferRow.transferDate,
+    documentDate: payload.transferRow.transferDate,
+    currencyCode: journalCurrencyCode,
+    description: `Inventory transfer receipt ${transferRef}`.slice(0, 500),
+    referenceNo: `INVENTORY_TRANSFER:${payload.transferRow.id}:RECEIPT`.slice(0, 100),
+    userId: payload.userId,
+    lines,
+  });
+
+  await upsertJournalSourceLinkTx(tx, {
+    tenantId: payload.tenantId,
+    legalEntityId: payload.transferRow.legalEntityId,
+    journalEntryId: journalResult.journalEntryId,
+    sourceRefType: "INVENTORY_TRANSFER",
+    sourceRefId: payload.transferRow.id,
+    linkRole: "PRIMARY",
+  });
+
+  return journalResult;
+}
+
 function toDecimalString(value, fieldName) {
   const normalized = String(value ?? "").trim();
   if (!normalized) {
@@ -1261,14 +1582,74 @@ export async function receiveInventoryTransferById({
 }) {
   const tenantId = parsePositiveInt(payload?.tenantId);
   const transferId = parsePositiveInt(payload?.transferId);
-  if (!tenantId || !transferId) {
-    throw badRequest("tenantId and transferId are required");
+  const userId = parsePositiveInt(payload?.userId);
+  if (!tenantId || !transferId || !userId) {
+    throw badRequest("tenantId, transferId, and userId are required");
   }
-  const status = await getTransferStatusOrThrow({ tenantId, transferId });
-  if (status !== "IN_TRANSIT") {
-    throw conflict(`Transfer must be IN_TRANSIT before receipt (current status: ${status})`);
-  }
-  throw conflict("Transfer receipt is scaffolded but not implemented yet");
+
+  return withTransaction(async (tx) => {
+    const lockedHeaderRow = await fetchTransferRowById({
+      tenantId,
+      transferId,
+      runQuery: tx.query,
+      forUpdate: true,
+    });
+    if (!lockedHeaderRow) {
+      throw badRequest("Inventory transfer not found");
+    }
+    const transferRow = mapTransferRow(lockedHeaderRow);
+    const status = normalizeTransferStatus(transferRow?.status);
+    if (status !== "IN_TRANSIT") {
+      throw conflict(`Transfer must be IN_TRANSIT before receipt (current status: ${status})`);
+    }
+    if (transferRow.receiptJournalEntryId || transferRow.receivedAt || transferRow.receivedByUserId) {
+      throw conflict("Transfer receipt is already posted or in progress");
+    }
+    if (!parsePositiveInt(transferRow.shipmentJournalEntryId)) {
+      throw conflict("Transfer receipt requires a posted shipment journal");
+    }
+
+    const transferLineRows = await fetchTransferLinesByTransferId({
+      tenantId,
+      transferId,
+      runQuery: tx.query,
+      forUpdate: true,
+    });
+    if (transferLineRows.length === 0) {
+      throw badRequest("Inventory transfer must contain at least one line before receipt");
+    }
+
+    const receiptResult = await materializeTransferReceiptTx(tx, {
+      tenantId,
+      legalEntityId: transferRow.legalEntityId,
+      transferRow,
+      transferLineRows,
+    });
+    const receiptJournal = await createTransferReceiptJournalTx(tx, {
+      tenantId,
+      userId,
+      transferRow,
+      receiptResult,
+    });
+
+    await tx.query(
+      `UPDATE inventory_transfers
+          SET receipt_journal_entry_id = ?,
+              status = 'RECEIVED',
+              received_by_user_id = ?,
+              received_at = CURRENT_TIMESTAMP,
+              updated_at = CURRENT_TIMESTAMP
+        WHERE tenant_id = ?
+          AND id = ?`,
+      [receiptJournal.journalEntryId, userId, tenantId, transferId]
+    );
+
+    return getTransferDetailRow({
+      tenantId,
+      transferId,
+      runQuery: tx.query,
+    });
+  });
 }
 
 export async function reverseInventoryTransferById({

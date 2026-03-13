@@ -88,7 +88,7 @@
 - [x] `PR-OU02` - Inventory transfer document foundation with approval
 - [x] `PR-OU03` - Reverse-direction OU internal-current-account foundation and balancing helper
 - [x] `PR-OU04` - Shipment-time transfer accounting and FIFO shipment valuation
-- [ ] `PR-OU05` - Transfer receipt and receipt journal
+- [x] `PR-OU05` - Transfer receipt and receipt journal
 - [ ] `PR-OU06` - Transfer reversal, cancel discipline, and bypass hardening
 - [ ] `PR-OU07` - Transfer evidence
 - [ ] `PR-OU08` - Cross-context settlement owner/collector persistence and resolution
@@ -522,41 +522,41 @@
 ### Checklist
 
 #### Receipt implementation
-- [ ] Require transfer status = `IN_TRANSIT`
-- [ ] Load shipped cost snapshot from transfer lines
-- [ ] Reuse `shipped_currency_code` when creating destination receipt movement and cost layer currency
-- [ ] Create destination `inventory_movements` rows with:
+- [x] Require transfer status = `IN_TRANSIT`
+- [x] Load shipped cost snapshot from transfer lines
+- [x] Reuse `shipped_currency_code` when creating destination receipt movement and cost layer currency
+- [x] Create destination `inventory_movements` rows with:
   - `movement_type = 'RECEIPT'`
   - `source_type = 'INVENTORY_TRANSFER'`
   - `source_document_type = 'INVENTORY_TRANSFER'`
   - `source_document_id`
   - `source_document_line_id`
   - `valuation_status = 'VALUED'`
-- [ ] Create destination `inventory_cost_layers`
-- [ ] Set `target_receipt_movement_id`
-- [ ] Set `quantity_received`
+- [x] Create destination `inventory_cost_layers`
+- [x] Set `target_receipt_movement_id`
+- [x] Set `quantity_received`
 
 #### Receipt journal
-- [ ] Create one receipt journal on transfer header
-- [ ] Debit destination inventory asset
-- [ ] Credit destination inventory transit
-- [ ] Set `inventory_transfers.receipt_journal_entry_id`
-- [ ] Set `status = 'RECEIVED'`
-- [ ] Set `received_by_user_id`
-- [ ] Set `received_at`
+- [x] Create one receipt journal on transfer header
+- [x] Debit destination inventory asset
+- [x] Credit destination inventory transit
+- [x] Set `inventory_transfers.receipt_journal_entry_id`
+- [x] Set `status = 'RECEIVED'`
+- [x] Set `received_by_user_id`
+- [x] Set `received_at`
 
 #### Frontend
-- [ ] Add receive action UI
+- [x] Add receive action UI
 
 #### Regression
-- [ ] Create `backend/scripts/test-inventory-ou05-transfer-receipt.js`
-- [ ] Test receive flow
-- [ ] Test receipt journal
+- [x] Create `backend/scripts/test-inventory-ou05-transfer-receipt.js`
+- [x] Test receive flow
+- [x] Test receipt journal
 
 ### Acceptance
-- [ ] Receipt clears transit correctly
-- [ ] Transfer can move cleanly from `IN_TRANSIT` to `RECEIVED`
-- [ ] Receipt visibility works in UI
+- [x] Receipt clears transit correctly
+- [x] Transfer can move cleanly from `IN_TRANSIT` to `RECEIVED`
+- [x] Receipt visibility works in UI
 
 ## PR-OU06 - Transfer reversal, cancel discipline, and bypass hardening
 
@@ -962,7 +962,7 @@
 - [x] 9. Create `m126_item_cards_inventory_transit_account.js`
 - [x] 10. Expose transit account in item-card backend/frontend
 - [x] 11. Implement transfer approval + shipment FIFO + accounting
-- [ ] 12. Implement transfer receipt
+- [x] 12. Implement transfer receipt
 - [ ] 13. Implement transfer cancel / reverse
 - [ ] 14. Block generic cross-context movement bypass
 - [ ] 15. Generalize evidence service and transfer evidence routes/UI
