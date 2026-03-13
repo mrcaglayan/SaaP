@@ -211,6 +211,7 @@
     "test:inventory:ou04": "node scripts/test-inventory-ou04-shipment-self-balancing.js",
     "test:inventory:ou05": "node scripts/test-inventory-ou05-transfer-receipt.js",
     "test:inventory:ou06": "node scripts/test-inventory-ou06-transfer-reversal-bypass.js",
+    "test:inventory:ou07": "node scripts/test-inventory-ou07-transfer-evidence.js",
     "test:cari-pr11": "node scripts/test-cari-pr11-frontend-routing-and-api-clients.js",
     "test:cari-pr12": "node scripts/test-cari-pr12-frontend-documents-smoke.js",
     "test:cari-pr12-documents-date-filter": "node scripts/test-cari-pr12-documents-date-filter-contract.js",

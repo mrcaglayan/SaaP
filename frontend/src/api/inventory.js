@@ -62,6 +62,70 @@ export async function reverseInventoryTransfer(transferId, payload = {}) {
   return response.data;
 }
 
+export async function listInventoryTransferEvidence(transferId) {
+  const response = await api.get(`/api/v1/inventory/transfers/${transferId}/evidence`);
+  return response.data;
+}
+
+export async function createInventoryTransferEvidence(transferId, payload = {}) {
+  const response = await api.post(`/api/v1/inventory/transfers/${transferId}/evidence`, payload);
+  return response.data;
+}
+
+export async function uploadInventoryTransferEvidenceContent(
+  transferId,
+  evidenceId,
+  fileOrBlob,
+  options = {}
+) {
+  const response = await api.put(
+    `/api/v1/inventory/transfers/${transferId}/evidence/${evidenceId}/content`,
+    fileOrBlob,
+    {
+      headers: {
+        "Content-Type": options?.contentType || "application/octet-stream",
+      },
+    }
+  );
+  return response.data;
+}
+
+function parseDispositionFileName(dispositionHeader) {
+  const raw = String(dispositionHeader || "").trim();
+  if (!raw) {
+    return null;
+  }
+  const utf8Match = raw.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match?.[1]) {
+    try {
+      return decodeURIComponent(utf8Match[1]).trim();
+    } catch {
+      return String(utf8Match[1]).trim();
+    }
+  }
+  const basicMatch = raw.match(/filename="([^"]+)"/i) || raw.match(/filename=([^;]+)/i);
+  return basicMatch?.[1] ? String(basicMatch[1]).trim() : null;
+}
+
+export async function downloadInventoryTransferEvidence(transferId, evidenceId) {
+  const response = await api.get(
+    `/api/v1/inventory/transfers/${transferId}/evidence/${evidenceId}/download`,
+    { responseType: "blob" }
+  );
+  return {
+    blob: response.data,
+    fileName: parseDispositionFileName(response.headers?.["content-disposition"]),
+    contentType: response.headers?.["content-type"] || null,
+  };
+}
+
+export async function deleteInventoryTransferEvidence(transferId, evidenceId) {
+  const response = await api.delete(
+    `/api/v1/inventory/transfers/${transferId}/evidence/${evidenceId}`
+  );
+  return response.data;
+}
+
 export async function listInventoryCariStockLinks(params = {}) {
   const response = await api.get(
     `/api/v1/inventory/cari-stock-links${toQueryString(params)}`

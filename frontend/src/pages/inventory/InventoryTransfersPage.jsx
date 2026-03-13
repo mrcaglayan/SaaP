@@ -7,12 +7,17 @@ import {
   approveInventoryTransfer,
   cancelInventoryTransfer,
   createInventoryTransfer,
+  createInventoryTransferEvidence,
+  deleteInventoryTransferEvidence,
+  downloadInventoryTransferEvidence,
   getInventoryTransfer,
+  listInventoryTransferEvidence,
   listInventoryTransfers,
   listInventoryWarehouses,
   receiveInventoryTransfer,
   reverseInventoryTransfer,
   shipInventoryTransfer,
+  uploadInventoryTransferEvidenceContent,
 } from "../../api/inventory.js";
 import { listItemCards } from "../../api/itemCards.js";
 function normalizeText(value) {
@@ -22,6 +27,15 @@ function normalizeText(value) {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 }function todayDateOnly() {
   return new Date().toISOString().slice(0, 10);
+}function triggerBrowserDownload(blob, fileName) {
+  const downloadUrl = window.URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = downloadUrl;
+  anchor.download = fileName;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  window.URL.revokeObjectURL(downloadUrl);
 }function normalizeApiError(error, fallback) {
   const message = String(error?.response?.data?.message || error?.message || fallback).trim();
   const requestId = String(error?.response?.data?.requestId || "").trim();
@@ -124,6 +138,16 @@ function normalizeText(value) {
   const [detailError, setDetailError] = useState("");
   const [actionError, setActionError] = useState("");
   const [actionMessage, setActionMessage] = useState("");
+  const [evidenceRows, setEvidenceRows] = useState([]);
+  const [evidenceLoading, setEvidenceLoading] = useState(false);
+  const [evidenceError, setEvidenceError] = useState("");
+  const [evidenceMessage, setEvidenceMessage] = useState("");
+  const [evidenceNote, setEvidenceNote] = useState("");
+  const [evidenceUploadFile, setEvidenceUploadFile] = useState(null);
+  const [evidenceUploadInputKey, setEvidenceUploadInputKey] = useState(0);
+  const [evidenceUploading, setEvidenceUploading] = useState(false);
+  const [evidenceDeletingId, setEvidenceDeletingId] = useState(null);
+  const [evidenceDownloadingId, setEvidenceDownloadingId] = useState(null);
   useEffect(() => {
     if (filters.legalEntityId || legalEntityOptions.length !== 1) {
       return;
@@ -287,6 +311,55 @@ function normalizeText(value) {
       active = false;
     };
   }, [canRead, selectedTransferId, l]);
+  useEffect(() => {
+    setEvidenceError("");
+    setEvidenceMessage("");
+    setEvidenceNote("");
+    setEvidenceUploadFile(null);
+    setEvidenceUploadInputKey((previous) => previous + 1);
+    setEvidenceDeletingId(null);
+    setEvidenceDownloadingId(null);
+  }, [selectedTransferId]);
+  useEffect(() => {
+    const transferId = toPositiveInt(selectedTransferId);
+    if (!canRead || !transferId) {
+      setEvidenceRows([]);
+      setEvidenceLoading(false);
+      setEvidenceError("");
+      return;
+    }
+    let active = true;
+    async function loadEvidence() {
+      setEvidenceLoading(true);
+      setEvidenceError("");
+      try {
+        const response = await listInventoryTransferEvidence(transferId);
+        if (!active) {
+          return;
+        }
+        setEvidenceRows(Array.isArray(response?.rows) ? response.rows : []);
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+        setEvidenceRows([]);
+        setEvidenceError(
+          normalizeApiError(
+            error,
+            l("Failed to load evidence attachments.", "Kanit ekleri yuklenemedi.")
+          )
+        );
+      } finally {
+        if (active) {
+          setEvidenceLoading(false);
+        }
+      }
+    }
+    loadEvidence();
+    return () => {
+      active = false;
+    };
+  }, [canRead, selectedTransferId, l]);
   const activeWarehouseOptions = useMemo(
     () =>
       warehouseRows
@@ -330,6 +403,17 @@ function normalizeText(value) {
           : "";
     setSelectedTransferId(resolvedSelection);
     return resolvedSelection;
+  }
+  async function reloadTransferEvidence(nextTransferId = selectedTransferId) {
+    const transferId = toPositiveInt(nextTransferId);
+    if (!transferId) {
+      setEvidenceRows([]);
+      return [];
+    }
+    const response = await listInventoryTransferEvidence(transferId);
+    const nextRows = Array.isArray(response?.rows) ? response.rows : [];
+    setEvidenceRows(nextRows);
+    return nextRows;
   }
   function updateTransferLine(index, field, value) {
     setForm((previous) => ({
@@ -471,6 +555,120 @@ function normalizeText(value) {
       );
     } finally {
       setActionLoading(false);
+    }
+  }
+  async function handleAttachEvidence() {
+    const transferId = toPositiveInt(selectedRow?.id);
+    if (!transferId || !canUpsert) {
+      setEvidenceError(
+        l(
+          "Evidence attach requires a selected transfer and inventory.upsert permission.",
+          "Kanit ekleme icin secili transfer ve inventory.upsert yetkisi gerekir."
+        )
+      );
+      return;
+    }
+    if (!evidenceUploadFile) {
+      setEvidenceError(
+        l("Select a file before attaching evidence.", "Kanit eklemeden once dosya secin.")
+      );
+      return;
+    }
+
+    setEvidenceUploading(true);
+    setEvidenceError("");
+    setEvidenceMessage("");
+    try {
+      const draftResponse = await createInventoryTransferEvidence(transferId, {
+        fileName: evidenceUploadFile.name || "evidence.bin",
+        contentType: evidenceUploadFile.type || undefined,
+        displayName: evidenceUploadFile.name || undefined,
+        note: normalizeText(evidenceNote) || undefined,
+      });
+      const evidenceId = toPositiveInt(draftResponse?.row?.id);
+      if (!evidenceId) {
+        throw new Error("Evidence draft creation did not return a valid id");
+      }
+      await uploadInventoryTransferEvidenceContent(transferId, evidenceId, evidenceUploadFile, {
+        contentType: evidenceUploadFile.type || "application/octet-stream",
+      });
+      await reloadTransferEvidence(transferId);
+      setEvidenceNote("");
+      setEvidenceUploadFile(null);
+      setEvidenceUploadInputKey((previous) => previous + 1);
+      setEvidenceMessage(
+        l(`Evidence attached. id=${evidenceId}`, `Kanit eklendi. id=${evidenceId}`)
+      );
+    } catch (error) {
+      setEvidenceError(
+        normalizeApiError(error, l("Failed to attach evidence.", "Kanit eklenemedi."))
+      );
+    } finally {
+      setEvidenceUploading(false);
+    }
+  }
+  async function handleDownloadEvidence(row) {
+    const transferId = toPositiveInt(selectedRow?.id);
+    const evidenceId = toPositiveInt(row?.id);
+    if (!transferId || !evidenceId) {
+      return;
+    }
+
+    setEvidenceDownloadingId(evidenceId);
+    setEvidenceError("");
+    setEvidenceMessage("");
+    try {
+      const response = await downloadInventoryTransferEvidence(transferId, evidenceId);
+      const fileName =
+        normalizeText(response?.fileName) ||
+        normalizeText(row?.fileName) ||
+        `transfer-evidence-${evidenceId}.bin`;
+      triggerBrowserDownload(response.blob, fileName);
+      setEvidenceMessage(
+        l(`Evidence downloaded. id=${evidenceId}`, `Kanit indirildi. id=${evidenceId}`)
+      );
+    } catch (error) {
+      setEvidenceError(
+        normalizeApiError(error, l("Failed to download evidence.", "Kanit indirilemedi."))
+      );
+    } finally {
+      setEvidenceDownloadingId(null);
+    }
+  }
+  async function handleDeleteEvidence(evidenceIdRaw) {
+    const transferId = toPositiveInt(selectedRow?.id);
+    const evidenceId = toPositiveInt(evidenceIdRaw);
+    if (!transferId || !evidenceId || !canUpsert) {
+      setEvidenceError(
+        l(
+          "Evidence delete requires a selected transfer, valid evidence id, and inventory.upsert permission.",
+          "Kanit silme icin secili transfer, gecerli kanit kimligi ve inventory.upsert yetkisi gerekir."
+        )
+      );
+      return;
+    }
+    const confirmed = window.confirm(
+      l("Delete this evidence attachment?", "Bu kanit ekini silmek istiyor musunuz?")
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setEvidenceDeletingId(evidenceId);
+    setEvidenceError("");
+    setEvidenceMessage("");
+    try {
+      await deleteInventoryTransferEvidence(transferId, evidenceId);
+      await reloadTransferEvidence(transferId);
+      setEvidenceMessage(
+        l(`Evidence deleted. id=${evidenceId}`, `Kanit silindi. id=${evidenceId}`)
+      );
+    } catch (error) {
+      setEvidenceError(
+        normalizeApiError(error, l("Failed to delete evidence.", "Kanit silinemedi."))
+      );
+    } finally {
+      setEvidenceDeletingId(null);
     }
   }
   return (
@@ -991,6 +1189,150 @@ function normalizeText(value) {
                     >
                       {l("Reverse", "Ters kaydet")}
                     </button>
+                  ) : null}
+                </div>
+
+                <div className="rounded-xl border border-slate-200 bg-white p-3">
+                  <div className="mb-2 flex items-center justify-between">
+                    <div>
+                      <div className="text-sm font-semibold text-slate-900">
+                        {l("Evidence attachments", "Kanit ekleri")}
+                      </div>
+                      <div className="text-xs text-slate-500">
+                        {l(
+                          "Attach shipment slips, approvals, or receiving proof to this transfer.",
+                          "Sevk fisleri, onaylar veya teslim alma kanitlarini bu transfere ekleyin."
+                        )}
+                      </div>
+                    </div>
+                    <div className="text-xs text-slate-500">
+                      {l("Count", "Adet")}: {evidenceRows.length}
+                    </div>
+                  </div>
+
+                  {evidenceError ? (
+                    <p className="mb-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                      {evidenceError}
+                    </p>
+                  ) : null}
+                  {evidenceMessage ? (
+                    <p className="mb-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+                      {evidenceMessage}
+                    </p>
+                  ) : null}
+
+                  <div className="grid gap-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 p-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
+                    <label className="grid gap-1 text-sm text-slate-600">
+                      <span>{l("File", "Dosya")}</span>
+                      <input
+                        key={evidenceUploadInputKey}
+                        className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+                        type="file"
+                        onChange={(event) =>
+                          setEvidenceUploadFile(event.target.files?.[0] || null)
+                        }
+                        disabled={evidenceUploading || !canUpsert}
+                      />
+                    </label>
+                    <label className="grid gap-1 text-sm text-slate-600">
+                      <span>{l("Note", "Not")}</span>
+                      <input
+                        className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+                        value={evidenceNote}
+                        onChange={(event) => setEvidenceNote(event.target.value)}
+                        disabled={evidenceUploading || !canUpsert}
+                        placeholder={l("Optional evidence note", "Istege bagli kanit notu")}
+                      />
+                    </label>
+                    <div className="flex items-end">
+                      <button
+                        type="button"
+                        className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                        disabled={!evidenceUploadFile || evidenceUploading || !canUpsert}
+                        onClick={() => void handleAttachEvidence()}
+                      >
+                        {evidenceUploading
+                          ? l("Attaching...", "Ekleniyor...")
+                          : l("Attach Evidence", "Kanit ekle")}
+                      </button>
+                    </div>
+                  </div>
+
+                  {!canUpsert ? (
+                    <p className="mt-2 text-xs text-slate-500">
+                      {l(
+                        "Missing permission: inventory.upsert",
+                        "Eksik yetki: inventory.upsert"
+                      )}
+                    </p>
+                  ) : null}
+                  {evidenceLoading ? (
+                    <p className="mt-3 text-sm text-slate-600">
+                      {l("Loading evidence...", "Kanitlar yukleniyor...")}
+                    </p>
+                  ) : null}
+                  {!evidenceLoading && evidenceRows.length === 0 ? (
+                    <p className="mt-3 text-sm text-slate-600">
+                      {l(
+                        "No evidence attached to this transfer.",
+                        "Bu transfere ekli kanit yok."
+                      )}
+                    </p>
+                  ) : null}
+                  {!evidenceLoading && evidenceRows.length > 0 ? (
+                    <div className="mt-3 space-y-2">
+                      {evidenceRows.map((row) => {
+                        const evidenceId = toPositiveInt(row?.id);
+                        const isDownloading =
+                          evidenceId && Number(evidenceDownloadingId) === Number(evidenceId);
+                        const isDeleting =
+                          evidenceId && Number(evidenceDeletingId) === Number(evidenceId);
+                        return (
+                          <div
+                            key={`transfer-evidence-${row.id}`}
+                            className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 md:flex-row md:items-start md:justify-between"
+                          >
+                            <div className="min-w-0">
+                              <div className="font-medium text-slate-900">
+                                {row.displayName || row.fileName || `Evidence #${row.id}`}
+                              </div>
+                              <div className="text-xs text-slate-500">
+                                {row.fileName || "-"} | {row.contentType || "application/octet-stream"}
+                              </div>
+                              <div className="text-xs text-slate-500">
+                                {l("Status", "Durum")}: {row.status || "-"}
+                                {row.uploadedAt ? ` | ${row.uploadedAt}` : ""}
+                              </div>
+                              <div className="text-sm text-slate-600">
+                                {row.note || l("No note", "Not yok")}
+                              </div>
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
+                                disabled={isDownloading}
+                                onClick={() => void handleDownloadEvidence(row)}
+                              >
+                                {isDownloading
+                                  ? l("Downloading...", "Indiriliyor...")
+                                  : l("Download", "Indir")}
+                              </button>
+                              <button
+                                type="button"
+                                className="rounded-lg border border-rose-200 px-3 py-2 text-sm font-medium text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                disabled={!canUpsert || isDeleting}
+                                onClick={() => void handleDeleteEvidence(row.id)}
+                              >
+                                {isDeleting
+                                  ? l("Deleting...", "Siliniyor...")
+                                  : l("Delete", "Sil")}
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
                   ) : null}
                 </div>
               </div>

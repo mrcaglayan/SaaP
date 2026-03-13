@@ -90,7 +90,7 @@
 - [x] `PR-OU04` - Shipment-time transfer accounting and FIFO shipment valuation
 - [x] `PR-OU05` - Transfer receipt and receipt journal
 - [x] `PR-OU06` - Transfer reversal, cancel discipline, and bypass hardening
-- [ ] `PR-OU07` - Transfer evidence
+- [x] `PR-OU07` - Transfer evidence
 - [ ] `PR-OU08` - Cross-context settlement owner/collector persistence and resolution
 - [ ] `PR-OU09` - Cross-context settlement posting split
 - [ ] `PR-OU10` - Cross-context settlement reversal discipline
@@ -628,29 +628,29 @@
 ### Checklist
 
 #### Evidence
-- [ ] Reuse existing `inventory.read` for transfer evidence list/download
-- [ ] Reuse existing `inventory.upsert` for transfer evidence create/upload/delete
-- [ ] Extend evidence service to support `INVENTORY_TRANSFER`
-- [ ] Add transfer row lookup helper
-- [ ] Add transfer scope assertion helper
-- [ ] Add transfer evidence routes:
+- [x] Reuse existing `inventory.read` for transfer evidence list/download
+- [x] Reuse existing `inventory.upsert` for transfer evidence create/upload/delete
+- [x] Extend evidence service to support `INVENTORY_TRANSFER`
+- [x] Add transfer row lookup helper
+- [x] Add transfer scope assertion helper
+- [x] Add transfer evidence routes:
   - `GET /transfers/:transferId/evidence`
   - `POST /transfers/:transferId/evidence`
   - `PUT /transfers/:transferId/evidence/:evidenceId/content`
   - `GET /transfers/:transferId/evidence/:evidenceId/download`
   - `DELETE /transfers/:transferId/evidence/:evidenceId`
-- [ ] Mount `inventory.transfer.evidence.routes.js` under existing `/api/v1/inventory`
+- [x] Mount `inventory.transfer.evidence.routes.js` under existing `/api/v1/inventory`
 
 #### Frontend
-- [ ] Add evidence upload / download / delete UI
+- [x] Add evidence upload / download / delete UI
 
 #### Regression
-- [ ] Create `backend/scripts/test-inventory-ou07-transfer-evidence.js`
-- [ ] Test evidence lifecycle
+- [x] Create `backend/scripts/test-inventory-ou07-transfer-evidence.js`
+- [x] Test evidence lifecycle
 
 ### Acceptance
-- [ ] Transfer evidence works
-- [ ] Evidence routes are reachable and scope-safe
+- [x] Transfer evidence works
+- [x] Evidence routes are reachable and scope-safe
 
 ## PR-OU08 - Cross-context settlement owner/collector persistence and resolution
 
@@ -968,7 +968,7 @@
 - [x] 12. Implement transfer receipt
 - [x] 13. Implement transfer cancel / reverse
 - [x] 14. Block generic cross-context movement bypass
-- [ ] 15. Generalize evidence service and transfer evidence routes/UI
+- [x] 15. Generalize evidence service and transfer evidence routes/UI
 - [ ] 16. Create `m128_cari_settlement_owner_collector_contexts.js`
 - [ ] 17. Implement settlement owner / collector resolvers and persistence
 - [ ] 18. Implement cross-context settlement posting split
@@ -983,7 +983,7 @@
 - [x] Transfer lifecycle includes approval, shipment, receipt, and additive reversal
 - [x] Shipment-time internal balancing works and is auditable
 - [x] Reverse-direction central `<->` OU accounts exist and are configured
-- [ ] Receipt / cancel / reversal / evidence work
+- [x] Receipt / cancel / reversal / evidence work
 - [x] Generic inventory movement bypass is blocked in backend
 - [ ] Cross-context CARI settlement owner vs collector split works
 - [ ] Settlement reports and drilldowns surface owner vs collector context correctly

@@ -1,6 +1,7 @@
 import express from "express";
 import { asyncHandler, parsePositiveInt, resolveTenantId } from "./_utils.js";
 import { assertScopeAccess, requirePermission } from "../middleware/rbac.js";
+import inventoryTransferEvidenceRoutes from "./inventory.transfer.evidence.routes.js";
 import {
   parseInventoryTransferApproveInput,
   parseInventoryTransferCancelInput,
@@ -48,6 +49,8 @@ async function resolveInventoryTransferScopeFromParam(req, tenantId) {
   }
   return resolveInventoryTransferScope(transferId, normalizedTenantId);
 }
+
+router.use("/transfers/:transferId/evidence", inventoryTransferEvidenceRoutes);
 
 router.get(
   "/transfers",
