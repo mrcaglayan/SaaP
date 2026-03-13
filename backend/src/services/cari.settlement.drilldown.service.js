@@ -37,6 +37,59 @@ function toDateOnlyString(value) {
   return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString().slice(0, 10);
 }
 
+function buildOperatingUnitContext({
+  operatingUnitId,
+  operatingUnitCode = null,
+  operatingUnitName = null,
+}) {
+  const resolvedOperatingUnitId = parsePositiveInt(operatingUnitId) || null;
+  const code = String(operatingUnitCode || "").trim() || null;
+  const name = String(operatingUnitName || "").trim() || null;
+  const contextLabel = !resolvedOperatingUnitId
+    ? "Central"
+    : [code ? `OU: ${code}` : `OU: ${resolvedOperatingUnitId}`, name]
+        .filter(Boolean)
+        .join(" - ");
+
+  return {
+    operatingUnitId: resolvedOperatingUnitId,
+    operatingUnitCode: code,
+    operatingUnitName: name,
+    contextLabel,
+  };
+}
+
+function mapSettlementContextFields(row) {
+  const ownerContext = buildOperatingUnitContext({
+    operatingUnitId: row.owner_operating_unit_id ?? row.ownerOperatingUnitId,
+    operatingUnitCode: row.owner_operating_unit_code ?? row.ownerOperatingUnitCode,
+    operatingUnitName: row.owner_operating_unit_name ?? row.ownerOperatingUnitName,
+  });
+  const collectorContext = buildOperatingUnitContext({
+    operatingUnitId: row.collector_operating_unit_id ?? row.collectorOperatingUnitId,
+    operatingUnitCode: row.collector_operating_unit_code ?? row.collectorOperatingUnitCode,
+    operatingUnitName: row.collector_operating_unit_name ?? row.collectorOperatingUnitName,
+  });
+  const originatingCrossContextSettlementBatchId =
+    parsePositiveInt(
+      row.originating_cross_context_settlement_batch_id ??
+        row.originatingCrossContextSettlementBatchId
+    ) || null;
+
+  return {
+    ownerOperatingUnitId: ownerContext.operatingUnitId,
+    ownerOperatingUnitCode: ownerContext.operatingUnitCode,
+    ownerOperatingUnitName: ownerContext.operatingUnitName,
+    ownerContextLabel: ownerContext.contextLabel,
+    collectorOperatingUnitId: collectorContext.operatingUnitId,
+    collectorOperatingUnitCode: collectorContext.operatingUnitCode,
+    collectorOperatingUnitName: collectorContext.operatingUnitName,
+    collectorContextLabel: collectorContext.contextLabel,
+    originatingCrossContextSettlementBatchId,
+    isCrossContext: ownerContext.operatingUnitId !== collectorContext.operatingUnitId,
+  };
+}
+
 export async function listCariSettlementDrilldownsByBatchIds({
   tenantId,
   settlementBatchIds,
@@ -62,6 +115,8 @@ export async function listCariSettlementDrilldownsByBatchIds({
        b.legal_entity_id,
        b.counterparty_id,
        b.cash_transaction_id,
+       b.owner_operating_unit_id,
+       b.collector_operating_unit_id,
        b.settlement_no,
        b.direction,
        b.settlement_date,
@@ -71,15 +126,28 @@ export async function listCariSettlementDrilldownsByBatchIds({
        b.currency_code,
        b.posted_journal_entry_id,
        b.reversal_of_settlement_batch_id,
+       b.originating_cross_context_settlement_batch_id,
        b.created_at,
        b.updated_at,
        cp.code AS counterparty_code,
-       cp.name AS counterparty_name
+       cp.name AS counterparty_name,
+       owner_ou.code AS owner_operating_unit_code,
+       owner_ou.name AS owner_operating_unit_name,
+       collector_ou.code AS collector_operating_unit_code,
+       collector_ou.name AS collector_operating_unit_name
      FROM cari_settlement_batches b
      LEFT JOIN counterparties cp
        ON cp.tenant_id = b.tenant_id
       AND cp.legal_entity_id = b.legal_entity_id
       AND cp.id = b.counterparty_id
+     LEFT JOIN operating_units owner_ou
+       ON owner_ou.tenant_id = b.tenant_id
+      AND owner_ou.legal_entity_id = b.legal_entity_id
+      AND owner_ou.id = b.owner_operating_unit_id
+     LEFT JOIN operating_units collector_ou
+       ON collector_ou.tenant_id = b.tenant_id
+      AND collector_ou.legal_entity_id = b.legal_entity_id
+      AND collector_ou.id = b.collector_operating_unit_id
      WHERE b.tenant_id = ?
        AND b.id IN (${placeholders})
      ORDER BY b.settlement_date ASC, b.id ASC`,
@@ -142,6 +210,7 @@ export async function listCariSettlementDrilldownsByBatchIds({
       counterpartyCode: row.counterparty_code || null,
       counterpartyName: row.counterparty_name || null,
       cashTransactionId: parsePositiveInt(row.cash_transaction_id),
+      ...mapSettlementContextFields(row),
       settlementNo: row.settlement_no || null,
       direction: normalizeUpperText(row.direction) || null,
       settlementDate: toDateOnlyString(row.settlement_date),

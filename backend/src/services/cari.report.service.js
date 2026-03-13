@@ -34,6 +34,60 @@ function deriveCounterpartyType({ isCustomer, isVendor }) {
   return "OTHER";
 }
 
+function buildOperatingUnitContext({
+  operatingUnitId,
+  operatingUnitCode = null,
+  operatingUnitName = null,
+}) {
+  const resolvedOperatingUnitId = parsePositiveInt(operatingUnitId) || null;
+  const code = String(operatingUnitCode || "").trim() || null;
+  const name = String(operatingUnitName || "").trim() || null;
+  const contextLabel = !resolvedOperatingUnitId
+    ? "Central"
+    : [code ? `OU: ${code}` : `OU: ${resolvedOperatingUnitId}`, name]
+        .filter(Boolean)
+        .join(" - ");
+
+  return {
+    operatingUnitId: resolvedOperatingUnitId,
+    operatingUnitCode: code,
+    operatingUnitName: name,
+    contextLabel,
+  };
+}
+
+function mapSettlementContextFields(row) {
+  const ownerContext = buildOperatingUnitContext({
+    operatingUnitId: row.owner_operating_unit_id ?? row.ownerOperatingUnitId,
+    operatingUnitCode: row.owner_operating_unit_code ?? row.ownerOperatingUnitCode,
+    operatingUnitName: row.owner_operating_unit_name ?? row.ownerOperatingUnitName,
+  });
+  const collectorContext = buildOperatingUnitContext({
+    operatingUnitId: row.collector_operating_unit_id ?? row.collectorOperatingUnitId,
+    operatingUnitCode: row.collector_operating_unit_code ?? row.collectorOperatingUnitCode,
+    operatingUnitName: row.collector_operating_unit_name ?? row.collectorOperatingUnitName,
+  });
+  const originatingCrossContextSettlementBatchId =
+    parsePositiveInt(
+      row.originating_cross_context_settlement_batch_id ??
+        row.originatingCrossContextSettlementBatchId
+    ) || null;
+  const isCrossContext = ownerContext.operatingUnitId !== collectorContext.operatingUnitId;
+
+  return {
+    ownerOperatingUnitId: ownerContext.operatingUnitId,
+    ownerOperatingUnitCode: ownerContext.operatingUnitCode,
+    ownerOperatingUnitName: ownerContext.operatingUnitName,
+    ownerContextLabel: ownerContext.contextLabel,
+    collectorOperatingUnitId: collectorContext.operatingUnitId,
+    collectorOperatingUnitCode: collectorContext.operatingUnitCode,
+    collectorOperatingUnitName: collectorContext.operatingUnitName,
+    collectorContextLabel: collectorContext.contextLabel,
+    originatingCrossContextSettlementBatchId,
+    isCrossContext,
+  };
+}
+
 function toNumber(value) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
@@ -546,6 +600,14 @@ function mapOpenItemAsOfRow(row, asOfDate) {
     direction: row.direction || null,
     documentType: row.document_type || null,
     documentStatusCurrent: row.document_status_current || null,
+    operatingUnitId: parsePositiveInt(row.document_operating_unit_id),
+    operatingUnitCode: row.document_operating_unit_code || null,
+    operatingUnitName: row.document_operating_unit_name || null,
+    operatingUnitContextLabel: buildOperatingUnitContext({
+      operatingUnitId: row.document_operating_unit_id,
+      operatingUnitCode: row.document_operating_unit_code,
+      operatingUnitName: row.document_operating_unit_name,
+    }).contextLabel,
     paymentTermSnapshot: row.payment_term_snapshot || null,
     dueDateSnapshot: toDateOnlyString(row.due_date_snapshot),
     currencyCodeSnapshot: row.currency_code_snapshot || null,
@@ -618,6 +680,7 @@ async function loadOpenItemAsOfRows({
        d.due_date,
        d.direction,
        d.document_type,
+       d.operating_unit_id AS document_operating_unit_id,
        d.status AS document_status_current,
        d.counterparty_code_snapshot,
        d.counterparty_name_snapshot,
@@ -625,6 +688,8 @@ async function loadOpenItemAsOfRows({
        d.due_date_snapshot,
        d.currency_code_snapshot,
        d.fx_rate_snapshot,
+       doc_ou.code AS document_operating_unit_code,
+       doc_ou.name AS document_operating_unit_name,
        cp.code AS counterparty_code_current,
        cp.name AS counterparty_name_current,
        cp.is_customer AS counterparty_is_customer,
@@ -645,6 +710,10 @@ async function loadOpenItemAsOfRows({
      LEFT JOIN cari_documents reversal_doc
        ON reversal_doc.tenant_id = d.tenant_id
       AND reversal_doc.reversal_of_document_id = d.id
+     LEFT JOIN operating_units doc_ou
+       ON doc_ou.tenant_id = d.tenant_id
+      AND doc_ou.legal_entity_id = d.legal_entity_id
+      AND doc_ou.id = d.operating_unit_id
      LEFT JOIN counterparties cp
        ON cp.tenant_id = oi.tenant_id
       AND cp.legal_entity_id = oi.legal_entity_id
@@ -719,9 +788,16 @@ async function loadSettlementReferenceMapForOpenItems({
        b.settlement_no,
        b.settlement_date,
        b.status AS settlement_status,
+       b.owner_operating_unit_id,
+       b.collector_operating_unit_id,
+       b.originating_cross_context_settlement_batch_id,
        b.bank_statement_line_id,
        b.bank_transaction_ref,
        b.bank_apply_idempotency_key,
+       owner_ou.code AS owner_operating_unit_code,
+       owner_ou.name AS owner_operating_unit_name,
+       collector_ou.code AS collector_operating_unit_code,
+       collector_ou.name AS collector_operating_unit_name,
        b_rev.id AS reversal_settlement_batch_id,
        b_rev.settlement_no AS reversal_settlement_no,
        b_rev.settlement_date AS reversal_settlement_date
@@ -734,6 +810,14 @@ async function loadSettlementReferenceMapForOpenItems({
        ON b_rev.tenant_id = b.tenant_id
       AND b_rev.legal_entity_id = b.legal_entity_id
       AND b_rev.reversal_of_settlement_batch_id = b.id
+     LEFT JOIN operating_units owner_ou
+       ON owner_ou.tenant_id = b.tenant_id
+      AND owner_ou.legal_entity_id = b.legal_entity_id
+      AND owner_ou.id = b.owner_operating_unit_id
+     LEFT JOIN operating_units collector_ou
+       ON collector_ou.tenant_id = b.tenant_id
+      AND collector_ou.legal_entity_id = b.legal_entity_id
+      AND collector_ou.id = b.collector_operating_unit_id
      WHERE a.tenant_id = ?
        AND b.settlement_date <= ?
        AND a.open_item_id IN (${uniqueOpenItemIds.map(() => "?").join(", ")})
@@ -772,6 +856,7 @@ async function loadSettlementReferenceMapForOpenItems({
       bankStatementLineId: parsePositiveInt(row.bank_statement_line_id),
       bankTransactionRef: row.bank_transaction_ref || null,
       bankApplyIdempotencyKey: row.bank_apply_idempotency_key || null,
+      ...mapSettlementContextFields(row),
     });
   }
 
@@ -937,6 +1022,8 @@ async function loadStatementSettlementRows({
        b.legal_entity_id,
        b.counterparty_id,
        b.cash_transaction_id,
+       b.owner_operating_unit_id,
+       b.collector_operating_unit_id,
        b.sequence_namespace,
        b.fiscal_year,
        b.sequence_no,
@@ -955,6 +1042,7 @@ async function loadStatementSettlementRows({
        b.settlement_fx_fallback_max_days,
        b.posted_journal_entry_id,
        b.reversal_of_settlement_batch_id,
+       b.originating_cross_context_settlement_batch_id,
        b.bank_statement_line_id,
        b.bank_transaction_ref,
        b.bank_attach_idempotency_key,
@@ -970,6 +1058,10 @@ async function loadStatementSettlementRows({
        cp.status AS counterparty_status,
        le.code AS legal_entity_code,
        le.name AS legal_entity_name,
+       owner_ou.code AS owner_operating_unit_code,
+       owner_ou.name AS owner_operating_unit_name,
+       collector_ou.code AS collector_operating_unit_code,
+       collector_ou.name AS collector_operating_unit_name,
        reversed_by.id AS reversed_by_settlement_batch_id,
        reversed_by.settlement_no AS reversed_by_settlement_no,
        reversed_by.settlement_date AS reversed_by_settlement_date,
@@ -981,8 +1073,16 @@ async function loadStatementSettlementRows({
       AND cp.legal_entity_id = b.legal_entity_id
       AND cp.id = b.counterparty_id
      LEFT JOIN legal_entities le
-       ON le.tenant_id = b.tenant_id
-      AND le.id = b.legal_entity_id
+      ON le.tenant_id = b.tenant_id
+     AND le.id = b.legal_entity_id
+     LEFT JOIN operating_units owner_ou
+       ON owner_ou.tenant_id = b.tenant_id
+      AND owner_ou.legal_entity_id = b.legal_entity_id
+      AND owner_ou.id = b.owner_operating_unit_id
+     LEFT JOIN operating_units collector_ou
+       ON collector_ou.tenant_id = b.tenant_id
+      AND collector_ou.legal_entity_id = b.legal_entity_id
+      AND collector_ou.id = b.collector_operating_unit_id
      LEFT JOIN cari_settlement_batches reversed_by
        ON reversed_by.tenant_id = b.tenant_id
       AND reversed_by.legal_entity_id = b.legal_entity_id
@@ -1017,6 +1117,7 @@ async function loadStatementSettlementRows({
       fiscalYear: Number(row.fiscal_year || 0),
       sequenceNo: Number(row.sequence_no || 0),
       settlementNo: row.settlement_no || null,
+      ...mapSettlementContextFields(row),
       direction: row.direction || null,
       settlementDate: toDateOnlyString(row.settlement_date),
       statusCurrent: row.status || null,
@@ -1102,6 +1203,9 @@ async function loadStatementAllocationRows({
        b.settlement_no,
        b.settlement_date,
        b.status AS settlement_status,
+       b.owner_operating_unit_id,
+       b.collector_operating_unit_id,
+       b.originating_cross_context_settlement_batch_id,
        b.currency_code AS settlement_batch_currency_code,
        b.bank_statement_line_id AS settlement_bank_statement_line_id,
        b.bank_transaction_ref AS settlement_bank_transaction_ref,
@@ -1123,7 +1227,11 @@ async function loadStatementAllocationRows({
        cp.is_customer AS counterparty_is_customer,
        cp.is_vendor AS counterparty_is_vendor,
        le.code AS legal_entity_code,
-       le.name AS legal_entity_name
+       le.name AS legal_entity_name,
+       owner_ou.code AS owner_operating_unit_code,
+       owner_ou.name AS owner_operating_unit_name,
+       collector_ou.code AS collector_operating_unit_code,
+       collector_ou.name AS collector_operating_unit_name
      FROM cari_settlement_allocations a
      JOIN cari_settlement_batches b
        ON b.tenant_id = a.tenant_id
@@ -1148,6 +1256,14 @@ async function loadStatementAllocationRows({
      LEFT JOIN legal_entities le
        ON le.tenant_id = oi.tenant_id
       AND le.id = oi.legal_entity_id
+     LEFT JOIN operating_units owner_ou
+       ON owner_ou.tenant_id = b.tenant_id
+      AND owner_ou.legal_entity_id = b.legal_entity_id
+      AND owner_ou.id = b.owner_operating_unit_id
+     LEFT JOIN operating_units collector_ou
+       ON collector_ou.tenant_id = b.tenant_id
+      AND collector_ou.legal_entity_id = b.legal_entity_id
+      AND collector_ou.id = b.collector_operating_unit_id
      WHERE ${conditions.join(" AND ")}
      ORDER BY a.allocation_date ASC, a.id ASC`,
     params
@@ -1217,6 +1333,7 @@ async function loadStatementAllocationRows({
       settlementBankTransactionRef: row.settlement_bank_transaction_ref || null,
       settlementBankApplyIdempotencyKey: row.settlement_bank_apply_idempotency_key || null,
       reversalOfSettlementBatchId: parsePositiveInt(row.reversal_of_settlement_batch_id),
+      ...mapSettlementContextFields(row),
     };
   });
 }
@@ -1592,6 +1709,17 @@ function buildAllocationLinksByDocumentId(allocationRows) {
         reversalSettlementBatchId: row.reversalSettlementBatchId,
         reversalSettlementNo: row.reversalSettlementNo,
         reversalSettlementDate: row.reversalSettlementDate,
+        ownerOperatingUnitId: row.ownerOperatingUnitId,
+        ownerOperatingUnitCode: row.ownerOperatingUnitCode,
+        ownerOperatingUnitName: row.ownerOperatingUnitName,
+        ownerContextLabel: row.ownerContextLabel,
+        collectorOperatingUnitId: row.collectorOperatingUnitId,
+        collectorOperatingUnitCode: row.collectorOperatingUnitCode,
+        collectorOperatingUnitName: row.collectorOperatingUnitName,
+        collectorContextLabel: row.collectorContextLabel,
+        originatingCrossContextSettlementBatchId:
+          row.originatingCrossContextSettlementBatchId,
+        isCrossContext: Boolean(row.isCrossContext),
       });
     }
   }
@@ -1655,6 +1783,10 @@ function summarizeStatementSettlements(rows, asOfDate) {
   let reversedCount = 0;
   let reversalRowsCount = 0;
   let activeAsOfCount = 0;
+  let crossContextCount = 0;
+  let sameContextCount = 0;
+  let activeCrossContextCount = 0;
+  let activeSameContextCount = 0;
   let postedTotalAllocatedTxn = 0;
   let postedTotalAllocatedBase = 0;
   let postedRealizedFxNetBase = 0;
@@ -1669,10 +1801,16 @@ function summarizeStatementSettlements(rows, asOfDate) {
 
   for (const row of rows) {
     const isReversalRow = Boolean(parsePositiveInt(row.reversalOfSettlementBatchId));
+    const isCrossContext = Boolean(row.isCrossContext);
     const totalAllocatedTxn = toNumber(row.totalAllocatedTxn);
     const totalAllocatedBase = toNumber(row.totalAllocatedBase);
     const realizedFxNetBase = toNumber(row.realizedFxNetBase);
     const currencyCode = row.currencyCode;
+    if (isCrossContext) {
+      crossContextCount += 1;
+    } else {
+      sameContextCount += 1;
+    }
     if (isReversalRow) {
       reversalRowsCount += 1;
       reversalRowsTotalAllocatedTxn = roundAmount(
@@ -1709,6 +1847,11 @@ function summarizeStatementSettlements(rows, asOfDate) {
     } else {
       postedCount += 1;
       activeAsOfCount += 1;
+      if (isCrossContext) {
+        activeCrossContextCount += 1;
+      } else {
+        activeSameContextCount += 1;
+      }
       postedTotalAllocatedTxn = roundAmount(postedTotalAllocatedTxn + totalAllocatedTxn);
       postedTotalAllocatedBase = roundAmount(postedTotalAllocatedBase + totalAllocatedBase);
       postedRealizedFxNetBase = roundAmount(postedRealizedFxNetBase + realizedFxNetBase);
@@ -1727,6 +1870,10 @@ function summarizeStatementSettlements(rows, asOfDate) {
     reversedCount,
     reversalRowsCount,
     activeAsOfCount,
+    crossContextCount,
+    sameContextCount,
+    activeCrossContextCount,
+    activeSameContextCount,
     postedTotalAllocatedTxn,
     postedTotalAllocatedBase,
     postedRealizedFxNetBase,
@@ -2210,6 +2357,26 @@ export async function getCariSettlementRealizedFxReport({
       cp.is_vendor,
       UPPER(b.currency_code) AS currency_code,
       COUNT(*) AS settlement_count,
+      COALESCE(
+        SUM(
+          CASE
+            WHEN COALESCE(b.owner_operating_unit_id, 0) <> COALESCE(b.collector_operating_unit_id, 0)
+              THEN 1
+            ELSE 0
+          END
+        ),
+        0
+      ) AS cross_context_settlement_count,
+      COALESCE(
+        SUM(
+          CASE
+            WHEN COALESCE(b.owner_operating_unit_id, 0) = COALESCE(b.collector_operating_unit_id, 0)
+              THEN 1
+            ELSE 0
+          END
+        ),
+        0
+      ) AS same_context_settlement_count,
       COALESCE(SUM(b.total_allocated_txn), 0) AS total_allocated_txn,
       COALESCE(SUM(b.total_allocated_base), 0) AS total_allocated_base,
       COALESCE(SUM(COALESCE(b.realized_fx_net_base, 0)), 0) AS realized_fx_net_base,
@@ -2298,6 +2465,8 @@ export async function getCariSettlementRealizedFxReport({
       counterpartyType: deriveCounterpartyType({ isCustomer, isVendor }),
       currencyCode: row.currency_code || null,
       settlementCount: Number(row.settlement_count || 0),
+      crossContextSettlementCount: Number(row.cross_context_settlement_count || 0),
+      sameContextSettlementCount: Number(row.same_context_settlement_count || 0),
       totalAllocatedTxn: roundAmount(row.total_allocated_txn),
       totalAllocatedBase: roundAmount(row.total_allocated_base),
       realizedFxNetBase: roundAmount(row.realized_fx_net_base),
@@ -2309,6 +2478,26 @@ export async function getCariSettlementRealizedFxReport({
   const summaryResult = await query(
     `SELECT
        COUNT(*) AS settlement_count,
+       COALESCE(
+         SUM(
+           CASE
+             WHEN COALESCE(b.owner_operating_unit_id, 0) <> COALESCE(b.collector_operating_unit_id, 0)
+               THEN 1
+             ELSE 0
+           END
+         ),
+         0
+       ) AS cross_context_settlement_count,
+       COALESCE(
+         SUM(
+           CASE
+             WHEN COALESCE(b.owner_operating_unit_id, 0) = COALESCE(b.collector_operating_unit_id, 0)
+               THEN 1
+             ELSE 0
+           END
+         ),
+         0
+       ) AS same_context_settlement_count,
        COALESCE(SUM(b.total_allocated_txn), 0) AS total_allocated_txn,
        COALESCE(SUM(b.total_allocated_base), 0) AS total_allocated_base,
        COALESCE(SUM(COALESCE(b.realized_fx_net_base, 0)), 0) AS realized_fx_net_base,
@@ -2371,6 +2560,8 @@ export async function getCariSettlementRealizedFxReport({
     offset: Number(filters.offset || 0),
     summary: {
       settlementCount: Number(summaryRow.settlement_count || 0),
+      crossContextSettlementCount: Number(summaryRow.cross_context_settlement_count || 0),
+      sameContextSettlementCount: Number(summaryRow.same_context_settlement_count || 0),
       distinctCounterpartyCount: Number(summaryRow.distinct_counterparty_count || 0),
       distinctCurrencyCount: Number(summaryRow.distinct_currency_count || 0),
       totalAllocatedTxn: roundAmount(summaryRow.total_allocated_txn),

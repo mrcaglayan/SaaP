@@ -439,7 +439,10 @@ async function createCoreFixture({ tenantId, userId, stamp }) {
   const vendorCounterpartyId = toNumber(vendorCounterpartyInsert.rows?.insertId);
   assert(vendorCounterpartyId > 0, "Failed to create vendor counterparty");
 
+  let postedJournalSequence = 1;
   async function createPostedJournal() {
+    const journalNo = `CTR_JE_${stamp}_${postedJournalSequence}`;
+    postedJournalSequence += 1;
     const insert = await query(
       `INSERT INTO journal_entries (
           tenant_id,
@@ -462,7 +465,7 @@ async function createCoreFixture({ tenantId, userId, stamp }) {
        VALUES (
          ?, ?, ?, ?, ?, 'SYSTEM', 'POSTED', '2026-01-15', '2026-01-15', 'USD', ?, 100, 100, ?, ?, CURRENT_TIMESTAMP
        )`,
-      [tenantId, legalEntityId, bookId, fiscalPeriodId, `CTR_JE_${Date.now()}`, "Fixture", userId, userId]
+      [tenantId, legalEntityId, bookId, fiscalPeriodId, journalNo, "Fixture", userId, userId]
     );
     return toNumber(insert.rows?.insertId);
   }

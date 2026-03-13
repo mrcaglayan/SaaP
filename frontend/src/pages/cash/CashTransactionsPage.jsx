@@ -15,6 +15,10 @@ import {
 import { listBankAccounts } from "../../api/bankAccounts.js";
 import { listCariCounterparties } from "../../api/cariCounterparty.js";
 import { getCariOpenItemsReport } from "../../api/cariReports.js";
+import {
+  describeCariSettlementContext,
+  getCariSettlementErrorHint,
+} from "../../api/cariSettlements.js";
 import { listAccounts } from "../../api/glAdmin.js";
 import { listJournalPurposeAccounts } from "../../api/glPurposeMappings.js";
 import {
@@ -2281,6 +2285,43 @@ export default function CashTransactionsPage() {
       }, 0).toFixed(6)
     );
   }, [actionForm]);
+  const applyOwnerContextSummary = useMemo(() => {
+    const contextLabels = [];
+    const uniqueContextLabels = new Set();
+    for (const row of applyOpenItems || []) {
+      const contextLabel = String(
+        row?.operatingUnitContextLabel ||
+          row?.ownerContextLabel ||
+          buildOwnershipContextLabel(row, l)
+      ).trim() || l("Central", "Merkez");
+      if (uniqueContextLabels.has(contextLabel)) {
+        continue;
+      }
+      uniqueContextLabels.add(contextLabel);
+      contextLabels.push(contextLabel);
+    }
+    return {
+      labels: contextLabels,
+      primaryLabel: contextLabels[0] || l("Central", "Merkez"),
+      hasMixed: contextLabels.length > 1,
+    };
+  }, [applyOpenItems, l]);
+  const cashApplyPredictedContext = useMemo(() => {
+    const collectorContextLabel = selectedActionRow
+      ? buildOwnershipContextLabel(selectedActionRow, l)
+      : l("Central", "Merkez");
+    const ownerContextLabel = applyOwnerContextSummary.primaryLabel;
+    return describeCariSettlementContext(
+      {
+        ownerContextLabel,
+        collectorContextLabel,
+        isCrossContext:
+          !applyOwnerContextSummary.hasMixed &&
+          collectorContextLabel !== ownerContextLabel,
+      },
+      { translate: l }
+    );
+  }, [applyOwnerContextSummary.hasMixed, applyOwnerContextSummary.primaryLabel, l, selectedActionRow]);
   const canFilterByTxnType = !presetTxnType;
   const effectiveTxnTypeFilter = presetTxnType || filters.txnType || "";
   const selectedTransactionLifecycleMeta = useMemo(
@@ -4488,6 +4529,9 @@ export default function CashTransactionsPage() {
         } else {
           const settlementBatchId = response?.row?.id || null;
           const createdUnappliedCashId = response?.unapplied?.createdUnappliedCashId || null;
+          const settlementContext = describeCariSettlementContext(response?.row, {
+            translate: l,
+          });
           setMessage(
             settlementBatchId
               ? t("cashTransactions.messages.applyCompletedSettlement", { settlementBatchId })
@@ -4495,6 +4539,14 @@ export default function CashTransactionsPage() {
                 ? t("cashTransactions.messages.applyCreatedUnapplied", { createdUnappliedCashId })
                 : t("cashTransactions.messages.applyCompleted")
           );
+          if (settlementContext.isCrossContext) {
+            setInfoMessage(
+              l(
+                `Cross-context self-balancing posted: ${settlementContext.collectorContextLabel} -> ${settlementContext.ownerContextLabel}.`,
+                `Baglamlar arasi self-balancing kaydedildi: ${settlementContext.collectorContextLabel} -> ${settlementContext.ownerContextLabel}.`
+              )
+            );
+          }
         }
       }
 
@@ -4502,7 +4554,15 @@ export default function CashTransactionsPage() {
       await loadPageData(filters);
     } catch (err) {
       const errorState = toTransactionErrorState(err, t, "cashTransactions.errors.action");
-      setError(errorState.message);
+      const settlementHint =
+        actionForm?.type === "applyCari" || actionForm?.type === "reverse"
+          ? getCariSettlementErrorHint(err, { translate: l })
+          : "";
+      const composedMessage =
+        settlementHint && !String(errorState.message || "").includes(settlementHint)
+          ? `${errorState.message} ${settlementHint}`
+          : errorState.message;
+      setError(composedMessage);
       setErrorRequestId(errorState.requestId);
     } finally {
       setActionSaving(false);
@@ -6170,6 +6230,36 @@ export default function CashTransactionsPage() {
                   {applyOpenItemsError ? (
                     <p className="mt-1 text-rose-700">{applyOpenItemsError}</p>
                   ) : null}
+                  {applyOpenItems.length > 0 ? (
+                    <div className="mt-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
+                      <p>
+                        {l("Collector context:", "Collector baglami:")}{" "}
+                        {cashApplyPredictedContext.collectorContextLabel}
+                      </p>
+                      <p className="mt-1">
+                        {l("Owner context preview:", "Owner baglam onizlemesi:")}{" "}
+                        {applyOwnerContextSummary.hasMixed
+                          ? l("Mixed owner contexts", "Karisik owner baglamlari")
+                          : cashApplyPredictedContext.ownerContextLabel}
+                      </p>
+                      {applyOwnerContextSummary.hasMixed ? (
+                        <p className="mt-1 text-rose-700">
+                          {l(
+                            "Selected rows span multiple owner contexts. Split this cash-triggered settlement by owner OU.",
+                            "Secili satirlar birden fazla owner baglamina yayiliyor. Bu kasa kaynakli mahsuplastirmayi owner OU bazinda bolun."
+                          )}
+                        </p>
+                      ) : null}
+                      {cashApplyPredictedContext.isCrossContext ? (
+                        <p className="mt-1 text-amber-700">
+                          {l(
+                            `This cash-triggered settlement will self-balance across contexts: ${cashApplyPredictedContext.collectorContextLabel} -> ${cashApplyPredictedContext.ownerContextLabel}.`,
+                            `Bu kasa kaynakli mahsuplastirma baglamlar arasinda self-balancing yapacak: ${cashApplyPredictedContext.collectorContextLabel} -> ${cashApplyPredictedContext.ownerContextLabel}.`
+                          )}
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : null}
                   <div className="mt-2 flex flex-wrap gap-2">
                     <button
                       type="button"
@@ -6200,6 +6290,7 @@ export default function CashTransactionsPage() {
                         <tr>
                           <th className="px-2 py-1">{t("cashTransactions.apply.table.document")}</th>
                           <th className="px-2 py-1">{t("cashTransactions.apply.table.openItem")}</th>
+                          <th className="px-2 py-1">{l("Owner context", "Owner baglami")}</th>
                           <th className="px-2 py-1">{t("cashTransactions.apply.table.dueDate")}</th>
                           <th className="px-2 py-1">{t("cashTransactions.apply.table.openAmount")}</th>
                           <th className="px-2 py-1">{t("cashTransactions.apply.table.applyAmount")}</th>
@@ -6210,6 +6301,13 @@ export default function CashTransactionsPage() {
                           <tr key={`apply-open-item-${item.openItemId}`} className="border-t border-slate-100">
                             <td className="px-2 py-1">{item.documentNo || item.documentId}</td>
                             <td className="px-2 py-1">{item.openItemId}</td>
+                            <td className="px-2 py-1 text-slate-600">
+                              {String(
+                                item?.operatingUnitContextLabel ||
+                                  item?.ownerContextLabel ||
+                                  buildOwnershipContextLabel(item, l)
+                              ).trim() || l("Central", "Merkez")}
+                            </td>
                             <td className="px-2 py-1">{item.dueDate || "-"}</td>
                             <td className="px-2 py-1">
                               <MoneyText
@@ -6234,7 +6332,7 @@ export default function CashTransactionsPage() {
                         ))}
                         {applyOpenItems.length === 0 ? (
                           <tr>
-                            <td colSpan={5} className="px-2 py-2 text-slate-500">
+                            <td colSpan={6} className="px-2 py-2 text-slate-500">
                               {applyOpenItemsLoading
                                 ? t("cashTransactions.apply.loadingOpenDocuments")
                                 : t("cashTransactions.apply.noOpenDocuments")}

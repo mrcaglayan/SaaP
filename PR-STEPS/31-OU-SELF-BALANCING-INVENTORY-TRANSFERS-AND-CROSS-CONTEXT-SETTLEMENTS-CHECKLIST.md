@@ -94,7 +94,7 @@
 - [x] `PR-OU08` - Cross-context settlement owner/collector persistence and resolution
 - [x] `PR-OU09` - Cross-context settlement posting split
 - [x] `PR-OU10` - Cross-context settlement reversal discipline
-- [ ] `PR-OU11` - Cross-context settlement reports, drilldowns, and UI feedback
+- [x] `PR-OU11` - Cross-context settlement reports, drilldowns, and UI feedback
 - [ ] `PR-OU12` - Frontend finishing for transfers, inventory, and settlement visibility
 - [ ] `PR-OU13` - OpenAPI, release gates, and rollout docs
 
@@ -810,22 +810,22 @@
 ### Checklist
 
 #### Reports, drilldowns, and feedback
-- [ ] Propagate owner / collector context into settlement reports and drilldowns
-- [ ] Expose `originatingCrossContextSettlementBatchId` when needed for support/debug visibility
-- [ ] Add owner / collector context visibility in settlement UI
-- [ ] Add cross-context indicator in settlement UI
-- [ ] Add warning when settlement will self-balance across contexts
-- [ ] Add helpful message for missing current-account setup
-- [ ] Surface better cross-context settlement feedback in cash-triggered flows when touched
+- [x] Propagate owner / collector context into settlement reports and drilldowns
+- [x] Expose `originatingCrossContextSettlementBatchId` when needed for support/debug visibility
+- [x] Add owner / collector context visibility in settlement UI
+- [x] Add cross-context indicator in settlement UI
+- [x] Add warning when settlement will self-balance across contexts
+- [x] Add helpful message for missing current-account setup
+- [x] Surface better cross-context settlement feedback in cash-triggered flows when touched
 
 #### Regression
-- [ ] Create `backend/scripts/test-cari-ou11-settlement-report-feedback.js`
-- [ ] Test collector vs owner context is visible consistently in reports and drilldowns
-- [ ] Test operator feedback is clear for mixed-owner and missing-mapping problems
+- [x] Create `backend/scripts/test-cari-ou11-settlement-report-feedback.js`
+- [x] Test collector vs owner context is visible consistently in reports and drilldowns
+- [x] Test operator feedback is clear for mixed-owner and missing-mapping problems
 
 ### Acceptance
-- [ ] Collector vs owner context is visible consistently in settlement reports and drilldowns
-- [ ] Operator feedback is clear for mixed-owner and missing-mapping problems
+- [x] Collector vs owner context is visible consistently in settlement reports and drilldowns
+- [x] Operator feedback is clear for mixed-owner and missing-mapping problems
 
 ## PR-OU12 - Frontend finishing for transfers, inventory, and settlement visibility
 
@@ -973,7 +973,7 @@
 - [x] 17. Implement settlement owner / collector resolvers and persistence
 - [x] 18. Implement cross-context settlement posting split
 - [x] 19. Implement strict reversal dependency and explicit downstream linkage
-- [ ] 20. Propagate settlement reports/drilldowns and operator feedback
+- [x] 20. Propagate settlement reports/drilldowns and operator feedback
 - [ ] 21. Finish transfer/inventory/settlement frontend polish
 - [ ] 22. Finish OpenAPI / release gates / docs
 
@@ -986,6 +986,6 @@
 - [x] Receipt / cancel / reversal / evidence work
 - [x] Generic inventory movement bypass is blocked in backend
 - [x] Cross-context CARI settlement owner vs collector split works
-- [ ] Settlement reports and drilldowns surface owner vs collector context correctly
+- [x] Settlement reports and drilldowns surface owner vs collector context correctly
 - [x] Non-self-balanced cross-context settlement is blocked
 - [ ] UI, OpenAPI, release gates, and docs are aligned

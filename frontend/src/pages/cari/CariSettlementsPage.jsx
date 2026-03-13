@@ -4,6 +4,8 @@ import {
   applyCariSettlement,
   attachCariBankReference,
   applyCariBankSettlement,
+  describeCariSettlementContext,
+  getCariSettlementErrorHint,
   reverseCariSettlement,
 } from "../../api/cariSettlements.js";
 import {
@@ -248,6 +250,36 @@ function normalizeUiError(error, fallback) {
   const message = String(error?.message || error?.response?.data?.message || fallback || "Request failed");
   const requestId = String(error?.requestId || error?.response?.data?.requestId || "").trim();
   return requestId ? `${message} (requestId: ${requestId})` : message;
+}
+
+function resolveOperatingUnitContextFromRow(row) {
+  return {
+    operatingUnitId: toPositiveInt(row?.operatingUnitId || row?.operating_unit_id),
+    operatingUnitCode: String(row?.operatingUnitCode || row?.operating_unit_code || "").trim(),
+    operatingUnitName: String(row?.operatingUnitName || row?.operating_unit_name || "").trim(),
+  };
+}
+
+function deriveSingleOwnerContext(rows = []) {
+  const byContextKey = new Map();
+  for (const row of rows) {
+    const context = resolveOperatingUnitContextFromRow(row);
+    const key = context.operatingUnitId ? String(context.operatingUnitId) : "CENTRAL";
+    if (!byContextKey.has(key)) {
+      byContextKey.set(key, context);
+    }
+  }
+
+  const contexts = Array.from(byContextKey.values());
+  return {
+    contexts,
+    hasMixed: contexts.length > 1,
+    primary: contexts[0] || {
+      operatingUnitId: null,
+      operatingUnitCode: "",
+      operatingUnitName: "",
+    },
+  };
 }
 
 function formatReadinessReason(reason, translate = (en) => en) {
@@ -837,6 +869,77 @@ export default function CariSettlementsPage() {
   const linkedCashSessionInputClass = `mt-1 w-full rounded-md border px-3 py-2 text-sm font-normal ${
     linkedCashSessionFieldInvalid ? "border-rose-300 bg-rose-50" : "border-slate-300"
   }`;
+  const selectedApplyPreviewRows = useMemo(() => {
+    if (applyForm.autoAllocate) {
+      return previewRows.filter(
+        (row) => Number(row?.expectedApplySettlementTxn || 0) > 0.000001
+      );
+    }
+    return previewRows.filter((row) => {
+      const draftAmount = Number(manualAllocationDraft[String(row?.openItemId)] || 0);
+      return Number.isFinite(draftAmount) && draftAmount > 0.000001;
+    });
+  }, [applyForm.autoAllocate, manualAllocationDraft, previewRows]);
+  const applyOwnerContextSummary = useMemo(
+    () => deriveSingleOwnerContext(selectedApplyPreviewRows),
+    [selectedApplyPreviewRows]
+  );
+  const predictedApplySettlementContext = useMemo(() => {
+    const ownerContext = applyOwnerContextSummary.primary;
+    const usesLinkedCashCollector =
+      linkedCashForm.createLinkedCashTransaction &&
+      toUpper(linkedCashForm.paymentChannel) === "CASH";
+    const collectorContext = usesLinkedCashCollector
+      ? {
+          operatingUnitId: toPositiveInt(selectedLinkedRegister?.operating_unit_id),
+          operatingUnitCode: String(selectedLinkedRegister?.operating_unit_code || "").trim(),
+          operatingUnitName: String(selectedLinkedRegister?.operating_unit_name || "").trim(),
+        }
+      : ownerContext;
+
+    return describeCariSettlementContext(
+      {
+        ownerOperatingUnitId: ownerContext.operatingUnitId,
+        ownerOperatingUnitCode: ownerContext.operatingUnitCode,
+        ownerOperatingUnitName: ownerContext.operatingUnitName,
+        collectorOperatingUnitId: collectorContext.operatingUnitId,
+        collectorOperatingUnitCode: collectorContext.operatingUnitCode,
+        collectorOperatingUnitName: collectorContext.operatingUnitName,
+      },
+      { translate: l }
+    );
+  }, [applyOwnerContextSummary.primary, l, linkedCashForm.createLinkedCashTransaction, linkedCashForm.paymentChannel, selectedLinkedRegister]);
+  const predictedApplySelfBalancingWarning = useMemo(() => {
+    if (applyOwnerContextSummary.hasMixed || !selectedApplyPreviewRows.length) {
+      return "";
+    }
+    if (!predictedApplySettlementContext.isCrossContext) {
+      return "";
+    }
+    return l(
+      `This settlement will self-balance across contexts. Collector ${predictedApplySettlementContext.collectorContextLabel} will clear owner ${predictedApplySettlementContext.ownerContextLabel}.`,
+      `Bu mahsuplastirma baglamlar arasinda self-balancing yapacak. Collector ${predictedApplySettlementContext.collectorContextLabel}, owner ${predictedApplySettlementContext.ownerContextLabel} bakiyesini kapatacak.`
+    );
+  }, [
+    applyOwnerContextSummary.hasMixed,
+    l,
+    predictedApplySettlementContext.collectorContextLabel,
+    predictedApplySettlementContext.isCrossContext,
+    predictedApplySettlementContext.ownerContextLabel,
+    selectedApplyPreviewRows.length,
+  ]);
+  const applyErrorHint = useMemo(
+    () => getCariSettlementErrorHint(applyError, { translate: l }),
+    [applyError, l]
+  );
+  const reverseErrorHint = useMemo(
+    () => getCariSettlementErrorHint(reverseError, { translate: l }),
+    [reverseError, l]
+  );
+  const bankApplyErrorHint = useMemo(
+    () => getCariSettlementErrorHint(bankApplyError, { translate: l }),
+    [bankApplyError, l]
+  );
   const linkedCashAccountLookupOptions = useMemo(() => {
     const selectedAccountId = String(linkedCashForm.counterAccountId || "").trim();
     const rows = Array.isArray(linkedCashAccountOptions) ? [...linkedCashAccountOptions] : [];
@@ -1035,13 +1138,14 @@ export default function CariSettlementsPage() {
       ).trim();
       const settlementDate = String(row?.settlementDate || "-").trim();
       const totalAllocated = formatMoneyText(row?.totalAllocatedTxn, row?.currencyCode);
+      const settlementContext = describeCariSettlementContext(row, { translate: l });
       return {
         value: String(row?.settlementBatchId || ""),
         label: `${settlementLabel} | ${settlementDate} | ${counterpartyLabel}`,
-        description: `ID:${row?.settlementBatchId || "-"} | ${row?.statusCurrent || "-"} | ${totalAllocated}`,
+        description: `ID:${row?.settlementBatchId || "-"} | ${row?.statusCurrent || "-"} | ${totalAllocated} | ${settlementContext.isCrossContext ? l("cross-context", "baglamlar arasi") : l("same-context", "ayni baglam")} | ${settlementContext.collectorContextLabel} -> ${settlementContext.ownerContextLabel}`,
       };
     });
-  }, [reverseSettlementLookupQuery, reverseSettlementRows]);
+  }, [l, reverseSettlementLookupQuery, reverseSettlementRows]);
   const selectedReverseSettlement = useMemo(() => {
     const settlementBatchId = toPositiveInt(reverseForm.settlementBatchId);
     if (!settlementBatchId) {
@@ -1049,10 +1153,30 @@ export default function CariSettlementsPage() {
     }
     return (
       (reverseSettlementRows || []).find(
-        (row) => toPositiveInt(row?.settlementBatchId) === settlementBatchId
+      (row) => toPositiveInt(row?.settlementBatchId) === settlementBatchId
       ) || null
     );
   }, [reverseForm.settlementBatchId, reverseSettlementRows]);
+  const selectedReverseSettlementContext = useMemo(
+    () => describeCariSettlementContext(selectedReverseSettlement, { translate: l }),
+    [l, selectedReverseSettlement]
+  );
+  const applyResultContext = useMemo(
+    () => describeCariSettlementContext(applyResult?.row, { translate: l }),
+    [applyResult?.row, l]
+  );
+  const reverseResultContext = useMemo(
+    () => describeCariSettlementContext(reverseResult?.row, { translate: l }),
+    [reverseResult?.row, l]
+  );
+  const reverseOriginalContext = useMemo(
+    () => describeCariSettlementContext(reverseResult?.original, { translate: l }),
+    [l, reverseResult?.original]
+  );
+  const bankApplyResultContext = useMemo(
+    () => describeCariSettlementContext(bankApplyResult?.row, { translate: l }),
+    [bankApplyResult?.row, l]
+  );
   const applyInlineCounterpartyName = normalizeLookupQuery(applyCounterpartyLookupQuery);
   const bankApplyInlineCounterpartyName = normalizeLookupQuery(
     bankApplyCounterpartyLookupQuery
@@ -2754,6 +2878,11 @@ export default function CariSettlementsPage() {
             {applyError}
           </div>
         ) : null}
+        {applyErrorHint ? (
+          <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            {applyErrorHint}
+          </div>
+        ) : null}
         {applyMessage ? (
           <div className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
             {applyMessage}
@@ -3246,6 +3375,27 @@ export default function CariSettlementsPage() {
             {l("Auto-allocation is blocked: missing settlement/document FX rate on at least one due row.", "Otomatik dagitim engellendi: en az bir satirda mahsuplastirma/belge kuru eksik.")}
           </p>
         ) : null}
+        {selectedApplyPreviewRows.length > 0 ? (
+          <div className="mt-3 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+            <p>
+              {l("Owner context preview:", "Owner baglam onizlemesi:")}{" "}
+              {applyOwnerContextSummary.hasMixed
+                ? l("Mixed owner contexts", "Karisik owner baglamlari")
+                : predictedApplySettlementContext.ownerContextLabel}
+            </p>
+            {applyOwnerContextSummary.hasMixed ? (
+              <p className="mt-1 text-rose-700">
+                {l(
+                  "Selected rows span multiple owner contexts. V1 requires one owner OU per settlement batch.",
+                  "Secili satirlar birden fazla owner baglamina yayiliyor. V1 her mahsuplastirma batch'i icin tek owner OU ister."
+                )}
+              </p>
+            ) : null}
+            {predictedApplySelfBalancingWarning ? (
+              <p className="mt-1 text-amber-700">{predictedApplySelfBalancingWarning}</p>
+            ) : null}
+          </div>
+        ) : null}
 
         <div className="mt-4 rounded-lg border border-slate-200 p-4">
           <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-700">
@@ -3304,6 +3454,7 @@ export default function CariSettlementsPage() {
                 <tr>
                   <th className="px-3 py-2">{l("openItemId", "openItemId")}</th>
                   <th className="px-3 py-2">{l("documentNo", "belgeNo")}</th>
+                  <th className="px-3 py-2">{l("owner context", "owner baglam")}</th>
                   <th className="px-3 py-2">{l("direction", "yon")}</th>
                   <th className="px-3 py-2">{l("dueDate", "vadeTarihi")}</th>
                   <th className="px-3 py-2">{l("open (doc)", "acik (belge)")}</th>
@@ -3319,6 +3470,9 @@ export default function CariSettlementsPage() {
                   <tr key={`preview-${row.openItemId}`} className="border-t border-slate-100">
                     <td className="px-3 py-2">{row.openItemId}</td>
                     <td className="px-3 py-2">{row.documentNo || "-"}</td>
+                    <td className="px-3 py-2 text-xs text-slate-600">
+                      {String(row?.operatingUnitContextLabel || row?.ownerContextLabel || "-")}
+                    </td>
                     <td className="px-3 py-2">{row.direction || "-"}</td>
                     <td className="px-3 py-2">{row.dueDate || "-"}</td>
                     <td className="px-3 py-2">
@@ -3387,7 +3541,7 @@ export default function CariSettlementsPage() {
                 ))}
                 {previewRows.length === 0 ? (
                   <tr>
-                    <td colSpan={10} className="px-3 py-3 text-slate-500">
+                    <td colSpan={11} className="px-3 py-3 text-slate-500">
                       {previewLoading
                         ? l("Loading preview...", "Onizleme yukleniyor...")
                         : l(
@@ -3413,6 +3567,25 @@ export default function CariSettlementsPage() {
             <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-700">
               {l("Apply response blocks", "Uygulama yanit bloklari")}
             </h3>
+            <div className="mt-3 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+              <p className="font-semibold text-slate-800">
+                {applyResultContext.isCrossContext
+                  ? l("Cross-context self-balancing", "Baglamlar arasi self-balancing")
+                  : l("Same-context settlement", "Ayni baglam mahsuplastirmasi")}
+              </p>
+              <p className="mt-1">
+                {l("Collector context:", "Collector baglami:")} {applyResultContext.collectorContextLabel}
+              </p>
+              <p className="mt-1">
+                {l("Owner context:", "Owner baglami:")} {applyResultContext.ownerContextLabel}
+              </p>
+              {applyResultContext.originatingCrossContextSettlementBatchId ? (
+                <p className="mt-1">
+                  {l("Originating cross-context batch:", "Kaynak baglamlar arasi batch:")} #
+                  {applyResultContext.originatingCrossContextSettlementBatchId}
+                </p>
+              ) : null}
+            </div>
             <dl className="mt-2 grid grid-cols-2 gap-2 text-sm">
               <dt className="font-semibold text-slate-600">settlementBatchId</dt>
               <dd>{applyResult?.row?.id || "-"}</dd>
@@ -3432,6 +3605,12 @@ export default function CariSettlementsPage() {
               <dd>{applyResult?.row?.ownerOperatingUnitId || "-"}</dd>
               <dt className="font-semibold text-slate-600">collectorOperatingUnitId</dt>
               <dd>{applyResult?.row?.collectorOperatingUnitId || "-"}</dd>
+              <dt className="font-semibold text-slate-600">ownerContext</dt>
+              <dd>{applyResultContext.ownerContextLabel}</dd>
+              <dt className="font-semibold text-slate-600">collectorContext</dt>
+              <dd>{applyResultContext.collectorContextLabel}</dd>
+              <dt className="font-semibold text-slate-600">isCrossContext</dt>
+              <dd>{String(Boolean(applyResultContext.isCrossContext))}</dd>
               <dt className="font-semibold text-slate-600">originatingCrossContextSettlementBatchId</dt>
               <dd>{applyResult?.row?.originatingCrossContextSettlementBatchId || "-"}</dd>
             </dl>
@@ -3462,6 +3641,11 @@ export default function CariSettlementsPage() {
         {reverseError ? (
           <div className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
             {reverseError}
+          </div>
+        ) : null}
+        {reverseErrorHint ? (
+          <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            {reverseErrorHint}
           </div>
         ) : null}
         {reverseMessage ? (
@@ -3616,20 +3800,42 @@ export default function CariSettlementsPage() {
                 </p>
               ) : null}
               {selectedReverseSettlement ? (
-                <p className="mt-1 text-[11px] normal-case text-slate-600">
-                  {l("Selected:", "Secilen:")}{" "}
-                  {selectedReverseSettlement.settlementNo ||
-                    `#${selectedReverseSettlement.settlementBatchId || "-"}`}
-                  {selectedReverseSettlement.settlementBatchId
-                    ? ` (ID ${selectedReverseSettlement.settlementBatchId})`
-                    : ""}{" "}
-                  | {l("Date", "Tarih")} {selectedReverseSettlement.settlementDate || "-"} | {l("Status", "Durum")}{" "}
-                  {selectedReverseSettlement.statusCurrent || "-"} | {l("Counterparty", "Cari")}{" "}
-                  {selectedReverseSettlement.counterpartyCodeCurrent ||
-                    selectedReverseSettlement.counterpartyNameCurrent ||
-                    selectedReverseSettlement.counterpartyId ||
-                    "-"}
-                </p>
+                <div className="mt-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] normal-case text-slate-700">
+                  <p>
+                    {l("Selected:", "Secilen:")}{" "}
+                    {selectedReverseSettlement.settlementNo ||
+                      `#${selectedReverseSettlement.settlementBatchId || "-"}`}
+                    {selectedReverseSettlement.settlementBatchId
+                      ? ` (ID ${selectedReverseSettlement.settlementBatchId})`
+                      : ""}{" "}
+                    | {l("Date", "Tarih")} {selectedReverseSettlement.settlementDate || "-"} |{" "}
+                    {l("Status", "Durum")} {selectedReverseSettlement.statusCurrent || "-"} |{" "}
+                    {l("Counterparty", "Cari")}{" "}
+                    {selectedReverseSettlement.counterpartyCodeCurrent ||
+                      selectedReverseSettlement.counterpartyNameCurrent ||
+                      selectedReverseSettlement.counterpartyId ||
+                      "-"}
+                  </p>
+                  <p className="mt-1">
+                    {selectedReverseSettlementContext.isCrossContext
+                      ? l("Cross-context self-balancing", "Baglamlar arasi self-balancing")
+                      : l("Same-context settlement", "Ayni baglam mahsuplastirmasi")}
+                  </p>
+                  <p className="mt-1">
+                    {l("Collector context:", "Collector baglami:")}{" "}
+                    {selectedReverseSettlementContext.collectorContextLabel}
+                  </p>
+                  <p className="mt-1">
+                    {l("Owner context:", "Owner baglami:")}{" "}
+                    {selectedReverseSettlementContext.ownerContextLabel}
+                  </p>
+                  {selectedReverseSettlementContext.originatingCrossContextSettlementBatchId ? (
+                    <p className="mt-1">
+                      {l("Originating cross-context batch:", "Kaynak baglamlar arasi batch:")} #
+                      {selectedReverseSettlementContext.originatingCrossContextSettlementBatchId}
+                    </p>
+                  ) : null}
+                </div>
               ) : null}
             </div>
           ) : (
@@ -3691,15 +3897,42 @@ export default function CariSettlementsPage() {
         </form>
         {reverseResult ? (
           <>
+            <div className="mt-3 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+              <p className="font-semibold text-slate-800">
+                {reverseOriginalContext.isCrossContext
+                  ? l("Original collection was cross-context", "Orijinal tahsilat baglamlar arasiydi")
+                  : l("Original collection was same-context", "Orijinal tahsilat ayni baglamdaydi")}
+              </p>
+              <p className="mt-1">
+                {l("Original collector -> owner:", "Orijinal collector -> owner:")}{" "}
+                {reverseOriginalContext.collectorContextLabel} {"->"}{" "}
+                {reverseOriginalContext.ownerContextLabel}
+              </p>
+              <p className="mt-1">
+                {l("Reversal collector -> owner:", "Ters kayit collector -> owner:")}{" "}
+                {reverseResultContext.collectorContextLabel} {"->"}{" "}
+                {reverseResultContext.ownerContextLabel}
+              </p>
+              {reverseOriginalContext.originatingCrossContextSettlementBatchId ? (
+                <p className="mt-1">
+                  {l("Originating cross-context batch:", "Kaynak baglamlar arasi batch:")} #
+                  {reverseOriginalContext.originatingCrossContextSettlementBatchId}
+                </p>
+              ) : null}
+            </div>
             <dl className="mt-3 grid grid-cols-2 gap-2 text-sm">
-              <dt className="font-semibold text-slate-600">reversal.ownerOperatingUnitId</dt>
-              <dd>{reverseResult?.row?.ownerOperatingUnitId || "-"}</dd>
-              <dt className="font-semibold text-slate-600">reversal.collectorOperatingUnitId</dt>
-              <dd>{reverseResult?.row?.collectorOperatingUnitId || "-"}</dd>
-              <dt className="font-semibold text-slate-600">original.ownerOperatingUnitId</dt>
-              <dd>{reverseResult?.original?.ownerOperatingUnitId || "-"}</dd>
-              <dt className="font-semibold text-slate-600">original.collectorOperatingUnitId</dt>
-              <dd>{reverseResult?.original?.collectorOperatingUnitId || "-"}</dd>
+              <dt className="font-semibold text-slate-600">reversal.ownerContext</dt>
+              <dd>{reverseResultContext.ownerContextLabel}</dd>
+              <dt className="font-semibold text-slate-600">reversal.collectorContext</dt>
+              <dd>{reverseResultContext.collectorContextLabel}</dd>
+              <dt className="font-semibold text-slate-600">reversal.isCrossContext</dt>
+              <dd>{String(Boolean(reverseResultContext.isCrossContext))}</dd>
+              <dt className="font-semibold text-slate-600">original.ownerContext</dt>
+              <dd>{reverseOriginalContext.ownerContextLabel}</dd>
+              <dt className="font-semibold text-slate-600">original.collectorContext</dt>
+              <dd>{reverseOriginalContext.collectorContextLabel}</dd>
+              <dt className="font-semibold text-slate-600">original.isCrossContext</dt>
+              <dd>{String(Boolean(reverseOriginalContext.isCrossContext))}</dd>
             </dl>
             <pre className="mt-3 overflow-x-auto rounded-md bg-slate-900 p-3 text-xs text-slate-100">
 {JSON.stringify(reverseResult, null, 2)}
@@ -3898,6 +4131,11 @@ export default function CariSettlementsPage() {
         {bankApplyError ? (
           <div className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
             {bankApplyError}
+          </div>
+        ) : null}
+        {bankApplyErrorHint ? (
+          <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            {bankApplyErrorHint}
           </div>
         ) : null}
         {bankApplyMessage ? (
@@ -4153,9 +4391,31 @@ export default function CariSettlementsPage() {
           </div>
         </form>
         {bankApplyResult ? (
-          <pre className="mt-3 overflow-x-auto rounded-md bg-slate-900 p-3 text-xs text-slate-100">
+          <>
+            <div className="mt-3 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+              <p className="font-semibold text-slate-800">
+                {bankApplyResultContext.isCrossContext
+                  ? l("Cross-context self-balancing", "Baglamlar arasi self-balancing")
+                  : l("Same-context settlement", "Ayni baglam mahsuplastirmasi")}
+              </p>
+              <p className="mt-1">
+                {l("Collector context:", "Collector baglami:")}{" "}
+                {bankApplyResultContext.collectorContextLabel}
+              </p>
+              <p className="mt-1">
+                {l("Owner context:", "Owner baglami:")} {bankApplyResultContext.ownerContextLabel}
+              </p>
+              {bankApplyResultContext.originatingCrossContextSettlementBatchId ? (
+                <p className="mt-1">
+                  {l("Originating cross-context batch:", "Kaynak baglamlar arasi batch:")} #
+                  {bankApplyResultContext.originatingCrossContextSettlementBatchId}
+                </p>
+              ) : null}
+            </div>
+            <pre className="mt-3 overflow-x-auto rounded-md bg-slate-900 p-3 text-xs text-slate-100">
 {JSON.stringify(bankApplyResult, null, 2)}
-          </pre>
+            </pre>
+          </>
         ) : null}
       </section>
     </div>
