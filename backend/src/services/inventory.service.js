@@ -433,7 +433,7 @@ async function fetchInventoryMovementDbRowById({
   return result.rows?.[0] || null;
 }
 
-async function fetchLegalEntityBaseCurrencyCode({
+export async function fetchLegalEntityBaseCurrencyCode({
   tenantId,
   legalEntityId,
   runQuery = query,
@@ -453,7 +453,7 @@ async function fetchLegalEntityBaseCurrencyCode({
   return currencyCode;
 }
 
-async function fetchOpenCostLayersForIssue({
+export async function fetchOpenCostLayersForIssue({
   tenantId,
   legalEntityId,
   warehouseId,
@@ -481,7 +481,7 @@ async function fetchOpenCostLayersForIssue({
   return result.rows || [];
 }
 
-function buildIssueValuationPlan({
+export function buildIssueValuationPlan({
   openLayerRows,
   quantity,
   itemCard,
@@ -1053,7 +1053,7 @@ async function fetchMovementById({
   return rowWithConsumptions || null;
 }
 
-async function resolveBookAndOpenPeriodForDate({
+export async function resolveBookAndOpenPeriodForDate({
   tenantId,
   legalEntityId,
   targetDate,
@@ -1140,7 +1140,7 @@ async function resolveBookAndOpenPeriodForDate({
   };
 }
 
-async function resolveInventoryPostingAccount({
+export async function resolveInventoryPostingAccount({
   tenantId,
   legalEntityId,
   accountId,
@@ -1252,7 +1252,7 @@ function ensureBalancedJournalLines(lines) {
   };
 }
 
-async function insertPostedJournalWithLinesTx(tx, payload) {
+export async function insertPostedJournalWithLinesTx(tx, payload) {
   const totals = ensureBalancedJournalLines(payload.lines);
   const insertResult = await tx.query(
     `INSERT INTO journal_entries (
@@ -1315,17 +1315,20 @@ async function insertPostedJournalWithLinesTx(tx, payload) {
           credit_base,
           tax_code
         )
-        VALUES (?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, NULL)`,
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         journalEntryId,
         index + 1,
         parsePositiveInt(line.accountId),
+        parsePositiveInt(line.operatingUnitId) || null,
+        parsePositiveInt(line.counterpartyLegalEntityId) || null,
         line.description || null,
         line.subledgerReferenceNo || null,
         line.currencyCode,
         Number(line.amountTxn || 0),
         Number(line.debitBase || 0),
         Number(line.creditBase || 0),
+        line.taxCode || null,
       ]
     );
   }

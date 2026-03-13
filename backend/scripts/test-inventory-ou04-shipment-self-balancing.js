@@ -17,19 +17,19 @@ import {
   upsertOperatingUnitPartnerCurrentAccount,
 } from "../src/services/org.write.service.js";
 
-+function assert(condition, message) {
+function assert(condition, message) {
   if (!condition) {
     throw new Error(message);
   }
 }
 
-+function assertClose(actual, expected, message, tolerance = 0.000001) {
+function assertClose(actual, expected, message, tolerance = 0.000001) {
   if (Math.abs(Number(actual || 0) - Number(expected || 0)) > tolerance) {
     throw new Error(`${message}: expected ${expected}, got ${actual}`);
   }
 }
 
-+async function assertThrowsAsync(fn, expectedMessage) {
+async function assertThrowsAsync(fn, expectedMessage) {
   let thrown = null;
   try {
     await fn();
@@ -44,12 +44,12 @@ import {
   );
 }
 
-+function uniqueCode(prefix) {
+function uniqueCode(prefix) {
   const token = `${Date.now()}${Math.floor(Math.random() * 1000)}`;
   return `${prefix}${token}`.slice(0, 40).toUpperCase();
 }
 
-+function buildReq(tenantId) {
+function buildReq(tenantId) {
   return {
     user: {
       tenantId,
@@ -60,7 +60,7 @@ import {
   };
 }
 
-+async function loadSmokeContext() {
+async function loadSmokeContext() {
   const result = await query(
     `SELECT
         le.tenant_id,
@@ -102,7 +102,7 @@ import {
   };
 }
 
-+async function createLeafAccount({
+async function createLeafAccount({
   coaId,
   code,
   name,
@@ -132,7 +132,7 @@ import {
   };
 }
 
-+async function insertReceiptCostLayer({
+async function insertReceiptCostLayer({
   tenantId,
   legalEntityId,
   warehouseId,
@@ -223,7 +223,7 @@ import {
   return movementId;
 }
 
-+async function loadJournalLines(journalEntryId) {
+async function loadJournalLines(journalEntryId) {
   const result = await query(
     `SELECT
         jl.account_id,
@@ -244,7 +244,7 @@ import {
   return result.rows || [];
 }
 
-+async function loadMovementRow(movementId) {
+async function loadMovementRow(movementId) {
   const result = await query(
     `SELECT
         id,
@@ -267,7 +267,7 @@ import {
   return result.rows?.[0] || null;
 }
 
-+async function loadIssueConsumptions(issueMovementId) {
+async function loadIssueConsumptions(issueMovementId) {
   const result = await query(
     `SELECT quantity_consumed
        FROM inventory_issue_layer_consumptions
@@ -278,7 +278,7 @@ import {
   return (result.rows || []).map((row) => Number(row.quantity_consumed || 0));
 }
 
-+async function loadJournalSourceLink(journalEntryId, sourceRefId) {
+async function loadJournalSourceLink(journalEntryId, sourceRefId) {
   const result = await query(
     `SELECT source_ref_type, source_ref_id, link_role
        FROM journal_source_links
@@ -291,7 +291,7 @@ import {
   return result.rows?.[0] || null;
 }
 
-+async function sumRemainingLayerQuantity(warehouseId, itemCardId) {
+async function sumRemainingLayerQuantity(warehouseId, itemCardId) {
   const result = await query(
     `SELECT COALESCE(SUM(quantity_remaining), 0) AS total
        FROM inventory_cost_layers
@@ -302,7 +302,7 @@ import {
   return Number(result.rows?.[0]?.total || 0);
 }
 
-+async function createApprovedTransfer({
+async function createApprovedTransfer({
   tenantId,
   legalEntityId,
   transferDate,
@@ -339,7 +339,7 @@ import {
   return approved;
 }
 
-+function expectJournalLine(lines, expected) {
+function expectJournalLine(lines, expected) {
   const match = lines.find(
     (line) =>
       Number(line.account_id) === Number(expected.accountId) &&
@@ -353,7 +353,7 @@ import {
   );
 }
 
-+async function main() {
+async function main() {
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
   const [
     migrationSource,

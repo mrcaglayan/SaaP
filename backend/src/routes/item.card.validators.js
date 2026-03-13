@@ -124,6 +124,10 @@ export function parseItemCardCreateInput(req) {
       body.inventoryAssetAccountId ?? body.inventory_asset_account_id,
       "inventoryAssetAccountId"
     ),
+    inventoryTransitAccountId: normalizeOptionalPositiveInt(
+      body.inventoryTransitAccountId ?? body.inventory_transit_account_id,
+      "inventoryTransitAccountId"
+    ),
     defaultCogsAccountId: normalizeOptionalPositiveInt(
       body.defaultCogsAccountId ?? body.default_cogs_account_id,
       "defaultCogsAccountId"
@@ -169,6 +173,10 @@ export function parseItemCardUpdateInput(req) {
     inventoryAssetAccountId: normalizeOptionalPositiveInt(
       body.inventoryAssetAccountId ?? body.inventory_asset_account_id,
       "inventoryAssetAccountId"
+    ),
+    inventoryTransitAccountId: normalizeOptionalPositiveInt(
+      body.inventoryTransitAccountId ?? body.inventory_transit_account_id,
+      "inventoryTransitAccountId"
     ),
     defaultCogsAccountId: normalizeOptionalPositiveInt(
       body.defaultCogsAccountId ?? body.default_cogs_account_id,

@@ -113,6 +113,8 @@ import migration122InventoryMovementReversalLineage from "./m122_inventory_movem
 import migration123InventoryWarehouseOwnershipScope from "./m123_inventory_warehouse_ownership_scope.js";
 import migration124InventoryTransferFoundation from "./m124_inventory_transfer_foundation.js";
 import migration125OperatingUnitReverseInternalCurrentAccounts from "./m125_operating_unit_reverse_internal_current_accounts.js";
+import migration126ItemCardsInventoryTransitAccount from "./m126_item_cards_inventory_transit_account.js";
+import migration127InventoryTransferSourceTypeBackfill from "./m127_inventory_transfer_source_type_backfill.js";
 
 const migrations = [
   migration001GlobalMultiEntity,
@@ -230,6 +232,8 @@ const migrations = [
   migration123InventoryWarehouseOwnershipScope,
   migration124InventoryTransferFoundation,
   migration125OperatingUnitReverseInternalCurrentAccounts,
+  migration126ItemCardsInventoryTransitAccount,
+  migration127InventoryTransferSourceTypeBackfill,
 ];
 
 export default migrations;

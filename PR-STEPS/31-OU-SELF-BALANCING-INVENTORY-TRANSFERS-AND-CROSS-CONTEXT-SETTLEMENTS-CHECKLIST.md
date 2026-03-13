@@ -87,7 +87,7 @@
 - [x] `PR-OU01` - OU-aware warehouse ownership foundation
 - [x] `PR-OU02` - Inventory transfer document foundation with approval
 - [x] `PR-OU03` - Reverse-direction OU internal-current-account foundation and balancing helper
-- [ ] `PR-OU04` - Shipment-time transfer accounting and FIFO shipment valuation
+- [x] `PR-OU04` - Shipment-time transfer accounting and FIFO shipment valuation
 - [ ] `PR-OU05` - Transfer receipt and receipt journal
 - [ ] `PR-OU06` - Transfer reversal, cancel discipline, and bypass hardening
 - [ ] `PR-OU07` - Transfer evidence
@@ -408,6 +408,7 @@
 
 ### Files
 - `backend/src/migrations/m126_item_cards_inventory_transit_account.js`
+- `backend/src/migrations/m127_inventory_transfer_source_type_backfill.js`
 - `backend/src/migrations/index.js`
 - `backend/src/services/item.card.service.js`
 - `backend/src/routes/item.card.validators.js`
@@ -422,88 +423,88 @@
 ### Checklist
 
 #### Migration registration
-- [ ] Register `m126_item_cards_inventory_transit_account` in `backend/src/migrations/index.js`
+- [x] Register `m126_item_cards_inventory_transit_account` in `backend/src/migrations/index.js`
 
 #### Transit account foundation
-- [ ] Create `backend/src/migrations/m126_item_cards_inventory_transit_account.js`
-- [ ] Add `inventory_transit_account_id BIGINT UNSIGNED NULL` to `item_cards`
-- [ ] Add FK to `accounts`
-- [ ] Add index for transit account
-- [ ] Expose the field in item-card validators, service, API, and UI
-- [ ] Treat item-card transit account as the v1 default transit account source for shipment-time posting
+- [x] Create `backend/src/migrations/m126_item_cards_inventory_transit_account.js`
+- [x] Add `inventory_transit_account_id BIGINT UNSIGNED NULL` to `item_cards`
+- [x] Add FK to `accounts`
+- [x] Add index for transit account
+- [x] Expose the field in item-card validators, service, API, and UI
+- [x] Treat item-card transit account as the v1 default transit account source for shipment-time posting
 
 #### Shipment FIFO costing
-- [ ] Add `consumeTransferShipmentCostLayersTx(...)`
-- [ ] Lock transfer header `FOR UPDATE`
-- [ ] Lock transfer lines
-- [ ] Lock source cost layers
-- [ ] Validate enough stock exists
-- [ ] Consume FIFO oldest-first
-- [ ] Compute and persist `shipped_currency_code` on transfer lines
-- [ ] If consumed source layers are mixed-currency, use legal-entity base currency as `shipped_currency_code`
-- [ ] Implement legal-entity base currency against the real repo field `legal_entities.functional_currency_code`
-- [ ] Compute and persist shipment cost snapshot to transfer lines
+- [x] Add `consumeTransferShipmentCostLayersTx(...)`
+- [x] Lock transfer header `FOR UPDATE`
+- [x] Lock transfer lines
+- [x] Lock source cost layers
+- [x] Validate enough stock exists
+- [x] Consume FIFO oldest-first
+- [x] Compute and persist `shipped_currency_code` on transfer lines
+- [x] If consumed source layers are mixed-currency, use legal-entity base currency as `shipped_currency_code`
+- [x] Implement legal-entity base currency against the real repo field `legal_entities.functional_currency_code`
+- [x] Compute and persist shipment cost snapshot to transfer lines
 
 #### Shipment movement creation
-- [ ] Require transfer status = `APPROVED`
-- [ ] Create source `inventory_movements` rows with:
+- [x] Require transfer status = `APPROVED`
+- [x] Create source `inventory_movements` rows with:
   - `movement_type = 'ISSUE'`
   - `source_type = 'INVENTORY_TRANSFER'`
   - `source_document_type = 'INVENTORY_TRANSFER'`
   - `source_document_id`
   - `source_document_line_id`
   - `valuation_status = 'VALUED'`
-- [ ] Create issue layer consumption rows
-- [ ] Set `source_issue_movement_id` on each transfer line
+- [x] Create issue layer consumption rows
+- [x] Set `source_issue_movement_id` on each transfer line
 
 #### Shipment posting logic
-- [ ] Build one shipment journal on transfer header
-- [ ] Debit destination transit account
-- [ ] Debit source-side `due_from` account
-- [ ] Credit source inventory asset account
-- [ ] Credit destination-side `due_to` account
-- [ ] Support route matrix:
+- [x] Build one shipment journal on transfer header
+- [x] Debit destination transit account
+- [x] Debit source-side `due_from` account
+- [x] Credit source inventory asset account
+- [x] Credit destination-side `due_to` account
+- [x] Support route matrix:
   - `CENTRAL -> OU`
   - `OU -> CENTRAL`
   - `OU -> OU`
-- [ ] Group journal lines by account when helpful
-- [ ] Reject posting clearly if required current-account mapping is missing
-- [ ] Reject posting clearly if required transit account is missing
-- [ ] Ensure no revenue / expense / `COGS` lines are posted
+- [x] Group journal lines by account when helpful
+- [x] Reject posting clearly if required current-account mapping is missing
+- [x] Reject posting clearly if required transit account is missing
+- [x] Ensure no revenue / expense / `COGS` lines are posted
 
 #### Shipment finalization
-- [ ] Insert shipment journal
-- [ ] Set `inventory_transfers.shipment_journal_entry_id`
-- [ ] Set `inventory_transfers.status = 'IN_TRANSIT'`
-- [ ] Set `shipped_by_user_id`
-- [ ] Set `in_transit_at`
-- [ ] Do not populate `inventory_movements.posted_journal_entry_id` with the shared header journal
+- [x] Insert shipment journal
+- [x] Set `inventory_transfers.shipment_journal_entry_id`
+- [x] Set `inventory_transfers.status = 'IN_TRANSIT'`
+- [x] Set `shipped_by_user_id`
+- [x] Set `in_transit_at`
+- [x] Do not populate `inventory_movements.posted_journal_entry_id` with the shared header journal
 
 #### Read model and source links
-- [ ] Add primary source link from shipment journal to transfer header
-- [ ] Extend transfer detail with shipment journal id
-- [ ] Extend transfer detail with shipment cost snapshot
-- [ ] Extend transfer detail with source issue movement ids
+- [x] Add primary source link from shipment journal to transfer header
+- [x] Extend transfer detail with shipment journal id
+- [x] Extend transfer detail with shipment cost snapshot
+- [x] Extend transfer detail with source issue movement ids
 
 #### Frontend
-- [ ] Add approve action UI
-- [ ] Add ship action UI
+- [x] Add approve action UI
+- [x] Add ship action UI
 
 #### Regression
-- [ ] Create `backend/scripts/test-inventory-ou04-shipment-self-balancing.js`
-- [ ] Test `CENTRAL -> OU` shipment
-- [ ] Test `OU -> CENTRAL` shipment
-- [ ] Test `OU -> OU` shipment
-- [ ] Test missing current-account mapping fails
-- [ ] Test missing transit account fails
-- [ ] Test insufficient stock fails
+- [x] Create `backend/scripts/test-inventory-ou04-shipment-self-balancing.js`
+- [x] Test `CENTRAL -> OU` shipment
+- [x] Test `OU -> CENTRAL` shipment
+- [x] Test `OU -> OU` shipment
+- [x] Test missing current-account mapping fails
+- [x] Test missing transit account fails
+- [x] Test insufficient stock fails
 
 ### Acceptance
-- [ ] Shipment reduces source quantity immediately
-- [ ] FIFO shipment cost snapshot persists
-- [ ] Shipment journal is created on transfer header
-- [ ] Due-from / due-to lines use explicit OU pair-account logic correctly
-- [ ] No transfer shipment posts revenue / expense / `COGS`
+- [x] Shipment reduces source quantity immediately
+- [x] FIFO shipment cost snapshot persists
+- [x] Shipment journal is created on transfer header
+- [x] Due-from / due-to lines use explicit OU pair-account logic correctly
+- [x] No transfer shipment posts revenue / expense / `COGS`
 
 ## PR-OU05 - Transfer receipt and receipt journal
 
@@ -654,7 +655,7 @@
 - Add owner/collector context persistence and deterministic resolution without changing the existing posting shape yet.
 
 ### Files
-- `backend/src/migrations/m127_cari_settlement_owner_collector_contexts.js`
+- `backend/src/migrations/m128_cari_settlement_owner_collector_contexts.js`
 - `backend/src/migrations/index.js`
 - `backend/src/routes/cari.js`
 - `backend/src/routes/cari.settlement.validators.js`
@@ -668,7 +669,7 @@
 ### Checklist
 
 #### Migration
-- [ ] Create `backend/src/migrations/m127_cari_settlement_owner_collector_contexts.js`
+- [ ] Create `backend/src/migrations/m128_cari_settlement_owner_collector_contexts.js`
 - [ ] Add `owner_operating_unit_id BIGINT UNSIGNED NULL` to `cari_settlement_batches`
 - [ ] Add `collector_operating_unit_id BIGINT UNSIGNED NULL` to `cari_settlement_batches`
 - [ ] Add `originating_cross_context_settlement_batch_id BIGINT UNSIGNED NULL` to `cari_settlement_batches`
@@ -679,7 +680,7 @@
 - [ ] Add scoped self-FK `(tenant_id, legal_entity_id, originating_cross_context_settlement_batch_id) -> cari_settlement_batches(tenant_id, legal_entity_id, id)` for originating cross-context settlement linkage
 
 #### Migration registration
-- [ ] Register `m127_cari_settlement_owner_collector_contexts` in `backend/src/migrations/index.js`
+- [ ] Register `m128_cari_settlement_owner_collector_contexts` in `backend/src/migrations/index.js`
 
 #### Owner / collector resolution
 - [ ] Add `resolveSettlementOwnerOperatingUnitId(...)`
@@ -958,14 +959,14 @@
 - [x] 6. Add transfer page shell
 - [x] 7. Create `m125_operating_unit_reverse_internal_current_accounts.js`
 - [x] 8. Extend org setup and create `ou.self-balancing.service.js`
-- [ ] 9. Create `m126_item_cards_inventory_transit_account.js`
-- [ ] 10. Expose transit account in item-card backend/frontend
-- [ ] 11. Implement transfer approval + shipment FIFO + accounting
+- [x] 9. Create `m126_item_cards_inventory_transit_account.js`
+- [x] 10. Expose transit account in item-card backend/frontend
+- [x] 11. Implement transfer approval + shipment FIFO + accounting
 - [ ] 12. Implement transfer receipt
 - [ ] 13. Implement transfer cancel / reverse
 - [ ] 14. Block generic cross-context movement bypass
 - [ ] 15. Generalize evidence service and transfer evidence routes/UI
-- [ ] 16. Create `m127_cari_settlement_owner_collector_contexts.js`
+- [ ] 16. Create `m128_cari_settlement_owner_collector_contexts.js`
 - [ ] 17. Implement settlement owner / collector resolvers and persistence
 - [ ] 18. Implement cross-context settlement posting split
 - [ ] 19. Implement strict reversal dependency and explicit downstream linkage
@@ -977,7 +978,7 @@
 - [x] Warehouses are explicitly central or OU-owned
 - [ ] Cross-context stock transfers use dedicated transfer workflow only
 - [ ] Transfer lifecycle includes approval, shipment, receipt, and additive reversal
-- [ ] Shipment-time internal balancing works and is auditable
+- [x] Shipment-time internal balancing works and is auditable
 - [x] Reverse-direction central `<->` OU accounts exist and are configured
 - [ ] Receipt / cancel / reversal / evidence work
 - [ ] Generic inventory movement bypass is blocked in backend

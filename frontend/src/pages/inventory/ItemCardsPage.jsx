@@ -38,6 +38,7 @@ function createInitialForm() {
     defaultSalesAccountId: "",
     defaultPurchaseAccountId: "",
     inventoryAssetAccountId: "",
+    inventoryTransitAccountId: "",
     defaultCogsAccountId: "",
     taxCategoryCode: "",
     status: "ACTIVE",
@@ -89,6 +90,7 @@ function mapItemCardRowToForm(row) {
     defaultSalesAccountId: String(row?.defaultSalesAccountId || ""),
     defaultPurchaseAccountId: String(row?.defaultPurchaseAccountId || ""),
     inventoryAssetAccountId: String(row?.inventoryAssetAccountId || ""),
+    inventoryTransitAccountId: String(row?.inventoryTransitAccountId || ""),
     defaultCogsAccountId: String(row?.defaultCogsAccountId || ""),
     taxCategoryCode: String(row?.taxCategoryCode || ""),
     status: String(row?.status || "ACTIVE"),
@@ -104,6 +106,7 @@ function buildPayload(form) {
     defaultSalesAccountId: toPositiveInt(form.defaultSalesAccountId) || undefined,
     defaultPurchaseAccountId: toPositiveInt(form.defaultPurchaseAccountId) || undefined,
     inventoryAssetAccountId: toPositiveInt(form.inventoryAssetAccountId) || undefined,
+    inventoryTransitAccountId: toPositiveInt(form.inventoryTransitAccountId) || undefined,
     defaultCogsAccountId: toPositiveInt(form.defaultCogsAccountId) || undefined,
     taxCategoryCode: normalizeText(form.taxCategoryCode).toUpperCase() || undefined,
     status: normalizeText(form.status).toUpperCase(),
@@ -298,6 +301,7 @@ export default function ItemCardsPage({ pageKey = "list" }) {
       form.defaultSalesAccountId,
       form.defaultPurchaseAccountId,
       form.inventoryAssetAccountId,
+      form.inventoryTransitAccountId,
       form.defaultCogsAccountId,
     ]
       .map((value) => Number(value || 0))
@@ -315,7 +319,14 @@ export default function ItemCardsPage({ pageKey = "list" }) {
       }
     });
     return nextRows;
-  }, [accountRows, form.defaultCogsAccountId, form.defaultPurchaseAccountId, form.defaultSalesAccountId, form.inventoryAssetAccountId]);
+  }, [
+    accountRows,
+    form.defaultCogsAccountId,
+    form.defaultPurchaseAccountId,
+    form.defaultSalesAccountId,
+    form.inventoryAssetAccountId,
+    form.inventoryTransitAccountId,
+  ]);
 
   const taxCategoryOptions = useMemo(() => {
     const selectedLegalEntityId = toPositiveInt(form.legalEntityId);
@@ -656,6 +667,27 @@ export default function ItemCardsPage({ pageKey = "list" }) {
               <option value="">{l("None", "Yok")}</option>
               {accountOptions.map((row) => (
                 <option key={`inventory-account-${row.id}`} value={String(row.id)}>
+                  {row.code} - {row.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+            {l("Inventory Transit Account (optional)", "Stok Transit Hesabi (opsiyonel)")}
+            <select
+              className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+              value={form.inventoryTransitAccountId}
+              onChange={(event) =>
+                setForm((previous) => ({
+                  ...previous,
+                  inventoryTransitAccountId: event.target.value,
+                }))
+              }
+              disabled={saving || accountLoading || !canReadGlAccounts}
+            >
+              <option value="">{l("None", "Yok")}</option>
+              {accountOptions.map((row) => (
+                <option key={`inventory-transit-account-${row.id}`} value={String(row.id)}>
                   {row.code} - {row.name}
                 </option>
               ))}
