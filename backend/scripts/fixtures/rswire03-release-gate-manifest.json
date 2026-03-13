@@ -34,6 +34,21 @@
       "routePath": "/app/ayarlar/rbac/raw-audit-logs",
       "smokeScriptPath": "backend/scripts/test-rbac-raw-audit-logs-smoke.js",
       "packageScriptName": "test:ux:raw-audit-logs-smoke"
+    },
+    {
+      "routePath": "/app/stok-karti-olustur",
+      "smokeScriptPath": "backend/scripts/test-inventory-pr26-release-gate.js",
+      "packageScriptName": "test:inventory:release-gate"
+    },
+    {
+      "routePath": "/app/stok-karti-listesi",
+      "smokeScriptPath": "backend/scripts/test-inventory-pr26-release-gate.js",
+      "packageScriptName": "test:inventory:release-gate"
+    },
+    {
+      "routePath": "/app/stok-yansitma-islemleri",
+      "smokeScriptPath": "backend/scripts/test-inventory-pr26-release-gate.js",
+      "packageScriptName": "test:inventory:release-gate"
     }
   ]
 }
