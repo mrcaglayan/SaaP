@@ -93,7 +93,7 @@
 - [x] `PR-OU07` - Transfer evidence
 - [x] `PR-OU08` - Cross-context settlement owner/collector persistence and resolution
 - [x] `PR-OU09` - Cross-context settlement posting split
-- [ ] `PR-OU10` - Cross-context settlement reversal discipline
+- [x] `PR-OU10` - Cross-context settlement reversal discipline
 - [ ] `PR-OU11` - Cross-context settlement reports, drilldowns, and UI feedback
 - [ ] `PR-OU12` - Frontend finishing for transfers, inventory, and settlement visibility
 - [ ] `PR-OU13` - OpenAPI, release gates, and rollout docs
@@ -774,23 +774,23 @@
 ### Checklist
 
 #### Reversal discipline
-- [ ] Reverse original owner / collector split exactly
-- [ ] Reverse same internal account family
-- [ ] Do not collapse reversal into one context
-- [ ] If downstream internal settlement already exists, enforce strict dependency order before collection reverse proceeds
-- [ ] Persist `originating_cross_context_settlement_batch_id` on downstream internal settlement records that clear balances created by cross-context collection
-- [ ] Reversal blocking depends on `originating_cross_context_settlement_batch_id`, not inferred net balances
-- [ ] Internal settlement records that clear balances originating from cross-context collection must retain explicit linkage to the originating settlement batch or future first-class collection event
+- [x] Reverse original owner / collector split exactly
+- [x] Reverse same internal account family
+- [x] Do not collapse reversal into one context
+- [x] If downstream internal settlement already exists, enforce strict dependency order before collection reverse proceeds
+- [x] Persist `originating_cross_context_settlement_batch_id` on downstream internal settlement records that clear balances created by cross-context collection
+- [x] Reversal blocking depends on `originating_cross_context_settlement_batch_id`, not inferred net balances
+- [x] Internal settlement records that clear balances originating from cross-context collection must retain explicit linkage to the originating settlement batch or future first-class collection event
 
 #### Regression
-- [ ] Create `backend/scripts/test-cari-ou10-settlement-reversal-discipline.js`
-- [ ] Test reversal preserves split
-- [ ] Test strict dependency order when internal settlement already exists
-- [ ] Test downstream internal settlement retains originating cross-context settlement linkage
+- [x] Create `backend/scripts/test-cari-ou10-settlement-reversal-discipline.js`
+- [x] Test reversal preserves split
+- [x] Test strict dependency order when internal settlement already exists
+- [x] Test downstream internal settlement retains originating cross-context settlement linkage
 
 ### Acceptance
-- [ ] Reversal discipline is preserved
-- [ ] Downstream internal settlement linkage is explicit and auditable
+- [x] Reversal discipline is preserved
+- [x] Downstream internal settlement linkage is explicit and auditable
 
 ## PR-OU11 - Cross-context settlement reports, drilldowns, and UI feedback
 
@@ -972,7 +972,7 @@
 - [x] 16. Create `m128_cari_settlement_owner_collector_contexts.js`
 - [x] 17. Implement settlement owner / collector resolvers and persistence
 - [x] 18. Implement cross-context settlement posting split
-- [ ] 19. Implement strict reversal dependency and explicit downstream linkage
+- [x] 19. Implement strict reversal dependency and explicit downstream linkage
 - [ ] 20. Propagate settlement reports/drilldowns and operator feedback
 - [ ] 21. Finish transfer/inventory/settlement frontend polish
 - [ ] 22. Finish OpenAPI / release gates / docs

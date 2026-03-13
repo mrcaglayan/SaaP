@@ -2427,6 +2427,7 @@ async function fetchCashTransactionForSettlementLink({
        ct.integration_link_status,
        ct.integration_event_uid,
        ct.idempotency_key,
+       cr.legal_entity_id AS legal_entity_id,
        cr.legal_entity_id AS register_legal_entity_id,
        cr.operating_unit_id AS operating_unit_id,
        cr.account_id AS register_account_id
@@ -3893,6 +3894,209 @@ function isCrossContextSettlement({
   );
 }
 
+function isSettlementRowCrossContext(row) {
+  if (!row) {
+    return false;
+  }
+  return isCrossContextSettlement({
+    ownerOperatingUnitId: row.owner_operating_unit_id ?? row.ownerOperatingUnitId ?? null,
+    collectorOperatingUnitId:
+      row.collector_operating_unit_id ?? row.collectorOperatingUnitId ?? null,
+  });
+}
+
+async function resolveCrossContextSettlementOriginBatchId({
+  tenantId,
+  legalEntityId,
+  candidateSettlementBatchId,
+  runQuery = query,
+  forUpdate = false,
+}) {
+  const normalizedCandidateSettlementBatchId =
+    parsePositiveInt(candidateSettlementBatchId) || null;
+  if (!normalizedCandidateSettlementBatchId) {
+    return null;
+  }
+
+  const candidateRow = await fetchSettlementBatchRow({
+    tenantId,
+    settlementBatchId: normalizedCandidateSettlementBatchId,
+    runQuery,
+    forUpdate,
+  });
+  if (!candidateRow) {
+    throw badRequest(
+      `Referenced settlementBatchId=${normalizedCandidateSettlementBatchId} was not found for tenant`
+    );
+  }
+  if (parsePositiveInt(candidateRow.legal_entity_id) !== parsePositiveInt(legalEntityId)) {
+    throw badRequest(
+      `Referenced settlementBatchId=${normalizedCandidateSettlementBatchId} must belong to legalEntityId`
+    );
+  }
+  if (parsePositiveInt(candidateRow.reversal_of_settlement_batch_id)) {
+    throw badRequest(
+      `Referenced settlementBatchId=${normalizedCandidateSettlementBatchId} cannot be a reversal batch`
+    );
+  }
+  if (normalizeUpperText(candidateRow.status) !== SETTLEMENT_STATUS_POSTED) {
+    throw badRequest(
+      `Referenced settlementBatchId=${normalizedCandidateSettlementBatchId} must be POSTED`
+    );
+  }
+
+  const directOriginBatchId =
+    parsePositiveInt(candidateRow.originating_cross_context_settlement_batch_id) || null;
+  const rootBatchId = directOriginBatchId || (isSettlementRowCrossContext(candidateRow)
+    ? parsePositiveInt(candidateRow.id)
+    : null);
+  if (!rootBatchId) {
+    return null;
+  }
+  if (rootBatchId === parsePositiveInt(candidateRow.id)) {
+    return rootBatchId;
+  }
+
+  const rootRow = await fetchSettlementBatchRow({
+    tenantId,
+    settlementBatchId: rootBatchId,
+    runQuery,
+    forUpdate,
+  });
+  if (!rootRow) {
+    throw badRequest(
+      `Originating cross-context settlementBatchId=${rootBatchId} was not found for tenant`
+    );
+  }
+  if (parsePositiveInt(rootRow.legal_entity_id) !== parsePositiveInt(legalEntityId)) {
+    throw badRequest(
+      `Originating cross-context settlementBatchId=${rootBatchId} must belong to legalEntityId`
+    );
+  }
+  if (!isSettlementRowCrossContext(rootRow)) {
+    throw badRequest(
+      `Originating cross-context settlementBatchId=${rootBatchId} must be a cross-context settlement`
+    );
+  }
+  if (normalizeUpperText(rootRow.status) !== SETTLEMENT_STATUS_POSTED) {
+    throw badRequest(
+      `Originating cross-context settlementBatchId=${rootBatchId} must be POSTED`
+    );
+  }
+  return rootBatchId;
+}
+
+async function resolveOriginatingCrossContextSettlementBatchId({
+  tenantId,
+  legalEntityId,
+  sourceEntityType = null,
+  sourceEntityId = null,
+  cashTransactionRow = null,
+  runQuery = query,
+  forUpdate = false,
+}) {
+  const linkedSettlementBatchId =
+    parsePositiveInt(cashTransactionRow?.linked_cari_settlement_batch_id) || null;
+  if (linkedSettlementBatchId) {
+    return resolveCrossContextSettlementOriginBatchId({
+      tenantId,
+      legalEntityId,
+      candidateSettlementBatchId: linkedSettlementBatchId,
+      runQuery,
+      forUpdate,
+    });
+  }
+
+  const normalizedSourceEntityType = normalizeUpperText(sourceEntityType);
+  if (
+    normalizedSourceEntityType !== normalizeUpperText(RESOURCE_TYPE_SETTLEMENT_BATCH) &&
+    normalizedSourceEntityType !== "CARI_SETTLEMENT_BATCH" &&
+    normalizedSourceEntityType !== "SETTLEMENT_BATCH"
+  ) {
+    return null;
+  }
+
+  return resolveCrossContextSettlementOriginBatchId({
+    tenantId,
+    legalEntityId,
+    candidateSettlementBatchId: sourceEntityId,
+    runQuery,
+    forUpdate,
+  });
+}
+
+export async function assertNoPostedDownstreamCrossContextSettlements({
+  tenantId,
+  legalEntityId,
+  settlementBatchId,
+  runQuery = query,
+  forUpdate = false,
+  actionLabel = "Cannot reverse settlement",
+}) {
+  const normalizedSettlementBatchId = parsePositiveInt(settlementBatchId) || null;
+  if (!normalizedSettlementBatchId) {
+    return;
+  }
+
+  const settlementRow = await fetchSettlementBatchRow({
+    tenantId,
+    settlementBatchId: normalizedSettlementBatchId,
+    runQuery,
+    forUpdate,
+  });
+  if (!settlementRow) {
+    return;
+  }
+  if (parsePositiveInt(settlementRow.legal_entity_id) !== parsePositiveInt(legalEntityId)) {
+    return;
+  }
+
+  const directOriginBatchId =
+    parsePositiveInt(settlementRow.originating_cross_context_settlement_batch_id) || null;
+  const rootSettlementBatchId =
+    directOriginBatchId || (isSettlementRowCrossContext(settlementRow)
+      ? normalizedSettlementBatchId
+      : null);
+  if (!rootSettlementBatchId || rootSettlementBatchId !== normalizedSettlementBatchId) {
+    return;
+  }
+
+  const lockClause = forUpdate ? "FOR UPDATE" : "";
+  const dependentResult = await runQuery(
+    `SELECT
+        id,
+        settlement_no
+     FROM cari_settlement_batches
+     WHERE tenant_id = ?
+       AND legal_entity_id = ?
+       AND originating_cross_context_settlement_batch_id = ?
+       AND status = ?
+       AND id <> ?
+     ORDER BY id ASC
+     ${lockClause}`,
+    [
+      tenantId,
+      legalEntityId,
+      rootSettlementBatchId,
+      SETTLEMENT_STATUS_POSTED,
+      normalizedSettlementBatchId,
+    ]
+  );
+  const dependentRows = dependentResult.rows || [];
+  if (dependentRows.length === 0) {
+    return;
+  }
+
+  const sample = dependentRows
+    .slice(0, 3)
+    .map((row) => row.settlement_no || `#${parsePositiveInt(row.id) || "?"}`)
+    .join(", ");
+  const suffix = dependentRows.length > 3 ? ", ..." : "";
+  throw badRequest(
+    `${actionLabel} because downstream internal settlement(s) ${sample}${suffix} still reference cross-context settlement #${rootSettlementBatchId}. Reverse downstream internal settlement first.`
+  );
+}
+
 function buildCrossContextSettlementPostingLines({
   direction,
   totalAmountTxn,
@@ -4575,6 +4779,16 @@ export async function applyCariSettlement({
         bankStatementLineId,
         runQuery: tx.query,
       });
+      const originatingCrossContextSettlementBatchId =
+        await resolveOriginatingCrossContextSettlementBatchId({
+          tenantId,
+          legalEntityId,
+          sourceEntityType: integrationMetadata.sourceEntityType,
+          sourceEntityId: integrationMetadata.sourceEntityId,
+          cashTransactionRow: lockedCashTransaction,
+          runQuery: tx.query,
+          forUpdate: true,
+        });
 
       const fxPolicy = await resolveSettlementFxRate({
         tenantId,
@@ -5210,7 +5424,7 @@ export async function applyCariSettlement({
             integration_event_uid,
             posted_at
          )
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
         [
           tenantId,
           legalEntityId,
@@ -5235,6 +5449,7 @@ export async function applyCariSettlement({
           fxPolicy.fallbackMode,
           fxPolicy.fallbackMaxDays,
           postedJournalEntryId,
+          originatingCrossContextSettlementBatchId,
           bankStatementLineId,
           bankTransactionRef,
           null,
@@ -5597,6 +5812,7 @@ export async function applyCariSettlement({
           counterpartyId,
           ownerOperatingUnitId,
           collectorOperatingUnitId,
+          originatingCrossContextSettlementBatchId,
           direction,
           settlementDate,
           incomingAmountTxn: effectiveIncomingAmountTxn,
@@ -6206,6 +6422,13 @@ export async function reverseCariSettlementById({
         throw badRequest("Only POSTED settlements can be reversed");
       }
       const lockedLegalEntityId = parsePositiveInt(original.legal_entity_id);
+      await assertNoPostedDownstreamCrossContextSettlements({
+        tenantId,
+        legalEntityId: lockedLegalEntityId,
+        settlementBatchId,
+        runQuery: tx.query,
+        forUpdate: true,
+      });
       const originalJournalEntryId = parsePositiveInt(original.posted_journal_entry_id);
       const linkedCashTransactionId = parsePositiveInt(original.cash_transaction_id);
       let linkedCashTxn = null;

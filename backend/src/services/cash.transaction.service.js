@@ -39,6 +39,7 @@ import { assertRegisterOperationalConfig } from "./cash.register.service.js";
 import { createAndPostCashJournalTx } from "./cash.service.js";
 import { applyCashFxPositionForPostedTransactionTx } from "./cash.fx.position.service.js";
 import {
+  assertNoPostedDownstreamCrossContextSettlements,
   CARI_SETTLEMENT_FOLLOW_UP_RISKS,
   applyCariSettlement,
 } from "./cari.settlement.service.js";
@@ -3051,6 +3052,17 @@ export async function reverseCashTransactionById({
 
     if (asUpper(original.status) !== "POSTED") {
       throw badRequest("Only POSTED transactions can be reversed");
+    }
+    const linkedSettlementBatchId = parsePositiveInt(original.linked_cari_settlement_batch_id);
+    if (linkedSettlementBatchId) {
+      await assertNoPostedDownstreamCrossContextSettlements({
+        tenantId: payload.tenantId,
+        legalEntityId: parsePositiveInt(original.legal_entity_id),
+        settlementBatchId: linkedSettlementBatchId,
+        runQuery: tx.query,
+        forUpdate: true,
+        actionLabel: "Cannot reverse cash transaction",
+      });
     }
 
     let reversal = existingReversal;

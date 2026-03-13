@@ -360,6 +360,37 @@ async function createAccount({
   return accountId;
 }
 
+async function assignOperatingUnitSelfBalancingAccounts({
+  tenantId,
+  legalEntityId,
+  operatingUnitId,
+  centralDueFromAccountId,
+  centralDueToAccountId,
+  ouDueFromCentralAccountId,
+  ouDueToCentralAccountId,
+}) {
+  await query(
+    `UPDATE operating_units
+     SET central_due_from_account_id = ?,
+         central_due_to_account_id = ?,
+         ou_due_from_central_account_id = ?,
+         ou_due_to_central_account_id = ?
+     WHERE tenant_id = ?
+       AND legal_entity_id = ?
+       AND id = ?
+     LIMIT 1`,
+    [
+      centralDueFromAccountId,
+      centralDueToAccountId,
+      ouDueFromCentralAccountId,
+      ouDueToCentralAccountId,
+      tenantId,
+      legalEntityId,
+      operatingUnitId,
+    ]
+  );
+}
+
 async function createRegister({
   token,
   tenantId,
@@ -700,6 +731,38 @@ async function main() {
       accountType: "EXPENSE",
       normalSide: "DEBIT",
     });
+    const centralDueFromAccountId = await createAccount({
+      token,
+      coaId: base.coaId,
+      code: `EX04U_CDF_${String(stamp).slice(-5)}`,
+      name: "EX04U Central Due From",
+      accountType: "ASSET",
+      normalSide: "DEBIT",
+    });
+    const centralDueToAccountId = await createAccount({
+      token,
+      coaId: base.coaId,
+      code: `EX04U_CDT_${String(stamp).slice(-5)}`,
+      name: "EX04U Central Due To",
+      accountType: "LIABILITY",
+      normalSide: "CREDIT",
+    });
+    const ouDueFromCentralAccountId = await createAccount({
+      token,
+      coaId: base.coaId,
+      code: `EX04U_ODF_${String(stamp).slice(-5)}`,
+      name: "EX04U OU Due From Central",
+      accountType: "ASSET",
+      normalSide: "DEBIT",
+    });
+    const ouDueToCentralAccountId = await createAccount({
+      token,
+      coaId: base.coaId,
+      code: `EX04U_ODT_${String(stamp).slice(-5)}`,
+      name: "EX04U OU Due To Central",
+      accountType: "LIABILITY",
+      normalSide: "CREDIT",
+    });
     const usdRegisterAccountId = await createAccount({
       token,
       coaId: base.coaId,
@@ -723,6 +786,16 @@ async function main() {
       name: "EX04U Linked Cash Counter",
       accountType: "EXPENSE",
       normalSide: "DEBIT",
+    });
+
+    await assignOperatingUnitSelfBalancingAccounts({
+      tenantId,
+      legalEntityId: base.legalEntityId,
+      operatingUnitId: base.operatingUnitId,
+      centralDueFromAccountId,
+      centralDueToAccountId,
+      ouDueFromCentralAccountId,
+      ouDueToCentralAccountId,
     });
 
     await upsertCariPostingAccounts({
