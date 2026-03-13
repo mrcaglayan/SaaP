@@ -92,7 +92,7 @@
 - [x] `PR-OU06` - Transfer reversal, cancel discipline, and bypass hardening
 - [x] `PR-OU07` - Transfer evidence
 - [x] `PR-OU08` - Cross-context settlement owner/collector persistence and resolution
-- [ ] `PR-OU09` - Cross-context settlement posting split
+- [x] `PR-OU09` - Cross-context settlement posting split
 - [ ] `PR-OU10` - Cross-context settlement reversal discipline
 - [ ] `PR-OU11` - Cross-context settlement reports, drilldowns, and UI feedback
 - [ ] `PR-OU12` - Frontend finishing for transfers, inventory, and settlement visibility
@@ -736,30 +736,30 @@
 ### Checklist
 
 #### Posting logic
-- [ ] Keep existing same-context path intact
-- [ ] Add split path when `owner != collector`
-- [ ] Hard-block any attempt to force a non-self-balanced path when contexts differ
-- [ ] Collector side posts actual cash / bank offset line
-- [ ] Collector side posts internal `Due To owner`
-- [ ] Owner side posts internal `Due From collector`
-- [ ] Owner side posts AR or AP control relief line
-- [ ] Keep realized FX on owner side
-- [ ] Keep tax augmentation on owner side
-- [ ] Reuse `ou.self-balancing.service.js` helper for account resolution
+- [x] Keep existing same-context path intact
+- [x] Add split path when `owner != collector`
+- [x] Hard-block any attempt to force a non-self-balanced path when contexts differ
+- [x] Collector side posts actual cash / bank offset line
+- [x] Collector side posts internal `Due To owner`
+- [x] Owner side posts internal `Due From collector`
+- [x] Owner side posts AR or AP control relief line
+- [x] Keep realized FX on owner side
+- [x] Keep tax augmentation on owner side
+- [x] Reuse `ou.self-balancing.service.js` helper for account resolution
 
 #### Regression
-- [ ] Create `backend/scripts/test-cari-ou09-cross-context-posting-split.js`
-- [ ] Create `backend/scripts/test-cari-ou09-cash-and-bank-collector-context.js`
-- [ ] Test central collects OU AR
-- [ ] Test OU collects central AR
-- [ ] Test OU collects other OU AR
-- [ ] Test bank and cash both follow the same immediate balancing rule
-- [ ] Test realized FX remains owner-side
+- [x] Create `backend/scripts/test-cari-ou09-cross-context-posting-split.js`
+- [x] Create `backend/scripts/test-cari-ou09-cash-and-bank-collector-context.js`
+- [x] Test central collects OU AR
+- [x] Test OU collects central AR
+- [x] Test OU collects other OU AR
+- [x] Test bank and cash both follow the same immediate balancing rule
+- [x] Test realized FX remains owner-side
 
 ### Acceptance
-- [ ] Cross-context settlements create explicit internal balancing
-- [ ] Bank and cash behave under the same balancing rule
-- [ ] Same-context settlements still behave correctly
+- [x] Cross-context settlements create explicit internal balancing
+- [x] Bank and cash behave under the same balancing rule
+- [x] Same-context settlements still behave correctly
 
 ## PR-OU10 - Cross-context settlement reversal discipline
 
@@ -971,7 +971,7 @@
 - [x] 15. Generalize evidence service and transfer evidence routes/UI
 - [x] 16. Create `m128_cari_settlement_owner_collector_contexts.js`
 - [x] 17. Implement settlement owner / collector resolvers and persistence
-- [ ] 18. Implement cross-context settlement posting split
+- [x] 18. Implement cross-context settlement posting split
 - [ ] 19. Implement strict reversal dependency and explicit downstream linkage
 - [ ] 20. Propagate settlement reports/drilldowns and operator feedback
 - [ ] 21. Finish transfer/inventory/settlement frontend polish
@@ -985,7 +985,7 @@
 - [x] Reverse-direction central `<->` OU accounts exist and are configured
 - [x] Receipt / cancel / reversal / evidence work
 - [x] Generic inventory movement bypass is blocked in backend
-- [ ] Cross-context CARI settlement owner vs collector split works
+- [x] Cross-context CARI settlement owner vs collector split works
 - [ ] Settlement reports and drilldowns surface owner vs collector context correctly
-- [ ] Non-self-balanced cross-context settlement is blocked
+- [x] Non-self-balanced cross-context settlement is blocked
 - [ ] UI, OpenAPI, release gates, and docs are aligned

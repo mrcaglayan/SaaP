@@ -12,6 +12,7 @@ import { upsertJournalSourceLinkTx } from "./journal.source-link.service.js";
 import { buildCariTaxAugmentation } from "./cari.tax.integration.service.js";
 import { recordCariSettlementCurrencyMismatchException } from "./cash.fx.ops.service.js";
 import { createAndPostCashJournalTx } from "./cash.service.js";
+import { resolveOuSelfBalancingAccountsTx } from "./ou.self-balancing.service.js";
 import {
   findCashRegisterById,
   findCashSessionById,
@@ -1171,10 +1172,13 @@ async function resolveSettlementCollectorOperatingUnitId({
   bankStatementLineId = null,
   runQuery = query,
 }) {
-  const cashTransactionOperatingUnitId =
-    parsePositiveInt(cashTransactionRow?.operating_unit_id) || null;
-  if (cashTransactionOperatingUnitId) {
-    return cashTransactionOperatingUnitId;
+  if (cashTransactionRow) {
+    const cashTransactionOperatingUnitId =
+      parsePositiveInt(cashTransactionRow?.operating_unit_id) || null;
+    if (cashTransactionOperatingUnitId) {
+      return cashTransactionOperatingUnitId;
+    }
+    return null;
   }
 
   const bankStatementContext = await fetchSettlementBankStatementOperatingUnitContext({
@@ -1193,6 +1197,9 @@ async function resolveSettlementCollectorOperatingUnitId({
     parsePositiveInt(bankStatementContext?.bank_account_operating_unit_id) || null;
   if (bankAccountOperatingUnitId) {
     return bankAccountOperatingUnitId;
+  }
+  if (bankStatementContext) {
+    return null;
   }
 
   return parsePositiveInt(ownerOperatingUnitId) || null;
@@ -3872,6 +3879,123 @@ function buildCashLinkedSettlementFxAdjustmentLines({
   return lines;
 }
 
+function resolveSettlementContextOperatingUnitId(context) {
+  return parsePositiveInt(context?.operatingUnitId) || null;
+}
+
+function isCrossContextSettlement({
+  ownerOperatingUnitId = null,
+  collectorOperatingUnitId = null,
+}) {
+  return (
+    (parsePositiveInt(ownerOperatingUnitId) || null) !==
+    (parsePositiveInt(collectorOperatingUnitId) || null)
+  );
+}
+
+function buildCrossContextSettlementPostingLines({
+  direction,
+  totalAmountTxn,
+  totalAmountBaseSettlement,
+  totalAmountBaseHistorical,
+  settlementFxRate,
+  ownerControlAccountId,
+  collectorOffsetAccountId,
+  selfBalancingAccounts,
+  fxGainAccountId = null,
+  fxLossAccountId = null,
+  lineDescription,
+  subledgerReferenceNo,
+  currencyCode,
+}) {
+  if (!selfBalancingAccounts?.sourceDueFromAccount?.id) {
+    throw badRequest("Cross-context settlement self-balancing source due-from account is missing");
+  }
+  if (!selfBalancingAccounts?.sourceDueToAccount?.id) {
+    throw badRequest("Cross-context settlement self-balancing source due-to account is missing");
+  }
+  if (!selfBalancingAccounts?.targetDueFromAccount?.id) {
+    throw badRequest("Cross-context settlement self-balancing target due-from account is missing");
+  }
+  if (!selfBalancingAccounts?.targetDueToAccount?.id) {
+    throw badRequest("Cross-context settlement self-balancing target due-to account is missing");
+  }
+
+  const normalizedDirection = normalizeUpperText(direction);
+  const collectorOperatingUnitId = resolveSettlementContextOperatingUnitId(
+    selfBalancingAccounts.sourceContext
+  );
+  const ownerOperatingUnitId = resolveSettlementContextOperatingUnitId(
+    selfBalancingAccounts.targetContext
+  );
+  const collectorLines =
+    normalizedDirection === "AR"
+      ? buildSettlementPostingLines({
+          direction: normalizedDirection,
+          operatingUnitId: collectorOperatingUnitId,
+          totalAmountTxn,
+          totalAmountBaseSettlement,
+          totalAmountBaseHistorical: totalAmountBaseSettlement,
+          settlementFxRate,
+          controlAccountId: selfBalancingAccounts.sourceDueToAccount.id,
+          offsetAccountId: collectorOffsetAccountId,
+          fxGainAccountId: null,
+          fxLossAccountId: null,
+          lineDescription,
+          subledgerReferenceNo,
+          currencyCode,
+        })
+      : buildSettlementPostingLines({
+          direction: normalizedDirection,
+          operatingUnitId: collectorOperatingUnitId,
+          totalAmountTxn,
+          totalAmountBaseSettlement,
+          totalAmountBaseHistorical: totalAmountBaseSettlement,
+          settlementFxRate,
+          controlAccountId: selfBalancingAccounts.sourceDueFromAccount.id,
+          offsetAccountId: collectorOffsetAccountId,
+          fxGainAccountId: null,
+          fxLossAccountId: null,
+          lineDescription,
+          subledgerReferenceNo,
+          currencyCode,
+        });
+  const ownerLines =
+    normalizedDirection === "AR"
+      ? buildSettlementPostingLines({
+          direction: normalizedDirection,
+          operatingUnitId: ownerOperatingUnitId,
+          totalAmountTxn,
+          totalAmountBaseSettlement,
+          totalAmountBaseHistorical,
+          settlementFxRate,
+          controlAccountId: ownerControlAccountId,
+          offsetAccountId: selfBalancingAccounts.targetDueFromAccount.id,
+          fxGainAccountId,
+          fxLossAccountId,
+          lineDescription,
+          subledgerReferenceNo,
+          currencyCode,
+        })
+      : buildSettlementPostingLines({
+          direction: normalizedDirection,
+          operatingUnitId: ownerOperatingUnitId,
+          totalAmountTxn,
+          totalAmountBaseSettlement,
+          totalAmountBaseHistorical,
+          settlementFxRate,
+          controlAccountId: ownerControlAccountId,
+          offsetAccountId: selfBalancingAccounts.targetDueToAccount.id,
+          fxGainAccountId,
+          fxLossAccountId,
+          lineDescription,
+          subledgerReferenceNo,
+          currencyCode,
+        });
+
+  return [...collectorLines, ...ownerLines];
+}
+
 async function loadSettlementResult({
   tenantId,
   settlementBatchId,
@@ -4737,6 +4861,22 @@ export async function applyCariSettlement({
         settlementDate,
         runQuery: tx.query,
       });
+      const crossContextSettlement = isCrossContextSettlement({
+        ownerOperatingUnitId,
+        collectorOperatingUnitId,
+      });
+      const selfBalancingAccounts = crossContextSettlement
+        ? await resolveOuSelfBalancingAccountsTx(tx, {
+            tenantId,
+            legalEntityId,
+            sourceOperatingUnitId: collectorOperatingUnitId,
+            targetOperatingUnitId: ownerOperatingUnitId,
+            cache: {
+              operatingUnitById: new Map(),
+              partnerPairById: new Map(),
+            },
+          })
+        : null;
       const postingSourceContext = deriveSettlementPostingSourceContext({
         paymentChannel,
         cashTransactionId: effectiveCashTransactionId,
@@ -4801,23 +4941,39 @@ export async function applyCariSettlement({
         });
 
         const subledgerReferenceNo = `${CARI_SETTLEMENT_REFERENCE_PREFIX}${sequence.settlementNo}`;
-        const postingLines = [
-          ...buildSettlementPostingLines({
-            direction,
-            operatingUnitId: settlementOperatingUnitId,
-            totalAmountTxn: totalAllocatedTxn,
-            totalAmountBaseSettlement: totalAllocatedBaseSettlement,
-            totalAmountBaseHistorical: totalAllocatedBaseHistorical,
-            settlementFxRate: fxPolicy.settlementFxRate,
-            controlAccountId: postingAccounts.controlAccountId,
-            offsetAccountId: postingAccounts.offsetAccountId,
-            fxGainAccountId: realizedFxPostingAccounts.gainAccountId,
-            fxLossAccountId: realizedFxPostingAccounts.lossAccountId,
-            lineDescription: `Cari settlement ${sequence.settlementNo}`.slice(0, 255),
-            subledgerReferenceNo,
-            currencyCode: settlementCurrencyCode,
-          }),
-        ];
+        const postingLines = crossContextSettlement
+          ? buildCrossContextSettlementPostingLines({
+              direction,
+              totalAmountTxn: totalAllocatedTxn,
+              totalAmountBaseSettlement: totalAllocatedBaseSettlement,
+              totalAmountBaseHistorical: totalAllocatedBaseHistorical,
+              settlementFxRate: fxPolicy.settlementFxRate,
+              ownerControlAccountId: postingAccounts.controlAccountId,
+              collectorOffsetAccountId: postingAccounts.offsetAccountId,
+              selfBalancingAccounts,
+              fxGainAccountId: realizedFxPostingAccounts.gainAccountId,
+              fxLossAccountId: realizedFxPostingAccounts.lossAccountId,
+              lineDescription: `Cari settlement ${sequence.settlementNo}`.slice(0, 255),
+              subledgerReferenceNo,
+              currencyCode: settlementCurrencyCode,
+            })
+          : [
+              ...buildSettlementPostingLines({
+                direction,
+                operatingUnitId: settlementOperatingUnitId,
+                totalAmountTxn: totalAllocatedTxn,
+                totalAmountBaseSettlement: totalAllocatedBaseSettlement,
+                totalAmountBaseHistorical: totalAllocatedBaseHistorical,
+                settlementFxRate: fxPolicy.settlementFxRate,
+                controlAccountId: postingAccounts.controlAccountId,
+                offsetAccountId: postingAccounts.offsetAccountId,
+                fxGainAccountId: realizedFxPostingAccounts.gainAccountId,
+                fxLossAccountId: realizedFxPostingAccounts.lossAccountId,
+                lineDescription: `Cari settlement ${sequence.settlementNo}`.slice(0, 255),
+                subledgerReferenceNo,
+                currencyCode: settlementCurrencyCode,
+              }),
+            ];
         taxAugmentation = await buildCariTaxAugmentation({
           tenantId,
           legalEntityId,
@@ -4835,7 +4991,9 @@ export async function applyCariSettlement({
           postingLines.push(
             ...taxAugmentation.lines.map((line) => ({
               ...line,
-              operatingUnitId: settlementOperatingUnitId,
+              operatingUnitId: crossContextSettlement
+                ? ownerOperatingUnitId
+                : settlementOperatingUnitId,
             }))
           );
         }
@@ -4876,20 +5034,36 @@ export async function applyCariSettlement({
         const canUseUnifiedCashJournal =
           Boolean(effectiveCashTransactionId) && !cashTransactionWasPostedBeforeSettlement;
         if (canUseUnifiedCashJournal) {
-          const postingLines = buildUnifiedCashLinkedSettlementPostingLines({
-            direction,
-            totalAmountTxn: totalAllocatedTxn,
-            totalAmountBaseSettlement: totalAllocatedBaseSettlement,
-            totalAmountBaseHistorical: totalAllocatedBaseHistorical,
-            settlementFxRate: fxPolicy.settlementFxRate,
-            controlAccountId: postingAccounts.controlAccountId,
-            offsetAccountId: cashOffsetAccountId,
-            fxGainAccountId: realizedFxPostingAccounts.gainAccountId,
-            fxLossAccountId: realizedFxPostingAccounts.lossAccountId,
-            lineDescription: `Cari settlement ${sequence.settlementNo}`.slice(0, 255),
-            currencyCode: settlementCurrencyCode,
-            operatingUnitId: lockedCashTransaction?.operating_unit_id,
-          });
+          const postingLines = crossContextSettlement
+            ? buildCrossContextSettlementPostingLines({
+                direction,
+                totalAmountTxn: totalAllocatedTxn,
+                totalAmountBaseSettlement: totalAllocatedBaseSettlement,
+                totalAmountBaseHistorical: totalAllocatedBaseHistorical,
+                settlementFxRate: fxPolicy.settlementFxRate,
+                ownerControlAccountId: postingAccounts.controlAccountId,
+                collectorOffsetAccountId: cashOffsetAccountId,
+                selfBalancingAccounts,
+                fxGainAccountId: realizedFxPostingAccounts.gainAccountId,
+                fxLossAccountId: realizedFxPostingAccounts.lossAccountId,
+                lineDescription: `Cari settlement ${sequence.settlementNo}`.slice(0, 255),
+                subledgerReferenceNo: `${CARI_SETTLEMENT_REFERENCE_PREFIX}${sequence.settlementNo}`,
+                currencyCode: settlementCurrencyCode,
+              })
+            : buildUnifiedCashLinkedSettlementPostingLines({
+                direction,
+                totalAmountTxn: totalAllocatedTxn,
+                totalAmountBaseSettlement: totalAllocatedBaseSettlement,
+                totalAmountBaseHistorical: totalAllocatedBaseHistorical,
+                settlementFxRate: fxPolicy.settlementFxRate,
+                controlAccountId: postingAccounts.controlAccountId,
+                offsetAccountId: cashOffsetAccountId,
+                fxGainAccountId: realizedFxPostingAccounts.gainAccountId,
+                fxLossAccountId: realizedFxPostingAccounts.lossAccountId,
+                lineDescription: `Cari settlement ${sequence.settlementNo}`.slice(0, 255),
+                currencyCode: settlementCurrencyCode,
+                operatingUnitId: lockedCashTransaction?.operating_unit_id,
+              });
           const postedLinkedCashTransaction = await ensureSettlementLinkedCashTransactionPostedTx({
             tx,
             req,
@@ -4916,6 +5090,47 @@ export async function applyCariSettlement({
             postedLinkedCashTransaction?.posted_journal_entry_id ||
               lockedCashTransaction?.posted_journal_entry_id
           );
+        } else if (crossContextSettlement) {
+          const journalContext = await resolveBookAndOpenPeriodForDate({
+            tenantId,
+            legalEntityId,
+            targetDate: settlementDate,
+            runQuery: tx.query,
+          });
+          const subledgerReferenceNo = `${CARI_SETTLEMENT_REFERENCE_PREFIX}${sequence.settlementNo}`;
+          const collectorControlReclassAccountId =
+            parsePositiveInt(lockedCashTransaction?.counter_account_id) ||
+            postingAccounts.controlAccountId;
+          const postingLines = buildCrossContextSettlementPostingLines({
+            direction,
+            totalAmountTxn: totalAllocatedTxn,
+            totalAmountBaseSettlement: totalAllocatedBaseSettlement,
+            totalAmountBaseHistorical: totalAllocatedBaseHistorical,
+            settlementFxRate: fxPolicy.settlementFxRate,
+            ownerControlAccountId: postingAccounts.controlAccountId,
+            collectorOffsetAccountId: collectorControlReclassAccountId,
+            selfBalancingAccounts,
+            fxGainAccountId: realizedFxPostingAccounts.gainAccountId,
+            fxLossAccountId: realizedFxPostingAccounts.lossAccountId,
+            lineDescription: `Cari settlement split ${sequence.settlementNo}`.slice(0, 255),
+            subledgerReferenceNo,
+            currencyCode: settlementCurrencyCode,
+          });
+          journalResult = await insertPostedJournalWithLinesTx(tx, {
+            tenantId,
+            legalEntityId,
+            bookId: journalContext.bookId,
+            fiscalPeriodId: journalContext.fiscalPeriodId,
+            userId: payload.userId,
+            journalNo: buildCariJournalNo("CARI-SET-SPLIT", sequence.sequenceNo),
+            entryDate: settlementDate,
+            documentDate: settlementDate,
+            currencyCode: settlementCurrencyCode,
+            description: `Cari settlement split ${sequence.settlementNo}`.slice(0, 500),
+            referenceNo: toNullableString(sequence.settlementNo, 100),
+            lines: postingLines,
+          });
+          postedJournalEntryId = parsePositiveInt(journalResult?.journalEntryId);
         } else if (realizedFxPosting.hasFx) {
           const journalContext = await resolveBookAndOpenPeriodForDate({
             tenantId,
