@@ -91,7 +91,7 @@
 - [x] `PR-OU05` - Transfer receipt and receipt journal
 - [x] `PR-OU06` - Transfer reversal, cancel discipline, and bypass hardening
 - [x] `PR-OU07` - Transfer evidence
-- [ ] `PR-OU08` - Cross-context settlement owner/collector persistence and resolution
+- [x] `PR-OU08` - Cross-context settlement owner/collector persistence and resolution
 - [ ] `PR-OU09` - Cross-context settlement posting split
 - [ ] `PR-OU10` - Cross-context settlement reversal discipline
 - [ ] `PR-OU11` - Cross-context settlement reports, drilldowns, and UI feedback
@@ -672,51 +672,51 @@
 ### Checklist
 
 #### Migration
-- [ ] Create `backend/src/migrations/m128_cari_settlement_owner_collector_contexts.js`
-- [ ] Add `owner_operating_unit_id BIGINT UNSIGNED NULL` to `cari_settlement_batches`
-- [ ] Add `collector_operating_unit_id BIGINT UNSIGNED NULL` to `cari_settlement_batches`
-- [ ] Add `originating_cross_context_settlement_batch_id BIGINT UNSIGNED NULL` to `cari_settlement_batches`
-- [ ] Add indexes by tenant / legal entity / owner / collector / settlement date
-- [ ] Add index `(tenant_id, legal_entity_id, originating_cross_context_settlement_batch_id)`
-- [ ] Add FK to `operating_units.id` for owner OU
-- [ ] Add FK to `operating_units.id` for collector OU
-- [ ] Add scoped self-FK `(tenant_id, legal_entity_id, originating_cross_context_settlement_batch_id) -> cari_settlement_batches(tenant_id, legal_entity_id, id)` for originating cross-context settlement linkage
+- [x] Create `backend/src/migrations/m128_cari_settlement_owner_collector_contexts.js`
+- [x] Add `owner_operating_unit_id BIGINT UNSIGNED NULL` to `cari_settlement_batches`
+- [x] Add `collector_operating_unit_id BIGINT UNSIGNED NULL` to `cari_settlement_batches`
+- [x] Add `originating_cross_context_settlement_batch_id BIGINT UNSIGNED NULL` to `cari_settlement_batches`
+- [x] Add indexes by tenant / legal entity / owner / collector / settlement date
+- [x] Add index `(tenant_id, legal_entity_id, originating_cross_context_settlement_batch_id)`
+- [x] Add FK to `operating_units.id` for owner OU
+- [x] Add FK to `operating_units.id` for collector OU
+- [x] Add scoped self-FK `(tenant_id, legal_entity_id, originating_cross_context_settlement_batch_id) -> cari_settlement_batches(tenant_id, legal_entity_id, id)` for originating cross-context settlement linkage
 
 #### Migration registration
-- [ ] Register `m128_cari_settlement_owner_collector_contexts` in `backend/src/migrations/index.js`
+- [x] Register `m128_cari_settlement_owner_collector_contexts` in `backend/src/migrations/index.js`
 
 #### Owner / collector resolution
-- [ ] Add `resolveSettlementOwnerOperatingUnitId(...)`
-- [ ] Add `resolveSettlementCollectorOperatingUnitId(...)`
-- [ ] Owner priority: allocated documents / open items first
-- [ ] Hard-fail in v1 when allocated items imply more than one owner OU in the same settlement batch
-- [ ] Explicit payload OU may not override a derived owner OU when allocations already imply one
-- [ ] Owner fallback: central / null only when no unique owner context can be derived
-- [ ] Collector priority: linked cash transaction OU
-- [ ] Collector priority: linked bank statement line OU
-- [ ] Collector priority: linked bank account OU if needed
-- [ ] Collector fallback: owner context when not cross-context
+- [x] Add `resolveSettlementOwnerOperatingUnitId(...)`
+- [x] Add `resolveSettlementCollectorOperatingUnitId(...)`
+- [x] Owner priority: allocated documents / open items first
+- [x] Hard-fail in v1 when allocated items imply more than one owner OU in the same settlement batch
+- [x] Explicit payload OU may not override a derived owner OU when allocations already imply one
+- [x] Owner fallback: central / null only when no unique owner context can be derived
+- [x] Collector priority: linked cash transaction OU
+- [x] Collector priority: linked bank statement line OU
+- [x] Collector priority: linked bank account OU if needed
+- [x] Collector fallback: owner context when not cross-context
 
 #### Batch persistence
-- [ ] Persist `owner_operating_unit_id`
-- [ ] Persist `collector_operating_unit_id`
-- [ ] Keep `originating_cross_context_settlement_batch_id` null for ordinary settlement batches in this slice
-- [ ] Preserve owner / collector context on reversal paths too
+- [x] Persist `owner_operating_unit_id`
+- [x] Persist `collector_operating_unit_id`
+- [x] Keep `originating_cross_context_settlement_batch_id` null for ordinary settlement batches in this slice
+- [x] Preserve owner / collector context on reversal paths too
 
 #### Read models and frontend
-- [ ] Expose `ownerOperatingUnitId`
-- [ ] Expose `collectorOperatingUnitId`
-- [ ] Return a clear validation error when settlement allocations imply multiple owner OUs in one batch
+- [x] Expose `ownerOperatingUnitId`
+- [x] Expose `collectorOperatingUnitId`
+- [x] Return a clear validation error when settlement allocations imply multiple owner OUs in one batch
 
 #### Regression
-- [ ] Create `backend/scripts/test-cari-ou08-settlement-owner-collector-resolution.js`
-- [ ] Test mixed-owner settlement batch fails hard in v1
-- [ ] Test owner / collector context persists
+- [x] Create `backend/scripts/test-cari-ou08-settlement-owner-collector-resolution.js`
+- [x] Test mixed-owner settlement batch fails hard in v1
+- [x] Test owner / collector context persists
 
 ### Acceptance
-- [ ] Same-context settlements still behave correctly
-- [ ] Collector vs owner context is persisted and visible
-- [ ] Owner vs collector context is resolved deterministically
+- [x] Same-context settlements still behave correctly
+- [x] Collector vs owner context is persisted and visible
+- [x] Owner vs collector context is resolved deterministically
 
 ## PR-OU09 - Cross-context settlement posting split
 
@@ -969,8 +969,8 @@
 - [x] 13. Implement transfer cancel / reverse
 - [x] 14. Block generic cross-context movement bypass
 - [x] 15. Generalize evidence service and transfer evidence routes/UI
-- [ ] 16. Create `m128_cari_settlement_owner_collector_contexts.js`
-- [ ] 17. Implement settlement owner / collector resolvers and persistence
+- [x] 16. Create `m128_cari_settlement_owner_collector_contexts.js`
+- [x] 17. Implement settlement owner / collector resolvers and persistence
 - [ ] 18. Implement cross-context settlement posting split
 - [ ] 19. Implement strict reversal dependency and explicit downstream linkage
 - [ ] 20. Propagate settlement reports/drilldowns and operator feedback

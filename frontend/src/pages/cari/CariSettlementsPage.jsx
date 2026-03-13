@@ -3428,6 +3428,12 @@ export default function CariSettlementsPage() {
                   linkedCashResult?.id ||
                   "-"}
               </dd>
+              <dt className="font-semibold text-slate-600">ownerOperatingUnitId</dt>
+              <dd>{applyResult?.row?.ownerOperatingUnitId || "-"}</dd>
+              <dt className="font-semibold text-slate-600">collectorOperatingUnitId</dt>
+              <dd>{applyResult?.row?.collectorOperatingUnitId || "-"}</dd>
+              <dt className="font-semibold text-slate-600">originatingCrossContextSettlementBatchId</dt>
+              <dd>{applyResult?.row?.originatingCrossContextSettlementBatchId || "-"}</dd>
             </dl>
             <pre className="mt-3 overflow-x-auto rounded-md bg-slate-900 p-3 text-xs text-slate-100">
 {JSON.stringify(
@@ -3684,9 +3690,21 @@ export default function CariSettlementsPage() {
           </div>
         </form>
         {reverseResult ? (
-          <pre className="mt-3 overflow-x-auto rounded-md bg-slate-900 p-3 text-xs text-slate-100">
+          <>
+            <dl className="mt-3 grid grid-cols-2 gap-2 text-sm">
+              <dt className="font-semibold text-slate-600">reversal.ownerOperatingUnitId</dt>
+              <dd>{reverseResult?.row?.ownerOperatingUnitId || "-"}</dd>
+              <dt className="font-semibold text-slate-600">reversal.collectorOperatingUnitId</dt>
+              <dd>{reverseResult?.row?.collectorOperatingUnitId || "-"}</dd>
+              <dt className="font-semibold text-slate-600">original.ownerOperatingUnitId</dt>
+              <dd>{reverseResult?.original?.ownerOperatingUnitId || "-"}</dd>
+              <dt className="font-semibold text-slate-600">original.collectorOperatingUnitId</dt>
+              <dd>{reverseResult?.original?.collectorOperatingUnitId || "-"}</dd>
+            </dl>
+            <pre className="mt-3 overflow-x-auto rounded-md bg-slate-900 p-3 text-xs text-slate-100">
 {JSON.stringify(reverseResult, null, 2)}
-          </pre>
+            </pre>
+          </>
         ) : null}
       </section>
 

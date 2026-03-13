@@ -766,6 +766,8 @@ function mapSettlementBatchRow(row) {
     tenantId: parsePositiveInt(row.tenant_id),
     legalEntityId: parsePositiveInt(row.legal_entity_id),
     counterpartyId: parsePositiveInt(row.counterparty_id),
+    ownerOperatingUnitId: parsePositiveInt(row.owner_operating_unit_id),
+    collectorOperatingUnitId: parsePositiveInt(row.collector_operating_unit_id),
     direction: normalizeUpperText(row.direction) || null,
     cashTransactionId: parsePositiveInt(row.cash_transaction_id),
     sequenceNamespace: row.sequence_namespace,
@@ -789,6 +791,9 @@ function mapSettlementBatchRow(row) {
         : Number(row.settlement_fx_fallback_max_days),
     postedJournalEntryId: parsePositiveInt(row.posted_journal_entry_id),
     reversalOfSettlementBatchId: parsePositiveInt(row.reversal_of_settlement_batch_id),
+    originatingCrossContextSettlementBatchId: parsePositiveInt(
+      row.originating_cross_context_settlement_batch_id
+    ),
     bankStatementLineId: parsePositiveInt(row.bank_statement_line_id),
     bankTransactionRef: row.bank_transaction_ref || null,
     bankAttachIdempotencyKey: row.bank_attach_idempotency_key || null,
@@ -1084,6 +1089,113 @@ async function resolveSettlementOperatingUnitForCounterparty({
     throw badRequest("operatingUnitId is not assigned to counterparty");
   }
   return normalizedRequestedOperatingUnitId;
+}
+
+function collectDistinctOperatingUnitIds(rows) {
+  return Array.from(
+    new Set(
+      (Array.isArray(rows) ? rows : [])
+        .map((row) => parsePositiveInt(row?.operating_unit_id))
+        .filter(Boolean)
+    )
+  ).sort((left, right) => left - right);
+}
+
+function resolveSettlementOwnerOperatingUnitId({
+  openItems,
+  requestedOperatingUnitId = null,
+  fallbackOperatingUnitId = null,
+}) {
+  const distinctOwnerOperatingUnitIds = collectDistinctOperatingUnitIds(openItems);
+  if (distinctOwnerOperatingUnitIds.length > 1) {
+    throw badRequest(
+      `Settlement allocations imply multiple owner operating units (${distinctOwnerOperatingUnitIds.join(
+        ", "
+      )}); split the settlement by operatingUnitId before posting.`
+    );
+  }
+
+  const derivedOwnerOperatingUnitId = distinctOwnerOperatingUnitIds[0] || null;
+  const normalizedRequestedOperatingUnitId = parsePositiveInt(requestedOperatingUnitId) || null;
+  if (
+    derivedOwnerOperatingUnitId &&
+    normalizedRequestedOperatingUnitId &&
+    derivedOwnerOperatingUnitId !== normalizedRequestedOperatingUnitId
+  ) {
+    throw badRequest(
+      `operatingUnitId=${normalizedRequestedOperatingUnitId} cannot override owner operatingUnitId=${derivedOwnerOperatingUnitId} implied by the selected settlement allocations`
+    );
+  }
+
+  if (derivedOwnerOperatingUnitId) {
+    return derivedOwnerOperatingUnitId;
+  }
+  return parsePositiveInt(fallbackOperatingUnitId) || null;
+}
+
+async function fetchSettlementBankStatementOperatingUnitContext({
+  tenantId,
+  legalEntityId,
+  bankStatementLineId = null,
+  runQuery = query,
+}) {
+  const normalizedBankStatementLineId = parsePositiveInt(bankStatementLineId) || null;
+  if (!normalizedBankStatementLineId) {
+    return null;
+  }
+
+  const result = await runQuery(
+    `SELECT
+        l.id,
+        l.operating_unit_id AS bank_statement_operating_unit_id,
+        ba.operating_unit_id AS bank_account_operating_unit_id
+     FROM bank_statement_lines l
+     LEFT JOIN bank_accounts ba
+       ON ba.id = l.bank_account_id
+      AND ba.tenant_id = l.tenant_id
+      AND ba.legal_entity_id = l.legal_entity_id
+     WHERE l.tenant_id = ?
+       AND l.legal_entity_id = ?
+       AND l.id = ?
+     LIMIT 1`,
+    [tenantId, legalEntityId, normalizedBankStatementLineId]
+  );
+  return result.rows?.[0] || null;
+}
+
+async function resolveSettlementCollectorOperatingUnitId({
+  tenantId,
+  legalEntityId,
+  ownerOperatingUnitId = null,
+  cashTransactionRow = null,
+  bankStatementLineId = null,
+  runQuery = query,
+}) {
+  const cashTransactionOperatingUnitId =
+    parsePositiveInt(cashTransactionRow?.operating_unit_id) || null;
+  if (cashTransactionOperatingUnitId) {
+    return cashTransactionOperatingUnitId;
+  }
+
+  const bankStatementContext = await fetchSettlementBankStatementOperatingUnitContext({
+    tenantId,
+    legalEntityId,
+    bankStatementLineId,
+    runQuery,
+  });
+  const bankStatementOperatingUnitId =
+    parsePositiveInt(bankStatementContext?.bank_statement_operating_unit_id) || null;
+  if (bankStatementOperatingUnitId) {
+    return bankStatementOperatingUnitId;
+  }
+
+  const bankAccountOperatingUnitId =
+    parsePositiveInt(bankStatementContext?.bank_account_operating_unit_id) || null;
+  if (bankAccountOperatingUnitId) {
+    return bankAccountOperatingUnitId;
+  }
+
+  return parsePositiveInt(ownerOperatingUnitId) || null;
 }
 
 async function resolveBookAndOpenPeriodForDate({
@@ -2088,6 +2200,8 @@ async function fetchSettlementBatchRow({
        tenant_id,
        legal_entity_id,
        counterparty_id,
+       owner_operating_unit_id,
+       collector_operating_unit_id,
        cash_transaction_id,
        sequence_namespace,
        fiscal_year,
@@ -2107,6 +2221,7 @@ async function fetchSettlementBatchRow({
        settlement_fx_fallback_max_days,
        posted_journal_entry_id,
        reversal_of_settlement_batch_id,
+       originating_cross_context_settlement_batch_id,
        bank_statement_line_id,
        bank_transaction_ref,
        bank_attach_idempotency_key,
@@ -2883,6 +2998,8 @@ async function fetchSettlementBatchRowByBankAttachIdempotency({
        tenant_id,
        legal_entity_id,
        counterparty_id,
+       owner_operating_unit_id,
+       collector_operating_unit_id,
        cash_transaction_id,
        sequence_namespace,
        fiscal_year,
@@ -2902,6 +3019,7 @@ async function fetchSettlementBatchRowByBankAttachIdempotency({
        settlement_fx_fallback_max_days,
        posted_journal_entry_id,
        reversal_of_settlement_batch_id,
+       originating_cross_context_settlement_batch_id,
        bank_statement_line_id,
        bank_transaction_ref,
        bank_attach_idempotency_key,
@@ -4073,6 +4191,28 @@ export async function applyCariSettlement({
         };
       }
 
+      const requestedOpenItemIds = Array.isArray(payload.allocations)
+        ? payload.allocations
+            .map((entry) => parsePositiveInt(entry?.openItemId))
+            .filter(Boolean)
+        : [];
+      const ownerCandidateOpenItems =
+        requestedOpenItemIds.length > 0
+          ? await fetchOpenItemsForApply({
+              tenantId,
+              legalEntityId,
+              counterpartyId,
+              openItemIds: requestedOpenItemIds,
+              runQuery: tx.query,
+            })
+          : null;
+      if (
+        requestedOpenItemIds.length > 0 &&
+        ownerCandidateOpenItems.length !== requestedOpenItemIds.length
+      ) {
+        throw badRequest("Some allocations target open items that are unavailable");
+      }
+
       const settlementOperatingUnitId =
         await resolveSettlementOperatingUnitForCounterparty({
           tenantId,
@@ -4085,25 +4225,34 @@ export async function applyCariSettlement({
         assertScopeAccess(req, "operating_unit", settlementOperatingUnitId, "operatingUnitId");
       }
 
-      const requestedOpenItemIds = Array.isArray(payload.allocations)
-        ? payload.allocations
-            .map((entry) => parsePositiveInt(entry?.openItemId))
-            .filter(Boolean)
-        : [];
-      const lockedOpenItems = await fetchOpenItemsForApply({
-        tenantId,
-        legalEntityId,
-        counterpartyId,
-        operatingUnitId: settlementOperatingUnitId,
-        openItemIds: requestedOpenItemIds.length > 0 ? requestedOpenItemIds : null,
-        runQuery: tx.query,
-      });
+      const lockedOpenItems =
+        requestedOpenItemIds.length > 0
+          ? ownerCandidateOpenItems.filter((row) => {
+              if (!settlementOperatingUnitId) {
+                return true;
+              }
+              return parsePositiveInt(row.operating_unit_id) === settlementOperatingUnitId;
+            })
+          : await fetchOpenItemsForApply({
+              tenantId,
+              legalEntityId,
+              counterpartyId,
+              operatingUnitId: settlementOperatingUnitId,
+              openItemIds: requestedOpenItemIds.length > 0 ? requestedOpenItemIds : null,
+              runQuery: tx.query,
+            });
       if (requestedOpenItemIds.length > 0 && lockedOpenItems.length !== requestedOpenItemIds.length) {
         throw badRequest("Some allocations target open items that are unavailable");
       }
       if (lockedOpenItems.length === 0) {
         throw badRequest("No open items are available for settlement");
       }
+
+      const ownerOperatingUnitId = resolveSettlementOwnerOperatingUnitId({
+        openItems: requestedOpenItemIds.length > 0 ? ownerCandidateOpenItems : lockedOpenItems,
+        requestedOperatingUnitId,
+        fallbackOperatingUnitId: null,
+      });
 
       const directions = new Set(
         lockedOpenItems
@@ -4293,6 +4442,15 @@ export async function applyCariSettlement({
           settlementFxRateOverrideFromLinkedCash = derivedCashFxRate;
         }
       }
+
+      const collectorOperatingUnitId = await resolveSettlementCollectorOperatingUnitId({
+        tenantId,
+        legalEntityId,
+        ownerOperatingUnitId,
+        cashTransactionRow: lockedCashTransaction,
+        bankStatementLineId,
+        runQuery: tx.query,
+      });
 
       const fxPolicy = await resolveSettlementFxRate({
         tenantId,
@@ -4804,6 +4962,8 @@ export async function applyCariSettlement({
             tenant_id,
             legal_entity_id,
             counterparty_id,
+            owner_operating_unit_id,
+            collector_operating_unit_id,
             cash_transaction_id,
             sequence_namespace,
             fiscal_year,
@@ -4823,6 +4983,7 @@ export async function applyCariSettlement({
             settlement_fx_fallback_max_days,
             posted_journal_entry_id,
             reversal_of_settlement_batch_id,
+            originating_cross_context_settlement_batch_id,
             bank_statement_line_id,
             bank_transaction_ref,
             bank_attach_idempotency_key,
@@ -4834,11 +4995,13 @@ export async function applyCariSettlement({
             integration_event_uid,
             posted_at
          )
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
         [
           tenantId,
           legalEntityId,
           counterpartyId,
+          ownerOperatingUnitId,
+          collectorOperatingUnitId,
           effectiveCashTransactionId,
           sequence.sequenceNamespace,
           sequence.fiscalYear,
@@ -4859,6 +5022,7 @@ export async function applyCariSettlement({
           postedJournalEntryId,
           bankStatementLineId,
           bankTransactionRef,
+          null,
           bankApplyIdempotencyKey,
           integrationMetadata.sourceModule,
           integrationMetadata.sourceEntityType,
@@ -5216,6 +5380,8 @@ export async function applyCariSettlement({
           bankStatementLineId,
           bankTransactionRef,
           counterpartyId,
+          ownerOperatingUnitId,
+          collectorOperatingUnitId,
           direction,
           settlementDate,
           incomingAmountTxn: effectiveIncomingAmountTxn,
@@ -6278,6 +6444,8 @@ export async function reverseCariSettlementById({
             tenant_id,
             legal_entity_id,
             counterparty_id,
+            owner_operating_unit_id,
+            collector_operating_unit_id,
             sequence_namespace,
             fiscal_year,
             sequence_no,
@@ -6296,6 +6464,7 @@ export async function reverseCariSettlementById({
             settlement_fx_fallback_max_days,
             posted_journal_entry_id,
             reversal_of_settlement_batch_id,
+            originating_cross_context_settlement_batch_id,
             bank_statement_line_id,
             bank_transaction_ref,
             bank_attach_idempotency_key,
@@ -6303,11 +6472,13 @@ export async function reverseCariSettlementById({
             posted_at,
             reversed_at
          )
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
         [
           tenantId,
           lockedLegalEntityId,
           parsePositiveInt(original.counterparty_id),
+          parsePositiveInt(original.owner_operating_unit_id) || null,
+          parsePositiveInt(original.collector_operating_unit_id) || null,
           reversalSequence.sequenceNamespace,
           reversalSequence.fiscalYear,
           reversalSequence.sequenceNo,
@@ -6328,6 +6499,8 @@ export async function reverseCariSettlementById({
             : original.settlement_fx_fallback_max_days,
           parsePositiveInt(reversalJournalResult?.journalEntryId) || null,
           settlementBatchId,
+          parsePositiveInt(original.originating_cross_context_settlement_batch_id) || null,
+          null,
         ]
       );
       const reversalSettlementBatchId = parsePositiveInt(reversalInsert.rows?.insertId);
@@ -6375,6 +6548,8 @@ export async function reverseCariSettlementById({
           reason,
           originalSettlementBatchId: settlementBatchId,
           reversalSettlementBatchId,
+          ownerOperatingUnitId: parsePositiveInt(original.owner_operating_unit_id) || null,
+          collectorOperatingUnitId: parsePositiveInt(original.collector_operating_unit_id) || null,
           originalPostedJournalEntryId: originalJournalEntryId,
           reversalPostedJournalEntryId,
           followUpRisks: FOLLOW_UP_RISKS,
