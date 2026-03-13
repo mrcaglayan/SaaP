@@ -122,7 +122,9 @@ async function loadSmokeContext() {
 async function main() {
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
   const [
-    migrationSource,
+    migration124Source,
+    migration127Source,
+    migrationIndexSource,
     appSource,
     sidebarSource,
     messagesSource,
@@ -132,6 +134,11 @@ async function main() {
       path.resolve(root, "src/migrations/m124_inventory_transfer_foundation.js"),
       "utf8"
     ),
+    readFile(
+      path.resolve(root, "src/migrations/m127_inventory_transfer_source_type_backfill.js"),
+      "utf8"
+    ),
+    readFile(path.resolve(root, "src/migrations/index.js"), "utf8"),
     readFile(path.resolve(root, "../frontend/src/App.jsx"), "utf8"),
     readFile(path.resolve(root, "../frontend/src/layouts/sidebarConfig.js"), "utf8"),
     readFile(path.resolve(root, "../frontend/src/i18n/messages.js"), "utf8"),
@@ -139,13 +146,23 @@ async function main() {
   ]);
 
   assert(
-    migrationSource.includes("inventory_transfers") &&
-      migrationSource.includes("inventory_transfer_lines"),
+    migration124Source.includes("inventory_transfers") &&
+      migration124Source.includes("inventory_transfer_lines"),
     "m124 migration should create transfer header and lines"
   );
   assert(
-    migrationSource.includes("INVENTORY_TRANSFER"),
+    migration124Source.includes("INVENTORY_TRANSFER"),
     "m124 migration should extend inventory movement source_type with INVENTORY_TRANSFER"
+  );
+  assert(
+    migration124Source.includes("SELECT column_type AS column_type") &&
+      migration127Source.includes("SELECT column_type AS column_type"),
+    "Inventory transfer enum migrations should alias information_schema column_type reads"
+  );
+  assert(
+    migrationIndexSource.includes("m129_inventory_transfer_source_type_enum_repair") &&
+      migrationIndexSource.includes("migration129InventoryTransferSourceTypeEnumRepair"),
+    "migrations index should register m129 inventory transfer enum repair"
   );
   assert(
     appSource.includes('appPath: "/app/stok-transferleri"') &&

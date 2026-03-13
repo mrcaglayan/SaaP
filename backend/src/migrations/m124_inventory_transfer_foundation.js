@@ -19,7 +19,7 @@ async function safeExecute(connection, sql, params = []) {
 
 async function readColumnType(connection, tableName, columnName) {
   const [rows] = await connection.execute(
-    `SELECT column_type
+    `SELECT column_type AS column_type
        FROM information_schema.columns
       WHERE table_schema = DATABASE()
         AND table_name = ?

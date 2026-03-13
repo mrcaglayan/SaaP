@@ -6,6 +6,7 @@ const REQUIRED_MIGRATION_KEYS = Object.freeze([
   "m124_inventory_transfer_foundation",
   "m126_item_cards_inventory_transit_account",
   "m127_inventory_transfer_source_type_backfill",
+  "m129_inventory_transfer_source_type_enum_repair",
 ]);
 
 function parseArgs(argv) {

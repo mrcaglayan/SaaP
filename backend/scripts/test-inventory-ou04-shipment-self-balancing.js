@@ -117,7 +117,8 @@ async function assertInventoryTransferSourceTypeSchema() {
       WHERE migration_key IN (
         'm118_inventory_foundation',
         'm124_inventory_transfer_foundation',
-        'm127_inventory_transfer_source_type_backfill'
+        'm127_inventory_transfer_source_type_backfill',
+        'm129_inventory_transfer_source_type_enum_repair'
       )
       ORDER BY migration_key`
   );
@@ -128,7 +129,7 @@ async function assertInventoryTransferSourceTypeSchema() {
     : [];
 
   const columnTypeResult = await query(
-    `SELECT column_type
+    `SELECT column_type AS column_type
        FROM information_schema.columns
       WHERE table_schema = DATABASE()
         AND table_name = 'inventory_movements'
@@ -155,7 +156,7 @@ async function assertInventoryTransferSourceTypeSchema() {
     `Schema preflight failed: inventory_movements.source_type does not include INVENTORY_TRANSFER. ` +
       `Current column_type=${columnType}. Applied enum migration keys: ` +
       `${appliedMigrationKeys.length ? appliedMigrationKeys.join(", ") : "none"}. ` +
-      `Run \`npm run audit:inventory:transfer-schema\`, then verify m124/m127 updated inventory_movements.source_type.`
+      `Run \`npm run audit:inventory:transfer-schema\`, then verify m124/m127/m129 updated inventory_movements.source_type.`
   );
 }
 

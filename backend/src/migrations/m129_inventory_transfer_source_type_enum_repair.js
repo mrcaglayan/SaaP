@@ -29,10 +29,10 @@ async function ensureInventoryMovementSourceTypeEnum(connection) {
   );
 }
 
-const migration127InventoryTransferSourceTypeBackfill = {
-  key: "m127_inventory_transfer_source_type_backfill",
+const migration129InventoryTransferSourceTypeEnumRepair = {
+  key: "m129_inventory_transfer_source_type_enum_repair",
   description:
-    "Backfill inventory movement source_type enum coverage for INVENTORY_TRANSFER on already-applied inventory transfer installs",
+    "Repair inventory movement source_type enum expansion for inventory transfer installs affected by metadata alias mismatch",
   async up(connection) {
     await ensureInventoryMovementSourceTypeEnum(connection);
   },
@@ -42,4 +42,4 @@ const migration127InventoryTransferSourceTypeBackfill = {
   },
 };
 
-export default migration127InventoryTransferSourceTypeBackfill;
+export default migration129InventoryTransferSourceTypeEnumRepair;

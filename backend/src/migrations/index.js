@@ -116,6 +116,7 @@ import migration125OperatingUnitReverseInternalCurrentAccounts from "./m125_oper
 import migration126ItemCardsInventoryTransitAccount from "./m126_item_cards_inventory_transit_account.js";
 import migration127InventoryTransferSourceTypeBackfill from "./m127_inventory_transfer_source_type_backfill.js";
 import migration128CariSettlementOwnerCollectorContexts from "./m128_cari_settlement_owner_collector_contexts.js";
+import migration129InventoryTransferSourceTypeEnumRepair from "./m129_inventory_transfer_source_type_enum_repair.js";
 
 const migrations = [
   migration001GlobalMultiEntity,
@@ -236,6 +237,7 @@ const migrations = [
   migration126ItemCardsInventoryTransitAccount,
   migration127InventoryTransferSourceTypeBackfill,
   migration128CariSettlementOwnerCollectorContexts,
+  migration129InventoryTransferSourceTypeEnumRepair,
 ];
 
 export default migrations;
