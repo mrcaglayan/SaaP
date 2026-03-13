@@ -102,6 +102,63 @@ async function loadSmokeContext() {
   };
 }
 
+async function assertInventoryTransferSourceTypeSchema() {
+  const tableResult = await query(
+    `SELECT COUNT(*) AS table_count
+       FROM information_schema.tables
+      WHERE table_schema = DATABASE()
+        AND table_name = 'inventory_movements'`
+  );
+  const inventoryMovementsTableExists = Number(tableResult.rows?.[0]?.table_count || 0) > 0;
+
+  const migrationResult = await query(
+    `SELECT migration_key
+       FROM schema_migrations
+      WHERE migration_key IN (
+        'm118_inventory_foundation',
+        'm124_inventory_transfer_foundation',
+        'm127_inventory_transfer_source_type_backfill'
+      )
+      ORDER BY migration_key`
+  );
+  const appliedMigrationKeys = Array.isArray(migrationResult.rows)
+    ? migrationResult.rows
+        .map((row) => String(row.migration_key || "").trim())
+        .filter(Boolean)
+    : [];
+
+  const columnTypeResult = await query(
+    `SELECT column_type
+       FROM information_schema.columns
+      WHERE table_schema = DATABASE()
+        AND table_name = 'inventory_movements'
+        AND column_name = 'source_type'
+      LIMIT 1`
+  );
+  const columnType = String(columnTypeResult.rows?.[0]?.column_type || "");
+  if (!columnType) {
+    throw new Error(
+      `Schema preflight failed: inventory_movements.source_type metadata was not found. ` +
+        `inventory_movements table exists=${inventoryMovementsTableExists}. ` +
+        `Applied migration keys: ${appliedMigrationKeys.length ? appliedMigrationKeys.join(", ") : "none"}. ` +
+        `This usually means inventory migrations were not applied, or schema_migrations is out of sync with the actual schema. ` +
+        `Run \`npm run audit:inventory:transfer-schema\`, then apply latest migrations or rebuild the test database.`
+    );
+  }
+
+  const enumValues = Array.from(columnType.matchAll(/'([^']+)'/g)).map((match) => match[1]);
+  if (enumValues.includes("INVENTORY_TRANSFER")) {
+    return;
+  }
+
+  throw new Error(
+    `Schema preflight failed: inventory_movements.source_type does not include INVENTORY_TRANSFER. ` +
+      `Current column_type=${columnType}. Applied enum migration keys: ` +
+      `${appliedMigrationKeys.length ? appliedMigrationKeys.join(", ") : "none"}. ` +
+      `Run \`npm run audit:inventory:transfer-schema\`, then verify m124/m127 updated inventory_movements.source_type.`
+  );
+}
+
 async function createLeafAccount({
   coaId,
   code,
@@ -410,6 +467,8 @@ async function main() {
       inventoryApiSource.includes("/transfers/${transferId}/ship"),
     "Frontend should expose transit-account maintenance and approve/ship transfer actions"
   );
+
+  await assertInventoryTransferSourceTypeSchema();
 
   const context = await loadSmokeContext();
   const req = buildReq(context.tenantId);
