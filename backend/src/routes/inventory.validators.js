@@ -2,6 +2,7 @@ import { badRequest, parsePositiveInt, resolveTenantId } from "./_utils.js";
 import { requireUserId } from "./cash.validators.common.js";
 
 const WAREHOUSE_STATUS_VALUES = ["ACTIVE", "INACTIVE"];
+const WAREHOUSE_OWNERSHIP_SCOPE_VALUES = ["CENTRAL", "OPERATING_UNIT"];
 const STOCK_LINK_STATUS_VALUES = ["PENDING", "LINKED", "VOID"];
 const MOVEMENT_TYPE_VALUES = ["RECEIPT", "ISSUE", "ADJUSTMENT_IN", "ADJUSTMENT_OUT"];
 const VALUATION_STATUS_VALUES = ["NOT_REQUIRED", "PENDING", "VALUED"];
@@ -90,6 +91,13 @@ export function parseInventoryWarehouseListFilters(req) {
   return {
     tenantId: requireTenantId(req),
     legalEntityId: normalizeOptionalPositiveInt(req.query?.legalEntityId, "legalEntityId"),
+    ownershipScope:
+      normalizeEnum(
+        req.query?.ownershipScope,
+        "ownershipScope",
+        WAREHOUSE_OWNERSHIP_SCOPE_VALUES
+      ) || null,
+    operatingUnitId: normalizeOptionalPositiveInt(req.query?.operatingUnitId, "operatingUnitId"),
     status: normalizeEnum(req.query?.status, "status", WAREHOUSE_STATUS_VALUES) || null,
     q: normalizeShortText(req.query?.q, "q", 120) || "",
     limit: parseLimit(req.query?.limit, 200),
@@ -98,10 +106,29 @@ export function parseInventoryWarehouseListFilters(req) {
 }
 
 export function parseInventoryWarehouseCreateInput(req) {
+  const ownershipScope =
+    normalizeEnum(
+      req.body?.ownershipScope ?? "CENTRAL",
+      "ownershipScope",
+      WAREHOUSE_OWNERSHIP_SCOPE_VALUES,
+      { required: true }
+    ) || "CENTRAL";
+  const operatingUnitId = normalizeOptionalPositiveInt(
+    req.body?.operatingUnitId,
+    "operatingUnitId"
+  );
+  if (ownershipScope === "CENTRAL" && operatingUnitId) {
+    throw badRequest("operatingUnitId must be empty when ownershipScope=CENTRAL");
+  }
+  if (ownershipScope === "OPERATING_UNIT" && !operatingUnitId) {
+    throw badRequest("operatingUnitId is required when ownershipScope=OPERATING_UNIT");
+  }
   return {
     tenantId: requireTenantId(req),
     userId: requireUserId(req),
     legalEntityId: normalizeOptionalPositiveInt(req.body?.legalEntityId, "legalEntityId"),
+    ownershipScope,
+    operatingUnitId,
     code: normalizeShortText(req.body?.code, "code", 80, { required: true }).toUpperCase(),
     name: normalizeShortText(req.body?.name, "name", 200, { required: true }),
     status:

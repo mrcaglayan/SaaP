@@ -3,6 +3,7 @@ import { badRequest, parsePositiveInt } from "../routes/_utils.js";
 import {
   assertAccountBelongsToTenant,
   assertLegalEntityBelongsToTenant,
+  assertOperatingUnitBelongsToTenant,
   assertCurrencyExists,
 } from "../tenantGuards.js";
 import { getItemCardByIdForTenant } from "./item.card.service.js";
@@ -10,6 +11,7 @@ import { upsertJournalSourceLinkTx } from "./journal.source-link.service.js";
 
 const AMOUNT_SCALE = 6;
 const BALANCE_EPSILON = 0.000001;
+const WAREHOUSE_OWNERSHIP_SCOPE_VALUES = new Set(["CENTRAL", "OPERATING_UNIT"]);
 
 function toDecimalNumber(value) {
   if (value === null || value === undefined) {
@@ -88,6 +90,10 @@ function mapWarehouseRow(row) {
     tenantId: parsePositiveInt(row.tenant_id),
     legalEntityId: parsePositiveInt(row.legal_entity_id),
     legalEntityCode: row.legal_entity_code || null,
+    ownershipScope: row.ownership_scope || "CENTRAL",
+    operatingUnitId: parsePositiveInt(row.operating_unit_id),
+    operatingUnitCode: row.operating_unit_code || null,
+    operatingUnitName: row.operating_unit_name || null,
     code: row.code || null,
     name: row.name || null,
     status: row.status || null,
@@ -253,11 +259,18 @@ async function fetchWarehouseById({
   runQuery = query,
 }) {
   const result = await runQuery(
-    `SELECT w.*, le.code AS legal_entity_code
+    `SELECT
+        w.*,
+        le.code AS legal_entity_code,
+        ou.code AS operating_unit_code,
+        ou.name AS operating_unit_name
        FROM inventory_warehouses w
        JOIN legal_entities le
          ON le.tenant_id = w.tenant_id
         AND le.id = w.legal_entity_id
+       LEFT JOIN operating_units ou
+         ON ou.tenant_id = w.tenant_id
+        AND ou.id = w.operating_unit_id
       WHERE w.tenant_id = ?
         AND w.legal_entity_id = ?
         AND w.id = ?
@@ -1472,6 +1485,27 @@ export async function listInventoryWarehouses({
     whereSql += " AND w.legal_entity_id = ?";
     params.push(legalEntityId);
   }
+  const ownershipScope = normalizeUpperText(filters?.ownershipScope, 30);
+  if (ownershipScope) {
+    whereSql += " AND w.ownership_scope = ?";
+    params.push(ownershipScope);
+  }
+  const operatingUnitId = parsePositiveInt(filters?.operatingUnitId);
+  if (operatingUnitId) {
+    const operatingUnit = await assertOperatingUnitBelongsToTenant(
+      tenantId,
+      operatingUnitId,
+      "operatingUnitId"
+    );
+    if (
+      legalEntityId &&
+      parsePositiveInt(operatingUnit?.legal_entity_id) !== legalEntityId
+    ) {
+      throw badRequest("operatingUnitId must belong to legalEntityId");
+    }
+    whereSql += " AND w.operating_unit_id = ?";
+    params.push(operatingUnitId);
+  }
   if (filters?.status) {
     whereSql += " AND w.status = ?";
     params.push(filters.status);
@@ -1484,13 +1518,18 @@ export async function listInventoryWarehouses({
   const result = await runQuery(
     `SELECT
         w.*,
-        le.code AS legal_entity_code
+        le.code AS legal_entity_code,
+        ou.code AS operating_unit_code,
+        ou.name AS operating_unit_name
        FROM inventory_warehouses w
        JOIN legal_entities le
          ON le.tenant_id = w.tenant_id
         AND le.id = w.legal_entity_id
+       LEFT JOIN operating_units ou
+         ON ou.tenant_id = w.tenant_id
+        AND ou.id = w.operating_unit_id
        ${whereSql}
-      ORDER BY le.code ASC, w.code ASC, w.id ASC
+      ORDER BY le.code ASC, w.ownership_scope ASC, w.code ASC, w.id ASC
       LIMIT ${limit}
       OFFSET ${offset}`,
     params
@@ -1512,20 +1551,45 @@ export async function createInventoryWarehouse({
   await assertLegalEntityBelongsToTenant(tenantId, legalEntityId, "legalEntityId", {
     runQuery,
   });
+  const ownershipScope = normalizeUpperText(payload?.ownershipScope, 30) || "CENTRAL";
+  if (!WAREHOUSE_OWNERSHIP_SCOPE_VALUES.has(ownershipScope)) {
+    throw badRequest("ownershipScope is invalid");
+  }
+  const operatingUnitId = parsePositiveInt(payload?.operatingUnitId);
+  if (ownershipScope === "CENTRAL" && operatingUnitId) {
+    throw badRequest("operatingUnitId must be empty when ownershipScope=CENTRAL");
+  }
+  if (ownershipScope === "OPERATING_UNIT" && !operatingUnitId) {
+    throw badRequest("operatingUnitId is required when ownershipScope=OPERATING_UNIT");
+  }
+  if (operatingUnitId) {
+    const operatingUnit = await assertOperatingUnitBelongsToTenant(
+      tenantId,
+      operatingUnitId,
+      "operatingUnitId"
+    );
+    if (parsePositiveInt(operatingUnit?.legal_entity_id) !== legalEntityId) {
+      throw badRequest("operatingUnitId must belong to legalEntityId");
+    }
+  }
 
   try {
     const insertResult = await runQuery(
       `INSERT INTO inventory_warehouses (
           tenant_id,
           legal_entity_id,
+          ownership_scope,
+          operating_unit_id,
           code,
           name,
           status,
           notes
-       ) VALUES (?, ?, ?, ?, ?, ?)`,
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         tenantId,
         legalEntityId,
+        ownershipScope,
+        operatingUnitId || null,
         normalizeText(payload.code, 80, { required: true }).toUpperCase(),
         normalizeText(payload.name, 200, { required: true }),
         payload.status || "ACTIVE",

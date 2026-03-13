@@ -1,0 +1,987 @@
+# 31 - OU SELF-BALANCING, OU-AWARE INVENTORY TRANSFERS, AND CROSS-CONTEXT SETTLEMENTS
+
+## Execution tracking
+- This file is the execution tracker that operationalizes the locked decisions in `30-OU-SELF-BALANCING-CROSS-CONTEXT-COLLECTIONS-DISCUSSION-NOTE.md`.
+- If `30` changes later, update this tracker before implementation continues.
+
+## Scope
+- OU-aware warehouse ownership
+- explicit inventory transfer workflow
+- shipment-time internal balancing for cross-context inventory movement
+- transfer receipt / reversal / evidence / bypass hardening
+- cross-context CARI settlement self-balancing
+
+## Locked decisions inherited from 30
+- [x] OU self-balancing is required for cross-context, financially meaningful events.
+- [x] Bank and cash use the same immediate balancing rule in cross-context collection cases.
+- [x] Cross-context collection uses explicit separate GL accounts per OU pair.
+- [x] Non-self-balanced cross-context collection is hard-blocked.
+- [x] Cross-context collection reversal uses strict dependency order:
+  - reverse downstream internal settlement first
+  - then reverse cross-context collection
+  - then reverse upstream source event if applicable
+- [x] Cross-context stock movement must use explicit transfer workflow.
+- [x] Cross-context transfer / collection balancing is internal relocation / internal claim-settlement accounting:
+  - not revenue
+  - not expense
+  - not `COGS`
+- [x] Evidence and reversals must remain additive and explicit.
+- [x] Existing OU internal-current-account model is the base pattern to extend, not replace.
+
+## V1 execution assumptions for this tracker
+- [x] Same legal entity only for v1.
+- [x] `NULL operating_unit_id` continues to mean central context.
+- [x] Inventory transfer workflow includes approval in v1 because `30` examples assume request -> approval -> shipment -> receipt.
+- [x] Full shipment only and full receipt only are acceptable v1 restrictions.
+- [x] This transfer family is for cross-context movement only, not every same-context warehouse move.
+- [x] Cross-context collection will be implemented in phase 1 through settlement owner / collector split and explicit posting logic.
+- [x] A first-class cross-context collection business document remains a later follow-up and is not part of this tracker.
+
+## Important repo guardrails
+- [x] Do not attach one shared shipment or receipt journal to multiple `inventory_movements` rows because current movement journal link columns are unique.
+- [x] Keep shared transfer journals on `inventory_transfers` header:
+  - `shipment_journal_entry_id`
+  - `receipt_journal_entry_id`
+  - `reversal_journal_entry_id`
+- [x] Keep transfer movement lineage through:
+  - `source_type = 'INVENTORY_TRANSFER'`
+  - `source_document_type = 'INVENTORY_TRANSFER'`
+  - `source_document_id`
+  - `source_document_line_id`
+- [x] Current repo setup only has one central `<->` OU account direction on `operating_units`:
+  - `central_due_from_account_id`
+  - `ou_due_to_central_account_id`
+- [x] This tracker must add the reverse direction as well so the locked pair-account model in `30` is actually implementable:
+  - `central_due_to_account_id`
+  - `ou_due_from_central_account_id`
+- [x] Existing central `<->` OU flows that only require `central_due_from_account_id` and `ou_due_to_central_account_id` must remain backward-compatible during rollout.
+- [x] Cross-context bypass must be blocked in all generic inventory movement entry paths:
+  - not only stock-link materialization
+  - not only one specific UI path
+
+## Locked transfer lifecycle contract
+- [x] Allowed transitions:
+  - `INITIATED -> APPROVED`
+  - `APPROVED -> IN_TRANSIT`
+  - `IN_TRANSIT -> RECEIVED`
+  - `INITIATED -> CANCELED`
+  - `APPROVED -> CANCELED`
+  - `IN_TRANSIT -> REVERSED` only through shipment reversal path
+  - `RECEIVED -> REVERSED` only through receipt reversal first, then shipment reversal
+- [x] Disallowed transitions:
+  - no reopening from `CANCELED`
+  - no direct `INITIATED -> IN_TRANSIT`
+  - no direct `APPROVED -> RECEIVED`
+  - no direct `INITIATED -> RECEIVED`
+  - no direct `RECEIVED -> CANCELED`
+
+## Out of scope for this tracker
+- No intercompany / cross-legal-entity stock transfer.
+- No partial shipment / partial receipt in v1.
+- No same-context warehouse-to-warehouse movement redesign in this tracker.
+- No dedicated first-class cross-context collection document yet.
+- No weighted-average / standard-cost redesign.
+- No lot / serial / bin redesign.
+
+## Master tracker
+- [x] `PR-OU01` - OU-aware warehouse ownership foundation
+- [ ] `PR-OU02` - Inventory transfer document foundation with approval
+- [ ] `PR-OU03` - Reverse-direction OU internal-current-account foundation and balancing helper
+- [ ] `PR-OU04` - Shipment-time transfer accounting and FIFO shipment valuation
+- [ ] `PR-OU05` - Transfer receipt and receipt journal
+- [ ] `PR-OU06` - Transfer reversal, cancel discipline, and bypass hardening
+- [ ] `PR-OU07` - Transfer evidence
+- [ ] `PR-OU08` - Cross-context settlement owner/collector persistence and resolution
+- [ ] `PR-OU09` - Cross-context settlement posting split
+- [ ] `PR-OU10` - Cross-context settlement reversal discipline
+- [ ] `PR-OU11` - Cross-context settlement reports, drilldowns, and UI feedback
+- [ ] `PR-OU12` - Frontend finishing for transfers, inventory, and settlement visibility
+- [ ] `PR-OU13` - OpenAPI, release gates, and rollout docs
+
+## PR-OU01 - OU-aware warehouse ownership foundation
+
+### Goal
+- Make `inventory_warehouses` explicitly central or OU-owned, matching the ownership model already used by cash registers.
+
+### Files
+- `backend/src/migrations/m123_inventory_warehouse_ownership_scope.js`
+- `backend/src/migrations/index.js`
+- `backend/src/routes/inventory.validators.js`
+- `backend/src/routes/inventory.routes.js`
+- `backend/src/services/inventory.service.js`
+- `frontend/src/api/inventory.js`
+- `frontend/src/pages/inventory/InventoryMovementsPage.jsx`
+- `backend/scripts/test-inventory-ou01-warehouse-ownership.js`
+
+### Checklist
+
+#### Migration
+- [x] Create `backend/src/migrations/m123_inventory_warehouse_ownership_scope.js`
+- [x] Add `ownership_scope ENUM('CENTRAL','OPERATING_UNIT') NOT NULL DEFAULT 'CENTRAL'` to `inventory_warehouses`
+- [x] Add `operating_unit_id BIGINT UNSIGNED NULL` to `inventory_warehouses`
+- [x] Add index `(tenant_id, legal_entity_id, ownership_scope, operating_unit_id, status)`
+- [x] Add index `(tenant_id, operating_unit_id)`
+- [x] Add FK `inventory_warehouses.operating_unit_id -> operating_units.id`
+- [x] Backfill existing rows to `ownership_scope = 'CENTRAL'`
+- [x] Do not auto-derive OU for existing rows
+
+#### Migration registration
+- [x] Register `m123_inventory_warehouse_ownership_scope` in `backend/src/migrations/index.js`
+
+#### Validators and service/query
+- [x] Add `ownershipScope` list filter
+- [x] Add `operatingUnitId` list filter
+- [x] Accept `ownershipScope` and `operatingUnitId` in create payloads
+- [x] Enforce `CENTRAL => operatingUnitId must be null`
+- [x] Enforce `OPERATING_UNIT => operatingUnitId required`
+- [x] Return `ownershipScope`
+- [x] Return `operatingUnitId`
+- [x] Return `operatingUnitCode`
+- [x] Return `operatingUnitName`
+- [x] Validate OU belongs to same tenant
+- [x] Validate OU belongs to same `legal_entity_id`
+
+#### Frontend
+- [x] Add ownership scope select
+- [x] Add OU selector when ownership scope = `OPERATING_UNIT`
+- [x] Show ownership badge/column in warehouse list
+
+#### Regression
+- [x] Create `backend/scripts/test-inventory-ou01-warehouse-ownership.js`
+- [x] Test central warehouse create
+- [x] Test OU-owned warehouse create
+- [x] Test central + OU id is rejected
+- [x] Test OU-owned without OU id is rejected
+- [x] Test legal-entity mismatch is rejected
+
+### Acceptance
+- [x] Warehouses clearly indicate central vs OU ownership
+- [x] Existing central-default inventory flow still works
+- [x] UI shows ownership context correctly
+- [x] Warehouse creation rules are enforced in backend
+
+## PR-OU02 - Inventory transfer document foundation with approval
+
+### Goal
+- Add a first-class inventory transfer document and lifecycle for cross-context stock movement only.
+
+### Files
+- `backend/src/migrations/m124_inventory_transfer_foundation.js`
+- `backend/src/migrations/index.js`
+- `backend/src/services/inventory.transfer.service.js`
+- `backend/src/routes/inventory.transfer.validators.js`
+- `backend/src/routes/inventory.transfer.routes.js`
+- `backend/src/index.js`
+- `backend/src/services/inventory.service.js`
+- `frontend/src/api/inventory.js`
+- `frontend/src/pages/inventory/InventoryTransfersPage.jsx`
+- `frontend/src/App.jsx`
+- `frontend/src/layouts/sidebarConfig.js`
+- `frontend/src/i18n/messages.js`
+- `backend/scripts/test-inventory-ou02-transfer-foundation.js`
+
+### Checklist
+
+#### Migration
+- [ ] Create `backend/src/migrations/m124_inventory_transfer_foundation.js`
+- [ ] Create `inventory_transfers`
+- [ ] Add `tenant_id`
+- [ ] Add `legal_entity_id`
+- [ ] Add `transfer_no`
+- [ ] Add `transfer_date`
+- [ ] Add `status ENUM('INITIATED','APPROVED','IN_TRANSIT','RECEIVED','CANCELED','REVERSED')`
+- [ ] Add `source_warehouse_id`
+- [ ] Add `target_warehouse_id`
+- [ ] Add `source_ownership_scope`
+- [ ] Add `source_operating_unit_id`
+- [ ] Add `target_ownership_scope`
+- [ ] Add `target_operating_unit_id`
+- [ ] Add `shipment_journal_entry_id`
+- [ ] Add `receipt_journal_entry_id`
+- [ ] Add `reversal_journal_entry_id`
+- [ ] Add `initiated_by_user_id`
+- [ ] Add `approved_by_user_id`
+- [ ] Add `shipped_by_user_id`
+- [ ] Add `received_by_user_id`
+- [ ] Add `canceled_by_user_id`
+- [ ] Add `reversed_by_user_id`
+- [ ] Add `initiated_at`
+- [ ] Add `approved_at`
+- [ ] Add `in_transit_at`
+- [ ] Add `received_at`
+- [ ] Add `canceled_at`
+- [ ] Add `reversed_at`
+- [ ] Add `cancel_reason`
+- [ ] Add `reverse_reason`
+- [ ] Add `idempotency_key`
+- [ ] Add `integration_event_uid`
+- [ ] Add `source_module`
+- [ ] Add `source_entity_type`
+- [ ] Add `source_entity_id`
+- [ ] Add `note`
+- [ ] Add timestamps
+- [ ] Add unique `(tenant_id, legal_entity_id, transfer_no)`
+- [ ] Add unique `(tenant_id, idempotency_key)` if idempotency is enforced for create
+- [ ] Add FK coverage for `source_warehouse_id`
+- [ ] Add FK coverage for `target_warehouse_id`
+- [ ] Alter `inventory_movements.source_type` to include `'INVENTORY_TRANSFER'`
+- [ ] Confirm `inventory_movements.source_document_type` does not need enum/constraint extension for `'INVENTORY_TRANSFER'`
+- [ ] Create `inventory_transfer_lines`
+- [ ] Add `tenant_id`
+- [ ] Add `legal_entity_id`
+- [ ] Add `inventory_transfer_id`
+- [ ] Add `line_no`
+- [ ] Add `item_card_id`
+- [ ] Add `quantity_requested`
+- [ ] Add `quantity_shipped`
+- [ ] Add `quantity_received`
+- [ ] Add `shipped_currency_code`
+- [ ] Add `shipped_unit_cost_txn`
+- [ ] Add `shipped_unit_cost_base`
+- [ ] Add `shipped_total_cost_txn`
+- [ ] Add `shipped_total_cost_base`
+- [ ] Add `source_issue_movement_id`
+- [ ] Add `target_receipt_movement_id`
+- [ ] Add `note`
+- [ ] Add timestamps
+- [ ] Add unique `(inventory_transfer_id, line_no)`
+- [ ] Add FK coverage for `inventory_transfer_lines.inventory_transfer_id`
+- [ ] Add FK coverage for `inventory_transfer_lines.item_card_id`
+- [ ] Add FK coverage for `inventory_transfer_lines.source_issue_movement_id` if strict lineage is enforced
+- [ ] Add FK coverage for `inventory_transfer_lines.target_receipt_movement_id` if strict lineage is enforced
+
+#### Migration registration
+- [ ] Register `m124_inventory_transfer_foundation` in `backend/src/migrations/index.js`
+
+#### Validators and routes
+- [ ] Add create, list, detail, approve, ship, receive, cancel, reverse validators
+- [ ] Reuse existing `inventory.read` for transfer list/detail access
+- [ ] Reuse existing `inventory.upsert` for transfer create/approve/ship/receive/cancel/reverse access
+- [ ] Do not introduce new transfer-specific permission codes in v1
+- [ ] Enforce source warehouse required
+- [ ] Enforce target warehouse required
+- [ ] Enforce source != target
+- [ ] Enforce same legal entity only
+- [ ] Enforce source and target ownership context must differ for this transfer family
+- [ ] Enforce lines array required
+- [ ] Enforce positive quantities
+- [ ] Enforce full shipment only in v1
+- [ ] Enforce full receipt only in v1
+- [ ] Approve action must fail or no-op clearly if transfer is already `APPROVED` or beyond
+- [ ] Ship action must fail or no-op clearly if transfer is not exactly `APPROVED`
+- [ ] Receive action must fail or no-op clearly if transfer is not exactly `IN_TRANSIT`
+- [ ] Cancel action must fail or no-op clearly if transfer is not in an allowed pre-shipment state
+- [ ] Reverse action must fail or no-op clearly if transfer is not in an allowed reversible state
+- [ ] Add routes:
+  - `GET /api/v1/inventory/transfers`
+  - `POST /api/v1/inventory/transfers`
+  - `GET /api/v1/inventory/transfers/:transferId`
+  - `POST /api/v1/inventory/transfers/:transferId/approve`
+  - `POST /api/v1/inventory/transfers/:transferId/ship`
+  - `POST /api/v1/inventory/transfers/:transferId/receive`
+  - `POST /api/v1/inventory/transfers/:transferId/cancel`
+  - `POST /api/v1/inventory/transfers/:transferId/reverse`
+- [ ] Mount `inventory.transfer.routes.js` under existing `/api/v1/inventory`
+- [ ] Add legal-entity scope resolution for transfer create/list
+- [ ] Add param-based scope resolution for transfer detail/actions
+- [ ] Follow repo route-guard style for detail/actions: resolve scoped entity first, then enforce loaded-row access with `assertScopeAccess` where needed
+
+#### Service skeleton
+- [ ] Add `listInventoryTransfers`
+- [ ] Add `getInventoryTransferById`
+- [ ] Add `createInventoryTransfer`
+- [ ] Add `approveInventoryTransferById`
+- [ ] Add `shipInventoryTransferById`
+- [ ] Add `receiveInventoryTransferById`
+- [ ] Add `cancelInventoryTransferById`
+- [ ] Add `reverseInventoryTransferById`
+- [ ] Snapshot source ownership scope / OU on header
+- [ ] Snapshot target ownership scope / OU on header
+- [ ] Treat same-context warehouse move as out of scope for this transfer family and fail clearly
+
+#### Frontend
+- [ ] Add transfer API helpers
+- [ ] Add transfer list page shell
+- [ ] Add transfer create form
+- [ ] Add transfer detail fetch
+- [ ] Lock the canonical transfer route path in `frontend/src/App.jsx`:
+  - `appPath = "/app/stok-transferleri"`
+  - `childPath = "stok-transferleri"`
+- [ ] Add canonical implemented transfer route entry in `frontend/src/App.jsx`
+- [ ] Add route/sidebar entry for transfers using existing `inventory.read` gating
+- [ ] Reuse the same canonical transfer route string in:
+  - `frontend/src/layouts/sidebarConfig.js` `to = "/app/stok-transferleri"`
+  - `frontend/src/i18n/messages.js` `messages.sidebar.byPath["/app/stok-transferleri"]`
+- [ ] Mark the new transfer sidebar entry as `implemented: true` in `frontend/src/layouts/sidebarConfig.js`
+- [ ] Add `messages.sidebar.byPath` TR/EN labels for the transfer route
+
+#### Regression
+- [ ] Create `backend/scripts/test-inventory-ou02-transfer-foundation.js`
+- [ ] Test create transfer
+- [ ] Test same warehouse blocked
+- [ ] Test cross-legal-entity blocked
+- [ ] Test same-context transfer create is rejected for this tracker family
+- [ ] Test approve twice fails or no-ops clearly
+- [ ] Test ship before approve fails
+- [ ] Test ship twice fails or no-ops clearly
+- [ ] Test receive before ship fails
+- [ ] Test receive twice fails or no-ops clearly
+- [ ] Test cancel after shipment fails
+- [ ] Test reverse after cancel fails
+- [ ] Test approval required before shipment
+- [ ] Test source/target context snapshot persists
+
+### Acceptance
+- [ ] Transfer header and lines persist correctly
+- [ ] Transfer has explicit source/target context snapshot
+- [ ] Approval is part of the lifecycle
+- [ ] Transfer routes are scope-safe
+- [ ] Transfer route/sidebar/messages wiring follows the repo route contract
+- [ ] Same-context movement is not silently pulled into the cross-context transfer family
+- [ ] Cross-context movement now has a real document foundation
+
+## PR-OU03 - Reverse-direction OU internal-current-account foundation and balancing helper
+
+### Goal
+- Extend the current repo OU-account setup so the locked explicit pair-account model is actually possible for both directions of central `<->` OU flow.
+
+### Files
+- `backend/src/migrations/m125_operating_unit_reverse_internal_current_accounts.js`
+- `backend/src/migrations/index.js`
+- `backend/src/routes/org.write.validators.js`
+- `backend/src/routes/org.js`
+- `backend/src/services/org.write.service.js`
+- `backend/src/services/org.read.queries.js`
+- `backend/src/services/org.write.queries.js`
+- `backend/src/services/ou.self-balancing.service.js`
+- `frontend/src/api/orgAdmin.js`
+- `frontend/src/pages/settings/OrganizationManagementPage.jsx`
+- `backend/scripts/test-inventory-ou03-ou-account-foundation.js`
+
+### Checklist
+
+#### Migration
+- [ ] Create `backend/src/migrations/m125_operating_unit_reverse_internal_current_accounts.js`
+- [ ] Add `central_due_to_account_id BIGINT UNSIGNED NULL` to `operating_units`
+- [ ] Add `ou_due_from_central_account_id BIGINT UNSIGNED NULL` to `operating_units`
+- [ ] Add FKs to `accounts(id)`
+- [ ] Add index coverage as needed for org setup reads
+
+#### Migration registration
+- [ ] Register `m125_operating_unit_reverse_internal_current_accounts` in `backend/src/migrations/index.js`
+
+#### Validation and org setup
+- [ ] Validate `central_due_from_account_id` is asset / debit-normal / postable / leaf
+- [ ] Validate `central_due_to_account_id` is liability / credit-normal / postable / leaf
+- [ ] Validate `ou_due_from_central_account_id` is asset / debit-normal / postable / leaf
+- [ ] Validate `ou_due_to_central_account_id` is liability / credit-normal / postable / leaf
+- [ ] Extend org write/read flows to persist and expose the new fields
+- [ ] Keep existing flows that only need current two-field central `<->` OU setup backward-compatible until reverse-direction fields are actually required by the posting path
+
+#### Shared helper
+- [ ] Create `backend/src/services/ou.self-balancing.service.js`
+- [ ] Add helper `resolveOuSelfBalancingAccountsTx(...)`
+- [ ] Support:
+  - `CENTRAL -> OU`
+  - `OU -> CENTRAL`
+  - `OU -> OU`
+- [ ] Reuse partner-pair mappings for `OU -> OU`
+- [ ] Use the new reverse-direction operating-unit fields for central `<->` OU paths
+- [ ] Fail clearly when required mapping is missing
+
+#### Regression
+- [ ] Create `backend/scripts/test-inventory-ou03-ou-account-foundation.js`
+- [ ] Test central `<->` OU mapping resolution both directions
+- [ ] Test OU `<->` OU mapping resolution
+- [ ] Test invalid account type / normal-side rejection
+- [ ] Test missing mapping failure
+
+### Acceptance
+- [ ] Central `<->` OU has explicit accounts for both directions
+- [ ] OU `<->` OU continues to use partner-specific pair mappings
+- [ ] A reusable helper exists for transfer and settlement posting
+
+## PR-OU04 - Shipment-time transfer accounting and FIFO shipment valuation
+
+### Goal
+- Implement shipment-time inventory balancing with FIFO cost consumption and explicit transit accounting.
+
+### Files
+- `backend/src/migrations/m126_item_cards_inventory_transit_account.js`
+- `backend/src/migrations/index.js`
+- `backend/src/services/item.card.service.js`
+- `backend/src/routes/item.card.validators.js`
+- `backend/src/routes/item.card.routes.js`
+- `frontend/src/api/itemCards.js`
+- `frontend/src/pages/inventory/ItemCardsPage.jsx`
+- `backend/src/services/inventory.transfer.service.js`
+- `backend/src/services/inventory.service.js`
+- `backend/src/services/journal.source-link.service.js`
+- `backend/scripts/test-inventory-ou04-shipment-self-balancing.js`
+
+### Checklist
+
+#### Migration registration
+- [ ] Register `m126_item_cards_inventory_transit_account` in `backend/src/migrations/index.js`
+
+#### Transit account foundation
+- [ ] Create `backend/src/migrations/m126_item_cards_inventory_transit_account.js`
+- [ ] Add `inventory_transit_account_id BIGINT UNSIGNED NULL` to `item_cards`
+- [ ] Add FK to `accounts`
+- [ ] Add index for transit account
+- [ ] Expose the field in item-card validators, service, API, and UI
+- [ ] Treat item-card transit account as the v1 default transit account source for shipment-time posting
+
+#### Shipment FIFO costing
+- [ ] Add `consumeTransferShipmentCostLayersTx(...)`
+- [ ] Lock transfer header `FOR UPDATE`
+- [ ] Lock transfer lines
+- [ ] Lock source cost layers
+- [ ] Validate enough stock exists
+- [ ] Consume FIFO oldest-first
+- [ ] Compute and persist `shipped_currency_code` on transfer lines
+- [ ] If consumed source layers are mixed-currency, use legal-entity base currency as `shipped_currency_code`
+- [ ] Implement legal-entity base currency against the real repo field `legal_entities.functional_currency_code`
+- [ ] Compute and persist shipment cost snapshot to transfer lines
+
+#### Shipment movement creation
+- [ ] Require transfer status = `APPROVED`
+- [ ] Create source `inventory_movements` rows with:
+  - `movement_type = 'ISSUE'`
+  - `source_type = 'INVENTORY_TRANSFER'`
+  - `source_document_type = 'INVENTORY_TRANSFER'`
+  - `source_document_id`
+  - `source_document_line_id`
+  - `valuation_status = 'VALUED'`
+- [ ] Create issue layer consumption rows
+- [ ] Set `source_issue_movement_id` on each transfer line
+
+#### Shipment posting logic
+- [ ] Build one shipment journal on transfer header
+- [ ] Debit destination transit account
+- [ ] Debit source-side `due_from` account
+- [ ] Credit source inventory asset account
+- [ ] Credit destination-side `due_to` account
+- [ ] Support route matrix:
+  - `CENTRAL -> OU`
+  - `OU -> CENTRAL`
+  - `OU -> OU`
+- [ ] Group journal lines by account when helpful
+- [ ] Reject posting clearly if required current-account mapping is missing
+- [ ] Reject posting clearly if required transit account is missing
+- [ ] Ensure no revenue / expense / `COGS` lines are posted
+
+#### Shipment finalization
+- [ ] Insert shipment journal
+- [ ] Set `inventory_transfers.shipment_journal_entry_id`
+- [ ] Set `inventory_transfers.status = 'IN_TRANSIT'`
+- [ ] Set `shipped_by_user_id`
+- [ ] Set `in_transit_at`
+- [ ] Do not populate `inventory_movements.posted_journal_entry_id` with the shared header journal
+
+#### Read model and source links
+- [ ] Add primary source link from shipment journal to transfer header
+- [ ] Extend transfer detail with shipment journal id
+- [ ] Extend transfer detail with shipment cost snapshot
+- [ ] Extend transfer detail with source issue movement ids
+
+#### Frontend
+- [ ] Add approve action UI
+- [ ] Add ship action UI
+
+#### Regression
+- [ ] Create `backend/scripts/test-inventory-ou04-shipment-self-balancing.js`
+- [ ] Test `CENTRAL -> OU` shipment
+- [ ] Test `OU -> CENTRAL` shipment
+- [ ] Test `OU -> OU` shipment
+- [ ] Test missing current-account mapping fails
+- [ ] Test missing transit account fails
+- [ ] Test insufficient stock fails
+
+### Acceptance
+- [ ] Shipment reduces source quantity immediately
+- [ ] FIFO shipment cost snapshot persists
+- [ ] Shipment journal is created on transfer header
+- [ ] Due-from / due-to lines use explicit OU pair-account logic correctly
+- [ ] No transfer shipment posts revenue / expense / `COGS`
+
+## PR-OU05 - Transfer receipt and receipt journal
+
+### Goal
+- Complete the inbound transfer leg by materializing the destination receipt and clearing transit cleanly.
+
+### Files
+- `backend/src/services/inventory.transfer.service.js`
+- `backend/src/services/inventory.service.js`
+- `backend/src/routes/inventory.transfer.routes.js`
+- `frontend/src/api/inventory.js`
+- `frontend/src/pages/inventory/InventoryTransfersPage.jsx`
+- `backend/scripts/test-inventory-ou05-transfer-receipt.js`
+
+### Checklist
+
+#### Receipt implementation
+- [ ] Require transfer status = `IN_TRANSIT`
+- [ ] Load shipped cost snapshot from transfer lines
+- [ ] Reuse `shipped_currency_code` when creating destination receipt movement and cost layer currency
+- [ ] Create destination `inventory_movements` rows with:
+  - `movement_type = 'RECEIPT'`
+  - `source_type = 'INVENTORY_TRANSFER'`
+  - `source_document_type = 'INVENTORY_TRANSFER'`
+  - `source_document_id`
+  - `source_document_line_id`
+  - `valuation_status = 'VALUED'`
+- [ ] Create destination `inventory_cost_layers`
+- [ ] Set `target_receipt_movement_id`
+- [ ] Set `quantity_received`
+
+#### Receipt journal
+- [ ] Create one receipt journal on transfer header
+- [ ] Debit destination inventory asset
+- [ ] Credit destination inventory transit
+- [ ] Set `inventory_transfers.receipt_journal_entry_id`
+- [ ] Set `status = 'RECEIVED'`
+- [ ] Set `received_by_user_id`
+- [ ] Set `received_at`
+
+#### Frontend
+- [ ] Add receive action UI
+
+#### Regression
+- [ ] Create `backend/scripts/test-inventory-ou05-transfer-receipt.js`
+- [ ] Test receive flow
+- [ ] Test receipt journal
+
+### Acceptance
+- [ ] Receipt clears transit correctly
+- [ ] Transfer can move cleanly from `IN_TRANSIT` to `RECEIVED`
+- [ ] Receipt visibility works in UI
+
+## PR-OU06 - Transfer reversal, cancel discipline, and bypass hardening
+
+### Goal
+- Finish additive reversal and cancellation rules, and enforce the transfer workflow as the only valid cross-context stock-movement path.
+
+### Files
+- `backend/src/services/inventory.transfer.service.js`
+- `backend/src/services/inventory.service.js`
+- `backend/src/routes/inventory.transfer.routes.js`
+- `frontend/src/api/inventory.js`
+- `frontend/src/pages/inventory/InventoryTransfersPage.jsx`
+- `backend/scripts/test-inventory-ou06-transfer-reversal-bypass.js`
+
+### Checklist
+
+#### Cancel and reversal discipline
+- [ ] Allow cancel only in `INITIATED` or `APPROVED`
+- [ ] Ensure no movements and no journals exist before cancel
+- [ ] Store cancel metadata
+- [ ] If transfer is `IN_TRANSIT` and no receipt exists, reverse shipment side directly through shipment reversal path
+- [ ] If receipt exists, reverse receipt side first
+- [ ] Reverse shipment side second
+- [ ] Reuse additive movement lineage discipline
+- [ ] Do not destroy original movement history
+- [ ] Reverse receipt journal
+- [ ] Reverse shipment journal
+- [ ] Store reversal metadata
+- [ ] Set status `REVERSED`
+
+#### Backend bypass hardening
+- [ ] In all generic stock movement creation paths, load warehouse ownership context
+- [ ] In all generic stock movement creation paths, load commercial/source OU context when relevant
+- [ ] Reject generic movement when contexts differ
+- [ ] Return clear error: cross-context stock movement must use transfer workflow
+- [ ] Do not limit this protection only to stock-link materialization
+
+#### Frontend
+- [ ] Add cancel action UI
+- [ ] Add reverse action UI
+
+#### Regression
+- [ ] Create `backend/scripts/test-inventory-ou06-transfer-reversal-bypass.js`
+- [ ] Test cancel flow
+- [ ] Test reversal flow
+- [ ] Test generic cross-context bypass is blocked in backend
+
+### Acceptance
+- [ ] Reversals are additive and auditable
+- [ ] Cancel rules are enforced safely
+- [ ] Generic inventory movement cannot fake cross-context transfer
+
+## PR-OU07 - Transfer evidence
+
+### Goal
+- Extend the evidence subsystem so transfer documents have first-class evidence lifecycle support.
+
+### Files
+- `backend/src/services/evidence.service.js`
+- `backend/src/routes/inventory.transfer.evidence.routes.js`
+- `backend/src/index.js`
+- `frontend/src/api/inventory.js`
+- `frontend/src/pages/inventory/InventoryTransfersPage.jsx`
+- `backend/scripts/test-inventory-ou07-transfer-evidence.js`
+
+### Checklist
+
+#### Evidence
+- [ ] Reuse existing `inventory.read` for transfer evidence list/download
+- [ ] Reuse existing `inventory.upsert` for transfer evidence create/upload/delete
+- [ ] Extend evidence service to support `INVENTORY_TRANSFER`
+- [ ] Add transfer row lookup helper
+- [ ] Add transfer scope assertion helper
+- [ ] Add transfer evidence routes:
+  - `GET /transfers/:transferId/evidence`
+  - `POST /transfers/:transferId/evidence`
+  - `PUT /transfers/:transferId/evidence/:evidenceId/content`
+  - `GET /transfers/:transferId/evidence/:evidenceId/download`
+  - `DELETE /transfers/:transferId/evidence/:evidenceId`
+- [ ] Mount `inventory.transfer.evidence.routes.js` under existing `/api/v1/inventory`
+
+#### Frontend
+- [ ] Add evidence upload / download / delete UI
+
+#### Regression
+- [ ] Create `backend/scripts/test-inventory-ou07-transfer-evidence.js`
+- [ ] Test evidence lifecycle
+
+### Acceptance
+- [ ] Transfer evidence works
+- [ ] Evidence routes are reachable and scope-safe
+
+## PR-OU08 - Cross-context settlement owner/collector persistence and resolution
+
+### Goal
+- Add owner/collector context persistence and deterministic resolution without changing the existing posting shape yet.
+
+### Files
+- `backend/src/migrations/m127_cari_settlement_owner_collector_contexts.js`
+- `backend/src/migrations/index.js`
+- `backend/src/routes/cari.js`
+- `backend/src/routes/cari.settlement.validators.js`
+- `backend/src/services/cari.settlement.service.js`
+- `backend/src/services/cash.queries.js`
+- bank statement / bank account service files as needed
+- `frontend/src/api/cariSettlements.js`
+- `frontend/src/pages/cari/CariSettlementsPage.jsx`
+- `backend/scripts/test-cari-ou08-settlement-owner-collector-resolution.js`
+
+### Checklist
+
+#### Migration
+- [ ] Create `backend/src/migrations/m127_cari_settlement_owner_collector_contexts.js`
+- [ ] Add `owner_operating_unit_id BIGINT UNSIGNED NULL` to `cari_settlement_batches`
+- [ ] Add `collector_operating_unit_id BIGINT UNSIGNED NULL` to `cari_settlement_batches`
+- [ ] Add `originating_cross_context_settlement_batch_id BIGINT UNSIGNED NULL` to `cari_settlement_batches`
+- [ ] Add indexes by tenant / legal entity / owner / collector / settlement date
+- [ ] Add index `(tenant_id, legal_entity_id, originating_cross_context_settlement_batch_id)`
+- [ ] Add FK to `operating_units.id` for owner OU
+- [ ] Add FK to `operating_units.id` for collector OU
+- [ ] Add scoped self-FK `(tenant_id, legal_entity_id, originating_cross_context_settlement_batch_id) -> cari_settlement_batches(tenant_id, legal_entity_id, id)` for originating cross-context settlement linkage
+
+#### Migration registration
+- [ ] Register `m127_cari_settlement_owner_collector_contexts` in `backend/src/migrations/index.js`
+
+#### Owner / collector resolution
+- [ ] Add `resolveSettlementOwnerOperatingUnitId(...)`
+- [ ] Add `resolveSettlementCollectorOperatingUnitId(...)`
+- [ ] Owner priority: allocated documents / open items first
+- [ ] Hard-fail in v1 when allocated items imply more than one owner OU in the same settlement batch
+- [ ] Explicit payload OU may not override a derived owner OU when allocations already imply one
+- [ ] Owner fallback: central / null only when no unique owner context can be derived
+- [ ] Collector priority: linked cash transaction OU
+- [ ] Collector priority: linked bank statement line OU
+- [ ] Collector priority: linked bank account OU if needed
+- [ ] Collector fallback: owner context when not cross-context
+
+#### Batch persistence
+- [ ] Persist `owner_operating_unit_id`
+- [ ] Persist `collector_operating_unit_id`
+- [ ] Keep `originating_cross_context_settlement_batch_id` null for ordinary settlement batches in this slice
+- [ ] Preserve owner / collector context on reversal paths too
+
+#### Read models and frontend
+- [ ] Expose `ownerOperatingUnitId`
+- [ ] Expose `collectorOperatingUnitId`
+- [ ] Return a clear validation error when settlement allocations imply multiple owner OUs in one batch
+
+#### Regression
+- [ ] Create `backend/scripts/test-cari-ou08-settlement-owner-collector-resolution.js`
+- [ ] Test mixed-owner settlement batch fails hard in v1
+- [ ] Test owner / collector context persists
+
+### Acceptance
+- [ ] Same-context settlements still behave correctly
+- [ ] Collector vs owner context is persisted and visible
+- [ ] Owner vs collector context is resolved deterministically
+
+## PR-OU09 - Cross-context settlement posting split
+
+### Goal
+- Add the real owner/collector posting split while preserving the existing same-context path.
+
+### Files
+- `backend/src/routes/cari.js`
+- `backend/src/routes/cari.settlement.validators.js`
+- `backend/src/services/cari.settlement.service.js`
+- `backend/src/services/cash.queries.js`
+- bank statement / bank account service files as needed
+- `backend/src/services/ou.self-balancing.service.js`
+- `backend/scripts/test-cari-ou09-cross-context-posting-split.js`
+- `backend/scripts/test-cari-ou09-cash-and-bank-collector-context.js`
+
+### Checklist
+
+#### Posting logic
+- [ ] Keep existing same-context path intact
+- [ ] Add split path when `owner != collector`
+- [ ] Hard-block any attempt to force a non-self-balanced path when contexts differ
+- [ ] Collector side posts actual cash / bank offset line
+- [ ] Collector side posts internal `Due To owner`
+- [ ] Owner side posts internal `Due From collector`
+- [ ] Owner side posts AR or AP control relief line
+- [ ] Keep realized FX on owner side
+- [ ] Keep tax augmentation on owner side
+- [ ] Reuse `ou.self-balancing.service.js` helper for account resolution
+
+#### Regression
+- [ ] Create `backend/scripts/test-cari-ou09-cross-context-posting-split.js`
+- [ ] Create `backend/scripts/test-cari-ou09-cash-and-bank-collector-context.js`
+- [ ] Test central collects OU AR
+- [ ] Test OU collects central AR
+- [ ] Test OU collects other OU AR
+- [ ] Test bank and cash both follow the same immediate balancing rule
+- [ ] Test realized FX remains owner-side
+
+### Acceptance
+- [ ] Cross-context settlements create explicit internal balancing
+- [ ] Bank and cash behave under the same balancing rule
+- [ ] Same-context settlements still behave correctly
+
+## PR-OU10 - Cross-context settlement reversal discipline
+
+### Goal
+- Enforce strict cross-context settlement reversal discipline with explicit downstream linkage, while keeping reporting and UI surfacing for the next slice.
+
+### Files
+- `backend/src/services/cari.settlement.service.js`
+- `backend/src/services/cash.transaction.service.js`
+- `backend/scripts/test-cari-ou10-settlement-reversal-discipline.js`
+
+### Checklist
+
+#### Reversal discipline
+- [ ] Reverse original owner / collector split exactly
+- [ ] Reverse same internal account family
+- [ ] Do not collapse reversal into one context
+- [ ] If downstream internal settlement already exists, enforce strict dependency order before collection reverse proceeds
+- [ ] Persist `originating_cross_context_settlement_batch_id` on downstream internal settlement records that clear balances created by cross-context collection
+- [ ] Reversal blocking depends on `originating_cross_context_settlement_batch_id`, not inferred net balances
+- [ ] Internal settlement records that clear balances originating from cross-context collection must retain explicit linkage to the originating settlement batch or future first-class collection event
+
+#### Regression
+- [ ] Create `backend/scripts/test-cari-ou10-settlement-reversal-discipline.js`
+- [ ] Test reversal preserves split
+- [ ] Test strict dependency order when internal settlement already exists
+- [ ] Test downstream internal settlement retains originating cross-context settlement linkage
+
+### Acceptance
+- [ ] Reversal discipline is preserved
+- [ ] Downstream internal settlement linkage is explicit and auditable
+
+## PR-OU11 - Cross-context settlement reports, drilldowns, and UI feedback
+
+### Goal
+- Surface owner/collector context consistently in settlement reports, drilldowns, and operator-facing feedback after the reversal discipline is in place.
+
+### Files
+- `frontend/src/api/cariSettlements.js`
+- `backend/src/services/cari.report.service.js`
+- `backend/src/services/cari.settlement.drilldown.service.js`
+- `frontend/src/pages/cari/CariSettlementsPage.jsx`
+- possible cash-side touch points when better cross-context settlement feedback is needed:
+  - `frontend/src/api/cashAdmin.js`
+  - `frontend/src/pages/cash/CashTransactionsPage.jsx`
+- `backend/scripts/test-cari-ou11-settlement-report-feedback.js`
+
+### Checklist
+
+#### Reports, drilldowns, and feedback
+- [ ] Propagate owner / collector context into settlement reports and drilldowns
+- [ ] Expose `originatingCrossContextSettlementBatchId` when needed for support/debug visibility
+- [ ] Add owner / collector context visibility in settlement UI
+- [ ] Add cross-context indicator in settlement UI
+- [ ] Add warning when settlement will self-balance across contexts
+- [ ] Add helpful message for missing current-account setup
+- [ ] Surface better cross-context settlement feedback in cash-triggered flows when touched
+
+#### Regression
+- [ ] Create `backend/scripts/test-cari-ou11-settlement-report-feedback.js`
+- [ ] Test collector vs owner context is visible consistently in reports and drilldowns
+- [ ] Test operator feedback is clear for mixed-owner and missing-mapping problems
+
+### Acceptance
+- [ ] Collector vs owner context is visible consistently in settlement reports and drilldowns
+- [ ] Operator feedback is clear for mixed-owner and missing-mapping problems
+
+## PR-OU12 - Frontend finishing for transfers, inventory, and settlement visibility
+
+### Goal
+- Finish the operator-facing UI surfaces for transfer workflow, inventory visibility, and settlement context display.
+
+### Files
+- `frontend/src/api/inventory.js`
+- `frontend/src/api/itemCards.js`
+- `frontend/src/api/cariSettlements.js`
+- `frontend/src/App.jsx`
+- `frontend/src/layouts/sidebarConfig.js`
+- `frontend/src/pages/inventory/InventoryMovementsPage.jsx`
+- `frontend/src/pages/inventory/InventoryTransfersPage.jsx`
+- `frontend/src/pages/inventory/ItemCardsPage.jsx`
+- `frontend/src/pages/cari/CariSettlementsPage.jsx`
+- `frontend/src/i18n/messages.js`
+
+### Checklist
+
+#### Inventory transfer UI
+- [ ] Finalize transfer list filters
+- [ ] Finalize transfer detail view
+- [ ] Finalize transfer route wiring in `App.jsx`
+- [ ] Finalize transfer sidebar entry wiring in `sidebarConfig.js`
+- [ ] Keep the transfer sidebar item marked `implemented: true` in `sidebarConfig.js`
+- [ ] Show source ownership context
+- [ ] Show target ownership context
+- [ ] Show approval / shipment / receipt / reversal status clearly
+- [ ] Show shipment journal reference
+- [ ] Show receipt journal reference
+- [ ] Show evidence panel
+- [ ] Show action buttons with correct state gating
+
+#### Existing inventory pages
+- [ ] Show `INVENTORY_TRANSFER` source badge on movement pages
+- [ ] Show transfer reference on transfer-generated movements
+- [ ] Reduce confusion between manual / stock-link / transfer movement types
+
+#### Item cards, settlement UI, and i18n
+- [ ] Finalize item-card transit account UI
+- [ ] Finalize settlement owner / collector context display
+- [ ] Add texts for ownership scope
+- [ ] Add texts for transfer lifecycle
+- [ ] Add texts for transfer evidence
+- [ ] Add texts for cross-context settlement warnings / errors
+- [ ] Keep transfer route/sidebar gating on existing `inventory.read` / `inventory.upsert` permission family
+- [ ] Finalize `messages.sidebar.byPath` TR/EN labels for the transfer route
+
+### Acceptance
+- [ ] UI fully supports warehouse ownership, transfers, evidence, and settlement context visibility
+- [ ] Transfer route/sidebar/messages wiring is aligned with repo standards
+- [ ] Operator-facing wording and visibility are aligned across inventory and settlement screens
+
+## PR-OU13 - OpenAPI, release gates, and rollout docs
+
+### Goal
+- Finish the public contract, regression gates, and rollout documentation for the whole feature set.
+
+### Files
+- `backend/scripts/generate-openapi.js`
+- `backend/openapi.yaml`
+- `backend/package.json`
+- `backend/scripts/fixtures/rswire03-release-gate-manifest.json`
+- `backend/scripts/test-ux-rswire01-cross-file-wiring.js`
+- `backend/scripts/test-ux-rswire02-implemented-routes-ci-guard.js`
+- `backend/scripts/test-ux-rswire03-release-gate-smoke-coverage.js`
+- new release-gate scripts
+- docs under `PR-STEPS/` / `docs/`
+
+### Checklist
+
+#### OpenAPI
+- [ ] Finalize payload shapes
+- [ ] Add explicit schemas for warehouse ownership fields
+- [ ] Add explicit schemas for inventory transfers
+- [ ] Add explicit schemas for transfer evidence
+- [ ] Add explicit schemas for `inventoryTransitAccountId`
+- [ ] Add explicit schemas for settlement owner / collector context
+- [ ] Add explicit schemas for `originatingCrossContextSettlementBatchId`
+- [ ] Add explicit schemas for reverse-direction central `<->` OU org fields:
+  - `central_due_to_account_id`
+  - `ou_due_from_central_account_id`
+- [ ] Regenerate `backend/openapi.yaml`
+
+#### Release gates
+- [ ] Add warehouse-ownership regression to CI flow
+- [ ] Add transfer-foundation regression to CI flow
+- [ ] Add OU-account-foundation regression to CI flow
+- [ ] Add shipment self-balancing regression to CI flow
+- [ ] Add receipt regression to CI flow
+- [ ] Add reversal / bypass regression to CI flow
+- [ ] Add transfer evidence regression to CI flow
+- [ ] Add cross-context settlement regressions to CI flow
+- [ ] Optionally add aggregate gate `backend/scripts/test-ou-self-balancing-release-gate.js`
+- [ ] Add new regression scripts to `backend/package.json`
+- [ ] Add new regression scripts to CI / release-gate runner
+- [ ] Add transfer route manifest entry to `backend/scripts/fixtures/rswire03-release-gate-manifest.json`
+- [ ] Lock the exact transfer-route manifest triple in `backend/scripts/fixtures/rswire03-release-gate-manifest.json`:
+  - `routePath = "/app/stok-transferleri"`
+  - `smokeScriptPath = "backend/scripts/test-ou-self-balancing-release-gate.js"`
+  - `packageScriptName = "test:ou:self-balancing:release-gate"`
+- [ ] Add the transfer route to `ROUTE_WIRING_RULES` in `backend/scripts/test-ux-rswire01-cross-file-wiring.js`
+- [ ] Lock the exact `apiNeedles` entry for the transfer route in `ROUTE_WIRING_RULES`:
+  - `apiNeedles = ["../../api/inventory.js"]`
+- [ ] Ensure `backend/package.json` exposes `npm run test:ux:rswire01` in the release-gate path that covers this feature
+- [ ] Add OpenAPI drift check to release gate
+- [ ] Ensure OpenAPI drift check runs in the same release-gate path as the new regressions
+- [ ] Ensure the implemented transfer route passes existing `RS-WIRE-01` cross-file route/API wiring checks
+- [ ] Ensure the implemented transfer route passes existing RS-WIRE sidebar/i18n and manifest coverage guards
+
+#### Rollout docs
+- [ ] Add operator note for warehouse ownership setup
+- [ ] Add operator note for transfer approval requirement
+- [ ] Add operator note for item transit account requirement
+- [ ] Add operator note for missing OU current-account mapping failures
+- [ ] Add transfer lifecycle runbook
+- [ ] Add accounting examples for shipment / receipt / reversal
+- [ ] Add cross-context settlement examples
+- [ ] Add troubleshooting for blocked generic cross-context stock movement
+- [ ] Add note that first-class cross-context collection document is still future scope
+
+### Acceptance
+- [ ] OpenAPI fully documents the feature
+- [ ] Release gates cover the new behavior
+- [ ] Operators have clear runbooks and troubleshooting docs
+
+## Recommended exact implementation order
+- [x] 1. Create `m123_inventory_warehouse_ownership_scope.js`
+- [x] 2. Update warehouse validators / queries / create logic
+- [x] 3. Update warehouse frontend form/list
+- [ ] 4. Create `m124_inventory_transfer_foundation.js`
+- [ ] 5. Build transfer validators / routes / service skeleton
+- [ ] 6. Add transfer page shell
+- [ ] 7. Create `m125_operating_unit_reverse_internal_current_accounts.js`
+- [ ] 8. Extend org setup and create `ou.self-balancing.service.js`
+- [ ] 9. Create `m126_item_cards_inventory_transit_account.js`
+- [ ] 10. Expose transit account in item-card backend/frontend
+- [ ] 11. Implement transfer approval + shipment FIFO + accounting
+- [ ] 12. Implement transfer receipt
+- [ ] 13. Implement transfer cancel / reverse
+- [ ] 14. Block generic cross-context movement bypass
+- [ ] 15. Generalize evidence service and transfer evidence routes/UI
+- [ ] 16. Create `m127_cari_settlement_owner_collector_contexts.js`
+- [ ] 17. Implement settlement owner / collector resolvers and persistence
+- [ ] 18. Implement cross-context settlement posting split
+- [ ] 19. Implement strict reversal dependency and explicit downstream linkage
+- [ ] 20. Propagate settlement reports/drilldowns and operator feedback
+- [ ] 21. Finish transfer/inventory/settlement frontend polish
+- [ ] 22. Finish OpenAPI / release gates / docs
+
+## Done definition
+- [x] Warehouses are explicitly central or OU-owned
+- [ ] Cross-context stock transfers use dedicated transfer workflow only
+- [ ] Transfer lifecycle includes approval, shipment, receipt, and additive reversal
+- [ ] Shipment-time internal balancing works and is auditable
+- [ ] Reverse-direction central `<->` OU accounts exist and are configured
+- [ ] Receipt / cancel / reversal / evidence work
+- [ ] Generic inventory movement bypass is blocked in backend
+- [ ] Cross-context CARI settlement owner vs collector split works
+- [ ] Settlement reports and drilldowns surface owner vs collector context correctly
+- [ ] Non-self-balanced cross-context settlement is blocked
+- [ ] UI, OpenAPI, release gates, and docs are aligned

@@ -5,6 +5,7 @@ import MoneyText from "../../components/MoneyText.jsx";
 import { useAuth } from "../../auth/useAuth.js";
 import { useI18n } from "../../i18n/useI18n.js";
 import { useWorkingContext } from "../../context/useWorkingContext.js";
+import { listOperatingUnits } from "../../api/orgAdmin.js";
 import {
   createInventoryMovement,
   createInventoryWarehouse,
@@ -51,6 +52,8 @@ function mapLegalEntityLookupOption(row) {
 function createWarehouseForm(legalEntityId = "") {
   return {
     legalEntityId: legalEntityId || "",
+    ownershipScope: "CENTRAL",
+    operatingUnitId: "",
     code: "",
     name: "",
     status: "ACTIVE",
@@ -83,6 +86,16 @@ function getStatusBadgeClass(value) {
       return "border border-slate-200 bg-slate-100 text-slate-700";
     default:
       return "border border-sky-200 bg-sky-50 text-sky-800";
+  }
+}
+
+function getOwnershipBadgeClass(value) {
+  switch (String(value || "").trim().toUpperCase()) {
+    case "OPERATING_UNIT":
+      return "border border-emerald-200 bg-emerald-50 text-emerald-800";
+    case "CENTRAL":
+    default:
+      return "border border-slate-200 bg-slate-100 text-slate-700";
   }
 }
 
@@ -130,6 +143,7 @@ export default function InventoryMovementsPage() {
 
   const canRead = hasPermission("inventory.read");
   const canUpsert = hasPermission("inventory.upsert");
+  const canReadOrgTree = hasPermission("org.tree.read");
   const deepLinkedLegalEntityId = useMemo(
     () => String(toPositiveInt(searchParams.get("legalEntityId")) || ""),
     [searchParams]
@@ -152,6 +166,9 @@ export default function InventoryMovementsPage() {
     warehouseId: "",
   });
   const [warehouseRows, setWarehouseRows] = useState([]);
+  const [warehouseOperatingUnits, setWarehouseOperatingUnits] = useState([]);
+  const [warehouseOperatingUnitsLoading, setWarehouseOperatingUnitsLoading] = useState(false);
+  const [warehouseOperatingUnitsError, setWarehouseOperatingUnitsError] = useState("");
   const [stockLinkRows, setStockLinkRows] = useState([]);
   const [movementRows, setMovementRows] = useState([]);
   const [costLayerRows, setCostLayerRows] = useState([]);
@@ -184,6 +201,48 @@ export default function InventoryMovementsPage() {
         (row) => String(toPositiveInt(row?.id) || "") === String(deepLinkedMovementId || "")
       ) || null,
     [deepLinkedMovementId, movementRows]
+  );
+  const warehouseOptions = useMemo(
+    () =>
+      warehouseRows.map((row) => ({
+        value: String(row.id || ""),
+        label:
+          row.code && row.name
+            ? `${row.code} - ${row.name}`
+            : row.code || row.name || `Warehouse #${row.id}`,
+      })),
+    [warehouseRows]
+  );
+  const activeWarehouseOptions = useMemo(
+    () =>
+      warehouseRows
+        .filter((row) => String(row?.status || "").toUpperCase() === "ACTIVE")
+        .map((row) => ({
+          value: String(row.id || ""),
+          label:
+            row.code && row.name
+              ? `${row.code} - ${row.name}`
+              : row.code || row.name || `Warehouse #${row.id}`,
+        })),
+    [warehouseRows]
+  );
+  const warehouseOperatingUnitOptions = useMemo(
+    () =>
+      warehouseOperatingUnits
+        .map((row) => {
+          const value = String(toPositiveInt(row?.id) || "");
+          if (!value) {
+            return null;
+          }
+          const code = normalizeText(row?.code);
+          const name = normalizeText(row?.name);
+          return {
+            value,
+            label: code && name ? `${code} - ${name}` : code || name || `OU #${value}`,
+          };
+        })
+        .filter(Boolean),
+    [warehouseOperatingUnits]
   );
 
   useEffect(() => {
@@ -252,6 +311,85 @@ export default function InventoryMovementsPage() {
     }));
   }, [filters.legalEntityId, filters.warehouseId]);
 
+  useEffect(() => {
+    if (warehouseForm.ownershipScope !== "OPERATING_UNIT" && warehouseForm.operatingUnitId) {
+      setWarehouseForm((previous) => ({
+        ...previous,
+        operatingUnitId: "",
+      }));
+    }
+  }, [warehouseForm.operatingUnitId, warehouseForm.ownershipScope]);
+
+  useEffect(() => {
+    const legalEntityId = toPositiveInt(warehouseForm.legalEntityId);
+    if (
+      warehouseForm.ownershipScope !== "OPERATING_UNIT" ||
+      !canReadOrgTree ||
+      !legalEntityId
+    ) {
+      setWarehouseOperatingUnits([]);
+      setWarehouseOperatingUnitsError("");
+      setWarehouseOperatingUnitsLoading(false);
+      setWarehouseForm((previous) =>
+        previous.operatingUnitId
+          ? {
+              ...previous,
+              operatingUnitId: "",
+            }
+          : previous
+      );
+      return;
+    }
+
+    let cancelled = false;
+    setWarehouseOperatingUnitsLoading(true);
+    setWarehouseOperatingUnitsError("");
+    void listOperatingUnits({
+      legalEntityId,
+      limit: 500,
+      includeInactive: true,
+    })
+      .then((response) => {
+        if (cancelled) {
+          return;
+        }
+        const rows = Array.isArray(response?.rows) ? response.rows : [];
+        setWarehouseOperatingUnits(rows);
+        const validIds = new Set(
+          rows.map((row) => String(toPositiveInt(row?.id) || "")).filter(Boolean)
+        );
+        setWarehouseForm((previous) =>
+          previous.operatingUnitId && !validIds.has(previous.operatingUnitId)
+            ? {
+                ...previous,
+                operatingUnitId: "",
+              }
+            : previous
+        );
+      })
+      .catch((error) => {
+        if (cancelled) {
+          return;
+        }
+        setWarehouseOperatingUnits([]);
+        setWarehouseOperatingUnitsError(
+          normalizeApiError(
+            error,
+            l("Operating units could not be loaded.", "Isletme birimleri yuklenemedi.")
+          )
+        );
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setWarehouseOperatingUnitsLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [canReadOrgTree, l, warehouseForm.legalEntityId, warehouseForm.ownershipScope]);
+
   const loadPageData = useCallback(async () => {
     const legalEntityId = toPositiveInt(filters.legalEntityId);
     if (!canRead) {
@@ -280,7 +418,6 @@ export default function InventoryMovementsPage() {
         await Promise.all([
           listInventoryWarehouses({
             legalEntityId,
-            status: "ACTIVE",
             limit: 200,
             offset: 0,
           }),
@@ -330,12 +467,17 @@ export default function InventoryMovementsPage() {
 
   useEffect(() => {
     const warehouseIds = new Set(
+      activeWarehouseOptions
+        .map((row) => String(row.value || ""))
+        .filter(Boolean)
+    );
+    const filterWarehouseIds = new Set(
       warehouseRows
         .map((row) => String(toPositiveInt(row?.id) || ""))
         .filter(Boolean)
     );
     setFilters((previous) => {
-      if (previous.warehouseId && !warehouseIds.has(previous.warehouseId)) {
+      if (previous.warehouseId && !filterWarehouseIds.has(previous.warehouseId)) {
         return { ...previous, warehouseId: "" };
       }
       return previous;
@@ -344,15 +486,15 @@ export default function InventoryMovementsPage() {
       if (previous.warehouseId && !warehouseIds.has(previous.warehouseId)) {
         return { ...previous, warehouseId: "" };
       }
-      if (!previous.warehouseId && warehouseRows.length === 1) {
+      if (!previous.warehouseId && activeWarehouseOptions.length === 1) {
         return {
           ...previous,
-          warehouseId: String(warehouseRows[0].id || ""),
+          warehouseId: String(activeWarehouseOptions[0].value || ""),
         };
       }
       return previous;
     });
-  }, [warehouseRows]);
+  }, [activeWarehouseOptions, warehouseRows]);
 
   useEffect(() => {
     const validStockLinkIds = new Set(
@@ -537,6 +679,11 @@ export default function InventoryMovementsPage() {
     try {
       const response = await createInventoryWarehouse({
         legalEntityId: toPositiveInt(warehouseForm.legalEntityId),
+        ownershipScope: warehouseForm.ownershipScope,
+        operatingUnitId:
+          warehouseForm.ownershipScope === "OPERATING_UNIT"
+            ? toPositiveInt(warehouseForm.operatingUnitId)
+            : undefined,
         code: normalizeText(warehouseForm.code).toUpperCase(),
         name: normalizeText(warehouseForm.name),
         status: normalizeText(warehouseForm.status).toUpperCase() || "ACTIVE",
@@ -734,18 +881,6 @@ export default function InventoryMovementsPage() {
     }
   }
 
-  const warehouseOptions = useMemo(
-    () =>
-      warehouseRows.map((row) => ({
-        value: String(row.id || ""),
-        label:
-          row.code && row.name
-            ? `${row.code} - ${row.name}`
-            : row.code || row.name || `Warehouse #${row.id}`,
-      })),
-    [warehouseRows]
-  );
-
   return (
     <div className="space-y-6">
       <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -898,6 +1033,52 @@ export default function InventoryMovementsPage() {
                 />
               </label>
               <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                {l("Ownership Scope", "Sahiplik Kapsami")}
+                <select
+                  className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                  value={warehouseForm.ownershipScope}
+                  onChange={(event) =>
+                    setWarehouseForm((previous) => ({
+                      ...previous,
+                      ownershipScope: event.target.value,
+                    }))
+                  }
+                  disabled={warehouseSaving || !canUpsert}
+                >
+                  <option value="CENTRAL">{l("Central", "Merkez")}</option>
+                  <option value="OPERATING_UNIT">{l("Operating Unit", "Isletme Birimi")}</option>
+                </select>
+              </label>
+              {warehouseForm.ownershipScope === "OPERATING_UNIT" ? (
+                <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                  {l("Operating Unit", "Isletme Birimi")}
+                  <select
+                    className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                    value={warehouseForm.operatingUnitId}
+                    onChange={(event) =>
+                      setWarehouseForm((previous) => ({
+                        ...previous,
+                        operatingUnitId: event.target.value,
+                      }))
+                    }
+                    disabled={
+                      warehouseSaving ||
+                      !canUpsert ||
+                      !warehouseForm.legalEntityId ||
+                      !canReadOrgTree ||
+                      warehouseOperatingUnitsLoading
+                    }
+                  >
+                    <option value="">{l("Select operating unit", "Isletme birimi secin")}</option>
+                    {warehouseOperatingUnitOptions.map((option) => (
+                      <option key={`warehouse-ou-${option.value}`} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
+              <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
                 {l("Code", "Kod")}
                 <input
                   type="text"
@@ -943,6 +1124,17 @@ export default function InventoryMovementsPage() {
               </label>
             </div>
 
+            {warehouseForm.ownershipScope === "OPERATING_UNIT" && !canReadOrgTree ? (
+              <p className="mt-3 text-sm text-amber-700">
+                {l(
+                  "Missing permission: org.tree.read. Operating-unit-owned warehouses cannot be selected from this screen.",
+                  "Eksik yetki: org.tree.read. Bu ekranda isletme birimine ait depo secimi yapilamaz."
+                )}
+              </p>
+            ) : null}
+            {warehouseOperatingUnitsError ? (
+              <p className="mt-3 text-sm text-rose-700">{warehouseOperatingUnitsError}</p>
+            ) : null}
             {warehouseError ? <p className="mt-3 text-sm text-rose-700">{warehouseError}</p> : null}
             {warehouseMessage ? (
               <p className="mt-3 text-sm text-emerald-700">{warehouseMessage}</p>
@@ -951,11 +1143,102 @@ export default function InventoryMovementsPage() {
             <button
               type="submit"
               className="mt-4 rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
-              disabled={warehouseSaving || !canUpsert}
+              disabled={
+                warehouseSaving ||
+                !canUpsert ||
+                !toPositiveInt(warehouseForm.legalEntityId) ||
+                !normalizeText(warehouseForm.code) ||
+                !normalizeText(warehouseForm.name) ||
+                (warehouseForm.ownershipScope === "OPERATING_UNIT" &&
+                  (!canReadOrgTree || !toPositiveInt(warehouseForm.operatingUnitId)))
+              }
             >
               {warehouseSaving ? l("Creating...", "Olusturuluyor...") : l("Create Warehouse", "Depo Olustur")}
             </button>
           </form>
+
+          <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900">
+                  {l("Warehouse List", "Depo Listesi")}
+                </h2>
+                <p className="mt-1 text-sm text-slate-600">
+                  {l(
+                    "Review central and operating-unit-owned warehouse scope before stock activity starts.",
+                    "Stok hareketi baslamadan once merkez ve isletme birimi sahipligindeki depolari gozden gecirin."
+                  )}
+                </p>
+              </div>
+              <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-slate-700">
+                {warehouseRows.length}
+              </span>
+            </div>
+
+            {warehouseRows.length === 0 ? (
+              <p className="mt-4 text-sm text-slate-600">
+                {l("No warehouses found for this legal entity.", "Bu tuzel kisilik icin depo bulunamadi.")}
+              </p>
+            ) : (
+              <div className="mt-4 space-y-3">
+                {warehouseRows.map((row) => {
+                  const ownershipScope = String(row?.ownershipScope || "CENTRAL").toUpperCase();
+                  const ownershipLabel =
+                    ownershipScope === "OPERATING_UNIT"
+                      ? l("Operating Unit", "Isletme Birimi")
+                      : l("Central", "Merkez");
+                  const operatingUnitLabel =
+                    ownershipScope === "OPERATING_UNIT"
+                      ? row?.operatingUnitCode && row?.operatingUnitName
+                        ? `${row.operatingUnitCode} - ${row.operatingUnitName}`
+                        : row?.operatingUnitCode || row?.operatingUnitName || l("Unknown OU", "Bilinmeyen IB")
+                      : l("Central", "Merkez");
+                  return (
+                    <div
+                      key={`warehouse-row-${row.id}`}
+                      className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                          <div className="font-semibold text-slate-900">
+                            {row.code && row.name
+                              ? `${row.code} - ${row.name}`
+                              : row.code || row.name || `Warehouse #${row.id}`}
+                          </div>
+                          <div className="mt-1 text-xs text-slate-500">
+                            {l("Legal entity", "Tuzel kisilik")}{" "}
+                            {row.legalEntityCode || row.legalEntityId || "-"}
+                          </div>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span
+                            className={`rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide ${getOwnershipBadgeClass(
+                              ownershipScope
+                            )}`}
+                          >
+                            {ownershipLabel}
+                          </span>
+                          <span
+                            className={`rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide ${getStatusBadgeClass(
+                              row.status
+                            )}`}
+                          >
+                            {row.status || "ACTIVE"}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="mt-2 text-sm text-slate-700">
+                        {l("Owner Context", "Sahiplik Baglami")}: {operatingUnitLabel}
+                      </div>
+                      {row.notes ? (
+                        <div className="mt-1 text-sm text-slate-600">{row.notes}</div>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </section>
 
           <form
             className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"
@@ -1015,10 +1298,10 @@ export default function InventoryMovementsPage() {
                       warehouseId: event.target.value,
                     }))
                   }
-                  disabled={movementSaving || !canUpsert || warehouseRows.length === 0}
+                  disabled={movementSaving || !canUpsert || activeWarehouseOptions.length === 0}
                 >
                   <option value="">{l("Select warehouse", "Depo secin")}</option>
-                  {warehouseOptions.map((option) => (
+                  {activeWarehouseOptions.map((option) => (
                     <option key={`movement-warehouse-${option.value}`} value={option.value}>
                       {option.label}
                     </option>
