@@ -413,6 +413,12 @@ export const sidebarItems = [
         implemented: true,
       },
       {
+        label: "Stok Transferleri",
+        to: "/app/stok-transferleri",
+        requiredPermissions: ["inventory.read"],
+        implemented: true,
+      },
+      {
         label: "Stok Karti Listesi",
         to: "/app/stok-karti-listesi",
         requiredPermissions: ["item.card.read"],

@@ -59,6 +59,7 @@ import payrollProvidersRoutes from "./routes/payroll.providers.routes.js";
 import cariRoutes from "./routes/cari.js";
 import itemCardRoutes from "./routes/item.card.routes.js";
 import inventoryRoutes from "./routes/inventory.routes.js";
+import inventoryTransferRoutes from "./routes/inventory.transfer.routes.js";
 import contractsRoutes from "./routes/contracts.js";
 import revenueRecognitionRoutes from "./routes/revenue-recognition.js";
 import { requireAuth } from "./middleware/auth.js";
@@ -281,6 +282,7 @@ app.use("/api/v1/payroll/close-controls", requireAuth, payrollCloseRoutes);
 app.use("/api/v1/cari", requireAuth, cariRoutes);
 app.use("/api/v1/items/cards", requireAuth, itemCardRoutes);
 app.use("/api/v1/inventory", requireAuth, inventoryRoutes);
+app.use("/api/v1/inventory", requireAuth, inventoryTransferRoutes);
 app.use("/api/v1/contracts", requireAuth, contractsRoutes);
 app.use("/api/v1/revenue-recognition", requireAuth, revenueRecognitionRoutes);
 

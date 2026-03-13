@@ -85,7 +85,7 @@
 
 ## Master tracker
 - [x] `PR-OU01` - OU-aware warehouse ownership foundation
-- [ ] `PR-OU02` - Inventory transfer document foundation with approval
+- [x] `PR-OU02` - Inventory transfer document foundation with approval
 - [ ] `PR-OU03` - Reverse-direction OU internal-current-account foundation and balancing helper
 - [ ] `PR-OU04` - Shipment-time transfer accounting and FIFO shipment valuation
 - [ ] `PR-OU05` - Transfer receipt and receipt journal
@@ -183,96 +183,96 @@
 ### Checklist
 
 #### Migration
-- [ ] Create `backend/src/migrations/m124_inventory_transfer_foundation.js`
-- [ ] Create `inventory_transfers`
-- [ ] Add `tenant_id`
-- [ ] Add `legal_entity_id`
-- [ ] Add `transfer_no`
-- [ ] Add `transfer_date`
-- [ ] Add `status ENUM('INITIATED','APPROVED','IN_TRANSIT','RECEIVED','CANCELED','REVERSED')`
-- [ ] Add `source_warehouse_id`
-- [ ] Add `target_warehouse_id`
-- [ ] Add `source_ownership_scope`
-- [ ] Add `source_operating_unit_id`
-- [ ] Add `target_ownership_scope`
-- [ ] Add `target_operating_unit_id`
-- [ ] Add `shipment_journal_entry_id`
-- [ ] Add `receipt_journal_entry_id`
-- [ ] Add `reversal_journal_entry_id`
-- [ ] Add `initiated_by_user_id`
-- [ ] Add `approved_by_user_id`
-- [ ] Add `shipped_by_user_id`
-- [ ] Add `received_by_user_id`
-- [ ] Add `canceled_by_user_id`
-- [ ] Add `reversed_by_user_id`
-- [ ] Add `initiated_at`
-- [ ] Add `approved_at`
-- [ ] Add `in_transit_at`
-- [ ] Add `received_at`
-- [ ] Add `canceled_at`
-- [ ] Add `reversed_at`
-- [ ] Add `cancel_reason`
-- [ ] Add `reverse_reason`
-- [ ] Add `idempotency_key`
-- [ ] Add `integration_event_uid`
-- [ ] Add `source_module`
-- [ ] Add `source_entity_type`
-- [ ] Add `source_entity_id`
-- [ ] Add `note`
-- [ ] Add timestamps
-- [ ] Add unique `(tenant_id, legal_entity_id, transfer_no)`
-- [ ] Add unique `(tenant_id, idempotency_key)` if idempotency is enforced for create
-- [ ] Add FK coverage for `source_warehouse_id`
-- [ ] Add FK coverage for `target_warehouse_id`
-- [ ] Alter `inventory_movements.source_type` to include `'INVENTORY_TRANSFER'`
-- [ ] Confirm `inventory_movements.source_document_type` does not need enum/constraint extension for `'INVENTORY_TRANSFER'`
-- [ ] Create `inventory_transfer_lines`
-- [ ] Add `tenant_id`
-- [ ] Add `legal_entity_id`
-- [ ] Add `inventory_transfer_id`
-- [ ] Add `line_no`
-- [ ] Add `item_card_id`
-- [ ] Add `quantity_requested`
-- [ ] Add `quantity_shipped`
-- [ ] Add `quantity_received`
-- [ ] Add `shipped_currency_code`
-- [ ] Add `shipped_unit_cost_txn`
-- [ ] Add `shipped_unit_cost_base`
-- [ ] Add `shipped_total_cost_txn`
-- [ ] Add `shipped_total_cost_base`
-- [ ] Add `source_issue_movement_id`
-- [ ] Add `target_receipt_movement_id`
-- [ ] Add `note`
-- [ ] Add timestamps
-- [ ] Add unique `(inventory_transfer_id, line_no)`
-- [ ] Add FK coverage for `inventory_transfer_lines.inventory_transfer_id`
-- [ ] Add FK coverage for `inventory_transfer_lines.item_card_id`
-- [ ] Add FK coverage for `inventory_transfer_lines.source_issue_movement_id` if strict lineage is enforced
-- [ ] Add FK coverage for `inventory_transfer_lines.target_receipt_movement_id` if strict lineage is enforced
+- [x] Create `backend/src/migrations/m124_inventory_transfer_foundation.js`
+- [x] Create `inventory_transfers`
+- [x] Add `tenant_id`
+- [x] Add `legal_entity_id`
+- [x] Add `transfer_no`
+- [x] Add `transfer_date`
+- [x] Add `status ENUM('INITIATED','APPROVED','IN_TRANSIT','RECEIVED','CANCELED','REVERSED')`
+- [x] Add `source_warehouse_id`
+- [x] Add `target_warehouse_id`
+- [x] Add `source_ownership_scope`
+- [x] Add `source_operating_unit_id`
+- [x] Add `target_ownership_scope`
+- [x] Add `target_operating_unit_id`
+- [x] Add `shipment_journal_entry_id`
+- [x] Add `receipt_journal_entry_id`
+- [x] Add `reversal_journal_entry_id`
+- [x] Add `initiated_by_user_id`
+- [x] Add `approved_by_user_id`
+- [x] Add `shipped_by_user_id`
+- [x] Add `received_by_user_id`
+- [x] Add `canceled_by_user_id`
+- [x] Add `reversed_by_user_id`
+- [x] Add `initiated_at`
+- [x] Add `approved_at`
+- [x] Add `in_transit_at`
+- [x] Add `received_at`
+- [x] Add `canceled_at`
+- [x] Add `reversed_at`
+- [x] Add `cancel_reason`
+- [x] Add `reverse_reason`
+- [x] Add `idempotency_key`
+- [x] Add `integration_event_uid`
+- [x] Add `source_module`
+- [x] Add `source_entity_type`
+- [x] Add `source_entity_id`
+- [x] Add `note`
+- [x] Add timestamps
+- [x] Add unique `(tenant_id, legal_entity_id, transfer_no)`
+- [x] Add unique `(tenant_id, idempotency_key)` if idempotency is enforced for create
+- [x] Add FK coverage for `source_warehouse_id`
+- [x] Add FK coverage for `target_warehouse_id`
+- [x] Alter `inventory_movements.source_type` to include `'INVENTORY_TRANSFER'`
+- [x] Confirm `inventory_movements.source_document_type` does not need enum/constraint extension for `'INVENTORY_TRANSFER'`
+- [x] Create `inventory_transfer_lines`
+- [x] Add `tenant_id`
+- [x] Add `legal_entity_id`
+- [x] Add `inventory_transfer_id`
+- [x] Add `line_no`
+- [x] Add `item_card_id`
+- [x] Add `quantity_requested`
+- [x] Add `quantity_shipped`
+- [x] Add `quantity_received`
+- [x] Add `shipped_currency_code`
+- [x] Add `shipped_unit_cost_txn`
+- [x] Add `shipped_unit_cost_base`
+- [x] Add `shipped_total_cost_txn`
+- [x] Add `shipped_total_cost_base`
+- [x] Add `source_issue_movement_id`
+- [x] Add `target_receipt_movement_id`
+- [x] Add `note`
+- [x] Add timestamps
+- [x] Add unique `(inventory_transfer_id, line_no)`
+- [x] Add FK coverage for `inventory_transfer_lines.inventory_transfer_id`
+- [x] Add FK coverage for `inventory_transfer_lines.item_card_id`
+- [x] Add FK coverage for `inventory_transfer_lines.source_issue_movement_id` if strict lineage is enforced
+- [x] Add FK coverage for `inventory_transfer_lines.target_receipt_movement_id` if strict lineage is enforced
 
 #### Migration registration
-- [ ] Register `m124_inventory_transfer_foundation` in `backend/src/migrations/index.js`
+- [x] Register `m124_inventory_transfer_foundation` in `backend/src/migrations/index.js`
 
 #### Validators and routes
-- [ ] Add create, list, detail, approve, ship, receive, cancel, reverse validators
-- [ ] Reuse existing `inventory.read` for transfer list/detail access
-- [ ] Reuse existing `inventory.upsert` for transfer create/approve/ship/receive/cancel/reverse access
-- [ ] Do not introduce new transfer-specific permission codes in v1
-- [ ] Enforce source warehouse required
-- [ ] Enforce target warehouse required
-- [ ] Enforce source != target
-- [ ] Enforce same legal entity only
-- [ ] Enforce source and target ownership context must differ for this transfer family
-- [ ] Enforce lines array required
-- [ ] Enforce positive quantities
-- [ ] Enforce full shipment only in v1
-- [ ] Enforce full receipt only in v1
-- [ ] Approve action must fail or no-op clearly if transfer is already `APPROVED` or beyond
-- [ ] Ship action must fail or no-op clearly if transfer is not exactly `APPROVED`
-- [ ] Receive action must fail or no-op clearly if transfer is not exactly `IN_TRANSIT`
-- [ ] Cancel action must fail or no-op clearly if transfer is not in an allowed pre-shipment state
-- [ ] Reverse action must fail or no-op clearly if transfer is not in an allowed reversible state
-- [ ] Add routes:
+- [x] Add create, list, detail, approve, ship, receive, cancel, reverse validators
+- [x] Reuse existing `inventory.read` for transfer list/detail access
+- [x] Reuse existing `inventory.upsert` for transfer create/approve/ship/receive/cancel/reverse access
+- [x] Do not introduce new transfer-specific permission codes in v1
+- [x] Enforce source warehouse required
+- [x] Enforce target warehouse required
+- [x] Enforce source != target
+- [x] Enforce same legal entity only
+- [x] Enforce source and target ownership context must differ for this transfer family
+- [x] Enforce lines array required
+- [x] Enforce positive quantities
+- [x] Enforce full shipment only in v1
+- [x] Enforce full receipt only in v1
+- [x] Approve action must fail or no-op clearly if transfer is already `APPROVED` or beyond
+- [x] Ship action must fail or no-op clearly if transfer is not exactly `APPROVED`
+- [x] Receive action must fail or no-op clearly if transfer is not exactly `IN_TRANSIT`
+- [x] Cancel action must fail or no-op clearly if transfer is not in an allowed pre-shipment state
+- [x] Reverse action must fail or no-op clearly if transfer is not in an allowed reversible state
+- [x] Add routes:
   - `GET /api/v1/inventory/transfers`
   - `POST /api/v1/inventory/transfers`
   - `GET /api/v1/inventory/transfers/:transferId`
@@ -281,64 +281,64 @@
   - `POST /api/v1/inventory/transfers/:transferId/receive`
   - `POST /api/v1/inventory/transfers/:transferId/cancel`
   - `POST /api/v1/inventory/transfers/:transferId/reverse`
-- [ ] Mount `inventory.transfer.routes.js` under existing `/api/v1/inventory`
-- [ ] Add legal-entity scope resolution for transfer create/list
-- [ ] Add param-based scope resolution for transfer detail/actions
-- [ ] Follow repo route-guard style for detail/actions: resolve scoped entity first, then enforce loaded-row access with `assertScopeAccess` where needed
+- [x] Mount `inventory.transfer.routes.js` under existing `/api/v1/inventory`
+- [x] Add legal-entity scope resolution for transfer create/list
+- [x] Add param-based scope resolution for transfer detail/actions
+- [x] Follow repo route-guard style for detail/actions: resolve scoped entity first, then enforce loaded-row access with `assertScopeAccess` where needed
 
 #### Service skeleton
-- [ ] Add `listInventoryTransfers`
-- [ ] Add `getInventoryTransferById`
-- [ ] Add `createInventoryTransfer`
-- [ ] Add `approveInventoryTransferById`
-- [ ] Add `shipInventoryTransferById`
-- [ ] Add `receiveInventoryTransferById`
-- [ ] Add `cancelInventoryTransferById`
-- [ ] Add `reverseInventoryTransferById`
-- [ ] Snapshot source ownership scope / OU on header
-- [ ] Snapshot target ownership scope / OU on header
-- [ ] Treat same-context warehouse move as out of scope for this transfer family and fail clearly
+- [x] Add `listInventoryTransfers`
+- [x] Add `getInventoryTransferById`
+- [x] Add `createInventoryTransfer`
+- [x] Add `approveInventoryTransferById`
+- [x] Add `shipInventoryTransferById`
+- [x] Add `receiveInventoryTransferById`
+- [x] Add `cancelInventoryTransferById`
+- [x] Add `reverseInventoryTransferById`
+- [x] Snapshot source ownership scope / OU on header
+- [x] Snapshot target ownership scope / OU on header
+- [x] Treat same-context warehouse move as out of scope for this transfer family and fail clearly
 
 #### Frontend
-- [ ] Add transfer API helpers
-- [ ] Add transfer list page shell
-- [ ] Add transfer create form
-- [ ] Add transfer detail fetch
-- [ ] Lock the canonical transfer route path in `frontend/src/App.jsx`:
+- [x] Add transfer API helpers
+- [x] Add transfer list page shell
+- [x] Add transfer create form
+- [x] Add transfer detail fetch
+- [x] Lock the canonical transfer route path in `frontend/src/App.jsx`:
   - `appPath = "/app/stok-transferleri"`
   - `childPath = "stok-transferleri"`
-- [ ] Add canonical implemented transfer route entry in `frontend/src/App.jsx`
-- [ ] Add route/sidebar entry for transfers using existing `inventory.read` gating
-- [ ] Reuse the same canonical transfer route string in:
+- [x] Add canonical implemented transfer route entry in `frontend/src/App.jsx`
+- [x] Add route/sidebar entry for transfers using existing `inventory.read` gating
+- [x] Reuse the same canonical transfer route string in:
   - `frontend/src/layouts/sidebarConfig.js` `to = "/app/stok-transferleri"`
   - `frontend/src/i18n/messages.js` `messages.sidebar.byPath["/app/stok-transferleri"]`
-- [ ] Mark the new transfer sidebar entry as `implemented: true` in `frontend/src/layouts/sidebarConfig.js`
-- [ ] Add `messages.sidebar.byPath` TR/EN labels for the transfer route
+- [x] Mark the new transfer sidebar entry as `implemented: true` in `frontend/src/layouts/sidebarConfig.js`
+- [x] Add `messages.sidebar.byPath` TR/EN labels for the transfer route
 
 #### Regression
-- [ ] Create `backend/scripts/test-inventory-ou02-transfer-foundation.js`
-- [ ] Test create transfer
-- [ ] Test same warehouse blocked
-- [ ] Test cross-legal-entity blocked
-- [ ] Test same-context transfer create is rejected for this tracker family
-- [ ] Test approve twice fails or no-ops clearly
-- [ ] Test ship before approve fails
-- [ ] Test ship twice fails or no-ops clearly
-- [ ] Test receive before ship fails
-- [ ] Test receive twice fails or no-ops clearly
-- [ ] Test cancel after shipment fails
-- [ ] Test reverse after cancel fails
-- [ ] Test approval required before shipment
-- [ ] Test source/target context snapshot persists
+- [x] Create `backend/scripts/test-inventory-ou02-transfer-foundation.js`
+- [x] Test create transfer
+- [x] Test same warehouse blocked
+- [x] Test cross-legal-entity blocked
+- [x] Test same-context transfer create is rejected for this tracker family
+- [x] Test approve twice fails or no-ops clearly
+- [x] Test ship before approve fails
+- [x] Test ship twice fails or no-ops clearly
+- [x] Test receive before ship fails
+- [x] Test receive twice fails or no-ops clearly
+- [x] Test cancel after shipment fails
+- [x] Test reverse after cancel fails
+- [x] Test approval required before shipment
+- [x] Test source/target context snapshot persists
 
 ### Acceptance
-- [ ] Transfer header and lines persist correctly
-- [ ] Transfer has explicit source/target context snapshot
-- [ ] Approval is part of the lifecycle
-- [ ] Transfer routes are scope-safe
-- [ ] Transfer route/sidebar/messages wiring follows the repo route contract
-- [ ] Same-context movement is not silently pulled into the cross-context transfer family
-- [ ] Cross-context movement now has a real document foundation
+- [x] Transfer header and lines persist correctly
+- [x] Transfer has explicit source/target context snapshot
+- [x] Approval is part of the lifecycle
+- [x] Transfer routes are scope-safe
+- [x] Transfer route/sidebar/messages wiring follows the repo route contract
+- [x] Same-context movement is not silently pulled into the cross-context transfer family
+- [x] Cross-context movement now has a real document foundation
 
 ## PR-OU03 - Reverse-direction OU internal-current-account foundation and balancing helper
 
@@ -953,9 +953,9 @@
 - [x] 1. Create `m123_inventory_warehouse_ownership_scope.js`
 - [x] 2. Update warehouse validators / queries / create logic
 - [x] 3. Update warehouse frontend form/list
-- [ ] 4. Create `m124_inventory_transfer_foundation.js`
-- [ ] 5. Build transfer validators / routes / service skeleton
-- [ ] 6. Add transfer page shell
+- [x] 4. Create `m124_inventory_transfer_foundation.js`
+- [x] 5. Build transfer validators / routes / service skeleton
+- [x] 6. Add transfer page shell
 - [ ] 7. Create `m125_operating_unit_reverse_internal_current_accounts.js`
 - [ ] 8. Extend org setup and create `ou.self-balancing.service.js`
 - [ ] 9. Create `m126_item_cards_inventory_transit_account.js`

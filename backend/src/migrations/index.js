@@ -111,6 +111,7 @@ import migration120InventoryIssueJournalPosting from "./m120_inventory_issue_jou
 import migration121CariStockLinkSuccessorLineage from "./m121_cari_stock_link_successor_lineage.js";
 import migration122InventoryMovementReversalLineage from "./m122_inventory_movement_reversal_lineage.js";
 import migration123InventoryWarehouseOwnershipScope from "./m123_inventory_warehouse_ownership_scope.js";
+import migration124InventoryTransferFoundation from "./m124_inventory_transfer_foundation.js";
 
 const migrations = [
   migration001GlobalMultiEntity,
@@ -226,6 +227,7 @@ const migrations = [
   migration121CariStockLinkSuccessorLineage,
   migration122InventoryMovementReversalLineage,
   migration123InventoryWarehouseOwnershipScope,
+  migration124InventoryTransferFoundation,
 ];
 
 export default migrations;

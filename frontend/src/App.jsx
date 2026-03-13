@@ -63,6 +63,7 @@ import CariSettlementsPage from "./pages/cari/CariSettlementsPage.jsx";
 import CariAuditPage from "./pages/cari/CariAuditPage.jsx";
 import ItemCardsPage from "./pages/inventory/ItemCardsPage.jsx";
 import InventoryMovementsPage from "./pages/inventory/InventoryMovementsPage.jsx";
+import InventoryTransfersPage from "./pages/inventory/InventoryTransfersPage.jsx";
 import ContractsPage from "./pages/contracts/ContractsPage.jsx";
 import FutureYearRevenuePage from "./pages/revenue/FutureYearRevenuePage.jsx";
 import YearEndRevrecChecklistPage from "./pages/YearEndRevrecChecklistPage.jsx";
@@ -333,6 +334,11 @@ const implementedRoutes = [
     appPath: "/app/stok-yansitma-islemleri",
     childPath: "stok-yansitma-islemleri",
     element: <InventoryMovementsPage />,
+  },
+  {
+    appPath: "/app/stok-transferleri",
+    childPath: "stok-transferleri",
+    element: <InventoryTransfersPage />,
   },
   {
     appPath: "/app/contracts",
