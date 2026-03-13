@@ -288,7 +288,7 @@ async function main() {
         legalEntityId: context.legalEntityId,
         code: uniqueCode("OU02ITEM"),
         name: "OU02 Transfer Item",
-        itemType: "NON_STOCK_GOOD",
+        itemType: "STOCK_ITEM",
         status: "ACTIVE",
       },
     });
@@ -476,7 +476,7 @@ async function main() {
             transferId: Number(shipGateTransfer.id),
           },
         }),
-      "scaffolded but not implemented yet"
+      "inventoryTransitAccountId"
     );
 
     const shipTwiceTransfer = await createInventoryTransfer({

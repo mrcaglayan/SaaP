@@ -363,7 +363,8 @@ async function main() {
     "Transfer service should implement receipt materialization and receipt journal posting"
   );
   assert(
-    transfersPageSource.includes('runTransferAction("receive")') &&
+    transfersPageSource.includes("receiveInventoryTransfer(transferId)") &&
+      transfersPageSource.includes("runTransferAction(action.key)") &&
       inventoryApiSource.includes("/transfers/${transferId}/receive"),
     "Frontend should expose the receive transfer action"
   );

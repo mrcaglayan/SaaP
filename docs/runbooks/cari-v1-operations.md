@@ -371,6 +371,7 @@ FX resolution baseline (exact + prior-date fallback):
 
 For day-to-day support and finance execution details, use:
 - `docs/runbooks/cari-v1-support-finance-ui-guide.md`
+- `docs/runbooks/ou-self-balancing-transfers-and-settlements.md` for owner-vs-collector cross-context settlement and `/app/stok-transferleri` transfer rollout guidance
 
 ## Recommended Commands
 

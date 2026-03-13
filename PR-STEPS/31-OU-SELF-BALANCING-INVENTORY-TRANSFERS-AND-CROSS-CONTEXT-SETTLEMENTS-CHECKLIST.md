@@ -96,7 +96,7 @@
 - [x] `PR-OU10` - Cross-context settlement reversal discipline
 - [x] `PR-OU11` - Cross-context settlement reports, drilldowns, and UI feedback
 - [x] `PR-OU12` - Frontend finishing for transfers, inventory, and settlement visibility
-- [ ] `PR-OU13` - OpenAPI, release gates, and rollout docs
+- [x] `PR-OU13` - OpenAPI, release gates, and rollout docs
 
 ## PR-OU01 - OU-aware warehouse ownership foundation
 
@@ -899,59 +899,59 @@
 ### Checklist
 
 #### OpenAPI
-- [ ] Finalize payload shapes
-- [ ] Add explicit schemas for warehouse ownership fields
-- [ ] Add explicit schemas for inventory transfers
-- [ ] Add explicit schemas for transfer evidence
-- [ ] Add explicit schemas for `inventoryTransitAccountId`
-- [ ] Add explicit schemas for settlement owner / collector context
-- [ ] Add explicit schemas for `originatingCrossContextSettlementBatchId`
-- [ ] Add explicit schemas for reverse-direction central `<->` OU org fields:
+- [x] Finalize payload shapes
+- [x] Add explicit schemas for warehouse ownership fields
+- [x] Add explicit schemas for inventory transfers
+- [x] Add explicit schemas for transfer evidence
+- [x] Add explicit schemas for `inventoryTransitAccountId`
+- [x] Add explicit schemas for settlement owner / collector context
+- [x] Add explicit schemas for `originatingCrossContextSettlementBatchId`
+- [x] Add explicit schemas for reverse-direction central `<->` OU org fields:
   - `central_due_to_account_id`
   - `ou_due_from_central_account_id`
-- [ ] Regenerate `backend/openapi.yaml`
+- [x] Regenerate `backend/openapi.yaml`
 
 #### Release gates
-- [ ] Add warehouse-ownership regression to CI flow
-- [ ] Add transfer-foundation regression to CI flow
-- [ ] Add OU-account-foundation regression to CI flow
-- [ ] Add shipment self-balancing regression to CI flow
-- [ ] Add receipt regression to CI flow
-- [ ] Add reversal / bypass regression to CI flow
-- [ ] Add transfer evidence regression to CI flow
-- [ ] Add cross-context settlement regressions to CI flow
-- [ ] Optionally add aggregate gate `backend/scripts/test-ou-self-balancing-release-gate.js`
-- [ ] Add new regression scripts to `backend/package.json`
-- [ ] Add new regression scripts to CI / release-gate runner
-- [ ] Add transfer route manifest entry to `backend/scripts/fixtures/rswire03-release-gate-manifest.json`
-- [ ] Lock the exact transfer-route manifest triple in `backend/scripts/fixtures/rswire03-release-gate-manifest.json`:
+- [x] Add warehouse-ownership regression to CI flow
+- [x] Add transfer-foundation regression to CI flow
+- [x] Add OU-account-foundation regression to CI flow
+- [x] Add shipment self-balancing regression to CI flow
+- [x] Add receipt regression to CI flow
+- [x] Add reversal / bypass regression to CI flow
+- [x] Add transfer evidence regression to CI flow
+- [x] Add cross-context settlement regressions to CI flow
+- [x] Optionally add aggregate gate `backend/scripts/test-ou-self-balancing-release-gate.js`
+- [x] Add new regression scripts to `backend/package.json`
+- [x] Add new regression scripts to CI / release-gate runner
+- [x] Add transfer route manifest entry to `backend/scripts/fixtures/rswire03-release-gate-manifest.json`
+- [x] Lock the exact transfer-route manifest triple in `backend/scripts/fixtures/rswire03-release-gate-manifest.json`:
   - `routePath = "/app/stok-transferleri"`
   - `smokeScriptPath = "backend/scripts/test-ou-self-balancing-release-gate.js"`
   - `packageScriptName = "test:ou:self-balancing:release-gate"`
-- [ ] Add the transfer route to `ROUTE_WIRING_RULES` in `backend/scripts/test-ux-rswire01-cross-file-wiring.js`
-- [ ] Lock the exact `apiNeedles` entry for the transfer route in `ROUTE_WIRING_RULES`:
+- [x] Add the transfer route to `ROUTE_WIRING_RULES` in `backend/scripts/test-ux-rswire01-cross-file-wiring.js`
+- [x] Lock the exact `apiNeedles` entry for the transfer route in `ROUTE_WIRING_RULES`:
   - `apiNeedles = ["../../api/inventory.js"]`
-- [ ] Ensure `backend/package.json` exposes `npm run test:ux:rswire01` in the release-gate path that covers this feature
-- [ ] Add OpenAPI drift check to release gate
-- [ ] Ensure OpenAPI drift check runs in the same release-gate path as the new regressions
-- [ ] Ensure the implemented transfer route passes existing `RS-WIRE-01` cross-file route/API wiring checks
-- [ ] Ensure the implemented transfer route passes existing RS-WIRE sidebar/i18n and manifest coverage guards
+- [x] Ensure `backend/package.json` exposes `npm run test:ux:rswire01` in the release-gate path that covers this feature
+- [x] Add OpenAPI drift check to release gate
+- [x] Ensure OpenAPI drift check runs in the same release-gate path as the new regressions
+- [x] Ensure the implemented transfer route passes existing `RS-WIRE-01` cross-file route/API wiring checks
+- [x] Ensure the implemented transfer route passes existing RS-WIRE sidebar/i18n and manifest coverage guards
 
 #### Rollout docs
-- [ ] Add operator note for warehouse ownership setup
-- [ ] Add operator note for transfer approval requirement
-- [ ] Add operator note for item transit account requirement
-- [ ] Add operator note for missing OU current-account mapping failures
-- [ ] Add transfer lifecycle runbook
-- [ ] Add accounting examples for shipment / receipt / reversal
-- [ ] Add cross-context settlement examples
-- [ ] Add troubleshooting for blocked generic cross-context stock movement
-- [ ] Add note that first-class cross-context collection document is still future scope
+- [x] Add operator note for warehouse ownership setup
+- [x] Add operator note for transfer approval requirement
+- [x] Add operator note for item transit account requirement
+- [x] Add operator note for missing OU current-account mapping failures
+- [x] Add transfer lifecycle runbook
+- [x] Add accounting examples for shipment / receipt / reversal
+- [x] Add cross-context settlement examples
+- [x] Add troubleshooting for blocked generic cross-context stock movement
+- [x] Add note that first-class cross-context collection document is still future scope
 
 ### Acceptance
-- [ ] OpenAPI fully documents the feature
-- [ ] Release gates cover the new behavior
-- [ ] Operators have clear runbooks and troubleshooting docs
+- [x] OpenAPI fully documents the feature
+- [x] Release gates cover the new behavior
+- [x] Operators have clear runbooks and troubleshooting docs
 
 ## Recommended exact implementation order
 - [x] 1. Create `m123_inventory_warehouse_ownership_scope.js`
@@ -975,7 +975,7 @@
 - [x] 19. Implement strict reversal dependency and explicit downstream linkage
 - [x] 20. Propagate settlement reports/drilldowns and operator feedback
 - [x] 21. Finish transfer/inventory/settlement frontend polish
-- [ ] 22. Finish OpenAPI / release gates / docs
+- [x] 22. Finish OpenAPI / release gates / docs
 
 ## Done definition
 - [x] Warehouses are explicitly central or OU-owned
@@ -988,4 +988,4 @@
 - [x] Cross-context CARI settlement owner vs collector split works
 - [x] Settlement reports and drilldowns surface owner vs collector context correctly
 - [x] Non-self-balanced cross-context settlement is blocked
-- [ ] UI, OpenAPI, release gates, and docs are aligned
+- [x] UI, OpenAPI, release gates, and docs are aligned

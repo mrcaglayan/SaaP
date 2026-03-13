@@ -436,8 +436,9 @@ async function main() {
     "Transfer service should enforce cancel discipline and additive reversal flow"
   );
   assert(
-    transfersPageSource.includes('runTransferAction("cancel")') &&
-      transfersPageSource.includes('runTransferAction("reverse")') &&
+    transfersPageSource.includes("cancelInventoryTransfer(transferId") &&
+      transfersPageSource.includes("reverseInventoryTransfer(transferId") &&
+      transfersPageSource.includes("runTransferAction(action.key)") &&
       inventoryApiSource.includes("/transfers/${transferId}/cancel") &&
       inventoryApiSource.includes("/transfers/${transferId}/reverse"),
     "Frontend should expose cancel and reverse transfer actions"

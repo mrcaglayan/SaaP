@@ -404,8 +404,9 @@ async function main() {
   );
   assert(
     itemCardsPageSource.includes("Inventory Transit Account (optional)") &&
-      transfersPageSource.includes("runTransferAction(\"approve\")") &&
-      transfersPageSource.includes("runTransferAction(\"ship\")") &&
+      transfersPageSource.includes("approveInventoryTransfer(transferId)") &&
+      transfersPageSource.includes("shipInventoryTransfer(transferId)") &&
+      transfersPageSource.includes("runTransferAction(action.key)") &&
       inventoryApiSource.includes("/transfers/${transferId}/ship"),
     "Frontend should expose transit-account maintenance and approve/ship transfer actions"
   );

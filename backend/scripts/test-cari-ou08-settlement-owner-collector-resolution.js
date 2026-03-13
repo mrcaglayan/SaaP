@@ -285,6 +285,78 @@ async function createOrgFixtures({ tenantId, userId, stamp }) {
     accountType: "EXPENSE",
     normalSide: "DEBIT",
   });
+  const centralDueFromOwnerAccountId = await createAccount({
+    code: `${accountPrefix}06`,
+    name: "OU08 Central Due From Owner",
+    accountType: "ASSET",
+    normalSide: "DEBIT",
+  });
+  const centralDueToOwnerAccountId = await createAccount({
+    code: `${accountPrefix}07`,
+    name: "OU08 Central Due To Owner",
+    accountType: "LIABILITY",
+    normalSide: "CREDIT",
+  });
+  const ownerDueFromCentralAccountId = await createAccount({
+    code: `${accountPrefix}08`,
+    name: "OU08 Owner Due From Central",
+    accountType: "ASSET",
+    normalSide: "DEBIT",
+  });
+  const ownerDueToCentralAccountId = await createAccount({
+    code: `${accountPrefix}09`,
+    name: "OU08 Owner Due To Central",
+    accountType: "LIABILITY",
+    normalSide: "CREDIT",
+  });
+  const centralDueFromCollectorAccountId = await createAccount({
+    code: `${accountPrefix}10`,
+    name: "OU08 Central Due From Collector",
+    accountType: "ASSET",
+    normalSide: "DEBIT",
+  });
+  const centralDueToCollectorAccountId = await createAccount({
+    code: `${accountPrefix}11`,
+    name: "OU08 Central Due To Collector",
+    accountType: "LIABILITY",
+    normalSide: "CREDIT",
+  });
+  const collectorDueFromCentralAccountId = await createAccount({
+    code: `${accountPrefix}12`,
+    name: "OU08 Collector Due From Central",
+    accountType: "ASSET",
+    normalSide: "DEBIT",
+  });
+  const collectorDueToCentralAccountId = await createAccount({
+    code: `${accountPrefix}13`,
+    name: "OU08 Collector Due To Central",
+    accountType: "LIABILITY",
+    normalSide: "CREDIT",
+  });
+  const ownerDueFromCollectorAccountId = await createAccount({
+    code: `${accountPrefix}14`,
+    name: "OU08 Owner Due From Collector",
+    accountType: "ASSET",
+    normalSide: "DEBIT",
+  });
+  const ownerDueToCollectorAccountId = await createAccount({
+    code: `${accountPrefix}15`,
+    name: "OU08 Owner Due To Collector",
+    accountType: "LIABILITY",
+    normalSide: "CREDIT",
+  });
+  const collectorDueFromOwnerAccountId = await createAccount({
+    code: `${accountPrefix}16`,
+    name: "OU08 Collector Due From Owner",
+    accountType: "ASSET",
+    normalSide: "DEBIT",
+  });
+  const collectorDueToOwnerAccountId = await createAccount({
+    code: `${accountPrefix}17`,
+    name: "OU08 Collector Due To Owner",
+    accountType: "LIABILITY",
+    normalSide: "CREDIT",
+  });
 
   await query(
     `INSERT INTO journal_purpose_accounts (
@@ -348,6 +420,74 @@ async function createOrgFixtures({ tenantId, userId, stamp }) {
   const collectorOperatingUnitId = await createOperatingUnit(
     `OU08COL${String(stamp).slice(-4)}`,
     "OU08 Collector OU"
+  );
+
+  await query(
+    `UPDATE operating_units
+     SET central_due_from_account_id = ?,
+         central_due_to_account_id = ?,
+         ou_due_from_central_account_id = ?,
+         ou_due_to_central_account_id = ?
+     WHERE tenant_id = ?
+       AND legal_entity_id = ?
+       AND id = ?`,
+    [
+      centralDueFromOwnerAccountId,
+      centralDueToOwnerAccountId,
+      ownerDueFromCentralAccountId,
+      ownerDueToCentralAccountId,
+      tenantId,
+      legalEntityId,
+      ownerOperatingUnitId,
+    ]
+  );
+  await query(
+    `UPDATE operating_units
+     SET central_due_from_account_id = ?,
+         central_due_to_account_id = ?,
+         ou_due_from_central_account_id = ?,
+         ou_due_to_central_account_id = ?
+     WHERE tenant_id = ?
+       AND legal_entity_id = ?
+       AND id = ?`,
+    [
+      centralDueFromCollectorAccountId,
+      centralDueToCollectorAccountId,
+      collectorDueFromCentralAccountId,
+      collectorDueToCentralAccountId,
+      tenantId,
+      legalEntityId,
+      collectorOperatingUnitId,
+    ]
+  );
+  await query(
+    `INSERT INTO operating_unit_partner_current_accounts (
+        tenant_id,
+        legal_entity_id,
+        operating_unit_id,
+        partner_operating_unit_id,
+        due_from_account_id,
+        due_to_account_id
+     ) VALUES
+       (?, ?, ?, ?, ?, ?),
+       (?, ?, ?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE
+       due_from_account_id = VALUES(due_from_account_id),
+       due_to_account_id = VALUES(due_to_account_id)`,
+    [
+      tenantId,
+      legalEntityId,
+      ownerOperatingUnitId,
+      collectorOperatingUnitId,
+      ownerDueFromCollectorAccountId,
+      ownerDueToCollectorAccountId,
+      tenantId,
+      legalEntityId,
+      collectorOperatingUnitId,
+      ownerOperatingUnitId,
+      collectorDueFromOwnerAccountId,
+      collectorDueToOwnerAccountId,
+    ]
   );
 
   await query(

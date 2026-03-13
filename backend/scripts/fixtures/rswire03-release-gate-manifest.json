@@ -52,8 +52,8 @@
     },
     {
       "routePath": "/app/stok-transferleri",
-      "smokeScriptPath": "backend/scripts/test-inventory-ou04-shipment-self-balancing.js",
-      "packageScriptName": "test:inventory:ou04"
+      "smokeScriptPath": "backend/scripts/test-ou-self-balancing-release-gate.js",
+      "packageScriptName": "test:ou:self-balancing:release-gate"
     }
   ]
 }

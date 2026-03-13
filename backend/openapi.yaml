@@ -9853,11 +9853,11 @@
         "summary": "Cari open-items report",
         "responses": {
           "200": {
-            "description": "Cari open-items report response",
+            "description": "Cari open-items report",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/CariOpenItemsReportResponse"
                 }
               }
             }
@@ -9983,14 +9983,14 @@
           "Cari"
         ],
         "operationId": "getApiV1CariReportsSettlementRealizedFx",
-        "summary": "Cari endpoint: GET /api/v1/cari/reports/settlement-realized-fx",
+        "summary": "Cari settlement realized-FX report",
         "responses": {
           "200": {
-            "description": "Successful response",
+            "description": "Cari settlement realized-FX report",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/CariSettlementRealizedFxReportResponse"
                 }
               }
             }
@@ -10004,7 +10004,114 @@
           "403": {
             "$ref": "#/components/responses/ErrorResponse"
           }
-        }
+        },
+        "parameters": [
+          {
+            "in": "query",
+            "name": "tenantId",
+            "required": false,
+            "description": "Tenant identifier; optional if available in JWT",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "legalEntityId",
+            "required": false,
+            "description": "Legal entity filter",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "counterpartyId",
+            "required": false,
+            "description": "Counterparty filter",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "role",
+            "required": false,
+            "description": "Counterparty role filter",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "CUSTOMER",
+                "VENDOR",
+                "BOTH"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "currencyCode",
+            "required": false,
+            "description": "Settlement currency filter",
+            "schema": {
+              "type": "string",
+              "minLength": 3,
+              "maxLength": 3
+            }
+          },
+          {
+            "in": "query",
+            "name": "periodFrom",
+            "required": false,
+            "description": "Settlement-date lower bound",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "in": "query",
+            "name": "periodTo",
+            "required": false,
+            "description": "Settlement-date upper bound",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "in": "query",
+            "name": "includeDetails",
+            "required": false,
+            "description": "Include grouped detail rows",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "description": "Page size",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "description": "Page offset",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ]
       }
     },
     "/api/v1/cari/reports/statement": {
@@ -10016,11 +10123,11 @@
         "summary": "Cari counterparty statement report",
         "responses": {
           "200": {
-            "description": "Cari counterparty statement report response",
+            "description": "Cari counterparty statement report",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/CariCounterpartyStatementReportResponse"
                 }
               }
             }
@@ -10146,14 +10253,14 @@
           "Cari"
         ],
         "operationId": "postApiV1CariSettlementsSettlementbatchidReverse",
-        "summary": "Cari endpoint: POST /api/v1/cari/settlements/{settlementBatchId}/reverse",
+        "summary": "Reverse cari settlement batch with downstream cross-context guardrails",
         "responses": {
-          "200": {
-            "description": "Successful response",
+          "201": {
+            "description": "Cari settlement reversed",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/CariSettlementReverseResponse"
                 }
               }
             }
@@ -10173,7 +10280,7 @@
             "in": "path",
             "name": "settlementBatchId",
             "required": true,
-            "description": "settlementBatchId identifier",
+            "description": "Settlement batch identifier",
             "schema": {
               "type": "integer",
               "minimum": 1
@@ -10185,7 +10292,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/AnyObject"
+                "$ref": "#/components/schemas/CariSettlementReverseRequest"
               }
             }
           }
@@ -15019,15 +15126,97 @@
         "tags": [
           "Inventory"
         ],
-        "operationId": "getApiV1InventoryTransfers",
-        "summary": "Auto-generated: GET /api/v1/inventory/transfers",
+        "operationId": "listInventoryTransfers",
+        "summary": "List inventory transfers across warehouse ownership contexts",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "tenantId",
+            "required": false,
+            "description": "Tenant identifier; optional if available in JWT",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "legalEntityId",
+            "required": false,
+            "description": "Legal entity filter",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "sourceWarehouseId",
+            "required": false,
+            "description": "Source warehouse filter",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "targetWarehouseId",
+            "required": false,
+            "description": "Target warehouse filter",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "description": "Transfer status filter",
+            "schema": {
+              "$ref": "#/components/schemas/InventoryTransferStatus"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "description": "Transfer or warehouse search",
+            "schema": {
+              "type": "string",
+              "maxLength": 120
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "description": "Page size",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "description": "Page offset",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ],
         "responses": {
           "200": {
-            "description": "Successful response",
+            "description": "Inventory transfer list",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/InventoryTransferListResponse"
                 }
               }
             }
@@ -15047,15 +15236,25 @@
         "tags": [
           "Inventory"
         ],
-        "operationId": "postApiV1InventoryTransfers",
-        "summary": "Auto-generated: POST /api/v1/inventory/transfers",
+        "operationId": "createInventoryTransfer",
+        "summary": "Create inventory transfer draft between different ownership contexts",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InventoryTransferCreateRequest"
+              }
+            }
+          }
+        },
         "responses": {
-          "200": {
-            "description": "Successful response",
+          "201": {
+            "description": "Inventory transfer created",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/InventoryTransferResponse"
                 }
               }
             }
@@ -15068,16 +15267,6 @@
           },
           "403": {
             "$ref": "#/components/responses/ErrorResponse"
-          }
-        },
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AnyObject"
-              }
-            }
           }
         }
       }
@@ -15087,15 +15276,37 @@
         "tags": [
           "Inventory"
         ],
-        "operationId": "getApiV1InventoryTransfersTransferid",
-        "summary": "Auto-generated: GET /api/v1/inventory/transfers/{transferId}",
+        "operationId": "getInventoryTransfer",
+        "summary": "Get one inventory transfer with line, journal, and ownership context detail",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "transferId",
+            "required": true,
+            "description": "Inventory transfer identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "tenantId",
+            "required": false,
+            "description": "Tenant identifier; optional if available in JWT",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
         "responses": {
           "200": {
-            "description": "Successful response",
+            "description": "Inventory transfer detail",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/InventoryTransferResponse"
                 }
               }
             }
@@ -15109,19 +15320,7 @@
           "403": {
             "$ref": "#/components/responses/ErrorResponse"
           }
-        },
-        "parameters": [
-          {
-            "in": "path",
-            "name": "transferId",
-            "required": true,
-            "description": "transferId identifier",
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          }
-        ]
+        }
       }
     },
     "/api/v1/inventory/transfers/{transferId}/approve": {
@@ -15129,15 +15328,27 @@
         "tags": [
           "Inventory"
         ],
-        "operationId": "postApiV1InventoryTransfersTransferidApprove",
-        "summary": "Auto-generated: POST /api/v1/inventory/transfers/{transferId}/approve",
+        "operationId": "approveInventoryTransfer",
+        "summary": "Approve inventory transfer before shipment",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "transferId",
+            "required": true,
+            "description": "Inventory transfer identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
         "responses": {
           "200": {
-            "description": "Successful response",
+            "description": "Inventory transfer approved",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/InventoryTransferResponse"
                 }
               }
             }
@@ -15150,28 +15361,6 @@
           },
           "403": {
             "$ref": "#/components/responses/ErrorResponse"
-          }
-        },
-        "parameters": [
-          {
-            "in": "path",
-            "name": "transferId",
-            "required": true,
-            "description": "transferId identifier",
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AnyObject"
-              }
-            }
           }
         }
       }
@@ -15181,15 +15370,37 @@
         "tags": [
           "Inventory"
         ],
-        "operationId": "postApiV1InventoryTransfersTransferidCancel",
-        "summary": "Auto-generated: POST /api/v1/inventory/transfers/{transferId}/cancel",
+        "operationId": "cancelInventoryTransfer",
+        "summary": "Cancel inventory transfer before shipment artifacts exist",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "transferId",
+            "required": true,
+            "description": "Inventory transfer identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InventoryTransferCancelRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
-            "description": "Successful response",
+            "description": "Inventory transfer canceled",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/InventoryTransferResponse"
                 }
               }
             }
@@ -15202,28 +15413,6 @@
           },
           "403": {
             "$ref": "#/components/responses/ErrorResponse"
-          }
-        },
-        "parameters": [
-          {
-            "in": "path",
-            "name": "transferId",
-            "required": true,
-            "description": "transferId identifier",
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AnyObject"
-              }
-            }
           }
         }
       }
@@ -15233,55 +15422,27 @@
         "tags": [
           "Inventory"
         ],
-        "operationId": "getApiV1InventoryTransfersTransferidEvidence",
-        "summary": "Auto-generated: GET /api/v1/inventory/transfers/{transferId}/evidence",
-        "responses": {
-          "200": {
-            "description": "Successful response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "401": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "403": {
-            "$ref": "#/components/responses/ErrorResponse"
-          }
-        },
+        "operationId": "listInventoryTransferEvidence",
+        "summary": "List inventory transfer evidence attachments",
         "parameters": [
           {
             "in": "path",
             "name": "transferId",
             "required": true,
-            "description": "transferId identifier",
+            "description": "Inventory transfer identifier",
             "schema": {
               "type": "integer",
               "minimum": 1
             }
           }
-        ]
-      },
-      "post": {
-        "tags": [
-          "Inventory"
         ],
-        "operationId": "postApiV1InventoryTransfersTransferidEvidence",
-        "summary": "Auto-generated: POST /api/v1/inventory/transfers/{transferId}/evidence",
         "responses": {
           "200": {
-            "description": "Successful response",
+            "description": "Inventory transfer evidence list",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/InventoryTransferEvidenceListResponse"
                 }
               }
             }
@@ -15295,13 +15456,20 @@
           "403": {
             "$ref": "#/components/responses/ErrorResponse"
           }
-        },
+        }
+      },
+      "post": {
+        "tags": [
+          "Inventory"
+        ],
+        "operationId": "createInventoryTransferEvidenceDraft",
+        "summary": "Create inventory transfer evidence draft and return binary upload target",
         "parameters": [
           {
             "in": "path",
             "name": "transferId",
             "required": true,
-            "description": "transferId identifier",
+            "description": "Inventory transfer identifier",
             "schema": {
               "type": "integer",
               "minimum": 1
@@ -15309,13 +15477,34 @@
           }
         ],
         "requestBody": {
-          "required": false,
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/AnyObject"
+                "$ref": "#/components/schemas/InventoryTransferEvidenceDraftRequest"
               }
             }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Inventory transfer evidence draft created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InventoryTransferEvidenceDraftResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
           }
         }
       }
@@ -15325,15 +15514,37 @@
         "tags": [
           "Inventory"
         ],
-        "operationId": "deleteApiV1InventoryTransfersTransferidEvidenceEvidenceid",
-        "summary": "Auto-generated: DELETE /api/v1/inventory/transfers/{transferId}/evidence/{evidenceId}",
+        "operationId": "deleteInventoryTransferEvidence",
+        "summary": "Delete inventory transfer evidence attachment",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "transferId",
+            "required": true,
+            "description": "Inventory transfer identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "path",
+            "name": "evidenceId",
+            "required": true,
+            "description": "Evidence identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
         "responses": {
           "200": {
-            "description": "Successful response",
+            "description": "Inventory transfer evidence deleted",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/InventoryTransferEvidenceResponse"
                 }
               }
             }
@@ -15347,29 +15558,7 @@
           "403": {
             "$ref": "#/components/responses/ErrorResponse"
           }
-        },
-        "parameters": [
-          {
-            "in": "path",
-            "name": "transferId",
-            "required": true,
-            "description": "transferId identifier",
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          },
-          {
-            "in": "path",
-            "name": "evidenceId",
-            "required": true,
-            "description": "evidenceId identifier",
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          }
-        ]
+        }
       }
     },
     "/api/v1/inventory/transfers/{transferId}/evidence/{evidenceId}/content": {
@@ -15377,15 +15566,48 @@
         "tags": [
           "Inventory"
         ],
-        "operationId": "putApiV1InventoryTransfersTransferidEvidenceEvidenceidContent",
-        "summary": "Auto-generated: PUT /api/v1/inventory/transfers/{transferId}/evidence/{evidenceId}/content",
+        "operationId": "uploadInventoryTransferEvidenceContent",
+        "summary": "Upload raw binary content for inventory transfer evidence attachment",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "transferId",
+            "required": true,
+            "description": "Inventory transfer identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "path",
+            "name": "evidenceId",
+            "required": true,
+            "description": "Evidence identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
-            "description": "Successful response",
+            "description": "Inventory transfer evidence content uploaded",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/InventoryTransferEvidenceResponse"
                 }
               }
             }
@@ -15398,38 +15620,6 @@
           },
           "403": {
             "$ref": "#/components/responses/ErrorResponse"
-          }
-        },
-        "parameters": [
-          {
-            "in": "path",
-            "name": "transferId",
-            "required": true,
-            "description": "transferId identifier",
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          },
-          {
-            "in": "path",
-            "name": "evidenceId",
-            "required": true,
-            "description": "evidenceId identifier",
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AnyObject"
-              }
-            }
           }
         }
       }
@@ -15439,35 +15629,14 @@
         "tags": [
           "Inventory"
         ],
-        "operationId": "getApiV1InventoryTransfersTransferidEvidenceEvidenceidDownload",
-        "summary": "Auto-generated: GET /api/v1/inventory/transfers/{transferId}/evidence/{evidenceId}/download",
-        "responses": {
-          "200": {
-            "description": "Successful response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "401": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "403": {
-            "$ref": "#/components/responses/ErrorResponse"
-          }
-        },
+        "operationId": "downloadInventoryTransferEvidence",
+        "summary": "Download inventory transfer evidence binary content",
         "parameters": [
           {
             "in": "path",
             "name": "transferId",
             "required": true,
-            "description": "transferId identifier",
+            "description": "Inventory transfer identifier",
             "schema": {
               "type": "integer",
               "minimum": 1
@@ -15477,29 +15646,21 @@
             "in": "path",
             "name": "evidenceId",
             "required": true,
-            "description": "evidenceId identifier",
+            "description": "Evidence identifier",
             "schema": {
               "type": "integer",
               "minimum": 1
             }
           }
-        ]
-      }
-    },
-    "/api/v1/inventory/transfers/{transferId}/receive": {
-      "post": {
-        "tags": [
-          "Inventory"
         ],
-        "operationId": "postApiV1InventoryTransfersTransferidReceive",
-        "summary": "Auto-generated: POST /api/v1/inventory/transfers/{transferId}/receive",
         "responses": {
           "200": {
-            "description": "Successful response",
+            "description": "Inventory transfer evidence binary content",
             "content": {
-              "application/json": {
+              "application/octet-stream": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "type": "string",
+                  "format": "binary"
                 }
               }
             }
@@ -15513,27 +15674,47 @@
           "403": {
             "$ref": "#/components/responses/ErrorResponse"
           }
-        },
+        }
+      }
+    },
+    "/api/v1/inventory/transfers/{transferId}/receive": {
+      "post": {
+        "tags": [
+          "Inventory"
+        ],
+        "operationId": "receiveInventoryTransfer",
+        "summary": "Receive inventory transfer and post destination receipt journal",
         "parameters": [
           {
             "in": "path",
             "name": "transferId",
             "required": true,
-            "description": "transferId identifier",
+            "description": "Inventory transfer identifier",
             "schema": {
               "type": "integer",
               "minimum": 1
             }
           }
         ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AnyObject"
+        "responses": {
+          "200": {
+            "description": "Inventory transfer received",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InventoryTransferResponse"
+                }
               }
             }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
           }
         }
       }
@@ -15543,15 +15724,37 @@
         "tags": [
           "Inventory"
         ],
-        "operationId": "postApiV1InventoryTransfersTransferidReverse",
-        "summary": "Auto-generated: POST /api/v1/inventory/transfers/{transferId}/reverse",
+        "operationId": "reverseInventoryTransfer",
+        "summary": "Reverse shipped and received inventory transfer journals and movements additively",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "transferId",
+            "required": true,
+            "description": "Inventory transfer identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InventoryTransferReverseRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
-            "description": "Successful response",
+            "description": "Inventory transfer reversed",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/InventoryTransferResponse"
                 }
               }
             }
@@ -15564,28 +15767,6 @@
           },
           "403": {
             "$ref": "#/components/responses/ErrorResponse"
-          }
-        },
-        "parameters": [
-          {
-            "in": "path",
-            "name": "transferId",
-            "required": true,
-            "description": "transferId identifier",
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AnyObject"
-              }
-            }
           }
         }
       }
@@ -15595,15 +15776,27 @@
         "tags": [
           "Inventory"
         ],
-        "operationId": "postApiV1InventoryTransfersTransferidShip",
-        "summary": "Auto-generated: POST /api/v1/inventory/transfers/{transferId}/ship",
+        "operationId": "shipInventoryTransfer",
+        "summary": "Ship inventory transfer, create issue movements, and post shipment self-balancing journal when required",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "transferId",
+            "required": true,
+            "description": "Inventory transfer identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
         "responses": {
           "200": {
-            "description": "Successful response",
+            "description": "Inventory transfer shipped",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/InventoryTransferResponse"
                 }
               }
             }
@@ -15616,28 +15809,6 @@
           },
           "403": {
             "$ref": "#/components/responses/ErrorResponse"
-          }
-        },
-        "parameters": [
-          {
-            "in": "path",
-            "name": "transferId",
-            "required": true,
-            "description": "transferId identifier",
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AnyObject"
-              }
-            }
           }
         }
       }
@@ -15665,6 +15836,25 @@
             "name": "legalEntityId",
             "required": false,
             "description": "Legal entity filter",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "ownershipScope",
+            "required": false,
+            "description": "Warehouse ownership scope filter",
+            "schema": {
+              "$ref": "#/components/schemas/InventoryWarehouseOwnershipScope"
+            }
+          },
+          {
+            "in": "query",
+            "name": "operatingUnitId",
+            "required": false,
+            "description": "Warehouse operating-unit filter",
             "schema": {
               "type": "integer",
               "minimum": 1
@@ -26779,11 +26969,1079 @@
           "bankApplyIdempotencyKey"
         ]
       },
-      "CariSettlementApplyResponse": {
-        "allOf": [
-          {
-            "$ref": "#/components/schemas/CashTransactionApplyCariResponse"
+      "CariSettlementBatchRow": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "legalEntityId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "counterpartyId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "ownerOperatingUnitId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "collectorOperatingUnitId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "direction": {
+            "type": "string",
+            "enum": [
+              "AR",
+              "AP"
+            ],
+            "nullable": true
+          },
+          "cashTransactionId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "sequenceNamespace": {
+            "type": "string",
+            "nullable": true
+          },
+          "fiscalYear": {
+            "type": "integer",
+            "nullable": true
+          },
+          "sequenceNo": {
+            "type": "integer",
+            "nullable": true
+          },
+          "settlementNo": {
+            "type": "string",
+            "nullable": true
+          },
+          "settlementDate": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "nullable": true
+          },
+          "totalAllocatedTxn": {
+            "type": "number",
+            "nullable": true
+          },
+          "totalAllocatedBase": {
+            "type": "number",
+            "nullable": true
+          },
+          "realizedFxNetBase": {
+            "type": "number",
+            "nullable": true
+          },
+          "currencyCode": {
+            "type": "string",
+            "maxLength": 3,
+            "nullable": true
+          },
+          "settlementFxRate": {
+            "type": "number",
+            "nullable": true
+          },
+          "settlementFxSource": {
+            "type": "string",
+            "nullable": true
+          },
+          "settlementFxRateDate": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "settlementFxFallbackMode": {
+            "type": "string",
+            "enum": [
+              "EXACT_ONLY",
+              "PRIOR_DATE"
+            ],
+            "nullable": true
+          },
+          "settlementFxFallbackMaxDays": {
+            "type": "integer",
+            "minimum": 0,
+            "nullable": true
+          },
+          "postedJournalEntryId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "reversalOfSettlementBatchId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "originatingCrossContextSettlementBatchId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "bankStatementLineId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "bankTransactionRef": {
+            "type": "string",
+            "nullable": true
+          },
+          "bankAttachIdempotencyKey": {
+            "type": "string",
+            "nullable": true
+          },
+          "bankApplyIdempotencyKey": {
+            "type": "string",
+            "nullable": true
+          },
+          "sourceModule": {
+            "type": "string",
+            "nullable": true
+          },
+          "sourceEntityType": {
+            "type": "string",
+            "nullable": true
+          },
+          "sourceEntityId": {
+            "type": "string",
+            "nullable": true
+          },
+          "integrationLinkStatus": {
+            "type": "string",
+            "nullable": true
+          },
+          "integrationEventUid": {
+            "type": "string",
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "postedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "reversedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
           }
+        },
+        "required": [
+          "id",
+          "tenantId",
+          "legalEntityId"
+        ]
+      },
+      "CariSettlementReverseRequest": {
+        "type": "object",
+        "properties": {
+          "reversalDate": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 255,
+            "nullable": true
+          }
+        }
+      },
+      "CariSettlementReverseResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "row": {
+            "$ref": "#/components/schemas/CariSettlementBatchRow"
+          },
+          "original": {
+            "$ref": "#/components/schemas/CariSettlementBatchRow"
+          },
+          "journal": {
+            "type": "object",
+            "additionalProperties": true,
+            "nullable": true
+          },
+          "followUpRisks": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "tenantId",
+          "row",
+          "original",
+          "journal",
+          "followUpRisks"
+        ]
+      },
+      "CariSettlementReferenceRow": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "settlementBatchId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "settlementNo": {
+            "type": "string",
+            "nullable": true
+          },
+          "settlementDate": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "settlementStatusCurrent": {
+            "type": "string",
+            "nullable": true
+          },
+          "activeAsOf": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "reversalSettlementBatchId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "reversalSettlementNo": {
+            "type": "string",
+            "nullable": true
+          },
+          "reversalSettlementDate": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "bankStatementLineId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "bankTransactionRef": {
+            "type": "string",
+            "nullable": true
+          },
+          "bankApplyIdempotencyKey": {
+            "type": "string",
+            "nullable": true
+          },
+          "ownerOperatingUnitId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "ownerOperatingUnitCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "ownerOperatingUnitName": {
+            "type": "string",
+            "nullable": true
+          },
+          "ownerContextLabel": {
+            "type": "string",
+            "nullable": true
+          },
+          "collectorOperatingUnitId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "collectorOperatingUnitCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "collectorOperatingUnitName": {
+            "type": "string",
+            "nullable": true
+          },
+          "collectorContextLabel": {
+            "type": "string",
+            "nullable": true
+          },
+          "originatingCrossContextSettlementBatchId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "isCrossContext": {
+            "type": "boolean",
+            "nullable": true
+          }
+        },
+        "required": [
+          "settlementBatchId"
+        ]
+      },
+      "CariOpenItemReportRow": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "openItemId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "asOfStatus": {
+            "type": "string",
+            "nullable": true
+          },
+          "settlementReferences": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CariSettlementReferenceRow"
+            }
+          }
+        },
+        "required": [
+          "openItemId",
+          "settlementReferences"
+        ]
+      },
+      "CariOpenItemsReportResponse": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "asOfDate": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "direction": {
+            "type": "string",
+            "enum": [
+              "AR",
+              "AP"
+            ],
+            "nullable": true
+          },
+          "legalEntityId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "counterpartyId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "role": {
+            "type": "string",
+            "nullable": true
+          },
+          "statusFilter": {
+            "type": "string",
+            "nullable": true
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "summary": {
+            "type": "object",
+            "additionalProperties": true,
+            "nullable": true
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CariOpenItemReportRow"
+            }
+          },
+          "unapplied": {
+            "type": "object",
+            "additionalProperties": true,
+            "nullable": true
+          }
+        },
+        "required": [
+          "tenantId",
+          "total",
+          "limit",
+          "offset",
+          "rows"
+        ]
+      },
+      "CariStatementAllocationRow": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "allocationId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "settlementBatchId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "settlementNo": {
+            "type": "string",
+            "nullable": true
+          },
+          "settlementDate": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "activeAsOf": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "documentId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "documentNo": {
+            "type": "string",
+            "nullable": true
+          },
+          "documentDate": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "openItemId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "allocationDate": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "allocationAmountTxn": {
+            "type": "number",
+            "nullable": true
+          },
+          "allocationAmountDocTxn": {
+            "type": "number",
+            "nullable": true
+          },
+          "allocationAmountSettlementTxn": {
+            "type": "number",
+            "nullable": true
+          },
+          "allocationAmountBase": {
+            "type": "number",
+            "nullable": true
+          },
+          "documentCurrencyCode": {
+            "type": "string",
+            "maxLength": 3,
+            "nullable": true
+          },
+          "settlementCurrencyCode": {
+            "type": "string",
+            "maxLength": 3,
+            "nullable": true
+          },
+          "ownerOperatingUnitId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "ownerOperatingUnitCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "ownerOperatingUnitName": {
+            "type": "string",
+            "nullable": true
+          },
+          "ownerContextLabel": {
+            "type": "string",
+            "nullable": true
+          },
+          "collectorOperatingUnitId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "collectorOperatingUnitCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "collectorOperatingUnitName": {
+            "type": "string",
+            "nullable": true
+          },
+          "collectorContextLabel": {
+            "type": "string",
+            "nullable": true
+          },
+          "originatingCrossContextSettlementBatchId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "isCrossContext": {
+            "type": "boolean",
+            "nullable": true
+          }
+        },
+        "required": [
+          "allocationId",
+          "settlementBatchId"
+        ]
+      },
+      "CariStatementDocumentRow": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "documentId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "documentNo": {
+            "type": "string",
+            "nullable": true
+          },
+          "asOfStatus": {
+            "type": "string",
+            "nullable": true
+          },
+          "settlementLinks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CariStatementAllocationRow"
+            }
+          }
+        },
+        "required": [
+          "documentId"
+        ]
+      },
+      "CariStatementSettlementRow": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "settlementBatchId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "settlementNo": {
+            "type": "string",
+            "nullable": true
+          },
+          "settlementDate": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "statusCurrent": {
+            "type": "string",
+            "nullable": true
+          },
+          "ownerOperatingUnitId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "ownerOperatingUnitCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "ownerOperatingUnitName": {
+            "type": "string",
+            "nullable": true
+          },
+          "ownerContextLabel": {
+            "type": "string",
+            "nullable": true
+          },
+          "collectorOperatingUnitId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "collectorOperatingUnitCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "collectorOperatingUnitName": {
+            "type": "string",
+            "nullable": true
+          },
+          "collectorContextLabel": {
+            "type": "string",
+            "nullable": true
+          },
+          "originatingCrossContextSettlementBatchId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "isCrossContext": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "reversalOfSettlementBatchId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "reversedBySettlementBatchId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "reversedBySettlementDate": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "totalAllocatedTxn": {
+            "type": "number",
+            "nullable": true
+          },
+          "totalAllocatedBase": {
+            "type": "number",
+            "nullable": true
+          },
+          "realizedFxNetBase": {
+            "type": "number",
+            "nullable": true
+          },
+          "currencyCode": {
+            "type": "string",
+            "maxLength": 3,
+            "nullable": true
+          }
+        },
+        "required": [
+          "settlementBatchId"
+        ]
+      },
+      "CariCounterpartyStatementReportResponse": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "asOfDate": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "direction": {
+            "type": "string",
+            "enum": [
+              "AR",
+              "AP"
+            ],
+            "nullable": true
+          },
+          "legalEntityId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "counterpartyId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "role": {
+            "type": "string",
+            "nullable": true
+          },
+          "statusFilter": {
+            "type": "string",
+            "nullable": true
+          },
+          "summary": {
+            "type": "object",
+            "additionalProperties": true,
+            "nullable": true
+          },
+          "documents": {
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+              "total": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "limit": {
+                "type": "integer",
+                "minimum": 1,
+                "nullable": true
+              },
+              "offset": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "rows": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/CariStatementDocumentRow"
+                }
+              }
+            },
+            "required": [
+              "total",
+              "limit",
+              "offset",
+              "rows"
+            ]
+          },
+          "settlements": {
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+              "total": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "limit": {
+                "type": "integer",
+                "minimum": 1,
+                "nullable": true
+              },
+              "offset": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "rows": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/CariStatementSettlementRow"
+                }
+              }
+            },
+            "required": [
+              "total",
+              "limit",
+              "offset",
+              "rows"
+            ]
+          },
+          "allocations": {
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+              "total": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "limit": {
+                "type": "integer",
+                "minimum": 1,
+                "nullable": true
+              },
+              "offset": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "rows": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/CariStatementAllocationRow"
+                }
+              }
+            },
+            "required": [
+              "total",
+              "limit",
+              "offset",
+              "rows"
+            ]
+          },
+          "unapplied": {
+            "type": "object",
+            "additionalProperties": true,
+            "nullable": true
+          }
+        },
+        "required": [
+          "tenantId",
+          "documents",
+          "settlements",
+          "allocations",
+          "unapplied"
+        ]
+      },
+      "CariSettlementRealizedFxReportRow": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "period": {
+            "type": "string",
+            "nullable": true
+          },
+          "legalEntityId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "legalEntityCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "legalEntityName": {
+            "type": "string",
+            "nullable": true
+          },
+          "counterpartyId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "counterpartyCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "counterpartyName": {
+            "type": "string",
+            "nullable": true
+          },
+          "counterpartyType": {
+            "type": "string",
+            "nullable": true
+          },
+          "currencyCode": {
+            "type": "string",
+            "maxLength": 3,
+            "nullable": true
+          },
+          "settlementCount": {
+            "type": "integer",
+            "minimum": 0,
+            "nullable": true
+          },
+          "crossContextSettlementCount": {
+            "type": "integer",
+            "minimum": 0,
+            "nullable": true
+          },
+          "sameContextSettlementCount": {
+            "type": "integer",
+            "minimum": 0,
+            "nullable": true
+          },
+          "totalAllocatedTxn": {
+            "type": "number",
+            "nullable": true
+          },
+          "totalAllocatedBase": {
+            "type": "number",
+            "nullable": true
+          },
+          "realizedFxNetBase": {
+            "type": "number",
+            "nullable": true
+          },
+          "realizedFxGainBase": {
+            "type": "number",
+            "nullable": true
+          },
+          "realizedFxLossBase": {
+            "type": "number",
+            "nullable": true
+          }
+        }
+      },
+      "CariSettlementRealizedFxReportResponse": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "legalEntityId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "counterpartyId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "role": {
+            "type": "string",
+            "nullable": true
+          },
+          "direction": {
+            "type": "string",
+            "nullable": true
+          },
+          "currencyCode": {
+            "type": "string",
+            "maxLength": 3,
+            "nullable": true
+          },
+          "periodFrom": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "periodTo": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "summary": {
+            "type": "object",
+            "additionalProperties": true,
+            "nullable": true
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CariSettlementRealizedFxReportRow"
+            }
+          }
+        },
+        "required": [
+          "tenantId",
+          "total",
+          "limit",
+          "offset",
+          "rows"
+        ]
+      },
+      "CariSettlementApplyResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "cashTransaction": {
+            "type": "object",
+            "additionalProperties": true,
+            "nullable": true
+          },
+          "row": {
+            "$ref": "#/components/schemas/CariSettlementBatchRow"
+          },
+          "allocations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          },
+          "journal": {
+            "type": "object",
+            "additionalProperties": true,
+            "nullable": true
+          },
+          "fx": {
+            "$ref": "#/components/schemas/CashTransactionApplyCariFxSummary"
+          },
+          "unapplied": {
+            "$ref": "#/components/schemas/CashTransactionApplyCariUnappliedSummary"
+          },
+          "unappliedCash": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          },
+          "metrics": {
+            "type": "object",
+            "additionalProperties": true,
+            "nullable": true
+          },
+          "idempotentReplay": {
+            "type": "boolean"
+          },
+          "followUpRisks": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "tenantId",
+          "cashTransaction",
+          "row",
+          "allocations",
+          "journal",
+          "fx",
+          "unapplied",
+          "unappliedCash",
+          "metrics",
+          "idempotentReplay",
+          "followUpRisks"
         ]
       },
       "CounterpartyContactInput": {
@@ -28549,6 +29807,16 @@
             "minimum": 1,
             "nullable": true
           },
+          "centralDueToAccountId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "ouDueFromCentralAccountId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
           "ouDueToCentralAccountId": {
             "type": "integer",
             "minimum": 1,
@@ -28626,6 +29894,32 @@
             "nullable": true
           },
           "central_due_from_account_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "central_due_to_account_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "central_due_to_account_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "central_due_to_account_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "ou_due_from_central_account_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "ou_due_from_central_account_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "ou_due_from_central_account_name": {
             "type": "string",
             "nullable": true
           },
@@ -33959,6 +35253,39 @@
           "INACTIVE"
         ]
       },
+      "InventoryWarehouseOwnershipScope": {
+        "type": "string",
+        "enum": [
+          "CENTRAL",
+          "OPERATING_UNIT"
+        ]
+      },
+      "InventoryTransferStatus": {
+        "type": "string",
+        "enum": [
+          "INITIATED",
+          "APPROVED",
+          "IN_TRANSIT",
+          "RECEIVED",
+          "CANCELED",
+          "REVERSED"
+        ]
+      },
+      "InventoryTransferEvidenceStatus": {
+        "type": "string",
+        "enum": [
+          "PENDING_UPLOAD",
+          "ACTIVE",
+          "DELETED"
+        ]
+      },
+      "EvidenceCompressionCodec": {
+        "type": "string",
+        "enum": [
+          "NONE",
+          "GZIP"
+        ]
+      },
       "InventoryStockLinkStatus": {
         "type": "string",
         "enum": [
@@ -34044,6 +35371,11 @@
             "nullable": true
           },
           "inventoryAssetAccountId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "inventoryTransitAccountId": {
             "type": "integer",
             "minimum": 1,
             "nullable": true
@@ -34156,6 +35488,11 @@
             "minimum": 1,
             "nullable": true
           },
+          "inventoryTransitAccountId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
           "defaultCogsAccountId": {
             "type": "integer",
             "minimum": 1,
@@ -34203,6 +35540,27 @@
             "type": "string",
             "nullable": true
           },
+          "ownershipScope": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/InventoryWarehouseOwnershipScope"
+              }
+            ],
+            "nullable": true
+          },
+          "operatingUnitId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "operatingUnitCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "operatingUnitName": {
+            "type": "string",
+            "nullable": true
+          },
           "code": {
             "type": "string",
             "nullable": true
@@ -34233,6 +35591,7 @@
           "id",
           "tenantId",
           "legalEntityId",
+          "ownershipScope",
           "code",
           "name",
           "status"
@@ -34280,6 +35639,19 @@
             "type": "integer",
             "minimum": 1
           },
+          "ownershipScope": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/InventoryWarehouseOwnershipScope"
+              }
+            ],
+            "nullable": true
+          },
+          "operatingUnitId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
           "code": {
             "type": "string",
             "minLength": 1,
@@ -34306,6 +35678,7 @@
         },
         "required": [
           "legalEntityId",
+          "ownershipScope",
           "code",
           "name"
         ]
@@ -34634,6 +36007,18 @@
             "type": "string",
             "nullable": true
           },
+          "sourceTransferNo": {
+            "type": "string",
+            "nullable": true
+          },
+          "sourceTransferStatus": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/InventoryTransferStatus"
+              }
+            ],
+            "nullable": true
+          },
           "movementDate": {
             "type": "string",
             "format": "date",
@@ -34808,6 +36193,735 @@
             "nullable": true
           }
         }
+      },
+      "InventoryTransferLineRow": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "legalEntityId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "inventoryTransferId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "lineNo": {
+            "type": "integer",
+            "nullable": true
+          },
+          "itemCardId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "itemCardCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "itemCardName": {
+            "type": "string",
+            "nullable": true
+          },
+          "quantityRequested": {
+            "type": "number",
+            "nullable": true
+          },
+          "quantityShipped": {
+            "type": "number",
+            "nullable": true
+          },
+          "quantityReceived": {
+            "type": "number",
+            "nullable": true
+          },
+          "shippedCurrencyCode": {
+            "type": "string",
+            "maxLength": 3,
+            "nullable": true
+          },
+          "shippedUnitCostTxn": {
+            "type": "number",
+            "nullable": true
+          },
+          "shippedUnitCostBase": {
+            "type": "number",
+            "nullable": true
+          },
+          "shippedTotalCostTxn": {
+            "type": "number",
+            "nullable": true
+          },
+          "shippedTotalCostBase": {
+            "type": "number",
+            "nullable": true
+          },
+          "sourceIssueMovementId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "targetReceiptMovementId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "note": {
+            "type": "string",
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "tenantId",
+          "legalEntityId",
+          "inventoryTransferId",
+          "lineNo",
+          "itemCardId"
+        ]
+      },
+      "InventoryTransferRow": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "legalEntityId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "legalEntityCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "transferNo": {
+            "type": "string",
+            "nullable": true
+          },
+          "transferDate": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "status": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/InventoryTransferStatus"
+              }
+            ],
+            "nullable": true
+          },
+          "sourceWarehouseId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "sourceWarehouseCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "sourceWarehouseName": {
+            "type": "string",
+            "nullable": true
+          },
+          "targetWarehouseId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "targetWarehouseCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "targetWarehouseName": {
+            "type": "string",
+            "nullable": true
+          },
+          "sourceOwnershipScope": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/InventoryWarehouseOwnershipScope"
+              }
+            ],
+            "nullable": true
+          },
+          "sourceOperatingUnitId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "sourceOperatingUnitCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "sourceOperatingUnitName": {
+            "type": "string",
+            "nullable": true
+          },
+          "targetOwnershipScope": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/InventoryWarehouseOwnershipScope"
+              }
+            ],
+            "nullable": true
+          },
+          "targetOperatingUnitId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "targetOperatingUnitCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "targetOperatingUnitName": {
+            "type": "string",
+            "nullable": true
+          },
+          "shipmentJournalEntryId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "shipmentJournalNo": {
+            "type": "string",
+            "nullable": true
+          },
+          "receiptJournalEntryId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "receiptJournalNo": {
+            "type": "string",
+            "nullable": true
+          },
+          "reversalJournalEntryId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "reversalJournalNo": {
+            "type": "string",
+            "nullable": true
+          },
+          "initiatedByUserId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "approvedByUserId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "shippedByUserId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "receivedByUserId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "canceledByUserId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "reversedByUserId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "initiatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "approvedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "inTransitAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "receivedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "canceledAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "reversedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "cancelReason": {
+            "type": "string",
+            "nullable": true
+          },
+          "reverseReason": {
+            "type": "string",
+            "nullable": true
+          },
+          "idempotencyKey": {
+            "type": "string",
+            "nullable": true
+          },
+          "integrationEventUid": {
+            "type": "string",
+            "nullable": true
+          },
+          "sourceModule": {
+            "type": "string",
+            "nullable": true
+          },
+          "sourceEntityType": {
+            "type": "string",
+            "nullable": true
+          },
+          "sourceEntityId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "note": {
+            "type": "string",
+            "nullable": true
+          },
+          "lineCount": {
+            "type": "integer",
+            "minimum": 0,
+            "nullable": true
+          },
+          "lines": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InventoryTransferLineRow"
+            }
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "tenantId",
+          "legalEntityId",
+          "status",
+          "sourceWarehouseId",
+          "targetWarehouseId"
+        ]
+      },
+      "InventoryTransferListResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InventoryTransferRow"
+            }
+          }
+        },
+        "required": [
+          "tenantId",
+          "total",
+          "rows"
+        ]
+      },
+      "InventoryTransferResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "row": {
+            "$ref": "#/components/schemas/InventoryTransferRow"
+          }
+        },
+        "required": [
+          "tenantId",
+          "row"
+        ]
+      },
+      "InventoryTransferCreateLineInput": {
+        "type": "object",
+        "properties": {
+          "itemCardId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "quantityRequested": {
+            "type": "string",
+            "pattern": "^\\d+(\\.\\d{1,6})?$"
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 255,
+            "nullable": true
+          }
+        },
+        "required": [
+          "itemCardId",
+          "quantityRequested"
+        ]
+      },
+      "InventoryTransferCreateRequest": {
+        "type": "object",
+        "properties": {
+          "legalEntityId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "transferDate": {
+            "type": "string",
+            "format": "date"
+          },
+          "sourceWarehouseId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "targetWarehouseId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "sourceModule": {
+            "type": "string",
+            "maxLength": 40,
+            "nullable": true
+          },
+          "sourceEntityType": {
+            "type": "string",
+            "maxLength": 60,
+            "nullable": true
+          },
+          "sourceEntityId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "integrationEventUid": {
+            "type": "string",
+            "maxLength": 100,
+            "nullable": true
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 500,
+            "nullable": true
+          },
+          "lines": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "$ref": "#/components/schemas/InventoryTransferCreateLineInput"
+            }
+          }
+        },
+        "required": [
+          "legalEntityId",
+          "transferDate",
+          "sourceWarehouseId",
+          "targetWarehouseId",
+          "lines"
+        ]
+      },
+      "InventoryTransferCancelRequest": {
+        "type": "object",
+        "properties": {
+          "cancelReason": {
+            "type": "string",
+            "maxLength": 255,
+            "nullable": true
+          }
+        }
+      },
+      "InventoryTransferReverseRequest": {
+        "type": "object",
+        "properties": {
+          "reverseReason": {
+            "type": "string",
+            "maxLength": 255,
+            "nullable": true
+          }
+        }
+      },
+      "InventoryTransferEvidenceRow": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "legalEntityId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "sourceRefType": {
+            "type": "string",
+            "nullable": true
+          },
+          "sourceRefId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "status": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/InventoryTransferEvidenceStatus"
+              }
+            ],
+            "nullable": true
+          },
+          "displayName": {
+            "type": "string",
+            "nullable": true
+          },
+          "note": {
+            "type": "string",
+            "nullable": true
+          },
+          "fileName": {
+            "type": "string",
+            "nullable": true
+          },
+          "fileExtension": {
+            "type": "string",
+            "nullable": true
+          },
+          "contentType": {
+            "type": "string",
+            "nullable": true
+          },
+          "compressionCodec": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/EvidenceCompressionCodec"
+              }
+            ],
+            "nullable": true
+          },
+          "fileSizeBytes": {
+            "type": "number",
+            "nullable": true
+          },
+          "storedSizeBytes": {
+            "type": "number",
+            "nullable": true
+          },
+          "fileSha256": {
+            "type": "string",
+            "nullable": true
+          },
+          "storageDriver": {
+            "type": "string",
+            "nullable": true
+          },
+          "storagePath": {
+            "type": "string",
+            "nullable": true
+          },
+          "uploadedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "createdByUserId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "deletedByUserId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "deletedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "tenantId",
+          "legalEntityId",
+          "sourceRefType",
+          "sourceRefId",
+          "status"
+        ]
+      },
+      "InventoryTransferEvidenceListResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "transferId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InventoryTransferEvidenceRow"
+            }
+          }
+        },
+        "required": [
+          "tenantId",
+          "transferId",
+          "rows"
+        ]
+      },
+      "InventoryTransferEvidenceResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "transferId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "row": {
+            "$ref": "#/components/schemas/InventoryTransferEvidenceRow"
+          }
+        },
+        "required": [
+          "tenantId",
+          "transferId",
+          "row"
+        ]
+      },
+      "InventoryTransferEvidenceDraftRequest": {
+        "type": "object",
+        "properties": {
+          "fileName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255
+          },
+          "contentType": {
+            "type": "string",
+            "maxLength": 120,
+            "nullable": true
+          },
+          "displayName": {
+            "type": "string",
+            "maxLength": 190,
+            "nullable": true
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 500,
+            "nullable": true
+          }
+        },
+        "required": [
+          "fileName"
+        ]
+      },
+      "InventoryTransferEvidenceDraftResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "transferId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "row": {
+            "$ref": "#/components/schemas/InventoryTransferEvidenceRow"
+          },
+          "uploadPath": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "tenantId",
+          "transferId",
+          "row",
+          "uploadPath"
+        ]
       },
       "InventoryCostLayerRow": {
         "type": "object",

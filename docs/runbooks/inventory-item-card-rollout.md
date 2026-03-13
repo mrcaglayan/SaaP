@@ -2,6 +2,8 @@
 
 This runbook covers rollout, verification, and remediation for the inventory/item-card hardening delivered after the commercial line-model cutover.
 
+For OU-owned warehouse transfers and cross-context settlement follow-up, also use `docs/runbooks/ou-self-balancing-transfers-and-settlements.md`.
+
 ## Scope
 
 - Dedicated RBAC for item cards and inventory:
@@ -112,3 +114,4 @@ npm run db:seed:core
 - `cd backend && npm run test:permission-matrix`
 - `cd backend && npm run test:cari:line-model-rollout`
 - `cd backend && npm run test:inventory:release-gate`
+- `cd backend && npm run test:ou:self-balancing:release-gate`

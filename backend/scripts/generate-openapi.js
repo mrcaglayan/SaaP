@@ -1280,6 +1280,66 @@ function applyCariOperationOverrides(specObject) {
     operation.responses = withStandardResponses("200", `${override.summary} response`);
   }
 
+  const openItemsReportOperation = paths["/api/v1/cari/reports/open-items"]?.get;
+  if (openItemsReportOperation) {
+    openItemsReportOperation.responses = withStandardResponses(
+      "200",
+      "Cari open-items report",
+      "#/components/schemas/CariOpenItemsReportResponse"
+    );
+  }
+
+  const statementReportOperation = paths["/api/v1/cari/reports/statement"]?.get;
+  if (statementReportOperation) {
+    statementReportOperation.responses = withStandardResponses(
+      "200",
+      "Cari counterparty statement report",
+      "#/components/schemas/CariCounterpartyStatementReportResponse"
+    );
+  }
+
+  const realizedFxReportOperation = paths["/api/v1/cari/reports/settlement-realized-fx"]?.get;
+  if (realizedFxReportOperation) {
+    realizedFxReportOperation.summary = "Cari settlement realized-FX report";
+    mergeOperationParameters(realizedFxReportOperation, [
+      queryParamInt("tenantId", false, "Tenant identifier; optional if available in JWT"),
+      queryParamInt("legalEntityId", false, "Legal entity filter"),
+      queryParamInt("counterpartyId", false, "Counterparty filter"),
+      queryParam(
+        "role",
+        { type: "string", enum: ["CUSTOMER", "VENDOR", "BOTH"] },
+        false,
+        "Counterparty role filter"
+      ),
+      queryParam(
+        "currencyCode",
+        { type: "string", minLength: 3, maxLength: 3 },
+        false,
+        "Settlement currency filter"
+      ),
+      queryParam(
+        "periodFrom",
+        { type: "string", format: "date" },
+        false,
+        "Settlement-date lower bound"
+      ),
+      queryParam(
+        "periodTo",
+        { type: "string", format: "date" },
+        false,
+        "Settlement-date upper bound"
+      ),
+      queryParam("includeDetails", { type: "boolean" }, false, "Include grouped detail rows"),
+      queryParam("limit", { type: "integer", minimum: 1, maximum: 1000 }, false, "Page size"),
+      queryParam("offset", nonNegativeInt, false, "Page offset"),
+    ]);
+    realizedFxReportOperation.responses = withStandardResponses(
+      "200",
+      "Cari settlement realized-FX report",
+      "#/components/schemas/CariSettlementRealizedFxReportResponse"
+    );
+  }
+
   const auditOperation = paths["/api/v1/cari/audit"]?.get;
   if (auditOperation) {
     auditOperation.summary = "Cari audit visibility endpoint";
@@ -1593,6 +1653,28 @@ function applyCariOperationOverrides(specObject) {
       "201": jsonResponse(
         "#/components/schemas/CariSettlementApplyResponse",
         "Cari bank-apply settlement created"
+      ),
+      "400": errorResponseRef,
+      "401": errorResponseRef,
+      "403": errorResponseRef,
+    };
+  }
+
+  const settlementReverseOperation = paths["/api/v1/cari/settlements/{settlementBatchId}/reverse"]?.post;
+  if (settlementReverseOperation) {
+    settlementReverseOperation.summary =
+      "Reverse cari settlement batch with downstream cross-context guardrails";
+    settlementReverseOperation.parameters = [
+      pathParam("settlementBatchId", "Settlement batch identifier"),
+    ];
+    settlementReverseOperation.requestBody = bodyFromRef(
+      "#/components/schemas/CariSettlementReverseRequest",
+      false
+    );
+    settlementReverseOperation.responses = {
+      "201": jsonResponse(
+        "#/components/schemas/CariSettlementReverseResponse",
+        "Cari settlement reversed"
       ),
       "400": errorResponseRef,
       "401": errorResponseRef,
@@ -2212,6 +2294,22 @@ function applyInventoryOperationOverrides(specObject) {
       type: "string",
       enum: ["ACTIVE", "INACTIVE"],
     },
+    InventoryWarehouseOwnershipScope: {
+      type: "string",
+      enum: ["CENTRAL", "OPERATING_UNIT"],
+    },
+    InventoryTransferStatus: {
+      type: "string",
+      enum: ["INITIATED", "APPROVED", "IN_TRANSIT", "RECEIVED", "CANCELED", "REVERSED"],
+    },
+    InventoryTransferEvidenceStatus: {
+      type: "string",
+      enum: ["PENDING_UPLOAD", "ACTIVE", "DELETED"],
+    },
+    EvidenceCompressionCodec: {
+      type: "string",
+      enum: ["NONE", "GZIP"],
+    },
     InventoryStockLinkStatus: {
       type: "string",
       enum: ["PENDING", "LINKED", "VOID"],
@@ -2248,6 +2346,7 @@ function applyInventoryOperationOverrides(specObject) {
         defaultSalesAccountId: { ...intId, nullable: true },
         defaultPurchaseAccountId: { ...intId, nullable: true },
         inventoryAssetAccountId: { ...intId, nullable: true },
+        inventoryTransitAccountId: { ...intId, nullable: true },
         defaultCogsAccountId: { ...intId, nullable: true },
         taxCategoryCode: { type: "string", nullable: true },
         status: { $ref: "#/components/schemas/ItemCardStatus" },
@@ -2286,6 +2385,7 @@ function applyInventoryOperationOverrides(specObject) {
         defaultSalesAccountId: { ...intId, nullable: true },
         defaultPurchaseAccountId: { ...intId, nullable: true },
         inventoryAssetAccountId: { ...intId, nullable: true },
+        inventoryTransitAccountId: { ...intId, nullable: true },
         defaultCogsAccountId: { ...intId, nullable: true },
         taxCategoryCode: { type: "string", maxLength: 60, nullable: true },
         status: {
@@ -2302,6 +2402,13 @@ function applyInventoryOperationOverrides(specObject) {
         tenantId: { ...intId, nullable: true },
         legalEntityId: { ...intId, nullable: true },
         legalEntityCode: { type: "string", nullable: true },
+        ownershipScope: {
+          allOf: [{ $ref: "#/components/schemas/InventoryWarehouseOwnershipScope" }],
+          nullable: true,
+        },
+        operatingUnitId: { ...intId, nullable: true },
+        operatingUnitCode: { type: "string", nullable: true },
+        operatingUnitName: { type: "string", nullable: true },
         code: { type: "string", nullable: true },
         name: { type: "string", nullable: true },
         status: { $ref: "#/components/schemas/InventoryWarehouseStatus" },
@@ -2309,7 +2416,15 @@ function applyInventoryOperationOverrides(specObject) {
         createdAt: { type: "string", format: "date-time", nullable: true },
         updatedAt: { type: "string", format: "date-time", nullable: true },
       },
-      required: ["id", "tenantId", "legalEntityId", "code", "name", "status"],
+      required: [
+        "id",
+        "tenantId",
+        "legalEntityId",
+        "ownershipScope",
+        "code",
+        "name",
+        "status",
+      ],
     },
     InventoryWarehouseListResponse: {
       type: "object",
@@ -2334,6 +2449,11 @@ function applyInventoryOperationOverrides(specObject) {
       type: "object",
       properties: {
         legalEntityId: intId,
+        ownershipScope: {
+          allOf: [{ $ref: "#/components/schemas/InventoryWarehouseOwnershipScope" }],
+          nullable: true,
+        },
+        operatingUnitId: { ...intId, nullable: true },
         code: { type: "string", minLength: 1, maxLength: 80 },
         name: { type: "string", minLength: 1, maxLength: 200 },
         status: {
@@ -2342,7 +2462,7 @@ function applyInventoryOperationOverrides(specObject) {
         },
         notes: { type: "string", maxLength: 255, nullable: true },
       },
-      required: ["legalEntityId", "code", "name"],
+      required: ["legalEntityId", "ownershipScope", "code", "name"],
     },
     InventoryPendingStockLinkRow: {
       type: "object",
@@ -2449,6 +2569,11 @@ function applyInventoryOperationOverrides(specObject) {
         sourceDocumentId: { ...intId, nullable: true },
         sourceDocumentLineId: { ...intId, nullable: true },
         sourceDocumentNo: { type: "string", nullable: true },
+        sourceTransferNo: { type: "string", nullable: true },
+        sourceTransferStatus: {
+          allOf: [{ $ref: "#/components/schemas/InventoryTransferStatus" }],
+          nullable: true,
+        },
         movementDate: { type: "string", format: "date", nullable: true },
         quantity: { type: "number", nullable: true },
         unitCostTxn: { type: "number", nullable: true },
@@ -2518,6 +2643,262 @@ function applyInventoryOperationOverrides(specObject) {
         reversalDate: { type: "string", format: "date", nullable: true },
         reason: { type: "string", maxLength: 255, nullable: true },
       },
+    },
+    InventoryTransferLineRow: {
+      type: "object",
+      properties: {
+        id: { ...intId, nullable: true },
+        tenantId: { ...intId, nullable: true },
+        legalEntityId: { ...intId, nullable: true },
+        inventoryTransferId: { ...intId, nullable: true },
+        lineNo: { type: "integer", nullable: true },
+        itemCardId: { ...intId, nullable: true },
+        itemCardCode: { type: "string", nullable: true },
+        itemCardName: { type: "string", nullable: true },
+        quantityRequested: { type: "number", nullable: true },
+        quantityShipped: { type: "number", nullable: true },
+        quantityReceived: { type: "number", nullable: true },
+        shippedCurrencyCode: { type: "string", maxLength: 3, nullable: true },
+        shippedUnitCostTxn: { type: "number", nullable: true },
+        shippedUnitCostBase: { type: "number", nullable: true },
+        shippedTotalCostTxn: { type: "number", nullable: true },
+        shippedTotalCostBase: { type: "number", nullable: true },
+        sourceIssueMovementId: { ...intId, nullable: true },
+        targetReceiptMovementId: { ...intId, nullable: true },
+        note: { type: "string", nullable: true },
+        createdAt: { type: "string", format: "date-time", nullable: true },
+        updatedAt: { type: "string", format: "date-time", nullable: true },
+      },
+      required: [
+        "id",
+        "tenantId",
+        "legalEntityId",
+        "inventoryTransferId",
+        "lineNo",
+        "itemCardId",
+      ],
+    },
+    InventoryTransferRow: {
+      type: "object",
+      properties: {
+        id: { ...intId, nullable: true },
+        tenantId: { ...intId, nullable: true },
+        legalEntityId: { ...intId, nullable: true },
+        legalEntityCode: { type: "string", nullable: true },
+        transferNo: { type: "string", nullable: true },
+        transferDate: { type: "string", format: "date", nullable: true },
+        status: {
+          allOf: [{ $ref: "#/components/schemas/InventoryTransferStatus" }],
+          nullable: true,
+        },
+        sourceWarehouseId: { ...intId, nullable: true },
+        sourceWarehouseCode: { type: "string", nullable: true },
+        sourceWarehouseName: { type: "string", nullable: true },
+        targetWarehouseId: { ...intId, nullable: true },
+        targetWarehouseCode: { type: "string", nullable: true },
+        targetWarehouseName: { type: "string", nullable: true },
+        sourceOwnershipScope: {
+          allOf: [{ $ref: "#/components/schemas/InventoryWarehouseOwnershipScope" }],
+          nullable: true,
+        },
+        sourceOperatingUnitId: { ...intId, nullable: true },
+        sourceOperatingUnitCode: { type: "string", nullable: true },
+        sourceOperatingUnitName: { type: "string", nullable: true },
+        targetOwnershipScope: {
+          allOf: [{ $ref: "#/components/schemas/InventoryWarehouseOwnershipScope" }],
+          nullable: true,
+        },
+        targetOperatingUnitId: { ...intId, nullable: true },
+        targetOperatingUnitCode: { type: "string", nullable: true },
+        targetOperatingUnitName: { type: "string", nullable: true },
+        shipmentJournalEntryId: { ...intId, nullable: true },
+        shipmentJournalNo: { type: "string", nullable: true },
+        receiptJournalEntryId: { ...intId, nullable: true },
+        receiptJournalNo: { type: "string", nullable: true },
+        reversalJournalEntryId: { ...intId, nullable: true },
+        reversalJournalNo: { type: "string", nullable: true },
+        initiatedByUserId: { ...intId, nullable: true },
+        approvedByUserId: { ...intId, nullable: true },
+        shippedByUserId: { ...intId, nullable: true },
+        receivedByUserId: { ...intId, nullable: true },
+        canceledByUserId: { ...intId, nullable: true },
+        reversedByUserId: { ...intId, nullable: true },
+        initiatedAt: { type: "string", format: "date-time", nullable: true },
+        approvedAt: { type: "string", format: "date-time", nullable: true },
+        inTransitAt: { type: "string", format: "date-time", nullable: true },
+        receivedAt: { type: "string", format: "date-time", nullable: true },
+        canceledAt: { type: "string", format: "date-time", nullable: true },
+        reversedAt: { type: "string", format: "date-time", nullable: true },
+        cancelReason: { type: "string", nullable: true },
+        reverseReason: { type: "string", nullable: true },
+        idempotencyKey: { type: "string", nullable: true },
+        integrationEventUid: { type: "string", nullable: true },
+        sourceModule: { type: "string", nullable: true },
+        sourceEntityType: { type: "string", nullable: true },
+        sourceEntityId: { ...intId, nullable: true },
+        note: { type: "string", nullable: true },
+        lineCount: { type: "integer", minimum: 0, nullable: true },
+        lines: {
+          type: "array",
+          items: { $ref: "#/components/schemas/InventoryTransferLineRow" },
+        },
+        createdAt: { type: "string", format: "date-time", nullable: true },
+        updatedAt: { type: "string", format: "date-time", nullable: true },
+      },
+      required: [
+        "id",
+        "tenantId",
+        "legalEntityId",
+        "status",
+        "sourceWarehouseId",
+        "targetWarehouseId",
+      ],
+    },
+    InventoryTransferListResponse: {
+      type: "object",
+      properties: {
+        tenantId: intId,
+        total: nonNegativeInt,
+        rows: {
+          type: "array",
+          items: { $ref: "#/components/schemas/InventoryTransferRow" },
+        },
+      },
+      required: ["tenantId", "total", "rows"],
+    },
+    InventoryTransferResponse: {
+      type: "object",
+      properties: {
+        tenantId: intId,
+        row: { $ref: "#/components/schemas/InventoryTransferRow" },
+      },
+      required: ["tenantId", "row"],
+    },
+    InventoryTransferCreateLineInput: {
+      type: "object",
+      properties: {
+        itemCardId: intId,
+        quantityRequested: {
+          type: "string",
+          pattern: "^\\d+(\\.\\d{1,6})?$",
+        },
+        note: { type: "string", maxLength: 255, nullable: true },
+      },
+      required: ["itemCardId", "quantityRequested"],
+    },
+    InventoryTransferCreateRequest: {
+      type: "object",
+      properties: {
+        legalEntityId: intId,
+        transferDate: { type: "string", format: "date" },
+        sourceWarehouseId: intId,
+        targetWarehouseId: intId,
+        sourceModule: { type: "string", maxLength: 40, nullable: true },
+        sourceEntityType: { type: "string", maxLength: 60, nullable: true },
+        sourceEntityId: { ...intId, nullable: true },
+        integrationEventUid: { type: "string", maxLength: 100, nullable: true },
+        note: { type: "string", maxLength: 500, nullable: true },
+        lines: {
+          type: "array",
+          minItems: 1,
+          items: { $ref: "#/components/schemas/InventoryTransferCreateLineInput" },
+        },
+      },
+      required: [
+        "legalEntityId",
+        "transferDate",
+        "sourceWarehouseId",
+        "targetWarehouseId",
+        "lines",
+      ],
+    },
+    InventoryTransferCancelRequest: {
+      type: "object",
+      properties: {
+        cancelReason: { type: "string", maxLength: 255, nullable: true },
+      },
+    },
+    InventoryTransferReverseRequest: {
+      type: "object",
+      properties: {
+        reverseReason: { type: "string", maxLength: 255, nullable: true },
+      },
+    },
+    InventoryTransferEvidenceRow: {
+      type: "object",
+      properties: {
+        id: { ...intId, nullable: true },
+        tenantId: { ...intId, nullable: true },
+        legalEntityId: { ...intId, nullable: true },
+        sourceRefType: { type: "string", nullable: true },
+        sourceRefId: { ...intId, nullable: true },
+        status: {
+          allOf: [{ $ref: "#/components/schemas/InventoryTransferEvidenceStatus" }],
+          nullable: true,
+        },
+        displayName: { type: "string", nullable: true },
+        note: { type: "string", nullable: true },
+        fileName: { type: "string", nullable: true },
+        fileExtension: { type: "string", nullable: true },
+        contentType: { type: "string", nullable: true },
+        compressionCodec: {
+          allOf: [{ $ref: "#/components/schemas/EvidenceCompressionCodec" }],
+          nullable: true,
+        },
+        fileSizeBytes: { type: "number", nullable: true },
+        storedSizeBytes: { type: "number", nullable: true },
+        fileSha256: { type: "string", nullable: true },
+        storageDriver: { type: "string", nullable: true },
+        storagePath: { type: "string", nullable: true },
+        uploadedAt: { type: "string", format: "date-time", nullable: true },
+        createdByUserId: { ...intId, nullable: true },
+        deletedByUserId: { ...intId, nullable: true },
+        createdAt: { type: "string", format: "date-time", nullable: true },
+        updatedAt: { type: "string", format: "date-time", nullable: true },
+        deletedAt: { type: "string", format: "date-time", nullable: true },
+      },
+      required: ["id", "tenantId", "legalEntityId", "sourceRefType", "sourceRefId", "status"],
+    },
+    InventoryTransferEvidenceListResponse: {
+      type: "object",
+      properties: {
+        tenantId: intId,
+        transferId: intId,
+        rows: {
+          type: "array",
+          items: { $ref: "#/components/schemas/InventoryTransferEvidenceRow" },
+        },
+      },
+      required: ["tenantId", "transferId", "rows"],
+    },
+    InventoryTransferEvidenceResponse: {
+      type: "object",
+      properties: {
+        tenantId: intId,
+        transferId: intId,
+        row: { $ref: "#/components/schemas/InventoryTransferEvidenceRow" },
+      },
+      required: ["tenantId", "transferId", "row"],
+    },
+    InventoryTransferEvidenceDraftRequest: {
+      type: "object",
+      properties: {
+        fileName: { type: "string", minLength: 1, maxLength: 255 },
+        contentType: { type: "string", maxLength: 120, nullable: true },
+        displayName: { type: "string", maxLength: 190, nullable: true },
+        note: { type: "string", maxLength: 500, nullable: true },
+      },
+      required: ["fileName"],
+    },
+    InventoryTransferEvidenceDraftResponse: {
+      type: "object",
+      properties: {
+        tenantId: intId,
+        transferId: intId,
+        row: { $ref: "#/components/schemas/InventoryTransferEvidenceRow" },
+        uploadPath: { type: "string", nullable: true },
+      },
+      required: ["tenantId", "transferId", "row", "uploadPath"],
     },
     InventoryCostLayerRow: {
       type: "object",
@@ -2652,6 +3033,13 @@ function applyInventoryOperationOverrides(specObject) {
         queryParamInt("tenantId", false, "Tenant identifier; optional if available in JWT"),
         queryParamInt("legalEntityId", false, "Legal entity filter"),
         queryParam(
+          "ownershipScope",
+          { $ref: "#/components/schemas/InventoryWarehouseOwnershipScope" },
+          false,
+          "Warehouse ownership scope filter"
+        ),
+        queryParamInt("operatingUnitId", false, "Warehouse operating-unit filter"),
+        queryParam(
           "status",
           { $ref: "#/components/schemas/InventoryWarehouseStatus" },
           false,
@@ -2779,6 +3167,236 @@ function applyInventoryOperationOverrides(specObject) {
         "Inventory movement reversed",
         "#/components/schemas/InventoryMovementResponse"
       ),
+    },
+  };
+
+  paths["/api/v1/inventory/transfers"] = {
+    get: {
+      tags: ["Inventory"],
+      operationId: "listInventoryTransfers",
+      summary: "List inventory transfers across warehouse ownership contexts",
+      parameters: [
+        queryParamInt("tenantId", false, "Tenant identifier; optional if available in JWT"),
+        queryParamInt("legalEntityId", false, "Legal entity filter"),
+        queryParamInt("sourceWarehouseId", false, "Source warehouse filter"),
+        queryParamInt("targetWarehouseId", false, "Target warehouse filter"),
+        queryParam(
+          "status",
+          { $ref: "#/components/schemas/InventoryTransferStatus" },
+          false,
+          "Transfer status filter"
+        ),
+        queryParam("q", { type: "string", maxLength: 120 }, false, "Transfer or warehouse search"),
+        queryParam("limit", { type: "integer", minimum: 1, maximum: 200 }, false, "Page size"),
+        queryParam("offset", nonNegativeInt, false, "Page offset"),
+      ],
+      responses: withStandardResponses(
+        "200",
+        "Inventory transfer list",
+        "#/components/schemas/InventoryTransferListResponse"
+      ),
+    },
+    post: {
+      tags: ["Inventory"],
+      operationId: "createInventoryTransfer",
+      summary: "Create inventory transfer draft between different ownership contexts",
+      requestBody: bodyFromRef("#/components/schemas/InventoryTransferCreateRequest"),
+      responses: {
+        "201": jsonResponse(
+          "#/components/schemas/InventoryTransferResponse",
+          "Inventory transfer created"
+        ),
+        "400": errorResponseRef,
+        "401": errorResponseRef,
+        "403": errorResponseRef,
+      },
+    },
+  };
+
+  paths["/api/v1/inventory/transfers/{transferId}"] = {
+    get: {
+      tags: ["Inventory"],
+      operationId: "getInventoryTransfer",
+      summary: "Get one inventory transfer with line, journal, and ownership context detail",
+      parameters: [
+        pathParam("transferId", "Inventory transfer identifier"),
+        queryParamInt("tenantId", false, "Tenant identifier; optional if available in JWT"),
+      ],
+      responses: withStandardResponses(
+        "200",
+        "Inventory transfer detail",
+        "#/components/schemas/InventoryTransferResponse"
+      ),
+    },
+  };
+
+  paths["/api/v1/inventory/transfers/{transferId}/approve"] = {
+    post: {
+      tags: ["Inventory"],
+      operationId: "approveInventoryTransfer",
+      summary: "Approve inventory transfer before shipment",
+      parameters: [pathParam("transferId", "Inventory transfer identifier")],
+      responses: withStandardResponses(
+        "200",
+        "Inventory transfer approved",
+        "#/components/schemas/InventoryTransferResponse"
+      ),
+    },
+  };
+
+  paths["/api/v1/inventory/transfers/{transferId}/ship"] = {
+    post: {
+      tags: ["Inventory"],
+      operationId: "shipInventoryTransfer",
+      summary:
+        "Ship inventory transfer, create issue movements, and post shipment self-balancing journal when required",
+      parameters: [pathParam("transferId", "Inventory transfer identifier")],
+      responses: withStandardResponses(
+        "200",
+        "Inventory transfer shipped",
+        "#/components/schemas/InventoryTransferResponse"
+      ),
+    },
+  };
+
+  paths["/api/v1/inventory/transfers/{transferId}/receive"] = {
+    post: {
+      tags: ["Inventory"],
+      operationId: "receiveInventoryTransfer",
+      summary: "Receive inventory transfer and post destination receipt journal",
+      parameters: [pathParam("transferId", "Inventory transfer identifier")],
+      responses: withStandardResponses(
+        "200",
+        "Inventory transfer received",
+        "#/components/schemas/InventoryTransferResponse"
+      ),
+    },
+  };
+
+  paths["/api/v1/inventory/transfers/{transferId}/cancel"] = {
+    post: {
+      tags: ["Inventory"],
+      operationId: "cancelInventoryTransfer",
+      summary: "Cancel inventory transfer before shipment artifacts exist",
+      parameters: [pathParam("transferId", "Inventory transfer identifier")],
+      requestBody: bodyFromRef("#/components/schemas/InventoryTransferCancelRequest", false),
+      responses: withStandardResponses(
+        "200",
+        "Inventory transfer canceled",
+        "#/components/schemas/InventoryTransferResponse"
+      ),
+    },
+  };
+
+  paths["/api/v1/inventory/transfers/{transferId}/reverse"] = {
+    post: {
+      tags: ["Inventory"],
+      operationId: "reverseInventoryTransfer",
+      summary: "Reverse shipped and received inventory transfer journals and movements additively",
+      parameters: [pathParam("transferId", "Inventory transfer identifier")],
+      requestBody: bodyFromRef("#/components/schemas/InventoryTransferReverseRequest", false),
+      responses: withStandardResponses(
+        "200",
+        "Inventory transfer reversed",
+        "#/components/schemas/InventoryTransferResponse"
+      ),
+    },
+  };
+
+  paths["/api/v1/inventory/transfers/{transferId}/evidence"] = {
+    get: {
+      tags: ["Inventory"],
+      operationId: "listInventoryTransferEvidence",
+      summary: "List inventory transfer evidence attachments",
+      parameters: [pathParam("transferId", "Inventory transfer identifier")],
+      responses: withStandardResponses(
+        "200",
+        "Inventory transfer evidence list",
+        "#/components/schemas/InventoryTransferEvidenceListResponse"
+      ),
+    },
+    post: {
+      tags: ["Inventory"],
+      operationId: "createInventoryTransferEvidenceDraft",
+      summary: "Create inventory transfer evidence draft and return binary upload target",
+      parameters: [pathParam("transferId", "Inventory transfer identifier")],
+      requestBody: bodyFromRef("#/components/schemas/InventoryTransferEvidenceDraftRequest"),
+      responses: {
+        "201": jsonResponse(
+          "#/components/schemas/InventoryTransferEvidenceDraftResponse",
+          "Inventory transfer evidence draft created"
+        ),
+        "400": errorResponseRef,
+        "401": errorResponseRef,
+        "403": errorResponseRef,
+      },
+    },
+  };
+
+  paths["/api/v1/inventory/transfers/{transferId}/evidence/{evidenceId}"] = {
+    delete: {
+      tags: ["Inventory"],
+      operationId: "deleteInventoryTransferEvidence",
+      summary: "Delete inventory transfer evidence attachment",
+      parameters: [
+        pathParam("transferId", "Inventory transfer identifier"),
+        pathParam("evidenceId", "Evidence identifier"),
+      ],
+      responses: withStandardResponses(
+        "200",
+        "Inventory transfer evidence deleted",
+        "#/components/schemas/InventoryTransferEvidenceResponse"
+      ),
+    },
+  };
+
+  paths["/api/v1/inventory/transfers/{transferId}/evidence/{evidenceId}/content"] = {
+    put: {
+      tags: ["Inventory"],
+      operationId: "uploadInventoryTransferEvidenceContent",
+      summary: "Upload raw binary content for inventory transfer evidence attachment",
+      parameters: [
+        pathParam("transferId", "Inventory transfer identifier"),
+        pathParam("evidenceId", "Evidence identifier"),
+      ],
+      requestBody: {
+        required: true,
+        content: {
+          "application/octet-stream": {
+            schema: { type: "string", format: "binary" },
+          },
+        },
+      },
+      responses: withStandardResponses(
+        "200",
+        "Inventory transfer evidence content uploaded",
+        "#/components/schemas/InventoryTransferEvidenceResponse"
+      ),
+    },
+  };
+
+  paths["/api/v1/inventory/transfers/{transferId}/evidence/{evidenceId}/download"] = {
+    get: {
+      tags: ["Inventory"],
+      operationId: "downloadInventoryTransferEvidence",
+      summary: "Download inventory transfer evidence binary content",
+      parameters: [
+        pathParam("transferId", "Inventory transfer identifier"),
+        pathParam("evidenceId", "Evidence identifier"),
+      ],
+      responses: {
+        "200": {
+          description: "Inventory transfer evidence binary content",
+          content: {
+            "application/octet-stream": {
+              schema: { type: "string", format: "binary" },
+            },
+          },
+        },
+        "400": errorResponseRef,
+        "401": errorResponseRef,
+        "403": errorResponseRef,
+      },
     },
   };
 
@@ -6657,8 +7275,345 @@ const spec = {
           "bankApplyIdempotencyKey",
         ],
       },
+      CariSettlementBatchRow: {
+        type: "object",
+        additionalProperties: true,
+        properties: {
+          id: { ...intId, nullable: true },
+          tenantId: { ...intId, nullable: true },
+          legalEntityId: { ...intId, nullable: true },
+          counterpartyId: { ...intId, nullable: true },
+          ownerOperatingUnitId: { ...intId, nullable: true },
+          collectorOperatingUnitId: { ...intId, nullable: true },
+          direction: { type: "string", enum: ["AR", "AP"], nullable: true },
+          cashTransactionId: { ...intId, nullable: true },
+          sequenceNamespace: { type: "string", nullable: true },
+          fiscalYear: { type: "integer", nullable: true },
+          sequenceNo: { type: "integer", nullable: true },
+          settlementNo: { type: "string", nullable: true },
+          settlementDate: { type: "string", format: "date", nullable: true },
+          status: { type: "string", nullable: true },
+          totalAllocatedTxn: { type: "number", nullable: true },
+          totalAllocatedBase: { type: "number", nullable: true },
+          realizedFxNetBase: { type: "number", nullable: true },
+          currencyCode: { type: "string", maxLength: 3, nullable: true },
+          settlementFxRate: { type: "number", nullable: true },
+          settlementFxSource: { type: "string", nullable: true },
+          settlementFxRateDate: { type: "string", format: "date", nullable: true },
+          settlementFxFallbackMode: {
+            type: "string",
+            enum: ["EXACT_ONLY", "PRIOR_DATE"],
+            nullable: true,
+          },
+          settlementFxFallbackMaxDays: { type: "integer", minimum: 0, nullable: true },
+          postedJournalEntryId: { ...intId, nullable: true },
+          reversalOfSettlementBatchId: { ...intId, nullable: true },
+          originatingCrossContextSettlementBatchId: { ...intId, nullable: true },
+          bankStatementLineId: { ...intId, nullable: true },
+          bankTransactionRef: { type: "string", nullable: true },
+          bankAttachIdempotencyKey: { type: "string", nullable: true },
+          bankApplyIdempotencyKey: { type: "string", nullable: true },
+          sourceModule: { type: "string", nullable: true },
+          sourceEntityType: { type: "string", nullable: true },
+          sourceEntityId: { type: "string", nullable: true },
+          integrationLinkStatus: { type: "string", nullable: true },
+          integrationEventUid: { type: "string", nullable: true },
+          createdAt: { type: "string", format: "date-time", nullable: true },
+          updatedAt: { type: "string", format: "date-time", nullable: true },
+          postedAt: { type: "string", format: "date-time", nullable: true },
+          reversedAt: { type: "string", format: "date-time", nullable: true },
+        },
+        required: ["id", "tenantId", "legalEntityId"],
+      },
+      CariSettlementReverseRequest: {
+        type: "object",
+        properties: {
+          reversalDate: { type: "string", format: "date", nullable: true },
+          reason: { type: "string", maxLength: 255, nullable: true },
+        },
+      },
+      CariSettlementReverseResponse: {
+        type: "object",
+        properties: {
+          tenantId: intId,
+          row: { $ref: "#/components/schemas/CariSettlementBatchRow" },
+          original: { $ref: "#/components/schemas/CariSettlementBatchRow" },
+          journal: { type: "object", additionalProperties: true, nullable: true },
+          followUpRisks: { type: "array", items: { type: "string" } },
+        },
+        required: ["tenantId", "row", "original", "journal", "followUpRisks"],
+      },
+      CariSettlementReferenceRow: {
+        type: "object",
+        additionalProperties: true,
+        properties: {
+          settlementBatchId: { ...intId, nullable: true },
+          settlementNo: { type: "string", nullable: true },
+          settlementDate: { type: "string", format: "date", nullable: true },
+          settlementStatusCurrent: { type: "string", nullable: true },
+          activeAsOf: { type: "boolean", nullable: true },
+          reversalSettlementBatchId: { ...intId, nullable: true },
+          reversalSettlementNo: { type: "string", nullable: true },
+          reversalSettlementDate: { type: "string", format: "date", nullable: true },
+          bankStatementLineId: { ...intId, nullable: true },
+          bankTransactionRef: { type: "string", nullable: true },
+          bankApplyIdempotencyKey: { type: "string", nullable: true },
+          ownerOperatingUnitId: { ...intId, nullable: true },
+          ownerOperatingUnitCode: { type: "string", nullable: true },
+          ownerOperatingUnitName: { type: "string", nullable: true },
+          ownerContextLabel: { type: "string", nullable: true },
+          collectorOperatingUnitId: { ...intId, nullable: true },
+          collectorOperatingUnitCode: { type: "string", nullable: true },
+          collectorOperatingUnitName: { type: "string", nullable: true },
+          collectorContextLabel: { type: "string", nullable: true },
+          originatingCrossContextSettlementBatchId: { ...intId, nullable: true },
+          isCrossContext: { type: "boolean", nullable: true },
+        },
+        required: ["settlementBatchId"],
+      },
+      CariOpenItemReportRow: {
+        type: "object",
+        additionalProperties: true,
+        properties: {
+          openItemId: { ...intId, nullable: true },
+          asOfStatus: { type: "string", nullable: true },
+          settlementReferences: {
+            type: "array",
+            items: { $ref: "#/components/schemas/CariSettlementReferenceRow" },
+          },
+        },
+        required: ["openItemId", "settlementReferences"],
+      },
+      CariOpenItemsReportResponse: {
+        type: "object",
+        additionalProperties: true,
+        properties: {
+          tenantId: intId,
+          asOfDate: { type: "string", format: "date", nullable: true },
+          direction: { type: "string", enum: ["AR", "AP"], nullable: true },
+          legalEntityId: { ...intId, nullable: true },
+          counterpartyId: { ...intId, nullable: true },
+          role: { type: "string", nullable: true },
+          statusFilter: { type: "string", nullable: true },
+          total: nonNegativeInt,
+          limit: { type: "integer", minimum: 1, nullable: true },
+          offset: nonNegativeInt,
+          summary: { type: "object", additionalProperties: true, nullable: true },
+          rows: {
+            type: "array",
+            items: { $ref: "#/components/schemas/CariOpenItemReportRow" },
+          },
+          unapplied: { type: "object", additionalProperties: true, nullable: true },
+        },
+        required: ["tenantId", "total", "limit", "offset", "rows"],
+      },
+      CariStatementAllocationRow: {
+        type: "object",
+        additionalProperties: true,
+        properties: {
+          allocationId: { ...intId, nullable: true },
+          settlementBatchId: { ...intId, nullable: true },
+          settlementNo: { type: "string", nullable: true },
+          settlementDate: { type: "string", format: "date", nullable: true },
+          activeAsOf: { type: "boolean", nullable: true },
+          documentId: { ...intId, nullable: true },
+          documentNo: { type: "string", nullable: true },
+          documentDate: { type: "string", format: "date", nullable: true },
+          openItemId: { ...intId, nullable: true },
+          allocationDate: { type: "string", format: "date", nullable: true },
+          allocationAmountTxn: { type: "number", nullable: true },
+          allocationAmountDocTxn: { type: "number", nullable: true },
+          allocationAmountSettlementTxn: { type: "number", nullable: true },
+          allocationAmountBase: { type: "number", nullable: true },
+          documentCurrencyCode: { type: "string", maxLength: 3, nullable: true },
+          settlementCurrencyCode: { type: "string", maxLength: 3, nullable: true },
+          ownerOperatingUnitId: { ...intId, nullable: true },
+          ownerOperatingUnitCode: { type: "string", nullable: true },
+          ownerOperatingUnitName: { type: "string", nullable: true },
+          ownerContextLabel: { type: "string", nullable: true },
+          collectorOperatingUnitId: { ...intId, nullable: true },
+          collectorOperatingUnitCode: { type: "string", nullable: true },
+          collectorOperatingUnitName: { type: "string", nullable: true },
+          collectorContextLabel: { type: "string", nullable: true },
+          originatingCrossContextSettlementBatchId: { ...intId, nullable: true },
+          isCrossContext: { type: "boolean", nullable: true },
+        },
+        required: ["allocationId", "settlementBatchId"],
+      },
+      CariStatementDocumentRow: {
+        type: "object",
+        additionalProperties: true,
+        properties: {
+          documentId: { ...intId, nullable: true },
+          documentNo: { type: "string", nullable: true },
+          asOfStatus: { type: "string", nullable: true },
+          settlementLinks: {
+            type: "array",
+            items: { $ref: "#/components/schemas/CariStatementAllocationRow" },
+          },
+        },
+        required: ["documentId"],
+      },
+      CariStatementSettlementRow: {
+        type: "object",
+        additionalProperties: true,
+        properties: {
+          settlementBatchId: { ...intId, nullable: true },
+          settlementNo: { type: "string", nullable: true },
+          settlementDate: { type: "string", format: "date", nullable: true },
+          statusCurrent: { type: "string", nullable: true },
+          ownerOperatingUnitId: { ...intId, nullable: true },
+          ownerOperatingUnitCode: { type: "string", nullable: true },
+          ownerOperatingUnitName: { type: "string", nullable: true },
+          ownerContextLabel: { type: "string", nullable: true },
+          collectorOperatingUnitId: { ...intId, nullable: true },
+          collectorOperatingUnitCode: { type: "string", nullable: true },
+          collectorOperatingUnitName: { type: "string", nullable: true },
+          collectorContextLabel: { type: "string", nullable: true },
+          originatingCrossContextSettlementBatchId: { ...intId, nullable: true },
+          isCrossContext: { type: "boolean", nullable: true },
+          reversalOfSettlementBatchId: { ...intId, nullable: true },
+          reversedBySettlementBatchId: { ...intId, nullable: true },
+          reversedBySettlementDate: { type: "string", format: "date", nullable: true },
+          totalAllocatedTxn: { type: "number", nullable: true },
+          totalAllocatedBase: { type: "number", nullable: true },
+          realizedFxNetBase: { type: "number", nullable: true },
+          currencyCode: { type: "string", maxLength: 3, nullable: true },
+        },
+        required: ["settlementBatchId"],
+      },
+      CariCounterpartyStatementReportResponse: {
+        type: "object",
+        additionalProperties: true,
+        properties: {
+          tenantId: intId,
+          asOfDate: { type: "string", format: "date", nullable: true },
+          direction: { type: "string", enum: ["AR", "AP"], nullable: true },
+          legalEntityId: { ...intId, nullable: true },
+          counterpartyId: { ...intId, nullable: true },
+          role: { type: "string", nullable: true },
+          statusFilter: { type: "string", nullable: true },
+          summary: { type: "object", additionalProperties: true, nullable: true },
+          documents: {
+            type: "object",
+            additionalProperties: true,
+            properties: {
+              total: nonNegativeInt,
+              limit: { type: "integer", minimum: 1, nullable: true },
+              offset: nonNegativeInt,
+              rows: {
+                type: "array",
+                items: { $ref: "#/components/schemas/CariStatementDocumentRow" },
+              },
+            },
+            required: ["total", "limit", "offset", "rows"],
+          },
+          settlements: {
+            type: "object",
+            additionalProperties: true,
+            properties: {
+              total: nonNegativeInt,
+              limit: { type: "integer", minimum: 1, nullable: true },
+              offset: nonNegativeInt,
+              rows: {
+                type: "array",
+                items: { $ref: "#/components/schemas/CariStatementSettlementRow" },
+              },
+            },
+            required: ["total", "limit", "offset", "rows"],
+          },
+          allocations: {
+            type: "object",
+            additionalProperties: true,
+            properties: {
+              total: nonNegativeInt,
+              limit: { type: "integer", minimum: 1, nullable: true },
+              offset: nonNegativeInt,
+              rows: {
+                type: "array",
+                items: { $ref: "#/components/schemas/CariStatementAllocationRow" },
+              },
+            },
+            required: ["total", "limit", "offset", "rows"],
+          },
+          unapplied: { type: "object", additionalProperties: true, nullable: true },
+        },
+        required: ["tenantId", "documents", "settlements", "allocations", "unapplied"],
+      },
+      CariSettlementRealizedFxReportRow: {
+        type: "object",
+        additionalProperties: true,
+        properties: {
+          period: { type: "string", nullable: true },
+          legalEntityId: { ...intId, nullable: true },
+          legalEntityCode: { type: "string", nullable: true },
+          legalEntityName: { type: "string", nullable: true },
+          counterpartyId: { ...intId, nullable: true },
+          counterpartyCode: { type: "string", nullable: true },
+          counterpartyName: { type: "string", nullable: true },
+          counterpartyType: { type: "string", nullable: true },
+          currencyCode: { type: "string", maxLength: 3, nullable: true },
+          settlementCount: { type: "integer", minimum: 0, nullable: true },
+          crossContextSettlementCount: { type: "integer", minimum: 0, nullable: true },
+          sameContextSettlementCount: { type: "integer", minimum: 0, nullable: true },
+          totalAllocatedTxn: { type: "number", nullable: true },
+          totalAllocatedBase: { type: "number", nullable: true },
+          realizedFxNetBase: { type: "number", nullable: true },
+          realizedFxGainBase: { type: "number", nullable: true },
+          realizedFxLossBase: { type: "number", nullable: true },
+        },
+      },
+      CariSettlementRealizedFxReportResponse: {
+        type: "object",
+        additionalProperties: true,
+        properties: {
+          tenantId: intId,
+          legalEntityId: { ...intId, nullable: true },
+          counterpartyId: { ...intId, nullable: true },
+          role: { type: "string", nullable: true },
+          direction: { type: "string", nullable: true },
+          currencyCode: { type: "string", maxLength: 3, nullable: true },
+          periodFrom: { type: "string", format: "date", nullable: true },
+          periodTo: { type: "string", format: "date", nullable: true },
+          total: nonNegativeInt,
+          limit: { type: "integer", minimum: 1, nullable: true },
+          offset: nonNegativeInt,
+          summary: { type: "object", additionalProperties: true, nullable: true },
+          rows: {
+            type: "array",
+            items: { $ref: "#/components/schemas/CariSettlementRealizedFxReportRow" },
+          },
+        },
+        required: ["tenantId", "total", "limit", "offset", "rows"],
+      },
       CariSettlementApplyResponse: {
-        allOf: [{ $ref: "#/components/schemas/CashTransactionApplyCariResponse" }],
+        type: "object",
+        properties: {
+          tenantId: intId,
+          cashTransaction: { type: "object", additionalProperties: true, nullable: true },
+          row: { $ref: "#/components/schemas/CariSettlementBatchRow" },
+          allocations: { type: "array", items: { type: "object", additionalProperties: true } },
+          journal: { type: "object", additionalProperties: true, nullable: true },
+          fx: { $ref: "#/components/schemas/CashTransactionApplyCariFxSummary" },
+          unapplied: { $ref: "#/components/schemas/CashTransactionApplyCariUnappliedSummary" },
+          unappliedCash: { type: "array", items: { type: "object", additionalProperties: true } },
+          metrics: { type: "object", additionalProperties: true, nullable: true },
+          idempotentReplay: { type: "boolean" },
+          followUpRisks: { type: "array", items: { type: "string" } },
+        },
+        required: [
+          "tenantId",
+          "cashTransaction",
+          "row",
+          "allocations",
+          "journal",
+          "fx",
+          "unapplied",
+          "unappliedCash",
+          "metrics",
+          "idempotentReplay",
+          "followUpRisks",
+        ],
       },
       CounterpartyContactInput: {
         type: "object",
@@ -7386,6 +8341,8 @@ const spec = {
           unitType: { type: "string", enum: ["BRANCH", "PLANT", "STORE", "DEPARTMENT", "OTHER"] },
           hasSubledger: { type: "boolean" },
           centralDueFromAccountId: { ...intId, nullable: true },
+          centralDueToAccountId: { ...intId, nullable: true },
+          ouDueFromCentralAccountId: { ...intId, nullable: true },
           ouDueToCentralAccountId: { ...intId, nullable: true },
         },
         required: ["legalEntityId", "code", "name"],
@@ -7414,6 +8371,12 @@ const spec = {
           central_due_from_account_id: { ...intId, nullable: true },
           central_due_from_account_code: { type: "string", nullable: true },
           central_due_from_account_name: { type: "string", nullable: true },
+          central_due_to_account_id: { ...intId, nullable: true },
+          central_due_to_account_code: { type: "string", nullable: true },
+          central_due_to_account_name: { type: "string", nullable: true },
+          ou_due_from_central_account_id: { ...intId, nullable: true },
+          ou_due_from_central_account_code: { type: "string", nullable: true },
+          ou_due_from_central_account_name: { type: "string", nullable: true },
           ou_due_to_central_account_id: { ...intId, nullable: true },
           ou_due_to_central_account_code: { type: "string", nullable: true },
           ou_due_to_central_account_name: { type: "string", nullable: true },

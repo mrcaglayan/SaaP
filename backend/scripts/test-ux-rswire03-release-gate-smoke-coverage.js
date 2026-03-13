@@ -59,6 +59,13 @@ const BASELINE_CANONICAL_IMPLEMENTED_ROUTES = new Set([
   "/app/tediye-islemleri",
 ]);
 
+const LOCKED_MANIFEST_ENTRIES = Object.freeze({
+  "/app/stok-transferleri": {
+    smokeScriptPath: "backend/scripts/test-ou-self-balancing-release-gate.js",
+    packageScriptName: "test:ou:self-balancing:release-gate",
+  },
+});
+
 function stripQuotes(value) {
   const raw = String(value || "").trim();
   if (
@@ -178,6 +185,19 @@ async function main() {
     );
   }
 
+  for (const [routePath, expected] of Object.entries(LOCKED_MANIFEST_ENTRIES)) {
+    const entry = entryByRoute.get(routePath);
+    assert(entry, `RS-WIRE-03 failed: locked manifest route missing: ${routePath}`);
+    assert(
+      String(entry?.smokeScriptPath || "").trim() === expected.smokeScriptPath,
+      `RS-WIRE-03 failed: ${routePath} smokeScriptPath must be ${expected.smokeScriptPath}`
+    );
+    assert(
+      String(entry?.packageScriptName || "").trim() === expected.packageScriptName,
+      `RS-WIRE-03 failed: ${routePath} packageScriptName must be ${expected.packageScriptName}`
+    );
+  }
+
   console.log(
     `RS-WIRE-03 guard passed (${canonicalRoutes.length} canonical routes, ${newRoutes.length} new route(s) needing manifest coverage).`
   );
@@ -187,4 +207,3 @@ main().catch((error) => {
   console.error(error);
   process.exit(1);
 });
-
