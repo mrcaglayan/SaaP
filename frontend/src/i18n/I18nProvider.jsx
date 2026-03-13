@@ -104,14 +104,26 @@ export function I18nProvider({ children }) {
     [language]
   );
 
+  const l = useCallback(
+    (englishText, turkishText, vars) => {
+      const selectedTemplate =
+        language === "tr"
+          ? turkishText ?? englishText
+          : englishText ?? turkishText;
+      return interpolateMessage(selectedTemplate, vars);
+    },
+    [language]
+  );
+
   const value = useMemo(
     () => ({
       language,
       setLanguage,
       supportedLanguages: SUPPORTED_LANGUAGES,
+      l,
       t,
     }),
-    [language, setLanguage, t]
+    [language, l, setLanguage, t]
   );
 
   return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>;

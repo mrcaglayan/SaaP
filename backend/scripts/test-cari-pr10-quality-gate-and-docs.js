@@ -137,6 +137,9 @@ function assertReportParams(spec, routePath, expectedParams) {
 
 function assertRunbookSections(runbookSource) {
   const requiredHeadings = [
+    "## Line-Based Documents and Legacy Compatibility",
+    "## Mixed-Tax and Item-Card Defaults",
+    "## Stock Item and Inventory Handoff",
     "## Unapplied Cash Handling",
     "## FX Override Policy",
     "## Reversal Effects on Statements and Aging",
@@ -156,6 +159,9 @@ function assertRunbookSections(runbookSource) {
     "reversal",
     "aging",
     "bank-link",
+    "item-card",
+    "stock",
+    "legacy",
     "idempotency",
     "audit",
     "troubleshooting",
@@ -172,6 +178,9 @@ function assertRunbookSections(runbookSource) {
 function assertSupportGuideSections(source) {
   const requiredHeadings = [
     "## Document Lifecycle",
+    "## Line Workbench and Item Cards",
+    "## Legacy Documents Without Stored Lines",
+    "## Stock Link Materialization (`/app/stok-yansitma-islemleri`)",
     "## Settlement Idempotency Behavior",
     "## Replay Behavior (`idempotentReplay`)",
     "## Reverse Behavior (Document + Settlement)",
@@ -181,6 +190,34 @@ function assertSupportGuideSections(source) {
 
   for (const heading of requiredHeadings) {
     assert(source.includes(heading), `Support guide heading missing: ${heading}`);
+  }
+}
+
+function assertAdrSections(source) {
+  const requiredHeadings = [
+    "### 13) Commercial line model amendment (`PR-CLI01`..`PR-CLI05`)",
+    "### 14) Line-tax and posting amendment (`PR-CLI03`..`PR-CLI04`)",
+    "### 15) Item-card and stock handshake amendment (`PR-CLI06`..`PR-CLI08`)",
+    "### 16) Legacy document compatibility after line rollout",
+  ];
+
+  for (const heading of requiredHeadings) {
+    assert(source.includes(heading), `ADR heading missing: ${heading}`);
+  }
+}
+
+function assertRegressionSpecSections(source) {
+  const requiredHeadings = [
+    "# Cari Line-Model Rollout Regression Matrix",
+    "### 1. Synthetic one-line compatibility",
+    "### 2. Mixed-tax invoice",
+    "### 3. Item-card defaults",
+    "### 4. Stock-item AP/AR handshake",
+    "### 5. Inventory materialization",
+  ];
+
+  for (const heading of requiredHeadings) {
+    assert(source.includes(heading), `Regression spec heading missing: ${heading}`);
   }
 }
 
@@ -304,6 +341,9 @@ async function main() {
   const runbookPath = path.resolve(repoRoot, "docs", "runbooks", "cari-v1-operations.md");
   const runbookSource = await readFile(runbookPath, "utf8");
   assertRunbookSections(runbookSource);
+  const adrPath = path.resolve(repoRoot, "docs", "adr", "adr-cari-v1.md");
+  const adrSource = await readFile(adrPath, "utf8");
+  assertAdrSections(adrSource);
   const supportGuidePath = path.resolve(
     repoRoot,
     "docs",
@@ -312,6 +352,14 @@ async function main() {
   );
   const supportGuideSource = await readFile(supportGuidePath, "utf8");
   assertSupportGuideSections(supportGuideSource);
+  const regressionSpecPath = path.resolve(
+    repoRoot,
+    "docs",
+    "specs",
+    "cari-line-model-regression-matrix.md"
+  );
+  const regressionSpecSource = await readFile(regressionSpecPath, "utf8");
+  assertRegressionSpecSections(regressionSpecSource);
 
   console.log("CARI PR-10 quality gate docs/openapi validation passed.");
   console.log(
@@ -321,8 +369,10 @@ async function main() {
         cariOpenApiPathCount: Object.keys(spec.paths || {}).filter((routePath) =>
           normalizePath(routePath).startsWith("/api/v1/cari")
         ).length,
+        adrPath,
         runbookPath,
         supportGuidePath,
+        regressionSpecPath,
       },
       null,
       2

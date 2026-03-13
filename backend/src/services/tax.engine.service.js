@@ -333,8 +333,12 @@ async function resolveTaxRule({
   documentType,
   counterpartyType,
   taxCodeId = null,
+  taxCategoryCode = null,
+  lineKind = null,
   runQuery = query,
 }) {
+  const normalizedTaxCategoryCode = taxCategoryCode ? u(taxCategoryCode) : null;
+  const normalizedLineKind = lineKind ? u(lineKind) : null;
   const result = await runQuery(
     `SELECT trs.*
      FROM tax_rule_sets trs
@@ -364,8 +368,7 @@ async function resolveTaxRule({
          ELSE 2
        END,
        trs.apply_priority ASC,
-       trs.id ASC
-     LIMIT 1`,
+       trs.id ASC`,
     [
       tenantId,
       regimeId,
@@ -382,7 +385,43 @@ async function resolveTaxRule({
       counterpartyType || null,
     ]
   );
-  return result.rows?.[0] || null;
+  const rows = result.rows || [];
+  const matchingRows = rows.filter((row) => {
+    const formula = safeParseJson(row.formula_json);
+    const match =
+      formula && typeof formula === "object" && !Array.isArray(formula)
+        ? formula.match
+        : null;
+    const ruleTaxCategoryCode = match?.taxCategoryCode
+      ? u(match.taxCategoryCode)
+      : null;
+    const ruleLineKind = match?.lineKind ? u(match.lineKind) : null;
+    if (ruleTaxCategoryCode && ruleTaxCategoryCode !== normalizedTaxCategoryCode) {
+      return false;
+    }
+    if (ruleLineKind && ruleLineKind !== normalizedLineKind) {
+      return false;
+    }
+    return true;
+  });
+  matchingRows.sort((left, right) => {
+    const leftFormula = safeParseJson(left.formula_json);
+    const rightFormula = safeParseJson(right.formula_json);
+    const leftMatch =
+      leftFormula && typeof leftFormula === "object" && !Array.isArray(leftFormula)
+        ? leftFormula.match
+        : null;
+    const rightMatch =
+      rightFormula && typeof rightFormula === "object" && !Array.isArray(rightFormula)
+        ? rightFormula.match
+        : null;
+    const leftSpecificity =
+      (leftMatch?.taxCategoryCode ? 2 : 0) + (leftMatch?.lineKind ? 1 : 0);
+    const rightSpecificity =
+      (rightMatch?.taxCategoryCode ? 2 : 0) + (rightMatch?.lineKind ? 1 : 0);
+    return rightSpecificity - leftSpecificity;
+  });
+  return matchingRows[0] || null;
 }
 
 function resolveComputationConfigFromFormula({
@@ -537,6 +576,8 @@ export async function resolveTaxCodeAndRule({
   moduleCode,
   documentType = null,
   counterpartyType = null,
+  taxCategoryCode = null,
+  lineKind = null,
   taxCodeId = null,
   taxCode = null,
   baseAmount = null,
@@ -594,6 +635,8 @@ export async function resolveTaxCodeAndRule({
     moduleCode,
     documentType,
     counterpartyType,
+    taxCategoryCode,
+    lineKind,
     taxCodeId: taxCodeRow ? parsePositiveInt(taxCodeRow.id) : null,
     runQuery,
   });

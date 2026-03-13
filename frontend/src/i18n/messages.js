@@ -157,6 +157,11 @@ export const messages = {
       },
       createTenant: {
         title: "Tenant Olustur",
+        fields: {
+          enableTaxEngine: "Ulke vergi motorunu etkinlestir",
+          enableTaxEngineHelp:
+            "Tenant olusurken FEATURE_TAX_ENGINE_V1 kaydi tenant feature tablosuna yazilir.",
+        },
         placeholders: {
           tenantCode: "Tenant kodu (orn. ACME)",
           tenantName: "Tenant adi",
@@ -173,6 +178,9 @@ export const messages = {
           tenant: "Tenant: #{{id}} ({{code}})",
           admin: "Yonetici: #{{id}} ({{email}})",
           roleId: "Rol ID: {{id}}",
+          taxEngine: "Vergi motoru: {{status}}",
+          enabled: "Etkin",
+          disabled: "Devre disi",
         },
       },
       directory: {
@@ -2051,6 +2059,11 @@ export const messages = {
       },
       createTenant: {
         title: "Create Tenant",
+        fields: {
+          enableTaxEngine: "Enable country tax engine",
+          enableTaxEngineHelp:
+            "Writes FEATURE_TAX_ENGINE_V1 into tenant feature flags during tenant provisioning.",
+        },
         placeholders: {
           tenantCode: "Tenant code (e.g. ACME)",
           tenantName: "Tenant name",
@@ -2067,6 +2080,9 @@ export const messages = {
           tenant: "Tenant: #{{id}} ({{code}})",
           admin: "Admin: #{{id}} ({{email}})",
           roleId: "Role ID: {{id}}",
+          taxEngine: "Tax engine: {{status}}",
+          enabled: "Enabled",
+          disabled: "Disabled",
         },
       },
       directory: {

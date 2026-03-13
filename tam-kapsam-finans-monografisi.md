@@ -381,8 +381,8 @@ Bu faz, Faz 1'de readiness guard'i gecmek icin minimum seviyede acilan sharehold
 - biri USD default
   Beklenen: kullanicinin 8. maddesi kapsanir.
 
-27. Kartlarin bir kismina ozel AR/AP control hesap mapping'i ver, bir kismini fallback purpose mapping ile birak.
-    Beklenen: posting precedence test edilir.
+27. Kartlarin bir kismina kart bazinda postable leaf AR/AP control hesap mapping'i ver, diger kartlarda bu alanlari bos birakip legal-entity purpose mapping fallback'ini kullan.
+    Beklenen: posting engine once kart uzerindeki AR/AP control override'ini, alan bos ise `CARI_AR_CONTROL` / `CARI_AP_CONTROL` fallback mapping'ini kullanir; posting precedence test edilir.
 
 28. Tum kartlara uygun payment term bagla:
 

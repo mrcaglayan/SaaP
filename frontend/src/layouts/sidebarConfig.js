@@ -403,14 +403,20 @@ export const sidebarItems = [
       {
         label: "Stok Karti Olustur",
         to: "/app/stok-karti-olustur",
+        requiredPermissions: ["item.card.upsert"],
+        implemented: true,
       },
       {
         label: "Stok Yansitma Islemleri",
         to: "/app/stok-yansitma-islemleri",
+        requiredPermissions: ["inventory.read"],
+        implemented: true,
       },
       {
         label: "Stok Karti Listesi",
         to: "/app/stok-karti-listesi",
+        requiredPermissions: ["item.card.read"],
+        implemented: true,
       },
     ],
   },

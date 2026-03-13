@@ -16,6 +16,112 @@ This runbook defines how to operate Cari v1 AR/AP workflows in production-like e
 - At least one role flag must be true.
 - Any `counterpartyType` field in responses is derived from booleans (`CUSTOMER`, `VENDOR`, `BOTH`) for compatibility.
 
+## Line-Based Documents and Legacy Compatibility
+
+- New CARI documents may carry explicit `cari_document_lines` and `cari_document_line_taxes`.
+- Header totals are derived snapshots from lines:
+  - subtotal/net
+  - tax total
+  - gross total
+- Legacy callers that do not send `lines[]` still work through the synthetic single-line compatibility path.
+- Operational meaning:
+  - old one-line invoice flows remain valid
+  - new mixed-line invoices should use explicit lines for tax and stock behavior
+- Legacy posted history is not backfilled destructively into fake commercial lines.
+- If a support incident involves an older document that behaves like a one-line document, treat that as expected compatibility behavior, not data corruption.
+
+## Mixed-Tax and Item-Card Defaults
+
+- Mixed-tax invoices are line-based:
+  - each commercial line resolves its own tax outcome
+  - header totals are the aggregate of all line tax results
+- Practical operator rule:
+  - do not expect one invoice-level tax rate to cover every line
+  - review line tax preview before post when different tax categories are mixed
+- Item-card selection may auto-default:
+  - posting account
+  - tax category
+  - stock impact mode
+- If a line posts to an unexpected account, check in this order:
+  - selected item card
+  - line-level posting account override
+  - fallback CARI purpose mappings
+- If a line tax looks wrong, check in this order:
+  - line `taxCategoryCode`
+  - tax-rule match conditions
+  - active tax regime/code/rule and mapping setup
+
+## Inventory and Item-Card Permissions
+
+- Inventory and item-card pages no longer inherit CARI-card access implicitly.
+- Dedicated permissions are:
+  - `item.card.read`
+  - `item.card.upsert`
+  - `inventory.read`
+  - `inventory.upsert`
+- Operational rule:
+  - grant item-card maintenance separately from CARI counterparty maintenance
+  - grant inventory read/upsert separately from item-card maintenance when warehouse operators do not maintain item masters
+- Existing tenants need permission backfill after code rollout:
+  - `cd backend && npm run db:seed:core`
+
+## Stock Item and Inventory Handoff
+
+- `STOCK_ITEM` lines still begin in CARI, but sell-side costing is now finalized in inventory materialization.
+- Current operational handshake:
+  - AP stock purchase line -> inventory asset posting + `RECEIPT_PENDING`
+  - AR stock sale line -> revenue posting + `ISSUE_PENDING`
+- Pending stock rows are materialized in:
+  - `/app/stok-yansitma-islemleri`
+- Expected workflow:
+  1. post the CARI document
+  2. verify pending stock-link row exists
+  3. create/select warehouse
+  4. materialize stock link into inventory movement
+  5. verify receipt cost layer for inbound stock
+  6. for AR issue, verify FIFO layer consumption and `COGS` journal link
+- Current valuation meaning:
+  - `RECEIPT` -> `VALUED`
+  - `ISSUE` -> `VALUED` when stock is available and FIFO consumption succeeds
+- Troubleshooting checks:
+  - verify item card type is really `STOCK_ITEM`
+  - verify pending link status is `PENDING` before materialization
+  - verify warehouse is `ACTIVE`
+  - verify source stock link flips to `LINKED` after movement create
+
+## Issue Valuation and COGS Posting Lifecycle
+
+- Outbound `ISSUE` materialization validates available stock before finalizing.
+- Current valuation method is `FIFO`.
+- Inventory service consumes open receipt layers and stores explicit issue-consumption rows.
+- A successful valued issue creates one inventory-side journal:
+  - `Dr COGS`
+  - `Cr Inventory`
+- Revenue remains in CARI posting; inventory relief remains in inventory valuation.
+- Replay rule:
+  - if the same stock link is materialized again after it is already `LINKED`, inventory returns the existing movement
+  - if the issue journal already exists, the same journal is reused instead of double-posting
+- If issue materialization fails:
+  - verify there is enough remaining stock in open receipt layers
+  - verify item card has `inventoryAssetAccountId`
+  - verify item card has `defaultCogsAccountId` or approved fallback
+  - verify the fiscal period for `movementDate` is `OPEN`
+
+## Inventory Unwind Order Before CARI Reverse
+
+- Posted CARI reverse now runs an inventory preflight before any additive reverse rows are created.
+- If a linked live `ISSUE` or `RECEIPT` movement still exists, document reverse is blocked with the blocking inventory movement ids.
+- Required unwind order:
+  1. open `/app/stok-yansitma-islemleri`
+  2. reverse the linked valued `ISSUE` first when outbound stock effect is still active
+  3. if the commercial line still needs stock impact after correction, rematerialize the reopened successor pending stock link
+  4. undo the linked materialized `RECEIPT` only when no later issue chronology still depends on that receipt layer history
+  5. retry CARI reverse only after the blocking inventory movement is no longer active
+- Practical rule:
+  - do not reverse the CARI document first and expect inventory to catch up later
+  - do not bypass the blocker by deleting stock-link or movement evidence
+- If receipt undo is blocked by later issue consumption, clean up the dependent issue chronology first, then retry the receipt undo.
+
 ## Unapplied Cash Handling
 
 - Unapplied cash is created when settlement incoming amount exceeds allocated amount.
@@ -130,6 +236,39 @@ FX resolution baseline (exact + prior-date fallback):
 - Check fiscal period status and posting preconditions.
 - Verify document/open-item statuses are valid for attempted transition.
 - Ensure required mappings exist for posting and realized FX entries.
+- If line-tax posting fails:
+  - verify tax feature flag state
+  - verify an active tax regime exists for the legal entity/date
+  - verify line tax match criteria (`taxCategoryCode`, `lineKind`) and tax account mappings
+
+### Legacy document behaves like one-line compatibility flow
+
+- Confirm whether the document was created without explicit `lines[]`.
+- A single stored/synthetic line is valid rollout behavior for legacy callers.
+- Support checks:
+  - verify document totals still reconcile to journal/open item
+  - verify there is no unintended multi-line expectation on that specific document
+  - do not force manual backfill just to make history look like post-rollout documents
+
+### Stock-link materialization issues
+
+- If `/app/stok-yansitma-islemleri` shows no pending rows:
+  - verify the CARI line is a `STOCK_ITEM`
+  - verify the posted line carried `RECEIPT_PENDING` or `ISSUE_PENDING`
+  - verify the source document is actually `POSTED`
+- If movement create fails:
+  - verify warehouse/legal-entity match
+  - verify stock link is still `PENDING`
+  - verify the source item card is still `ACTIVE` and `STOCK_ITEM`
+- If receipt has no cost layer:
+  - verify the source stock link was `RECEIPT_PENDING`
+  - verify movement status is `VALUED`
+  - verify movement quantity/cost fields were populated
+- If issue stays unvalued or no `COGS` journal appears:
+  - verify receipt cost layers exist and still have remaining quantity
+  - verify item card `inventoryAssetAccountId` and `defaultCogsAccountId`
+  - verify movement detail exposes `postedJournalEntryId` / `postedJournalNo`
+  - verify replay did not already create the journal on a prior run
 
 ### Idempotency and duplicate-click incidents
 
@@ -140,6 +279,10 @@ FX resolution baseline (exact + prior-date fallback):
 
 - Confirm original row is in reversible state and not already reversed.
 - Validate dependent balances were not progressed beyond reversible boundary.
+- If document reverse is blocked by inventory:
+  - use the blocking inventory movement ids shown in `/app/cari-belgeler`
+  - complete the required unwind order in `/app/stok-yansitma-islemleri`
+  - retry document reverse only after the linked inventory effect is no longer active
 
 ### Reporting mismatches
 
@@ -184,6 +327,16 @@ FX resolution baseline (exact + prior-date fallback):
 13. Validate FX fallback behavior:
   - `EXACT_ONLY` missing rate -> explicit failure
   - `PRIOR_DATE` with available prior rate -> success
+14. Create one synthetic one-line document without explicit `lines[]` and verify it still posts.
+15. Create one mixed-line invoice with at least two tax outcomes and verify header total = line total aggregate.
+16. Create one `STOCK_ITEM` AP line and one `STOCK_ITEM` AR line, then materialize both in `/app/stok-yansitma-islemleri`.
+17. Verify the outbound issue becomes `VALUED`, stores FIFO layer consumption, and links one `COGS` journal.
+18. Rerun the same outbound stock-link materialization and verify the existing movement/journal is reused.
+19. Attempt CARI reverse while one linked valued `ISSUE` is still active and verify reverse is blocked with inventory movement detail.
+20. Reverse that valued issue and verify one reopened successor pending stock link is created.
+21. Rematerialize from the reopened successor stock link and verify the new movement/journal are linked to the successor.
+22. Attempt CARI reverse while one linked valued `RECEIPT` is still active and verify reverse is blocked until receipt undo is completed.
+23. Undo one fully available receipt materialization, then retry the CARI reverse and verify the blocker clears.
 
 ## UI Route Coverage (PR-11..14)
 
@@ -211,6 +364,10 @@ FX resolution baseline (exact + prior-date fallback):
 - FX override:
   - Only permitted for users with `cari.fx.override`.
   - Override/fallback behavior must be reviewable (`EXACT_ONLY` vs `PRIOR_DATE`, optional max-day bound).
+- Line-model rollout:
+  - explicit lines are preferred for new commercial documents
+  - synthetic one-line compatibility remains supported for old callers
+  - stock-item lines require the inventory handoff step when quantity movement should be tracked
 
 For day-to-day support and finance execution details, use:
 - `docs/runbooks/cari-v1-support-finance-ui-guide.md`

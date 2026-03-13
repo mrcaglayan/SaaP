@@ -89,7 +89,7 @@ function resolveTaxDirection({ direction, reverseTaxSign = false }) {
   throw badRequest("direction must be AR or AP");
 }
 
-function buildControlBalancingTaxLine({
+export function buildControlBalancingTaxLine({
   controlAccountId,
   taxLine,
   currencyCode,
@@ -117,21 +117,20 @@ function buildControlBalancingTaxLine({
   };
 }
 
-export async function buildCariTaxAugmentation({
+export async function resolveCariTaxComputation({
   tenantId,
   legalEntityId,
   postingDate,
   direction,
   documentType = null,
   baseAmount,
-  controlAccountId,
   currencyCode,
-  subledgerReferenceNo = null,
-  lineDescription = null,
   reverseTaxSign = false,
   taxCodeId = null,
   taxCode = null,
   taxPurposeCode = null,
+  taxCategoryCode = null,
+  lineKind = null,
   runQuery = query,
 }) {
   const parsedTenantId = parsePositiveInt(tenantId);
@@ -161,8 +160,13 @@ export async function buildCariTaxAugmentation({
   if (!taxFeatureEnabled) {
     return {
       enabled: false,
-      lines: [],
       summary: null,
+      breakdown: null,
+      resolvedAccounts: null,
+      resolved: null,
+      taxDirection: null,
+      currencyCode: normalizedCurrencyCode,
+      taxLines: [],
     };
   }
 
@@ -188,6 +192,8 @@ export async function buildCariTaxAugmentation({
     moduleCode: TAX_MODULE_CODE_CARI,
     documentType: toNullableString(documentType, 60),
     counterpartyType,
+    taxCategoryCode: toNullableString(taxCategoryCode, 60),
+    lineKind: toNullableString(lineKind, 40),
     taxCodeId: parsePositiveInt(taxCodeId),
     taxCode: toNullableString(taxCode, 40),
     baseAmount: normalizedBaseAmount,
@@ -229,30 +235,188 @@ export async function buildCariTaxAugmentation({
     calculationMode: normalizeUpperText(breakdown.calculationMode),
     recoverability: normalizeUpperText(breakdown.recoverability),
     mappingAccountId: parsePositiveInt(resolvedAccounts.mappingRow?.account_id),
+    taxCategoryCode: toNullableString(taxCategoryCode, 60),
+    lineKind: toNullableString(lineKind, 40),
   };
 
-  if (Number(summary.taxAmount) <= TAX_ZERO_EPSILON) {
+  const taxLines =
+    Number(summary.taxAmount) <= TAX_ZERO_EPSILON
+      ? []
+      : buildTaxJournalLines({
+          breakdown,
+          taxCode: String(resolved.taxCodeRow.code || ""),
+          taxPurposeCode: resolvedAccounts.taxPurposeCode,
+          mappingRow: resolvedAccounts.mappingRow,
+          direction: taxDirection,
+          currencyCode: normalizedCurrencyCode,
+        });
+
+  return {
+    enabled: true,
+    summary,
+    breakdown,
+    resolvedAccounts,
+    resolved,
+    taxDirection,
+    currencyCode: normalizedCurrencyCode,
+    taxLines,
+  };
+}
+
+export function buildCariTaxAugmentationFromStoredLineTaxes({
+  lineTaxes,
+  controlAccountId,
+  direction,
+  reverseTaxSign = false,
+  currencyCode,
+  subledgerReferenceNo = null,
+  lineDescription = null,
+  includeControlBalancing = true,
+}) {
+  const normalizedCurrencyCode = normalizeUpperText(currencyCode);
+  const normalizedSubledgerReferenceNo = toNullableString(subledgerReferenceNo, 100);
+  const normalizedLineDescription = toNullableString(lineDescription, 255);
+  const taxDirection = resolveTaxDirection({
+    direction: normalizeUpperText(direction),
+    reverseTaxSign: Boolean(reverseTaxSign),
+  });
+  const aggregateMap = new Map();
+
+  for (const lineTax of lineTaxes || []) {
+    const accountId = parsePositiveInt(lineTax.accountId ?? lineTax.account_id);
+    if (!accountId) {
+      continue;
+    }
+    const taxAmountTxn = toAmount(lineTax.taxAmountTxn ?? lineTax.tax_amount_txn ?? 0);
+    const taxAmountBase = toAmount(lineTax.taxAmountBase ?? lineTax.tax_amount_base ?? taxAmountTxn);
+    if (taxAmountTxn <= TAX_ZERO_EPSILON && taxAmountBase <= TAX_ZERO_EPSILON) {
+      continue;
+    }
+    const taxCode = toNullableString(lineTax.taxCode ?? lineTax.tax_code, 40);
+    const taxPurposeCode = toNullableString(
+      lineTax.taxPurposeCode ?? lineTax.tax_purpose_code,
+      40
+    );
+    const key = [accountId, taxCode || "", taxPurposeCode || ""].join("|");
+    const existing =
+      aggregateMap.get(key) || {
+        accountId,
+        taxCode,
+        taxPurposeCode,
+        debitBase: 0,
+        creditBase: 0,
+        amountTxn: 0,
+      };
+    if (taxDirection === TAX_DIRECTION_SALE) {
+      existing.creditBase = Number(
+        (existing.creditBase + Number(taxAmountBase || 0)).toFixed(AMOUNT_SCALE)
+      );
+      existing.amountTxn = Number(
+        (existing.amountTxn - Number(taxAmountTxn || 0)).toFixed(AMOUNT_SCALE)
+      );
+    } else {
+      existing.debitBase = Number(
+        (existing.debitBase + Number(taxAmountBase || 0)).toFixed(AMOUNT_SCALE)
+      );
+      existing.amountTxn = Number(
+        (existing.amountTxn + Number(taxAmountTxn || 0)).toFixed(AMOUNT_SCALE)
+      );
+    }
+    aggregateMap.set(key, existing);
+  }
+
+  const lines = [];
+  for (const taxLine of aggregateMap.values()) {
+    const description =
+      normalizedLineDescription ||
+      toNullableString(`Cari tax (${taxLine.taxCode || "UNSPECIFIED"})`, 255);
+    lines.push({
+      accountId: taxLine.accountId,
+      debitBase: toAmount(taxLine.debitBase || 0),
+      creditBase: toAmount(taxLine.creditBase || 0),
+      amountTxn: toAmount(taxLine.amountTxn || 0),
+      description,
+      subledgerReferenceNo: normalizedSubledgerReferenceNo,
+      currencyCode: normalizedCurrencyCode,
+      taxCode: taxLine.taxCode || null,
+      taxPurposeCode: taxLine.taxPurposeCode || null,
+    });
+    if (includeControlBalancing) {
+      lines.push(
+        buildControlBalancingTaxLine({
+          controlAccountId,
+          taxLine,
+          currencyCode: normalizedCurrencyCode,
+          subledgerReferenceNo: normalizedSubledgerReferenceNo,
+          description: toNullableString(
+            `${normalizedLineDescription || "Cari tax"} balancing (${taxLine.taxCode || "TAX"})`,
+            255
+          ),
+        })
+      );
+    }
+  }
+
+  return lines;
+}
+
+export async function buildCariTaxAugmentation({
+  tenantId,
+  legalEntityId,
+  postingDate,
+  direction,
+  documentType = null,
+  baseAmount,
+  controlAccountId,
+  currencyCode,
+  subledgerReferenceNo = null,
+  lineDescription = null,
+  reverseTaxSign = false,
+  taxCodeId = null,
+  taxCode = null,
+  taxPurposeCode = null,
+  taxCategoryCode = null,
+  lineKind = null,
+  includeControlBalancing = true,
+  runQuery = query,
+}) {
+  const computation = await resolveCariTaxComputation({
+    tenantId,
+    legalEntityId,
+    postingDate,
+    direction,
+    documentType,
+    baseAmount,
+    currencyCode,
+    reverseTaxSign,
+    taxCodeId,
+    taxCode,
+    taxPurposeCode,
+    taxCategoryCode,
+    lineKind,
+    runQuery,
+  });
+  if (!computation.enabled) {
+    return {
+      enabled: false,
+      lines: [],
+      summary: null,
+    };
+  }
+  const summary = computation.summary;
+  if (Number(summary?.taxAmount || 0) <= TAX_ZERO_EPSILON) {
     return {
       enabled: true,
       lines: [],
       summary,
     };
   }
-
-  const taxLines = buildTaxJournalLines({
-    breakdown,
-    taxCode: String(resolved.taxCodeRow.code || ""),
-    taxPurposeCode: resolvedAccounts.taxPurposeCode,
-    mappingRow: resolvedAccounts.mappingRow,
-    direction: taxDirection,
-    currencyCode: normalizedCurrencyCode,
-  });
-
+  const normalizedCurrencyCode = normalizeUpperText(currencyCode);
   const normalizedSubledgerReferenceNo = toNullableString(subledgerReferenceNo, 100);
   const normalizedLineDescription = toNullableString(lineDescription, 255);
   const integratedLines = [];
 
-  for (const taxLine of taxLines) {
+  for (const taxLine of computation.taxLines) {
     const accountId = parsePositiveInt(taxLine.accountId);
     if (!accountId) {
       throw badRequest("Resolved tax line account is invalid");
@@ -262,7 +426,7 @@ export async function buildCariTaxAugmentation({
     const creditBase = toAmount(taxLine.creditBase || 0, "taxLine.creditBase");
     const amountTxn = toAmount(taxLine.amountTxn || 0, "taxLine.amountTxn");
     const resolvedTaxCode = toNullableString(
-      taxLine.taxCode || resolved.taxCodeRow.code,
+      taxLine.taxCode || summary.taxCode,
       40
     );
     const taxDescription =
@@ -281,18 +445,20 @@ export async function buildCariTaxAugmentation({
       taxCode: resolvedTaxCode,
     });
 
-    integratedLines.push(
-      buildControlBalancingTaxLine({
-        controlAccountId,
-        taxLine: { debitBase, creditBase, amountTxn },
-        currencyCode: normalizedCurrencyCode,
-        subledgerReferenceNo: normalizedSubledgerReferenceNo,
-        description: toNullableString(
-          `${normalizedLineDescription || "Cari tax"} balancing (${resolvedTaxCode || "TAX"})`,
-          255
-        ),
-      })
-    );
+    if (includeControlBalancing) {
+      integratedLines.push(
+        buildControlBalancingTaxLine({
+          controlAccountId,
+          taxLine: { debitBase, creditBase, amountTxn },
+          currencyCode: normalizedCurrencyCode,
+          subledgerReferenceNo: normalizedSubledgerReferenceNo,
+          description: toNullableString(
+            `${normalizedLineDescription || "Cari tax"} balancing (${resolvedTaxCode || "TAX"})`,
+            255
+          ),
+        })
+      );
+    }
   }
 
   return {
@@ -303,5 +469,8 @@ export async function buildCariTaxAugmentation({
 }
 
 export default {
+  resolveCariTaxComputation,
+  buildCariTaxAugmentationFromStoredLineTaxes,
+  buildControlBalancingTaxLine,
   buildCariTaxAugmentation,
 };

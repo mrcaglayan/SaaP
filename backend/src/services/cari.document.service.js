@@ -11,7 +11,12 @@ import {
 } from "../utils/pagination.js";
 import { autoRemapCariPurposeMappingsForLegalEntity } from "./cari.purpose-mapping-autofix.service.js";
 import { upsertJournalSourceLinkTx } from "./journal.source-link.service.js";
-import { buildCariTaxAugmentation } from "./cari.tax.integration.service.js";
+import {
+  buildCariTaxAugmentation,
+  buildCariTaxAugmentationFromStoredLineTaxes,
+  resolveCariTaxComputation,
+} from "./cari.tax.integration.service.js";
+import { resolveItemCardLineDefaults } from "./item.card.service.js";
 
 const DRAFT_STATUS = "DRAFT";
 const CANCELLED_STATUS = "CANCELLED";
@@ -49,6 +54,9 @@ const FROZEN_TRANSACTION_KEYS = new Set([
   "AP:PAYMENT",
   "AP:ADJUSTMENT",
 ]);
+const STOCK_PENDING_IMPACT_MODES = new Set(["RECEIPT_PENDING", "ISSUE_PENDING"]);
+const STOCK_LINK_STATUS_PENDING = "PENDING";
+const STOCK_LINK_STATUS_VOID = "VOID";
 
 function toDecimalNumber(value) {
   if (value === null || value === undefined) {
@@ -217,11 +225,11 @@ function addDays(dateString, daysToAdd) {
   return utcDate.toISOString().slice(0, 10);
 }
 
-function mapDocumentRow(row) {
+function mapDocumentRow(row, { lines } = {}) {
   const documentDate = toDateOnlyString(row.document_date, "documentDate");
   const dueDate = toDateOnlyString(row.due_date, "dueDate");
   const dueDateSnapshot = toDateOnlyString(row.due_date_snapshot, "dueDateSnapshot");
-  return {
+  const mapped = {
     id: parsePositiveInt(row.id),
     tenantId: parsePositiveInt(row.tenant_id),
     legalEntityId: parsePositiveInt(row.legal_entity_id),
@@ -241,6 +249,12 @@ function mapDocumentRow(row) {
     status: row.status,
     documentDate,
     dueDate,
+    subtotalAmountTxn: toDecimalNumber(row.subtotal_amount_txn),
+    subtotalAmountBase: toDecimalNumber(row.subtotal_amount_base),
+    taxAmountTxn: toDecimalNumber(row.tax_amount_txn),
+    taxAmountBase: toDecimalNumber(row.tax_amount_base),
+    grossAmountTxn: toDecimalNumber(row.gross_amount_txn ?? row.amount_txn),
+    grossAmountBase: toDecimalNumber(row.gross_amount_base ?? row.amount_base),
     amountTxn: toDecimalNumber(row.amount_txn),
     amountBase: toDecimalNumber(row.amount_base),
     openAmountTxn: toDecimalNumber(row.open_amount_txn),
@@ -262,12 +276,29 @@ function mapDocumentRow(row) {
     reversedAt: row.reversed_at || null,
     draftSequenceAssigned: row.sequence_namespace === DRAFT_SEQUENCE_NAMESPACE,
   };
+  if (lines !== undefined) {
+    mapped.lines = Array.isArray(lines) ? lines : [];
+    mapped.lineCount = mapped.lines.length;
+  }
+  return mapped;
 }
 
 function optimisticLockConflictError(message = "Document was modified by another request.") {
   const err = new Error(message);
   err.status = 409;
   err.code = "OPTIMISTIC_LOCK_CONFLICT";
+  return err;
+}
+
+function conflictError(message, code, details = null) {
+  const err = new Error(message);
+  err.status = 409;
+  if (code) {
+    err.code = code;
+  }
+  if (details !== undefined) {
+    err.details = details;
+  }
   return err;
 }
 
@@ -334,6 +365,173 @@ function mapOpenItemRow(row) {
     currencyCode: row.currency_code || null,
     createdAt: row.created_at || null,
     updatedAt: row.updated_at || null,
+  };
+}
+
+function mapDocumentLineTaxRow(row) {
+  return {
+    id: parsePositiveInt(row.id),
+    tenantId: parsePositiveInt(row.tenant_id),
+    legalEntityId: parsePositiveInt(row.legal_entity_id),
+    documentId: parsePositiveInt(row.cari_document_id),
+    documentLineId: parsePositiveInt(row.cari_document_line_id),
+    componentNo: Number(row.component_no || 0),
+    taxCode: row.tax_code || null,
+    taxKind: row.tax_kind || null,
+    ratePct: toDecimalNumber(row.rate_pct),
+    taxBaseAmountTxn: toDecimalNumber(row.tax_base_amount_txn),
+    taxAmountTxn: toDecimalNumber(row.tax_amount_txn),
+    taxBaseAmountBase: toDecimalNumber(row.tax_base_amount_base),
+    taxAmountBase: toDecimalNumber(row.tax_amount_base),
+    taxPurposeCode: row.tax_purpose_code || null,
+    accountId: parsePositiveInt(row.account_id),
+    createdAt: row.created_at || null,
+    updatedAt: row.updated_at || null,
+  };
+}
+
+function mapDocumentLineStockLinkRow(row) {
+  return {
+    id: parsePositiveInt(row.id),
+    tenantId: parsePositiveInt(row.tenant_id),
+    legalEntityId: parsePositiveInt(row.legal_entity_id),
+    documentId: parsePositiveInt(row.cari_document_id),
+    documentLineId: parsePositiveInt(row.cari_document_line_id),
+    documentLineNo: Number(row.document_line_no || 0),
+    documentLineDescription: row.document_line_description || null,
+    itemCardId: parsePositiveInt(row.item_card_id),
+    itemCardCode: row.item_card_code || null,
+    itemCardName: row.item_card_name || null,
+    direction: row.direction || null,
+    stockImpactMode: row.stock_impact_mode || null,
+    linkStatus: row.link_status || null,
+    requestedQuantity: toDecimalNumber(row.requested_quantity),
+    postedNetAmountTxn: toDecimalNumber(row.posted_net_amount_txn),
+    postedNetAmountBase: toDecimalNumber(row.posted_net_amount_base),
+    inventoryDocumentType: row.inventory_document_type || null,
+    inventoryDocumentId: parsePositiveInt(row.inventory_document_id),
+    inventoryMovementId: parsePositiveInt(row.inventory_movement_id),
+    reopenedFromStockLinkId: parsePositiveInt(row.reopened_from_stock_link_id),
+    supersededByStockLinkId: parsePositiveInt(row.superseded_by_stock_link_id),
+    inventoryMovementType: row.inventory_movement_type || null,
+    inventoryValuationStatus: row.inventory_valuation_status || null,
+    inventoryMovementDate: toDateOnlyString(
+      row.inventory_movement_date,
+      "inventoryMovementDate"
+    ),
+    inventoryMovementReversedAt: row.inventory_movement_reversed_at || null,
+    inventoryMovementReversalJournalEntryId: parsePositiveInt(
+      row.inventory_movement_reversal_journal_entry_id
+    ),
+    inventoryWarehouseId: parsePositiveInt(row.inventory_warehouse_id),
+    inventoryWarehouseCode: row.inventory_warehouse_code || null,
+    inventoryWarehouseName: row.inventory_warehouse_name || null,
+    resolvedAt: row.resolved_at || null,
+    resolutionNote: row.resolution_note || null,
+    createdAt: row.created_at || null,
+    updatedAt: row.updated_at || null,
+  };
+}
+
+function isActiveInventoryMovementForDocumentReverse(stockLinkRow) {
+  if (!parsePositiveInt(stockLinkRow?.inventoryMovementId)) {
+    return false;
+  }
+  if (
+    parsePositiveInt(stockLinkRow?.inventoryMovementReversalJournalEntryId) ||
+    toNullableString(stockLinkRow?.inventoryMovementReversedAt, 50)
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function resolveInventoryReverseAction(stockLinkRow) {
+  const movementType = normalizeUpperText(stockLinkRow?.inventoryMovementType);
+  if (movementType === "ISSUE") {
+    return {
+      code: "REVERSE_INVENTORY_ISSUE_FIRST",
+      message: "Reverse the linked inventory issue first.",
+    };
+  }
+  if (movementType === "RECEIPT") {
+    return {
+      code: "UNDO_RECEIPT_MATERIALIZATION_FIRST",
+      message: "Undo the linked inventory receipt materialization first.",
+    };
+  }
+  return {
+    code: "RESOLVE_LINKED_INVENTORY_MOVEMENT_FIRST",
+    message: "Resolve the linked inventory movement first.",
+  };
+}
+
+function buildDocumentReverseInventoryBlocks(stockLinkRows) {
+  return (Array.isArray(stockLinkRows) ? stockLinkRows : [])
+    .filter((row) => isActiveInventoryMovementForDocumentReverse(row))
+    .map((row) => {
+      const suggestedAction = resolveInventoryReverseAction(row);
+      return {
+        stockLinkId: parsePositiveInt(row.id),
+        documentLineId: parsePositiveInt(row.documentLineId),
+        documentLineNo: Number(row.documentLineNo || 0),
+        stockImpactMode: row.stockImpactMode || null,
+        linkStatus: row.linkStatus || null,
+        inventoryMovementId: parsePositiveInt(row.inventoryMovementId),
+        inventoryMovementType: row.inventoryMovementType || null,
+        inventoryValuationStatus: row.inventoryValuationStatus || null,
+        inventoryMovementDate: row.inventoryMovementDate || null,
+        warehouseId: parsePositiveInt(row.inventoryWarehouseId),
+        warehouseCode: row.inventoryWarehouseCode || null,
+        warehouseName: row.inventoryWarehouseName || null,
+        itemCardId: parsePositiveInt(row.itemCardId),
+        itemCardCode: row.itemCardCode || null,
+        itemCardName: row.itemCardName || null,
+        requestedQuantity: toDecimalNumber(row.requestedQuantity),
+        suggestedActionCode: suggestedAction.code,
+        suggestedActionMessage: suggestedAction.message,
+      };
+    });
+}
+
+function documentReverseBlockedByInventoryError(documentId, inventoryBlocks) {
+  const count = Array.isArray(inventoryBlocks) ? inventoryBlocks.length : 0;
+  return conflictError(
+    `Document reverse is blocked by ${count} active linked inventory movement${count === 1 ? "" : "s"}.`,
+    "CARI_DOCUMENT_REVERSE_BLOCKED_BY_INVENTORY",
+    {
+      reason: "ACTIVE_LINKED_INVENTORY_MOVEMENTS",
+      documentId: parsePositiveInt(documentId),
+      inventoryBlocks,
+    }
+  );
+}
+
+function mapDocumentLineRow(row, taxes = [], stockLinks = []) {
+  return {
+    id: parsePositiveInt(row.id),
+    tenantId: parsePositiveInt(row.tenant_id),
+    legalEntityId: parsePositiveInt(row.legal_entity_id),
+    documentId: parsePositiveInt(row.cari_document_id),
+    lineNo: Number(row.line_no || 0),
+    lineKind: row.line_kind || "STANDARD",
+    description: row.description || null,
+    itemCardId: parsePositiveInt(row.item_card_id),
+    quantity: toDecimalNumber(row.quantity),
+    unitPriceTxn: toDecimalNumber(row.unit_price_txn),
+    lineNetAmountTxn: toDecimalNumber(row.line_net_amount_txn),
+    lineTaxAmountTxn: toDecimalNumber(row.line_tax_amount_txn),
+    lineGrossAmountTxn: toDecimalNumber(row.line_gross_amount_txn),
+    lineNetAmountBase: toDecimalNumber(row.line_net_amount_base),
+    lineTaxAmountBase: toDecimalNumber(row.line_tax_amount_base),
+    lineGrossAmountBase: toDecimalNumber(row.line_gross_amount_base),
+    postingAccountId: parsePositiveInt(row.posting_account_id),
+    taxCategoryCode: row.tax_category_code || null,
+    stockImpactMode: row.stock_impact_mode || "NONE",
+    createdAt: row.created_at || null,
+    updatedAt: row.updated_at || null,
+    taxes: Array.isArray(taxes) ? taxes : [],
+    stockLinks: Array.isArray(stockLinks) ? stockLinks : [],
   };
 }
 
@@ -501,6 +699,196 @@ async function fetchDocumentRow({
     [tenantId, documentId]
   );
   return result.rows?.[0] || null;
+}
+
+async function listDocumentLineRows({
+  tenantId,
+  legalEntityId,
+  documentId,
+  runQuery = query,
+}) {
+  const result = await runQuery(
+    `SELECT
+        id,
+        tenant_id,
+        legal_entity_id,
+        cari_document_id,
+        line_no,
+        line_kind,
+        description,
+        item_card_id,
+        quantity,
+        unit_price_txn,
+        line_net_amount_txn,
+        line_tax_amount_txn,
+        line_gross_amount_txn,
+        line_net_amount_base,
+        line_tax_amount_base,
+        line_gross_amount_base,
+        posting_account_id,
+        tax_category_code,
+        stock_impact_mode,
+        created_at,
+        updated_at
+     FROM cari_document_lines
+     WHERE tenant_id = ?
+       AND legal_entity_id = ?
+       AND cari_document_id = ?
+     ORDER BY line_no ASC, id ASC`,
+    [tenantId, legalEntityId, documentId]
+  );
+  return result.rows || [];
+}
+
+async function listDocumentLineTaxRows({
+  tenantId,
+  legalEntityId,
+  documentId,
+  runQuery = query,
+}) {
+  const result = await runQuery(
+    `SELECT
+        id,
+        tenant_id,
+        legal_entity_id,
+        cari_document_id,
+        cari_document_line_id,
+        component_no,
+        tax_code,
+        tax_kind,
+        rate_pct,
+        tax_base_amount_txn,
+        tax_amount_txn,
+        tax_base_amount_base,
+        tax_amount_base,
+        tax_purpose_code,
+        account_id,
+        created_at,
+        updated_at
+     FROM cari_document_line_taxes
+     WHERE tenant_id = ?
+       AND legal_entity_id = ?
+       AND cari_document_id = ?
+     ORDER BY cari_document_line_id ASC, component_no ASC, id ASC`,
+    [tenantId, legalEntityId, documentId]
+  );
+  return result.rows || [];
+}
+
+async function listDocumentLineStockLinkRows({
+  tenantId,
+  legalEntityId,
+  documentId,
+  runQuery = query,
+}) {
+  const result = await runQuery(
+      `SELECT
+        sl.id,
+        sl.tenant_id,
+        sl.legal_entity_id,
+        sl.cari_document_id,
+        sl.cari_document_line_id,
+        l.line_no AS document_line_no,
+        l.description AS document_line_description,
+        sl.item_card_id,
+        ic.code AS item_card_code,
+        ic.name AS item_card_name,
+        sl.direction,
+        sl.stock_impact_mode,
+        sl.link_status,
+        sl.requested_quantity,
+        sl.posted_net_amount_txn,
+        sl.posted_net_amount_base,
+        sl.inventory_document_type,
+        sl.inventory_document_id,
+        sl.inventory_movement_id,
+        sl.reopened_from_stock_link_id,
+        sl.superseded_by_stock_link_id,
+        im.movement_type AS inventory_movement_type,
+        im.valuation_status AS inventory_valuation_status,
+        im.movement_date AS inventory_movement_date,
+        im.reversed_at AS inventory_movement_reversed_at,
+        im.reversal_journal_entry_id AS inventory_movement_reversal_journal_entry_id,
+        iw.id AS inventory_warehouse_id,
+        iw.code AS inventory_warehouse_code,
+        iw.name AS inventory_warehouse_name,
+        sl.resolved_at,
+        sl.resolution_note,
+        sl.created_at,
+        sl.updated_at
+     FROM cari_document_line_stock_links sl
+     JOIN cari_document_lines l
+       ON l.tenant_id = sl.tenant_id
+      AND l.legal_entity_id = sl.legal_entity_id
+      AND l.cari_document_id = sl.cari_document_id
+      AND l.id = sl.cari_document_line_id
+     LEFT JOIN item_cards ic
+       ON ic.tenant_id = sl.tenant_id
+      AND ic.id = sl.item_card_id
+     LEFT JOIN inventory_movements im
+       ON im.id = sl.inventory_movement_id
+     LEFT JOIN inventory_warehouses iw
+       ON iw.id = im.warehouse_id
+     WHERE sl.tenant_id = ?
+       AND sl.legal_entity_id = ?
+       AND sl.cari_document_id = ?
+     ORDER BY sl.cari_document_line_id ASC, sl.id ASC`,
+    [tenantId, legalEntityId, documentId]
+  );
+  return result.rows || [];
+}
+
+async function loadDocumentLinesForDocument({
+  tenantId,
+  legalEntityId,
+  documentId,
+  runQuery = query,
+}) {
+  const lineRows = await listDocumentLineRows({
+    tenantId,
+    legalEntityId,
+    documentId,
+    runQuery,
+  });
+  const taxRows = await listDocumentLineTaxRows({
+    tenantId,
+    legalEntityId,
+    documentId,
+    runQuery,
+  });
+  const stockLinkRows = await listDocumentLineStockLinkRows({
+    tenantId,
+    legalEntityId,
+    documentId,
+    runQuery,
+  });
+
+  const taxesByLineId = new Map();
+  for (const taxRow of taxRows) {
+    const mappedTax = mapDocumentLineTaxRow(taxRow);
+    const lineId = mappedTax.documentLineId;
+    if (!taxesByLineId.has(lineId)) {
+      taxesByLineId.set(lineId, []);
+    }
+    taxesByLineId.get(lineId).push(mappedTax);
+  }
+  const stockLinksByLineId = new Map();
+  for (const stockLinkRow of stockLinkRows) {
+    const mappedStockLink = mapDocumentLineStockLinkRow(stockLinkRow);
+    const lineId = mappedStockLink.documentLineId;
+    if (!stockLinksByLineId.has(lineId)) {
+      stockLinksByLineId.set(lineId, []);
+    }
+    stockLinksByLineId.get(lineId).push(mappedStockLink);
+  }
+
+  return lineRows.map((lineRow) =>
+    mapDocumentLineRow(
+      lineRow,
+      taxesByLineId.get(parsePositiveInt(lineRow.id)) || [],
+      stockLinksByLineId.get(parsePositiveInt(lineRow.id)) || []
+    )
+  );
 }
 
 async function reserveDraftSequence({
@@ -1092,6 +1480,134 @@ function buildCariPostingLines({
   return lines;
 }
 
+function resolveCariPostingSides({ direction, documentType }) {
+  const normalizedDirection = normalizeUpperText(direction);
+  const normalizedType = normalizeUpperText(documentType);
+  const isPositiveSign = POSITIVE_SIGN_DOCUMENT_TYPES.has(normalizedType);
+
+  if (normalizedDirection === "AR") {
+    return {
+      controlSide: isPositiveSign ? "DEBIT" : "CREDIT",
+      offsetSide: isPositiveSign ? "CREDIT" : "DEBIT",
+    };
+  }
+  if (normalizedDirection === "AP") {
+    return {
+      controlSide: isPositiveSign ? "CREDIT" : "DEBIT",
+      offsetSide: isPositiveSign ? "DEBIT" : "CREDIT",
+    };
+  }
+  throw badRequest("direction must be AR or AP");
+}
+
+function buildCariDirectionalJournalLine({
+  accountId,
+  side,
+  amountTxn,
+  amountBase,
+  lineDescription,
+  subledgerReferenceNo,
+  currencyCode,
+  operatingUnitId = null,
+  taxCode = null,
+}) {
+  const normalizedSide = normalizeUpperText(side);
+  if (!["DEBIT", "CREDIT"].includes(normalizedSide)) {
+    throw badRequest("side must be DEBIT or CREDIT");
+  }
+  const normalizedAmountTxn = normalizeAmount(amountTxn, "amountTxn");
+  const normalizedAmountBase = normalizeAmount(amountBase, "amountBase");
+  return {
+    accountId: parsePositiveInt(accountId),
+    operatingUnitId: parsePositiveInt(operatingUnitId) || null,
+    debitBase: normalizedSide === "DEBIT" ? normalizedAmountBase : 0,
+    creditBase: normalizedSide === "CREDIT" ? normalizedAmountBase : 0,
+    amountTxn:
+      normalizedSide === "DEBIT"
+        ? normalizedAmountTxn
+        : Number((normalizedAmountTxn * -1).toFixed(AMOUNT_PRECISION_SCALE)),
+    description: toNullableString(lineDescription, 255),
+    subledgerReferenceNo: toNullableString(subledgerReferenceNo, 100),
+    currencyCode: normalizeUpperText(currencyCode),
+    taxCode: toNullableString(taxCode, 40),
+  };
+}
+
+async function resolveCariLinePostingAccount({
+  tenantId,
+  legalEntityId,
+  accountId,
+  fieldLabel = "postingAccountId",
+  runQuery = query,
+}) {
+  const normalizedAccountId = parsePositiveInt(accountId);
+  if (!normalizedAccountId) {
+    return null;
+  }
+
+  await assertAccountBelongsToTenant(tenantId, normalizedAccountId, fieldLabel, {
+    runQuery,
+  });
+  const result = await runQuery(
+    `SELECT
+        a.id,
+        a.code,
+        a.is_active,
+        a.allow_posting,
+        c.scope AS coa_scope,
+        c.legal_entity_id AS coa_legal_entity_id
+     FROM accounts a
+     JOIN charts_of_accounts c ON c.id = a.coa_id
+     WHERE a.id = ?
+       AND c.tenant_id = ?
+     LIMIT 1`,
+    [normalizedAccountId, tenantId]
+  );
+  const account = result.rows?.[0] || null;
+  if (!account) {
+    throw badRequest(`${fieldLabel} not found for tenant`);
+  }
+  if (normalizeUpperText(account.coa_scope) !== "LEGAL_ENTITY") {
+    throw badRequest(`${fieldLabel} must belong to a LEGAL_ENTITY chart`);
+  }
+  if (parsePositiveInt(account.coa_legal_entity_id) !== parsePositiveInt(legalEntityId)) {
+    throw badRequest(`${fieldLabel} must belong to legalEntityId`);
+  }
+  if (!(account.is_active === true || Number(account.is_active) === 1)) {
+    throw badRequest(`${fieldLabel} must reference an ACTIVE account`);
+  }
+  if (!(account.allow_posting === true || Number(account.allow_posting) === 1)) {
+    throw badRequest(`${fieldLabel} must reference a postable account`);
+  }
+  return {
+    id: normalizedAccountId,
+    code: String(account.code || ""),
+  };
+}
+
+function sumJournalLineAmountsTxn(lines) {
+  let total = 0;
+  for (const line of lines || []) {
+    total = Number(
+      (total + Math.abs(Number(line?.amountTxn || 0))).toFixed(AMOUNT_PRECISION_SCALE)
+    );
+  }
+  return total;
+}
+
+function sumJournalLineAmountsBase(lines) {
+  let total = 0;
+  for (const line of lines || []) {
+    total = Number(
+      (
+        total +
+        Math.max(Number(line?.debitBase || 0), Number(line?.creditBase || 0))
+      ).toFixed(AMOUNT_PRECISION_SCALE)
+    );
+  }
+  return total;
+}
+
 function summarizePostingLineDescription({
   baseDescription,
   lineDescription,
@@ -1411,6 +1927,663 @@ function resolveDraftDocumentAmounts({
   };
 }
 
+function sumAmountRows(rows, fieldName) {
+  let total = 0;
+  for (const row of rows || []) {
+    total = Number(
+      (total + Number(row?.[fieldName] || 0)).toFixed(AMOUNT_PRECISION_SCALE)
+    );
+  }
+  return total;
+}
+
+function normalizeExplicitDraftLines(linesInput) {
+  return (linesInput || []).map((line, index) => {
+    const quantity = normalizeAmount(
+      line.quantity ?? 1,
+      `lines[${index}].quantity`,
+      { allowZero: true }
+    );
+    const lineNetAmountTxn = normalizeAmount(
+      line.lineNetAmountTxn,
+      `lines[${index}].lineNetAmountTxn`,
+      { allowZero: true }
+    );
+    const lineTaxAmountTxn = normalizeAmount(
+      line.lineTaxAmountTxn ?? 0,
+      `lines[${index}].lineTaxAmountTxn`,
+      { allowZero: true }
+    );
+    const lineGrossAmountTxn = normalizeAmount(
+      line.lineGrossAmountTxn,
+      `lines[${index}].lineGrossAmountTxn`,
+      { allowZero: true }
+    );
+    const computedGrossAmountTxn = Number(
+      (lineNetAmountTxn + lineTaxAmountTxn).toFixed(AMOUNT_PRECISION_SCALE)
+    );
+    if (!amountsAreEqual(lineGrossAmountTxn, computedGrossAmountTxn, AMOUNT_BALANCE_EPSILON)) {
+      throw badRequest(
+        `lines[${index}].lineGrossAmountTxn must equal lineNetAmountTxn + lineTaxAmountTxn`
+      );
+    }
+
+    const unitPriceTxn =
+      line.unitPriceTxn === null || line.unitPriceTxn === undefined
+        ? quantity > 0
+          ? Number((lineNetAmountTxn / quantity).toFixed(AMOUNT_PRECISION_SCALE))
+          : lineNetAmountTxn
+        : normalizeAmount(line.unitPriceTxn, `lines[${index}].unitPriceTxn`, {
+            allowZero: true,
+          });
+
+    return {
+      lineNo: Number(line.lineNo || index + 1),
+      lineKind: normalizeUpperText(line.lineKind || "STANDARD"),
+      description: toNullableString(line.description, 500),
+      itemCardId: parsePositiveInt(line.itemCardId),
+      quantity,
+      unitPriceTxn,
+      lineNetAmountTxn,
+      lineTaxAmountTxn,
+      lineGrossAmountTxn,
+      lineNetAmountBase: null,
+      lineTaxAmountBase: null,
+      lineGrossAmountBase: null,
+      postingAccountId: parsePositiveInt(line.postingAccountId),
+      taxCodeId: parsePositiveInt(line.taxCodeId),
+      taxCode: toNullableString(line.taxCode, 40),
+      taxCategoryCode: toNullableString(line.taxCategoryCode, 60),
+      stockImpactMode: normalizeUpperText(line.stockImpactMode || "NONE"),
+      taxes: [],
+    };
+  });
+}
+
+function calculateDraftLineHeaderTotals(lines) {
+  return {
+    subtotalAmountTxn: sumAmountRows(lines, "lineNetAmountTxn"),
+    subtotalAmountBase: sumAmountRows(lines, "lineNetAmountBase"),
+    taxAmountTxn: sumAmountRows(lines, "lineTaxAmountTxn"),
+    taxAmountBase: sumAmountRows(lines, "lineTaxAmountBase"),
+    grossAmountTxn: sumAmountRows(lines, "lineGrossAmountTxn"),
+    grossAmountBase: sumAmountRows(lines, "lineGrossAmountBase"),
+  };
+}
+
+async function applyItemCardDefaultsToLines({
+  tenantId,
+  legalEntityId,
+  direction,
+  lines,
+  runQuery = query,
+  applyTaxCategoryDefaults = true,
+  fieldCollectionLabel = "lines",
+}) {
+  const defaultsCache = new Map();
+  let mutated = false;
+  for (let index = 0; index < (lines || []).length; index += 1) {
+    const line = lines[index] || {};
+    const fieldPrefix = `${fieldCollectionLabel}[${index + 1}]`;
+    const itemCardId = parsePositiveInt(line.itemCardId);
+    const normalizedStockImpactMode = normalizeUpperText(line.stockImpactMode || "NONE");
+    if ((line.stockImpactMode || "NONE") !== normalizedStockImpactMode) {
+      line.stockImpactMode = normalizedStockImpactMode;
+      mutated = true;
+    } else {
+      line.stockImpactMode = normalizedStockImpactMode;
+    }
+
+    if (!itemCardId) {
+      if (STOCK_PENDING_IMPACT_MODES.has(line.stockImpactMode)) {
+        throw badRequest(`${fieldPrefix}.stockImpactMode requires itemCardId`);
+      }
+      continue;
+    }
+
+    const cacheKey = `${itemCardId}:${normalizeUpperText(direction)}`;
+    let defaults = defaultsCache.get(cacheKey);
+    if (!defaults) {
+      defaults = await resolveItemCardLineDefaults({
+        tenantId,
+        legalEntityId,
+        itemCardId,
+        direction,
+        runQuery,
+      });
+      defaultsCache.set(cacheKey, defaults);
+    }
+
+    if (defaults.isStockItem) {
+      const requiredStockImpactMode = defaults.defaultStockImpactMode || "NONE";
+      if (
+        STOCK_PENDING_IMPACT_MODES.has(line.stockImpactMode) &&
+        line.stockImpactMode !== requiredStockImpactMode
+      ) {
+        throw badRequest(
+          `${fieldPrefix}.stockImpactMode conflicts with itemCardId and direction`
+        );
+      }
+      if (line.stockImpactMode !== requiredStockImpactMode) {
+        line.stockImpactMode = requiredStockImpactMode;
+        mutated = true;
+      }
+      const quantity = normalizeAmount(line.quantity || 0, `${fieldPrefix}.quantity`, {
+        allowZero: true,
+      });
+      if (quantity <= AMOUNT_BALANCE_EPSILON) {
+        throw badRequest(`${fieldPrefix}.quantity must be greater than 0 for STOCK_ITEM`);
+      }
+    } else if (STOCK_PENDING_IMPACT_MODES.has(line.stockImpactMode)) {
+      throw badRequest(`${fieldPrefix}.stockImpactMode only allowed for STOCK_ITEM itemCardId`);
+    } else if (line.stockImpactMode !== "NONE") {
+      line.stockImpactMode = "NONE";
+      mutated = true;
+    }
+
+    if (!parsePositiveInt(line.postingAccountId) && defaults.defaultPostingAccountId) {
+      line.postingAccountId = defaults.defaultPostingAccountId;
+      mutated = true;
+    }
+    if (
+      applyTaxCategoryDefaults &&
+      !String(line.taxCategoryCode || "").trim() &&
+      defaults.defaultTaxCategoryCode
+    ) {
+      line.taxCategoryCode = defaults.defaultTaxCategoryCode;
+      mutated = true;
+    }
+  }
+  return {
+    lines,
+    mutated,
+  };
+}
+
+function applyDocumentFxToDraftLines(lines, resolvedAmounts) {
+  const documentFxRate =
+    Number(resolvedAmounts?.amountTxn || 0) > AMOUNT_BALANCE_EPSILON
+      ? Number(resolvedAmounts.amountBase || 0) / Number(resolvedAmounts.amountTxn || 1)
+      : Number(resolvedAmounts?.fxRate || 1) || 1;
+  for (const line of lines || []) {
+    line.lineNetAmountBase = Number(
+      (Number(line.lineNetAmountTxn || 0) * documentFxRate).toFixed(AMOUNT_PRECISION_SCALE)
+    );
+    line.lineTaxAmountBase = Number(
+      (Number(line.lineTaxAmountTxn || 0) * documentFxRate).toFixed(AMOUNT_PRECISION_SCALE)
+    );
+    line.lineGrossAmountBase = Number(
+      (Number(line.lineGrossAmountTxn || 0) * documentFxRate).toFixed(AMOUNT_PRECISION_SCALE)
+    );
+    for (const taxRow of line.taxes || []) {
+      taxRow.taxBaseAmountBase = Number(
+        (Number(taxRow.taxBaseAmountTxn || 0) * documentFxRate).toFixed(
+          AMOUNT_PRECISION_SCALE
+        )
+      );
+      taxRow.taxAmountBase = Number(
+        (Number(taxRow.taxAmountTxn || 0) * documentFxRate).toFixed(
+          AMOUNT_PRECISION_SCALE
+        )
+      );
+    }
+  }
+}
+
+async function applyResolvedLineTaxes({
+  tenantId,
+  legalEntityId,
+  postingDate,
+  direction,
+  documentType,
+  currencyCode,
+  lines,
+  runQuery = query,
+}) {
+  let requestedTaxResolution = false;
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const wantsTaxResolution = Boolean(
+      line.taxCategoryCode || line.taxCodeId || line.taxCode
+    );
+    if (!wantsTaxResolution) {
+      if (Number(line.lineTaxAmountTxn || 0) > AMOUNT_BALANCE_EPSILON) {
+        throw badRequest(
+          `lines[${index}].lineTaxAmountTxn requires taxCategoryCode or taxCode`
+        );
+      }
+      line.taxes = [];
+      continue;
+    }
+    requestedTaxResolution = true;
+    const computation = await resolveCariTaxComputation({
+      tenantId,
+      legalEntityId,
+      postingDate,
+      direction,
+      documentType,
+      baseAmount: line.lineNetAmountTxn,
+      currencyCode,
+      taxCodeId: line.taxCodeId,
+      taxCode: line.taxCode,
+      taxCategoryCode: line.taxCategoryCode,
+      lineKind: line.lineKind,
+      runQuery,
+    });
+    if (!computation.enabled) {
+      throw badRequest(
+        `Tax engine is disabled; cannot resolve tax for lines[${index + 1}]`
+      );
+    }
+
+    const taxRows = (computation.taxLines || []).map((taxLine, componentIndex) => {
+      const taxAmountTxn = Math.abs(Number(taxLine.amountTxn || 0));
+      return {
+        componentNo: componentIndex + 1,
+        taxCode: toNullableString(taxLine.taxCode || computation.summary?.taxCode, 40),
+        taxKind: computation.resolved?.taxCodeRow?.tax_kind || "VAT",
+        ratePct: Number(computation.breakdown?.ratePct || 0),
+        taxBaseAmountTxn: Number(computation.summary?.taxableBaseAmount || line.lineNetAmountTxn),
+        taxAmountTxn,
+        taxBaseAmountBase: null,
+        taxAmountBase: null,
+        taxPurposeCode: toNullableString(
+          taxLine.taxPurposeCode || computation.summary?.taxPurposeCode,
+          40
+        ),
+        accountId: parsePositiveInt(taxLine.accountId),
+      };
+    });
+    line.taxes = taxRows;
+    line.lineTaxAmountTxn = sumAmountRows(taxRows, "taxAmountTxn");
+    line.lineGrossAmountTxn = Number(
+      (Number(line.lineNetAmountTxn || 0) + Number(line.lineTaxAmountTxn || 0)).toFixed(
+        AMOUNT_PRECISION_SCALE
+      )
+    );
+  }
+  return {
+    requestedTaxResolution,
+    lines,
+  };
+}
+
+function buildSyntheticDraftLines({
+  resolvedAmounts,
+  existingLineRows = [],
+}) {
+  const existingSingleLine =
+    Array.isArray(existingLineRows) && existingLineRows.length === 1
+      ? existingLineRows[0]
+      : null;
+  const preservedQuantity = existingSingleLine
+    ? normalizeAmount(existingSingleLine.quantity || 1, "existingLine.quantity", {
+        allowZero: true,
+      })
+    : 1;
+  const quantity = preservedQuantity > 0 ? preservedQuantity : 1;
+  const unitPriceTxn =
+    quantity > 0
+      ? Number((resolvedAmounts.amountTxn / quantity).toFixed(AMOUNT_PRECISION_SCALE))
+      : resolvedAmounts.amountTxn;
+
+  return {
+    lines: [
+      {
+        lineNo: 1,
+        lineKind: normalizeUpperText(existingSingleLine?.line_kind || "STANDARD"),
+        description: toNullableString(existingSingleLine?.description, 500),
+        itemCardId: parsePositiveInt(existingSingleLine?.item_card_id),
+        quantity,
+        unitPriceTxn,
+        lineNetAmountTxn: resolvedAmounts.amountTxn,
+        lineTaxAmountTxn: 0,
+        lineGrossAmountTxn: resolvedAmounts.amountTxn,
+        lineNetAmountBase: resolvedAmounts.amountBase,
+        lineTaxAmountBase: 0,
+        lineGrossAmountBase: resolvedAmounts.amountBase,
+        postingAccountId: parsePositiveInt(existingSingleLine?.posting_account_id),
+        taxCodeId: null,
+        taxCode: null,
+        taxCategoryCode: toNullableString(existingSingleLine?.tax_category_code, 60),
+        stockImpactMode: normalizeUpperText(
+          existingSingleLine?.stock_impact_mode || "NONE"
+        ),
+        taxes: [],
+      },
+    ],
+    headerTotals: {
+      subtotalAmountTxn: resolvedAmounts.amountTxn,
+      subtotalAmountBase: resolvedAmounts.amountBase,
+      taxAmountTxn: 0,
+      taxAmountBase: 0,
+      grossAmountTxn: resolvedAmounts.amountTxn,
+      grossAmountBase: resolvedAmounts.amountBase,
+    },
+    isSynthetic: true,
+  };
+}
+
+async function replaceDocumentLinesTx(tx, { tenantId, legalEntityId, documentId, lines }) {
+  await tx.query(
+    `DELETE FROM cari_document_line_stock_links
+     WHERE tenant_id = ?
+       AND legal_entity_id = ?
+       AND cari_document_id = ?`,
+    [tenantId, legalEntityId, documentId]
+  );
+  await tx.query(
+    `DELETE FROM cari_document_line_taxes
+     WHERE tenant_id = ?
+       AND legal_entity_id = ?
+       AND cari_document_id = ?`,
+    [tenantId, legalEntityId, documentId]
+  );
+  await tx.query(
+    `DELETE FROM cari_document_lines
+     WHERE tenant_id = ?
+       AND legal_entity_id = ?
+       AND cari_document_id = ?`,
+    [tenantId, legalEntityId, documentId]
+  );
+
+  for (const line of lines || []) {
+    const insertResult = await tx.query(
+      `INSERT INTO cari_document_lines (
+          tenant_id,
+          legal_entity_id,
+          cari_document_id,
+          line_no,
+          line_kind,
+          description,
+          item_card_id,
+          quantity,
+          unit_price_txn,
+          line_net_amount_txn,
+          line_tax_amount_txn,
+          line_gross_amount_txn,
+          line_net_amount_base,
+          line_tax_amount_base,
+          line_gross_amount_base,
+          posting_account_id,
+          tax_category_code,
+          stock_impact_mode
+       )
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        tenantId,
+        legalEntityId,
+        documentId,
+        line.lineNo,
+        line.lineKind,
+        line.description,
+        line.itemCardId,
+        line.quantity,
+        line.unitPriceTxn,
+        line.lineNetAmountTxn,
+        line.lineTaxAmountTxn,
+        line.lineGrossAmountTxn,
+        line.lineNetAmountBase,
+        line.lineTaxAmountBase,
+        line.lineGrossAmountBase,
+        line.postingAccountId,
+        line.taxCategoryCode,
+        line.stockImpactMode,
+      ]
+    );
+    const insertedLineId = parsePositiveInt(insertResult.rows?.insertId);
+    for (const taxRow of line.taxes || []) {
+      await tx.query(
+        `INSERT INTO cari_document_line_taxes (
+            tenant_id,
+            legal_entity_id,
+            cari_document_id,
+            cari_document_line_id,
+            component_no,
+            tax_code,
+            tax_kind,
+            rate_pct,
+            tax_base_amount_txn,
+            tax_amount_txn,
+            tax_base_amount_base,
+            tax_amount_base,
+            tax_purpose_code,
+            account_id
+         )
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          tenantId,
+          legalEntityId,
+          documentId,
+          insertedLineId,
+          taxRow.componentNo,
+          taxRow.taxCode,
+          taxRow.taxKind,
+          taxRow.ratePct,
+          taxRow.taxBaseAmountTxn,
+          taxRow.taxAmountTxn,
+          taxRow.taxBaseAmountBase,
+          taxRow.taxAmountBase,
+          taxRow.taxPurposeCode,
+          taxRow.accountId,
+        ]
+      );
+    }
+  }
+}
+
+async function syncStoredDocumentLinesForPostingTx({
+  tx,
+  tenantId,
+  legalEntityId,
+  documentId,
+  direction,
+  documentLines,
+}) {
+  const workingLines = (documentLines || []).map((line) => ({
+    ...line,
+    taxes: Array.isArray(line?.taxes) ? line.taxes.map((tax) => ({ ...tax })) : [],
+  }));
+  const { mutated } = await applyItemCardDefaultsToLines({
+    tenantId,
+    legalEntityId,
+    direction,
+    lines: workingLines,
+    runQuery: tx.query,
+    applyTaxCategoryDefaults: false,
+    fieldCollectionLabel: "storedLines",
+  });
+  if (!mutated) {
+    return workingLines;
+  }
+
+  await replaceDocumentLinesTx(tx, {
+    tenantId,
+    legalEntityId,
+    documentId,
+    lines: workingLines,
+  });
+  return loadDocumentLinesForDocument({
+    tenantId,
+    legalEntityId,
+    documentId,
+    runQuery: tx.query,
+  });
+}
+
+async function replaceDocumentLineStockLinksTx(
+  tx,
+  { tenantId, legalEntityId, documentId, direction, lines }
+) {
+  await tx.query(
+    `DELETE FROM cari_document_line_stock_links
+     WHERE tenant_id = ?
+       AND legal_entity_id = ?
+       AND cari_document_id = ?`,
+    [tenantId, legalEntityId, documentId]
+  );
+
+  for (const line of lines || []) {
+    const lineId = parsePositiveInt(line.id);
+    const itemCardId = parsePositiveInt(line.itemCardId);
+    const stockImpactMode = normalizeUpperText(line.stockImpactMode || "NONE");
+    if (!lineId || !itemCardId || !STOCK_PENDING_IMPACT_MODES.has(stockImpactMode)) {
+      continue;
+    }
+
+    await tx.query(
+      `INSERT INTO cari_document_line_stock_links (
+          tenant_id,
+          legal_entity_id,
+          cari_document_id,
+          cari_document_line_id,
+          item_card_id,
+          direction,
+          stock_impact_mode,
+          link_status,
+          requested_quantity,
+          posted_net_amount_txn,
+          posted_net_amount_base
+       )
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        tenantId,
+        legalEntityId,
+        documentId,
+        lineId,
+        itemCardId,
+        normalizeUpperText(direction),
+        stockImpactMode,
+        STOCK_LINK_STATUS_PENDING,
+        normalizeAmount(line.quantity || 0, "stockLink.requestedQuantity", {
+          allowZero: true,
+        }),
+        normalizeAmount(line.lineNetAmountTxn || 0, "stockLink.postedNetAmountTxn", {
+          allowZero: true,
+        }),
+        normalizeAmount(line.lineNetAmountBase || 0, "stockLink.postedNetAmountBase", {
+          allowZero: true,
+        }),
+      ]
+    );
+  }
+}
+
+async function voidPendingDocumentLineStockLinksTx(
+  tx,
+  { tenantId, legalEntityId, documentId, resolutionNote }
+) {
+  await tx.query(
+    `UPDATE cari_document_line_stock_links
+     SET link_status = ?,
+         resolved_at = COALESCE(resolved_at, CURRENT_TIMESTAMP),
+         resolution_note = ?
+     WHERE tenant_id = ?
+       AND legal_entity_id = ?
+       AND cari_document_id = ?
+       AND link_status = ?`,
+    [
+      STOCK_LINK_STATUS_VOID,
+      toNullableString(resolutionNote, 255),
+      tenantId,
+      legalEntityId,
+      documentId,
+      STOCK_LINK_STATUS_PENDING,
+    ]
+  );
+}
+
+async function resolveDraftDocumentWriteModel({
+  tenantId,
+  legalEntityId,
+  documentDate,
+  direction,
+  documentType,
+  linesInput,
+  amountTxn,
+  amountBase,
+  currencyCode,
+  fxRate,
+  functionalCurrencyCode,
+  existingLineRows = [],
+  runQuery = query,
+}) {
+  if (Array.isArray(linesInput) && linesInput.length > 0) {
+    const normalizedLines = normalizeExplicitDraftLines(linesInput);
+    await applyItemCardDefaultsToLines({
+      tenantId,
+      legalEntityId,
+      direction,
+      lines: normalizedLines,
+      runQuery,
+      applyTaxCategoryDefaults: true,
+    });
+    await applyResolvedLineTaxes({
+      tenantId,
+      legalEntityId,
+      postingDate: documentDate,
+      direction,
+      documentType,
+      currencyCode,
+      lines: normalizedLines,
+      runQuery,
+    });
+    const normalizedHeaderTotals = calculateDraftLineHeaderTotals(normalizedLines);
+    const effectiveAmountTxn =
+      amountTxn === null || amountTxn === undefined
+        ? normalizedHeaderTotals.grossAmountTxn
+        : amountTxn;
+    const resolvedAmounts = resolveDraftDocumentAmounts({
+      amountTxn: effectiveAmountTxn,
+      amountBase,
+      currencyCode,
+      fxRate,
+      functionalCurrencyCode,
+    });
+    if (
+      !amountsAreEqual(
+        normalizedHeaderTotals.grossAmountTxn,
+        resolvedAmounts.amountTxn,
+        AMOUNT_BALANCE_EPSILON
+      )
+    ) {
+      throw badRequest("lines gross total must equal draft amountTxn");
+    }
+    applyDocumentFxToDraftLines(normalizedLines, resolvedAmounts);
+    const headerTotals = calculateDraftLineHeaderTotals(normalizedLines);
+    return {
+      resolvedAmounts,
+      lines: normalizedLines,
+      headerTotals,
+      isSynthetic: false,
+    };
+  }
+
+  const resolvedAmounts = resolveDraftDocumentAmounts({
+    amountTxn,
+    amountBase,
+    currencyCode,
+    fxRate,
+    functionalCurrencyCode,
+  });
+  const syntheticWriteModel = buildSyntheticDraftLines({
+    resolvedAmounts,
+    existingLineRows,
+  });
+  await applyItemCardDefaultsToLines({
+    tenantId,
+    legalEntityId,
+    direction,
+    lines: syntheticWriteModel.lines,
+    runQuery,
+    applyTaxCategoryDefaults: false,
+  });
+  return {
+    resolvedAmounts,
+    ...syntheticWriteModel,
+  };
+}
+
 async function findReversalDocumentByOriginalId({
   tenantId,
   originalDocumentId,
@@ -1623,7 +2796,12 @@ export async function getCariDocumentByIdForTenant({
     throw badRequest("Document not found");
   }
   assertDocumentScopeAccess(req, assertScopeAccess, row, "documentId");
-  return mapDocumentRow(row);
+  const lines = await loadDocumentLinesForDocument({
+    tenantId,
+    legalEntityId: parsePositiveInt(row.legal_entity_id),
+    documentId,
+  });
+  return mapDocumentRow(row, { lines });
 }
 
 export async function listCariDocumentOpenItemsByIdForTenant({
@@ -1734,13 +2912,21 @@ export async function createCariDraftDocument({
       documentType: payload.documentType,
       dueDate: resolvedDueDate,
     });
-    const resolvedAmounts = resolveDraftDocumentAmounts({
+    const draftWriteModel = await resolveDraftDocumentWriteModel({
+      tenantId,
+      legalEntityId,
+      documentDate: payload.documentDate,
+      direction: payload.direction,
+      documentType: payload.documentType,
+      linesInput: payload.lines,
       amountTxn: payload.amountTxn,
       amountBase: payload.amountBase,
       currencyCode: payload.currencyCode,
       fxRate: payload.fxRate,
       functionalCurrencyCode: legalEntity.functional_currency_code,
+      runQuery: tx.query,
     });
+    const { resolvedAmounts, headerTotals } = draftWriteModel;
 
     const draftNumbering = await reserveDraftSequence({
       tenantId,
@@ -1768,6 +2954,12 @@ export async function createCariDraftDocument({
           due_date,
           amount_txn,
           amount_base,
+          subtotal_amount_txn,
+          subtotal_amount_base,
+          tax_amount_txn,
+          tax_amount_base,
+          gross_amount_txn,
+          gross_amount_base,
           open_amount_txn,
           open_amount_base,
           currency_code,
@@ -1779,7 +2971,7 @@ export async function createCariDraftDocument({
           currency_code_snapshot,
           fx_rate_snapshot
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` ,
       [
         tenantId,
         legalEntityId,
@@ -1797,6 +2989,12 @@ export async function createCariDraftDocument({
         resolvedDueDate,
         resolvedAmounts.amountTxn,
         resolvedAmounts.amountBase,
+        headerTotals.subtotalAmountTxn,
+        headerTotals.subtotalAmountBase,
+        headerTotals.taxAmountTxn,
+        headerTotals.taxAmountBase,
+        headerTotals.grossAmountTxn,
+        headerTotals.grossAmountBase,
         resolvedAmounts.amountTxn,
         resolvedAmounts.amountBase,
         resolvedAmounts.currencyCode,
@@ -1813,6 +3011,13 @@ export async function createCariDraftDocument({
     if (!documentId) {
       throw new Error("Document create failed");
     }
+
+    await replaceDocumentLinesTx(tx, {
+      tenantId,
+      legalEntityId,
+      documentId,
+      lines: draftWriteModel.lines,
+    });
 
     const row = await fetchDocumentRow({
       tenantId,
@@ -1835,10 +3040,18 @@ export async function createCariDraftDocument({
         direction: row.direction,
         documentType: row.document_type,
         status: row.status,
+        lineCount: draftWriteModel.lines.length,
+        syntheticLineMode: draftWriteModel.isSynthetic,
       },
     });
 
-    return mapDocumentRow(row);
+    const lines = await loadDocumentLinesForDocument({
+      tenantId,
+      legalEntityId,
+      documentId,
+      runQuery: tx.query,
+    });
+    return mapDocumentRow(row, { lines });
   });
 
   return created;
@@ -1965,19 +3178,55 @@ export async function updateCariDraftDocumentById({
       documentType: nextDocumentType,
       dueDate: resolvedDueDate,
     });
-    const resolvedAmounts = financialFieldsTouched
-      ? resolveDraftDocumentAmounts({
-          amountTxn: nextAmountTxn,
-          amountBase: nextAmountBase,
+    const existingLineRows = await listDocumentLineRows({
+      tenantId,
+      legalEntityId,
+      documentId,
+      runQuery: tx.query,
+    });
+    const hasExplicitLines = Array.isArray(payload.lines);
+    if (!hasExplicitLines && existingLineRows.length > 1 && financialFieldsTouched) {
+      throw badRequest(
+        "lines is required when updating amount/fx fields on a multi-line document"
+      );
+    }
+
+    const shouldReplaceLines =
+      hasExplicitLines || existingLineRows.length === 0 || (existingLineRows.length <= 1 && financialFieldsTouched);
+    const draftWriteModel = shouldReplaceLines
+      ? await resolveDraftDocumentWriteModel({
+          tenantId,
+          legalEntityId,
+          documentDate: nextDocumentDate,
+          direction: nextDirection,
+          documentType: nextDocumentType,
+          linesInput: hasExplicitLines ? payload.lines : null,
+          amountTxn: hasExplicitLines ? payload.amountTxn : nextAmountTxn,
+          amountBase: payload.amountBase,
           currencyCode: nextCurrencyCode,
           fxRate: nextFxRate,
           functionalCurrencyCode: legalEntity.functional_currency_code,
+          existingLineRows,
+          runQuery: tx.query,
         })
+      : null;
+    const resolvedAmounts = draftWriteModel
+      ? draftWriteModel.resolvedAmounts
       : {
           amountTxn: normalizeAmount(nextAmountTxn, "amountTxn"),
           amountBase: normalizeAmount(nextAmountBase, "amountBase"),
           currencyCode: normalizeUpperText(nextCurrencyCode),
           fxRate: normalizeOptionalPositiveDecimal(nextFxRate, "fxRate"),
+        };
+    const headerTotals = draftWriteModel
+      ? draftWriteModel.headerTotals
+      : {
+          subtotalAmountTxn: toDecimalNumber(existing.subtotal_amount_txn),
+          subtotalAmountBase: toDecimalNumber(existing.subtotal_amount_base),
+          taxAmountTxn: toDecimalNumber(existing.tax_amount_txn),
+          taxAmountBase: toDecimalNumber(existing.tax_amount_base),
+          grossAmountTxn: toDecimalNumber(existing.gross_amount_txn),
+          grossAmountBase: toDecimalNumber(existing.gross_amount_base),
         };
 
     let sequenceNamespace = existing.sequence_namespace;
@@ -2019,6 +3268,12 @@ export async function updateCariDraftDocumentById({
            due_date = ?,
            amount_txn = ?,
            amount_base = ?,
+           subtotal_amount_txn = ?,
+           subtotal_amount_base = ?,
+           tax_amount_txn = ?,
+           tax_amount_base = ?,
+           gross_amount_txn = ?,
+           gross_amount_base = ?,
            open_amount_txn = ?,
            open_amount_base = ?,
            currency_code = ?,
@@ -2047,6 +3302,12 @@ export async function updateCariDraftDocumentById({
         resolvedDueDate,
         resolvedAmounts.amountTxn,
         resolvedAmounts.amountBase,
+        headerTotals.subtotalAmountTxn,
+        headerTotals.subtotalAmountBase,
+        headerTotals.taxAmountTxn,
+        headerTotals.taxAmountBase,
+        headerTotals.grossAmountTxn,
+        headerTotals.grossAmountBase,
         resolvedAmounts.amountTxn,
         resolvedAmounts.amountBase,
         resolvedAmounts.currencyCode,
@@ -2070,6 +3331,15 @@ export async function updateCariDraftDocumentById({
       throw optimisticLockConflictError(
         "Document update conflict: refresh and retry with latest rowVersion."
       );
+    }
+
+    if (shouldReplaceLines) {
+      await replaceDocumentLinesTx(tx, {
+        tenantId,
+        legalEntityId,
+        documentId,
+        lines: draftWriteModel.lines,
+      });
     }
 
     const row = await fetchDocumentRow({
@@ -2097,6 +3367,7 @@ export async function updateCariDraftDocumentById({
           amountBase: toDecimalNumber(existing.amount_base),
           documentDate: existing.document_date,
           dueDate: existing.due_date,
+          lineCount: existingLineRows.length,
         },
         after: {
           direction: row.direction,
@@ -2105,11 +3376,20 @@ export async function updateCariDraftDocumentById({
           amountBase: toDecimalNumber(row.amount_base),
           documentDate: row.document_date,
           dueDate: row.due_date,
+          lineCount: shouldReplaceLines
+            ? draftWriteModel.lines.length
+            : existingLineRows.length,
         },
       },
     });
 
-    return mapDocumentRow(row);
+    const lines = await loadDocumentLinesForDocument({
+      tenantId,
+      legalEntityId,
+      documentId,
+      runQuery: tx.query,
+    });
+    return mapDocumentRow(row, { lines });
   });
 
   return updated;
@@ -2297,25 +3577,54 @@ export async function postCariDocumentById({
       runQuery: tx.query,
     });
 
-    const amountTxn = normalizeAmount(lockedDocument.amount_txn, "amountTxn");
-    const amountBase = normalizeAmount(lockedDocument.amount_base, "amountBase");
+    let documentLines = await loadDocumentLinesForDocument({
+      tenantId,
+      legalEntityId: lockedLegalEntityId,
+      documentId,
+      runQuery: tx.query,
+    });
+    documentLines = await syncStoredDocumentLinesForPostingTx({
+      tx,
+      tenantId,
+      legalEntityId: lockedLegalEntityId,
+      documentId,
+      direction,
+      documentLines,
+    });
+    const usesStoredLineTaxes = documentLines.some(
+      (line) => Array.isArray(line?.taxes) && line.taxes.length > 0
+    );
+    if (
+      usesStoredLineTaxes &&
+      Array.isArray(payload.postingLines) &&
+      payload.postingLines.length > 0
+    ) {
+      throw badRequest("postingLines are not supported for line-taxed documents yet");
+    }
+
+    const documentNetAmountTxn = normalizeAmount(
+      documentLines.length > 0
+        ? sumAmountRows(documentLines, "lineNetAmountTxn")
+        : lockedDocument.subtotal_amount_txn ?? lockedDocument.amount_txn,
+      "documentNetAmountTxn"
+    );
+    const documentNetAmountBase = normalizeAmount(
+      documentLines.length > 0
+        ? sumAmountRows(documentLines, "lineNetAmountBase")
+        : lockedDocument.subtotal_amount_base ?? lockedDocument.amount_base,
+      "documentNetAmountBase"
+    );
     const subledgerReferenceNo = `${CARI_SUBLEDGER_REFERENCE_PREFIX}${documentId}`;
     const defaultLineDescription = `Cari ${direction} ${documentType} ${postedNumbering.documentNo}`;
-    const postingLineRows = Array.isArray(payload.postingLines)
-      ? payload.postingLines
-      : null;
+    const postingLineRows = Array.isArray(payload.postingLines) ? payload.postingLines : null;
+    const postingSides = resolveCariPostingSides({ direction, documentType });
     const postingLineSummary = [];
     const postingLines = [];
     let postingLinesUseLineLevelOffsets = false;
+
     if (postingLineRows?.length) {
       let postingLinesTotalTxn = 0;
       let postingLinesTotalBase = 0;
-      let controlDebitTotalBase = 0;
-      let controlCreditTotalBase = 0;
-      let controlTotalTxn = 0;
-      const resolvedControlAccountId = parsePositiveInt(
-        postingAccounts.controlAccountId
-      );
 
       for (let index = 0; index < postingLineRows.length; index += 1) {
         const line = postingLineRows[index] || {};
@@ -2333,8 +3642,6 @@ export async function postCariDocumentById({
 
         let linePostingAccounts = postingAccounts;
         if (lineHasOffsetOverride) {
-          // Per-line offset override keeps the same control account but allows expense split.
-          // eslint-disable-next-line no-await-in-loop
           linePostingAccounts = await resolveCariPostingAccounts({
             tenantId,
             legalEntityId: lockedLegalEntityId,
@@ -2377,109 +3684,210 @@ export async function postCariDocumentById({
           offsetAccountCode: linePostingAccounts.offsetAccountCode || null,
           description: toNullableString(line.description, 255),
         });
-        const splitLines = buildCariPostingLines({
-          direction,
-          documentType,
-          amountTxn: lineAmountTxn,
-          amountBase: lineAmountBase,
-          controlAccountId: postingAccounts.controlAccountId,
-          offsetAccountId: linePostingAccounts.offsetAccountId,
-          lineDescription,
-          subledgerReferenceNo,
-          currencyCode,
-        });
-        const controlLine = splitLines.find(
-          (entry) => parsePositiveInt(entry.accountId) === resolvedControlAccountId
+        postingLines.push(
+          buildCariDirectionalJournalLine({
+            accountId: linePostingAccounts.offsetAccountId,
+            side: postingSides.offsetSide,
+            amountTxn: lineAmountTxn,
+            amountBase: lineAmountBase,
+            lineDescription,
+            subledgerReferenceNo,
+            currencyCode,
+          })
         );
-        const offsetLine = splitLines.find(
-          (entry) =>
-            parsePositiveInt(entry.accountId) ===
-            parsePositiveInt(linePostingAccounts.offsetAccountId)
-        );
-        if (!controlLine || !offsetLine) {
-          throw badRequest(
-            `postingLines[${index}] could not resolve control/offset posting split`
-          );
-        }
-        controlDebitTotalBase = Number(
-          (
-            controlDebitTotalBase + Number(controlLine.debitBase || 0)
-          ).toFixed(AMOUNT_PRECISION_SCALE)
-        );
-        controlCreditTotalBase = Number(
-          (
-            controlCreditTotalBase + Number(controlLine.creditBase || 0)
-          ).toFixed(AMOUNT_PRECISION_SCALE)
-        );
-        controlTotalTxn = Number(
-          (
-            controlTotalTxn + Number(controlLine.amountTxn || 0)
-          ).toFixed(AMOUNT_PRECISION_SCALE)
-        );
-        postingLines.push(offsetLine);
       }
 
       if (
-        !amountsAreEqual(postingLinesTotalTxn, amountTxn, AMOUNT_BALANCE_EPSILON) ||
-        !amountsAreEqual(postingLinesTotalBase, amountBase, AMOUNT_BALANCE_EPSILON)
+        !amountsAreEqual(
+          postingLinesTotalTxn,
+          documentNetAmountTxn,
+          AMOUNT_BALANCE_EPSILON
+        ) ||
+        !amountsAreEqual(
+          postingLinesTotalBase,
+          documentNetAmountBase,
+          AMOUNT_BALANCE_EPSILON
+        )
       ) {
-        throw badRequest("postingLines totals must equal draft amountTxn and amountBase");
+        throw badRequest(
+          "postingLines totals must equal draft net/subtotal amountTxn and amountBase"
+        );
       }
-      if (!resolvedControlAccountId) {
-        throw badRequest("Posting control account is invalid");
+    } else if (documentLines.length > 0) {
+      let lineDrivenTotalTxn = 0;
+      let lineDrivenTotalBase = 0;
+
+      for (let index = 0; index < documentLines.length; index += 1) {
+        const line = documentLines[index] || {};
+        const lineAmountTxn = normalizeAmount(
+          line.lineNetAmountTxn ?? 0,
+          `documentLines[${index}].lineNetAmountTxn`,
+          { allowZero: true }
+        );
+        const lineAmountBase = normalizeAmount(
+          line.lineNetAmountBase ?? 0,
+          `documentLines[${index}].lineNetAmountBase`,
+          { allowZero: true }
+        );
+        if (
+          lineAmountTxn <= AMOUNT_BALANCE_EPSILON &&
+          lineAmountBase <= AMOUNT_BALANCE_EPSILON
+        ) {
+          continue;
+        }
+
+        lineDrivenTotalTxn = Number(
+          (lineDrivenTotalTxn + lineAmountTxn).toFixed(AMOUNT_PRECISION_SCALE)
+        );
+        lineDrivenTotalBase = Number(
+          (lineDrivenTotalBase + lineAmountBase).toFixed(AMOUNT_PRECISION_SCALE)
+        );
+
+        const resolvedLinePostingAccount = parsePositiveInt(line.postingAccountId)
+          ? await resolveCariLinePostingAccount({
+              tenantId,
+              legalEntityId: lockedLegalEntityId,
+              accountId: line.postingAccountId,
+              fieldLabel: `lines[${index + 1}].postingAccountId`,
+              runQuery: tx.query,
+            })
+          : {
+              id: postingAccounts.offsetAccountId,
+              code: postingAccounts.offsetAccountCode || null,
+            };
+        const lineDescription = summarizePostingLineDescription({
+          baseDescription: defaultLineDescription,
+          lineDescription: line.description,
+          lineIndex: index,
+          lineCount: documentLines.length,
+        });
+        postingLineSummary.push({
+          lineNo: Number(line.lineNo || index + 1),
+          amountTxn: lineAmountTxn,
+          amountBase: lineAmountBase,
+          offsetAccountId: resolvedLinePostingAccount.id,
+          offsetAccountCode: resolvedLinePostingAccount.code || null,
+          description: toNullableString(line.description, 255),
+        });
+        postingLines.push(
+          buildCariDirectionalJournalLine({
+            accountId: resolvedLinePostingAccount.id,
+            side: postingSides.offsetSide,
+            amountTxn: lineAmountTxn,
+            amountBase: lineAmountBase,
+            lineDescription,
+            subledgerReferenceNo,
+            currencyCode,
+          })
+        );
       }
-      postingLines.push({
-        accountId: resolvedControlAccountId,
-        debitBase: controlDebitTotalBase,
-        creditBase: controlCreditTotalBase,
-        amountTxn: controlTotalTxn,
-        description: toNullableString(defaultLineDescription, 255),
-        subledgerReferenceNo: toNullableString(subledgerReferenceNo, 100),
-        currencyCode: normalizeUpperText(currencyCode),
-      });
+
+      if (
+        !amountsAreEqual(
+          lineDrivenTotalTxn,
+          documentNetAmountTxn,
+          AMOUNT_BALANCE_EPSILON
+        ) ||
+        !amountsAreEqual(
+          lineDrivenTotalBase,
+          documentNetAmountBase,
+          AMOUNT_BALANCE_EPSILON
+        )
+      ) {
+        throw badRequest(
+          "Stored document lines are out of sync with draft subtotal amounts"
+        );
+      }
     } else {
       postingLineSummary.push({
         lineNo: 1,
-        amountTxn,
-        amountBase,
+        amountTxn: documentNetAmountTxn,
+        amountBase: documentNetAmountBase,
         offsetAccountId: postingAccounts.offsetAccountId,
         offsetAccountCode: postingAccounts.offsetAccountCode || null,
         description: null,
       });
       postingLines.push(
-        ...buildCariPostingLines({
-          direction,
-          documentType,
-          amountTxn,
-          amountBase,
-          controlAccountId: postingAccounts.controlAccountId,
-          offsetAccountId: postingAccounts.offsetAccountId,
+        buildCariDirectionalJournalLine({
+          accountId: postingAccounts.offsetAccountId,
+          side: postingSides.offsetSide,
+          amountTxn: documentNetAmountTxn,
+          amountBase: documentNetAmountBase,
           lineDescription: defaultLineDescription,
           subledgerReferenceNo,
           currencyCode,
         })
       );
     }
-    const taxAugmentation = await buildCariTaxAugmentation({
-      tenantId,
-      legalEntityId: lockedLegalEntityId,
-      postingDate: documentDate,
-      direction,
-      documentType,
-      baseAmount: amountBase,
-      controlAccountId: postingAccounts.controlAccountId,
-      currencyCode,
-      subledgerReferenceNo,
-      lineDescription: `Cari tax ${direction} ${documentType} ${postedNumbering.documentNo}`.slice(
-        0,
-        255
-      ),
-      reverseTaxSign: !POSITIVE_SIGN_DOCUMENT_TYPES.has(documentType),
-      runQuery: tx.query,
-    });
+
+    const taxAugmentation = usesStoredLineTaxes
+      ? {
+          enabled: true,
+          lines: buildCariTaxAugmentationFromStoredLineTaxes({
+            lineTaxes: documentLines.flatMap((line) => line.taxes || []),
+            controlAccountId: postingAccounts.controlAccountId,
+            direction,
+            reverseTaxSign: !POSITIVE_SIGN_DOCUMENT_TYPES.has(documentType),
+            currencyCode,
+            subledgerReferenceNo,
+            lineDescription: `Cari tax ${direction} ${documentType} ${postedNumbering.documentNo}`.slice(
+              0,
+              255
+            ),
+            includeControlBalancing: false,
+          }),
+          summary: null,
+        }
+      : await buildCariTaxAugmentation({
+          tenantId,
+          legalEntityId: lockedLegalEntityId,
+          postingDate: documentDate,
+          direction,
+          documentType,
+          baseAmount: documentNetAmountBase,
+          controlAccountId: postingAccounts.controlAccountId,
+          currencyCode,
+          subledgerReferenceNo,
+          lineDescription: `Cari tax ${direction} ${documentType} ${postedNumbering.documentNo}`.slice(
+            0,
+            255
+          ),
+          reverseTaxSign: !POSITIVE_SIGN_DOCUMENT_TYPES.has(documentType),
+          includeControlBalancing: false,
+          runQuery: tx.query,
+        });
+    const taxAmountTxn = taxAugmentation.lines.length
+      ? sumJournalLineAmountsTxn(taxAugmentation.lines)
+      : normalizeAmount(lockedDocument.tax_amount_txn ?? 0, "taxAmountTxn", {
+          allowZero: true,
+        });
+    const taxAmountBase = taxAugmentation.lines.length
+      ? sumJournalLineAmountsBase(taxAugmentation.lines)
+      : normalizeAmount(lockedDocument.tax_amount_base ?? 0, "taxAmountBase", {
+          allowZero: true,
+        });
+    const grossAmountTxn = Number(
+      (documentNetAmountTxn + taxAmountTxn).toFixed(AMOUNT_PRECISION_SCALE)
+    );
+    const grossAmountBase = Number(
+      (documentNetAmountBase + taxAmountBase).toFixed(AMOUNT_PRECISION_SCALE)
+    );
+
     if (taxAugmentation.lines.length > 0) {
       postingLines.push(...taxAugmentation.lines);
     }
+    postingLines.push(
+      buildCariDirectionalJournalLine({
+        accountId: postingAccounts.controlAccountId,
+        side: postingSides.controlSide,
+        amountTxn: grossAmountTxn,
+        amountBase: grossAmountBase,
+        lineDescription: defaultLineDescription,
+        subledgerReferenceNo,
+        currencyCode,
+      })
+    );
+    ensureBalancedJournalLines(postingLines);
 
     const journalContext = await resolveBookAndOpenPeriodForDate({
       tenantId,
@@ -2524,6 +3932,12 @@ export async function postCariDocumentById({
            document_no = ?,
            status = ?,
            due_date = ?,
+           subtotal_amount_txn = ?,
+           subtotal_amount_base = ?,
+           tax_amount_txn = ?,
+           tax_amount_base = ?,
+           gross_amount_txn = ?,
+           gross_amount_base = ?,
            amount_txn = ?,
            amount_base = ?,
            open_amount_txn = ?,
@@ -2547,10 +3961,16 @@ export async function postCariDocumentById({
         postedNumbering.documentNo,
         POSTED_STATUS,
         resolvedDueDate,
-        amountTxn,
-        amountBase,
-        amountTxn,
-        amountBase,
+        documentNetAmountTxn,
+        documentNetAmountBase,
+        taxAmountTxn,
+        taxAmountBase,
+        grossAmountTxn,
+        grossAmountBase,
+        grossAmountTxn,
+        grossAmountBase,
+        grossAmountTxn,
+        grossAmountBase,
         fxPolicy.effectiveFxRate,
         counterparty.code,
         counterparty.name,
@@ -2592,13 +4012,20 @@ export async function postCariDocumentById({
         OPEN_ITEM_STATUS_OPEN,
         documentDate,
         openItemDueDate,
-        amountTxn,
-        amountBase,
-        amountTxn,
-        amountBase,
+        grossAmountTxn,
+        grossAmountBase,
+        grossAmountTxn,
+        grossAmountBase,
         currencyCode,
       ]
     );
+    await replaceDocumentLineStockLinksTx(tx, {
+      tenantId,
+      legalEntityId: lockedLegalEntityId,
+      documentId,
+      direction,
+      lines: documentLines,
+    });
 
     const row = await fetchDocumentRow({
       tenantId,
@@ -2661,9 +4088,15 @@ export async function postCariDocumentById({
         },
       });
     }
+    const lines = await loadDocumentLinesForDocument({
+      tenantId,
+      legalEntityId: lockedLegalEntityId,
+      documentId,
+      runQuery: tx.query,
+    });
 
     return {
-      row: mapDocumentRow(row),
+      row: mapDocumentRow(row, { lines }),
       journal: {
         journalEntryId: journalResult.journalEntryId,
         bookId: journalContext.bookId,
@@ -2751,6 +4184,23 @@ export async function reverseCariPostedDocumentById({
       }
       if (originalJournalLines.length === 0) {
         throw badRequest("Original journal has no lines to reverse");
+      }
+      const originalDocumentLines = await loadDocumentLinesForDocument({
+        tenantId,
+        legalEntityId: lockedLegalEntityId,
+        documentId,
+        runQuery: tx.query,
+      });
+      const inventoryReverseBlocks = buildDocumentReverseInventoryBlocks(
+        originalDocumentLines.flatMap((line) =>
+          Array.isArray(line?.stockLinks) ? line.stockLinks : []
+        )
+      );
+      if (inventoryReverseBlocks.length > 0) {
+        throw documentReverseBlockedByInventoryError(
+          documentId,
+          inventoryReverseBlocks
+        );
       }
 
       const reversalDate =
@@ -2853,6 +4303,12 @@ export async function reverseCariPostedDocumentById({
             status,
             document_date,
             due_date,
+            subtotal_amount_txn,
+            subtotal_amount_base,
+            tax_amount_txn,
+            tax_amount_base,
+            gross_amount_txn,
+            gross_amount_base,
             amount_txn,
             amount_base,
             open_amount_txn,
@@ -2870,7 +4326,7 @@ export async function reverseCariPostedDocumentById({
             posted_at,
             reversed_at
          )
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0.000000, 0.000000, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0.000000, 0.000000, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
         [
           tenantId,
           lockedLegalEntityId,
@@ -2886,6 +4342,28 @@ export async function reverseCariPostedDocumentById({
           REVERSED_STATUS,
           reversalDate,
           reversalDate,
+          normalizeAmount(
+            original.subtotal_amount_txn ?? original.amount_txn,
+            "subtotalAmountTxn"
+          ),
+          normalizeAmount(
+            original.subtotal_amount_base ?? original.amount_base,
+            "subtotalAmountBase"
+          ),
+          normalizeAmount(original.tax_amount_txn ?? 0, "taxAmountTxn", {
+            allowZero: true,
+          }),
+          normalizeAmount(original.tax_amount_base ?? 0, "taxAmountBase", {
+            allowZero: true,
+          }),
+          normalizeAmount(
+            original.gross_amount_txn ?? original.amount_txn,
+            "grossAmountTxn"
+          ),
+          normalizeAmount(
+            original.gross_amount_base ?? original.amount_base,
+            "grossAmountBase"
+          ),
           normalizeAmount(original.amount_txn, "amountTxn"),
           normalizeAmount(original.amount_base, "amountBase"),
           normalizeUpperText(original.currency_code),
@@ -2905,6 +4383,90 @@ export async function reverseCariPostedDocumentById({
       );
       if (!reversalDocumentId) {
         throw new Error("Reversal document create failed");
+      }
+      if (originalDocumentLines.length > 0) {
+        await replaceDocumentLinesTx(tx, {
+          tenantId,
+          legalEntityId: lockedLegalEntityId,
+          documentId: reversalDocumentId,
+          lines: originalDocumentLines.map((line) => ({
+            lineNo: Number(line.lineNo || 0),
+            lineKind: normalizeUpperText(line.lineKind || "STANDARD"),
+            description: toNullableString(line.description, 500),
+            itemCardId: parsePositiveInt(line.itemCardId),
+            quantity: normalizeAmount(line.quantity || 0, "reversalLine.quantity", {
+              allowZero: true,
+            }),
+            unitPriceTxn: normalizeAmount(
+              line.unitPriceTxn || 0,
+              "reversalLine.unitPriceTxn",
+              { allowZero: true }
+            ),
+            lineNetAmountTxn: normalizeAmount(
+              line.lineNetAmountTxn || 0,
+              "reversalLine.lineNetAmountTxn",
+              { allowZero: true }
+            ),
+            lineTaxAmountTxn: normalizeAmount(
+              line.lineTaxAmountTxn || 0,
+              "reversalLine.lineTaxAmountTxn",
+              { allowZero: true }
+            ),
+            lineGrossAmountTxn: normalizeAmount(
+              line.lineGrossAmountTxn || 0,
+              "reversalLine.lineGrossAmountTxn",
+              { allowZero: true }
+            ),
+            lineNetAmountBase: normalizeAmount(
+              line.lineNetAmountBase || 0,
+              "reversalLine.lineNetAmountBase",
+              { allowZero: true }
+            ),
+            lineTaxAmountBase: normalizeAmount(
+              line.lineTaxAmountBase || 0,
+              "reversalLine.lineTaxAmountBase",
+              { allowZero: true }
+            ),
+            lineGrossAmountBase: normalizeAmount(
+              line.lineGrossAmountBase || 0,
+              "reversalLine.lineGrossAmountBase",
+              { allowZero: true }
+            ),
+            postingAccountId: parsePositiveInt(line.postingAccountId),
+            taxCategoryCode: toNullableString(line.taxCategoryCode, 60),
+            stockImpactMode: normalizeUpperText(line.stockImpactMode || "NONE"),
+            taxes: (line.taxes || []).map((tax) => ({
+              componentNo: Number(tax.componentNo || 0),
+              taxCode: toNullableString(tax.taxCode, 40),
+              taxKind: toNullableString(tax.taxKind, 40),
+              ratePct: normalizeAmount(tax.ratePct || 0, "reversalTax.ratePct", {
+                allowZero: true,
+              }),
+              taxBaseAmountTxn: normalizeAmount(
+                tax.taxBaseAmountTxn || 0,
+                "reversalTax.taxBaseAmountTxn",
+                { allowZero: true }
+              ),
+              taxAmountTxn: normalizeAmount(
+                tax.taxAmountTxn || 0,
+                "reversalTax.taxAmountTxn",
+                { allowZero: true }
+              ),
+              taxBaseAmountBase: normalizeAmount(
+                tax.taxBaseAmountBase || 0,
+                "reversalTax.taxBaseAmountBase",
+                { allowZero: true }
+              ),
+              taxAmountBase: normalizeAmount(
+                tax.taxAmountBase || 0,
+                "reversalTax.taxAmountBase",
+                { allowZero: true }
+              ),
+              taxPurposeCode: toNullableString(tax.taxPurposeCode, 40),
+              accountId: parsePositiveInt(tax.accountId),
+            })),
+          })),
+        });
       }
       await upsertJournalSourceLinkTx(tx, {
         tenantId,
@@ -2942,9 +4504,15 @@ export async function reverseCariPostedDocumentById({
              settled_amount_base = 0.000000
          WHERE tenant_id = ?
            AND legal_entity_id = ?
-           AND document_id = ?`,
+          AND document_id = ?`,
         [OPEN_ITEM_STATUS_CANCELLED, tenantId, lockedLegalEntityId, documentId]
       );
+      await voidPendingDocumentLineStockLinksTx(tx, {
+        tenantId,
+        legalEntityId: lockedLegalEntityId,
+        documentId,
+        resolutionNote: `Voided by reversal document ${reversalDocumentId}`,
+      });
 
       const reversalRow = await fetchDocumentRow({
         tenantId,
@@ -2953,6 +4521,18 @@ export async function reverseCariPostedDocumentById({
       });
       const originalRow = await fetchDocumentRow({
         tenantId,
+        documentId,
+        runQuery: tx.query,
+      });
+      const reversalDocumentLines = await loadDocumentLinesForDocument({
+        tenantId,
+        legalEntityId: lockedLegalEntityId,
+        documentId: reversalDocumentId,
+        runQuery: tx.query,
+      });
+      const originalLines = await loadDocumentLinesForDocument({
+        tenantId,
+        legalEntityId: lockedLegalEntityId,
         documentId,
         runQuery: tx.query,
       });
@@ -2978,8 +4558,8 @@ export async function reverseCariPostedDocumentById({
       });
 
       return {
-        row: mapDocumentRow(reversalRow),
-        original: mapDocumentRow(originalRow),
+        row: mapDocumentRow(reversalRow, { lines: reversalDocumentLines }),
+        original: mapDocumentRow(originalRow, { lines: originalLines }),
         journal: {
           originalJournalEntryId: originalPostedJournalEntryId,
           reversalJournalEntryId: reversalJournalResult.journalEntryId,

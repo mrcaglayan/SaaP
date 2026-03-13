@@ -94,6 +94,8 @@ const TAG_DESCRIPTION_MAP = new Map([
   ["Consolidation", "Consolidation setup, runs, and report endpoints."],
   ["Onboarding", "Tenant/company bootstrap flow endpoints."],
   ["Cash", "Cash register, session, transaction, and exception workflows."],
+  ["Inventory", "Warehouse, stock-link materialization, valuation, and inventory movement endpoints."],
+  ["Items", "Item-card master data endpoints used by CARI and inventory flows."],
   ["Bank", "Bank account, statements, reconciliation, and payment-file workflows."],
   ["Payments", "Generic payment batch workflows (create, approve, export, post, cancel)."],
   ["Payroll", "Payroll import runs and payroll subledger workflow endpoints."],
@@ -234,6 +236,12 @@ function inferTagFromPath(endpointPath) {
   }
   if (normalizedPath.startsWith("/api/v1/cash")) {
     return "Cash";
+  }
+  if (normalizedPath.startsWith("/api/v1/inventory")) {
+    return "Inventory";
+  }
+  if (normalizedPath.startsWith("/api/v1/items")) {
+    return "Items";
   }
   if (normalizedPath.startsWith("/api/v1/bank")) {
     return "Bank";
@@ -1486,6 +1494,623 @@ function applyCashOperationOverrides(specObject) {
       "#/components/schemas/CashTransitTransferResponse"
     );
   }
+}
+
+function applyInventoryOperationOverrides(specObject) {
+  ensureTagPresent(specObject, "Inventory");
+  ensureTagPresent(specObject, "Items");
+  const paths = specObject.paths || {};
+  const schemas = specObject.components?.schemas || {};
+
+  Object.assign(schemas, {
+    ItemCardItemType: {
+      type: "string",
+      enum: ["SERVICE", "NON_STOCK_GOOD", "STOCK_ITEM"],
+    },
+    ItemCardStatus: {
+      type: "string",
+      enum: ["ACTIVE", "INACTIVE"],
+    },
+    InventoryWarehouseStatus: {
+      type: "string",
+      enum: ["ACTIVE", "INACTIVE"],
+    },
+    InventoryStockLinkStatus: {
+      type: "string",
+      enum: ["PENDING", "LINKED", "VOID"],
+    },
+    InventoryStockImpactMode: {
+      type: "string",
+      enum: ["RECEIPT_PENDING", "ISSUE_PENDING"],
+    },
+    InventoryMovementType: {
+      type: "string",
+      enum: ["RECEIPT", "ISSUE", "ADJUSTMENT_IN", "ADJUSTMENT_OUT"],
+    },
+    InventoryValuationStatus: {
+      type: "string",
+      enum: ["NOT_REQUIRED", "PENDING", "VALUED"],
+    },
+    InventoryCostLayerStatus: {
+      type: "string",
+      enum: ["OPEN", "CLOSED"],
+    },
+    InventoryValuationMethod: {
+      type: "string",
+      enum: ["FIFO"],
+    },
+    ItemCardRow: {
+      type: "object",
+      properties: {
+        id: { ...intId, nullable: true },
+        tenantId: { ...intId, nullable: true },
+        legalEntityId: { ...intId, nullable: true },
+        code: { type: "string", nullable: true },
+        name: { type: "string", nullable: true },
+        itemType: { $ref: "#/components/schemas/ItemCardItemType" },
+        defaultSalesAccountId: { ...intId, nullable: true },
+        defaultPurchaseAccountId: { ...intId, nullable: true },
+        inventoryAssetAccountId: { ...intId, nullable: true },
+        defaultCogsAccountId: { ...intId, nullable: true },
+        taxCategoryCode: { type: "string", nullable: true },
+        status: { $ref: "#/components/schemas/ItemCardStatus" },
+        createdAt: { type: "string", format: "date-time", nullable: true },
+        updatedAt: { type: "string", format: "date-time", nullable: true },
+      },
+      required: ["id", "tenantId", "code", "name", "itemType", "status"],
+    },
+    ItemCardListResponse: {
+      type: "object",
+      properties: {
+        tenantId: intId,
+        total: nonNegativeInt,
+        rows: {
+          type: "array",
+          items: { $ref: "#/components/schemas/ItemCardRow" },
+        },
+      },
+      required: ["tenantId", "total", "rows"],
+    },
+    ItemCardResponse: {
+      type: "object",
+      properties: {
+        tenantId: intId,
+        row: { $ref: "#/components/schemas/ItemCardRow" },
+      },
+      required: ["tenantId", "row"],
+    },
+    ItemCardUpsertRequest: {
+      type: "object",
+      properties: {
+        legalEntityId: { ...intId, nullable: true },
+        code: { type: "string", minLength: 1, maxLength: 80 },
+        name: { type: "string", minLength: 1, maxLength: 200 },
+        itemType: { $ref: "#/components/schemas/ItemCardItemType" },
+        defaultSalesAccountId: { ...intId, nullable: true },
+        defaultPurchaseAccountId: { ...intId, nullable: true },
+        inventoryAssetAccountId: { ...intId, nullable: true },
+        defaultCogsAccountId: { ...intId, nullable: true },
+        taxCategoryCode: { type: "string", maxLength: 60, nullable: true },
+        status: {
+          allOf: [{ $ref: "#/components/schemas/ItemCardStatus" }],
+          nullable: true,
+        },
+      },
+      required: ["code", "name", "itemType"],
+    },
+    InventoryWarehouseRow: {
+      type: "object",
+      properties: {
+        id: { ...intId, nullable: true },
+        tenantId: { ...intId, nullable: true },
+        legalEntityId: { ...intId, nullable: true },
+        legalEntityCode: { type: "string", nullable: true },
+        code: { type: "string", nullable: true },
+        name: { type: "string", nullable: true },
+        status: { $ref: "#/components/schemas/InventoryWarehouseStatus" },
+        notes: { type: "string", nullable: true },
+        createdAt: { type: "string", format: "date-time", nullable: true },
+        updatedAt: { type: "string", format: "date-time", nullable: true },
+      },
+      required: ["id", "tenantId", "legalEntityId", "code", "name", "status"],
+    },
+    InventoryWarehouseListResponse: {
+      type: "object",
+      properties: {
+        tenantId: intId,
+        rows: {
+          type: "array",
+          items: { $ref: "#/components/schemas/InventoryWarehouseRow" },
+        },
+      },
+      required: ["tenantId", "rows"],
+    },
+    InventoryWarehouseResponse: {
+      type: "object",
+      properties: {
+        tenantId: intId,
+        row: { $ref: "#/components/schemas/InventoryWarehouseRow" },
+      },
+      required: ["tenantId", "row"],
+    },
+    InventoryWarehouseCreateRequest: {
+      type: "object",
+      properties: {
+        legalEntityId: intId,
+        code: { type: "string", minLength: 1, maxLength: 80 },
+        name: { type: "string", minLength: 1, maxLength: 200 },
+        status: {
+          allOf: [{ $ref: "#/components/schemas/InventoryWarehouseStatus" }],
+          nullable: true,
+        },
+        notes: { type: "string", maxLength: 255, nullable: true },
+      },
+      required: ["legalEntityId", "code", "name"],
+    },
+    InventoryPendingStockLinkRow: {
+      type: "object",
+      properties: {
+        id: { ...intId, nullable: true },
+        tenantId: { ...intId, nullable: true },
+        legalEntityId: { ...intId, nullable: true },
+        legalEntityCode: { type: "string", nullable: true },
+        documentId: { ...intId, nullable: true },
+        documentLineId: { ...intId, nullable: true },
+        documentNo: { type: "string", nullable: true },
+        documentDate: { type: "string", format: "date", nullable: true },
+        direction: { type: "string", nullable: true },
+        stockImpactMode: { $ref: "#/components/schemas/InventoryStockImpactMode" },
+        linkStatus: { $ref: "#/components/schemas/InventoryStockLinkStatus" },
+        requestedQuantity: { type: "number", nullable: true },
+        postedNetAmountTxn: { type: "number", nullable: true },
+        postedNetAmountBase: { type: "number", nullable: true },
+        currencyCode: { type: "string", maxLength: 3, nullable: true },
+        itemCardId: { ...intId, nullable: true },
+        itemCardCode: { type: "string", nullable: true },
+        itemCardName: { type: "string", nullable: true },
+        itemType: { $ref: "#/components/schemas/ItemCardItemType" },
+        lineNo: { type: "integer", nullable: true },
+        lineDescription: { type: "string", nullable: true },
+        inventoryMovementId: { ...intId, nullable: true },
+        inventoryDocumentId: { ...intId, nullable: true },
+        resolvedAt: { type: "string", format: "date-time", nullable: true },
+        resolutionNote: { type: "string", nullable: true },
+        createdAt: { type: "string", format: "date-time", nullable: true },
+        updatedAt: { type: "string", format: "date-time", nullable: true },
+      },
+      required: [
+        "id",
+        "tenantId",
+        "legalEntityId",
+        "documentId",
+        "documentLineId",
+        "stockImpactMode",
+        "linkStatus",
+        "itemCardId",
+      ],
+    },
+    InventoryPendingStockLinkListResponse: {
+      type: "object",
+      properties: {
+        tenantId: intId,
+        rows: {
+          type: "array",
+          items: { $ref: "#/components/schemas/InventoryPendingStockLinkRow" },
+        },
+      },
+      required: ["tenantId", "rows"],
+    },
+    InventoryIssueLayerConsumptionRow: {
+      type: "object",
+      properties: {
+        id: { ...intId, nullable: true },
+        tenantId: { ...intId, nullable: true },
+        legalEntityId: { ...intId, nullable: true },
+        issueMovementId: { ...intId, nullable: true },
+        costLayerId: { ...intId, nullable: true },
+        consumptionNo: { type: "integer", nullable: true },
+        quantityConsumed: { type: "number", nullable: true },
+        unitCostTxn: { type: "number", nullable: true },
+        unitCostBase: { type: "number", nullable: true },
+        totalCostTxn: { type: "number", nullable: true },
+        totalCostBase: { type: "number", nullable: true },
+        currencyCode: { type: "string", maxLength: 3, nullable: true },
+        layerStatus: { $ref: "#/components/schemas/InventoryCostLayerStatus" },
+        valuationMethod: { $ref: "#/components/schemas/InventoryValuationMethod" },
+        sourceMovementId: { ...intId, nullable: true },
+        sourceStockLinkId: { ...intId, nullable: true },
+        createdAt: { type: "string", format: "date-time", nullable: true },
+        updatedAt: { type: "string", format: "date-time", nullable: true },
+      },
+      required: [
+        "id",
+        "tenantId",
+        "legalEntityId",
+        "issueMovementId",
+        "costLayerId",
+        "consumptionNo",
+        "quantityConsumed",
+      ],
+    },
+    InventoryMovementRow: {
+      type: "object",
+      properties: {
+        id: { ...intId, nullable: true },
+        tenantId: { ...intId, nullable: true },
+        legalEntityId: { ...intId, nullable: true },
+        legalEntityCode: { type: "string", nullable: true },
+        warehouseId: { ...intId, nullable: true },
+        warehouseCode: { type: "string", nullable: true },
+        warehouseName: { type: "string", nullable: true },
+        itemCardId: { ...intId, nullable: true },
+        itemCardCode: { type: "string", nullable: true },
+        itemCardName: { type: "string", nullable: true },
+        movementType: { $ref: "#/components/schemas/InventoryMovementType" },
+        sourceType: { type: "string", nullable: true },
+        sourceStockLinkId: { ...intId, nullable: true },
+        sourceDocumentType: { type: "string", nullable: true },
+        sourceDocumentId: { ...intId, nullable: true },
+        sourceDocumentLineId: { ...intId, nullable: true },
+        sourceDocumentNo: { type: "string", nullable: true },
+        movementDate: { type: "string", format: "date", nullable: true },
+        quantity: { type: "number", nullable: true },
+        unitCostTxn: { type: "number", nullable: true },
+        unitCostBase: { type: "number", nullable: true },
+        totalCostTxn: { type: "number", nullable: true },
+        totalCostBase: { type: "number", nullable: true },
+        currencyCode: { type: "string", maxLength: 3, nullable: true },
+        valuationStatus: { $ref: "#/components/schemas/InventoryValuationStatus" },
+        postedJournalEntryId: { ...intId, nullable: true },
+        postedJournalNo: { type: "string", nullable: true },
+        postedAt: { type: "string", format: "date-time", nullable: true },
+        reversalJournalEntryId: { ...intId, nullable: true },
+        reversalJournalNo: { type: "string", nullable: true },
+        reversedAt: { type: "string", format: "date-time", nullable: true },
+        note: { type: "string", nullable: true },
+        layerConsumptions: {
+          type: "array",
+          items: { $ref: "#/components/schemas/InventoryIssueLayerConsumptionRow" },
+        },
+        createdAt: { type: "string", format: "date-time", nullable: true },
+        updatedAt: { type: "string", format: "date-time", nullable: true },
+      },
+      required: [
+        "id",
+        "tenantId",
+        "legalEntityId",
+        "warehouseId",
+        "itemCardId",
+        "movementType",
+        "valuationStatus",
+        "layerConsumptions",
+      ],
+    },
+    InventoryMovementListResponse: {
+      type: "object",
+      properties: {
+        tenantId: intId,
+        rows: {
+          type: "array",
+          items: { $ref: "#/components/schemas/InventoryMovementRow" },
+        },
+      },
+      required: ["tenantId", "rows"],
+    },
+    InventoryMovementResponse: {
+      type: "object",
+      properties: {
+        tenantId: intId,
+        row: { $ref: "#/components/schemas/InventoryMovementRow" },
+      },
+      required: ["tenantId", "row"],
+    },
+    InventoryMovementCreateRequest: {
+      type: "object",
+      properties: {
+        legalEntityId: intId,
+        warehouseId: intId,
+        sourceStockLinkId: intId,
+        movementDate: { type: "string", format: "date" },
+        note: { type: "string", maxLength: 255, nullable: true },
+      },
+      required: ["legalEntityId", "warehouseId", "sourceStockLinkId", "movementDate"],
+    },
+    InventoryMovementReverseRequest: {
+      type: "object",
+      properties: {
+        reversalDate: { type: "string", format: "date", nullable: true },
+        reason: { type: "string", maxLength: 255, nullable: true },
+      },
+    },
+    InventoryCostLayerRow: {
+      type: "object",
+      properties: {
+        id: { ...intId, nullable: true },
+        tenantId: { ...intId, nullable: true },
+        legalEntityId: { ...intId, nullable: true },
+        legalEntityCode: { type: "string", nullable: true },
+        warehouseId: { ...intId, nullable: true },
+        warehouseCode: { type: "string", nullable: true },
+        warehouseName: { type: "string", nullable: true },
+        itemCardId: { ...intId, nullable: true },
+        itemCardCode: { type: "string", nullable: true },
+        itemCardName: { type: "string", nullable: true },
+        sourceMovementId: { ...intId, nullable: true },
+        sourceStockLinkId: { ...intId, nullable: true },
+        valuationMethod: { $ref: "#/components/schemas/InventoryValuationMethod" },
+        layerStatus: { $ref: "#/components/schemas/InventoryCostLayerStatus" },
+        currencyCode: { type: "string", maxLength: 3, nullable: true },
+        quantityIn: { type: "number", nullable: true },
+        quantityRemaining: { type: "number", nullable: true },
+        unitCostTxn: { type: "number", nullable: true },
+        unitCostBase: { type: "number", nullable: true },
+        totalCostTxn: { type: "number", nullable: true },
+        totalCostBase: { type: "number", nullable: true },
+        createdAt: { type: "string", format: "date-time", nullable: true },
+        updatedAt: { type: "string", format: "date-time", nullable: true },
+      },
+      required: [
+        "id",
+        "tenantId",
+        "legalEntityId",
+        "warehouseId",
+        "itemCardId",
+        "sourceMovementId",
+        "valuationMethod",
+        "layerStatus",
+      ],
+    },
+    InventoryCostLayerListResponse: {
+      type: "object",
+      properties: {
+        tenantId: intId,
+        rows: {
+          type: "array",
+          items: { $ref: "#/components/schemas/InventoryCostLayerRow" },
+        },
+      },
+      required: ["tenantId", "rows"],
+    },
+  });
+
+  paths["/api/v1/items/cards"] = {
+    get: {
+      tags: ["Items"],
+      operationId: "listItemCards",
+      summary: "List item cards",
+      parameters: [
+        queryParamInt("tenantId", false, "Tenant identifier; optional if available in JWT"),
+        queryParamInt("legalEntityId", false, "Legal entity filter"),
+        queryParam(
+          "status",
+          { $ref: "#/components/schemas/ItemCardStatus" },
+          false,
+          "Item-card status filter"
+        ),
+        queryParam(
+          "itemType",
+          { $ref: "#/components/schemas/ItemCardItemType" },
+          false,
+          "Item-card type filter"
+        ),
+        queryParam("q", { type: "string", maxLength: 120 }, false, "Code/name search"),
+        queryParam("limit", { type: "integer", minimum: 1, maximum: 500 }, false, "Page size"),
+        queryParam("offset", nonNegativeInt, false, "Page offset"),
+      ],
+      responses: withStandardResponses(
+        "200",
+        "Item-card list",
+        "#/components/schemas/ItemCardListResponse"
+      ),
+    },
+    post: {
+      tags: ["Items"],
+      operationId: "createItemCard",
+      summary: "Create item card",
+      requestBody: bodyFromRef("#/components/schemas/ItemCardUpsertRequest"),
+      responses: {
+        "201": jsonResponse("#/components/schemas/ItemCardResponse", "Item card created"),
+        "400": errorResponseRef,
+        "401": errorResponseRef,
+        "403": errorResponseRef,
+      },
+    },
+  };
+
+  paths["/api/v1/items/cards/{itemCardId}"] = {
+    get: {
+      tags: ["Items"],
+      operationId: "getItemCard",
+      summary: "Get item-card detail",
+      parameters: [
+        pathParam("itemCardId", "Item-card identifier"),
+        queryParamInt("tenantId", false, "Tenant identifier; optional if available in JWT"),
+      ],
+      responses: withStandardResponses(
+        "200",
+        "Item-card detail",
+        "#/components/schemas/ItemCardResponse"
+      ),
+    },
+    patch: {
+      tags: ["Items"],
+      operationId: "updateItemCard",
+      summary: "Update item card",
+      parameters: [pathParam("itemCardId", "Item-card identifier")],
+      requestBody: bodyFromRef("#/components/schemas/ItemCardUpsertRequest"),
+      responses: withStandardResponses(
+        "200",
+        "Item card updated",
+        "#/components/schemas/ItemCardResponse"
+      ),
+    },
+  };
+
+  paths["/api/v1/inventory/warehouses"] = {
+    get: {
+      tags: ["Inventory"],
+      operationId: "listInventoryWarehouses",
+      summary: "List inventory warehouses",
+      parameters: [
+        queryParamInt("tenantId", false, "Tenant identifier; optional if available in JWT"),
+        queryParamInt("legalEntityId", false, "Legal entity filter"),
+        queryParam(
+          "status",
+          { $ref: "#/components/schemas/InventoryWarehouseStatus" },
+          false,
+          "Warehouse status filter"
+        ),
+        queryParam("q", { type: "string", maxLength: 120 }, false, "Warehouse code/name search"),
+        queryParam("limit", { type: "integer", minimum: 1, maximum: 500 }, false, "Page size"),
+        queryParam("offset", nonNegativeInt, false, "Page offset"),
+      ],
+      responses: withStandardResponses(
+        "200",
+        "Inventory warehouse list",
+        "#/components/schemas/InventoryWarehouseListResponse"
+      ),
+    },
+    post: {
+      tags: ["Inventory"],
+      operationId: "createInventoryWarehouse",
+      summary: "Create inventory warehouse",
+      requestBody: bodyFromRef("#/components/schemas/InventoryWarehouseCreateRequest"),
+      responses: {
+        "201": jsonResponse(
+          "#/components/schemas/InventoryWarehouseResponse",
+          "Inventory warehouse created"
+        ),
+        "400": errorResponseRef,
+        "401": errorResponseRef,
+        "403": errorResponseRef,
+      },
+    },
+  };
+
+  paths["/api/v1/inventory/cari-stock-links"] = {
+    get: {
+      tags: ["Inventory"],
+      operationId: "listInventoryCariStockLinks",
+      summary: "List pending CARI stock links for warehouse materialization",
+      parameters: [
+        queryParamInt("tenantId", false, "Tenant identifier; optional if available in JWT"),
+        queryParamInt("legalEntityId", false, "Legal entity filter"),
+        queryParam(
+          "linkStatus",
+          { $ref: "#/components/schemas/InventoryStockLinkStatus" },
+          false,
+          "Stock-link status filter"
+        ),
+        queryParam(
+          "warehouseLinked",
+          { type: "boolean" },
+          false,
+          "Filter links with or without related inventory movement"
+        ),
+        queryParam("limit", { type: "integer", minimum: 1, maximum: 500 }, false, "Page size"),
+        queryParam("offset", nonNegativeInt, false, "Page offset"),
+      ],
+      responses: withStandardResponses(
+        "200",
+        "Pending CARI stock-link list",
+        "#/components/schemas/InventoryPendingStockLinkListResponse"
+      ),
+    },
+  };
+
+  paths["/api/v1/inventory/movements"] = {
+    get: {
+      tags: ["Inventory"],
+      operationId: "listInventoryMovements",
+      summary: "List inventory movements with valuation and issue-consumption detail",
+      parameters: [
+        queryParamInt("tenantId", false, "Tenant identifier; optional if available in JWT"),
+        queryParamInt("legalEntityId", false, "Legal entity filter"),
+        queryParamInt("warehouseId", false, "Warehouse filter"),
+        queryParam(
+          "movementType",
+          { $ref: "#/components/schemas/InventoryMovementType" },
+          false,
+          "Movement type filter"
+        ),
+        queryParam(
+          "valuationStatus",
+          { $ref: "#/components/schemas/InventoryValuationStatus" },
+          false,
+          "Valuation status filter"
+        ),
+        queryParam("limit", { type: "integer", minimum: 1, maximum: 500 }, false, "Page size"),
+        queryParam("offset", nonNegativeInt, false, "Page offset"),
+      ],
+      responses: withStandardResponses(
+        "200",
+        "Inventory movement list",
+        "#/components/schemas/InventoryMovementListResponse"
+      ),
+    },
+    post: {
+      tags: ["Inventory"],
+      operationId: "createInventoryMovementFromStockLink",
+      summary:
+        "Materialize one pending stock link into warehouse movement, FIFO valuation, and issue-side COGS journal when applicable",
+      requestBody: bodyFromRef("#/components/schemas/InventoryMovementCreateRequest"),
+      responses: {
+        "201": jsonResponse(
+          "#/components/schemas/InventoryMovementResponse",
+          "Inventory movement created or existing linked movement returned"
+        ),
+        "400": errorResponseRef,
+        "401": errorResponseRef,
+        "403": errorResponseRef,
+      },
+    },
+  };
+
+  paths["/api/v1/inventory/movements/{movementId}/reverse"] = {
+    post: {
+      tags: ["Inventory"],
+      operationId: "reverseInventoryMovement",
+      summary:
+        "Reverse one valued outbound issue, restore FIFO layer quantities, and post the inventory-side reversal journal",
+      parameters: [pathParam("movementId", "Inventory movement identifier")],
+      requestBody: bodyFromRef(
+        "#/components/schemas/InventoryMovementReverseRequest",
+        false
+      ),
+      responses: withStandardResponses(
+        "200",
+        "Inventory movement reversed",
+        "#/components/schemas/InventoryMovementResponse"
+      ),
+    },
+  };
+
+  paths["/api/v1/inventory/cost-layers"] = {
+    get: {
+      tags: ["Inventory"],
+      operationId: "listInventoryCostLayers",
+      summary: "List receipt cost layers used by FIFO issue valuation",
+      parameters: [
+        queryParamInt("tenantId", false, "Tenant identifier; optional if available in JWT"),
+        queryParamInt("legalEntityId", false, "Legal entity filter"),
+        queryParamInt("warehouseId", false, "Warehouse filter"),
+        queryParamInt("itemCardId", false, "Item-card filter"),
+        queryParam(
+          "layerStatus",
+          { $ref: "#/components/schemas/InventoryCostLayerStatus" },
+          false,
+          "Layer status filter"
+        ),
+        queryParam("limit", { type: "integer", minimum: 1, maximum: 500 }, false, "Page size"),
+        queryParam("offset", nonNegativeInt, false, "Page offset"),
+      ],
+      responses: withStandardResponses(
+        "200",
+        "Inventory cost-layer list",
+        "#/components/schemas/InventoryCostLayerListResponse"
+      ),
+    },
+  };
 }
 
 function applyContractsOperationOverrides(specObject) {
@@ -2766,6 +3391,14 @@ const spec = {
     { name: "Intercompany", description: "Intercompany relationship and reconciliation endpoints." },
     { name: "Consolidation", description: "Consolidation setup, runs, and report endpoints." },
     { name: "Onboarding", description: "Tenant/company bootstrap flow endpoints." },
+    {
+      name: "Inventory",
+      description: "Warehouse, stock-link materialization, valuation, and inventory movement endpoints.",
+    },
+    {
+      name: "Items",
+      description: "Item-card master data endpoints used by CARI and inventory flows.",
+    },
   ],
   paths: {
     "/api/v1/org/tree": {
@@ -7733,6 +8366,7 @@ const autoDocumentedOperationCount = await appendUndocumentedRoutes(
 );
 applyCariOperationOverrides(spec);
 applyCashOperationOverrides(spec);
+applyInventoryOperationOverrides(spec);
 applyContractsOperationOverrides(spec);
 applyRevenueRecognitionOperationOverrides(spec);
 applyBankAccountOperationOverrides(spec);

@@ -3,6 +3,7 @@ import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { query, withTransaction } from "../db.js";
 import { invalidateRbacCache } from "../middleware/rbac.js";
+import { normalizeFeatureCode } from "../services/features.catalog.js";
 import {
   asyncHandler,
   assertRequiredFields,
@@ -12,12 +13,38 @@ import {
 
 const router = express.Router();
 const TENANT_STATUSES = new Set(["ACTIVE", "SUSPENDED"]);
+const FEATURE_TAX_ENGINE_V1 = normalizeFeatureCode("feature_tax_engine_v1");
 
 function parseBooleanEnv(value) {
   const normalized = String(value || "")
     .trim()
     .toLowerCase();
   return ["1", "true", "yes", "on"].includes(normalized);
+}
+
+function parseBooleanInput(value, fallback = false, fieldName = "value") {
+  if (value === undefined || value === null || value === "") {
+    return fallback;
+  }
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (value === 1 || value === "1") {
+    return true;
+  }
+  if (value === 0 || value === "0") {
+    return false;
+  }
+
+  const normalized = String(value).trim().toLowerCase();
+  if (["true", "yes", "on"].includes(normalized)) {
+    return true;
+  }
+  if (["false", "no", "off"].includes(normalized)) {
+    return false;
+  }
+
+  throw badRequest(`${fieldName} must be boolean`);
 }
 
 function isProviderPanelEnabled() {
@@ -307,12 +334,35 @@ async function ensureTenantAdminRole(tx, tenantId) {
   return roleId;
 }
 
+async function upsertTenantFeature(tx, { tenantId, featureCode, isEnabled }) {
+  await tx.query(
+    `INSERT INTO tenant_features (
+        tenant_id,
+        feature_code,
+        is_enabled,
+        config_json,
+        updated_by_user_id
+     )
+     VALUES (?, ?, ?, NULL, NULL)
+     ON DUPLICATE KEY UPDATE
+       is_enabled = VALUES(is_enabled),
+       config_json = VALUES(config_json),
+       updated_by_user_id = VALUES(updated_by_user_id)`,
+    [tenantId, normalizeFeatureCode(featureCode), isEnabled ? 1 : 0]
+  );
+}
+
 async function createTenantWithAdmin(tx, input) {
   const tenantCode = normalizeTenantCode(input.tenantCode);
   const tenantName = normalizeName(input.tenantName, "tenantName", 255);
   const adminName = normalizeName(input.adminName, "adminName", 255);
   const adminEmail = normalizeEmail(input.adminEmail);
   const adminPassword = validatePassword(input.adminPassword);
+  const enableTaxEngine = parseBooleanInput(
+    input.enableTaxEngine,
+    false,
+    "enableTaxEngine"
+  );
   const passwordHash = await bcrypt.hash(adminPassword, 10);
 
   const existingTenantResult = await tx.query(
@@ -380,6 +430,12 @@ async function createTenantWithAdmin(tx, input) {
     [tenantId, userId, roleId, tenantId]
   );
 
+  await upsertTenantFeature(tx, {
+    tenantId,
+    featureCode: FEATURE_TAX_ENGINE_V1,
+    isEnabled: enableTaxEngine,
+  });
+
   return {
     tenantId,
     tenantCode,
@@ -388,6 +444,7 @@ async function createTenantWithAdmin(tx, input) {
     adminEmail,
     adminName,
     adminRoleId: roleId,
+    taxEngineEnabled: enableTaxEngine,
   };
 }
 

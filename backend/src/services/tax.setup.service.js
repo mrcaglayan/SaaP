@@ -171,6 +171,11 @@ function mapTaxRuleRow(row) {
   if (!row) {
     return null;
   }
+  const formulaJson = safeParseJson(row.formula_json);
+  const match =
+    formulaJson && typeof formulaJson === "object" && !Array.isArray(formulaJson)
+      ? formulaJson.match
+      : null;
   return {
     id: parsePositiveInt(row.id),
     tenantId: parsePositiveInt(row.tenant_id),
@@ -183,10 +188,12 @@ function mapTaxRuleRow(row) {
     taxCodeName: row.tax_code_name || null,
     moduleCode: u(row.module_code),
     documentType: row.document_type || null,
+    taxCategoryCode: match?.taxCategoryCode ? u(match.taxCategoryCode) : null,
+    lineKind: match?.lineKind ? u(match.lineKind) : null,
     counterpartyType: row.counterparty_type ? u(row.counterparty_type) : null,
     applyPriority: Number(row.apply_priority || 0),
     thresholdAmount: toAmount(row.threshold_amount),
-    formulaJson: safeParseJson(row.formula_json),
+    formulaJson,
     status: u(row.status),
     effectiveFrom: toDateOnly(row.effective_from),
     effectiveTo: toDateOnly(row.effective_to),
@@ -383,6 +390,37 @@ function normalizeFormulaOrThrow(value) {
     throw badRequest("formulaJson must be a JSON object");
   }
   return value;
+}
+
+function mergeRuleMatchCriteriaIntoFormula(formulaJson, { taxCategoryCode, lineKind }) {
+  const formula = normalizeFormulaOrThrow({ ...(safeParseJson(formulaJson) || {}) });
+  const match =
+    formula.match && typeof formula.match === "object" && !Array.isArray(formula.match)
+      ? { ...formula.match }
+      : {};
+
+  if (taxCategoryCode !== undefined) {
+    if (taxCategoryCode) {
+      match.taxCategoryCode = u(taxCategoryCode);
+    } else {
+      delete match.taxCategoryCode;
+    }
+  }
+  if (lineKind !== undefined) {
+    if (lineKind) {
+      match.lineKind = u(lineKind);
+    } else {
+      delete match.lineKind;
+    }
+  }
+
+  if (Object.keys(match).length > 0) {
+    formula.match = match;
+  } else {
+    delete formula.match;
+  }
+
+  return formula;
 }
 
 function assertSupportedThresholdRuleConfig({
@@ -1247,8 +1285,8 @@ export async function listTaxRules({
   }
   if (filters?.q) {
     const wildcard = `%${filters.q}%`;
-    where.push("(tc.code LIKE ? OR tc.name LIKE ? OR trs.document_type LIKE ?)");
-    params.push(wildcard, wildcard, wildcard);
+    where.push("(tc.code LIKE ? OR tc.name LIKE ? OR trs.document_type LIKE ? OR trs.formula_json LIKE ?)");
+    params.push(wildcard, wildcard, wildcard, wildcard);
   }
   const result = await runQuery(
     `SELECT
@@ -1302,7 +1340,10 @@ export async function createTaxRule({
     documentType: input.documentType,
     thresholdAmount: input.thresholdAmount,
   });
-  const formula = normalizeFormulaOrThrow(input.formulaJson);
+  const formula = mergeRuleMatchCriteriaIntoFormula(input.formulaJson, {
+    taxCategoryCode: input.taxCategoryCode,
+    lineKind: input.lineKind,
+  });
   const formulaText = JSON.stringify(formula);
   const insertResult = await runQuery(
     `INSERT INTO tax_rule_sets (
@@ -1394,7 +1435,12 @@ export async function updateTaxRule({
       input.thresholdAmount !== undefined
         ? input.thresholdAmount
         : toAmount(existing.threshold_amount),
-    formulaJson: JSON.stringify(nextFormula || existingFormula),
+    formulaJson: JSON.stringify(
+      mergeRuleMatchCriteriaIntoFormula(nextFormula || existingFormula, {
+        taxCategoryCode: input.taxCategoryCode,
+        lineKind: input.lineKind,
+      })
+    ),
     status: input.status !== undefined ? u(input.status) : u(existing.status),
     effectiveFrom:
       input.effectiveFrom !== undefined
@@ -1728,6 +1774,8 @@ export async function previewTaxComputation({
     countryId: resolvedCountryId,
     moduleCode: input.moduleCode,
     documentType: input.documentType,
+    taxCategoryCode: input.taxCategoryCode,
+    lineKind: input.lineKind,
     counterpartyType: input.counterpartyType,
     taxCodeId: input.taxCodeId,
     taxCode: input.taxCode,

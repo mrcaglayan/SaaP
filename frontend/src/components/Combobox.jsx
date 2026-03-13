@@ -162,26 +162,6 @@ export default function Combobox({
       ? Boolean(localInputState.hasTypedQuery)
       : false;
 
-  useEffect(() => {
-    if (isInputControlled) {
-      return;
-    }
-    setLocalInputState((prev) => {
-      if (
-        prev.selectedOptionToken === selectedOptionToken &&
-        prev.value === selectedLabel &&
-        !prev.hasTypedQuery
-      ) {
-        return prev;
-      }
-      return {
-        value: selectedLabel,
-        selectedOptionToken,
-        hasTypedQuery: false,
-      };
-    });
-  }, [isInputControlled, selectedLabel, selectedOptionToken]);
-
   const query = isInputControlled
     ? normalizeText(inputValue)
     : isOpen

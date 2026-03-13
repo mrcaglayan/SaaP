@@ -274,6 +274,83 @@ function sortJournalDetailLines(lines = []) {
     .map((entry) => entry.line);
 }
 
+function buildJournalDetailCollapseKey(line) {
+  const side = getJournalLineSide(line);
+  const accountId = toInt(line?.account_id || line?.accountId) || 0;
+  const accountCode = String(line?.account_code || line?.accountCode || "")
+    .trim()
+    .toUpperCase();
+  const operatingUnitId = toInt(line?.operating_unit_id || line?.operatingUnitId) || 0;
+  const operatingUnitCode = String(
+    line?.operating_unit_code || line?.operatingUnitCode || ""
+  )
+    .trim()
+    .toUpperCase();
+  const subledgerReferenceNo = String(
+    line?.subledger_reference_no || line?.subledgerReferenceNo || ""
+  )
+    .trim()
+    .toUpperCase();
+  const currencyCode = String(line?.currency_code || line?.currencyCode || "")
+    .trim()
+    .toUpperCase();
+  const counterpartyLegalEntityId =
+    toInt(line?.counterparty_legal_entity_id || line?.counterpartyLegalEntityId) || 0;
+  return [
+    side,
+    accountId,
+    accountCode,
+    operatingUnitId,
+    operatingUnitCode,
+    subledgerReferenceNo,
+    currencyCode,
+    counterpartyLegalEntityId,
+  ].join("|");
+}
+
+function collapseJournalDetailLines(lines = []) {
+  const sortedLines = sortJournalDetailLines(lines);
+  const mergedByKey = new Map();
+
+  for (const rawLine of sortedLines) {
+    const key = buildJournalDetailCollapseKey(rawLine);
+    const existing = mergedByKey.get(key);
+    if (!existing) {
+      mergedByKey.set(key, {
+        ...rawLine,
+        id: rawLine?.id || `collapsed-${key}`,
+        line_no: String(rawLine?.line_no || ""),
+        debit_base: toAmount(rawLine?.debit_base ?? rawLine?.debitBase),
+        credit_base: toAmount(rawLine?.credit_base ?? rawLine?.creditBase),
+        amount_txn: toAmount(rawLine?.amount_txn ?? rawLine?.amountTxn),
+        mergedLineCount: 1,
+        mergedLineNos: [String(rawLine?.line_no || "").trim()].filter(Boolean),
+      });
+      continue;
+    }
+
+    existing.debit_base = Number(
+      (toAmount(existing.debit_base) + toAmount(rawLine?.debit_base ?? rawLine?.debitBase)).toFixed(6)
+    );
+    existing.credit_base = Number(
+      (
+        toAmount(existing.credit_base) + toAmount(rawLine?.credit_base ?? rawLine?.creditBase)
+      ).toFixed(6)
+    );
+    existing.amount_txn = Number(
+      (toAmount(existing.amount_txn) + toAmount(rawLine?.amount_txn ?? rawLine?.amountTxn)).toFixed(6)
+    );
+    existing.mergedLineCount += 1;
+    const rawLineNo = String(rawLine?.line_no || "").trim();
+    if (rawLineNo && !existing.mergedLineNos.includes(rawLineNo)) {
+      existing.mergedLineNos.push(rawLineNo);
+      existing.line_no = existing.mergedLineNos.join(", ");
+    }
+  }
+
+  return Array.from(mergedByKey.values());
+}
+
 function hasId(rows, id) {
   return rows.some((row) => Number(row.id) === Number(id));
 }
@@ -564,6 +641,7 @@ export default function JournalWorkbenchPage() {
   });
   const [selectedJournalId, setSelectedJournalId] = useState("");
   const [selectedJournal, setSelectedJournal] = useState(null);
+  const [showRawJournalDetailLines, setShowRawJournalDetailLines] = useState(false);
   const lastObservedUrlJournalIdRef = useRef(null);
   const pendingUrlSelectionJournalIdRef = useRef(null);
   const [complianceRows, setComplianceRows] = useState([]);
@@ -950,6 +1028,29 @@ export default function JournalWorkbenchPage() {
   const selectedJournalDetailLines = useMemo(
     () => sortJournalDetailLines(selectedJournal?.lines || []),
     [selectedJournal]
+  );
+  const selectedJournalCollapsedDetailLines = useMemo(
+    () => collapseJournalDetailLines(selectedJournal?.lines || []),
+    [selectedJournal]
+  );
+  const selectedJournalDisplayLines = useMemo(
+    () =>
+      showRawJournalDetailLines
+        ? selectedJournalDetailLines
+        : selectedJournalCollapsedDetailLines,
+    [
+      selectedJournalCollapsedDetailLines,
+      selectedJournalDetailLines,
+      showRawJournalDetailLines,
+    ]
+  );
+  const selectedJournalCollapsedLineDelta = useMemo(
+    () =>
+      Math.max(
+        0,
+        selectedJournalDetailLines.length - selectedJournalCollapsedDetailLines.length
+      ),
+    [selectedJournalCollapsedDetailLines.length, selectedJournalDetailLines.length]
   );
   const selectedJournalOperatingUnitLabels = useMemo(() => {
     const byKey = new Map();
@@ -3929,6 +4030,22 @@ export default function JournalWorkbenchPage() {
                 <div>{l("Operating Units", "Operasyon Birimleri")}: {selectedJournalOperatingUnitLabels.join(", ") || "-"}</div>
                 <div>{l("Period", "Donem")}: {selectedJournal.fiscal_year}-P{String(selectedJournal.period_no || "").padStart(2, "0")}</div>
                 <div>{l("Lines", "Satirlar")}: {(selectedJournal.lines || []).length}</div>
+                <label className="flex items-center gap-2 pt-1 text-[11px] text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={showRawJournalDetailLines}
+                    onChange={(event) => setShowRawJournalDetailLines(event.target.checked)}
+                  />
+                  {l("Show raw lines", "Ham satirlari goster")}
+                </label>
+                {!showRawJournalDetailLines && selectedJournalCollapsedLineDelta > 0 ? (
+                  <div className="text-[11px] text-slate-500">
+                    {l(
+                      `Collapsed view combines ${selectedJournalCollapsedLineDelta} duplicate raw line(s).`,
+                      `Collapsed gorunum ${selectedJournalCollapsedLineDelta} tekrar eden ham satiri birlestirir.`
+                    )}
+                  </div>
+                ) : null}
                 {Array.isArray(selectedJournal.source_links) &&
                 selectedJournal.source_links.length > 0 ? (
                   <div>
@@ -4156,7 +4273,7 @@ export default function JournalWorkbenchPage() {
                   <table className="min-w-full text-[11px]">
                     <thead className="bg-slate-50 text-left text-slate-600"><tr><th className="px-2 py-1.5">#</th><th className="px-2 py-1.5">{l("Account", "Hesap")}</th><th className="px-2 py-1.5">{l("Unit", "Birim")}</th><th className="px-2 py-1.5">{l("Subledger Ref", "Alt Defter Ref")}</th><th className="px-2 py-1.5">{l("Debit", "Borc")}</th><th className="px-2 py-1.5">{l("Credit", "Alacak")}</th></tr></thead>
                     <tbody>
-                      {selectedJournalDetailLines.map((line, index) => {
+                      {selectedJournalDisplayLines.map((line, index) => {
                         const lineSide = getJournalLineSide(line);
                         const accountPrefix = lineSide === "CREDIT" ? " " : "";
                         const operatingUnitLabel = getJournalLineOperatingUnitLabel(line, unitsById);

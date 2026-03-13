@@ -131,6 +131,7 @@ return {
   taxCodeId: "",
   moduleCode: "CARI",
   documentType: "",
+  taxCategoryCode: "",
   counterpartyType: "",
   applyPriority: "100",
   thresholdAmount: "",
@@ -140,15 +141,27 @@ return {
   effectiveTo: "",
 };
 }
-function defaultMappingForm() {
-return {
-  regimeId: "",
-  legalEntityId: "",
-  taxCodeId: "",
-  taxPurposeCode: "VAT_OUTPUT",
-  accountId: "",
-  status: "ACTIVE",
-};
+function defaultMappingForm(overrides = {}) {
+  return {
+    regimeId: "",
+    legalEntityId: "",
+    taxCodeId: "",
+    taxPurposeCode: "VAT_OUTPUT",
+    accountId: "",
+    status: "ACTIVE",
+    ...overrides,
+  };
+}
+
+function buildMappingFormFromRow(row) {
+  return defaultMappingForm({
+    regimeId: String(toPositiveInt(row?.regimeId) || ""),
+    legalEntityId: String(toPositiveInt(row?.legalEntityId) || ""),
+    taxCodeId: String(toPositiveInt(row?.taxCodeId) || ""),
+    taxPurposeCode: toUpper(row?.taxPurposeCode) || "VAT_OUTPUT",
+    accountId: String(toPositiveInt(row?.accountId) || ""),
+    status: toUpper(row?.status) || "ACTIVE",
+  });
 }
 function defaultPreviewForm() {
 return {
@@ -157,6 +170,7 @@ return {
   countryId: "",
   moduleCode: "CARI",
   documentType: "",
+  taxCategoryCode: "",
   counterpartyType: "",
   taxCodeId: "",
   taxCode: "",
@@ -235,7 +249,8 @@ const [regimeForm, setRegimeForm] = useState(defaultRegimeForm);
 const [codeForm, setCodeForm] = useState(defaultCodeForm);
 const [ruleForm, setRuleForm] = useState(defaultRuleForm);
 const [mappingForm, setMappingForm] = useState(defaultMappingForm);
-const [previewForm, setPreviewForm] = useState(defaultPreviewForm);
+  const [previewForm, setPreviewForm] = useState(defaultPreviewForm);
+  const [editingMappingId, setEditingMappingId] = useState(null);
 const [previewResult, setPreviewResult] = useState(null);
 const activeRegimeId = toPositiveInt(selectedRegimeId);
 const activeRegime = useMemo(
@@ -565,6 +580,7 @@ async function onCreateRule(event) {
       taxCodeId,
       moduleCode: toUpper(ruleForm.moduleCode),
       documentType: String(ruleForm.documentType || "").trim() || undefined,
+      taxCategoryCode: toUpper(ruleForm.taxCategoryCode) || undefined,
       counterpartyType: toUpper(ruleForm.counterpartyType) || undefined,
       applyPriority: Number(ruleForm.applyPriority || 100),
       thresholdAmount:
@@ -589,6 +605,33 @@ async function onCreateRule(event) {
     setSaving("");
   }
 }
+  function resetMappingEditor(nextRegimeId = activeRegimeId, nextLegalEntityId = selectedLegalEntityId) {
+    setEditingMappingId(null);
+    setAccountSearch("");
+    setInlineChildParentAccountId("");
+    setInlineChildCode("");
+    setInlineChildName("");
+    setMappingForm(
+      defaultMappingForm({
+        regimeId: nextRegimeId ? String(nextRegimeId) : "",
+        legalEntityId: nextLegalEntityId ? String(nextLegalEntityId) : "",
+      })
+    );
+  }
+
+  function handleEditMapping(row) {
+    const rowId = toPositiveInt(row?.id);
+    if (!rowId) {
+      return;
+    }
+    setEditingMappingId(rowId);
+    setAccountSearch("");
+    setInlineChildParentAccountId("");
+    setInlineChildCode("");
+    setInlineChildName("");
+    setMappingForm(buildMappingFormFromRow(row));
+  }
+
   async function onCreateMapping(event) {
   event.preventDefault();
   if (!canWrite) {
@@ -598,57 +641,72 @@ async function onCreateRule(event) {
   const regimeId = toPositiveInt(mappingForm.regimeId) || activeRegimeId;
   const legalEntityId =
     toPositiveInt(mappingForm.legalEntityId) || toPositiveInt(selectedLegalEntityId);
-    const taxCodeId = toPositiveInt(mappingForm.taxCodeId);
-    const accountId = toPositiveInt(mappingForm.accountId);
-    if (!regimeId || !legalEntityId || !taxCodeId || !accountId) {
+  const taxCodeId = toPositiveInt(mappingForm.taxCodeId);
+  const accountId = toPositiveInt(mappingForm.accountId);
+  const mappingId = toPositiveInt(editingMappingId);
+  if (!regimeId || !legalEntityId || !taxCodeId || !accountId) {
     setError(
       l(
         "regimeId, legalEntityId, taxCodeId and accountId are required.",
         "regimeId, legalEntityId, taxCodeId ve accountId zorunludur."
       )
     );
-      return;
-    }
-    const selectedAccount = accountById.get(accountId) || null;
-    if (
-      selectedAccount &&
-      (!isActiveAccount(selectedAccount) ||
-        !isPostingAccount(selectedAccount) ||
-        hasActiveChildren(selectedAccount))
-    ) {
-      setError(
-        l(
-          "Select an active posting leaf account for tax mapping.",
-          "Tax eslemesi icin aktif, postable ve alt hesabi olmayan bir hesap secin."
-        )
-      );
-      return;
-    }
-    setSaving("mapping");
+    return;
+  }
+  const selectedAccount = accountById.get(accountId) || null;
+  if (
+    selectedAccount &&
+    (!isActiveAccount(selectedAccount) ||
+      !isPostingAccount(selectedAccount) ||
+      hasActiveChildren(selectedAccount))
+  ) {
+    setError(
+      l(
+        "Select an active posting leaf account for tax mapping.",
+        "Tax eslemesi icin aktif, postable ve alt hesabi olmayan bir hesap secin."
+      )
+    );
+    return;
+  }
+  setSaving("mapping");
   setError("");
   setMessage("");
   try {
-    await createTaxAccountMapping({
+    const payload = {
       regimeId,
       legalEntityId,
       taxCodeId,
       taxPurposeCode: toUpper(mappingForm.taxPurposeCode),
       accountId,
       status: toUpper(mappingForm.status || "ACTIVE"),
-    });
-    setMessage(l("Tax account mapping saved.", "Tax hesap eslemesi kaydedildi."));
+    };
+    if (mappingId) {
+      await updateTaxAccountMapping(mappingId, payload);
+    } else {
+      await createTaxAccountMapping(payload);
+    }
+    setMessage(
+      mappingId
+        ? l("Tax account mapping updated.", "Tax hesap eslemesi guncellendi.")
+        : l("Tax account mapping saved.", "Tax hesap eslemesi kaydedildi.")
+    );
     await loadRegimeDetails(regimeId);
+    if (mappingId) {
+      resetMappingEditor(regimeId, legalEntityId);
+    }
   } catch (err) {
     setError(
       toApiError(
         err,
-        l("Failed to save tax account mapping.", "Tax hesap eslemesi kaydedilemedi.")
+        mappingId
+          ? l("Failed to update tax account mapping.", "Tax hesap eslemesi guncellenemedi.")
+          : l("Failed to save tax account mapping.", "Tax hesap eslemesi kaydedilemedi.")
       )
     );
   } finally {
-      setSaving("");
-    }
+    setSaving("");
   }
+}
   async function handleCreateInlineChildAccount() {
     if (!canUpsertAccounts) {
       setError(
@@ -829,6 +887,7 @@ async function onPreview(event) {
       countryId: toPositiveInt(previewForm.countryId) || undefined,
       moduleCode: toUpper(previewForm.moduleCode),
       documentType: String(previewForm.documentType || "").trim() || undefined,
+      taxCategoryCode: toUpper(previewForm.taxCategoryCode) || undefined,
       counterpartyType: toUpper(previewForm.counterpartyType) || undefined,
       taxCodeId: toPositiveInt(previewForm.taxCodeId) || undefined,
       taxCode: toUpper(previewForm.taxCode) || undefined,
@@ -1275,6 +1334,18 @@ return (
             className="rounded border border-slate-300 px-3 py-2 text-sm"
             placeholder={l("Document type (optional)", "Belge tipi (opsiyonel)")}
           />
+          <input
+            value={ruleForm.taxCategoryCode}
+            onChange={(event) =>
+              setRuleForm((prev) => ({
+                ...prev,
+                taxCategoryCode: event.target.value.toUpperCase(),
+              }))
+            }
+            className="rounded border border-slate-300 px-3 py-2 text-sm uppercase"
+            maxLength={60}
+            placeholder={l("Tax category code (optional)", "Vergi kategori kodu (opsiyonel)")}
+          />
           <select
             value={ruleForm.counterpartyType}
             onChange={(event) =>
@@ -1370,9 +1441,32 @@ return (
         </form>
       </section>
       <section className="rounded-xl border border-slate-200 bg-white p-4">
-        <h2 className="mb-3 text-sm font-semibold text-slate-700">
-          {l("Create Tax Account Mapping", "Tax Hesap Eslemesi Olustur")}
-        </h2>
+        <div className="mb-3 flex items-start justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-semibold text-slate-700">
+              {editingMappingId
+                ? l("Edit Tax Account Mapping", "Tax Hesap Eslemesini Duzenle")
+                : l("Create Tax Account Mapping", "Tax Hesap Eslemesi Olustur")}
+            </h2>
+            {editingMappingId ? (
+              <p className="mt-1 text-xs text-slate-500">
+                {l(
+                  `Editing mapping #${editingMappingId}. Update the fields and save the change.`,
+                  `#${editingMappingId} eslemesi duzenleniyor. Alanlari guncelleyip degisikligi kaydedin.`
+                )}
+              </p>
+            ) : null}
+          </div>
+          {editingMappingId ? (
+            <button
+              type="button"
+              onClick={() => resetMappingEditor()}
+              className="rounded border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700"
+            >
+              {l("Cancel edit", "Duzenlemeyi iptal et")}
+            </button>
+          ) : null}
+        </div>
         <form onSubmit={onCreateMapping} className="grid gap-2 md:grid-cols-2">
           <select
             value={mappingForm.regimeId || selectedRegimeId}
@@ -1562,7 +1656,9 @@ return (
           >
             {saving === "mapping"
               ? l("Saving...", "Kaydediliyor...")
-              : l("Save mapping", "Eslemeyi kaydet")}
+              : editingMappingId
+                ? l("Update mapping", "Eslemeyi guncelle")
+                : l("Save mapping", "Eslemeyi kaydet")}
           </button>
         </form>
       </section>
@@ -1642,6 +1738,18 @@ return (
           }
           className="rounded border border-slate-300 px-3 py-2 text-sm"
           placeholder={l("Document type", "Belge tipi")}
+        />
+        <input
+          value={previewForm.taxCategoryCode}
+          onChange={(event) =>
+            setPreviewForm((prev) => ({
+              ...prev,
+              taxCategoryCode: event.target.value.toUpperCase(),
+            }))
+          }
+          className="rounded border border-slate-300 px-3 py-2 text-sm uppercase"
+          maxLength={60}
+          placeholder={l("Tax category code", "Vergi kategori kodu")}
         />
         <select
           value={previewForm.counterpartyType}
@@ -1913,6 +2021,7 @@ return (
                 <th className="px-2 py-2">ID</th>
                 <th className="px-2 py-2">{l("Code", "Kod")}</th>
                 <th className="px-2 py-2">{l("Module", "Modul")}</th>
+                <th className="px-2 py-2">{l("Tax Category", "Vergi Kategorisi")}</th>
                 <th className="px-2 py-2">{l("Priority", "Oncelik")}</th>
                 <th className="px-2 py-2">{l("Threshold", "Esik")}</th>
                 <th className="px-2 py-2">{l("Status", "Durum")}</th>
@@ -1928,6 +2037,7 @@ return (
                     <td className="px-2 py-2">#{row.id}</td>
                     <td className="px-2 py-2">{row.taxCode || "-"}</td>
                     <td className="px-2 py-2">{row.moduleCode}</td>
+                    <td className="px-2 py-2">{row.taxCategoryCode || "-"}</td>
                     <td className="px-2 py-2">{row.applyPriority}</td>
                     <td className="px-2 py-2">
                       {row.thresholdAmount === null || row.thresholdAmount === undefined
@@ -1954,7 +2064,7 @@ return (
               })}
               {rules.length === 0 && !loading ? (
                 <tr>
-                  <td colSpan={7} className="px-2 py-3 text-slate-500">
+                  <td colSpan={8} className="px-2 py-3 text-slate-500">
                     {l("No tax rules found.", "Tax kurali bulunamadi.")}
                   </td>
                 </tr>
@@ -1983,6 +2093,7 @@ return (
               {mappings.map((row) => {
                 const rowId = toPositiveInt(row?.id);
                 const rowSaving = saving === `mapping-${rowId}`;
+                const rowEditing = rowId && rowId === toPositiveInt(editingMappingId);
                 return (
                   <tr key={row.id} className="border-t border-slate-100">
                     <td className="px-2 py-2">#{row.id}</td>
@@ -1993,18 +2104,28 @@ return (
                     </td>
                     <td className="px-2 py-2">{row.status}</td>
                     <td className="px-2 py-2">
-                      <button
-                        type="button"
-                        disabled={!canWrite || rowSaving}
-                        onClick={() => onToggleStatus("mapping", row)}
-                        className="rounded border border-slate-300 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 disabled:opacity-50"
-                      >
-                        {rowSaving
-                          ? l("Saving...", "Kaydediliyor...")
-                          : row.status === "ACTIVE"
-                          ? "INACTIVE"
-                          : "ACTIVE"}
-                      </button>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          disabled={!canWrite || saving === "mapping"}
+                          onClick={() => handleEditMapping(row)}
+                          className="rounded border border-cyan-300 bg-cyan-50 px-2 py-1 text-[11px] font-semibold text-cyan-800 disabled:opacity-50"
+                        >
+                          {rowEditing ? l("Editing", "Duzenleniyor") : l("Edit", "Duzenle")}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={!canWrite || rowSaving || saving === "mapping"}
+                          onClick={() => onToggleStatus("mapping", row)}
+                          className="rounded border border-slate-300 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 disabled:opacity-50"
+                        >
+                          {rowSaving
+                            ? l("Saving...", "Kaydediliyor...")
+                            : row.status === "ACTIVE"
+                            ? "INACTIVE"
+                            : "ACTIVE"}
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 );

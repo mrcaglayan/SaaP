@@ -102,6 +102,14 @@ import migration111CashRegisterOwnershipScope from "./m111_cash_register_ownersh
 import migration112OperatingUnitPartnerCurrentAccounts from "./m112_operating_unit_partner_current_accounts.js";
 import migration113TaxRuleThresholdAmount from "./m113_tax_rule_threshold_amount.js";
 import migration114ConsolidationCanonicalSavedRules from "./m114_consolidation_canonical_saved_rules.js";
+import migration115CariDocumentLinesFoundation from "./m115_cari_document_lines_foundation.js";
+import migration116ItemCardsFoundation from "./m116_item_cards_foundation.js";
+import migration117CariDocumentLineStockLinks from "./m117_cari_document_line_stock_links.js";
+import migration118InventoryFoundation from "./m118_inventory_foundation.js";
+import migration119InventoryIssueLayerConsumptions from "./m119_inventory_issue_layer_consumptions.js";
+import migration120InventoryIssueJournalPosting from "./m120_inventory_issue_journal_posting.js";
+import migration121CariStockLinkSuccessorLineage from "./m121_cari_stock_link_successor_lineage.js";
+import migration122InventoryMovementReversalLineage from "./m122_inventory_movement_reversal_lineage.js";
 
 const migrations = [
   migration001GlobalMultiEntity,
@@ -208,6 +216,14 @@ const migrations = [
   migration112OperatingUnitPartnerCurrentAccounts,
   migration113TaxRuleThresholdAmount,
   migration114ConsolidationCanonicalSavedRules,
+  migration115CariDocumentLinesFoundation,
+  migration116ItemCardsFoundation,
+  migration117CariDocumentLineStockLinks,
+  migration118InventoryFoundation,
+  migration119InventoryIssueLayerConsumptions,
+  migration120InventoryIssueJournalPosting,
+  migration121CariStockLinkSuccessorLineage,
+  migration122InventoryMovementReversalLineage,
 ];
 
 export default migrations;

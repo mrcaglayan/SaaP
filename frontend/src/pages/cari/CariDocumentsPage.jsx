@@ -28,9 +28,11 @@ import {
 import { listCariPaymentTerms } from "../../api/cariPaymentTerms.js";
 import { getCariCounterpartyStatementReport } from "../../api/cariReports.js";
 import { getJournal, listAccounts } from "../../api/glAdmin.js";
+import { listItemCards } from "../../api/itemCards.js";
 import { listExceptionWorkbench } from "../../api/exceptionsWorkbench.js";
 import { listOperatingUnits } from "../../api/orgAdmin.js";
 import { listCariAudit } from "../../api/cariAudit.js";
+import { listTaxRules, previewTaxComputation } from "../../api/taxAdmin.js";
 import {
   createMeSavedView,
   deleteMeSavedView,
@@ -58,8 +60,12 @@ import { exportRowsAsCsv } from "../../utils/csvExport.js";
 import {
   buildDocumentListQuery,
   buildDocumentMutationPayload,
+  createDocumentLineDraft,
+  DOCUMENT_LINE_KINDS,
   DOCUMENT_DIRECTIONS,
+  getDocumentLineTotals,
   DOCUMENT_STATUSES,
+  normalizeDocumentFormLines,
   DOCUMENT_TYPES,
   getDocumentFxComputation,
   mapDocumentRowToForm,
@@ -109,6 +115,7 @@ const DOCUMENT_SAVED_VIEW_MODULE_CODE = "CARI_DOCUMENTS_LIST";
 const DOCUMENT_DRAFT_TEMPLATE_MODULE_CODE = "CARI_DOCUMENT_DRAFT_TEMPLATES";
 const DOCUMENT_TABLE_DEFAULT_ROWS_PER_PAGE = 50;
 const DOCUMENT_TABLE_ROWS_PER_PAGE_OPTIONS = [25, 50, 100, 200];
+const INVENTORY_MOVEMENTS_ROUTE = "/app/stok-yansitma-islemleri";
 const DOCUMENT_RECURRING_TEMPLATE_CADENCES = [
   "NONE",
   "WEEKLY",
@@ -185,6 +192,20 @@ function normalizeText(value) {
   return String(value || "").trim();
 }
 
+function buildInventoryMovementLink(legalEntityId, movementId = null) {
+  const params = new URLSearchParams();
+  const normalizedLegalEntityId = normalizePositiveIntText(legalEntityId);
+  const normalizedMovementId = normalizePositiveIntText(movementId);
+  if (normalizedLegalEntityId) {
+    params.set("legalEntityId", normalizedLegalEntityId);
+  }
+  if (normalizedMovementId) {
+    params.set("movementId", normalizedMovementId);
+  }
+  const query = params.toString();
+  return query ? `${INVENTORY_MOVEMENTS_ROUTE}?${query}` : INVENTORY_MOVEMENTS_ROUTE;
+}
+
 const INTERNAL_COMMENT_MENTION_REGEX = /(^|[\s(])@([A-Za-z0-9._%+\-@]*)$/;
 
 function getInternalCommentMentionDraft(value, selectionStart) {
@@ -257,6 +278,138 @@ function createPostingLineDraft(seed = {}) {
   };
 }
 
+function mapPostableAccountRows(responseRows = []) {
+  return (Array.isArray(responseRows) ? responseRows : [])
+    .filter((row) => {
+      const isActive = row?.is_active === true || Number(row?.is_active) === 1;
+      const allowPosting = row?.allow_posting === true || Number(row?.allow_posting) === 1;
+      return isActive && allowPosting;
+    })
+    .map((row) => ({
+      id: Number(row?.id || 0),
+      code: String(row?.code || "").trim(),
+      name: String(row?.name || "").trim(),
+      accountType: String(row?.account_type || "").trim().toUpperCase(),
+    }))
+    .filter((row) => row.id > 0 && row.code)
+    .sort((left, right) =>
+      String(left.code || "").localeCompare(String(right.code || ""), undefined, {
+        numeric: true,
+        sensitivity: "base",
+      })
+    );
+}
+
+function extendAccountOptionsForSelectedLines(options, lines) {
+  const normalizedOptions = Array.isArray(options) ? [...options] : [];
+  const knownIds = new Set(
+    normalizedOptions
+      .map((row) => Number(row?.id || 0))
+      .filter((id) => Number.isInteger(id) && id > 0)
+  );
+  const selectedIds = (Array.isArray(lines) ? lines : [])
+    .map((line) => Number(line?.postingAccountId || 0))
+    .filter((id) => Number.isInteger(id) && id > 0);
+  selectedIds.forEach((id) => {
+    if (!knownIds.has(id)) {
+      normalizedOptions.unshift({
+        id,
+        code: `#${id}`,
+        name: "Selected account is outside current lookup scope.",
+        accountType: "",
+      });
+      knownIds.add(id);
+    }
+  });
+  return normalizedOptions;
+}
+
+function mapItemCardLookupOptions(rows = []) {
+  return (Array.isArray(rows) ? rows : [])
+    .map((row) => {
+      const value = String(toPositiveInt(row?.id) || "").trim();
+      if (!value) {
+        return null;
+      }
+      const code = normalizeText(row?.code);
+      const name = normalizeText(row?.name);
+      const itemType = normalizeText(row?.itemType || row?.item_type);
+      return {
+        value,
+        label:
+          code && name
+            ? `${code} - ${name}`
+            : code || name || `Item card #${value}`,
+        description: itemType || undefined,
+      };
+    })
+    .filter(Boolean);
+}
+
+function extendItemCardOptionsForSelectedLines(options, lines) {
+  const normalizedOptions = Array.isArray(options) ? [...options] : [];
+  const knownValues = new Set(
+    normalizedOptions.map((row) => String(row?.value || "").trim()).filter(Boolean)
+  );
+  const selectedIds = (Array.isArray(lines) ? lines : [])
+    .map((line) => String(line?.itemCardId || "").trim())
+    .filter(Boolean);
+  selectedIds.forEach((value) => {
+    if (!knownValues.has(value)) {
+      normalizedOptions.unshift({
+        value,
+        label: `Item card #${value}`,
+        description: "Selected value is outside current lookup scope.",
+      });
+      knownValues.add(value);
+    }
+  });
+  return normalizedOptions;
+}
+
+function resolveLineDefaultsFromItemCard(itemCard, direction) {
+  const normalizedDirection = normalizeDirection(direction);
+  const itemType = normalizeText(itemCard?.itemType || itemCard?.item_type).toUpperCase();
+  const isStockItem = itemType === "STOCK_ITEM";
+  const postingAccountId =
+    normalizedDirection === "AP"
+      ? itemCard?.inventoryAssetAccountId ||
+        itemCard?.inventory_asset_account_id ||
+        itemCard?.defaultPurchaseAccountId ||
+        itemCard?.default_purchase_account_id ||
+        ""
+      : itemCard?.defaultSalesAccountId ||
+        itemCard?.default_sales_account_id ||
+        "";
+  const stockImpactMode = isStockItem
+    ? normalizedDirection === "AP"
+      ? "RECEIPT_PENDING"
+      : normalizedDirection === "AR"
+        ? "ISSUE_PENDING"
+        : "NONE"
+    : "NONE";
+  return {
+    itemCardId: String(toPositiveInt(itemCard?.id) || "").trim(),
+    description: normalizeText(itemCard?.name),
+    postingAccountId: String(toPositiveInt(postingAccountId) || "").trim(),
+    taxCategoryCode: normalizeText(
+      itemCard?.taxCategoryCode || itemCard?.tax_category_code
+    ).toUpperCase(),
+    stockImpactMode,
+  };
+}
+
+function resetDocumentLineTaxPreview(seed = {}) {
+  return createDocumentLineDraft({
+    ...seed,
+    lineTaxAmountTxn: 0,
+    taxes: [],
+    previewStatus: seed?.taxCategoryCode ? "STALE" : "",
+    previewError: "",
+    previewUpdatedAt: "",
+  });
+}
+
 function buildInitialPostForm(snapshot = null) {
   const documentId = toPositiveInt(snapshot?.id);
   const amountTxn = normalizeOptionalDecimalText(
@@ -279,6 +432,11 @@ function buildInitialPostForm(snapshot = null) {
       }),
     ],
   };
+}
+
+function documentUsesStoredLineTaxes(snapshot = null) {
+  const lines = Array.isArray(snapshot?.lines) ? snapshot.lines : [];
+  return lines.some((line) => Array.isArray(line?.taxes) && line.taxes.length > 0);
 }
 
 function normalizeRecurringCadence(value) {
@@ -329,6 +487,9 @@ function buildTemplateSafeDraftForm(input = {}) {
     amountBase: normalizeOptionalDecimalText(input?.amountBase),
     currencyCode: normalizeCurrencyCode(input?.currencyCode) || baseline.currencyCode,
     fxRate: normalizeOptionalDecimalText(input?.fxRate),
+    lines: normalizeDocumentFormLines(input?.lines, {
+      amountTxn: input?.amountTxn,
+    }),
   };
   return { ...baseline, ...next };
 }
@@ -394,6 +555,7 @@ function buildCloneDraftFormFromRow(row, fallbackForm) {
       "currency_code_snapshot"
     ),
     fxRate: firstDefinedRowValue(row, "fxRate", "fx_rate", "fxRateSnapshot", "fx_rate_snapshot"),
+    lines: Array.isArray(row?.lines) ? row.lines : undefined,
   };
   const nextForm = buildTemplateSafeDraftForm(sourceForm);
   if (!nextForm.dueDate && requiresDueDate(nextForm.documentType)) {
@@ -471,6 +633,7 @@ function createInitialDraftForm() {
     amountBase: "",
     currencyCode: "USD",
     fxRate: "",
+    lines: [createDocumentLineDraft()],
   };
 }
 
@@ -478,6 +641,74 @@ function normalizeApiError(error, fallback = "Operation failed.") {
   const message = String(error?.response?.data?.message || error?.message || fallback).trim();
   const requestId = String(error?.response?.data?.requestId || "").trim();
   return requestId ? `${message} (requestId: ${requestId})` : message || fallback;
+}
+
+function buildTaxCategoryOptions(ruleRows = [], legalEntityId, lines = []) {
+  const selectedLegalEntityId = toPositiveInt(legalEntityId);
+  const values = new Set();
+
+  for (const row of Array.isArray(ruleRows) ? ruleRows : []) {
+    const taxCategoryCode = normalizeText(row?.taxCategoryCode).toUpperCase();
+    if (!taxCategoryCode) {
+      continue;
+    }
+    const regimeLegalEntityId = toPositiveInt(row?.regimeLegalEntityId);
+    if (
+      selectedLegalEntityId &&
+      regimeLegalEntityId &&
+      regimeLegalEntityId !== selectedLegalEntityId
+    ) {
+      continue;
+    }
+    values.add(taxCategoryCode);
+  }
+
+  for (const line of Array.isArray(lines) ? lines : []) {
+    const taxCategoryCode = normalizeText(line?.taxCategoryCode).toUpperCase();
+    if (taxCategoryCode) {
+      values.add(taxCategoryCode);
+    }
+  }
+
+  return Array.from(values)
+    .sort((left, right) =>
+      left.localeCompare(right, undefined, {
+        numeric: true,
+        sensitivity: "base",
+      })
+    )
+    .map((value) => ({ value, label: value }));
+}
+
+function normalizeInventoryReverseBlocks(error) {
+  const rows =
+    error?.response?.data?.details?.inventoryBlocks ??
+    error?.details?.inventoryBlocks ??
+    [];
+  if (!Array.isArray(rows)) {
+    return [];
+  }
+  return rows.map((row) => ({
+    stockLinkId: toPositiveInt(row?.stockLinkId),
+    documentLineId: toPositiveInt(row?.documentLineId),
+    documentLineNo: Number(row?.documentLineNo || 0),
+    stockImpactMode: normalizeText(row?.stockImpactMode).toUpperCase(),
+    linkStatus: normalizeText(row?.linkStatus).toUpperCase(),
+    inventoryMovementId: toPositiveInt(row?.inventoryMovementId),
+    inventoryMovementType: normalizeText(row?.inventoryMovementType).toUpperCase(),
+    inventoryValuationStatus: normalizeText(row?.inventoryValuationStatus).toUpperCase(),
+    inventoryMovementDate: normalizeText(row?.inventoryMovementDate),
+    warehouseCode: normalizeText(row?.warehouseCode),
+    warehouseName: normalizeText(row?.warehouseName),
+    itemCardCode: normalizeText(row?.itemCardCode),
+    itemCardName: normalizeText(row?.itemCardName),
+    requestedQuantity:
+      row?.requestedQuantity === null || row?.requestedQuantity === undefined
+        ? null
+        : Number(row.requestedQuantity),
+    suggestedActionCode: normalizeText(row?.suggestedActionCode).toUpperCase(),
+    suggestedActionMessage: normalizeText(row?.suggestedActionMessage),
+  }));
 }
 
 function formatDateTime(value) {
@@ -520,6 +751,457 @@ function resolveCounterpartyRoleFromDirection(direction) {
   if (normalized === "AR") return "CUSTOMER";
   if (normalized === "AP") return "VENDOR";
   return undefined;
+}
+
+function DocumentLineWorkbench({
+  l,
+  title,
+  form,
+  saving,
+  gridSpanClass = "md:col-span-4",
+  currencyCode,
+  functionalCurrencyCode,
+  fxComputation,
+  canReadGlAccounts,
+  lineAccountOptions,
+  lineAccountsLoading,
+  lineAccountsError,
+  itemCardOptions,
+  itemCardsLoading,
+  itemCardsError,
+  taxCategoryOptions,
+  taxCategoryLoading,
+  taxCategoryError,
+  previewLoading,
+  previewError,
+  previewMessage,
+  onAddLine,
+  onRemoveLine,
+  onMoveLine,
+  onPatchLine,
+  onPatchTaxSensitiveLine,
+  onSelectItemCard,
+  onPreviewAll,
+  onPreviewRow,
+}) {
+  const lines = Array.isArray(form?.lines) ? form.lines.map((row) => createDocumentLineDraft(row)) : [];
+  const totals = fxComputation?.lineTotals || getDocumentLineTotals(lines);
+  const resolvedAmountBaseText = normalizeOptionalDecimalText(
+    fxComputation?.resolvedAmountBase
+  );
+  const resolvedAmountTxnText = normalizeOptionalDecimalText(
+    fxComputation?.resolvedAmountTxn
+  );
+
+  return (
+    <div className={`${gridSpanClass} rounded-md border border-slate-200 bg-slate-50 px-3 py-3`}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-700">
+            {title}
+          </p>
+          <p className="mt-1 text-xs text-slate-600">
+            {l(
+              "Net is derived from quantity x unit price. Refresh tax preview after changing tax-sensitive fields.",
+              "Net tutar miktar x birim fiyattan turetilir. Vergiyle ilgili alanlar degisirse vergi onizlemesini yenileyin."
+            )}
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 disabled:opacity-60"
+            onClick={onPreviewAll}
+            disabled={saving || previewLoading || lines.length === 0}
+          >
+            {previewLoading
+              ? l("Refreshing taxes...", "Vergiler yenileniyor...")
+              : l("Preview all line taxes", "Tum satir vergilerini onizle")}
+          </button>
+          <button
+            type="button"
+            className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 disabled:opacity-60"
+            onClick={onAddLine}
+            disabled={saving}
+          >
+            {l("Add line", "Satir ekle")}
+          </button>
+        </div>
+      </div>
+
+      {lineAccountsLoading ? (
+        <p className="mt-2 text-xs text-slate-600">
+          {l(
+            "Loading postable accounts for lines...",
+            "Satirlar icin kaydedilebilir hesaplar yukleniyor..."
+          )}
+        </p>
+      ) : null}
+      {lineAccountsError ? (
+        <p className="mt-2 text-xs text-amber-700">{lineAccountsError}</p>
+      ) : null}
+      {itemCardsLoading ? (
+        <p className="mt-2 text-xs text-slate-600">
+          {l("Loading item cards...", "Urun kartlari yukleniyor...")}
+        </p>
+      ) : null}
+      {itemCardsError ? <p className="mt-2 text-xs text-amber-700">{itemCardsError}</p> : null}
+      {taxCategoryLoading ? (
+        <p className="mt-2 text-xs text-slate-600">
+          {l("Loading tax categories...", "Vergi kategorileri yukleniyor...")}
+        </p>
+      ) : null}
+      {taxCategoryError ? (
+        <p className="mt-2 text-xs text-amber-700">{taxCategoryError}</p>
+      ) : null}
+      {previewError ? <p className="mt-2 text-xs text-rose-700">{previewError}</p> : null}
+      {previewMessage ? (
+        <p className="mt-2 text-xs text-emerald-700">{previewMessage}</p>
+      ) : null}
+
+      <div className="mt-3 space-y-3">
+        {lines.map((line, index) => {
+          const lineCurrencyCode = normalizeCurrencyCode(currencyCode) || currencyCode || "USD";
+          const hasTaxCategory = Boolean(normalizeText(line.taxCategoryCode));
+          const previewStatus = normalizeText(line.previewStatus).toUpperCase();
+          const previewReady =
+            previewStatus === "READY" ||
+            (Array.isArray(line.taxes) && line.taxes.length > 0) ||
+            (hasTaxCategory && Number(line.lineTaxAmountTxn || 0) > 0);
+
+          return (
+            <div
+              key={line.rowId}
+              className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-sm font-semibold text-slate-800">
+                  {l("Line", "Satir")} {index + 1}
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className="rounded border border-slate-300 px-2 py-1 text-[11px] font-semibold text-slate-700 disabled:opacity-60"
+                    onClick={() => onMoveLine(line.rowId, -1)}
+                    disabled={saving || index === 0}
+                  >
+                    {l("Move up", "Yukari al")}
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded border border-slate-300 px-2 py-1 text-[11px] font-semibold text-slate-700 disabled:opacity-60"
+                    onClick={() => onMoveLine(line.rowId, 1)}
+                    disabled={saving || index === lines.length - 1}
+                  >
+                    {l("Move down", "Asagi al")}
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded border border-cyan-300 px-2 py-1 text-[11px] font-semibold text-cyan-800 disabled:opacity-60"
+                    onClick={() => onPreviewRow(line.rowId)}
+                    disabled={saving || previewLoading || !hasTaxCategory}
+                  >
+                    {l("Preview tax", "Vergiyi onizle")}
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded border border-rose-300 px-2 py-1 text-[11px] font-semibold text-rose-700 disabled:opacity-60"
+                    onClick={() => onRemoveLine(line.rowId)}
+                    disabled={saving || lines.length <= 1}
+                  >
+                    {l("Remove", "Kaldir")}
+                  </button>
+                </div>
+              </div>
+
+              <div className="mt-3 grid gap-3 md:grid-cols-4">
+                <label className="text-xs font-semibold uppercase tracking-wide text-slate-600 md:col-span-2">
+                  {l("Description", "Aciklama")}
+                  <input
+                    type="text"
+                    className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                    value={line.description}
+                    onChange={(event) =>
+                      onPatchLine(line.rowId, { description: event.target.value })
+                    }
+                    disabled={saving}
+                  />
+                </label>
+                <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                  {l("Line Kind", "Satir Turu")}
+                  <select
+                    className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                    value={line.lineKind}
+                    onChange={(event) =>
+                      onPatchTaxSensitiveLine(line.rowId, {
+                        lineKind: event.target.value,
+                      })
+                    }
+                    disabled={saving}
+                  >
+                    {DOCUMENT_LINE_KINDS.map((lineKind) => (
+                      <option key={`line-kind-${line.rowId}-${lineKind}`} value={lineKind}>
+                        {lineKind}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                  <label className="block">
+                    {l("Item Card (optional)", "Urun Karti (opsiyonel)")}
+                    <Combobox
+                      className="mt-1"
+                      value={line.itemCardId}
+                      options={itemCardOptions}
+                      loading={itemCardsLoading}
+                      disabled={saving}
+                      placeholder={l("Search item card", "Urun karti ara")}
+                      noOptionsText={l("No item cards found.", "Urun karti bulunamadi.")}
+                      onChange={(nextValue) => onSelectItemCard(line.rowId, nextValue)}
+                    />
+                  </label>
+                </div>
+                <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                  {l("Quantity", "Miktar")}
+                  <input
+                    type="number"
+                    min="0.000001"
+                    step="0.000001"
+                    className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                    value={line.quantity}
+                    onChange={(event) =>
+                      onPatchTaxSensitiveLine(line.rowId, {
+                        quantity: event.target.value,
+                      })
+                    }
+                    disabled={saving}
+                  />
+                </label>
+                <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                  {l("Unit Price", "Birim Fiyat")}
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.000001"
+                    className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                    value={line.unitPriceTxn}
+                    onChange={(event) =>
+                      onPatchTaxSensitiveLine(line.rowId, {
+                        unitPriceTxn: event.target.value,
+                      })
+                    }
+                    disabled={saving}
+                  />
+                </label>
+                <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                  {l("Tax Category", "Vergi Kategorisi")}
+                  {taxCategoryOptions.length > 0 ? (
+                    <select
+                      className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                      value={line.taxCategoryCode}
+                      onChange={(event) =>
+                        onPatchTaxSensitiveLine(line.rowId, {
+                          taxCategoryCode: event.target.value,
+                        })
+                      }
+                      disabled={saving || taxCategoryLoading}
+                    >
+                      <option value="">{l("Optional", "Opsiyonel")}</option>
+                      {taxCategoryOptions.map((option) => (
+                        <option
+                          key={`line-tax-category-${line.rowId}-${option.value}`}
+                          value={option.value}
+                        >
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      type="text"
+                      maxLength={60}
+                      className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal uppercase"
+                      value={line.taxCategoryCode}
+                      onChange={(event) =>
+                        onPatchTaxSensitiveLine(line.rowId, {
+                          taxCategoryCode: event.target.value,
+                        })
+                      }
+                      disabled={saving}
+                      placeholder={l("Optional", "Opsiyonel")}
+                    />
+                  )}
+                </label>
+                {canReadGlAccounts ? (
+                  <label className="text-xs font-semibold uppercase tracking-wide text-slate-600 md:col-span-2">
+                    {l("Posting Account (optional)", "Kayit Hesabi (opsiyonel)")}
+                    <select
+                      className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                      value={line.postingAccountId}
+                      onChange={(event) =>
+                        onPatchLine(line.rowId, {
+                          postingAccountId: event.target.value,
+                        })
+                      }
+                      disabled={saving || lineAccountsLoading}
+                    >
+                      <option value="">
+                        {l(
+                          "Use purpose/default mapping",
+                          "Amac/varsayilan eslemeyi kullan"
+                        )}
+                      </option>
+                      {lineAccountOptions.map((row) => (
+                        <option key={`line-account-${line.rowId}-${row.id}`} value={String(row.id)}>
+                          {row.code} - {row.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ) : (
+                  <label className="text-xs font-semibold uppercase tracking-wide text-slate-600 md:col-span-2">
+                    {l("Posting Account ID (optional)", "Kayit Hesabi ID (opsiyonel)")}
+                    <input
+                      type="number"
+                      min="1"
+                      className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+                      value={line.postingAccountId}
+                      onChange={(event) =>
+                        onPatchLine(line.rowId, {
+                          postingAccountId: event.target.value,
+                        })
+                      }
+                      disabled={saving}
+                    />
+                  </label>
+                )}
+              </div>
+
+              <div className="mt-3 grid gap-3 md:grid-cols-3">
+                <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                    {l("Net", "Net")}
+                  </p>
+                  <MoneyText
+                    amount={line.lineNetAmountTxn}
+                    currencyCode={lineCurrencyCode}
+                    className="mt-1 text-sm font-semibold text-slate-800"
+                  />
+                </div>
+                <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                    {l("Tax", "Vergi")}
+                  </p>
+                  <MoneyText
+                    amount={line.lineTaxAmountTxn}
+                    currencyCode={lineCurrencyCode}
+                    className="mt-1 text-sm font-semibold text-slate-800"
+                  />
+                </div>
+                <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                    {l("Gross", "Brut")}
+                  </p>
+                  <MoneyText
+                    amount={line.lineGrossAmountTxn}
+                    currencyCode={lineCurrencyCode}
+                    className="mt-1 text-sm font-semibold text-slate-800"
+                  />
+                </div>
+              </div>
+              <div className="mt-2 flex flex-wrap gap-3 text-[11px] text-slate-500">
+                <span>
+                  {l("Stock impact", "Stok etkisi")}: {line.stockImpactMode || "NONE"}
+                </span>
+                <span>
+                  {l("Item card", "Urun karti")}: {line.itemCardId || "-"}
+                </span>
+              </div>
+
+              {line.previewError ? (
+                <p className="mt-2 text-xs text-rose-700">{line.previewError}</p>
+              ) : null}
+              {!line.previewError && hasTaxCategory && !previewReady ? (
+                <p className="mt-2 text-xs text-amber-700">
+                  {l(
+                    "Tax category is set. Refresh preview to update invoice totals before saving.",
+                    "Vergi kategorisi secili. Kaydetmeden once fatura toplamlarini guncellemek icin onizlemeyi yenileyin."
+                  )}
+                </p>
+              ) : null}
+              {previewReady && Array.isArray(line.taxes) && line.taxes.length > 0 ? (
+                <div className="mt-2 rounded-md border border-cyan-200 bg-cyan-50 px-3 py-2">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-cyan-800">
+                    {l("Tax preview", "Vergi onizlemesi")}
+                  </p>
+                  <ul className="mt-2 space-y-1 text-xs text-cyan-950">
+                    {line.taxes.map((taxRow, taxIndex) => (
+                      <li key={`line-tax-${line.rowId}-${taxRow.componentNo || taxIndex}`}>
+                        {(taxRow.taxCode || l("Tax", "Vergi"))} | {taxRow.ratePct ?? 0}% |{" "}
+                        <MoneyText
+                          amount={taxRow.taxAmountTxn}
+                          currencyCode={lineCurrencyCode}
+                          className="inline"
+                        />
+                        {taxRow.taxPurposeCode ? ` | ${taxRow.taxPurposeCode}` : ""}
+                        {taxRow.accountId ? ` | account #${taxRow.accountId}` : ""}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="mt-4 grid gap-3 md:grid-cols-4">
+        <div className="rounded-md border border-slate-200 bg-white px-3 py-2">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+            {l("Subtotal", "Ara Toplam")}
+          </p>
+          <MoneyText
+            amount={totals.netAmountTxn}
+            currencyCode={normalizeCurrencyCode(currencyCode) || currencyCode || "USD"}
+            className="mt-1 text-sm font-semibold text-slate-800"
+          />
+        </div>
+        <div className="rounded-md border border-slate-200 bg-white px-3 py-2">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+            {l("Tax Total", "Vergi Toplami")}
+          </p>
+          <MoneyText
+            amount={totals.taxAmountTxn}
+            currencyCode={normalizeCurrencyCode(currencyCode) || currencyCode || "USD"}
+            className="mt-1 text-sm font-semibold text-slate-800"
+          />
+        </div>
+        <div className="rounded-md border border-slate-200 bg-white px-3 py-2">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+            {l("Gross Total", "Brut Toplam")}
+          </p>
+          <MoneyText
+            amount={totals.grossAmountTxn}
+            currencyCode={normalizeCurrencyCode(currencyCode) || currencyCode || "USD"}
+            className="mt-1 text-sm font-semibold text-slate-800"
+          />
+        </div>
+        <div className="rounded-md border border-slate-200 bg-white px-3 py-2">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+            {l("Base Total", "Baz Toplam")}
+          </p>
+          <p className="mt-1 text-sm font-semibold text-slate-800">
+            {resolvedAmountBaseText || "-"} {functionalCurrencyCode || ""}
+          </p>
+        </div>
+      </div>
+
+      <p className="mt-2 text-[11px] text-slate-500">
+        {l("Derived invoice total:", "Turetilmis fatura toplami:")}{" "}
+        {resolvedAmountTxnText || "-"} {normalizeCurrencyCode(currencyCode) || currencyCode || ""}
+      </p>
+    </div>
+  );
 }
 
 function normalizeDirection(value) {
@@ -865,6 +1547,7 @@ export default function CariDocumentsPage() {
   const canReadReports = hasPermission("cari.report.read");
   const canReadCards = hasPermission("cari.card.read");
   const canUpsertCards = hasPermission("cari.card.upsert");
+  const canReadItemCards = hasPermission("item.card.read");
   const canReadGlJournals = hasPermission("gl.journal.read");
   const canReadGlAccounts = hasPermission("gl.account.read");
   const canReadExceptions = hasPermission("ops.exceptions.read");
@@ -902,6 +1585,18 @@ export default function CariDocumentsPage() {
   const [createOperatingUnitOptions, setCreateOperatingUnitOptions] = useState([]);
   const [createOperatingUnitsLoading, setCreateOperatingUnitsLoading] = useState(false);
   const [createOperatingUnitsError, setCreateOperatingUnitsError] = useState("");
+  const [createLineAccountRows, setCreateLineAccountRows] = useState([]);
+  const [createLineAccountsLoading, setCreateLineAccountsLoading] = useState(false);
+  const [createLineAccountsError, setCreateLineAccountsError] = useState("");
+  const [createItemCardRows, setCreateItemCardRows] = useState([]);
+  const [createItemCardsLoading, setCreateItemCardsLoading] = useState(false);
+  const [createItemCardsError, setCreateItemCardsError] = useState("");
+  const [taxRuleRows, setTaxRuleRows] = useState([]);
+  const [taxCategoryLoading, setTaxCategoryLoading] = useState(false);
+  const [taxCategoryError, setTaxCategoryError] = useState("");
+  const [createLinePreviewLoading, setCreateLinePreviewLoading] = useState(false);
+  const [createLinePreviewError, setCreateLinePreviewError] = useState("");
+  const [createLinePreviewMessage, setCreateLinePreviewMessage] = useState("");
   const [createInlineCounterpartySaving, setCreateInlineCounterpartySaving] = useState(false);
   const [createInlineCounterpartyError, setCreateInlineCounterpartyError] = useState("");
   const [createInlineCounterpartyMessage, setCreateInlineCounterpartyMessage] = useState("");
@@ -934,6 +1629,15 @@ export default function CariDocumentsPage() {
   const [editOperatingUnitOptions, setEditOperatingUnitOptions] = useState([]);
   const [editOperatingUnitsLoading, setEditOperatingUnitsLoading] = useState(false);
   const [editOperatingUnitsError, setEditOperatingUnitsError] = useState("");
+  const [editLineAccountRows, setEditLineAccountRows] = useState([]);
+  const [editLineAccountsLoading, setEditLineAccountsLoading] = useState(false);
+  const [editLineAccountsError, setEditLineAccountsError] = useState("");
+  const [editItemCardRows, setEditItemCardRows] = useState([]);
+  const [editItemCardsLoading, setEditItemCardsLoading] = useState(false);
+  const [editItemCardsError, setEditItemCardsError] = useState("");
+  const [editLinePreviewLoading, setEditLinePreviewLoading] = useState(false);
+  const [editLinePreviewError, setEditLinePreviewError] = useState("");
+  const [editLinePreviewMessage, setEditLinePreviewMessage] = useState("");
   const [editInlineCounterpartySaving, setEditInlineCounterpartySaving] = useState(false);
   const [editInlineCounterpartyError, setEditInlineCounterpartyError] = useState("");
   const [editInlineCounterpartyMessage, setEditInlineCounterpartyMessage] = useState("");
@@ -956,6 +1660,7 @@ export default function CariDocumentsPage() {
   const [reverseError, setReverseError] = useState("");
   const [reverseMessage, setReverseMessage] = useState("");
   const [reverseResult, setReverseResult] = useState(null);
+  const [reverseInventoryBlocks, setReverseInventoryBlocks] = useState([]);
   const [linkedCashRows, setLinkedCashRows] = useState([]);
   const [linkedCashLoading, setLinkedCashLoading] = useState(false);
   const [linkedCashError, setLinkedCashError] = useState("");
@@ -1375,6 +2080,65 @@ export default function CariDocumentsPage() {
   const selectedDocumentAmountBase = toPositiveDecimal(
     selectedSnapshot?.amountBase ?? selectedSnapshot?.amount_base
   );
+  const selectedDetailForPosting = useMemo(() => {
+    const activeDocumentId = toPositiveInt(selectedDocumentId);
+    const loadedDetailId = toPositiveInt(selectedDetail?.id);
+    if (!activeDocumentId || !loadedDetailId || activeDocumentId !== loadedDetailId) {
+      return null;
+    }
+    return selectedDetail;
+  }, [selectedDetail, selectedDocumentId]);
+  const selectedDocumentPostingRulesReady = !toPositiveInt(selectedDocumentId) || Boolean(
+    selectedDetailForPosting
+  );
+  const selectedDocumentUsesStoredTaxesForPosting = useMemo(
+    () => documentUsesStoredLineTaxes(selectedDetailForPosting),
+    [selectedDetailForPosting]
+  );
+  const reverseInventoryBlockSummary = useMemo(() => {
+    const issueCount = reverseInventoryBlocks.filter(
+      (row) => String(row?.inventoryMovementType || "").trim().toUpperCase() === "ISSUE"
+    ).length;
+    const receiptCount = reverseInventoryBlocks.filter(
+      (row) => String(row?.inventoryMovementType || "").trim().toUpperCase() === "RECEIPT"
+    ).length;
+    const stepMessages = [];
+    if (issueCount > 0) {
+      stepMessages.push(
+        l(
+          "Reverse the linked valued issue movement first in Inventory Movements.",
+          "Stok Hareketleri ekraninda once bagli degerlenmis cikis hareketini tersleyin."
+        )
+      );
+      stepMessages.push(
+        l(
+          "If stock still needs to leave after correction, rematerialize the reopened successor pending stock link.",
+          "Duzeltmeden sonra stok cikisi hala gerekiyorsa yeniden acilan ardil bekleyen stok baglantisini tekrar yansitin."
+        )
+      );
+    }
+    if (receiptCount > 0) {
+      stepMessages.push(
+        l(
+          "Undo the linked materialized receipt only when no later issue chronology still depends on it.",
+          "Bagli gerceklestirilmis alimi yalnizca daha sonraki cikis kronolojisi hala buna bagli degilse geri alin."
+        )
+      );
+    }
+    if (reverseInventoryBlocks.length > 0) {
+      stepMessages.push(
+        l(
+          "Use the inventory movement links below, then retry the document reverse.",
+          "Asagidaki stok hareketi baglantilarini kullanin, sonra belge ters kaydini tekrar deneyin."
+        )
+      );
+    }
+    return {
+      issueCount,
+      receiptCount,
+      stepMessages,
+    };
+  }, [l, reverseInventoryBlocks]);
   const postFormPostingLineSummary = useMemo(() => {
     const rows = Array.isArray(postForm.postingLines) ? postForm.postingLines : [];
     let totalTxn = 0;
@@ -1580,6 +2344,56 @@ export default function CariDocumentsPage() {
     editForm.amountBase,
     editFunctionalCurrencyCode,
   ]);
+  const createLineAccountOptions = useMemo(
+    () => extendAccountOptionsForSelectedLines(createLineAccountRows, createForm.lines),
+    [createForm.lines, createLineAccountRows]
+  );
+  const editLineAccountOptions = useMemo(
+    () => extendAccountOptionsForSelectedLines(editLineAccountRows, editForm.lines),
+    [editForm.lines, editLineAccountRows]
+  );
+  const createItemCardOptions = useMemo(
+    () =>
+      extendItemCardOptionsForSelectedLines(
+        mapItemCardLookupOptions(createItemCardRows),
+        createForm.lines
+      ),
+    [createForm.lines, createItemCardRows]
+  );
+  const createTaxCategoryOptions = useMemo(
+    () => buildTaxCategoryOptions(taxRuleRows, createForm.legalEntityId, createForm.lines),
+    [createForm.legalEntityId, createForm.lines, taxRuleRows]
+  );
+  const editItemCardOptions = useMemo(
+    () =>
+      extendItemCardOptionsForSelectedLines(
+        mapItemCardLookupOptions(editItemCardRows),
+        editForm.lines
+      ),
+    [editForm.lines, editItemCardRows]
+  );
+  const editTaxCategoryOptions = useMemo(
+    () => buildTaxCategoryOptions(taxRuleRows, editForm.legalEntityId, editForm.lines),
+    [editForm.legalEntityId, editForm.lines, taxRuleRows]
+  );
+  const createItemCardRowsById = useMemo(
+    () =>
+      new Map(
+        (Array.isArray(createItemCardRows) ? createItemCardRows : [])
+          .map((row) => [Number(row?.id || 0), row])
+          .filter(([id]) => id > 0)
+      ),
+    [createItemCardRows]
+  );
+  const editItemCardRowsById = useMemo(
+    () =>
+      new Map(
+        (Array.isArray(editItemCardRows) ? editItemCardRows : [])
+          .map((row) => [Number(row?.id || 0), row])
+          .filter(([id]) => id > 0)
+      ),
+    [editItemCardRows]
+  );
   const createCounterpartyLookupOptions = useMemo(
     () => {
       const selectedCounterpartyId = normalizeText(createForm.counterpartyId);
@@ -1711,6 +2525,8 @@ export default function CariDocumentsPage() {
     setCreateInlineCounterpartyMessage("");
     setDraftTemplatesError("");
     setDraftTemplatesMessage("");
+    setCreateLinePreviewError("");
+    setCreateLinePreviewMessage("");
   }
 
   function applyCreateDraftFormSnapshot(nextForm) {
@@ -1721,6 +2537,122 @@ export default function CariDocumentsPage() {
     setCreateCounterpartyLookupQuery("");
     setCreateInlineCounterpartyError("");
     setCreateInlineCounterpartyMessage("");
+    setCreateLinePreviewError("");
+    setCreateLinePreviewMessage("");
+  }
+
+  function addCreateDocumentLine() {
+    setCreateLinePreviewError("");
+    setCreateLinePreviewMessage("");
+    addDraftFormLine(setCreateForm);
+  }
+
+  function removeCreateDocumentLine(rowId) {
+    setCreateLinePreviewError("");
+    setCreateLinePreviewMessage("");
+    removeDraftFormLine(setCreateForm, rowId);
+  }
+
+  function moveCreateDocumentLine(rowId, directionStep) {
+    setCreateLinePreviewError("");
+    setCreateLinePreviewMessage("");
+    moveDraftFormLine(setCreateForm, rowId, directionStep);
+  }
+
+  function patchCreateDocumentLine(rowId, patch) {
+    setCreateLinePreviewError("");
+    setCreateLinePreviewMessage("");
+    patchDraftFormLine(setCreateForm, rowId, patch);
+  }
+
+  function patchCreateDocumentLineWithTaxReset(rowId, patch) {
+    setCreateLinePreviewError("");
+    setCreateLinePreviewMessage("");
+    patchDraftFormLine(setCreateForm, rowId, patch, { resetTaxPreview: true });
+  }
+
+  function selectCreateDocumentLineItemCard(rowId, itemCardId) {
+    setCreateLinePreviewError("");
+    setCreateLinePreviewMessage("");
+    const selectedItemCard = createItemCardRowsById.get(Number(itemCardId || 0)) || null;
+    if (!selectedItemCard) {
+      patchDraftFormLine(setCreateForm, rowId, { itemCardId: "" });
+      return;
+    }
+    patchDraftFormLine(
+      setCreateForm,
+      rowId,
+      resolveLineDefaultsFromItemCard(selectedItemCard, createForm.direction),
+      { resetTaxPreview: true }
+    );
+  }
+
+  function addEditDocumentLine() {
+    setEditLinePreviewError("");
+    setEditLinePreviewMessage("");
+    addDraftFormLine(setEditForm);
+  }
+
+  function removeEditDocumentLine(rowId) {
+    setEditLinePreviewError("");
+    setEditLinePreviewMessage("");
+    removeDraftFormLine(setEditForm, rowId);
+  }
+
+  function moveEditDocumentLine(rowId, directionStep) {
+    setEditLinePreviewError("");
+    setEditLinePreviewMessage("");
+    moveDraftFormLine(setEditForm, rowId, directionStep);
+  }
+
+  function patchEditDocumentLine(rowId, patch) {
+    setEditLinePreviewError("");
+    setEditLinePreviewMessage("");
+    patchDraftFormLine(setEditForm, rowId, patch);
+  }
+
+  function patchEditDocumentLineWithTaxReset(rowId, patch) {
+    setEditLinePreviewError("");
+    setEditLinePreviewMessage("");
+    patchDraftFormLine(setEditForm, rowId, patch, { resetTaxPreview: true });
+  }
+
+  function selectEditDocumentLineItemCard(rowId, itemCardId) {
+    setEditLinePreviewError("");
+    setEditLinePreviewMessage("");
+    const selectedItemCard = editItemCardRowsById.get(Number(itemCardId || 0)) || null;
+    if (!selectedItemCard) {
+      patchDraftFormLine(setEditForm, rowId, { itemCardId: "" });
+      return;
+    }
+    patchDraftFormLine(
+      setEditForm,
+      rowId,
+      resolveLineDefaultsFromItemCard(selectedItemCard, editForm.direction),
+      { resetTaxPreview: true }
+    );
+  }
+
+  async function handleCreateDocumentLineTaxPreview(rowId = null) {
+    await runDocumentLineTaxPreview({
+      form: createForm,
+      setForm: setCreateForm,
+      setLoading: setCreateLinePreviewLoading,
+      setError: setCreateLinePreviewError,
+      setMessage: setCreateLinePreviewMessage,
+      targetRowId: rowId,
+    });
+  }
+
+  async function handleEditDocumentLineTaxPreview(rowId = null) {
+    await runDocumentLineTaxPreview({
+      form: editForm,
+      setForm: setEditForm,
+      setLoading: setEditLinePreviewLoading,
+      setError: setEditLinePreviewError,
+      setMessage: setEditLinePreviewMessage,
+      targetRowId: rowId,
+    });
   }
 
   function handleFilterDirectionChange(nextDirection) {
@@ -1792,6 +2724,259 @@ export default function CariDocumentsPage() {
     setCreateOperatingUnitsError("");
     setCreatePaymentTermsError("");
   }
+
+  function replaceDraftFormLines(setForm, transformer) {
+    setForm((previous) => {
+      const currentLines = normalizeDocumentFormLines(previous?.lines, {
+        amountTxn: previous?.amountTxn,
+      });
+      const nextLines = normalizeDocumentFormLines(transformer(currentLines), {
+        amountTxn: previous?.amountTxn,
+      });
+      return {
+        ...previous,
+        lines: nextLines,
+      };
+    });
+  }
+
+  function addDraftFormLine(setForm) {
+    replaceDraftFormLines(setForm, (currentLines) => [
+      ...currentLines,
+      createDocumentLineDraft(),
+    ]);
+  }
+
+  function removeDraftFormLine(setForm, rowId) {
+    replaceDraftFormLines(setForm, (currentLines) => {
+      if (currentLines.length <= 1) {
+        return currentLines;
+      }
+      const nextLines = currentLines.filter((row) => row?.rowId !== rowId);
+      return nextLines.length > 0 ? nextLines : currentLines;
+    });
+  }
+
+  function moveDraftFormLine(setForm, rowId, directionStep) {
+    replaceDraftFormLines(setForm, (currentLines) => {
+      const currentIndex = currentLines.findIndex((row) => row?.rowId === rowId);
+      if (currentIndex < 0) {
+        return currentLines;
+      }
+      const nextIndex = currentIndex + Number(directionStep || 0);
+      if (nextIndex < 0 || nextIndex >= currentLines.length) {
+        return currentLines;
+      }
+      const nextLines = [...currentLines];
+      const [movedRow] = nextLines.splice(currentIndex, 1);
+      nextLines.splice(nextIndex, 0, movedRow);
+      return nextLines;
+    });
+  }
+
+  function patchDraftFormLine(setForm, rowId, patch, { resetTaxPreview = false } = {}) {
+    replaceDraftFormLines(setForm, (currentLines) =>
+      currentLines.map((row) => {
+        if (row?.rowId !== rowId) {
+          return row;
+        }
+        const nextSeed = {
+          ...row,
+          ...patch,
+        };
+        return resetTaxPreview
+          ? resetDocumentLineTaxPreview(nextSeed)
+          : createDocumentLineDraft(nextSeed);
+      })
+    );
+  }
+
+  const runDocumentLineTaxPreview = useCallback(
+    async ({
+      form,
+      setForm,
+      setLoading,
+      setError,
+      setMessage,
+      targetRowId = null,
+    }) => {
+      const legalEntityId = toPositiveInt(form?.legalEntityId);
+      const postingDate = normalizeText(form?.documentDate);
+      const direction = normalizeText(form?.direction).toUpperCase();
+      const documentType = normalizeText(form?.documentType).toUpperCase();
+      const currencyCode = normalizeCurrencyCode(form?.currencyCode);
+      const lines = normalizeDocumentFormLines(form?.lines, {
+        amountTxn: form?.amountTxn,
+      });
+
+      setError("");
+      setMessage("");
+      if (!legalEntityId || !postingDate || !direction || !documentType || !currencyCode) {
+        setError(
+          l(
+            "Set legal entity, document date, direction, document type, and currency before previewing taxes.",
+            "Vergi onizlemesinden once tuzel kisilik, belge tarihi, yon, belge turu ve para birimini girin."
+          )
+        );
+        return;
+      }
+      if (lines.length === 0) {
+        setError(
+          l("Add at least one line before previewing taxes.", "Vergi onizlemesinden once en az bir satir ekleyin.")
+        );
+        return;
+      }
+
+      setLoading(true);
+      try {
+        const previewDirection = direction === "AP" ? "PURCHASE" : "SALE";
+        const counterpartyType = direction === "AP" ? "VENDOR" : "CUSTOMER";
+        const nextLines = [];
+        let refreshedCount = 0;
+        let errorCount = 0;
+
+        for (const line of lines) {
+          if (targetRowId && line.rowId !== targetRowId) {
+            nextLines.push(line);
+            continue;
+          }
+          const lineNetAmountTxn = Number(line.lineNetAmountTxn || 0);
+          const hasTaxCategory = Boolean(normalizeText(line.taxCategoryCode));
+          if (!hasTaxCategory) {
+            nextLines.push(
+              createDocumentLineDraft({
+                ...line,
+                lineTaxAmountTxn: 0,
+                taxes: [],
+                previewStatus: "",
+                previewError: "",
+                previewUpdatedAt: "",
+              })
+            );
+            continue;
+          }
+          if (lineNetAmountTxn <= 0) {
+            errorCount += 1;
+            nextLines.push(
+              createDocumentLineDraft({
+                ...line,
+                lineTaxAmountTxn: 0,
+                taxes: [],
+                previewStatus: "ERROR",
+                previewError: l(
+                  "Line net amount must be > 0 before previewing tax.",
+                  "Vergi onizlemesinden once satir net tutari 0'dan buyuk olmali."
+                ),
+                previewUpdatedAt: "",
+              })
+            );
+            continue;
+          }
+
+          try {
+            const preview = await previewTaxComputation({
+              legalEntityId,
+              postingDate,
+              moduleCode: "CARI",
+              documentType,
+              taxCategoryCode: line.taxCategoryCode,
+              lineKind: line.lineKind,
+              counterpartyType,
+              baseAmount: lineNetAmountTxn,
+              direction: previewDirection,
+              currencyCode,
+            });
+            const taxAmountTxn = Number(
+              preview?.breakdown?.taxAmount ??
+                preview?.breakdown?.tax_amount ??
+                0
+            );
+            nextLines.push(
+              createDocumentLineDraft({
+                ...line,
+                lineTaxAmountTxn: taxAmountTxn,
+                taxes: [
+                  {
+                    componentNo: 1,
+                    taxCode:
+                      preview?.taxCode?.code ||
+                      preview?.taxCode?.taxCode ||
+                      line.taxCategoryCode,
+                    taxKind:
+                      preview?.taxCode?.taxKind ||
+                      preview?.taxCode?.tax_kind ||
+                      null,
+                    ratePct:
+                      preview?.breakdown?.ratePct ??
+                      preview?.breakdown?.rate_pct ??
+                      0,
+                    taxBaseAmountTxn:
+                      preview?.breakdown?.taxableBaseAmount ??
+                      preview?.breakdown?.taxable_base_amount ??
+                      lineNetAmountTxn,
+                    taxAmountTxn,
+                    taxPurposeCode:
+                      preview?.mapping?.taxPurposeCode ||
+                      preview?.mapping?.tax_purpose_code ||
+                      null,
+                    accountId:
+                      Number(
+                        preview?.mapping?.accountId ||
+                          preview?.mapping?.account_id ||
+                          0
+                      ) || null,
+                  },
+                ],
+                previewStatus: "READY",
+                previewError: "",
+                previewUpdatedAt: new Date().toISOString(),
+              })
+            );
+            refreshedCount += 1;
+          } catch (error) {
+            errorCount += 1;
+            nextLines.push(
+              createDocumentLineDraft({
+                ...line,
+                lineTaxAmountTxn: 0,
+                taxes: [],
+                previewStatus: "ERROR",
+                previewError: normalizeApiError(
+                  error,
+                  l("Failed to preview tax for line.", "Satir icin vergi onizlemesi alinamadi.")
+                ),
+                previewUpdatedAt: "",
+              })
+            );
+          }
+        }
+
+        setForm((previous) => ({
+          ...previous,
+          lines: nextLines,
+        }));
+        if (refreshedCount > 0) {
+          setMessage(
+            l(
+              `Tax preview refreshed for ${refreshedCount} line(s).`,
+              `${refreshedCount} satir icin vergi onizlemesi yenilendi.`
+            )
+          );
+        }
+        if (errorCount > 0) {
+          setError(
+            l(
+              `${errorCount} line(s) could not refresh tax preview.`,
+              `${errorCount} satirin vergi onizlemesi yenilenemedi.`
+            )
+          );
+        }
+      } finally {
+        setLoading(false);
+      }
+    },
+    [l]
+  );
 
   function addPostFormPostingLine() {
     setPostForm((previous) => {
@@ -1878,7 +3063,11 @@ export default function CariDocumentsPage() {
       const response = await getCariDocument(documentId);
       const row = response?.row || null;
       setSelectedDetail(row);
-      if (row && isDraft(row)) setEditForm(mapDocumentRowToForm(row));
+      if (row && isDraft(row)) {
+        setEditForm(mapDocumentRowToForm(row));
+        setEditLinePreviewError("");
+        setEditLinePreviewMessage("");
+      }
     } catch (error) {
       setSelectedDetail(null);
       setDetailError(
@@ -2211,6 +3400,52 @@ export default function CariDocumentsPage() {
       active = false;
     };
   }, [canReadCards, createForm.direction, createForm.legalEntityId]);
+
+  useEffect(() => {
+    setTaxCategoryError("");
+    if (!canReadOrgTree) {
+      setTaxRuleRows([]);
+      setTaxCategoryLoading(false);
+      return;
+    }
+
+    let active = true;
+    async function loadTaxRulesForCategories() {
+      setTaxCategoryLoading(true);
+      try {
+        const response = await listTaxRules({
+          moduleCode: "CARI",
+          status: "ACTIVE",
+          limit: 500,
+          offset: 0,
+        });
+        if (!active) {
+          return;
+        }
+        setTaxRuleRows(Array.isArray(response?.rows) ? response.rows : []);
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+        setTaxRuleRows([]);
+        setTaxCategoryError(
+          normalizeApiError(
+            error,
+            l("Failed to load tax category options.", "Vergi kategori secenekleri yuklenemedi.")
+          )
+        );
+      } finally {
+        if (active) {
+          setTaxCategoryLoading(false);
+        }
+      }
+    }
+
+    loadTaxRulesForCategories();
+    return () => {
+      active = false;
+    };
+  }, [canReadOrgTree, l]);
 
   useEffect(() => {
     if (!canReadOrgTree) {
@@ -2662,6 +3897,205 @@ export default function CariDocumentsPage() {
   ]);
 
   useEffect(() => {
+    const legalEntityId = toPositiveInt(createForm.legalEntityId);
+
+    setCreateLineAccountsError("");
+    if (!canReadGlAccounts || !legalEntityId) {
+      setCreateLineAccountRows([]);
+      setCreateLineAccountsLoading(false);
+      return;
+    }
+
+    let active = true;
+    async function loadCreateLineAccounts() {
+      setCreateLineAccountsLoading(true);
+      try {
+        const response = await listAccounts({
+          legalEntityId,
+          includeInactive: false,
+          limit: 1000,
+          offset: 0,
+        });
+        if (!active) {
+          return;
+        }
+        setCreateLineAccountRows(mapPostableAccountRows(response?.rows));
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+        setCreateLineAccountRows([]);
+        setCreateLineAccountsError(
+          normalizeApiError(
+            error,
+            l(
+              "Failed to load line posting account options.",
+              "Satir kayit hesap secenekleri yuklenemedi."
+            )
+          )
+        );
+      } finally {
+        if (active) {
+          setCreateLineAccountsLoading(false);
+        }
+      }
+    }
+
+    loadCreateLineAccounts();
+    return () => {
+      active = false;
+    };
+  }, [canReadGlAccounts, createForm.legalEntityId, l]);
+
+  useEffect(() => {
+    const legalEntityId = toPositiveInt(createForm.legalEntityId);
+    setCreateItemCardsError("");
+    if (!canReadItemCards || !legalEntityId) {
+      setCreateItemCardRows([]);
+      setCreateItemCardsLoading(false);
+      return;
+    }
+
+    let active = true;
+    async function loadCreateItemCards() {
+      setCreateItemCardsLoading(true);
+      try {
+        const response = await listItemCards({
+          legalEntityId,
+          status: "ACTIVE",
+          limit: 300,
+          offset: 0,
+        });
+        if (!active) {
+          return;
+        }
+        setCreateItemCardRows(Array.isArray(response?.rows) ? response.rows : []);
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+        setCreateItemCardRows([]);
+        setCreateItemCardsError(
+          normalizeApiError(
+            error,
+            l("Failed to load item card options.", "Urun karti secenekleri yuklenemedi.")
+          )
+        );
+      } finally {
+        if (active) {
+          setCreateItemCardsLoading(false);
+        }
+      }
+    }
+
+    loadCreateItemCards();
+    return () => {
+      active = false;
+    };
+  }, [canReadItemCards, createForm.legalEntityId, l]);
+
+  useEffect(() => {
+    const legalEntityId = toPositiveInt(editForm.legalEntityId);
+
+    setEditLineAccountsError("");
+    if (!canReadGlAccounts || !legalEntityId) {
+      setEditLineAccountRows([]);
+      setEditLineAccountsLoading(false);
+      return;
+    }
+
+    let active = true;
+    async function loadEditLineAccounts() {
+      setEditLineAccountsLoading(true);
+      try {
+        const response = await listAccounts({
+          legalEntityId,
+          includeInactive: false,
+          limit: 1000,
+          offset: 0,
+        });
+        if (!active) {
+          return;
+        }
+        setEditLineAccountRows(mapPostableAccountRows(response?.rows));
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+        setEditLineAccountRows([]);
+        setEditLineAccountsError(
+          normalizeApiError(
+            error,
+            l(
+              "Failed to load edit-line account options.",
+              "Duzenleme satir hesap secenekleri yuklenemedi."
+            )
+          )
+        );
+      } finally {
+        if (active) {
+          setEditLineAccountsLoading(false);
+        }
+      }
+    }
+
+    loadEditLineAccounts();
+    return () => {
+      active = false;
+    };
+  }, [canReadGlAccounts, editForm.legalEntityId, l]);
+
+  useEffect(() => {
+    const legalEntityId = toPositiveInt(editForm.legalEntityId);
+    setEditItemCardsError("");
+    if (!canReadItemCards || !legalEntityId) {
+      setEditItemCardRows([]);
+      setEditItemCardsLoading(false);
+      return;
+    }
+
+    let active = true;
+    async function loadEditItemCards() {
+      setEditItemCardsLoading(true);
+      try {
+        const response = await listItemCards({
+          legalEntityId,
+          status: "ACTIVE",
+          limit: 300,
+          offset: 0,
+        });
+        if (!active) {
+          return;
+        }
+        setEditItemCardRows(Array.isArray(response?.rows) ? response.rows : []);
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+        setEditItemCardRows([]);
+        setEditItemCardsError(
+          normalizeApiError(
+            error,
+            l(
+              "Failed to load edit-line item card options.",
+              "Duzenleme satiri urun karti secenekleri yuklenemedi."
+            )
+          )
+        );
+      } finally {
+        if (active) {
+          setEditItemCardsLoading(false);
+        }
+      }
+    }
+
+    loadEditItemCards();
+    return () => {
+      active = false;
+    };
+  }, [canReadItemCards, editForm.legalEntityId, l]);
+
+  useEffect(() => {
     const legalEntityId = toPositiveInt(
       selectedSnapshot?.legalEntityId || selectedSnapshot?.legal_entity_id
     );
@@ -2686,28 +4120,7 @@ export default function CariDocumentsPage() {
         if (!active) {
           return;
         }
-        const options = (Array.isArray(response?.rows) ? response.rows : [])
-          .filter((row) => {
-            const isActive = row?.is_active === true || Number(row?.is_active) === 1;
-            const allowPosting =
-              row?.allow_posting === true || Number(row?.allow_posting) === 1;
-            return isActive && allowPosting;
-          })
-          .map((row) => ({
-            id: Number(row?.id || 0),
-            code: String(row?.code || "").trim(),
-            name: String(row?.name || "").trim(),
-            accountType: String(row?.account_type || "").trim().toUpperCase(),
-          }))
-          .filter((row) => row.id > 0 && row.code)
-          .sort((left, right) =>
-            String(left.code || "").localeCompare(String(right.code || ""), undefined, {
-              numeric: true,
-              sensitivity: "base",
-            })
-          );
-
-        setPostOffsetAccountOptions(options);
+        setPostOffsetAccountOptions(mapPostableAccountRows(response?.rows));
       } catch (error) {
         if (!active) {
           return;
@@ -2847,6 +4260,20 @@ export default function CariDocumentsPage() {
     setPostError("");
     setPostMessage("");
   }, [selectedDocumentNumericId, selectedSnapshot]);
+
+  useEffect(() => {
+    if (!selectedDocumentUsesStoredTaxesForPosting) {
+      return;
+    }
+    setPostForm((previous) =>
+      previous.usePostingLines
+        ? {
+            ...previous,
+            usePostingLines: false,
+          }
+        : previous
+    );
+  }, [selectedDocumentUsesStoredTaxesForPosting]);
 
   useEffect(() => {
     const documentId = selectedDocumentNumericId;
@@ -3416,6 +4843,9 @@ export default function CariDocumentsPage() {
       const response = await updateCariDocument(selectedDocumentId, payload);
       setEditMessage(l("Draft document updated.", "Belge taslagi guncellendi."));
       setSelectedDetail(response?.row || null);
+      if (response?.row) {
+        setEditForm(mapDocumentRowToForm(response.row));
+      }
       await loadDocuments(filters);
     } catch (error) {
       setEditError(
@@ -3496,6 +4926,16 @@ export default function CariDocumentsPage() {
         : null,
       offsetAccountId: toPositiveInt(postForm.offsetAccountId) || null,
     };
+
+    if (selectedDocumentUsesStoredTaxesForPosting && postForm.usePostingLines) {
+      setPostError(
+        l(
+          "Split posting is not available for drafts that already store line-level taxes.",
+          "Satir bazli vergisi kayitli taslaklarda bolunmus kayit kullanilamaz."
+        )
+      );
+      return;
+    }
 
     if (postForm.usePostingLines) {
       if (!selectedDocumentAmountTxn || !selectedDocumentAmountBase) {
@@ -3608,6 +5048,7 @@ export default function CariDocumentsPage() {
     setReverseSaving(true);
     setReverseError("");
     setReverseMessage("");
+    setReverseInventoryBlocks([]);
     try {
       const response = await reverseCariDocument(selectedDocumentId, {
         reason: String(reverseForm.reason || "").trim() || l("Manual reversal", "Manuel ters kayit"),
@@ -3624,9 +5065,11 @@ export default function CariDocumentsPage() {
           `Ters kayit tamamlandi. reversalDocumentId=${response?.row?.id || "-"}`
         )
       );
+      setReverseInventoryBlocks([]);
       await loadDocuments(filters);
       await loadDocumentDetail(selectedDocumentId);
     } catch (error) {
+      setReverseInventoryBlocks(normalizeInventoryReverseBlocks(error));
       setReverseError(
         normalizeApiError(error, l("Failed to reverse posted document.", "Kaydedilmis belge terslenemedi."))
       );
@@ -4687,7 +6130,7 @@ export default function CariDocumentsPage() {
             <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">{l("Document Type", "Belge Turu")}<select className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={createForm.documentType} onChange={(event) => setCreateForm((prev) => ({ ...prev, documentType: event.target.value }))} required>{DOCUMENT_TYPES.map((documentType) => <option key={`create-document-type-${documentType}`} value={documentType}>{documentType}</option>)}</select></label>
             <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">{l("Document Date", "Belge Tarihi")}<input type="date" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={createForm.documentDate} onChange={(event) => setCreateForm((prev) => ({ ...prev, documentDate: event.target.value }))} required /></label>
             <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">{l("Due Date", "Vade Tarihi")} {requiresDueDate(createForm.documentType) ? l("(required for this type)", "(bu tur icin zorunlu)") : l("(optional)", "(opsiyonel)")}<input type="date" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={createForm.dueDate} onChange={(event) => setCreateForm((prev) => ({ ...prev, dueDate: event.target.value }))} required={requiresDueDate(createForm.documentType)} /></label>
-            <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">{l("Invoice Amount (Invoice Currency)", "Fatura Tutari (Fatura Para Birimi)")}<input type="number" min="0.000001" step="0.000001" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={createForm.amountTxn} onChange={(event) => setCreateForm((prev) => ({ ...prev, amountTxn: event.target.value }))} required /></label>
+            <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">{l("Invoice Total (derived)", "Fatura Toplami (turetilmis)")}<input type="number" min="0.000001" step="0.000001" className="mt-1 w-full rounded-md border border-slate-300 bg-slate-50 px-3 py-2 text-sm font-normal text-slate-700" value={normalizeOptionalDecimalText(createDocumentFxComputation.resolvedAmountTxn)} readOnly disabled={createSaving} /></label>
             <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">{l("Invoice Currency", "Fatura Para Birimi")}<input type="text" maxLength={3} className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal uppercase" value={createForm.currencyCode} onChange={(event) => {
               setCreateCurrencyTouched(true);
               setCreateForm((prev) => ({ ...prev, currencyCode: event.target.value }));
@@ -4707,6 +6150,36 @@ export default function CariDocumentsPage() {
                     )}
               </p>
             ) : null}
+            <DocumentLineWorkbench
+              l={l}
+              title={l("Commercial Lines", "Ticari Satirlar")}
+              form={createForm}
+              saving={createSaving}
+              currencyCode={createForm.currencyCode}
+              functionalCurrencyCode={createFunctionalCurrencyCode}
+              fxComputation={createDocumentFxComputation}
+              canReadGlAccounts={canReadGlAccounts}
+              lineAccountOptions={createLineAccountOptions}
+              lineAccountsLoading={createLineAccountsLoading}
+              lineAccountsError={createLineAccountsError}
+              itemCardOptions={createItemCardOptions}
+              itemCardsLoading={createItemCardsLoading}
+              itemCardsError={createItemCardsError}
+              taxCategoryOptions={createTaxCategoryOptions}
+              taxCategoryLoading={taxCategoryLoading}
+              taxCategoryError={taxCategoryError}
+              previewLoading={createLinePreviewLoading}
+              previewError={createLinePreviewError}
+              previewMessage={createLinePreviewMessage}
+              onAddLine={addCreateDocumentLine}
+              onRemoveLine={removeCreateDocumentLine}
+              onMoveLine={moveCreateDocumentLine}
+              onPatchLine={patchCreateDocumentLine}
+              onPatchTaxSensitiveLine={patchCreateDocumentLineWithTaxReset}
+              onSelectItemCard={selectCreateDocumentLineItemCard}
+              onPreviewAll={() => handleCreateDocumentLineTaxPreview()}
+              onPreviewRow={(rowId) => handleCreateDocumentLineTaxPreview(rowId)}
+            />
             <div className="md:col-span-4 flex gap-2">
               <button type="submit" className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white" disabled={createSaving}>{createSaving ? l("Creating...", "Olusturuluyor...") : l("Create Draft Document", "Belge Taslagi Olustur")}</button>
               <button
@@ -4872,9 +6345,187 @@ export default function CariDocumentsPage() {
                     currencyCode={selectedDocumentFunctionalCurrencyCode}
                   />
                 </dd>
+                <dt className="font-semibold text-slate-600">subtotalAmountTxn</dt>
+                <dd>
+                  <MoneyText
+                    amount={firstDefinedRowValue(
+                      selectedSnapshot,
+                      "subtotalAmountTxn",
+                      "subtotal_amount_txn"
+                    )}
+                    currencyCode={firstDefinedRowValue(
+                      selectedSnapshot,
+                      "currencyCode",
+                      "currency_code",
+                      "currencyCodeSnapshot",
+                      "currency_code_snapshot"
+                    )}
+                  />
+                </dd>
+                <dt className="font-semibold text-slate-600">taxAmountTxn</dt>
+                <dd>
+                  <MoneyText
+                    amount={firstDefinedRowValue(
+                      selectedSnapshot,
+                      "taxAmountTxn",
+                      "tax_amount_txn"
+                    )}
+                    currencyCode={firstDefinedRowValue(
+                      selectedSnapshot,
+                      "currencyCode",
+                      "currency_code",
+                      "currencyCodeSnapshot",
+                      "currency_code_snapshot"
+                    )}
+                  />
+                </dd>
+                <dt className="font-semibold text-slate-600">grossAmountTxn</dt>
+                <dd>
+                  <MoneyText
+                    amount={firstDefinedRowValue(
+                      selectedSnapshot,
+                      "grossAmountTxn",
+                      "gross_amount_txn"
+                    )}
+                    currencyCode={firstDefinedRowValue(
+                      selectedSnapshot,
+                      "currencyCode",
+                      "currency_code",
+                      "currencyCodeSnapshot",
+                      "currency_code_snapshot"
+                    )}
+                  />
+                </dd>
                 <dt className="font-semibold text-slate-600">currencyCodeSnapshot</dt><dd>{selectedSnapshot.currencyCodeSnapshot || "-"}</dd>
                 <dt className="font-semibold text-slate-600">fxRateSnapshot</dt><dd>{selectedSnapshot.fxRateSnapshot || "-"}</dd>
               </dl>
+              <div className="mt-4 rounded-md border border-slate-200 bg-white px-3 py-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-700">
+                  {l("Commercial lines", "Ticari satirlar")}
+                </p>
+                {!Array.isArray(selectedSnapshot.lines) || selectedSnapshot.lines.length === 0 ? (
+                  <p className="mt-2 text-sm text-slate-600">
+                    {l("No stored document lines.", "Kayitli belge satiri yok.")}
+                  </p>
+                ) : (
+                  <div className="mt-2 space-y-2">
+                    {selectedSnapshot.lines.map((line) => (
+                      <div
+                        key={`detail-line-${line.id || line.lineNo}`}
+                        className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs"
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2 text-slate-800">
+                          <span className="font-semibold">
+                            {l("Line", "Satir")} {line.lineNo || "-"} | {line.lineKind || "STANDARD"}
+                          </span>
+                          <span>
+                            {l("Posting account", "Kayit hesabi")} #{line.postingAccountId || "-"}
+                          </span>
+                        </div>
+                        <div className="mt-1 text-slate-700">
+                          {line.description || "-"}
+                        </div>
+                        <div className="mt-1 flex flex-wrap gap-3 text-slate-600">
+                          <span>
+                            {l("Item card", "Urun karti")}: {line.itemCardId || "-"}
+                          </span>
+                          <span>
+                            {l("Qty", "Miktar")}: {line.quantity ?? "-"}
+                          </span>
+                          <span>
+                            {l("Unit price", "Birim fiyat")}: {line.unitPriceTxn ?? "-"}
+                          </span>
+                          <span>
+                            {l("Tax category", "Vergi kategorisi")}: {line.taxCategoryCode || "-"}
+                          </span>
+                          <span>
+                            {l("Stock impact", "Stok etkisi")}: {line.stockImpactMode || "NONE"}
+                          </span>
+                        </div>
+                        <div className="mt-2 grid gap-2 md:grid-cols-3">
+                          <div className="rounded border border-slate-200 bg-white px-2 py-1">
+                            <span className="block text-[11px] uppercase tracking-wide text-slate-500">
+                              {l("Net", "Net")}
+                            </span>
+                            <MoneyText
+                              amount={line.lineNetAmountTxn}
+                              currencyCode={selectedSnapshot.currencyCodeSnapshot || selectedSnapshot.currencyCode}
+                            />
+                          </div>
+                          <div className="rounded border border-slate-200 bg-white px-2 py-1">
+                            <span className="block text-[11px] uppercase tracking-wide text-slate-500">
+                              {l("Tax", "Vergi")}
+                            </span>
+                            <MoneyText
+                              amount={line.lineTaxAmountTxn}
+                              currencyCode={selectedSnapshot.currencyCodeSnapshot || selectedSnapshot.currencyCode}
+                            />
+                          </div>
+                          <div className="rounded border border-slate-200 bg-white px-2 py-1">
+                            <span className="block text-[11px] uppercase tracking-wide text-slate-500">
+                              {l("Gross", "Brut")}
+                            </span>
+                            <MoneyText
+                              amount={line.lineGrossAmountTxn}
+                              currencyCode={selectedSnapshot.currencyCodeSnapshot || selectedSnapshot.currencyCode}
+                            />
+                          </div>
+                        </div>
+                        {Array.isArray(line.taxes) && line.taxes.length > 0 ? (
+                          <ul className="mt-2 space-y-1 text-slate-600">
+                            {line.taxes.map((taxRow) => (
+                              <li key={`detail-line-tax-${line.id || line.lineNo}-${taxRow.componentNo || 0}`}>
+                                {(taxRow.taxCode || l("Tax", "Vergi"))} | {taxRow.ratePct ?? 0}% |{" "}
+                                <MoneyText
+                                  amount={taxRow.taxAmountTxn}
+                                  currencyCode={selectedSnapshot.currencyCodeSnapshot || selectedSnapshot.currencyCode}
+                                  className="inline"
+                                />
+                                {taxRow.taxPurposeCode ? ` | ${taxRow.taxPurposeCode}` : ""}
+                              </li>
+                            ))}
+                          </ul>
+                        ) : null}
+                        {Array.isArray(line.stockLinks) && line.stockLinks.length > 0 ? (
+                          <ul className="mt-2 space-y-1 text-slate-600">
+                            {line.stockLinks.map((stockLink) => (
+                              <li
+                                key={`detail-line-stock-${line.id || line.lineNo}-${stockLink.id || stockLink.stockImpactMode}`}
+                              >
+                                {l("Stock link", "Stok baglantisi")} |{" "}
+                                {stockLink.stockImpactMode || line.stockImpactMode || "NONE"} |{" "}
+                                {stockLink.linkStatus || "-"} | {l("Qty", "Miktar")}{" "}
+                                {stockLink.requestedQuantity ?? "-"}
+                                {stockLink.inventoryMovementId
+                                  ? ` | ${l("Movement", "Hareket")} #${stockLink.inventoryMovementId}`
+                                  : ""}
+                                {stockLink.inventoryMovementType
+                                  ? ` | ${stockLink.inventoryMovementType}`
+                                  : ""}
+                                {stockLink.inventoryValuationStatus
+                                  ? ` | ${stockLink.inventoryValuationStatus}`
+                                  : ""}
+                                {stockLink.inventoryWarehouseCode
+                                  ? ` | ${l("Warehouse", "Depo")} ${stockLink.inventoryWarehouseCode}`
+                                  : ""}
+                                {stockLink.reopenedFromStockLinkId
+                                  ? ` | ${l("Reopened from", "Yeniden acilan kaynak")} #${stockLink.reopenedFromStockLinkId}`
+                                  : ""}
+                                {stockLink.supersededByStockLinkId
+                                  ? ` | ${l("Successor", "Devam baglantisi")} #${stockLink.supersededByStockLinkId}`
+                                  : ""}
+                                {stockLink.inventoryMovementReversedAt
+                                  ? ` | ${l("Reversed", "Terslendi")} ${stockLink.inventoryMovementReversedAt}`
+                                  : ""}
+                              </li>
+                            ))}
+                          </ul>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
               <div className="mt-4 rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
                 <p className="text-xs font-semibold uppercase tracking-wide text-slate-700">
                   {l("Lifecycle Snapshot", "Yasam Dongusu Ozeti")}
@@ -5515,18 +7166,15 @@ export default function CariDocumentsPage() {
                     </p>
                     <div className="mt-2 grid gap-2 md:grid-cols-2">
                       <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                        {l("Invoice Amount (Invoice Currency)", "Fatura Tutari (Fatura Para Birimi)")}
+                        {l("Invoice Total (derived)", "Fatura Toplami (turetilmis)")}
                         <input
                           type="number"
                           min="0.000001"
                           step="0.000001"
-                          className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
-                          value={editForm.amountTxn}
-                          onChange={(event) =>
-                            setEditForm((prev) => ({ ...prev, amountTxn: event.target.value }))
-                          }
+                          className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-normal text-slate-700"
+                          value={normalizeOptionalDecimalText(editDocumentFxComputation.resolvedAmountTxn)}
+                          readOnly
                           disabled={!canEditOrCancelSelected || editSaving}
-                          required
                         />
                       </label>
                       <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
@@ -5588,6 +7236,37 @@ export default function CariDocumentsPage() {
                       </p>
                     ) : null}
                   </div>
+                  <DocumentLineWorkbench
+                    l={l}
+                    title={l("Commercial Lines", "Ticari Satirlar")}
+                    form={editForm}
+                    saving={!canEditOrCancelSelected || editSaving}
+                    gridSpanClass="md:col-span-2"
+                    currencyCode={editForm.currencyCode}
+                    functionalCurrencyCode={editFunctionalCurrencyCode}
+                    fxComputation={editDocumentFxComputation}
+                    canReadGlAccounts={canReadGlAccounts}
+                    lineAccountOptions={editLineAccountOptions}
+                    lineAccountsLoading={editLineAccountsLoading}
+                    lineAccountsError={editLineAccountsError}
+                    itemCardOptions={editItemCardOptions}
+                    itemCardsLoading={editItemCardsLoading}
+                    itemCardsError={editItemCardsError}
+                    taxCategoryOptions={editTaxCategoryOptions}
+                    taxCategoryLoading={taxCategoryLoading}
+                    taxCategoryError={taxCategoryError}
+                    previewLoading={editLinePreviewLoading}
+                    previewError={editLinePreviewError}
+                    previewMessage={editLinePreviewMessage}
+                    onAddLine={addEditDocumentLine}
+                    onRemoveLine={removeEditDocumentLine}
+                    onMoveLine={moveEditDocumentLine}
+                    onPatchLine={patchEditDocumentLine}
+                    onPatchTaxSensitiveLine={patchEditDocumentLineWithTaxReset}
+                    onSelectItemCard={selectEditDocumentLineItemCard}
+                    onPreviewAll={() => handleEditDocumentLineTaxPreview()}
+                    onPreviewRow={(rowId) => handleEditDocumentLineTaxPreview(rowId)}
+                  />
                   <button type="submit" className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50" disabled={!canEditOrCancelSelected || editSaving}>{editSaving ? l("Saving...", "Kaydediliyor...") : l("Update Draft Document", "Taslak Belgeyi Guncelle")}</button>
                   <button type="button" className="rounded-md border border-rose-300 px-4 py-2 text-sm font-semibold text-rose-700 disabled:opacity-50" onClick={handleCancelDraft} disabled={!canEditOrCancelSelected || cancelSaving}>{cancelSaving ? l("Cancelling...", "Iptal ediliyor...") : l("Cancel Draft", "Taslagi Iptal Et")}</button>
                 </form>
@@ -5745,11 +7424,32 @@ export default function CariDocumentsPage() {
                         };
                       })
                     }
-                    disabled={!canPostSelected || postSaving}
+                    disabled={
+                      !canPostSelected ||
+                      postSaving ||
+                      !selectedDocumentPostingRulesReady ||
+                      selectedDocumentUsesStoredTaxesForPosting
+                    }
                   />
                   {l("Split posting by line items", "Kaydi satirlara bol")}
                 </label>
-                {postForm.usePostingLines ? (
+                {!selectedDocumentPostingRulesReady && selectedDocumentId ? (
+                  <p className="mt-1 text-xs text-slate-600">
+                    {l(
+                      "Loading draft line detail to determine whether split posting is available.",
+                      "Bolunmus kaydin uygun olup olmadigini belirlemek icin taslak satir detayi yukleniyor."
+                    )}
+                  </p>
+                ) : null}
+                {selectedDocumentUsesStoredTaxesForPosting ? (
+                  <p className="mt-1 text-xs text-amber-700">
+                    {l(
+                      "Split posting is disabled because this draft already stores line-level taxes.",
+                      "Bu taslakta satir bazli vergi kayitli oldugu icin bolunmus kayit kapatildi."
+                    )}
+                  </p>
+                ) : null}
+                {postForm.usePostingLines && !selectedDocumentUsesStoredTaxesForPosting ? (
                   <div className="mt-2 rounded-md border border-slate-200 bg-slate-50 p-3">
                     <div className="flex items-center justify-between gap-2">
                       <p className="text-xs font-semibold uppercase tracking-wide text-slate-700">
@@ -5912,6 +7612,68 @@ export default function CariDocumentsPage() {
                 <label className="mt-2 block text-xs font-semibold uppercase tracking-wide text-slate-600">{l("Reversal Date", "Ters Kayit Tarihi")}<input type="date" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={reverseForm.reversalDate} onChange={(event) => setReverseForm((prev) => ({ ...prev, reversalDate: event.target.value }))} disabled={!canReverseSelected || reverseSaving} /></label>
                 <button type="button" className="mt-2 rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50" onClick={handleReversePosted} disabled={!canReverseSelected || reverseSaving}>{reverseSaving ? l("Reversing...", "Ters kayit olusturuluyor...") : l("Reverse Posted Document", "Kaydedilmis Belgeyi Tersle")}</button>
                 {reverseError ? <div className="mt-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{reverseError}</div> : null}
+                {reverseInventoryBlocks.length > 0 ? (
+                  <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                    <p className="font-semibold">
+                      {l(
+                        "Reverse is blocked by linked inventory effects:",
+                        "Ters kayit bagli stok etkileri nedeniyle engellendi:"
+                      )}
+                    </p>
+                    <div className="mt-2 flex flex-wrap gap-2 text-[11px] font-semibold uppercase tracking-wide text-amber-900">
+                      <span className="rounded-full border border-amber-300 bg-white px-2 py-1">
+                        {`${reverseInventoryBlockSummary.issueCount} ${l("issue", "cikis")}`}
+                      </span>
+                      <span className="rounded-full border border-amber-300 bg-white px-2 py-1">
+                        {`${reverseInventoryBlockSummary.receiptCount} ${l("receipt", "alim")}`}
+                      </span>
+                    </div>
+                    {reverseInventoryBlockSummary.stepMessages.length > 0 ? (
+                      <ol className="mt-2 list-decimal space-y-1 pl-4 text-xs">
+                        {reverseInventoryBlockSummary.stepMessages.map((message, index) => (
+                          <li key={`reverse-inventory-step-${index}`}>{message}</li>
+                        ))}
+                      </ol>
+                    ) : null}
+                    <p className="mt-2 text-xs text-amber-900">
+                      <Link
+                        to={buildInventoryMovementLink(selectedRow?.legalEntityId)}
+                        className="font-semibold underline underline-offset-2"
+                      >
+                        {l("Inventory Movements", "Stok Hareketleri")}
+                      </Link>{" "}
+                      {l(
+                        "opens `/app/stok-yansitma-islemleri` for the blocking legal entity context.",
+                        "engel koyan tuzel kisilik baglamiyla `/app/stok-yansitma-islemleri` ekranini acar."
+                      )}
+                    </p>
+                    <ul className="mt-2 space-y-1 text-xs">
+                      {reverseInventoryBlocks.map((row, index) => (
+                        <li key={`reverse-inventory-block-${row.stockLinkId || row.inventoryMovementId || index}`}>
+                          {row.inventoryMovementId ? (
+                            <Link
+                              to={buildInventoryMovementLink(
+                                row.legalEntityId || selectedRow?.legalEntityId,
+                                row.inventoryMovementId
+                              )}
+                              className="font-semibold underline underline-offset-2"
+                            >
+                              {`#${row.inventoryMovementId}`}
+                            </Link>
+                          ) : (
+                            "#-"
+                          )}{" "}
+                          {`| ${row.inventoryMovementType || "-"} | ${
+                            row.itemCardCode || row.itemCardName || l("Item", "Kalem")
+                          } | ${row.warehouseCode || row.warehouseName || l("Warehouse", "Depo")}`}
+                          {row.documentLineNo ? ` | ${l("Line", "Satir")} ${row.documentLineNo}` : ""}
+                          {row.inventoryValuationStatus ? ` | ${row.inventoryValuationStatus}` : ""}
+                          {row.suggestedActionMessage ? ` | ${row.suggestedActionMessage}` : ""}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
                 {reverseMessage ? <div className="mt-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{reverseMessage}</div> : null}
               </div>
             </div>

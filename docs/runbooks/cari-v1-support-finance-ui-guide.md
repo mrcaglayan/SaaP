@@ -19,6 +19,111 @@ This guide is for support and finance users operating the Cari UI modules:
   - Reverse is allowed only under backend reversal guards for posted lifecycle states.
   - Reversal keeps additive history; original rows remain traceable.
 
+## Line Workbench and Item Cards
+
+- `/app/cari-belgeler` now supports explicit commercial lines.
+- Finance operators can:
+  - add/remove/reorder lines
+  - enter quantity + unit price
+  - review line net/tax/gross preview
+  - optionally select an item card per line
+- Item-card selection may prefill:
+  - posting account
+  - tax category
+  - stock impact mode
+- Important operator rule:
+  - if invoice content differs by tax treatment or stock behavior, use explicit lines instead of collapsing everything into one document amount
+
+## Legacy Documents Without Stored Lines
+
+- Some older or compatibility-path documents behave like one-line documents.
+- That is expected when the source caller used header-only input and backend synthesized the commercial line.
+- Support handling:
+  - validate totals and journal/open-item linkage first
+  - do not treat absence of rich multi-line detail as an automatic defect
+  - use newer mixed-line entry only for forward operations, not for destructive historical cleanup
+
+## Stock Link Materialization (`/app/stok-yansitma-islemleri`)
+
+- `STOCK_ITEM` lines create pending stock intent after CARI post:
+  - AP purchase -> `RECEIPT_PENDING`
+  - AR sale -> `ISSUE_PENDING`
+- Inventory operators then use `/app/stok-yansitma-islemleri` to:
+  - create/select warehouse
+  - materialize pending stock link into inventory movement
+  - review resulting movement/cost-layer status
+- Expected outcomes:
+  - receipt movement -> `VALUED`
+  - issue movement -> `VALUED`
+  - inbound receipt creates a receipt cost layer
+  - valued issue may post one COGS journal on the inventory side
+- If the pending link list is empty, first recheck:
+  - item card type
+  - posted document status
+  - legal entity filter
+
+## Inventory Permissions
+
+- Access issues on stock reflection screens should be checked against:
+  - `inventory.read`
+  - `inventory.upsert`
+- Item-card access is separate:
+  - `item.card.read`
+  - `item.card.upsert`
+
+## Reverse valued issue
+
+- A valued outbound issue can be reversed from inventory flow.
+- Reversal restores the consumed FIFO layer quantities and posts the inventory-side reverse journal when the original issue had a posted COGS journal.
+- Practical support rule:
+  - reverse the latest relevant valued issue first
+  - if later valued issues already exist for the same warehouse/item, reversal may be blocked until chronology is cleaned up
+- If a user reports that a reversed issue still "exists", that is expected:
+  - history remains additive
+  - the original movement stays visible
+  - reverse evidence is shown through reversal timestamps and reverse-journal linkage
+
+## CARI Reverse Blocked By Inventory
+
+- If `/app/cari-belgeler` shows `Reverse is blocked by linked inventory effects`, treat that as a hard preflight block, not a retryable generic error.
+- The reverse dialog now exposes direct inventory movement links. Open the linked row in `/app/stok-yansitma-islemleri` and unwind there first.
+- Required operator order:
+  1. reverse linked valued `ISSUE` movement first
+  2. if stock still needs to leave after correction, rematerialize the reopened successor pending stock link
+  3. undo linked materialized `RECEIPT` only when it is fully available
+  4. retry the CARI reverse after the blocking inventory movement is no longer active
+- Do not ask users to bypass the blocker by editing DB rows or hiding stock-link evidence.
+
+## Reopened Successor Stock Link
+
+- Reversing a valued issue reopens business intent additively:
+  - original stock link stays historical
+  - one reopened successor pending stock link is created for the same commercial line
+- Materialize the successor link, not the original linked row.
+- Replay rule:
+  - re-running the same issue reverse should reuse the same reopened successor link
+  - re-running successor materialization should reuse the new movement/journal instead of creating duplicates
+
+## Undo Materialized Receipt
+
+- Receipt undo is the inventory-side unwind for a materialized AP receipt effect.
+- Use `/app/stok-yansitma-islemleri` and select `Undo Materialized Receipt`.
+- Receipt undo is allowed only when no later valued issue chronology still depends on that receipt layer history.
+- If the undo is blocked because the receipt was partially consumed:
+  - reverse or otherwise resolve the dependent later issue chronology first
+  - then retry the receipt undo
+- Undo remains additive:
+  - original receipt movement stays visible
+  - explicit reversal/undo evidence is created
+  - no duplicate inventory GL journal is invented just for the receipt undo
+
+## Mixed-Currency FIFO Issue Valuation
+
+- If one item/warehouse has receipt layers from different currencies, issue valuation is still FIFO.
+- Accounting source of truth is base currency:
+  - source receipt-layer currencies remain visible in layer-consumption detail
+  - the issue total is posted in legal-entity base currency instead of pretending one fake common source currency
+
 ## Settlement Idempotency Behavior
 
 - Apply action always requires `idempotencyKey`.
@@ -52,6 +157,7 @@ This guide is for support and finance users operating the Cari UI modules:
 
 - Document reverse:
   - reverses accounting effect with explicit linkage to reversal row/journal context.
+  - now hard-blocks when a linked live inventory `ISSUE` or `RECEIPT` movement still exists.
 - Settlement reverse:
   - called via `POST /api/v1/cari/settlements/{settlementBatchId}/reverse`.
   - re-opens affected balances according to effective-date/as-of rules.

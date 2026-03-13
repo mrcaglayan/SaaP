@@ -20,6 +20,7 @@ function createInitialForm() {
     adminName: "",
     adminEmail: "",
     adminPassword: "",
+    enableTaxEngine: false,
   };
 }
 
@@ -182,6 +183,7 @@ export default function ProviderBootstrapPage() {
         adminName: form.adminName.trim(),
         adminEmail: form.adminEmail.trim(),
         adminPassword: form.adminPassword,
+        enableTaxEngine: Boolean(form.enableTaxEngine),
       });
       setResult(response || null);
       setMessage(t("providerBootstrap.messages.created"));
@@ -457,6 +459,23 @@ export default function ProviderBootstrapPage() {
                 required
                 minLength={8}
               />
+              <label className="flex items-start gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={Boolean(form.enableTaxEngine)}
+                  onChange={(event) => setField("enableTaxEngine", event.target.checked)}
+                  className="mt-0.5"
+                  disabled={saving}
+                />
+                <span>
+                  <span className="font-medium">
+                    {t("providerBootstrap.createTenant.fields.enableTaxEngine")}
+                  </span>
+                  <span className="mt-1 block text-xs text-slate-500">
+                    {t("providerBootstrap.createTenant.fields.enableTaxEngineHelp")}
+                  </span>
+                </span>
+              </label>
               <button
                 type="submit"
                 disabled={saving}
@@ -489,6 +508,13 @@ export default function ProviderBootstrapPage() {
                   <div>
                     {t("providerBootstrap.createTenant.result.roleId", {
                       id: result.adminRoleId,
+                    })}
+                  </div>
+                  <div>
+                    {t("providerBootstrap.createTenant.result.taxEngine", {
+                      status: result.taxEngineEnabled
+                        ? t("providerBootstrap.createTenant.result.enabled")
+                        : t("providerBootstrap.createTenant.result.disabled"),
                     })}
                   </div>
                 </div>

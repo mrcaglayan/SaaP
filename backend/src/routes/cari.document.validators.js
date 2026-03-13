@@ -28,8 +28,11 @@ const DOCUMENT_STATUS_VALUES = [
   "PARTIALLY_SETTLED",
   "SETTLED",
 ];
+const LINE_KIND_VALUES = ["STANDARD", "COMMENT", "ROUNDING", "ADJUSTMENT", "OTHER"];
+const STOCK_IMPACT_MODE_VALUES = ["NONE", "RECEIPT_PENDING", "ISSUE_PENDING"];
 const DUE_DATE_REQUIRED_TYPES = new Set(["INVOICE", "DEBIT_NOTE"]);
 const MAX_POSTING_LINES = 200;
+const MAX_DOCUMENT_LINES = 500;
 
 function parseOptionalDate(value, label) {
   if (value === undefined) {
@@ -124,6 +127,155 @@ function parseRequiredAmount(value, label) {
     required: true,
     allowZero: false,
   });
+}
+
+function parseRequiredNonNegativeAmount(value, label) {
+  return parseAmount(value, label, {
+    required: true,
+    allowZero: true,
+  });
+}
+
+function parseOptionalNonNegativeAmount(value, label) {
+  if (value === undefined) {
+    return undefined;
+  }
+  return parseAmount(value, label, {
+    required: true,
+    allowZero: true,
+  });
+}
+
+function parseDocumentLines(value) {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!Array.isArray(value)) {
+    throw badRequest("lines must be an array");
+  }
+  if (value.length === 0) {
+    throw badRequest("lines must contain at least one row");
+  }
+  if (value.length > MAX_DOCUMENT_LINES) {
+    throw badRequest(`lines cannot exceed ${MAX_DOCUMENT_LINES} rows`);
+  }
+
+  const rows = [];
+  for (let index = 0; index < value.length; index += 1) {
+    const row = value[index];
+    if (!row || typeof row !== "object" || Array.isArray(row)) {
+      throw badRequest(`lines[${index}] must be an object`);
+    }
+
+    const lineKind = normalizeEnum(
+      row.lineKind ?? row.line_kind ?? "STANDARD",
+      `lines[${index}].lineKind`,
+      LINE_KIND_VALUES
+    );
+    const description =
+      parseOptionalShortText(
+        row.description,
+        `lines[${index}].description`,
+        500
+      ) || null;
+    const itemCardId =
+      parseOptionalPositiveIntField(
+        row.itemCardId ?? row.item_card_id,
+        `lines[${index}].itemCardId`
+      ) || null;
+    const quantity =
+      parseOptionalNonNegativeAmount(
+        row.quantity ?? row.qty,
+        `lines[${index}].quantity`
+      ) || "1.000000";
+    const unitPriceTxn =
+      parseOptionalNonNegativeAmount(
+        row.unitPriceTxn ?? row.unit_price_txn ?? row.unitPrice,
+        `lines[${index}].unitPriceTxn`
+      ) || null;
+    const lineNetAmountTxn = parseRequiredNonNegativeAmount(
+      row.lineNetAmountTxn ??
+        row.line_net_amount_txn ??
+        row.netAmountTxn ??
+        row.net_amount_txn ??
+        row.amountTxn ??
+        row.amount_txn,
+      `lines[${index}].lineNetAmountTxn`
+    );
+    const lineTaxAmountTxn =
+      parseOptionalNonNegativeAmount(
+        row.lineTaxAmountTxn ??
+          row.line_tax_amount_txn ??
+          row.taxAmountTxn ??
+          row.tax_amount_txn,
+        `lines[${index}].lineTaxAmountTxn`
+      ) || "0.000000";
+    const computedGrossAmountTxn = (
+      Number(lineNetAmountTxn) + Number(lineTaxAmountTxn)
+    ).toFixed(6);
+    const lineGrossAmountTxnRaw =
+      row.lineGrossAmountTxn ??
+      row.line_gross_amount_txn ??
+      row.grossAmountTxn ??
+      row.gross_amount_txn;
+    const lineGrossAmountTxn =
+      parseOptionalNonNegativeAmount(
+        lineGrossAmountTxnRaw,
+        `lines[${index}].lineGrossAmountTxn`
+      ) || computedGrossAmountTxn;
+    if (Number(lineGrossAmountTxn) !== Number(computedGrossAmountTxn)) {
+      throw badRequest(
+        `lines[${index}].lineGrossAmountTxn must equal lineNetAmountTxn + lineTaxAmountTxn`
+      );
+    }
+
+    const postingAccountId =
+      parseOptionalPositiveIntField(
+        row.postingAccountId ?? row.posting_account_id,
+        `lines[${index}].postingAccountId`
+      ) || null;
+    const taxCodeId =
+      parseOptionalPositiveIntField(
+        row.taxCodeId ?? row.tax_code_id,
+        `lines[${index}].taxCodeId`
+      ) || null;
+    const taxCode =
+      parseOptionalShortText(
+        row.taxCode ?? row.tax_code,
+        `lines[${index}].taxCode`,
+        40
+      ) || null;
+    const taxCategoryCode =
+      parseOptionalShortText(
+        row.taxCategoryCode ?? row.tax_category_code,
+        `lines[${index}].taxCategoryCode`,
+        60
+      ) || null;
+    const stockImpactMode = normalizeEnum(
+      row.stockImpactMode ?? row.stock_impact_mode ?? "NONE",
+      `lines[${index}].stockImpactMode`,
+      STOCK_IMPACT_MODE_VALUES
+    );
+
+    rows.push({
+      lineNo: index + 1,
+      lineKind,
+      description,
+      itemCardId,
+      quantity,
+      unitPriceTxn,
+      lineNetAmountTxn,
+      lineTaxAmountTxn,
+      lineGrossAmountTxn,
+      postingAccountId,
+      taxCodeId,
+      taxCode,
+      taxCategoryCode,
+      stockImpactMode,
+    });
+  }
+
+  return rows;
 }
 
 function parsePostingLines(value) {
@@ -319,7 +471,11 @@ export function parseDocumentCreateInput(req) {
   const dueDate = dueDateInput === undefined ? null : dueDateInput;
   assertDueDateRule({ documentType, dueDate });
 
-  const amountTxn = parseRequiredAmount(req.body?.amountTxn, "amountTxn");
+  const lines = parseDocumentLines(req.body?.lines);
+  const amountTxn =
+    lines === undefined
+      ? parseRequiredAmount(req.body?.amountTxn, "amountTxn")
+      : parseOptionalAmount(req.body?.amountTxn, "amountTxn");
   const amountBase = parseOptionalAmount(req.body?.amountBase, "amountBase");
   const currencyCode = normalizeCurrencyCode(req.body?.currencyCode, "currencyCode");
   const fxRateInput = parseOptionalDecimal(req.body?.fxRate, "fxRate");
@@ -340,6 +496,7 @@ export function parseDocumentCreateInput(req) {
     amountBase,
     currencyCode,
     fxRate,
+    lines: lines === undefined ? null : lines,
   };
 }
 
@@ -389,6 +546,7 @@ export function parseDocumentUpdateInput(req) {
       ? parseDateOnly(req.body?.documentDate, "documentDate")
       : undefined;
   const dueDate = parseOptionalDate(req.body?.dueDate, "dueDate");
+  const lines = parseDocumentLines(req.body?.lines);
   const amountTxn = parseOptionalAmount(req.body?.amountTxn, "amountTxn");
   const amountBase = parseOptionalAmount(req.body?.amountBase, "amountBase");
   const currencyCode =
@@ -406,6 +564,7 @@ export function parseDocumentUpdateInput(req) {
     documentType !== undefined ||
     documentDate !== undefined ||
     dueDate !== undefined ||
+    lines !== undefined ||
     amountTxn !== undefined ||
     amountBase !== undefined ||
     currencyCode !== undefined ||
@@ -428,6 +587,7 @@ export function parseDocumentUpdateInput(req) {
     documentType,
     documentDate,
     dueDate,
+    lines,
     amountTxn,
     amountBase,
     currencyCode,

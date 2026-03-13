@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   applyConsolidationCanonicalRuleMappings,
   applyConsolidationCanonicalMappingCandidates,
@@ -269,7 +269,7 @@ export default function ConsolidationSetupPage() {
   const { hasPermission } = useAuth();
   const { language } = useI18n();
   const isTr = language === "tr";
-  const l = (en, tr) => (isTr ? tr : en);
+  const l = useCallback((en, tr) => (isTr ? tr : en), [isTr]);
 
   const canReadGroups = hasPermission("consolidation.group.read");
   const canUpsertGroups = hasPermission("consolidation.group.upsert");

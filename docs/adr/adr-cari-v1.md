@@ -130,6 +130,67 @@ It is aligned with the current implementation so backend/frontend teams can ship
 - `GET /api/v1/cari/audit` is the supported read endpoint for Cari audit visibility.
 - The endpoint is tenant-safe and legal-entity scope-safe and supports time/action/resource filters for support and finance operations.
 
+### 13) Commercial line model amendment (`PR-CLI01`..`PR-CLI05`)
+
+- `cari_documents` remains the commercial header, numbering anchor, and settlement/open-item anchor.
+- Explicit commercial rows now live in:
+  - `cari_document_lines`
+  - `cari_document_line_taxes`
+- Header totals are line-derived snapshots:
+  - `subtotal_amount_txn/base`
+  - `tax_amount_txn/base`
+  - `gross_amount_txn/base`
+- Legacy header-only callers remain supported through a synthetic single-line compatibility path.
+- Compatibility rules:
+  - if caller sends explicit `lines[]`, those lines are the source of truth
+  - if caller omits `lines[]`, backend synthesizes one commercial line from header amount/currency data
+- v1 settlement remains document/open-item based. Commercial lines do not introduce line-level settlement semantics.
+
+### 14) Line-tax and posting amendment (`PR-CLI03`..`PR-CLI04`)
+
+- Tax determination is line-based, not document-total based.
+- Rule matching may use line context through formula match criteria such as:
+  - `taxCategoryCode`
+  - `lineKind`
+- Resolved tax evidence is persisted on `cari_document_line_taxes`; it must not be inferred only from journal output.
+- Normal invoice posting now reads explicit line results and journals:
+  - net commercial detail by line
+  - tax detail from stored line-tax results
+  - one gross AR/AP control line per document side in the normal case
+- Duplicate control-account balancing lines for normal invoice tax output are not the preferred v1 line-model behavior.
+
+### 15) Item-card and stock handshake amendment (`PR-CLI06`..`PR-CLI08`)
+
+- `item_cards` is the reusable commercial master for v1+:
+  - `SERVICE`
+  - `NON_STOCK_GOOD`
+  - `STOCK_ITEM`
+- Invoice lines may reference an item card, but item-card usage remains optional.
+- Item-card selection may default:
+  - posting account
+  - tax category
+  - stock impact mode
+- `STOCK_ITEM` behavior in v1:
+  - AP may post to inventory asset account
+  - AR posts revenue normally
+  - cost recognition is deferred to inventory valuation, not fabricated inside CARI posting
+- Stock-impacting lines persist traceable source metadata in `cari_document_line_stock_links`.
+- Inventory v1 foundation now includes:
+  - `inventory_warehouses`
+  - `inventory_movements`
+  - `inventory_cost_layers`
+- Inventory movements must remain traceable back to originating CARI document lines.
+
+### 16) Legacy document compatibility after line rollout
+
+- Pre-line documents remain valid historical records.
+- v1 does not require destructive backfill of legacy posted history into fake commercial lines.
+- Read/update/post compatibility is preserved through synthetic line generation where allowed by document status and route semantics.
+- Operationally:
+  - old one-line flows are still valid
+  - mixed-line flows are preferred for new invoices when commercial detail matters
+  - reports/statements continue to anchor on document/open-item history, not on a mandatory line backfill campaign
+
 ## Out of Scope (v1)
 
 - Dunning/collections workflows

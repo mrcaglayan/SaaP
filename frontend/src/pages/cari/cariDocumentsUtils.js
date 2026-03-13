@@ -16,6 +16,18 @@ export const DOCUMENT_TYPES = [
   "PAYMENT",
   "ADJUSTMENT",
 ];
+export const DOCUMENT_LINE_KINDS = [
+  "STANDARD",
+  "COMMENT",
+  "ROUNDING",
+  "ADJUSTMENT",
+  "OTHER",
+];
+export const DOCUMENT_LINE_STOCK_IMPACT_MODES = [
+  "NONE",
+  "RECEIPT_PENDING",
+  "ISSUE_PENDING",
+];
 
 export const DUE_DATE_REQUIRED_TYPES = new Set(["INVOICE", "DEBIT_NOTE"]);
 const DOCUMENT_AMOUNT_PRECISION = 6;
@@ -28,6 +40,181 @@ function normalizeCurrencyCode(value) {
 
 function roundDocumentAmount(value) {
   return Number.isFinite(value) ? Number(value.toFixed(DOCUMENT_AMOUNT_PRECISION)) : null;
+}
+
+function createDocumentLineRowId() {
+  return (
+    globalThis.crypto?.randomUUID?.() ||
+    `doc-line-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  );
+}
+
+function normalizeEnum(value, allowedValues, fallbackValue) {
+  const normalized = String(value || "")
+    .trim()
+    .toUpperCase();
+  return allowedValues.includes(normalized) ? normalized : fallbackValue;
+}
+
+function mapDocumentLineTaxRow(row, fallbackIndex = 0) {
+  return {
+    componentNo: Number(row?.componentNo ?? row?.component_no ?? fallbackIndex + 1),
+    taxCode: String(row?.taxCode ?? row?.tax_code ?? "").trim() || null,
+    taxKind: String(row?.taxKind ?? row?.tax_kind ?? "").trim() || null,
+    ratePct: toOptionalNumber(row?.ratePct ?? row?.rate_pct),
+    taxBaseAmountTxn: toOptionalNumber(
+      row?.taxBaseAmountTxn ?? row?.tax_base_amount_txn
+    ),
+    taxAmountTxn: toOptionalNumber(row?.taxAmountTxn ?? row?.tax_amount_txn),
+    taxPurposeCode: String(
+      row?.taxPurposeCode ?? row?.tax_purpose_code ?? ""
+    ).trim() || null,
+    accountId: toPositiveInt(row?.accountId ?? row?.account_id),
+  };
+}
+
+function resolveLineTaxAmountTxn(line, taxes = []) {
+  const explicitTaxAmount = toOptionalNumber(
+    line?.lineTaxAmountTxn ??
+      line?.line_tax_amount_txn ??
+      line?.taxAmountTxn ??
+      line?.tax_amount_txn
+  );
+  if (explicitTaxAmount !== null) {
+    return roundDocumentAmount(explicitTaxAmount) ?? 0;
+  }
+  return roundDocumentAmount(
+    taxes.reduce(
+      (sum, row) => sum + Number(row?.taxAmountTxn ?? row?.tax_amount_txn ?? 0),
+      0
+    )
+  ) ?? 0;
+}
+
+export function computeDocumentLineAmounts(line) {
+  const normalizedTaxes = Array.isArray(line?.taxes)
+    ? line.taxes.map((row, index) => mapDocumentLineTaxRow(row, index))
+    : [];
+  const explicitNetAmount = toOptionalNumber(
+    line?.lineNetAmountTxn ??
+      line?.line_net_amount_txn ??
+      line?.netAmountTxn ??
+      line?.net_amount_txn ??
+      line?.amountTxn ??
+      line?.amount_txn
+  );
+  const quantityInput = toOptionalNumber(line?.quantity ?? line?.qty);
+  const quantity =
+    quantityInput !== null && quantityInput > 0 ? roundDocumentAmount(quantityInput) : 1;
+  let unitPriceTxn = toOptionalNumber(
+    line?.unitPriceTxn ?? line?.unit_price_txn ?? line?.unitPrice
+  );
+  if (unitPriceTxn === null && explicitNetAmount !== null && quantity > 0) {
+    unitPriceTxn = roundDocumentAmount(explicitNetAmount / quantity);
+  }
+  const lineNetAmountTxn =
+    unitPriceTxn !== null
+      ? roundDocumentAmount(quantity * unitPriceTxn) ?? 0
+      : roundDocumentAmount(explicitNetAmount ?? 0) ?? 0;
+  const lineTaxAmountTxn = resolveLineTaxAmountTxn(line, normalizedTaxes);
+  const lineGrossAmountTxn =
+    roundDocumentAmount(lineNetAmountTxn + lineTaxAmountTxn) ?? 0;
+
+  return {
+    quantity,
+    unitPriceTxn,
+    lineNetAmountTxn,
+    lineTaxAmountTxn,
+    lineGrossAmountTxn,
+    taxes: normalizedTaxes,
+  };
+}
+
+export function createDocumentLineDraft(seed = {}) {
+  const amounts = computeDocumentLineAmounts(seed);
+  return {
+    rowId: String(seed?.rowId || createDocumentLineRowId()),
+    lineKind: normalizeEnum(
+      seed?.lineKind ?? seed?.line_kind ?? "STANDARD",
+      DOCUMENT_LINE_KINDS,
+      "STANDARD"
+    ),
+    description: String(seed?.description || "").trim(),
+    itemCardId: String(seed?.itemCardId ?? seed?.item_card_id ?? "").trim(),
+    quantity: String(amounts.quantity ?? 1),
+    unitPriceTxn:
+      amounts.unitPriceTxn === null || amounts.unitPriceTxn === undefined
+        ? ""
+        : String(amounts.unitPriceTxn),
+    lineNetAmountTxn: String(amounts.lineNetAmountTxn ?? 0),
+    lineTaxAmountTxn: String(amounts.lineTaxAmountTxn ?? 0),
+    lineGrossAmountTxn: String(amounts.lineGrossAmountTxn ?? 0),
+    postingAccountId: String(
+      seed?.postingAccountId ?? seed?.posting_account_id ?? ""
+    ).trim(),
+    taxCategoryCode: String(
+      seed?.taxCategoryCode ?? seed?.tax_category_code ?? ""
+    )
+      .trim()
+      .toUpperCase(),
+    stockImpactMode: normalizeEnum(
+      seed?.stockImpactMode ?? seed?.stock_impact_mode ?? "NONE",
+      DOCUMENT_LINE_STOCK_IMPACT_MODES,
+      "NONE"
+    ),
+    taxes: amounts.taxes,
+    previewStatus: String(seed?.previewStatus || "").trim().toUpperCase(),
+    previewError: String(seed?.previewError || "").trim(),
+    previewUpdatedAt: String(seed?.previewUpdatedAt || "").trim(),
+  };
+}
+
+export function normalizeDocumentFormLines(lines, fallback = {}) {
+  const normalizedLines = Array.isArray(lines)
+    ? lines.map((row) => createDocumentLineDraft(row))
+    : [];
+  if (normalizedLines.length > 0) {
+    return normalizedLines;
+  }
+  const fallbackAmountTxn = toOptionalNumber(fallback?.amountTxn);
+  if (fallbackAmountTxn !== null && fallbackAmountTxn > 0) {
+    return [
+      createDocumentLineDraft({
+        quantity: 1,
+        unitPriceTxn: fallbackAmountTxn,
+        lineNetAmountTxn: fallbackAmountTxn,
+        lineGrossAmountTxn: fallbackAmountTxn,
+      }),
+    ];
+  }
+  return [createDocumentLineDraft()];
+}
+
+export function getDocumentLineTotals(lines) {
+  const normalizedLines = Array.isArray(lines)
+    ? lines.map((row) => createDocumentLineDraft(row))
+    : [];
+  const totals = normalizedLines.reduce(
+    (accumulator, row) => {
+      accumulator.netAmountTxn += Number(row.lineNetAmountTxn || 0);
+      accumulator.taxAmountTxn += Number(row.lineTaxAmountTxn || 0);
+      accumulator.grossAmountTxn += Number(row.lineGrossAmountTxn || 0);
+      return accumulator;
+    },
+    {
+      lineCount: normalizedLines.length,
+      netAmountTxn: 0,
+      taxAmountTxn: 0,
+      grossAmountTxn: 0,
+    }
+  );
+
+  return {
+    lineCount: totals.lineCount,
+    netAmountTxn: roundDocumentAmount(totals.netAmountTxn) ?? 0,
+    taxAmountTxn: roundDocumentAmount(totals.taxAmountTxn) ?? 0,
+    grossAmountTxn: roundDocumentAmount(totals.grossAmountTxn) ?? 0,
+  };
 }
 
 export function buildDocumentListQuery(filters) {
@@ -64,6 +251,15 @@ export function toOptionalNumber(value) {
 }
 
 export function mapDocumentRowToForm(row) {
+  const amountTxnValue =
+    row?.amountTxn === null || row?.amountTxn === undefined
+      ? row?.amount_txn === null || row?.amount_txn === undefined
+        ? ""
+        : String(row.amount_txn)
+      : String(row.amountTxn);
+  const lines = normalizeDocumentFormLines(row?.lines, {
+    amountTxn: amountTxnValue,
+  });
   return {
     rowVersion:
       row?.rowVersion === null || row?.rowVersion === undefined
@@ -77,12 +273,7 @@ export function mapDocumentRowToForm(row) {
     documentType: String(row?.documentType ?? row?.document_type ?? "INVOICE"),
     documentDate: String(row?.documentDate ?? row?.document_date ?? ""),
     dueDate: String(row?.dueDate ?? row?.due_date ?? row?.dueDateSnapshot ?? row?.due_date_snapshot ?? ""),
-    amountTxn:
-      row?.amountTxn === null || row?.amountTxn === undefined
-        ? row?.amount_txn === null || row?.amount_txn === undefined
-          ? ""
-          : String(row.amount_txn)
-        : String(row.amountTxn),
+    amountTxn: amountTxnValue,
     amountBase:
       row?.amountBase === null || row?.amountBase === undefined
         ? row?.amount_base === null || row?.amount_base === undefined
@@ -106,11 +297,16 @@ export function mapDocumentRowToForm(row) {
             : String(row.fxRateSnapshot)
           : String(row.fx_rate)
         : String(row.fxRate),
+    lines,
   };
 }
 
 export function getDocumentFxComputation(form, options = {}) {
-  const amountTxn = toOptionalNumber(form?.amountTxn);
+  const lineTotals = getDocumentLineTotals(form?.lines);
+  const amountTxn =
+    lineTotals.lineCount > 0
+      ? lineTotals.grossAmountTxn
+      : toOptionalNumber(form?.amountTxn);
   const amountBaseInput = toOptionalNumber(form?.amountBase);
   const fxRateInput = toOptionalNumber(form?.fxRate);
   const currencyCode = normalizeCurrencyCode(form?.currencyCode);
@@ -139,6 +335,8 @@ export function getDocumentFxComputation(form, options = {}) {
     fxRateRequired: isForeignCurrency,
     resolvedFxRate,
     derivedAmountBase,
+    resolvedAmountTxn: amountTxn,
+    lineTotals,
     resolvedAmountBase: derivedAmountBase ?? amountBaseInput,
   };
 }
@@ -156,6 +354,25 @@ export function buildDocumentMutationPayload(form, options = {}) {
   const documentDate = String(form.documentDate || "").trim();
   const dueDate = String(form.dueDate || "").trim();
   const currencyCode = normalizeCurrencyCode(form.currencyCode);
+  const lines = Array.isArray(form?.lines)
+    ? form.lines.map((row, index) => {
+        const normalizedLine = createDocumentLineDraft(row);
+        return {
+          lineNo: index + 1,
+          lineKind: normalizedLine.lineKind,
+          description: normalizedLine.description || undefined,
+          itemCardId: toPositiveInt(normalizedLine.itemCardId) || undefined,
+          quantity: toOptionalNumber(normalizedLine.quantity) ?? 1,
+          unitPriceTxn: toOptionalNumber(normalizedLine.unitPriceTxn),
+          lineNetAmountTxn: toOptionalNumber(normalizedLine.lineNetAmountTxn) ?? 0,
+          lineTaxAmountTxn: toOptionalNumber(normalizedLine.lineTaxAmountTxn) ?? 0,
+          lineGrossAmountTxn: toOptionalNumber(normalizedLine.lineGrossAmountTxn) ?? 0,
+          postingAccountId: toPositiveInt(normalizedLine.postingAccountId) || undefined,
+          taxCategoryCode: normalizedLine.taxCategoryCode || undefined,
+          stockImpactMode: normalizedLine.stockImpactMode || undefined,
+        };
+      })
+    : [];
 
   return {
     rowVersion: rowVersion || undefined,
@@ -167,10 +384,11 @@ export function buildDocumentMutationPayload(form, options = {}) {
     documentType,
     documentDate,
     dueDate: dueDate || null,
-    amountTxn,
+    amountTxn: lines.length > 0 ? fxComputation.resolvedAmountTxn : amountTxn,
     amountBase: fxComputation.resolvedAmountBase,
     currencyCode,
     fxRate: fxComputation.resolvedFxRate,
+    lines: lines.length > 0 ? lines : undefined,
   };
 }
 
@@ -196,6 +414,24 @@ export function validateDocumentMutationForm(form, options = {}) {
   }
   if (requiresDueDate(payload.documentType) && !payload.dueDate) {
     errors.push(`dueDate is required for documentType=${payload.documentType}.`);
+  }
+  if (payload.lines && payload.lines.length > 0) {
+    payload.lines.forEach((line, index) => {
+      if ((line.quantity ?? 0) <= 0) {
+        errors.push(`lines[${index}].quantity must be > 0.`);
+      }
+      if ((line.lineNetAmountTxn ?? 0) <= 0) {
+        errors.push(`lines[${index}].lineNetAmountTxn must be > 0.`);
+      }
+      if ((line.lineGrossAmountTxn ?? 0) <= 0) {
+        errors.push(`lines[${index}].lineGrossAmountTxn must be > 0.`);
+      }
+      if ((line.lineTaxAmountTxn ?? 0) > 0 && !line.taxCategoryCode) {
+        errors.push(
+          `lines[${index}].taxCategoryCode is required when lineTaxAmountTxn > 0.`
+        );
+      }
+    });
   }
   if (payload.amountTxn === null || payload.amountTxn <= 0) {
     errors.push("amountTxn must be > 0.");

@@ -62,6 +62,14 @@
       "description": "Tenant/company bootstrap flow endpoints."
     },
     {
+      "name": "Inventory",
+      "description": "Warehouse, stock-link materialization, valuation, and inventory movement endpoints."
+    },
+    {
+      "name": "Items",
+      "description": "Item-card master data endpoints used by CARI and inventory flows."
+    },
+    {
       "name": "Approvals",
       "description": "Unified approval policy and approval request engine endpoints (Bank + Payroll)."
     },
@@ -14577,6 +14585,761 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
+    "/api/v1/inventory/cari-stock-links": {
+      "get": {
+        "tags": [
+          "Inventory"
+        ],
+        "operationId": "listInventoryCariStockLinks",
+        "summary": "List pending CARI stock links for warehouse materialization",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "tenantId",
+            "required": false,
+            "description": "Tenant identifier; optional if available in JWT",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "legalEntityId",
+            "required": false,
+            "description": "Legal entity filter",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "linkStatus",
+            "required": false,
+            "description": "Stock-link status filter",
+            "schema": {
+              "$ref": "#/components/schemas/InventoryStockLinkStatus"
+            }
+          },
+          {
+            "in": "query",
+            "name": "warehouseLinked",
+            "required": false,
+            "description": "Filter links with or without related inventory movement",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "description": "Page size",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "description": "Page offset",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Pending CARI stock-link list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InventoryPendingStockLinkListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
+    "/api/v1/inventory/cost-layers": {
+      "get": {
+        "tags": [
+          "Inventory"
+        ],
+        "operationId": "listInventoryCostLayers",
+        "summary": "List receipt cost layers used by FIFO issue valuation",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "tenantId",
+            "required": false,
+            "description": "Tenant identifier; optional if available in JWT",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "legalEntityId",
+            "required": false,
+            "description": "Legal entity filter",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "warehouseId",
+            "required": false,
+            "description": "Warehouse filter",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "itemCardId",
+            "required": false,
+            "description": "Item-card filter",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "layerStatus",
+            "required": false,
+            "description": "Layer status filter",
+            "schema": {
+              "$ref": "#/components/schemas/InventoryCostLayerStatus"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "description": "Page size",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "description": "Page offset",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Inventory cost-layer list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InventoryCostLayerListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
+    "/api/v1/inventory/movements": {
+      "get": {
+        "tags": [
+          "Inventory"
+        ],
+        "operationId": "listInventoryMovements",
+        "summary": "List inventory movements with valuation and issue-consumption detail",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "tenantId",
+            "required": false,
+            "description": "Tenant identifier; optional if available in JWT",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "legalEntityId",
+            "required": false,
+            "description": "Legal entity filter",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "warehouseId",
+            "required": false,
+            "description": "Warehouse filter",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "movementType",
+            "required": false,
+            "description": "Movement type filter",
+            "schema": {
+              "$ref": "#/components/schemas/InventoryMovementType"
+            }
+          },
+          {
+            "in": "query",
+            "name": "valuationStatus",
+            "required": false,
+            "description": "Valuation status filter",
+            "schema": {
+              "$ref": "#/components/schemas/InventoryValuationStatus"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "description": "Page size",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "description": "Page offset",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Inventory movement list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InventoryMovementListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Inventory"
+        ],
+        "operationId": "createInventoryMovementFromStockLink",
+        "summary": "Materialize one pending stock link into warehouse movement, FIFO valuation, and issue-side COGS journal when applicable",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InventoryMovementCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Inventory movement created or existing linked movement returned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InventoryMovementResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
+    "/api/v1/inventory/movements/{movementId}/reverse": {
+      "post": {
+        "tags": [
+          "Inventory"
+        ],
+        "operationId": "reverseInventoryMovement",
+        "summary": "Reverse one valued outbound issue, restore FIFO layer quantities, and post the inventory-side reversal journal",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "movementId",
+            "required": true,
+            "description": "Inventory movement identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InventoryMovementReverseRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Inventory movement reversed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InventoryMovementResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
+    "/api/v1/inventory/warehouses": {
+      "get": {
+        "tags": [
+          "Inventory"
+        ],
+        "operationId": "listInventoryWarehouses",
+        "summary": "List inventory warehouses",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "tenantId",
+            "required": false,
+            "description": "Tenant identifier; optional if available in JWT",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "legalEntityId",
+            "required": false,
+            "description": "Legal entity filter",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "description": "Warehouse status filter",
+            "schema": {
+              "$ref": "#/components/schemas/InventoryWarehouseStatus"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "description": "Warehouse code/name search",
+            "schema": {
+              "type": "string",
+              "maxLength": 120
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "description": "Page size",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "description": "Page offset",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Inventory warehouse list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InventoryWarehouseListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Inventory"
+        ],
+        "operationId": "createInventoryWarehouse",
+        "summary": "Create inventory warehouse",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InventoryWarehouseCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Inventory warehouse created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InventoryWarehouseResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
+    "/api/v1/items/cards": {
+      "get": {
+        "tags": [
+          "Items"
+        ],
+        "operationId": "listItemCards",
+        "summary": "List item cards",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "tenantId",
+            "required": false,
+            "description": "Tenant identifier; optional if available in JWT",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "legalEntityId",
+            "required": false,
+            "description": "Legal entity filter",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "description": "Item-card status filter",
+            "schema": {
+              "$ref": "#/components/schemas/ItemCardStatus"
+            }
+          },
+          {
+            "in": "query",
+            "name": "itemType",
+            "required": false,
+            "description": "Item-card type filter",
+            "schema": {
+              "$ref": "#/components/schemas/ItemCardItemType"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "description": "Code/name search",
+            "schema": {
+              "type": "string",
+              "maxLength": 120
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "description": "Page size",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "description": "Page offset",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Item-card list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ItemCardListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Items"
+        ],
+        "operationId": "createItemCard",
+        "summary": "Create item card",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ItemCardUpsertRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Item card created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ItemCardResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
+    "/api/v1/items/cards/{itemCardId}": {
+      "get": {
+        "tags": [
+          "Items"
+        ],
+        "operationId": "getItemCard",
+        "summary": "Get item-card detail",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "itemCardId",
+            "required": true,
+            "description": "Item-card identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "tenantId",
+            "required": false,
+            "description": "Tenant identifier; optional if available in JWT",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Item-card detail",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ItemCardResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Items"
+        ],
+        "operationId": "updateItemCard",
+        "summary": "Update item card",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "itemCardId",
+            "required": true,
+            "description": "Item-card identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ItemCardUpsertRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Item card updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ItemCardResponse"
                 }
               }
             }
@@ -30972,6 +31735,1012 @@
           "generatedScheduleCount",
           "generatedLineCount",
           "skippedLineCount",
+          "rows"
+        ]
+      },
+      "ItemCardItemType": {
+        "type": "string",
+        "enum": [
+          "SERVICE",
+          "NON_STOCK_GOOD",
+          "STOCK_ITEM"
+        ]
+      },
+      "ItemCardStatus": {
+        "type": "string",
+        "enum": [
+          "ACTIVE",
+          "INACTIVE"
+        ]
+      },
+      "InventoryWarehouseStatus": {
+        "type": "string",
+        "enum": [
+          "ACTIVE",
+          "INACTIVE"
+        ]
+      },
+      "InventoryStockLinkStatus": {
+        "type": "string",
+        "enum": [
+          "PENDING",
+          "LINKED",
+          "VOID"
+        ]
+      },
+      "InventoryStockImpactMode": {
+        "type": "string",
+        "enum": [
+          "RECEIPT_PENDING",
+          "ISSUE_PENDING"
+        ]
+      },
+      "InventoryMovementType": {
+        "type": "string",
+        "enum": [
+          "RECEIPT",
+          "ISSUE",
+          "ADJUSTMENT_IN",
+          "ADJUSTMENT_OUT"
+        ]
+      },
+      "InventoryValuationStatus": {
+        "type": "string",
+        "enum": [
+          "NOT_REQUIRED",
+          "PENDING",
+          "VALUED"
+        ]
+      },
+      "InventoryCostLayerStatus": {
+        "type": "string",
+        "enum": [
+          "OPEN",
+          "CLOSED"
+        ]
+      },
+      "InventoryValuationMethod": {
+        "type": "string",
+        "enum": [
+          "FIFO"
+        ]
+      },
+      "ItemCardRow": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "legalEntityId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "code": {
+            "type": "string",
+            "nullable": true
+          },
+          "name": {
+            "type": "string",
+            "nullable": true
+          },
+          "itemType": {
+            "$ref": "#/components/schemas/ItemCardItemType"
+          },
+          "defaultSalesAccountId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "defaultPurchaseAccountId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "inventoryAssetAccountId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "defaultCogsAccountId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "taxCategoryCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "status": {
+            "$ref": "#/components/schemas/ItemCardStatus"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "tenantId",
+          "code",
+          "name",
+          "itemType",
+          "status"
+        ]
+      },
+      "ItemCardListResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ItemCardRow"
+            }
+          }
+        },
+        "required": [
+          "tenantId",
+          "total",
+          "rows"
+        ]
+      },
+      "ItemCardResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "row": {
+            "$ref": "#/components/schemas/ItemCardRow"
+          }
+        },
+        "required": [
+          "tenantId",
+          "row"
+        ]
+      },
+      "ItemCardUpsertRequest": {
+        "type": "object",
+        "properties": {
+          "legalEntityId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "code": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "itemType": {
+            "$ref": "#/components/schemas/ItemCardItemType"
+          },
+          "defaultSalesAccountId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "defaultPurchaseAccountId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "inventoryAssetAccountId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "defaultCogsAccountId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "taxCategoryCode": {
+            "type": "string",
+            "maxLength": 60,
+            "nullable": true
+          },
+          "status": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ItemCardStatus"
+              }
+            ],
+            "nullable": true
+          }
+        },
+        "required": [
+          "code",
+          "name",
+          "itemType"
+        ]
+      },
+      "InventoryWarehouseRow": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "legalEntityId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "legalEntityCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "code": {
+            "type": "string",
+            "nullable": true
+          },
+          "name": {
+            "type": "string",
+            "nullable": true
+          },
+          "status": {
+            "$ref": "#/components/schemas/InventoryWarehouseStatus"
+          },
+          "notes": {
+            "type": "string",
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "tenantId",
+          "legalEntityId",
+          "code",
+          "name",
+          "status"
+        ]
+      },
+      "InventoryWarehouseListResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InventoryWarehouseRow"
+            }
+          }
+        },
+        "required": [
+          "tenantId",
+          "rows"
+        ]
+      },
+      "InventoryWarehouseResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "row": {
+            "$ref": "#/components/schemas/InventoryWarehouseRow"
+          }
+        },
+        "required": [
+          "tenantId",
+          "row"
+        ]
+      },
+      "InventoryWarehouseCreateRequest": {
+        "type": "object",
+        "properties": {
+          "legalEntityId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "code": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "status": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/InventoryWarehouseStatus"
+              }
+            ],
+            "nullable": true
+          },
+          "notes": {
+            "type": "string",
+            "maxLength": 255,
+            "nullable": true
+          }
+        },
+        "required": [
+          "legalEntityId",
+          "code",
+          "name"
+        ]
+      },
+      "InventoryPendingStockLinkRow": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "legalEntityId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "legalEntityCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "documentId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "documentLineId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "documentNo": {
+            "type": "string",
+            "nullable": true
+          },
+          "documentDate": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "direction": {
+            "type": "string",
+            "nullable": true
+          },
+          "stockImpactMode": {
+            "$ref": "#/components/schemas/InventoryStockImpactMode"
+          },
+          "linkStatus": {
+            "$ref": "#/components/schemas/InventoryStockLinkStatus"
+          },
+          "requestedQuantity": {
+            "type": "number",
+            "nullable": true
+          },
+          "postedNetAmountTxn": {
+            "type": "number",
+            "nullable": true
+          },
+          "postedNetAmountBase": {
+            "type": "number",
+            "nullable": true
+          },
+          "currencyCode": {
+            "type": "string",
+            "maxLength": 3,
+            "nullable": true
+          },
+          "itemCardId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "itemCardCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "itemCardName": {
+            "type": "string",
+            "nullable": true
+          },
+          "itemType": {
+            "$ref": "#/components/schemas/ItemCardItemType"
+          },
+          "lineNo": {
+            "type": "integer",
+            "nullable": true
+          },
+          "lineDescription": {
+            "type": "string",
+            "nullable": true
+          },
+          "inventoryMovementId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "inventoryDocumentId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "resolvedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "resolutionNote": {
+            "type": "string",
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "tenantId",
+          "legalEntityId",
+          "documentId",
+          "documentLineId",
+          "stockImpactMode",
+          "linkStatus",
+          "itemCardId"
+        ]
+      },
+      "InventoryPendingStockLinkListResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InventoryPendingStockLinkRow"
+            }
+          }
+        },
+        "required": [
+          "tenantId",
+          "rows"
+        ]
+      },
+      "InventoryIssueLayerConsumptionRow": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "legalEntityId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "issueMovementId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "costLayerId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "consumptionNo": {
+            "type": "integer",
+            "nullable": true
+          },
+          "quantityConsumed": {
+            "type": "number",
+            "nullable": true
+          },
+          "unitCostTxn": {
+            "type": "number",
+            "nullable": true
+          },
+          "unitCostBase": {
+            "type": "number",
+            "nullable": true
+          },
+          "totalCostTxn": {
+            "type": "number",
+            "nullable": true
+          },
+          "totalCostBase": {
+            "type": "number",
+            "nullable": true
+          },
+          "currencyCode": {
+            "type": "string",
+            "maxLength": 3,
+            "nullable": true
+          },
+          "layerStatus": {
+            "$ref": "#/components/schemas/InventoryCostLayerStatus"
+          },
+          "valuationMethod": {
+            "$ref": "#/components/schemas/InventoryValuationMethod"
+          },
+          "sourceMovementId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "sourceStockLinkId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "tenantId",
+          "legalEntityId",
+          "issueMovementId",
+          "costLayerId",
+          "consumptionNo",
+          "quantityConsumed"
+        ]
+      },
+      "InventoryMovementRow": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "legalEntityId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "legalEntityCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "warehouseId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "warehouseCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "warehouseName": {
+            "type": "string",
+            "nullable": true
+          },
+          "itemCardId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "itemCardCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "itemCardName": {
+            "type": "string",
+            "nullable": true
+          },
+          "movementType": {
+            "$ref": "#/components/schemas/InventoryMovementType"
+          },
+          "sourceType": {
+            "type": "string",
+            "nullable": true
+          },
+          "sourceStockLinkId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "sourceDocumentType": {
+            "type": "string",
+            "nullable": true
+          },
+          "sourceDocumentId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "sourceDocumentLineId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "sourceDocumentNo": {
+            "type": "string",
+            "nullable": true
+          },
+          "movementDate": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "quantity": {
+            "type": "number",
+            "nullable": true
+          },
+          "unitCostTxn": {
+            "type": "number",
+            "nullable": true
+          },
+          "unitCostBase": {
+            "type": "number",
+            "nullable": true
+          },
+          "totalCostTxn": {
+            "type": "number",
+            "nullable": true
+          },
+          "totalCostBase": {
+            "type": "number",
+            "nullable": true
+          },
+          "currencyCode": {
+            "type": "string",
+            "maxLength": 3,
+            "nullable": true
+          },
+          "valuationStatus": {
+            "$ref": "#/components/schemas/InventoryValuationStatus"
+          },
+          "postedJournalEntryId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "postedJournalNo": {
+            "type": "string",
+            "nullable": true
+          },
+          "postedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "reversalJournalEntryId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "reversalJournalNo": {
+            "type": "string",
+            "nullable": true
+          },
+          "reversedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "note": {
+            "type": "string",
+            "nullable": true
+          },
+          "layerConsumptions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InventoryIssueLayerConsumptionRow"
+            }
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "tenantId",
+          "legalEntityId",
+          "warehouseId",
+          "itemCardId",
+          "movementType",
+          "valuationStatus",
+          "layerConsumptions"
+        ]
+      },
+      "InventoryMovementListResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InventoryMovementRow"
+            }
+          }
+        },
+        "required": [
+          "tenantId",
+          "rows"
+        ]
+      },
+      "InventoryMovementResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "row": {
+            "$ref": "#/components/schemas/InventoryMovementRow"
+          }
+        },
+        "required": [
+          "tenantId",
+          "row"
+        ]
+      },
+      "InventoryMovementCreateRequest": {
+        "type": "object",
+        "properties": {
+          "legalEntityId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "warehouseId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "sourceStockLinkId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "movementDate": {
+            "type": "string",
+            "format": "date"
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 255,
+            "nullable": true
+          }
+        },
+        "required": [
+          "legalEntityId",
+          "warehouseId",
+          "sourceStockLinkId",
+          "movementDate"
+        ]
+      },
+      "InventoryMovementReverseRequest": {
+        "type": "object",
+        "properties": {
+          "reversalDate": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 255,
+            "nullable": true
+          }
+        }
+      },
+      "InventoryCostLayerRow": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "legalEntityId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "legalEntityCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "warehouseId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "warehouseCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "warehouseName": {
+            "type": "string",
+            "nullable": true
+          },
+          "itemCardId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "itemCardCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "itemCardName": {
+            "type": "string",
+            "nullable": true
+          },
+          "sourceMovementId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "sourceStockLinkId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "valuationMethod": {
+            "$ref": "#/components/schemas/InventoryValuationMethod"
+          },
+          "layerStatus": {
+            "$ref": "#/components/schemas/InventoryCostLayerStatus"
+          },
+          "currencyCode": {
+            "type": "string",
+            "maxLength": 3,
+            "nullable": true
+          },
+          "quantityIn": {
+            "type": "number",
+            "nullable": true
+          },
+          "quantityRemaining": {
+            "type": "number",
+            "nullable": true
+          },
+          "unitCostTxn": {
+            "type": "number",
+            "nullable": true
+          },
+          "unitCostBase": {
+            "type": "number",
+            "nullable": true
+          },
+          "totalCostTxn": {
+            "type": "number",
+            "nullable": true
+          },
+          "totalCostBase": {
+            "type": "number",
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "tenantId",
+          "legalEntityId",
+          "warehouseId",
+          "itemCardId",
+          "sourceMovementId",
+          "valuationMethod",
+          "layerStatus"
+        ]
+      },
+      "InventoryCostLayerListResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InventoryCostLayerRow"
+            }
+          }
+        },
+        "required": [
+          "tenantId",
           "rows"
         ]
       },

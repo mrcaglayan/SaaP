@@ -28,6 +28,7 @@ const TAX_PURPOSE_CODES = [
   "ROUNDING",
 ];
 const PREVIEW_DIRECTIONS = ["PURCHASE", "SALE"];
+const LINE_KIND_VALUES = ["STANDARD", "COMMENT", "ROUNDING", "ADJUSTMENT", "OTHER"];
 
 function hasOwn(source, key) {
   return Object.prototype.hasOwnProperty.call(source || {}, key);
@@ -504,6 +505,16 @@ export function parseTaxRuleCreateInput(req) {
     taxCodeId: requirePositiveInt(body.taxCodeId ?? body.tax_code_id, "taxCodeId"),
     moduleCode: normalizeEnum(body.moduleCode ?? body.module_code, "moduleCode", MODULE_CODES),
     documentType: normalizeText(body.documentType ?? body.document_type, "documentType", 60),
+    taxCategoryCode: parseOptionalCode(
+      body.taxCategoryCode ?? body.tax_category_code,
+      "taxCategoryCode",
+      60
+    ),
+    lineKind: parseOptionalEnum(
+      body.lineKind ?? body.line_kind,
+      "lineKind",
+      LINE_KIND_VALUES
+    ),
     counterpartyType: parseOptionalEnum(
       body.counterpartyType ?? body.counterparty_type,
       "counterpartyType",
@@ -575,6 +586,20 @@ export function parseTaxRuleUpdateInput(req) {
       body.documentType ?? body.document_type,
       "documentType",
       60
+    );
+  }
+  if (hasOwn(body, "taxCategoryCode") || hasOwn(body, "tax_category_code")) {
+    patch.taxCategoryCode = parseOptionalCode(
+      body.taxCategoryCode ?? body.tax_category_code,
+      "taxCategoryCode",
+      60
+    );
+  }
+  if (hasOwn(body, "lineKind") || hasOwn(body, "line_kind")) {
+    patch.lineKind = parseOptionalEnum(
+      body.lineKind ?? body.line_kind,
+      "lineKind",
+      LINE_KIND_VALUES
     );
   }
   if (hasOwn(body, "counterpartyType") || hasOwn(body, "counterparty_type")) {
@@ -708,6 +733,16 @@ export function parseTaxPreviewInput(req) {
     countryId: optionalPositiveInt(body.countryId ?? body.country_id, "countryId"),
     moduleCode: normalizeEnum(body.moduleCode ?? body.module_code, "moduleCode", MODULE_CODES),
     documentType: normalizeText(body.documentType ?? body.document_type, "documentType", 60),
+    taxCategoryCode: parseOptionalCode(
+      body.taxCategoryCode ?? body.tax_category_code,
+      "taxCategoryCode",
+      60
+    ),
+    lineKind: parseOptionalEnum(
+      body.lineKind ?? body.line_kind,
+      "lineKind",
+      LINE_KIND_VALUES
+    ),
     counterpartyType: parseOptionalEnum(
       body.counterpartyType ?? body.counterparty_type,
       "counterpartyType",
