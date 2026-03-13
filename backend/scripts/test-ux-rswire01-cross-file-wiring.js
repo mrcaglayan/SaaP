@@ -54,6 +54,10 @@ const ROUTE_WIRING_RULES = [
     apiNeedles: ["../../api/cashAdmin.js"],
   },
   {
+    routePath: "/app/stok-transferleri",
+    apiNeedles: ["../../api/inventory.js"],
+  },
+  {
     routePath: "/app/contracts",
     apiNeedles: ["../../api/contracts.js"],
   },
@@ -153,4 +157,3 @@ main().catch((error) => {
   console.error(error);
   process.exit(1);
 });
-

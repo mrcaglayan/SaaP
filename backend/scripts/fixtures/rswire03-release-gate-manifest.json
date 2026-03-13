@@ -49,6 +49,11 @@
       "routePath": "/app/stok-yansitma-islemleri",
       "smokeScriptPath": "backend/scripts/test-inventory-pr26-release-gate.js",
       "packageScriptName": "test:inventory:release-gate"
+    },
+    {
+      "routePath": "/app/stok-transferleri",
+      "smokeScriptPath": "backend/scripts/test-inventory-ou04-shipment-self-balancing.js",
+      "packageScriptName": "test:inventory:ou04"
     }
   ]
 }
