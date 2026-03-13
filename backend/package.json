@@ -207,6 +207,7 @@
     "test:cari-pr10": "node scripts/test-cari-pr10-quality-gate-and-docs.js",
     "test:cari:line-model-rollout": "node scripts/test-cari-line-model-rollout-regression.js",
     "test:inventory:release-gate": "node scripts/test-inventory-pr26-release-gate.js",
+    "test:inventory:ou03": "node scripts/test-inventory-ou03-ou-account-foundation.js",
     "test:cari-pr11": "node scripts/test-cari-pr11-frontend-routing-and-api-clients.js",
     "test:cari-pr12": "node scripts/test-cari-pr12-frontend-documents-smoke.js",
     "test:cari-pr12-documents-date-filter": "node scripts/test-cari-pr12-documents-date-filter-contract.js",

@@ -86,7 +86,7 @@
 ## Master tracker
 - [x] `PR-OU01` - OU-aware warehouse ownership foundation
 - [x] `PR-OU02` - Inventory transfer document foundation with approval
-- [ ] `PR-OU03` - Reverse-direction OU internal-current-account foundation and balancing helper
+- [x] `PR-OU03` - Reverse-direction OU internal-current-account foundation and balancing helper
 - [ ] `PR-OU04` - Shipment-time transfer accounting and FIFO shipment valuation
 - [ ] `PR-OU05` - Transfer receipt and receipt journal
 - [ ] `PR-OU06` - Transfer reversal, cancel discipline, and bypass hardening
@@ -361,45 +361,45 @@
 ### Checklist
 
 #### Migration
-- [ ] Create `backend/src/migrations/m125_operating_unit_reverse_internal_current_accounts.js`
-- [ ] Add `central_due_to_account_id BIGINT UNSIGNED NULL` to `operating_units`
-- [ ] Add `ou_due_from_central_account_id BIGINT UNSIGNED NULL` to `operating_units`
-- [ ] Add FKs to `accounts(id)`
-- [ ] Add index coverage as needed for org setup reads
+- [x] Create `backend/src/migrations/m125_operating_unit_reverse_internal_current_accounts.js`
+- [x] Add `central_due_to_account_id BIGINT UNSIGNED NULL` to `operating_units`
+- [x] Add `ou_due_from_central_account_id BIGINT UNSIGNED NULL` to `operating_units`
+- [x] Add FKs to `accounts(id)`
+- [x] Add index coverage as needed for org setup reads
 
 #### Migration registration
-- [ ] Register `m125_operating_unit_reverse_internal_current_accounts` in `backend/src/migrations/index.js`
+- [x] Register `m125_operating_unit_reverse_internal_current_accounts` in `backend/src/migrations/index.js`
 
 #### Validation and org setup
-- [ ] Validate `central_due_from_account_id` is asset / debit-normal / postable / leaf
-- [ ] Validate `central_due_to_account_id` is liability / credit-normal / postable / leaf
-- [ ] Validate `ou_due_from_central_account_id` is asset / debit-normal / postable / leaf
-- [ ] Validate `ou_due_to_central_account_id` is liability / credit-normal / postable / leaf
-- [ ] Extend org write/read flows to persist and expose the new fields
-- [ ] Keep existing flows that only need current two-field central `<->` OU setup backward-compatible until reverse-direction fields are actually required by the posting path
+- [x] Validate `central_due_from_account_id` is asset / debit-normal / postable / leaf
+- [x] Validate `central_due_to_account_id` is liability / credit-normal / postable / leaf
+- [x] Validate `ou_due_from_central_account_id` is asset / debit-normal / postable / leaf
+- [x] Validate `ou_due_to_central_account_id` is liability / credit-normal / postable / leaf
+- [x] Extend org write/read flows to persist and expose the new fields
+- [x] Keep existing flows that only need current two-field central `<->` OU setup backward-compatible until reverse-direction fields are actually required by the posting path
 
 #### Shared helper
-- [ ] Create `backend/src/services/ou.self-balancing.service.js`
-- [ ] Add helper `resolveOuSelfBalancingAccountsTx(...)`
-- [ ] Support:
+- [x] Create `backend/src/services/ou.self-balancing.service.js`
+- [x] Add helper `resolveOuSelfBalancingAccountsTx(...)`
+- [x] Support:
   - `CENTRAL -> OU`
   - `OU -> CENTRAL`
   - `OU -> OU`
-- [ ] Reuse partner-pair mappings for `OU -> OU`
-- [ ] Use the new reverse-direction operating-unit fields for central `<->` OU paths
-- [ ] Fail clearly when required mapping is missing
+- [x] Reuse partner-pair mappings for `OU -> OU`
+- [x] Use the new reverse-direction operating-unit fields for central `<->` OU paths
+- [x] Fail clearly when required mapping is missing
 
 #### Regression
-- [ ] Create `backend/scripts/test-inventory-ou03-ou-account-foundation.js`
-- [ ] Test central `<->` OU mapping resolution both directions
-- [ ] Test OU `<->` OU mapping resolution
-- [ ] Test invalid account type / normal-side rejection
-- [ ] Test missing mapping failure
+- [x] Create `backend/scripts/test-inventory-ou03-ou-account-foundation.js`
+- [x] Test central `<->` OU mapping resolution both directions
+- [x] Test OU `<->` OU mapping resolution
+- [x] Test invalid account type / normal-side rejection
+- [x] Test missing mapping failure
 
 ### Acceptance
-- [ ] Central `<->` OU has explicit accounts for both directions
-- [ ] OU `<->` OU continues to use partner-specific pair mappings
-- [ ] A reusable helper exists for transfer and settlement posting
+- [x] Central `<->` OU has explicit accounts for both directions
+- [x] OU `<->` OU continues to use partner-specific pair mappings
+- [x] A reusable helper exists for transfer and settlement posting
 
 ## PR-OU04 - Shipment-time transfer accounting and FIFO shipment valuation
 
@@ -956,8 +956,8 @@
 - [x] 4. Create `m124_inventory_transfer_foundation.js`
 - [x] 5. Build transfer validators / routes / service skeleton
 - [x] 6. Add transfer page shell
-- [ ] 7. Create `m125_operating_unit_reverse_internal_current_accounts.js`
-- [ ] 8. Extend org setup and create `ou.self-balancing.service.js`
+- [x] 7. Create `m125_operating_unit_reverse_internal_current_accounts.js`
+- [x] 8. Extend org setup and create `ou.self-balancing.service.js`
 - [ ] 9. Create `m126_item_cards_inventory_transit_account.js`
 - [ ] 10. Expose transit account in item-card backend/frontend
 - [ ] 11. Implement transfer approval + shipment FIFO + accounting
@@ -978,7 +978,7 @@
 - [ ] Cross-context stock transfers use dedicated transfer workflow only
 - [ ] Transfer lifecycle includes approval, shipment, receipt, and additive reversal
 - [ ] Shipment-time internal balancing works and is auditable
-- [ ] Reverse-direction central `<->` OU accounts exist and are configured
+- [x] Reverse-direction central `<->` OU accounts exist and are configured
 - [ ] Receipt / cancel / reversal / evidence work
 - [ ] Generic inventory movement bypass is blocked in backend
 - [ ] Cross-context CARI settlement owner vs collector split works

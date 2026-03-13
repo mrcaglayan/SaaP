@@ -104,6 +104,14 @@ export function parseOperatingUnitUpsertInput(req) {
       req.body.centralDueFromAccountId,
       "centralDueFromAccountId"
     ),
+    centralDueToAccountId: parseOptionalPositiveIntField(
+      req.body.centralDueToAccountId,
+      "centralDueToAccountId"
+    ),
+    ouDueFromCentralAccountId: parseOptionalPositiveIntField(
+      req.body.ouDueFromCentralAccountId,
+      "ouDueFromCentralAccountId"
+    ),
     ouDueToCentralAccountId: parseOptionalPositiveIntField(
       req.body.ouDueToCentralAccountId,
       "ouDueToCentralAccountId"

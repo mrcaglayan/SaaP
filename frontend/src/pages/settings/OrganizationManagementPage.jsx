@@ -64,6 +64,8 @@ const DEFAULT_UNIT_FORM = {
   unitType: "BRANCH",
   hasSubledger: false,
   centralDueFromAccountId: "",
+  centralDueToAccountId: "",
+  ouDueFromCentralAccountId: "",
   ouDueToCentralAccountId: "",
 };
 const DEFAULT_UNIT_PARTNER_CURRENT_FORM = {
@@ -2260,6 +2262,8 @@ export default function OrganizationManagementPage() {
       unitType: String(row?.unit_type || "BRANCH").trim().toUpperCase() || "BRANCH",
       hasSubledger: Boolean(row?.has_subledger),
       centralDueFromAccountId: String(row?.central_due_from_account_id || ""),
+      centralDueToAccountId: String(row?.central_due_to_account_id || ""),
+      ouDueFromCentralAccountId: String(row?.ou_due_from_central_account_id || ""),
       ouDueToCentralAccountId: String(row?.ou_due_to_central_account_id || ""),
     });
     setError("");
@@ -2437,61 +2441,59 @@ export default function OrganizationManagementPage() {
 
     const legalEntityId = toNumber(unitForm.legalEntityId);
     const centralDueFromAccountId = toNumber(unitForm.centralDueFromAccountId);
+    const centralDueToAccountId = toNumber(unitForm.centralDueToAccountId);
+    const ouDueFromCentralAccountId = toNumber(unitForm.ouDueFromCentralAccountId);
     const ouDueToCentralAccountId = toNumber(unitForm.ouDueToCentralAccountId);
     if (!legalEntityId) {
       setError(l("legalEntityId is required.", "legalEntityId zorunludur."));
       return;
     }
-    if (
-      centralDueFromAccountId &&
-      ouDueToCentralAccountId &&
-      centralDueFromAccountId === ouDueToCentralAccountId
-    ) {
-      setError(
-        l(
-          "Central due-from and OU due-to-central accounts must be different.",
-          "Merkez alacak ve OU merkeze borc hesaplari farkli olmalidir."
-        )
-      );
-      return;
-    }
-    const conflictingCentralDueFromUnit = centralDueFromAccountId
-      ? (operatingUnits || []).find((row) => {
-        const rowKey = `${row?.legal_entity_id || ""}:${String(row?.code || "").trim()}`;
-        return (
-          rowKey !== unitEditingKey &&
-          toNumber(row?.legal_entity_id) === legalEntityId &&
-          toNumber(row?.central_due_from_account_id) === centralDueFromAccountId
+    const mappingFieldChecks = [
+      {
+        accountId: centralDueFromAccountId,
+        rowField: "central_due_from_account_id",
+        labelEn: "Central due-from account",
+        labelTr: "Merkez alacak hesabi",
+      },
+      {
+        accountId: centralDueToAccountId,
+        rowField: "central_due_to_account_id",
+        labelEn: "Central due-to account",
+        labelTr: "Merkez borc hesabi",
+      },
+      {
+        accountId: ouDueFromCentralAccountId,
+        rowField: "ou_due_from_central_account_id",
+        labelEn: "OU due-from-central account",
+        labelTr: "OU merkezden alacak hesabi",
+      },
+      {
+        accountId: ouDueToCentralAccountId,
+        rowField: "ou_due_to_central_account_id",
+        labelEn: "OU due-to-central account",
+        labelTr: "OU merkeze borc hesabi",
+      },
+    ];
+    for (const fieldCheck of mappingFieldChecks) {
+      const conflictingUnit = fieldCheck.accountId
+        ? (operatingUnits || []).find((row) => {
+            const rowKey = `${row?.legal_entity_id || ""}:${String(row?.code || "").trim()}`;
+            return (
+              rowKey !== unitEditingKey &&
+              toNumber(row?.legal_entity_id) === legalEntityId &&
+              toNumber(row?.[fieldCheck.rowField]) === fieldCheck.accountId
+            );
+          })
+        : null;
+      if (conflictingUnit) {
+        setError(
+          l(
+            `${fieldCheck.labelEn} is already assigned to operating unit ${formatOperatingUnitLabel(conflictingUnit)}. Use a branch-specific account.`,
+            `${fieldCheck.labelTr} zaten ${formatOperatingUnitLabel(conflictingUnit)} operasyon birimine atanmis. Subeye ozel bir hesap kullanin.`
+          )
         );
-      })
-      : null;
-    if (conflictingCentralDueFromUnit) {
-      setError(
-        l(
-          `Central due-from account is already assigned to operating unit ${formatOperatingUnitLabel(conflictingCentralDueFromUnit)}. Use a branch-specific account.`,
-          `Merkez alacak hesabi zaten ${formatOperatingUnitLabel(conflictingCentralDueFromUnit)} operasyon birimine atanmis. Subeye ozel bir hesap kullanin.`
-        )
-      );
-      return;
-    }
-    const conflictingOuDueToUnit = ouDueToCentralAccountId
-      ? (operatingUnits || []).find((row) => {
-        const rowKey = `${row?.legal_entity_id || ""}:${String(row?.code || "").trim()}`;
-        return (
-          rowKey !== unitEditingKey &&
-          toNumber(row?.legal_entity_id) === legalEntityId &&
-          toNumber(row?.ou_due_to_central_account_id) === ouDueToCentralAccountId
-        );
-      })
-      : null;
-    if (conflictingOuDueToUnit) {
-      setError(
-        l(
-          `OU due-to-central account is already assigned to operating unit ${formatOperatingUnitLabel(conflictingOuDueToUnit)}. Use a branch-specific account.`,
-          `OU merkeze borc hesabi zaten ${formatOperatingUnitLabel(conflictingOuDueToUnit)} operasyon birimine atanmis. Subeye ozel bir hesap kullanin.`
-        )
-      );
-      return;
+        return;
+      }
     }
 
     setSaving("unit");
@@ -2505,6 +2507,8 @@ export default function OrganizationManagementPage() {
         unitType: unitForm.unitType,
         hasSubledger: Boolean(unitForm.hasSubledger),
         centralDueFromAccountId: centralDueFromAccountId || undefined,
+        centralDueToAccountId: centralDueToAccountId || undefined,
+        ouDueFromCentralAccountId: ouDueFromCentralAccountId || undefined,
         ouDueToCentralAccountId: ouDueToCentralAccountId || undefined,
       });
       const successMessage = unitEditingKey
@@ -4451,6 +4455,8 @@ export default function OrganizationManagementPage() {
                   ...prev,
                   legalEntityId: event.target.value,
                   centralDueFromAccountId: "",
+                  centralDueToAccountId: "",
+                  ouDueFromCentralAccountId: "",
                   ouDueToCentralAccountId: "",
                 }))
               }
@@ -4528,6 +4534,44 @@ export default function OrganizationManagementPage() {
               ))}
             </select>
             <select
+              value={unitForm.centralDueToAccountId}
+              onChange={(event) =>
+                setUnitForm((prev) => ({
+                  ...prev,
+                  centralDueToAccountId: event.target.value,
+                }))
+              }
+              className="rounded-lg border border-slate-300 px-3 py-2 text-sm md:col-span-3"
+            >
+              <option value="">
+                {l("Central Due To OU (optional)", "Merkez OU Borcu (opsiyonel)")}
+              </option>
+              {unitOuDueToCentralAccountOptions.map((account) => (
+                <option key={account.id} value={account.id}>
+                  {formatAccountOptionLabel(account)}
+                </option>
+              ))}
+            </select>
+            <select
+              value={unitForm.ouDueFromCentralAccountId}
+              onChange={(event) =>
+                setUnitForm((prev) => ({
+                  ...prev,
+                  ouDueFromCentralAccountId: event.target.value,
+                }))
+              }
+              className="rounded-lg border border-slate-300 px-3 py-2 text-sm md:col-span-3"
+            >
+              <option value="">
+                {l("OU Due From Central (optional)", "OU Merkezden Alacak (opsiyonel)")}
+              </option>
+              {unitCentralDueFromAccountOptions.map((account) => (
+                <option key={account.id} value={account.id}>
+                  {formatAccountOptionLabel(account)}
+                </option>
+              ))}
+            </select>
+            <select
               value={unitForm.ouDueToCentralAccountId}
               onChange={(event) =>
                 setUnitForm((prev) => ({
@@ -4549,8 +4593,8 @@ export default function OrganizationManagementPage() {
             <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 md:col-span-6">
               <div>
                 {l(
-                  "For OU-targeted capital fulfillment, configure both fields on this operating unit.",
-                  "OU hedefli sermaye karsilamasi icin bu operasyon biriminde iki alani da tanimlayin."
+                  "For central/OU self-balancing, configure all four directional fields on this operating unit. The first pair keeps OU-targeted capital and central-to-OU flows backward-compatible; the reverse pair is required for cross-context collections and settlement splits.",
+                  "Merkez/OU self-balancing icin bu operasyon biriminde dort yonlu alani tanimlayin. Ilk cift OU hedefli sermaye ve merkezden OU'ya akislarini geriye uyumlu tutar; ters yon cift ise contextler arasi tahsilat ve mutabakat bolunmesi icin gereklidir."
                 )}
               </div>
               <div className="mt-1">
@@ -4563,6 +4607,12 @@ export default function OrganizationManagementPage() {
                 {l(
                   "OU Due To Central must be an active, postable, leaf legal-entity account with LIABILITY type and CREDIT normal side.",
                   "OU Merkeze Borc, ayni legal entity icinde aktif, post edilebilir, leaf bir hesap olmali; hesap tipi LIABILITY ve normal bakiye yonu CREDIT olmalidir."
+                )}
+              </div>
+              <div className="mt-1">
+                {l(
+                  "Central Due To OU must be an active, postable, leaf legal-entity account with LIABILITY type and CREDIT normal side. OU Due From Central must be an active, postable, leaf legal-entity account with ASSET type and DEBIT normal side.",
+                  "Merkez OU Borcu aktif, post edilebilir, leaf bir LIABILITY/CREDIT hesap olmali. OU Merkezden Alacak ise aktif, post edilebilir, leaf bir ASSET/DEBIT hesap olmali."
                 )}
               </div>
             </div>
@@ -4602,8 +4652,11 @@ export default function OrganizationManagementPage() {
                   <th className="px-3 py-2">{l("Type", "Tur")}</th>
                   <th className="px-3 py-2">{l("Subledger", "Alt Defter")}</th>
                   <th className="px-3 py-2">{l("Central Due From", "Merkez Alacagi")}</th>
+                  <th className="px-3 py-2">{l("Central Due To", "Merkez Borcu")}</th>
+                  <th className="px-3 py-2">{l("OU Due From Central", "OU Merkezden Alacak")}</th>
                   <th className="px-3 py-2">{l("OU Due To Central", "OU Merkeze Borc")}</th>
-                  <th className="px-3 py-2">{l("Ready", "Hazir")}</th>
+                  <th className="px-3 py-2">{l("Capital Ready", "Sermaye Hazir")}</th>
+                  <th className="px-3 py-2">{l("Cross-Context Ready", "Contextler Arasi Hazir")}</th>
                   <th className="px-3 py-2">{l("Actions", "Islemler")}</th>
                 </tr>
               </thead>
@@ -4637,6 +4690,30 @@ export default function OrganizationManagementPage() {
                       </td>
                       <td className="px-3 py-2">
                         <div className="font-medium text-slate-700">
+                          {row.central_due_to_account_id
+                            ? l("Configured", "Yapilandirildi")
+                            : l("Missing", "Eksik")}
+                        </div>
+                        <div className="text-xs text-slate-500">
+                          {row.central_due_to_account_code
+                            ? `${row.central_due_to_account_code} - ${row.central_due_to_account_name || ""}`.trim()
+                            : "-"}
+                        </div>
+                      </td>
+                      <td className="px-3 py-2">
+                        <div className="font-medium text-slate-700">
+                          {row.ou_due_from_central_account_id
+                            ? l("Configured", "Yapilandirildi")
+                            : l("Missing", "Eksik")}
+                        </div>
+                        <div className="text-xs text-slate-500">
+                          {row.ou_due_from_central_account_code
+                            ? `${row.ou_due_from_central_account_code} - ${row.ou_due_from_central_account_name || ""}`.trim()
+                            : "-"}
+                        </div>
+                      </td>
+                      <td className="px-3 py-2">
+                        <div className="font-medium text-slate-700">
                           {row.ou_due_to_central_account_id
                             ? l("Configured", "Yapilandirildi")
                             : l("Missing", "Eksik")}
@@ -4660,6 +4737,18 @@ export default function OrganizationManagementPage() {
                         </span>
                       </td>
                       <td className="px-3 py-2">
+                        <span
+                          className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${row.cross_context_self_balancing_ready
+                            ? "bg-emerald-100 text-emerald-700"
+                            : "bg-amber-100 text-amber-700"
+                            }`}
+                        >
+                          {row.cross_context_self_balancing_ready
+                            ? l("Ready", "Hazir")
+                            : l("Missing setup", "Kurulum eksik")}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2">
                         <button
                           type="button"
                           onClick={() => handleOperatingUnitEdit(row)}
@@ -4674,7 +4763,7 @@ export default function OrganizationManagementPage() {
                 })}
                 {operatingUnits.length === 0 && !loading && (
                   <tr>
-                    <td colSpan={10} className="px-3 py-3 text-slate-500">
+                    <td colSpan={13} className="px-3 py-3 text-slate-500">
                       {l("No operating units found.", "Operasyon birimi bulunamadi.")}
                     </td>
                   </tr>

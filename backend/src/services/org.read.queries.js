@@ -71,6 +71,12 @@ export async function fetchOperatingUnitRows({ conditions, params }) {
        ou.central_due_from_account_id,
        cdfa.code AS central_due_from_account_code,
        cdfa.name AS central_due_from_account_name,
+       ou.central_due_to_account_id,
+       cdta.code AS central_due_to_account_code,
+       cdta.name AS central_due_to_account_name,
+       ou.ou_due_from_central_account_id,
+       odfa.code AS ou_due_from_central_account_code,
+       odfa.name AS ou_due_from_central_account_name,
        ou.ou_due_to_central_account_id,
        odtq.code AS ou_due_to_central_account_code,
        odtq.name AS ou_due_to_central_account_name,
@@ -104,9 +110,70 @@ export async function fetchOperatingUnitRows({ conditions, params }) {
          THEN TRUE
          ELSE FALSE
        END AS capital_self_balancing_ready
+       ,
+       CASE
+         WHEN ou.central_due_from_account_id IS NOT NULL
+           AND ou.central_due_to_account_id IS NOT NULL
+           AND ou.ou_due_from_central_account_id IS NOT NULL
+           AND ou.ou_due_to_central_account_id IS NOT NULL
+           AND cdfa.id IS NOT NULL
+           AND cdta.id IS NOT NULL
+           AND odfa.id IS NOT NULL
+           AND odtq.id IS NOT NULL
+           AND cdfc.scope = 'LEGAL_ENTITY'
+           AND cdtc.scope = 'LEGAL_ENTITY'
+           AND odfc.scope = 'LEGAL_ENTITY'
+           AND odtqc.scope = 'LEGAL_ENTITY'
+           AND cdfc.legal_entity_id = ou.legal_entity_id
+           AND cdtc.legal_entity_id = ou.legal_entity_id
+           AND odfc.legal_entity_id = ou.legal_entity_id
+           AND odtqc.legal_entity_id = ou.legal_entity_id
+           AND cdfa.is_active = TRUE
+           AND cdta.is_active = TRUE
+           AND odfa.is_active = TRUE
+           AND odtq.is_active = TRUE
+           AND cdfa.allow_posting = TRUE
+           AND cdta.allow_posting = TRUE
+           AND odfa.allow_posting = TRUE
+           AND odtq.allow_posting = TRUE
+           AND cdfa.account_type = 'ASSET'
+           AND cdta.account_type = 'LIABILITY'
+           AND odfa.account_type = 'ASSET'
+           AND odtq.account_type = 'LIABILITY'
+           AND cdfa.normal_side = 'DEBIT'
+           AND cdta.normal_side = 'CREDIT'
+           AND odfa.normal_side = 'DEBIT'
+           AND odtq.normal_side = 'CREDIT'
+           AND NOT EXISTS (
+             SELECT 1
+             FROM accounts child
+             WHERE child.parent_account_id = cdfa.id
+           )
+           AND NOT EXISTS (
+             SELECT 1
+             FROM accounts child
+             WHERE child.parent_account_id = cdta.id
+           )
+           AND NOT EXISTS (
+             SELECT 1
+             FROM accounts child
+             WHERE child.parent_account_id = odfa.id
+           )
+           AND NOT EXISTS (
+             SELECT 1
+             FROM accounts child
+             WHERE child.parent_account_id = odtq.id
+           )
+         THEN TRUE
+         ELSE FALSE
+       END AS cross_context_self_balancing_ready
      FROM operating_units ou
      LEFT JOIN accounts cdfa ON cdfa.id = ou.central_due_from_account_id
      LEFT JOIN charts_of_accounts cdfc ON cdfc.id = cdfa.coa_id
+     LEFT JOIN accounts cdta ON cdta.id = ou.central_due_to_account_id
+     LEFT JOIN charts_of_accounts cdtc ON cdtc.id = cdta.coa_id
+     LEFT JOIN accounts odfa ON odfa.id = ou.ou_due_from_central_account_id
+     LEFT JOIN charts_of_accounts odfc ON odfc.id = odfa.coa_id
      LEFT JOIN accounts odtq ON odtq.id = ou.ou_due_to_central_account_id
      LEFT JOIN charts_of_accounts odtqc ON odtqc.id = odtq.coa_id
      WHERE ${conditions.join(" AND ")}
@@ -243,6 +310,12 @@ export async function fetchTreeOperatingUnitRows({ tenantId, scopeFilter, params
        ou.central_due_from_account_id,
        cdfa.code AS central_due_from_account_code,
        cdfa.name AS central_due_from_account_name,
+       ou.central_due_to_account_id,
+       cdta.code AS central_due_to_account_code,
+       cdta.name AS central_due_to_account_name,
+       ou.ou_due_from_central_account_id,
+       odfa.code AS ou_due_from_central_account_code,
+       odfa.name AS ou_due_from_central_account_name,
        ou.ou_due_to_central_account_id,
        odtq.code AS ou_due_to_central_account_code,
        odtq.name AS ou_due_to_central_account_name,
@@ -276,9 +349,70 @@ export async function fetchTreeOperatingUnitRows({ tenantId, scopeFilter, params
          THEN TRUE
          ELSE FALSE
        END AS capital_self_balancing_ready
+       ,
+       CASE
+         WHEN ou.central_due_from_account_id IS NOT NULL
+           AND ou.central_due_to_account_id IS NOT NULL
+           AND ou.ou_due_from_central_account_id IS NOT NULL
+           AND ou.ou_due_to_central_account_id IS NOT NULL
+           AND cdfa.id IS NOT NULL
+           AND cdta.id IS NOT NULL
+           AND odfa.id IS NOT NULL
+           AND odtq.id IS NOT NULL
+           AND cdfc.scope = 'LEGAL_ENTITY'
+           AND cdtc.scope = 'LEGAL_ENTITY'
+           AND odfc.scope = 'LEGAL_ENTITY'
+           AND odtqc.scope = 'LEGAL_ENTITY'
+           AND cdfc.legal_entity_id = ou.legal_entity_id
+           AND cdtc.legal_entity_id = ou.legal_entity_id
+           AND odfc.legal_entity_id = ou.legal_entity_id
+           AND odtqc.legal_entity_id = ou.legal_entity_id
+           AND cdfa.is_active = TRUE
+           AND cdta.is_active = TRUE
+           AND odfa.is_active = TRUE
+           AND odtq.is_active = TRUE
+           AND cdfa.allow_posting = TRUE
+           AND cdta.allow_posting = TRUE
+           AND odfa.allow_posting = TRUE
+           AND odtq.allow_posting = TRUE
+           AND cdfa.account_type = 'ASSET'
+           AND cdta.account_type = 'LIABILITY'
+           AND odfa.account_type = 'ASSET'
+           AND odtq.account_type = 'LIABILITY'
+           AND cdfa.normal_side = 'DEBIT'
+           AND cdta.normal_side = 'CREDIT'
+           AND odfa.normal_side = 'DEBIT'
+           AND odtq.normal_side = 'CREDIT'
+           AND NOT EXISTS (
+             SELECT 1
+             FROM accounts child
+             WHERE child.parent_account_id = cdfa.id
+           )
+           AND NOT EXISTS (
+             SELECT 1
+             FROM accounts child
+             WHERE child.parent_account_id = cdta.id
+           )
+           AND NOT EXISTS (
+             SELECT 1
+             FROM accounts child
+             WHERE child.parent_account_id = odfa.id
+           )
+           AND NOT EXISTS (
+             SELECT 1
+             FROM accounts child
+             WHERE child.parent_account_id = odtq.id
+           )
+         THEN TRUE
+         ELSE FALSE
+       END AS cross_context_self_balancing_ready
      FROM operating_units ou
      LEFT JOIN accounts cdfa ON cdfa.id = ou.central_due_from_account_id
      LEFT JOIN charts_of_accounts cdfc ON cdfc.id = cdfa.coa_id
+     LEFT JOIN accounts cdta ON cdta.id = ou.central_due_to_account_id
+     LEFT JOIN charts_of_accounts cdtc ON cdtc.id = cdta.coa_id
+     LEFT JOIN accounts odfa ON odfa.id = ou.ou_due_from_central_account_id
+     LEFT JOIN charts_of_accounts odfc ON odfc.id = odfa.coa_id
      LEFT JOIN accounts odtq ON odtq.id = ou.ou_due_to_central_account_id
      LEFT JOIN charts_of_accounts odtqc ON odtqc.id = odtq.coa_id
      WHERE ou.tenant_id = ?

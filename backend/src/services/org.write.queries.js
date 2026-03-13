@@ -84,6 +84,8 @@ export async function upsertOperatingUnitRow({
   unitType,
   hasSubledger,
   centralDueFromAccountId,
+  centralDueToAccountId,
+  ouDueFromCentralAccountId,
   ouDueToCentralAccountId,
   runQuery = query,
 }) {
@@ -96,15 +98,19 @@ export async function upsertOperatingUnitRow({
         unit_type,
         has_subledger,
         central_due_from_account_id,
+        central_due_to_account_id,
+        ou_due_from_central_account_id,
         ou_due_to_central_account_id
       )
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE
        id = LAST_INSERT_ID(id),
        name = VALUES(name),
        unit_type = VALUES(unit_type),
        has_subledger = VALUES(has_subledger),
        central_due_from_account_id = VALUES(central_due_from_account_id),
+       central_due_to_account_id = VALUES(central_due_to_account_id),
+       ou_due_from_central_account_id = VALUES(ou_due_from_central_account_id),
        ou_due_to_central_account_id = VALUES(ou_due_to_central_account_id)`,
     [
       tenantId,
@@ -114,6 +120,8 @@ export async function upsertOperatingUnitRow({
       unitType,
       hasSubledger,
       centralDueFromAccountId || null,
+      centralDueToAccountId || null,
+      ouDueFromCentralAccountId || null,
       ouDueToCentralAccountId || null,
     ]
   );

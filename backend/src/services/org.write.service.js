@@ -121,6 +121,10 @@ function normalizeUpperText(value) {
     .toUpperCase();
 }
 
+function getIndefiniteArticle(value) {
+  return /^[AEIOU]/i.test(String(value || "").trim()) ? "an" : "a";
+}
+
 async function assertOperatingUnitInternalCurrentAccountTx(
   tx,
   {
@@ -183,7 +187,9 @@ async function assertOperatingUnitInternalCurrentAccountTx(
   }
   if (normalizeUpperText(row.account_type) !== normalizeUpperText(expectedAccountType)) {
     throw badRequest(
-      `${fieldLabel} must reference an ${normalizeUpperText(expectedAccountType)} account`
+      `${fieldLabel} must reference ${getIndefiniteArticle(
+        expectedAccountType
+      )} ${normalizeUpperText(expectedAccountType)} account`
     );
   }
   if (normalizeUpperText(row.normal_side) !== normalizeUpperText(expectedNormalSide)) {
@@ -568,6 +574,8 @@ export async function upsertOperatingUnit({
   unitType,
   hasSubledger,
   centralDueFromAccountId,
+  centralDueToAccountId,
+  ouDueFromCentralAccountId,
   ouDueToCentralAccountId,
   assertLegalEntityBelongsToTenant,
   assertScopeAccess,
@@ -575,50 +583,65 @@ export async function upsertOperatingUnit({
   await assertLegalEntityBelongsToTenant(tenantId, legalEntityId, "legalEntityId");
   assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
 
-  if (
-    parsePositiveInt(centralDueFromAccountId) &&
-    parsePositiveInt(centralDueFromAccountId) === parsePositiveInt(ouDueToCentralAccountId)
-  ) {
-    throw badRequest(
-      "ouDueToCentralAccountId must be different from centralDueFromAccountId"
-    );
-  }
-
   const id = await withTransaction(async (tx) => {
-    await assertOperatingUnitInternalCurrentAccountTx(tx, {
-      tenantId,
-      legalEntityId,
-      accountId: centralDueFromAccountId,
-      fieldLabel: "centralDueFromAccountId",
-      expectedAccountType: "ASSET",
-      expectedNormalSide: "DEBIT",
-    });
-    await assertOperatingUnitInternalCurrentAccountTx(tx, {
-      tenantId,
-      legalEntityId,
-      accountId: ouDueToCentralAccountId,
-      fieldLabel: "ouDueToCentralAccountId",
-      expectedAccountType: "LIABILITY",
-      expectedNormalSide: "CREDIT",
-    });
-    await assertUniqueOperatingUnitInternalCurrentMappingTx(tx, {
-      tenantId,
-      legalEntityId,
-      code,
-      accountId: centralDueFromAccountId,
-      fieldLabel: "centralDueFromAccountId",
-      columnName: "central_due_from_account_id",
-      roleLabel: "Central Due From OU account mapping",
-    });
-    await assertUniqueOperatingUnitInternalCurrentMappingTx(tx, {
-      tenantId,
-      legalEntityId,
-      code,
-      accountId: ouDueToCentralAccountId,
-      fieldLabel: "ouDueToCentralAccountId",
-      columnName: "ou_due_to_central_account_id",
-      roleLabel: "OU Due To Central account mapping",
-    });
+    const fieldSpecs = [
+      {
+        accountId: centralDueFromAccountId,
+        fieldLabel: "centralDueFromAccountId",
+        columnName: "central_due_from_account_id",
+        roleLabel: "Central Due From OU account mapping",
+        expectedAccountType: "ASSET",
+        expectedNormalSide: "DEBIT",
+      },
+      {
+        accountId: centralDueToAccountId,
+        fieldLabel: "centralDueToAccountId",
+        columnName: "central_due_to_account_id",
+        roleLabel: "Central Due To OU account mapping",
+        expectedAccountType: "LIABILITY",
+        expectedNormalSide: "CREDIT",
+      },
+      {
+        accountId: ouDueFromCentralAccountId,
+        fieldLabel: "ouDueFromCentralAccountId",
+        columnName: "ou_due_from_central_account_id",
+        roleLabel: "OU Due From Central account mapping",
+        expectedAccountType: "ASSET",
+        expectedNormalSide: "DEBIT",
+      },
+      {
+        accountId: ouDueToCentralAccountId,
+        fieldLabel: "ouDueToCentralAccountId",
+        columnName: "ou_due_to_central_account_id",
+        roleLabel: "OU Due To Central account mapping",
+        expectedAccountType: "LIABILITY",
+        expectedNormalSide: "CREDIT",
+      },
+    ];
+
+    for (const spec of fieldSpecs) {
+      // eslint-disable-next-line no-await-in-loop
+      await assertOperatingUnitInternalCurrentAccountTx(tx, {
+        tenantId,
+        legalEntityId,
+        accountId: spec.accountId,
+        fieldLabel: spec.fieldLabel,
+        expectedAccountType: spec.expectedAccountType,
+        expectedNormalSide: spec.expectedNormalSide,
+      });
+    }
+    for (const spec of fieldSpecs) {
+      // eslint-disable-next-line no-await-in-loop
+      await assertUniqueOperatingUnitInternalCurrentMappingTx(tx, {
+        tenantId,
+        legalEntityId,
+        code,
+        accountId: spec.accountId,
+        fieldLabel: spec.fieldLabel,
+        columnName: spec.columnName,
+        roleLabel: spec.roleLabel,
+      });
+    }
 
     return upsertOperatingUnitRow({
       tenantId,
@@ -628,6 +651,8 @@ export async function upsertOperatingUnit({
       unitType: String(unitType).toUpperCase(),
       hasSubledger: Boolean(hasSubledger),
       centralDueFromAccountId: parsePositiveInt(centralDueFromAccountId),
+      centralDueToAccountId: parsePositiveInt(centralDueToAccountId),
+      ouDueFromCentralAccountId: parsePositiveInt(ouDueFromCentralAccountId),
       ouDueToCentralAccountId: parsePositiveInt(ouDueToCentralAccountId),
       runQuery: (sql, params) => tx.query(sql, params),
     });
@@ -932,7 +957,9 @@ async function assertOperatingUnitInternalCurrentParentAccountTx(
   }
   if (normalizeUpperText(row.account_type) !== normalizeUpperText(expectedAccountType)) {
     throw badRequest(
-      `${fieldLabel} must reference an ${normalizeUpperText(expectedAccountType)} account`
+      `${fieldLabel} must reference ${getIndefiniteArticle(
+        expectedAccountType
+      )} ${normalizeUpperText(expectedAccountType)} account`
     );
   }
   if (normalizeUpperText(row.normal_side) !== normalizeUpperText(expectedNormalSide)) {
@@ -974,6 +1001,8 @@ async function loadOperatingUnitIdentityTx(
        has_subledger,
        status,
        central_due_from_account_id,
+       central_due_to_account_id,
+       ou_due_from_central_account_id,
        ou_due_to_central_account_id
      FROM operating_units
      WHERE id = ?
@@ -997,6 +1026,8 @@ async function loadOperatingUnitIdentityTx(
     has_subledger: parseDbBoolean(row.has_subledger),
     status: String(row.status || ""),
     central_due_from_account_id: parsePositiveInt(row.central_due_from_account_id),
+    central_due_to_account_id: parsePositiveInt(row.central_due_to_account_id),
+    ou_due_from_central_account_id: parsePositiveInt(row.ou_due_from_central_account_id),
     ou_due_to_central_account_id: parsePositiveInt(row.ou_due_to_central_account_id),
   };
 }
