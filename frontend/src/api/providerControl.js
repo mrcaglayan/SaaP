@@ -66,6 +66,15 @@ export async function updateProviderTenantStatus(token, tenantId, status) {
   return response.data;
 }
 
+export async function updateProviderTenantTaxEngine(token, tenantId, enabled) {
+  const response = await providerApi.patch(
+    `/api/v1/provider/tenants/${tenantId}/tax-engine`,
+    { enabled },
+    withAuth(token)
+  );
+  return response.data;
+}
+
 export async function listProviderCurrencies(token) {
   const response = await providerApi.get("/api/v1/provider/currencies", withAuth(token));
   return response.data;

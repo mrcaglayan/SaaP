@@ -58,6 +58,11 @@ function roundAmount(value) {
   return Number(Number(value || 0).toFixed(AMOUNT_SCALE));
 }
 
+function toInt(value, fallback = 0) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.trunc(parsed) : fallback;
+}
+
 function normalizeDateOnly(value, label = "date") {
   const normalized = String(value || "").trim();
   if (!normalized) {
@@ -1816,6 +1821,10 @@ export async function listPendingInventoryStockLinks({
     whereSql += " AND sl.link_status = ?";
     params.push(filters.linkStatus);
   }
+  if (filters?.stockImpactMode) {
+    whereSql += " AND sl.stock_impact_mode = ?";
+    params.push(filters.stockImpactMode);
+  }
   if (filters?.warehouseLinked === true) {
     whereSql += " AND sl.inventory_movement_id IS NOT NULL";
   }
@@ -1860,6 +1869,124 @@ export async function listPendingInventoryStockLinks({
   );
   return {
     rows: (result.rows || []).map(mapPendingStockLinkRow),
+  };
+}
+
+export async function getInventoryWorkQueueSummary({
+  tenantId,
+  filters = {},
+  runQuery = query,
+}) {
+  const normalizedTenantId = parsePositiveInt(tenantId);
+  if (!normalizedTenantId) {
+    throw badRequest("tenantId is required");
+  }
+
+  const legalEntityId = parsePositiveInt(filters?.legalEntityId);
+
+  const stockParams = [normalizedTenantId];
+  let stockWhereSql = "WHERE sl.tenant_id = ? AND sl.link_status = 'PENDING'";
+  if (legalEntityId) {
+    stockWhereSql += " AND sl.legal_entity_id = ?";
+    stockParams.push(legalEntityId);
+  }
+
+  const stockSummary = await runQuery(
+    `SELECT
+        COUNT(*) AS total_pending,
+        SUM(CASE WHEN sl.stock_impact_mode = 'RECEIPT_PENDING' THEN 1 ELSE 0 END) AS receipt_pending,
+        SUM(CASE WHEN sl.stock_impact_mode = 'ISSUE_PENDING' THEN 1 ELSE 0 END) AS issue_pending,
+        SUM(CASE WHEN sl.reopened_from_stock_link_id IS NOT NULL THEN 1 ELSE 0 END) AS reopened_pending,
+        SUM(CASE WHEN DATEDIFF(CURDATE(), d.document_date) BETWEEN 0 AND 1 THEN 1 ELSE 0 END) AS age_0_1d,
+        SUM(CASE WHEN DATEDIFF(CURDATE(), d.document_date) BETWEEN 2 AND 7 THEN 1 ELSE 0 END) AS age_2_7d,
+        SUM(CASE WHEN DATEDIFF(CURDATE(), d.document_date) > 7 THEN 1 ELSE 0 END) AS age_8_plus_d,
+        SUM(CASE WHEN DATEDIFF(CURDATE(), d.document_date) > 2 THEN 1 ELSE 0 END) AS stale_gt_2d,
+        MAX(DATEDIFF(CURDATE(), d.document_date)) AS oldest_pending_days
+       FROM cari_document_line_stock_links sl
+       JOIN cari_documents d
+         ON d.tenant_id = sl.tenant_id
+        AND d.legal_entity_id = sl.legal_entity_id
+        AND d.id = sl.cari_document_id
+       ${stockWhereSql}`,
+    stockParams
+  );
+
+  const transferParams = [normalizedTenantId];
+  let transferWhereSql =
+    "WHERE t.tenant_id = ? AND t.status IN ('INITIATED', 'APPROVED', 'IN_TRANSIT')";
+  if (legalEntityId) {
+    transferWhereSql += " AND t.legal_entity_id = ?";
+    transferParams.push(legalEntityId);
+  }
+
+  const transferSummary = await runQuery(
+    `SELECT
+        COUNT(*) AS total_open,
+        SUM(CASE WHEN t.status = 'INITIATED' THEN 1 ELSE 0 END) AS initiated,
+        SUM(CASE WHEN t.status = 'APPROVED' THEN 1 ELSE 0 END) AS approved,
+        SUM(CASE WHEN t.status = 'IN_TRANSIT' THEN 1 ELSE 0 END) AS in_transit,
+        SUM(
+          CASE
+            WHEN t.status = 'IN_TRANSIT'
+             AND COALESCE(t.source_operating_unit_id, 0) <> COALESCE(t.target_operating_unit_id, 0)
+            THEN 1
+            ELSE 0
+          END
+        ) AS cross_context_in_transit,
+        SUM(CASE WHEN t.status = 'INITIATED' AND DATEDIFF(CURDATE(), t.transfer_date) > 1 THEN 1 ELSE 0 END) AS stale_initiated_gt_1d,
+        SUM(CASE WHEN t.status = 'APPROVED' AND DATEDIFF(CURDATE(), t.transfer_date) > 1 THEN 1 ELSE 0 END) AS stale_approved_gt_1d,
+        SUM(
+          CASE
+            WHEN t.status = 'IN_TRANSIT'
+             AND DATEDIFF(CURDATE(), COALESCE(DATE(t.in_transit_at), t.transfer_date)) > 2
+            THEN 1
+            ELSE 0
+          END
+        ) AS stale_in_transit_gt_2d,
+        MAX(
+          CASE
+            WHEN t.status = 'IN_TRANSIT'
+            THEN DATEDIFF(CURDATE(), COALESCE(DATE(t.in_transit_at), t.transfer_date))
+            ELSE NULL
+          END
+        ) AS oldest_in_transit_days
+       FROM inventory_transfers t
+       ${transferWhereSql}`,
+    transferParams
+  );
+
+  const stockRow = stockSummary.rows?.[0] || {};
+  const transferRow = transferSummary.rows?.[0] || {};
+
+  return {
+    asOfDate: new Date().toISOString().slice(0, 10),
+    filters: {
+      legalEntityId: legalEntityId || null,
+    },
+    stockLinks: {
+      total_pending: toInt(stockRow.total_pending, 0),
+      pending_receipt_materialization: toInt(stockRow.receipt_pending, 0),
+      pending_issue_materialization: toInt(stockRow.issue_pending, 0),
+      reopened_pending: toInt(stockRow.reopened_pending, 0),
+      stale_pending_gt_2d: toInt(stockRow.stale_gt_2d, 0),
+      oldest_pending_days: toInt(stockRow.oldest_pending_days, 0),
+      aging_pending: {
+        "0_1d": toInt(stockRow.age_0_1d, 0),
+        "2_7d": toInt(stockRow.age_2_7d, 0),
+        "8_plus_d": toInt(stockRow.age_8_plus_d, 0),
+      },
+    },
+    transfers: {
+      total_open: toInt(transferRow.total_open, 0),
+      waiting_approval: toInt(transferRow.initiated, 0),
+      ready_to_ship: toInt(transferRow.approved, 0),
+      in_transit_waiting_receipt: toInt(transferRow.in_transit, 0),
+      cross_context_in_transit: toInt(transferRow.cross_context_in_transit, 0),
+      stale_waiting_approval_gt_1d: toInt(transferRow.stale_initiated_gt_1d, 0),
+      stale_ready_to_ship_gt_1d: toInt(transferRow.stale_approved_gt_1d, 0),
+      stale_in_transit_gt_2d: toInt(transferRow.stale_in_transit_gt_2d, 0),
+      oldest_in_transit_days: toInt(transferRow.oldest_in_transit_days, 0),
+    },
   };
 }
 

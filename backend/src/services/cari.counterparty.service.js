@@ -165,6 +165,8 @@ function mapCounterpartyRow(row) {
     tenantId: parsePositiveInt(row.tenant_id),
     legalEntityId: parsePositiveInt(row.legal_entity_id),
     primaryOperatingUnitId: parsePositiveInt(row.primary_operating_unit_id),
+    primaryOperatingUnitCode: row.primary_operating_unit_code || null,
+    primaryOperatingUnitName: row.primary_operating_unit_name || null,
     code: row.code,
     name: row.name,
     counterpartyType,
@@ -1118,6 +1120,10 @@ const COUNTERPARTY_LIST_FROM_SQL = `
        ON pt.tenant_id = c.tenant_id
       AND pt.legal_entity_id = c.legal_entity_id
       AND pt.id = c.default_payment_term_id
+     LEFT JOIN operating_units primary_ou
+       ON primary_ou.id = c.primary_operating_unit_id
+      AND primary_ou.tenant_id = c.tenant_id
+      AND primary_ou.legal_entity_id = c.legal_entity_id
      LEFT JOIN accounts ar_acc
        ON ar_acc.id = c.ar_account_id
      LEFT JOIN charts_of_accounts ar_coa
@@ -1267,6 +1273,8 @@ export async function listCounterpartyRows({
         c.*,
         pt.code AS default_payment_term_code,
         pt.name AS default_payment_term_name,
+        primary_ou.code AS primary_operating_unit_code,
+        primary_ou.name AS primary_operating_unit_name,
         ${COUNTERPARTY_AR_ACCOUNT_CODE_SQL} AS ar_account_code,
         ${COUNTERPARTY_AR_ACCOUNT_NAME_SQL} AS ar_account_name,
         ${COUNTERPARTY_AP_ACCOUNT_CODE_SQL} AS ap_account_code,

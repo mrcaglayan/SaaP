@@ -322,9 +322,22 @@ export function buildAutoAllocatePreview(openItems = [], incomingAmountTxn = 0, 
 
     return {
       openItemId: item?.openItemId || null,
+      documentId: item?.documentId || null,
       documentNo: item?.documentNo || null,
+      documentDate: item?.documentDate || null,
       dueDate: item?.dueDate || null,
       direction: item?.direction || null,
+      operatingUnitId: item?.operatingUnitId ?? item?.operating_unit_id ?? null,
+      operatingUnitCode:
+        item?.operatingUnitCode ?? item?.operating_unit_code ?? null,
+      operatingUnitName:
+        item?.operatingUnitName ?? item?.operating_unit_name ?? null,
+      operatingUnitContextLabel:
+        item?.operatingUnitContextLabel ??
+        item?.operating_unit_context_label ??
+        item?.ownerContextLabel ??
+        item?.owner_context_label ??
+        null,
       documentCurrencyCode: documentCurrencyCode || null,
       settlementCurrencyCode: settlementCurrencyCode || null,
       openAmountDocTxn,

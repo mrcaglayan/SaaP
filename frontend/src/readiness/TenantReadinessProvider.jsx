@@ -4,10 +4,12 @@ import {
   getTenantReadiness,
 } from "../api/readiness.js";
 import { useAuth } from "../auth/useAuth.js";
+import { useWorkingContext } from "../context/useWorkingContext.js";
 import { TenantReadinessContext } from "./tenantReadinessContext.js";
 
 export default function TenantReadinessProvider({ children }) {
   const { isAuthed } = useAuth();
+  const { refreshLookups } = useWorkingContext();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [readiness, setReadiness] = useState(null);
@@ -50,6 +52,7 @@ export default function TenantReadinessProvider({ children }) {
       setBootstrapError("");
       try {
         const data = await bootstrapTenantBaseline(payload);
+        refreshLookups();
         setBootstrapResult(data || null);
         await refresh();
         return data || null;
@@ -64,7 +67,7 @@ export default function TenantReadinessProvider({ children }) {
         setBootstrapping(false);
       }
     },
-    [isAuthed, refresh]
+    [isAuthed, refresh, refreshLookups]
   );
 
   useEffect(() => {

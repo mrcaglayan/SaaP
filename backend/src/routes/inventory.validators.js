@@ -4,6 +4,7 @@ import { requireUserId } from "./cash.validators.common.js";
 const WAREHOUSE_STATUS_VALUES = ["ACTIVE", "INACTIVE"];
 const WAREHOUSE_OWNERSHIP_SCOPE_VALUES = ["CENTRAL", "OPERATING_UNIT"];
 const STOCK_LINK_STATUS_VALUES = ["PENDING", "LINKED", "VOID"];
+const STOCK_IMPACT_MODE_VALUES = ["RECEIPT_PENDING", "ISSUE_PENDING"];
 const MOVEMENT_TYPE_VALUES = ["RECEIPT", "ISSUE", "ADJUSTMENT_IN", "ADJUSTMENT_OUT"];
 const VALUATION_STATUS_VALUES = ["NOT_REQUIRED", "PENDING", "VALUED"];
 const LAYER_STATUS_VALUES = ["OPEN", "CLOSED"];
@@ -151,6 +152,12 @@ export function parseInventoryStockLinkListFilters(req) {
         STOCK_LINK_STATUS_VALUES,
         { required: true }
       ) || "PENDING",
+    stockImpactMode:
+      normalizeEnum(
+        req.query?.stockImpactMode ?? req.query?.stock_impact_mode,
+        "stockImpactMode",
+        STOCK_IMPACT_MODE_VALUES
+      ) || null,
     warehouseLinked:
       linkedRaw === "true" ? true : linkedRaw === "false" ? false : undefined,
     limit: parseLimit(req.query?.limit, 200),

@@ -7,6 +7,7 @@ import {
   getOpsPayrollCloseStatus,
   getOpsPayrollImportHealth,
 } from "../api/opsDashboard.js";
+import { getInventoryWorkQueueSummary } from "../api/inventory.js";
 import { listExceptionWorkbench } from "../api/exceptionsWorkbench.js";
 import {
   listMeNotifications,
@@ -87,6 +88,18 @@ function resolveScopeParams(workingContext) {
   return params;
 }
 
+function buildAppPath(basePath, params = {}) {
+  const searchParams = new URLSearchParams();
+  for (const [key, value] of Object.entries(params || {})) {
+    if (value === undefined || value === null || value === "") {
+      continue;
+    }
+    searchParams.set(key, String(value));
+  }
+  const query = searchParams.toString();
+  return query ? `${basePath}?${query}` : basePath;
+}
+
 function MetricCard({ title, value, subtitle, to, ctaLabel, locked }) {
   const baseClassName =
     "rounded-xl border p-4 transition-colors bg-white border-slate-200 shadow-sm";
@@ -146,6 +159,7 @@ export default function Dashboard() {
   const canReadOps = hasPermission("ops.dashboard.read");
   const canReadExceptions = hasPermission("ops.exceptions.read");
   const canReadReadiness = hasPermission("org.tree.read");
+  const canReadInventory = hasPermission("inventory.read");
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -157,6 +171,7 @@ export default function Dashboard() {
     payrollClose: null,
     jobs: null,
     exceptions: null,
+    inventoryWorkQueue: null,
   });
   const [notificationsLoading, setNotificationsLoading] = useState(false);
   const [notificationsError, setNotificationsError] = useState("");
@@ -169,6 +184,13 @@ export default function Dashboard() {
     () => resolveScopeParams(workingContext),
     [workingContext]
   );
+  const inventoryScopeParams = useMemo(() => {
+    const params = {};
+    if (scopeParams.legalEntityId) {
+      params.legalEntityId = scopeParams.legalEntityId;
+    }
+    return params;
+  }, [scopeParams.legalEntityId]);
 
   const load = useCallback(async () => {
     const requestEntries = [];
@@ -211,6 +233,13 @@ export default function Dashboard() {
       });
     }
 
+    if (canReadInventory) {
+      requestEntries.push({
+        key: "inventoryWorkQueue",
+        run: () => getInventoryWorkQueueSummary(inventoryScopeParams),
+      });
+    }
+
     if (requestEntries.length === 0) {
       setError("");
       setLoading(false);
@@ -221,6 +250,7 @@ export default function Dashboard() {
         payrollClose: null,
         jobs: null,
         exceptions: null,
+        inventoryWorkQueue: null,
       });
       setLastRefreshedAt(new Date().toISOString());
       return;
@@ -240,6 +270,7 @@ export default function Dashboard() {
         payrollClose: null,
         jobs: null,
         exceptions: null,
+        inventoryWorkQueue: null,
       };
 
       const failedKeys = [];
@@ -272,7 +303,7 @@ export default function Dashboard() {
     } finally {
       setLoading(false);
     }
-  }, [canReadExceptions, canReadOps, scopeParams, t]);
+  }, [canReadExceptions, canReadInventory, canReadOps, inventoryScopeParams, scopeParams, t]);
 
   useEffect(() => {
     load();
@@ -406,6 +437,38 @@ export default function Dashboard() {
     return payrollFailedChecks + tenantMissing + moduleBlockerCount;
   }, [missingChecks, moduleBlockerCount, snapshot.payrollClose]);
 
+  const inventoryQueueLinks = useMemo(() => {
+    const legalEntityId = inventoryScopeParams.legalEntityId || "";
+    return {
+      receiptMaterialization: buildAppPath("/app/stok-yansitma-islemleri", {
+        legalEntityId,
+        stockImpactMode: "RECEIPT_PENDING",
+      }),
+      issueMaterialization: buildAppPath("/app/stok-yansitma-islemleri", {
+        legalEntityId,
+        stockImpactMode: "ISSUE_PENDING",
+      }),
+      waitingApproval: buildAppPath("/app/stok-transferleri", {
+        legalEntityId,
+        status: "INITIATED",
+      }),
+      readyToShip: buildAppPath("/app/stok-transferleri", {
+        legalEntityId,
+        status: "APPROVED",
+      }),
+      waitingReceipt: buildAppPath("/app/stok-transferleri", {
+        legalEntityId,
+        status: "IN_TRANSIT",
+      }),
+      transfers: buildAppPath("/app/stok-transferleri", {
+        legalEntityId,
+      }),
+      materialization: buildAppPath("/app/stok-yansitma-islemleri", {
+        legalEntityId,
+      }),
+    };
+  }, [inventoryScopeParams.legalEntityId]);
+
   const windowLabel = useMemo(() => {
     const firstWindow =
       snapshot.bankReconciliation?.window ||
@@ -458,8 +521,24 @@ export default function Dashboard() {
         )} ${t("dashboard.jobsDueNow", "jobs due now")}`,
         enabled: canReadOps,
       },
+      {
+        to: inventoryQueueLinks.materialization,
+        title: t("dashboard.links.inventoryMaterialization", "Inventory Materialization"),
+        hint: `${formatCount(
+          snapshot.inventoryWorkQueue?.stockLinks?.total_pending || 0
+        )} ${t("dashboard.pendingLinks", "pending links")}`,
+        enabled: canReadInventory,
+      },
+      {
+        to: inventoryQueueLinks.transfers,
+        title: t("dashboard.links.inventoryTransfers", "Inventory Transfers"),
+        hint: `${formatCount(
+          snapshot.inventoryWorkQueue?.transfers?.in_transit_waiting_receipt || 0
+        )} ${t("dashboard.inTransit", "in transit")}`,
+        enabled: canReadInventory,
+      },
     ],
-    [canReadExceptions, canReadOps, openExceptionsCount, snapshot, t]
+    [canReadExceptions, canReadInventory, canReadOps, inventoryQueueLinks, openExceptionsCount, snapshot, t]
   );
 
   const readinessInlineError = moduleReadinessError || tenantReadinessError || "";
@@ -556,6 +635,164 @@ export default function Dashboard() {
           locked={!canReadOps && !canReadReadiness}
         />
       </div>
+
+      <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div>
+            <h2 className="text-sm font-semibold uppercase tracking-[0.12em] text-slate-600">
+              {t("dashboard.inventoryWorkQueue", "Inventory Work Queue")}
+            </h2>
+            <p className="mt-1 text-sm text-slate-600">
+              {t(
+                "dashboard.inventoryWorkQueueHint",
+                "Pending materialization, transfer prep, transit, and receipt actions."
+              )}
+            </p>
+          </div>
+          {canReadInventory ? (
+            <Link
+              to={inventoryQueueLinks.materialization}
+              className="rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              {t("dashboard.openQueue", "Open queue")}
+            </Link>
+          ) : null}
+        </div>
+        {!canReadInventory ? (
+          <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+            {t("dashboard.permissionRequired", "Permission required")}
+          </div>
+        ) : (
+          <>
+            <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+              <MetricCard
+                title={t("dashboard.inventory.receiptQueue", "Receipt Queue")}
+                value={formatCount(
+                  snapshot.inventoryWorkQueue?.stockLinks?.pending_receipt_materialization || 0
+                )}
+                subtitle={t(
+                  "dashboard.inventory.receiptQueueHint",
+                  "AP stock lines waiting warehouse receipt materialization."
+                )}
+                to={inventoryQueueLinks.receiptMaterialization}
+                ctaLabel={t("dashboard.openQueue", "Open queue")}
+              />
+              <MetricCard
+                title={t("dashboard.inventory.issueQueue", "Issue Queue")}
+                value={formatCount(
+                  snapshot.inventoryWorkQueue?.stockLinks?.pending_issue_materialization || 0
+                )}
+                subtitle={t(
+                  "dashboard.inventory.issueQueueHint",
+                  "AR stock lines waiting warehouse issue materialization."
+                )}
+                to={inventoryQueueLinks.issueMaterialization}
+                ctaLabel={t("dashboard.openQueue", "Open queue")}
+              />
+              <MetricCard
+                title={t("dashboard.inventory.waitingApproval", "Waiting Approval")}
+                value={formatCount(
+                  snapshot.inventoryWorkQueue?.transfers?.waiting_approval || 0
+                )}
+                subtitle={t(
+                  "dashboard.inventory.waitingApprovalHint",
+                  "Transfers initiated but not approved yet."
+                )}
+                to={inventoryQueueLinks.waitingApproval}
+                ctaLabel={t("dashboard.openQueue", "Open queue")}
+              />
+              <MetricCard
+                title={t("dashboard.inventory.readyToShip", "Ready To Ship")}
+                value={formatCount(snapshot.inventoryWorkQueue?.transfers?.ready_to_ship || 0)}
+                subtitle={t(
+                  "dashboard.inventory.readyToShipHint",
+                  "Approved transfers waiting shipment posting."
+                )}
+                to={inventoryQueueLinks.readyToShip}
+                ctaLabel={t("dashboard.openQueue", "Open queue")}
+              />
+              <MetricCard
+                title={t("dashboard.inventory.waitingReceipt", "Waiting Receipt")}
+                value={formatCount(
+                  snapshot.inventoryWorkQueue?.transfers?.in_transit_waiting_receipt || 0
+                )}
+                subtitle={t(
+                  "dashboard.inventory.waitingReceiptHint",
+                  "Transfers already shipped and waiting target receipt."
+                )}
+                to={inventoryQueueLinks.waitingReceipt}
+                ctaLabel={t("dashboard.openQueue", "Open queue")}
+              />
+            </div>
+
+            <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+              <article className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-500">
+                  {t("dashboard.inventory.reopenedPending", "Reopened Pending")}
+                </p>
+                <p className="mt-2 text-2xl font-semibold text-slate-900">
+                  {formatCount(snapshot.inventoryWorkQueue?.stockLinks?.reopened_pending || 0)}
+                </p>
+                <p className="mt-1 text-xs text-slate-600">
+                  {t(
+                    "dashboard.inventory.reopenedPendingHint",
+                    "Successor stock links reopened after reversal and still waiting action."
+                  )}
+                </p>
+              </article>
+              <article className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-500">
+                  {t("dashboard.inventory.staleMaterialization", "Stale Materialization")}
+                </p>
+                <p className="mt-2 text-2xl font-semibold text-slate-900">
+                  {formatCount(snapshot.inventoryWorkQueue?.stockLinks?.stale_pending_gt_2d || 0)}
+                </p>
+                <p className="mt-1 text-xs text-slate-600">
+                  {t(
+                    "dashboard.inventory.staleMaterializationHint",
+                    "Pending stock links older than two days."
+                  )}
+                </p>
+              </article>
+              <article className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-500">
+                  {t("dashboard.inventory.crossContextTransit", "Cross-Context Transit")}
+                </p>
+                <p className="mt-2 text-2xl font-semibold text-slate-900">
+                  {formatCount(
+                    snapshot.inventoryWorkQueue?.transfers?.cross_context_in_transit || 0
+                  )}
+                </p>
+                <p className="mt-1 text-xs text-slate-600">
+                  {t(
+                    "dashboard.inventory.crossContextTransitHint",
+                    "In-transit transfers moving between different contexts."
+                  )}
+                </p>
+              </article>
+              <article className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-500">
+                  {t("dashboard.inventory.oldestTransit", "Oldest Transit")}
+                </p>
+                <p className="mt-2 text-2xl font-semibold text-slate-900">
+                  {formatCount(
+                    snapshot.inventoryWorkQueue?.transfers?.oldest_in_transit_days || 0
+                  )}
+                  <span className="ml-1 text-sm font-medium text-slate-500">
+                    {t("dashboard.days", "days")}
+                  </span>
+                </p>
+                <p className="mt-1 text-xs text-slate-600">
+                  {t(
+                    "dashboard.inventory.oldestTransitHint",
+                    "Longest-running transfer still waiting receipt."
+                  )}
+                </p>
+              </article>
+            </div>
+          </>
+        )}
+      </section>
 
       <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
         <h2 className="text-sm font-semibold uppercase tracking-[0.12em] text-slate-600">

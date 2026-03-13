@@ -1,5 +1,6 @@
 
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useAuth } from "../../auth/useAuth.js";
 import { useI18n } from "../../i18n/useI18n.js";
 import { useWorkingContext } from "../../context/useWorkingContext.js";
@@ -200,9 +201,18 @@ export default function InventoryTransfersPage() {
   const { hasPermission } = useAuth();
   const { l } = useI18n();
   const { legalEntities: workingContextLegalEntities } = useWorkingContext();
+  const [searchParams] = useSearchParams();
   const canRead = hasPermission("inventory.read");
   const canUpsert = hasPermission("inventory.upsert");
   const canReadItemCards = hasPermission("item.card.read");
+  const deepLinkedLegalEntityId = useMemo(
+    () => String(toPositiveInt(searchParams.get("legalEntityId")) || ""),
+    [searchParams]
+  );
+  const deepLinkedStatus = useMemo(() => {
+    const value = normalizeText(searchParams.get("status")).toUpperCase();
+    return TRANSFER_STATUS_VALUES.includes(value) ? value : "";
+  }, [searchParams]);
   const legalEntityOptions = useMemo(
     () =>
       (Array.isArray(workingContextLegalEntities) ? workingContextLegalEntities : [])
@@ -257,6 +267,42 @@ export default function InventoryTransfersPage() {
       legalEntityId: onlyValue,
     }));
   }, [filters.legalEntityId, legalEntityOptions]);
+  useEffect(() => {
+    if (!deepLinkedLegalEntityId) {
+      return;
+    }
+    setFilters((previous) =>
+      previous.legalEntityId === deepLinkedLegalEntityId
+        ? previous
+        : {
+            ...previous,
+            legalEntityId: deepLinkedLegalEntityId,
+          }
+    );
+    setForm((previous) =>
+      previous.legalEntityId === deepLinkedLegalEntityId
+        ? previous
+        : {
+            ...previous,
+            legalEntityId: deepLinkedLegalEntityId,
+            sourceWarehouseId: "",
+            targetWarehouseId: "",
+          }
+    );
+  }, [deepLinkedLegalEntityId]);
+  useEffect(() => {
+    if (!deepLinkedStatus) {
+      return;
+    }
+    setFilters((previous) =>
+      previous.status === deepLinkedStatus
+        ? previous
+        : {
+            ...previous,
+            status: deepLinkedStatus,
+          }
+    );
+  }, [deepLinkedStatus]);
   useEffect(() => {
     setForm((previous) => ({
       ...previous,

@@ -100,6 +100,19 @@ function formatMappedAccountLabel(code, name) {
   return codeText || nameText;
 }
 
+function formatOperatingUnitLabel(code, name, id) {
+  const codeText = String(code || "").trim();
+  const nameText = String(name || "").trim();
+  if (codeText && nameText) {
+    return `${codeText} - ${nameText}`;
+  }
+  if (codeText || nameText) {
+    return codeText || nameText;
+  }
+  const parsedId = toPositiveInt(id);
+  return parsedId ? `#${parsedId}` : "-";
+}
+
 function normalizeFilterRole(value, fallback) {
   const normalized = String(value || "")
     .trim()
@@ -2818,7 +2831,11 @@ export default function CariCounterpartyPage({ pageKey = "buyerList" }) {
                         row.legalEntityId}
                     </td>
                     <td className="px-3 py-2 text-slate-700">
-                      {row.primaryOperatingUnitId || "-"}
+                      {formatOperatingUnitLabel(
+                        row.primaryOperatingUnitCode,
+                        row.primaryOperatingUnitName,
+                        row.primaryOperatingUnitId
+                      )}
                     </td>
                     <td className="px-3 py-2 text-slate-700">
                       {formatMappedAccountLabel(row.arAccountCode, row.arAccountName)}

@@ -16,6 +16,8 @@ import {
   reverseInventoryMovement,
 } from "../../api/inventory.js";
 
+const STOCK_IMPACT_MODE_VALUES = new Set(["RECEIPT_PENDING", "ISSUE_PENDING"]);
+
 function normalizeText(value) {
   return String(value || "").trim();
 }
@@ -206,6 +208,10 @@ export default function InventoryMovementsPage() {
     () => String(toPositiveInt(searchParams.get("movementId")) || ""),
     [searchParams]
   );
+  const deepLinkedStockImpactMode = useMemo(() => {
+    const value = normalizeText(searchParams.get("stockImpactMode")).toUpperCase();
+    return STOCK_IMPACT_MODE_VALUES.has(value) ? value : "";
+  }, [searchParams]);
 
   const legalEntityOptions = useMemo(
     () =>
@@ -478,6 +484,7 @@ export default function InventoryMovementsPage() {
           listInventoryCariStockLinks({
             legalEntityId,
             linkStatus: "PENDING",
+            stockImpactMode: deepLinkedStockImpactMode || undefined,
             limit: 200,
             offset: 0,
           }),
@@ -513,7 +520,7 @@ export default function InventoryMovementsPage() {
     } finally {
       setLoading(false);
     }
-  }, [canRead, filters.legalEntityId, filters.warehouseId, l]);
+  }, [canRead, deepLinkedStockImpactMode, filters.legalEntityId, filters.warehouseId, l]);
 
   useEffect(() => {
     void loadPageData();

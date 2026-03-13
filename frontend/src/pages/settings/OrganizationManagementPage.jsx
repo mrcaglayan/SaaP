@@ -35,6 +35,7 @@ import {
 import { listCashRegisters, listCashSessions } from "../../api/cashAdmin.js";
 import { listAccounts } from "../../api/glAdmin.js";
 import { useAuth } from "../../auth/useAuth.js";
+import { useWorkingContext } from "../../context/useWorkingContext.js";
 import { useI18n } from "../../i18n/useI18n.js";
 import { useModuleReadiness } from "../../readiness/useModuleReadiness.js";
 import TenantReadinessChecklist from "../../readiness/TenantReadinessChecklist.jsx";
@@ -411,6 +412,7 @@ function formatShareholderReadinessReason(reason, l) {
 
 export default function OrganizationManagementPage() {
   const { hasPermission } = useAuth();
+  const { refreshLookups } = useWorkingContext();
   const { language } = useI18n();
   const { getModuleRow, refreshLegalEntity } = useModuleReadiness();
   const isTr = language === "tr";
@@ -2424,6 +2426,7 @@ export default function OrganizationManagementPage() {
       } else {
         setMessage(baseSuccessMessage);
       }
+      refreshLookups();
       await loadCoreData();
     } catch (err) {
       setError(err?.response?.data?.message || l("Failed to save legal entity.", "Istirak / bagli ortak kaydedilemedi."));
@@ -2516,6 +2519,7 @@ export default function OrganizationManagementPage() {
         : l("Operating unit saved.", "Operasyon birimi kaydedildi.");
       resetUnitForm();
       setMessage(successMessage);
+      refreshLookups();
       await loadCoreData();
     } catch (err) {
       setError(err?.response?.data?.message || l("Failed to save operating unit.", "Operasyon birimi kaydedilemedi."));
@@ -4015,6 +4019,7 @@ export default function OrganizationManagementPage() {
         yearStartDay: 1,
       });
       setMessage(l("Fiscal calendar saved.", "Mali takvim kaydedildi."));
+      refreshLookups();
       await loadCoreData();
     } catch (err) {
       setError(err?.response?.data?.message || l("Failed to save fiscal calendar.", "Mali takvim kaydedilemedi."));
@@ -4043,6 +4048,7 @@ export default function OrganizationManagementPage() {
     try {
       await generateFiscalPeriods({ calendarId, fiscalYear });
       setMessage(l("Fiscal periods generated.", "Mali donemler olusturuldu."));
+      refreshLookups();
       await loadPeriods(calendarId, fiscalYear);
     } catch (err) {
       setError(err?.response?.data?.message || l("Failed to generate fiscal periods.", "Mali donemler olusturulamadi."));

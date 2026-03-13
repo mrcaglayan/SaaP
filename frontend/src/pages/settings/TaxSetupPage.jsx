@@ -125,7 +125,7 @@ return {
   status: "ACTIVE",
 };
 }
-function defaultRuleForm() {
+function defaultRuleForm(overrides = {}) {
 return {
   regimeId: "",
   taxCodeId: "",
@@ -139,7 +139,27 @@ return {
   status: "ACTIVE",
   effectiveFrom: todayIsoDate(),
   effectiveTo: "",
+  ...overrides,
 };
+}
+function buildRuleFormFromRow(row) {
+  return {
+    regimeId: String(toPositiveInt(row?.regimeId) || ""),
+    taxCodeId: String(toPositiveInt(row?.taxCodeId) || ""),
+    moduleCode: toUpper(row?.moduleCode) || "CARI",
+    documentType: String(row?.documentType || "").trim(),
+    taxCategoryCode: toUpper(row?.taxCategoryCode),
+    counterpartyType: toUpper(row?.counterpartyType),
+    applyPriority: String(Number(row?.applyPriority || 100)),
+    thresholdAmount:
+      row?.thresholdAmount === null || row?.thresholdAmount === undefined
+        ? ""
+        : String(row.thresholdAmount),
+    formulaJson: JSON.stringify(row?.formulaJson || { type: "RATE" }, null, 2),
+    status: toUpper(row?.status) || "ACTIVE",
+    effectiveFrom: String(row?.effectiveFrom || todayIsoDate()),
+    effectiveTo: String(row?.effectiveTo || ""),
+  };
 }
 function defaultMappingForm(overrides = {}) {
   return {
@@ -250,6 +270,7 @@ const [codeForm, setCodeForm] = useState(defaultCodeForm);
 const [ruleForm, setRuleForm] = useState(defaultRuleForm);
 const [mappingForm, setMappingForm] = useState(defaultMappingForm);
   const [previewForm, setPreviewForm] = useState(defaultPreviewForm);
+  const [editingRuleId, setEditingRuleId] = useState(null);
   const [editingMappingId, setEditingMappingId] = useState(null);
 const [previewResult, setPreviewResult] = useState(null);
 const activeRegimeId = toPositiveInt(selectedRegimeId);
@@ -558,6 +579,7 @@ async function onCreateRule(event) {
     setError(l("Missing permission: onboarding.company.setup", "Eksik yetki: onboarding.company.setup"));
     return;
   }
+  const ruleId = toPositiveInt(editingRuleId);
   const regimeId = toPositiveInt(ruleForm.regimeId) || activeRegimeId;
   const taxCodeId = toPositiveInt(ruleForm.taxCodeId);
   if (!regimeId || !taxCodeId) {
@@ -575,7 +597,7 @@ async function onCreateRule(event) {
   setError("");
   setMessage("");
   try {
-    await createTaxRule({
+    const payload = {
       regimeId,
       taxCodeId,
       moduleCode: toUpper(ruleForm.moduleCode),
@@ -591,20 +613,55 @@ async function onCreateRule(event) {
       status: toUpper(ruleForm.status || "ACTIVE"),
       effectiveFrom: ruleForm.effectiveFrom,
       effectiveTo: ruleForm.effectiveTo || undefined,
-    });
-    setMessage(l("Tax rule saved.", "Tax kurali kaydedildi."));
+    };
+    if (ruleId) {
+      await updateTaxRule(ruleId, payload);
+    } else {
+      await createTaxRule(payload);
+    }
+    setMessage(
+      ruleId
+        ? l("Tax rule updated.", "Tax kurali guncellendi.")
+        : l("Tax rule saved.", "Tax kurali kaydedildi.")
+    );
     await loadRegimeDetails(regimeId);
+    if (ruleId) {
+      resetRuleEditor(regimeId);
+    }
   } catch (err) {
     setError(
       toApiError(
         err,
-        l("Failed to save tax rule.", "Tax kurali kaydedilemedi.")
+        ruleId
+          ? l("Failed to update tax rule.", "Tax kurali guncellenemedi.")
+          : l("Failed to save tax rule.", "Tax kurali kaydedilemedi.")
       )
     );
   } finally {
     setSaving("");
   }
 }
+  function resetRuleEditor(nextRegimeId = activeRegimeId) {
+    setEditingRuleId(null);
+    setRuleForm(
+      defaultRuleForm({
+        regimeId: nextRegimeId ? String(nextRegimeId) : "",
+      })
+    );
+  }
+
+  function handleEditRule(row) {
+    const rowId = toPositiveInt(row?.id);
+    const regimeId = toPositiveInt(row?.regimeId);
+    if (!rowId) {
+      return;
+    }
+    setEditingRuleId(rowId);
+    if (regimeId) {
+      setSelectedRegimeId(String(regimeId));
+    }
+    setRuleForm(buildRuleFormFromRow(row));
+  }
   function resetMappingEditor(nextRegimeId = activeRegimeId, nextLegalEntityId = selectedLegalEntityId) {
     setEditingMappingId(null);
     setAccountSearch("");
@@ -1279,9 +1336,32 @@ return (
     </div>
     <div className="grid gap-4 xl:grid-cols-2">
       <section className="rounded-xl border border-slate-200 bg-white p-4">
-        <h2 className="mb-3 text-sm font-semibold text-slate-700">
-          {l("Create Tax Rule", "Tax Kurali Olustur")}
-        </h2>
+        <div className="mb-3 flex items-start justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-semibold text-slate-700">
+              {editingRuleId
+                ? l("Edit Tax Rule", "Tax Kuralini Duzenle")
+                : l("Create Tax Rule", "Tax Kurali Olustur")}
+            </h2>
+            {editingRuleId ? (
+              <p className="mt-1 text-xs text-slate-500">
+                {l(
+                  `Editing rule #${editingRuleId}. Update the tax category or other fields and save the change.`,
+                  `#${editingRuleId} kurali duzenleniyor. Vergi kategorisi veya diger alanlari guncelleyip degisikligi kaydedin.`
+                )}
+              </p>
+            ) : null}
+          </div>
+          {editingRuleId ? (
+            <button
+              type="button"
+              onClick={() => resetRuleEditor()}
+              className="rounded border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700"
+            >
+              {l("Cancel edit", "Duzenlemeyi iptal et")}
+            </button>
+          ) : null}
+        </div>
         <form onSubmit={onCreateRule} className="grid gap-2 md:grid-cols-2">
           <select
             value={ruleForm.regimeId || selectedRegimeId}
@@ -1436,7 +1516,9 @@ return (
           >
             {saving === "rule"
               ? l("Saving...", "Kaydediliyor...")
-              : l("Save rule", "Kurali kaydet")}
+              : editingRuleId
+                ? l("Update rule", "Kurali guncelle")
+                : l("Save rule", "Kurali kaydet")}
           </button>
         </form>
       </section>
@@ -2032,8 +2114,12 @@ return (
               {rules.map((row) => {
                 const rowId = toPositiveInt(row?.id);
                 const rowSaving = saving === `rule-${rowId}`;
+                const rowEditing = rowId && rowId === toPositiveInt(editingRuleId);
                 return (
-                  <tr key={row.id} className="border-t border-slate-100">
+                  <tr
+                    key={row.id}
+                    className={`border-t border-slate-100 ${rowEditing ? "bg-cyan-50" : ""}`}
+                  >
                     <td className="px-2 py-2">#{row.id}</td>
                     <td className="px-2 py-2">{row.taxCode || "-"}</td>
                     <td className="px-2 py-2">{row.moduleCode}</td>
@@ -2046,18 +2132,28 @@ return (
                     </td>
                     <td className="px-2 py-2">{row.status}</td>
                     <td className="px-2 py-2">
-                      <button
-                        type="button"
-                        disabled={!canWrite || rowSaving}
-                        onClick={() => onToggleStatus("rule", row)}
-                        className="rounded border border-slate-300 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 disabled:opacity-50"
-                      >
-                        {rowSaving
-                          ? l("Saving...", "Kaydediliyor...")
-                          : row.status === "ACTIVE"
-                          ? "INACTIVE"
-                          : "ACTIVE"}
-                      </button>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          disabled={!canWrite || saving === "rule"}
+                          onClick={() => handleEditRule(row)}
+                          className="rounded border border-cyan-300 bg-cyan-50 px-2 py-1 text-[11px] font-semibold text-cyan-800 disabled:opacity-50"
+                        >
+                          {rowEditing ? l("Editing", "Duzenleniyor") : l("Edit", "Duzenle")}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={!canWrite || rowSaving || saving === "rule"}
+                          onClick={() => onToggleStatus("rule", row)}
+                          className="rounded border border-slate-300 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 disabled:opacity-50"
+                        >
+                          {rowSaving
+                            ? l("Saving...", "Kaydediliyor...")
+                            : row.status === "ACTIVE"
+                            ? "INACTIVE"
+                            : "ACTIVE"}
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 );

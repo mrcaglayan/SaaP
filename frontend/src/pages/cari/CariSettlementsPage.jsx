@@ -3393,6 +3393,12 @@ export default function CariSettlementsPage() {
                 "Owner = acik kalem/belge baglami. Collector = bunu kapatan kasa, banka veya uygulama baglami."
               )}
             </p>
+            <p className="mt-1 text-xs text-slate-500">
+              {l(
+                "Owner preview is derived from the open items actually selected for settlement. With auto-allocation on, entering incoming amount can change the selected rows and the owner preview. The chosen cash register affects collector context, not owner context.",
+                "Owner onizlemesi mahsuplastirma icin fiilen secilen acik kalemlerden uretilir. Otomatik dagitim acikken gelen tutari girmek secilen satirlari ve owner onizlemesini degistirebilir. Secilen kasa register'i owner degil, collector baglamini etkiler."
+              )}
+            </p>
             {applyOwnerContextSummary.hasMixed ? (
               <p className="mt-1 text-rose-700">
                 {l(

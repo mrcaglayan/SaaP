@@ -14,6 +14,7 @@ import {
 import {
   createInventoryMovementFromStockLink,
   createInventoryWarehouse,
+  getInventoryWorkQueueSummary,
   listInventoryCostLayers,
   listInventoryMovements,
   listInventoryWarehouses,
@@ -80,6 +81,24 @@ router.post(
     return res.status(201).json({
       tenantId: payload.tenantId,
       row,
+    });
+  })
+);
+
+router.get(
+  "/work-queue-summary",
+  requirePermission("inventory.read", {
+    resolveScope: async (req) => resolveLegalEntityScopeFromQuery(req),
+  }),
+  asyncHandler(async (req, res) => {
+    const filters = parseInventoryStockLinkListFilters(req);
+    const result = await getInventoryWorkQueueSummary({
+      tenantId: filters.tenantId,
+      filters,
+    });
+    return res.json({
+      tenantId: filters.tenantId,
+      ...result,
     });
   })
 );

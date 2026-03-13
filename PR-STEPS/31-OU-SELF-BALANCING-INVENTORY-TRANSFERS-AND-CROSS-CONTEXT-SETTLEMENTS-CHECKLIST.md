@@ -657,6 +657,9 @@
 ### Goal
 - Add owner/collector context persistence and deterministic resolution without changing the existing posting shape yet.
 
+### Note
+- Settlement owner / collector migration for this slice is `m128_cari_settlement_owner_collector_contexts.js`.
+
 ### Files
 - `backend/src/migrations/m128_cari_settlement_owner_collector_contexts.js`
 - `backend/src/migrations/index.js`
@@ -924,12 +927,21 @@
 - [x] Add new regression scripts to `backend/package.json`
 - [x] Add new regression scripts to CI / release-gate runner
 - [x] Add transfer route manifest entry to `backend/scripts/fixtures/rswire03-release-gate-manifest.json`
-- [x] Lock the exact transfer-route manifest triple in `backend/scripts/fixtures/rswire03-release-gate-manifest.json`:
+- [x] Lock the exact transfer route entry in `frontend/src/App.jsx`:
+  - `appPath = "/app/stok-transferleri"`
+  - `childPath = "stok-transferleri"`
+- [x] Lock the exact transfer sidebar entry in `frontend/src/layouts/sidebarConfig.js`:
+  - `to = "/app/stok-transferleri"`
+  - `implemented = true`
+- [x] Lock the exact transfer sidebar labels in `frontend/src/i18n/messages.js`:
+  - `TR messages.sidebar.byPath["/app/stok-transferleri"] = "Stok Transferleri"`
+  - `EN messages.sidebar.byPath["/app/stok-transferleri"] = "Inventory Transfers"`
+- [x] Lock the exact transfer-route manifest entry in `backend/scripts/fixtures/rswire03-release-gate-manifest.json`:
   - `routePath = "/app/stok-transferleri"`
   - `smokeScriptPath = "backend/scripts/test-ou-self-balancing-release-gate.js"`
   - `packageScriptName = "test:ou:self-balancing:release-gate"`
-- [x] Add the transfer route to `ROUTE_WIRING_RULES` in `backend/scripts/test-ux-rswire01-cross-file-wiring.js`
-- [x] Lock the exact `apiNeedles` entry for the transfer route in `ROUTE_WIRING_RULES`:
+- [x] Lock the exact transfer route wiring rule in `backend/scripts/test-ux-rswire01-cross-file-wiring.js`:
+  - `routePath = "/app/stok-transferleri"`
   - `apiNeedles = ["../../api/inventory.js"]`
 - [x] Ensure `backend/package.json` exposes `npm run test:ux:rswire01` in the release-gate path that covers this feature
 - [x] Add OpenAPI drift check to release gate

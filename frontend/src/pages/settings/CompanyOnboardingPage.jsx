@@ -4,6 +4,7 @@ import { bootstrapCompany } from "../../api/onboarding.js";
 import { listCountries, listCurrencies } from "../../api/orgAdmin.js";
 import { getPolicyPack, listPolicyPacks } from "../../api/policyPacks.js";
 import { useAuth } from "../../auth/useAuth.js";
+import { useWorkingContext } from "../../context/useWorkingContext.js";
 import { useI18n } from "../../i18n/useI18n.js";
 import TenantReadinessChecklist from "../../readiness/TenantReadinessChecklist.jsx";
 import {
@@ -568,6 +569,7 @@ return "";
 }
 export default function CompanyOnboardingPage() {
 const { hasPermission } = useAuth();
+const { refreshLookups } = useWorkingContext();
 const { language } = useI18n();
 const isTr = language === "tr";
 const l = (en, tr) => (isTr ? tr : en);
@@ -1113,6 +1115,7 @@ async function handleSubmit(event) {
   setSubmitting(true);
   try {
     const response = await bootstrapCompany(payload);
+    refreshLookups();
     setResult(response);
     setMessage(
       l(

@@ -274,6 +274,20 @@ function mapCountryRow(row) {
   };
 }
 
+function mapTenantRow(row) {
+  return {
+    id: parsePositiveInt(row?.id),
+    code: row?.code || null,
+    name: row?.name || null,
+    status: String(row?.status || "").toUpperCase(),
+    createdAt: row?.created_at || null,
+    updatedAt: row?.updated_at || null,
+    userCount: Number(row?.user_count || 0),
+    activeUserCount: Number(row?.active_user_count || 0),
+    taxEngineEnabled: Number(row?.tax_engine_enabled || 0) === 1,
+  };
+}
+
 async function ensureCurrencyExists(currencyCode, label = "defaultCurrencyCode") {
   const result = await query(
     `SELECT code
@@ -285,6 +299,32 @@ async function ensureCurrencyExists(currencyCode, label = "defaultCurrencyCode")
   if (!result.rows[0]) {
     throw badRequest(`${label} not found`);
   }
+}
+
+async function getProviderTenantRow(tenantId) {
+  const result = await query(
+    `SELECT
+       t.id,
+       t.code,
+       t.name,
+       t.status,
+       t.created_at,
+       t.updated_at,
+       COUNT(u.id) AS user_count,
+       SUM(CASE WHEN u.status = 'ACTIVE' THEN 1 ELSE 0 END) AS active_user_count,
+       COALESCE(MAX(CASE WHEN tf.is_enabled = 1 THEN 1 ELSE 0 END), 0) AS tax_engine_enabled
+     FROM tenants t
+     LEFT JOIN users u ON u.tenant_id = t.id
+     LEFT JOIN tenant_features tf
+       ON tf.tenant_id = t.id
+      AND tf.feature_code = ?
+     WHERE t.id = ?
+     GROUP BY t.id, t.code, t.name, t.status, t.created_at, t.updated_at
+     LIMIT 1`,
+    [FEATURE_TAX_ENGINE_V1, tenantId]
+  );
+
+  return result.rows[0] ? mapTenantRow(result.rows[0]) : null;
 }
 
 async function ensureTenantAdminRole(tx, tenantId) {
@@ -585,28 +625,23 @@ router.get(
          t.created_at,
          t.updated_at,
          COUNT(u.id) AS user_count,
-         SUM(CASE WHEN u.status = 'ACTIVE' THEN 1 ELSE 0 END) AS active_user_count
+         SUM(CASE WHEN u.status = 'ACTIVE' THEN 1 ELSE 0 END) AS active_user_count,
+         COALESCE(MAX(CASE WHEN tf.is_enabled = 1 THEN 1 ELSE 0 END), 0) AS tax_engine_enabled
        FROM tenants t
        LEFT JOIN users u ON u.tenant_id = t.id
+       LEFT JOIN tenant_features tf
+         ON tf.tenant_id = t.id
+        AND tf.feature_code = ?
        ${whereClause}
        GROUP BY t.id, t.code, t.name, t.status, t.created_at, t.updated_at
        ORDER BY t.id DESC
        LIMIT ${limit}
        OFFSET ${offset}`,
-      params
+      [FEATURE_TAX_ENGINE_V1, ...params]
     );
 
     return res.json({
-      rows: rowsResult.rows.map((row) => ({
-        id: parsePositiveInt(row.id),
-        code: row.code || null,
-        name: row.name || null,
-        status: String(row.status || "").toUpperCase(),
-        createdAt: row.created_at || null,
-        updatedAt: row.updated_at || null,
-        userCount: Number(row.user_count || 0),
-        activeUserCount: Number(row.active_user_count || 0),
-      })),
+      rows: rowsResult.rows.map((row) => mapTenantRow(row)),
       total,
       limit,
       offset,
@@ -660,25 +695,46 @@ router.patch(
       throw badRequest("tenantId not found");
     }
 
-    const tenantResult = await query(
-      `SELECT id, code, name, status, created_at, updated_at
-       FROM tenants
-       WHERE id = ?
-       LIMIT 1`,
-      [tenantId]
-    );
-    const row = tenantResult.rows[0];
+    const row = await getProviderTenantRow(tenantId);
 
     return res.json({
       ok: true,
-      row: {
-        id: parsePositiveInt(row?.id),
-        code: row?.code || null,
-        name: row?.name || null,
-        status: String(row?.status || "").toUpperCase(),
-        createdAt: row?.created_at || null,
-        updatedAt: row?.updated_at || null,
-      },
+      row,
+    });
+  })
+);
+
+router.patch(
+  "/tenants/:tenantId/tax-engine",
+  requireProviderAuth,
+  asyncHandler(async (req, res) => {
+    await requireProviderAdminRecord(req.providerAdmin.providerAdminId);
+    const tenantId = parsePositiveInt(req.params.tenantId);
+    if (!tenantId) {
+      throw badRequest("tenantId must be a positive integer");
+    }
+
+    assertRequiredFields(req.body, ["enabled"]);
+    const enabled = parseBooleanInput(req.body?.enabled, false, "enabled");
+
+    const tenant = await getProviderTenantRow(tenantId);
+    if (!tenant) {
+      throw badRequest("tenantId not found");
+    }
+
+    await withTransaction(async (tx) => {
+      await upsertTenantFeature(tx, {
+        tenantId,
+        featureCode: FEATURE_TAX_ENGINE_V1,
+        isEnabled: enabled,
+      });
+    });
+
+    const row = await getProviderTenantRow(tenantId);
+
+    return res.json({
+      ok: true,
+      row,
     });
   })
 );

@@ -8,11 +8,55 @@ import {
   listItemCards,
   updateItemCard,
 } from "../../api/itemCards.js";
-import { listAccounts } from "../../api/glAdmin.js";
+import { listAccounts, upsertAccount } from "../../api/glAdmin.js";
+import { listLegalEntities } from "../../api/orgAdmin.js";
 import { listTaxRules } from "../../api/taxAdmin.js";
 
 const ITEM_TYPES = ["SERVICE", "NON_STOCK_GOOD", "STOCK_ITEM"];
 const STATUS_VALUES = ["ACTIVE", "INACTIVE"];
+const INLINE_ACCOUNT_FIELD_CONFIG = Object.freeze({
+  defaultSalesAccountId: {
+    optionKey: "sales-account",
+    labelEn: "Sales Revenue Account (optional)",
+    labelTr: "Satis Gelir Hesabi (opsiyonel)",
+    expectedAccountType: "REVENUE",
+    childNameSuffixEn: "Sales",
+    childNameSuffixTr: "Satis",
+  },
+  defaultPurchaseAccountId: {
+    optionKey: "purchase-account",
+    labelEn: "Purchase Expense Account (fallback)",
+    labelTr: "Alim Gider Hesabi (yedek)",
+    expectedAccountType: "EXPENSE",
+    childNameSuffixEn: "Purchase",
+    childNameSuffixTr: "Alim",
+  },
+  inventoryAssetAccountId: {
+    optionKey: "inventory-account",
+    labelEn: "Inventory Asset Account (optional)",
+    labelTr: "Stok Varlik Hesabi (opsiyonel)",
+    expectedAccountType: "ASSET",
+    childNameSuffixEn: "Inventory",
+    childNameSuffixTr: "Stok",
+  },
+  inventoryTransitAccountId: {
+    optionKey: "inventory-transit-account",
+    labelEn: "Inventory Transit Account (optional)",
+    labelTr: "Stok Transit Hesabi (opsiyonel)",
+    expectedAccountType: "ASSET",
+    childNameSuffixEn: "Inventory Transit",
+    childNameSuffixTr: "Stok Transit",
+  },
+  defaultCogsAccountId: {
+    optionKey: "cogs-account",
+    labelEn: "COGS Account (optional)",
+    labelTr: "Maliyet Hesabi (opsiyonel)",
+    expectedAccountType: "EXPENSE",
+    childNameSuffixEn: "COGS",
+    childNameSuffixTr: "Maliyet",
+  },
+});
+const INLINE_ACCOUNT_FIELD_KEYS = Object.keys(INLINE_ACCOUNT_FIELD_CONFIG);
 
 function normalizeText(value) {
   return String(value || "").trim();
@@ -27,6 +71,115 @@ function normalizeApiError(error, fallback) {
   const message = String(error?.response?.data?.message || error?.message || fallback).trim();
   const requestId = String(error?.response?.data?.requestId || "").trim();
   return requestId ? `${message} (requestId: ${requestId})` : message || fallback;
+}
+
+function parseDbBoolean(value) {
+  return value === true || value === 1 || value === "1";
+}
+
+function normalizeAccountCode(value) {
+  return String(value || "")
+    .trim()
+    .toUpperCase();
+}
+
+function isActiveAccount(row) {
+  return parseDbBoolean(row?.isActive);
+}
+
+function isActivePostableAccount(row) {
+  return isActiveAccount(row) && parseDbBoolean(row?.allowPosting);
+}
+
+function formatAccountOptionLabel(row) {
+  const code = normalizeAccountCode(row?.code);
+  const name = normalizeText(row?.name);
+  if (code && name) {
+    return `${code} - ${name}`;
+  }
+  return code || name || String(toPositiveInt(row?.id) || "-");
+}
+
+function formatAccountOptionDescription(row) {
+  const breadcrumbCodes = normalizeText(
+    row?.breadcrumbCodes ?? row?.account_breadcrumb_codes ?? row?.accountBreadcrumbCodes
+  );
+  if (breadcrumbCodes) {
+    return breadcrumbCodes;
+  }
+  return normalizeAccountCode(row?.accountType ?? row?.account_type);
+}
+
+function parseChildCodeSequence(code, parentCode) {
+  const normalizedCode = normalizeAccountCode(code);
+  const normalizedParentCode = normalizeAccountCode(parentCode);
+  if (!normalizedCode || !normalizedParentCode) {
+    return null;
+  }
+
+  let suffix = "";
+  if (normalizedCode.startsWith(`${normalizedParentCode}.`)) {
+    suffix = normalizedCode.slice(normalizedParentCode.length + 1);
+  } else if (normalizedCode.startsWith(`${normalizedParentCode}-`)) {
+    suffix = normalizedCode.slice(normalizedParentCode.length + 1);
+  } else if (normalizedCode.startsWith(normalizedParentCode)) {
+    suffix = normalizedCode.slice(normalizedParentCode.length);
+  } else {
+    return null;
+  }
+
+  if (!/^\d+$/.test(suffix)) {
+    return null;
+  }
+  const numeric = Number(suffix);
+  if (!Number.isInteger(numeric) || numeric <= 0) {
+    return null;
+  }
+  return {
+    value: numeric,
+    width: suffix.length,
+  };
+}
+
+function buildNextChildAccountCode(rows, parentAccount) {
+  const parentCode = normalizeAccountCode(parentAccount?.code);
+  const parentId = toPositiveInt(parentAccount?.id);
+  if (!parentCode || !parentId) {
+    return "";
+  }
+
+  const normalizedRows = Array.isArray(rows) ? rows : [];
+  const existingCodes = new Set(
+    normalizedRows
+      .map((row) => normalizeAccountCode(row?.code))
+      .filter(Boolean)
+  );
+  const parsedChildren = normalizedRows
+    .filter((row) => toPositiveInt(row?.parentAccountId) === parentId)
+    .map((row) => parseChildCodeSequence(row?.code, parentCode))
+    .filter(Boolean);
+
+  const maxSequence = parsedChildren.reduce(
+    (maxValue, row) => Math.max(maxValue, Number(row?.value || 0)),
+    0
+  );
+  const width = Math.max(
+    2,
+    parsedChildren.reduce(
+      (maxWidth, row) => Math.max(maxWidth, Number(row?.width || 0)),
+      0
+    )
+  );
+
+  let next = Math.max(1, maxSequence + 1);
+  while (next <= 999999) {
+    const candidate = `${parentCode}.${String(next).padStart(width, "0")}`;
+    if (!existingCodes.has(candidate)) {
+      return candidate;
+    }
+    next += 1;
+  }
+  return "";
 }
 
 function createInitialForm() {
@@ -61,16 +214,19 @@ function mapLegalEntityLookupOption(row) {
 
 function mapAccountRows(responseRows = []) {
   return (Array.isArray(responseRows) ? responseRows : [])
-    .filter((row) => {
-      const isActive = row?.is_active === true || Number(row?.is_active) === 1;
-      const allowPosting = row?.allow_posting === true || Number(row?.allow_posting) === 1;
-      return isActive && allowPosting;
-    })
     .map((row) => ({
       id: Number(row?.id || 0),
-      code: String(row?.code || "").trim(),
-      name: String(row?.name || "").trim(),
-      accountType: String(row?.account_type || "").trim().toUpperCase(),
+      coaId: Number(row?.coa_id || row?.coaId || 0) || null,
+      code: normalizeAccountCode(row?.code),
+      name: normalizeText(row?.name),
+      accountType: normalizeAccountCode(row?.account_type || row?.accountType),
+      normalSide: normalizeAccountCode(row?.normal_side || row?.normalSide),
+      allowPosting: parseDbBoolean(row?.allow_posting ?? row?.allowPosting),
+      isActive: parseDbBoolean(row?.is_active ?? row?.isActive),
+      parentAccountId: Number(row?.parent_account_id || row?.parentAccountId || 0) || null,
+      breadcrumbCodes: normalizeText(
+        row?.account_breadcrumb_codes ?? row?.accountBreadcrumbCodes
+      ),
     }))
     .filter((row) => row.id > 0 && row.code)
     .sort((left, right) =>
@@ -79,6 +235,19 @@ function mapAccountRows(responseRows = []) {
         sensitivity: "base",
       })
     );
+}
+
+async function fetchAccountRowsForLegalEntity(legalEntityId) {
+  if (!toPositiveInt(legalEntityId)) {
+    return [];
+  }
+  const response = await listAccounts({
+    legalEntityId,
+    includeInactive: true,
+    limit: 1000,
+    offset: 0,
+  });
+  return mapAccountRows(response?.rows);
 }
 
 function mapItemCardRowToForm(row) {
@@ -139,20 +308,102 @@ function describeTransitSetup(row, translate = (en) => en) {
 export default function ItemCardsPage({ pageKey = "list" }) {
   const { hasPermission } = useAuth();
   const { l } = useI18n();
-  const { legalEntities: workingContextLegalEntities } = useWorkingContext();
+  const {
+    legalEntities: workingContextLegalEntities,
+    loading: workingContextLoading,
+    error: workingContextError,
+  } = useWorkingContext();
 
   const canRead = hasPermission("item.card.read");
   const canUpsert = hasPermission("item.card.upsert");
   const canReadGlAccounts = hasPermission("gl.account.read");
-  const canReadTaxSetup = hasPermission("org.tree.read");
+  const canUpsertGlAccounts = hasPermission("gl.account.upsert");
+  const canReadOrgTree = hasPermission("org.tree.read");
+
+  const [fallbackLegalEntityRows, setFallbackLegalEntityRows] = useState([]);
+  const [fallbackLegalEntityLoading, setFallbackLegalEntityLoading] = useState(false);
+  const [fallbackLegalEntityError, setFallbackLegalEntityError] = useState("");
+
+  useEffect(() => {
+    if (!canReadOrgTree) {
+      setFallbackLegalEntityRows([]);
+      setFallbackLegalEntityLoading(false);
+      setFallbackLegalEntityError("");
+      return;
+    }
+
+    if (
+      Array.isArray(workingContextLegalEntities) &&
+      workingContextLegalEntities.length > 0
+    ) {
+      setFallbackLegalEntityRows([]);
+      setFallbackLegalEntityLoading(false);
+      setFallbackLegalEntityError("");
+      return;
+    }
+
+    if (workingContextLoading) {
+      return;
+    }
+
+    let active = true;
+    async function loadFallbackLegalEntities() {
+      setFallbackLegalEntityLoading(true);
+      setFallbackLegalEntityError("");
+      try {
+        const response = await listLegalEntities({
+          limit: 500,
+          includeInactive: true,
+        });
+        if (!active) {
+          return;
+        }
+        setFallbackLegalEntityRows(Array.isArray(response?.rows) ? response.rows : []);
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+        setFallbackLegalEntityRows([]);
+        setFallbackLegalEntityError(
+          normalizeApiError(
+            error,
+            l("Failed to load legal entity options.", "Tuzel kisilik secenekleri yuklenemedi.")
+          )
+        );
+      } finally {
+        if (active) {
+          setFallbackLegalEntityLoading(false);
+        }
+      }
+    }
+
+    loadFallbackLegalEntities();
+    return () => {
+      active = false;
+    };
+  }, [canReadOrgTree, l, workingContextLegalEntities, workingContextLoading]);
+
+  const legalEntityRows = useMemo(() => {
+    if (
+      Array.isArray(workingContextLegalEntities) &&
+      workingContextLegalEntities.length > 0
+    ) {
+      return workingContextLegalEntities;
+    }
+    return Array.isArray(fallbackLegalEntityRows) ? fallbackLegalEntityRows : [];
+  }, [fallbackLegalEntityRows, workingContextLegalEntities]);
 
   const legalEntityOptions = useMemo(
     () =>
-      (Array.isArray(workingContextLegalEntities) ? workingContextLegalEntities : [])
-        .map(mapLegalEntityLookupOption)
-        .filter(Boolean),
-    [workingContextLegalEntities]
+      legalEntityRows.map(mapLegalEntityLookupOption).filter(Boolean),
+    [legalEntityRows]
   );
+  const legalEntityLookupLoading =
+    fallbackLegalEntityLoading ||
+    (workingContextLoading && legalEntityOptions.length === 0);
+  const legalEntityLookupError =
+    fallbackLegalEntityError ||
+    (legalEntityOptions.length === 0 ? String(workingContextError || "").trim() : "");
 
   const [filters, setFilters] = useState({
     legalEntityId: "",
@@ -171,9 +422,32 @@ export default function ItemCardsPage({ pageKey = "list" }) {
   const [accountRows, setAccountRows] = useState([]);
   const [accountLoading, setAccountLoading] = useState(false);
   const [accountError, setAccountError] = useState("");
+  const [inlineChildFieldKey, setInlineChildFieldKey] = useState("");
+  const [inlineChildParentAccountId, setInlineChildParentAccountId] = useState("");
+  const [inlineChildCode, setInlineChildCode] = useState("");
+  const [inlineChildName, setInlineChildName] = useState("");
+  const [inlineChildSaving, setInlineChildSaving] = useState(false);
   const [taxRuleRows, setTaxRuleRows] = useState([]);
   const [taxCategoryError, setTaxCategoryError] = useState("");
+  const selectedLegalEntityId = toPositiveInt(form.legalEntityId);
   const formTransitSetup = describeTransitSetup(form, l);
+
+  function clearInlineChildState() {
+    setInlineChildFieldKey("");
+    setInlineChildParentAccountId("");
+    setInlineChildCode("");
+    setInlineChildName("");
+    setInlineChildSaving(false);
+  }
+
+  function buildDefaultInlineChildName(fieldKey) {
+    const fieldConfig = INLINE_ACCOUNT_FIELD_CONFIG[fieldKey];
+    const baseName = normalizeText(form.name);
+    const suffix = fieldConfig
+      ? l(fieldConfig.childNameSuffixEn, fieldConfig.childNameSuffixTr)
+      : "";
+    return [baseName, suffix].filter(Boolean).join(" ");
+  }
 
   useEffect(() => {
     if (pageKey === "create" && !filters.legalEntityId && legalEntityOptions.length === 1) {
@@ -182,6 +456,14 @@ export default function ItemCardsPage({ pageKey = "list" }) {
       setForm((previous) => ({ ...previous, legalEntityId: onlyValue }));
     }
   }, [legalEntityOptions, pageKey, filters.legalEntityId]);
+
+  useEffect(() => {
+    setInlineChildFieldKey("");
+    setInlineChildParentAccountId("");
+    setInlineChildCode("");
+    setInlineChildName("");
+    setInlineChildSaving(false);
+  }, [form.legalEntityId]);
 
   useEffect(() => {
     if (!canRead) {
@@ -233,9 +515,8 @@ export default function ItemCardsPage({ pageKey = "list" }) {
   }, [canRead, filters, l]);
 
   useEffect(() => {
-    const legalEntityId = toPositiveInt(form.legalEntityId);
     setAccountError("");
-    if (!canReadGlAccounts || !legalEntityId) {
+    if (!canReadGlAccounts || !selectedLegalEntityId) {
       setAccountRows([]);
       setAccountLoading(false);
       return;
@@ -245,16 +526,11 @@ export default function ItemCardsPage({ pageKey = "list" }) {
     async function loadAccounts() {
       setAccountLoading(true);
       try {
-        const response = await listAccounts({
-          legalEntityId,
-          includeInactive: false,
-          limit: 1000,
-          offset: 0,
-        });
+        const nextRows = await fetchAccountRowsForLegalEntity(selectedLegalEntityId);
         if (!active) {
           return;
         }
-        setAccountRows(mapAccountRows(response?.rows));
+        setAccountRows(nextRows);
       } catch (error) {
         if (!active) {
           return;
@@ -277,11 +553,11 @@ export default function ItemCardsPage({ pageKey = "list" }) {
     return () => {
       active = false;
     };
-  }, [canReadGlAccounts, form.legalEntityId, l]);
+  }, [canReadGlAccounts, l, selectedLegalEntityId]);
 
   useEffect(() => {
     setTaxCategoryError("");
-    if (!canReadTaxSetup) {
+    if (!canReadOrgTree) {
       setTaxRuleRows([]);
       return;
     }
@@ -317,40 +593,85 @@ export default function ItemCardsPage({ pageKey = "list" }) {
     return () => {
       active = false;
     };
-  }, [canReadTaxSetup, l]);
+  }, [canReadOrgTree, l]);
 
+  const postableAccountRows = useMemo(
+    () => accountRows.filter((row) => isActivePostableAccount(row)),
+    [accountRows]
+  );
+  const selectedAccountRowById = useMemo(() => {
+    const nextMap = new Map();
+    accountRows.forEach((row) => {
+      const rowId = toPositiveInt(row?.id);
+      if (rowId) {
+        nextMap.set(rowId, row);
+      }
+    });
+    return nextMap;
+  }, [accountRows]);
   const accountOptions = useMemo(() => {
-    const optionIds = new Set(accountRows.map((row) => Number(row.id || 0)));
-    const selectedIds = [
-      form.defaultSalesAccountId,
-      form.defaultPurchaseAccountId,
-      form.inventoryAssetAccountId,
-      form.inventoryTransitAccountId,
-      form.defaultCogsAccountId,
-    ]
+    const optionIds = new Set(postableAccountRows.map((row) => Number(row.id || 0)));
+    const selectedIds = INLINE_ACCOUNT_FIELD_KEYS.map((fieldKey) => form[fieldKey])
       .map((value) => Number(value || 0))
       .filter((id) => Number.isInteger(id) && id > 0);
-    const nextRows = [...accountRows];
+    const nextRows = [...postableAccountRows];
     selectedIds.forEach((id) => {
-      if (!optionIds.has(id)) {
-        nextRows.unshift({
+      if (optionIds.has(id)) {
+        return;
+      }
+      const selectedRow = selectedAccountRowById.get(id);
+      nextRows.unshift(
+        selectedRow || {
           id,
           code: `#${id}`,
           name: "Selected account is outside current lookup scope.",
           accountType: "",
-        });
-        optionIds.add(id);
-      }
+          normalSide: "",
+          allowPosting: true,
+          isActive: true,
+          parentAccountId: null,
+          breadcrumbCodes: "",
+        }
+      );
+      optionIds.add(id);
     });
     return nextRows;
-  }, [
-    accountRows,
-    form.defaultCogsAccountId,
-    form.defaultPurchaseAccountId,
-    form.defaultSalesAccountId,
-    form.inventoryAssetAccountId,
-    form.inventoryTransitAccountId,
-  ]);
+  }, [form, postableAccountRows, selectedAccountRowById]);
+  const inlineFieldConfig = inlineChildFieldKey
+    ? INLINE_ACCOUNT_FIELD_CONFIG[inlineChildFieldKey] || null
+    : null;
+  const inlineParentAccountRows = useMemo(() => {
+    if (!inlineFieldConfig) {
+      return [];
+    }
+    return accountRows.filter(
+      (row) =>
+        isActiveAccount(row) &&
+        (!inlineFieldConfig.expectedAccountType ||
+          normalizeAccountCode(row?.accountType) ===
+            inlineFieldConfig.expectedAccountType)
+    );
+  }, [accountRows, inlineFieldConfig]);
+  const inlineParentAccountLookupOptions = useMemo(
+    () =>
+      inlineParentAccountRows.map((row) => ({
+        value: String(row.id || ""),
+        label: formatAccountOptionLabel(row),
+        description: formatAccountOptionDescription(row),
+      })),
+    [inlineParentAccountRows]
+  );
+  const selectedInlineParentAccount = useMemo(
+    () =>
+      inlineParentAccountRows.find(
+        (row) => toPositiveInt(row?.id) === toPositiveInt(inlineChildParentAccountId)
+      ) || null,
+    [inlineChildParentAccountId, inlineParentAccountRows]
+  );
+  const suggestedInlineChildCode = useMemo(
+    () => buildNextChildAccountCode(accountRows, selectedInlineParentAccount),
+    [accountRows, selectedInlineParentAccount]
+  );
 
   const taxCategoryOptions = useMemo(() => {
     const selectedLegalEntityId = toPositiveInt(form.legalEntityId);
@@ -386,12 +707,33 @@ export default function ItemCardsPage({ pageKey = "list" }) {
       .map((value) => ({ value, label: value }));
   }, [form.legalEntityId, form.taxCategoryCode, taxRuleRows]);
 
+  useEffect(() => {
+    if (!inlineChildFieldKey) {
+      return;
+    }
+    const fieldConfig = INLINE_ACCOUNT_FIELD_CONFIG[inlineChildFieldKey] || null;
+    const baseName = normalizeText(form.name);
+    const suffix = fieldConfig
+      ? l(fieldConfig.childNameSuffixEn, fieldConfig.childNameSuffixTr)
+      : "";
+    const nextDefaultName = [baseName, suffix].filter(Boolean).join(" ");
+    setInlineChildName((previous) => previous || nextDefaultName);
+  }, [form.name, inlineChildFieldKey, l]);
+
+  useEffect(() => {
+    if (!inlineChildFieldKey || !suggestedInlineChildCode) {
+      return;
+    }
+    setInlineChildCode((previous) => previous || suggestedInlineChildCode);
+  }, [inlineChildFieldKey, suggestedInlineChildCode]);
+
   function resetForm(nextLegalEntityId = form.legalEntityId) {
     setSelectedRow(null);
     setForm({
       ...createInitialForm(),
       legalEntityId: nextLegalEntityId || "",
     });
+    clearInlineChildState();
     setFormError("");
     setFormMessage("");
   }
@@ -412,6 +754,308 @@ export default function ItemCardsPage({ pageKey = "list" }) {
       errors.push(l("Status is invalid.", "Durum gecersiz."));
     }
     return { payload, errors };
+  }
+
+  function toggleInlineChildPanel(fieldKey) {
+    const nextFieldKey = inlineChildFieldKey === fieldKey ? "" : fieldKey;
+    setInlineChildFieldKey(nextFieldKey);
+    setInlineChildParentAccountId("");
+    setInlineChildCode("");
+    setInlineChildName(nextFieldKey ? buildDefaultInlineChildName(nextFieldKey) : "");
+  }
+
+  async function handleCreateInlineChildAccount() {
+    if (!inlineFieldConfig || !inlineChildFieldKey) {
+      return;
+    }
+    if (!canUpsertGlAccounts) {
+      setFormError(l("Missing permission: gl.account.upsert", "Eksik yetki: gl.account.upsert"));
+      return;
+    }
+    if (!selectedLegalEntityId) {
+      setFormError(l("Select legal entity first.", "Once tuzel kisilik secin."));
+      return;
+    }
+
+    const parentAccountId = toPositiveInt(inlineChildParentAccountId);
+    const parentAccount =
+      inlineParentAccountRows.find((row) => toPositiveInt(row?.id) === parentAccountId) || null;
+    if (!parentAccountId || !parentAccount) {
+      setFormError(l("Select a parent account first.", "Once ust hesap secin."));
+      return;
+    }
+
+    const childCode = normalizeAccountCode(inlineChildCode);
+    const childName = normalizeText(inlineChildName);
+    if (!childCode) {
+      setFormError(l("Child account code is required.", "Alt hesap kodu zorunludur."));
+      return;
+    }
+    if (!childName) {
+      setFormError(l("Child account name is required.", "Alt hesap adi zorunludur."));
+      return;
+    }
+
+    const parentCode = normalizeAccountCode(parentAccount?.code);
+    if (parentCode && childCode === parentCode) {
+      setFormError(
+        l(
+          "Child account code must differ from parent account code.",
+          "Alt hesap kodu ust hesap koduyla ayni olamaz."
+        )
+      );
+      return;
+    }
+
+    const existingAccount =
+      accountRows.find((row) => normalizeAccountCode(row?.code) === childCode) || null;
+    if (existingAccount) {
+      if (
+        inlineFieldConfig.expectedAccountType &&
+        normalizeAccountCode(existingAccount?.accountType) !==
+          inlineFieldConfig.expectedAccountType
+      ) {
+        setFormError(
+          l(
+            "The entered child code already belongs to a different account type.",
+            "Girilen alt hesap kodu farkli bir hesap tipine ait."
+          )
+        );
+        return;
+      }
+      if (isActivePostableAccount(existingAccount)) {
+        setForm((previous) => ({
+          ...previous,
+          [inlineChildFieldKey]: String(existingAccount.id),
+        }));
+        clearInlineChildState();
+        setFormError("");
+        setFormMessage(
+          `${l("Existing account selected", "Mevcut hesap secildi")}: ${formatAccountOptionLabel(existingAccount)}`
+        );
+        return;
+      }
+      setFormError(
+        l(
+          "The entered child code already belongs to an inactive or non-postable account.",
+          "Girilen alt hesap kodu aktif olmayan veya kaydedilemeyen bir hesaba ait."
+        )
+      );
+      return;
+    }
+
+    const coaId = toPositiveInt(parentAccount?.coaId);
+    if (!coaId) {
+      setFormError(
+        l(
+          "Selected parent account has no chart of accounts id.",
+          "Secilen ust hesabin hesap plani kimligi yok."
+        )
+      );
+      return;
+    }
+
+    const accountType = normalizeAccountCode(parentAccount?.accountType);
+    if (!accountType) {
+      setFormError(
+        l(
+          "Selected parent account has no account type.",
+          "Secilen ust hesabin hesap tipi yok."
+        )
+      );
+      return;
+    }
+    if (
+      inlineFieldConfig.expectedAccountType &&
+      accountType !== inlineFieldConfig.expectedAccountType
+    ) {
+      setFormError(
+        l(
+          "Selected parent account type does not match this field.",
+          "Secilen ust hesap tipi bu alanla uyusmuyor."
+        )
+      );
+      return;
+    }
+
+    setInlineChildSaving(true);
+    setFormError("");
+    setFormMessage("");
+    try {
+      const defaultNormalSide =
+        accountType === "LIABILITY" || accountType === "REVENUE" ? "CREDIT" : "DEBIT";
+      await upsertAccount({
+        coaId,
+        code: childCode,
+        name: childName,
+        accountType,
+        normalSide: normalizeAccountCode(parentAccount?.normalSide) || defaultNormalSide,
+        allowPosting: true,
+        parentAccountId,
+      });
+
+      const refreshedRows = await fetchAccountRowsForLegalEntity(selectedLegalEntityId);
+      setAccountRows(refreshedRows);
+      const resolvedAccount =
+        refreshedRows.find((row) => normalizeAccountCode(row?.code) === childCode) || null;
+      const resolvedAccountId = toPositiveInt(resolvedAccount?.id);
+      if (!resolvedAccountId) {
+        throw new Error(
+          l(
+            "Created account could not be resolved from the refreshed lookup.",
+            "Olusturulan hesap yenilenen listede bulunamadi."
+          )
+        );
+      }
+
+      setForm((previous) => ({
+        ...previous,
+        [inlineChildFieldKey]: String(resolvedAccountId),
+      }));
+      clearInlineChildState();
+      setFormMessage(
+        `${l("Child account created and selected", "Alt hesap olusturulup secildi")}: ${childCode} - ${childName}`
+      );
+    } catch (error) {
+      setFormError(
+        normalizeApiError(
+          error,
+          l("Failed to create child account.", "Alt hesap olusturulamadi.")
+        )
+      );
+    } finally {
+      setInlineChildSaving(false);
+    }
+  }
+
+  function renderAccountField(fieldKey, helperContent = null) {
+    const fieldConfig = INLINE_ACCOUNT_FIELD_CONFIG[fieldKey];
+    if (!fieldConfig) {
+      return null;
+    }
+    const isInlinePanelOpen = inlineChildFieldKey === fieldKey;
+    return (
+      <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+        <label className="block">
+          {l(fieldConfig.labelEn, fieldConfig.labelTr)}
+          <select
+            className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+            value={form[fieldKey]}
+            onChange={(event) =>
+              setForm((previous) => ({
+                ...previous,
+                [fieldKey]: event.target.value,
+              }))
+            }
+            disabled={saving || accountLoading || !canReadGlAccounts}
+          >
+            <option value="">{l("None", "Yok")}</option>
+            {accountOptions.map((row) => (
+              <option
+                key={`${fieldConfig.optionKey}-${row.id}`}
+                value={String(row.id)}
+              >
+                {formatAccountOptionLabel(row)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] normal-case tracking-normal">
+          <button
+            type="button"
+            className="rounded border border-cyan-300 bg-white px-2 py-1 font-semibold text-cyan-800 hover:bg-cyan-50 disabled:opacity-60"
+            onClick={() => toggleInlineChildPanel(fieldKey)}
+            disabled={saving || accountLoading || !canReadGlAccounts || !selectedLegalEntityId}
+          >
+            {isInlinePanelOpen
+              ? l("Close child creator", "Alt hesap panelini kapat")
+              : l("Add child account", "Alt hesap ekle")}
+          </button>
+          <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-slate-600">
+            {l("Expected type", "Beklenen tip")}: {fieldConfig.expectedAccountType}
+          </span>
+          {!selectedLegalEntityId ? (
+            <span className="text-amber-700">
+              {l(
+                "Select a legal entity first to create a child account.",
+                "Alt hesap olusturmak icin once tuzel kisilik secin."
+              )}
+            </span>
+          ) : null}
+        </div>
+        {isInlinePanelOpen ? (
+          <div className="mt-2 space-y-2 rounded-lg border border-cyan-200 bg-cyan-50 p-3 normal-case tracking-normal">
+            <p className="text-xs text-cyan-800">
+              {l(
+                "Create a postable child account under the selected parent, then link it to this item card field.",
+                "Secilen ust hesap altinda kaydedilebilir bir alt hesap olusturun ve bu urun karti alanina baglayin."
+              )}
+            </p>
+            <Combobox
+              value={inlineChildParentAccountId || null}
+              options={inlineParentAccountLookupOptions}
+              placeholder={l("Select parent account", "Ust hesap secin")}
+              noOptionsText={l("No parent accounts found.", "Ust hesap bulunamadi.")}
+              onChange={(nextValue) =>
+                setInlineChildParentAccountId(nextValue ? String(nextValue) : "")
+              }
+              disabled={saving || accountLoading || inlineChildSaving}
+            />
+            <div className="grid gap-2 sm:grid-cols-2">
+              <input
+                type="text"
+                className="rounded-md border border-cyan-300 bg-white px-3 py-2 text-xs uppercase"
+                value={inlineChildCode}
+                onChange={(event) => setInlineChildCode(normalizeAccountCode(event.target.value))}
+                placeholder={l("Child account code", "Alt hesap kodu")}
+                maxLength={60}
+              />
+              <input
+                type="text"
+                className="rounded-md border border-cyan-300 bg-white px-3 py-2 text-xs"
+                value={inlineChildName}
+                onChange={(event) => setInlineChildName(event.target.value)}
+                placeholder={l("Child account name", "Alt hesap adi")}
+                maxLength={255}
+              />
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                className="rounded border border-cyan-300 bg-white px-2 py-1 text-[11px] font-semibold text-cyan-800 hover:bg-cyan-100 disabled:opacity-60"
+                onClick={() => setInlineChildCode(suggestedInlineChildCode)}
+                disabled={!suggestedInlineChildCode || !selectedInlineParentAccount}
+              >
+                {l("Use next child code", "Sonraki alt kodu kullan")}
+              </button>
+              <button
+                type="button"
+                className="rounded bg-cyan-700 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-cyan-800 disabled:opacity-60"
+                onClick={handleCreateInlineChildAccount}
+                disabled={saving || inlineChildSaving || !canUpsertGlAccounts}
+              >
+                {inlineChildSaving
+                  ? l("Creating child...", "Alt hesap olusturuluyor...")
+                  : l("Create child account", "Alt hesap olustur")}
+              </button>
+            </div>
+            {!canUpsertGlAccounts ? (
+              <p className="text-[11px] text-amber-700">
+                {l(
+                  "Need gl.account.upsert permission to create child accounts here.",
+                  "Burada alt hesap olusturmak icin gl.account.upsert yetkisi gerekir."
+                )}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+        {helperContent ? (
+          <div className="mt-2 space-y-1 text-[11px] normal-case tracking-normal">
+            {helperContent}
+          </div>
+        ) : null}
+      </div>
+    );
   }
 
   async function handleSubmit(event) {
@@ -441,6 +1085,7 @@ export default function ItemCardsPage({ pageKey = "list" }) {
       if (nextRow) {
         setSelectedRow(nextRow);
         setForm(mapItemCardRowToForm(nextRow));
+        clearInlineChildState();
       }
       const refreshed = await listItemCards({
         legalEntityId: filters.legalEntityId || undefined,
@@ -489,6 +1134,7 @@ export default function ItemCardsPage({ pageKey = "list" }) {
                 className="mt-1"
                 value={filters.legalEntityId}
                 options={legalEntityOptions}
+                loading={legalEntityLookupLoading}
                 placeholder={l("Search legal entity", "Tuzel kisilik ara")}
                 noOptionsText={l("No legal entities found.", "Tuzel kisilik bulunamadi.")}
                 onChange={(nextValue) =>
@@ -547,6 +1193,9 @@ export default function ItemCardsPage({ pageKey = "list" }) {
             />
           </label>
         </div>
+        {legalEntityLookupError ? (
+          <p className="mt-3 text-sm text-amber-700">{legalEntityLookupError}</p>
+        ) : null}
         {listError ? <p className="mt-3 text-sm text-rose-700">{listError}</p> : null}
       </section>
 
@@ -578,6 +1227,7 @@ export default function ItemCardsPage({ pageKey = "list" }) {
                 className="mt-1"
                 value={form.legalEntityId}
                 options={legalEntityOptions}
+                loading={legalEntityLookupLoading}
                 placeholder={l("Search legal entity", "Tuzel kisilik ara")}
                 noOptionsText={l("No legal entities found.", "Tuzel kisilik bulunamadi.")}
                 onChange={(nextValue) =>
@@ -633,90 +1283,36 @@ export default function ItemCardsPage({ pageKey = "list" }) {
               ))}
             </select>
           </label>
-          <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-            {l("Sales Account (optional)", "Satis Hesabi (opsiyonel)")}
-            <select
-              className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
-              value={form.defaultSalesAccountId}
-              onChange={(event) =>
-                setForm((previous) => ({
-                  ...previous,
-                  defaultSalesAccountId: event.target.value,
-                }))
-              }
-              disabled={saving || accountLoading || !canReadGlAccounts}
-            >
-              <option value="">{l("None", "Yok")}</option>
-              {accountOptions.map((row) => (
-                <option key={`sales-account-${row.id}`} value={String(row.id)}>
-                  {row.code} - {row.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-            {l("Purchase Account (optional)", "Alim Hesabi (opsiyonel)")}
-            <select
-              className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
-              value={form.defaultPurchaseAccountId}
-              onChange={(event) =>
-                setForm((previous) => ({
-                  ...previous,
-                  defaultPurchaseAccountId: event.target.value,
-                }))
-              }
-              disabled={saving || accountLoading || !canReadGlAccounts}
-            >
-              <option value="">{l("None", "Yok")}</option>
-              {accountOptions.map((row) => (
-                <option key={`purchase-account-${row.id}`} value={String(row.id)}>
-                  {row.code} - {row.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-            {l("Inventory Asset Account (optional)", "Stok Varlik Hesabi (opsiyonel)")}
-            <select
-              className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
-              value={form.inventoryAssetAccountId}
-              onChange={(event) =>
-                setForm((previous) => ({
-                  ...previous,
-                  inventoryAssetAccountId: event.target.value,
-                }))
-              }
-              disabled={saving || accountLoading || !canReadGlAccounts}
-            >
-              <option value="">{l("None", "Yok")}</option>
-              {accountOptions.map((row) => (
-                <option key={`inventory-account-${row.id}`} value={String(row.id)}>
-                  {row.code} - {row.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-            {l("Inventory Transit Account (optional)", "Stok Transit Hesabi (opsiyonel)")}
-            <select
-              className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
-              value={form.inventoryTransitAccountId}
-              onChange={(event) =>
-                setForm((previous) => ({
-                  ...previous,
-                  inventoryTransitAccountId: event.target.value,
-                }))
-              }
-              disabled={saving || accountLoading || !canReadGlAccounts}
-            >
-              <option value="">{l("None", "Yok")}</option>
-              {accountOptions.map((row) => (
-                <option key={`inventory-transit-account-${row.id}`} value={String(row.id)}>
-                  {row.code} - {row.name}
-                </option>
-              ))}
-            </select>
-            <div className="mt-2 space-y-1 text-[11px] normal-case tracking-normal">
+          {renderAccountField(
+            "defaultSalesAccountId",
+            <p className="text-slate-500">
+              {l(
+                "Revenue-side default for AR sales lines that use this item card.",
+                "Bu urun kartini kullanan AR satis satirlari icin gelir varsayilanidir."
+              )}
+            </p>
+          )}
+          {renderAccountField(
+            "defaultPurchaseAccountId",
+            <p className="text-slate-500">
+              {l(
+                "For SERVICE / NON_STOCK_GOOD, use an expense account such as 770 / 760 / 740. For STOCK_ITEM, use Inventory Asset as the main purchase account; this field is backup only.",
+                "SERVICE / NON_STOCK_GOOD icin 770 / 760 / 740 gibi bir gider hesabi kullanin. STOCK_ITEM icin ana alim hesabi olarak Stok Varlik kullanin; bu alan sadece yedektir."
+              )}
+            </p>
+          )}
+          {renderAccountField(
+            "inventoryAssetAccountId",
+            <p className="text-slate-500">
+              {l(
+                "Main stock account for STOCK_ITEM purchase receipt and on-hand inventory balance.",
+                "STOCK_ITEM alim girisi ve eldeki stok bakiyesi icin ana stok hesabidir."
+              )}
+            </p>
+          )}
+          {renderAccountField(
+            "inventoryTransitAccountId",
+            <>
               <span
                 className={`inline-flex rounded-full px-2 py-1 font-semibold ${formTransitSetup.className}`}
               >
@@ -742,29 +1338,9 @@ export default function ItemCardsPage({ pageKey = "list" }) {
                   )}
                 </p>
               )}
-            </div>
-          </label>
-          <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-            {l("COGS Account (optional)", "Maliyet Hesabi (opsiyonel)")}
-            <select
-              className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
-              value={form.defaultCogsAccountId}
-              onChange={(event) =>
-                setForm((previous) => ({
-                  ...previous,
-                  defaultCogsAccountId: event.target.value,
-                }))
-              }
-              disabled={saving || accountLoading || !canReadGlAccounts}
-            >
-              <option value="">{l("None", "Yok")}</option>
-              {accountOptions.map((row) => (
-                <option key={`cogs-account-${row.id}`} value={String(row.id)}>
-                  {row.code} - {row.name}
-                </option>
-              ))}
-            </select>
-          </label>
+            </>
+          )}
+          {renderAccountField("defaultCogsAccountId")}
           <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
             {l("Tax Category Code (optional)", "Vergi Kategori Kodu (opsiyonel)")}
             {taxCategoryOptions.length > 0 ? (
@@ -891,6 +1467,7 @@ export default function ItemCardsPage({ pageKey = "list" }) {
                         onClick={() => {
                           setSelectedRow(row);
                           setForm(mapItemCardRowToForm(row));
+                          clearInlineChildState();
                           setFormError("");
                           setFormMessage("");
                         }}

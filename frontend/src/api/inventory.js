@@ -133,6 +133,13 @@ export async function listInventoryCariStockLinks(params = {}) {
   return response.data;
 }
 
+export async function getInventoryWorkQueueSummary(params = {}) {
+  const response = await api.get(
+    `/api/v1/inventory/work-queue-summary${toQueryString(params)}`
+  );
+  return response.data;
+}
+
 export async function listInventoryMovements(params = {}) {
   const response = await api.get(`/api/v1/inventory/movements${toQueryString(params)}`);
   return response.data;

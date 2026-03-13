@@ -6,6 +6,7 @@ import {
   listProviderCountries,
   listProviderCurrencies,
   listProviderTenants,
+  updateProviderTenantTaxEngine,
   updateProviderCurrency,
   updateProviderCountry,
   updateProviderTenantStatus,
@@ -64,6 +65,7 @@ export default function ProviderBootstrapPage() {
   const [savingCurrency, setSavingCurrency] = useState(false);
   const [savingCountry, setSavingCountry] = useState(false);
   const [updatingTenantId, setUpdatingTenantId] = useState(null);
+  const [updatingTenantTaxEngineId, setUpdatingTenantTaxEngineId] = useState(null);
   const [updatingCurrencyCode, setUpdatingCurrencyCode] = useState(null);
   const [updatingCountryId, setUpdatingCountryId] = useState(null);
   const [editingCurrencyCode, setEditingCurrencyCode] = useState(null);
@@ -225,6 +227,37 @@ export default function ProviderBootstrapPage() {
       );
     } finally {
       setUpdatingTenantId(null);
+    }
+  }
+
+  async function handleSetTenantTaxEngine(tenantId, enabled) {
+    if (!token) {
+      return;
+    }
+
+    setUpdatingTenantTaxEngineId(tenantId);
+    setError("");
+    setMessage("");
+    try {
+      await updateProviderTenantTaxEngine(token, tenantId, enabled);
+      setMessage(
+        t("providerBootstrap.messages.taxEngineUpdated", {
+          id: tenantId,
+          status: enabled
+            ? t("providerBootstrap.directory.taxEngine.enabled")
+            : t("providerBootstrap.directory.taxEngine.disabled"),
+        })
+      );
+      await loadTenants();
+    } catch (err) {
+      if (err?.response?.status === 401) {
+        clearSession();
+      }
+      setError(
+        err?.response?.data?.message || t("providerBootstrap.errors.updateTaxEngine")
+      );
+    } finally {
+      setUpdatingTenantTaxEngineId(null);
     }
   }
 
@@ -569,6 +602,7 @@ export default function ProviderBootstrapPage() {
                     <th className="px-3 py-2">{t("providerBootstrap.directory.columns.code")}</th>
                     <th className="px-3 py-2">{t("providerBootstrap.directory.columns.name")}</th>
                     <th className="px-3 py-2">{t("providerBootstrap.directory.columns.status")}</th>
+                    <th className="px-3 py-2">{t("providerBootstrap.directory.columns.taxEngine")}</th>
                     <th className="px-3 py-2">{t("providerBootstrap.directory.columns.users")}</th>
                     <th className="px-3 py-2">{t("providerBootstrap.directory.columns.actions")}</th>
                   </tr>
@@ -581,6 +615,31 @@ export default function ProviderBootstrapPage() {
                       <td className="px-3 py-2">{tenant.name}</td>
                       <td className="px-3 py-2">
                         {toTenantStatusLabel(t, tenant.status)}
+                      </td>
+                      <td className="px-3 py-2">
+                        <label className="flex min-w-40 items-start gap-2 text-xs text-slate-700">
+                          <input
+                            type="checkbox"
+                            checked={Boolean(tenant.taxEngineEnabled)}
+                            onChange={(event) =>
+                              handleSetTenantTaxEngine(tenant.id, event.target.checked)
+                            }
+                            disabled={updatingTenantTaxEngineId === tenant.id}
+                            className="mt-0.5"
+                          />
+                          <span>
+                            <span className="font-medium">
+                              {t("providerBootstrap.directory.taxEngine.label")}
+                            </span>
+                            <span className="mt-1 block text-slate-500">
+                              {updatingTenantTaxEngineId === tenant.id
+                                ? t("providerBootstrap.directory.taxEngine.updating")
+                                : tenant.taxEngineEnabled
+                                  ? t("providerBootstrap.directory.taxEngine.enabled")
+                                  : t("providerBootstrap.directory.taxEngine.disabled")}
+                            </span>
+                          </span>
+                        </label>
                       </td>
                       <td className="px-3 py-2">
                         {tenant.activeUserCount}/{tenant.userCount}
@@ -614,7 +673,7 @@ export default function ProviderBootstrapPage() {
                   ))}
                   {tenants.length === 0 && !loadingTenants ? (
                     <tr>
-                      <td colSpan={6} className="px-3 py-3 text-slate-500">
+                      <td colSpan={7} className="px-3 py-3 text-slate-500">
                         {t("providerBootstrap.directory.empty")}
                       </td>
                     </tr>
