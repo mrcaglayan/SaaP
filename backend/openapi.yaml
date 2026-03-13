@@ -15962,6 +15962,36 @@
         }
       }
     },
+    "/api/v1/inventory/work-queue-summary": {
+      "get": {
+        "tags": [
+          "Inventory"
+        ],
+        "operationId": "getApiV1InventoryWorkQueueSummary",
+        "summary": "Auto-generated: GET /api/v1/inventory/work-queue-summary",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
     "/api/v1/items/cards": {
       "get": {
         "tags": [
@@ -20373,6 +20403,58 @@
         ],
         "operationId": "patchApiV1ProviderTenantsTenantidStatus",
         "summary": "Auto-generated: PATCH /api/v1/provider/tenants/{tenantId}/status",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tenantId",
+            "required": true,
+            "description": "tenantId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/provider/tenants/{tenantId}/tax-engine": {
+      "patch": {
+        "tags": [
+          "Provider"
+        ],
+        "operationId": "patchApiV1ProviderTenantsTenantidTaxEngine",
+        "summary": "Auto-generated: PATCH /api/v1/provider/tenants/{tenantId}/tax-engine",
         "responses": {
           "200": {
             "description": "Successful response",
