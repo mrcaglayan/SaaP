@@ -92,8 +92,30 @@ function assertOpenApiContracts(spec) {
   assertTaggedOperation(spec, "/api/v1/inventory/movements", "post", "Inventory");
   assertTaggedOperation(spec, "/api/v1/inventory/movements/{movementId}/reverse", "post", "Inventory");
   assertTaggedOperation(spec, "/api/v1/inventory/cost-layers", "get", "Inventory");
+  assertTaggedOperation(spec, "/api/v1/cari/documents", "get", "Cari");
+  assertTaggedOperation(spec, "/api/v1/cari/documents", "post", "Cari");
+  assertTaggedOperation(spec, "/api/v1/cari/documents/{documentId}", "get", "Cari");
+  assertTaggedOperation(spec, "/api/v1/cari/documents/{documentId}", "put", "Cari");
+  assertTaggedOperation(spec, "/api/v1/cari/documents/{documentId}/cancel", "post", "Cari");
+  assertTaggedOperation(spec, "/api/v1/cari/documents/{documentId}/open-items", "get", "Cari");
+  assertTaggedOperation(spec, "/api/v1/cari/documents/{documentId}/post", "post", "Cari");
+  assertTaggedOperation(spec, "/api/v1/cari/documents/{documentId}/reverse", "post", "Cari");
 
   const requiredSchemas = [
+    "CariDocumentLineTaxRow",
+    "CariDocumentLineStockLinkRow",
+    "CariDocumentLineRow",
+    "CariDocumentRow",
+    "CariDocumentListResponse",
+    "CariDocumentResponse",
+    "CariDocumentOpenItemRow",
+    "CariDocumentOpenItemListResponse",
+    "CariDocumentCreateRequest",
+    "CariDocumentUpdateRequest",
+    "CariDocumentPostRequest",
+    "CariDocumentPostResponse",
+    "CariDocumentReverseRequest",
+    "CariDocumentReverseResponse",
     "ItemCardRow",
     "ItemCardListResponse",
     "ItemCardResponse",
@@ -118,6 +140,66 @@ function assertOpenApiContracts(spec) {
     );
   }
 
+  assert(
+    getResponseSchemaRef(findOperation(spec, "/api/v1/cari/documents", "get"), "200") ===
+      "#/components/schemas/CariDocumentListResponse",
+    "GET /api/v1/cari/documents must return CariDocumentListResponse"
+  );
+  assert(
+    getRequestBodySchemaRef(findOperation(spec, "/api/v1/cari/documents", "post")) ===
+      "#/components/schemas/CariDocumentCreateRequest",
+    "POST /api/v1/cari/documents must use CariDocumentCreateRequest"
+  );
+  assert(
+    getResponseSchemaRef(findOperation(spec, "/api/v1/cari/documents", "post"), "201") ===
+      "#/components/schemas/CariDocumentResponse",
+    "POST /api/v1/cari/documents must return CariDocumentResponse"
+  );
+  assert(
+    getResponseSchemaRef(findOperation(spec, "/api/v1/cari/documents/{documentId}", "get"), "200") ===
+      "#/components/schemas/CariDocumentResponse",
+    "GET /api/v1/cari/documents/{documentId} must return CariDocumentResponse"
+  );
+  assert(
+    getRequestBodySchemaRef(findOperation(spec, "/api/v1/cari/documents/{documentId}", "put")) ===
+      "#/components/schemas/CariDocumentUpdateRequest",
+    "PUT /api/v1/cari/documents/{documentId} must use CariDocumentUpdateRequest"
+  );
+  assert(
+    getResponseSchemaRef(findOperation(spec, "/api/v1/cari/documents/{documentId}", "put"), "200") ===
+      "#/components/schemas/CariDocumentResponse",
+    "PUT /api/v1/cari/documents/{documentId} must return CariDocumentResponse"
+  );
+  assert(
+    getResponseSchemaRef(findOperation(spec, "/api/v1/cari/documents/{documentId}/cancel", "post"), "200") ===
+      "#/components/schemas/CariDocumentResponse",
+    "POST /api/v1/cari/documents/{documentId}/cancel must return CariDocumentResponse"
+  );
+  assert(
+    getResponseSchemaRef(findOperation(spec, "/api/v1/cari/documents/{documentId}/open-items", "get"), "200") ===
+      "#/components/schemas/CariDocumentOpenItemListResponse",
+    "GET /api/v1/cari/documents/{documentId}/open-items must return CariDocumentOpenItemListResponse"
+  );
+  assert(
+    getRequestBodySchemaRef(findOperation(spec, "/api/v1/cari/documents/{documentId}/post", "post")) ===
+      "#/components/schemas/CariDocumentPostRequest",
+    "POST /api/v1/cari/documents/{documentId}/post must use CariDocumentPostRequest"
+  );
+  assert(
+    getResponseSchemaRef(findOperation(spec, "/api/v1/cari/documents/{documentId}/post", "post"), "200") ===
+      "#/components/schemas/CariDocumentPostResponse",
+    "POST /api/v1/cari/documents/{documentId}/post must return CariDocumentPostResponse"
+  );
+  assert(
+    getRequestBodySchemaRef(findOperation(spec, "/api/v1/cari/documents/{documentId}/reverse", "post")) ===
+      "#/components/schemas/CariDocumentReverseRequest",
+    "POST /api/v1/cari/documents/{documentId}/reverse must use CariDocumentReverseRequest"
+  );
+  assert(
+    getResponseSchemaRef(findOperation(spec, "/api/v1/cari/documents/{documentId}/reverse", "post"), "201") ===
+      "#/components/schemas/CariDocumentReverseResponse",
+    "POST /api/v1/cari/documents/{documentId}/reverse must return CariDocumentReverseResponse"
+  );
   assert(
     getResponseSchemaRef(findOperation(spec, "/api/v1/items/cards", "get"), "200") ===
       "#/components/schemas/ItemCardListResponse",
@@ -440,6 +522,13 @@ async function main() {
   await runNpmScript("test:cari:line-model-rollout", backendRoot);
   await runNpmScript("openapi:generate", backendRoot);
   await runNpmScript("check:openapi:parse", backendRoot);
+  await runNpmScript("check:openapi", backendRoot);
+  await runCommand(
+    "git",
+    ["diff", "--exit-code", "--", "backend/openapi.yaml"],
+    repoRoot,
+    "git diff --exit-code -- backend/openapi.yaml"
+  );
 
   const openapiSource = await readFile(path.resolve(backendRoot, "openapi.yaml"), "utf8");
   const spec = JSON.parse(openapiSource);

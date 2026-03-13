@@ -600,6 +600,523 @@ function mergeOperationParameters(operation, parametersToAppend) {
 function applyCariOperationOverrides(specObject) {
   ensureTagPresent(specObject, "Cari");
   const paths = specObject.paths || {};
+  const schemas = specObject.components?.schemas || {};
+
+  Object.assign(schemas, {
+    CariDocumentDirection: {
+      type: "string",
+      enum: ["AR", "AP"],
+    },
+    CariDocumentType: {
+      type: "string",
+      enum: ["INVOICE", "DEBIT_NOTE", "CREDIT_NOTE", "PAYMENT", "ADJUSTMENT"],
+    },
+    CariDocumentStatus: {
+      type: "string",
+      enum: ["DRAFT", "POSTED", "REVERSED", "CANCELLED", "PARTIALLY_SETTLED", "SETTLED"],
+    },
+    CariDocumentLineKind: {
+      type: "string",
+      enum: ["STANDARD", "COMMENT", "ROUNDING", "ADJUSTMENT", "OTHER"],
+    },
+    CariDocumentLineStockImpactMode: {
+      type: "string",
+      enum: ["NONE", "RECEIPT_PENDING", "ISSUE_PENDING"],
+    },
+    CariDocumentOpenItemStatus: {
+      type: "string",
+      enum: ["OPEN", "PARTIALLY_SETTLED", "SETTLED"],
+    },
+    CariDocumentLineTaxRow: {
+      type: "object",
+      properties: {
+        id: { ...intId, nullable: true },
+        tenantId: { ...intId, nullable: true },
+        legalEntityId: { ...intId, nullable: true },
+        documentId: { ...intId, nullable: true },
+        documentLineId: { ...intId, nullable: true },
+        componentNo: { type: "integer", nullable: true },
+        taxCode: { type: "string", nullable: true },
+        taxKind: { type: "string", nullable: true },
+        ratePct: { type: "number", nullable: true },
+        taxBaseAmountTxn: { type: "number", nullable: true },
+        taxAmountTxn: { type: "number", nullable: true },
+        taxBaseAmountBase: { type: "number", nullable: true },
+        taxAmountBase: { type: "number", nullable: true },
+        taxPurposeCode: { type: "string", nullable: true },
+        accountId: { ...intId, nullable: true },
+        createdAt: { type: "string", format: "date-time", nullable: true },
+        updatedAt: { type: "string", format: "date-time", nullable: true },
+      },
+      required: ["id", "tenantId", "legalEntityId", "documentId", "documentLineId", "componentNo"],
+    },
+    CariDocumentLineStockLinkRow: {
+      type: "object",
+      properties: {
+        id: { ...intId, nullable: true },
+        tenantId: { ...intId, nullable: true },
+        legalEntityId: { ...intId, nullable: true },
+        documentId: { ...intId, nullable: true },
+        documentLineId: { ...intId, nullable: true },
+        documentLineNo: { type: "integer", nullable: true },
+        documentLineDescription: { type: "string", nullable: true },
+        itemCardId: { ...intId, nullable: true },
+        itemCardCode: { type: "string", nullable: true },
+        itemCardName: { type: "string", nullable: true },
+        direction: { $ref: "#/components/schemas/CariDocumentDirection" },
+        stockImpactMode: { $ref: "#/components/schemas/CariDocumentLineStockImpactMode" },
+        linkStatus: { type: "string", nullable: true },
+        requestedQuantity: { type: "number", nullable: true },
+        postedNetAmountTxn: { type: "number", nullable: true },
+        postedNetAmountBase: { type: "number", nullable: true },
+        inventoryDocumentType: { type: "string", nullable: true },
+        inventoryDocumentId: { ...intId, nullable: true },
+        inventoryMovementId: { ...intId, nullable: true },
+        reopenedFromStockLinkId: { ...intId, nullable: true },
+        supersededByStockLinkId: { ...intId, nullable: true },
+        inventoryMovementType: { $ref: "#/components/schemas/InventoryMovementType" },
+        inventoryValuationStatus: { $ref: "#/components/schemas/InventoryValuationStatus" },
+        inventoryMovementDate: { type: "string", format: "date", nullable: true },
+        inventoryMovementReversedAt: { type: "string", format: "date-time", nullable: true },
+        inventoryMovementReversalJournalEntryId: { ...intId, nullable: true },
+        inventoryWarehouseId: { ...intId, nullable: true },
+        inventoryWarehouseCode: { type: "string", nullable: true },
+        inventoryWarehouseName: { type: "string", nullable: true },
+        resolvedAt: { type: "string", format: "date-time", nullable: true },
+        resolutionNote: { type: "string", nullable: true },
+        createdAt: { type: "string", format: "date-time", nullable: true },
+        updatedAt: { type: "string", format: "date-time", nullable: true },
+      },
+      required: ["id", "tenantId", "legalEntityId", "documentId", "documentLineId"],
+    },
+    CariDocumentLineRow: {
+      type: "object",
+      properties: {
+        id: { ...intId, nullable: true },
+        tenantId: { ...intId, nullable: true },
+        legalEntityId: { ...intId, nullable: true },
+        documentId: { ...intId, nullable: true },
+        lineNo: { type: "integer", nullable: true },
+        lineKind: { $ref: "#/components/schemas/CariDocumentLineKind" },
+        description: { type: "string", nullable: true },
+        itemCardId: { ...intId, nullable: true },
+        quantity: { type: "number", nullable: true },
+        unitPriceTxn: { type: "number", nullable: true },
+        lineNetAmountTxn: { type: "number", nullable: true },
+        lineTaxAmountTxn: { type: "number", nullable: true },
+        lineGrossAmountTxn: { type: "number", nullable: true },
+        lineNetAmountBase: { type: "number", nullable: true },
+        lineTaxAmountBase: { type: "number", nullable: true },
+        lineGrossAmountBase: { type: "number", nullable: true },
+        postingAccountId: { ...intId, nullable: true },
+        taxCategoryCode: { type: "string", nullable: true },
+        stockImpactMode: { $ref: "#/components/schemas/CariDocumentLineStockImpactMode" },
+        createdAt: { type: "string", format: "date-time", nullable: true },
+        updatedAt: { type: "string", format: "date-time", nullable: true },
+        taxes: {
+          type: "array",
+          items: { $ref: "#/components/schemas/CariDocumentLineTaxRow" },
+        },
+        stockLinks: {
+          type: "array",
+          items: { $ref: "#/components/schemas/CariDocumentLineStockLinkRow" },
+        },
+      },
+      required: [
+        "id",
+        "tenantId",
+        "legalEntityId",
+        "documentId",
+        "lineNo",
+        "lineKind",
+        "taxes",
+        "stockLinks",
+      ],
+    },
+    CariDocumentRow: {
+      type: "object",
+      properties: {
+        id: { ...intId, nullable: true },
+        tenantId: { ...intId, nullable: true },
+        legalEntityId: { ...intId, nullable: true },
+        operatingUnitId: { ...intId, nullable: true },
+        operatingUnitCode: { type: "string", nullable: true },
+        operatingUnitName: { type: "string", nullable: true },
+        counterpartyId: { ...intId, nullable: true },
+        paymentTermId: { ...intId, nullable: true },
+        paymentTermCode: { type: "string", nullable: true },
+        paymentTermName: { type: "string", nullable: true },
+        direction: { $ref: "#/components/schemas/CariDocumentDirection" },
+        documentType: { $ref: "#/components/schemas/CariDocumentType" },
+        sequenceNamespace: { type: "string", nullable: true },
+        fiscalYear: { type: "integer", nullable: true },
+        sequenceNo: { type: "integer", nullable: true },
+        documentNo: { type: "string", nullable: true },
+        status: { $ref: "#/components/schemas/CariDocumentStatus" },
+        documentDate: { type: "string", format: "date", nullable: true },
+        dueDate: { type: "string", format: "date", nullable: true },
+        subtotalAmountTxn: { type: "number", nullable: true },
+        subtotalAmountBase: { type: "number", nullable: true },
+        taxAmountTxn: { type: "number", nullable: true },
+        taxAmountBase: { type: "number", nullable: true },
+        grossAmountTxn: { type: "number", nullable: true },
+        grossAmountBase: { type: "number", nullable: true },
+        amountTxn: { type: "number", nullable: true },
+        amountBase: { type: "number", nullable: true },
+        openAmountTxn: { type: "number", nullable: true },
+        openAmountBase: { type: "number", nullable: true },
+        currencyCode: { ...currencyCode, nullable: true },
+        fxRate: { type: "number", nullable: true },
+        counterpartyCodeSnapshot: { type: "string", nullable: true },
+        counterpartyNameSnapshot: { type: "string", nullable: true },
+        paymentTermSnapshot: { type: "string", nullable: true },
+        dueDateSnapshot: { type: "string", format: "date", nullable: true },
+        currencyCodeSnapshot: { ...currencyCode, nullable: true },
+        fxRateSnapshot: { type: "number", nullable: true },
+        postedJournalEntryId: { ...intId, nullable: true },
+        reversalOfDocumentId: { ...intId, nullable: true },
+        createdAt: { type: "string", format: "date-time", nullable: true },
+        updatedAt: { type: "string", format: "date-time", nullable: true },
+        rowVersion: { type: "integer", minimum: 1, nullable: true },
+        postedAt: { type: "string", format: "date-time", nullable: true },
+        reversedAt: { type: "string", format: "date-time", nullable: true },
+        draftSequenceAssigned: { type: "boolean", nullable: true },
+        lineCount: { type: "integer", minimum: 0, nullable: true },
+        lines: {
+          type: "array",
+          items: { $ref: "#/components/schemas/CariDocumentLineRow" },
+        },
+      },
+      required: [
+        "id",
+        "tenantId",
+        "legalEntityId",
+        "counterpartyId",
+        "direction",
+        "documentType",
+        "status",
+        "rowVersion",
+      ],
+    },
+    CariDocumentListResponse: {
+      type: "object",
+      properties: {
+        tenantId: intId,
+        total: nonNegativeInt,
+        rows: {
+          type: "array",
+          items: { $ref: "#/components/schemas/CariDocumentRow" },
+        },
+      },
+      required: ["tenantId", "total", "rows"],
+    },
+    CariDocumentResponse: {
+      type: "object",
+      properties: {
+        tenantId: intId,
+        row: { $ref: "#/components/schemas/CariDocumentRow" },
+      },
+      required: ["tenantId", "row"],
+    },
+    CariDocumentOpenItemRow: {
+      type: "object",
+      properties: {
+        id: { ...intId, nullable: true },
+        tenantId: { ...intId, nullable: true },
+        legalEntityId: { ...intId, nullable: true },
+        counterpartyId: { ...intId, nullable: true },
+        documentId: { ...intId, nullable: true },
+        itemNo: { type: "integer", nullable: true },
+        status: {
+          allOf: [{ $ref: "#/components/schemas/CariDocumentOpenItemStatus" }],
+          nullable: true,
+        },
+        documentDate: { type: "string", format: "date", nullable: true },
+        dueDate: { type: "string", format: "date", nullable: true },
+        originalAmountTxn: { type: "number", nullable: true },
+        originalAmountBase: { type: "number", nullable: true },
+        residualAmountTxn: { type: "number", nullable: true },
+        residualAmountBase: { type: "number", nullable: true },
+        settledAmountTxn: { type: "number", nullable: true },
+        settledAmountBase: { type: "number", nullable: true },
+        currencyCode: { ...currencyCode, nullable: true },
+        createdAt: { type: "string", format: "date-time", nullable: true },
+        updatedAt: { type: "string", format: "date-time", nullable: true },
+      },
+      required: ["id", "tenantId", "legalEntityId", "counterpartyId", "documentId", "itemNo"],
+    },
+    CariDocumentOpenItemListResponse: {
+      type: "object",
+      properties: {
+        tenantId: intId,
+        documentId: intId,
+        rows: {
+          type: "array",
+          items: { $ref: "#/components/schemas/CariDocumentOpenItemRow" },
+        },
+      },
+      required: ["tenantId", "documentId", "rows"],
+    },
+    CariPostingLineRequest: {
+      type: "object",
+      properties: {
+        amountTxn: { type: "number", minimum: 0, exclusiveMinimum: true },
+        amountBase: { type: "number", minimum: 0, exclusiveMinimum: true },
+        offsetAccountId: { ...intId, nullable: true },
+        offsetAccountCode: { type: "string", maxLength: 50, nullable: true },
+        description: { type: "string", maxLength: 255, nullable: true },
+      },
+      required: ["amountTxn", "amountBase"],
+    },
+    CariDocumentCreateRequest: {
+      type: "object",
+      properties: {
+        legalEntityId: intId,
+        operatingUnitId: { ...intId, nullable: true },
+        counterpartyId: intId,
+        paymentTermId: { ...intId, nullable: true },
+        direction: { $ref: "#/components/schemas/CariDocumentDirection" },
+        documentType: { $ref: "#/components/schemas/CariDocumentType" },
+        documentDate: { type: "string", format: "date" },
+        dueDate: { type: "string", format: "date", nullable: true },
+        amountTxn: { type: "number", nullable: true },
+        amountBase: { type: "number", nullable: true },
+        currencyCode: currencyCode,
+        fxRate: { type: "number", nullable: true },
+        lines: {
+          type: "array",
+          items: { $ref: "#/components/schemas/CariDocumentLineInput" },
+          nullable: true,
+        },
+      },
+      required: [
+        "legalEntityId",
+        "counterpartyId",
+        "direction",
+        "documentType",
+        "documentDate",
+        "currencyCode",
+      ],
+    },
+    CariDocumentUpdateRequest: {
+      type: "object",
+      properties: {
+        rowVersion: { type: "integer", minimum: 1 },
+        legalEntityId: { ...intId, nullable: true },
+        operatingUnitId: { ...intId, nullable: true },
+        counterpartyId: { ...intId, nullable: true },
+        paymentTermId: { ...intId, nullable: true },
+        direction: { $ref: "#/components/schemas/CariDocumentDirection" },
+        documentType: { $ref: "#/components/schemas/CariDocumentType" },
+        documentDate: { type: "string", format: "date", nullable: true },
+        dueDate: { type: "string", format: "date", nullable: true },
+        amountTxn: { type: "number", nullable: true },
+        amountBase: { type: "number", nullable: true },
+        currencyCode: { ...currencyCode, nullable: true },
+        fxRate: { type: "number", nullable: true },
+        lines: {
+          type: "array",
+          items: { $ref: "#/components/schemas/CariDocumentLineInput" },
+          nullable: true,
+        },
+      },
+      required: ["rowVersion"],
+    },
+    CariDocumentLineInput: {
+      type: "object",
+      properties: {
+        lineKind: { $ref: "#/components/schemas/CariDocumentLineKind" },
+        description: { type: "string", maxLength: 500, nullable: true },
+        itemCardId: { ...intId, nullable: true },
+        quantity: { type: "number", minimum: 0, nullable: true },
+        unitPriceTxn: { type: "number", minimum: 0, nullable: true },
+        lineNetAmountTxn: { type: "number", minimum: 0 },
+        lineTaxAmountTxn: { type: "number", minimum: 0, nullable: true },
+        lineGrossAmountTxn: { type: "number", minimum: 0, nullable: true },
+        postingAccountId: { ...intId, nullable: true },
+        taxCodeId: { ...intId, nullable: true },
+        taxCode: { type: "string", maxLength: 40, nullable: true },
+        taxCategoryCode: { type: "string", maxLength: 60, nullable: true },
+        stockImpactMode: { $ref: "#/components/schemas/CariDocumentLineStockImpactMode" },
+      },
+      required: ["lineNetAmountTxn"],
+    },
+    CariDocumentPostRequest: {
+      type: "object",
+      properties: {
+        offsetAccountId: { ...intId, nullable: true },
+        offsetAccountCode: { type: "string", maxLength: 50, nullable: true },
+        useFxOverride: { type: "boolean", nullable: true },
+        fxOverrideReason: { type: "string", maxLength: 500, nullable: true },
+        postingLines: {
+          type: "array",
+          items: { $ref: "#/components/schemas/CariPostingLineRequest" },
+          nullable: true,
+        },
+      },
+    },
+    CariDocumentPostJournalSummary: {
+      type: "object",
+      properties: {
+        journalEntryId: { ...intId, nullable: true },
+        bookId: { ...intId, nullable: true },
+        fiscalPeriodId: { ...intId, nullable: true },
+        lineCount: { type: "integer", minimum: 0, nullable: true },
+        totalDebit: { type: "number", nullable: true },
+        totalCredit: { type: "number", nullable: true },
+        subledgerReferenceNo: { type: "string", nullable: true },
+        tax: { type: "object", additionalProperties: true, nullable: true },
+      },
+      required: ["journalEntryId"],
+    },
+    CariDocumentPostResponse: {
+      type: "object",
+      properties: {
+        tenantId: intId,
+        row: { $ref: "#/components/schemas/CariDocumentRow" },
+        journal: { $ref: "#/components/schemas/CariDocumentPostJournalSummary" },
+      },
+      required: ["tenantId", "row", "journal"],
+    },
+    CariDocumentReverseRequest: {
+      type: "object",
+      properties: {
+        reason: { type: "string", maxLength: 255, nullable: true },
+        reversalDate: { type: "string", format: "date", nullable: true },
+      },
+    },
+    CariDocumentReverseJournalSummary: {
+      type: "object",
+      properties: {
+        originalJournalEntryId: { ...intId, nullable: true },
+        reversalJournalEntryId: { ...intId, nullable: true },
+        lineCount: { type: "integer", minimum: 0, nullable: true },
+        totalDebit: { type: "number", nullable: true },
+        totalCredit: { type: "number", nullable: true },
+        subledgerReferenceNo: { type: "string", nullable: true },
+      },
+    },
+    CariDocumentReverseResponse: {
+      type: "object",
+      properties: {
+        tenantId: intId,
+        row: { $ref: "#/components/schemas/CariDocumentRow" },
+        original: { $ref: "#/components/schemas/CariDocumentRow" },
+        journal: { $ref: "#/components/schemas/CariDocumentReverseJournalSummary" },
+      },
+      required: ["tenantId", "row", "original", "journal"],
+    },
+    CariDocumentInternalCommentRow: {
+      type: "object",
+      properties: {
+        id: { ...intId, nullable: true },
+        tenantId: { ...intId, nullable: true },
+        legalEntityId: { ...intId, nullable: true },
+        sourceRefType: { type: "string", nullable: true },
+        sourceRefId: { ...intId, nullable: true },
+        body: { type: "string", nullable: true },
+        status: { type: "string", nullable: true },
+        createdByUserId: { ...intId, nullable: true },
+        createdByUserName: { type: "string", nullable: true },
+        createdByUserEmail: { type: "string", nullable: true },
+        updatedByUserId: { ...intId, nullable: true },
+        deletedByUserId: { ...intId, nullable: true },
+        createdAt: { type: "string", format: "date-time", nullable: true },
+        updatedAt: { type: "string", format: "date-time", nullable: true },
+        deletedAt: { type: "string", format: "date-time", nullable: true },
+      },
+      required: ["id", "tenantId", "legalEntityId", "sourceRefType", "sourceRefId", "body", "status"],
+    },
+    CariDocumentInternalCommentListResponse: {
+      type: "object",
+      properties: {
+        tenantId: intId,
+        documentId: intId,
+        rows: {
+          type: "array",
+          items: { $ref: "#/components/schemas/CariDocumentInternalCommentRow" },
+        },
+      },
+      required: ["tenantId", "documentId", "rows"],
+    },
+    CariDocumentInternalCommentResponse: {
+      type: "object",
+      properties: {
+        tenantId: intId,
+        documentId: intId,
+        row: { $ref: "#/components/schemas/CariDocumentInternalCommentRow" },
+      },
+      required: ["tenantId", "documentId", "row"],
+    },
+    CariDocumentInternalCommentCreateRequest: {
+      type: "object",
+      properties: {
+        body: { type: "string", minLength: 1, maxLength: 2000 },
+      },
+      required: ["body"],
+    },
+    CariDocumentMentionCandidateRow: {
+      type: "object",
+      properties: {
+        id: { ...intId, nullable: true },
+        email: { type: "string", nullable: true },
+        name: { type: "string", nullable: true },
+      },
+      required: ["id", "email"],
+    },
+    CariDocumentMentionCandidateListResponse: {
+      type: "object",
+      properties: {
+        tenantId: intId,
+        documentId: intId,
+        q: { type: "string", nullable: true },
+        limit: { type: "integer", minimum: 1, nullable: true },
+        rows: {
+          type: "array",
+          items: { $ref: "#/components/schemas/CariDocumentMentionCandidateRow" },
+        },
+      },
+      required: ["tenantId", "documentId", "q", "limit", "rows"],
+    },
+    CariDocumentOpsStatusRow: {
+      type: "object",
+      properties: {
+        id: { ...intId, nullable: true },
+        tenantId: { ...intId, nullable: true },
+        legalEntityId: { ...intId, nullable: true },
+        sourceRefType: { type: "string", nullable: true },
+        sourceRefId: { ...intId, nullable: true },
+        opsStatus: { type: "string", enum: ["OK", "AT_RISK", "BLOCKED"], nullable: true },
+        blockedReason: { type: "string", nullable: true },
+        note: { type: "string", nullable: true },
+        updatedByUserId: { ...intId, nullable: true },
+        updatedByUserName: { type: "string", nullable: true },
+        updatedByUserEmail: { type: "string", nullable: true },
+        createdAt: { type: "string", format: "date-time", nullable: true },
+        updatedAt: { type: "string", format: "date-time", nullable: true },
+        isDefault: { type: "boolean", nullable: true },
+      },
+      required: ["tenantId", "legalEntityId", "sourceRefType", "sourceRefId", "opsStatus"],
+    },
+    CariDocumentOpsStatusResponse: {
+      type: "object",
+      properties: {
+        tenantId: intId,
+        documentId: intId,
+        row: { $ref: "#/components/schemas/CariDocumentOpsStatusRow" },
+      },
+      required: ["tenantId", "documentId", "row"],
+    },
+    CariDocumentOpsStatusUpsertRequest: {
+      type: "object",
+      properties: {
+        opsStatus: { type: "string", enum: ["OK", "AT_RISK", "BLOCKED"] },
+        blockedReason: { type: "string", maxLength: 500, nullable: true },
+        note: { type: "string", maxLength: 1000, nullable: true },
+      },
+      required: ["opsStatus"],
+    },
+  });
 
   const reportCommonQueryParams = [
     queryParam("asOfDate", { type: "string", format: "date" }, false, "As-of date cutoff"),
@@ -630,6 +1147,7 @@ function applyCariOperationOverrides(specObject) {
   );
   const documentListQueryParams = [
     queryParamInt("legalEntityId", false, "Legal entity filter"),
+    queryParamInt("operatingUnitId", false, "Operating unit filter"),
     queryParamInt("counterpartyId", false, "Counterparty filter"),
     queryParam("direction", { type: "string", enum: ["AR", "AP"] }, false, "Document direction filter"),
     queryParam(
@@ -773,7 +1291,186 @@ function applyCariOperationOverrides(specObject) {
   if (documentsListOperation) {
     documentsListOperation.summary = "List cari documents";
     mergeOperationParameters(documentsListOperation, documentListQueryParams);
-    documentsListOperation.responses = withStandardResponses("200", "Cari document list");
+    documentsListOperation.responses = withStandardResponses(
+      "200",
+      "Cari document list",
+      "#/components/schemas/CariDocumentListResponse"
+    );
+  }
+
+  const documentsCreateOperation = paths["/api/v1/cari/documents"]?.post;
+  if (documentsCreateOperation) {
+    documentsCreateOperation.summary = "Create draft cari document";
+    documentsCreateOperation.requestBody = bodyFromRef(
+      "#/components/schemas/CariDocumentCreateRequest"
+    );
+    documentsCreateOperation.responses = {
+      "201": jsonResponse(
+        "#/components/schemas/CariDocumentResponse",
+        "Draft cari document created"
+      ),
+      "400": errorResponseRef,
+      "401": errorResponseRef,
+      "403": errorResponseRef,
+    };
+  }
+
+  const documentDetailOperation = paths["/api/v1/cari/documents/{documentId}"]?.get;
+  if (documentDetailOperation) {
+    documentDetailOperation.summary = "Get cari document detail";
+    documentDetailOperation.responses = withStandardResponses(
+      "200",
+      "Cari document detail",
+      "#/components/schemas/CariDocumentResponse"
+    );
+  }
+
+  const documentUpdateOperation = paths["/api/v1/cari/documents/{documentId}"]?.put;
+  if (documentUpdateOperation) {
+    documentUpdateOperation.summary = "Update draft cari document";
+    documentUpdateOperation.requestBody = bodyFromRef(
+      "#/components/schemas/CariDocumentUpdateRequest"
+    );
+    documentUpdateOperation.responses = {
+      "200": jsonResponse(
+        "#/components/schemas/CariDocumentResponse",
+        "Draft cari document updated"
+      ),
+      "400": errorResponseRef,
+      "401": errorResponseRef,
+      "403": errorResponseRef,
+      "409": errorResponseRef,
+    };
+  }
+
+  const documentCancelOperation = paths["/api/v1/cari/documents/{documentId}/cancel"]?.post;
+  if (documentCancelOperation) {
+    documentCancelOperation.summary = "Cancel draft cari document";
+    delete documentCancelOperation.requestBody;
+    documentCancelOperation.responses = withStandardResponses(
+      "200",
+      "Draft cari document cancelled",
+      "#/components/schemas/CariDocumentResponse"
+    );
+  }
+
+  const documentOpenItemsOperation =
+    paths["/api/v1/cari/documents/{documentId}/open-items"]?.get;
+  if (documentOpenItemsOperation) {
+    documentOpenItemsOperation.summary = "List open items for one cari document";
+    documentOpenItemsOperation.responses = withStandardResponses(
+      "200",
+      "Cari document open items",
+      "#/components/schemas/CariDocumentOpenItemListResponse"
+    );
+  }
+
+  const documentCommentsListOperation =
+    paths["/api/v1/cari/documents/{documentId}/comments"]?.get;
+  if (documentCommentsListOperation) {
+    documentCommentsListOperation.summary = "List internal comments for one cari document";
+    documentCommentsListOperation.responses = withStandardResponses(
+      "200",
+      "Cari document internal comments",
+      "#/components/schemas/CariDocumentInternalCommentListResponse"
+    );
+  }
+
+  const documentCommentsCreateOperation =
+    paths["/api/v1/cari/documents/{documentId}/comments"]?.post;
+  if (documentCommentsCreateOperation) {
+    documentCommentsCreateOperation.summary = "Create internal comment for one cari document";
+    documentCommentsCreateOperation.requestBody = bodyFromRef(
+      "#/components/schemas/CariDocumentInternalCommentCreateRequest"
+    );
+    documentCommentsCreateOperation.responses = {
+      "201": jsonResponse(
+        "#/components/schemas/CariDocumentInternalCommentResponse",
+        "Cari document internal comment created"
+      ),
+      "400": errorResponseRef,
+      "401": errorResponseRef,
+      "403": errorResponseRef,
+    };
+  }
+
+  const documentMentionCandidatesOperation =
+    paths["/api/v1/cari/documents/{documentId}/comments/mention-candidates"]?.get;
+  if (documentMentionCandidatesOperation) {
+    documentMentionCandidatesOperation.summary =
+      "List internal-comment mention candidates for one cari document";
+    mergeOperationParameters(documentMentionCandidatesOperation, [
+      queryParam("q", { type: "string" }, false, "Email/name search"),
+      queryParam("limit", { type: "integer", minimum: 1, maximum: 20 }, false, "Candidate limit"),
+    ]);
+    documentMentionCandidatesOperation.responses = withStandardResponses(
+      "200",
+      "Cari document mention candidates",
+      "#/components/schemas/CariDocumentMentionCandidateListResponse"
+    );
+  }
+
+  const documentOpsStatusGetOperation =
+    paths["/api/v1/cari/documents/{documentId}/ops-status"]?.get;
+  if (documentOpsStatusGetOperation) {
+    documentOpsStatusGetOperation.summary = "Get ops status note for one cari document";
+    documentOpsStatusGetOperation.responses = withStandardResponses(
+      "200",
+      "Cari document ops status",
+      "#/components/schemas/CariDocumentOpsStatusResponse"
+    );
+  }
+
+  const documentOpsStatusPutOperation =
+    paths["/api/v1/cari/documents/{documentId}/ops-status"]?.put;
+  if (documentOpsStatusPutOperation) {
+    documentOpsStatusPutOperation.summary = "Create or update ops status note for one cari document";
+    documentOpsStatusPutOperation.requestBody = bodyFromRef(
+      "#/components/schemas/CariDocumentOpsStatusUpsertRequest"
+    );
+    documentOpsStatusPutOperation.responses = withStandardResponses(
+      "200",
+      "Cari document ops status updated",
+      "#/components/schemas/CariDocumentOpsStatusResponse"
+    );
+  }
+
+  const documentPostOperation = paths["/api/v1/cari/documents/{documentId}/post"]?.post;
+  if (documentPostOperation) {
+    documentPostOperation.summary = "Post draft cari document";
+    documentPostOperation.requestBody = bodyFromRef(
+      "#/components/schemas/CariDocumentPostRequest",
+      false
+    );
+    documentPostOperation.responses = {
+      "200": jsonResponse(
+        "#/components/schemas/CariDocumentPostResponse",
+        "Draft cari document posted"
+      ),
+      "400": errorResponseRef,
+      "401": errorResponseRef,
+      "403": errorResponseRef,
+      "409": errorResponseRef,
+    };
+  }
+
+  const documentReverseOperation = paths["/api/v1/cari/documents/{documentId}/reverse"]?.post;
+  if (documentReverseOperation) {
+    documentReverseOperation.summary = "Reverse posted cari document";
+    documentReverseOperation.requestBody = bodyFromRef(
+      "#/components/schemas/CariDocumentReverseRequest",
+      false
+    );
+    documentReverseOperation.responses = {
+      "201": jsonResponse(
+        "#/components/schemas/CariDocumentReverseResponse",
+        "Posted cari document reversed"
+      ),
+      "400": errorResponseRef,
+      "401": errorResponseRef,
+      "403": errorResponseRef,
+      "409": errorResponseRef,
+    };
   }
 
   const counterpartyListQueryParams = [

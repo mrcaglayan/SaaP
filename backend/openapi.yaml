@@ -8276,7 +8276,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/CariDocumentListResponse"
                 }
               }
             }
@@ -8297,6 +8297,16 @@
             "name": "legalEntityId",
             "required": false,
             "description": "Legal entity filter",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "operatingUnitId",
+            "required": false,
+            "description": "Operating unit filter",
             "schema": {
               "type": "integer",
               "minimum": 1
@@ -8434,14 +8444,14 @@
           "Cari"
         ],
         "operationId": "postApiV1CariDocuments",
-        "summary": "Cari endpoint: POST /api/v1/cari/documents",
+        "summary": "Create draft cari document",
         "responses": {
-          "200": {
-            "description": "Successful response",
+          "201": {
+            "description": "Draft cari document created",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/CariDocumentResponse"
                 }
               }
             }
@@ -8457,11 +8467,11 @@
           }
         },
         "requestBody": {
-          "required": false,
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/AnyObject"
+                "$ref": "#/components/schemas/CariDocumentCreateRequest"
               }
             }
           }
@@ -8474,14 +8484,14 @@
           "Cari"
         ],
         "operationId": "getApiV1CariDocumentsDocumentid",
-        "summary": "Cari endpoint: GET /api/v1/cari/documents/{documentId}",
+        "summary": "Get cari document detail",
         "responses": {
           "200": {
-            "description": "Successful response",
+            "description": "Cari document detail",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/CariDocumentResponse"
                 }
               }
             }
@@ -8514,14 +8524,14 @@
           "Cari"
         ],
         "operationId": "putApiV1CariDocumentsDocumentid",
-        "summary": "Cari endpoint: PUT /api/v1/cari/documents/{documentId}",
+        "summary": "Update draft cari document",
         "responses": {
           "200": {
-            "description": "Successful response",
+            "description": "Draft cari document updated",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/CariDocumentResponse"
                 }
               }
             }
@@ -8533,6 +8543,9 @@
             "$ref": "#/components/responses/ErrorResponse"
           },
           "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "409": {
             "$ref": "#/components/responses/ErrorResponse"
           }
         },
@@ -8549,11 +8562,11 @@
           }
         ],
         "requestBody": {
-          "required": false,
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/AnyObject"
+                "$ref": "#/components/schemas/CariDocumentUpdateRequest"
               }
             }
           }
@@ -8566,14 +8579,14 @@
           "Cari"
         ],
         "operationId": "postApiV1CariDocumentsDocumentidCancel",
-        "summary": "Cari endpoint: POST /api/v1/cari/documents/{documentId}/cancel",
+        "summary": "Cancel draft cari document",
         "responses": {
           "200": {
-            "description": "Successful response",
+            "description": "Draft cari document cancelled",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/CariDocumentResponse"
                 }
               }
             }
@@ -8599,17 +8612,7 @@
               "minimum": 1
             }
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AnyObject"
-              }
-            }
-          }
-        }
+        ]
       }
     },
     "/api/v1/cari/documents/{documentId}/comments": {
@@ -8618,14 +8621,14 @@
           "Cari"
         ],
         "operationId": "getApiV1CariDocumentsDocumentidComments",
-        "summary": "Cari endpoint: GET /api/v1/cari/documents/{documentId}/comments",
+        "summary": "List internal comments for one cari document",
         "responses": {
           "200": {
-            "description": "Successful response",
+            "description": "Cari document internal comments",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/CariDocumentInternalCommentListResponse"
                 }
               }
             }
@@ -8658,14 +8661,14 @@
           "Cari"
         ],
         "operationId": "postApiV1CariDocumentsDocumentidComments",
-        "summary": "Cari endpoint: POST /api/v1/cari/documents/{documentId}/comments",
+        "summary": "Create internal comment for one cari document",
         "responses": {
-          "200": {
-            "description": "Successful response",
+          "201": {
+            "description": "Cari document internal comment created",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/CariDocumentInternalCommentResponse"
                 }
               }
             }
@@ -8693,11 +8696,11 @@
           }
         ],
         "requestBody": {
-          "required": false,
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/AnyObject"
+                "$ref": "#/components/schemas/CariDocumentInternalCommentCreateRequest"
               }
             }
           }
@@ -8710,14 +8713,14 @@
           "Cari"
         ],
         "operationId": "getApiV1CariDocumentsDocumentidCommentsMentionCandidates",
-        "summary": "Cari endpoint: GET /api/v1/cari/documents/{documentId}/comments/mention-candidates",
+        "summary": "List internal-comment mention candidates for one cari document",
         "responses": {
           "200": {
-            "description": "Successful response",
+            "description": "Cari document mention candidates",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/CariDocumentMentionCandidateListResponse"
                 }
               }
             }
@@ -8741,6 +8744,26 @@
             "schema": {
               "type": "integer",
               "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "description": "Email/name search",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "description": "Candidate limit",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 20
             }
           }
         ]
@@ -9060,14 +9083,14 @@
           "Cari"
         ],
         "operationId": "getApiV1CariDocumentsDocumentidOpenItems",
-        "summary": "Cari endpoint: GET /api/v1/cari/documents/{documentId}/open-items",
+        "summary": "List open items for one cari document",
         "responses": {
           "200": {
-            "description": "Successful response",
+            "description": "Cari document open items",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/CariDocumentOpenItemListResponse"
                 }
               }
             }
@@ -9102,14 +9125,14 @@
           "Cari"
         ],
         "operationId": "getApiV1CariDocumentsDocumentidOpsStatus",
-        "summary": "Cari endpoint: GET /api/v1/cari/documents/{documentId}/ops-status",
+        "summary": "Get ops status note for one cari document",
         "responses": {
           "200": {
-            "description": "Successful response",
+            "description": "Cari document ops status",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/CariDocumentOpsStatusResponse"
                 }
               }
             }
@@ -9142,14 +9165,14 @@
           "Cari"
         ],
         "operationId": "putApiV1CariDocumentsDocumentidOpsStatus",
-        "summary": "Cari endpoint: PUT /api/v1/cari/documents/{documentId}/ops-status",
+        "summary": "Create or update ops status note for one cari document",
         "responses": {
           "200": {
-            "description": "Successful response",
+            "description": "Cari document ops status updated",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/CariDocumentOpsStatusResponse"
                 }
               }
             }
@@ -9177,11 +9200,11 @@
           }
         ],
         "requestBody": {
-          "required": false,
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/AnyObject"
+                "$ref": "#/components/schemas/CariDocumentOpsStatusUpsertRequest"
               }
             }
           }
@@ -9194,14 +9217,14 @@
           "Cari"
         ],
         "operationId": "postApiV1CariDocumentsDocumentidPost",
-        "summary": "Cari endpoint: POST /api/v1/cari/documents/{documentId}/post",
+        "summary": "Post draft cari document",
         "responses": {
           "200": {
-            "description": "Successful response",
+            "description": "Draft cari document posted",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/CariDocumentPostResponse"
                 }
               }
             }
@@ -9213,6 +9236,9 @@
             "$ref": "#/components/responses/ErrorResponse"
           },
           "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "409": {
             "$ref": "#/components/responses/ErrorResponse"
           }
         },
@@ -9233,7 +9259,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/AnyObject"
+                "$ref": "#/components/schemas/CariDocumentPostRequest"
               }
             }
           }
@@ -9246,14 +9272,14 @@
           "Cari"
         ],
         "operationId": "postApiV1CariDocumentsDocumentidReverse",
-        "summary": "Cari endpoint: POST /api/v1/cari/documents/{documentId}/reverse",
+        "summary": "Reverse posted cari document",
         "responses": {
-          "200": {
-            "description": "Successful response",
+          "201": {
+            "description": "Posted cari document reversed",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/CariDocumentReverseResponse"
                 }
               }
             }
@@ -9265,6 +9291,9 @@
             "$ref": "#/components/responses/ErrorResponse"
           },
           "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "409": {
             "$ref": "#/components/responses/ErrorResponse"
           }
         },
@@ -9285,7 +9314,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/AnyObject"
+                "$ref": "#/components/schemas/CariDocumentReverseRequest"
               }
             }
           }
@@ -31736,6 +31765,1548 @@
           "generatedLineCount",
           "skippedLineCount",
           "rows"
+        ]
+      },
+      "CariDocumentDirection": {
+        "type": "string",
+        "enum": [
+          "AR",
+          "AP"
+        ]
+      },
+      "CariDocumentType": {
+        "type": "string",
+        "enum": [
+          "INVOICE",
+          "DEBIT_NOTE",
+          "CREDIT_NOTE",
+          "PAYMENT",
+          "ADJUSTMENT"
+        ]
+      },
+      "CariDocumentStatus": {
+        "type": "string",
+        "enum": [
+          "DRAFT",
+          "POSTED",
+          "REVERSED",
+          "CANCELLED",
+          "PARTIALLY_SETTLED",
+          "SETTLED"
+        ]
+      },
+      "CariDocumentLineKind": {
+        "type": "string",
+        "enum": [
+          "STANDARD",
+          "COMMENT",
+          "ROUNDING",
+          "ADJUSTMENT",
+          "OTHER"
+        ]
+      },
+      "CariDocumentLineStockImpactMode": {
+        "type": "string",
+        "enum": [
+          "NONE",
+          "RECEIPT_PENDING",
+          "ISSUE_PENDING"
+        ]
+      },
+      "CariDocumentOpenItemStatus": {
+        "type": "string",
+        "enum": [
+          "OPEN",
+          "PARTIALLY_SETTLED",
+          "SETTLED"
+        ]
+      },
+      "CariDocumentLineTaxRow": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "legalEntityId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "documentId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "documentLineId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "componentNo": {
+            "type": "integer",
+            "nullable": true
+          },
+          "taxCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "taxKind": {
+            "type": "string",
+            "nullable": true
+          },
+          "ratePct": {
+            "type": "number",
+            "nullable": true
+          },
+          "taxBaseAmountTxn": {
+            "type": "number",
+            "nullable": true
+          },
+          "taxAmountTxn": {
+            "type": "number",
+            "nullable": true
+          },
+          "taxBaseAmountBase": {
+            "type": "number",
+            "nullable": true
+          },
+          "taxAmountBase": {
+            "type": "number",
+            "nullable": true
+          },
+          "taxPurposeCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "accountId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "tenantId",
+          "legalEntityId",
+          "documentId",
+          "documentLineId",
+          "componentNo"
+        ]
+      },
+      "CariDocumentLineStockLinkRow": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "legalEntityId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "documentId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "documentLineId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "documentLineNo": {
+            "type": "integer",
+            "nullable": true
+          },
+          "documentLineDescription": {
+            "type": "string",
+            "nullable": true
+          },
+          "itemCardId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "itemCardCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "itemCardName": {
+            "type": "string",
+            "nullable": true
+          },
+          "direction": {
+            "$ref": "#/components/schemas/CariDocumentDirection"
+          },
+          "stockImpactMode": {
+            "$ref": "#/components/schemas/CariDocumentLineStockImpactMode"
+          },
+          "linkStatus": {
+            "type": "string",
+            "nullable": true
+          },
+          "requestedQuantity": {
+            "type": "number",
+            "nullable": true
+          },
+          "postedNetAmountTxn": {
+            "type": "number",
+            "nullable": true
+          },
+          "postedNetAmountBase": {
+            "type": "number",
+            "nullable": true
+          },
+          "inventoryDocumentType": {
+            "type": "string",
+            "nullable": true
+          },
+          "inventoryDocumentId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "inventoryMovementId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "reopenedFromStockLinkId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "supersededByStockLinkId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "inventoryMovementType": {
+            "$ref": "#/components/schemas/InventoryMovementType"
+          },
+          "inventoryValuationStatus": {
+            "$ref": "#/components/schemas/InventoryValuationStatus"
+          },
+          "inventoryMovementDate": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "inventoryMovementReversedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "inventoryMovementReversalJournalEntryId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "inventoryWarehouseId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "inventoryWarehouseCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "inventoryWarehouseName": {
+            "type": "string",
+            "nullable": true
+          },
+          "resolvedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "resolutionNote": {
+            "type": "string",
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "tenantId",
+          "legalEntityId",
+          "documentId",
+          "documentLineId"
+        ]
+      },
+      "CariDocumentLineRow": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "legalEntityId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "documentId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "lineNo": {
+            "type": "integer",
+            "nullable": true
+          },
+          "lineKind": {
+            "$ref": "#/components/schemas/CariDocumentLineKind"
+          },
+          "description": {
+            "type": "string",
+            "nullable": true
+          },
+          "itemCardId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "quantity": {
+            "type": "number",
+            "nullable": true
+          },
+          "unitPriceTxn": {
+            "type": "number",
+            "nullable": true
+          },
+          "lineNetAmountTxn": {
+            "type": "number",
+            "nullable": true
+          },
+          "lineTaxAmountTxn": {
+            "type": "number",
+            "nullable": true
+          },
+          "lineGrossAmountTxn": {
+            "type": "number",
+            "nullable": true
+          },
+          "lineNetAmountBase": {
+            "type": "number",
+            "nullable": true
+          },
+          "lineTaxAmountBase": {
+            "type": "number",
+            "nullable": true
+          },
+          "lineGrossAmountBase": {
+            "type": "number",
+            "nullable": true
+          },
+          "postingAccountId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "taxCategoryCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "stockImpactMode": {
+            "$ref": "#/components/schemas/CariDocumentLineStockImpactMode"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "taxes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CariDocumentLineTaxRow"
+            }
+          },
+          "stockLinks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CariDocumentLineStockLinkRow"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "tenantId",
+          "legalEntityId",
+          "documentId",
+          "lineNo",
+          "lineKind",
+          "taxes",
+          "stockLinks"
+        ]
+      },
+      "CariDocumentRow": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "legalEntityId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "operatingUnitId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "operatingUnitCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "operatingUnitName": {
+            "type": "string",
+            "nullable": true
+          },
+          "counterpartyId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "paymentTermId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "paymentTermCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "paymentTermName": {
+            "type": "string",
+            "nullable": true
+          },
+          "direction": {
+            "$ref": "#/components/schemas/CariDocumentDirection"
+          },
+          "documentType": {
+            "$ref": "#/components/schemas/CariDocumentType"
+          },
+          "sequenceNamespace": {
+            "type": "string",
+            "nullable": true
+          },
+          "fiscalYear": {
+            "type": "integer",
+            "nullable": true
+          },
+          "sequenceNo": {
+            "type": "integer",
+            "nullable": true
+          },
+          "documentNo": {
+            "type": "string",
+            "nullable": true
+          },
+          "status": {
+            "$ref": "#/components/schemas/CariDocumentStatus"
+          },
+          "documentDate": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "dueDate": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "subtotalAmountTxn": {
+            "type": "number",
+            "nullable": true
+          },
+          "subtotalAmountBase": {
+            "type": "number",
+            "nullable": true
+          },
+          "taxAmountTxn": {
+            "type": "number",
+            "nullable": true
+          },
+          "taxAmountBase": {
+            "type": "number",
+            "nullable": true
+          },
+          "grossAmountTxn": {
+            "type": "number",
+            "nullable": true
+          },
+          "grossAmountBase": {
+            "type": "number",
+            "nullable": true
+          },
+          "amountTxn": {
+            "type": "number",
+            "nullable": true
+          },
+          "amountBase": {
+            "type": "number",
+            "nullable": true
+          },
+          "openAmountTxn": {
+            "type": "number",
+            "nullable": true
+          },
+          "openAmountBase": {
+            "type": "number",
+            "nullable": true
+          },
+          "currencyCode": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 3,
+            "nullable": true
+          },
+          "fxRate": {
+            "type": "number",
+            "nullable": true
+          },
+          "counterpartyCodeSnapshot": {
+            "type": "string",
+            "nullable": true
+          },
+          "counterpartyNameSnapshot": {
+            "type": "string",
+            "nullable": true
+          },
+          "paymentTermSnapshot": {
+            "type": "string",
+            "nullable": true
+          },
+          "dueDateSnapshot": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "currencyCodeSnapshot": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 3,
+            "nullable": true
+          },
+          "fxRateSnapshot": {
+            "type": "number",
+            "nullable": true
+          },
+          "postedJournalEntryId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "reversalOfDocumentId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "rowVersion": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "postedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "reversedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "draftSequenceAssigned": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "lineCount": {
+            "type": "integer",
+            "minimum": 0,
+            "nullable": true
+          },
+          "lines": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CariDocumentLineRow"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "tenantId",
+          "legalEntityId",
+          "counterpartyId",
+          "direction",
+          "documentType",
+          "status",
+          "rowVersion"
+        ]
+      },
+      "CariDocumentListResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CariDocumentRow"
+            }
+          }
+        },
+        "required": [
+          "tenantId",
+          "total",
+          "rows"
+        ]
+      },
+      "CariDocumentResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "row": {
+            "$ref": "#/components/schemas/CariDocumentRow"
+          }
+        },
+        "required": [
+          "tenantId",
+          "row"
+        ]
+      },
+      "CariDocumentOpenItemRow": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "legalEntityId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "counterpartyId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "documentId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "itemNo": {
+            "type": "integer",
+            "nullable": true
+          },
+          "status": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CariDocumentOpenItemStatus"
+              }
+            ],
+            "nullable": true
+          },
+          "documentDate": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "dueDate": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "originalAmountTxn": {
+            "type": "number",
+            "nullable": true
+          },
+          "originalAmountBase": {
+            "type": "number",
+            "nullable": true
+          },
+          "residualAmountTxn": {
+            "type": "number",
+            "nullable": true
+          },
+          "residualAmountBase": {
+            "type": "number",
+            "nullable": true
+          },
+          "settledAmountTxn": {
+            "type": "number",
+            "nullable": true
+          },
+          "settledAmountBase": {
+            "type": "number",
+            "nullable": true
+          },
+          "currencyCode": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 3,
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "tenantId",
+          "legalEntityId",
+          "counterpartyId",
+          "documentId",
+          "itemNo"
+        ]
+      },
+      "CariDocumentOpenItemListResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "documentId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CariDocumentOpenItemRow"
+            }
+          }
+        },
+        "required": [
+          "tenantId",
+          "documentId",
+          "rows"
+        ]
+      },
+      "CariPostingLineRequest": {
+        "type": "object",
+        "properties": {
+          "amountTxn": {
+            "type": "number",
+            "minimum": 0,
+            "exclusiveMinimum": true
+          },
+          "amountBase": {
+            "type": "number",
+            "minimum": 0,
+            "exclusiveMinimum": true
+          },
+          "offsetAccountId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "offsetAccountCode": {
+            "type": "string",
+            "maxLength": 50,
+            "nullable": true
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 255,
+            "nullable": true
+          }
+        },
+        "required": [
+          "amountTxn",
+          "amountBase"
+        ]
+      },
+      "CariDocumentCreateRequest": {
+        "type": "object",
+        "properties": {
+          "legalEntityId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "operatingUnitId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "counterpartyId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "paymentTermId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "direction": {
+            "$ref": "#/components/schemas/CariDocumentDirection"
+          },
+          "documentType": {
+            "$ref": "#/components/schemas/CariDocumentType"
+          },
+          "documentDate": {
+            "type": "string",
+            "format": "date"
+          },
+          "dueDate": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "amountTxn": {
+            "type": "number",
+            "nullable": true
+          },
+          "amountBase": {
+            "type": "number",
+            "nullable": true
+          },
+          "currencyCode": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 3
+          },
+          "fxRate": {
+            "type": "number",
+            "nullable": true
+          },
+          "lines": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CariDocumentLineInput"
+            },
+            "nullable": true
+          }
+        },
+        "required": [
+          "legalEntityId",
+          "counterpartyId",
+          "direction",
+          "documentType",
+          "documentDate",
+          "currencyCode"
+        ]
+      },
+      "CariDocumentUpdateRequest": {
+        "type": "object",
+        "properties": {
+          "rowVersion": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "legalEntityId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "operatingUnitId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "counterpartyId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "paymentTermId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "direction": {
+            "$ref": "#/components/schemas/CariDocumentDirection"
+          },
+          "documentType": {
+            "$ref": "#/components/schemas/CariDocumentType"
+          },
+          "documentDate": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "dueDate": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "amountTxn": {
+            "type": "number",
+            "nullable": true
+          },
+          "amountBase": {
+            "type": "number",
+            "nullable": true
+          },
+          "currencyCode": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 3,
+            "nullable": true
+          },
+          "fxRate": {
+            "type": "number",
+            "nullable": true
+          },
+          "lines": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CariDocumentLineInput"
+            },
+            "nullable": true
+          }
+        },
+        "required": [
+          "rowVersion"
+        ]
+      },
+      "CariDocumentLineInput": {
+        "type": "object",
+        "properties": {
+          "lineKind": {
+            "$ref": "#/components/schemas/CariDocumentLineKind"
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 500,
+            "nullable": true
+          },
+          "itemCardId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "quantity": {
+            "type": "number",
+            "minimum": 0,
+            "nullable": true
+          },
+          "unitPriceTxn": {
+            "type": "number",
+            "minimum": 0,
+            "nullable": true
+          },
+          "lineNetAmountTxn": {
+            "type": "number",
+            "minimum": 0
+          },
+          "lineTaxAmountTxn": {
+            "type": "number",
+            "minimum": 0,
+            "nullable": true
+          },
+          "lineGrossAmountTxn": {
+            "type": "number",
+            "minimum": 0,
+            "nullable": true
+          },
+          "postingAccountId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "taxCodeId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "taxCode": {
+            "type": "string",
+            "maxLength": 40,
+            "nullable": true
+          },
+          "taxCategoryCode": {
+            "type": "string",
+            "maxLength": 60,
+            "nullable": true
+          },
+          "stockImpactMode": {
+            "$ref": "#/components/schemas/CariDocumentLineStockImpactMode"
+          }
+        },
+        "required": [
+          "lineNetAmountTxn"
+        ]
+      },
+      "CariDocumentPostRequest": {
+        "type": "object",
+        "properties": {
+          "offsetAccountId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "offsetAccountCode": {
+            "type": "string",
+            "maxLength": 50,
+            "nullable": true
+          },
+          "useFxOverride": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "fxOverrideReason": {
+            "type": "string",
+            "maxLength": 500,
+            "nullable": true
+          },
+          "postingLines": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CariPostingLineRequest"
+            },
+            "nullable": true
+          }
+        }
+      },
+      "CariDocumentPostJournalSummary": {
+        "type": "object",
+        "properties": {
+          "journalEntryId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "bookId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "fiscalPeriodId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "lineCount": {
+            "type": "integer",
+            "minimum": 0,
+            "nullable": true
+          },
+          "totalDebit": {
+            "type": "number",
+            "nullable": true
+          },
+          "totalCredit": {
+            "type": "number",
+            "nullable": true
+          },
+          "subledgerReferenceNo": {
+            "type": "string",
+            "nullable": true
+          },
+          "tax": {
+            "type": "object",
+            "additionalProperties": true,
+            "nullable": true
+          }
+        },
+        "required": [
+          "journalEntryId"
+        ]
+      },
+      "CariDocumentPostResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "row": {
+            "$ref": "#/components/schemas/CariDocumentRow"
+          },
+          "journal": {
+            "$ref": "#/components/schemas/CariDocumentPostJournalSummary"
+          }
+        },
+        "required": [
+          "tenantId",
+          "row",
+          "journal"
+        ]
+      },
+      "CariDocumentReverseRequest": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": "string",
+            "maxLength": 255,
+            "nullable": true
+          },
+          "reversalDate": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          }
+        }
+      },
+      "CariDocumentReverseJournalSummary": {
+        "type": "object",
+        "properties": {
+          "originalJournalEntryId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "reversalJournalEntryId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "lineCount": {
+            "type": "integer",
+            "minimum": 0,
+            "nullable": true
+          },
+          "totalDebit": {
+            "type": "number",
+            "nullable": true
+          },
+          "totalCredit": {
+            "type": "number",
+            "nullable": true
+          },
+          "subledgerReferenceNo": {
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
+      "CariDocumentReverseResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "row": {
+            "$ref": "#/components/schemas/CariDocumentRow"
+          },
+          "original": {
+            "$ref": "#/components/schemas/CariDocumentRow"
+          },
+          "journal": {
+            "$ref": "#/components/schemas/CariDocumentReverseJournalSummary"
+          }
+        },
+        "required": [
+          "tenantId",
+          "row",
+          "original",
+          "journal"
+        ]
+      },
+      "CariDocumentInternalCommentRow": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "legalEntityId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "sourceRefType": {
+            "type": "string",
+            "nullable": true
+          },
+          "sourceRefId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "body": {
+            "type": "string",
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "nullable": true
+          },
+          "createdByUserId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "createdByUserName": {
+            "type": "string",
+            "nullable": true
+          },
+          "createdByUserEmail": {
+            "type": "string",
+            "nullable": true
+          },
+          "updatedByUserId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "deletedByUserId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "deletedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "tenantId",
+          "legalEntityId",
+          "sourceRefType",
+          "sourceRefId",
+          "body",
+          "status"
+        ]
+      },
+      "CariDocumentInternalCommentListResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "documentId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CariDocumentInternalCommentRow"
+            }
+          }
+        },
+        "required": [
+          "tenantId",
+          "documentId",
+          "rows"
+        ]
+      },
+      "CariDocumentInternalCommentResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "documentId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "row": {
+            "$ref": "#/components/schemas/CariDocumentInternalCommentRow"
+          }
+        },
+        "required": [
+          "tenantId",
+          "documentId",
+          "row"
+        ]
+      },
+      "CariDocumentInternalCommentCreateRequest": {
+        "type": "object",
+        "properties": {
+          "body": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          }
+        },
+        "required": [
+          "body"
+        ]
+      },
+      "CariDocumentMentionCandidateRow": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "email": {
+            "type": "string",
+            "nullable": true
+          },
+          "name": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "email"
+        ]
+      },
+      "CariDocumentMentionCandidateListResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "documentId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "q": {
+            "type": "string",
+            "nullable": true
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CariDocumentMentionCandidateRow"
+            }
+          }
+        },
+        "required": [
+          "tenantId",
+          "documentId",
+          "q",
+          "limit",
+          "rows"
+        ]
+      },
+      "CariDocumentOpsStatusRow": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "legalEntityId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "sourceRefType": {
+            "type": "string",
+            "nullable": true
+          },
+          "sourceRefId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "opsStatus": {
+            "type": "string",
+            "enum": [
+              "OK",
+              "AT_RISK",
+              "BLOCKED"
+            ],
+            "nullable": true
+          },
+          "blockedReason": {
+            "type": "string",
+            "nullable": true
+          },
+          "note": {
+            "type": "string",
+            "nullable": true
+          },
+          "updatedByUserId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "updatedByUserName": {
+            "type": "string",
+            "nullable": true
+          },
+          "updatedByUserEmail": {
+            "type": "string",
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "isDefault": {
+            "type": "boolean",
+            "nullable": true
+          }
+        },
+        "required": [
+          "tenantId",
+          "legalEntityId",
+          "sourceRefType",
+          "sourceRefId",
+          "opsStatus"
+        ]
+      },
+      "CariDocumentOpsStatusResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "documentId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "row": {
+            "$ref": "#/components/schemas/CariDocumentOpsStatusRow"
+          }
+        },
+        "required": [
+          "tenantId",
+          "documentId",
+          "row"
+        ]
+      },
+      "CariDocumentOpsStatusUpsertRequest": {
+        "type": "object",
+        "properties": {
+          "opsStatus": {
+            "type": "string",
+            "enum": [
+              "OK",
+              "AT_RISK",
+              "BLOCKED"
+            ]
+          },
+          "blockedReason": {
+            "type": "string",
+            "maxLength": 500,
+            "nullable": true
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 1000,
+            "nullable": true
+          }
+        },
+        "required": [
+          "opsStatus"
         ]
       },
       "ItemCardItemType": {

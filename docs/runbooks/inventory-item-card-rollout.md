@@ -107,6 +107,8 @@ npm run db:seed:core
 
 - `cd backend && npm run openapi:generate`
 - `cd backend && npm run check:openapi:parse`
+- `cd backend && npm run check:openapi`
+- `git diff --exit-code -- backend/openapi.yaml`
 - `cd backend && npm run test:permission-matrix`
 - `cd backend && npm run test:cari:line-model-rollout`
 - `cd backend && npm run test:inventory:release-gate`
