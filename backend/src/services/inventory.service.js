@@ -229,6 +229,8 @@ function mapMovementRow(row) {
     reversalMovementType: row.reversal_movement_type || null,
     reversalMovementDate: row.reversal_movement_date || null,
     sourceDocumentNo: row.source_document_no || null,
+    sourceTransferNo: row.source_transfer_no || null,
+    sourceTransferStatus: row.source_transfer_status || null,
     movementDate: row.movement_date || null,
     quantity: toDecimalNumber(row.quantity),
     unitCostTxn: toDecimalNumber(row.unit_cost_txn),
@@ -1184,7 +1186,9 @@ async function fetchMovementById({
         w.name AS warehouse_name,
         ic.code AS item_card_code,
         ic.name AS item_card_name,
-        d.document_no AS source_document_no,
+        COALESCE(d.document_no, it.transfer_no) AS source_document_no,
+        it.transfer_no AS source_transfer_no,
+        it.status AS source_transfer_status,
         om.id AS reversal_of_movement_id,
         om.movement_type AS reversal_of_movement_type,
         om.movement_date AS reversal_of_movement_date,
@@ -1206,6 +1210,10 @@ async function fetchMovementById({
         ON m.source_document_type = 'CARI_DOCUMENT'
        AND d.tenant_id = m.tenant_id
        AND d.id = m.source_document_id
+      LEFT JOIN inventory_transfers it
+        ON m.source_document_type = 'INVENTORY_TRANSFER'
+       AND it.tenant_id = m.tenant_id
+       AND it.id = m.source_document_id
       LEFT JOIN inventory_movements om
         ON om.id = m.reversal_of_movement_id
       LEFT JOIN inventory_movements rm
@@ -1891,7 +1899,9 @@ export async function listInventoryMovements({
         w.name AS warehouse_name,
         ic.code AS item_card_code,
         ic.name AS item_card_name,
-        d.document_no AS source_document_no,
+        COALESCE(d.document_no, it.transfer_no) AS source_document_no,
+        it.transfer_no AS source_transfer_no,
+        it.status AS source_transfer_status,
         om.id AS reversal_of_movement_id,
         om.movement_type AS reversal_of_movement_type,
         om.movement_date AS reversal_of_movement_date,
@@ -1913,6 +1923,10 @@ export async function listInventoryMovements({
          ON m.source_document_type = 'CARI_DOCUMENT'
         AND d.tenant_id = m.tenant_id
         AND d.id = m.source_document_id
+       LEFT JOIN inventory_transfers it
+         ON m.source_document_type = 'INVENTORY_TRANSFER'
+        AND it.tenant_id = m.tenant_id
+        AND it.id = m.source_document_id
        LEFT JOIN inventory_movements om
          ON om.id = m.reversal_of_movement_id
        LEFT JOIN inventory_movements rm

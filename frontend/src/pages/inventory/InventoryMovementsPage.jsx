@@ -103,7 +103,7 @@ function stockLinkOptionLabel(row) {
   const parts = [
     row?.documentNo || `Doc #${row?.documentId || "-"}`,
     row?.itemCardCode || row?.itemCardName || `Item #${row?.itemCardId || "-"}`,
-    `${row?.stockImpactMode || "NONE"} x ${row?.requestedQuantity ?? "-"}`,
+    `${row?.stockImpactMode || "NONE"} x ${row?.requestedQuantity | "-"}`,
     row?.reopenedFromStockLinkId ? `reopened #${row.reopenedFromStockLinkId}` : "",
   ];
   return parts.filter(Boolean).join(" | ");
@@ -118,6 +118,60 @@ function formatQuantityValue(value) {
     minimumFractionDigits: 0,
     maximumFractionDigits: 6,
   });
+}
+
+function describeMovementSource(row, translate = (en) => en) {
+  const sourceType = normalizeText(row?.sourceType).toUpperCase();
+  const sourceDocumentNo = normalizeText(row?.sourceDocumentNo);
+  const sourceTransferNo = normalizeText(row?.sourceTransferNo);
+
+  if (sourceType === "INVENTORY_TRANSFER") {
+    return {
+      badgeLabel: translate("Inventory transfer", "Stok transferi"),
+      badgeClass: "border border-sky-200 bg-sky-50 text-sky-800",
+      primary:
+        sourceTransferNo ||
+        sourceDocumentNo ||
+        `Transfer #${row?.sourceDocumentId || row?.sourceStockLinkId || "-"}`,
+      secondary: [
+        row?.sourceTransferStatus ? `${translate("Status", "Durum")}: ${row.sourceTransferStatus}` : "",
+        row?.sourceDocumentLineId ? `${translate("Line", "Satir")} #${row.sourceDocumentLineId}` : "",
+      ]
+        .filter(Boolean)
+        .join(" | "),
+    };
+  }
+
+  if (row?.sourceStockLinkId) {
+    return {
+      badgeLabel: translate("Stock link", "Stok baglantisi"),
+      badgeClass: "border border-emerald-200 bg-emerald-50 text-emerald-800",
+      primary: sourceDocumentNo || `${translate("Stock link", "Stok baglantisi")} #${row.sourceStockLinkId}`,
+      secondary: [
+        sourceType || translate("Linked source", "Bagli kaynak"),
+        `${translate("Link", "Baglanti")} #${row.sourceStockLinkId}`,
+      ].join(" | "),
+    };
+  }
+
+  if (sourceDocumentNo) {
+    return {
+      badgeLabel: translate("Document", "Belge"),
+      badgeClass: "border border-slate-200 bg-slate-100 text-slate-700",
+      primary: sourceDocumentNo,
+      secondary: sourceType || translate("Document sourced", "Belge kaynakli"),
+    };
+  }
+
+  return {
+    badgeLabel: translate("Manual entry", "Manuel giris"),
+    badgeClass: "border border-amber-200 bg-amber-50 text-amber-800",
+    primary: sourceType || translate("Manual inventory movement", "Manuel stok hareketi"),
+    secondary: translate(
+      "No stock-link or transfer reference on this movement.",
+      "Bu harekette stok baglantisi veya transfer referansi yok."
+    ),
+  };
 }
 
 function collectConsumptionCurrencyCodes(row) {
@@ -1206,7 +1260,7 @@ export default function InventoryMovementsPage() {
                               : row.code || row.name || `Warehouse #${row.id}`}
                           </div>
                           <div className="mt-1 text-xs text-slate-500">
-                            {l("Legal entity", "Tuzel kisilik")}{" "}
+                            {l("Legal entity", "Tuzel kisilik")} |{" "}
                             {row.legalEntityCode || row.legalEntityId || "-"}
                           </div>
                         </div>
@@ -1347,7 +1401,7 @@ export default function InventoryMovementsPage() {
                 <div className="mt-1">
                   {(selectedPendingLink.itemCardCode || selectedPendingLink.itemCardName || "-")} |{" "}
                   {selectedPendingLink.stockImpactMode || "NONE"} |{" "}
-                  {l("Qty", "Miktar")} {selectedPendingLink.requestedQuantity ?? "-"}
+                  {l("Qty", "Miktar")} {selectedPendingLink.requestedQuantity | "-"}
                 </div>
                 <div className="mt-1">
                   {selectedPendingLink.lineDescription || l("No line description.", "Satir aciklamasi yok.")}
@@ -1422,7 +1476,7 @@ export default function InventoryMovementsPage() {
                     <option key={`reverse-movement-${row.id}`} value={String(row.id || "")}>
                       {`#${row.id || "-"} | ${row.itemCardCode || row.itemCardName || "-"} | ${
                         row.warehouseCode || row.warehouseName || "-"
-                      } | ${row.quantity ?? "-"} | ${row.sourceDocumentNo || "-"}`}
+                      } | ${row.quantity | "-"} | ${row.sourceDocumentNo || "-"}`}
                     </option>
                   ))}
                 </select>
@@ -1455,11 +1509,12 @@ export default function InventoryMovementsPage() {
                 <div className="mt-1">
                   {selectedReversibleIssue.warehouseCode ||
                     selectedReversibleIssue.warehouseName ||
-                    "-"}{" "}
-                  | {l("Qty", "Miktar")} {selectedReversibleIssue.quantity ?? "-"}
+                    "-"} |{" "}
+                  | {l("Qty", "Miktar")} {selectedReversibleIssue.quantity | "-"}
                 </div>
                 <div className="mt-1">
-                  {selectedReversibleIssue.sourceDocumentNo || selectedReversibleIssue.sourceType || "-"}
+                  {describeMovementSource(selectedReversibleIssue, l).badgeLabel}:{" "}
+                  {describeMovementSource(selectedReversibleIssue, l).primary}
                 </div>
               </div>
             ) : null}
@@ -1523,7 +1578,7 @@ export default function InventoryMovementsPage() {
                     <option key={`reverse-receipt-${row.id}`} value={String(row.id || "")}>
                       {`#${row.id || "-"} | ${row.itemCardCode || row.itemCardName || "-"} | ${
                         row.warehouseCode || row.warehouseName || "-"
-                      } | ${row.quantity ?? "-"} | ${row.sourceDocumentNo || "-"}`}
+                      } | ${row.quantity | "-"} | ${row.sourceDocumentNo || "-"}`}
                     </option>
                   ))}
                 </select>
@@ -1556,13 +1611,12 @@ export default function InventoryMovementsPage() {
                 <div className="mt-1">
                   {selectedReversibleReceipt.warehouseCode ||
                     selectedReversibleReceipt.warehouseName ||
-                    "-"}{" "}
-                  | {l("Qty", "Miktar")} {selectedReversibleReceipt.quantity ?? "-"}
+                    "-"} |{" "}
+                  | {l("Qty", "Miktar")} {selectedReversibleReceipt.quantity | "-"}
                 </div>
                 <div className="mt-1">
-                  {selectedReversibleReceipt.sourceDocumentNo ||
-                    selectedReversibleReceipt.sourceType ||
-                    "-"}
+                  {describeMovementSource(selectedReversibleReceipt, l).badgeLabel}:{" "}
+                  {describeMovementSource(selectedReversibleReceipt, l).primary}
                 </div>
               </div>
             ) : null}
@@ -1626,7 +1680,7 @@ export default function InventoryMovementsPage() {
                             </div>
                           ) : null}
                         </td>
-                        <td className="px-3 py-2 text-slate-700">{row.requestedQuantity ?? "-"}</td>
+                        <td className="px-3 py-2 text-slate-700">{row.requestedQuantity | "-"}</td>
                         <td className="px-3 py-2">
                           <span
                             className={`rounded-full px-2 py-1 text-[11px] font-semibold uppercase tracking-wide ${getStatusBadgeClass(
@@ -1660,7 +1714,7 @@ export default function InventoryMovementsPage() {
             </div>
             {deepLinkedMovementRow ? (
               <p className="mt-3 rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-800">
-                {l("Focused from CARI reverse blocker:", "CARI ters kayit engelinden odaklandi:")}{" "}
+                {l("Focused from CARI reverse blocker:", "CARI ters kayit engelinden odaklandi:")} |{" "}
                 {`#${deepLinkedMovementRow.id || "-"} | ${
                   deepLinkedMovementRow.itemCardCode ||
                   deepLinkedMovementRow.itemCardName ||
@@ -1701,6 +1755,7 @@ export default function InventoryMovementsPage() {
                       const movementAnchorId = createInventoryMovementAnchorId(row?.id);
                       const isDeepLinkedMovement =
                         String(toPositiveInt(row?.id) || "") === deepLinkedMovementId;
+                      const sourceSummary = describeMovementSource(row, l);
                       return (
                       <tr
                         key={`movement-row-${row.id}`}
@@ -1728,7 +1783,7 @@ export default function InventoryMovementsPage() {
                             {row.movementType || "-"}
                           </span>
                         </td>
-                        <td className="px-3 py-2 text-slate-700">{row.quantity ?? "-"}</td>
+                        <td className="px-3 py-2 text-slate-700">{row.quantity | "-"}</td>
                         <td className="px-3 py-2">
                           <span
                             className={`rounded-full px-2 py-1 text-[11px] font-semibold uppercase tracking-wide ${getStatusBadgeClass(
@@ -1745,15 +1800,12 @@ export default function InventoryMovementsPage() {
                                   className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1"
                                 >
                                   <div className="font-medium text-slate-700">
-                                    {l("Layer", "Katman")} #{consumption.costLayerId || "-"} ·{" "}
-                                    {l("Qty", "Miktar")} {formatQuantityValue(consumption.quantityConsumed)}
+                                    {l("Layer", "Katman")} #{consumption.costLayerId || "-"} |{" "}{l("Qty", "Miktar")} {formatQuantityValue(consumption.quantityConsumed)}
                                   </div>
                                   <div>
                                     {l("Source receipt", "Kaynak alim")} #
                                     {consumption.sourceMovementId || "-"}
-                                    {consumption.sourceStockLinkId
-                                      ? ` · ${l("Link", "Baglanti")} #${consumption.sourceStockLinkId}`
-                                      : ""}
+                                    {consumption.sourceStockLinkId ? ` | ${l("Link", "Baglanti")} #${consumption.sourceStockLinkId}` : ""}
                                   </div>
                                 </div>
                               ))}
@@ -1761,10 +1813,15 @@ export default function InventoryMovementsPage() {
                           ) : null}
                         </td>
                         <td className="px-3 py-2 text-slate-700">
-                          <div>{row.sourceDocumentNo || row.sourceType || "-"}</div>
-                          <div className="text-xs text-slate-500">
-                            {row.sourceType || "-"} {row.sourceStockLinkId ? `#${row.sourceStockLinkId}` : ""}
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span
+                              className={`rounded-full px-2 py-1 text-[11px] font-semibold uppercase tracking-wide ${sourceSummary.badgeClass}`}
+                            >
+                              {sourceSummary.badgeLabel}
+                            </span>
+                            <span className="font-medium text-slate-900">{sourceSummary.primary}</span>
                           </div>
+                          <div className="text-xs text-slate-500">{sourceSummary.secondary || "-"}</div>
                           {row.reversalOfMovementId ? (
                             <div className="mt-1 text-xs text-amber-700">
                               {l("Reversal of movement", "Ters kayit hareketi")} #
@@ -1784,7 +1841,7 @@ export default function InventoryMovementsPage() {
                               </div>
                               <div>
                                 {row.postedJournalNo || `JRN #${row.postedJournalEntryId}`}
-                                {row.postedJournalEntryId ? ` · #${row.postedJournalEntryId}` : ""}
+                                {row.postedJournalEntryId ? ` | #${row.postedJournalEntryId}` : ""}
                               </div>
                             </div>
                           ) : null}
@@ -1797,7 +1854,7 @@ export default function InventoryMovementsPage() {
                               <MoneyText amount={row.totalCostTxn} currencyCode={row.currencyCode} />
                               {row.unitCostTxn === null || row.unitCostTxn === undefined ? null : (
                                 <div className="text-xs text-slate-500">
-                                  {l("Unit", "Birim")}{" "}
+                                  {l("Unit", "Birim")} |{" "}
                                   <MoneyText amount={row.unitCostTxn} currencyCode={row.currencyCode} />
                                 </div>
                               )}
@@ -1932,7 +1989,7 @@ export default function InventoryMovementsPage() {
                             {l(
                               "Posted in base currency",
                               "Baz para biriminde kaydedildi"
-                            )}{" "}
+                            )} |{" "}
                             {row.currencyCode || "-"} | {currencyCodes.join(", ")}
                           </div>
                         </div>
@@ -1985,8 +2042,8 @@ export default function InventoryMovementsPage() {
                           <div className="text-xs text-slate-500">#{row.itemCardId || "-"}</div>
                         </td>
                         <td className="px-3 py-2 text-slate-700">{row.valuationMethod || "-"}</td>
-                        <td className="px-3 py-2 text-slate-700">{row.quantityIn ?? "-"}</td>
-                        <td className="px-3 py-2 text-slate-700">{row.quantityRemaining ?? "-"}</td>
+                        <td className="px-3 py-2 text-slate-700">{row.quantityIn | "-"}</td>
+                        <td className="px-3 py-2 text-slate-700">{row.quantityRemaining | "-"}</td>
                         <td className="px-3 py-2 text-slate-700">
                           <MoneyText amount={row.unitCostTxn} currencyCode={row.currencyCode} />
                         </td>

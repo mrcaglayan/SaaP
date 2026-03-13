@@ -3383,6 +3383,16 @@ export default function CariSettlementsPage() {
                 ? l("Mixed owner contexts", "Karisik owner baglamlari")
                 : predictedApplySettlementContext.ownerContextLabel}
             </p>
+            <p className="mt-1">
+              {l("Collector context preview:", "Collector baglam onizlemesi:")}{" "}
+              {predictedApplySettlementContext.collectorContextLabel}
+            </p>
+            <p className="mt-1 text-xs text-slate-500">
+              {l(
+                "Owner = open-item/document context. Collector = cash, bank, or execution context that closes it.",
+                "Owner = acik kalem/belge baglami. Collector = bunu kapatan kasa, banka veya uygulama baglami."
+              )}
+            </p>
             {applyOwnerContextSummary.hasMixed ? (
               <p className="mt-1 text-rose-700">
                 {l(

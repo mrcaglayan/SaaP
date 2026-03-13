@@ -1012,8 +1012,11 @@ function mapTransferRow(row) {
     targetOperatingUnitCode: row.target_operating_unit_code || null,
     targetOperatingUnitName: row.target_operating_unit_name || null,
     shipmentJournalEntryId: parsePositiveInt(row.shipment_journal_entry_id),
+    shipmentJournalNo: row.shipment_journal_no || null,
     receiptJournalEntryId: parsePositiveInt(row.receipt_journal_entry_id),
+    receiptJournalNo: row.receipt_journal_no || null,
     reversalJournalEntryId: parsePositiveInt(row.reversal_journal_entry_id),
+    reversalJournalNo: row.reversal_journal_no || null,
     initiatedByUserId: parsePositiveInt(row.initiated_by_user_id),
     approvedByUserId: parsePositiveInt(row.approved_by_user_id),
     shippedByUserId: parsePositiveInt(row.shipped_by_user_id),
@@ -1188,6 +1191,9 @@ async function fetchTransferRowById({
         sou.name AS source_operating_unit_name,
         tou.code AS target_operating_unit_code,
         tou.name AS target_operating_unit_name,
+        sj.journal_no AS shipment_journal_no,
+        rj.journal_no AS receipt_journal_no,
+        rvj.journal_no AS reversal_journal_no,
         (
           SELECT COUNT(*)
             FROM inventory_transfer_lines tl
@@ -1208,6 +1214,12 @@ async function fetchTransferRowById({
        LEFT JOIN operating_units tou
          ON tou.tenant_id = t.tenant_id
         AND tou.id = t.target_operating_unit_id
+       LEFT JOIN journal_entries sj
+         ON sj.id = t.shipment_journal_entry_id
+       LEFT JOIN journal_entries rj
+         ON rj.id = t.receipt_journal_entry_id
+       LEFT JOIN journal_entries rvj
+         ON rvj.id = t.reversal_journal_entry_id
       WHERE t.tenant_id = ?
         AND t.id = ?
       LIMIT 1${forUpdate ? "\n      FOR UPDATE" : ""}`,
@@ -1379,6 +1391,12 @@ export async function listInventoryTransfers({
        LEFT JOIN operating_units tou
          ON tou.tenant_id = t.tenant_id
         AND tou.id = t.target_operating_unit_id
+       LEFT JOIN journal_entries sj
+         ON sj.id = t.shipment_journal_entry_id
+       LEFT JOIN journal_entries rj
+         ON rj.id = t.receipt_journal_entry_id
+       LEFT JOIN journal_entries rvj
+         ON rvj.id = t.reversal_journal_entry_id
        ${whereSql}
        ORDER BY t.transfer_date DESC, t.id DESC
        LIMIT ${limit}

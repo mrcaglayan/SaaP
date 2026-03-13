@@ -113,6 +113,29 @@ function buildPayload(form) {
   };
 }
 
+function isStockItemType(value) {
+  return normalizeText(value).toUpperCase() === "STOCK_ITEM";
+}
+
+function describeTransitSetup(row, translate = (en) => en) {
+  if (!isStockItemType(row?.itemType)) {
+    return {
+      label: translate("Not used", "Kullanilmaz"),
+      className: "border border-slate-200 bg-slate-100 text-slate-700",
+    };
+  }
+  if (toPositiveInt(row?.inventoryTransitAccountId)) {
+    return {
+      label: translate("Configured", "Tanimli"),
+      className: "border border-emerald-200 bg-emerald-50 text-emerald-800",
+    };
+  }
+  return {
+    label: translate("Missing", "Eksik"),
+    className: "border border-amber-200 bg-amber-50 text-amber-800",
+  };
+}
+
 export default function ItemCardsPage({ pageKey = "list" }) {
   const { hasPermission } = useAuth();
   const { l } = useI18n();
@@ -150,6 +173,7 @@ export default function ItemCardsPage({ pageKey = "list" }) {
   const [accountError, setAccountError] = useState("");
   const [taxRuleRows, setTaxRuleRows] = useState([]);
   const [taxCategoryError, setTaxCategoryError] = useState("");
+  const formTransitSetup = describeTransitSetup(form, l);
 
   useEffect(() => {
     if (pageKey === "create" && !filters.legalEntityId && legalEntityOptions.length === 1) {
@@ -692,6 +716,33 @@ export default function ItemCardsPage({ pageKey = "list" }) {
                 </option>
               ))}
             </select>
+            <div className="mt-2 space-y-1 text-[11px] normal-case tracking-normal">
+              <span
+                className={`inline-flex rounded-full px-2 py-1 font-semibold ${formTransitSetup.className}`}
+              >
+                {l("Transit setup", "Transit ayari")}: {formTransitSetup.label}
+              </span>
+              {isStockItemType(form.itemType) ? (
+                <p className="text-slate-500">
+                  {toPositiveInt(form.inventoryTransitAccountId)
+                    ? l(
+                        "Stock transfer shipment and receipt postings can reuse this transit account.",
+                        "Stok transferi sevkiyat ve teslim alma kayitlari bu transit hesabini kullanabilir."
+                      )
+                    : l(
+                        "Cross-context stock transfers should have a transit account before shipment starts.",
+                        "Baglamlar arasi stok transferlerinde sevkiyat baslamadan once transit hesabi tanimlanmalidir."
+                      )}
+                </p>
+              ) : (
+                <p className="text-slate-500">
+                  {l(
+                    "Transit account is only used for STOCK_ITEM transfer workflow.",
+                    "Transit hesabi sadece STOCK_ITEM transfer akisi icin kullanilir."
+                  )}
+                </p>
+              )}
+            </div>
           </label>
           <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
             {l("COGS Account (optional)", "Maliyet Hesabi (opsiyonel)")}
@@ -811,6 +862,7 @@ export default function ItemCardsPage({ pageKey = "list" }) {
                   <th className="px-3 py-2">{l("Name", "Ad")}</th>
                   <th className="px-3 py-2">{l("Type", "Tip")}</th>
                   <th className="px-3 py-2">{l("Entity", "Tuzel Kisilik")}</th>
+                  <th className="px-3 py-2">{l("Transit setup", "Transit ayari")}</th>
                   <th className="px-3 py-2">{l("Tax Category", "Vergi Kategorisi")}</th>
                   <th className="px-3 py-2">{l("Status", "Durum")}</th>
                   <th className="px-3 py-2 text-right">{l("Action", "Islem")}</th>
@@ -823,6 +875,13 @@ export default function ItemCardsPage({ pageKey = "list" }) {
                     <td className="px-3 py-2">{row.name || "-"}</td>
                     <td className="px-3 py-2">{row.itemType || "-"}</td>
                     <td className="px-3 py-2">{row.legalEntityId || "-"}</td>
+                    <td className="px-3 py-2">
+                      <span
+                        className={`inline-flex rounded-full px-2 py-1 text-[11px] font-semibold uppercase tracking-wide ${describeTransitSetup(row, l).className}`}
+                      >
+                        {describeTransitSetup(row, l).label}
+                      </span>
+                    </td>
                     <td className="px-3 py-2">{row.taxCategoryCode || "-"}</td>
                     <td className="px-3 py-2">{row.status || "-"}</td>
                     <td className="px-3 py-2 text-right">

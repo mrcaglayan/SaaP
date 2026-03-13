@@ -20,14 +20,30 @@ import {
   uploadInventoryTransferEvidenceContent,
 } from "../../api/inventory.js";
 import { listItemCards } from "../../api/itemCards.js";
+
+const TRANSFER_STATUS_VALUES = [
+  "INITIATED",
+  "APPROVED",
+  "IN_TRANSIT",
+  "RECEIVED",
+  "CANCELED",
+  "REVERSED",
+];
+
 function normalizeText(value) {
   return String(value || "").trim();
-}function toPositiveInt(value) {
+}
+
+function toPositiveInt(value) {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
-}function todayDateOnly() {
+}
+
+function todayDateOnly() {
   return new Date().toISOString().slice(0, 10);
-}function triggerBrowserDownload(blob, fileName) {
+}
+
+function triggerBrowserDownload(blob, fileName) {
   const downloadUrl = window.URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = downloadUrl;
@@ -36,11 +52,15 @@ function normalizeText(value) {
   anchor.click();
   anchor.remove();
   window.URL.revokeObjectURL(downloadUrl);
-}function normalizeApiError(error, fallback) {
+}
+
+function normalizeApiError(error, fallback) {
   const message = String(error?.response?.data?.message || error?.message || fallback).trim();
   const requestId = String(error?.response?.data?.requestId || "").trim();
   return requestId ? `${message} (requestId: ${requestId})` : message || fallback;
-}function mapLegalEntityLookupOption(row) {
+}
+
+function mapLegalEntityLookupOption(row) {
   const value = String(toPositiveInt(row?.id) || "");
   if (!value) {
     return null;
@@ -51,13 +71,17 @@ function normalizeText(value) {
     value,
     label: code && name ? `${code} - ${name}` : code || name || `Legal entity #${value}`,
   };
-}function createTransferLine() {
+}
+
+function createTransferLine() {
   return {
     itemCardId: "",
     quantityRequested: "1",
     note: "",
   };
-}function createTransferForm(legalEntityId = "") {
+}
+
+function createTransferForm(legalEntityId = "") {
   return {
     legalEntityId,
     transferDate: todayDateOnly(),
@@ -66,7 +90,9 @@ function normalizeText(value) {
     note: "",
     lines: [createTransferLine()],
   };
-}function getStatusBadgeClass(value) {
+}
+
+function getStatusBadgeClass(value) {
   switch (String(value || "").trim().toUpperCase()) {
     case "INITIATED":
       return "border border-slate-200 bg-slate-100 text-slate-700";
@@ -82,28 +108,95 @@ function normalizeText(value) {
     default:
       return "border border-slate-200 bg-slate-100 text-slate-700";
   }
-}function getOwnershipLabel(row) {
+}
+
+function getTransferStatusLabel(value, translate = (en) => en) {
+  switch (String(value || "").trim().toUpperCase()) {
+    case "INITIATED":
+      return translate("Initiated", "Baslatildi");
+    case "APPROVED":
+      return translate("Approved", "Onaylandi");
+    case "IN_TRANSIT":
+      return translate("In transit", "Yolda");
+    case "RECEIVED":
+      return translate("Received", "Teslim alindi");
+    case "CANCELED":
+      return translate("Canceled", "Iptal edildi");
+    case "REVERSED":
+      return translate("Reversed", "Ters kaydedildi");
+    default:
+      return normalizeText(value) || "-";
+  }
+}
+
+function canApprove(row) {
+  return String(row?.status || "").toUpperCase() === "INITIATED";
+}
+
+function canShip(row) {
+  return String(row?.status || "").toUpperCase() === "APPROVED";
+}
+
+function canReceive(row) {
+  return String(row?.status || "").toUpperCase() === "IN_TRANSIT";
+}
+
+function canCancel(row) {
+  return ["INITIATED", "APPROVED"].includes(String(row?.status || "").toUpperCase());
+}
+
+function canReverse(row) {
+  return ["IN_TRANSIT", "RECEIVED"].includes(String(row?.status || "").toUpperCase());
+}
+
+function getOwnershipLabel(row, translate = (en) => en) {
   const scope = String(row?.ownershipScope || "").trim().toUpperCase();
   if (scope === "OPERATING_UNIT") {
     const code = normalizeText(row?.operatingUnitCode);
     const name = normalizeText(row?.operatingUnitName);
+    const ouPrefix = translate("OU", "OU");
     if (code && name) {
-      return `OU • ${code} - ${name}`;
+      return `${ouPrefix} | ${code} - ${name}`;
     }
-    return code || name ? `OU • ${code || name}` : "OU";
+    return code || name ? `${ouPrefix} | ${code || name}` : ouPrefix;
   }
-  return "Central";
-}function canApprove(row) {
-  return String(row?.status || "").toUpperCase() === "INITIATED";
-}function canShip(row) {
-  return String(row?.status || "").toUpperCase() === "APPROVED";
-}function canReceive(row) {
-  return String(row?.status || "").toUpperCase() === "IN_TRANSIT";
-}function canCancel(row) {
-  return ["INITIATED", "APPROVED"].includes(String(row?.status || "").toUpperCase());
-}function canReverse(row) {
-  return ["IN_TRANSIT", "RECEIVED"].includes(String(row?.status || "").toUpperCase());
-}export default function InventoryTransfersPage() {
+  return translate("Central", "Merkez");
+}
+
+function formatWarehouseOptionLabel(row, translate = (en) => en) {
+  const code = normalizeText(row?.code);
+  const name = normalizeText(row?.name);
+  const warehouseLabel =
+    (code && name ? `${code} - ${name}` : code || name) || `Warehouse #${row?.id || "-"}`;
+  return `${warehouseLabel} | ${getOwnershipLabel(
+    {
+      ownershipScope: row?.ownershipScope || row?.ownership_scope,
+      operatingUnitCode: row?.operatingUnitCode || row?.operating_unit_code,
+      operatingUnitName: row?.operatingUnitName || row?.operating_unit_name,
+    },
+    translate
+  )}`;
+}
+
+function formatJournalReference(journalNo, journalEntryId) {
+  return normalizeText(journalNo) || (toPositiveInt(journalEntryId) ? `JRN #${journalEntryId}` : "");
+}
+
+function formatLifecycleValue(at, userId, translate = (en) => en) {
+  if (!at && !userId) {
+    return translate("Pending", "Bekliyor");
+  }
+  const parts = [];
+  if (at) {
+    parts.push(at);
+  }
+  if (userId) {
+    parts.push(`${translate("User", "Kullanici")} #${userId}`);
+  }
+  return parts.join(" | ");
+}
+
+export default function InventoryTransfersPage() {
   const { hasPermission } = useAuth();
   const { l } = useI18n();
   const { legalEntities: workingContextLegalEntities } = useWorkingContext();
@@ -120,6 +213,8 @@ function normalizeText(value) {
   const [filters, setFilters] = useState({
     legalEntityId: "",
     status: "",
+    sourceWarehouseId: "",
+    targetWarehouseId: "",
     q: "",
   });
   const [form, setForm] = useState(() => createTransferForm());
@@ -166,6 +261,8 @@ function normalizeText(value) {
     setForm((previous) => ({
       ...previous,
       legalEntityId: filters.legalEntityId || previous.legalEntityId || "",
+      sourceWarehouseId: "",
+      targetWarehouseId: "",
     }));
   }, [filters.legalEntityId]);
   useEffect(() => {
@@ -233,6 +330,8 @@ function normalizeText(value) {
         const response = await listInventoryTransfers({
           legalEntityId: filters.legalEntityId || undefined,
           status: filters.status || undefined,
+          sourceWarehouseId: filters.sourceWarehouseId || undefined,
+          targetWarehouseId: filters.targetWarehouseId || undefined,
           q: filters.q || undefined,
           limit: 200,
           offset: 0,
@@ -366,12 +465,9 @@ function normalizeText(value) {
         .filter((row) => String(row?.status || "").toUpperCase() === "ACTIVE")
         .map((row) => ({
           value: String(row.id || ""),
-          label:
-            row.code && row.name
-              ? `${row.code} - ${row.name}`
-              : row.code || row.name || `Warehouse #${row.id}`,
+          label: formatWarehouseOptionLabel(row, l),
         })),
-    [warehouseRows]
+    [warehouseRows, l]
   );
   const itemCardOptions = useMemo(
     () =>
@@ -384,10 +480,115 @@ function normalizeText(value) {
       })),
     [itemCardRows]
   );
+  const selectedTransferLifecycleRows = selectedRow
+    ? [
+        {
+          key: "initiated",
+          label: l("Initiated", "Baslatildi"),
+          value: formatLifecycleValue(selectedRow.initiatedAt, selectedRow.initiatedByUserId, l),
+        },
+        {
+          key: "approved",
+          label: l("Approved", "Onaylandi"),
+          value: formatLifecycleValue(selectedRow.approvedAt, selectedRow.approvedByUserId, l),
+        },
+        {
+          key: "in-transit",
+          label: l("In transit", "Yolda"),
+          value: formatLifecycleValue(selectedRow.inTransitAt, selectedRow.shippedByUserId, l),
+        },
+        {
+          key: "received",
+          label: l("Received", "Teslim alindi"),
+          value: formatLifecycleValue(selectedRow.receivedAt, selectedRow.receivedByUserId, l),
+        },
+        {
+          key: "canceled",
+          label: l("Canceled", "Iptal edildi"),
+          value: formatLifecycleValue(selectedRow.canceledAt, selectedRow.canceledByUserId, l),
+        },
+        {
+          key: "reversed",
+          label: l("Reversed", "Ters kaydedildi"),
+          value: formatLifecycleValue(selectedRow.reversedAt, selectedRow.reversedByUserId, l),
+        },
+      ]
+    : [];
+  const selectedTransferJournalRows = selectedRow
+    ? [
+        {
+          key: "shipment",
+          label: l("Shipment journal", "Sevkiyat yevmiyesi"),
+          reference: formatJournalReference(
+            selectedRow.shipmentJournalNo,
+            selectedRow.shipmentJournalEntryId
+          ),
+          detail: selectedRow.shipmentJournalEntryId
+            ? `#${selectedRow.shipmentJournalEntryId}`
+            : l("Posts when shipment moves to in transit.", "Sevkiyat yola cikinca olusur."),
+        },
+        {
+          key: "receipt",
+          label: l("Receipt journal", "Tesellum yevmiyesi"),
+          reference: formatJournalReference(
+            selectedRow.receiptJournalNo,
+            selectedRow.receiptJournalEntryId
+          ),
+          detail: selectedRow.receiptJournalEntryId
+            ? `#${selectedRow.receiptJournalEntryId}`
+            : l("Posts when target warehouse receives the transfer.", "Hedef depo transferi teslim alinca olusur."),
+        },
+        {
+          key: "reversal",
+          label: l("Reversal journal", "Ters kayit yevmiyesi"),
+          reference: formatJournalReference(
+            selectedRow.reversalJournalNo,
+            selectedRow.reversalJournalEntryId
+          ),
+          detail: selectedRow.reversalJournalEntryId
+            ? `#${selectedRow.reversalJournalEntryId}`
+            : l("Created only when a shipped or received transfer is reversed.", "Sadece sevk edilen veya teslim alinan transfer terslenince olusur."),
+        },
+      ]
+    : [];
+  const selectedTransferActions = [
+    {
+      key: "approve",
+      label: l("Approve", "Onayla"),
+      enabled: Boolean(selectedRow) && canApprove(selectedRow),
+      className: "rounded-lg bg-sky-600 px-3 py-2 text-sm font-semibold text-white hover:bg-sky-500 disabled:cursor-not-allowed disabled:opacity-60",
+    },
+    {
+      key: "ship",
+      label: l("Ship", "Sevk et"),
+      enabled: Boolean(selectedRow) && canShip(selectedRow),
+      className: "rounded-lg bg-amber-600 px-3 py-2 text-sm font-semibold text-white hover:bg-amber-500 disabled:cursor-not-allowed disabled:opacity-60",
+    },
+    {
+      key: "receive",
+      label: l("Receive", "Teslim al"),
+      enabled: Boolean(selectedRow) && canReceive(selectedRow),
+      className: "rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-60",
+    },
+    {
+      key: "cancel",
+      label: l("Cancel", "Iptal et"),
+      enabled: Boolean(selectedRow) && canCancel(selectedRow),
+      className: "rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60",
+    },
+    {
+      key: "reverse",
+      label: l("Reverse", "Ters kaydet"),
+      enabled: Boolean(selectedRow) && canReverse(selectedRow),
+      className: "rounded-lg border border-rose-300 px-3 py-2 text-sm font-semibold text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60",
+    },
+  ];
   async function reloadTransfers(nextSelectedTransferId = selectedTransferId) {
     const response = await listInventoryTransfers({
       legalEntityId: filters.legalEntityId || undefined,
       status: filters.status || undefined,
+      sourceWarehouseId: filters.sourceWarehouseId || undefined,
+      targetWarehouseId: filters.targetWarehouseId || undefined,
       q: filters.q || undefined,
       limit: 200,
       offset: 0,
@@ -686,7 +887,7 @@ function normalizeText(value) {
               )}
             </p>
           </div>
-          <div className="grid gap-3 md:grid-cols-3">
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
             <label className="grid gap-1 text-sm text-slate-600">
               <span>{l("Legal entity", "Legal entity")}</span>
               <select
@@ -696,6 +897,8 @@ function normalizeText(value) {
                   setFilters((previous) => ({
                     ...previous,
                     legalEntityId: event.target.value,
+                    sourceWarehouseId: "",
+                    targetWarehouseId: "",
                   }))
                 }
               >
@@ -720,12 +923,53 @@ function normalizeText(value) {
                 }
               >
                 <option value="">{l("All", "Tum")}</option>
-                <option value="INITIATED">INITIATED</option>
-                <option value="APPROVED">APPROVED</option>
-                <option value="IN_TRANSIT">IN_TRANSIT</option>
-                <option value="RECEIVED">RECEIVED</option>
-                <option value="CANCELED">CANCELED</option>
-                <option value="REVERSED">REVERSED</option>
+                {TRANSFER_STATUS_VALUES.map((status) => (
+                  <option key={`transfer-status-filter-${status}`} value={status}>
+                    {getTransferStatusLabel(status, l)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="grid gap-1 text-sm text-slate-600">
+              <span>{l("Source warehouse", "Kaynak depo")}</span>
+              <select
+                className="rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900"
+                value={filters.sourceWarehouseId}
+                onChange={(event) =>
+                  setFilters((previous) => ({
+                    ...previous,
+                    sourceWarehouseId: event.target.value,
+                  }))
+                }
+                disabled={!filters.legalEntityId}
+              >
+                <option value="">{l("All", "Tum")}</option>
+                {activeWarehouseOptions.map((option) => (
+                  <option key={`filter-source-${option.value}`} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="grid gap-1 text-sm text-slate-600">
+              <span>{l("Target warehouse", "Hedef depo")}</span>
+              <select
+                className="rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900"
+                value={filters.targetWarehouseId}
+                onChange={(event) =>
+                  setFilters((previous) => ({
+                    ...previous,
+                    targetWarehouseId: event.target.value,
+                  }))
+                }
+                disabled={!filters.legalEntityId}
+              >
+                <option value="">{l("All", "Tum")}</option>
+                {activeWarehouseOptions.map((option) => (
+                  <option key={`filter-target-${option.value}`} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
               </select>
             </label>
             <label className="grid gap-1 text-sm text-slate-600">
@@ -778,6 +1022,8 @@ function normalizeText(value) {
                     setForm((previous) => ({
                       ...previous,
                       legalEntityId: event.target.value,
+                      sourceWarehouseId: "",
+                      targetWarehouseId: "",
                     }))
                   }
                 >
@@ -987,6 +1233,7 @@ function normalizeText(value) {
               <thead className="bg-slate-50 text-left text-slate-500">
                 <tr>
                   <th className="px-3 py-2 font-medium">{l("Transfer", "Transfer")}</th>
+                  <th className="px-3 py-2 font-medium">{l("Route", "Rota")}</th>
                   <th className="px-3 py-2 font-medium">{l("Date", "Tarih")}</th>
                   <th className="px-3 py-2 font-medium">{l("Status", "Durum")}</th>
                 </tr>
@@ -994,7 +1241,7 @@ function normalizeText(value) {
               <tbody className="divide-y divide-slate-100">
                 {rows.length === 0 ? (
                   <tr>
-                    <td className="px-3 py-4 text-slate-500" colSpan={3}>
+                    <td className="px-3 py-4 text-slate-500" colSpan={4}>
                       {l("No transfers found.", "Transfer kaydi bulunamadi.")}
                     </td>
                   </tr>
@@ -1014,16 +1261,47 @@ function normalizeText(value) {
                         >
                           <div className="font-medium">{row.transferNo}</div>
                           <div className="text-xs text-slate-500">
-                            {row.sourceWarehouseCode} → {row.targetWarehouseCode}
+                            {row.sourceWarehouseCode} {"->"} {row.targetWarehouseCode}
                           </div>
                         </button>
                       </td>
-                      <td className="px-3 py-2 text-slate-700">{row.transferDate || "-"}</td>
+                      <td className="px-3 py-2 text-slate-700">
+                        <div className="font-medium text-slate-900">
+                          {(row.sourceWarehouseCode || row.sourceWarehouseName || "-")} {"->"}{" "}
+                          {(row.targetWarehouseCode || row.targetWarehouseName || "-")}
+                        </div>
+                        <div className="text-xs text-slate-500">
+                          {getOwnershipLabel(
+                            {
+                              ownershipScope: row.sourceOwnershipScope,
+                              operatingUnitCode: row.sourceOperatingUnitCode,
+                              operatingUnitName: row.sourceOperatingUnitName,
+                            },
+                            l
+                          )}
+                        </div>
+                        <div className="text-xs text-slate-500">
+                          {getOwnershipLabel(
+                            {
+                              ownershipScope: row.targetOwnershipScope,
+                              operatingUnitCode: row.targetOperatingUnitCode,
+                              operatingUnitName: row.targetOperatingUnitName,
+                            },
+                            l
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-3 py-2 text-slate-700">
+                        <div>{row.transferDate || "-"}</div>
+                        <div className="text-xs text-slate-500">
+                          {row.createdAt || l("Created in this batch", "Bu batch'te olustu")}
+                        </div>
+                      </td>
                       <td className="px-3 py-2">
                         <span
                           className={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ${getStatusBadgeClass(row.status)}`}
                         >
-                          {row.status}
+                          {getTransferStatusLabel(row.status, l)}
                         </span>
                       </td>
                     </tr>
@@ -1042,7 +1320,7 @@ function normalizeText(value) {
                 <span
                   className={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ${getStatusBadgeClass(selectedRow.status)}`}
                 >
-                  {selectedRow.status}
+                  {getTransferStatusLabel(selectedRow.status, l)}
                 </span>
               ) : null}
             </div>
@@ -1087,7 +1365,7 @@ function normalizeText(value) {
                         ownershipScope: selectedRow.sourceOwnershipScope,
                         operatingUnitCode: selectedRow.sourceOperatingUnitCode,
                         operatingUnitName: selectedRow.sourceOperatingUnitName,
-                      })}
+                      }, l)}
                     </div>
                   </div>
                   <div className="rounded-xl border border-slate-200 bg-white p-3">
@@ -1102,8 +1380,111 @@ function normalizeText(value) {
                         ownershipScope: selectedRow.targetOwnershipScope,
                         operatingUnitCode: selectedRow.targetOperatingUnitCode,
                         operatingUnitName: selectedRow.targetOperatingUnitName,
-                      })}
+                      }, l)}
                     </div>
+                  </div>
+                  <div className="rounded-xl border border-slate-200 bg-white p-3 md:col-span-2">
+                    <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                      {l("Transfer summary", "Transfer ozeti")}
+                    </div>
+                    <div className="mt-1 flex flex-wrap items-center gap-2">
+                      <span className="font-medium text-slate-900">{selectedRow.transferNo || "-"}</span>
+                      <span
+                        className={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ${getStatusBadgeClass(selectedRow.status)}`}
+                      >
+                        {getTransferStatusLabel(selectedRow.status, l)}
+                      </span>
+                    </div>
+                    <div className="mt-2 grid gap-2 text-sm text-slate-600 md:grid-cols-2">
+                      <div>
+                        {l("Legal entity", "Legal entity")}: {selectedRow.legalEntityCode || selectedRow.legalEntityId || "-"}
+                      </div>
+                      <div>
+                        {l("Date", "Tarih")}: {selectedRow.transferDate || "-"}
+                      </div>
+                      <div>
+                        {l("Line count", "Satir adedi")}: {Array.isArray(selectedRow.lines) ? selectedRow.lines.length : 0}
+                      </div>
+                      <div>
+                        {l("Created", "Olusturma")}: {selectedRow.createdAt || "-"}
+                      </div>
+                    </div>
+                    {selectedRow.note ? (
+                      <div className="mt-2 text-sm text-slate-600">
+                        {l("Note", "Not")}: {selectedRow.note}
+                      </div>
+                    ) : null}
+                    {selectedRow.cancelReason ? (
+                      <div className="mt-2 text-sm text-rose-700">
+                        {l("Cancel reason", "Iptal nedeni")}: {selectedRow.cancelReason}
+                      </div>
+                    ) : null}
+                    {selectedRow.reverseReason ? (
+                      <div className="mt-2 text-sm text-rose-700">
+                        {l("Reverse reason", "Ters kayit nedeni")}: {selectedRow.reverseReason}
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-slate-200 bg-white p-3">
+                  <div className="mb-3 flex items-center justify-between">
+                    <div>
+                      <div className="text-sm font-semibold text-slate-900">
+                        {l("Transfer lifecycle", "Transfer yasam dongusu")}
+                      </div>
+                      <div className="text-xs text-slate-500">
+                        {l(
+                          "Approval, shipment, receipt, and reversal stamps stay visible on the transfer header.",
+                          "Onay, sevkiyat, teslim alma ve ters kayit damgalari transfer basliginda gorunur."
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                    {selectedTransferLifecycleRows.map((entry) => (
+                      <div
+                        key={`transfer-lifecycle-${entry.key}`}
+                        className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3"
+                      >
+                        <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                          {entry.label}
+                        </div>
+                        <div className="mt-1 text-sm text-slate-700">{entry.value}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-slate-200 bg-white p-3">
+                  <div className="mb-3 flex items-center justify-between">
+                    <div>
+                      <div className="text-sm font-semibold text-slate-900">
+                        {l("Transfer journals", "Transfer yevmiyeleri")}
+                      </div>
+                      <div className="text-xs text-slate-500">
+                        {l(
+                          "Shipment, receipt, and reversal journals remain attached on the transfer header.",
+                          "Sevkiyat, teslim alma ve ters kayit yevmiyeleri transfer basligina bagli kalir."
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="grid gap-3 md:grid-cols-3">
+                    {selectedTransferJournalRows.map((entry) => (
+                      <div
+                        key={`transfer-journal-${entry.key}`}
+                        className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3"
+                      >
+                        <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                          {entry.label}
+                        </div>
+                        <div className="mt-1 font-medium text-slate-900">
+                          {entry.reference || l("Not posted yet", "Henuz olusmadi")}
+                        </div>
+                        <div className="mt-1 text-xs text-slate-500">{entry.detail}</div>
+                      </div>
+                    ))}
                   </div>
                 </div>
 
@@ -1120,75 +1501,66 @@ function normalizeText(value) {
                     {(Array.isArray(selectedRow.lines) ? selectedRow.lines : []).map((line) => (
                       <div
                         key={line.id}
-                        className="grid gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 md:grid-cols-[90px_minmax(0,1fr)_140px]"
+                        className="grid gap-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 md:grid-cols-[100px_minmax(0,1fr)_220px]"
                       >
-                        <div className="text-xs text-slate-500">
-                          #{line.lineNo}
-                        </div>
+                        <div className="text-xs text-slate-500">#{line.lineNo}</div>
                         <div>
                           <div className="font-medium text-slate-900">
-                            {line.itemCardCode} - {line.itemCardName}
+                            {line.itemCardCode || line.itemCardName || "-"}
+                            {line.itemCardCode && line.itemCardName ? ` - ${line.itemCardName}` : ""}
                           </div>
-                          <div className="text-xs text-slate-500">{line.note || "—"}</div>
+                          <div className="text-xs text-slate-500">{line.note || l("No line note", "Satir notu yok")}</div>
                         </div>
-                        <div className="text-sm text-slate-700">
-                          {l("Requested", "Istenen")}: {line.quantityRequested}
+                        <div className="space-y-1 text-sm text-slate-700">
+                          <div>
+                            {l("Requested", "Istenen")}: {line.quantityRequested ?? "-"}
+                          </div>
+                          <div>
+                            {l("Shipped", "Sevk edilen")}: {line.quantityShipped ?? "-"}
+                          </div>
+                          <div>
+                            {l("Received", "Teslim alinan")}: {line.quantityReceived ?? "-"}
+                          </div>
+                          {line.shippedTotalCostTxn === null || line.shippedTotalCostTxn === undefined ? null : (
+                            <div className="text-xs text-slate-500">
+                              {l("Shipment cost", "Sevkiyat maliyeti")}: {line.shippedTotalCostTxn} {line.shippedCurrencyCode || ""}
+                            </div>
+                          )}
                         </div>
                       </div>
                     ))}
                   </div>
                 </div>
 
-                <div className="flex flex-wrap gap-2">
-                  {canApprove(selectedRow) ? (
-                    <button
-                      type="button"
-                      className="rounded-lg bg-sky-600 px-3 py-2 text-sm font-semibold text-white hover:bg-sky-500 disabled:cursor-not-allowed disabled:opacity-60"
-                      disabled={actionLoading}
-                      onClick={() => void runTransferAction("approve")}
-                    >
-                      {l("Approve", "Onayla")}
-                    </button>
-                  ) : null}
-                  {canShip(selectedRow) ? (
-                    <button
-                      type="button"
-                      className="rounded-lg bg-amber-600 px-3 py-2 text-sm font-semibold text-white hover:bg-amber-500 disabled:cursor-not-allowed disabled:opacity-60"
-                      disabled={actionLoading}
-                      onClick={() => void runTransferAction("ship")}
-                    >
-                      {l("Ship", "Sevk et")}
-                    </button>
-                  ) : null}
-                  {canReceive(selectedRow) ? (
-                    <button
-                      type="button"
-                      className="rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
-                      disabled={actionLoading}
-                      onClick={() => void runTransferAction("receive")}
-                    >
-                      {l("Receive", "Teslim al")}
-                    </button>
-                  ) : null}
-                  {canCancel(selectedRow) ? (
-                    <button
-                      type="button"
-                      className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
-                      disabled={actionLoading}
-                      onClick={() => void runTransferAction("cancel")}
-                    >
-                      {l("Cancel", "Iptal et")}
-                    </button>
-                  ) : null}
-                  {canReverse(selectedRow) ? (
-                    <button
-                      type="button"
-                      className="rounded-lg border border-rose-300 px-3 py-2 text-sm font-semibold text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
-                      disabled={actionLoading}
-                      onClick={() => void runTransferAction("reverse")}
-                    >
-                      {l("Reverse", "Ters kaydet")}
-                    </button>
+                <div className="rounded-xl border border-slate-200 bg-white p-3">
+                  <div className="mb-3">
+                    <div className="text-sm font-semibold text-slate-900">
+                      {l("Available actions", "Kullanilabilir aksiyonlar")}
+                    </div>
+                    <div className="text-xs text-slate-500">
+                      {l(
+                        "Only actions valid for the current lifecycle are enabled.",
+                        "Sadece mevcut yasam dongusune uygun aksiyonlar etkinlestirilir."
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {selectedTransferActions.map((action) => (
+                      <button
+                        key={`transfer-action-${action.key}`}
+                        type="button"
+                        className={action.className}
+                        disabled={actionLoading || !canUpsert || !action.enabled}
+                        onClick={() => void runTransferAction(action.key)}
+                      >
+                        {action.label}
+                      </button>
+                    ))}
+                  </div>
+                  {!canUpsert ? (
+                    <p className="mt-2 text-xs text-slate-500">
+                      {l("Missing permission: inventory.upsert", "Eksik yetki: inventory.upsert")}
+                    </p>
                   ) : null}
                 </div>
 

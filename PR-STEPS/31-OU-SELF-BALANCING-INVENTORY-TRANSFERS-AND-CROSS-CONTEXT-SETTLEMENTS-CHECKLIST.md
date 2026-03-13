@@ -95,7 +95,7 @@
 - [x] `PR-OU09` - Cross-context settlement posting split
 - [x] `PR-OU10` - Cross-context settlement reversal discipline
 - [x] `PR-OU11` - Cross-context settlement reports, drilldowns, and UI feedback
-- [ ] `PR-OU12` - Frontend finishing for transfers, inventory, and settlement visibility
+- [x] `PR-OU12` - Frontend finishing for transfers, inventory, and settlement visibility
 - [ ] `PR-OU13` - OpenAPI, release gates, and rollout docs
 
 ## PR-OU01 - OU-aware warehouse ownership foundation
@@ -847,38 +847,38 @@
 ### Checklist
 
 #### Inventory transfer UI
-- [ ] Finalize transfer list filters
-- [ ] Finalize transfer detail view
-- [ ] Finalize transfer route wiring in `App.jsx`
-- [ ] Finalize transfer sidebar entry wiring in `sidebarConfig.js`
-- [ ] Keep the transfer sidebar item marked `implemented: true` in `sidebarConfig.js`
-- [ ] Show source ownership context
-- [ ] Show target ownership context
-- [ ] Show approval / shipment / receipt / reversal status clearly
-- [ ] Show shipment journal reference
-- [ ] Show receipt journal reference
-- [ ] Show evidence panel
-- [ ] Show action buttons with correct state gating
+- [x] Finalize transfer list filters
+- [x] Finalize transfer detail view
+- [x] Finalize transfer route wiring in `App.jsx`
+- [x] Finalize transfer sidebar entry wiring in `sidebarConfig.js`
+- [x] Keep the transfer sidebar item marked `implemented: true` in `sidebarConfig.js`
+- [x] Show source ownership context
+- [x] Show target ownership context
+- [x] Show approval / shipment / receipt / reversal status clearly
+- [x] Show shipment journal reference
+- [x] Show receipt journal reference
+- [x] Show evidence panel
+- [x] Show action buttons with correct state gating
 
 #### Existing inventory pages
-- [ ] Show `INVENTORY_TRANSFER` source badge on movement pages
-- [ ] Show transfer reference on transfer-generated movements
-- [ ] Reduce confusion between manual / stock-link / transfer movement types
+- [x] Show `INVENTORY_TRANSFER` source badge on movement pages
+- [x] Show transfer reference on transfer-generated movements
+- [x] Reduce confusion between manual / stock-link / transfer movement types
 
 #### Item cards, settlement UI, and i18n
-- [ ] Finalize item-card transit account UI
-- [ ] Finalize settlement owner / collector context display
-- [ ] Add texts for ownership scope
-- [ ] Add texts for transfer lifecycle
-- [ ] Add texts for transfer evidence
-- [ ] Add texts for cross-context settlement warnings / errors
-- [ ] Keep transfer route/sidebar gating on existing `inventory.read` / `inventory.upsert` permission family
-- [ ] Finalize `messages.sidebar.byPath` TR/EN labels for the transfer route
+- [x] Finalize item-card transit account UI
+- [x] Finalize settlement owner / collector context display
+- [x] Add texts for ownership scope
+- [x] Add texts for transfer lifecycle
+- [x] Add texts for transfer evidence
+- [x] Add texts for cross-context settlement warnings / errors
+- [x] Keep transfer route/sidebar gating on existing `inventory.read` / `inventory.upsert` permission family
+- [x] Finalize `messages.sidebar.byPath` TR/EN labels for the transfer route
 
 ### Acceptance
-- [ ] UI fully supports warehouse ownership, transfers, evidence, and settlement context visibility
-- [ ] Transfer route/sidebar/messages wiring is aligned with repo standards
-- [ ] Operator-facing wording and visibility are aligned across inventory and settlement screens
+- [x] UI fully supports warehouse ownership, transfers, evidence, and settlement context visibility
+- [x] Transfer route/sidebar/messages wiring is aligned with repo standards
+- [x] Operator-facing wording and visibility are aligned across inventory and settlement screens
 
 ## PR-OU13 - OpenAPI, release gates, and rollout docs
 
@@ -974,7 +974,7 @@
 - [x] 18. Implement cross-context settlement posting split
 - [x] 19. Implement strict reversal dependency and explicit downstream linkage
 - [x] 20. Propagate settlement reports/drilldowns and operator feedback
-- [ ] 21. Finish transfer/inventory/settlement frontend polish
+- [x] 21. Finish transfer/inventory/settlement frontend polish
 - [ ] 22. Finish OpenAPI / release gates / docs
 
 ## Done definition
