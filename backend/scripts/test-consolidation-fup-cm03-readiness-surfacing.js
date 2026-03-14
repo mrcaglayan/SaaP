@@ -64,13 +64,13 @@ async function main() {
     "ConsolidationSetupPage must render canonical readiness setup card"
   );
 
-  const onboardingSource = await readFile(
-    path.resolve(root, "backend/src/routes/onboarding.js"),
+  const tenantReadinessSource = await readFile(
+    path.resolve(root, "backend/src/services/tenant-readiness.service.js"),
     "utf8"
   );
   assert(
-    onboardingSource.includes('key: "consolidationCanonicalMappingV1"') &&
-      onboardingSource.includes('key: "workflowCloseConsolidationV1"'),
+    tenantReadinessSource.includes('key: "consolidationCanonicalMappingV1"') &&
+      tenantReadinessSource.includes('key: "workflowCloseConsolidationV1"'),
     "onboarding readiness contract keys must remain stable"
   );
 
@@ -81,4 +81,3 @@ main().catch((error) => {
   console.error(error);
   process.exit(1);
 });
-
