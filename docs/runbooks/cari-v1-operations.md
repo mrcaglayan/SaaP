@@ -210,11 +210,18 @@ FX resolution baseline (exact + prior-date fallback):
 - Posting completion for different-context transfers depends on the right current-account setup:
   - `Central Due From OU` + `OU Due To Central` for `Central <-> OU`
   - partner-specific `Due From Partner OU` + `Due To Partner OU` mappings for `OU <-> OU`
-- `Kasa Islemleri` can now create the missing child accounts and save the required mappings inline during `Transfer Out`:
+- `Kasa Islemleri` can now run saved-config repair during `Transfer Out` using the saved current-account config:
   - `Center / Branch Current Accounts` card for `Central <-> OU`
   - `Branch Pair Current Accounts` card for `OU <-> OU`
+- Legacy parent-pick auto-provision endpoints were removed after the app-reset cleanup so operators use one canonical saved-config apply path instead of two competing provisioning models.
 - `Organization Management` remains the canonical setup screen for reviewing and editing those mappings outside the transfer flow.
-- `Cash Transit Transfers` still expects that setup to already exist; if receive/post fails there, return to `Kasa Islemleri` `Transfer Out` or use `Organization Management`.
+- `Cash Transit Transfers` still expects that setup to already exist; if receive/post fails there, return to `Kasa Islemleri` `Transfer Out` to run the saved current-account config repair or use `Organization Management`.
+
+### Current-account setup troubleshooting
+
+- `Saved config missing`: the legal entity still has no saved OU current-account parent selection. Save the config in `Organization Management` before retrying the transfer or settlement.
+- `Saved config exists but apply not run`: parents were saved, but the provisioning apply has not completed yet. Run `Repair missing only` or finish the bootstrap apply step.
+- `Saved config exists but mapping drift remains`: some central OU fields or partner-OU directions are still missing. Start with `Repair missing only`; keep manual Organization Management edit only for exception mappings that should not be reset to the shared saved-config pattern.
 
 ## Operational Troubleshooting
 

@@ -704,10 +704,14 @@ export default function CounterpartyForm({
 
         <div>
           <label className="block text-xs font-semibold uppercase tracking-wide text-slate-600">
-            Primary Operating Unit
+            Primary Operating Unit (default owner branch)
           </label>
+          <p className="mt-1 text-xs text-slate-500">
+            Select the branch that should be used by default as the owner context for this
+            customer/vendor card's documents and open items.
+          </p>
           <Combobox
-            className="mt-1"
+            className="mt-2"
             value={selectedPrimaryOperatingUnitId}
             options={operatingUnitLookupOptions}
             loading={operatingUnitsLoading}
@@ -734,8 +738,13 @@ export default function CounterpartyForm({
 
         <div className="md:col-span-2">
           <label className="block text-xs font-semibold uppercase tracking-wide text-slate-600">
-            Allowed Operating Units
+            Allowed Operating Units (branches allowed to own this card's activity)
           </label>
+          <p className="mt-1 text-xs text-slate-500">
+            Select the branches that are allowed to own this counterparty's invoices, bills, and
+            open items. This does not by itself choose which cash register or bank branch will
+            collect or pay.
+          </p>
           {!form.legalEntityId ? (
             <p className="mt-1 text-xs text-slate-500">Select legal entity first.</p>
           ) : operatingUnitOptions.length === 0 ? (

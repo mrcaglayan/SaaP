@@ -4851,37 +4851,49 @@ const spec = {
         },
       },
     },
-    "/api/v1/org/operating-units/central-current-accounts/auto-provision": {
+    "/api/v1/org/operating-unit-current-account-config": {
+      get: {
+        tags: ["Org"],
+        operationId: "listOperatingUnitCurrentAccountConfigs",
+        summary: "List saved legal-entity OU current-account configs",
+        parameters: [
+          queryParamInt("tenantId", false, "Tenant identifier"),
+          queryParamInt("legalEntityId", false, "Legal entity identifier"),
+        ],
+        responses: withStandardResponses(
+          "200",
+          "Operating unit current-account config list",
+          "#/components/schemas/OperatingUnitCurrentAccountConfigListResponse"
+        ),
+      },
       post: {
         tags: ["Org"],
-        operationId: "autoProvisionOperatingUnitCentralCurrentAccounts",
-        summary: "Create or reuse Central <-> Branch current child accounts for one operating unit",
-        description:
-          "Creates missing branch-specific child accounts under the selected parent accounts and updates the operating unit's Central Due From OU / OU Due To Central mapping.",
+        operationId: "upsertOperatingUnitCurrentAccountConfig",
+        summary: "Create or update saved legal-entity OU current-account config",
         requestBody: bodyFromRef(
-          "#/components/schemas/OperatingUnitCentralCurrentAccountAutoProvisionInput"
+          "#/components/schemas/OperatingUnitCurrentAccountConfigInput"
         ),
         responses: withStandardResponses(
           "201",
-          "Central current accounts provisioned",
-          "#/components/schemas/OperatingUnitCentralCurrentAccountAutoProvisionResponse"
+          "Operating unit current-account config saved",
+          "#/components/schemas/OperatingUnitCurrentAccountConfigResponse"
         ),
       },
     },
-    "/api/v1/org/operating-unit-partner-current-accounts/auto-provision": {
+    "/api/v1/org/operating-unit-current-account-config/apply": {
       post: {
         tags: ["Org"],
-        operationId: "autoProvisionOperatingUnitPartnerCurrentAccounts",
-        summary: "Create or reuse direct branch-pair current child accounts for both directions",
+        operationId: "applyOperatingUnitCurrentAccountConfig",
+        summary: "Apply saved legal-entity OU current-account config",
         description:
-          "Creates missing branch-specific Due From Partner OU / Due To Partner OU child accounts under the selected parents and saves both directional mappings for the branch pair.",
+          "Runs repair-missing-only provisioning from the saved legal-entity config for one legal entity or one selected operating unit.",
         requestBody: bodyFromRef(
-          "#/components/schemas/OperatingUnitPartnerCurrentAccountAutoProvisionInput"
+          "#/components/schemas/OperatingUnitCurrentAccountConfigApplyInput"
         ),
         responses: withStandardResponses(
           "201",
-          "Operating unit partner current accounts provisioned",
-          "#/components/schemas/OperatingUnitPartnerCurrentAccountAutoProvisionResponse"
+          "Operating unit current-account config apply summary",
+          "#/components/schemas/OperatingUnitCurrentAccountApplyResponse"
         ),
       },
     },
@@ -5912,8 +5924,31 @@ const spec = {
         operationId: "bootstrapCompany",
         summary:
           "Run company onboarding bootstrap flow (includes default Cari payment terms)",
-        requestBody: bodyFromRef("#/components/schemas/AnyObject"),
-        responses: withStandardResponses("201", "Company bootstrap result"),
+        requestBody: bodyFromRef(
+          "#/components/schemas/OnboardingCompanyBootstrapInput"
+        ),
+        responses: withStandardResponses(
+          "201",
+          "Company bootstrap result",
+          "#/components/schemas/OnboardingCompanyBootstrapResponse"
+        ),
+      },
+    },
+    "/api/v1/onboarding/company-bootstrap/current-account-eligibility-preview": {
+      post: {
+        tags: ["Onboarding"],
+        operationId: "previewCompanyBootstrapCurrentAccountEligibility",
+        summary:
+          "Preview OU current-account setup recommendation for onboarding draft legal entities",
+        requestBody: bodyFromRef(
+          "#/components/schemas/OnboardingCompanyBootstrapCurrentAccountEligibilityPreviewInput",
+          false
+        ),
+        responses: withStandardResponses(
+          "200",
+          "Current-account eligibility preview",
+          "#/components/schemas/OnboardingCompanyBootstrapCurrentAccountEligibilityPreviewResponse"
+        ),
       },
     },
     "/api/v1/onboarding/readiness": {
@@ -5932,6 +5967,30 @@ const spec = {
           "200",
           "Tenant readiness snapshot",
           "#/components/schemas/TenantReadinessResponse"
+        ),
+      },
+    },
+    "/api/v1/onboarding/module-readiness": {
+      get: {
+        tags: ["Onboarding"],
+        operationId: "getModuleReadiness",
+        summary: "Get module readiness snapshot by legal entity",
+        parameters: [
+          queryParamInt(
+            "tenantId",
+            false,
+            "Tenant identifier; optional if available in JWT"
+          ),
+          queryParamInt(
+            "legalEntityId",
+            false,
+            "Optional legal entity filter"
+          ),
+        ],
+        responses: withStandardResponses(
+          "200",
+          "Module readiness snapshot",
+          "#/components/schemas/ModuleReadinessResponse"
         ),
       },
     },
@@ -7854,8 +7913,76 @@ const spec = {
           minimum: nonNegativeInt,
           count: nonNegativeInt,
           ready: { type: "boolean" },
+          details: {
+            nullable: true,
+            oneOf: [
+              { $ref: "#/components/schemas/TenantReadinessWorkflowDetails" },
+              {
+                $ref: "#/components/schemas/TenantReadinessOperatingUnitCurrentAccountDetails",
+              },
+              {
+                type: "object",
+                additionalProperties: true,
+              },
+            ],
+          },
         },
-        required: ["key", "label", "minimum", "count", "ready"],
+        required: ["key", "label", "minimum", "count", "ready", "details"],
+      },
+      TenantReadinessWorkflowDetails: {
+        type: "object",
+        properties: {
+          readyEntityCount: nonNegativeInt,
+          totalEntityCount: nonNegativeInt,
+          missingLegalEntityIds: {
+            type: "array",
+            items: intId,
+          },
+        },
+        required: ["readyEntityCount", "totalEntityCount", "missingLegalEntityIds"],
+      },
+      TenantReadinessOperatingUnitCurrentAccountBlockingRow: {
+        type: "object",
+        properties: {
+          legalEntityId: intId,
+          legalEntityCode: { type: "string" },
+          legalEntityName: { type: "string" },
+          blockerCode: { type: "string", nullable: true },
+          setupPath: { type: "string", nullable: true },
+          effectiveActiveOperatingUnitCount: nonNegativeInt,
+          missingCentralOperatingUnitCount: nonNegativeInt,
+          missingPartnerDirectionCount: nonNegativeInt,
+        },
+        required: [
+          "legalEntityId",
+          "legalEntityCode",
+          "legalEntityName",
+          "blockerCode",
+          "setupPath",
+          "effectiveActiveOperatingUnitCount",
+          "missingCentralOperatingUnitCount",
+          "missingPartnerDirectionCount",
+        ],
+      },
+      TenantReadinessOperatingUnitCurrentAccountDetails: {
+        type: "object",
+        properties: {
+          readyEntityCount: nonNegativeInt,
+          totalEntityCount: nonNegativeInt,
+          applicableEntityCount: nonNegativeInt,
+          blockingRows: {
+            type: "array",
+            items: {
+              $ref: "#/components/schemas/TenantReadinessOperatingUnitCurrentAccountBlockingRow",
+            },
+          },
+        },
+        required: [
+          "readyEntityCount",
+          "totalEntityCount",
+          "applicableEntityCount",
+          "blockingRows",
+        ],
       },
       TenantReadinessCounts: {
         type: "object",
@@ -7865,8 +7992,13 @@ const spec = {
           fiscalCalendars: nonNegativeInt,
           fiscalPeriods: nonNegativeInt,
           books: nonNegativeInt,
+          openBookPeriods: nonNegativeInt,
           chartsOfAccounts: nonNegativeInt,
           accounts: nonNegativeInt,
+          shareholders: nonNegativeInt,
+          shareholderCommitmentConfigs: nonNegativeInt,
+          operatingUnitCurrentAccounts: nonNegativeInt,
+          workflowCloseConsolidationV1: nonNegativeInt,
         },
         required: [
           "groupCompanies",
@@ -7874,8 +8006,13 @@ const spec = {
           "fiscalCalendars",
           "fiscalPeriods",
           "books",
+          "openBookPeriods",
           "chartsOfAccounts",
           "accounts",
+          "shareholders",
+          "shareholderCommitmentConfigs",
+          "operatingUnitCurrentAccounts",
+          "workflowCloseConsolidationV1",
         ],
       },
       TenantReadinessResponse: {
@@ -8033,6 +8170,339 @@ const spec = {
           "createdCount",
           "skippedCount",
           "perLegalEntity",
+        ],
+      },
+      OnboardingCompanyBootstrapCurrentAccountConfigInput: {
+        type: "object",
+        properties: {
+          skipForNow: { type: "boolean", nullable: true },
+          dueFromParentAccountCode: { type: "string", nullable: true },
+          dueToParentAccountCode: { type: "string", nullable: true },
+        },
+      },
+      OnboardingCompanyBootstrapBranchInput: {
+        type: "object",
+        additionalProperties: true,
+        properties: {
+          code: shortText,
+          name: shortText,
+          status: {
+            type: "string",
+            enum: ["ACTIVE", "INACTIVE"],
+            nullable: true,
+          },
+        },
+      },
+      OnboardingCompanyBootstrapLegalEntityInput: {
+        type: "object",
+        additionalProperties: true,
+        properties: {
+          code: shortText,
+          name: shortText,
+          functionalCurrencyCode: currencyCode,
+          currentAccountConfig: {
+            $ref: "#/components/schemas/OnboardingCompanyBootstrapCurrentAccountConfigInput",
+          },
+          branches: {
+            type: "array",
+            items: {
+              $ref: "#/components/schemas/OnboardingCompanyBootstrapBranchInput",
+            },
+          },
+          policyPackId: { ...intId, nullable: true },
+        },
+        required: ["code", "name", "functionalCurrencyCode"],
+      },
+      OnboardingCompanyBootstrapInput: {
+        type: "object",
+        additionalProperties: true,
+        properties: {
+          groupCompany: {
+            $ref: "#/components/schemas/GroupCompanyInput",
+          },
+          groupCoa: {
+            type: "object",
+            additionalProperties: true,
+          },
+          fiscalCalendar: {
+            $ref: "#/components/schemas/FiscalCalendarInput",
+          },
+          fiscalYear: { type: "integer", minimum: 1 },
+          legalEntities: {
+            type: "array",
+            items: {
+              $ref: "#/components/schemas/OnboardingCompanyBootstrapLegalEntityInput",
+            },
+          },
+        },
+        required: ["groupCompany", "fiscalCalendar", "fiscalYear", "legalEntities"],
+      },
+      OnboardingCompanyBootstrapCurrentAccountEligibilityPreviewLegalEntityInput: {
+        type: "object",
+        additionalProperties: true,
+        properties: {
+          code: shortText,
+          name: shortText,
+          branches: {
+            type: "array",
+            items: {
+              $ref: "#/components/schemas/OnboardingCompanyBootstrapBranchInput",
+            },
+          },
+        },
+      },
+      OnboardingCompanyBootstrapCurrentAccountEligibilityPreviewInput: {
+        type: "object",
+        properties: {
+          legalEntities: {
+            type: "array",
+            items: {
+              $ref: "#/components/schemas/OnboardingCompanyBootstrapCurrentAccountEligibilityPreviewLegalEntityInput",
+            },
+          },
+        },
+      },
+      OperatingUnitCurrentAccountEligibilityPreviewOperatingUnit: {
+        type: "object",
+        properties: {
+          code: { type: "string" },
+          name: { type: "string" },
+          status: { type: "string" },
+        },
+        required: ["code", "name", "status"],
+      },
+      OnboardingCompanyBootstrapCurrentAccountEligibilityPreviewRow: {
+        type: "object",
+        properties: {
+          index: nonNegativeInt,
+          legalEntityCode: { type: "string" },
+          legalEntityName: { type: "string" },
+          effectiveActiveOperatingUnitCount: nonNegativeInt,
+          currentAccountSetupRecommended: { type: "boolean" },
+          recommendationCode: { type: "string" },
+          eligibleOperatingUnits: {
+            type: "array",
+            items: {
+              $ref: "#/components/schemas/OperatingUnitCurrentAccountEligibilityPreviewOperatingUnit",
+            },
+          },
+        },
+        required: [
+          "index",
+          "legalEntityCode",
+          "legalEntityName",
+          "effectiveActiveOperatingUnitCount",
+          "currentAccountSetupRecommended",
+          "recommendationCode",
+          "eligibleOperatingUnits",
+        ],
+      },
+      OnboardingCompanyBootstrapCurrentAccountEligibilityPreviewResponse: {
+        type: "object",
+        properties: {
+          ok: { type: "boolean", enum: [true] },
+          rows: {
+            type: "array",
+            items: {
+              $ref: "#/components/schemas/OnboardingCompanyBootstrapCurrentAccountEligibilityPreviewRow",
+            },
+          },
+        },
+        required: ["ok", "rows"],
+      },
+      OnboardingCompanyBootstrapCurrentAccountEligibilitySummary: {
+        type: "object",
+        properties: {
+          effectiveActiveOperatingUnitCount: nonNegativeInt,
+          currentAccountSetupRecommended: { type: "boolean" },
+          recommendationCode: { type: "string" },
+          eligibleOperatingUnits: {
+            type: "array",
+            items: {
+              $ref: "#/components/schemas/OperatingUnitCurrentAccountEligibilityPreviewOperatingUnit",
+            },
+          },
+        },
+        required: [
+          "effectiveActiveOperatingUnitCount",
+          "currentAccountSetupRecommended",
+          "recommendationCode",
+          "eligibleOperatingUnits",
+        ],
+      },
+      OnboardingCompanyBootstrapCurrentAccountSavedConfig: {
+        type: "object",
+        properties: {
+          dueFromParentAccountCode: { type: "string" },
+          dueToParentAccountCode: { type: "string" },
+          autoProvisionOnOperatingUnitCreate: { type: "boolean" },
+          lastAppliedAt: { type: "string", format: "date-time", nullable: true },
+          updatedAt: { type: "string", format: "date-time", nullable: true },
+        },
+        required: [
+          "dueFromParentAccountCode",
+          "dueToParentAccountCode",
+          "autoProvisionOnOperatingUnitCreate",
+          "lastAppliedAt",
+          "updatedAt",
+        ],
+      },
+      OnboardingCompanyBootstrapCurrentAccountProvisioningSummary: {
+        type: "object",
+        properties: {
+          createdAccountCount: nonNegativeInt,
+          reusedAccountCount: nonNegativeInt,
+          updatedOperatingUnitCount: nonNegativeInt,
+          updatedPartnerMappingCount: nonNegativeInt,
+          warningCount: nonNegativeInt,
+          lastAppliedAt: { type: "string", format: "date-time", nullable: true },
+        },
+        required: [
+          "createdAccountCount",
+          "reusedAccountCount",
+          "updatedOperatingUnitCount",
+          "updatedPartnerMappingCount",
+          "warningCount",
+          "lastAppliedAt",
+        ],
+      },
+      OnboardingCompanyBootstrapCurrentAccountWarning: {
+        type: "object",
+        properties: {
+          code: { type: "string" },
+          severity: { type: "string", enum: ["info", "warning", "error"] },
+          message: { type: "string" },
+        },
+        required: ["code", "severity", "message"],
+      },
+      OnboardingCompanyBootstrapCurrentAccountReadinessWarning: {
+        type: "object",
+        properties: {
+          legalEntityCode: { type: "string" },
+          legalEntityId: intId,
+          code: { type: "string" },
+          severity: { type: "string", enum: ["info", "warning", "error"] },
+          message: { type: "string" },
+        },
+        required: ["legalEntityCode", "legalEntityId", "code", "severity", "message"],
+      },
+      OnboardingCompanyBootstrapCurrentAccountSetupResult: {
+        type: "object",
+        properties: {
+          configured: { type: "boolean" },
+          skipped: { type: "boolean" },
+          eligibility: {
+            $ref: "#/components/schemas/OnboardingCompanyBootstrapCurrentAccountEligibilitySummary",
+          },
+          savedConfig: {
+            allOf: [
+              {
+                $ref: "#/components/schemas/OnboardingCompanyBootstrapCurrentAccountSavedConfig",
+              },
+            ],
+            nullable: true,
+          },
+          provisioningSummary: {
+            allOf: [
+              {
+                $ref: "#/components/schemas/OnboardingCompanyBootstrapCurrentAccountProvisioningSummary",
+              },
+            ],
+            nullable: true,
+          },
+          warning: {
+            allOf: [
+              {
+                $ref: "#/components/schemas/OnboardingCompanyBootstrapCurrentAccountWarning",
+              },
+            ],
+            nullable: true,
+          },
+        },
+        required: [
+          "configured",
+          "skipped",
+          "eligibility",
+          "savedConfig",
+          "provisioningSummary",
+          "warning",
+        ],
+      },
+      OnboardingCompanyBootstrapLegalEntityResult: {
+        type: "object",
+        additionalProperties: true,
+        properties: {
+          code: { type: "string" },
+          legalEntityId: intId,
+          coaCode: { type: "string" },
+          coaId: intId,
+          branchCount: nonNegativeInt,
+          currentAccountSetup: {
+            $ref: "#/components/schemas/OnboardingCompanyBootstrapCurrentAccountSetupResult",
+          },
+        },
+        required: [
+          "code",
+          "legalEntityId",
+          "coaCode",
+          "coaId",
+          "branchCount",
+          "currentAccountSetup",
+        ],
+      },
+      OnboardingCompanyBootstrapPaymentTermsSummary: {
+        type: "object",
+        properties: {
+          defaultsUsed: { type: "boolean" },
+          templateCount: nonNegativeInt,
+          createdCount: nonNegativeInt,
+          skippedCount: nonNegativeInt,
+          perLegalEntity: {
+            type: "array",
+            items: {
+              $ref: "#/components/schemas/OnboardingPaymentTermsBootstrapEntityResult",
+            },
+          },
+        },
+        required: [
+          "defaultsUsed",
+          "templateCount",
+          "createdCount",
+          "skippedCount",
+          "perLegalEntity",
+        ],
+      },
+      OnboardingCompanyBootstrapResponse: {
+        type: "object",
+        properties: {
+          ok: { type: "boolean", enum: [true] },
+          groupCompanyId: intId,
+          calendarId: intId,
+          periodsGenerated: nonNegativeInt,
+          legalEntities: {
+            type: "array",
+            items: {
+              $ref: "#/components/schemas/OnboardingCompanyBootstrapLegalEntityResult",
+            },
+          },
+          currentAccountReadinessWarnings: {
+            type: "array",
+            items: {
+              $ref: "#/components/schemas/OnboardingCompanyBootstrapCurrentAccountReadinessWarning",
+            },
+          },
+          paymentTerms: {
+            $ref: "#/components/schemas/OnboardingCompanyBootstrapPaymentTermsSummary",
+          },
+        },
+        required: [
+          "ok",
+          "groupCompanyId",
+          "calendarId",
+          "periodsGenerated",
+          "legalEntities",
+          "currentAccountReadinessWarnings",
+          "paymentTerms",
         ],
       },
       TrialBalanceRow: {
@@ -8470,6 +8940,8 @@ const spec = {
             type: "string",
             enum: [
               "CENTRAL_DUE_FROM",
+              "CENTRAL_DUE_TO",
+              "OU_DUE_FROM_CENTRAL",
               "OU_DUE_TO_CENTRAL",
               "DUE_FROM",
               "DUE_TO",
@@ -8479,95 +8951,6 @@ const spec = {
           partnerOperatingUnitId: { ...intId, nullable: true },
         },
         required: ["id", "code", "name", "role", "operatingUnitId"],
-      },
-      OperatingUnitCentralCurrentAccountState: {
-        type: "object",
-        properties: {
-          id: intId,
-          code: { type: "string" },
-          name: { type: "string" },
-          centralDueFromAccountId: intId,
-          centralDueFromAccountCode: { type: "string" },
-          centralDueFromAccountName: { type: "string" },
-          ouDueToCentralAccountId: intId,
-          ouDueToCentralAccountCode: { type: "string" },
-          ouDueToCentralAccountName: { type: "string" },
-          capitalSelfBalancingReady: { type: "boolean" },
-        },
-        required: [
-          "id",
-          "code",
-          "name",
-          "centralDueFromAccountId",
-          "centralDueFromAccountCode",
-          "centralDueFromAccountName",
-          "ouDueToCentralAccountId",
-          "ouDueToCentralAccountCode",
-          "ouDueToCentralAccountName",
-          "capitalSelfBalancingReady",
-        ],
-      },
-      OperatingUnitCentralCurrentAccountAutoProvisionInput: {
-        type: "object",
-        properties: {
-          tenantId: { ...intId, nullable: true },
-          legalEntityId: intId,
-          operatingUnitId: intId,
-          centralDueFromParentAccountId: intId,
-          ouDueToCentralParentAccountId: intId,
-        },
-        required: [
-          "legalEntityId",
-          "operatingUnitId",
-          "centralDueFromParentAccountId",
-          "ouDueToCentralParentAccountId",
-        ],
-      },
-      OperatingUnitCentralCurrentAccountAutoProvisionResponse: {
-        type: "object",
-        properties: {
-          ok: { type: "boolean", enum: [true] },
-          legalEntityId: intId,
-          operatingUnitId: intId,
-          centralDueFromParentAccountId: intId,
-          ouDueToCentralParentAccountId: intId,
-          createdAccounts: {
-            type: "array",
-            items: {
-              $ref: "#/components/schemas/OperatingUnitCurrentProvisionedAccount",
-            },
-          },
-          operatingUnit: {
-            $ref: "#/components/schemas/OperatingUnitCentralCurrentAccountState",
-          },
-        },
-        required: [
-          "ok",
-          "legalEntityId",
-          "operatingUnitId",
-          "centralDueFromParentAccountId",
-          "ouDueToCentralParentAccountId",
-          "createdAccounts",
-          "operatingUnit",
-        ],
-      },
-      OperatingUnitPartnerCurrentAccountAutoProvisionInput: {
-        type: "object",
-        properties: {
-          tenantId: { ...intId, nullable: true },
-          legalEntityId: intId,
-          operatingUnitId: intId,
-          partnerOperatingUnitId: intId,
-          dueFromParentAccountId: intId,
-          dueToParentAccountId: intId,
-        },
-        required: [
-          "legalEntityId",
-          "operatingUnitId",
-          "partnerOperatingUnitId",
-          "dueFromParentAccountId",
-          "dueToParentAccountId",
-        ],
       },
       OperatingUnitPartnerCurrentAccountMappingResult: {
         type: "object",
@@ -8582,6 +8965,7 @@ const spec = {
           dueToAccountCode: { type: "string" },
           dueToAccountName: { type: "string" },
           created: { type: "boolean" },
+          updated: { type: "boolean" },
         },
         required: [
           "id",
@@ -8594,40 +8978,340 @@ const spec = {
           "dueToAccountCode",
           "dueToAccountName",
           "created",
+          "updated",
         ],
       },
-      OperatingUnitPartnerCurrentAccountAutoProvisionResponse: {
+      OperatingUnitCurrentAccountApplyOperatingUnitResult: {
+        type: "object",
+        properties: {
+          id: intId,
+          code: { type: "string" },
+          name: { type: "string" },
+          centralDueFromAccountId: intId,
+          centralDueFromAccountCode: { type: "string" },
+          centralDueFromAccountName: { type: "string" },
+          centralDueToAccountId: intId,
+          centralDueToAccountCode: { type: "string" },
+          centralDueToAccountName: { type: "string" },
+          ouDueFromCentralAccountId: intId,
+          ouDueFromCentralAccountCode: { type: "string" },
+          ouDueFromCentralAccountName: { type: "string" },
+          ouDueToCentralAccountId: intId,
+          ouDueToCentralAccountCode: { type: "string" },
+          ouDueToCentralAccountName: { type: "string" },
+          capitalSelfBalancingReady: { type: "boolean" },
+          currentAccountProvisioningReady: { type: "boolean" },
+        },
+        required: [
+          "id",
+          "code",
+          "name",
+          "centralDueFromAccountId",
+          "centralDueFromAccountCode",
+          "centralDueFromAccountName",
+          "centralDueToAccountId",
+          "centralDueToAccountCode",
+          "centralDueToAccountName",
+          "ouDueFromCentralAccountId",
+          "ouDueFromCentralAccountCode",
+          "ouDueFromCentralAccountName",
+          "ouDueToCentralAccountId",
+          "ouDueToCentralAccountCode",
+          "ouDueToCentralAccountName",
+          "capitalSelfBalancingReady",
+          "currentAccountProvisioningReady",
+        ],
+      },
+      OperatingUnitCurrentAccountConfigRow: {
+        type: "object",
+        properties: {
+          legal_entity_id: { ...intId, nullable: true },
+          legal_entity_code: { type: "string", nullable: true },
+          legal_entity_name: { type: "string", nullable: true },
+          operating_unit_current_account_config_id: { ...intId, nullable: true },
+          due_from_parent_account_id: { ...intId, nullable: true },
+          due_from_parent_account_code: { type: "string", nullable: true },
+          due_from_parent_account_name: { type: "string", nullable: true },
+          due_to_parent_account_id: { ...intId, nullable: true },
+          due_to_parent_account_code: { type: "string", nullable: true },
+          due_to_parent_account_name: { type: "string", nullable: true },
+          auto_provision_on_operating_unit_create: { type: "boolean", nullable: true },
+          last_applied_at: { type: "string", format: "date-time", nullable: true },
+          created_at: { type: "string", format: "date-time", nullable: true },
+          updated_at: { type: "string", format: "date-time", nullable: true },
+        },
+      },
+      OperatingUnitCurrentAccountConfigListResponse: {
+        type: "object",
+        properties: {
+          tenantId: intId,
+          rows: {
+            type: "array",
+            items: {
+              $ref: "#/components/schemas/OperatingUnitCurrentAccountConfigRow",
+            },
+          },
+        },
+        required: ["tenantId", "rows"],
+      },
+      OperatingUnitCurrentAccountConfigInput: {
+        type: "object",
+        properties: {
+          tenantId: { ...intId, nullable: true },
+          legalEntityId: intId,
+          dueFromParentAccountId: intId,
+          dueToParentAccountId: intId,
+          autoProvisionOnOperatingUnitCreate: { type: "boolean", nullable: true },
+        },
+        required: ["legalEntityId", "dueFromParentAccountId", "dueToParentAccountId"],
+      },
+      OperatingUnitCurrentAccountConfigResponse: {
+        type: "object",
+        properties: {
+          ok: { type: "boolean", enum: [true] },
+          row: {
+            $ref: "#/components/schemas/OperatingUnitCurrentAccountConfigRow",
+          },
+        },
+        required: ["ok", "row"],
+      },
+      OperatingUnitCurrentAccountConfigApplyInput: {
+        type: "object",
+        properties: {
+          tenantId: { ...intId, nullable: true },
+          legalEntityId: intId,
+          operatingUnitId: intId,
+          repairMissingOnly: { type: "boolean", nullable: true },
+        },
+        required: ["legalEntityId"],
+      },
+      OperatingUnitCurrentAccountProvisionWarning: {
+        type: "object",
+        properties: {
+          code: { type: "string" },
+          message: { type: "string" },
+        },
+        additionalProperties: true,
+        required: ["code", "message"],
+      },
+      OperatingUnitCurrentAccountApplyResponse: {
         type: "object",
         properties: {
           ok: { type: "boolean", enum: [true] },
           legalEntityId: intId,
-          operatingUnitId: intId,
-          partnerOperatingUnitId: intId,
+          operatingUnitId: { ...intId, nullable: true },
           dueFromParentAccountId: intId,
           dueToParentAccountId: intId,
+          repairMissingOnly: { type: "boolean" },
           createdAccounts: {
             type: "array",
             items: {
               $ref: "#/components/schemas/OperatingUnitCurrentProvisionedAccount",
             },
           },
-          mappings: {
+          reusedAccounts: {
+            type: "array",
+            items: {
+              $ref: "#/components/schemas/OperatingUnitCurrentProvisionedAccount",
+            },
+          },
+          updatedOperatingUnits: {
+            type: "array",
+            items: {
+              $ref: "#/components/schemas/OperatingUnitCurrentAccountApplyOperatingUnitResult",
+            },
+          },
+          updatedPartnerMappings: {
             type: "array",
             items: {
               $ref: "#/components/schemas/OperatingUnitPartnerCurrentAccountMappingResult",
             },
           },
+          partnerMappings: {
+            type: "array",
+            items: {
+              $ref: "#/components/schemas/OperatingUnitPartnerCurrentAccountMappingResult",
+            },
+          },
+          warnings: {
+            type: "array",
+            items: {
+              $ref: "#/components/schemas/OperatingUnitCurrentAccountProvisionWarning",
+            },
+          },
+          lastAppliedAt: { type: "string", format: "date-time", nullable: true },
         },
         required: [
           "ok",
           "legalEntityId",
           "operatingUnitId",
-          "partnerOperatingUnitId",
           "dueFromParentAccountId",
           "dueToParentAccountId",
+          "repairMissingOnly",
           "createdAccounts",
-          "mappings",
+          "reusedAccounts",
+          "updatedOperatingUnits",
+          "updatedPartnerMappings",
+          "partnerMappings",
+          "warnings",
+          "lastAppliedAt",
         ],
+      },
+      OperatingUnitCurrentAccountReadinessOperatingUnit: {
+        type: "object",
+        properties: {
+          id: intId,
+          code: { type: "string" },
+          name: { type: "string" },
+          label: { type: "string" },
+          status: { type: "string", nullable: true },
+        },
+        required: ["id", "code", "name", "label"],
+      },
+      OperatingUnitCurrentAccountReadinessDirection: {
+        type: "object",
+        properties: {
+          operatingUnitId: intId,
+          operatingUnitCode: { type: "string" },
+          operatingUnitName: { type: "string" },
+          partnerOperatingUnitId: intId,
+          partnerOperatingUnitCode: { type: "string" },
+          partnerOperatingUnitName: { type: "string" },
+        },
+        required: [
+          "operatingUnitId",
+          "operatingUnitCode",
+          "operatingUnitName",
+          "partnerOperatingUnitId",
+          "partnerOperatingUnitCode",
+          "partnerOperatingUnitName",
+        ],
+      },
+      OperatingUnitCurrentAccountReadinessRow: {
+        type: "object",
+        properties: {
+          legalEntityId: intId,
+          legalEntityCode: { type: "string" },
+          legalEntityName: { type: "string" },
+          ready: { type: "boolean" },
+          applicable: { type: "boolean" },
+          blockerCode: { type: "string", nullable: true },
+          setupPath: { type: "string", nullable: true },
+          effectiveActiveOperatingUnitCount: nonNegativeInt,
+          currentAccountSetupRecommended: { type: "boolean" },
+          recommendationCode: { type: "string", nullable: true },
+          configPresent: { type: "boolean" },
+          configApplied: { type: "boolean" },
+          autoProvisionOnOperatingUnitCreate: { type: "boolean" },
+          lastAppliedAt: { type: "string", format: "date-time", nullable: true },
+          configChangedSinceLastApply: { type: "boolean" },
+          eligibleOperatingUnits: {
+            type: "array",
+            items: {
+              $ref: "#/components/schemas/OperatingUnitCurrentAccountReadinessOperatingUnit",
+            },
+          },
+          missingCentralOperatingUnits: {
+            type: "array",
+            items: {
+              $ref: "#/components/schemas/OperatingUnitCurrentAccountReadinessOperatingUnit",
+            },
+          },
+          expectedPartnerDirectionCount: nonNegativeInt,
+          missingPartnerDirectionCount: nonNegativeInt,
+          missingPartnerDirections: {
+            type: "array",
+            items: {
+              $ref: "#/components/schemas/OperatingUnitCurrentAccountReadinessDirection",
+            },
+          },
+        },
+        required: [
+          "legalEntityId",
+          "legalEntityCode",
+          "legalEntityName",
+          "ready",
+          "applicable",
+          "blockerCode",
+          "setupPath",
+          "effectiveActiveOperatingUnitCount",
+          "currentAccountSetupRecommended",
+          "recommendationCode",
+          "configPresent",
+          "configApplied",
+          "autoProvisionOnOperatingUnitCreate",
+          "lastAppliedAt",
+          "configChangedSinceLastApply",
+          "eligibleOperatingUnits",
+          "missingCentralOperatingUnits",
+          "expectedPartnerDirectionCount",
+          "missingPartnerDirectionCount",
+          "missingPartnerDirections",
+        ],
+      },
+      ModuleReadinessBucket: {
+        type: "object",
+        properties: {
+          byLegalEntity: {
+            type: "array",
+            items: {
+              type: "object",
+              additionalProperties: true,
+            },
+          },
+        },
+        required: ["byLegalEntity"],
+      },
+      OperatingUnitCurrentAccountModuleReadinessBucket: {
+        type: "object",
+        properties: {
+          byLegalEntity: {
+            type: "array",
+            items: {
+              $ref: "#/components/schemas/OperatingUnitCurrentAccountReadinessRow",
+            },
+          },
+        },
+        required: ["byLegalEntity"],
+      },
+      ModuleReadinessResponse: {
+        type: "object",
+        properties: {
+          tenantId: intId,
+          legalEntityId: { ...intId, nullable: true },
+          modules: {
+            type: "object",
+            properties: {
+              cariPosting: {
+                $ref: "#/components/schemas/ModuleReadinessBucket",
+              },
+              shareholderCommitment: {
+                $ref: "#/components/schemas/ModuleReadinessBucket",
+              },
+              cashClearing: {
+                $ref: "#/components/schemas/ModuleReadinessBucket",
+              },
+              bankControlParent: {
+                $ref: "#/components/schemas/ModuleReadinessBucket",
+              },
+              operatingUnitCurrentAccounts: {
+                $ref: "#/components/schemas/OperatingUnitCurrentAccountModuleReadinessBucket",
+              },
+              closeConsolidationWorkflow: {
+                $ref: "#/components/schemas/ModuleReadinessBucket",
+              },
+            },
+            required: [
+              "cariPosting",
+              "shareholderCommitment",
+              "cashClearing",
+              "bankControlParent",
+              "operatingUnitCurrentAccounts",
+              "closeConsolidationWorkflow",
+            ],
+          },
+        },
+        required: ["tenantId", "legalEntityId", "modules"],
       },
       FiscalCalendarInput: {
         type: "object",

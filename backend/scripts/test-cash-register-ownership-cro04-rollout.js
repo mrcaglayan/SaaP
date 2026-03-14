@@ -118,6 +118,12 @@ async function main() {
   const transitInitiateOp =
     spec?.paths?.["/api/v1/cash/transactions/transit/initiate"]?.post;
   const operatingUnitListOp = spec?.paths?.["/api/v1/org/operating-units"]?.get;
+  const currentAccountConfigListOp =
+    spec?.paths?.["/api/v1/org/operating-unit-current-account-config"]?.get;
+  const currentAccountConfigUpsertOp =
+    spec?.paths?.["/api/v1/org/operating-unit-current-account-config"]?.post;
+  const currentAccountConfigApplyOp =
+    spec?.paths?.["/api/v1/org/operating-unit-current-account-config/apply"]?.post;
   const partnerCurrentListOp =
     spec?.paths?.["/api/v1/org/operating-unit-partner-current-accounts"]?.get;
   const partnerCurrentUpsertOp =
@@ -189,12 +195,24 @@ async function main() {
     "OpenAPI missing POST /api/v1/org/operating-unit-partner-current-accounts"
   );
   assert(
-    centralCurrentAutoProvisionOp,
-    "OpenAPI missing POST /api/v1/org/operating-units/central-current-accounts/auto-provision"
+    currentAccountConfigListOp,
+    "OpenAPI missing GET /api/v1/org/operating-unit-current-account-config"
   );
   assert(
-    partnerCurrentAutoProvisionOp,
-    "OpenAPI missing POST /api/v1/org/operating-unit-partner-current-accounts/auto-provision"
+    currentAccountConfigUpsertOp,
+    "OpenAPI missing POST /api/v1/org/operating-unit-current-account-config"
+  );
+  assert(
+    currentAccountConfigApplyOp,
+    "OpenAPI missing POST /api/v1/org/operating-unit-current-account-config/apply"
+  );
+  assert(
+    !centralCurrentAutoProvisionOp,
+    "OpenAPI should remove legacy POST /api/v1/org/operating-units/central-current-accounts/auto-provision"
+  );
+  assert(
+    !partnerCurrentAutoProvisionOp,
+    "OpenAPI should remove legacy POST /api/v1/org/operating-unit-partner-current-accounts/auto-provision"
   );
 
   assert(
@@ -328,24 +346,29 @@ async function main() {
     "Partner current-account upsert request should use OperatingUnitPartnerCurrentAccountInput"
   );
   assert(
-    getRequestBodyRef(centralCurrentAutoProvisionOp) ===
-      "#/components/schemas/OperatingUnitCentralCurrentAccountAutoProvisionInput",
-    "Central current-account auto-provision request should use OperatingUnitCentralCurrentAccountAutoProvisionInput"
+    getSchemaRef(currentAccountConfigListOp) ===
+      "#/components/schemas/OperatingUnitCurrentAccountConfigListResponse",
+    "Current-account config list response should use OperatingUnitCurrentAccountConfigListResponse"
   );
   assert(
-    getAnySchemaRef(centralCurrentAutoProvisionOp, ["201"]) ===
-      "#/components/schemas/OperatingUnitCentralCurrentAccountAutoProvisionResponse",
-    "Central current-account auto-provision response should use OperatingUnitCentralCurrentAccountAutoProvisionResponse"
+    getRequestBodyRef(currentAccountConfigUpsertOp) ===
+      "#/components/schemas/OperatingUnitCurrentAccountConfigInput",
+    "Current-account config upsert request should use OperatingUnitCurrentAccountConfigInput"
   );
   assert(
-    getRequestBodyRef(partnerCurrentAutoProvisionOp) ===
-      "#/components/schemas/OperatingUnitPartnerCurrentAccountAutoProvisionInput",
-    "Partner current-account auto-provision request should use OperatingUnitPartnerCurrentAccountAutoProvisionInput"
+    getAnySchemaRef(currentAccountConfigUpsertOp, ["201"]) ===
+      "#/components/schemas/OperatingUnitCurrentAccountConfigResponse",
+    "Current-account config upsert response should use OperatingUnitCurrentAccountConfigResponse"
   );
   assert(
-    getAnySchemaRef(partnerCurrentAutoProvisionOp, ["201"]) ===
-      "#/components/schemas/OperatingUnitPartnerCurrentAccountAutoProvisionResponse",
-    "Partner current-account auto-provision response should use OperatingUnitPartnerCurrentAccountAutoProvisionResponse"
+    getRequestBodyRef(currentAccountConfigApplyOp) ===
+      "#/components/schemas/OperatingUnitCurrentAccountConfigApplyInput",
+    "Current-account config apply request should use OperatingUnitCurrentAccountConfigApplyInput"
+  );
+  assert(
+    getAnySchemaRef(currentAccountConfigApplyOp, ["201"]) ===
+      "#/components/schemas/OperatingUnitCurrentAccountApplyResponse",
+    "Current-account config apply response should use OperatingUnitCurrentAccountApplyResponse"
   );
   assert(
     String(transitInitiateOp.summary || "").includes("different operating-unit contexts"),
@@ -519,6 +542,7 @@ async function main() {
     "`Transfer Out`",
     "Center / Branch Current Accounts",
     "Branch Pair Current Accounts",
+    "saved current-account config",
   ]) {
     assert(
       cariRunbook.includes(requiredToken),
@@ -582,6 +606,7 @@ async function main() {
     "`Kasa Islemleri`",
     "Branch Pair Current Accounts",
     "Center / Branch Current Accounts",
+    "saved-config",
   ]) {
     assert(
       prStepsSource.includes(requiredToken),

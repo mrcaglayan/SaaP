@@ -37,6 +37,15 @@ This runbook covers OU-owned warehouse setup, cross-context inventory transfer l
   - missing `central_due_to_account_id` / `ou_due_from_central_account_id`
   - missing partner OU current-account pair for source/target operating units
 
+## Saved Current-Account Automation
+
+- Choose parent control accounts once per legal entity in `Organization Management`.
+- The system creates or reuses branch-specific children automatically for both `CENTRAL <-> OU` and `OU <-> OU` mappings.
+- When a later branch is added, only delta is created.
+- Old branches are not reset during later branch add automation.
+- `Repair missing only` is the default saved-config rerun path.
+- Manual Organization Management edit remains available for exceptions.
+
 ## Transfer Lifecycle Runbook
 
 1. Create the transfer in `/app/stok-transferleri`.
@@ -88,6 +97,24 @@ Approve -> Ship -> Receive is the expected happy path.
   - self-balancing current-account lines are posted immediately
   - reversal must respect downstream linkage discipline
 
+## Cross-Context Cash and Bank Movements
+
+- In `/app/kasa-islemleri`, `DEPOSIT_TO_BANK` and `WITHDRAWAL_FROM_BANK` now follow the same context rule as other OU self-balancing flows.
+- The bank-side context is resolved from the selected bank account ownership:
+  - central bank account -> `no OU`
+  - OU-owned bank account -> that exact operating unit
+- Same-context bank/cash movement stays on the normal 2-line asset movement.
+- Different-context bank/cash movement posts immediate self-balancing lines:
+  - `CENTRAL <-> OPERATING_UNIT`
+  - `OPERATING_UNIT <-> OPERATING_UNIT`
+- Missing current-account setup blocks posting and operators should repair the saved config from `Organization Management` or the surviving `Kasa Islemleri` repair path before retrying.
+
+## Current-Account Automation Troubleshooting
+
+- `Saved config missing`: no legal-entity current-account parent config has been saved yet. Go to `Organization Management`, choose the two parent control accounts, and save the config.
+- `Saved config exists but apply not run`: the legal entity has saved parents but provisioning has not completed yet. Run `Repair missing only` or finish the onboarding apply step.
+- `Saved config exists but mapping drift remains`: the config is saved, but one or more OU central fields or OU-pair directions are still missing. Use `Repair missing only` first, then use manual Organization Management edit only for exception rows that should stay outside the shared saved-config pattern.
+
 ## Troubleshooting: Blocked Generic Cross-Context Stock Movement
 
 - If generic stock materialization fails with `Cross-context stock movement must use inventory transfer workflow`, do not bypass it.
@@ -110,5 +137,6 @@ Approve -> Ship -> Receive is the expected happy path.
 ## Verification
 
 - `cd backend && npm run test:ou:self-balancing:release-gate`
+- `cd backend && npm run test:ou:current-account-automation:release-gate`
 - `cd backend && npm run openapi:generate`
 - `cd backend && npm run check:openapi`

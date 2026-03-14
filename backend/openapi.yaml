@@ -529,31 +529,80 @@
         }
       }
     },
-    "/api/v1/org/operating-units/central-current-accounts/auto-provision": {
+    "/api/v1/org/operating-unit-current-account-config": {
+      "get": {
+        "tags": [
+          "Org"
+        ],
+        "operationId": "listOperatingUnitCurrentAccountConfigs",
+        "summary": "List saved legal-entity OU current-account configs",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "tenantId",
+            "required": false,
+            "description": "Tenant identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "legalEntityId",
+            "required": false,
+            "description": "Legal entity identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Operating unit current-account config list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperatingUnitCurrentAccountConfigListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      },
       "post": {
         "tags": [
           "Org"
         ],
-        "operationId": "autoProvisionOperatingUnitCentralCurrentAccounts",
-        "summary": "Create or reuse Central <-> Branch current child accounts for one operating unit",
-        "description": "Creates missing branch-specific child accounts under the selected parent accounts and updates the operating unit's Central Due From OU / OU Due To Central mapping.",
+        "operationId": "upsertOperatingUnitCurrentAccountConfig",
+        "summary": "Create or update saved legal-entity OU current-account config",
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/OperatingUnitCentralCurrentAccountAutoProvisionInput"
+                "$ref": "#/components/schemas/OperatingUnitCurrentAccountConfigInput"
               }
             }
           }
         },
         "responses": {
           "201": {
-            "description": "Central current accounts provisioned",
+            "description": "Operating unit current-account config saved",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/OperatingUnitCentralCurrentAccountAutoProvisionResponse"
+                  "$ref": "#/components/schemas/OperatingUnitCurrentAccountConfigResponse"
                 }
               }
             }
@@ -570,31 +619,31 @@
         }
       }
     },
-    "/api/v1/org/operating-unit-partner-current-accounts/auto-provision": {
+    "/api/v1/org/operating-unit-current-account-config/apply": {
       "post": {
         "tags": [
           "Org"
         ],
-        "operationId": "autoProvisionOperatingUnitPartnerCurrentAccounts",
-        "summary": "Create or reuse direct branch-pair current child accounts for both directions",
-        "description": "Creates missing branch-specific Due From Partner OU / Due To Partner OU child accounts under the selected parents and saves both directional mappings for the branch pair.",
+        "operationId": "applyOperatingUnitCurrentAccountConfig",
+        "summary": "Apply saved legal-entity OU current-account config",
+        "description": "Runs repair-missing-only provisioning from the saved legal-entity config for one legal entity or one selected operating unit.",
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/OperatingUnitPartnerCurrentAccountAutoProvisionInput"
+                "$ref": "#/components/schemas/OperatingUnitCurrentAccountConfigApplyInput"
               }
             }
           }
         },
         "responses": {
           "201": {
-            "description": "Operating unit partner current accounts provisioned",
+            "description": "Operating unit current-account config apply summary",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/OperatingUnitPartnerCurrentAccountAutoProvisionResponse"
+                  "$ref": "#/components/schemas/OperatingUnitCurrentAccountApplyResponse"
                 }
               }
             }
@@ -4296,7 +4345,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/AnyObject"
+                "$ref": "#/components/schemas/OnboardingCompanyBootstrapInput"
               }
             }
           }
@@ -4307,7 +4356,47 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/OnboardingCompanyBootstrapResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
+    "/api/v1/onboarding/company-bootstrap/current-account-eligibility-preview": {
+      "post": {
+        "tags": [
+          "Onboarding"
+        ],
+        "operationId": "previewCompanyBootstrapCurrentAccountEligibility",
+        "summary": "Preview OU current-account setup recommendation for onboarding draft legal entities",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OnboardingCompanyBootstrapCurrentAccountEligibilityPreviewInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Current-account eligibility preview",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OnboardingCompanyBootstrapCurrentAccountEligibilityPreviewResponse"
                 }
               }
             }
@@ -4350,6 +4439,58 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/TenantReadinessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
+    "/api/v1/onboarding/module-readiness": {
+      "get": {
+        "tags": [
+          "Onboarding"
+        ],
+        "operationId": "getModuleReadiness",
+        "summary": "Get module readiness snapshot by legal entity",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "tenantId",
+            "required": false,
+            "description": "Tenant identifier; optional if available in JWT",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "legalEntityId",
+            "required": false,
+            "description": "Optional legal entity filter",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Module readiness snapshot",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModuleReadinessResponse"
                 }
               }
             }
@@ -16445,36 +16586,6 @@
                 "$ref": "#/components/schemas/AnyObject"
               }
             }
-          }
-        }
-      }
-    },
-    "/api/v1/onboarding/module-readiness": {
-      "get": {
-        "tags": [
-          "Onboarding"
-        ],
-        "operationId": "getApiV1OnboardingModuleReadiness",
-        "summary": "Auto-generated: GET /api/v1/onboarding/module-readiness",
-        "responses": {
-          "200": {
-            "description": "Successful response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "401": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "403": {
-            "$ref": "#/components/responses/ErrorResponse"
           }
         }
       }
@@ -28742,6 +28853,21 @@
           },
           "ready": {
             "type": "boolean"
+          },
+          "details": {
+            "nullable": true,
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/TenantReadinessWorkflowDetails"
+              },
+              {
+                "$ref": "#/components/schemas/TenantReadinessOperatingUnitCurrentAccountDetails"
+              },
+              {
+                "type": "object",
+                "additionalProperties": true
+              }
+            ]
           }
         },
         "required": [
@@ -28749,7 +28875,107 @@
           "label",
           "minimum",
           "count",
-          "ready"
+          "ready",
+          "details"
+        ]
+      },
+      "TenantReadinessWorkflowDetails": {
+        "type": "object",
+        "properties": {
+          "readyEntityCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "totalEntityCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "missingLegalEntityIds": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "required": [
+          "readyEntityCount",
+          "totalEntityCount",
+          "missingLegalEntityIds"
+        ]
+      },
+      "TenantReadinessOperatingUnitCurrentAccountBlockingRow": {
+        "type": "object",
+        "properties": {
+          "legalEntityId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "legalEntityCode": {
+            "type": "string"
+          },
+          "legalEntityName": {
+            "type": "string"
+          },
+          "blockerCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "setupPath": {
+            "type": "string",
+            "nullable": true
+          },
+          "effectiveActiveOperatingUnitCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "missingCentralOperatingUnitCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "missingPartnerDirectionCount": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "legalEntityId",
+          "legalEntityCode",
+          "legalEntityName",
+          "blockerCode",
+          "setupPath",
+          "effectiveActiveOperatingUnitCount",
+          "missingCentralOperatingUnitCount",
+          "missingPartnerDirectionCount"
+        ]
+      },
+      "TenantReadinessOperatingUnitCurrentAccountDetails": {
+        "type": "object",
+        "properties": {
+          "readyEntityCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "totalEntityCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "applicableEntityCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "blockingRows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TenantReadinessOperatingUnitCurrentAccountBlockingRow"
+            }
+          }
+        },
+        "required": [
+          "readyEntityCount",
+          "totalEntityCount",
+          "applicableEntityCount",
+          "blockingRows"
         ]
       },
       "TenantReadinessCounts": {
@@ -28775,11 +29001,31 @@
             "type": "integer",
             "minimum": 0
           },
+          "openBookPeriods": {
+            "type": "integer",
+            "minimum": 0
+          },
           "chartsOfAccounts": {
             "type": "integer",
             "minimum": 0
           },
           "accounts": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "shareholders": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "shareholderCommitmentConfigs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "operatingUnitCurrentAccounts": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "workflowCloseConsolidationV1": {
             "type": "integer",
             "minimum": 0
           }
@@ -28790,8 +29036,13 @@
           "fiscalCalendars",
           "fiscalPeriods",
           "books",
+          "openBookPeriods",
           "chartsOfAccounts",
-          "accounts"
+          "accounts",
+          "shareholders",
+          "shareholderCommitmentConfigs",
+          "operatingUnitCurrentAccounts",
+          "workflowCloseConsolidationV1"
         ]
       },
       "TenantReadinessResponse": {
@@ -29066,6 +29317,540 @@
           "createdCount",
           "skippedCount",
           "perLegalEntity"
+        ]
+      },
+      "OnboardingCompanyBootstrapCurrentAccountConfigInput": {
+        "type": "object",
+        "properties": {
+          "skipForNow": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "dueFromParentAccountCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "dueToParentAccountCode": {
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
+      "OnboardingCompanyBootstrapBranchInput": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "code": {
+            "type": "string",
+            "minLength": 1
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ACTIVE",
+              "INACTIVE"
+            ],
+            "nullable": true
+          }
+        }
+      },
+      "OnboardingCompanyBootstrapLegalEntityInput": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "code": {
+            "type": "string",
+            "minLength": 1
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "functionalCurrencyCode": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 3
+          },
+          "currentAccountConfig": {
+            "$ref": "#/components/schemas/OnboardingCompanyBootstrapCurrentAccountConfigInput"
+          },
+          "branches": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OnboardingCompanyBootstrapBranchInput"
+            }
+          },
+          "policyPackId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          }
+        },
+        "required": [
+          "code",
+          "name",
+          "functionalCurrencyCode"
+        ]
+      },
+      "OnboardingCompanyBootstrapInput": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "groupCompany": {
+            "$ref": "#/components/schemas/GroupCompanyInput"
+          },
+          "groupCoa": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "fiscalCalendar": {
+            "$ref": "#/components/schemas/FiscalCalendarInput"
+          },
+          "fiscalYear": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "legalEntities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OnboardingCompanyBootstrapLegalEntityInput"
+            }
+          }
+        },
+        "required": [
+          "groupCompany",
+          "fiscalCalendar",
+          "fiscalYear",
+          "legalEntities"
+        ]
+      },
+      "OnboardingCompanyBootstrapCurrentAccountEligibilityPreviewLegalEntityInput": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "code": {
+            "type": "string",
+            "minLength": 1
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "branches": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OnboardingCompanyBootstrapBranchInput"
+            }
+          }
+        }
+      },
+      "OnboardingCompanyBootstrapCurrentAccountEligibilityPreviewInput": {
+        "type": "object",
+        "properties": {
+          "legalEntities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OnboardingCompanyBootstrapCurrentAccountEligibilityPreviewLegalEntityInput"
+            }
+          }
+        }
+      },
+      "OperatingUnitCurrentAccountEligibilityPreviewOperatingUnit": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "name",
+          "status"
+        ]
+      },
+      "OnboardingCompanyBootstrapCurrentAccountEligibilityPreviewRow": {
+        "type": "object",
+        "properties": {
+          "index": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "legalEntityCode": {
+            "type": "string"
+          },
+          "legalEntityName": {
+            "type": "string"
+          },
+          "effectiveActiveOperatingUnitCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "currentAccountSetupRecommended": {
+            "type": "boolean"
+          },
+          "recommendationCode": {
+            "type": "string"
+          },
+          "eligibleOperatingUnits": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OperatingUnitCurrentAccountEligibilityPreviewOperatingUnit"
+            }
+          }
+        },
+        "required": [
+          "index",
+          "legalEntityCode",
+          "legalEntityName",
+          "effectiveActiveOperatingUnitCount",
+          "currentAccountSetupRecommended",
+          "recommendationCode",
+          "eligibleOperatingUnits"
+        ]
+      },
+      "OnboardingCompanyBootstrapCurrentAccountEligibilityPreviewResponse": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OnboardingCompanyBootstrapCurrentAccountEligibilityPreviewRow"
+            }
+          }
+        },
+        "required": [
+          "ok",
+          "rows"
+        ]
+      },
+      "OnboardingCompanyBootstrapCurrentAccountEligibilitySummary": {
+        "type": "object",
+        "properties": {
+          "effectiveActiveOperatingUnitCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "currentAccountSetupRecommended": {
+            "type": "boolean"
+          },
+          "recommendationCode": {
+            "type": "string"
+          },
+          "eligibleOperatingUnits": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OperatingUnitCurrentAccountEligibilityPreviewOperatingUnit"
+            }
+          }
+        },
+        "required": [
+          "effectiveActiveOperatingUnitCount",
+          "currentAccountSetupRecommended",
+          "recommendationCode",
+          "eligibleOperatingUnits"
+        ]
+      },
+      "OnboardingCompanyBootstrapCurrentAccountSavedConfig": {
+        "type": "object",
+        "properties": {
+          "dueFromParentAccountCode": {
+            "type": "string"
+          },
+          "dueToParentAccountCode": {
+            "type": "string"
+          },
+          "autoProvisionOnOperatingUnitCreate": {
+            "type": "boolean"
+          },
+          "lastAppliedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          }
+        },
+        "required": [
+          "dueFromParentAccountCode",
+          "dueToParentAccountCode",
+          "autoProvisionOnOperatingUnitCreate",
+          "lastAppliedAt",
+          "updatedAt"
+        ]
+      },
+      "OnboardingCompanyBootstrapCurrentAccountProvisioningSummary": {
+        "type": "object",
+        "properties": {
+          "createdAccountCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "reusedAccountCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "updatedOperatingUnitCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "updatedPartnerMappingCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "warningCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "lastAppliedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          }
+        },
+        "required": [
+          "createdAccountCount",
+          "reusedAccountCount",
+          "updatedOperatingUnitCount",
+          "updatedPartnerMappingCount",
+          "warningCount",
+          "lastAppliedAt"
+        ]
+      },
+      "OnboardingCompanyBootstrapCurrentAccountWarning": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "info",
+              "warning",
+              "error"
+            ]
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "severity",
+          "message"
+        ]
+      },
+      "OnboardingCompanyBootstrapCurrentAccountReadinessWarning": {
+        "type": "object",
+        "properties": {
+          "legalEntityCode": {
+            "type": "string"
+          },
+          "legalEntityId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "code": {
+            "type": "string"
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "info",
+              "warning",
+              "error"
+            ]
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "legalEntityCode",
+          "legalEntityId",
+          "code",
+          "severity",
+          "message"
+        ]
+      },
+      "OnboardingCompanyBootstrapCurrentAccountSetupResult": {
+        "type": "object",
+        "properties": {
+          "configured": {
+            "type": "boolean"
+          },
+          "skipped": {
+            "type": "boolean"
+          },
+          "eligibility": {
+            "$ref": "#/components/schemas/OnboardingCompanyBootstrapCurrentAccountEligibilitySummary"
+          },
+          "savedConfig": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/OnboardingCompanyBootstrapCurrentAccountSavedConfig"
+              }
+            ],
+            "nullable": true
+          },
+          "provisioningSummary": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/OnboardingCompanyBootstrapCurrentAccountProvisioningSummary"
+              }
+            ],
+            "nullable": true
+          },
+          "warning": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/OnboardingCompanyBootstrapCurrentAccountWarning"
+              }
+            ],
+            "nullable": true
+          }
+        },
+        "required": [
+          "configured",
+          "skipped",
+          "eligibility",
+          "savedConfig",
+          "provisioningSummary",
+          "warning"
+        ]
+      },
+      "OnboardingCompanyBootstrapLegalEntityResult": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "legalEntityId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "coaCode": {
+            "type": "string"
+          },
+          "coaId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "branchCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "currentAccountSetup": {
+            "$ref": "#/components/schemas/OnboardingCompanyBootstrapCurrentAccountSetupResult"
+          }
+        },
+        "required": [
+          "code",
+          "legalEntityId",
+          "coaCode",
+          "coaId",
+          "branchCount",
+          "currentAccountSetup"
+        ]
+      },
+      "OnboardingCompanyBootstrapPaymentTermsSummary": {
+        "type": "object",
+        "properties": {
+          "defaultsUsed": {
+            "type": "boolean"
+          },
+          "templateCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "createdCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "skippedCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "perLegalEntity": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OnboardingPaymentTermsBootstrapEntityResult"
+            }
+          }
+        },
+        "required": [
+          "defaultsUsed",
+          "templateCount",
+          "createdCount",
+          "skippedCount",
+          "perLegalEntity"
+        ]
+      },
+      "OnboardingCompanyBootstrapResponse": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "groupCompanyId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "calendarId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "periodsGenerated": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "legalEntities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OnboardingCompanyBootstrapLegalEntityResult"
+            }
+          },
+          "currentAccountReadinessWarnings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OnboardingCompanyBootstrapCurrentAccountReadinessWarning"
+            }
+          },
+          "paymentTerms": {
+            "$ref": "#/components/schemas/OnboardingCompanyBootstrapPaymentTermsSummary"
+          }
+        },
+        "required": [
+          "ok",
+          "groupCompanyId",
+          "calendarId",
+          "periodsGenerated",
+          "legalEntities",
+          "currentAccountReadinessWarnings",
+          "paymentTerms"
         ]
       },
       "TrialBalanceRow": {
@@ -30199,6 +30984,8 @@
             "type": "string",
             "enum": [
               "CENTRAL_DUE_FROM",
+              "CENTRAL_DUE_TO",
+              "OU_DUE_FROM_CENTRAL",
               "OU_DUE_TO_CENTRAL",
               "DUE_FROM",
               "DUE_TO"
@@ -30220,170 +31007,6 @@
           "name",
           "role",
           "operatingUnitId"
-        ]
-      },
-      "OperatingUnitCentralCurrentAccountState": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "integer",
-            "minimum": 1
-          },
-          "code": {
-            "type": "string"
-          },
-          "name": {
-            "type": "string"
-          },
-          "centralDueFromAccountId": {
-            "type": "integer",
-            "minimum": 1
-          },
-          "centralDueFromAccountCode": {
-            "type": "string"
-          },
-          "centralDueFromAccountName": {
-            "type": "string"
-          },
-          "ouDueToCentralAccountId": {
-            "type": "integer",
-            "minimum": 1
-          },
-          "ouDueToCentralAccountCode": {
-            "type": "string"
-          },
-          "ouDueToCentralAccountName": {
-            "type": "string"
-          },
-          "capitalSelfBalancingReady": {
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "id",
-          "code",
-          "name",
-          "centralDueFromAccountId",
-          "centralDueFromAccountCode",
-          "centralDueFromAccountName",
-          "ouDueToCentralAccountId",
-          "ouDueToCentralAccountCode",
-          "ouDueToCentralAccountName",
-          "capitalSelfBalancingReady"
-        ]
-      },
-      "OperatingUnitCentralCurrentAccountAutoProvisionInput": {
-        "type": "object",
-        "properties": {
-          "tenantId": {
-            "type": "integer",
-            "minimum": 1,
-            "nullable": true
-          },
-          "legalEntityId": {
-            "type": "integer",
-            "minimum": 1
-          },
-          "operatingUnitId": {
-            "type": "integer",
-            "minimum": 1
-          },
-          "centralDueFromParentAccountId": {
-            "type": "integer",
-            "minimum": 1
-          },
-          "ouDueToCentralParentAccountId": {
-            "type": "integer",
-            "minimum": 1
-          }
-        },
-        "required": [
-          "legalEntityId",
-          "operatingUnitId",
-          "centralDueFromParentAccountId",
-          "ouDueToCentralParentAccountId"
-        ]
-      },
-      "OperatingUnitCentralCurrentAccountAutoProvisionResponse": {
-        "type": "object",
-        "properties": {
-          "ok": {
-            "type": "boolean",
-            "enum": [
-              true
-            ]
-          },
-          "legalEntityId": {
-            "type": "integer",
-            "minimum": 1
-          },
-          "operatingUnitId": {
-            "type": "integer",
-            "minimum": 1
-          },
-          "centralDueFromParentAccountId": {
-            "type": "integer",
-            "minimum": 1
-          },
-          "ouDueToCentralParentAccountId": {
-            "type": "integer",
-            "minimum": 1
-          },
-          "createdAccounts": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/OperatingUnitCurrentProvisionedAccount"
-            }
-          },
-          "operatingUnit": {
-            "$ref": "#/components/schemas/OperatingUnitCentralCurrentAccountState"
-          }
-        },
-        "required": [
-          "ok",
-          "legalEntityId",
-          "operatingUnitId",
-          "centralDueFromParentAccountId",
-          "ouDueToCentralParentAccountId",
-          "createdAccounts",
-          "operatingUnit"
-        ]
-      },
-      "OperatingUnitPartnerCurrentAccountAutoProvisionInput": {
-        "type": "object",
-        "properties": {
-          "tenantId": {
-            "type": "integer",
-            "minimum": 1,
-            "nullable": true
-          },
-          "legalEntityId": {
-            "type": "integer",
-            "minimum": 1
-          },
-          "operatingUnitId": {
-            "type": "integer",
-            "minimum": 1
-          },
-          "partnerOperatingUnitId": {
-            "type": "integer",
-            "minimum": 1
-          },
-          "dueFromParentAccountId": {
-            "type": "integer",
-            "minimum": 1
-          },
-          "dueToParentAccountId": {
-            "type": "integer",
-            "minimum": 1
-          }
-        },
-        "required": [
-          "legalEntityId",
-          "operatingUnitId",
-          "partnerOperatingUnitId",
-          "dueFromParentAccountId",
-          "dueToParentAccountId"
         ]
       },
       "OperatingUnitPartnerCurrentAccountMappingResult": {
@@ -30423,6 +31046,9 @@
           },
           "created": {
             "type": "boolean"
+          },
+          "updated": {
+            "type": "boolean"
           }
         },
         "required": [
@@ -30435,10 +31061,268 @@
           "dueToAccountId",
           "dueToAccountCode",
           "dueToAccountName",
-          "created"
+          "created",
+          "updated"
         ]
       },
-      "OperatingUnitPartnerCurrentAccountAutoProvisionResponse": {
+      "OperatingUnitCurrentAccountApplyOperatingUnitResult": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "code": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "centralDueFromAccountId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "centralDueFromAccountCode": {
+            "type": "string"
+          },
+          "centralDueFromAccountName": {
+            "type": "string"
+          },
+          "centralDueToAccountId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "centralDueToAccountCode": {
+            "type": "string"
+          },
+          "centralDueToAccountName": {
+            "type": "string"
+          },
+          "ouDueFromCentralAccountId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "ouDueFromCentralAccountCode": {
+            "type": "string"
+          },
+          "ouDueFromCentralAccountName": {
+            "type": "string"
+          },
+          "ouDueToCentralAccountId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "ouDueToCentralAccountCode": {
+            "type": "string"
+          },
+          "ouDueToCentralAccountName": {
+            "type": "string"
+          },
+          "capitalSelfBalancingReady": {
+            "type": "boolean"
+          },
+          "currentAccountProvisioningReady": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "code",
+          "name",
+          "centralDueFromAccountId",
+          "centralDueFromAccountCode",
+          "centralDueFromAccountName",
+          "centralDueToAccountId",
+          "centralDueToAccountCode",
+          "centralDueToAccountName",
+          "ouDueFromCentralAccountId",
+          "ouDueFromCentralAccountCode",
+          "ouDueFromCentralAccountName",
+          "ouDueToCentralAccountId",
+          "ouDueToCentralAccountCode",
+          "ouDueToCentralAccountName",
+          "capitalSelfBalancingReady",
+          "currentAccountProvisioningReady"
+        ]
+      },
+      "OperatingUnitCurrentAccountConfigRow": {
+        "type": "object",
+        "properties": {
+          "legal_entity_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "legal_entity_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "legal_entity_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "operating_unit_current_account_config_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "due_from_parent_account_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "due_from_parent_account_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "due_from_parent_account_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "due_to_parent_account_id": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "due_to_parent_account_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "due_to_parent_account_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "auto_provision_on_operating_unit_create": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "last_applied_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          }
+        }
+      },
+      "OperatingUnitCurrentAccountConfigListResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OperatingUnitCurrentAccountConfigRow"
+            }
+          }
+        },
+        "required": [
+          "tenantId",
+          "rows"
+        ]
+      },
+      "OperatingUnitCurrentAccountConfigInput": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "legalEntityId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "dueFromParentAccountId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "dueToParentAccountId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "autoProvisionOnOperatingUnitCreate": {
+            "type": "boolean",
+            "nullable": true
+          }
+        },
+        "required": [
+          "legalEntityId",
+          "dueFromParentAccountId",
+          "dueToParentAccountId"
+        ]
+      },
+      "OperatingUnitCurrentAccountConfigResponse": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "row": {
+            "$ref": "#/components/schemas/OperatingUnitCurrentAccountConfigRow"
+          }
+        },
+        "required": [
+          "ok",
+          "row"
+        ]
+      },
+      "OperatingUnitCurrentAccountConfigApplyInput": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "legalEntityId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "operatingUnitId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "repairMissingOnly": {
+            "type": "boolean",
+            "nullable": true
+          }
+        },
+        "required": [
+          "legalEntityId"
+        ]
+      },
+      "OperatingUnitCurrentAccountProvisionWarning": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": true,
+        "required": [
+          "code",
+          "message"
+        ]
+      },
+      "OperatingUnitCurrentAccountApplyResponse": {
         "type": "object",
         "properties": {
           "ok": {
@@ -30453,11 +31337,8 @@
           },
           "operatingUnitId": {
             "type": "integer",
-            "minimum": 1
-          },
-          "partnerOperatingUnitId": {
-            "type": "integer",
-            "minimum": 1
+            "minimum": 1,
+            "nullable": true
           },
           "dueFromParentAccountId": {
             "type": "integer",
@@ -30467,28 +31348,310 @@
             "type": "integer",
             "minimum": 1
           },
+          "repairMissingOnly": {
+            "type": "boolean"
+          },
           "createdAccounts": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/OperatingUnitCurrentProvisionedAccount"
             }
           },
-          "mappings": {
+          "reusedAccounts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OperatingUnitCurrentProvisionedAccount"
+            }
+          },
+          "updatedOperatingUnits": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OperatingUnitCurrentAccountApplyOperatingUnitResult"
+            }
+          },
+          "updatedPartnerMappings": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/OperatingUnitPartnerCurrentAccountMappingResult"
             }
+          },
+          "partnerMappings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OperatingUnitPartnerCurrentAccountMappingResult"
+            }
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OperatingUnitCurrentAccountProvisionWarning"
+            }
+          },
+          "lastAppliedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
           }
         },
         "required": [
           "ok",
           "legalEntityId",
           "operatingUnitId",
-          "partnerOperatingUnitId",
           "dueFromParentAccountId",
           "dueToParentAccountId",
+          "repairMissingOnly",
           "createdAccounts",
-          "mappings"
+          "reusedAccounts",
+          "updatedOperatingUnits",
+          "updatedPartnerMappings",
+          "partnerMappings",
+          "warnings",
+          "lastAppliedAt"
+        ]
+      },
+      "OperatingUnitCurrentAccountReadinessOperatingUnit": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "code": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "code",
+          "name",
+          "label"
+        ]
+      },
+      "OperatingUnitCurrentAccountReadinessDirection": {
+        "type": "object",
+        "properties": {
+          "operatingUnitId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "operatingUnitCode": {
+            "type": "string"
+          },
+          "operatingUnitName": {
+            "type": "string"
+          },
+          "partnerOperatingUnitId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "partnerOperatingUnitCode": {
+            "type": "string"
+          },
+          "partnerOperatingUnitName": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "operatingUnitId",
+          "operatingUnitCode",
+          "operatingUnitName",
+          "partnerOperatingUnitId",
+          "partnerOperatingUnitCode",
+          "partnerOperatingUnitName"
+        ]
+      },
+      "OperatingUnitCurrentAccountReadinessRow": {
+        "type": "object",
+        "properties": {
+          "legalEntityId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "legalEntityCode": {
+            "type": "string"
+          },
+          "legalEntityName": {
+            "type": "string"
+          },
+          "ready": {
+            "type": "boolean"
+          },
+          "applicable": {
+            "type": "boolean"
+          },
+          "blockerCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "setupPath": {
+            "type": "string",
+            "nullable": true
+          },
+          "effectiveActiveOperatingUnitCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "currentAccountSetupRecommended": {
+            "type": "boolean"
+          },
+          "recommendationCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "configPresent": {
+            "type": "boolean"
+          },
+          "configApplied": {
+            "type": "boolean"
+          },
+          "autoProvisionOnOperatingUnitCreate": {
+            "type": "boolean"
+          },
+          "lastAppliedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "configChangedSinceLastApply": {
+            "type": "boolean"
+          },
+          "eligibleOperatingUnits": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OperatingUnitCurrentAccountReadinessOperatingUnit"
+            }
+          },
+          "missingCentralOperatingUnits": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OperatingUnitCurrentAccountReadinessOperatingUnit"
+            }
+          },
+          "expectedPartnerDirectionCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "missingPartnerDirectionCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "missingPartnerDirections": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OperatingUnitCurrentAccountReadinessDirection"
+            }
+          }
+        },
+        "required": [
+          "legalEntityId",
+          "legalEntityCode",
+          "legalEntityName",
+          "ready",
+          "applicable",
+          "blockerCode",
+          "setupPath",
+          "effectiveActiveOperatingUnitCount",
+          "currentAccountSetupRecommended",
+          "recommendationCode",
+          "configPresent",
+          "configApplied",
+          "autoProvisionOnOperatingUnitCreate",
+          "lastAppliedAt",
+          "configChangedSinceLastApply",
+          "eligibleOperatingUnits",
+          "missingCentralOperatingUnits",
+          "expectedPartnerDirectionCount",
+          "missingPartnerDirectionCount",
+          "missingPartnerDirections"
+        ]
+      },
+      "ModuleReadinessBucket": {
+        "type": "object",
+        "properties": {
+          "byLegalEntity": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          }
+        },
+        "required": [
+          "byLegalEntity"
+        ]
+      },
+      "OperatingUnitCurrentAccountModuleReadinessBucket": {
+        "type": "object",
+        "properties": {
+          "byLegalEntity": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OperatingUnitCurrentAccountReadinessRow"
+            }
+          }
+        },
+        "required": [
+          "byLegalEntity"
+        ]
+      },
+      "ModuleReadinessResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "legalEntityId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "modules": {
+            "type": "object",
+            "properties": {
+              "cariPosting": {
+                "$ref": "#/components/schemas/ModuleReadinessBucket"
+              },
+              "shareholderCommitment": {
+                "$ref": "#/components/schemas/ModuleReadinessBucket"
+              },
+              "cashClearing": {
+                "$ref": "#/components/schemas/ModuleReadinessBucket"
+              },
+              "bankControlParent": {
+                "$ref": "#/components/schemas/ModuleReadinessBucket"
+              },
+              "operatingUnitCurrentAccounts": {
+                "$ref": "#/components/schemas/OperatingUnitCurrentAccountModuleReadinessBucket"
+              },
+              "closeConsolidationWorkflow": {
+                "$ref": "#/components/schemas/ModuleReadinessBucket"
+              }
+            },
+            "required": [
+              "cariPosting",
+              "shareholderCommitment",
+              "cashClearing",
+              "bankControlParent",
+              "operatingUnitCurrentAccounts",
+              "closeConsolidationWorkflow"
+            ]
+          }
+        },
+        "required": [
+          "tenantId",
+          "legalEntityId",
+          "modules"
         ]
       },
       "FiscalCalendarInput": {

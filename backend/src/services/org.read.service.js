@@ -6,6 +6,7 @@ import {
   fetchCurrencyRows,
   fetchGroupCompanyRows,
   fetchLegalEntityRows,
+  fetchOperatingUnitCurrentAccountConfigRows,
   fetchOperatingUnitPartnerCurrentAccountRows,
   fetchOperatingUnitRows,
   fetchShareholderJournalConfigRows,
@@ -101,6 +102,36 @@ export async function listOperatingUnits({
   }
 
   return fetchOperatingUnitRows({
+    conditions,
+    params,
+  });
+}
+
+export async function listOperatingUnitCurrentAccountConfigs({
+  req,
+  tenantId,
+  filters,
+  buildScopeFilter,
+  assertLegalEntityBelongsToTenant,
+  assertScopeAccess,
+}) {
+  const { legalEntityId } = filters;
+
+  if (legalEntityId) {
+    await assertLegalEntityBelongsToTenant(tenantId, legalEntityId, "legalEntityId");
+    assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
+  }
+
+  const params = [tenantId];
+  const conditions = ["le.tenant_id = ?"];
+  conditions.push(buildScopeFilter(req, "legal_entity", "le.id", params));
+
+  if (legalEntityId) {
+    conditions.push("le.id = ?");
+    params.push(legalEntityId);
+  }
+
+  return fetchOperatingUnitCurrentAccountConfigRows({
     conditions,
     params,
   });

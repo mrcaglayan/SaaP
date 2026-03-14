@@ -1580,7 +1580,7 @@ export const messages = {
         transitReverseTransferInFirst:
           "Transfer-out ters kaydi oncesi once transfer-in ters kaydini alin.",
         ouSelfBalancingSetupInvalid:
-          "Gerekli merkez-OU veya sube-cifti cari hesap kurulumlari hazir olmadigi icin farkli baglam transfer post islemi engellendi. Kurulumu Transfer Out sirasinda Kasa Islemleri ekranindan veya Organizasyon Yonetimi icinden tamamlayin.",
+          "Gerekli merkez-OU veya sube-cifti cari hesap kurulumlari hazir olmadigi icin farkli baglam transfer post islemi engellendi. Kaydedilen cari hesap konfigurasyonunu Transfer Out sirasinda Kasa Islemleri ekranindan ya da Organizasyon Yonetimi icinden calistirin.",
         applyRequiresPostedTxn:
           "Cari apply icin kasa islemi POSTED olmalidir.",
         applyCounterpartyInvalid:
@@ -1883,6 +1883,8 @@ export const messages = {
         setupWizardV2: "Setup Wizard V2 (uyari placeholder)",
         consolidationCanonicalMappingV1:
           "Konsolidasyon kanonik esleme (uyari placeholder)",
+        operatingUnitCurrentAccounts:
+          "Operasyon birimi cari hesap hazirligi",
         workflowCloseConsolidationV1:
           "Kapanis/konsolidasyon workflow hazirligi",
         taxEngineV1: "Ulke vergi motoru kurulumu (opsiyonel)",
@@ -3495,7 +3497,7 @@ export const messages = {
         transitReverseTransferInFirst:
           "Reverse transfer-in first; transfer-out cannot be reversed after receive.",
         ouSelfBalancingSetupInvalid:
-          "Cross-context transfer posting is blocked until the required central or branch-pair current-account mappings are ready. Complete the setup during Transfer Out in Kasa Islemleri or in Organization Management.",
+          "Cross-context transfer posting is blocked until the required central or branch-pair current-account mappings are ready. Run the saved current-account repair during Transfer Out in Kasa Islemleri or in Organization Management.",
         applyRequiresPostedTxn:
           "Cash transaction must be POSTED before apply.",
         applyCounterpartyInvalid:
@@ -3798,6 +3800,8 @@ export const messages = {
         setupWizardV2: "Setup Wizard V2 (warning placeholder)",
         consolidationCanonicalMappingV1:
           "Consolidation canonical mapping (warning placeholder)",
+        operatingUnitCurrentAccounts:
+          "Operating-unit current-account readiness",
         workflowCloseConsolidationV1:
           "Close/consolidation workflow readiness",
         taxEngineV1: "Country tax engine setup (optional)",

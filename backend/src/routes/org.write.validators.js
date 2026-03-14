@@ -27,6 +27,33 @@ function normalizeOptionalUpperEnum(rawValue, allowedValues, fieldLabel) {
   return normalized;
 }
 
+function parseBooleanField(rawValue, fieldLabel, defaultValue = false) {
+  if (rawValue === undefined || rawValue === null || rawValue === "") {
+    return defaultValue;
+  }
+  if (typeof rawValue === "boolean") {
+    return rawValue;
+  }
+  if (typeof rawValue === "number") {
+    if (rawValue === 1) {
+      return true;
+    }
+    if (rawValue === 0) {
+      return false;
+    }
+  }
+  if (typeof rawValue === "string") {
+    const normalized = rawValue.trim().toLowerCase();
+    if (["true", "1", "yes", "on"].includes(normalized)) {
+      return true;
+    }
+    if (["false", "0", "no", "off"].includes(normalized)) {
+      return false;
+    }
+  }
+  throw badRequest(`${fieldLabel} must be a boolean`);
+}
+
 export function parseGroupCompanyUpsertInput(req) {
   const tenantId = resolveTenantId(req);
   if (!tenantId) {
@@ -115,6 +142,66 @@ export function parseOperatingUnitUpsertInput(req) {
     ouDueToCentralAccountId: parseOptionalPositiveIntField(
       req.body.ouDueToCentralAccountId,
       "ouDueToCentralAccountId"
+    ),
+  };
+}
+
+export function parseOperatingUnitCurrentAccountConfigUpsertInput(req) {
+  const tenantId = resolveTenantId(req);
+  if (!tenantId) {
+    throw badRequest("tenantId is required");
+  }
+
+  const legalEntityId = parsePositiveInt(req.body?.legalEntityId);
+  const dueFromParentAccountId = parsePositiveInt(req.body?.dueFromParentAccountId);
+  const dueToParentAccountId = parsePositiveInt(req.body?.dueToParentAccountId);
+
+  if (!legalEntityId || !dueFromParentAccountId || !dueToParentAccountId) {
+    throw badRequest(
+      "legalEntityId, dueFromParentAccountId, and dueToParentAccountId must be positive integers"
+    );
+  }
+  if (dueFromParentAccountId === dueToParentAccountId) {
+    throw badRequest(
+      "dueToParentAccountId must be different from dueFromParentAccountId"
+    );
+  }
+
+  return {
+    tenantId,
+    legalEntityId,
+    dueFromParentAccountId,
+    dueToParentAccountId,
+    autoProvisionOnOperatingUnitCreate: parseBooleanField(
+      req.body?.autoProvisionOnOperatingUnitCreate,
+      "autoProvisionOnOperatingUnitCreate",
+      true
+    ),
+  };
+}
+
+export function parseOperatingUnitCurrentAccountConfigApplyInput(req) {
+  const tenantId = resolveTenantId(req);
+  if (!tenantId) {
+    throw badRequest("tenantId is required");
+  }
+
+  const legalEntityId = parsePositiveInt(req.body?.legalEntityId);
+  if (!legalEntityId) {
+    throw badRequest("legalEntityId must be a positive integer");
+  }
+
+  return {
+    tenantId,
+    legalEntityId,
+    operatingUnitId: parseOptionalPositiveIntField(
+      req.body?.operatingUnitId,
+      "operatingUnitId"
+    ),
+    repairMissingOnly: parseBooleanField(
+      req.body?.repairMissingOnly,
+      "repairMissingOnly",
+      true
     ),
   };
 }

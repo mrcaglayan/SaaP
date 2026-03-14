@@ -129,22 +129,63 @@ export async function upsertOperatingUnitRow({
   return result.rows?.insertId || null;
 }
 
+export async function upsertOperatingUnitCurrentAccountConfigRow({
+  tenantId,
+  legalEntityId,
+  dueFromParentAccountId,
+  dueToParentAccountId,
+  autoProvisionOnOperatingUnitCreate = true,
+  runQuery = query,
+}) {
+  const result = await runQuery(
+    `INSERT INTO operating_unit_current_account_configs (
+        tenant_id,
+        legal_entity_id,
+        due_from_parent_account_id,
+        due_to_parent_account_id,
+        auto_provision_on_operating_unit_create
+      )
+     VALUES (?, ?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE
+       id = LAST_INSERT_ID(id),
+       due_from_parent_account_id = VALUES(due_from_parent_account_id),
+       due_to_parent_account_id = VALUES(due_to_parent_account_id),
+       auto_provision_on_operating_unit_create = VALUES(auto_provision_on_operating_unit_create),
+       updated_at = CURRENT_TIMESTAMP`,
+    [
+      tenantId,
+      legalEntityId,
+      dueFromParentAccountId,
+      dueToParentAccountId,
+      autoProvisionOnOperatingUnitCreate,
+    ]
+  );
+
+  return result.rows?.insertId || null;
+}
+
 export async function updateOperatingUnitInternalCurrentAccountsRow({
   tenantId,
   operatingUnitId,
   centralDueFromAccountId,
+  centralDueToAccountId,
+  ouDueFromCentralAccountId,
   ouDueToCentralAccountId,
   runQuery = query,
 }) {
   await runQuery(
     `UPDATE operating_units
      SET central_due_from_account_id = ?,
+         central_due_to_account_id = ?,
+         ou_due_from_central_account_id = ?,
          ou_due_to_central_account_id = ?
      WHERE tenant_id = ?
        AND id = ?
      LIMIT 1`,
     [
       centralDueFromAccountId || null,
+      centralDueToAccountId || null,
+      ouDueFromCentralAccountId || null,
       ouDueToCentralAccountId || null,
       tenantId,
       operatingUnitId,
@@ -152,6 +193,61 @@ export async function updateOperatingUnitInternalCurrentAccountsRow({
   );
 
   return operatingUnitId;
+}
+
+export async function findOperatingUnitCurrentAccountConfigRowTx(
+  tx,
+  {
+    tenantId,
+    legalEntityId,
+  }
+) {
+  const result = await tx.query(
+    `SELECT
+       le.id AS legal_entity_id,
+       le.code AS legal_entity_code,
+       le.name AS legal_entity_name,
+       cfg.id AS operating_unit_current_account_config_id,
+       cfg.due_from_parent_account_id,
+       dfa.code AS due_from_parent_account_code,
+       dfa.name AS due_from_parent_account_name,
+       cfg.due_to_parent_account_id,
+       dta.code AS due_to_parent_account_code,
+       dta.name AS due_to_parent_account_name,
+       cfg.auto_provision_on_operating_unit_create,
+       cfg.last_applied_at,
+       cfg.created_at,
+       cfg.updated_at
+     FROM legal_entities le
+     LEFT JOIN operating_unit_current_account_configs cfg
+       ON cfg.tenant_id = le.tenant_id
+      AND cfg.legal_entity_id = le.id
+     LEFT JOIN accounts dfa ON dfa.id = cfg.due_from_parent_account_id
+     LEFT JOIN accounts dta ON dta.id = cfg.due_to_parent_account_id
+     WHERE le.tenant_id = ?
+       AND le.id = ?
+     LIMIT 1`,
+    [tenantId, legalEntityId]
+  );
+
+  const row = result.rows?.[0] || null;
+  return row?.operating_unit_current_account_config_id ? row : null;
+}
+
+export async function markOperatingUnitCurrentAccountConfigAppliedRow({
+  tenantId,
+  legalEntityId,
+  runQuery = query,
+}) {
+  await runQuery(
+    `UPDATE operating_unit_current_account_configs
+     SET last_applied_at = CURRENT_TIMESTAMP,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE tenant_id = ?
+       AND legal_entity_id = ?
+     LIMIT 1`,
+    [tenantId, legalEntityId]
+  );
 }
 
 export async function upsertOperatingUnitPartnerCurrentAccountRow({

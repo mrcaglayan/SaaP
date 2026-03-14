@@ -1,7 +1,11 @@
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../auth/useAuth.js";
 import { useI18n } from "../i18n/useI18n.js";
+import {
+  formatOperatingUnitCurrentAccountBlocker,
+  OU_CURRENT_ACCOUNT_SETUP_PATH,
+} from "./ouCurrentAccountReadiness.js";
 import { useTenantReadiness } from "./useTenantReadiness.js";
 
 function getReadinessCheckLabel(t, check) {
@@ -13,7 +17,8 @@ function getReadinessCheckLabel(t, check) {
 
 export default function TenantReadinessChecklist() {
   const { hasPermission } = useAuth();
-  const { t } = useI18n();
+  const { t, language } = useI18n();
+  const l = useCallback((en, tr) => (language === "tr" ? tr : en), [language]);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const {
     loading,
@@ -39,6 +44,7 @@ export default function TenantReadinessChecklist() {
     accounts: "/app/ayarlar/hesap-plani-ayarlari",
     shareholders: "/app/ayarlar/organizasyon-yonetimi",
     shareholderCommitmentConfigs: "/app/ayarlar/organizasyon-yonetimi",
+    operatingUnitCurrentAccounts: OU_CURRENT_ACCOUNT_SETUP_PATH,
     workflowCloseConsolidationV1: "/app/ayarlar/workflow-kurulumu",
     taxEngineV1: "/app/ayarlar/vergi-kurulumu",
   };
@@ -193,11 +199,36 @@ export default function TenantReadinessChecklist() {
                   </span>
                 </div>
                 <p className="mt-1 text-xs text-slate-600">
-                  {t("readinessChecklist.minimum", {
-                    count: check.count,
-                    minimum: check.minimum,
-                  })}
+                  {check.key === "operatingUnitCurrentAccounts"
+                    ? l(
+                        `Ready legal entities: ${check.count}/${check.minimum}.`,
+                        `Hazir legal entity sayisi: ${check.count}/${check.minimum}.`
+                      )
+                    : t("readinessChecklist.minimum", {
+                        count: check.count,
+                        minimum: check.minimum,
+                      })}
                 </p>
+                {check.key === "operatingUnitCurrentAccounts" &&
+                Number(check?.details?.applicableEntityCount || 0) === 0 ? (
+                  <p className="mt-1 text-xs text-slate-500">
+                    {l(
+                      "No legal entity currently has more than one active branch in cross-context scope, so this check is not applicable yet.",
+                      "Su anda hicbir legal entity capraz-context kapsaminda birden fazla aktif subeye sahip olmadigi icin bu kontrol henuz uygulanabilir degil."
+                    )}
+                  </p>
+                ) : null}
+                {check.key === "operatingUnitCurrentAccounts" &&
+                Array.isArray(check?.details?.blockingRows) &&
+                check.details.blockingRows.length > 0 ? (
+                  <ul className="mt-2 list-disc pl-5 text-xs text-amber-800">
+                    {check.details.blockingRows.map((row, index) => (
+                      <li key={`tenant-ou-current-account-${index}`}>
+                        {formatOperatingUnitCurrentAccountBlocker(row, l)}
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
               </div>
             ))}
           </div>

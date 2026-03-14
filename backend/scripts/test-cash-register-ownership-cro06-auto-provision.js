@@ -44,16 +44,13 @@ function parseChildSequence(code, parentCode) {
   if (!normalizedCode || !normalizedParentCode) {
     return null;
   }
-
   if (!normalizedCode.startsWith(`${normalizedParentCode}.`)) {
     return null;
   }
-
   const suffix = normalizedCode.slice(normalizedParentCode.length + 1);
   if (!/^\d+$/.test(suffix)) {
     return null;
   }
-
   return Number(suffix);
 }
 
@@ -64,6 +61,7 @@ async function createGlAccount({
   name,
   accountType,
   normalSide,
+  allowPosting = false,
   parentAccountId = null,
 }) {
   const response = await apiRequest({
@@ -77,7 +75,7 @@ async function createGlAccount({
       name,
       accountType,
       normalSide,
-      allowPosting: true,
+      allowPosting,
       parentAccountId: parentAccountId || undefined,
     },
     expectedStatus: 201,
@@ -87,12 +85,7 @@ async function createGlAccount({
   return accountId;
 }
 
-async function createOperatingUnit({
-  token,
-  legalEntityId,
-  code,
-  name,
-}) {
+async function createOperatingUnit({ token, legalEntityId, code, name }) {
   const response = await apiRequest({
     baseUrl: BASE_URL,
     token,
@@ -112,53 +105,42 @@ async function createOperatingUnit({
   return operatingUnitId;
 }
 
-async function createOperatingUnitPartnerCurrentAccount({
+async function saveCurrentAccountConfig({
   token,
   legalEntityId,
-  operatingUnitId,
-  partnerOperatingUnitId,
-  dueFromAccountId,
-  dueToAccountId,
+  dueFromParentAccountId,
+  dueToParentAccountId,
 }) {
-  const response = await apiRequest({
+  return apiRequest({
     baseUrl: BASE_URL,
     token,
     method: "POST",
-    requestPath: "/api/v1/org/operating-unit-partner-current-accounts",
+    requestPath: "/api/v1/org/operating-unit-current-account-config",
     body: {
       legalEntityId,
-      operatingUnitId,
-      partnerOperatingUnitId,
-      dueFromAccountId,
-      dueToAccountId,
+      dueFromParentAccountId,
+      dueToParentAccountId,
+      autoProvisionOnOperatingUnitCreate: true,
     },
     expectedStatus: 201,
   });
-  const id = toNumber(response.json?.id);
-  assert(id > 0, "Partner current-account mapping create failed");
-  return id;
 }
 
-async function autoProvisionPartnerCurrentAccounts({
+async function applyCurrentAccountConfig({
   token,
   legalEntityId,
   operatingUnitId,
-  partnerOperatingUnitId,
-  dueFromParentAccountId,
-  dueToParentAccountId,
   expectedStatus = 201,
 }) {
   return apiRequest({
     baseUrl: BASE_URL,
     token,
     method: "POST",
-    requestPath: "/api/v1/org/operating-unit-partner-current-accounts/auto-provision",
+    requestPath: "/api/v1/org/operating-unit-current-account-config/apply",
     body: {
       legalEntityId,
       operatingUnitId,
-      partnerOperatingUnitId,
-      dueFromParentAccountId,
-      dueToParentAccountId,
+      repairMissingOnly: true,
     },
     expectedStatus,
   });
@@ -273,7 +255,7 @@ async function main() {
       stamp,
       baseCurrencyCode: "USD",
     });
-    const { legalEntityId, coaId } = org;
+    const { legalEntityId, coaId, operatingUnitId: bootstrapOperatingUnitId } = org;
 
     const dueFromParentCode = "132";
     const dueToParentCode = "339";
@@ -284,6 +266,7 @@ async function main() {
       name: `Due From Branches ${suffix}`,
       accountType: "ASSET",
       normalSide: "DEBIT",
+      allowPosting: false,
     });
     const dueToParentAccountId = await createGlAccount({
       token: adminToken,
@@ -292,6 +275,14 @@ async function main() {
       name: `Due To Branches ${suffix}`,
       accountType: "LIABILITY",
       normalSide: "CREDIT",
+      allowPosting: false,
+    });
+
+    await saveCurrentAccountConfig({
+      token: adminToken,
+      legalEntityId,
+      dueFromParentAccountId,
+      dueToParentAccountId,
     });
 
     const branchACode = `BRA${suffix}`;
@@ -309,25 +300,51 @@ async function main() {
       name: `Branch B ${suffix}`,
     });
 
-    const freshProvision = await autoProvisionPartnerCurrentAccounts({
+    const freshApply = await applyCurrentAccountConfig({
       token: adminToken,
       legalEntityId,
       operatingUnitId: branchAId,
-      partnerOperatingUnitId: branchBId,
-      dueFromParentAccountId,
-      dueToParentAccountId,
     });
-    const freshCreatedAccounts = Array.isArray(freshProvision.json?.createdAccounts)
-      ? freshProvision.json.createdAccounts
+    const freshCreatedAccounts = Array.isArray(freshApply.json?.createdAccounts)
+      ? freshApply.json.createdAccounts
       : [];
-    const freshMappings = Array.isArray(freshProvision.json?.mappings)
-      ? freshProvision.json.mappings
+    const freshPartnerMappings = Array.isArray(freshApply.json?.partnerMappings)
+      ? freshApply.json.partnerMappings
       : [];
-    assert(freshCreatedAccounts.length === 4, "Fresh auto-provision should create four child accounts");
-    assert(freshMappings.length === 2, "Fresh auto-provision should return two directional mappings");
+    const freshUpdatedPartnerMappings = Array.isArray(freshApply.json?.updatedPartnerMappings)
+      ? freshApply.json.updatedPartnerMappings
+      : [];
+    const peerCount = 2;
+    assert(
+      freshCreatedAccounts.length === 4 + peerCount * 4,
+      "Saved-config delta apply should create four central accounts plus both partner directions for every existing peer branch"
+    );
+    assert(
+      freshUpdatedPartnerMappings.length === peerCount * 2,
+      "Saved-config delta apply should create both partner directions for every selected-branch peer"
+    );
+    assert(freshApply.json?.lastAppliedAt, "Saved-config apply should return lastAppliedAt");
 
-    const branchAToB = findDirectionalMapping(freshMappings, branchAId, branchBId);
-    const branchBToA = findDirectionalMapping(freshMappings, branchBId, branchAId);
+    const branchAToB = findDirectionalMapping(freshPartnerMappings, branchAId, branchBId);
+    const branchBToA = findDirectionalMapping(freshPartnerMappings, branchBId, branchAId);
+    const branchAToBootstrap = findDirectionalMapping(
+      freshPartnerMappings,
+      branchAId,
+      bootstrapOperatingUnitId
+    );
+    const bootstrapToBranchA = findDirectionalMapping(
+      freshPartnerMappings,
+      bootstrapOperatingUnitId,
+      branchAId
+    );
+    assert(
+      branchAToBootstrap?.created === true,
+      "Selected-branch apply should also create Branch A -> bootstrap branch mapping"
+    );
+    assert(
+      bootstrapToBranchA?.created === true,
+      "Selected-branch apply should also create bootstrap branch -> Branch A mapping"
+    );
     assert(branchAToB?.created === true, "Branch A -> Branch B mapping should be marked created");
     assert(branchBToA?.created === true, "Branch B -> Branch A mapping should be marked created");
 
@@ -347,7 +364,7 @@ async function main() {
 
     assertAccountRow({
       row: aToBDueFromRow,
-      expectedCode: "132.01",
+      expectedCode: "132.05",
       expectedName: `${branchACode} Due From ${branchBCode}`,
       expectedParentAccountId: dueFromParentAccountId,
       expectedAccountType: "ASSET",
@@ -355,7 +372,7 @@ async function main() {
     });
     assertAccountRow({
       row: aToBDueToRow,
-      expectedCode: "339.01",
+      expectedCode: "339.05",
       expectedName: `${branchACode} Due To ${branchBCode}`,
       expectedParentAccountId: dueToParentAccountId,
       expectedAccountType: "LIABILITY",
@@ -363,7 +380,7 @@ async function main() {
     });
     assertAccountRow({
       row: bToADueFromRow,
-      expectedCode: "132.02",
+      expectedCode: "132.06",
       expectedName: `${branchBCode} Due From ${branchACode}`,
       expectedParentAccountId: dueFromParentAccountId,
       expectedAccountType: "ASSET",
@@ -371,32 +388,32 @@ async function main() {
     });
     assertAccountRow({
       row: bToADueToRow,
-      expectedCode: "339.02",
+      expectedCode: "339.06",
       expectedName: `${branchBCode} Due To ${branchACode}`,
       expectedParentAccountId: dueToParentAccountId,
       expectedAccountType: "LIABILITY",
       expectedNormalSide: "CREDIT",
     });
     assert(
-      parseChildSequence(aToBDueFromRow?.code, dueFromParentCode) === 1 &&
-        parseChildSequence(aToBDueToRow?.code, dueToParentCode) === 1,
-      "Fresh A -> B mapping should use shared child sequence 01"
+      parseChildSequence(aToBDueFromRow?.code, dueFromParentCode) === 5 &&
+        parseChildSequence(aToBDueToRow?.code, dueToParentCode) === 5,
+      "Fresh A -> B mapping should use shared child sequence 05 after the bootstrap peer consumes 03-04"
     );
     assert(
-      parseChildSequence(bToADueFromRow?.code, dueFromParentCode) === 2 &&
-        parseChildSequence(bToADueToRow?.code, dueToParentCode) === 2,
-      "Fresh B -> A mapping should use shared child sequence 02"
+      parseChildSequence(bToADueFromRow?.code, dueFromParentCode) === 6 &&
+        parseChildSequence(bToADueToRow?.code, dueToParentCode) === 6,
+      "Fresh B -> A mapping should use shared child sequence 06 after the bootstrap peer consumes 03-04"
     );
 
     assert(
       accountById.get(dueFromParentAccountId)?.allow_posting === 0 ||
         accountById.get(dueFromParentAccountId)?.allow_posting === false,
-      "Due-from parent should become non-postable after child creation"
+      "Due-from parent should remain non-postable after child creation"
     );
     assert(
       accountById.get(dueToParentAccountId)?.allow_posting === 0 ||
         accountById.get(dueToParentAccountId)?.allow_posting === false,
-      "Due-to parent should become non-postable after child creation"
+      "Due-to parent should remain non-postable after child creation"
     );
 
     const listAToBRows = await listPartnerCurrentMappings({
@@ -414,189 +431,54 @@ async function main() {
     assert(listAToBRows.length === 1, "GET mapping list should return one row for A -> B");
     assert(listBToARows.length === 1, "GET mapping list should return one row for B -> A");
     assert(
-      String(listAToBRows[0]?.due_from_account_code || "") === "132.01" &&
-        String(listAToBRows[0]?.due_to_account_code || "") === "339.01",
-      "GET mapping list should expose A -> B generated child codes"
+      String(listAToBRows[0]?.due_from_account_code || "") === "132.05" &&
+        String(listAToBRows[0]?.due_to_account_code || "") === "339.05",
+      "GET mapping list should expose A -> B generated child codes from saved-config apply"
     );
 
-    const reusedProvision = await autoProvisionPartnerCurrentAccounts({
+    const rerunApply = await applyCurrentAccountConfig({
       token: adminToken,
       legalEntityId,
       operatingUnitId: branchAId,
-      partnerOperatingUnitId: branchBId,
-      dueFromParentAccountId,
-      dueToParentAccountId,
     });
-    const reusedCreatedAccounts = Array.isArray(reusedProvision.json?.createdAccounts)
-      ? reusedProvision.json.createdAccounts
+    const rerunCreatedAccounts = Array.isArray(rerunApply.json?.createdAccounts)
+      ? rerunApply.json.createdAccounts
       : [];
-    const reusedMappings = Array.isArray(reusedProvision.json?.mappings)
-      ? reusedProvision.json.mappings
+    const rerunUpdatedPartnerMappings = Array.isArray(rerunApply.json?.updatedPartnerMappings)
+      ? rerunApply.json.updatedPartnerMappings
       : [];
-    assert(reusedCreatedAccounts.length === 0, "Second auto-provision should reuse existing setup");
-    assert(reusedMappings.length === 2, "Second auto-provision should still return both mappings");
+    const rerunPartnerMappings = Array.isArray(rerunApply.json?.partnerMappings)
+      ? rerunApply.json.partnerMappings
+      : [];
+    assert(rerunCreatedAccounts.length === 0, "Second saved-config apply should reuse existing branch-pair setup");
     assert(
-      reusedMappings.every((row) => row?.created === false),
-      "Second auto-provision should mark both mappings as existing"
+      rerunUpdatedPartnerMappings.length === 0,
+      "Second saved-config apply should not rewrite existing branch-pair mappings"
     );
     assert(
-      toNumber(findDirectionalMapping(reusedMappings, branchAId, branchBId)?.id) ===
-        toNumber(branchAToB?.id) &&
-        toNumber(findDirectionalMapping(reusedMappings, branchBId, branchAId)?.id) ===
-          toNumber(branchBToA?.id),
-      "Second auto-provision should reuse the same mapping ids"
+      rerunPartnerMappings.length === peerCount * 2,
+      "Second saved-config apply should still return both partner directions for every peer"
     );
-
-    const dueFromParentCode2 = `1328${suffix}`;
-    const dueToParentCode2 = `3398${suffix}`;
-    const dueFromParentAccountId2 = await createGlAccount({
-      token: adminToken,
-      coaId,
-      code: dueFromParentCode2,
-      name: `Due From Branches Partial ${suffix}`,
-      accountType: "ASSET",
-      normalSide: "DEBIT",
-    });
-    const dueToParentAccountId2 = await createGlAccount({
-      token: adminToken,
-      coaId,
-      code: dueToParentCode2,
-      name: `Due To Branches Partial ${suffix}`,
-      accountType: "LIABILITY",
-      normalSide: "CREDIT",
-    });
-
-    const branchCCode = `BRC${suffix}`;
-    const branchDCode = `BRD${suffix}`;
-    const branchCId = await createOperatingUnit({
-      token: adminToken,
-      legalEntityId,
-      code: branchCCode,
-      name: `Branch C ${suffix}`,
-    });
-    const branchDId = await createOperatingUnit({
-      token: adminToken,
-      legalEntityId,
-      code: branchDCode,
-      name: `Branch D ${suffix}`,
-    });
-
-    const manualCToDDueFromId = await createGlAccount({
-      token: adminToken,
-      coaId,
-      code: `${dueFromParentCode2}.09`,
-      name: `${branchCCode} Due From ${branchDCode}`,
-      accountType: "ASSET",
-      normalSide: "DEBIT",
-      parentAccountId: dueFromParentAccountId2,
-    });
-    const manualCToDDueToId = await createGlAccount({
-      token: adminToken,
-      coaId,
-      code: `${dueToParentCode2}.09`,
-      name: `${branchCCode} Due To ${branchDCode}`,
-      accountType: "LIABILITY",
-      normalSide: "CREDIT",
-      parentAccountId: dueToParentAccountId2,
-    });
-    const manualMappingId = await createOperatingUnitPartnerCurrentAccount({
-      token: adminToken,
-      legalEntityId,
-      operatingUnitId: branchCId,
-      partnerOperatingUnitId: branchDId,
-      dueFromAccountId: manualCToDDueFromId,
-      dueToAccountId: manualCToDDueToId,
-    });
-
-    const partialProvision = await autoProvisionPartnerCurrentAccounts({
-      token: adminToken,
-      legalEntityId,
-      operatingUnitId: branchCId,
-      partnerOperatingUnitId: branchDId,
-      dueFromParentAccountId: dueFromParentAccountId2,
-      dueToParentAccountId: dueToParentAccountId2,
-    });
-    const partialCreatedAccounts = Array.isArray(partialProvision.json?.createdAccounts)
-      ? partialProvision.json.createdAccounts
-      : [];
-    const partialMappings = Array.isArray(partialProvision.json?.mappings)
-      ? partialProvision.json.mappings
-      : [];
-    assert(partialCreatedAccounts.length === 2, "Partial setup should create only the missing reverse-direction accounts");
-    assert(partialMappings.length === 2, "Partial setup should still return both directions");
-
-    const partialCToD = findDirectionalMapping(partialMappings, branchCId, branchDId);
-    const partialDToC = findDirectionalMapping(partialMappings, branchDId, branchCId);
     assert(
-      partialCToD?.created === false && toNumber(partialCToD?.id) === manualMappingId,
-      "Existing C -> D mapping should be reused during partial auto-provision"
-    );
-    assert(partialDToC?.created === true, "Missing D -> C mapping should be created");
-
-    const partialRows = await fetchAccountRows([
-      partialDToC?.dueFromAccountId,
-      partialDToC?.dueToAccountId,
-    ]);
-    const partialById = new Map(partialRows.map((row) => [toNumber(row.id), row]));
-    assertAccountRow({
-      row: partialById.get(toNumber(partialDToC?.dueFromAccountId)),
-      expectedCode: `${dueFromParentCode2}.01`,
-      expectedName: `${branchDCode} Due From ${branchCCode}`,
-      expectedParentAccountId: dueFromParentAccountId2,
-      expectedAccountType: "ASSET",
-      expectedNormalSide: "DEBIT",
-    });
-    assertAccountRow({
-      row: partialById.get(toNumber(partialDToC?.dueToAccountId)),
-      expectedCode: `${dueToParentCode2}.01`,
-      expectedName: `${branchDCode} Due To ${branchCCode}`,
-      expectedParentAccountId: dueToParentAccountId2,
-      expectedAccountType: "LIABILITY",
-      expectedNormalSide: "CREDIT",
-    });
-
-    const validationFailure = await autoProvisionPartnerCurrentAccounts({
-      token: adminToken,
-      legalEntityId,
-      operatingUnitId: branchAId,
-      partnerOperatingUnitId: branchBId,
-      dueFromParentAccountId: dueToParentAccountId2,
-      dueToParentAccountId: dueFromParentAccountId2,
-      expectedStatus: 400,
-    });
-    const validationErrorText = toErrorText(validationFailure.json);
-    assert(
-      validationErrorText.includes("dueFromParentAccountId must reference an ASSET account"),
-      "Auto-provision should reject invalid parent-account typing with actionable error text"
+      rerunPartnerMappings.every((row) => row?.created === false),
+      "Second saved-config apply should mark both partner directions as existing"
     );
 
-    console.log("Cash register ownership CRO06 auto-provision checks passed.");
+    console.log("Cash register ownership CRO06 saved-config branch-pair apply checks passed.");
     console.log(
       JSON.stringify(
         {
           tenantId: identity.tenantId,
           legalEntityId,
-          freshProvision: {
-            branchAToBMappingId: toNumber(branchAToB?.id),
-            branchBToAMappingId: toNumber(branchBToA?.id),
-            createdAccountCodes: [
-              aToBDueFromRow?.code,
-              aToBDueToRow?.code,
-              bToADueFromRow?.code,
-              bToADueToRow?.code,
-            ],
-          },
-          reusedProvision: {
-            reused: true,
-          },
-          partialProvision: {
-            manualMappingId,
-            createdReverseMappingId: toNumber(partialDToC?.id),
-            createdReverseAccountCodes: [
-              partialById.get(toNumber(partialDToC?.dueFromAccountId))?.code,
-              partialById.get(toNumber(partialDToC?.dueToAccountId))?.code,
-            ],
-          },
+          branchAToBMappingId: toNumber(branchAToB?.id),
+          branchBToAMappingId: toNumber(branchBToA?.id),
+          createdAccountCodes: [
+            aToBDueFromRow?.code,
+            aToBDueToRow?.code,
+            bToADueFromRow?.code,
+            bToADueToRow?.code,
+          ],
+          rerunCreatedAccounts: rerunCreatedAccounts.length,
         },
         null,
         2
@@ -617,7 +499,7 @@ main()
     process.exitCode = 0;
   })
   .catch((err) => {
-    console.error("Cash register ownership CRO06 auto-provision test failed.");
+    console.error("Cash register ownership CRO06 saved-config apply test failed.");
     console.error(toErrorText(err?.message || err));
     console.error(err);
     process.exitCode = 1;

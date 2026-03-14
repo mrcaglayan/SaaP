@@ -1,6 +1,9 @@
 
 import { useEffect, useMemo, useState } from "react";
-import { bootstrapCompany } from "../../api/onboarding.js";
+import {
+  bootstrapCompany,
+  previewCompanyBootstrapCurrentAccountEligibility,
+} from "../../api/onboarding.js";
 import { listCountries, listCurrencies } from "../../api/orgAdmin.js";
 import { getPolicyPack, listPolicyPacks } from "../../api/policyPacks.js";
 import { useAuth } from "../../auth/useAuth.js";
@@ -37,6 +40,11 @@ Object.freeze({
   titleTr: "Hesap Agaci",
 }),
 Object.freeze({ key: "branches", titleEn: "Branches", titleTr: "Subeler" }),
+Object.freeze({
+  key: "currentAccounts",
+  titleEn: "Current Accounts",
+  titleTr: "Cari Ic Hesaplar",
+}),
 ]);
 
 const BASELINE_DEFAULT_ACCOUNTS = Object.freeze([
@@ -158,6 +166,25 @@ return {
   hasSubledger: false,
 };
 }
+function createCurrentAccountConfigDraft(seed = {}) {
+return {
+  skipForNow:
+    seed.skipForNow === undefined && seed.skip_for_now === undefined
+      ? false
+      : Boolean(seed.skipForNow ?? seed.skip_for_now),
+  dueFromParentAccountCode: toUpper(
+    seed.dueFromParentAccountCode ?? seed.due_from_parent_account_code
+  ),
+  dueToParentAccountCode: toUpper(
+    seed.dueToParentAccountCode ?? seed.due_to_parent_account_code
+  ),
+};
+}
+function getEntityCurrentAccountConfig(entity) {
+return createCurrentAccountConfigDraft(
+  entity?.currentAccountConfig ?? entity?.current_account_config
+);
+}
 function createEntityDraft(seed = {}) {
 const countryIso2 = toUpper(seed.countryIso2 || "US");
 return {
@@ -176,6 +203,9 @@ return {
   bookName: "",
   defaultAccounts: getCountryStarterAccounts(countryIso2),
   branches: [createBranchDraft()],
+  currentAccountConfig: createCurrentAccountConfigDraft(
+    seed.currentAccountConfig ?? seed.current_account_config
+  ),
 };
 }
 function buildDefaultGroupCoaCode(groupCompanyCode) {
@@ -321,6 +351,34 @@ for (const account of unresolved) {
 }
 return treeRows;
 }
+function buildCurrentAccountParentOptions(defaultAccounts, accountType, normalSide) {
+return sanitizeDefaultAccounts(defaultAccounts)
+  .filter(
+    (account) =>
+      toUpper(account.accountType) === toUpper(accountType) &&
+      toUpper(account.normalSide) === toUpper(normalSide) &&
+      !Boolean(account.allowPosting)
+  )
+  .sort(compareAccountsForTree);
+}
+function compactCurrentAccountConfigPayload(entity) {
+const currentAccountConfig = getEntityCurrentAccountConfig(entity);
+if (currentAccountConfig.skipForNow) {
+  return {
+    skipForNow: true,
+  };
+}
+if (
+  !currentAccountConfig.dueFromParentAccountCode &&
+  !currentAccountConfig.dueToParentAccountCode
+) {
+  return null;
+}
+return {
+  dueFromParentAccountCode: currentAccountConfig.dueFromParentAccountCode,
+  dueToParentAccountCode: currentAccountConfig.dueToParentAccountCode,
+};
+}
 function compactEntityPayload(entity) {
 const branches = (entity.branches || [])
   .filter((branch) => branch.code.trim() && branch.name.trim())
@@ -332,6 +390,7 @@ const branches = (entity.branches || [])
   }));
 
 const defaultAccounts = sanitizeDefaultAccounts(entity.defaultAccounts);
+const currentAccountConfig = compactCurrentAccountConfigPayload(entity);
 
 return {
   code: entity.code.trim(),
@@ -352,6 +411,7 @@ return {
     : {}),
   ...(defaultAccounts.length > 0 ? { defaultAccounts } : {}),
   ...(branches.length > 0 ? { branches } : {}),
+  ...(currentAccountConfig ? { currentAccountConfig } : {}),
 };
 }
 function compactGroupCoaPayload(groupCoa) {
@@ -422,7 +482,60 @@ for (const row of rows) {
 }
 return "";
 }
-function validateForm(form, l) {
+function validateCurrentAccountSetupRows(form, eligibilityRows, l) {
+const rows = Array.isArray(eligibilityRows) ? eligibilityRows : [];
+for (let index = 0; index < form.legalEntities.length; index += 1) {
+  const entity = form.legalEntities[index];
+  const prefix = entity.code.trim() || `Legal entity ${index + 1}`;
+  const currentAccountConfig = getEntityCurrentAccountConfig(entity);
+  if (currentAccountConfig.skipForNow) {
+    continue;
+  }
+
+  const dueFromOptions = buildCurrentAccountParentOptions(
+    entity.defaultAccounts,
+    "ASSET",
+    "DEBIT"
+  );
+  const dueToOptions = buildCurrentAccountParentOptions(
+    entity.defaultAccounts,
+    "LIABILITY",
+    "CREDIT"
+  );
+  const dueFromCodes = new Set(dueFromOptions.map((account) => toUpper(account.code)));
+  const dueToCodes = new Set(dueToOptions.map((account) => toUpper(account.code)));
+  const hasDueFrom = Boolean(currentAccountConfig.dueFromParentAccountCode);
+  const hasDueTo = Boolean(currentAccountConfig.dueToParentAccountCode);
+  const isRecommended = Boolean(rows[index]?.currentAccountSetupRecommended);
+
+  if (hasDueFrom && !dueFromCodes.has(currentAccountConfig.dueFromParentAccountCode)) {
+    return l(
+      `${prefix}: due-from parent must stay selected from a non-postable ASSET/DEBIT account in the account tree.`,
+      `${prefix}: alacak/due-from ust hesap secimi hesap agacindaki post edilemeyen ASSET/DEBIT hesaptan kalmalidir.`
+    );
+  }
+  if (hasDueTo && !dueToCodes.has(currentAccountConfig.dueToParentAccountCode)) {
+    return l(
+      `${prefix}: due-to parent must stay selected from a non-postable LIABILITY/CREDIT account in the account tree.`,
+      `${prefix}: borc/due-to ust hesap secimi hesap agacindaki post edilemeyen LIABILITY/CREDIT hesaptan kalmalidir.`
+    );
+  }
+  if ((hasDueFrom && !hasDueTo) || (!hasDueFrom && hasDueTo)) {
+    return l(
+      `${prefix}: choose both Due From and Due To parents or skip this step explicitly.`,
+      `${prefix}: hem Due From hem Due To ust hesabini secin ya da bu adimi acikca simdilik atlayin.`
+    );
+  }
+  if (isRecommended && (!hasDueFrom || !hasDueTo)) {
+    return l(
+      `${prefix}: current-account setup is recommended because the backend preview found multiple active branches. Choose both parents or mark skip for now.`,
+      `${prefix}: arka uc onizlemesi birden fazla aktif sube buldugu icin cari ic hesap kurulumu onerilir. Iki ust hesabi secin veya simdilik atla secenegini isaretleyin.`
+    );
+  }
+}
+return "";
+}
+function validateForm(form, l, options = {}) {
 if (!form.groupCompany.code.trim() || !form.groupCompany.name.trim()) {
   return l(
     "Group company code and name are required.",
@@ -488,9 +601,17 @@ for (let index = 0; index < form.legalEntities.length; index += 1) {
     return accountTreeError;
   }
 }
+const currentAccountError = validateCurrentAccountSetupRows(
+  form,
+  options.currentAccountEligibilityRows,
+  l
+);
+if (currentAccountError) {
+  return currentAccountError;
+}
 return "";
 }
-function validateWizardStep(form, stepKey, l) {
+function validateWizardStep(form, stepKey, l, options = {}) {
 if (stepKey === "entity") {
   if (!form.groupCompany.code.trim() || !form.groupCompany.name.trim()) {
     return l(
@@ -565,6 +686,13 @@ if (stepKey === "accountTree") {
     }
   }
 }
+if (stepKey === "currentAccounts") {
+  return validateCurrentAccountSetupRows(
+    form,
+    options.currentAccountEligibilityRows,
+    l
+  );
+}
 return "";
 }
 export default function CompanyOnboardingPage() {
@@ -588,12 +716,32 @@ const [message, setMessage] = useState("");
 const [result, setResult] = useState(null);
 const [showAllPolicyPackOptions, setShowAllPolicyPackOptions] = useState(false);
 const [selectedAccountIdByEntityId, setSelectedAccountIdByEntityId] = useState({});
+const [currentAccountEligibilityRows, setCurrentAccountEligibilityRows] = useState([]);
+const [currentAccountEligibilityLoading, setCurrentAccountEligibilityLoading] =
+  useState(false);
+const [currentAccountEligibilityWarning, setCurrentAccountEligibilityWarning] =
+  useState("");
 const activeStep = WIZARD_STEPS[activeStepIndex] || WIZARD_STEPS[0];
 const isLastStep = activeStepIndex >= WIZARD_STEPS.length - 1;
 const entityCount = useMemo(
   () => form.legalEntities.length,
   [form.legalEntities.length]
 );
+const currentAccountEligibilityPreviewPayload = useMemo(() => {
+  return {
+    legalEntities: form.legalEntities.map((entity) => ({
+      code: entity.code.trim(),
+      name: entity.name.trim(),
+      branches: (entity.branches || [])
+        .filter((branch) => branch.code.trim() && branch.name.trim())
+        .map((branch) => ({
+          code: branch.code.trim(),
+          name: branch.name.trim(),
+          unitType: String(branch.unitType || "BRANCH").toUpperCase(),
+        })),
+    })),
+  };
+}, [form.legalEntities]);
 const countryOptions = useMemo(() => {
   return [...countries].sort((left, right) =>
     String(left?.iso2 || "").localeCompare(String(right?.iso2 || ""))
@@ -697,6 +845,93 @@ useEffect(() => {
     active = false;
   };
 }, [canSetupCompany]);
+useEffect(() => {
+  if (!canSetupCompany || activeStep.key !== "currentAccounts") {
+    return undefined;
+  }
+
+  let active = true;
+  setCurrentAccountEligibilityLoading(true);
+  setCurrentAccountEligibilityWarning("");
+
+  previewCompanyBootstrapCurrentAccountEligibility(
+    currentAccountEligibilityPreviewPayload
+  )
+    .then((response) => {
+      if (!active) {
+        return;
+      }
+      setCurrentAccountEligibilityRows(Array.isArray(response?.rows) ? response.rows : []);
+    })
+    .catch((err) => {
+      if (!active) {
+        return;
+      }
+      setCurrentAccountEligibilityRows([]);
+      setCurrentAccountEligibilityWarning(
+        err?.response?.data?.message ||
+          (isTr
+            ? "Cari ic hesap oneri onizlemesi yuklenemedi. Kurulumu yine gonderebilirsiniz ancak su anda oneri rozetleri gosterilemiyor."
+            : "Current-account recommendation preview could not be loaded. You can still submit bootstrap, but recommendation badges are unavailable right now.")
+      );
+    })
+    .finally(() => {
+      if (!active) {
+        return;
+      }
+      setCurrentAccountEligibilityLoading(false);
+    });
+
+  return () => {
+    active = false;
+  };
+}, [
+  activeStep.key,
+  canSetupCompany,
+  currentAccountEligibilityPreviewPayload,
+  isTr,
+]);
+useEffect(() => {
+  setForm((prev) => {
+    let changed = false;
+    const nextLegalEntities = prev.legalEntities.map((entity) => {
+      const currentAccountConfig = getEntityCurrentAccountConfig(entity);
+      const accountCodes = new Set(
+        sanitizeDefaultAccounts(entity.defaultAccounts).map((account) => toUpper(account.code))
+      );
+      const nextDueFromParentAccountCode = accountCodes.has(
+        currentAccountConfig.dueFromParentAccountCode
+      )
+        ? currentAccountConfig.dueFromParentAccountCode
+        : "";
+      const nextDueToParentAccountCode = accountCodes.has(
+        currentAccountConfig.dueToParentAccountCode
+      )
+        ? currentAccountConfig.dueToParentAccountCode
+        : "";
+
+      if (
+        nextDueFromParentAccountCode === currentAccountConfig.dueFromParentAccountCode &&
+        nextDueToParentAccountCode === currentAccountConfig.dueToParentAccountCode &&
+        entity.currentAccountConfig
+      ) {
+        return entity;
+      }
+
+      changed = true;
+      return {
+        ...entity,
+        currentAccountConfig: {
+          ...currentAccountConfig,
+          dueFromParentAccountCode: nextDueFromParentAccountCode,
+          dueToParentAccountCode: nextDueToParentAccountCode,
+        },
+      };
+    });
+
+    return changed ? { ...prev, legalEntities: nextLegalEntities } : prev;
+  });
+}, [form.legalEntities]);
 function setGroupCompanyField(field, value) {
   setForm((prev) => ({
     ...prev,
@@ -908,6 +1143,34 @@ function setBranchField(entityId, branchId, field, value) {
     ),
   }));
 }
+function setCurrentAccountConfigField(entityId, field, value) {
+  setForm((prev) => ({
+    ...prev,
+    legalEntities: prev.legalEntities.map((entity) => {
+      if (entity.id !== entityId) {
+        return entity;
+      }
+      const currentAccountConfig = getEntityCurrentAccountConfig(entity);
+      const normalizedValue =
+        field === "skipForNow" ? Boolean(value) : toUpper(value);
+      const nextCurrentAccountConfig = {
+        ...currentAccountConfig,
+        [field]: normalizedValue,
+      };
+      if (field === "skipForNow" && normalizedValue) {
+        nextCurrentAccountConfig.dueFromParentAccountCode = "";
+        nextCurrentAccountConfig.dueToParentAccountCode = "";
+      }
+      if (field !== "skipForNow") {
+        nextCurrentAccountConfig.skipForNow = false;
+      }
+      return {
+        ...entity,
+        currentAccountConfig: nextCurrentAccountConfig,
+      };
+    }),
+  }));
+}
 function removeBranch(entityId, branchId) {
   setForm((prev) => ({
     ...prev,
@@ -1066,7 +1329,9 @@ function resetForm() {
   setMessage("");
 }
 function goToNextStep() {
-  const validationError = validateWizardStep(form, activeStep.key, l);
+  const validationError = validateWizardStep(form, activeStep.key, l, {
+    currentAccountEligibilityRows,
+  });
   if (validationError) {
     setError(validationError);
     return;
@@ -1092,7 +1357,9 @@ async function handleSubmit(event) {
     );
     return;
   }
-  const validationError = validateForm(form, l);
+  const validationError = validateForm(form, l, {
+    currentAccountEligibilityRows,
+  });
   if (validationError) {
     setError(validationError);
     return;
@@ -1143,8 +1410,8 @@ return (
           </h1>
           <p className="mt-1 text-sm text-slate-600">
             {l(
-              "Company + Entities -> CoA Template -> Account Tree -> Branches",
-              "Sirket + Birimler -> Hesap Plani Sablonu -> Hesap Agaci -> Subeler"
+              "Company + Entities -> CoA Template -> Account Tree -> Branches -> Current Accounts",
+              "Sirket + Birimler -> Hesap Plani Sablonu -> Hesap Agaci -> Subeler -> Cari Ic Hesaplar"
             )}
           </p>
         </div>
@@ -1167,7 +1434,7 @@ return (
       </div>
     </div>
     <div className="rounded-2xl border border-slate-200 bg-white p-4">
-      <ol className="grid gap-2 sm:grid-cols-5">
+      <ol className="grid gap-2 sm:grid-cols-6">
         {WIZARD_STEPS.map((step, index) => {
           const isActive = index === activeStepIndex;
           const isCompleted = index < activeStepIndex;
@@ -2203,6 +2470,197 @@ return (
           </div>
         </section>
       ) : null}
+      {activeStep.key === "currentAccounts" ? (
+        <section className="space-y-4 rounded-2xl border border-slate-200 bg-white p-4">
+          <div className="rounded-xl border border-cyan-200 bg-cyan-50/70 p-4 text-sm text-cyan-950">
+            <h2 className="text-sm font-semibold">
+              {l("Current-Account Setup", "Cari Ic Hesap Kurulumu")}
+            </h2>
+            <p className="mt-2">
+              {l(
+                "Choose one Due From parent and one Due To parent per legal entity. SaaP will create or reuse the branch-specific child accounts and mappings automatically during bootstrap.",
+                "Her tuzel kisilik icin bir Due From ve bir Due To ust hesabi secin. SaaP kurulum sirasinda subeye ozel alt hesaplari ve eslesmeleri otomatik olarak olusturur veya yeniden kullanir."
+              )}
+            </p>
+            <p className="mt-2 text-xs text-cyan-900/80">
+              {l(
+                "Pick non-postable control/header parents from the account tree. If you skip now, multi-branch cross-context readiness stays pending until you save and apply the config later.",
+                "Hesap agacindan post edilemeyen kontrol/ust hesaplari secin. Simdilik atlarsaniz, cok subeli capraz baglam hazirlik durumu daha sonra kaydedip uygulayana kadar beklemede kalir."
+              )}
+            </p>
+          </div>
+          {currentAccountEligibilityWarning ? (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+              {currentAccountEligibilityWarning}
+            </div>
+          ) : null}
+          {currentAccountEligibilityLoading ? (
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
+              {l(
+                "Checking backend recommendation for current-account setup...",
+                "Cari ic hesap kurulumu icin arka uc onerisi kontrol ediliyor..."
+              )}
+            </div>
+          ) : null}
+          <div className="space-y-3">
+            {form.legalEntities.map((entity, entityIndex) => {
+              const currentAccountConfig = getEntityCurrentAccountConfig(entity);
+              const eligibility = currentAccountEligibilityRows[entityIndex] || null;
+              const effectiveActiveOperatingUnitCount = Number(
+                eligibility?.effectiveActiveOperatingUnitCount || 0
+              );
+              const currentAccountSetupRecommended = Boolean(
+                eligibility?.currentAccountSetupRecommended
+              );
+              const dueFromOptions = buildCurrentAccountParentOptions(
+                entity.defaultAccounts,
+                "ASSET",
+                "DEBIT"
+              );
+              const dueToOptions = buildCurrentAccountParentOptions(
+                entity.defaultAccounts,
+                "LIABILITY",
+                "CREDIT"
+              );
+
+              return (
+                <article
+                  key={entity.id}
+                  className="rounded-xl border border-slate-200 bg-slate-50/40 p-4"
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <h3 className="text-sm font-semibold text-slate-800">
+                        {l("Entity", "Birim")} {entityIndex + 1} -{" "}
+                        {entity.code || l("No code", "Kod yok")}
+                      </h3>
+                      <p className="mt-1 text-xs text-slate-600">
+                        {l(
+                          `Backend preview found ${effectiveActiveOperatingUnitCount} active branches in this draft.`,
+                          `Arka uc onizlemesi bu taslakta ${effectiveActiveOperatingUnitCount} aktif sube buldu.`
+                        )}
+                      </p>
+                    </div>
+                    <div
+                      className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                        currentAccountSetupRecommended
+                          ? "bg-amber-100 text-amber-900"
+                          : "bg-slate-200 text-slate-700"
+                      }`}
+                    >
+                      {currentAccountSetupRecommended
+                        ? l("Recommended for readiness", "Hazirlik icin onerilir")
+                        : l("Optional for now", "Simdilik opsiyonel")}
+                    </div>
+                  </div>
+                  <div className="mt-3 grid gap-3 lg:grid-cols-2">
+                    <div className="space-y-2">
+                      <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                        {l("Due From Parent", "Due From Ust Hesabi")}
+                      </label>
+                      <select
+                        value={currentAccountConfig.dueFromParentAccountCode}
+                        onChange={(event) =>
+                          setCurrentAccountConfigField(
+                            entity.id,
+                            "dueFromParentAccountCode",
+                            event.target.value
+                          )
+                        }
+                        disabled={currentAccountConfig.skipForNow}
+                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm disabled:bg-slate-100"
+                      >
+                        <option value="">
+                          {l("Select ASSET / DEBIT header parent", "ASSET / DEBIT ust hesabi secin")}
+                        </option>
+                        {dueFromOptions.map((account) => (
+                          <option key={`${entity.id}-dfa-${account.code}`} value={account.code}>
+                            {account.code} - {account.name}
+                          </option>
+                        ))}
+                      </select>
+                      <p className="text-xs text-slate-500">
+                        {l(
+                          "Use a non-postable ASSET / DEBIT control account under the legal entity CoA.",
+                          "Tuzel kisilik hesap planinda post edilemeyen bir ASSET / DEBIT kontrol hesabi kullanin."
+                        )}
+                      </p>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                        {l("Due To Parent", "Due To Ust Hesabi")}
+                      </label>
+                      <select
+                        value={currentAccountConfig.dueToParentAccountCode}
+                        onChange={(event) =>
+                          setCurrentAccountConfigField(
+                            entity.id,
+                            "dueToParentAccountCode",
+                            event.target.value
+                          )
+                        }
+                        disabled={currentAccountConfig.skipForNow}
+                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm disabled:bg-slate-100"
+                      >
+                        <option value="">
+                          {l(
+                            "Select LIABILITY / CREDIT header parent",
+                            "LIABILITY / CREDIT ust hesabi secin"
+                          )}
+                        </option>
+                        {dueToOptions.map((account) => (
+                          <option key={`${entity.id}-dta-${account.code}`} value={account.code}>
+                            {account.code} - {account.name}
+                          </option>
+                        ))}
+                      </select>
+                      <p className="text-xs text-slate-500">
+                        {l(
+                          "Use a non-postable LIABILITY / CREDIT control account under the legal entity CoA.",
+                          "Tuzel kisilik hesap planinda post edilemeyen bir LIABILITY / CREDIT kontrol hesabi kullanin."
+                        )}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+                    <label className="inline-flex items-center gap-2 text-sm text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={currentAccountConfig.skipForNow}
+                        onChange={(event) =>
+                          setCurrentAccountConfigField(
+                            entity.id,
+                            "skipForNow",
+                            event.target.checked
+                          )
+                        }
+                      />
+                      {l(
+                        "Skip current-account setup for now",
+                        "Cari ic hesap kurulumunu simdilik atla"
+                      )}
+                    </label>
+                    <p className="text-xs text-slate-500">
+                      {l(
+                        "You can repair or apply the saved config later from Organization Management.",
+                        "Kayitli konfigurasyonu daha sonra Organization Management ekranindan uygulayabilir veya onarabilirsiniz."
+                      )}
+                    </p>
+                  </div>
+                  {dueFromOptions.length === 0 || dueToOptions.length === 0 ? (
+                    <div className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                      {l(
+                        "This entity does not yet have both required non-postable parent candidates in the account tree. Go back to Account Tree and add child-capable header accounts first.",
+                        "Bu birimde hesap agacinda gerekli iki post edilemeyen ust hesap adayi henuz yok. Once Hesap Agaci adimina donup alt hesap kabul eden ust hesaplari ekleyin."
+                      )}
+                    </div>
+                  ) : null}
+                </article>
+              );
+            })}
+          </div>
+        </section>
+      ) : null}
       <div className="flex items-center justify-between gap-2">
         <button
           type="button"
@@ -2223,7 +2681,11 @@ return (
         ) : (
           <button
             type="submit"
-            disabled={submitting || !canSetupCompany}
+            disabled={
+              submitting ||
+              !canSetupCompany ||
+              (activeStep.key === "currentAccounts" && currentAccountEligibilityLoading)
+            }
             className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
           >
             {submitting
@@ -2297,6 +2759,7 @@ return (
                 <th className="px-3 py-2">{l("CoA Code", "Hesap Plani Kodu")}</th>
                 <th className="px-3 py-2">{l("CoA ID", "Hesap Plani ID")}</th>
                 <th className="px-3 py-2">{l("Branch Count", "Sube Sayisi")}</th>
+                <th className="px-3 py-2">{l("Current Accounts", "Cari Ic Hesaplar")}</th>
               </tr>
             </thead>
             <tbody>
@@ -2310,11 +2773,37 @@ return (
                   <td className="px-3 py-2">{entity.coaCode}</td>
                   <td className="px-3 py-2">{entity.coaId}</td>
                   <td className="px-3 py-2">{entity.branchCount}</td>
+                  <td className="px-3 py-2">
+                    {entity?.currentAccountSetup?.configured
+                      ? l(
+                          `Applied (+${Number(
+                            entity?.currentAccountSetup?.provisioningSummary?.createdAccountCount || 0
+                          )} accounts)`,
+                          `Uygulandi (+${Number(
+                            entity?.currentAccountSetup?.provisioningSummary?.createdAccountCount || 0
+                          )} hesap)`
+                        )
+                      : entity?.currentAccountSetup?.warning?.message ||
+                        l("Not configured", "Yapilandirilmadi")}
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
+        {Array.isArray(result?.currentAccountReadinessWarnings) &&
+        result.currentAccountReadinessWarnings.length > 0 ? (
+          <div className="mt-3 space-y-2">
+            {result.currentAccountReadinessWarnings.map((warning, index) => (
+              <div
+                key={`${warning.legalEntityCode || "warning"}-${index}`}
+                className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800"
+              >
+                {warning.message}
+              </div>
+            ))}
+          </div>
+        ) : null}
       </section>
     )}
   </div>

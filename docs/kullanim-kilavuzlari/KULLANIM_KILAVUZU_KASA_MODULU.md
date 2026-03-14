@@ -371,6 +371,10 @@ Sistem tarafi kritik:
 
 - `DEPOSIT_TO_BANK` / `WITHDRAWAL_FROM_BANK`:
   - `counterAccountId` zorunlu
+  - Secilen banka hesabi ile kasa register ayni baglamdaysa normal 2 satirli varlik hareketi post edilir.
+  - Secilen banka hesabi merkezi (`no OU`) ve kasa branch ise, veya tersi durumda, sistem OU current-account satirlarini otomatik ekleyerek self-balancing fis olusturur.
+  - Banka hesabi farkli bir branch'e aitse ayni mantik `OU -> OU` self-balancing olarak calisir.
+  - Gerekli current-account mapping eksikse post bloklanir; once `Organization Management` veya ilgili onarim akisindan setup tamamlanmalidir.
 
 - `VARIANCE`:
   - Manuel olusturulamaz (sistem olusturur)
@@ -714,8 +718,8 @@ Bu bolum, sistemde gercekten calisan kurallarin is diline cevrilmis ozetidir.
 |---|---|---|---|
 | `RECEIPT` | Register Kasa | Karsi Hesap | Tahsilat |
 | `PAYOUT` | Karsi Hesap | Register Kasa | Odeme |
-| `DEPOSIT_TO_BANK` | Karsi Hesap (banka vb.) | Register Kasa | Kasadan bankaya cikis |
-| `WITHDRAWAL_FROM_BANK` | Register Kasa | Karsi Hesap (banka vb.) | Bankadan kasaya giris |
+| `DEPOSIT_TO_BANK` | Karsi Hesap (banka vb.) | Register Kasa | Kasadan bankaya cikis. Farkli context ise self-balancing current-account satirlari eklenir. |
+| `WITHDRAWAL_FROM_BANK` | Register Kasa | Karsi Hesap (banka vb.) | Bankadan kasaya giris. Farkli context ise self-balancing current-account satirlari eklenir. |
 | `TRANSFER_OUT` | Hedef Register Kasa (direkt) veya CASH_IN_TRANSIT hesabi (`counterAccountId`) | Kaynak Register Kasa (`registerId`) | Ayni LE zorunlu. Ayni OU: direkt transfer. Farkli OU: transit akisi (`transitAccountId` zorunlu). |
 | `TRANSFER_IN` | Hedef Register Kasa (`registerId`) | Kaynak Register Kasa (direkt) veya CASH_IN_TRANSIT hesabi (`counterAccountId`) | Ayni LE zorunlu. Transit receive icin transfer-out kaydi once `POSTED` olmalidir. |
 | `VARIANCE` (eksik) | Varyans Zarar Hesabi | Register Kasa | Counted < Expected |

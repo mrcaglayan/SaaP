@@ -361,6 +361,7 @@ export function buildAutoAllocatePreview(openItems = [], incomingAmountTxn = 0, 
 
 export function buildSettlementApplyPayload(form) {
   const paymentChannel = String(form.paymentChannel || "").trim().toUpperCase();
+  const operatingUnitId = Number(form.operatingUnitId || 0);
   const payload = {
     legalEntityId: Number(form.legalEntityId),
     counterpartyId: Number(form.counterpartyId),
@@ -375,6 +376,10 @@ export function buildSettlementApplyPayload(form) {
     fxRate: form.fxRate || undefined,
     note: form.note || undefined,
   };
+
+  if (Number.isInteger(operatingUnitId) && operatingUnitId > 0) {
+    payload.operatingUnitId = operatingUnitId;
+  }
 
   if (paymentChannel) {
     payload.paymentChannel = paymentChannel;

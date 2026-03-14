@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
+  applyOperatingUnitCurrentAccountConfig,
   autoProvisionShareholderSubAccounts,
   createShareholderCapitalFulfillment,
   createShareholderCommitmentBatchJournal,
@@ -11,6 +12,7 @@ import {
   listFiscalPeriods,
   listGroupCompanies,
   listLegalEntities,
+  listOperatingUnitCurrentAccountConfigs,
   listOperatingUnitPartnerCurrentAccounts,
   listOperatingUnits,
   listShareholderCapitalFulfillments,
@@ -22,6 +24,7 @@ import {
   upsertFiscalCalendar,
   upsertGroupCompany,
   upsertLegalEntity,
+  upsertOperatingUnitCurrentAccountConfig,
   upsertOperatingUnitPartnerCurrentAccount,
   upsertOperatingUnit,
   upsertShareholderJournalConfig,
@@ -37,8 +40,15 @@ import { listAccounts } from "../../api/glAdmin.js";
 import { useAuth } from "../../auth/useAuth.js";
 import { useWorkingContext } from "../../context/useWorkingContext.js";
 import { useI18n } from "../../i18n/useI18n.js";
+import { formatOperatingUnitCurrentAccountBlocker } from "../../readiness/ouCurrentAccountReadiness.js";
 import { useModuleReadiness } from "../../readiness/useModuleReadiness.js";
 import TenantReadinessChecklist from "../../readiness/TenantReadinessChecklist.jsx";
+import {
+  buildRankedOperatingUnitCurrentAccountOptions,
+  formatAccountOptionLabel,
+  formatRankedOperatingUnitCurrentAccountOptionLabel,
+  summarizeOperatingUnitCurrentAccountConfigDrift,
+} from "./orgCurrentAccountHelpers.js";
 
 const UNIT_TYPES = ["BRANCH", "PLANT", "STORE", "DEPARTMENT", "OTHER"];
 const SHAREHOLDER_TYPES = ["INDIVIDUAL", "CORPORATE"];
@@ -68,6 +78,12 @@ const DEFAULT_UNIT_FORM = {
   centralDueToAccountId: "",
   ouDueFromCentralAccountId: "",
   ouDueToCentralAccountId: "",
+};
+const DEFAULT_OPERATING_UNIT_CURRENT_ACCOUNT_CONFIG_FORM = {
+  legalEntityId: "",
+  dueFromParentAccountId: "",
+  dueToParentAccountId: "",
+  autoProvisionOnOperatingUnitCreate: true,
 };
 const DEFAULT_UNIT_PARTNER_CURRENT_FORM = {
   legalEntityId: "",
@@ -123,19 +139,6 @@ function formatAmount(value) {
   });
 }
 
-function formatAccountOptionLabel(account) {
-  const breadcrumb = String(account?.account_breadcrumb || "").trim();
-  if (breadcrumb) {
-    return breadcrumb;
-  }
-  const code = String(account?.code || "").trim();
-  const name = String(account?.name || "").trim();
-  if (code && name) {
-    return `${code} - ${name}`;
-  }
-  return code || name || "-";
-}
-
 function formatOperatingUnitLabel(unit) {
   const code = String(unit?.code || "").trim();
   const name = String(unit?.name || "").trim();
@@ -143,6 +146,88 @@ function formatOperatingUnitLabel(unit) {
     return `${code} - ${name}`;
   }
   return code || name || "-";
+}
+
+function formatTimestampLabel(value) {
+  if (!value) {
+    return "-";
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return String(value);
+  }
+  return parsed.toLocaleString();
+}
+
+function formatOperatingUnitCurrentAccountApplySummary(l, summary, warningCountOverride = null) {
+  if (!summary) {
+    return "";
+  }
+  const childAccountCount = Array.isArray(summary.createdAccounts)
+    ? summary.createdAccounts.length
+    : 0;
+  const mappingCount =
+    (Array.isArray(summary.updatedOperatingUnits) ? summary.updatedOperatingUnits.length : 0) +
+    (Array.isArray(summary.updatedPartnerMappings) ? summary.updatedPartnerMappings.length : 0);
+  const reusedCount = Array.isArray(summary.reusedAccounts) ? summary.reusedAccounts.length : 0;
+  const warningCount =
+    warningCountOverride === null
+      ? Array.isArray(summary.warnings)
+        ? summary.warnings.length
+        : 0
+      : Number(warningCountOverride) || 0;
+
+  return l(
+    `Current-account delta: child accounts created ${childAccountCount}, mappings created ${mappingCount}, reused rows ${reusedCount}, warnings ${warningCount}.`,
+    `Cari hesap deltasi: olusturulan alt hesap ${childAccountCount}, olusturulan esleme ${mappingCount}, yeniden kullanilan satir ${reusedCount}, uyari ${warningCount}.`
+  );
+}
+
+function formatOperatingUnitCreateProvisioningMessage(l, provisioning) {
+  if (!provisioning) {
+    return "";
+  }
+  const warnings = Array.isArray(provisioning.warnings) ? provisioning.warnings : [];
+  if (provisioning.summary) {
+    return formatOperatingUnitCurrentAccountApplySummary(
+      l,
+      provisioning.summary,
+      warnings.length
+    );
+  }
+  if (provisioning.status === "skipped_missing_config") {
+    return l(
+      "Saved current-account config is missing, so branch delta auto-provision was skipped. Save the config in OU Current-Account Config and rerun apply.",
+      "Kaydedilmis cari hesap konfigurasyonu eksik oldugu icin sube deltasi otomatik provision atlandi. OU Cari Hesap Konfigurasyonu bolumunde konfigurasyonu kaydedip yeniden uygulayin."
+    );
+  }
+  if (provisioning.status === "skipped_auto_provision_disabled") {
+    return l(
+      "Saved current-account config exists, but auto-provision on branch create is disabled. Use the apply actions when you are ready.",
+      "Kaydedilmis cari hesap konfigurasyonu var, ancak sube olusturmada otomatik provision kapali. Hazir oldugunuzda uygula islemlerini kullanin."
+    );
+  }
+  if (provisioning.status === "warning") {
+    return l(
+      "Branch saved, but current-account delta auto-provision needs attention. Use the saved-config apply action to rerun repair-missing-only.",
+      "Sube kaydedildi, ancak cari hesap delta otomatik provision dikkat gerektiriyor. Sadece eksikleri onar modunda yeniden calistirmak icin kaydedilen konfigurasyonu uygula islemini kullanin."
+    );
+  }
+  return "";
+}
+
+function buildOperatingUnitCurrentAccountConfigForm(legalEntityId, row = null) {
+  return {
+    ...DEFAULT_OPERATING_UNIT_CURRENT_ACCOUNT_CONFIG_FORM,
+    legalEntityId: String(row?.legal_entity_id || legalEntityId || ""),
+    dueFromParentAccountId: String(row?.due_from_parent_account_id || ""),
+    dueToParentAccountId: String(row?.due_to_parent_account_id || ""),
+    autoProvisionOnOperatingUnitCreate:
+      row?.auto_provision_on_operating_unit_create === undefined ||
+      row?.auto_provision_on_operating_unit_create === null
+        ? true
+        : Boolean(row?.auto_provision_on_operating_unit_create),
+  };
 }
 
 function formatBankAccountOptionLabel(account) {
@@ -514,6 +599,8 @@ export default function OrganizationManagementPage() {
   const [accounts, setAccounts] = useState([]);
   const [legalEntities, setLegalEntities] = useState([]);
   const [operatingUnits, setOperatingUnits] = useState([]);
+  const [operatingUnitCurrentAccountConfigs, setOperatingUnitCurrentAccountConfigs] =
+    useState([]);
   const [operatingUnitPartnerCurrentAccounts, setOperatingUnitPartnerCurrentAccounts] =
     useState([]);
   const [shareholders, setShareholders] = useState([]);
@@ -530,6 +617,8 @@ export default function OrganizationManagementPage() {
   const [unitPartnerCurrentEditingKey, setUnitPartnerCurrentEditingKey] = useState("");
   const [entityForm, setEntityForm] = useState(DEFAULT_ENTITY_FORM);
   const [unitForm, setUnitForm] = useState(DEFAULT_UNIT_FORM);
+  const [operatingUnitCurrentAccountConfigForm, setOperatingUnitCurrentAccountConfigForm] =
+    useState(DEFAULT_OPERATING_UNIT_CURRENT_ACCOUNT_CONFIG_FORM);
   const [unitPartnerCurrentForm, setUnitPartnerCurrentForm] = useState(
     DEFAULT_UNIT_PARTNER_CURRENT_FORM
   );
@@ -580,6 +669,7 @@ export default function OrganizationManagementPage() {
           accountsRes,
           entitiesRes,
           unitsRes,
+          operatingUnitCurrentAccountConfigsRes,
           unitPartnerAccountsRes,
           shareholdersRes,
           shareholderConfigsRes,
@@ -593,6 +683,7 @@ export default function OrganizationManagementPage() {
               : Promise.resolve({ rows: [] }),
             listLegalEntities(),
             listOperatingUnits(),
+            listOperatingUnitCurrentAccountConfigs(),
             listOperatingUnitPartnerCurrentAccounts(),
             canReadShareholders
               ? listShareholders()
@@ -608,6 +699,8 @@ export default function OrganizationManagementPage() {
         const accountRows = accountsRes?.rows || [];
         const entityRows = entitiesRes?.rows || [];
         const unitRows = unitsRes?.rows || [];
+        const operatingUnitCurrentAccountConfigRows =
+          operatingUnitCurrentAccountConfigsRes?.rows || [];
         const unitPartnerAccountRows = unitPartnerAccountsRes?.rows || [];
         const shareholderRows = shareholdersRes?.rows || [];
         const shareholderConfigRows = shareholderConfigsRes?.rows || [];
@@ -618,6 +711,7 @@ export default function OrganizationManagementPage() {
         setAccounts(accountRows);
         setLegalEntities(entityRows);
         setOperatingUnits(unitRows);
+        setOperatingUnitCurrentAccountConfigs(operatingUnitCurrentAccountConfigRows);
         setOperatingUnitPartnerCurrentAccounts(unitPartnerAccountRows);
         setShareholders(shareholderRows);
         setShareholderJournalConfigs(shareholderConfigRows);
@@ -645,6 +739,18 @@ export default function OrganizationManagementPage() {
           ...prev,
           legalEntityId: prev.legalEntityId || String(entityRows[0]?.id || ""),
         }));
+        setOperatingUnitCurrentAccountConfigForm((prev) => {
+          const nextLegalEntityId =
+            prev.legalEntityId || String(entityRows[0]?.id || "");
+          const selectedConfig =
+            operatingUnitCurrentAccountConfigRows.find(
+              (row) => String(row?.legal_entity_id || "") === String(nextLegalEntityId)
+            ) || null;
+          return buildOperatingUnitCurrentAccountConfigForm(
+            nextLegalEntityId,
+            selectedConfig
+          );
+        });
         setShareholderForm((prev) => {
           const nextLegalEntityId =
             prev.legalEntityId || String(entityRows[0]?.id || "");
@@ -776,6 +882,28 @@ export default function OrganizationManagementPage() {
     }
     return next;
   }, [legalEntities]);
+  const operatingUnitCurrentAccountConfigSummaryByEntityId = useMemo(() => {
+    const next = new Map();
+    for (const row of operatingUnitCurrentAccountConfigs) {
+      const legalEntityId = toNumber(row?.legal_entity_id);
+      if (!legalEntityId) {
+        continue;
+      }
+      next.set(
+        legalEntityId,
+        summarizeOperatingUnitCurrentAccountConfigDrift(
+          row,
+          operatingUnits,
+          operatingUnitPartnerCurrentAccounts
+        )
+      );
+    }
+    return next;
+  }, [
+    operatingUnitCurrentAccountConfigs,
+    operatingUnitPartnerCurrentAccounts,
+    operatingUnits,
+  ]);
 
   const currencySelectOptions = useMemo(
     () =>
@@ -784,6 +912,44 @@ export default function OrganizationManagementPage() {
         label: `${String(row.code || "").toUpperCase()} - ${row.name}`,
       })),
     [currencies]
+  );
+  const selectedOperatingUnitCurrentAccountConfigLegalEntityId = toNumber(
+    operatingUnitCurrentAccountConfigForm.legalEntityId
+  );
+  const selectedOperatingUnitCurrentAccountConfigEntityAccounts = useMemo(
+    () =>
+      accounts.filter(
+        (row) =>
+          Number(row.legal_entity_id) ===
+            Number(selectedOperatingUnitCurrentAccountConfigLegalEntityId) &&
+          String(row.scope || "").trim().toUpperCase() === "LEGAL_ENTITY"
+      ),
+    [accounts, selectedOperatingUnitCurrentAccountConfigLegalEntityId]
+  );
+  const operatingUnitCurrentAccountConfigParentAccounts = useMemo(
+    () =>
+      selectedOperatingUnitCurrentAccountConfigEntityAccounts.filter(
+        (account) => Boolean(account.is_active) && !isPostingEnabled(account)
+      ),
+    [selectedOperatingUnitCurrentAccountConfigEntityAccounts]
+  );
+  const operatingUnitCurrentDueFromParentOptions = useMemo(
+    () =>
+      operatingUnitCurrentAccountConfigParentAccounts.filter(
+        (account) =>
+          String(account.account_type || "").toUpperCase() === "ASSET" &&
+          getAccountNormalSide(account) === "DEBIT"
+      ),
+    [operatingUnitCurrentAccountConfigParentAccounts]
+  );
+  const operatingUnitCurrentDueToParentOptions = useMemo(
+    () =>
+      operatingUnitCurrentAccountConfigParentAccounts.filter(
+        (account) =>
+          String(account.account_type || "").toUpperCase() === "LIABILITY" &&
+          getAccountNormalSide(account) === "CREDIT"
+      ),
+    [operatingUnitCurrentAccountConfigParentAccounts]
   );
   const selectedUnitLegalEntityId = toNumber(unitForm.legalEntityId);
   const selectedUnitEntityAccounts = useMemo(
@@ -820,21 +986,31 @@ export default function OrganizationManagementPage() {
   );
   const unitCentralDueFromAccountOptions = useMemo(
     () =>
-      unitEligibleLeafAccounts.filter(
-        (account) =>
-          String(account.account_type || "").toUpperCase() === "ASSET" &&
-          getAccountNormalSide(account) === "DEBIT"
+      buildRankedOperatingUnitCurrentAccountOptions(
+        unitEligibleLeafAccounts.filter(
+          (account) =>
+            String(account.account_type || "").toUpperCase() === "ASSET" &&
+            getAccountNormalSide(account) === "DEBIT"
+        ),
+        {
+          sourceOperatingUnitCode: unitForm.code,
+        }
       ),
-    [unitEligibleLeafAccounts]
+    [unitEligibleLeafAccounts, unitForm.code]
   );
   const unitOuDueToCentralAccountOptions = useMemo(
     () =>
-      unitEligibleLeafAccounts.filter(
-        (account) =>
-          String(account.account_type || "").toUpperCase() === "LIABILITY" &&
-          getAccountNormalSide(account) === "CREDIT"
+      buildRankedOperatingUnitCurrentAccountOptions(
+        unitEligibleLeafAccounts.filter(
+          (account) =>
+            String(account.account_type || "").toUpperCase() === "LIABILITY" &&
+            getAccountNormalSide(account) === "CREDIT"
+        ),
+        {
+          sourceOperatingUnitCode: unitForm.code,
+        }
       ),
-    [unitEligibleLeafAccounts]
+    [unitEligibleLeafAccounts, unitForm.code]
   );
   const selectedUnitPartnerCurrentLegalEntityId = toNumber(
     unitPartnerCurrentForm.legalEntityId
@@ -875,24 +1051,6 @@ export default function OrganizationManagementPage() {
       selectedUnitPartnerCurrentEntityParentIds,
     ]
   );
-  const unitPartnerCurrentDueFromAccountOptions = useMemo(
-    () =>
-      unitPartnerCurrentEligibleLeafAccounts.filter(
-        (account) =>
-          String(account.account_type || "").toUpperCase() === "ASSET" &&
-          getAccountNormalSide(account) === "DEBIT"
-      ),
-    [unitPartnerCurrentEligibleLeafAccounts]
-  );
-  const unitPartnerCurrentDueToAccountOptions = useMemo(
-    () =>
-      unitPartnerCurrentEligibleLeafAccounts.filter(
-        (account) =>
-          String(account.account_type || "").toUpperCase() === "LIABILITY" &&
-          getAccountNormalSide(account) === "CREDIT"
-      ),
-    [unitPartnerCurrentEligibleLeafAccounts]
-  );
   const selectedUnitPartnerCurrentOperatingUnits = useMemo(
     () =>
       operatingUnits.filter(
@@ -900,6 +1058,63 @@ export default function OrganizationManagementPage() {
           Number(row.legal_entity_id) === Number(selectedUnitPartnerCurrentLegalEntityId)
       ),
     [operatingUnits, selectedUnitPartnerCurrentLegalEntityId]
+  );
+  const selectedUnitPartnerCurrentOperatingUnit = useMemo(
+    () =>
+      selectedUnitPartnerCurrentOperatingUnits.find(
+        (row) => Number(row.id) === Number(unitPartnerCurrentForm.operatingUnitId)
+      ) || null,
+    [selectedUnitPartnerCurrentOperatingUnits, unitPartnerCurrentForm.operatingUnitId]
+  );
+  const selectedUnitPartnerCurrentPartnerOperatingUnit = useMemo(
+    () =>
+      selectedUnitPartnerCurrentOperatingUnits.find(
+        (row) => Number(row.id) === Number(unitPartnerCurrentForm.partnerOperatingUnitId)
+      ) || null,
+    [
+      selectedUnitPartnerCurrentOperatingUnits,
+      unitPartnerCurrentForm.partnerOperatingUnitId,
+    ]
+  );
+  const unitPartnerCurrentDueFromAccountOptions = useMemo(
+    () =>
+      buildRankedOperatingUnitCurrentAccountOptions(
+        unitPartnerCurrentEligibleLeafAccounts.filter(
+          (account) =>
+            String(account.account_type || "").toUpperCase() === "ASSET" &&
+            getAccountNormalSide(account) === "DEBIT"
+        ),
+        {
+          sourceOperatingUnitCode: selectedUnitPartnerCurrentOperatingUnit?.code,
+          partnerOperatingUnitCode:
+            selectedUnitPartnerCurrentPartnerOperatingUnit?.code,
+        }
+      ),
+    [
+      selectedUnitPartnerCurrentOperatingUnit?.code,
+      selectedUnitPartnerCurrentPartnerOperatingUnit?.code,
+      unitPartnerCurrentEligibleLeafAccounts,
+    ]
+  );
+  const unitPartnerCurrentDueToAccountOptions = useMemo(
+    () =>
+      buildRankedOperatingUnitCurrentAccountOptions(
+        unitPartnerCurrentEligibleLeafAccounts.filter(
+          (account) =>
+            String(account.account_type || "").toUpperCase() === "LIABILITY" &&
+            getAccountNormalSide(account) === "CREDIT"
+        ),
+        {
+          sourceOperatingUnitCode: selectedUnitPartnerCurrentOperatingUnit?.code,
+          partnerOperatingUnitCode:
+            selectedUnitPartnerCurrentPartnerOperatingUnit?.code,
+        }
+      ),
+    [
+      selectedUnitPartnerCurrentOperatingUnit?.code,
+      selectedUnitPartnerCurrentPartnerOperatingUnit?.code,
+      unitPartnerCurrentEligibleLeafAccounts,
+    ]
   );
 
   const selectedShareholderLegalEntityId = toNumber(
@@ -2201,6 +2416,30 @@ export default function OrganizationManagementPage() {
     setMessage("");
   }
 
+  function handleOperatingUnitCurrentAccountConfigEntityChange(legalEntityId) {
+    const selectedRow =
+      operatingUnitCurrentAccountConfigs.find(
+        (row) => String(row?.legal_entity_id || "") === String(legalEntityId || "")
+      ) || null;
+    setOperatingUnitCurrentAccountConfigForm(
+      buildOperatingUnitCurrentAccountConfigForm(legalEntityId, selectedRow)
+    );
+    setError("");
+    setMessage("");
+  }
+
+  function handleOperatingUnitCurrentAccountConfigEdit(row) {
+    const legalEntityId = String(row?.legal_entity_id || "").trim();
+    if (!legalEntityId) {
+      return;
+    }
+    setOperatingUnitCurrentAccountConfigForm(
+      buildOperatingUnitCurrentAccountConfigForm(legalEntityId, row)
+    );
+    setError("");
+    setMessage("");
+  }
+
   function resetUnitForm() {
     setUnitForm((prev) => ({
       ...DEFAULT_UNIT_FORM,
@@ -2435,6 +2674,136 @@ export default function OrganizationManagementPage() {
     }
   }
 
+  async function handleOperatingUnitCurrentAccountConfigSubmit(event) {
+    event.preventDefault();
+    if (!canUpsertLegalEntity) {
+      setError(
+        l(
+          "Missing permission: org.legal_entity.upsert",
+          "Eksik yetki: org.legal_entity.upsert"
+        )
+      );
+      return;
+    }
+
+    const legalEntityId = toNumber(operatingUnitCurrentAccountConfigForm.legalEntityId);
+    const dueFromParentAccountId = toNumber(
+      operatingUnitCurrentAccountConfigForm.dueFromParentAccountId
+    );
+    const dueToParentAccountId = toNumber(
+      operatingUnitCurrentAccountConfigForm.dueToParentAccountId
+    );
+
+    if (!legalEntityId || !dueFromParentAccountId || !dueToParentAccountId) {
+      setError(
+        l(
+          "Select legal entity, Due From parent, and Due To parent first.",
+          "Once legal entity, Alacak parent ve Borc parent hesaplarini secin."
+        )
+      );
+      return;
+    }
+    if (dueFromParentAccountId === dueToParentAccountId) {
+      setError(
+        l(
+          "Due To parent must be different from Due From parent.",
+          "Borc parent hesabi, Alacak parent hesabindan farkli olmalidir."
+        )
+      );
+      return;
+    }
+
+    setSaving("operating-unit-current-account-config");
+    setError("");
+    setMessage("");
+    try {
+      await upsertOperatingUnitCurrentAccountConfig({
+        legalEntityId,
+        dueFromParentAccountId,
+        dueToParentAccountId,
+        autoProvisionOnOperatingUnitCreate: Boolean(
+          operatingUnitCurrentAccountConfigForm.autoProvisionOnOperatingUnitCreate
+        ),
+      });
+      setMessage(
+        l(
+          "Operating unit current-account config saved.",
+          "Operasyon birimi cari hesap konfigurasyonu kaydedildi."
+        )
+      );
+      await Promise.all([loadCoreData(), refreshLegalEntity(legalEntityId)]);
+    } catch (err) {
+      setError(
+        err?.response?.data?.message ||
+          l(
+            "Failed to save operating unit current-account config.",
+            "Operasyon birimi cari hesap konfigurasyonu kaydedilemedi."
+          )
+      );
+    } finally {
+      setSaving("");
+    }
+  }
+
+  async function handleApplyOperatingUnitCurrentAccounts({
+    legalEntityId,
+    operatingUnitId = null,
+  }) {
+    if (!canUpsertAccounts || !canUpsertOperatingUnit) {
+      setError(
+        !canUpsertAccounts
+          ? l("Missing permission: gl.account.upsert", "Eksik yetki: gl.account.upsert")
+          : l(
+              "Missing permission: org.operating_unit.upsert",
+              "Eksik yetki: org.operating_unit.upsert"
+            )
+      );
+      return;
+    }
+    if (!toNumber(legalEntityId)) {
+      setError(
+        l(
+          "Select legal entity first.",
+          "Once legal entity secin."
+        )
+      );
+      return;
+    }
+
+    setSaving("operating-unit-current-account-apply");
+    setError("");
+    setMessage("");
+    try {
+      const response = await applyOperatingUnitCurrentAccountConfig({
+        legalEntityId,
+        operatingUnitId: toNumber(operatingUnitId) || undefined,
+        repairMissingOnly: true,
+      });
+      const baseSuccessMessage = toNumber(operatingUnitId)
+        ? l(
+            "Current-account delta applied for branch.",
+            "Sube icin cari hesap deltasi uygulandi."
+          )
+        : l(
+            "Saved current-account config applied to active branches.",
+            "Kaydedilen cari hesap konfigurasyonu aktif subelere uygulandi."
+          );
+      const detailMessage = formatOperatingUnitCurrentAccountApplySummary(l, response);
+      setMessage(detailMessage ? `${baseSuccessMessage} ${detailMessage}` : baseSuccessMessage);
+      await Promise.all([loadCoreData(), refreshLegalEntity(legalEntityId)]);
+    } catch (err) {
+      setError(
+        err?.response?.data?.message ||
+          l(
+            "Failed to apply saved current-account config.",
+            "Kaydedilen cari hesap konfigurasyonu uygulanamadi."
+          )
+      );
+    } finally {
+      setSaving("");
+    }
+  }
+
   async function handleOperatingUnitSubmit(event) {
     event.preventDefault();
     if (!canUpsertOperatingUnit) {
@@ -2503,7 +2872,7 @@ export default function OrganizationManagementPage() {
     setError("");
     setMessage("");
     try {
-      await upsertOperatingUnit({
+      const response = await upsertOperatingUnit({
         legalEntityId,
         code: unitForm.code.trim(),
         name: unitForm.name.trim(),
@@ -2518,7 +2887,13 @@ export default function OrganizationManagementPage() {
         ? l("Operating unit updated.", "Operasyon birimi guncellendi.")
         : l("Operating unit saved.", "Operasyon birimi kaydedildi.");
       resetUnitForm();
-      setMessage(successMessage);
+      const provisioningMessage = formatOperatingUnitCreateProvisioningMessage(
+        l,
+        response?.currentAccountProvisioning
+      );
+      setMessage(
+        provisioningMessage ? `${successMessage} ${provisioningMessage}`.trim() : successMessage
+      );
       refreshLookups();
       await loadCoreData();
     } catch (err) {
@@ -4453,6 +4828,12 @@ export default function OrganizationManagementPage() {
           <h2 className="mb-3 text-sm font-semibold text-slate-700">
             {l("Operating Units / Branches", "Operasyon Birimleri / Subeler")}
           </h2>
+          <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+            {l(
+              "Saved current-account config and Repair missing only are the default path. The four account picks below stay available as advanced exception-mode manual overrides, with exact branch matches listed before same-entity fallback accounts.",
+              "Kaydedilen cari hesap konfigurasyonu ve Sadece eksikleri onar varsayilan yoldur. Asagidaki dort hesap secimi gelismis istisna-modu manuel override olarak acik kalir; tam sube eslesmeleri ayni entity icindeki yedek hesaplardan once listelenir."
+            )}
+          </div>
           <form onSubmit={handleOperatingUnitSubmit} className="grid gap-2 md:grid-cols-6">
             <select
               value={unitForm.legalEntityId}
@@ -4535,7 +4916,7 @@ export default function OrganizationManagementPage() {
               </option>
               {unitCentralDueFromAccountOptions.map((account) => (
                 <option key={account.id} value={account.id}>
-                  {formatAccountOptionLabel(account)}
+                  {formatRankedOperatingUnitCurrentAccountOptionLabel(account, l)}
                 </option>
               ))}
             </select>
@@ -4554,7 +4935,7 @@ export default function OrganizationManagementPage() {
               </option>
               {unitOuDueToCentralAccountOptions.map((account) => (
                 <option key={account.id} value={account.id}>
-                  {formatAccountOptionLabel(account)}
+                  {formatRankedOperatingUnitCurrentAccountOptionLabel(account, l)}
                 </option>
               ))}
             </select>
@@ -4573,7 +4954,7 @@ export default function OrganizationManagementPage() {
               </option>
               {unitCentralDueFromAccountOptions.map((account) => (
                 <option key={account.id} value={account.id}>
-                  {formatAccountOptionLabel(account)}
+                  {formatRankedOperatingUnitCurrentAccountOptionLabel(account, l)}
                 </option>
               ))}
             </select>
@@ -4592,7 +4973,7 @@ export default function OrganizationManagementPage() {
               </option>
               {unitOuDueToCentralAccountOptions.map((account) => (
                 <option key={account.id} value={account.id}>
-                  {formatAccountOptionLabel(account)}
+                  {formatRankedOperatingUnitCurrentAccountOptionLabel(account, l)}
                 </option>
               ))}
             </select>
@@ -4671,6 +5052,10 @@ export default function OrganizationManagementPage() {
                   const legalEntity = legalEntityById.get(
                     toNumber(row.legal_entity_id)
                   );
+                  const configSummary =
+                    operatingUnitCurrentAccountConfigSummaryByEntityId.get(
+                      toNumber(row.legal_entity_id)
+                    ) || null;
                   const legalEntityLabel = legalEntity
                     ? `${legalEntity.code} - ${legalEntity.name}`
                     : "-";
@@ -4753,16 +5138,48 @@ export default function OrganizationManagementPage() {
                             ? l("Ready", "Hazir")
                             : l("Missing setup", "Kurulum eksik")}
                         </span>
+                        {configSummary?.configured && !row.cross_context_self_balancing_ready ? (
+                          <div className="mt-1 text-[11px] text-amber-700">
+                            {l(
+                              "Drift: one or more of the four central <> branch mappings is still missing. Use saved-config repair for the safe default fix.",
+                              "Drift: merkez <> sube arasindaki dort eslemeden biri veya birkaci halen eksik. Guvenli varsayilan duzeltme icin kaydedilen konfigurasyon onarimini kullanin."
+                            )}
+                          </div>
+                        ) : null}
                       </td>
                       <td className="px-3 py-2">
-                        <button
-                          type="button"
-                          onClick={() => handleOperatingUnitEdit(row)}
-                          disabled={saving === "unit" || !canUpsertOperatingUnit}
-                          className="rounded border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
-                        >
-                          {l("Edit", "Duzenle")}
-                        </button>
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleOperatingUnitEdit(row)}
+                            disabled={saving === "unit" || !canUpsertOperatingUnit}
+                            className="rounded border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                          >
+                            {l("Edit", "Duzenle")}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              handleApplyOperatingUnitCurrentAccounts({
+                                legalEntityId: row.legal_entity_id,
+                                operatingUnitId: row.id,
+                              })
+                            }
+                            disabled={
+                              saving === "operating-unit-current-account-apply" ||
+                              !canUpsertAccounts ||
+                              !canUpsertOperatingUnit
+                            }
+                            className="rounded border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                          >
+                            {saving === "operating-unit-current-account-apply"
+                              ? l("Applying...", "Uygulaniyor...")
+                              : l(
+                                  "Auto-provision current accounts",
+                                  "Cari hesaplari otomatik provision et"
+                                )}
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -4782,10 +5199,342 @@ export default function OrganizationManagementPage() {
         <section className="rounded-xl border border-slate-200 bg-white p-4">
           <h2 className="mb-3 text-sm font-semibold text-slate-700">
             {l(
+              "OU Current-Account Config",
+              "Operasyon Birimi Cari Hesap Konfigurasyonu"
+            )}
+          </h2>
+          <p className="mb-3 text-xs text-slate-600">
+            {l(
+              "Choose one Due From parent and one Due To parent per legal entity. Saved config becomes the setup-time and branch-add auto-provision source; use non-postable control/header accounts, not posting leafs. After that, Repair missing only is the default review-and-fix action; the manual leaf-account forms below stay available only for exceptions.",
+              "Her legal entity icin bir Alacak parent ve bir Borc parent secin. Kaydedilen konfigurasyon kurulum ve sonradan sube ekleme otomasyonunun kaynagi olur; posting leaf yerine post edilemeyen kontrol/header hesaplari kullanin. Bundan sonra varsayilan inceleme ve duzeltme aksiyonu Sadece eksikleri onar olur; asagidaki manuel leaf-hesap formlari sadece istisnalar icin acik kalir."
+            )}
+          </p>
+          <form
+            onSubmit={handleOperatingUnitCurrentAccountConfigSubmit}
+            className="grid gap-2 md:grid-cols-5"
+          >
+            <select
+              value={operatingUnitCurrentAccountConfigForm.legalEntityId}
+              onChange={(event) =>
+                handleOperatingUnitCurrentAccountConfigEntityChange(event.target.value)
+              }
+              className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              required
+            >
+              <option value="">{l("Select legal entity", "Legal entity secin")}</option>
+              {legalEntities.map((row) => (
+                <option key={row.id} value={row.id}>
+                  {row.code} - {row.name}
+                </option>
+              ))}
+            </select>
+            <select
+              value={operatingUnitCurrentAccountConfigForm.dueFromParentAccountId}
+              onChange={(event) =>
+                setOperatingUnitCurrentAccountConfigForm((prev) => ({
+                  ...prev,
+                  dueFromParentAccountId: event.target.value,
+                }))
+              }
+              className="rounded-lg border border-slate-300 px-3 py-2 text-sm md:col-span-2"
+              disabled={!canReadAccounts}
+              required
+            >
+              <option value="">
+                {canReadAccounts
+                  ? l(
+                      "Due From parent (ASSET/DEBIT, header)",
+                      "Alacak parent (ASSET/DEBIT, header)"
+                    )
+                  : l("Need gl.account.read", "gl.account.read yetkisi gerekli")}
+              </option>
+              {operatingUnitCurrentDueFromParentOptions.map((account) => (
+                <option key={account.id} value={account.id}>
+                  {formatAccountOptionLabel(account)}
+                </option>
+              ))}
+            </select>
+            <select
+              value={operatingUnitCurrentAccountConfigForm.dueToParentAccountId}
+              onChange={(event) =>
+                setOperatingUnitCurrentAccountConfigForm((prev) => ({
+                  ...prev,
+                  dueToParentAccountId: event.target.value,
+                }))
+              }
+              className="rounded-lg border border-slate-300 px-3 py-2 text-sm md:col-span-2"
+              disabled={!canReadAccounts}
+              required
+            >
+              <option value="">
+                {canReadAccounts
+                  ? l(
+                      "Due To parent (LIABILITY/CREDIT, header)",
+                      "Borc parent (LIABILITY/CREDIT, header)"
+                    )
+                  : l("Need gl.account.read", "gl.account.read yetkisi gerekli")}
+              </option>
+              {operatingUnitCurrentDueToParentOptions.map((account) => (
+                <option key={account.id} value={account.id}>
+                  {formatAccountOptionLabel(account)}
+                </option>
+              ))}
+            </select>
+            <label className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 md:col-span-3">
+              <input
+                type="checkbox"
+                checked={Boolean(
+                  operatingUnitCurrentAccountConfigForm.autoProvisionOnOperatingUnitCreate
+                )}
+                onChange={(event) =>
+                  setOperatingUnitCurrentAccountConfigForm((prev) => ({
+                    ...prev,
+                    autoProvisionOnOperatingUnitCreate: event.target.checked,
+                  }))
+                }
+              />
+              {l(
+                "Auto-provision when a new branch is created",
+                "Yeni sube olusturulunca otomatik provision et"
+              )}
+            </label>
+            <div className="flex items-center gap-2 md:col-span-2">
+              <button
+                type="submit"
+                disabled={
+                  saving === "operating-unit-current-account-config" ||
+                  !canUpsertLegalEntity
+                }
+                className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60"
+              >
+                {saving === "operating-unit-current-account-config"
+                  ? l("Saving...", "Kaydediliyor...")
+                  : l("Save config", "Konfigurasyonu kaydet")}
+              </button>
+            </div>
+          </form>
+
+          <div className="mt-3 overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead className="bg-slate-50 text-left text-slate-600">
+                <tr>
+                  <th className="px-3 py-2">{l("Entity", "Legal Entity")}</th>
+                  <th className="px-3 py-2">{l("Status", "Durum")}</th>
+                  <th className="px-3 py-2">{l("Drift / Notes", "Drift / Notlar")}</th>
+                  <th className="px-3 py-2">{l("Due From Parent", "Alacak Parent")}</th>
+                  <th className="px-3 py-2">{l("Due To Parent", "Borc Parent")}</th>
+                  <th className="px-3 py-2">{l("Auto-provision", "Oto-provision")}</th>
+                  <th className="px-3 py-2">{l("Last Applied", "Son Uygulama")}</th>
+                  <th className="px-3 py-2">{l("Actions", "Islemler")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(operatingUnitCurrentAccountConfigs || []).map((row) => {
+                  const readinessRow = getModuleRow(
+                    "operatingUnitCurrentAccounts",
+                    toNumber(row?.legal_entity_id)
+                  );
+                  const configured =
+                    toNumber(row?.due_from_parent_account_id) &&
+                    toNumber(row?.due_to_parent_account_id);
+                  const summary =
+                    operatingUnitCurrentAccountConfigSummaryByEntityId.get(
+                      toNumber(row?.legal_entity_id)
+                    ) || summarizeOperatingUnitCurrentAccountConfigDrift(
+                      row,
+                      operatingUnits,
+                      operatingUnitPartnerCurrentAccounts
+                    );
+                  const statusTone = !configured
+                    ? "bg-amber-100 text-amber-700"
+                    : readinessRow?.applicable === false
+                      ? "bg-slate-100 text-slate-700"
+                      : readinessRow?.ready
+                        ? "bg-emerald-100 text-emerald-700"
+                        : "bg-amber-100 text-amber-700";
+                  const statusLabel = !configured
+                    ? l("Missing", "Eksik")
+                    : readinessRow?.applicable === false
+                      ? l("Not required yet", "Henuz gerekli degil")
+                      : readinessRow?.blockerCode === "CONFIG_SAVED_NOT_APPLIED"
+                        ? l("Apply pending", "Uygulama bekliyor")
+                        : readinessRow?.ready
+                          ? l("Ready", "Hazir")
+                          : l("Needs review", "Inceleme gerekli");
+                  return (
+                    <tr
+                      key={`ou-current-account-config-${row?.legal_entity_id || "missing"}`}
+                      className="border-t border-slate-100"
+                    >
+                      <td className="px-3 py-2">
+                        {String(row?.legal_entity_code || "").trim()
+                          ? `${row.legal_entity_code} - ${row.legal_entity_name || ""}`.trim()
+                          : "-"}
+                      </td>
+                      <td className="px-3 py-2">
+                        <span
+                          className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${statusTone}`}
+                        >
+                          {statusLabel}
+                        </span>
+                        <div className="mt-1 text-xs text-slate-500">
+                            {summary.currentAccountSetupExpected
+                              ? l(
+                                  `${summary.effectiveActiveOperatingUnitCount} active branches are in cross-context scope.`,
+                                  `Capraz-context kapsaminda ${summary.effectiveActiveOperatingUnitCount} aktif sube var.`
+                                )
+                            : l(
+                                "Cross-context setup is not required yet because this legal entity has zero or one active branch in scope.",
+                                "Bu legal entity kapsaminda sifir veya tek aktif sube oldugu icin capraz-context kurulum henuz gerekli degil."
+                              )}
+                        </div>
+                        {readinessRow ? (
+                          <div className="mt-1 text-xs text-slate-500">
+                            {formatOperatingUnitCurrentAccountBlocker(
+                              {
+                                ...readinessRow,
+                                legalEntityId: row?.legal_entity_id,
+                                legalEntityCode: row?.legal_entity_code,
+                                legalEntityName: row?.legal_entity_name,
+                              },
+                              l
+                            )}
+                          </div>
+                        ) : null}
+                      </td>
+                      <td className="px-3 py-2">
+                        {!configured ? (
+                          <div className="text-xs text-slate-500">
+                            {l(
+                              "Save the parent config first to enable repair and drift checks.",
+                              "Onarim ve drift kontrollerini acmak icin once parent konfigurasyonunu kaydedin."
+                            )}
+                          </div>
+                        ) : (
+                          <div className="space-y-1 text-xs text-slate-600">
+                            <div>
+                              {l(
+                                `OU rows missing one or more of four central <> branch mappings: ${summary.missingCentralMappingOperatingUnitCount}`,
+                                `Merkez <> sube arasindaki dort eslemeden biri veya daha fazlasi eksik OU satiri: ${summary.missingCentralMappingOperatingUnitCount}`
+                              )}
+                            </div>
+                            <div>
+                              {l(
+                                `Branch-pair directions missing: ${summary.missingPartnerDirectionCount} / ${summary.expectedPartnerDirectionCount}`,
+                                `Eksik sube-cifti yonu: ${summary.missingPartnerDirectionCount} / ${summary.expectedPartnerDirectionCount}`
+                              )}
+                            </div>
+                            {summary.configChangedSinceLastApply ? (
+                              <div className="font-medium text-amber-700">
+                                {l(
+                                  "Config changed after the last successful apply.",
+                                  "Konfigurasyon son basarili uygulamadan sonra degisti."
+                                )}
+                              </div>
+                            ) : null}
+                            {summary.legalEntityStillNotReady ? (
+                              <div className="font-medium text-amber-700">
+                                {l(
+                                  "Saved config exists, but this legal entity is still not fully ready.",
+                                  "Kaydedilen konfigurasyon var, ancak bu legal entity halen tam hazir degil."
+                                )}
+                              </div>
+                            ) : !summary.hasDrift ? (
+                              <div className="font-medium text-emerald-700">
+                                {l(
+                                  "Saved config and mappings are aligned.",
+                                  "Kaydedilen konfigurasyon ve eslemeler hizali."
+                                )}
+                              </div>
+                            ) : null}
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-3 py-2">
+                        {row?.due_from_parent_account_code
+                          ? `${row.due_from_parent_account_code} - ${row.due_from_parent_account_name || ""}`.trim()
+                          : "-"}
+                      </td>
+                      <td className="px-3 py-2">
+                        {row?.due_to_parent_account_code
+                          ? `${row.due_to_parent_account_code} - ${row.due_to_parent_account_name || ""}`.trim()
+                          : "-"}
+                      </td>
+                      <td className="px-3 py-2">
+                        {configured
+                          ? row?.auto_provision_on_operating_unit_create
+                            ? l("Enabled", "Acik")
+                            : l("Disabled", "Kapali")
+                          : "-"}
+                      </td>
+                      <td className="px-3 py-2">
+                        {formatTimestampLabel(row?.last_applied_at)}
+                      </td>
+                      <td className="px-3 py-2">
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleOperatingUnitCurrentAccountConfigEdit(row)}
+                            disabled={saving === "operating-unit-current-account-config"}
+                            className="rounded border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                          >
+                            {l("Edit", "Duzenle")}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              handleApplyOperatingUnitCurrentAccounts({
+                                legalEntityId: row.legal_entity_id,
+                              })
+                            }
+                            disabled={
+                              !configured ||
+                              saving === "operating-unit-current-account-apply" ||
+                              !canUpsertAccounts ||
+                              !canUpsertOperatingUnit
+                            }
+                            className="rounded border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                          >
+                            {saving === "operating-unit-current-account-apply"
+                              ? l("Applying...", "Uygulaniyor...")
+                              : l(
+                                  "Repair missing only",
+                                  "Sadece eksikleri onar"
+                                )}
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+                {operatingUnitCurrentAccountConfigs.length === 0 && !loading ? (
+                  <tr>
+                    <td colSpan={8} className="px-3 py-3 text-slate-500">
+                      {l(
+                        "No legal entities found for OU current-account config.",
+                        "OU cari hesap konfigurasyonu icin legal entity bulunamadi."
+                      )}
+                    </td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section className="rounded-xl border border-slate-200 bg-white p-4">
+          <h2 className="mb-3 text-sm font-semibold text-slate-700">
+            {l(
               "Branch Pair Current Accounts",
               "Sube Cift Cari Hesaplari"
             )}
           </h2>
+          <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+            {l(
+              "This manual branch-pair form is advanced exception mode. Use saved-config automation and Repair missing only first; if you must override, exact branch-pair matches are listed before same-entity fallback accounts.",
+              "Bu manuel sube-cifti formu gelismis istisna modudur. Once kaydedilen konfigurasyon otomasyonunu ve Sadece eksikleri onar aksiyonunu kullanin; override zorunluysa tam sube-cifti eslesmeleri ayni entity icindeki yedek hesaplardan once listelenir."
+            )}
+          </div>
           <form
             onSubmit={handleOperatingUnitPartnerCurrentSubmit}
             className="grid gap-2 md:grid-cols-6"
@@ -4864,7 +5613,7 @@ export default function OrganizationManagementPage() {
               </option>
               {unitPartnerCurrentDueFromAccountOptions.map((account) => (
                 <option key={account.id} value={account.id}>
-                  {formatAccountOptionLabel(account)}
+                  {formatRankedOperatingUnitCurrentAccountOptionLabel(account, l)}
                 </option>
               ))}
             </select>
@@ -4884,14 +5633,14 @@ export default function OrganizationManagementPage() {
               </option>
               {unitPartnerCurrentDueToAccountOptions.map((account) => (
                 <option key={account.id} value={account.id}>
-                  {formatAccountOptionLabel(account)}
+                  {formatRankedOperatingUnitCurrentAccountOptionLabel(account, l)}
                 </option>
               ))}
             </select>
             <div className="text-xs text-slate-500 md:col-span-6">
               {l(
-                "Configure direct branch-pair current accounts for branch-to-branch cash transfers. Save both directions separately when cash can move both ways.",
-                "Subeler arasi nakit transferleri icin dogrudan sube cift cari hesaplarini tanimlayin. Nakit iki yone de gidecekse iki yonu ayri ayri kaydedin."
+                "Configure direct branch-pair current accounts for branch-to-branch cash transfers only when the saved-config path is not enough. Save both directions separately when cash can move both ways.",
+                "Dogrudan sube cift cari hesaplarini sadece kaydedilen konfigurasyon yolu yeterli olmadiginda tanimlayin. Nakit iki yone de gidecekse iki yonu ayri ayri kaydedin."
               )}
             </div>
             <div className="flex flex-wrap gap-2 md:col-span-6">

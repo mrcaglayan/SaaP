@@ -137,16 +137,31 @@ export async function listOperatingUnits(params = {}) {
   return response.data;
 }
 
-export async function upsertOperatingUnit(payload) {
-  const response = await api.post("/api/v1/org/operating-units", payload);
+export async function listOperatingUnitCurrentAccountConfigs(params = {}) {
+  const response = await api.get(
+    `/api/v1/org/operating-unit-current-account-config${toQueryString(params)}`
+  );
   return response.data;
 }
 
-export async function autoProvisionOperatingUnitCentralCurrentAccounts(payload) {
+export async function upsertOperatingUnitCurrentAccountConfig(payload) {
   const response = await api.post(
-    "/api/v1/org/operating-units/central-current-accounts/auto-provision",
+    "/api/v1/org/operating-unit-current-account-config",
     payload
   );
+  return response.data;
+}
+
+export async function applyOperatingUnitCurrentAccountConfig(payload) {
+  const response = await api.post(
+    "/api/v1/org/operating-unit-current-account-config/apply",
+    payload
+  );
+  return response.data;
+}
+
+export async function upsertOperatingUnit(payload) {
+  const response = await api.post("/api/v1/org/operating-units", payload);
   return response.data;
 }
 
@@ -160,14 +175,6 @@ export async function listOperatingUnitPartnerCurrentAccounts(params = {}) {
 export async function upsertOperatingUnitPartnerCurrentAccount(payload) {
   const response = await api.post(
     "/api/v1/org/operating-unit-partner-current-accounts",
-    payload
-  );
-  return response.data;
-}
-
-export async function autoProvisionOperatingUnitPartnerCurrentAccounts(payload) {
-  const response = await api.post(
-    "/api/v1/org/operating-unit-partner-current-accounts/auto-provision",
     payload
   );
   return response.data;

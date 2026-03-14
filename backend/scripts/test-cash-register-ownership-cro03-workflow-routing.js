@@ -68,9 +68,10 @@ async function main() {
       transactionsPageSource.includes("formatRegisterOptionText(row, l)") &&
       transactionsPageSource.includes("formatSessionDisplayLabel(session, l)") &&
       transactionsPageSource.includes("Center / Branch Current Accounts") &&
-      transactionsPageSource.includes("Create central current accounts") &&
+      transactionsPageSource.includes("Repair from saved config") &&
+      transactionsPageSource.includes("saved legal-entity config") &&
       transactionsPageSource.includes("Branch Pair Current Accounts") &&
-      transactionsPageSource.includes("Create branch pair accounts"),
+      transactionsPageSource.includes("saved-config repair"),
     "CashTransactionsPage should show ownership-aware register labels and transfer-mode guidance"
   );
 
@@ -94,7 +95,7 @@ async function main() {
       transitPageSource.includes("formatCashSessionOptionLabel") &&
       transitPageSource.includes("Different operating-unit contexts use transit") &&
       transitPageSource.includes(
-        "Complete the setup during Transfer Out in Kasa Islemleri or in Organization Management."
+        "Run the saved current-account repair during Transfer Out in Kasa Islemleri or in Organization Management."
       ),
     "CashTransitTransfersPage should show ownership-aware route context and routing guidance"
   );
@@ -105,10 +106,10 @@ async function main() {
   );
   assert(
     messagesSource.includes(
-      "Complete the setup during Transfer Out in Kasa Islemleri or in Organization Management."
+      "Run the saved current-account repair during Transfer Out in Kasa Islemleri or in Organization Management."
     ) &&
-      messagesSource.includes("Kasa Islemleri ekranindan veya Organizasyon Yonetimi icinden"),
-    "messages.js should align cross-context setup errors with inline Kasa Islemleri guidance"
+      messagesSource.includes("Kasa Islemleri ekranindan ya da Organizasyon Yonetimi icinden"),
+    "messages.js should align cross-context setup errors with saved-config repair guidance"
   );
 
   const orgManagementSource = await readFile(

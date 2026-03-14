@@ -3,6 +3,7 @@ import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-do
 import { useAuth } from "../auth/useAuth.js";
 import LanguageSwitcher from "../i18n/LanguageSwitcher.jsx";
 import { useI18n } from "../i18n/useI18n.js";
+import { OU_CURRENT_ACCOUNT_SETUP_PATH } from "../readiness/ouCurrentAccountReadiness.js";
 import { useTenantReadiness } from "../readiness/useTenantReadiness.js";
 import { toastError, toastSuccess } from "../toast/toastBus.js";
 import SidebarSection from "./SidebarSection.jsx";
@@ -14,6 +15,21 @@ const MODULE_PREVIEW_ADMIN_PERMISSIONS = [
   "security.role_permissions.assign",
 ];
 const TENANT_SETUP_ROUTE = "/app/ayarlar/sirket-ayarlari";
+const TENANT_SETUP_ROUTE_BY_CHECK_KEY = {
+  groupCompanies: "/app/ayarlar/organizasyon-yonetimi",
+  legalEntities: "/app/ayarlar/organizasyon-yonetimi",
+  fiscalCalendars: "/app/ayarlar/organizasyon-yonetimi",
+  fiscalPeriods: "/app/ayarlar/organizasyon-yonetimi",
+  books: "/app/ayarlar/hesap-plani-ayarlari",
+  openBookPeriods: "/app/ayarlar/organizasyon-yonetimi",
+  chartsOfAccounts: "/app/ayarlar/hesap-plani-ayarlari",
+  accounts: "/app/ayarlar/hesap-plani-ayarlari",
+  shareholders: "/app/ayarlar/organizasyon-yonetimi",
+  shareholderCommitmentConfigs: "/app/ayarlar/organizasyon-yonetimi",
+  operatingUnitCurrentAccounts: OU_CURRENT_ACCOUNT_SETUP_PATH,
+  workflowCloseConsolidationV1: "/app/ayarlar/workflow-kurulumu",
+  taxEngineV1: "/app/ayarlar/vergi-kurulumu",
+};
 const TENANT_SETUP_ROUTES = [
   {
     to: "/app/ayarlar/sirket-ayarlari",
@@ -849,9 +865,19 @@ export default function AppLayout() {
                             key={check.key}
                             className="flex items-center justify-between rounded-md border border-rose-200 bg-rose-50 px-2 py-1.5"
                           >
-                            <span className="text-xs text-rose-900">
-                              {getReadinessCheckLabel(t, check)}
-                            </span>
+                            {TENANT_SETUP_ROUTE_BY_CHECK_KEY[check.key] ? (
+                              <Link
+                                to={TENANT_SETUP_ROUTE_BY_CHECK_KEY[check.key]}
+                                className="text-xs text-rose-900 underline decoration-rose-300 underline-offset-2"
+                                onClick={closeReadinessMenu}
+                              >
+                                {getReadinessCheckLabel(t, check)}
+                              </Link>
+                            ) : (
+                              <span className="text-xs text-rose-900">
+                                {getReadinessCheckLabel(t, check)}
+                              </span>
+                            )}
                             <span className="text-[11px] font-semibold text-rose-700">
                               {check.count}/{check.minimum}
                             </span>

@@ -58,6 +58,7 @@ async function createGlAccount({
   name,
   accountType,
   normalSide,
+  allowPosting = false,
   parentAccountId = null,
 }) {
   const response = await apiRequest({
@@ -71,7 +72,7 @@ async function createGlAccount({
       name,
       accountType,
       normalSide,
-      allowPosting: true,
+      allowPosting,
       parentAccountId: parentAccountId || undefined,
     },
     expectedStatus: 201,
@@ -81,14 +82,7 @@ async function createGlAccount({
   return accountId;
 }
 
-async function upsertOperatingUnit({
-  token,
-  legalEntityId,
-  code,
-  name,
-  centralDueFromAccountId,
-  ouDueToCentralAccountId,
-}) {
+async function createOperatingUnit({ token, legalEntityId, code, name }) {
   const response = await apiRequest({
     baseUrl: BASE_URL,
     token,
@@ -100,44 +94,56 @@ async function upsertOperatingUnit({
       name,
       unitType: "BRANCH",
       hasSubledger: true,
-      centralDueFromAccountId: centralDueFromAccountId || undefined,
-      ouDueToCentralAccountId: ouDueToCentralAccountId || undefined,
     },
     expectedStatus: 201,
   });
   const operatingUnitId = toNumber(response.json?.id);
-  assert(operatingUnitId > 0, `Operating unit upsert failed for ${code}`);
+  assert(operatingUnitId > 0, `Operating unit create failed for ${code}`);
   return operatingUnitId;
 }
 
-async function autoProvisionCentralCurrentAccounts({
+async function saveCurrentAccountConfig({
+  token,
+  legalEntityId,
+  dueFromParentAccountId,
+  dueToParentAccountId,
+}) {
+  return apiRequest({
+    baseUrl: BASE_URL,
+    token,
+    method: "POST",
+    requestPath: "/api/v1/org/operating-unit-current-account-config",
+    body: {
+      legalEntityId,
+      dueFromParentAccountId,
+      dueToParentAccountId,
+      autoProvisionOnOperatingUnitCreate: true,
+    },
+    expectedStatus: 201,
+  });
+}
+
+async function applyCurrentAccountConfig({
   token,
   legalEntityId,
   operatingUnitId,
-  centralDueFromParentAccountId,
-  ouDueToCentralParentAccountId,
   expectedStatus = 201,
 }) {
   return apiRequest({
     baseUrl: BASE_URL,
     token,
     method: "POST",
-    requestPath: "/api/v1/org/operating-units/central-current-accounts/auto-provision",
+    requestPath: "/api/v1/org/operating-unit-current-account-config/apply",
     body: {
       legalEntityId,
       operatingUnitId,
-      centralDueFromParentAccountId,
-      ouDueToCentralParentAccountId,
+      repairMissingOnly: true,
     },
     expectedStatus,
   });
 }
 
-async function listOperatingUnits({
-  token,
-  legalEntityId,
-  operatingUnitId,
-}) {
+async function listOperatingUnits({ token, legalEntityId, operatingUnitId }) {
   const search = new URLSearchParams({
     legalEntityId: String(legalEntityId),
     operatingUnitId: String(operatingUnitId),
@@ -231,256 +237,229 @@ async function main() {
       stamp,
       baseCurrencyCode: "USD",
     });
-    const { legalEntityId, coaId } = org;
+    const { legalEntityId, coaId, operatingUnitId: bootstrapOperatingUnitId } = org;
 
-    const centralDueFromParentCode = "132";
-    const ouDueToParentCode = "339";
-    const centralDueFromParentAccountId = await createGlAccount({
+    const dueFromParentCode = "132";
+    const dueToParentCode = "339";
+    const dueFromParentAccountId = await createGlAccount({
       token: adminToken,
       coaId,
-      code: centralDueFromParentCode,
-      name: `Central Due From Branches ${suffix}`,
+      code: dueFromParentCode,
+      name: `Central Due From Parent ${suffix}`,
       accountType: "ASSET",
       normalSide: "DEBIT",
+      allowPosting: false,
     });
-    const ouDueToParentAccountId = await createGlAccount({
+    const dueToParentAccountId = await createGlAccount({
       token: adminToken,
       coaId,
-      code: ouDueToParentCode,
-      name: `Branches Due To Central ${suffix}`,
+      code: dueToParentCode,
+      name: `Central Due To Parent ${suffix}`,
       accountType: "LIABILITY",
       normalSide: "CREDIT",
+      allowPosting: false,
     });
 
-    const branchACode = `BRA${suffix}`;
-    const branchAId = await upsertOperatingUnit({
+    await saveCurrentAccountConfig({
       token: adminToken,
       legalEntityId,
-      code: branchACode,
+      dueFromParentAccountId,
+      dueToParentAccountId,
+    });
+
+    const branchCode = `BRA${suffix}`;
+    const branchId = await createOperatingUnit({
+      token: adminToken,
+      legalEntityId,
+      code: branchCode,
       name: `Branch A ${suffix}`,
     });
 
-    const freshProvision = await autoProvisionCentralCurrentAccounts({
+    const freshApply = await applyCurrentAccountConfig({
       token: adminToken,
       legalEntityId,
-      operatingUnitId: branchAId,
-      centralDueFromParentAccountId,
-      ouDueToCentralParentAccountId: ouDueToParentAccountId,
+      operatingUnitId: branchId,
     });
-    const freshCreatedAccounts = Array.isArray(freshProvision.json?.createdAccounts)
-      ? freshProvision.json.createdAccounts
+    const freshCreatedAccounts = Array.isArray(freshApply.json?.createdAccounts)
+      ? freshApply.json.createdAccounts
       : [];
-    const freshOperatingUnit = freshProvision.json?.operatingUnit || null;
-    assert(freshCreatedAccounts.length === 2, "Fresh central auto-provision should create two child accounts");
+    const freshUpdatedOperatingUnits = Array.isArray(freshApply.json?.updatedOperatingUnits)
+      ? freshApply.json.updatedOperatingUnits
+      : [];
+    const freshPartnerMappings = Array.isArray(freshApply.json?.partnerMappings)
+      ? freshApply.json.partnerMappings
+      : [];
     assert(
-      toNumber(freshOperatingUnit?.centralDueFromAccountId) > 0 &&
-        toNumber(freshOperatingUnit?.ouDueToCentralAccountId) > 0,
-      "Fresh central auto-provision should return both mapped account ids"
+      freshCreatedAccounts.length === 8,
+      "Saved-config delta apply should create the four central accounts plus both partner directions against the existing bootstrap branch"
     );
     assert(
-      freshOperatingUnit?.capitalSelfBalancingReady === true,
-      "Fresh central auto-provision should mark the operating unit ready"
+      freshUpdatedOperatingUnits.length === 1,
+      "Saved-config delta apply should update one operating-unit row for a single-branch apply"
+    );
+    assert(freshApply.json?.lastAppliedAt, "Saved-config apply should return lastAppliedAt");
+
+    const updatedUnit = freshUpdatedOperatingUnits[0] || null;
+    assert(toNumber(updatedUnit?.id) === branchId, "Updated operating-unit summary should target the selected branch");
+    assert(
+      updatedUnit?.currentAccountProvisioningReady === true,
+      "Saved-config central apply should report currentAccountProvisioningReady=true"
+    );
+    assert(
+      freshPartnerMappings.length === 2 &&
+        freshPartnerMappings.every(
+          (row) =>
+            toNumber(row?.operatingUnitId) === branchId ||
+            toNumber(row?.partnerOperatingUnitId) === branchId
+        ) &&
+        freshPartnerMappings.some(
+          (row) =>
+            toNumber(row?.operatingUnitId) === branchId &&
+            toNumber(row?.partnerOperatingUnitId) === bootstrapOperatingUnitId
+        ) &&
+        freshPartnerMappings.some(
+          (row) =>
+            toNumber(row?.operatingUnitId) === bootstrapOperatingUnitId &&
+            toNumber(row?.partnerOperatingUnitId) === branchId
+        ),
+      "Single-branch saved-config apply should also create both partner directions against the bootstrap branch"
     );
 
     const freshRows = await fetchAccountRows([
-      freshOperatingUnit?.centralDueFromAccountId,
-      freshOperatingUnit?.ouDueToCentralAccountId,
-      centralDueFromParentAccountId,
-      ouDueToParentAccountId,
+      updatedUnit?.centralDueFromAccountId,
+      updatedUnit?.centralDueToAccountId,
+      updatedUnit?.ouDueFromCentralAccountId,
+      updatedUnit?.ouDueToCentralAccountId,
+      dueFromParentAccountId,
+      dueToParentAccountId,
     ]);
     const freshById = new Map(freshRows.map((row) => [toNumber(row.id), row]));
-    const freshCentralDueFromRow = freshById.get(
-      toNumber(freshOperatingUnit?.centralDueFromAccountId)
-    );
-    const freshOuDueToRow = freshById.get(
-      toNumber(freshOperatingUnit?.ouDueToCentralAccountId)
-    );
+    const centralDueFromRow = freshById.get(toNumber(updatedUnit?.centralDueFromAccountId));
+    const centralDueToRow = freshById.get(toNumber(updatedUnit?.centralDueToAccountId));
+    const ouDueFromCentralRow = freshById.get(toNumber(updatedUnit?.ouDueFromCentralAccountId));
+    const ouDueToCentralRow = freshById.get(toNumber(updatedUnit?.ouDueToCentralAccountId));
 
     assertAccountRow({
-      row: freshCentralDueFromRow,
+      row: centralDueFromRow,
       expectedCode: "132.01",
-      expectedName: `Central Due From ${branchACode}`,
-      expectedParentAccountId: centralDueFromParentAccountId,
+      expectedName: `Central Due From ${branchCode}`,
+      expectedParentAccountId: dueFromParentAccountId,
       expectedAccountType: "ASSET",
       expectedNormalSide: "DEBIT",
     });
     assertAccountRow({
-      row: freshOuDueToRow,
+      row: ouDueToCentralRow,
       expectedCode: "339.01",
-      expectedName: `${branchACode} Due To Central`,
-      expectedParentAccountId: ouDueToParentAccountId,
+      expectedName: `${branchCode} Due To Central`,
+      expectedParentAccountId: dueToParentAccountId,
       expectedAccountType: "LIABILITY",
       expectedNormalSide: "CREDIT",
     });
-    assert(
-      parseChildSequence(freshCentralDueFromRow?.code, centralDueFromParentCode) === 1 &&
-        parseChildSequence(freshOuDueToRow?.code, ouDueToParentCode) === 1,
-      "Fresh central auto-provision should use shared child sequence 01"
-    );
-    assert(
-      freshById.get(centralDueFromParentAccountId)?.allow_posting === 0 ||
-        freshById.get(centralDueFromParentAccountId)?.allow_posting === false,
-      "Central due-from parent should become non-postable after child creation"
-    );
-    assert(
-      freshById.get(ouDueToParentAccountId)?.allow_posting === 0 ||
-        freshById.get(ouDueToParentAccountId)?.allow_posting === false,
-      "OU due-to-central parent should become non-postable after child creation"
-    );
-
-    const freshOperatingUnitRows = await listOperatingUnits({
-      token: adminToken,
-      legalEntityId,
-      operatingUnitId: branchAId,
-    });
-    assert(freshOperatingUnitRows.length === 1, "Operating-unit GET should return one filtered row");
-    assert(
-      Boolean(freshOperatingUnitRows[0]?.capital_self_balancing_ready),
-      "Operating-unit GET should expose ready=true after central auto-provision"
-    );
-    assert(
-      String(freshOperatingUnitRows[0]?.central_due_from_account_code || "") === "132.01" &&
-        String(freshOperatingUnitRows[0]?.ou_due_to_central_account_code || "") === "339.01",
-      "Operating-unit GET should expose the generated central current child codes"
-    );
-
-    const reusedProvision = await autoProvisionCentralCurrentAccounts({
-      token: adminToken,
-      legalEntityId,
-      operatingUnitId: branchAId,
-      centralDueFromParentAccountId,
-      ouDueToCentralParentAccountId: ouDueToParentAccountId,
-    });
-    const reusedCreatedAccounts = Array.isArray(reusedProvision.json?.createdAccounts)
-      ? reusedProvision.json.createdAccounts
-      : [];
-    const reusedOperatingUnit = reusedProvision.json?.operatingUnit || null;
-    assert(reusedCreatedAccounts.length === 0, "Second central auto-provision should reuse existing setup");
-    assert(
-      toNumber(reusedOperatingUnit?.centralDueFromAccountId) ===
-        toNumber(freshOperatingUnit?.centralDueFromAccountId) &&
-        toNumber(reusedOperatingUnit?.ouDueToCentralAccountId) ===
-          toNumber(freshOperatingUnit?.ouDueToCentralAccountId),
-      "Second central auto-provision should reuse the same mapped account ids"
-    );
-
-    const centralDueFromParentCode2 = `1328${suffix}`;
-    const ouDueToParentCode2 = `3398${suffix}`;
-    const centralDueFromParentAccountId2 = await createGlAccount({
-      token: adminToken,
-      coaId,
-      code: centralDueFromParentCode2,
-      name: `Central Due From Partial ${suffix}`,
-      accountType: "ASSET",
-      normalSide: "DEBIT",
-    });
-    const ouDueToParentAccountId2 = await createGlAccount({
-      token: adminToken,
-      coaId,
-      code: ouDueToParentCode2,
-      name: `OU Due To Central Partial ${suffix}`,
-      accountType: "LIABILITY",
-      normalSide: "CREDIT",
-    });
-
-    const branchBCode = `BRB${suffix}`;
-    const branchBId = await upsertOperatingUnit({
-      token: adminToken,
-      legalEntityId,
-      code: branchBCode,
-      name: `Branch B ${suffix}`,
-    });
-    const manualCentralDueFromId = await createGlAccount({
-      token: adminToken,
-      coaId,
-      code: `${centralDueFromParentCode2}.09`,
-      name: `Central Due From ${branchBCode}`,
-      accountType: "ASSET",
-      normalSide: "DEBIT",
-      parentAccountId: centralDueFromParentAccountId2,
-    });
-    await upsertOperatingUnit({
-      token: adminToken,
-      legalEntityId,
-      code: branchBCode,
-      name: `Branch B ${suffix}`,
-      centralDueFromAccountId: manualCentralDueFromId,
-    });
-
-    const partialProvision = await autoProvisionCentralCurrentAccounts({
-      token: adminToken,
-      legalEntityId,
-      operatingUnitId: branchBId,
-      centralDueFromParentAccountId: centralDueFromParentAccountId2,
-      ouDueToCentralParentAccountId: ouDueToParentAccountId2,
-    });
-    const partialCreatedAccounts = Array.isArray(partialProvision.json?.createdAccounts)
-      ? partialProvision.json.createdAccounts
-      : [];
-    const partialOperatingUnit = partialProvision.json?.operatingUnit || null;
-    assert(partialCreatedAccounts.length === 1, "Partial central setup should create only one missing account");
-    assert(
-      toNumber(partialOperatingUnit?.centralDueFromAccountId) === toNumber(manualCentralDueFromId),
-      "Partial central setup should reuse the existing central due-from account"
-    );
-
-    const partialRows = await fetchAccountRows([
-      partialOperatingUnit?.centralDueFromAccountId,
-      partialOperatingUnit?.ouDueToCentralAccountId,
-    ]);
-    const partialById = new Map(partialRows.map((row) => [toNumber(row.id), row]));
     assertAccountRow({
-      row: partialById.get(toNumber(partialOperatingUnit?.centralDueFromAccountId)),
-      expectedCode: `${centralDueFromParentCode2}.09`,
-      expectedName: `Central Due From ${branchBCode}`,
-      expectedParentAccountId: centralDueFromParentAccountId2,
+      row: ouDueFromCentralRow,
+      expectedCode: "132.02",
+      expectedName: `${branchCode} Due From Central`,
+      expectedParentAccountId: dueFromParentAccountId,
       expectedAccountType: "ASSET",
       expectedNormalSide: "DEBIT",
     });
     assertAccountRow({
-      row: partialById.get(toNumber(partialOperatingUnit?.ouDueToCentralAccountId)),
-      expectedCode: `${ouDueToParentCode2}.09`,
-      expectedName: `${branchBCode} Due To Central`,
-      expectedParentAccountId: ouDueToParentAccountId2,
+      row: centralDueToRow,
+      expectedCode: "339.02",
+      expectedName: `Central Due To ${branchCode}`,
+      expectedParentAccountId: dueToParentAccountId,
       expectedAccountType: "LIABILITY",
       expectedNormalSide: "CREDIT",
     });
-
-    const validationFailure = await autoProvisionCentralCurrentAccounts({
-      token: adminToken,
-      legalEntityId,
-      operatingUnitId: branchAId,
-      centralDueFromParentAccountId: ouDueToParentAccountId2,
-      ouDueToCentralParentAccountId: centralDueFromParentAccountId2,
-      expectedStatus: 400,
-    });
-    const validationErrorText = toErrorText(validationFailure.json);
     assert(
-      validationErrorText.includes(
-        "centralDueFromParentAccountId must reference an ASSET account"
-      ),
-      "Central auto-provision should reject invalid parent-account typing with actionable error text"
+      parseChildSequence(centralDueFromRow?.code, dueFromParentCode) === 1 &&
+        parseChildSequence(ouDueToCentralRow?.code, dueToParentCode) === 1,
+      "Forward central pair should use shared child sequence 01"
+    );
+    assert(
+      parseChildSequence(ouDueFromCentralRow?.code, dueFromParentCode) === 2 &&
+        parseChildSequence(centralDueToRow?.code, dueToParentCode) === 2,
+      "Reverse central pair should use shared child sequence 02"
     );
 
-    console.log("Cash register ownership CRO07 central auto-provision checks passed.");
+    assert(
+      freshById.get(dueFromParentAccountId)?.allow_posting === 0 ||
+        freshById.get(dueFromParentAccountId)?.allow_posting === false,
+      "Due-from parent should remain non-postable after child creation"
+    );
+    assert(
+      freshById.get(dueToParentAccountId)?.allow_posting === 0 ||
+        freshById.get(dueToParentAccountId)?.allow_posting === false,
+      "Due-to parent should remain non-postable after child creation"
+    );
+
+    const listedOperatingUnits = await listOperatingUnits({
+      token: adminToken,
+      legalEntityId,
+      operatingUnitId: branchId,
+    });
+    assert(listedOperatingUnits.length === 1, "Operating-unit GET should return one filtered row");
+    assert(
+      Boolean(listedOperatingUnits[0]?.cross_context_self_balancing_ready),
+      "Operating-unit GET should expose cross_context_self_balancing_ready=true after saved-config apply"
+    );
+    assert(
+      String(listedOperatingUnits[0]?.central_due_from_account_code || "") === "132.01" &&
+        String(listedOperatingUnits[0]?.central_due_to_account_code || "") === "339.02" &&
+        String(listedOperatingUnits[0]?.ou_due_from_central_account_code || "") === "132.02" &&
+        String(listedOperatingUnits[0]?.ou_due_to_central_account_code || "") === "339.01",
+      "Operating-unit GET should expose the generated four-direction central current child codes"
+    );
+
+    const rerunApply = await applyCurrentAccountConfig({
+      token: adminToken,
+      legalEntityId,
+      operatingUnitId: branchId,
+    });
+    const rerunCreatedAccounts = Array.isArray(rerunApply.json?.createdAccounts)
+      ? rerunApply.json.createdAccounts
+      : [];
+    const rerunUpdatedOperatingUnits = Array.isArray(rerunApply.json?.updatedOperatingUnits)
+      ? rerunApply.json.updatedOperatingUnits
+      : [];
+    const rerunReusedAccounts = Array.isArray(rerunApply.json?.reusedAccounts)
+      ? rerunApply.json.reusedAccounts
+      : [];
+    const rerunPartnerMappings = Array.isArray(rerunApply.json?.partnerMappings)
+      ? rerunApply.json.partnerMappings
+      : [];
+    assert(
+      rerunCreatedAccounts.length === 0,
+      "Second saved-config apply should reuse the existing four-direction central setup"
+    );
+    assert(
+      rerunUpdatedOperatingUnits.length === 0,
+      "Second saved-config apply should not rewrite an already-valid central mapping row"
+    );
+    assert(
+      rerunReusedAccounts.length >= 4,
+      "Second saved-config apply should report reused central accounts"
+    );
+    assert(
+      rerunPartnerMappings.length === 2 &&
+        rerunPartnerMappings.every((row) => row?.created === false),
+      "Second saved-config apply should keep the bootstrap branch partner mappings as existing rows"
+    );
+
+    console.log("Cash register ownership CRO07 saved-config central apply checks passed.");
     console.log(
       JSON.stringify(
         {
           tenantId: identity.tenantId,
           legalEntityId,
-          freshProvision: {
-            operatingUnitId: branchAId,
-            createdAccountCodes: [freshCentralDueFromRow?.code, freshOuDueToRow?.code],
-          },
-          reusedProvision: {
-            reused: true,
-          },
-          partialProvision: {
-            operatingUnitId: branchBId,
-            reusedCentralDueFromAccountId: manualCentralDueFromId,
-            createdOuDueToCentralAccountCode:
-              partialById.get(toNumber(partialOperatingUnit?.ouDueToCentralAccountId))?.code,
-          },
+          operatingUnitId: branchId,
+          createdAccountCodes: [
+            centralDueFromRow?.code,
+            centralDueToRow?.code,
+            ouDueFromCentralRow?.code,
+            ouDueToCentralRow?.code,
+          ],
+          rerunCreatedAccounts: rerunCreatedAccounts.length,
         },
         null,
         2
@@ -501,7 +480,7 @@ main()
     process.exitCode = 0;
   })
   .catch((err) => {
-    console.error("Cash register ownership CRO07 central auto-provision test failed.");
+    console.error("Cash register ownership CRO07 saved-config central apply test failed.");
     console.error(toErrorText(err?.message || err));
     console.error(err);
     process.exitCode = 1;

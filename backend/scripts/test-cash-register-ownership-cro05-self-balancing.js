@@ -317,6 +317,38 @@ async function createRegister({
   return registerId;
 }
 
+async function createBankAccount({
+  token,
+  legalEntityId,
+  operatingUnitId = null,
+  glAccountId,
+  code,
+  name,
+  currencyCode,
+}) {
+  const response = await apiRequest({
+    token,
+    method: "POST",
+    path: "/api/v1/bank/accounts",
+    body: {
+      legalEntityId,
+      operatingUnitId,
+      glAccountId,
+      code,
+      name,
+      currencyCode,
+      bankName: name,
+      branchName: operatingUnitId ? "Branch" : "HQ",
+      accountNo: `${code}-001`,
+      isActive: true,
+    },
+    expectedStatus: 201,
+  });
+  const bankAccountId = toNumber(response.json?.row?.id);
+  assert(bankAccountId > 0, `Bank account not created for code=${code}`);
+  return bankAccountId;
+}
+
 async function bootstrapSelfBalancingContext(token, identity) {
   const countryResult = await query(
     `SELECT id, default_currency_code
@@ -418,6 +450,18 @@ async function bootstrapSelfBalancingContext(token, identity) {
     coaId,
     code: `CRC${identity.stamp}`,
     name: "Central Register",
+  });
+  const centralBankAccountGlId = await createAccount({
+    token,
+    coaId,
+    code: `CBK${identity.stamp}`,
+    name: "Central Bank",
+  });
+  const branchBankAccountAGlId = await createAccount({
+    token,
+    coaId,
+    code: `BBK${identity.stamp}`,
+    name: "Branch Bank A",
   });
   const registerAccountAId = await createAccount({
     token,
@@ -593,6 +637,25 @@ async function bootstrapSelfBalancingContext(token, identity) {
     currencyCode,
   });
 
+  const centralBankAccountId = await createBankAccount({
+    token,
+    legalEntityId,
+    operatingUnitId: null,
+    glAccountId: centralBankAccountGlId,
+    code: `BANKC${identity.stamp}`,
+    name: "Central Bank",
+    currencyCode,
+  });
+  const branchBankAccountAId = await createBankAccount({
+    token,
+    legalEntityId,
+    operatingUnitId: operatingUnitAId,
+    glAccountId: branchBankAccountAGlId,
+    code: `BANKA${identity.stamp}`,
+    name: "Branch Bank A",
+    currencyCode,
+  });
+
   await apiRequest({
     token,
     method: "POST",
@@ -618,6 +681,10 @@ async function bootstrapSelfBalancingContext(token, identity) {
     operatingUnitBId,
     operatingUnitCId,
     centralRegisterAccountId,
+    centralBankAccountId,
+    centralBankAccountGlId,
+    branchBankAccountAId,
+    branchBankAccountAGlId,
     registerAccountAId,
     registerAccountBId,
     transitAccountId,
@@ -630,6 +697,38 @@ async function bootstrapSelfBalancingContext(token, identity) {
     dueFromAccountBAId,
     dueToAccountBAId,
   };
+}
+
+async function createCashTransaction({
+  token,
+  tenantId,
+  registerId,
+  txnType,
+  amount,
+  currencyCode,
+  idempotencyKey,
+  counterAccountId,
+  expectedStatus = 200,
+}) {
+  return apiRequest({
+    token,
+    method: "POST",
+    path: "/api/v1/cash/transactions",
+    body: {
+      tenantId,
+      registerId,
+      txnType,
+      amount,
+      currencyCode,
+      counterAccountId,
+      txnDatetime: TEST_DATETIME,
+      bookDate: TEST_DATE,
+      description: `CRO05 bank/cash ${idempotencyKey}`,
+      referenceNo: `CRO05-BANK-${idempotencyKey}`.slice(0, 100),
+      idempotencyKey,
+    },
+    expectedStatus,
+  });
 }
 
 async function initiateTransitTransfer({
@@ -1087,6 +1186,170 @@ async function runOuToOuScenario(token, setup, stamp) {
   };
 }
 
+async function runCentralBankToOuCashScenario(token, setup, stamp) {
+  const createRes = await createCashTransaction({
+    token,
+    tenantId: setup.tenantId,
+    registerId: setup.registerAId,
+    txnType: "WITHDRAWAL_FROM_BANK",
+    amount: "21.00",
+    currencyCode: setup.currencyCode,
+    idempotencyKey: `BANK-CENTRAL-OU-${stamp}`,
+    counterAccountId: setup.centralBankAccountGlId,
+    expectedStatus: 200,
+  });
+  const transactionId = toNumber(createRes.json?.row?.id);
+  assert(transactionId > 0, "Central bank -> OU cash transaction id missing");
+
+  await postCashTransaction({
+    token,
+    tenantId: setup.tenantId,
+    transactionId,
+    expectedStatus: 200,
+  });
+
+  const lines = await loadPostedJournalLines({
+    tenantId: setup.tenantId,
+    transactionId,
+  });
+  assert(lines.length === 4, "Central bank -> OU cash should post 4 journal lines");
+  assertHasLine(
+    lines,
+    {
+      accountId: setup.registerAccountAId,
+      operatingUnitId: setup.operatingUnitAId,
+      side: "debit",
+      amount: 21,
+    },
+    "Central bank -> OU cash should debit the target branch register"
+  );
+  assertHasLine(
+    lines,
+    {
+      accountId: setup.ouDueToAccountAId,
+      operatingUnitId: setup.operatingUnitAId,
+      side: "credit",
+      amount: 21,
+    },
+    "Central bank -> OU cash should credit the branch OU due-to-central account"
+  );
+  assertHasLine(
+    lines,
+    {
+      accountId: setup.centralDueFromAccountAId,
+      operatingUnitId: null,
+      side: "debit",
+      amount: 21,
+    },
+    "Central bank -> OU cash should debit the branch central due-from account at no-OU scope"
+  );
+  assertHasLine(
+    lines,
+    {
+      accountId: setup.centralBankAccountGlId,
+      operatingUnitId: null,
+      side: "credit",
+      amount: 21,
+    },
+    "Central bank -> OU cash should credit the central bank GL account at no-OU scope"
+  );
+  assertNoAccount(
+    lines,
+    setup.transitAccountId,
+    "Central bank -> OU cash should not use transit clearing"
+  );
+  assertNoOuLinesHaveNoSubledgerRef(
+    lines,
+    "Central bank -> OU cash no-OU lines should not carry subledger reference metadata"
+  );
+
+  return {
+    transactionId,
+  };
+}
+
+async function runOuCashToCentralBankScenario(token, setup, stamp) {
+  const createRes = await createCashTransaction({
+    token,
+    tenantId: setup.tenantId,
+    registerId: setup.registerAId,
+    txnType: "DEPOSIT_TO_BANK",
+    amount: "22.00",
+    currencyCode: setup.currencyCode,
+    idempotencyKey: `OU-CENTRAL-BANK-${stamp}`,
+    counterAccountId: setup.centralBankAccountGlId,
+    expectedStatus: 200,
+  });
+  const transactionId = toNumber(createRes.json?.row?.id);
+  assert(transactionId > 0, "OU cash -> central bank transaction id missing");
+
+  await postCashTransaction({
+    token,
+    tenantId: setup.tenantId,
+    transactionId,
+    expectedStatus: 200,
+  });
+
+  const lines = await loadPostedJournalLines({
+    tenantId: setup.tenantId,
+    transactionId,
+  });
+  assert(lines.length === 4, "OU cash -> central bank should post 4 journal lines");
+  assertHasLine(
+    lines,
+    {
+      accountId: setup.centralBankAccountGlId,
+      operatingUnitId: null,
+      side: "debit",
+      amount: 22,
+    },
+    "OU cash -> central bank should debit the central bank GL account at no-OU scope"
+  );
+  assertHasLine(
+    lines,
+    {
+      accountId: setup.centralDueFromAccountAId,
+      operatingUnitId: null,
+      side: "credit",
+      amount: 22,
+    },
+    "OU cash -> central bank should credit the branch central due-from account at no-OU scope"
+  );
+  assertHasLine(
+    lines,
+    {
+      accountId: setup.ouDueToAccountAId,
+      operatingUnitId: setup.operatingUnitAId,
+      side: "debit",
+      amount: 22,
+    },
+    "OU cash -> central bank should debit the branch OU due-to-central account"
+  );
+  assertHasLine(
+    lines,
+    {
+      accountId: setup.registerAccountAId,
+      operatingUnitId: setup.operatingUnitAId,
+      side: "credit",
+      amount: 22,
+    },
+    "OU cash -> central bank should credit the source branch register"
+  );
+  assertNoAccount(
+    lines,
+    setup.transitAccountId,
+    "OU cash -> central bank should not use transit clearing"
+  );
+  assertNoOuLinesHaveNoSubledgerRef(
+    lines,
+    "OU cash -> central bank no-OU lines should not carry subledger reference metadata"
+  );
+
+  return {
+    transactionId,
+  };
+}
+
 async function runMissingSetupScenario(token, setup, stamp) {
   const initiateRes = await initiateTransitTransfer({
     token,
@@ -1112,14 +1375,51 @@ async function runMissingSetupScenario(token, setup, stamp) {
   assert(
     errorText.includes("self-balancing setup is invalid") &&
       errorText.includes("Kasa Islemleri") &&
+      errorText.includes("saved current-account repair") &&
       errorText.includes("Organization Management"),
-    "Missing setup post failure should direct users to Kasa Islemleri or Organization Management"
+    "Missing setup post failure should direct users to saved-config repair in Kasa Islemleri or Organization Management"
   );
   await assertTransferState(token, transferId, "INITIATED");
 
   return {
     transferId,
     transferOutTxnId,
+    errorText,
+  };
+}
+
+async function runMissingBankSetupScenario(token, setup, stamp) {
+  const createRes = await createCashTransaction({
+    token,
+    tenantId: setup.tenantId,
+    registerId: setup.registerCId,
+    txnType: "WITHDRAWAL_FROM_BANK",
+    amount: "9.00",
+    currencyCode: setup.currencyCode,
+    idempotencyKey: `BANK-MISSING-${stamp}`,
+    counterAccountId: setup.centralBankAccountGlId,
+    expectedStatus: 200,
+  });
+  const transactionId = toNumber(createRes.json?.row?.id);
+  assert(transactionId > 0, "Missing-setup bank/cash transaction id missing");
+
+  const failedPost = await postCashTransaction({
+    token,
+    tenantId: setup.tenantId,
+    transactionId,
+    expectedStatus: 400,
+  });
+  const errorText = toErrorText(failedPost.json);
+  assert(
+    errorText.includes("self-balancing setup is invalid") &&
+      errorText.includes("Kasa Islemleri") &&
+      errorText.includes("saved current-account repair") &&
+      errorText.includes("Organization Management"),
+    "Missing bank/cash setup post failure should direct users to saved-config repair in Kasa Islemleri or Organization Management"
+  );
+
+  return {
+    transactionId,
     errorText,
   };
 }
@@ -1182,7 +1482,22 @@ async function main() {
     const centralToOu = await runCentralToOuScenario(adminToken, setup, identity.stamp);
     const ouToCentral = await runOuToCentralScenario(adminToken, setup, identity.stamp);
     const ouToOu = await runOuToOuScenario(adminToken, setup, identity.stamp);
+    const centralBankToOuCash = await runCentralBankToOuCashScenario(
+      adminToken,
+      setup,
+      identity.stamp
+    );
+    const ouCashToCentralBank = await runOuCashToCentralBankScenario(
+      adminToken,
+      setup,
+      identity.stamp
+    );
     const missingSetup = await runMissingSetupScenario(adminToken, setup, identity.stamp);
+    const missingBankSetup = await runMissingBankSetupScenario(
+      adminToken,
+      setup,
+      identity.stamp
+    );
     const duplicateMapping = await runDuplicateMappingScenario(adminToken, setup, identity.stamp);
 
     console.log("Cash register ownership CRO05 self-balancing checks passed.");
@@ -1193,9 +1508,14 @@ async function main() {
           centralToOu,
           ouToCentral,
           ouToOu,
+          centralBankToOuCash,
+          ouCashToCentralBank,
           missingSetup: {
             transferId: missingSetup.transferId,
             transferOutTxnId: missingSetup.transferOutTxnId,
+          },
+          missingBankSetup: {
+            transactionId: missingBankSetup.transactionId,
           },
           duplicateMapping: {
             transferId: duplicateMapping.transferId,

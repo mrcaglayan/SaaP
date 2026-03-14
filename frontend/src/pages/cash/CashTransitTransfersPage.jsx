@@ -132,8 +132,8 @@ function mapTransitErrorMessage(rawMessage, l) {
     lower.includes("direct inter-branch current-account setup is invalid")
   ) {
     return l(
-      "Cross-context transfer posting is blocked because the required central or branch-pair current-account mappings are not ready. Complete the setup during Transfer Out in Kasa Islemleri or in Organization Management.",
-      "Gerekli merkez veya sube-cifti cari hesap kurulumlari hazir olmadigi icin farkli baglam transfer post islemi engellendi. Kurulumu Transfer Out sirasinda Kasa Islemleri ekranindan veya Organizasyon Yonetimi icinden tamamlayin."
+      "Cross-context transfer posting is blocked because the required central or branch-pair current-account mappings are not ready. Run the saved current-account repair during Transfer Out in Kasa Islemleri or in Organization Management.",
+      "Gerekli merkez veya sube-cifti cari hesap kurulumlari hazir olmadigi icin farkli baglam transfer post islemi engellendi. Kaydedilen cari hesap konfigurasyonunu Transfer Out sirasinda Kasa Islemleri ekranindan ya da Organizasyon Yonetimi icinden calistirin."
     );
   }
 

@@ -11,7 +11,15 @@ import {
 import { resolvePolicyPack } from "../services/policy-packs.resolve.service.js";
 import { getPolicyPack } from "../services/policy-packs.service.js";
 import { applyPolicyPackTx } from "../services/policy-packs.apply.service.js";
-import { getCloseConsolidationWorkflowReadiness } from "../services/module-readiness.service.js";
+import {
+  buildDraftOperatingUnitCurrentAccountEligibilityPreview,
+  summarizeOperatingUnitCurrentAccountEligibility,
+} from "../services/ou.current-account-eligibility.service.js";
+import {
+  applyOperatingUnitCurrentAccountConfigTx,
+  upsertOperatingUnitCurrentAccountConfigTx,
+} from "../services/org.write.service.js";
+import { getTenantReadinessSnapshot } from "../services/tenant-readiness.service.js";
 
 const router = express.Router();
 const SHAREHOLDER_CAPITAL_CREDIT_PARENT_PURPOSE =
@@ -65,52 +73,6 @@ const ACCOUNT_TYPE_VALUES = new Set([
   "EXPENSE",
 ]);
 const NORMAL_SIDE_VALUES = new Set(["DEBIT", "CREDIT"]);
-
-const READINESS_DEFINITIONS = [
-  { key: "groupCompanies", label: "Group companies", minimum: 1 },
-  { key: "legalEntities", label: "Legal entities", minimum: 1 },
-  { key: "fiscalCalendars", label: "Fiscal calendars", minimum: 1 },
-  { key: "fiscalPeriods", label: "Fiscal periods", minimum: 1 },
-  { key: "books", label: "Books", minimum: 1 },
-  { key: "openBookPeriods", label: "Open book periods", minimum: 1 },
-  { key: "chartsOfAccounts", label: "Charts of accounts", minimum: 1 },
-  { key: "accounts", label: "Accounts", minimum: 1 },
-  {
-    key: "shareholders",
-    label: "Shareholders",
-    minimum: 1,
-  },
-  {
-    key: "shareholderCommitmentConfigs",
-    label: "Shareholder parent account mappings",
-    minimum: 1,
-  },
-  {
-    key: "subaccountsV1",
-    label: "Subaccounts V1 placeholder",
-    minimum: 0,
-  },
-  {
-    key: "setupWizardV2",
-    label: "Setup Wizard V2 placeholder",
-    minimum: 0,
-  },
-  {
-    key: "consolidationCanonicalMappingV1",
-    label: "Consolidation canonical mapping placeholder",
-    minimum: 0,
-  },
-  {
-    key: "workflowCloseConsolidationV1",
-    label: "Workflow close/consolidation readiness",
-    minimum: 1,
-  },
-  {
-    key: "taxEngineV1",
-    label: "Country tax engine setup (optional)",
-    minimum: 0,
-  },
-];
 
 const PAYMENT_TERM_STATUS_VALUES = new Set(["ACTIVE", "INACTIVE"]);
 const DEFAULT_PAYMENT_TERM_TEMPLATES = [
@@ -255,6 +217,172 @@ function normalizeGroupCoaSelection(groupCoa, groupCompany) {
         groupCoa?.policyPackId ??
         groupCoa?.policy_pack_id
     ),
+  };
+}
+
+function normalizeCompanyBootstrapCurrentAccountConfig(entity, index) {
+  const rawConfig = entity?.currentAccountConfig ?? entity?.current_account_config;
+  if (rawConfig === undefined || rawConfig === null || rawConfig === "") {
+    return {
+      skipForNow: false,
+      dueFromParentAccountCode: null,
+      dueToParentAccountCode: null,
+    };
+  }
+  if (typeof rawConfig !== "object" || Array.isArray(rawConfig)) {
+    throw badRequest(`legalEntities[${index}].currentAccountConfig must be an object`);
+  }
+
+  const skipForNow = parseBooleanFlag(
+    rawConfig.skipForNow ?? rawConfig.skip_for_now,
+    false,
+    `legalEntities[${index}].currentAccountConfig.skipForNow`
+  );
+  const dueFromParentAccountCode = normalizeOptionalCode(
+    rawConfig.dueFromParentAccountCode ?? rawConfig.due_from_parent_account_code
+  );
+  const dueToParentAccountCode = normalizeOptionalCode(
+    rawConfig.dueToParentAccountCode ?? rawConfig.due_to_parent_account_code
+  );
+
+  if (skipForNow) {
+    return {
+      skipForNow: true,
+      dueFromParentAccountCode,
+      dueToParentAccountCode,
+    };
+  }
+  if (!dueFromParentAccountCode && !dueToParentAccountCode) {
+    return {
+      skipForNow: false,
+      dueFromParentAccountCode: null,
+      dueToParentAccountCode: null,
+    };
+  }
+  if (!dueFromParentAccountCode || !dueToParentAccountCode) {
+    throw badRequest(
+      `legalEntities[${index}].currentAccountConfig must include both dueFromParentAccountCode and dueToParentAccountCode`
+    );
+  }
+  if (dueFromParentAccountCode === dueToParentAccountCode) {
+    throw badRequest(
+      `legalEntities[${index}].currentAccountConfig dueFromParentAccountCode must differ from dueToParentAccountCode`
+    );
+  }
+
+  return {
+    skipForNow: false,
+    dueFromParentAccountCode,
+    dueToParentAccountCode,
+  };
+}
+
+async function resolveBootstrapCurrentAccountParentAccountIdsForCoa({
+  coaId,
+  legalEntityCode,
+  currentAccountConfig,
+  runQuery = query,
+}) {
+  if (
+    !currentAccountConfig?.dueFromParentAccountCode ||
+    !currentAccountConfig?.dueToParentAccountCode
+  ) {
+    return null;
+  }
+
+  const result = await runQuery(
+    `SELECT id, code
+     FROM accounts
+     WHERE coa_id = ?
+       AND code IN (?, ?)`,
+    [
+      coaId,
+      currentAccountConfig.dueFromParentAccountCode,
+      currentAccountConfig.dueToParentAccountCode,
+    ]
+  );
+  const accountIdByCode = new Map(
+    (result.rows || []).map((row) => [
+      normalizeOptionalCode(row?.code),
+      parsePositiveInt(row?.id),
+    ])
+  );
+
+  const dueFromParentAccountId = parsePositiveInt(
+    accountIdByCode.get(currentAccountConfig.dueFromParentAccountCode)
+  );
+  if (!dueFromParentAccountId) {
+    throw badRequest(
+      `currentAccountConfig.dueFromParentAccountCode could not be resolved in legal entity ${String(
+        legalEntityCode || ""
+      ).trim()} CoA: ${currentAccountConfig.dueFromParentAccountCode}`
+    );
+  }
+
+  const dueToParentAccountId = parsePositiveInt(
+    accountIdByCode.get(currentAccountConfig.dueToParentAccountCode)
+  );
+  if (!dueToParentAccountId) {
+    throw badRequest(
+      `currentAccountConfig.dueToParentAccountCode could not be resolved in legal entity ${String(
+        legalEntityCode || ""
+      ).trim()} CoA: ${currentAccountConfig.dueToParentAccountCode}`
+    );
+  }
+
+  return {
+    dueFromParentAccountId,
+    dueToParentAccountId,
+  };
+}
+
+function summarizeBootstrapCurrentAccountProvisioning(payload) {
+  return {
+    createdAccountCount: Array.isArray(payload?.createdAccounts)
+      ? payload.createdAccounts.length
+      : 0,
+    reusedAccountCount: Array.isArray(payload?.reusedAccounts)
+      ? payload.reusedAccounts.length
+      : 0,
+    updatedOperatingUnitCount: Array.isArray(payload?.updatedOperatingUnits)
+      ? payload.updatedOperatingUnits.length
+      : 0,
+    updatedPartnerMappingCount: Array.isArray(payload?.updatedPartnerMappings)
+      ? payload.updatedPartnerMappings.length
+      : 0,
+    warningCount: Array.isArray(payload?.warnings) ? payload.warnings.length : 0,
+    lastAppliedAt: payload?.lastAppliedAt || null,
+  };
+}
+
+function buildBootstrapCurrentAccountReadinessWarning({
+  legalEntityCode,
+  effectiveActiveOperatingUnitCount,
+  currentAccountSetupRecommended,
+  skippedExplicitly,
+}) {
+  if (currentAccountSetupRecommended) {
+    return {
+      code: skippedExplicitly
+        ? "CURRENT_ACCOUNT_SETUP_SKIPPED"
+        : "CURRENT_ACCOUNT_SETUP_PENDING",
+      severity: "warning",
+      message: `Current-account setup was ${
+        skippedExplicitly ? "skipped" : "not configured"
+      } for legal entity ${String(
+        legalEntityCode || ""
+      ).trim()} during company bootstrap. This legal entity has ${effectiveActiveOperatingUnitCount} active operating units in the submitted draft, so tenant readiness remains pending until saved parents are configured and applied.`,
+    };
+  }
+
+  return {
+    code: "CURRENT_ACCOUNT_SETUP_OPTIONAL",
+    severity: "info",
+    message: `Current-account setup was not configured for legal entity ${String(
+      legalEntityCode || ""
+    ).trim()} during company bootstrap. The submitted draft has ${effectiveActiveOperatingUnitCount} active operating unit${
+      effectiveActiveOperatingUnitCount === 1 ? "" : "s"
+    }, so cross-context readiness is not required yet.`,
   };
 }
 
@@ -722,172 +850,6 @@ async function bootstrapPaymentTermsForLegalEntities({
     createdCount,
     skippedCount,
     perLegalEntity,
-  };
-}
-
-async function scalarCount(sql, params = [], runQuery = query) {
-  const result = await runQuery(sql, params);
-  const count = Number(result.rows[0]?.count || 0);
-  return Number.isFinite(count) ? count : 0;
-}
-
-async function buildTenantReadinessSnapshot(tenantId) {
-  const [
-    groupCompanies,
-    legalEntities,
-    fiscalCalendars,
-    fiscalPeriods,
-    books,
-    openBookPeriods,
-    chartsOfAccounts,
-    accounts,
-    shareholders,
-    shareholderCommitmentConfigs,
-  ] = await Promise.all([
-    scalarCount(
-      `SELECT COUNT(*) AS count
-       FROM group_companies
-       WHERE tenant_id = ?`,
-      [tenantId]
-    ),
-    scalarCount(
-      `SELECT COUNT(*) AS count
-       FROM legal_entities
-       WHERE tenant_id = ?`,
-      [tenantId]
-    ),
-    scalarCount(
-      `SELECT COUNT(*) AS count
-       FROM fiscal_calendars
-       WHERE tenant_id = ?`,
-      [tenantId]
-    ),
-    scalarCount(
-      `SELECT COUNT(*) AS count
-       FROM fiscal_periods fp
-       JOIN fiscal_calendars fc ON fc.id = fp.calendar_id
-       WHERE fc.tenant_id = ?`,
-      [tenantId]
-    ),
-    scalarCount(
-      `SELECT COUNT(*) AS count
-       FROM books
-       WHERE tenant_id = ?`,
-      [tenantId]
-    ),
-    scalarCount(
-      `SELECT COUNT(*) AS count
-       FROM books b
-       JOIN fiscal_periods fp
-         ON fp.calendar_id = b.calendar_id
-        AND fp.is_adjustment = FALSE
-       LEFT JOIN period_statuses ps
-         ON ps.book_id = b.id
-        AND ps.fiscal_period_id = fp.id
-       WHERE b.tenant_id = ?
-         AND COALESCE(ps.status, 'OPEN') = 'OPEN'`,
-      [tenantId]
-    ),
-    scalarCount(
-      `SELECT COUNT(*) AS count
-       FROM charts_of_accounts
-       WHERE tenant_id = ?`,
-      [tenantId]
-    ),
-    scalarCount(
-      `SELECT COUNT(*) AS count
-       FROM accounts a
-       JOIN charts_of_accounts c ON c.id = a.coa_id
-       WHERE c.tenant_id = ?`,
-      [tenantId]
-    ),
-    scalarCount(
-      `SELECT COUNT(*) AS count
-       FROM shareholders
-       WHERE tenant_id = ?`,
-      [tenantId]
-    ),
-    scalarCount(
-      `SELECT COUNT(*) AS count
-       FROM legal_entities le
-       WHERE le.tenant_id = ?
-         AND EXISTS (
-           SELECT 1
-           FROM journal_purpose_accounts cap
-           WHERE cap.tenant_id = le.tenant_id
-             AND cap.legal_entity_id = le.id
-             AND cap.purpose_code = ?
-         )
-         AND EXISTS (
-           SELECT 1
-           FROM journal_purpose_accounts deb
-           WHERE deb.tenant_id = le.tenant_id
-             AND deb.legal_entity_id = le.id
-             AND deb.purpose_code = ?
-         )`,
-      [
-        tenantId,
-        SHAREHOLDER_CAPITAL_CREDIT_PARENT_PURPOSE,
-        SHAREHOLDER_COMMITMENT_DEBIT_PARENT_PURPOSE,
-      ]
-    ),
-  ]);
-
-  const workflowModuleReadiness = await getCloseConsolidationWorkflowReadiness(tenantId, null, {
-    runQuery: query,
-  });
-  const workflowRows = Array.isArray(workflowModuleReadiness?.byLegalEntity)
-    ? workflowModuleReadiness.byLegalEntity
-    : [];
-  const workflowReadyCount = workflowRows.filter((row) => Boolean(row?.ready)).length;
-  const workflowMinimum = Math.max(1, workflowRows.length);
-  const workflowMissingLegalEntityIds = workflowRows
-    .filter((row) => !row?.ready)
-    .map((row) => parsePositiveInt(row?.legalEntityId))
-    .filter(Boolean);
-
-  const counts = {
-    groupCompanies,
-    legalEntities,
-    fiscalCalendars,
-    fiscalPeriods,
-    books,
-    openBookPeriods,
-    chartsOfAccounts,
-    accounts,
-    shareholders,
-    shareholderCommitmentConfigs,
-    workflowCloseConsolidationV1: workflowReadyCount,
-  };
-
-  const checks = READINESS_DEFINITIONS.map((definition) => {
-    const isWorkflowReadiness = definition.key === "workflowCloseConsolidationV1";
-    const count = Number(counts[definition.key] || 0);
-    const minimum = isWorkflowReadiness ? workflowMinimum : definition.minimum;
-    return {
-      ...definition,
-      count,
-      minimum,
-      ready: count >= minimum,
-      details: isWorkflowReadiness
-        ? {
-            readyEntityCount: workflowReadyCount,
-            totalEntityCount: workflowRows.length,
-            missingLegalEntityIds: workflowMissingLegalEntityIds,
-          }
-        : null,
-    };
-  });
-
-  const missing = checks.filter((check) => !check.ready);
-
-  return {
-    tenantId,
-    ready: missing.length === 0,
-    checks,
-    counts,
-    missingKeys: missing.map((check) => check.key),
-    generatedAt: new Date().toISOString(),
   };
 }
 
@@ -1429,7 +1391,7 @@ router.get(
       throw badRequest("tenantId is required");
     }
 
-    const readiness = await buildTenantReadinessSnapshot(tenantId);
+    const readiness = await getTenantReadinessSnapshot(tenantId);
     return res.json(readiness);
   })
 );
@@ -1449,7 +1411,7 @@ router.post(
       throw badRequest("fiscalYear must be a positive integer");
     }
 
-    const readinessBefore = await buildTenantReadinessSnapshot(tenantId);
+    const readinessBefore = await getTenantReadinessSnapshot(tenantId);
     const bootstrapResult = await withTransaction(async (tx) => {
       const groupCompany = await ensureDefaultGroupCompany(tenantId, tx.query);
       const legalEntity = await ensureDefaultLegalEntity(
@@ -1505,7 +1467,7 @@ router.post(
     });
     await invalidateRbacCache(tenantId);
 
-    const readinessAfter = await buildTenantReadinessSnapshot(tenantId);
+    const readinessAfter = await getTenantReadinessSnapshot(tenantId);
 
     return res.status(201).json({
       ok: true,
@@ -1574,6 +1536,23 @@ router.post(
       createdCount: bootstrapResult.createdCount,
       skippedCount: bootstrapResult.skippedCount,
       perLegalEntity: bootstrapResult.perLegalEntity,
+    });
+  })
+);
+
+router.post(
+  "/company-bootstrap/current-account-eligibility-preview",
+  requirePermission("onboarding.company.setup"),
+  asyncHandler(async (req, res) => {
+    const legalEntities = req.body?.legalEntities;
+    if (legalEntities !== undefined && !Array.isArray(legalEntities)) {
+      throw badRequest("legalEntities must be an array when provided");
+    }
+
+    const rows = buildDraftOperatingUnitCurrentAccountEligibilityPreview(legalEntities);
+    return res.json({
+      ok: true,
+      rows,
     });
   })
 );
@@ -1706,9 +1685,13 @@ router.post(
       }
 
       const entitySummaries = [];
+      const currentAccountReadinessWarnings = [];
 
-      for (const entity of legalEntities) {
+      for (let entityIndex = 0; entityIndex < legalEntities.length; entityIndex += 1) {
+        const entity = legalEntities[entityIndex];
         assertRequiredFields(entity, ["code", "name", "functionalCurrencyCode"]);
+        const normalizedEntityCode = String(entity.code).trim();
+        const normalizedEntityName = String(entity.name).trim();
         // eslint-disable-next-line no-await-in-loop
         const countryId = await getCountryId(entity.countryId, entity.countryIso2, tx.query);
 
@@ -1736,8 +1719,8 @@ router.post(
           [
             tenantId,
             groupCompanyId,
-            String(entity.code).trim(),
-            String(entity.name).trim(),
+            normalizedEntityCode,
+            normalizedEntityName,
             entity.taxId ? String(entity.taxId).trim() : null,
             countryId,
             String(entity.functionalCurrencyCode).toUpperCase(),
@@ -1753,6 +1736,13 @@ router.post(
         }
 
         const branches = Array.isArray(entity.branches) ? entity.branches : [];
+        const currentAccountEligibility = summarizeOperatingUnitCurrentAccountEligibility(
+          branches
+        );
+        const currentAccountConfig = normalizeCompanyBootstrapCurrentAccountConfig(
+          entity,
+          entityIndex
+        );
         for (const branch of branches) {
           assertRequiredFields(branch, ["code", "name"]);
           // eslint-disable-next-line no-await-in-loop
@@ -1778,10 +1768,10 @@ router.post(
 
         const coaCode = entity.coaCode
           ? String(entity.coaCode).trim()
-          : `COA-${String(entity.code).trim().toUpperCase()}`;
+          : `COA-${normalizedEntityCode.toUpperCase()}`;
         const coaName = entity.coaName
           ? String(entity.coaName).trim()
-          : `${String(entity.name).trim()} CoA`;
+          : `${normalizedEntityName} CoA`;
 
         // eslint-disable-next-line no-await-in-loop
         await tx.query(
@@ -1887,10 +1877,10 @@ router.post(
 
         const bookCode = entity.bookCode
           ? String(entity.bookCode).trim()
-          : `BOOK-${String(entity.code).trim().toUpperCase()}`;
+          : `BOOK-${normalizedEntityCode.toUpperCase()}`;
         const bookName = entity.bookName
           ? String(entity.bookName).trim()
-          : `${String(entity.name).trim()} Book`;
+          : `${normalizedEntityName} Book`;
 
         // eslint-disable-next-line no-await-in-loop
         await tx.query(
@@ -1912,12 +1902,91 @@ router.post(
           ]
         );
 
+        let currentAccountSetup = {
+          configured: false,
+          skipped: false,
+          eligibility: currentAccountEligibility,
+          savedConfig: null,
+          provisioningSummary: null,
+          warning: null,
+        };
+        if (
+          currentAccountConfig.dueFromParentAccountCode &&
+          currentAccountConfig.dueToParentAccountCode &&
+          !currentAccountConfig.skipForNow
+        ) {
+          const resolvedCurrentAccountParentIds =
+            await resolveBootstrapCurrentAccountParentAccountIdsForCoa({
+              coaId,
+              legalEntityCode: normalizedEntityCode,
+              currentAccountConfig,
+              runQuery: tx.query,
+            });
+          const savedCurrentAccountConfig =
+            await upsertOperatingUnitCurrentAccountConfigTx(tx, {
+              tenantId,
+              legalEntityId,
+              dueFromParentAccountId:
+                resolvedCurrentAccountParentIds.dueFromParentAccountId,
+              dueToParentAccountId:
+                resolvedCurrentAccountParentIds.dueToParentAccountId,
+              autoProvisionOnOperatingUnitCreate: true,
+            });
+          const provisioningSummary = await applyOperatingUnitCurrentAccountConfigTx(tx, {
+            tenantId,
+            legalEntityId,
+          });
+          currentAccountSetup = {
+            configured: true,
+            skipped: false,
+            eligibility: currentAccountEligibility,
+            savedConfig: {
+              dueFromParentAccountCode:
+                currentAccountConfig.dueFromParentAccountCode,
+              dueToParentAccountCode: currentAccountConfig.dueToParentAccountCode,
+              autoProvisionOnOperatingUnitCreate: true,
+              lastAppliedAt: provisioningSummary?.lastAppliedAt || null,
+              updatedAt: savedCurrentAccountConfig?.updated_at || null,
+            },
+            provisioningSummary: summarizeBootstrapCurrentAccountProvisioning(
+              provisioningSummary
+            ),
+            warning: null,
+          };
+        } else if (
+          currentAccountConfig.skipForNow ||
+          currentAccountEligibility.currentAccountSetupRecommended
+        ) {
+          const warning = buildBootstrapCurrentAccountReadinessWarning({
+            legalEntityCode: normalizedEntityCode,
+            effectiveActiveOperatingUnitCount:
+              currentAccountEligibility.effectiveActiveOperatingUnitCount,
+            currentAccountSetupRecommended:
+              currentAccountEligibility.currentAccountSetupRecommended,
+            skippedExplicitly: currentAccountConfig.skipForNow,
+          });
+          currentAccountSetup = {
+            configured: false,
+            skipped: Boolean(currentAccountConfig.skipForNow),
+            eligibility: currentAccountEligibility,
+            savedConfig: null,
+            provisioningSummary: null,
+            warning,
+          };
+          currentAccountReadinessWarnings.push({
+            legalEntityCode: normalizedEntityCode,
+            legalEntityId,
+            ...warning,
+          });
+        }
+
         entitySummaries.push({
-          code: String(entity.code).trim(),
+          code: normalizedEntityCode,
           legalEntityId,
           coaCode,
           coaId,
           branchCount: branches.length,
+          currentAccountSetup,
           ...(policyPackSummary ? { policyPack: policyPackSummary } : {}),
         });
       }
@@ -1936,6 +2005,7 @@ router.post(
         calendarId,
         entitySummaries,
         paymentTermBootstrap,
+        currentAccountReadinessWarnings,
       };
     });
     await invalidateRbacCache(tenantId);
@@ -1949,6 +2019,8 @@ router.post(
       fiscalYear,
       periodsGenerated: 12,
       legalEntities: bootstrapResult.entitySummaries,
+      currentAccountReadinessWarnings:
+        bootstrapResult.currentAccountReadinessWarnings,
       paymentTerms: {
         defaultsUsed: true,
         templateCount: DEFAULT_PAYMENT_TERM_TEMPLATES.length,
@@ -1965,6 +2037,8 @@ export const __testOnboardingInternals = {
   normalizeEntityPolicyPackSelection,
   normalizeGroupCoaSelection,
   buildPolicyPackBootstrapApplyPlan,
+  normalizeCompanyBootstrapCurrentAccountConfig,
+  buildDraftOperatingUnitCurrentAccountEligibilityPreview,
 };
 
 export default router;

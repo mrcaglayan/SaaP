@@ -28,8 +28,8 @@ import {
   updateMeSavedView,
 } from "../../api/me.js";
 import {
-  autoProvisionOperatingUnitCentralCurrentAccounts,
-  autoProvisionOperatingUnitPartnerCurrentAccounts,
+  applyOperatingUnitCurrentAccountConfig,
+  listOperatingUnitCurrentAccountConfigs,
   listOperatingUnits,
   listOperatingUnitPartnerCurrentAccounts,
 } from "../../api/orgAdmin.js";
@@ -47,6 +47,7 @@ import {
   getLifecycleAllowedActions,
   getLifecycleStatusMeta,
 } from "../../lifecycle/lifecycleRules.js";
+import { useModuleReadiness } from "../../readiness/useModuleReadiness.js";
 import { exportRowsAsCsv } from "../../utils/csvExport.js";
 import { formatMoneyText } from "../../utils/money.js";
 import CashControlModeBanner from "./CashControlModeBanner.jsx";
@@ -1134,10 +1135,32 @@ function toTransactionErrorState(err, t, fallbackKey) {
   };
 }
 
+function buildCurrentAccountApplySummary(response, l, contextLabel) {
+  const createdAccountsCount = Array.isArray(response?.createdAccounts)
+    ? response.createdAccounts.length
+    : 0;
+  const reusedAccountsCount = Array.isArray(response?.reusedAccounts)
+    ? response.reusedAccounts.length
+    : 0;
+  const updatedOperatingUnitsCount = Array.isArray(response?.updatedOperatingUnits)
+    ? response.updatedOperatingUnits.length
+    : 0;
+  const updatedPartnerMappingsCount = Array.isArray(response?.updatedPartnerMappings)
+    ? response.updatedPartnerMappings.length
+    : 0;
+  const warningsCount = Array.isArray(response?.warnings) ? response.warnings.length : 0;
+
+  return l(
+    `${contextLabel} repair completed. ${createdAccountsCount} account(s) created, ${reusedAccountsCount} reused, ${updatedOperatingUnitsCount} branch row(s) updated, ${updatedPartnerMappingsCount} branch-pair row(s) updated${warningsCount ? `, ${warningsCount} warning(s).` : "."}`,
+    `${contextLabel} onarimi tamamlandi. ${createdAccountsCount} hesap olusturuldu, ${reusedAccountsCount} hesap yeniden kullanildi, ${updatedOperatingUnitsCount} sube satiri guncellendi, ${updatedPartnerMappingsCount} sube-cifti satiri guncellendi${warningsCount ? `, ${warningsCount} uyari var.` : "."}`
+  );
+}
+
 export default function CashTransactionsPage() {
   const { pathname, search } = useLocation();
   const { hasPermission } = useAuth();
   const { language, t } = useI18n();
+  const { getModuleRow } = useModuleReadiness();
   const l = useCallback((en, tr) => (language === "tr" ? tr : en), [language]);
   const localizeTxnStatus = (status) => {
     const normalized = toUpper(status);
@@ -1243,6 +1266,10 @@ export default function CashTransactionsPage() {
     dueFromParentAccountId: "",
     dueToParentAccountId: "",
   });
+  const [currentAccountConfigLookupLoading, setCurrentAccountConfigLookupLoading] = useState(false);
+  const [currentAccountConfigLookupWarning, setCurrentAccountConfigLookupWarning] = useState("");
+  const [selectedCurrentAccountConfig, setSelectedCurrentAccountConfig] = useState(null);
+  const [currentAccountSetupRefreshToken, setCurrentAccountSetupRefreshToken] = useState(0);
   const [filters, setFilters, resetFilters] = usePersistedFilters(
     CASH_TRANSACTION_FILTERS_STORAGE_SCOPE,
     () => buildInitialFilters(presetTxnType)
@@ -1459,7 +1486,11 @@ export default function CashTransactionsPage() {
     () =>
       Boolean(
         parseDbBoolean(
-          selectedCentralOperatingUnitRow?.capital_self_balancing_ready ??
+          selectedCentralOperatingUnitRow?.cross_context_self_balancing_ready ??
+            selectedCentralOperatingUnitRow?.crossContextSelfBalancingReady ??
+            selectedCentralOperatingUnitRow?.currentAccountProvisioningReady ??
+            selectedCentralOperatingUnitRow?.current_account_provisioning_ready ??
+            selectedCentralOperatingUnitRow?.capital_self_balancing_ready ??
             selectedCentralOperatingUnitRow?.capitalSelfBalancingReady
         )
       ),
@@ -1471,6 +1502,50 @@ export default function CashTransactionsPage() {
         selectedPartnerCurrentRows.sourceToTarget && selectedPartnerCurrentRows.targetToSource
       ),
     [selectedPartnerCurrentRows]
+  );
+  const selectedCurrentAccountConfigReady = useMemo(
+    () =>
+      Boolean(
+        toPositiveInt(selectedCurrentAccountConfig?.due_from_parent_account_id) &&
+          toPositiveInt(selectedCurrentAccountConfig?.due_to_parent_account_id)
+      ),
+    [selectedCurrentAccountConfig]
+  );
+  const selectedOuCurrentAccountReadiness = getModuleRow(
+    "operatingUnitCurrentAccounts",
+    selectedRegisterLegalEntityId
+  );
+  const describeSelectedCurrentAccountSetupGap = useCallback(
+    (gapKind) => {
+      const blockerCode = String(
+        selectedOuCurrentAccountReadiness?.blockerCode || ""
+      )
+        .trim()
+        .toUpperCase();
+      if (!selectedCurrentAccountConfigReady || blockerCode === "MISSING_CONFIG") {
+        return l(
+          "Saved current-account parent config is missing for this legal entity. Save it in Organization Management first.",
+          "Bu legal entity icin kayitli cari hesap parent konfigurasyonu eksik. Once Organizasyon Yonetimi icinden kaydedin."
+        );
+      }
+      if (blockerCode === "CONFIG_SAVED_NOT_APPLIED") {
+        return l(
+          "Saved current-account config exists but has not been applied yet. Run the saved current-account repair from the helper panel below or from Organization Management before continuing.",
+          "Kaydedilen cari hesap konfigurasyonu var ama henuz uygulanmadi. Devam etmeden once asagidaki yardim panelinden veya Organizasyon Yonetimi icinden kayitli cari hesap onarimini calistirin."
+        );
+      }
+      if (gapKind === "central") {
+        return l(
+          "Saved current-account config exists, but central current-account mappings are still incomplete. Run the saved current-account repair from the helper panel below before starting the transfer.",
+          "Kaydedilen cari hesap konfigurasyonu var, ancak merkez cari hesap eslemeleri halen eksik. Transferi baslatmadan once asagidaki yardim panelinden kayitli cari hesap onarimini calistirin."
+        );
+      }
+      return l(
+        "Saved current-account config exists, but branch-pair current-account mappings are still incomplete. Run the saved current-account repair from the helper panel below before starting the transfer.",
+        "Kaydedilen cari hesap konfigurasyonu var, ancak sube-cifti cari hesap eslemeleri halen eksik. Transferi baslatmadan once asagidaki yardim panelinden kayitli cari hesap onarimini calistirin."
+      );
+    },
+    [l, selectedCurrentAccountConfigReady, selectedOuCurrentAccountReadiness]
   );
   const scopedAccountOptions = accountOptions;
   const counterAccountIsBank = isBankTxnType(form.txnType);
@@ -1981,31 +2056,24 @@ export default function CashTransactionsPage() {
     }
     if (!canReadOrgTree) {
       return l(
-        "Inline central current setup needs org.tree.read permission.",
-        "Satir ici merkez cari kurulumu icin org.tree.read yetkisi gerekir."
-      );
-    }
-    if (!canReadAccounts) {
-      return l(
-        "Inline central current setup needs gl.account.read permission.",
-        "Satir ici merkez cari kurulumu icin gl.account.read yetkisi gerekir."
+        "Saved current-account repair needs org.tree.read permission.",
+        "Kayitli cari hesap onarimi icin org.tree.read yetkisi gerekir."
       );
     }
     if (!canUpsertAccounts) {
       return l(
-        "Inline central current setup needs gl.account.upsert permission.",
-        "Satir ici merkez cari kurulumu icin gl.account.upsert yetkisi gerekir."
+        "Saved current-account repair needs gl.account.upsert permission.",
+        "Kayitli cari hesap onarimi icin gl.account.upsert yetkisi gerekir."
       );
     }
     if (!canUpsertOperatingUnit) {
       return l(
-        "Inline central current setup needs org.operating_unit.upsert permission.",
-        "Satir ici merkez cari kurulumu icin org.operating_unit.upsert yetkisi gerekir."
+        "Saved current-account repair needs org.operating_unit.upsert permission.",
+        "Kayitli cari hesap onarimi icin org.operating_unit.upsert yetkisi gerekir."
       );
     }
     return "";
   }, [
-    canReadAccounts,
     canReadOrgTree,
     canUpsertAccounts,
     canUpsertOperatingUnit,
@@ -2018,31 +2086,24 @@ export default function CashTransactionsPage() {
     }
     if (!canReadOrgTree) {
       return l(
-        "Inline branch-pair setup needs org.tree.read permission.",
-        "Satir ici sube cift kurulumu icin org.tree.read yetkisi gerekir."
-      );
-    }
-    if (!canReadAccounts) {
-      return l(
-        "Inline branch-pair setup needs gl.account.read permission.",
-        "Satir ici sube cift kurulumu icin gl.account.read yetkisi gerekir."
+        "Saved current-account repair needs org.tree.read permission.",
+        "Kayitli cari hesap onarimi icin org.tree.read yetkisi gerekir."
       );
     }
     if (!canUpsertAccounts) {
       return l(
-        "Inline branch-pair setup needs gl.account.upsert permission.",
-        "Satir ici sube cift kurulumu icin gl.account.upsert yetkisi gerekir."
+        "Saved current-account repair needs gl.account.upsert permission.",
+        "Kayitli cari hesap onarimi icin gl.account.upsert yetkisi gerekir."
       );
     }
     if (!canUpsertOperatingUnit) {
       return l(
-        "Inline branch-pair setup needs org.operating_unit.upsert permission.",
-        "Satir ici sube cift kurulumu icin org.operating_unit.upsert yetkisi gerekir."
+        "Saved current-account repair needs org.operating_unit.upsert permission.",
+        "Kayitli cari hesap onarimi icin org.operating_unit.upsert yetkisi gerekir."
       );
     }
     return "";
   }, [
-    canReadAccounts,
     canReadOrgTree,
     canUpsertAccounts,
     canUpsertOperatingUnit,
@@ -3234,6 +3295,69 @@ export default function CashTransactionsPage() {
   }, [canRead, canReadAccounts, selectedRegisterLegalEntityId, t]);
 
   useEffect(() => {
+    if (
+      (!showCentralCurrentAutoSetupPanel && !showPartnerCurrentAutoSetupPanel) ||
+      !canRead ||
+      !canReadOrgTree ||
+      !selectedRegisterLegalEntityId
+    ) {
+      setSelectedCurrentAccountConfig(null);
+      setCurrentAccountConfigLookupLoading(false);
+      setCurrentAccountConfigLookupWarning("");
+      return;
+    }
+
+    let active = true;
+    setCurrentAccountConfigLookupLoading(true);
+    setCurrentAccountConfigLookupWarning("");
+
+    listOperatingUnitCurrentAccountConfigs({
+      legalEntityId: selectedRegisterLegalEntityId,
+    })
+      .then((result) => {
+        if (!active) {
+          return;
+        }
+        const row = result?.rows?.[0] || null;
+        setSelectedCurrentAccountConfig(row);
+        if (!row) {
+          setCurrentAccountConfigLookupWarning(
+            l(
+              "Saved current-account config could not be loaded for the selected legal entity.",
+              "Secili legal entity icin kayitli cari hesap konfigurasyonu yuklenemedi."
+            )
+          );
+        }
+      })
+      .catch((err) => {
+        if (!active) {
+          return;
+        }
+        setSelectedCurrentAccountConfig(null);
+        setCurrentAccountConfigLookupWarning(
+          err?.response?.data?.message || err?.message || ""
+        );
+      })
+      .finally(() => {
+        if (active) {
+          setCurrentAccountConfigLookupLoading(false);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [
+    canRead,
+    canReadOrgTree,
+    currentAccountSetupRefreshToken,
+    l,
+    selectedRegisterLegalEntityId,
+    showCentralCurrentAutoSetupPanel,
+    showPartnerCurrentAutoSetupPanel,
+  ]);
+
+  useEffect(() => {
     setSelectedCentralOperatingUnitRow(null);
     setCentralCurrentSetupForm({
       centralDueFromParentAccountId: "",
@@ -3303,6 +3427,7 @@ export default function CashTransactionsPage() {
   }, [
     canRead,
     canReadOrgTree,
+    currentAccountSetupRefreshToken,
     l,
     selectedCentralCurrentOperatingUnitId,
     selectedRegisterLegalEntityId,
@@ -3417,6 +3542,7 @@ export default function CashTransactionsPage() {
   }, [
     canRead,
     canReadOrgTree,
+    currentAccountSetupRefreshToken,
     selectedRegisterLegalEntityId,
     selectedSourceOperatingUnitId,
     selectedTargetOperatingUnitId,
@@ -3906,51 +4032,24 @@ export default function CashTransactionsPage() {
       );
       return;
     }
-
-    const centralDueFromParentAccountId = toPositiveInt(
-      centralCurrentSetupForm.centralDueFromParentAccountId
-    );
-    const ouDueToCentralParentAccountId = toPositiveInt(
-      centralCurrentSetupForm.ouDueToCentralParentAccountId
-    );
-    if (!centralDueFromParentAccountId || !ouDueToCentralParentAccountId) {
-      setSimpleError(
-        l(
-          "Select Central Due From and OU Due To Central parent accounts first.",
-          "Once Merkezin Sube Alacagi ve Subenin Merkeze Borcu ebeveyn hesaplarini secin."
-        )
-      );
+    if (!selectedCurrentAccountConfigReady) {
+      setSimpleError(describeSelectedCurrentAccountSetupGap("config"));
       return;
     }
 
     setCentralCurrentSetupSaving(true);
     try {
-      const response = await autoProvisionOperatingUnitCentralCurrentAccounts({
+      const response = await applyOperatingUnitCurrentAccountConfig({
         legalEntityId: selectedRegisterLegalEntityId,
         operatingUnitId: selectedCentralCurrentOperatingUnitId,
-        centralDueFromParentAccountId,
-        ouDueToCentralParentAccountId,
+        repairMissingOnly: true,
       });
-
-      if (canReadAccounts) {
-        const refreshedAccounts = await listAccounts({
-          legalEntityId: selectedRegisterLegalEntityId,
-          includeInactive: true,
-          limit: 600,
-        });
-        setAccounts(Array.isArray(refreshedAccounts?.rows) ? refreshedAccounts.rows : []);
-      }
-
-      setSelectedCentralOperatingUnitRow(response?.operatingUnit || null);
-      setCentralCurrentLookupWarning("");
-
-      const createdAccountsCount = Array.isArray(response?.createdAccounts)
-        ? response.createdAccounts.length
-        : 0;
+      setCurrentAccountSetupRefreshToken((value) => value + 1);
       setMessage(
-        l(
-          `Central current accounts are ready.${createdAccountsCount > 0 ? ` ${createdAccountsCount} child accounts created.` : " Existing setup reused."}`,
-          `Merkez cari hesaplari hazir.${createdAccountsCount > 0 ? ` ${createdAccountsCount} alt hesap olusturuldu.` : " Mevcut kurulum kullanildi."}`
+        buildCurrentAccountApplySummary(
+          response,
+          l,
+          l("Center / Branch current-account", "Merkez / Sube cari hesap")
         )
       );
     } catch (err) {
@@ -3996,70 +4095,24 @@ export default function CashTransactionsPage() {
       );
       return;
     }
-
-    const dueFromParentAccountId = toPositiveInt(
-      partnerCurrentSetupForm.dueFromParentAccountId
-    );
-    const dueToParentAccountId = toPositiveInt(partnerCurrentSetupForm.dueToParentAccountId);
-    if (!dueFromParentAccountId || !dueToParentAccountId) {
-      setSimpleError(
-        l(
-          "Select Due From and Due To parent accounts first.",
-          "Once Partnerden Alacak ve Partnere Borc ebeveyn hesaplarini secin."
-        )
-      );
+    if (!selectedCurrentAccountConfigReady) {
+      setSimpleError(describeSelectedCurrentAccountSetupGap("config"));
       return;
     }
 
     setPartnerCurrentSetupSaving(true);
     try {
-      const response = await autoProvisionOperatingUnitPartnerCurrentAccounts({
+      const response = await applyOperatingUnitCurrentAccountConfig({
         legalEntityId: selectedRegisterLegalEntityId,
         operatingUnitId: selectedSourceOperatingUnitId,
-        partnerOperatingUnitId: selectedTargetOperatingUnitId,
-        dueFromParentAccountId,
-        dueToParentAccountId,
+        repairMissingOnly: true,
       });
-
-      if (canReadAccounts) {
-        const refreshedAccounts = await listAccounts({
-          legalEntityId: selectedRegisterLegalEntityId,
-          includeInactive: true,
-          limit: 600,
-        });
-        setAccounts(Array.isArray(refreshedAccounts?.rows) ? refreshedAccounts.rows : []);
-      }
-
-      const mappingRows = Array.isArray(response?.mappings) ? response.mappings : [];
-      const sourceToTarget =
-        mappingRows.find(
-          (row) =>
-            toPositiveInt(row?.operatingUnitId ?? row?.operating_unit_id) ===
-              selectedSourceOperatingUnitId &&
-            toPositiveInt(row?.partnerOperatingUnitId ?? row?.partner_operating_unit_id) ===
-              selectedTargetOperatingUnitId
-        ) || null;
-      const targetToSource =
-        mappingRows.find(
-          (row) =>
-            toPositiveInt(row?.operatingUnitId ?? row?.operating_unit_id) ===
-              selectedTargetOperatingUnitId &&
-            toPositiveInt(row?.partnerOperatingUnitId ?? row?.partner_operating_unit_id) ===
-              selectedSourceOperatingUnitId
-        ) || null;
-      setSelectedPartnerCurrentRows({
-        sourceToTarget,
-        targetToSource,
-      });
-      setPartnerCurrentLookupWarning("");
-
-      const createdAccountsCount = Array.isArray(response?.createdAccounts)
-        ? response.createdAccounts.length
-        : 0;
+      setCurrentAccountSetupRefreshToken((value) => value + 1);
       setMessage(
-        l(
-          `Branch-pair current accounts are ready.${createdAccountsCount > 0 ? ` ${createdAccountsCount} child accounts created.` : " Existing setup reused."}`,
-          `Sube cift cari hesaplari hazir.${createdAccountsCount > 0 ? ` ${createdAccountsCount} alt hesap olusturuldu.` : " Mevcut kurulum kullanildi."}`
+        buildCurrentAccountApplySummary(
+          response,
+          l,
+          l("Branch-pair current-account", "Sube-cifti cari hesap")
         )
       );
     } catch (err) {
@@ -4151,12 +4204,7 @@ export default function CashTransactionsPage() {
       !centralCurrentLookupLoading &&
       !selectedCentralCurrentSetupComplete
     ) {
-      setSimpleError(
-        l(
-          "Central current accounts are missing for the selected branch. Create them from the inline setup panel below before starting the transfer.",
-          "Secili sube icin merkez cari hesaplari eksik. Transferi baslatmadan once asagidaki satir ici kurulum panelinden olusturun."
-        )
-      );
+      setSimpleError(describeSelectedCurrentAccountSetupGap("central"));
       return;
     }
     if (
@@ -4168,12 +4216,7 @@ export default function CashTransactionsPage() {
       !partnerCurrentLookupLoading &&
       !selectedBranchPairCurrentSetupComplete
     ) {
-      setSimpleError(
-        l(
-          "Branch-pair current accounts are missing. Create them from the inline setup panel below before starting the transfer.",
-          "Sube cift cari hesaplari eksik. Transferi baslatmadan once asagidaki satir ici kurulum panelinden olusturun."
-        )
-      );
+      setSimpleError(describeSelectedCurrentAccountSetupGap("partner"));
       return;
     }
 
@@ -5503,10 +5546,25 @@ export default function CashTransactionsPage() {
                 </div>
                 <div className="mt-1 text-xs text-teal-900">
                   {l(
-                    "Center-to-branch transfers still use the branch's Central Due From OU and OU Due To Central setup. This page can create the missing child accounts and update the selected branch mapping without leaving Kasa Islemleri.",
-                    "Merkezden subeye transferler hala subenin Merkezin Sube Alacagi ve Subenin Merkeze Borcu kurulumunu kullanir. Bu sayfa eksik alt hesaplari olusturup secili sube eslesmesini Kasa Islemleri icinden guncelleyebilir."
+                    "Center-to-branch transfers still use the branch's saved current-account setup. This helper runs repair-missing-only from the saved legal-entity config; change the parent accounts in Organization Management.",
+                    "Merkezden subeye transferler halen subenin kaydedilmis cari hesap kurulumunu kullanir. Bu yardimci, legal entity icin kaydedilen konfigurasyondan sadece eksik kisimlari onarir; parent hesaplari Organizasyon Yonetimi icinden degistirin."
                   )}
                 </div>
+
+                {currentAccountConfigLookupLoading ? (
+                  <div className="mt-2 rounded-md border border-teal-200 bg-white px-3 py-2 text-xs text-teal-900">
+                    {l(
+                      "Loading saved current-account config...",
+                      "Kayitli cari hesap konfigurasyonu yukleniyor..."
+                    )}
+                  </div>
+                ) : null}
+
+                {currentAccountConfigLookupWarning ? (
+                  <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                    {currentAccountConfigLookupWarning}
+                  </div>
+                ) : null}
 
                 {centralCurrentLookupLoading ? (
                   <div className="mt-2 rounded-md border border-teal-200 bg-white px-3 py-2 text-xs text-teal-900">
@@ -5522,6 +5580,45 @@ export default function CashTransactionsPage() {
                     {centralCurrentLookupWarning}
                   </div>
                 ) : null}
+
+                {selectedCurrentAccountConfigReady ? (
+                  <div className="mt-2 rounded-md border border-teal-200 bg-white px-3 py-2 text-xs text-slate-700">
+                    <div className="font-semibold text-teal-900">
+                      {l("Saved current-account config", "Kayitli cari hesap konfigurasyonu")}
+                    </div>
+                    <div className="mt-1">
+                      {l("Due From parent", "Alacak parent")}:{" "}
+                      {selectedCurrentAccountConfig?.due_from_parent_account_code
+                        ? `${selectedCurrentAccountConfig.due_from_parent_account_code} - ${selectedCurrentAccountConfig?.due_from_parent_account_name || ""}`.trim()
+                        : "-"}
+                    </div>
+                    <div className="mt-1">
+                      {l("Due To parent", "Borc parent")}:{" "}
+                      {selectedCurrentAccountConfig?.due_to_parent_account_code
+                        ? `${selectedCurrentAccountConfig.due_to_parent_account_code} - ${selectedCurrentAccountConfig?.due_to_parent_account_name || ""}`.trim()
+                        : "-"}
+                    </div>
+                    <div className="mt-1">
+                      {l("Auto-provision on branch create", "Sube olusumunda oto-provision")}:{" "}
+                      {selectedCurrentAccountConfig?.auto_provision_on_operating_unit_create
+                        ? l("Enabled", "Acik")
+                        : l("Disabled", "Kapali")}
+                    </div>
+                    <div className="mt-1">
+                      {l("Last applied", "Son uygulama")}:{" "}
+                      {selectedCurrentAccountConfig?.last_applied_at
+                        ? formatDateTime(selectedCurrentAccountConfig.last_applied_at)
+                        : l("Not applied yet", "Henuz uygulanmadi")}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                    {l(
+                      "Saved current-account parent config is missing for this legal entity. Save it in Organization Management before using this helper.",
+                      "Bu legal entity icin kayitli cari hesap parent konfigurasyonu eksik. Bu yardimciyi kullanmadan once Organizasyon Yonetimi icinden kaydedin."
+                    )}
+                  </div>
+                )}
 
                 {selectedCentralCurrentSetupComplete ? (
                   <div className="mt-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
@@ -5545,6 +5642,26 @@ export default function CashTransactionsPage() {
                       )}
                     </div>
                     <div className="mt-1">
+                      {l("Central Due To OU", "Merkezin Subeye Borcu")}:{" "}
+                      {String(
+                        firstDefinedRowValue(
+                          selectedCentralOperatingUnitRow,
+                          "central_due_to_account_code",
+                          "centralDueToAccountCode"
+                        ) || "-"
+                      )}
+                    </div>
+                    <div className="mt-1">
+                      {l("OU Due From Central", "Subenin Merkezden Alacagi")}:{" "}
+                      {String(
+                        firstDefinedRowValue(
+                          selectedCentralOperatingUnitRow,
+                          "ou_due_from_central_account_code",
+                          "ouDueFromCentralAccountCode"
+                        ) || "-"
+                      )}
+                    </div>
+                    <div className="mt-1">
                       {l("OU Due To Central", "Subenin Merkeze Borcu")}:{" "}
                       {String(
                         firstDefinedRowValue(
@@ -5563,92 +5680,12 @@ export default function CashTransactionsPage() {
                       </div>
                     ) : (
                       <>
-                        <div className="mt-3 grid gap-2 md:grid-cols-2">
-                          <label className="text-xs font-semibold uppercase tracking-wide text-teal-950">
-                            {l("Central Due From Parent", "Merkezin Sube Alacagi Ebeveyn")}
-                            <select
-                              value={centralCurrentSetupForm.centralDueFromParentAccountId}
-                              onChange={(event) =>
-                                setCentralCurrentSetupForm((prev) => ({
-                                  ...prev,
-                                  centralDueFromParentAccountId: event.target.value,
-                                }))
-                              }
-                              className="mt-1 w-full rounded-lg border border-teal-300 bg-white px-3 py-2 text-sm font-normal text-slate-900"
-                              disabled={centralCurrentSetupSaving}
-                            >
-                              <option value="">
-                                {l(
-                                  "Select asset parent account",
-                                  "Varlik ebeveyn hesabini secin"
-                                )}
-                              </option>
-                              {partnerCurrentDueFromParentOptions.map((account) => (
-                                <option key={`central-current-due-from-parent-${account.id}`} value={account.id}>
-                                  {formatAccountOptionLabel(account)}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-                          <label className="text-xs font-semibold uppercase tracking-wide text-teal-950">
-                            {l("OU Due To Central Parent", "Subenin Merkeze Borcu Ebeveyn")}
-                            <select
-                              value={centralCurrentSetupForm.ouDueToCentralParentAccountId}
-                              onChange={(event) =>
-                                setCentralCurrentSetupForm((prev) => ({
-                                  ...prev,
-                                  ouDueToCentralParentAccountId: event.target.value,
-                                }))
-                              }
-                              className="mt-1 w-full rounded-lg border border-teal-300 bg-white px-3 py-2 text-sm font-normal text-slate-900"
-                              disabled={centralCurrentSetupSaving}
-                            >
-                              <option value="">
-                                {l(
-                                  "Select liability parent account",
-                                  "Yukumluluk ebeveyn hesabini secin"
-                                )}
-                              </option>
-                              {partnerCurrentDueToParentOptions.map((account) => (
-                                <option key={`central-current-due-to-parent-${account.id}`} value={account.id}>
-                                  {formatAccountOptionLabel(account)}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
+                        <div className="mt-2 rounded-md border border-teal-200 bg-white px-3 py-2 text-xs text-slate-700">
+                          {l(
+                            "Run saved-config repair to create or reuse any missing central current-account children and refresh the selected branch mapping without changing valid manual rows.",
+                            "Eksik merkez cari alt hesaplarini olusturmak veya yeniden kullanmak ve gecerli manuel satirlari degistirmeden secili sube eslesmesini tazelemek icin kayitli konfigurasyon onarimini calistirin."
+                          )}
                         </div>
-
-                        {selectedCentralCurrentProvisionPreview ? (
-                          <div className="mt-3 rounded-md border border-teal-200 bg-white px-3 py-2 text-xs text-slate-700">
-                            <div className="font-semibold text-teal-900">
-                              {l("Provision preview", "Kurulum onizlemesi")}
-                            </div>
-                            <div className="mt-2 rounded border border-slate-200 bg-slate-50 px-2 py-2">
-                              <div className="font-semibold text-slate-900">
-                                {buildOperatingUnitShortLabel(
-                                  selectedCentralOperatingUnitRow || selectedCentralCurrentOperatingUnitRegister
-                                )}
-                              </div>
-                              <div className="mt-1">
-                                {l("Central Due From", "Merkezin Sube Alacagi")}:{" "}
-                                {selectedCentralCurrentProvisionPreview.centralDueFromCode} -{" "}
-                                {selectedCentralCurrentProvisionPreview.centralDueFromName}
-                                {selectedCentralCurrentProvisionPreview.centralDueFromCreated
-                                  ? ` | ${l("new", "yeni")}`
-                                  : ` | ${l("existing", "mevcut")}`}
-                              </div>
-                              <div className="mt-1">
-                                {l("OU Due To Central", "Subenin Merkeze Borcu")}:{" "}
-                                {selectedCentralCurrentProvisionPreview.ouDueToCode} -{" "}
-                                {selectedCentralCurrentProvisionPreview.ouDueToName}
-                                {selectedCentralCurrentProvisionPreview.ouDueToCreated
-                                  ? ` | ${l("new", "yeni")}`
-                                  : ` | ${l("existing", "mevcut")}`}
-                              </div>
-                            </div>
-                          </div>
-                        ) : null}
-
                         <div className="mt-3 flex flex-wrap gap-2">
                           <button
                             type="button"
@@ -5656,15 +5693,24 @@ export default function CashTransactionsPage() {
                             disabled={
                               centralCurrentSetupSaving ||
                               centralCurrentLookupLoading ||
-                              !centralCurrentSetupForm.centralDueFromParentAccountId ||
-                              !centralCurrentSetupForm.ouDueToCentralParentAccountId
+                              currentAccountConfigLookupLoading ||
+                              !selectedCurrentAccountConfigReady
                             }
                             className="rounded-lg bg-teal-700 px-3 py-2 text-sm font-semibold text-white hover:bg-teal-800 disabled:opacity-60"
                           >
                             {centralCurrentSetupSaving
-                              ? l("Creating central current accounts...", "Merkez cari hesaplari olusturuluyor...")
-                              : l("Create central current accounts", "Merkez cari hesaplarini olustur")}
+                              ? l(
+                                  "Applying saved current-account config...",
+                                  "Kayitli cari hesap konfigurasyonu uygulaniyor..."
+                                )
+                              : l("Repair from saved config", "Kayitli konfigurasyondan onar")}
                           </button>
+                          <div className="self-center text-xs text-teal-900">
+                            {l(
+                              "Use Organization Management to change parent accounts or do manual exception repair.",
+                              "Parent hesaplari degistirmek veya manuel istisna onarimi yapmak icin Organizasyon Yonetimi kullanin."
+                            )}
+                          </div>
                         </div>
                       </>
                     )}
@@ -5683,10 +5729,25 @@ export default function CashTransactionsPage() {
                 </div>
                 <div className="mt-1 text-xs text-cyan-900">
                   {l(
-                    "For direct branch-to-branch balancing, this transfer needs reciprocal Due From / Due To partner setup for both branches. The page can create the missing child accounts and save both pair mappings for the selected registers.",
-                    "Dogrudan subeden subeye denkleme icin bu transfer her iki sube icin de karsilikli Partnerden Alacak / Partnere Borc kurulumu ister. Bu sayfa secili kasalar icin eksik alt hesaplari olusturup her iki cift eslesmesini kaydedebilir."
+                    "Direct branch-to-branch balancing still needs reciprocal partner mappings for both branches. This helper runs repair-missing-only from the saved legal-entity config; change the parent accounts in Organization Management.",
+                    "Dogrudan subeden subeye denkleme halen her iki sube icin de karsilikli partner eslesmeleri ister. Bu yardimci, legal entity icin kaydedilen konfigurasyondan sadece eksik kisimlari onarir; parent hesaplari Organizasyon Yonetimi icinden degistirin."
                   )}
                 </div>
+
+                {currentAccountConfigLookupLoading ? (
+                  <div className="mt-2 rounded-md border border-cyan-200 bg-white px-3 py-2 text-xs text-cyan-900">
+                    {l(
+                      "Loading saved current-account config...",
+                      "Kayitli cari hesap konfigurasyonu yukleniyor..."
+                    )}
+                  </div>
+                ) : null}
+
+                {currentAccountConfigLookupWarning ? (
+                  <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                    {currentAccountConfigLookupWarning}
+                  </div>
+                ) : null}
 
                 {partnerCurrentLookupLoading ? (
                   <div className="mt-2 rounded-md border border-cyan-200 bg-white px-3 py-2 text-xs text-cyan-800">
@@ -5702,6 +5763,39 @@ export default function CashTransactionsPage() {
                     {partnerCurrentLookupWarning}
                   </div>
                 ) : null}
+
+                {selectedCurrentAccountConfigReady ? (
+                  <div className="mt-2 rounded-md border border-cyan-200 bg-white px-3 py-2 text-xs text-slate-700">
+                    <div className="font-semibold text-cyan-900">
+                      {l("Saved current-account config", "Kayitli cari hesap konfigurasyonu")}
+                    </div>
+                    <div className="mt-1">
+                      {l("Due From parent", "Alacak parent")}:{" "}
+                      {selectedCurrentAccountConfig?.due_from_parent_account_code
+                        ? `${selectedCurrentAccountConfig.due_from_parent_account_code} - ${selectedCurrentAccountConfig?.due_from_parent_account_name || ""}`.trim()
+                        : "-"}
+                    </div>
+                    <div className="mt-1">
+                      {l("Due To parent", "Borc parent")}:{" "}
+                      {selectedCurrentAccountConfig?.due_to_parent_account_code
+                        ? `${selectedCurrentAccountConfig.due_to_parent_account_code} - ${selectedCurrentAccountConfig?.due_to_parent_account_name || ""}`.trim()
+                        : "-"}
+                    </div>
+                    <div className="mt-1">
+                      {l("Last applied", "Son uygulama")}:{" "}
+                      {selectedCurrentAccountConfig?.last_applied_at
+                        ? formatDateTime(selectedCurrentAccountConfig.last_applied_at)
+                        : l("Not applied yet", "Henuz uygulanmadi")}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                    {l(
+                      "Saved current-account parent config is missing for this legal entity. Save it in Organization Management before using this helper.",
+                      "Bu legal entity icin kayitli cari hesap parent konfigurasyonu eksik. Bu yardimciyi kullanmadan once Organizasyon Yonetimi icinden kaydedin."
+                    )}
+                  </div>
+                )}
 
                 {selectedBranchPairCurrentSetupComplete ? (
                   <div className="mt-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
@@ -5759,85 +5853,12 @@ export default function CashTransactionsPage() {
                       </div>
                     ) : (
                       <>
-                        <div className="mt-3 grid gap-2 md:grid-cols-2">
-                          <label className="text-xs font-semibold uppercase tracking-wide text-cyan-900">
-                            {l("Due From Parent", "Partnerden Alacak Ebeveyn")}
-                            <select
-                              value={partnerCurrentSetupForm.dueFromParentAccountId}
-                              onChange={(event) =>
-                                setPartnerCurrentSetupForm((prev) => ({
-                                  ...prev,
-                                  dueFromParentAccountId: event.target.value,
-                                }))
-                              }
-                              className="mt-1 w-full rounded-lg border border-cyan-300 bg-white px-3 py-2 text-sm font-normal text-slate-900"
-                              disabled={partnerCurrentSetupSaving}
-                            >
-                              <option value="">
-                                {l(
-                                  "Select asset parent account",
-                                  "Varlik ebeveyn hesabini secin"
-                                )}
-                              </option>
-                              {partnerCurrentDueFromParentOptions.map((account) => (
-                                <option key={`partner-current-due-from-parent-${account.id}`} value={account.id}>
-                                  {formatAccountOptionLabel(account)}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-                          <label className="text-xs font-semibold uppercase tracking-wide text-cyan-900">
-                            {l("Due To Parent", "Partnere Borc Ebeveyn")}
-                            <select
-                              value={partnerCurrentSetupForm.dueToParentAccountId}
-                              onChange={(event) =>
-                                setPartnerCurrentSetupForm((prev) => ({
-                                  ...prev,
-                                  dueToParentAccountId: event.target.value,
-                                }))
-                              }
-                              className="mt-1 w-full rounded-lg border border-cyan-300 bg-white px-3 py-2 text-sm font-normal text-slate-900"
-                              disabled={partnerCurrentSetupSaving}
-                            >
-                              <option value="">
-                                {l(
-                                  "Select liability parent account",
-                                  "Yukumluluk ebeveyn hesabini secin"
-                                )}
-                              </option>
-                              {partnerCurrentDueToParentOptions.map((account) => (
-                                <option key={`partner-current-due-to-parent-${account.id}`} value={account.id}>
-                                  {formatAccountOptionLabel(account)}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
+                        <div className="mt-2 rounded-md border border-cyan-200 bg-white px-3 py-2 text-xs text-slate-700">
+                          {l(
+                            "Run saved-config repair to create or reuse any missing reciprocal branch-pair current accounts for the selected registers without changing valid manual rows.",
+                            "Secili kasalar icin eksik karsilikli sube-cifti cari hesaplarini olusturmak veya yeniden kullanmak ve gecerli manuel satirlari degistirmemek icin kayitli konfigurasyon onarimini calistirin."
+                          )}
                         </div>
-
-                        {selectedPartnerCurrentProvisionPreview?.length > 0 ? (
-                          <div className="mt-3 rounded-md border border-cyan-200 bg-white px-3 py-2 text-xs text-slate-700">
-                            <div className="font-semibold text-cyan-900">
-                              {l("Provision preview", "Kurulum onizlemesi")}
-                            </div>
-                            {selectedPartnerCurrentProvisionPreview.map((row) => (
-                              <div key={row.key} className="mt-2 rounded border border-slate-200 bg-slate-50 px-2 py-2">
-                                <div className="font-semibold text-slate-900">
-                                  {row.sourceLabel} {"->"} {row.targetLabel}
-                                  {row.created
-                                    ? ` | ${l("new", "yeni")}`
-                                    : ` | ${l("existing", "mevcut")}`}
-                                </div>
-                                <div className="mt-1">
-                                  {l("Due From", "Partnerden Alacak")}: {row.dueFromCode} - {row.dueFromName}
-                                </div>
-                                <div className="mt-1">
-                                  {l("Due To", "Partnere Borc")}: {row.dueToCode} - {row.dueToName}
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        ) : null}
-
                         <div className="mt-3 flex flex-wrap gap-2">
                           <button
                             type="button"
@@ -5845,15 +5866,24 @@ export default function CashTransactionsPage() {
                             disabled={
                               partnerCurrentSetupSaving ||
                               partnerCurrentLookupLoading ||
-                              !partnerCurrentSetupForm.dueFromParentAccountId ||
-                              !partnerCurrentSetupForm.dueToParentAccountId
+                              currentAccountConfigLookupLoading ||
+                              !selectedCurrentAccountConfigReady
                             }
                             className="rounded-lg bg-cyan-700 px-3 py-2 text-sm font-semibold text-white hover:bg-cyan-800 disabled:opacity-60"
                           >
                             {partnerCurrentSetupSaving
-                              ? l("Creating branch pair accounts...", "Sube cift hesaplari olusturuluyor...")
-                              : l("Create branch pair accounts", "Sube cift hesaplarini olustur")}
+                              ? l(
+                                  "Applying saved current-account config...",
+                                  "Kayitli cari hesap konfigurasyonu uygulaniyor..."
+                                )
+                              : l("Repair from saved config", "Kayitli konfigurasyondan onar")}
                           </button>
+                          <div className="self-center text-xs text-cyan-900">
+                            {l(
+                              "Use Organization Management to change parent accounts or do manual exception repair.",
+                              "Parent hesaplari degistirmek veya manuel istisna onarimi yapmak icin Organizasyon Yonetimi kullanin."
+                            )}
+                          </div>
                         </div>
                       </>
                     )}

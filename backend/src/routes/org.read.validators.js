@@ -23,6 +23,12 @@ export function parseOperatingUnitReadFilters(rawQuery = {}) {
   };
 }
 
+export function parseOperatingUnitCurrentAccountConfigReadFilters(rawQuery = {}) {
+  return {
+    legalEntityId: parsePositiveInt(rawQuery.legalEntityId),
+  };
+}
+
 export function parseOperatingUnitPartnerCurrentAccountReadFilters(rawQuery = {}) {
   return {
     legalEntityId: parsePositiveInt(rawQuery.legalEntityId),

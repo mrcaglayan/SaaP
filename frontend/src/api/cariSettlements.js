@@ -117,6 +117,15 @@ export function getCariSettlementErrorHint(errorLike, { translate = (en) => en }
     );
   }
   if (
+    message.includes("is limited to specific operating units") ||
+    message.includes("is not assigned to counterparty")
+  ) {
+    return translate(
+      "Open the counterparty card and check Primary Operating Unit and Allowed Operating Units. The settlement owner branch must be assigned on that card.",
+      "Cari kartini acip Primary Operating Unit ve Allowed Operating Units alanlarini kontrol edin. Mahsuplastirmanin owner branch'i bu kartta tanimli olmalidir."
+    );
+  }
+  if (
     message.includes("configure all four central <-> ou current-account fields") ||
     message.includes("central/ou self-balancing setup is invalid")
   ) {

@@ -10,8 +10,8 @@ function assert(condition, message) {
 
 async function main() {
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
-  const onboardingRouteSource = await readFile(
-    path.resolve(root, "backend/src/routes/onboarding.js"),
+  const readinessServiceSource = await readFile(
+    path.resolve(root, "backend/src/services/tenant-readiness.service.js"),
     "utf8"
   );
   const i18nSource = await readFile(
@@ -30,13 +30,13 @@ async function main() {
   for (const key of placeholderKeys) {
     const keyPattern = new RegExp(`key:\\s*["']${key}["']`);
     assert(
-      keyPattern.test(onboardingRouteSource),
-      `Missing readiness placeholder key in onboarding route: ${key}`
+      keyPattern.test(readinessServiceSource),
+      `Missing readiness placeholder key in tenant readiness service: ${key}`
     );
   }
 
   const minimumZeroMatches = (
-    onboardingRouteSource.match(/minimum:\s*0/g) || []
+    readinessServiceSource.match(/minimum:\s*0/g) || []
   ).length;
   assert(
     minimumZeroMatches >= placeholderKeys.length,

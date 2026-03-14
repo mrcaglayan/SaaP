@@ -16,7 +16,14 @@ async function main() {
     "utf8"
   );
 
-  for (const stepKey of ["country", "entity", "template", "accountTree", "branches"]) {
+  for (const stepKey of [
+    "country",
+    "entity",
+    "template",
+    "accountTree",
+    "branches",
+    "currentAccounts",
+  ]) {
     assert(
       onboardingPageSource.includes(`key: "${stepKey}"`),
       `Setup wizard is missing step key: ${stepKey}`
@@ -25,16 +32,18 @@ async function main() {
 
   assert(
     onboardingPageSource.includes("activeStep.key === \"accountTree\"") &&
-      onboardingPageSource.includes("activeStep.key === \"branches\""),
-    "Setup wizard should render dedicated account-tree and branch steps"
+      onboardingPageSource.includes("activeStep.key === \"branches\"") &&
+      onboardingPageSource.includes("activeStep.key === \"currentAccounts\""),
+    "Setup wizard should render dedicated account-tree, branch, and current-account steps"
   );
 
   assert(
     onboardingPageSource.includes("policyPackId") &&
       onboardingPageSource.includes("parentCode") &&
       onboardingPageSource.includes("compactEntityPayload") &&
-      onboardingPageSource.includes("groupCoa"),
-    "Setup wizard payload should include policyPackId, groupCoa, and parentCode tree support"
+      onboardingPageSource.includes("groupCoa") &&
+      onboardingPageSource.includes("currentAccountConfig"),
+    "Setup wizard payload should include policyPackId, groupCoa, parentCode tree support, and currentAccountConfig"
   );
 
   const onboardingRouteSource = await readFile(

@@ -28,6 +28,10 @@ import { useAuth } from "../../auth/useAuth.js";
 import { useI18n } from "../../i18n/useI18n.js";
 import { useWorkingContextDefaults } from "../../context/useWorkingContextDefaults.js";
 import { usePersistedFilters } from "../../hooks/usePersistedFilters.js";
+import {
+  formatOperatingUnitCurrentAccountBlocker,
+  OU_CURRENT_ACCOUNT_SETUP_PATH,
+} from "../../readiness/ouCurrentAccountReadiness.js";
 import { useModuleReadiness } from "../../readiness/useModuleReadiness.js";
 import { formatMoneyText } from "../../utils/money.js";
 import {
@@ -743,6 +747,13 @@ export default function CariSettlementsPage() {
   const applyLegalEntityId = toPositiveInt(applyForm.legalEntityId);
   const applyCariReadiness = getModuleRow("cariPosting", applyLegalEntityId);
   const applyCariNotReady = Boolean(applyCariReadiness && !applyCariReadiness.ready);
+  const applyOuCurrentAccountReadiness = getModuleRow(
+    "operatingUnitCurrentAccounts",
+    applyLegalEntityId
+  );
+  const applyOuCurrentAccountSetupBlocked = Boolean(
+    applyOuCurrentAccountReadiness?.applicable && !applyOuCurrentAccountReadiness.ready
+  );
   const bankApplyLegalEntityId = toPositiveInt(bankApplyForm.legalEntityId);
   const bankApplyCariReadiness = getModuleRow(
     "cariPosting",
@@ -750,6 +761,14 @@ export default function CariSettlementsPage() {
   );
   const bankApplyCariNotReady = Boolean(
     bankApplyCariReadiness && !bankApplyCariReadiness.ready
+  );
+  const bankApplyOuCurrentAccountReadiness = getModuleRow(
+    "operatingUnitCurrentAccounts",
+    bankApplyLegalEntityId
+  );
+  const bankApplyOuCurrentAccountSetupBlocked = Boolean(
+    bankApplyOuCurrentAccountReadiness?.applicable &&
+      !bankApplyOuCurrentAccountReadiness.ready
   );
   const applyFunctionalCurrencyCode = useMemo(
     () => resolveLegalEntityCurrencyCode(legalEntities, applyForm.legalEntityId),
@@ -2267,8 +2286,13 @@ export default function CariSettlementsPage() {
 
     setApplySubmitting(true);
     try {
+      const derivedOwnerOperatingUnitId =
+        !applyOwnerContextSummary.hasMixed && selectedApplyPreviewRows.length > 0
+          ? applyOwnerContextSummary.primary.operatingUnitId || undefined
+          : undefined;
       const payload = buildSettlementApplyPayload({
         ...form,
+        operatingUnitId: derivedOwnerOperatingUnitId,
         idempotencyKey,
         allocations: form.autoAllocate ? [] : manualAllocations,
         ...buildLinkedCashPayloadForApply(form, idempotencyKey),
@@ -2869,6 +2893,36 @@ export default function CariSettlementsPage() {
                 className="rounded border border-amber-300 bg-white px-2.5 py-1 text-xs font-semibold text-amber-900"
               >
                 {l("Use template", "Sablon Kullan")}
+              </Link>
+            </div>
+          </div>
+        ) : null}
+        {applyOuCurrentAccountSetupBlocked ? (
+          <div className="mt-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+            <p className="font-semibold">
+              {l(
+                "Cross-context current-account setup still needs attention",
+                "Capraz-context cari hesap kurulumu halen dikkat istiyor"
+              )}
+            </p>
+            <p className="mt-1">
+              {formatOperatingUnitCurrentAccountBlocker(
+                applyOuCurrentAccountReadiness,
+                l
+              )}
+            </p>
+            <p className="mt-1 text-xs text-amber-800">
+              {l(
+                "Same-branch settlement can still continue, but branch/central or branch/branch collector flows will stay blocked until Organization Management current-account setup is fixed.",
+                "Ayni sube icindeki mahsuplastirma devam edebilir; ancak sube/merkez veya sube/sube tahsilat-odeme akislari Organizasyon Yonetimi altindaki cari hesap kurulumu duzeltilene kadar bloklu kalir."
+              )}
+            </p>
+            <div className="mt-2">
+              <Link
+                to={OU_CURRENT_ACCOUNT_SETUP_PATH}
+                className="rounded border border-amber-300 bg-white px-2.5 py-1 text-xs font-semibold text-amber-900"
+              >
+                {l("Open Organization Management", "Organizasyon Yonetimini Ac")}
               </Link>
             </div>
           </div>
@@ -4140,6 +4194,36 @@ export default function CariSettlementsPage() {
                 className="rounded border border-amber-300 bg-white px-2.5 py-1 text-xs font-semibold text-amber-900"
               >
                 {l("Use template", "Sablon Kullan")}
+              </Link>
+            </div>
+          </div>
+        ) : null}
+        {bankApplyOuCurrentAccountSetupBlocked ? (
+          <div className="mt-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+            <p className="font-semibold">
+              {l(
+                "Cross-context current-account setup still needs attention",
+                "Capraz-context cari hesap kurulumu halen dikkat istiyor"
+              )}
+            </p>
+            <p className="mt-1">
+              {formatOperatingUnitCurrentAccountBlocker(
+                bankApplyOuCurrentAccountReadiness,
+                l
+              )}
+            </p>
+            <p className="mt-1 text-xs text-amber-800">
+              {l(
+                "Bank settlement can still continue for same-context ownership, but branch/central and branch/branch balancing stays blocked until Organization Management current-account setup is fixed.",
+                "Banka mahsuplastirmasi ayni context sahipliginde devam edebilir; ancak sube/merkez ve sube/sube denkleme Organizasyon Yonetimi altindaki cari hesap kurulumu duzeltilene kadar bloklu kalir."
+              )}
+            </p>
+            <div className="mt-2">
+              <Link
+                to={OU_CURRENT_ACCOUNT_SETUP_PATH}
+                className="rounded border border-amber-300 bg-white px-2.5 py-1 text-xs font-semibold text-amber-900"
+              >
+                {l("Open Organization Management", "Organizasyon Yonetimini Ac")}
               </Link>
             </div>
           </div>

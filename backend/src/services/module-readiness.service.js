@@ -2,6 +2,10 @@ import { query } from "../db.js";
 import { badRequest, parsePositiveInt } from "../routes/_utils.js";
 import { autoRemapCariPurposeMappingsForLegalEntity } from "./cari.purpose-mapping-autofix.service.js";
 import { CASH_PURPOSE_CODES } from "./cash.purpose-mappings.service.js";
+import {
+  isEligibleDraftOperatingUnit,
+  summarizeOperatingUnitCurrentAccountEligibility,
+} from "./ou.current-account-eligibility.service.js";
 
 const CARI_REQUIRED_PURPOSE_CODES = Object.freeze([
   "CARI_AR_CONTROL",
@@ -92,6 +96,8 @@ const WORKFLOW_REQUIRED_PROCESS_TYPES = Object.freeze([
   "PERIOD_CLOSE",
   "CONSOLIDATION_RUN",
 ]);
+
+const OU_CURRENT_ACCOUNT_SETUP_PATH = "/app/ayarlar/organizasyon-yonetimi";
 
 function normalizePermissionCode(value) {
   return String(value || "").trim();
@@ -617,6 +623,358 @@ function buildReadinessRow({
     requiredPurposeCodes: [...requiredPurposeCodes],
     missingPurposeCodes,
     invalidMappings,
+  };
+}
+
+function buildOperatingUnitCurrentAccountDirectionKey(operatingUnitId, partnerOperatingUnitId) {
+  return `${parsePositiveInt(operatingUnitId) || 0}:${parsePositiveInt(partnerOperatingUnitId) || 0}`;
+}
+
+function describeOperatingUnitLabel(row) {
+  const code = String(row?.code || row?.operatingUnitCode || "").trim();
+  const name = String(row?.name || row?.operatingUnitName || "").trim();
+  if (code && name) {
+    return `${code} - ${name}`;
+  }
+  return code || name || `#${parsePositiveInt(row?.id) || "?"}`;
+}
+
+async function loadLegalEntityMetadataRows({
+  tenantId,
+  legalEntityIds,
+  runQuery = query,
+}) {
+  if (!Array.isArray(legalEntityIds) || legalEntityIds.length === 0) {
+    return [];
+  }
+
+  const placeholders = legalEntityIds.map(() => "?").join(", ");
+  const result = await runQuery(
+    `SELECT id, code, name
+     FROM legal_entities
+     WHERE tenant_id = ?
+       AND id IN (${placeholders})
+     ORDER BY id`,
+    [tenantId, ...legalEntityIds]
+  );
+  return result.rows || [];
+}
+
+async function loadOperatingUnitCurrentAccountConfigRowsForReadiness({
+  tenantId,
+  legalEntityIds,
+  runQuery = query,
+}) {
+  if (!Array.isArray(legalEntityIds) || legalEntityIds.length === 0) {
+    return [];
+  }
+
+  const placeholders = legalEntityIds.map(() => "?").join(", ");
+  const result = await runQuery(
+    `SELECT
+       cfg.id AS operating_unit_current_account_config_id,
+       cfg.tenant_id,
+       cfg.legal_entity_id,
+       cfg.due_from_parent_account_id,
+       cfg.due_to_parent_account_id,
+       cfg.auto_provision_on_operating_unit_create,
+       cfg.last_applied_at,
+       cfg.created_at,
+       cfg.updated_at
+     FROM operating_unit_current_account_configs cfg
+     WHERE cfg.tenant_id = ?
+       AND cfg.legal_entity_id IN (${placeholders})
+     ORDER BY cfg.legal_entity_id`,
+    [tenantId, ...legalEntityIds]
+  );
+  return result.rows || [];
+}
+
+async function loadOperatingUnitCentralReadinessRows({
+  tenantId,
+  legalEntityIds,
+  runQuery = query,
+}) {
+  if (!Array.isArray(legalEntityIds) || legalEntityIds.length === 0) {
+    return [];
+  }
+
+  const placeholders = legalEntityIds.map(() => "?").join(", ");
+  const result = await runQuery(
+    `SELECT
+       ou.id,
+       ou.legal_entity_id,
+       ou.code,
+       ou.name,
+       ou.status,
+       CASE
+         WHEN ou.central_due_from_account_id IS NOT NULL
+           AND ou.central_due_to_account_id IS NOT NULL
+           AND ou.ou_due_from_central_account_id IS NOT NULL
+           AND ou.ou_due_to_central_account_id IS NOT NULL
+           AND cdfa.id IS NOT NULL
+           AND cdta.id IS NOT NULL
+           AND odfa.id IS NOT NULL
+           AND odtq.id IS NOT NULL
+           AND cdfc.scope = 'LEGAL_ENTITY'
+           AND cdtc.scope = 'LEGAL_ENTITY'
+           AND odfc.scope = 'LEGAL_ENTITY'
+           AND odtqc.scope = 'LEGAL_ENTITY'
+           AND cdfc.legal_entity_id = ou.legal_entity_id
+           AND cdtc.legal_entity_id = ou.legal_entity_id
+           AND odfc.legal_entity_id = ou.legal_entity_id
+           AND odtqc.legal_entity_id = ou.legal_entity_id
+           AND cdfa.is_active = TRUE
+           AND cdta.is_active = TRUE
+           AND odfa.is_active = TRUE
+           AND odtq.is_active = TRUE
+           AND cdfa.allow_posting = TRUE
+           AND cdta.allow_posting = TRUE
+           AND odfa.allow_posting = TRUE
+           AND odtq.allow_posting = TRUE
+           AND cdfa.account_type = 'ASSET'
+           AND cdta.account_type = 'LIABILITY'
+           AND odfa.account_type = 'ASSET'
+           AND odtq.account_type = 'LIABILITY'
+           AND cdfa.normal_side = 'DEBIT'
+           AND cdta.normal_side = 'CREDIT'
+           AND odfa.normal_side = 'DEBIT'
+           AND odtq.normal_side = 'CREDIT'
+           AND NOT EXISTS (
+             SELECT 1
+             FROM accounts child
+             WHERE child.parent_account_id = cdfa.id
+           )
+           AND NOT EXISTS (
+             SELECT 1
+             FROM accounts child
+             WHERE child.parent_account_id = cdta.id
+           )
+           AND NOT EXISTS (
+             SELECT 1
+             FROM accounts child
+             WHERE child.parent_account_id = odfa.id
+           )
+           AND NOT EXISTS (
+             SELECT 1
+             FROM accounts child
+             WHERE child.parent_account_id = odtq.id
+           )
+         THEN TRUE
+         ELSE FALSE
+       END AS cross_context_self_balancing_ready
+     FROM operating_units ou
+     LEFT JOIN accounts cdfa ON cdfa.id = ou.central_due_from_account_id
+     LEFT JOIN charts_of_accounts cdfc ON cdfc.id = cdfa.coa_id
+     LEFT JOIN accounts cdta ON cdta.id = ou.central_due_to_account_id
+     LEFT JOIN charts_of_accounts cdtc ON cdtc.id = cdta.coa_id
+     LEFT JOIN accounts odfa ON odfa.id = ou.ou_due_from_central_account_id
+     LEFT JOIN charts_of_accounts odfc ON odfc.id = odfa.coa_id
+     LEFT JOIN accounts odtq ON odtq.id = ou.ou_due_to_central_account_id
+     LEFT JOIN charts_of_accounts odtqc ON odtqc.id = odtq.coa_id
+     WHERE ou.tenant_id = ?
+       AND ou.legal_entity_id IN (${placeholders})
+     ORDER BY ou.legal_entity_id, ou.id`,
+    [tenantId, ...legalEntityIds]
+  );
+  return result.rows || [];
+}
+
+async function loadOperatingUnitPartnerReadinessRows({
+  tenantId,
+  legalEntityIds,
+  runQuery = query,
+}) {
+  if (!Array.isArray(legalEntityIds) || legalEntityIds.length === 0) {
+    return [];
+  }
+
+  const placeholders = legalEntityIds.map(() => "?").join(", ");
+  const result = await runQuery(
+    `SELECT
+       map.legal_entity_id,
+       map.operating_unit_id,
+       map.partner_operating_unit_id,
+       ou.code AS operating_unit_code,
+       ou.name AS operating_unit_name,
+       partner.code AS partner_operating_unit_code,
+       partner.name AS partner_operating_unit_name,
+       CASE
+         WHEN map.due_from_account_id IS NOT NULL
+           AND map.due_to_account_id IS NOT NULL
+           AND dfa.id IS NOT NULL
+           AND dta.id IS NOT NULL
+           AND dfc.scope = 'LEGAL_ENTITY'
+           AND dtc.scope = 'LEGAL_ENTITY'
+           AND dfc.legal_entity_id = map.legal_entity_id
+           AND dtc.legal_entity_id = map.legal_entity_id
+           AND dfa.is_active = TRUE
+           AND dta.is_active = TRUE
+           AND dfa.allow_posting = TRUE
+           AND dta.allow_posting = TRUE
+           AND dfa.account_type = 'ASSET'
+           AND dta.account_type = 'LIABILITY'
+           AND dfa.normal_side = 'DEBIT'
+           AND dta.normal_side = 'CREDIT'
+           AND NOT EXISTS (
+             SELECT 1
+             FROM accounts child
+             WHERE child.parent_account_id = dfa.id
+           )
+           AND NOT EXISTS (
+             SELECT 1
+             FROM accounts child
+             WHERE child.parent_account_id = dta.id
+           )
+         THEN TRUE
+         ELSE FALSE
+       END AS mapping_ready
+     FROM operating_unit_partner_current_accounts map
+     JOIN operating_units ou
+       ON ou.id = map.operating_unit_id
+     JOIN operating_units partner
+       ON partner.id = map.partner_operating_unit_id
+     LEFT JOIN accounts dfa
+       ON dfa.id = map.due_from_account_id
+     LEFT JOIN charts_of_accounts dfc
+       ON dfc.id = dfa.coa_id
+     LEFT JOIN accounts dta
+       ON dta.id = map.due_to_account_id
+     LEFT JOIN charts_of_accounts dtc
+       ON dtc.id = dta.coa_id
+     WHERE map.tenant_id = ?
+       AND map.legal_entity_id IN (${placeholders})
+     ORDER BY map.legal_entity_id, map.operating_unit_id, map.partner_operating_unit_id`,
+    [tenantId, ...legalEntityIds]
+  );
+  return result.rows || [];
+}
+
+function buildOperatingUnitCurrentAccountReadinessRow({
+  legalEntity,
+  operatingUnitRows,
+  configRow,
+  partnerRows,
+}) {
+  const legalEntityId = parsePositiveInt(legalEntity?.id);
+  const eligibility = summarizeOperatingUnitCurrentAccountEligibility(operatingUnitRows);
+  const applicable = Boolean(eligibility?.currentAccountSetupRecommended);
+  const eligibleOperatingUnits = (Array.isArray(operatingUnitRows) ? operatingUnitRows : []).filter(
+    (row) => isEligibleDraftOperatingUnit(row)
+  );
+  const eligibleOperatingUnitIds = new Set(
+    eligibleOperatingUnits.map((row) => parsePositiveInt(row?.id)).filter(Boolean)
+  );
+
+  const centralMissingRows = operatingUnitRows.filter(
+    (row) =>
+      eligibleOperatingUnitIds.has(parsePositiveInt(row?.id)) &&
+      !toDbBoolean(row?.cross_context_self_balancing_ready)
+  );
+
+  const partnerRowByDirection = new Map();
+  for (const row of partnerRows) {
+    const directionKey = buildOperatingUnitCurrentAccountDirectionKey(
+      row?.operating_unit_id,
+      row?.partner_operating_unit_id
+    );
+    if (!partnerRowByDirection.has(directionKey)) {
+      partnerRowByDirection.set(directionKey, row);
+    }
+  }
+
+  const missingPartnerDirections = [];
+  for (const sourceRow of eligibleOperatingUnits) {
+    const sourceId = parsePositiveInt(sourceRow?.id);
+    if (!sourceId) {
+      continue;
+    }
+    for (const targetRow of eligibleOperatingUnits) {
+      const targetId = parsePositiveInt(targetRow?.id);
+      if (!targetId || targetId === sourceId) {
+        continue;
+      }
+      const mappedRow = partnerRowByDirection.get(
+        buildOperatingUnitCurrentAccountDirectionKey(sourceId, targetId)
+      );
+      if (mappedRow && toDbBoolean(mappedRow.mapping_ready)) {
+        continue;
+      }
+      missingPartnerDirections.push({
+        operatingUnitId: sourceId,
+        operatingUnitCode: String(sourceRow?.code || "").trim(),
+        operatingUnitName: String(sourceRow?.name || "").trim(),
+        partnerOperatingUnitId: targetId,
+        partnerOperatingUnitCode: String(targetRow?.code || "").trim(),
+        partnerOperatingUnitName: String(targetRow?.name || "").trim(),
+      });
+    }
+  }
+
+  const configPresent = Boolean(
+    parsePositiveInt(configRow?.operating_unit_current_account_config_id)
+  );
+  const configApplied = Boolean(String(configRow?.last_applied_at || "").trim());
+  const configUpdatedAt = configRow?.updated_at ? new Date(configRow.updated_at) : null;
+  const lastAppliedAt = configRow?.last_applied_at ? new Date(configRow.last_applied_at) : null;
+  const configChangedSinceLastApply =
+    configPresent &&
+    Boolean(
+      configUpdatedAt &&
+        !Number.isNaN(configUpdatedAt.getTime()) &&
+        (!lastAppliedAt ||
+          Number.isNaN(lastAppliedAt.getTime()) ||
+          configUpdatedAt > lastAppliedAt)
+    );
+
+  let ready = true;
+  let blockerCode = "READY";
+  if (!applicable) {
+    blockerCode = "NOT_APPLICABLE";
+  } else if (!configPresent) {
+    ready = false;
+    blockerCode = "MISSING_CONFIG";
+  } else if (centralMissingRows.length > 0 || missingPartnerDirections.length > 0) {
+    ready = false;
+    blockerCode = configApplied ? "MAPPING_DRIFT" : "CONFIG_SAVED_NOT_APPLIED";
+  }
+
+  return {
+    legalEntityId,
+    legalEntityCode: String(legalEntity?.code || "").trim(),
+    legalEntityName: String(legalEntity?.name || "").trim(),
+    ready,
+    applicable,
+    blockerCode,
+    setupPath: OU_CURRENT_ACCOUNT_SETUP_PATH,
+    effectiveActiveOperatingUnitCount:
+      parsePositiveInt(eligibility?.effectiveActiveOperatingUnitCount) || 0,
+    currentAccountSetupRecommended: Boolean(eligibility?.currentAccountSetupRecommended),
+    recommendationCode: String(eligibility?.recommendationCode || "").trim() || null,
+    configPresent,
+    configApplied,
+    autoProvisionOnOperatingUnitCreate: toDbBoolean(
+      configRow?.auto_provision_on_operating_unit_create
+    ),
+    lastAppliedAt: configRow?.last_applied_at || null,
+    configChangedSinceLastApply,
+    eligibleOperatingUnits: eligibleOperatingUnits.map((row) => ({
+      id: parsePositiveInt(row?.id),
+      code: String(row?.code || "").trim(),
+      name: String(row?.name || "").trim(),
+      label: describeOperatingUnitLabel(row),
+    })),
+    missingCentralOperatingUnits: centralMissingRows.map((row) => ({
+      id: parsePositiveInt(row?.id),
+      code: String(row?.code || "").trim(),
+      name: String(row?.name || "").trim(),
+      label: describeOperatingUnitLabel(row),
+    })),
+    expectedPartnerDirectionCount: applicable
+      ? eligibleOperatingUnits.length * Math.max(eligibleOperatingUnits.length - 1, 0)
+      : 0,
+    missingPartnerDirectionCount: missingPartnerDirections.length,
+    missingPartnerDirections,
   };
 }
 
@@ -1225,6 +1583,82 @@ export async function getBankControlParentReadiness(
   };
 }
 
+export async function getOperatingUnitCurrentAccountReadiness(
+  tenantId,
+  legalEntityId = null,
+  { runQuery = query } = {}
+) {
+  const legalEntityIds = await resolveTargetLegalEntityIds({
+    tenantId,
+    legalEntityId,
+    runQuery,
+  });
+  const [legalEntityRows, operatingUnitRows, configRows, partnerRows] = await Promise.all([
+    loadLegalEntityMetadataRows({
+      tenantId,
+      legalEntityIds,
+      runQuery,
+    }),
+    loadOperatingUnitCentralReadinessRows({
+      tenantId,
+      legalEntityIds,
+      runQuery,
+    }),
+    loadOperatingUnitCurrentAccountConfigRowsForReadiness({
+      tenantId,
+      legalEntityIds,
+      runQuery,
+    }),
+    loadOperatingUnitPartnerReadinessRows({
+      tenantId,
+      legalEntityIds,
+      runQuery,
+    }),
+  ]);
+
+  const configRowByLegalEntityId = new Map(
+    configRows.map((row) => [parsePositiveInt(row?.legal_entity_id), row])
+  );
+  const operatingUnitRowsByLegalEntityId = new Map();
+  for (const row of operatingUnitRows) {
+    const rowLegalEntityId = parsePositiveInt(row?.legal_entity_id);
+    if (!rowLegalEntityId) {
+      continue;
+    }
+    if (!operatingUnitRowsByLegalEntityId.has(rowLegalEntityId)) {
+      operatingUnitRowsByLegalEntityId.set(rowLegalEntityId, []);
+    }
+    operatingUnitRowsByLegalEntityId.get(rowLegalEntityId).push(row);
+  }
+  const partnerRowsByLegalEntityId = new Map();
+  for (const row of partnerRows) {
+    const rowLegalEntityId = parsePositiveInt(row?.legal_entity_id);
+    if (!rowLegalEntityId) {
+      continue;
+    }
+    if (!partnerRowsByLegalEntityId.has(rowLegalEntityId)) {
+      partnerRowsByLegalEntityId.set(rowLegalEntityId, []);
+    }
+    partnerRowsByLegalEntityId.get(rowLegalEntityId).push(row);
+  }
+
+  const byLegalEntity = legalEntityRows.map((legalEntityRow) =>
+    buildOperatingUnitCurrentAccountReadinessRow({
+      legalEntity: legalEntityRow,
+      operatingUnitRows:
+        operatingUnitRowsByLegalEntityId.get(parsePositiveInt(legalEntityRow?.id)) || [],
+      configRow: configRowByLegalEntityId.get(parsePositiveInt(legalEntityRow?.id)) || null,
+      partnerRows:
+        partnerRowsByLegalEntityId.get(parsePositiveInt(legalEntityRow?.id)) || [],
+    })
+  );
+
+  return {
+    moduleKey: "operatingUnitCurrentAccounts",
+    byLegalEntity,
+  };
+}
+
 export async function getModuleReadiness(
   tenantId,
   legalEntityId = null,
@@ -1241,6 +1675,7 @@ export async function getModuleReadiness(
     shareholderCommitment,
     cashClearing,
     bankControlParent,
+    operatingUnitCurrentAccounts,
     closeConsolidationWorkflow,
   ] =
     await Promise.all([
@@ -1254,6 +1689,9 @@ export async function getModuleReadiness(
         runQuery,
       }),
       getBankControlParentReadiness(normalizedTenantId, normalizedLegalEntityId, {
+        runQuery,
+      }),
+      getOperatingUnitCurrentAccountReadiness(normalizedTenantId, normalizedLegalEntityId, {
         runQuery,
       }),
       getCloseConsolidationWorkflowReadiness(
@@ -1280,6 +1718,9 @@ export async function getModuleReadiness(
       },
       bankControlParent: {
         byLegalEntity: bankControlParent.byLegalEntity,
+      },
+      operatingUnitCurrentAccounts: {
+        byLegalEntity: operatingUnitCurrentAccounts.byLegalEntity,
       },
       closeConsolidationWorkflow: {
         byLegalEntity: closeConsolidationWorkflow.byLegalEntity,

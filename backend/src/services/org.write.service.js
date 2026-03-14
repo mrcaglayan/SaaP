@@ -3,16 +3,23 @@ import { badRequest, parsePositiveInt } from "../routes/_utils.js";
 import { assertOperatingUnitBelongsToTenant } from "../tenantGuards.js";
 import {
   findGroupCompanyByCode,
+  findOperatingUnitCurrentAccountConfigRowTx,
   findShareholderJournalConfigRowTx,
+  markOperatingUnitCurrentAccountConfigAppliedRow,
   upsertFiscalCalendarRow,
   upsertFiscalPeriodRow,
   upsertGroupCompanyRow,
   upsertJournalPurposeAccountTx,
   upsertLegalEntityRowTx,
+  upsertOperatingUnitCurrentAccountConfigRow,
   updateOperatingUnitInternalCurrentAccountsRow,
   upsertOperatingUnitPartnerCurrentAccountRow,
   upsertOperatingUnitRow,
 } from "./org.write.queries.js";
+import {
+  isDescendantOfParentAccount,
+  loadLegalEntityAccountHierarchy,
+} from "./org.shareholder.helpers.js";
 
 const PAYMENT_TERM_STATUS_VALUES = new Set(["ACTIVE", "INACTIVE"]);
 const DEFAULT_PAYMENT_TERM_TEMPLATES = [
@@ -248,6 +255,40 @@ async function assertUniqueOperatingUnitInternalCurrentMappingTx(
   throw badRequest(
     `${fieldLabel} is already assigned to operating unit ${conflictingLabel}. ${roleLabel} must be unique per operating unit within the legal entity; configure a branch-specific internal current account.`
   );
+}
+
+async function findOperatingUnitByCodeTx(
+  tx,
+  {
+    tenantId,
+    legalEntityId,
+    code,
+  }
+) {
+  const normalizedCode = String(code || "").trim();
+  if (!normalizedCode) {
+    return null;
+  }
+
+  const result = await tx.query(
+    `SELECT id
+     FROM operating_units
+     WHERE tenant_id = ?
+       AND legal_entity_id = ?
+       AND code = ?
+     LIMIT 1
+     FOR UPDATE`,
+    [parsePositiveInt(tenantId), parsePositiveInt(legalEntityId), normalizedCode]
+  );
+
+  const row = result.rows?.[0] || null;
+  if (!row) {
+    return null;
+  }
+
+  return {
+    id: parsePositiveInt(row.id),
+  };
 }
 
 async function assertUniqueOperatingUnitPartnerCurrentAccountTx(
@@ -600,7 +641,12 @@ export async function upsertOperatingUnit({
     );
   }
 
-  const id = await withTransaction(async (tx) => {
+  const saveResult = await withTransaction(async (tx) => {
+    const existingOperatingUnit = await findOperatingUnitByCodeTx(tx, {
+      tenantId,
+      legalEntityId,
+      code,
+    });
     const fieldSpecs = [
       {
         accountId: centralDueFromAccountId,
@@ -660,7 +706,7 @@ export async function upsertOperatingUnit({
       });
     }
 
-    return upsertOperatingUnitRow({
+    const id = await upsertOperatingUnitRow({
       tenantId,
       legalEntityId,
       code: String(code).trim(),
@@ -673,10 +719,96 @@ export async function upsertOperatingUnit({
       ouDueToCentralAccountId: parsePositiveInt(ouDueToCentralAccountId),
       runQuery: (sql, params) => tx.query(sql, params),
     });
+
+    return {
+      id: parsePositiveInt(id),
+      created: !existingOperatingUnit,
+    };
   });
 
+  let currentAccountProvisioning = null;
+  if (saveResult.created) {
+    try {
+      currentAccountProvisioning = await withTransaction(async (tx) => {
+        const config = await findOperatingUnitCurrentAccountConfigRowTx(tx, {
+          tenantId,
+          legalEntityId,
+        });
+        if (!config) {
+          return buildOperatingUnitCreateProvisioningResult({
+            status: "skipped_missing_config",
+            legalEntityId,
+            operatingUnitId: saveResult.id,
+            configPresent: false,
+            autoProvisionOnOperatingUnitCreate: null,
+            warnings: [
+              buildProvisionWarning(
+                "MISSING_SAVED_CURRENT_ACCOUNT_CONFIG",
+                "Saved OU current-account config is missing, so branch delta auto-provision was skipped"
+              ),
+            ],
+          });
+        }
+
+        const autoProvisionEnabled = parseDbBoolean(
+          config.auto_provision_on_operating_unit_create
+        );
+        if (!autoProvisionEnabled) {
+          return buildOperatingUnitCreateProvisioningResult({
+            status: "skipped_auto_provision_disabled",
+            legalEntityId,
+            operatingUnitId: saveResult.id,
+            configPresent: true,
+            autoProvisionOnOperatingUnitCreate: false,
+            warnings: [
+              buildProvisionWarning(
+                "AUTO_PROVISION_DISABLED",
+                "Saved OU current-account config exists, but auto-provision on branch create is disabled"
+              ),
+            ],
+          });
+        }
+
+        const summary = await applyOperatingUnitCurrentAccountConfigTx(tx, {
+          tenantId,
+          legalEntityId,
+          operatingUnitId: saveResult.id,
+          repairMissingOnly: true,
+        });
+
+        return buildOperatingUnitCreateProvisioningResult({
+          status: "applied",
+          legalEntityId,
+          operatingUnitId: saveResult.id,
+          configPresent: true,
+          autoProvisionOnOperatingUnitCreate: true,
+          summary,
+          warnings: summary?.warnings || [],
+        });
+      });
+    } catch (error) {
+      currentAccountProvisioning = buildOperatingUnitCreateProvisioningResult({
+        status: "warning",
+        legalEntityId,
+        operatingUnitId: saveResult.id,
+        configPresent: true,
+        autoProvisionOnOperatingUnitCreate: true,
+        warnings: [
+          buildProvisionWarning(
+            "AUTO_PROVISION_FAILED",
+            error?.message || "Branch current-account delta auto-provision failed after save",
+            {
+              rerunPath: "POST /api/v1/org/operating-unit-current-account-config/apply",
+            }
+          ),
+        ],
+      });
+    }
+  }
+
   return {
-    id,
+    id: saveResult.id,
+    currentAccountProvisioning,
   };
 }
 
@@ -919,6 +1051,12 @@ function buildCentralCurrentAccountName({
       "Central Due From OU"
     );
   }
+  if (role === "CENTRAL_DUE_TO") {
+    return normalizeName(`Central Due To ${operatingUnitLabel}`, "Central Due To OU");
+  }
+  if (role === "OU_DUE_FROM_CENTRAL") {
+    return normalizeName(`${operatingUnitLabel} Due From Central`, "OU Due From Central");
+  }
   return normalizeName(`${operatingUnitLabel} Due To Central`, "OU Due To Central");
 }
 
@@ -993,6 +1131,47 @@ async function assertOperatingUnitInternalCurrentParentAccountTx(
     accountType: normalizeUpperText(row.account_type),
     normalSide: normalizeUpperText(row.normal_side),
   };
+}
+
+async function assertOperatingUnitCurrentAccountConfigParentAccountTx(
+  tx,
+  {
+    tenantId,
+    legalEntityId,
+    accountId,
+    fieldLabel,
+    expectedAccountType,
+    expectedNormalSide,
+  }
+) {
+  const account = await assertOperatingUnitInternalCurrentParentAccountTx(tx, {
+    tenantId,
+    legalEntityId,
+    accountId,
+    fieldLabel,
+    expectedAccountType,
+    expectedNormalSide,
+  });
+
+  const result = await tx.query(
+    `SELECT allow_posting
+     FROM accounts
+     WHERE id = ?
+     LIMIT 1
+     FOR UPDATE`,
+    [account.id]
+  );
+  const row = result.rows?.[0] || null;
+  if (!row) {
+    throw badRequest(`${fieldLabel} not found for tenant`);
+  }
+  if (parseDbBoolean(row.allow_posting)) {
+    throw badRequest(
+      `${fieldLabel} must reference a child-capable non-postable control/header account`
+    );
+  }
+
+  return account;
 }
 
 async function loadOperatingUnitIdentityTx(
@@ -1098,6 +1277,172 @@ async function resolveReusableOperatingUnitCurrentAccountTx(
   }
 }
 
+function isOperatingUnitActive(operatingUnit) {
+  return normalizeUpperText(operatingUnit?.status) === "ACTIVE";
+}
+
+function buildProvisionWarning(code, message, details = {}) {
+  return {
+    code: String(code || "").trim().toUpperCase(),
+    message: String(message || "").trim(),
+    ...details,
+  };
+}
+
+function summarizeProvisionedAccount(account, extra = {}) {
+  return {
+    id: parsePositiveInt(account?.id),
+    code: String(account?.code || ""),
+    name: String(account?.name || ""),
+    ...extra,
+  };
+}
+
+function buildOperatingUnitCreateProvisioningResult({
+  status,
+  legalEntityId,
+  operatingUnitId,
+  configPresent = false,
+  autoProvisionOnOperatingUnitCreate = null,
+  summary = null,
+  warnings = [],
+}) {
+  return {
+    status: String(status || "").trim().toLowerCase(),
+    legalEntityId: parsePositiveInt(legalEntityId),
+    operatingUnitId: parsePositiveInt(operatingUnitId),
+    configPresent: Boolean(configPresent),
+    autoProvisionOnOperatingUnitCreate:
+      autoProvisionOnOperatingUnitCreate === null
+        ? null
+        : Boolean(autoProvisionOnOperatingUnitCreate),
+    summary,
+    warnings: Array.isArray(warnings) ? warnings : [],
+  };
+}
+
+async function inspectOperatingUnitCurrentAccountCandidateTx(
+  tx,
+  {
+    tenantId,
+    legalEntityId,
+    accountId,
+    fieldLabel,
+    expectedAccountType,
+    expectedNormalSide,
+    expectedParentAccountId = null,
+    accountParentById = null,
+    uniquenessCheck = null,
+    preservedManualWarning = null,
+  }
+) {
+  const normalizedAccountId = parsePositiveInt(accountId);
+  if (!normalizedAccountId) {
+    return {
+      status: "missing",
+      account: null,
+      reason: null,
+    };
+  }
+
+  let account = null;
+  try {
+    account = await assertOperatingUnitInternalCurrentAccountTx(tx, {
+      tenantId,
+      legalEntityId,
+      accountId: normalizedAccountId,
+      fieldLabel,
+      expectedAccountType,
+      expectedNormalSide,
+    });
+  } catch (error) {
+    return {
+      status: "invalid",
+      account: null,
+      reason: error?.message || `${fieldLabel} is invalid`,
+    };
+  }
+
+  if (typeof uniquenessCheck === "function") {
+    try {
+      await uniquenessCheck(account.id);
+    } catch (error) {
+      return {
+        status: "invalid",
+        account: null,
+        reason: error?.message || `${fieldLabel} is not unique`,
+      };
+    }
+  }
+
+  if (
+    expectedParentAccountId &&
+    accountParentById instanceof Map &&
+    !isDescendantOfParentAccount(accountParentById, account.id, expectedParentAccountId)
+  ) {
+    return {
+      status: "preserved_manual",
+      account,
+      reason: null,
+      warning:
+        preservedManualWarning ||
+        buildProvisionWarning(
+          "PRESERVED_MANUAL_CURRENT_ACCOUNT",
+          `${fieldLabel} already points to a valid current-account leaf outside the configured parent and was left unchanged`
+        ),
+    };
+  }
+
+  return {
+    status: "reused",
+    account,
+    reason: null,
+  };
+}
+
+async function listOperatingUnitsForLegalEntityTx(
+  tx,
+  {
+    tenantId,
+    legalEntityId,
+  }
+) {
+  const result = await tx.query(
+    `SELECT
+       id,
+       legal_entity_id,
+       code,
+       name,
+       unit_type,
+       has_subledger,
+       status,
+       central_due_from_account_id,
+       central_due_to_account_id,
+       ou_due_from_central_account_id,
+       ou_due_to_central_account_id
+     FROM operating_units
+     WHERE tenant_id = ?
+       AND legal_entity_id = ?
+     ORDER BY id
+     FOR UPDATE`,
+    [parsePositiveInt(tenantId), parsePositiveInt(legalEntityId)]
+  );
+
+  return (result.rows || []).map((row) => ({
+    id: parsePositiveInt(row.id),
+    legal_entity_id: parsePositiveInt(row.legal_entity_id),
+    code: String(row.code || ""),
+    name: String(row.name || ""),
+    unit_type: String(row.unit_type || ""),
+    has_subledger: parseDbBoolean(row.has_subledger),
+    status: String(row.status || ""),
+    central_due_from_account_id: parsePositiveInt(row.central_due_from_account_id),
+    central_due_to_account_id: parsePositiveInt(row.central_due_to_account_id),
+    ou_due_from_central_account_id: parsePositiveInt(row.ou_due_from_central_account_id),
+    ou_due_to_central_account_id: parsePositiveInt(row.ou_due_to_central_account_id),
+  }));
+}
+
 async function insertOperatingUnitCurrentChildAccountTx(
   tx,
   {
@@ -1182,191 +1527,313 @@ export async function autoProvisionOperatingUnitCentralCurrentAccounts({
   }
 
   return withTransaction(async (tx) => {
-    const operatingUnit = await loadOperatingUnitIdentityTx(tx, {
-      tenantId,
-      operatingUnitId,
-      fieldLabel: "operatingUnitId",
-    });
-    if (parsePositiveInt(operatingUnit.legal_entity_id) !== parsePositiveInt(legalEntityId)) {
-      throw badRequest("operatingUnitId must belong to selected legalEntityId");
-    }
-
-    const centralDueFromParentAccount =
-      await assertOperatingUnitInternalCurrentParentAccountTx(tx, {
-        tenantId,
-        legalEntityId,
-        accountId: centralDueFromParentAccountId,
-        fieldLabel: "centralDueFromParentAccountId",
-        expectedAccountType: "ASSET",
-        expectedNormalSide: "DEBIT",
-      });
-    const ouDueToCentralParentAccount =
-      await assertOperatingUnitInternalCurrentParentAccountTx(tx, {
-        tenantId,
-        legalEntityId,
-        accountId: ouDueToCentralParentAccountId,
-        fieldLabel: "ouDueToCentralParentAccountId",
-        expectedAccountType: "LIABILITY",
-        expectedNormalSide: "CREDIT",
-      });
-
-    let centralDueFromAccount = await resolveReusableOperatingUnitCurrentAccountTx(tx, {
+    return autoProvisionOperatingUnitCentralCurrentAccountsTx(tx, {
       tenantId,
       legalEntityId,
-      accountId: operatingUnit.central_due_from_account_id,
-      fieldLabel: "centralDueFromAccountId",
+      operatingUnitId,
+      centralDueFromParentAccountId,
+      ouDueToCentralParentAccountId,
+      provisionAllDirections: false,
+    });
+  });
+}
+
+export async function autoProvisionOperatingUnitCentralCurrentAccountsTx(
+  tx,
+  {
+    tenantId,
+    legalEntityId,
+    operatingUnitId,
+    centralDueFromParentAccountId,
+    ouDueToCentralParentAccountId,
+    provisionAllDirections = false,
+    accountParentById = null,
+  }
+) {
+  const operatingUnit = await loadOperatingUnitIdentityTx(tx, {
+    tenantId,
+    operatingUnitId,
+    fieldLabel: "operatingUnitId",
+  });
+  if (parsePositiveInt(operatingUnit.legal_entity_id) !== parsePositiveInt(legalEntityId)) {
+    throw badRequest("operatingUnitId must belong to selected legalEntityId");
+  }
+
+  const dueFromParentAccount = await assertOperatingUnitInternalCurrentParentAccountTx(tx, {
+    tenantId,
+    legalEntityId,
+    accountId: centralDueFromParentAccountId,
+    fieldLabel: "centralDueFromParentAccountId",
+    expectedAccountType: "ASSET",
+    expectedNormalSide: "DEBIT",
+  });
+  const dueToParentAccount = await assertOperatingUnitInternalCurrentParentAccountTx(tx, {
+    tenantId,
+    legalEntityId,
+    accountId: ouDueToCentralParentAccountId,
+    fieldLabel: "ouDueToCentralParentAccountId",
+    expectedAccountType: "LIABILITY",
+    expectedNormalSide: "CREDIT",
+  });
+
+  const resolvedAccountParentById =
+    accountParentById instanceof Map
+      ? accountParentById
+      : await loadLegalEntityAccountHierarchy(tx, tenantId, legalEntityId);
+  const childRowsResult = await tx.query(
+    `SELECT id, code, parent_account_id
+     FROM accounts
+     WHERE parent_account_id IN (?, ?)
+     FOR UPDATE`,
+    [parsePositiveInt(dueFromParentAccount.id), parsePositiveInt(dueToParentAccount.id)]
+  );
+  const childRows = childRowsResult.rows || [];
+  const dueFromUsage = collectUsedChildSequences(
+    childRows,
+    dueFromParentAccount.id,
+    dueFromParentAccount.code
+  );
+  const dueToUsage = collectUsedChildSequences(
+    childRows,
+    dueToParentAccount.id,
+    dueToParentAccount.code
+  );
+  const createdAccounts = [];
+  const reusedAccounts = [];
+  const warnings = [];
+  const finalAccounts = {
+    centralDueFrom: null,
+    centralDueTo: null,
+    ouDueFromCentral: null,
+    ouDueToCentral: null,
+  };
+
+  const addReusedAccount = (account, role) => {
+    reusedAccounts.push(
+      summarizeProvisionedAccount(account, {
+        role,
+        operatingUnitId: parsePositiveInt(operatingUnit.id),
+      })
+    );
+  };
+  const addCreatedAccount = (account, role) => {
+    createdAccounts.push(
+      summarizeProvisionedAccount(account, {
+        role,
+        operatingUnitId: parsePositiveInt(operatingUnit.id),
+      })
+    );
+  };
+
+  const ensureCentralPair = async ({
+    assetFieldLabel,
+    assetExistingAccountId,
+    assetRole,
+    assetColumnName,
+    assetRoleLabel,
+    assetTargetKey,
+    liabilityFieldLabel,
+    liabilityExistingAccountId,
+    liabilityRole,
+    liabilityColumnName,
+    liabilityRoleLabel,
+    liabilityTargetKey,
+  }) => {
+    const assetCandidate = await inspectOperatingUnitCurrentAccountCandidateTx(tx, {
+      tenantId,
+      legalEntityId,
+      accountId: assetExistingAccountId,
+      fieldLabel: assetFieldLabel,
       expectedAccountType: "ASSET",
       expectedNormalSide: "DEBIT",
+      expectedParentAccountId: dueFromParentAccount.id,
+      accountParentById: resolvedAccountParentById,
+      uniquenessCheck: async (accountId) =>
+        assertUniqueOperatingUnitInternalCurrentMappingTx(tx, {
+          tenantId,
+          legalEntityId,
+          code: operatingUnit.code,
+          accountId,
+          fieldLabel: assetFieldLabel,
+          columnName: assetColumnName,
+          roleLabel: assetRoleLabel,
+        }),
+      preservedManualWarning: buildProvisionWarning(
+        "PRESERVED_MANUAL_OU_CURRENT_ACCOUNT",
+        `${assetFieldLabel} already points to a valid account outside the saved Due From parent and was left unchanged`,
+        {
+          operatingUnitId: parsePositiveInt(operatingUnit.id),
+          field: assetFieldLabel,
+          accountId: parsePositiveInt(assetExistingAccountId),
+          expectedParentAccountId: parsePositiveInt(dueFromParentAccount.id),
+        }
+      ),
     });
-    let ouDueToCentralAccount = await resolveReusableOperatingUnitCurrentAccountTx(tx, {
+    const liabilityCandidate = await inspectOperatingUnitCurrentAccountCandidateTx(tx, {
       tenantId,
       legalEntityId,
-      accountId: operatingUnit.ou_due_to_central_account_id,
-      fieldLabel: "ouDueToCentralAccountId",
+      accountId: liabilityExistingAccountId,
+      fieldLabel: liabilityFieldLabel,
       expectedAccountType: "LIABILITY",
       expectedNormalSide: "CREDIT",
+      expectedParentAccountId: dueToParentAccount.id,
+      accountParentById: resolvedAccountParentById,
+      uniquenessCheck: async (accountId) =>
+        assertUniqueOperatingUnitInternalCurrentMappingTx(tx, {
+          tenantId,
+          legalEntityId,
+          code: operatingUnit.code,
+          accountId,
+          fieldLabel: liabilityFieldLabel,
+          columnName: liabilityColumnName,
+          roleLabel: liabilityRoleLabel,
+        }),
+      preservedManualWarning: buildProvisionWarning(
+        "PRESERVED_MANUAL_OU_CURRENT_ACCOUNT",
+        `${liabilityFieldLabel} already points to a valid account outside the saved Due To parent and was left unchanged`,
+        {
+          operatingUnitId: parsePositiveInt(operatingUnit.id),
+          field: liabilityFieldLabel,
+          accountId: parsePositiveInt(liabilityExistingAccountId),
+          expectedParentAccountId: parsePositiveInt(dueToParentAccount.id),
+        }
+      ),
     });
 
-    const childRowsResult = await tx.query(
-      `SELECT id, code, parent_account_id
-       FROM accounts
-       WHERE parent_account_id IN (?, ?)
-       FOR UPDATE`,
-      [
-        parsePositiveInt(centralDueFromParentAccount.id),
-        parsePositiveInt(ouDueToCentralParentAccount.id),
-      ]
-    );
-    const childRows = childRowsResult.rows || [];
-    const centralDueFromUsage = collectUsedChildSequences(
-      childRows,
-      centralDueFromParentAccount.id,
-      centralDueFromParentAccount.code
-    );
-    const ouDueToUsage = collectUsedChildSequences(
-      childRows,
-      ouDueToCentralParentAccount.id,
-      ouDueToCentralParentAccount.code
-    );
-    const createdAccounts = [];
+    let assetAccount = assetCandidate.account;
+    let liabilityAccount = liabilityCandidate.account;
 
-    if (!centralDueFromAccount && !ouDueToCentralAccount) {
-      const allocation = pickNextSharedChildSequence(
-        centralDueFromUsage,
-        ouDueToUsage
+    if (assetCandidate.warning) {
+      warnings.push(assetCandidate.warning);
+    }
+    if (liabilityCandidate.warning) {
+      warnings.push(liabilityCandidate.warning);
+    }
+    if (assetCandidate.status === "invalid") {
+      warnings.push(
+        buildProvisionWarning(
+          "REPAIRED_INVALID_OU_CURRENT_ACCOUNT",
+          `${assetFieldLabel} referenced an invalid or conflicting account and was re-provisioned`,
+          {
+            operatingUnitId: parsePositiveInt(operatingUnit.id),
+            field: assetFieldLabel,
+            reason: assetCandidate.reason,
+          }
+        )
       );
-      centralDueFromUsage.usedSequences.add(allocation.sequence);
-      ouDueToUsage.usedSequences.add(allocation.sequence);
+    }
+    if (liabilityCandidate.status === "invalid") {
+      warnings.push(
+        buildProvisionWarning(
+          "REPAIRED_INVALID_OU_CURRENT_ACCOUNT",
+          `${liabilityFieldLabel} referenced an invalid or conflicting account and was re-provisioned`,
+          {
+            operatingUnitId: parsePositiveInt(operatingUnit.id),
+            field: liabilityFieldLabel,
+            reason: liabilityCandidate.reason,
+          }
+        )
+      );
+    }
 
-      centralDueFromAccount = await insertOperatingUnitCurrentChildAccountTx(tx, {
-        parentAccount: centralDueFromParentAccount,
+    if (!assetAccount && !liabilityAccount) {
+      const allocation = pickNextSharedChildSequence(dueFromUsage, dueToUsage);
+      dueFromUsage.usedSequences.add(allocation.sequence);
+      dueToUsage.usedSequences.add(allocation.sequence);
+
+      assetAccount = await insertOperatingUnitCurrentChildAccountTx(tx, {
+        parentAccount: dueFromParentAccount,
         code: buildChildAccountCode(
-          centralDueFromParentAccount.code,
+          dueFromParentAccount.code,
           allocation.sequence,
           allocation.width
         ),
         name: buildCentralCurrentAccountName({
           operatingUnit,
-          role: "CENTRAL_DUE_FROM",
+          role: assetRole,
         }),
         accountType: "ASSET",
         normalSide: "DEBIT",
       });
-      ouDueToCentralAccount = await insertOperatingUnitCurrentChildAccountTx(tx, {
-        parentAccount: ouDueToCentralParentAccount,
+      liabilityAccount = await insertOperatingUnitCurrentChildAccountTx(tx, {
+        parentAccount: dueToParentAccount,
         code: buildChildAccountCode(
-          ouDueToCentralParentAccount.code,
+          dueToParentAccount.code,
           allocation.sequence,
           allocation.width
         ),
         name: buildCentralCurrentAccountName({
           operatingUnit,
-          role: "OU_DUE_TO_CENTRAL",
+          role: liabilityRole,
         }),
         accountType: "LIABILITY",
         normalSide: "CREDIT",
       });
-      createdAccounts.push(
-        {
-          id: centralDueFromAccount.id,
-          code: centralDueFromAccount.code,
-          name: centralDueFromAccount.name,
-          role: "CENTRAL_DUE_FROM",
-          operatingUnitId: parsePositiveInt(operatingUnit.id),
-        },
-        {
-          id: ouDueToCentralAccount.id,
-          code: ouDueToCentralAccount.code,
-          name: ouDueToCentralAccount.name,
-          role: "OU_DUE_TO_CENTRAL",
-          operatingUnitId: parsePositiveInt(operatingUnit.id),
-        }
-      );
+      addCreatedAccount(assetAccount, assetRole);
+      addCreatedAccount(liabilityAccount, liabilityRole);
     } else {
-      if (!centralDueFromAccount) {
+      if (!assetAccount) {
         const preferredSequence = parsePreferredChildSequenceFromExistingAccount(
-          ouDueToCentralAccount
+          liabilityAccount
         );
         const allocation = pickNextAvailableChildSequence(
-          centralDueFromUsage,
+          dueFromUsage,
           preferredSequence?.sequence,
           preferredSequence?.width
         );
-        centralDueFromUsage.usedSequences.add(allocation.sequence);
-        centralDueFromAccount = await insertOperatingUnitCurrentChildAccountTx(tx, {
-          parentAccount: centralDueFromParentAccount,
+        dueFromUsage.usedSequences.add(allocation.sequence);
+        assetAccount = await insertOperatingUnitCurrentChildAccountTx(tx, {
+          parentAccount: dueFromParentAccount,
           code: buildChildAccountCode(
-            centralDueFromParentAccount.code,
+            dueFromParentAccount.code,
             allocation.sequence,
             allocation.width
           ),
           name: buildCentralCurrentAccountName({
             operatingUnit,
-            role: "CENTRAL_DUE_FROM",
+            role: assetRole,
           }),
           accountType: "ASSET",
           normalSide: "DEBIT",
         });
-        createdAccounts.push({
-          id: centralDueFromAccount.id,
-          code: centralDueFromAccount.code,
-          name: centralDueFromAccount.name,
-          role: "CENTRAL_DUE_FROM",
-          operatingUnitId: parsePositiveInt(operatingUnit.id),
-        });
+        addCreatedAccount(assetAccount, assetRole);
       }
 
-      if (!ouDueToCentralAccount) {
+      if (!liabilityAccount) {
         const preferredSequence = parsePreferredChildSequenceFromExistingAccount(
-          centralDueFromAccount
+          assetAccount
         );
         const allocation = pickNextAvailableChildSequence(
-          ouDueToUsage,
+          dueToUsage,
           preferredSequence?.sequence,
           preferredSequence?.width
         );
-        ouDueToUsage.usedSequences.add(allocation.sequence);
-        ouDueToCentralAccount = await insertOperatingUnitCurrentChildAccountTx(tx, {
-          parentAccount: ouDueToCentralParentAccount,
+        dueToUsage.usedSequences.add(allocation.sequence);
+        liabilityAccount = await insertOperatingUnitCurrentChildAccountTx(tx, {
+          parentAccount: dueToParentAccount,
           code: buildChildAccountCode(
-            ouDueToCentralParentAccount.code,
+            dueToParentAccount.code,
             allocation.sequence,
             allocation.width
           ),
           name: buildCentralCurrentAccountName({
             operatingUnit,
-            role: "OU_DUE_TO_CENTRAL",
+            role: liabilityRole,
           }),
           accountType: "LIABILITY",
           normalSide: "CREDIT",
         });
-        createdAccounts.push({
-          id: ouDueToCentralAccount.id,
-          code: ouDueToCentralAccount.code,
-          name: ouDueToCentralAccount.name,
-          role: "OU_DUE_TO_CENTRAL",
-          operatingUnitId: parsePositiveInt(operatingUnit.id),
-        });
+        addCreatedAccount(liabilityAccount, liabilityRole);
+      }
+
+      if (assetCandidate.status === "reused" || assetCandidate.status === "preserved_manual") {
+        addReusedAccount(assetAccount, assetRole);
+      }
+      if (
+        liabilityCandidate.status === "reused" ||
+        liabilityCandidate.status === "preserved_manual"
+      ) {
+        addReusedAccount(liabilityAccount, liabilityRole);
       }
     }
 
@@ -1374,49 +1841,389 @@ export async function autoProvisionOperatingUnitCentralCurrentAccounts({
       tenantId,
       legalEntityId,
       code: operatingUnit.code,
-      accountId: centralDueFromAccount.id,
-      fieldLabel: "centralDueFromAccountId",
-      columnName: "central_due_from_account_id",
-      roleLabel: "Central Due From OU account mapping",
+      accountId: assetAccount.id,
+      fieldLabel: assetFieldLabel,
+      columnName: assetColumnName,
+      roleLabel: assetRoleLabel,
     });
     await assertUniqueOperatingUnitInternalCurrentMappingTx(tx, {
       tenantId,
       legalEntityId,
       code: operatingUnit.code,
-      accountId: ouDueToCentralAccount.id,
-      fieldLabel: "ouDueToCentralAccountId",
-      columnName: "ou_due_to_central_account_id",
-      roleLabel: "OU Due To Central account mapping",
+      accountId: liabilityAccount.id,
+      fieldLabel: liabilityFieldLabel,
+      columnName: liabilityColumnName,
+      roleLabel: liabilityRoleLabel,
     });
 
-    await updateOperatingUnitInternalCurrentAccountsRow({
-      tenantId,
-      operatingUnitId: parsePositiveInt(operatingUnit.id),
-      centralDueFromAccountId: centralDueFromAccount.id,
-      ouDueToCentralAccountId: ouDueToCentralAccount.id,
-      runQuery: (sql, params) => tx.query(sql, params),
-    });
+    finalAccounts[assetTargetKey] = assetAccount;
+    finalAccounts[liabilityTargetKey] = liabilityAccount;
+  };
 
-    return {
-      legalEntityId: parsePositiveInt(legalEntityId),
-      operatingUnitId: parsePositiveInt(operatingUnit.id),
-      centralDueFromParentAccountId: parsePositiveInt(centralDueFromParentAccount.id),
-      ouDueToCentralParentAccountId: parsePositiveInt(ouDueToCentralParentAccount.id),
-      createdAccounts,
-      operatingUnit: {
-        id: parsePositiveInt(operatingUnit.id),
-        code: String(operatingUnit.code || ""),
-        name: String(operatingUnit.name || ""),
-        centralDueFromAccountId: centralDueFromAccount.id,
-        centralDueFromAccountCode: centralDueFromAccount.code,
-        centralDueFromAccountName: centralDueFromAccount.name,
-        ouDueToCentralAccountId: ouDueToCentralAccount.id,
-        ouDueToCentralAccountCode: ouDueToCentralAccount.code,
-        ouDueToCentralAccountName: ouDueToCentralAccount.name,
-        capitalSelfBalancingReady: true,
-      },
-    };
+  await ensureCentralPair({
+    assetFieldLabel: "centralDueFromAccountId",
+    assetExistingAccountId: operatingUnit.central_due_from_account_id,
+    assetRole: "CENTRAL_DUE_FROM",
+    assetColumnName: "central_due_from_account_id",
+    assetRoleLabel: "Central Due From OU account mapping",
+    assetTargetKey: "centralDueFrom",
+    liabilityFieldLabel: "ouDueToCentralAccountId",
+    liabilityExistingAccountId: operatingUnit.ou_due_to_central_account_id,
+    liabilityRole: "OU_DUE_TO_CENTRAL",
+    liabilityColumnName: "ou_due_to_central_account_id",
+    liabilityRoleLabel: "OU Due To Central account mapping",
+    liabilityTargetKey: "ouDueToCentral",
   });
+
+  if (provisionAllDirections) {
+    await ensureCentralPair({
+      assetFieldLabel: "ouDueFromCentralAccountId",
+      assetExistingAccountId: operatingUnit.ou_due_from_central_account_id,
+      assetRole: "OU_DUE_FROM_CENTRAL",
+      assetColumnName: "ou_due_from_central_account_id",
+      assetRoleLabel: "OU Due From Central account mapping",
+      assetTargetKey: "ouDueFromCentral",
+      liabilityFieldLabel: "centralDueToAccountId",
+      liabilityExistingAccountId: operatingUnit.central_due_to_account_id,
+      liabilityRole: "CENTRAL_DUE_TO",
+      liabilityColumnName: "central_due_to_account_id",
+      liabilityRoleLabel: "Central Due To OU account mapping",
+      liabilityTargetKey: "centralDueTo",
+    });
+  }
+
+  const finalCentralDueFromAccountId = parsePositiveInt(finalAccounts.centralDueFrom?.id);
+  const finalCentralDueToAccountId = provisionAllDirections
+    ? parsePositiveInt(finalAccounts.centralDueTo?.id)
+    : parsePositiveInt(operatingUnit.central_due_to_account_id);
+  const finalOuDueFromCentralAccountId = provisionAllDirections
+    ? parsePositiveInt(finalAccounts.ouDueFromCentral?.id)
+    : parsePositiveInt(operatingUnit.ou_due_from_central_account_id);
+  const finalOuDueToCentralAccountId = parsePositiveInt(finalAccounts.ouDueToCentral?.id);
+
+  await updateOperatingUnitInternalCurrentAccountsRow({
+    tenantId,
+    operatingUnitId: parsePositiveInt(operatingUnit.id),
+    centralDueFromAccountId: finalCentralDueFromAccountId,
+    centralDueToAccountId: finalCentralDueToAccountId,
+    ouDueFromCentralAccountId: finalOuDueFromCentralAccountId,
+    ouDueToCentralAccountId: finalOuDueToCentralAccountId,
+    runQuery: (sql, params) => tx.query(sql, params),
+  });
+
+  const operatingUnitChanged =
+    finalCentralDueFromAccountId !== parsePositiveInt(operatingUnit.central_due_from_account_id) ||
+    finalCentralDueToAccountId !== parsePositiveInt(operatingUnit.central_due_to_account_id) ||
+    finalOuDueFromCentralAccountId !==
+      parsePositiveInt(operatingUnit.ou_due_from_central_account_id) ||
+    finalOuDueToCentralAccountId !==
+      parsePositiveInt(operatingUnit.ou_due_to_central_account_id);
+
+  const operatingUnitSummary = {
+    id: parsePositiveInt(operatingUnit.id),
+    code: String(operatingUnit.code || ""),
+    name: String(operatingUnit.name || ""),
+    centralDueFromAccountId: finalCentralDueFromAccountId,
+    centralDueFromAccountCode: String(finalAccounts.centralDueFrom?.code || ""),
+    centralDueFromAccountName: String(finalAccounts.centralDueFrom?.name || ""),
+    centralDueToAccountId: finalCentralDueToAccountId,
+    centralDueToAccountCode: String(finalAccounts.centralDueTo?.code || ""),
+    centralDueToAccountName: String(finalAccounts.centralDueTo?.name || ""),
+    ouDueFromCentralAccountId: finalOuDueFromCentralAccountId,
+    ouDueFromCentralAccountCode: String(finalAccounts.ouDueFromCentral?.code || ""),
+    ouDueFromCentralAccountName: String(finalAccounts.ouDueFromCentral?.name || ""),
+    ouDueToCentralAccountId: finalOuDueToCentralAccountId,
+    ouDueToCentralAccountCode: String(finalAccounts.ouDueToCentral?.code || ""),
+    ouDueToCentralAccountName: String(finalAccounts.ouDueToCentral?.name || ""),
+    capitalSelfBalancingReady: Boolean(
+      finalCentralDueFromAccountId && finalOuDueToCentralAccountId
+    ),
+    currentAccountProvisioningReady: provisionAllDirections
+      ? Boolean(
+          finalCentralDueFromAccountId &&
+            finalCentralDueToAccountId &&
+            finalOuDueFromCentralAccountId &&
+            finalOuDueToCentralAccountId
+        )
+      : Boolean(finalCentralDueFromAccountId && finalOuDueToCentralAccountId),
+  };
+
+  return {
+    legalEntityId: parsePositiveInt(legalEntityId),
+    operatingUnitId: parsePositiveInt(operatingUnit.id),
+    centralDueFromParentAccountId: parsePositiveInt(dueFromParentAccount.id),
+    centralDueToParentAccountId: provisionAllDirections
+      ? parsePositiveInt(dueToParentAccount.id)
+      : null,
+    ouDueFromCentralParentAccountId: provisionAllDirections
+      ? parsePositiveInt(dueFromParentAccount.id)
+      : null,
+    ouDueToCentralParentAccountId: parsePositiveInt(dueToParentAccount.id),
+    createdAccounts,
+    reusedAccounts,
+    updatedOperatingUnits: operatingUnitChanged ? [operatingUnitSummary] : [],
+    warnings,
+    operatingUnit: operatingUnitSummary,
+  };
+}
+
+export async function upsertOperatingUnitCurrentAccountConfig({
+  req,
+  tenantId,
+  legalEntityId,
+  dueFromParentAccountId,
+  dueToParentAccountId,
+  autoProvisionOnOperatingUnitCreate,
+  assertLegalEntityBelongsToTenant,
+  assertScopeAccess,
+}) {
+  await assertLegalEntityBelongsToTenant(tenantId, legalEntityId, "legalEntityId");
+  assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
+
+  const row = await withTransaction(async (tx) =>
+    upsertOperatingUnitCurrentAccountConfigTx(tx, {
+      tenantId,
+      legalEntityId,
+      dueFromParentAccountId,
+      dueToParentAccountId,
+      autoProvisionOnOperatingUnitCreate,
+    })
+  );
+
+  return {
+    row,
+  };
+}
+
+export async function upsertOperatingUnitCurrentAccountConfigTx(
+  tx,
+  {
+    tenantId,
+    legalEntityId,
+    dueFromParentAccountId,
+    dueToParentAccountId,
+    autoProvisionOnOperatingUnitCreate = true,
+  }
+) {
+  await assertOperatingUnitCurrentAccountConfigParentAccountTx(tx, {
+    tenantId,
+    legalEntityId,
+    accountId: dueFromParentAccountId,
+    fieldLabel: "dueFromParentAccountId",
+    expectedAccountType: "ASSET",
+    expectedNormalSide: "DEBIT",
+  });
+  await assertOperatingUnitCurrentAccountConfigParentAccountTx(tx, {
+    tenantId,
+    legalEntityId,
+    accountId: dueToParentAccountId,
+    fieldLabel: "dueToParentAccountId",
+    expectedAccountType: "LIABILITY",
+    expectedNormalSide: "CREDIT",
+  });
+
+  await upsertOperatingUnitCurrentAccountConfigRow({
+    tenantId,
+    legalEntityId,
+    dueFromParentAccountId,
+    dueToParentAccountId,
+    autoProvisionOnOperatingUnitCreate,
+    runQuery: (sql, params) => tx.query(sql, params),
+  });
+
+  return findOperatingUnitCurrentAccountConfigRowTx(tx, {
+    tenantId,
+    legalEntityId,
+  });
+}
+
+export async function applyOperatingUnitCurrentAccountConfig({
+  req,
+  tenantId,
+  legalEntityId,
+  operatingUnitId = null,
+  repairMissingOnly = true,
+  assertLegalEntityBelongsToTenant,
+  assertScopeAccess,
+}) {
+  await assertLegalEntityBelongsToTenant(tenantId, legalEntityId, "legalEntityId");
+  assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
+  if (parsePositiveInt(operatingUnitId)) {
+    assertScopeAccess(req, "operating_unit", operatingUnitId, "operatingUnitId");
+  }
+
+  return withTransaction(async (tx) =>
+    applyOperatingUnitCurrentAccountConfigTx(tx, {
+      tenantId,
+      legalEntityId,
+      operatingUnitId,
+      repairMissingOnly,
+    })
+  );
+}
+
+export async function applyOperatingUnitCurrentAccountConfigTx(
+  tx,
+  {
+    tenantId,
+    legalEntityId,
+    operatingUnitId = null,
+    repairMissingOnly = true,
+  }
+) {
+  const config = await findOperatingUnitCurrentAccountConfigRowTx(tx, {
+    tenantId,
+    legalEntityId,
+  });
+  if (!config) {
+    throw badRequest(
+      "Setup required: configure saved current-account parent accounts for selected legalEntityId"
+    );
+  }
+
+  const dueFromParentAccount = await assertOperatingUnitCurrentAccountConfigParentAccountTx(tx, {
+    tenantId,
+    legalEntityId,
+    accountId: config.due_from_parent_account_id,
+    fieldLabel: "dueFromParentAccountId",
+    expectedAccountType: "ASSET",
+    expectedNormalSide: "DEBIT",
+  });
+  const dueToParentAccount = await assertOperatingUnitCurrentAccountConfigParentAccountTx(tx, {
+    tenantId,
+    legalEntityId,
+    accountId: config.due_to_parent_account_id,
+    fieldLabel: "dueToParentAccountId",
+    expectedAccountType: "LIABILITY",
+    expectedNormalSide: "CREDIT",
+  });
+
+  const accountParentById = await loadLegalEntityAccountHierarchy(tx, tenantId, legalEntityId);
+  const allOperatingUnits = await listOperatingUnitsForLegalEntityTx(tx, {
+    tenantId,
+    legalEntityId,
+  });
+  const targetOperatingUnitId = parsePositiveInt(operatingUnitId);
+  const warnings = [];
+  if (!repairMissingOnly) {
+    warnings.push(
+      buildProvisionWarning(
+        "REBASELINE_NOT_SUPPORTED",
+        "repairMissingOnly=false is not supported yet; apply continued in repair-missing-only mode"
+      )
+    );
+  }
+
+  let selectedOperatingUnit = null;
+  if (targetOperatingUnitId) {
+    selectedOperatingUnit =
+      allOperatingUnits.find((row) => parsePositiveInt(row.id) === targetOperatingUnitId) || null;
+    if (!selectedOperatingUnit) {
+      throw badRequest("operatingUnitId not found for selected legalEntityId");
+    }
+  }
+
+  const activeOperatingUnits = allOperatingUnits.filter((row) => isOperatingUnitActive(row));
+  const operatingUnitsToApply = selectedOperatingUnit
+    ? isOperatingUnitActive(selectedOperatingUnit)
+      ? [selectedOperatingUnit]
+      : []
+    : activeOperatingUnits;
+
+  if (selectedOperatingUnit && !isOperatingUnitActive(selectedOperatingUnit)) {
+    warnings.push(
+      buildProvisionWarning(
+        "SKIPPED_INACTIVE_OPERATING_UNIT",
+        "Selected operatingUnitId is not ACTIVE, so current-account apply skipped it",
+        {
+          operatingUnitId: parsePositiveInt(selectedOperatingUnit.id),
+          status: String(selectedOperatingUnit.status || ""),
+        }
+      )
+    );
+  }
+
+  const createdAccounts = [];
+  const reusedAccounts = [];
+  const updatedOperatingUnits = [];
+  const updatedPartnerMappings = [];
+  const partnerMappings = [];
+
+  for (const unit of operatingUnitsToApply) {
+    // eslint-disable-next-line no-await-in-loop
+    const operation = await autoProvisionOperatingUnitCentralCurrentAccountsTx(tx, {
+      tenantId,
+      legalEntityId,
+      operatingUnitId: parsePositiveInt(unit.id),
+      centralDueFromParentAccountId: dueFromParentAccount.id,
+      ouDueToCentralParentAccountId: dueToParentAccount.id,
+      provisionAllDirections: true,
+      accountParentById,
+    });
+    createdAccounts.push(...operation.createdAccounts);
+    reusedAccounts.push(...operation.reusedAccounts);
+    updatedOperatingUnits.push(...operation.updatedOperatingUnits);
+    warnings.push(...operation.warnings);
+  }
+
+  const partnerPairs = [];
+  if (targetOperatingUnitId && selectedOperatingUnit && isOperatingUnitActive(selectedOperatingUnit)) {
+    for (const peer of activeOperatingUnits) {
+      if (parsePositiveInt(peer.id) === targetOperatingUnitId) {
+        continue;
+      }
+      partnerPairs.push([selectedOperatingUnit, peer]);
+    }
+  } else if (!targetOperatingUnitId) {
+    for (let index = 0; index < activeOperatingUnits.length; index += 1) {
+      for (let peerIndex = index + 1; peerIndex < activeOperatingUnits.length; peerIndex += 1) {
+        partnerPairs.push([activeOperatingUnits[index], activeOperatingUnits[peerIndex]]);
+      }
+    }
+  }
+
+  for (const [sourceUnit, targetUnit] of partnerPairs) {
+    // eslint-disable-next-line no-await-in-loop
+    const operation = await autoProvisionOperatingUnitPartnerCurrentAccountsTx(tx, {
+      tenantId,
+      legalEntityId,
+      operatingUnitId: parsePositiveInt(sourceUnit.id),
+      partnerOperatingUnitId: parsePositiveInt(targetUnit.id),
+      dueFromParentAccountId: dueFromParentAccount.id,
+      dueToParentAccountId: dueToParentAccount.id,
+      accountParentById,
+    });
+    createdAccounts.push(...operation.createdAccounts);
+    reusedAccounts.push(...operation.reusedAccounts);
+    updatedPartnerMappings.push(...operation.updatedPartnerMappings);
+    partnerMappings.push(...operation.mappings);
+    warnings.push(...operation.warnings);
+  }
+
+  await markOperatingUnitCurrentAccountConfigAppliedRow({
+    tenantId,
+    legalEntityId,
+    runQuery: (sql, params) => tx.query(sql, params),
+  });
+  const updatedConfig = await findOperatingUnitCurrentAccountConfigRowTx(tx, {
+    tenantId,
+    legalEntityId,
+  });
+
+  return {
+    legalEntityId: parsePositiveInt(legalEntityId),
+    operatingUnitId: targetOperatingUnitId || null,
+    repairMissingOnly: true,
+    dueFromParentAccountId: parsePositiveInt(dueFromParentAccount.id),
+    dueToParentAccountId: parsePositiveInt(dueToParentAccount.id),
+    createdAccounts,
+    reusedAccounts,
+    updatedOperatingUnits,
+    updatedPartnerMappings,
+    partnerMappings,
+    warnings,
+    lastAppliedAt: updatedConfig?.last_applied_at || null,
+  };
 }
 
 export async function autoProvisionOperatingUnitPartnerCurrentAccounts({
@@ -1445,147 +2252,267 @@ export async function autoProvisionOperatingUnitPartnerCurrentAccounts({
   }
 
   return withTransaction(async (tx) => {
-    const operatingUnit = await loadOperatingUnitIdentityTx(tx, {
-      tenantId,
-      operatingUnitId,
-      fieldLabel: "operatingUnitId",
-    });
-    const partnerOperatingUnit = await loadOperatingUnitIdentityTx(tx, {
-      tenantId,
-      operatingUnitId: partnerOperatingUnitId,
-      fieldLabel: "partnerOperatingUnitId",
-    });
-
-    if (parsePositiveInt(operatingUnit.legal_entity_id) !== parsePositiveInt(legalEntityId)) {
-      throw badRequest("operatingUnitId must belong to selected legalEntityId");
-    }
-    if (
-      parsePositiveInt(partnerOperatingUnit.legal_entity_id) !== parsePositiveInt(legalEntityId)
-    ) {
-      throw badRequest("partnerOperatingUnitId must belong to selected legalEntityId");
-    }
-
-    const dueFromParentAccount = await assertOperatingUnitInternalCurrentParentAccountTx(tx, {
+    return autoProvisionOperatingUnitPartnerCurrentAccountsTx(tx, {
       tenantId,
       legalEntityId,
-      accountId: dueFromParentAccountId,
-      fieldLabel: "dueFromParentAccountId",
+      operatingUnitId,
+      partnerOperatingUnitId,
+      dueFromParentAccountId,
+      dueToParentAccountId,
+    });
+  });
+}
+
+export async function autoProvisionOperatingUnitPartnerCurrentAccountsTx(
+  tx,
+  {
+    tenantId,
+    legalEntityId,
+    operatingUnitId,
+    partnerOperatingUnitId,
+    dueFromParentAccountId,
+    dueToParentAccountId,
+    accountParentById = null,
+  }
+) {
+  const operatingUnit = await loadOperatingUnitIdentityTx(tx, {
+    tenantId,
+    operatingUnitId,
+    fieldLabel: "operatingUnitId",
+  });
+  const partnerOperatingUnit = await loadOperatingUnitIdentityTx(tx, {
+    tenantId,
+    operatingUnitId: partnerOperatingUnitId,
+    fieldLabel: "partnerOperatingUnitId",
+  });
+
+  if (parsePositiveInt(operatingUnit.legal_entity_id) !== parsePositiveInt(legalEntityId)) {
+    throw badRequest("operatingUnitId must belong to selected legalEntityId");
+  }
+  if (
+    parsePositiveInt(partnerOperatingUnit.legal_entity_id) !== parsePositiveInt(legalEntityId)
+  ) {
+    throw badRequest("partnerOperatingUnitId must belong to selected legalEntityId");
+  }
+
+  const dueFromParentAccount = await assertOperatingUnitInternalCurrentParentAccountTx(tx, {
+    tenantId,
+    legalEntityId,
+    accountId: dueFromParentAccountId,
+    fieldLabel: "dueFromParentAccountId",
+    expectedAccountType: "ASSET",
+    expectedNormalSide: "DEBIT",
+  });
+  const dueToParentAccount = await assertOperatingUnitInternalCurrentParentAccountTx(tx, {
+    tenantId,
+    legalEntityId,
+    accountId: dueToParentAccountId,
+    fieldLabel: "dueToParentAccountId",
+    expectedAccountType: "LIABILITY",
+    expectedNormalSide: "CREDIT",
+  });
+
+  const resolvedAccountParentById =
+    accountParentById instanceof Map
+      ? accountParentById
+      : await loadLegalEntityAccountHierarchy(tx, tenantId, legalEntityId);
+  const mappingResult = await tx.query(
+    `SELECT
+       map.id,
+       map.operating_unit_id,
+       map.partner_operating_unit_id,
+       map.due_from_account_id,
+       dfa.code AS due_from_account_code,
+       dfa.name AS due_from_account_name,
+       map.due_to_account_id,
+       dta.code AS due_to_account_code,
+       dta.name AS due_to_account_name
+     FROM operating_unit_partner_current_accounts map
+     LEFT JOIN accounts dfa ON dfa.id = map.due_from_account_id
+     LEFT JOIN accounts dta ON dta.id = map.due_to_account_id
+     WHERE map.tenant_id = ?
+       AND map.legal_entity_id = ?
+       AND (
+         (map.operating_unit_id = ? AND map.partner_operating_unit_id = ?)
+         OR
+         (map.operating_unit_id = ? AND map.partner_operating_unit_id = ?)
+       )
+     FOR UPDATE`,
+    [
+      tenantId,
+      legalEntityId,
+      parsePositiveInt(operatingUnitId),
+      parsePositiveInt(partnerOperatingUnitId),
+      parsePositiveInt(partnerOperatingUnitId),
+      parsePositiveInt(operatingUnitId),
+    ]
+  );
+  const existingMappingsByKey = new Map();
+  for (const row of mappingResult.rows || []) {
+    existingMappingsByKey.set(
+      `${parsePositiveInt(row.operating_unit_id)}:${parsePositiveInt(
+        row.partner_operating_unit_id
+      )}`,
+      row
+    );
+  }
+
+  const childRowsResult = await tx.query(
+    `SELECT id, code, parent_account_id
+     FROM accounts
+     WHERE parent_account_id IN (?, ?)
+     FOR UPDATE`,
+    [parsePositiveInt(dueFromParentAccount.id), parsePositiveInt(dueToParentAccount.id)]
+  );
+  const childRows = childRowsResult.rows || [];
+  const dueFromUsage = collectUsedChildSequences(
+    childRows,
+    dueFromParentAccount.id,
+    dueFromParentAccount.code
+  );
+  const dueToUsage = collectUsedChildSequences(
+    childRows,
+    dueToParentAccount.id,
+    dueToParentAccount.code
+  );
+  const createdAccounts = [];
+  const reusedAccounts = [];
+  const updatedPartnerMappings = [];
+  const warnings = [];
+  const mappings = [];
+
+  const ensureDirectionalMapping = async ({
+    sourceOperatingUnit,
+    targetOperatingUnit,
+  }) => {
+    const mappingKey = `${parsePositiveInt(sourceOperatingUnit.id)}:${parsePositiveInt(
+      targetOperatingUnit.id
+    )}`;
+    const existing = existingMappingsByKey.get(mappingKey) || null;
+
+    const dueFromCandidate = await inspectOperatingUnitCurrentAccountCandidateTx(tx, {
+      tenantId,
+      legalEntityId,
+      accountId: existing?.due_from_account_id,
+      fieldLabel: "dueFromAccountId",
       expectedAccountType: "ASSET",
       expectedNormalSide: "DEBIT",
+      expectedParentAccountId: dueFromParentAccount.id,
+      accountParentById: resolvedAccountParentById,
+      uniquenessCheck: async (accountId) =>
+        assertUniqueOperatingUnitPartnerCurrentAccountTx(tx, {
+          tenantId,
+          legalEntityId,
+          operatingUnitId: parsePositiveInt(sourceOperatingUnit.id),
+          partnerOperatingUnitId: parsePositiveInt(targetOperatingUnit.id),
+          accountId,
+          fieldLabel: "dueFromAccountId",
+          columnName: "due_from_account_id",
+          roleLabel: "Due From Partner account mapping",
+        }),
+      preservedManualWarning: buildProvisionWarning(
+        "PRESERVED_MANUAL_PARTNER_CURRENT_ACCOUNT",
+        `dueFromAccountId for ${buildOperatingUnitLabel(sourceOperatingUnit)} -> ${buildOperatingUnitLabel(
+          targetOperatingUnit
+        )} is outside the saved Due From parent and was left unchanged`,
+        {
+          operatingUnitId: parsePositiveInt(sourceOperatingUnit.id),
+          partnerOperatingUnitId: parsePositiveInt(targetOperatingUnit.id),
+          field: "dueFromAccountId",
+          accountId: parsePositiveInt(existing?.due_from_account_id),
+          expectedParentAccountId: parsePositiveInt(dueFromParentAccount.id),
+        }
+      ),
     });
-    const dueToParentAccount = await assertOperatingUnitInternalCurrentParentAccountTx(tx, {
+    const dueToCandidate = await inspectOperatingUnitCurrentAccountCandidateTx(tx, {
       tenantId,
       legalEntityId,
-      accountId: dueToParentAccountId,
-      fieldLabel: "dueToParentAccountId",
+      accountId: existing?.due_to_account_id,
+      fieldLabel: "dueToAccountId",
       expectedAccountType: "LIABILITY",
       expectedNormalSide: "CREDIT",
+      expectedParentAccountId: dueToParentAccount.id,
+      accountParentById: resolvedAccountParentById,
+      uniquenessCheck: async (accountId) =>
+        assertUniqueOperatingUnitPartnerCurrentAccountTx(tx, {
+          tenantId,
+          legalEntityId,
+          operatingUnitId: parsePositiveInt(sourceOperatingUnit.id),
+          partnerOperatingUnitId: parsePositiveInt(targetOperatingUnit.id),
+          accountId,
+          fieldLabel: "dueToAccountId",
+          columnName: "due_to_account_id",
+          roleLabel: "Due To Partner account mapping",
+        }),
+      preservedManualWarning: buildProvisionWarning(
+        "PRESERVED_MANUAL_PARTNER_CURRENT_ACCOUNT",
+        `dueToAccountId for ${buildOperatingUnitLabel(sourceOperatingUnit)} -> ${buildOperatingUnitLabel(
+          targetOperatingUnit
+        )} is outside the saved Due To parent and was left unchanged`,
+        {
+          operatingUnitId: parsePositiveInt(sourceOperatingUnit.id),
+          partnerOperatingUnitId: parsePositiveInt(targetOperatingUnit.id),
+          field: "dueToAccountId",
+          accountId: parsePositiveInt(existing?.due_to_account_id),
+          expectedParentAccountId: parsePositiveInt(dueToParentAccount.id),
+        }
+      ),
     });
 
-    const mappingResult = await tx.query(
-      `SELECT
-         map.id,
-         map.operating_unit_id,
-         map.partner_operating_unit_id,
-         map.due_from_account_id,
-         dfa.code AS due_from_account_code,
-         dfa.name AS due_from_account_name,
-         map.due_to_account_id,
-         dta.code AS due_to_account_code,
-         dta.name AS due_to_account_name
-       FROM operating_unit_partner_current_accounts map
-       LEFT JOIN accounts dfa ON dfa.id = map.due_from_account_id
-       LEFT JOIN accounts dta ON dta.id = map.due_to_account_id
-       WHERE map.tenant_id = ?
-         AND map.legal_entity_id = ?
-         AND (
-           (map.operating_unit_id = ? AND map.partner_operating_unit_id = ?)
-           OR
-           (map.operating_unit_id = ? AND map.partner_operating_unit_id = ?)
-         )
-       FOR UPDATE`,
-      [
-        tenantId,
-        legalEntityId,
-        parsePositiveInt(operatingUnitId),
-        parsePositiveInt(partnerOperatingUnitId),
-        parsePositiveInt(partnerOperatingUnitId),
-        parsePositiveInt(operatingUnitId),
-      ]
-    );
-    const existingMappingsByKey = new Map();
-    for (const row of mappingResult.rows || []) {
-      existingMappingsByKey.set(
-        `${parsePositiveInt(row.operating_unit_id)}:${parsePositiveInt(
-          row.partner_operating_unit_id
-        )}`,
-        row
+    let dueFromAccount = dueFromCandidate.account;
+    let dueToAccount = dueToCandidate.account;
+
+    if (dueFromCandidate.warning) {
+      warnings.push(dueFromCandidate.warning);
+    }
+    if (dueToCandidate.warning) {
+      warnings.push(dueToCandidate.warning);
+    }
+    if (dueFromCandidate.status === "invalid") {
+      warnings.push(
+        buildProvisionWarning(
+          "REPAIRED_INVALID_PARTNER_CURRENT_ACCOUNT",
+          `dueFromAccountId for ${buildOperatingUnitLabel(sourceOperatingUnit)} -> ${buildOperatingUnitLabel(
+            targetOperatingUnit
+          )} was invalid or conflicting and was re-provisioned`,
+          {
+            operatingUnitId: parsePositiveInt(sourceOperatingUnit.id),
+            partnerOperatingUnitId: parsePositiveInt(targetOperatingUnit.id),
+            field: "dueFromAccountId",
+            reason: dueFromCandidate.reason,
+          }
+        )
+      );
+    }
+    if (dueToCandidate.status === "invalid") {
+      warnings.push(
+        buildProvisionWarning(
+          "REPAIRED_INVALID_PARTNER_CURRENT_ACCOUNT",
+          `dueToAccountId for ${buildOperatingUnitLabel(sourceOperatingUnit)} -> ${buildOperatingUnitLabel(
+            targetOperatingUnit
+          )} was invalid or conflicting and was re-provisioned`,
+          {
+            operatingUnitId: parsePositiveInt(sourceOperatingUnit.id),
+            partnerOperatingUnitId: parsePositiveInt(targetOperatingUnit.id),
+            field: "dueToAccountId",
+            reason: dueToCandidate.reason,
+          }
+        )
       );
     }
 
-    const childRowsResult = await tx.query(
-      `SELECT id, code, parent_account_id
-       FROM accounts
-       WHERE parent_account_id IN (?, ?)
-       FOR UPDATE`,
-      [parsePositiveInt(dueFromParentAccount.id), parsePositiveInt(dueToParentAccount.id)]
-    );
-    const childRows = childRowsResult.rows || [];
-    const dueFromUsage = collectUsedChildSequences(
-      childRows,
-      dueFromParentAccount.id,
-      dueFromParentAccount.code
-    );
-    const dueToUsage = collectUsedChildSequences(
-      childRows,
-      dueToParentAccount.id,
-      dueToParentAccount.code
-    );
-    const createdAccounts = [];
-    const mappings = [];
-
-    const ensureDirectionalMapping = async ({
-      sourceOperatingUnit,
-      targetOperatingUnit,
-    }) => {
-      const mappingKey = `${parsePositiveInt(sourceOperatingUnit.id)}:${parsePositiveInt(
-        targetOperatingUnit.id
-      )}`;
-      const existing = existingMappingsByKey.get(mappingKey) || null;
-      if (existing) {
-        mappings.push({
-          id: parsePositiveInt(existing.id),
-          operatingUnitId: parsePositiveInt(existing.operating_unit_id),
-          partnerOperatingUnitId: parsePositiveInt(existing.partner_operating_unit_id),
-          dueFromAccountId: parsePositiveInt(existing.due_from_account_id),
-          dueFromAccountCode: String(existing.due_from_account_code || ""),
-          dueFromAccountName: String(existing.due_from_account_name || ""),
-          dueToAccountId: parsePositiveInt(existing.due_to_account_id),
-          dueToAccountCode: String(existing.due_to_account_code || ""),
-          dueToAccountName: String(existing.due_to_account_name || ""),
-          created: false,
-        });
-        return;
-      }
-
+    if (!dueFromAccount && !dueToAccount) {
       const allocation = pickNextSharedChildSequence(dueFromUsage, dueToUsage);
       dueFromUsage.usedSequences.add(allocation.sequence);
       dueToUsage.usedSequences.add(allocation.sequence);
 
-      const dueFromCode = buildChildAccountCode(
-        dueFromParentAccount.code,
-        allocation.sequence,
-        allocation.width
-      );
-      const dueToCode = buildChildAccountCode(
-        dueToParentAccount.code,
-        allocation.sequence,
-        allocation.width
-      );
-
-      const dueFromAccount = await insertOperatingUnitCurrentChildAccountTx(tx, {
+      dueFromAccount = await insertOperatingUnitCurrentChildAccountTx(tx, {
         parentAccount: dueFromParentAccount,
-        code: dueFromCode,
+        code: buildChildAccountCode(
+          dueFromParentAccount.code,
+          allocation.sequence,
+          allocation.width
+        ),
         name: buildPartnerCurrentAccountName({
           operatingUnit: sourceOperatingUnit,
           partnerOperatingUnit: targetOperatingUnit,
@@ -1594,9 +2521,13 @@ export async function autoProvisionOperatingUnitPartnerCurrentAccounts({
         accountType: "ASSET",
         normalSide: "DEBIT",
       });
-      const dueToAccount = await insertOperatingUnitCurrentChildAccountTx(tx, {
+      dueToAccount = await insertOperatingUnitCurrentChildAccountTx(tx, {
         parentAccount: dueToParentAccount,
-        code: dueToCode,
+        code: buildChildAccountCode(
+          dueToParentAccount.code,
+          allocation.sequence,
+          allocation.width
+        ),
         name: buildPartnerCurrentAccountName({
           operatingUnit: sourceOperatingUnit,
           partnerOperatingUnit: targetOperatingUnit,
@@ -1605,89 +2536,186 @@ export async function autoProvisionOperatingUnitPartnerCurrentAccounts({
         accountType: "LIABILITY",
         normalSide: "CREDIT",
       });
-
-      await assertUniqueOperatingUnitPartnerCurrentAccountTx(tx, {
-        tenantId,
-        legalEntityId,
-        operatingUnitId: parsePositiveInt(sourceOperatingUnit.id),
-        partnerOperatingUnitId: parsePositiveInt(targetOperatingUnit.id),
-        accountId: dueFromAccount.id,
-        fieldLabel: "dueFromAccountId",
-        columnName: "due_from_account_id",
-        roleLabel: "Due From Partner account mapping",
-      });
-      await assertUniqueOperatingUnitPartnerCurrentAccountTx(tx, {
-        tenantId,
-        legalEntityId,
-        operatingUnitId: parsePositiveInt(sourceOperatingUnit.id),
-        partnerOperatingUnitId: parsePositiveInt(targetOperatingUnit.id),
-        accountId: dueToAccount.id,
-        fieldLabel: "dueToAccountId",
-        columnName: "due_to_account_id",
-        roleLabel: "Due To Partner account mapping",
-      });
-
-      const mappingId = await upsertOperatingUnitPartnerCurrentAccountRow({
-        tenantId,
-        legalEntityId,
-        operatingUnitId: parsePositiveInt(sourceOperatingUnit.id),
-        partnerOperatingUnitId: parsePositiveInt(targetOperatingUnit.id),
-        dueFromAccountId: dueFromAccount.id,
-        dueToAccountId: dueToAccount.id,
-        runQuery: (sql, params) => tx.query(sql, params),
-      });
-
       createdAccounts.push(
-        {
-          id: dueFromAccount.id,
-          code: dueFromAccount.code,
-          name: dueFromAccount.name,
+        summarizeProvisionedAccount(dueFromAccount, {
           role: "DUE_FROM",
           operatingUnitId: parsePositiveInt(sourceOperatingUnit.id),
           partnerOperatingUnitId: parsePositiveInt(targetOperatingUnit.id),
-        },
-        {
-          id: dueToAccount.id,
-          code: dueToAccount.code,
-          name: dueToAccount.name,
+        }),
+        summarizeProvisionedAccount(dueToAccount, {
           role: "DUE_TO",
           operatingUnitId: parsePositiveInt(sourceOperatingUnit.id),
           partnerOperatingUnitId: parsePositiveInt(targetOperatingUnit.id),
-        }
+        })
       );
-      mappings.push({
-        id: mappingId,
-        operatingUnitId: parsePositiveInt(sourceOperatingUnit.id),
-        partnerOperatingUnitId: parsePositiveInt(targetOperatingUnit.id),
-        dueFromAccountId: dueFromAccount.id,
-        dueFromAccountCode: dueFromAccount.code,
-        dueFromAccountName: dueFromAccount.name,
-        dueToAccountId: dueToAccount.id,
-        dueToAccountCode: dueToAccount.code,
-        dueToAccountName: dueToAccount.name,
-        created: true,
-      });
-    };
+    } else {
+      if (!dueFromAccount) {
+        const preferredSequence = parsePreferredChildSequenceFromExistingAccount(
+          dueToAccount
+        );
+        const allocation = pickNextAvailableChildSequence(
+          dueFromUsage,
+          preferredSequence?.sequence,
+          preferredSequence?.width
+        );
+        dueFromUsage.usedSequences.add(allocation.sequence);
+        dueFromAccount = await insertOperatingUnitCurrentChildAccountTx(tx, {
+          parentAccount: dueFromParentAccount,
+          code: buildChildAccountCode(
+            dueFromParentAccount.code,
+            allocation.sequence,
+            allocation.width
+          ),
+          name: buildPartnerCurrentAccountName({
+            operatingUnit: sourceOperatingUnit,
+            partnerOperatingUnit: targetOperatingUnit,
+            role: "DUE_FROM",
+          }),
+          accountType: "ASSET",
+          normalSide: "DEBIT",
+        });
+        createdAccounts.push(
+          summarizeProvisionedAccount(dueFromAccount, {
+            role: "DUE_FROM",
+            operatingUnitId: parsePositiveInt(sourceOperatingUnit.id),
+            partnerOperatingUnitId: parsePositiveInt(targetOperatingUnit.id),
+          })
+        );
+      }
 
-    await ensureDirectionalMapping({
-      sourceOperatingUnit: operatingUnit,
-      targetOperatingUnit: partnerOperatingUnit,
+      if (!dueToAccount) {
+        const preferredSequence = parsePreferredChildSequenceFromExistingAccount(
+          dueFromAccount
+        );
+        const allocation = pickNextAvailableChildSequence(
+          dueToUsage,
+          preferredSequence?.sequence,
+          preferredSequence?.width
+        );
+        dueToUsage.usedSequences.add(allocation.sequence);
+        dueToAccount = await insertOperatingUnitCurrentChildAccountTx(tx, {
+          parentAccount: dueToParentAccount,
+          code: buildChildAccountCode(
+            dueToParentAccount.code,
+            allocation.sequence,
+            allocation.width
+          ),
+          name: buildPartnerCurrentAccountName({
+            operatingUnit: sourceOperatingUnit,
+            partnerOperatingUnit: targetOperatingUnit,
+            role: "DUE_TO",
+          }),
+          accountType: "LIABILITY",
+          normalSide: "CREDIT",
+        });
+        createdAccounts.push(
+          summarizeProvisionedAccount(dueToAccount, {
+            role: "DUE_TO",
+            operatingUnitId: parsePositiveInt(sourceOperatingUnit.id),
+            partnerOperatingUnitId: parsePositiveInt(targetOperatingUnit.id),
+          })
+        );
+      }
+
+      if (dueFromCandidate.status === "reused" || dueFromCandidate.status === "preserved_manual") {
+        reusedAccounts.push(
+          summarizeProvisionedAccount(dueFromAccount, {
+            role: "DUE_FROM",
+            operatingUnitId: parsePositiveInt(sourceOperatingUnit.id),
+            partnerOperatingUnitId: parsePositiveInt(targetOperatingUnit.id),
+          })
+        );
+      }
+      if (dueToCandidate.status === "reused" || dueToCandidate.status === "preserved_manual") {
+        reusedAccounts.push(
+          summarizeProvisionedAccount(dueToAccount, {
+            role: "DUE_TO",
+            operatingUnitId: parsePositiveInt(sourceOperatingUnit.id),
+            partnerOperatingUnitId: parsePositiveInt(targetOperatingUnit.id),
+          })
+        );
+      }
+    }
+
+    await assertUniqueOperatingUnitPartnerCurrentAccountTx(tx, {
+      tenantId,
+      legalEntityId,
+      operatingUnitId: parsePositiveInt(sourceOperatingUnit.id),
+      partnerOperatingUnitId: parsePositiveInt(targetOperatingUnit.id),
+      accountId: dueFromAccount.id,
+      fieldLabel: "dueFromAccountId",
+      columnName: "due_from_account_id",
+      roleLabel: "Due From Partner account mapping",
     });
-    await ensureDirectionalMapping({
-      sourceOperatingUnit: partnerOperatingUnit,
-      targetOperatingUnit: operatingUnit,
+    await assertUniqueOperatingUnitPartnerCurrentAccountTx(tx, {
+      tenantId,
+      legalEntityId,
+      operatingUnitId: parsePositiveInt(sourceOperatingUnit.id),
+      partnerOperatingUnitId: parsePositiveInt(targetOperatingUnit.id),
+      accountId: dueToAccount.id,
+      fieldLabel: "dueToAccountId",
+      columnName: "due_to_account_id",
+      roleLabel: "Due To Partner account mapping",
     });
 
-    return {
-      legalEntityId: parsePositiveInt(legalEntityId),
-      operatingUnitId: parsePositiveInt(operatingUnitId),
-      partnerOperatingUnitId: parsePositiveInt(partnerOperatingUnitId),
-      dueFromParentAccountId: parsePositiveInt(dueFromParentAccount.id),
-      dueToParentAccountId: parsePositiveInt(dueToParentAccount.id),
-      createdAccounts,
-      mappings,
+    const previousDueFromAccountId = parsePositiveInt(existing?.due_from_account_id);
+    const previousDueToAccountId = parsePositiveInt(existing?.due_to_account_id);
+    const mappingChanged =
+      !parsePositiveInt(existing?.id) ||
+      previousDueFromAccountId !== parsePositiveInt(dueFromAccount.id) ||
+      previousDueToAccountId !== parsePositiveInt(dueToAccount.id);
+    const mappingId = mappingChanged
+      ? await upsertOperatingUnitPartnerCurrentAccountRow({
+          tenantId,
+          legalEntityId,
+          operatingUnitId: parsePositiveInt(sourceOperatingUnit.id),
+          partnerOperatingUnitId: parsePositiveInt(targetOperatingUnit.id),
+          dueFromAccountId: dueFromAccount.id,
+          dueToAccountId: dueToAccount.id,
+          runQuery: (sql, params) => tx.query(sql, params),
+        })
+      : parsePositiveInt(existing?.id);
+
+    const mappingSummary = {
+      id: mappingId,
+      operatingUnitId: parsePositiveInt(sourceOperatingUnit.id),
+      partnerOperatingUnitId: parsePositiveInt(targetOperatingUnit.id),
+      dueFromAccountId: parsePositiveInt(dueFromAccount.id),
+      dueFromAccountCode: String(dueFromAccount.code || ""),
+      dueFromAccountName: String(dueFromAccount.name || ""),
+      dueToAccountId: parsePositiveInt(dueToAccount.id),
+      dueToAccountCode: String(dueToAccount.code || ""),
+      dueToAccountName: String(dueToAccount.name || ""),
+      created: !parsePositiveInt(existing?.id),
+      updated: Boolean(parsePositiveInt(existing?.id) && mappingChanged),
     };
+    mappings.push(mappingSummary);
+    if (mappingChanged) {
+      updatedPartnerMappings.push(mappingSummary);
+    }
+  };
+
+  await ensureDirectionalMapping({
+    sourceOperatingUnit: operatingUnit,
+    targetOperatingUnit: partnerOperatingUnit,
   });
+  await ensureDirectionalMapping({
+    sourceOperatingUnit: partnerOperatingUnit,
+    targetOperatingUnit: operatingUnit,
+  });
+
+  return {
+    legalEntityId: parsePositiveInt(legalEntityId),
+    operatingUnitId: parsePositiveInt(operatingUnitId),
+    partnerOperatingUnitId: parsePositiveInt(partnerOperatingUnitId),
+    dueFromParentAccountId: parsePositiveInt(dueFromParentAccount.id),
+    dueToParentAccountId: parsePositiveInt(dueToParentAccount.id),
+    createdAccounts,
+    reusedAccounts,
+    updatedPartnerMappings,
+    warnings,
+    mappings,
+  };
 }
 
 export async function upsertFiscalCalendar({

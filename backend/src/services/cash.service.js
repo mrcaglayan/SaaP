@@ -155,6 +155,24 @@ function parseDbBoolean(value) {
   return value === true || value === 1 || value === "1";
 }
 
+function resolveCrossContextRouteByOperatingUnitIds(sourceOperatingUnitId, targetOperatingUnitId) {
+  const sourceOuId = parsePositiveInt(sourceOperatingUnitId);
+  const targetOuId = parsePositiveInt(targetOperatingUnitId);
+  if (sourceOuId && targetOuId && sourceOuId === targetOuId) {
+    return "SAME_CONTEXT";
+  }
+  if (sourceOuId && targetOuId) {
+    return "OU_TO_OU";
+  }
+  if (sourceOuId) {
+    return "OU_TO_CENTRAL";
+  }
+  if (targetOuId) {
+    return "CENTRAL_TO_OU";
+  }
+  return "SAME_CONTEXT";
+}
+
 function describeOperatingUnit(row, fallbackId) {
   const code = String(row?.code || "").trim();
   const name = String(row?.name || "").trim();
@@ -173,7 +191,7 @@ function describeOperatingUnit(row, fallbackId) {
 function buildOperatingUnitSelfBalancingError(row, operatingUnitId, detail) {
   const label = describeOperatingUnit(row, operatingUnitId);
   return badRequest(
-    `Operating unit ${label} self-balancing setup is invalid for cross-context cash transfers: ${detail}. Complete "Central Due From OU" and "OU Due To Central" from Kasa Islemleri during Transfer Out or in Organization Management before posting.`
+    `Operating unit ${label} self-balancing setup is invalid for cross-context cash transfers: ${detail}. Run the saved current-account repair from Kasa Islemleri during Transfer Out or in Organization Management before posting.`
   );
 }
 
@@ -203,8 +221,97 @@ function buildOperatingUnitPartnerCurrentError(
 ) {
   const label = describeOperatingUnitPair(row, operatingUnitId, partnerOperatingUnitId);
   return badRequest(
-    `Operating unit pair ${label} direct inter-branch current-account setup is invalid for cross-context cash transfers: ${detail}. Complete "Due From Partner OU" and "Due To Partner OU" from Kasa Islemleri during Transfer Out or in Organization Management before posting.`
+    `Operating unit pair ${label} direct inter-branch current-account setup is invalid for cross-context cash transfers: ${detail}. Run the saved current-account repair from Kasa Islemleri during Transfer Out or in Organization Management before posting.`
   );
+}
+
+async function loadBankAccountPostingContextTx(
+  tx,
+  { tenantId, legalEntityId, glAccountId, cache }
+) {
+  const resolvedGlAccountId = parsePositiveInt(glAccountId);
+  if (!resolvedGlAccountId) {
+    return null;
+  }
+
+  if (cache?.has(resolvedGlAccountId)) {
+    return cache.get(resolvedGlAccountId);
+  }
+
+  const result = await tx.query(
+    `SELECT
+       ba.id,
+       ba.legal_entity_id,
+       ba.operating_unit_id,
+       ba.code,
+       ba.name,
+       ba.currency_code,
+       ba.gl_account_id,
+       ba.is_active,
+       a.code AS gl_account_code,
+       a.name AS gl_account_name,
+       a.allow_posting AS gl_account_allow_posting,
+       a.is_active AS gl_account_is_active,
+       ou.code AS operating_unit_code,
+       ou.name AS operating_unit_name,
+       ou.status AS operating_unit_status,
+       ou.legal_entity_id AS operating_unit_legal_entity_id
+     FROM bank_accounts ba
+     JOIN accounts a
+       ON a.id = ba.gl_account_id
+     LEFT JOIN operating_units ou
+       ON ou.id = ba.operating_unit_id
+     WHERE ba.tenant_id = ?
+       AND ba.legal_entity_id = ?
+       AND ba.gl_account_id = ?
+     LIMIT 1`,
+    [tenantId, legalEntityId, resolvedGlAccountId]
+  );
+
+  const row = result.rows?.[0] || null;
+  if (!row || !parseDbBoolean(row.is_active)) {
+    throw badRequest(
+      "counterAccountId must reference an ACTIVE bank account GL for register legalEntityId"
+    );
+  }
+  if (!parseDbBoolean(row.gl_account_is_active)) {
+    throw badRequest("counterAccountId bank GL account must be active");
+  }
+  if (!parseDbBoolean(row.gl_account_allow_posting)) {
+    throw badRequest("counterAccountId bank GL account must be postable");
+  }
+
+  const operatingUnitId = parsePositiveInt(row.operating_unit_id);
+  if (operatingUnitId) {
+    if (
+      parsePositiveInt(row.operating_unit_legal_entity_id) !==
+      parsePositiveInt(legalEntityId)
+    ) {
+      throw badRequest(
+        "counterAccountId bank operating unit must belong to the same legal entity"
+      );
+    }
+    if (asUpper(row.operating_unit_status) !== "ACTIVE") {
+      throw badRequest("counterAccountId bank operating unit must be ACTIVE");
+    }
+  }
+
+  const resolved = {
+    bankAccountId: parsePositiveInt(row.id),
+    legalEntityId: parsePositiveInt(row.legal_entity_id),
+    operatingUnitId,
+    code: String(row.code || ""),
+    name: String(row.name || ""),
+    currencyCode: String(row.currency_code || ""),
+    glAccountId: resolvedGlAccountId,
+    glAccountCode: String(row.gl_account_code || ""),
+    glAccountName: String(row.gl_account_name || ""),
+    operatingUnitCode: String(row.operating_unit_code || ""),
+    operatingUnitName: String(row.operating_unit_name || ""),
+  };
+
+  cache?.set(resolvedGlAccountId, resolved);
+  return resolved;
 }
 
 async function loadOperatingUnitSelfBalancingConfigTx(
@@ -793,6 +900,204 @@ async function loadOperatingUnitPartnerCurrentConfigTx(
   return resolved;
 }
 
+async function buildCrossContextAssetMovementLinesTx(
+  tx,
+  {
+    tenantId,
+    legalEntityId,
+    amountBase,
+    lineDescription,
+    subledgerReferenceNo,
+    sourceParty,
+    targetParty,
+    operatingUnitCache,
+    partnerCurrentCache,
+  }
+) {
+  const routeType = resolveCrossContextRouteByOperatingUnitIds(
+    sourceParty?.operatingUnitId,
+    targetParty?.operatingUnitId
+  );
+
+  if (routeType === "SAME_CONTEXT") {
+    return [
+      buildBaseLine({
+        accountId: requireAccountId(targetParty?.accountId, "target asset account"),
+        operatingUnitId: targetParty?.operatingUnitId,
+        debitBase: amountBase,
+        creditBase: 0,
+        description: lineDescription,
+        subledgerReferenceNo,
+      }),
+      buildBaseLine({
+        accountId: requireAccountId(sourceParty?.accountId, "source asset account"),
+        operatingUnitId: sourceParty?.operatingUnitId,
+        debitBase: 0,
+        creditBase: amountBase,
+        description: lineDescription,
+        subledgerReferenceNo,
+      }),
+    ];
+  }
+
+  if (routeType === "CENTRAL_TO_OU") {
+    const targetUnit = await loadOperatingUnitSelfBalancingConfigTx(tx, {
+      tenantId,
+      legalEntityId,
+      operatingUnitId: targetParty?.operatingUnitId,
+      cache: operatingUnitCache,
+    });
+    return [
+      buildBaseLine({
+        accountId: requireAccountId(targetParty?.accountId, "target asset account"),
+        operatingUnitId: targetParty?.operatingUnitId,
+        debitBase: amountBase,
+        creditBase: 0,
+        description: lineDescription,
+        subledgerReferenceNo,
+      }),
+      buildBaseLine({
+        accountId: requireAccountId(
+          targetUnit?.ouDueToCentralAccountId,
+          "target operating unit OU Due To Central account"
+        ),
+        operatingUnitId: targetParty?.operatingUnitId,
+        debitBase: 0,
+        creditBase: amountBase,
+        description: lineDescription,
+        subledgerReferenceNo,
+      }),
+      buildBaseLine({
+        accountId: requireAccountId(
+          targetUnit?.centralDueFromAccountId,
+          "target operating unit Central Due From OU account"
+        ),
+        operatingUnitId: null,
+        debitBase: amountBase,
+        creditBase: 0,
+        description: lineDescription,
+        subledgerReferenceNo,
+      }),
+      buildBaseLine({
+        accountId: requireAccountId(sourceParty?.accountId, "source asset account"),
+        operatingUnitId: null,
+        debitBase: 0,
+        creditBase: amountBase,
+        description: lineDescription,
+        subledgerReferenceNo,
+      }),
+    ];
+  }
+
+  if (routeType === "OU_TO_CENTRAL") {
+    const sourceUnit = await loadOperatingUnitSelfBalancingConfigTx(tx, {
+      tenantId,
+      legalEntityId,
+      operatingUnitId: sourceParty?.operatingUnitId,
+      cache: operatingUnitCache,
+    });
+    return [
+      buildBaseLine({
+        accountId: requireAccountId(targetParty?.accountId, "target asset account"),
+        operatingUnitId: null,
+        debitBase: amountBase,
+        creditBase: 0,
+        description: lineDescription,
+        subledgerReferenceNo,
+      }),
+      buildBaseLine({
+        accountId: requireAccountId(
+          sourceUnit?.centralDueFromAccountId,
+          "source operating unit Central Due From OU account"
+        ),
+        operatingUnitId: null,
+        debitBase: 0,
+        creditBase: amountBase,
+        description: lineDescription,
+        subledgerReferenceNo,
+      }),
+      buildBaseLine({
+        accountId: requireAccountId(
+          sourceUnit?.ouDueToCentralAccountId,
+          "source operating unit OU Due To Central account"
+        ),
+        operatingUnitId: sourceParty?.operatingUnitId,
+        debitBase: amountBase,
+        creditBase: 0,
+        description: lineDescription,
+        subledgerReferenceNo,
+      }),
+      buildBaseLine({
+        accountId: requireAccountId(sourceParty?.accountId, "source asset account"),
+        operatingUnitId: sourceParty?.operatingUnitId,
+        debitBase: 0,
+        creditBase: amountBase,
+        description: lineDescription,
+        subledgerReferenceNo,
+      }),
+    ];
+  }
+
+  if (routeType === "OU_TO_OU") {
+    const sourcePartnerConfig = await loadOperatingUnitPartnerCurrentConfigTx(tx, {
+      tenantId,
+      legalEntityId,
+      operatingUnitId: sourceParty?.operatingUnitId,
+      partnerOperatingUnitId: targetParty?.operatingUnitId,
+      cache: partnerCurrentCache,
+    });
+    const targetPartnerConfig = await loadOperatingUnitPartnerCurrentConfigTx(tx, {
+      tenantId,
+      legalEntityId,
+      operatingUnitId: targetParty?.operatingUnitId,
+      partnerOperatingUnitId: sourceParty?.operatingUnitId,
+      cache: partnerCurrentCache,
+    });
+    return [
+      buildBaseLine({
+        accountId: requireAccountId(targetParty?.accountId, "target asset account"),
+        operatingUnitId: targetParty?.operatingUnitId,
+        debitBase: amountBase,
+        creditBase: 0,
+        description: lineDescription,
+        subledgerReferenceNo,
+      }),
+      buildBaseLine({
+        accountId: requireAccountId(
+          targetPartnerConfig?.dueToAccountId,
+          "target operating unit Due To Partner OU account"
+        ),
+        operatingUnitId: targetParty?.operatingUnitId,
+        debitBase: 0,
+        creditBase: amountBase,
+        description: lineDescription,
+        subledgerReferenceNo,
+      }),
+      buildBaseLine({
+        accountId: requireAccountId(
+          sourcePartnerConfig?.dueFromAccountId,
+          "source operating unit Due From Partner OU account"
+        ),
+        operatingUnitId: sourceParty?.operatingUnitId,
+        debitBase: amountBase,
+        creditBase: 0,
+        description: lineDescription,
+        subledgerReferenceNo,
+      }),
+      buildBaseLine({
+        accountId: requireAccountId(sourceParty?.accountId, "source asset account"),
+        operatingUnitId: sourceParty?.operatingUnitId,
+        debitBase: 0,
+        creditBase: amountBase,
+        description: lineDescription,
+        subledgerReferenceNo,
+      }),
+    ];
+  }
+
+  throw badRequest("Cross-context movement accounting requires different operating-unit contexts");
+}
+
 function resolveTransferParticipants(cashTxn) {
   const txnType = asUpper(cashTxn?.txn_type);
   const registerParty = {
@@ -824,18 +1129,10 @@ function resolveTransferParticipants(cashTxn) {
 }
 
 function resolveCrossContextTransferRoute(participants) {
-  const sourceOuId = parsePositiveInt(participants?.source?.operatingUnitId);
-  const targetOuId = parsePositiveInt(participants?.target?.operatingUnitId);
-  if (sourceOuId && targetOuId) {
-    return "OU_TO_OU";
-  }
-  if (sourceOuId) {
-    return "OU_TO_CENTRAL";
-  }
-  if (targetOuId) {
-    return "CENTRAL_TO_OU";
-  }
-  return "SAME_CONTEXT";
+  return resolveCrossContextRouteByOperatingUnitIds(
+    participants?.source?.operatingUnitId,
+    participants?.target?.operatingUnitId
+  );
 }
 
 function normalizeCashJournalOverrideLine(line, { currencyCode, postingReference }) {
@@ -906,8 +1203,9 @@ async function buildCashPostingLinesTx(tx, { tenantId, legalEntityId, cashTxn })
   let lines;
   const operatingUnitCache = new Map();
   const partnerCurrentCache = new Map();
+  const bankAccountContextCache = new Map();
 
-  if (txnType === "RECEIPT" || txnType === "WITHDRAWAL_FROM_BANK" || txnType === "OPENING_FLOAT") {
+  if (txnType === "RECEIPT" || txnType === "OPENING_FLOAT") {
     lines = [
       buildBaseLine({
         accountId: registerAccountId,
@@ -926,9 +1224,32 @@ async function buildCashPostingLinesTx(tx, { tenantId, legalEntityId, cashTxn })
         subledgerReferenceNo,
       }),
     ];
+  } else if (txnType === "WITHDRAWAL_FROM_BANK") {
+    const bankAccount = await loadBankAccountPostingContextTx(tx, {
+      tenantId,
+      legalEntityId,
+      glAccountId: requireAccountId(counterAccountId, "counterAccountId"),
+      cache: bankAccountContextCache,
+    });
+    lines = await buildCrossContextAssetMovementLinesTx(tx, {
+      tenantId,
+      legalEntityId,
+      amountBase,
+      lineDescription,
+      subledgerReferenceNo,
+      sourceParty: {
+        accountId: bankAccount?.glAccountId,
+        operatingUnitId: bankAccount?.operatingUnitId,
+      },
+      targetParty: {
+        accountId: registerAccountId,
+        operatingUnitId: cashTxn.operating_unit_id,
+      },
+      operatingUnitCache,
+      partnerCurrentCache,
+    });
   } else if (
     txnType === "PAYOUT" ||
-    txnType === "DEPOSIT_TO_BANK" ||
     txnType === "CLOSING_ADJUSTMENT"
   ) {
     lines = [
@@ -949,6 +1270,30 @@ async function buildCashPostingLinesTx(tx, { tenantId, legalEntityId, cashTxn })
         subledgerReferenceNo,
       }),
     ];
+  } else if (txnType === "DEPOSIT_TO_BANK") {
+    const bankAccount = await loadBankAccountPostingContextTx(tx, {
+      tenantId,
+      legalEntityId,
+      glAccountId: requireAccountId(counterAccountId, "counterAccountId"),
+      cache: bankAccountContextCache,
+    });
+    lines = await buildCrossContextAssetMovementLinesTx(tx, {
+      tenantId,
+      legalEntityId,
+      amountBase,
+      lineDescription,
+      subledgerReferenceNo,
+      sourceParty: {
+        accountId: registerAccountId,
+        operatingUnitId: cashTxn.operating_unit_id,
+      },
+      targetParty: {
+        accountId: bankAccount?.glAccountId,
+        operatingUnitId: bankAccount?.operatingUnitId,
+      },
+      operatingUnitCache,
+      partnerCurrentCache,
+    });
   } else if (txnType === "VARIANCE") {
     const resolvedCounterAccountId = requireAccountId(counterAccountId, "counterAccountId");
     let isOverVariance = false;

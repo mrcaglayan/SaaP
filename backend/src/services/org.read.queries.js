@@ -183,6 +183,39 @@ export async function fetchOperatingUnitRows({ conditions, params }) {
   return result.rows || [];
 }
 
+export async function fetchOperatingUnitCurrentAccountConfigRows({
+  conditions,
+  params,
+}) {
+  const result = await query(
+    `SELECT
+       le.id AS legal_entity_id,
+       le.code AS legal_entity_code,
+       le.name AS legal_entity_name,
+       cfg.id AS operating_unit_current_account_config_id,
+       cfg.due_from_parent_account_id,
+       dfa.code AS due_from_parent_account_code,
+       dfa.name AS due_from_parent_account_name,
+       cfg.due_to_parent_account_id,
+       dta.code AS due_to_parent_account_code,
+       dta.name AS due_to_parent_account_name,
+       cfg.auto_provision_on_operating_unit_create,
+       cfg.last_applied_at,
+       cfg.created_at,
+       cfg.updated_at
+     FROM legal_entities le
+     LEFT JOIN operating_unit_current_account_configs cfg
+       ON cfg.tenant_id = le.tenant_id
+      AND cfg.legal_entity_id = le.id
+     LEFT JOIN accounts dfa ON dfa.id = cfg.due_from_parent_account_id
+     LEFT JOIN accounts dta ON dta.id = cfg.due_to_parent_account_id
+     WHERE ${conditions.join(" AND ")}
+     ORDER BY le.code, le.id`,
+    params
+  );
+  return result.rows || [];
+}
+
 export async function fetchOperatingUnitPartnerCurrentAccountRows({
   conditions,
   params,

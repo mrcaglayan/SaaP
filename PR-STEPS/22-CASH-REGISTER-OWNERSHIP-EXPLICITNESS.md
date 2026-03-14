@@ -22,6 +22,7 @@
   - `OPERATING_UNIT A -> OPERATING_UNIT B`
 - Do not weaken existing cash-transit controls.
 - Cross-context transfer accounting must use configured OU internal current-account mappings when different ownership contexts are involved.
+- Bank-linked cash transactions also follow the same ownership-context rule when the selected bank account belongs to a different context than the cash register.
 - Do not hardcode `136` / `339`; those are chart-specific examples only.
 - This PR is about generic cross-context cash movement only; it must stay separate from shareholder-capital fulfillment logic and must not introduce shareholder commitment / paid-capital lines.
 
@@ -49,7 +50,7 @@
 - Reuse the same OU internal current-account setup that capital-fulfillment uses, but keep the business meaning separate:
   - `PR-CF02`: direct branch-targeted capital fulfillment can post to a branch directly while keeping shareholder commitment central
   - `PR-CRO05`: branch-to-branch or central-to-branch cash transfer has no shareholder-capital logic
-- Missing current-account setup can now be completed from `Kasa Islemleri` during `Transfer Out`:
+- Missing current-account setup can now be completed from `Kasa Islemleri` during `Transfer Out` using saved-config repair:
   - `Center / Branch Current Accounts` for `CENTRAL <-> OPERATING_UNIT`
   - `Branch Pair Current Accounts` for `OPERATING_UNIT <-> OPERATING_UNIT`
 - `Organization Management` remains the source-of-truth maintenance screen for OU internal-current mappings.
@@ -60,8 +61,8 @@
 3. `PR-CRO03` - downstream workflow clarity and transfer routing UX
 4. `PR-CRO04` - rollout hardening, docs, and compatibility cleanup
 5. `PR-CRO05` - cross-context transfer accounting and OU self-balancing
-6. `PR-CRO06` - inline branch-pair account auto-provision from `Kasa Islemleri`
-7. `PR-CRO07` - inline central current-account auto-provision from `Kasa Islemleri`
+6. `PR-CRO06` - inline branch-pair saved-config repair from `Kasa Islemleri`
+7. `PR-CRO07` - inline central current-account saved-config repair from `Kasa Islemleri`
 
 ## Master tracker
 - [x] `PR-CRO01` acceptance: cash registers persist explicit ownership without changing central/no-OU accounting semantics.
@@ -248,6 +249,7 @@ Deliverables:
   - `due_from_account_id`
   - `due_to_account_id`
 - Extend cross-context cash transfer posting logic so operational transit and final accounting result are both explicit.
+- Apply the same self-balancing accounting rule to `DEPOSIT_TO_BANK` / `WITHDRAWAL_FROM_BANK` when the bank account ownership context differs from the cash register context.
 - Block completion of cross-context transfers when the required source/target OU internal current-account setup is missing.
 - Enforce branch-specific uniqueness for both OU central mappings and OU-pair mappings within the same legal entity.
 - Surface resolved internal-current-account usage in transfer details, previews, or diagnostics where helpful.
@@ -315,6 +317,7 @@ Test coverage:
 - `CENTRAL -> OU` resolves through the selected OU's configured internal current accounts.
 - `OU -> CENTRAL` resolves through the selected OU's configured internal current accounts.
 - `OU A -> OU B` resolves through both OUs' configured internal current accounts.
+- `Central bank -> OU cash` and `OU cash -> central bank` resolve through the same configured OU current accounts.
 - Missing source/target OU setup blocks completion with actionable error text.
 - Duplicate OU internal-current mappings are rejected at setup time and also block posting if legacy bad data already exists.
 - Posted lines keep central rows `no OU` and branch rows on the correct OU.

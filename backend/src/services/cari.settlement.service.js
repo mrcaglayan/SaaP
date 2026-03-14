@@ -1046,6 +1046,35 @@ async function listCounterpartyOperatingUnitIds({
   );
 }
 
+function describeCounterparty(row) {
+  const code = String(row?.code || "").trim();
+  const name = String(row?.name || "").trim();
+  if (code && name) {
+    return `${code} - ${name}`;
+  }
+  if (code || name) {
+    return code || name;
+  }
+  const id = parsePositiveInt(row?.id);
+  return id ? `ID ${id}` : "selected counterparty";
+}
+
+function buildCounterpartyOperatingUnitRequiredError(counterpartyRow) {
+  return badRequest(
+    `Counterparty ${describeCounterparty(
+      counterpartyRow
+    )} is limited to specific operating units. Open the counterparty card and set a Primary Operating Unit, or add the owner branch under Allowed Operating Units, then retry the settlement.`
+  );
+}
+
+function buildCounterpartyOperatingUnitNotAssignedError(counterpartyRow) {
+  return badRequest(
+    `The selected owner operating unit is not assigned to counterparty ${describeCounterparty(
+      counterpartyRow
+    )}. Open the counterparty card and update Allowed Operating Units or Primary Operating Unit, then retry the settlement.`
+  );
+}
+
 async function resolveSettlementOperatingUnitForCounterparty({
   tenantId,
   legalEntityId,
@@ -1082,12 +1111,10 @@ async function resolveSettlementOperatingUnitForCounterparty({
     return primaryOperatingUnitId;
   }
   if (!normalizedRequestedOperatingUnitId) {
-    throw badRequest(
-      "operatingUnitId is required because this counterparty is restricted to specific operating units"
-    );
+    throw buildCounterpartyOperatingUnitRequiredError(counterpartyRow);
   }
   if (!allowedOperatingUnitIds.includes(normalizedRequestedOperatingUnitId)) {
-    throw badRequest("operatingUnitId is not assigned to counterparty");
+    throw buildCounterpartyOperatingUnitNotAssignedError(counterpartyRow);
   }
   return normalizedRequestedOperatingUnitId;
 }
