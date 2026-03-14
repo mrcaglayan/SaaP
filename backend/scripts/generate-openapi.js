@@ -218,6 +218,18 @@ function buildOperationId(method, endpointPath, usedOperationIds) {
   return ensureUniqueOperationId(baseOperationId, usedOperationIds);
 }
 
+function compareStableStrings(left, right) {
+  const a = String(left || "");
+  const b = String(right || "");
+  if (a === b) {
+    return 0;
+  }
+
+  // `localeCompare` can reorder punctuation differently across ICU/platform builds.
+  // The release gate needs byte-stable OpenAPI output on every environment.
+  return a < b ? -1 : 1;
+}
+
 function extractPathParamNames(endpointPath) {
   const matches = endpointPath.matchAll(/\{([A-Za-z0-9_]+)\}/g);
   return Array.from(matches, (match) => match[1]);
@@ -476,11 +488,11 @@ async function discoverExpressRoutes(indexFilePath) {
   }
 
   return Array.from(deduped.values()).sort((a, b) => {
-    const pathCompare = a.path.localeCompare(b.path);
+    const pathCompare = compareStableStrings(a.path, b.path);
     if (pathCompare !== 0) {
       return pathCompare;
     }
-    return a.method.localeCompare(b.method);
+    return compareStableStrings(a.method, b.method);
   });
 }
 

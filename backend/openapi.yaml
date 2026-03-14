@@ -4958,6 +4958,68 @@
         }
       }
     },
+    "/api/v1/bank/accounts/provision-control-parent-child": {
+      "post": {
+        "tags": [
+          "Bank"
+        ],
+        "operationId": "provisionBankAccountControlParentChild",
+        "summary": "Provision bank account and auto-create a child GL account under the configured bank control parent",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "description": "Optional idempotency key for replay-safe bank control-parent child provisioning",
+            "schema": {
+              "type": "string",
+              "maxLength": 190
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BankAccountProvisionControlParentChildRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Idempotent replay response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BankAccountProvisionControlParentChildResponse"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Provisioned bank account created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BankAccountProvisionControlParentChildResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
     "/api/v1/bank/accounts/{bankAccountId}": {
       "get": {
         "tags": [
@@ -5128,68 +5190,6 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/BankAccountEnvelopeResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "401": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "403": {
-            "$ref": "#/components/responses/ErrorResponse"
-          }
-        }
-      }
-    },
-    "/api/v1/bank/accounts/provision-control-parent-child": {
-      "post": {
-        "tags": [
-          "Bank"
-        ],
-        "operationId": "provisionBankAccountControlParentChild",
-        "summary": "Provision bank account and auto-create a child GL account under the configured bank control parent",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "Idempotency-Key",
-            "required": false,
-            "description": "Optional idempotency key for replay-safe bank control-parent child provisioning",
-            "schema": {
-              "type": "string",
-              "maxLength": 190
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/BankAccountProvisionControlParentChildRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Idempotent replay response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BankAccountProvisionControlParentChildResponse"
-                }
-              }
-            }
-          },
-          "201": {
-            "description": "Provisioned bank account created",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BankAccountProvisionControlParentChildResponse"
                 }
               }
             }
@@ -10247,6 +10247,56 @@
         ]
       }
     },
+    "/api/v1/cari/settlements/apply": {
+      "post": {
+        "tags": [
+          "Cari"
+        ],
+        "operationId": "postApiV1CariSettlementsApply",
+        "summary": "Apply cari settlement (manual or CASH-linked payment channel)",
+        "responses": {
+          "200": {
+            "description": "Idempotent replay response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CariSettlementApplyResponse"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Cari settlement apply created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CariSettlementApplyResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CariSettlementApplyRequest"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/cari/settlements/{settlementBatchId}/reverse": {
       "post": {
         "tags": [
@@ -10293,56 +10343,6 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/CariSettlementReverseRequest"
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/cari/settlements/apply": {
-      "post": {
-        "tags": [
-          "Cari"
-        ],
-        "operationId": "postApiV1CariSettlementsApply",
-        "summary": "Apply cari settlement (manual or CASH-linked payment channel)",
-        "responses": {
-          "200": {
-            "description": "Idempotent replay response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CariSettlementApplyResponse"
-                }
-              }
-            }
-          },
-          "201": {
-            "description": "Cari settlement apply created",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CariSettlementApplyResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "401": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "403": {
-            "$ref": "#/components/responses/ErrorResponse"
-          }
-        },
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CariSettlementApplyRequest"
               }
             }
           }
@@ -11324,6 +11324,46 @@
         ]
       }
     },
+    "/api/v1/cash/sessions/open": {
+      "post": {
+        "tags": [
+          "Cash"
+        ],
+        "operationId": "postApiV1CashSessionsOpen",
+        "summary": "Open a cash session for a register",
+        "responses": {
+          "200": {
+            "description": "Cash session opened",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CashSessionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CashSessionOpenRequest"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/cash/sessions/{sessionId}": {
       "get": {
         "tags": [
@@ -11422,46 +11462,6 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/CashSessionCloseRequest"
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/cash/sessions/open": {
-      "post": {
-        "tags": [
-          "Cash"
-        ],
-        "operationId": "postApiV1CashSessionsOpen",
-        "summary": "Open a cash session for a register",
-        "responses": {
-          "200": {
-            "description": "Cash session opened",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CashSessionResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "401": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "403": {
-            "$ref": "#/components/responses/ErrorResponse"
-          }
-        },
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CashSessionOpenRequest"
               }
             }
           }
@@ -11631,6 +11631,331 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/CashTransactionCreateRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/cash/transactions/transit": {
+      "get": {
+        "tags": [
+          "Cash"
+        ],
+        "operationId": "getApiV1CashTransactionsTransit",
+        "summary": "List cash transit transfers",
+        "responses": {
+          "200": {
+            "description": "Cash transit transfer list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CashTransitTransferListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "query",
+            "name": "legalEntityId",
+            "required": false,
+            "description": "Legal entity filter",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "sourceRegisterId",
+            "required": false,
+            "description": "Source cash register filter",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "targetRegisterId",
+            "required": false,
+            "description": "Target cash register filter",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "description": "Transit status filter",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "INITIATED",
+                "IN_TRANSIT",
+                "RECEIVED",
+                "CANCELED",
+                "REVERSED"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "initiatedDateFrom",
+            "required": false,
+            "description": "Initiated date lower bound",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "in": "query",
+            "name": "initiatedDateTo",
+            "required": false,
+            "description": "Initiated date upper bound",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "description": "Page size",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "description": "Page offset",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/cash/transactions/transit/initiate": {
+      "post": {
+        "tags": [
+          "Cash"
+        ],
+        "operationId": "postApiV1CashTransactionsTransitInitiate",
+        "summary": "Initiate cash transit transfer for different operating-unit contexts (creates transfer-out)",
+        "responses": {
+          "200": {
+            "description": "Idempotent replay response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CashTransitTransferResponse"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Cash transit transfer initiated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CashTransitTransferResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CashTransitTransferInitiateRequest"
+              }
+            }
+          }
+        },
+        "description": "Use this workflow when the source and target registers are in different operating-unit contexts, including Central to branch, branch to Central, or branch-to-branch moves between different operating units."
+      }
+    },
+    "/api/v1/cash/transactions/transit/{transitTransferId}": {
+      "get": {
+        "tags": [
+          "Cash"
+        ],
+        "operationId": "getApiV1CashTransactionsTransitTransittransferid",
+        "summary": "Get cash transit transfer detail",
+        "responses": {
+          "200": {
+            "description": "Cash transit transfer detail",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CashTransitTransferResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "transitTransferId",
+            "required": true,
+            "description": "transitTransferId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/cash/transactions/transit/{transitTransferId}/cancel": {
+      "post": {
+        "tags": [
+          "Cash"
+        ],
+        "operationId": "postApiV1CashTransactionsTransitTransittransferidCancel",
+        "summary": "Cancel initiated cash transit transfer",
+        "responses": {
+          "200": {
+            "description": "Cash transit transfer cancelled",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CashTransitTransferResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "transitTransferId",
+            "required": true,
+            "description": "transitTransferId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CashTransitTransferCancelRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/cash/transactions/transit/{transitTransferId}/receive": {
+      "post": {
+        "tags": [
+          "Cash"
+        ],
+        "operationId": "postApiV1CashTransactionsTransitTransittransferidReceive",
+        "summary": "Receive cash transit transfer (creates and posts linked transfer-in)",
+        "responses": {
+          "200": {
+            "description": "Idempotent replay response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CashTransitTransferResponse"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Cash transit transfer received",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CashTransitTransferResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "transitTransferId",
+            "required": true,
+            "description": "transitTransferId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CashTransitTransferReceiveRequest"
               }
             }
           }
@@ -11905,331 +12230,6 @@
             }
           }
         }
-      }
-    },
-    "/api/v1/cash/transactions/transit": {
-      "get": {
-        "tags": [
-          "Cash"
-        ],
-        "operationId": "getApiV1CashTransactionsTransit",
-        "summary": "List cash transit transfers",
-        "responses": {
-          "200": {
-            "description": "Cash transit transfer list",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CashTransitTransferListResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "401": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "403": {
-            "$ref": "#/components/responses/ErrorResponse"
-          }
-        },
-        "parameters": [
-          {
-            "in": "query",
-            "name": "legalEntityId",
-            "required": false,
-            "description": "Legal entity filter",
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          },
-          {
-            "in": "query",
-            "name": "sourceRegisterId",
-            "required": false,
-            "description": "Source cash register filter",
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          },
-          {
-            "in": "query",
-            "name": "targetRegisterId",
-            "required": false,
-            "description": "Target cash register filter",
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          },
-          {
-            "in": "query",
-            "name": "status",
-            "required": false,
-            "description": "Transit status filter",
-            "schema": {
-              "type": "string",
-              "enum": [
-                "INITIATED",
-                "IN_TRANSIT",
-                "RECEIVED",
-                "CANCELED",
-                "REVERSED"
-              ]
-            }
-          },
-          {
-            "in": "query",
-            "name": "initiatedDateFrom",
-            "required": false,
-            "description": "Initiated date lower bound",
-            "schema": {
-              "type": "string",
-              "format": "date"
-            }
-          },
-          {
-            "in": "query",
-            "name": "initiatedDateTo",
-            "required": false,
-            "description": "Initiated date upper bound",
-            "schema": {
-              "type": "string",
-              "format": "date"
-            }
-          },
-          {
-            "in": "query",
-            "name": "limit",
-            "required": false,
-            "description": "Page size",
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          },
-          {
-            "in": "query",
-            "name": "offset",
-            "required": false,
-            "description": "Page offset",
-            "schema": {
-              "type": "integer",
-              "minimum": 0
-            }
-          }
-        ]
-      }
-    },
-    "/api/v1/cash/transactions/transit/{transitTransferId}": {
-      "get": {
-        "tags": [
-          "Cash"
-        ],
-        "operationId": "getApiV1CashTransactionsTransitTransittransferid",
-        "summary": "Get cash transit transfer detail",
-        "responses": {
-          "200": {
-            "description": "Cash transit transfer detail",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CashTransitTransferResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "401": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "403": {
-            "$ref": "#/components/responses/ErrorResponse"
-          }
-        },
-        "parameters": [
-          {
-            "in": "path",
-            "name": "transitTransferId",
-            "required": true,
-            "description": "transitTransferId identifier",
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          }
-        ]
-      }
-    },
-    "/api/v1/cash/transactions/transit/{transitTransferId}/cancel": {
-      "post": {
-        "tags": [
-          "Cash"
-        ],
-        "operationId": "postApiV1CashTransactionsTransitTransittransferidCancel",
-        "summary": "Cancel initiated cash transit transfer",
-        "responses": {
-          "200": {
-            "description": "Cash transit transfer cancelled",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CashTransitTransferResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "401": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "403": {
-            "$ref": "#/components/responses/ErrorResponse"
-          }
-        },
-        "parameters": [
-          {
-            "in": "path",
-            "name": "transitTransferId",
-            "required": true,
-            "description": "transitTransferId identifier",
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CashTransitTransferCancelRequest"
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/cash/transactions/transit/{transitTransferId}/receive": {
-      "post": {
-        "tags": [
-          "Cash"
-        ],
-        "operationId": "postApiV1CashTransactionsTransitTransittransferidReceive",
-        "summary": "Receive cash transit transfer (creates and posts linked transfer-in)",
-        "responses": {
-          "200": {
-            "description": "Idempotent replay response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CashTransitTransferResponse"
-                }
-              }
-            }
-          },
-          "201": {
-            "description": "Cash transit transfer received",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CashTransitTransferResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "401": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "403": {
-            "$ref": "#/components/responses/ErrorResponse"
-          }
-        },
-        "parameters": [
-          {
-            "in": "path",
-            "name": "transitTransferId",
-            "required": true,
-            "description": "transitTransferId identifier",
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CashTransitTransferReceiveRequest"
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/cash/transactions/transit/initiate": {
-      "post": {
-        "tags": [
-          "Cash"
-        ],
-        "operationId": "postApiV1CashTransactionsTransitInitiate",
-        "summary": "Initiate cash transit transfer for different operating-unit contexts (creates transfer-out)",
-        "responses": {
-          "200": {
-            "description": "Idempotent replay response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CashTransitTransferResponse"
-                }
-              }
-            }
-          },
-          "201": {
-            "description": "Cash transit transfer initiated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CashTransitTransferResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "401": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "403": {
-            "$ref": "#/components/responses/ErrorResponse"
-          }
-        },
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CashTransitTransferInitiateRequest"
-              }
-            }
-          }
-        },
-        "description": "Use this workflow when the source and target registers are in different operating-unit contexts, including Central to branch, branch to Central, or branch-to-branch moves between different operating units."
       }
     },
     "/api/v1/consolidation/groups/{groupId}/canonical-governance-review": {
@@ -12698,6 +12698,110 @@
         }
       }
     },
+    "/api/v1/consolidation/groups/{groupId}/canonical-mappings/rules/apply": {
+      "post": {
+        "tags": [
+          "Consolidation"
+        ],
+        "operationId": "postApiV1ConsolidationGroupsGroupidCanonicalMappingsRulesApply",
+        "summary": "Auto-generated: POST /api/v1/consolidation/groups/{groupId}/canonical-mappings/rules/apply",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "groupId",
+            "required": true,
+            "description": "groupId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/consolidation/groups/{groupId}/canonical-mappings/rules/preview": {
+      "post": {
+        "tags": [
+          "Consolidation"
+        ],
+        "operationId": "postApiV1ConsolidationGroupsGroupidCanonicalMappingsRulesPreview",
+        "summary": "Auto-generated: POST /api/v1/consolidation/groups/{groupId}/canonical-mappings/rules/preview",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "groupId",
+            "required": true,
+            "description": "groupId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/consolidation/groups/{groupId}/canonical-mappings/rules/{ruleId}/apply": {
       "post": {
         "tags": [
@@ -12866,110 +12970,6 @@
             "name": "ruleId",
             "required": true,
             "description": "ruleId identifier",
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AnyObject"
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/consolidation/groups/{groupId}/canonical-mappings/rules/apply": {
-      "post": {
-        "tags": [
-          "Consolidation"
-        ],
-        "operationId": "postApiV1ConsolidationGroupsGroupidCanonicalMappingsRulesApply",
-        "summary": "Auto-generated: POST /api/v1/consolidation/groups/{groupId}/canonical-mappings/rules/apply",
-        "responses": {
-          "200": {
-            "description": "Successful response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "401": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "403": {
-            "$ref": "#/components/responses/ErrorResponse"
-          }
-        },
-        "parameters": [
-          {
-            "in": "path",
-            "name": "groupId",
-            "required": true,
-            "description": "groupId identifier",
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            }
-          }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AnyObject"
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/consolidation/groups/{groupId}/canonical-mappings/rules/preview": {
-      "post": {
-        "tags": [
-          "Consolidation"
-        ],
-        "operationId": "postApiV1ConsolidationGroupsGroupidCanonicalMappingsRulesPreview",
-        "summary": "Auto-generated: POST /api/v1/consolidation/groups/{groupId}/canonical-mappings/rules/preview",
-        "responses": {
-          "200": {
-            "description": "Successful response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "401": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "403": {
-            "$ref": "#/components/responses/ErrorResponse"
-          }
-        },
-        "parameters": [
-          {
-            "in": "path",
-            "name": "groupId",
-            "required": true,
-            "description": "groupId identifier",
             "schema": {
               "type": "integer",
               "minimum": 1
@@ -14077,6 +14077,86 @@
         }
       }
     },
+    "/api/v1/exceptions/workbench/bulk-action": {
+      "post": {
+        "tags": [
+          "Exceptions"
+        ],
+        "operationId": "postApiV1ExceptionsWorkbenchBulkAction",
+        "summary": "Auto-generated: POST /api/v1/exceptions/workbench/bulk-action",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/exceptions/workbench/refresh": {
+      "post": {
+        "tags": [
+          "Exceptions"
+        ],
+        "operationId": "postApiV1ExceptionsWorkbenchRefresh",
+        "summary": "Auto-generated: POST /api/v1/exceptions/workbench/refresh",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/exceptions/workbench/{exceptionId}": {
       "get": {
         "tags": [
@@ -14315,86 +14395,6 @@
             }
           }
         ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AnyObject"
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/exceptions/workbench/bulk-action": {
-      "post": {
-        "tags": [
-          "Exceptions"
-        ],
-        "operationId": "postApiV1ExceptionsWorkbenchBulkAction",
-        "summary": "Auto-generated: POST /api/v1/exceptions/workbench/bulk-action",
-        "responses": {
-          "200": {
-            "description": "Successful response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "401": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "403": {
-            "$ref": "#/components/responses/ErrorResponse"
-          }
-        },
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AnyObject"
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/exceptions/workbench/refresh": {
-      "post": {
-        "tags": [
-          "Exceptions"
-        ],
-        "operationId": "postApiV1ExceptionsWorkbenchRefresh",
-        "summary": "Auto-generated: POST /api/v1/exceptions/workbench/refresh",
-        "responses": {
-          "200": {
-            "description": "Successful response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "401": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "403": {
-            "$ref": "#/components/responses/ErrorResponse"
-          }
-        },
         "requestBody": {
           "required": false,
           "content": {
@@ -16263,6 +16263,46 @@
         }
       }
     },
+    "/api/v1/jobs/run-once": {
+      "post": {
+        "tags": [
+          "Jobs"
+        ],
+        "operationId": "postApiV1JobsRunOnce",
+        "summary": "Auto-generated: POST /api/v1/jobs/run-once",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/jobs/{id}": {
       "get": {
         "tags": [
@@ -16397,46 +16437,6 @@
             }
           }
         ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AnyObject"
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/jobs/run-once": {
-      "post": {
-        "tags": [
-          "Jobs"
-        ],
-        "operationId": "postApiV1JobsRunOnce",
-        "summary": "Auto-generated: POST /api/v1/jobs/run-once",
-        "responses": {
-          "200": {
-            "description": "Successful response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "401": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "403": {
-            "$ref": "#/components/responses/ErrorResponse"
-          }
-        },
         "requestBody": {
           "required": false,
           "content": {
@@ -17547,6 +17547,46 @@
         }
       }
     },
+    "/api/v1/org/shareholders/capital-fulfillments/preview": {
+      "post": {
+        "tags": [
+          "Org"
+        ],
+        "operationId": "previewShareholderCapitalFulfillment",
+        "summary": "Preview shareholder capital fulfillment",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ShareholderCapitalFulfillmentRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Capital fulfillment preview",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShareholderCapitalFulfillmentPreviewResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
     "/api/v1/org/shareholders/capital-fulfillments/{id}/reverse": {
       "post": {
         "tags": [
@@ -17583,46 +17623,6 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ShareholderCapitalFulfillmentReverseResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "401": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "403": {
-            "$ref": "#/components/responses/ErrorResponse"
-          }
-        }
-      }
-    },
-    "/api/v1/org/shareholders/capital-fulfillments/preview": {
-      "post": {
-        "tags": [
-          "Org"
-        ],
-        "operationId": "previewShareholderCapitalFulfillment",
-        "summary": "Preview shareholder capital fulfillment",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ShareholderCapitalFulfillmentRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Capital fulfillment preview",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ShareholderCapitalFulfillmentPreviewResponse"
                 }
               }
             }
@@ -18239,6 +18239,46 @@
         }
       }
     },
+    "/api/v1/payroll/close-controls/prepare": {
+      "post": {
+        "tags": [
+          "Payroll"
+        ],
+        "operationId": "postApiV1PayrollCloseControlsPrepare",
+        "summary": "Auto-generated: POST /api/v1/payroll/close-controls/prepare",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/payroll/close-controls/{closeId}": {
       "get": {
         "tags": [
@@ -18425,46 +18465,6 @@
             }
           }
         ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AnyObject"
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/payroll/close-controls/prepare": {
-      "post": {
-        "tags": [
-          "Payroll"
-        ],
-        "operationId": "postApiV1PayrollCloseControlsPrepare",
-        "summary": "Auto-generated: POST /api/v1/payroll/close-controls/prepare",
-        "responses": {
-          "200": {
-            "description": "Successful response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "401": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "403": {
-            "$ref": "#/components/responses/ErrorResponse"
-          }
-        },
         "requestBody": {
           "required": false,
           "content": {
@@ -19073,6 +19073,46 @@
         }
       }
     },
+    "/api/v1/payroll/provider-imports/preview": {
+      "post": {
+        "tags": [
+          "Payroll"
+        ],
+        "operationId": "postApiV1PayrollProviderImportsPreview",
+        "summary": "Auto-generated: POST /api/v1/payroll/provider-imports/preview",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/payroll/provider-imports/{importJobId}": {
       "get": {
         "tags": [
@@ -19271,46 +19311,6 @@
         }
       }
     },
-    "/api/v1/payroll/provider-imports/preview": {
-      "post": {
-        "tags": [
-          "Payroll"
-        ],
-        "operationId": "postApiV1PayrollProviderImportsPreview",
-        "summary": "Auto-generated: POST /api/v1/payroll/provider-imports/preview",
-        "responses": {
-          "200": {
-            "description": "Successful response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "401": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "403": {
-            "$ref": "#/components/responses/ErrorResponse"
-          }
-        },
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AnyObject"
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/v1/payroll/providers": {
       "get": {
         "tags": [
@@ -19367,6 +19367,46 @@
           },
           "403": {
             "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
+    "/api/v1/payroll/runs/import": {
+      "post": {
+        "tags": [
+          "Payroll"
+        ],
+        "operationId": "postApiV1PayrollRunsImport",
+        "summary": "Auto-generated: POST /api/v1/payroll/runs/import",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
           }
         }
       }
@@ -19977,46 +20017,6 @@
         }
       }
     },
-    "/api/v1/payroll/runs/import": {
-      "post": {
-        "tags": [
-          "Payroll"
-        ],
-        "operationId": "postApiV1PayrollRunsImport",
-        "summary": "Auto-generated: POST /api/v1/payroll/runs/import",
-        "responses": {
-          "200": {
-            "description": "Successful response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "401": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "403": {
-            "$ref": "#/components/responses/ErrorResponse"
-          }
-        },
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AnyObject"
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/v1/provider/auth/login": {
       "post": {
         "tags": [
@@ -20396,6 +20396,51 @@
         }
       }
     },
+    "/api/v1/provider/tenants/bootstrap": {
+      "post": {
+        "tags": [
+          "Provider"
+        ],
+        "operationId": "postApiV1ProviderTenantsBootstrap",
+        "summary": "Auto-generated: POST /api/v1/provider/tenants/bootstrap",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "providerApiKey": []
+          }
+        ]
+      }
+    },
     "/api/v1/provider/tenants/{tenantId}/status": {
       "patch": {
         "tags": [
@@ -20500,20 +20545,20 @@
         }
       }
     },
-    "/api/v1/provider/tenants/bootstrap": {
+    "/api/v1/revenue-recognition/accruals/generate": {
       "post": {
         "tags": [
-          "Provider"
+          "RevenueRecognition"
         ],
-        "operationId": "postApiV1ProviderTenantsBootstrap",
-        "summary": "Auto-generated: POST /api/v1/provider/tenants/bootstrap",
+        "operationId": "postApiV1RevenueRecognitionAccrualsGenerate",
+        "summary": "Generate accrual run (ACCRUED_REVENUE / ACCRUED_EXPENSE)",
         "responses": {
-          "200": {
-            "description": "Successful response",
+          "201": {
+            "description": "Accrual generated",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/RevenueAccrualGenerateResponse"
                 }
               }
             }
@@ -20529,20 +20574,16 @@
           }
         },
         "requestBody": {
-          "required": false,
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/AnyObject"
+                "$ref": "#/components/schemas/RevenueAccrualGenerateInput"
               }
             }
           }
         },
-        "security": [
-          {
-            "providerApiKey": []
-          }
-        ]
+        "description": "PR-17C accrual generation endpoint. Permission: revenue.run.create."
       }
     },
     "/api/v1/revenue-recognition/accruals/{accrualId}/reverse": {
@@ -20649,47 +20690,6 @@
           }
         },
         "description": "PR-17C accrual settle endpoint. Permission: revenue.run.post."
-      }
-    },
-    "/api/v1/revenue-recognition/accruals/generate": {
-      "post": {
-        "tags": [
-          "RevenueRecognition"
-        ],
-        "operationId": "postApiV1RevenueRecognitionAccrualsGenerate",
-        "summary": "Generate accrual run (ACCRUED_REVENUE / ACCRUED_EXPENSE)",
-        "responses": {
-          "201": {
-            "description": "Accrual generated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RevenueAccrualGenerateResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "401": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "403": {
-            "$ref": "#/components/responses/ErrorResponse"
-          }
-        },
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/RevenueAccrualGenerateInput"
-              }
-            }
-          }
-        },
-        "description": "PR-17C accrual generation endpoint. Permission: revenue.run.create."
       }
     },
     "/api/v1/revenue-recognition/lookups/fiscal-periods": {
@@ -22858,6 +22858,47 @@
         "security": []
       }
     },
+    "/auth/password-reset/request": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "operationId": "postAuthPasswordResetRequest",
+        "summary": "Auto-generated: POST /auth/password-reset/request",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        },
+        "security": []
+      }
+    },
     "/auth/password-reset/{token}": {
       "get": {
         "tags": [
@@ -22941,47 +22982,6 @@
             }
           }
         ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AnyObject"
-              }
-            }
-          }
-        },
-        "security": []
-      }
-    },
-    "/auth/password-reset/request": {
-      "post": {
-        "tags": [
-          "Auth"
-        ],
-        "operationId": "postAuthPasswordResetRequest",
-        "summary": "Auto-generated: POST /auth/password-reset/request",
-        "responses": {
-          "200": {
-            "description": "Successful response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "401": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "403": {
-            "$ref": "#/components/responses/ErrorResponse"
-          }
-        },
         "requestBody": {
           "required": false,
           "content": {
@@ -23116,6 +23116,46 @@
         }
       }
     },
+    "/me/notifications/read-all": {
+      "put": {
+        "tags": [
+          "Auth"
+        ],
+        "operationId": "putMeNotificationsReadAll",
+        "summary": "Auto-generated: PUT /me/notifications/read-all",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
     "/me/notifications/{notificationId}/read": {
       "put": {
         "tags": [
@@ -23156,46 +23196,6 @@
             }
           }
         ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AnyObject"
-              }
-            }
-          }
-        }
-      }
-    },
-    "/me/notifications/read-all": {
-      "put": {
-        "tags": [
-          "Auth"
-        ],
-        "operationId": "putMeNotificationsReadAll",
-        "summary": "Auto-generated: PUT /me/notifications/read-all",
-        "responses": {
-          "200": {
-            "description": "Successful response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "401": {
-            "$ref": "#/components/responses/ErrorResponse"
-          },
-          "403": {
-            "$ref": "#/components/responses/ErrorResponse"
-          }
-        },
         "requestBody": {
           "required": false,
           "content": {
