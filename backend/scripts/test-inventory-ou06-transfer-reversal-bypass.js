@@ -1025,6 +1025,12 @@ async function main() {
     }
     if (uniqueOperatingUnitIds.length > 0) {
       await query(
+        `DELETE FROM operating_unit_partner_current_accounts
+          WHERE operating_unit_id IN (${uniqueOperatingUnitIds.map(() => "?").join(",")})
+             OR partner_operating_unit_id IN (${uniqueOperatingUnitIds.map(() => "?").join(",")})`,
+        [...uniqueOperatingUnitIds, ...uniqueOperatingUnitIds]
+      );
+      await query(
         `DELETE FROM operating_units
           WHERE id IN (${uniqueOperatingUnitIds.map(() => "?").join(",")})`,
         uniqueOperatingUnitIds

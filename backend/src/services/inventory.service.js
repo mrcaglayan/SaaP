@@ -28,6 +28,8 @@ import { upsertJournalSourceLinkTx } from "./journal.source-link.service.js";
 
 const AMOUNT_SCALE = 6;
 const BALANCE_EPSILON = 0.000001;
+const CROSS_CONTEXT_TRANSFER_WORKFLOW_MESSAGE =
+  "Cross-context stock movement must use inventory transfer workflow";
 
 function toDecimalNumber(value) {
   if (value === null || value === undefined) {
@@ -401,6 +403,28 @@ function mapIssueLayerConsumptionRow(row) {
 
 function makeInClause(values) {
   return values.map(() => "?").join(", ");
+}
+
+function assertInventoryWarehouseBelongsToOwnershipContext({
+  warehouseRow,
+  ownershipContext,
+  ownershipContextRow,
+  ownerLabel = "document",
+} = {}) {
+  try {
+    assertWarehouseBelongsToOwnershipContext({
+      warehouseRow,
+      ownershipContext,
+      ownershipContextRow,
+      ownerLabel,
+    });
+  } catch (error) {
+    const message = String(error?.message || "");
+    if (message.includes(CROSS_CONTEXT_TRANSFER_WORKFLOW_MESSAGE)) {
+      throw badRequest(message);
+    }
+    throw error;
+  }
 }
 
 async function fetchWarehouseById({
@@ -1084,7 +1108,7 @@ export async function resolveWarehouseForOwnershipContext({
   ) {
     throw badRequest(`${warehouseFieldLabel} must reference an ACTIVE warehouse`);
   }
-  assertWarehouseBelongsToOwnershipContext({
+  assertInventoryWarehouseBelongsToOwnershipContext({
     warehouseRow,
     ownershipContext,
     ownershipContextRow,
