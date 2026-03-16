@@ -118,6 +118,12 @@ const DEFAULT_PAYMENT_TERM_TEMPLATES = [
   },
 ];
 
+async function scalarCount(sql, params = [], runQuery = query) {
+  const result = await runQuery(sql, params);
+  const count = Number(result.rows?.[0]?.count || 0);
+  return Number.isFinite(count) ? count : 0;
+}
+
 function toIsoDate(date) {
   return date.toISOString().slice(0, 10);
 }
