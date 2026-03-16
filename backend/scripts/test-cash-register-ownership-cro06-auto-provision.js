@@ -100,9 +100,8 @@ async function createOperatingUnit({ token, legalEntityId, code, name }) {
     },
     expectedStatus: 201,
   });
-  const operatingUnitId = toNumber(response.json?.id);
-  assert(operatingUnitId > 0, `Operating unit create failed for ${code}`);
-  return operatingUnitId;
+  assert(toNumber(response.json?.id) > 0, `Operating unit create failed for ${code}`);
+  return response;
 }
 
 async function saveCurrentAccountConfig({
@@ -110,6 +109,7 @@ async function saveCurrentAccountConfig({
   legalEntityId,
   dueFromParentAccountId,
   dueToParentAccountId,
+  autoProvisionOnOperatingUnitCreate = true,
 }) {
   return apiRequest({
     baseUrl: BASE_URL,
@@ -120,7 +120,7 @@ async function saveCurrentAccountConfig({
       legalEntityId,
       dueFromParentAccountId,
       dueToParentAccountId,
-      autoProvisionOnOperatingUnitCreate: true,
+      autoProvisionOnOperatingUnitCreate,
     },
     expectedStatus: 201,
   });
@@ -283,22 +283,37 @@ async function main() {
       legalEntityId,
       dueFromParentAccountId,
       dueToParentAccountId,
+      autoProvisionOnOperatingUnitCreate: false,
     });
 
     const branchACode = `BRA${suffix}`;
     const branchBCode = `BRB${suffix}`;
-    const branchAId = await createOperatingUnit({
+    const branchAResponse = await createOperatingUnit({
       token: adminToken,
       legalEntityId,
       code: branchACode,
       name: `Branch A ${suffix}`,
     });
-    const branchBId = await createOperatingUnit({
+    const branchAId = toNumber(branchAResponse.json?.id);
+    assert(branchAId > 0, `Operating unit create failed for ${branchACode}`);
+    assert(
+      branchAResponse.json?.currentAccountProvisioning?.status ===
+        "skipped_auto_provision_disabled",
+      "Branch A save should skip create-time auto-provision when saved config disables it"
+    );
+    const branchBResponse = await createOperatingUnit({
       token: adminToken,
       legalEntityId,
       code: branchBCode,
       name: `Branch B ${suffix}`,
     });
+    const branchBId = toNumber(branchBResponse.json?.id);
+    assert(branchBId > 0, `Operating unit create failed for ${branchBCode}`);
+    assert(
+      branchBResponse.json?.currentAccountProvisioning?.status ===
+        "skipped_auto_provision_disabled",
+      "Branch B save should skip create-time auto-provision when saved config disables it"
+    );
 
     const freshApply = await applyCurrentAccountConfig({
       token: adminToken,
