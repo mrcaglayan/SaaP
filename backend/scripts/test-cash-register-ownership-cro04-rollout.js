@@ -80,7 +80,8 @@ async function main() {
     "utf8"
   );
   assert(
-    releaseGateSource.includes("cash ownership rollout gates"),
+    releaseGateSource.includes("cash ownership") &&
+      releaseGateSource.includes("strict inventory rollout gates"),
     "Unified release gate stage title should mention cash ownership rollout coverage"
   );
 
