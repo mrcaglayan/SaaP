@@ -9,6 +9,7 @@ import {
   deleteCariDocumentEvidence,
   downloadCariDocumentEvidence,
   getCariDocument,
+  listCariDocumentWarehouseOptions,
   getCariDocumentOpenItems,
   listCariDocumentComments,
   listCariDocumentEvidence,
@@ -116,6 +117,7 @@ const DOCUMENT_DRAFT_TEMPLATE_MODULE_CODE = "CARI_DOCUMENT_DRAFT_TEMPLATES";
 const DOCUMENT_TABLE_DEFAULT_ROWS_PER_PAGE = 50;
 const DOCUMENT_TABLE_ROWS_PER_PAGE_OPTIONS = [25, 50, 100, 200];
 const INVENTORY_MOVEMENTS_ROUTE = "/app/stok-yansitma-islemleri";
+const INVENTORY_TRANSFERS_ROUTE = "/app/stok-transferleri";
 const DOCUMENT_RECURRING_TEMPLATE_CADENCES = [
   "NONE",
   "WEEKLY",
@@ -204,6 +206,82 @@ function buildInventoryMovementLink(legalEntityId, movementId = null) {
   }
   const query = params.toString();
   return query ? `${INVENTORY_MOVEMENTS_ROUTE}?${query}` : INVENTORY_MOVEMENTS_ROUTE;
+}
+
+function buildInventoryTransferLink({
+  legalEntityId,
+  sourceWarehouseId = null,
+  targetWarehouseId = null,
+  itemCardId = null,
+  quantityRequested = null,
+  sourceModule = null,
+  sourceEntityType = null,
+  sourceEntityId = null,
+} = {}) {
+  const params = new URLSearchParams();
+  const normalizedLegalEntityId = normalizePositiveIntText(legalEntityId);
+  const normalizedSourceWarehouseId = normalizePositiveIntText(sourceWarehouseId);
+  const normalizedTargetWarehouseId = normalizePositiveIntText(targetWarehouseId);
+  const normalizedItemCardId = normalizePositiveIntText(itemCardId);
+  const normalizedSourceEntityId = normalizePositiveIntText(sourceEntityId);
+  const normalizedQuantityRequested = normalizeText(quantityRequested);
+  if (normalizedLegalEntityId) {
+    params.set("legalEntityId", normalizedLegalEntityId);
+  }
+  if (normalizedSourceWarehouseId) {
+    params.set("sourceWarehouseId", normalizedSourceWarehouseId);
+  }
+  if (normalizedTargetWarehouseId) {
+    params.set("targetWarehouseId", normalizedTargetWarehouseId);
+  }
+  if (normalizedItemCardId) {
+    params.set("itemCardId", normalizedItemCardId);
+  }
+  if (normalizedQuantityRequested) {
+    params.set("quantityRequested", normalizedQuantityRequested);
+  }
+  if (normalizeText(sourceModule)) {
+    params.set("sourceModule", normalizeText(sourceModule).toUpperCase());
+  }
+  if (normalizeText(sourceEntityType)) {
+    params.set("sourceEntityType", normalizeText(sourceEntityType).toUpperCase());
+  }
+  if (normalizedSourceEntityId) {
+    params.set("sourceEntityId", normalizedSourceEntityId);
+  }
+  params.set("prefillReason", "TRANSFER_REQUIRED");
+  const query = params.toString();
+  return query ? `${INVENTORY_TRANSFERS_ROUTE}?${query}` : INVENTORY_TRANSFERS_ROUTE;
+}
+
+function extractTransferRequiredGuidanceFromError(error) {
+  const responseData = error?.response?.data || {};
+  const details = responseData?.details || {};
+  const directReason = String(details?.reason || responseData?.code || "").trim().toUpperCase();
+  const directCandidate =
+    directReason === "TRANSFER_REQUIRED" ? details : null;
+  const lineCandidate = Array.isArray(details?.lineErrors)
+    ? details.lineErrors.find(
+        (lineError) => String(lineError?.reason || "").trim().toUpperCase() === "TRANSFER_REQUIRED"
+      ) || null
+    : null;
+  const candidate = lineCandidate || directCandidate;
+  if (!candidate) {
+    return null;
+  }
+  return {
+    warehouseId: toPositiveInt(candidate?.warehouseId),
+    warehouseCode: normalizeText(candidate?.warehouseCode),
+    warehouseName: normalizeText(candidate?.warehouseName),
+    itemCardId: toPositiveInt(candidate?.itemCardId),
+    itemCardCode: normalizeText(candidate?.itemCardCode),
+    itemCardName: normalizeText(candidate?.itemCardName),
+    requestedQuantity: normalizeText(candidate?.requestedQuantity),
+    transferSourceWarehouseId: toPositiveInt(candidate?.transferSourceWarehouseId),
+    transferSourceWarehouseCode: normalizeText(candidate?.transferSourceWarehouseCode),
+    transferSourceWarehouseName: normalizeText(candidate?.transferSourceWarehouseName),
+    transferSourceOperatingUnitName: normalizeText(candidate?.transferSourceOperatingUnitName),
+  };
 }
 
 const INTERNAL_COMMENT_MENTION_REGEX = /(^|[\s(])@([A-Za-z0-9._%+\-@]*)$/;
@@ -365,6 +443,151 @@ function extendItemCardOptionsForSelectedLines(options, lines) {
     }
   });
   return normalizedOptions;
+}
+
+function mapWarehouseLookupOptions(rows = [], l) {
+  return (Array.isArray(rows) ? rows : [])
+    .map((row) => {
+      const value = String(toPositiveInt(row?.id) || "").trim();
+      if (!value) {
+        return null;
+      }
+      const operatingUnitId = toPositiveInt(
+        row?.operatingUnitId ?? row?.operating_unit_id
+      );
+      const operatingUnitCode = normalizeText(
+        row?.operatingUnitCode ?? row?.operating_unit_code
+      );
+      const operatingUnitName = normalizeText(
+        row?.operatingUnitName ?? row?.operating_unit_name
+      );
+      const ownershipScope = normalizeText(
+        row?.ownershipScope ?? row?.ownership_scope
+      ).toUpperCase();
+      const scopeLabel =
+        ownershipScope === "OPERATING_UNIT"
+          ? l(
+              `Branch ${operatingUnitCode || operatingUnitName || `#${operatingUnitId || "?"}`}`,
+              `Sube ${operatingUnitCode || operatingUnitName || `#${operatingUnitId || "?"}`}`
+            )
+          : l("Central ownership context", "Merkez sahiplik baglami");
+      return {
+        value,
+        label: formatWarehouseDisplay(row?.id, row?.code, row?.name),
+        description: scopeLabel,
+      };
+    })
+    .filter(Boolean);
+}
+
+function extendWarehouseOptionsForSelectedLines(options, lines, l) {
+  const normalizedOptions = Array.isArray(options) ? [...options] : [];
+  const knownValues = new Set(
+    normalizedOptions.map((row) => String(row?.value || "").trim()).filter(Boolean)
+  );
+  const selectedRows = (Array.isArray(lines) ? lines : [])
+    .map((line) => createDocumentLineDraft(line))
+    .filter((line) => normalizeText(line.warehouseId))
+    .map((line) => ({
+      value: String(line.warehouseId).trim(),
+      label: formatWarehouseDisplay(line.warehouseId, line.warehouseCode, line.warehouseName),
+    }));
+  selectedRows.forEach((row) => {
+    if (!knownValues.has(row.value)) {
+      normalizedOptions.unshift({
+        value: row.value,
+        label: row.label === "-" ? `#${row.value}` : row.label,
+        description: l(
+          "Selected warehouse is outside current ownership-context scope.",
+          "Secili depo guncel sahiplik baglami kapsami disinda."
+        ),
+        disabled: true,
+      });
+      knownValues.add(row.value);
+    }
+  });
+  return normalizedOptions;
+}
+
+function buildRowsById(rows = []) {
+  return new Map(
+    (Array.isArray(rows) ? rows : [])
+      .map((row) => [Number(row?.id || 0), row])
+      .filter(([id]) => id > 0)
+  );
+}
+
+function analyzeDocumentWarehouseBindings(
+  form,
+  {
+    warehouseRowsById,
+    warehouseLoading = false,
+    warehouseError = "",
+    l,
+  } = {}
+) {
+  const normalizedMap =
+    warehouseRowsById instanceof Map ? warehouseRowsById : new Map();
+  const lines = normalizeDocumentFormLines(form?.lines);
+  const lineErrors = new Map();
+  const generalErrors = [];
+  const stockLines = lines.filter(
+    (line) => normalizeText(line.stockImpactMode).toUpperCase() !== "NONE"
+  );
+  if (stockLines.length === 0) {
+    return {
+      generalErrors,
+      lineErrors,
+      blockingMessages: [],
+    };
+  }
+  if (warehouseError) {
+    generalErrors.push(String(warehouseError).trim());
+  } else if (warehouseLoading) {
+    generalErrors.push(
+      l(
+        "Warehouse choices are still loading for the selected ownership context.",
+        "Secili sahiplik baglami icin depo secenekleri hala yukleniyor."
+      )
+    );
+  } else if (toPositiveInt(form?.legalEntityId) && normalizedMap.size === 0) {
+    generalErrors.push(
+      l(
+        "No active warehouse exists for the selected ownership context.",
+        "Secili sahiplik baglami icin aktif depo yok."
+      )
+    );
+  }
+
+  stockLines.forEach((line) => {
+    const lineKey = String(line.rowId || `line-${line.lineNo || 0}`);
+    const warehouseId = toPositiveInt(line.warehouseId);
+    if (!warehouseId) {
+      lineErrors.set(
+        lineKey,
+        l(
+          "Select a warehouse for this stock-affecting line.",
+          "Bu stok etkileyen satir icin depo secin."
+        )
+      );
+      return;
+    }
+    if (!warehouseLoading && !warehouseError && !normalizedMap.has(warehouseId)) {
+      lineErrors.set(
+        lineKey,
+        l(
+          "Selected warehouse is outside the current ownership-context scope.",
+          "Secili depo mevcut sahiplik baglami kapsami disinda."
+        )
+      );
+    }
+  });
+
+  return {
+    generalErrors,
+    lineErrors,
+    blockingMessages: [...new Set([...generalErrors, ...lineErrors.values()])],
+  };
 }
 
 function resolveLineDefaultsFromItemCard(itemCard, direction) {
@@ -769,6 +992,11 @@ function DocumentLineWorkbench({
   itemCardOptions,
   itemCardsLoading,
   itemCardsError,
+  warehouseOptions,
+  warehouseLoading,
+  warehouseError,
+  warehouseInfoMessage,
+  warehouseLineErrors,
   taxCategoryOptions,
   taxCategoryLoading,
   taxCategoryError,
@@ -781,6 +1009,7 @@ function DocumentLineWorkbench({
   onPatchLine,
   onPatchTaxSensitiveLine,
   onSelectItemCard,
+  onSelectWarehouse,
   onPreviewAll,
   onPreviewRow,
 }) {
@@ -846,6 +1075,17 @@ function DocumentLineWorkbench({
         </p>
       ) : null}
       {itemCardsError ? <p className="mt-2 text-xs text-amber-700">{itemCardsError}</p> : null}
+      {warehouseLoading ? (
+        <p className="mt-2 text-xs text-slate-600">
+          {l("Loading warehouses...", "Depolar yukleniyor...")}
+        </p>
+      ) : null}
+      {warehouseError ? (
+        <p className="mt-2 text-xs text-amber-700">{warehouseError}</p>
+      ) : null}
+      {!warehouseError && !warehouseLoading && warehouseInfoMessage ? (
+        <p className="mt-2 text-xs text-amber-700">{warehouseInfoMessage}</p>
+      ) : null}
       {taxCategoryLoading ? (
         <p className="mt-2 text-xs text-slate-600">
           {l("Loading tax categories...", "Vergi kategorileri yukleniyor...")}
@@ -863,11 +1103,22 @@ function DocumentLineWorkbench({
         {lines.map((line, index) => {
           const lineCurrencyCode = normalizeCurrencyCode(currencyCode) || currencyCode || "USD";
           const hasTaxCategory = Boolean(normalizeText(line.taxCategoryCode));
+          const isStockAffectingLine =
+            normalizeText(line.stockImpactMode).toUpperCase() !== "NONE";
           const previewStatus = normalizeText(line.previewStatus).toUpperCase();
           const previewReady =
             previewStatus === "READY" ||
             (Array.isArray(line.taxes) && line.taxes.length > 0) ||
             (hasTaxCategory && Number(line.lineTaxAmountTxn || 0) > 0);
+          const warehouseLabel = formatWarehouseDisplay(
+            line.warehouseId,
+            line.warehouseCode,
+            line.warehouseName
+          );
+          const lineWarehouseError =
+            warehouseLineErrors instanceof Map
+              ? warehouseLineErrors.get(String(line.rowId || `line-${index}`)) || ""
+              : "";
 
           return (
             <div
@@ -961,6 +1212,44 @@ function DocumentLineWorkbench({
                     />
                   </label>
                 </div>
+                <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                  {isStockAffectingLine
+                    ? l("Warehouse (required)", "Depo (zorunlu)")
+                    : l("Warehouse", "Depo")}
+                  <Combobox
+                    className="mt-1"
+                    value={line.warehouseId}
+                    options={warehouseOptions}
+                    loading={warehouseLoading}
+                    disabled={saving || !isStockAffectingLine}
+                    clearable
+                    placeholder={
+                      isStockAffectingLine
+                        ? l("Search warehouse", "Depo ara")
+                        : l("Not used for non-stock lines", "Stok disi satirlarda kullanilmaz")
+                    }
+                    noOptionsText={l("No warehouses found.", "Depo bulunamadi.")}
+                    onChange={(nextValue) => onSelectWarehouse(line.rowId, nextValue)}
+                  />
+                  {lineWarehouseError ? (
+                    <span className="mt-1 block normal-case tracking-normal text-[11px] text-amber-700">
+                      {lineWarehouseError}
+                    </span>
+                  ) : null}
+                  {!lineWarehouseError && warehouseLabel !== "-" ? (
+                    <span className="mt-1 block normal-case tracking-normal text-[11px] text-slate-500">
+                      {l("Current binding", "Mevcut bag")}: {warehouseLabel}
+                    </span>
+                  ) : null}
+                  {!lineWarehouseError && isStockAffectingLine && warehouseLabel === "-" ? (
+                    <span className="mt-1 block normal-case tracking-normal text-[11px] text-slate-500">
+                      {l(
+                        "Choose a warehouse in the current ownership context before saving or posting.",
+                        "Kaydetmeden veya kayda almadan once mevcut sahiplik baglaminda bir depo secin."
+                      )}
+                    </span>
+                  ) : null}
+                </label>
                 <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
                   {l("Quantity", "Miktar")}
                   <input
@@ -1115,6 +1404,9 @@ function DocumentLineWorkbench({
                 </span>
                 <span>
                   {l("Item card", "Urun karti")}: {line.itemCardId || "-"}
+                </span>
+                <span>
+                  {l("Warehouse", "Depo")}: {warehouseLabel}
                 </span>
               </div>
 
@@ -1299,6 +1591,22 @@ function formatOperatingUnitDisplay(unitId, unitCode, unitName) {
     return name;
   }
   return unitId ? `#${unitId}` : "-";
+}
+
+function formatWarehouseDisplay(warehouseId, warehouseCode, warehouseName) {
+  const normalizedWarehouseId = toPositiveInt(warehouseId);
+  const code = normalizeText(warehouseCode);
+  const name = normalizeText(warehouseName);
+  if (code && name) {
+    return `${code} - ${name}`;
+  }
+  if (code) {
+    return code;
+  }
+  if (name) {
+    return name;
+  }
+  return normalizedWarehouseId ? `#${normalizedWarehouseId}` : "-";
 }
 
 function buildOperatingUnitsById(...collections) {
@@ -1508,12 +1816,82 @@ export default function CariDocumentsPage() {
           "currencyCode must be a 3-letter code.",
           "currencyCode 3 harfli bir kod olmali."
         );
+      case "warehouseCode is read-only; send warehouseId only":
+        return l(
+          "warehouseCode is read-only; send warehouseId only.",
+          "warehouseCode salt okunurdur; yalnizca warehouseId gonderin."
+        );
+      case "warehouseName is read-only; send warehouseId only":
+        return l(
+          "warehouseName is read-only; send warehouseId only.",
+          "warehouseName salt okunurdur; yalnizca warehouseId gonderin."
+        );
+      case "warehouseId must belong to legalEntityId":
+        return l(
+          "Selected warehouse must belong to the same legal entity.",
+          "Secili depo ayni tuzel kisilige ait olmalidir."
+        );
+      case "warehouseId must reference an ACTIVE warehouse":
+        return l(
+          "Selected warehouse must be active.",
+          "Secili depo aktif olmalidir."
+        );
       case "fxRate must be > 0 when provided.":
         return l(
           "fxRate must be > 0 when provided.",
           "fxRate girildiginde 0'dan buyuk olmali."
         );
       default: {
+        const stockLineWarehousePattern =
+          /^lines\[\d+\]\.warehouseId is required for stock-affecting lines\.?$/;
+        if (stockLineWarehousePattern.test(String(message || "").trim())) {
+          return l(
+            "warehouseId is required for stock-affecting lines.",
+            "Stok etkileyen satirlarda warehouseId zorunludur."
+          );
+        }
+        const warehouseCodeReadOnlyPattern =
+          /^lines\[\d+\]\.warehouseCode is read-only; send warehouseId only$/;
+        if (warehouseCodeReadOnlyPattern.test(String(message || "").trim())) {
+          return l(
+            "warehouseCode is read-only; send warehouseId only.",
+            "warehouseCode salt okunurdur; yalnizca warehouseId gonderin."
+          );
+        }
+        const warehouseNameReadOnlyPattern =
+          /^lines\[\d+\]\.warehouseName is read-only; send warehouseId only$/;
+        if (warehouseNameReadOnlyPattern.test(String(message || "").trim())) {
+          return l(
+            "warehouseName is read-only; send warehouseId only.",
+            "warehouseName salt okunurdur; yalnizca warehouseId gonderin."
+          );
+        }
+        const warehouseLegalEntityPattern =
+          /^lines\[\d+\]\.warehouseId must belong to legalEntityId$/;
+        if (warehouseLegalEntityPattern.test(String(message || "").trim())) {
+          return l(
+            "Selected warehouse must belong to the same legal entity.",
+            "Secili depo ayni tuzel kisilige ait olmalidir."
+          );
+        }
+        const activeWarehousePattern =
+          /^lines\[\d+\]\.warehouseId must reference an ACTIVE warehouse$/;
+        if (activeWarehousePattern.test(String(message || "").trim())) {
+          return l(
+            "Selected warehouse must be active.",
+            "Secili depo aktif olmalidir."
+          );
+        }
+        if (
+          /^Warehouse does not belong to ownership context /i.test(
+            String(message || "").trim()
+          )
+        ) {
+          return l(
+            "Selected warehouse belongs to another ownership context.",
+            "Secili depo baska bir sahiplik baglamina aittir."
+          );
+        }
         const dueDatePrefix = "dueDate is required for documentType=";
         if (String(message || "").startsWith(dueDatePrefix)) {
           const documentType = String(message || "")
@@ -1591,6 +1969,9 @@ export default function CariDocumentsPage() {
   const [createItemCardRows, setCreateItemCardRows] = useState([]);
   const [createItemCardsLoading, setCreateItemCardsLoading] = useState(false);
   const [createItemCardsError, setCreateItemCardsError] = useState("");
+  const [createWarehouseRows, setCreateWarehouseRows] = useState([]);
+  const [createWarehousesLoading, setCreateWarehousesLoading] = useState(false);
+  const [createWarehousesError, setCreateWarehousesError] = useState("");
   const [taxRuleRows, setTaxRuleRows] = useState([]);
   const [taxCategoryLoading, setTaxCategoryLoading] = useState(false);
   const [taxCategoryError, setTaxCategoryError] = useState("");
@@ -1635,6 +2016,9 @@ export default function CariDocumentsPage() {
   const [editItemCardRows, setEditItemCardRows] = useState([]);
   const [editItemCardsLoading, setEditItemCardsLoading] = useState(false);
   const [editItemCardsError, setEditItemCardsError] = useState("");
+  const [editWarehouseRows, setEditWarehouseRows] = useState([]);
+  const [editWarehousesLoading, setEditWarehousesLoading] = useState(false);
+  const [editWarehousesError, setEditWarehousesError] = useState("");
   const [editLinePreviewLoading, setEditLinePreviewLoading] = useState(false);
   const [editLinePreviewError, setEditLinePreviewError] = useState("");
   const [editLinePreviewMessage, setEditLinePreviewMessage] = useState("");
@@ -1648,8 +2032,12 @@ export default function CariDocumentsPage() {
   const [postOffsetAccountOptions, setPostOffsetAccountOptions] = useState([]);
   const [postOffsetAccountsLoading, setPostOffsetAccountsLoading] = useState(false);
   const [postOffsetAccountsError, setPostOffsetAccountsError] = useState("");
+  const [postWarehouseRows, setPostWarehouseRows] = useState([]);
+  const [postWarehousesLoading, setPostWarehousesLoading] = useState(false);
+  const [postWarehousesError, setPostWarehousesError] = useState("");
   const [postSaving, setPostSaving] = useState(false);
   const [postError, setPostError] = useState("");
+  const [postTransferGuidance, setPostTransferGuidance] = useState(null);
   const [postMessage, setPostMessage] = useState("");
 
   const [reverseForm, setReverseForm] = useState(() => ({
@@ -2095,6 +2483,26 @@ export default function CariDocumentsPage() {
     () => documentUsesStoredLineTaxes(selectedDetailForPosting),
     [selectedDetailForPosting]
   );
+  const selectedPostingDraftForm = useMemo(
+    () => (selectedDetailForPosting ? mapDocumentRowToForm(selectedDetailForPosting) : null),
+    [selectedDetailForPosting]
+  );
+  const selectedPostingWarehouseValidation = useMemo(
+    () =>
+      analyzeDocumentWarehouseBindings(selectedPostingDraftForm, {
+        warehouseRowsById: buildRowsById(postWarehouseRows),
+        warehouseLoading: postWarehousesLoading,
+        warehouseError: postWarehousesError,
+        l,
+      }),
+    [
+      l,
+      postWarehouseRows,
+      postWarehousesError,
+      postWarehousesLoading,
+      selectedPostingDraftForm,
+    ]
+  );
   const reverseInventoryBlockSummary = useMemo(() => {
     const issueCount = reverseInventoryBlocks.filter(
       (row) => String(row?.inventoryMovementType || "").trim().toUpperCase() === "ISSUE"
@@ -2376,6 +2784,58 @@ export default function CariDocumentsPage() {
     () => buildTaxCategoryOptions(taxRuleRows, editForm.legalEntityId, editForm.lines),
     [editForm.legalEntityId, editForm.lines, taxRuleRows]
   );
+  const createWarehouseRowsById = useMemo(
+    () => buildRowsById(createWarehouseRows),
+    [createWarehouseRows]
+  );
+  const editWarehouseRowsById = useMemo(
+    () => buildRowsById(editWarehouseRows),
+    [editWarehouseRows]
+  );
+  const createWarehouseOptions = useMemo(
+    () =>
+      extendWarehouseOptionsForSelectedLines(
+        mapWarehouseLookupOptions(createWarehouseRows, l),
+        createForm.lines,
+        l
+      ),
+    [createForm.lines, createWarehouseRows, l]
+  );
+  const editWarehouseOptions = useMemo(
+    () =>
+      extendWarehouseOptionsForSelectedLines(
+        mapWarehouseLookupOptions(editWarehouseRows, l),
+        editForm.lines,
+        l
+      ),
+    [editForm.lines, editWarehouseRows, l]
+  );
+  const createWarehouseValidation = useMemo(
+    () =>
+      analyzeDocumentWarehouseBindings(createForm, {
+        warehouseRowsById: createWarehouseRowsById,
+        warehouseLoading: createWarehousesLoading,
+        warehouseError: createWarehousesError,
+        l,
+      }),
+    [
+      createForm,
+      createWarehouseRowsById,
+      createWarehousesLoading,
+      createWarehousesError,
+      l,
+    ]
+  );
+  const editWarehouseValidation = useMemo(
+    () =>
+      analyzeDocumentWarehouseBindings(editForm, {
+        warehouseRowsById: editWarehouseRowsById,
+        warehouseLoading: editWarehousesLoading,
+        warehouseError: editWarehousesError,
+        l,
+      }),
+    [editForm, editWarehouseRowsById, editWarehousesLoading, editWarehousesError, l]
+  );
   const createItemCardRowsById = useMemo(
     () =>
       new Map(
@@ -2576,15 +3036,51 @@ export default function CariDocumentsPage() {
     setCreateLinePreviewMessage("");
     const selectedItemCard = createItemCardRowsById.get(Number(itemCardId || 0)) || null;
     if (!selectedItemCard) {
-      patchDraftFormLine(setCreateForm, rowId, { itemCardId: "" });
+      patchDraftFormLine(setCreateForm, rowId, {
+        itemCardId: "",
+        warehouseId: "",
+        warehouseCode: "",
+        warehouseName: "",
+      });
       return;
     }
+    const lineDefaults = resolveLineDefaultsFromItemCard(
+      selectedItemCard,
+      createForm.direction
+    );
     patchDraftFormLine(
       setCreateForm,
       rowId,
-      resolveLineDefaultsFromItemCard(selectedItemCard, createForm.direction),
+      lineDefaults.stockImpactMode === "NONE"
+        ? {
+            ...lineDefaults,
+            warehouseId: "",
+            warehouseCode: "",
+            warehouseName: "",
+          }
+        : lineDefaults,
       { resetTaxPreview: true }
     );
+  }
+
+  function selectCreateDocumentLineWarehouse(rowId, warehouseId) {
+    setCreateLinePreviewError("");
+    setCreateLinePreviewMessage("");
+    const selectedWarehouse =
+      createWarehouseRowsById.get(Number(warehouseId || 0)) || null;
+    if (!selectedWarehouse) {
+      patchDraftFormLine(setCreateForm, rowId, {
+        warehouseId: "",
+        warehouseCode: "",
+        warehouseName: "",
+      });
+      return;
+    }
+    patchDraftFormLine(setCreateForm, rowId, {
+      warehouseId: String(toPositiveInt(selectedWarehouse.id) || ""),
+      warehouseCode: normalizeText(selectedWarehouse.code),
+      warehouseName: normalizeText(selectedWarehouse.name),
+    });
   }
 
   function addEditDocumentLine() {
@@ -2622,15 +3118,51 @@ export default function CariDocumentsPage() {
     setEditLinePreviewMessage("");
     const selectedItemCard = editItemCardRowsById.get(Number(itemCardId || 0)) || null;
     if (!selectedItemCard) {
-      patchDraftFormLine(setEditForm, rowId, { itemCardId: "" });
+      patchDraftFormLine(setEditForm, rowId, {
+        itemCardId: "",
+        warehouseId: "",
+        warehouseCode: "",
+        warehouseName: "",
+      });
       return;
     }
+    const lineDefaults = resolveLineDefaultsFromItemCard(
+      selectedItemCard,
+      editForm.direction
+    );
     patchDraftFormLine(
       setEditForm,
       rowId,
-      resolveLineDefaultsFromItemCard(selectedItemCard, editForm.direction),
+      lineDefaults.stockImpactMode === "NONE"
+        ? {
+            ...lineDefaults,
+            warehouseId: "",
+            warehouseCode: "",
+            warehouseName: "",
+          }
+        : lineDefaults,
       { resetTaxPreview: true }
     );
+  }
+
+  function selectEditDocumentLineWarehouse(rowId, warehouseId) {
+    setEditLinePreviewError("");
+    setEditLinePreviewMessage("");
+    const selectedWarehouse =
+      editWarehouseRowsById.get(Number(warehouseId || 0)) || null;
+    if (!selectedWarehouse) {
+      patchDraftFormLine(setEditForm, rowId, {
+        warehouseId: "",
+        warehouseCode: "",
+        warehouseName: "",
+      });
+      return;
+    }
+    patchDraftFormLine(setEditForm, rowId, {
+      warehouseId: String(toPositiveInt(selectedWarehouse.id) || ""),
+      warehouseCode: normalizeText(selectedWarehouse.code),
+      warehouseName: normalizeText(selectedWarehouse.name),
+    });
   }
 
   async function handleCreateDocumentLineTaxPreview(rowId = null) {
@@ -3995,6 +4527,54 @@ export default function CariDocumentsPage() {
   }, [canReadItemCards, createForm.legalEntityId, l]);
 
   useEffect(() => {
+    const legalEntityId = toPositiveInt(createForm.legalEntityId);
+    const operatingUnitId = toPositiveInt(createForm.operatingUnitId);
+    setCreateWarehousesError("");
+    if (!canRead || !legalEntityId) {
+      setCreateWarehouseRows([]);
+      setCreateWarehousesLoading(false);
+      return;
+    }
+
+    let active = true;
+    async function loadCreateWarehouses() {
+      setCreateWarehousesLoading(true);
+      try {
+        const response = await listCariDocumentWarehouseOptions({
+          legalEntityId,
+          operatingUnitId: operatingUnitId || undefined,
+          limit: 300,
+          offset: 0,
+        });
+        if (!active) {
+          return;
+        }
+        setCreateWarehouseRows(Array.isArray(response?.rows) ? response.rows : []);
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+        setCreateWarehouseRows([]);
+        setCreateWarehousesError(
+          normalizeApiError(
+            error,
+            l("Failed to load warehouse choices.", "Depo secenekleri yuklenemedi.")
+          )
+        );
+      } finally {
+        if (active) {
+          setCreateWarehousesLoading(false);
+        }
+      }
+    }
+
+    loadCreateWarehouses();
+    return () => {
+      active = false;
+    };
+  }, [canRead, createForm.legalEntityId, createForm.operatingUnitId, l]);
+
+  useEffect(() => {
     const legalEntityId = toPositiveInt(editForm.legalEntityId);
 
     setEditLineAccountsError("");
@@ -4094,6 +4674,112 @@ export default function CariDocumentsPage() {
       active = false;
     };
   }, [canReadItemCards, editForm.legalEntityId, l]);
+
+  useEffect(() => {
+    const legalEntityId = toPositiveInt(editForm.legalEntityId);
+    const operatingUnitId = toPositiveInt(editForm.operatingUnitId);
+    setEditWarehousesError("");
+    if (!canRead || !legalEntityId) {
+      setEditWarehouseRows([]);
+      setEditWarehousesLoading(false);
+      return;
+    }
+
+    let active = true;
+    async function loadEditWarehouses() {
+      setEditWarehousesLoading(true);
+      try {
+        const response = await listCariDocumentWarehouseOptions({
+          legalEntityId,
+          operatingUnitId: operatingUnitId || undefined,
+          limit: 300,
+          offset: 0,
+        });
+        if (!active) {
+          return;
+        }
+        setEditWarehouseRows(Array.isArray(response?.rows) ? response.rows : []);
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+        setEditWarehouseRows([]);
+        setEditWarehousesError(
+          normalizeApiError(
+            error,
+            l(
+              "Failed to load edit-line warehouse choices.",
+              "Duzenleme satiri depo secenekleri yuklenemedi."
+            )
+          )
+        );
+      } finally {
+        if (active) {
+          setEditWarehousesLoading(false);
+        }
+      }
+    }
+
+    loadEditWarehouses();
+    return () => {
+      active = false;
+    };
+  }, [canRead, editForm.legalEntityId, editForm.operatingUnitId, l]);
+
+  useEffect(() => {
+    const legalEntityId = toPositiveInt(
+      selectedDetailForPosting?.legalEntityId || selectedDetailForPosting?.legal_entity_id
+    );
+    const operatingUnitId = toPositiveInt(
+      selectedDetailForPosting?.operatingUnitId || selectedDetailForPosting?.operating_unit_id
+    );
+    setPostWarehousesError("");
+    if (!canRead || !legalEntityId || !selectedDetailForPosting) {
+      setPostWarehouseRows([]);
+      setPostWarehousesLoading(false);
+      return;
+    }
+
+    let active = true;
+    async function loadPostWarehouses() {
+      setPostWarehousesLoading(true);
+      try {
+        const response = await listCariDocumentWarehouseOptions({
+          legalEntityId,
+          operatingUnitId: operatingUnitId || undefined,
+          limit: 300,
+          offset: 0,
+        });
+        if (!active) {
+          return;
+        }
+        setPostWarehouseRows(Array.isArray(response?.rows) ? response.rows : []);
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+        setPostWarehouseRows([]);
+        setPostWarehousesError(
+          normalizeApiError(
+            error,
+            l(
+              "Failed to load posting warehouse choices.",
+              "Kayit icin depo secenekleri yuklenemedi."
+            )
+          )
+        );
+      } finally {
+        if (active) {
+          setPostWarehousesLoading(false);
+        }
+      }
+    }
+
+    loadPostWarehouses();
+    return () => {
+      active = false;
+    };
+  }, [canRead, l, selectedDetailForPosting]);
 
   useEffect(() => {
     const legalEntityId = toPositiveInt(
@@ -4796,6 +5482,10 @@ export default function CariDocumentsPage() {
         setCreateError(translateDocumentMutationErrors(errors));
         return;
       }
+      if (createWarehouseValidation.blockingMessages.length > 0) {
+        setCreateError(createWarehouseValidation.blockingMessages.join(" "));
+        return;
+      }
       const payload = buildDocumentMutationPayload(createForm, createDocumentMutationOptions);
       const response = await createCariDocument(payload);
       setCreateMessage(
@@ -4834,6 +5524,10 @@ export default function CariDocumentsPage() {
       const { errors } = validateDocumentMutationForm(editForm, editDocumentMutationOptions);
       if (errors.length > 0) {
         setEditError(translateDocumentMutationErrors(errors));
+        return;
+      }
+      if (editWarehouseValidation.blockingMessages.length > 0) {
+        setEditError(editWarehouseValidation.blockingMessages.join(" "));
         return;
       }
       const payload = buildDocumentMutationPayload(editForm, editDocumentMutationOptions);
@@ -4882,6 +5576,7 @@ export default function CariDocumentsPage() {
   }
 
   async function handlePostDraft() {
+    setPostTransferGuidance(null);
     if (cariPostingNotReady) {
       setPostError(
         l(
@@ -4898,6 +5593,10 @@ export default function CariDocumentsPage() {
           "Yalnizca DRAFT belgeler `cari.doc.post` yetkisiyle kayda alinabilir."
         )
       );
+      return;
+    }
+    if (selectedPostingWarehouseValidation.blockingMessages.length > 0) {
+      setPostError(selectedPostingWarehouseValidation.blockingMessages.join(" "));
       return;
     }
     if (postForm.useFxOverride && !canFxOverride) {
@@ -5014,6 +5713,7 @@ export default function CariDocumentsPage() {
 
     setPostSaving(true);
     setPostError("");
+    setPostTransferGuidance(null);
     setPostMessage("");
     try {
       const response = await postCariDocument(selectedDocumentId, payload);
@@ -5024,9 +5724,11 @@ export default function CariDocumentsPage() {
         )
       );
       setSelectedDetail(response?.row || null);
+      setPostTransferGuidance(null);
       await loadDocuments(filters);
       await loadDocumentDetail(selectedDocumentId);
     } catch (error) {
+      setPostTransferGuidance(extractTransferRequiredGuidanceFromError(error));
       setPostError(
         normalizeApiError(error, l("Failed to post draft document.", "Belge taslagi kayda alinamadi."))
       );
@@ -6165,6 +6867,11 @@ export default function CariDocumentsPage() {
               itemCardOptions={createItemCardOptions}
               itemCardsLoading={createItemCardsLoading}
               itemCardsError={createItemCardsError}
+              warehouseOptions={createWarehouseOptions}
+              warehouseLoading={createWarehousesLoading}
+              warehouseError={createWarehousesError}
+              warehouseInfoMessage={createWarehouseValidation.generalErrors[0] || ""}
+              warehouseLineErrors={createWarehouseValidation.lineErrors}
               taxCategoryOptions={createTaxCategoryOptions}
               taxCategoryLoading={taxCategoryLoading}
               taxCategoryError={taxCategoryError}
@@ -6177,6 +6884,7 @@ export default function CariDocumentsPage() {
               onPatchLine={patchCreateDocumentLine}
               onPatchTaxSensitiveLine={patchCreateDocumentLineWithTaxReset}
               onSelectItemCard={selectCreateDocumentLineItemCard}
+              onSelectWarehouse={selectCreateDocumentLineWarehouse}
               onPreviewAll={() => handleCreateDocumentLineTaxPreview()}
               onPreviewRow={(rowId) => handleCreateDocumentLineTaxPreview(rowId)}
             />
@@ -6440,6 +7148,14 @@ export default function CariDocumentsPage() {
                           </span>
                           <span>
                             {l("Stock impact", "Stok etkisi")}: {line.stockImpactMode || "NONE"}
+                          </span>
+                          <span>
+                            {l("Warehouse", "Depo")}:{" "}
+                            {formatWarehouseDisplay(
+                              line.warehouseId,
+                              line.warehouseCode,
+                              line.warehouseName
+                            )}
                           </span>
                         </div>
                         <div className="mt-2 grid gap-2 md:grid-cols-3">
@@ -7252,6 +7968,11 @@ export default function CariDocumentsPage() {
                     itemCardOptions={editItemCardOptions}
                     itemCardsLoading={editItemCardsLoading}
                     itemCardsError={editItemCardsError}
+                    warehouseOptions={editWarehouseOptions}
+                    warehouseLoading={editWarehousesLoading}
+                    warehouseError={editWarehousesError}
+                    warehouseInfoMessage={editWarehouseValidation.generalErrors[0] || ""}
+                    warehouseLineErrors={editWarehouseValidation.lineErrors}
                     taxCategoryOptions={editTaxCategoryOptions}
                     taxCategoryLoading={taxCategoryLoading}
                     taxCategoryError={taxCategoryError}
@@ -7264,6 +7985,7 @@ export default function CariDocumentsPage() {
                     onPatchLine={patchEditDocumentLine}
                     onPatchTaxSensitiveLine={patchEditDocumentLineWithTaxReset}
                     onSelectItemCard={selectEditDocumentLineItemCard}
+                    onSelectWarehouse={selectEditDocumentLineWarehouse}
                     onPreviewAll={() => handleEditDocumentLineTaxPreview()}
                     onPreviewRow={(rowId) => handleEditDocumentLineTaxPreview(rowId)}
                   />
@@ -7606,6 +8328,61 @@ export default function CariDocumentsPage() {
                 {postForm.useFxOverride && !canFxOverride ? <p className="mt-2 text-sm text-amber-700">{l("You cannot post with FX override. Missing permission: `cari.fx.override`.", "Kur gecersiz kilma ile kayit yapamazsiniz. Eksik yetki: `cari.fx.override`.")}</p> : null}
                 <button type="button" className="mt-2 rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50" onClick={handlePostDraft} disabled={!canPostSelected || postSaving || !postingLinesReadyForSubmit}>{postSaving ? l("Posting...", "Kaydediliyor...") : l("Post Draft", "Taslagi Kaydet")}</button>
                 {postError ? <div className="mt-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{postError}</div> : null}
+                {postTransferGuidance ? (
+                  <div className="mt-2 rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-900">
+                    <p className="font-semibold">
+                      {l(
+                        "Stock exists in another ownership context. Use an explicit transfer before posting again.",
+                        "Stok baska bir sahiplik baglaminda mevcut. Yeniden kayda almadan once acik bir transfer kullanin."
+                      )}
+                    </p>
+                    <p className="mt-1 text-xs">
+                      {[
+                        postTransferGuidance.itemCardCode ||
+                          postTransferGuidance.itemCardName ||
+                          l("Item", "Kalem"),
+                        postTransferGuidance.transferSourceWarehouseCode ||
+                        postTransferGuidance.transferSourceWarehouseName
+                          ? `${l("Suggested source", "Onerilen kaynak")}: ${
+                              postTransferGuidance.transferSourceWarehouseCode ||
+                              postTransferGuidance.transferSourceWarehouseName
+                            }`
+                          : "",
+                        postTransferGuidance.warehouseCode || postTransferGuidance.warehouseName
+                          ? `${l("Target warehouse", "Hedef depo")}: ${
+                              postTransferGuidance.warehouseCode || postTransferGuidance.warehouseName
+                            }`
+                          : "",
+                        postTransferGuidance.requestedQuantity
+                          ? `${l("Quantity", "Miktar")}: ${postTransferGuidance.requestedQuantity}`
+                          : "",
+                      ]
+                        .filter(Boolean)
+                        .join(" | ")}
+                    </p>
+                    <p className="mt-2 text-xs">
+                      <Link
+                        to={buildInventoryTransferLink({
+                          legalEntityId: selectedRow?.legalEntityId || selectedDetail?.legalEntityId,
+                          sourceWarehouseId: postTransferGuidance.transferSourceWarehouseId,
+                          targetWarehouseId: postTransferGuidance.warehouseId,
+                          itemCardId: postTransferGuidance.itemCardId,
+                          quantityRequested: postTransferGuidance.requestedQuantity,
+                          sourceModule: "CARI",
+                          sourceEntityType: "CARI_DOCUMENT",
+                          sourceEntityId: selectedDocumentId,
+                        })}
+                        className="font-semibold underline underline-offset-2"
+                      >
+                        {l("Open inventory transfers", "Stok transferlerini ac")}
+                      </Link>{" "}
+                      {l(
+                        "to create the cross-context replenishment, then post the draft again.",
+                        "ile contextler arasi ikmali olusturun, sonra taslagi yeniden kayda alin."
+                      )}
+                    </p>
+                  </div>
+                ) : null}
                 {postMessage ? <div className="mt-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{postMessage}</div> : null}
 
                 <label className="mt-3 block text-xs font-semibold uppercase tracking-wide text-slate-600">{l("Reverse Reason", "Ters Kayit Nedeni")}<input type="text" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal" value={reverseForm.reason} onChange={(event) => setReverseForm((prev) => ({ ...prev, reason: event.target.value }))} disabled={!canReverseSelected || reverseSaving} /></label>

@@ -8619,6 +8619,89 @@
         }
       }
     },
+    "/api/v1/cari/documents/warehouse-options": {
+      "get": {
+        "tags": [
+          "Cari"
+        ],
+        "operationId": "getApiV1CariDocumentsWarehouseOptions",
+        "summary": "List active warehouses for the selected cari ownership context",
+        "responses": {
+          "200": {
+            "description": "Cari warehouse lookup options",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CariDocumentWarehouseLookupResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "query",
+            "name": "legalEntityId",
+            "required": true,
+            "description": "Legal entity identifier for the document context",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "operatingUnitId",
+            "required": false,
+            "description": "Operating unit identifier; omit for CENTRAL ownership context",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "description": "Warehouse code/name search",
+            "schema": {
+              "type": "string",
+              "maxLength": 120
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "description": "Page size",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 300
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "description": "Page offset",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ]
+      }
+    },
     "/api/v1/cari/documents/{documentId}": {
       "get": {
         "tags": [
@@ -14884,7 +14967,7 @@
           "Inventory"
         ],
         "operationId": "listInventoryCariStockLinks",
-        "summary": "List pending CARI stock links for warehouse materialization",
+        "summary": "List strict-mode CARI stock-link queue rows across actionable and history scopes",
         "parameters": [
           {
             "in": "query",
@@ -14908,11 +14991,39 @@
           },
           {
             "in": "query",
+            "name": "queueScope",
+            "required": false,
+            "description": "Queue scope filter. ACTIONABLE stays execution-focused; COMPLETED and VOID expose explicit history views.",
+            "schema": {
+              "$ref": "#/components/schemas/InventoryStockLinkQueueScope"
+            }
+          },
+          {
+            "in": "query",
             "name": "linkStatus",
             "required": false,
             "description": "Stock-link status filter",
             "schema": {
               "$ref": "#/components/schemas/InventoryStockLinkStatus"
+            }
+          },
+          {
+            "in": "query",
+            "name": "stockImpactMode",
+            "required": false,
+            "description": "Stock-impact mode filter",
+            "schema": {
+              "$ref": "#/components/schemas/InventoryStockImpactMode"
+            }
+          },
+          {
+            "in": "query",
+            "name": "warehouseId",
+            "required": false,
+            "description": "Bound warehouse filter",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
             }
           },
           {
@@ -14948,11 +15059,63 @@
         ],
         "responses": {
           "200": {
-            "description": "Pending CARI stock-link list",
+            "description": "CARI stock-link queue list",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/InventoryPendingStockLinkListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        }
+      }
+    },
+    "/api/v1/inventory/cari-stock-links/{stockLinkId}/materialize": {
+      "post": {
+        "tags": [
+          "Inventory"
+        ],
+        "operationId": "materializeInventoryCariStockLink",
+        "summary": "Materialize one strict-mode CARI stock link using its bound warehouse and authoritative rechecks",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "stockLinkId",
+            "required": true,
+            "description": "CARI stock-link identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InventoryStockLinkMaterializeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Strict-mode stock link materialized or existing linked movement returned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InventoryMovementResponse"
                 }
               }
             }
@@ -15176,7 +15339,7 @@
           "Inventory"
         ],
         "operationId": "createInventoryMovementFromStockLink",
-        "summary": "Materialize one pending stock link into warehouse movement, FIFO valuation, and issue-side COGS journal when applicable",
+        "summary": "Legacy-only non-strict stock-link materialization using caller-selected warehouse input",
         "requestBody": {
           "required": true,
           "content": {
@@ -16108,15 +16271,37 @@
         "tags": [
           "Inventory"
         ],
-        "operationId": "getApiV1InventoryWorkQueueSummary",
-        "summary": "Auto-generated: GET /api/v1/inventory/work-queue-summary",
+        "operationId": "getInventoryWorkQueueSummary",
+        "summary": "Summarize actionable and history-oriented inventory work-queue counts",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "tenantId",
+            "required": false,
+            "description": "Tenant identifier; optional if available in JWT",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "legalEntityId",
+            "required": false,
+            "description": "Legal entity filter",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
         "responses": {
           "200": {
-            "description": "Successful response",
+            "description": "Inventory work-queue summary",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnyObject"
+                  "$ref": "#/components/schemas/InventoryWorkQueueSummaryResponse"
                 }
               }
             }
@@ -35148,6 +35333,19 @@
             "type": "number",
             "nullable": true
           },
+          "boundWarehouseId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "boundWarehouseCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "boundWarehouseName": {
+            "type": "string",
+            "nullable": true
+          },
           "inventoryDocumentType": {
             "type": "string",
             "nullable": true
@@ -35170,6 +35368,18 @@
           "supersededByStockLinkId": {
             "type": "integer",
             "minimum": 1,
+            "nullable": true
+          },
+          "queueState": {
+            "type": "string",
+            "nullable": true
+          },
+          "repairReasonCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "successorInheritanceStatus": {
+            "type": "string",
             "nullable": true
           },
           "inventoryMovementType": {
@@ -35316,6 +35526,19 @@
           },
           "stockImpactMode": {
             "$ref": "#/components/schemas/CariDocumentLineStockImpactMode"
+          },
+          "warehouseId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "warehouseCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "warehouseName": {
+            "type": "string",
+            "nullable": true
           },
           "createdAt": {
             "type": "string",
@@ -35612,6 +35835,76 @@
         "required": [
           "tenantId",
           "row"
+        ]
+      },
+      "CariDocumentWarehouseLookupRow": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "legalEntityId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "legalEntityCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "ownershipScope": {
+            "type": "string",
+            "nullable": true
+          },
+          "operatingUnitId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "operatingUnitCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "operatingUnitName": {
+            "type": "string",
+            "nullable": true
+          },
+          "code": {
+            "type": "string",
+            "nullable": true
+          },
+          "name": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "CariDocumentWarehouseLookupResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CariDocumentWarehouseLookupRow"
+            }
+          }
+        },
+        "required": [
+          "tenantId",
+          "rows"
         ]
       },
       "CariDocumentOpenItemRow": {
@@ -35977,6 +36270,11 @@
           },
           "stockImpactMode": {
             "$ref": "#/components/schemas/CariDocumentLineStockImpactMode"
+          },
+          "warehouseId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
           }
         },
         "required": [
@@ -36546,6 +36844,26 @@
           "ISSUE_PENDING"
         ]
       },
+      "InventoryStockLinkQueueState": {
+        "type": "string",
+        "enum": [
+          "READY",
+          "BLOCKED",
+          "REPAIR_REQUIRED",
+          "TRANSFER_REQUIRED",
+          "COMPLETED",
+          "VOID"
+        ]
+      },
+      "InventoryStockLinkQueueScope": {
+        "type": "string",
+        "enum": [
+          "ACTIONABLE",
+          "COMPLETED",
+          "VOID",
+          "ALL"
+        ]
+      },
       "InventoryMovementType": {
         "type": "string",
         "enum": [
@@ -36969,6 +37287,19 @@
             "format": "date",
             "nullable": true
           },
+          "documentOperatingUnitId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "documentOperatingUnitCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "documentOperatingUnitName": {
+            "type": "string",
+            "nullable": true
+          },
           "direction": {
             "type": "string",
             "nullable": true
@@ -36983,6 +37314,14 @@
             "type": "number",
             "nullable": true
           },
+          "materializedQuantity": {
+            "type": "number",
+            "nullable": true
+          },
+          "remainingQuantity": {
+            "type": "number",
+            "nullable": true
+          },
           "postedNetAmountTxn": {
             "type": "number",
             "nullable": true
@@ -36994,6 +37333,19 @@
           "currencyCode": {
             "type": "string",
             "maxLength": 3,
+            "nullable": true
+          },
+          "boundWarehouseId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "boundWarehouseCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "boundWarehouseName": {
+            "type": "string",
             "nullable": true
           },
           "itemCardId": {
@@ -37028,6 +37380,94 @@
           "inventoryDocumentId": {
             "type": "integer",
             "minimum": 1,
+            "nullable": true
+          },
+          "reopenedFromStockLinkId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "supersededByStockLinkId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "boundAvailableQuantity": {
+            "type": "number",
+            "nullable": true
+          },
+          "crossContextAvailableQuantity": {
+            "type": "number",
+            "nullable": true
+          },
+          "transferSourceWarehouseId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "transferSourceWarehouseCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "transferSourceWarehouseName": {
+            "type": "string",
+            "nullable": true
+          },
+          "transferSourceOwnershipScope": {
+            "type": "string",
+            "nullable": true
+          },
+          "transferSourceOperatingUnitId": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true
+          },
+          "transferSourceOperatingUnitCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "transferSourceOperatingUnitName": {
+            "type": "string",
+            "nullable": true
+          },
+          "transferSourceAvailableQuantity": {
+            "type": "number",
+            "nullable": true
+          },
+          "queueState": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/InventoryStockLinkQueueState"
+              }
+            ],
+            "nullable": true
+          },
+          "blockedReasonCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "repairReasonCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "successorInheritanceStatus": {
+            "type": "string",
+            "nullable": true
+          },
+          "canMaterialize": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "isStrictMode": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "isRepairOnly": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "isLegacyRow": {
+            "type": "boolean",
             "nullable": true
           },
           "resolvedAt": {
@@ -37078,6 +37518,160 @@
         "required": [
           "tenantId",
           "rows"
+        ]
+      },
+      "InventoryWorkQueueSummaryResponse": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "asOfDate": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "filters": {
+            "type": "object",
+            "properties": {
+              "legalEntityId": {
+                "type": "integer",
+                "minimum": 1,
+                "nullable": true
+              }
+            }
+          },
+          "stockLinks": {
+            "type": "object",
+            "properties": {
+              "total_pending": {
+                "type": "integer",
+                "nullable": true
+              },
+              "actionable_total": {
+                "type": "integer",
+                "nullable": true
+              },
+              "ready_total": {
+                "type": "integer",
+                "nullable": true
+              },
+              "blocked_total": {
+                "type": "integer",
+                "nullable": true
+              },
+              "repair_required_total": {
+                "type": "integer",
+                "nullable": true
+              },
+              "transfer_required_total": {
+                "type": "integer",
+                "nullable": true
+              },
+              "completed_total": {
+                "type": "integer",
+                "nullable": true
+              },
+              "void_total": {
+                "type": "integer",
+                "nullable": true
+              },
+              "ready_receipt_materialization": {
+                "type": "integer",
+                "nullable": true
+              },
+              "ready_issue_materialization": {
+                "type": "integer",
+                "nullable": true
+              },
+              "pending_receipt_materialization": {
+                "type": "integer",
+                "nullable": true
+              },
+              "pending_issue_materialization": {
+                "type": "integer",
+                "nullable": true
+              },
+              "reopened_pending": {
+                "type": "integer",
+                "nullable": true
+              },
+              "stale_pending_gt_2d": {
+                "type": "integer",
+                "nullable": true
+              },
+              "oldest_pending_days": {
+                "type": "integer",
+                "nullable": true
+              },
+              "aging_pending": {
+                "type": "object",
+                "properties": {
+                  "0_1d": {
+                    "type": "integer",
+                    "nullable": true
+                  },
+                  "2_7d": {
+                    "type": "integer",
+                    "nullable": true
+                  },
+                  "8_plus_d": {
+                    "type": "integer",
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          },
+          "transfers": {
+            "type": "object",
+            "properties": {
+              "total_open": {
+                "type": "integer",
+                "nullable": true
+              },
+              "waiting_approval": {
+                "type": "integer",
+                "nullable": true
+              },
+              "ready_to_ship": {
+                "type": "integer",
+                "nullable": true
+              },
+              "in_transit_waiting_receipt": {
+                "type": "integer",
+                "nullable": true
+              },
+              "cross_context_in_transit": {
+                "type": "integer",
+                "nullable": true
+              },
+              "stale_waiting_approval_gt_1d": {
+                "type": "integer",
+                "nullable": true
+              },
+              "stale_ready_to_ship_gt_1d": {
+                "type": "integer",
+                "nullable": true
+              },
+              "stale_in_transit_gt_2d": {
+                "type": "integer",
+                "nullable": true
+              },
+              "oldest_in_transit_days": {
+                "type": "integer",
+                "nullable": true
+              }
+            }
+          }
+        },
+        "required": [
+          "tenantId",
+          "asOfDate",
+          "filters",
+          "stockLinks",
+          "transfers"
         ]
       },
       "InventoryIssueLayerConsumptionRow": {
@@ -37390,6 +37984,28 @@
         "required": [
           "tenantId",
           "row"
+        ]
+      },
+      "InventoryStockLinkMaterializeRequest": {
+        "type": "object",
+        "properties": {
+          "legalEntityId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "movementDate": {
+            "type": "string",
+            "format": "date"
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 255,
+            "nullable": true
+          }
+        },
+        "required": [
+          "legalEntityId",
+          "movementDate"
         ]
       },
       "InventoryMovementCreateRequest": {

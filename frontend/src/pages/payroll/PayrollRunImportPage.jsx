@@ -208,6 +208,12 @@ export default function PayrollRunImportPage() {
         </Link>
       </div>
 
+      <div className="rounded border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-900">
+        Bu rolloutta provider baglanti / preview ekranlari bilerek acik degil. Su an bordro akisi
+        dogrudan CSV import ile yurur. Buradaki <code>Provider Code</code> alani bugun canli
+        provider secimi degil, kaynak / audit etiketi olarak kullanilir.
+      </div>
+
       {!canImport ? (
         <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
           Missing permission: <code>payroll.runs.import</code>

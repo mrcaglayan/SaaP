@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import Combobox from "../../components/Combobox.jsx";
 import MoneyText from "../../components/MoneyText.jsx";
 import { useAuth } from "../../auth/useAuth.js";
@@ -7,16 +7,18 @@ import { useI18n } from "../../i18n/useI18n.js";
 import { useWorkingContext } from "../../context/useWorkingContext.js";
 import { listOperatingUnits } from "../../api/orgAdmin.js";
 import {
-  createInventoryMovement,
   createInventoryWarehouse,
   listInventoryCariStockLinks,
   listInventoryCostLayers,
   listInventoryMovements,
   listInventoryWarehouses,
+  materializeInventoryCariStockLink,
   reverseInventoryMovement,
 } from "../../api/inventory.js";
 
 const STOCK_IMPACT_MODE_VALUES = new Set(["RECEIPT_PENDING", "ISSUE_PENDING"]);
+const STOCK_LINK_QUEUE_SCOPE_VALUES = new Set(["ACTIONABLE", "COMPLETED", "VOID", "ALL"]);
+const INVENTORY_TRANSFERS_ROUTE = "/app/stok-transferleri";
 
 function normalizeText(value) {
   return String(value || "").trim();
@@ -63,11 +65,9 @@ function createWarehouseForm(legalEntityId = "") {
   };
 }
 
-function createMovementForm(legalEntityId = "", warehouseId = "") {
+function createMovementForm(legalEntityId = "") {
   return {
     legalEntityId: legalEntityId || "",
-    sourceStockLinkId: "",
-    warehouseId: warehouseId || "",
     movementDate: todayDateOnly(),
     note: "",
   };
@@ -91,6 +91,24 @@ function getStatusBadgeClass(value) {
   }
 }
 
+function getQueueStateBadgeClass(value) {
+  switch (String(value || "").trim().toUpperCase()) {
+    case "READY":
+      return "border border-emerald-200 bg-emerald-50 text-emerald-800";
+    case "BLOCKED":
+      return "border border-amber-200 bg-amber-50 text-amber-800";
+    case "TRANSFER_REQUIRED":
+      return "border border-sky-200 bg-sky-50 text-sky-800";
+    case "REPAIR_REQUIRED":
+      return "border border-rose-200 bg-rose-50 text-rose-800";
+    case "COMPLETED":
+    case "VOID":
+      return "border border-slate-200 bg-slate-100 text-slate-700";
+    default:
+      return "border border-sky-200 bg-sky-50 text-sky-800";
+  }
+}
+
 function getOwnershipBadgeClass(value) {
   switch (String(value || "").trim().toUpperCase()) {
     case "OPERATING_UNIT":
@@ -101,14 +119,158 @@ function getOwnershipBadgeClass(value) {
   }
 }
 
-function stockLinkOptionLabel(row) {
-  const parts = [
-    row?.documentNo || `Doc #${row?.documentId || "-"}`,
-    row?.itemCardCode || row?.itemCardName || `Item #${row?.itemCardId || "-"}`,
-    `${row?.stockImpactMode || "NONE"} x ${row?.requestedQuantity | "-"}`,
-    row?.reopenedFromStockLinkId ? `reopened #${row.reopenedFromStockLinkId}` : "",
-  ];
-  return parts.filter(Boolean).join(" | ");
+function normalizeQueueScope(value, fallback = "ACTIONABLE") {
+  const normalized = String(value || "")
+    .trim()
+    .toUpperCase();
+  return STOCK_LINK_QUEUE_SCOPE_VALUES.has(normalized) ? normalized : fallback;
+}
+
+function describeStockLinkOwnershipContext(row, translate = (en) => en) {
+  const operatingUnitId = toPositiveInt(row?.documentOperatingUnitId);
+  if (!operatingUnitId) {
+    return translate("Central", "Merkez");
+  }
+  const code = normalizeText(row?.documentOperatingUnitCode);
+  const name = normalizeText(row?.documentOperatingUnitName);
+  return code && name
+    ? `${translate("Branch", "Sube")} ${code} - ${name}`
+    : code || name || `${translate("Branch", "Sube")} #${operatingUnitId}`;
+}
+
+function describeBoundWarehouse(row, translate = (en) => en) {
+  const warehouseId = toPositiveInt(row?.boundWarehouseId);
+  const code = normalizeText(row?.boundWarehouseCode);
+  const name = normalizeText(row?.boundWarehouseName);
+  if (!warehouseId) {
+    return translate("Cleanup required", "Temizlik gerekli");
+  }
+  return code && name
+    ? `${code} - ${name}`
+    : code || name || `${translate("Warehouse", "Depo")} #${warehouseId}`;
+}
+
+function describeRepairReason(row, translate = (en) => en) {
+  switch (String(row?.repairReasonCode || "").trim().toUpperCase()) {
+    case "LEGACY_UNBOUND_STOCK_LINK":
+      return translate(
+        "This legacy stock link has no bound warehouse. In this rollout it is cleanup/reset-only and not actionable from the normal queue.",
+        "Bu eski stok baglantisinin bagli deposu yoktur. Bu rolloutta yalnizca temizlik/reset kapsamindadir ve normal kuyruktan isleme alinmaz."
+      );
+    case "SUCCESSOR_WAREHOUSE_INHERITANCE_INVALID":
+      return translate(
+        "The reopened successor could not keep its original warehouse binding. In this rollout it must be cleaned up/reset, not handled as normal queue work.",
+        "Yeniden acilan ardil satir ilk depo bagini koruyamadi. Bu rolloutta normal kuyruk isi gibi ele alinmaz; temizlenmeli/resetlenmelidir."
+      );
+    default:
+      return "";
+  }
+}
+
+function describeBlockedReason(row, translate = (en) => en) {
+  switch (String(row?.blockedReasonCode || "").trim().toUpperCase()) {
+    case "BOUND_WAREHOUSE_MISSING":
+      return translate(
+        "The bound warehouse record is missing. This row is invalid for strict execution until the underlying data is cleaned up or reset.",
+        "Bagli depo kaydi bulunamadi. Alttaki veri temizlenene veya resetlenene kadar bu satir strict yurutme icin gecersizdir."
+      );
+    case "BOUND_WAREHOUSE_INACTIVE":
+      return translate(
+        "The bound warehouse is inactive. Reactivate the warehouse if valid, otherwise clean up/reset the invalid row before materializing.",
+        "Bagli depo pasiftir. Gecerliyse depoyu yeniden etkinlestirin; degilse gerceklestirmeden once gecersiz satiri temizleyin/resetleyin."
+      );
+    case "BOUND_WAREHOUSE_CONTEXT_MISMATCH":
+      return translate(
+        "The bound warehouse no longer belongs to the same ownership context as the document.",
+        "Bagli depo artik belge ile ayni sahiplik baglamina ait degildir."
+      );
+    case "INSUFFICIENT_BOUND_WAREHOUSE_STOCK":
+      return translate(
+        "The bound warehouse does not have enough available stock for this issue row.",
+        "Bagli depoda bu cikis satiri icin yeterli kullanilabilir stok yok."
+      );
+    default:
+      return "";
+  }
+}
+
+function describeTransferSourceOwnershipContext(row, translate = (en) => en) {
+  const scope = String(row?.transferSourceOwnershipScope || "").trim().toUpperCase();
+  if (scope === "OPERATING_UNIT") {
+    const code = normalizeText(row?.transferSourceOperatingUnitCode);
+    const name = normalizeText(row?.transferSourceOperatingUnitName);
+    return code && name
+      ? `${translate("Branch", "Sube")} ${code} - ${name}`
+      : code || name || translate("Operating unit", "Isletme birimi");
+  }
+  return translate("Central", "Merkez");
+}
+
+function describeTransferRequiredReason(row, translate = (en) => en) {
+  if (String(row?.queueState || "").trim().toUpperCase() !== "TRANSFER_REQUIRED") {
+    return "";
+  }
+  const sourceWarehouse =
+    normalizeText(row?.transferSourceWarehouseCode) ||
+    normalizeText(row?.transferSourceWarehouseName) ||
+    (toPositiveInt(row?.transferSourceWarehouseId)
+      ? `${translate("Warehouse", "Depo")} #${row.transferSourceWarehouseId}`
+      : translate("another warehouse", "baska bir depo"));
+  const sourceContext = describeTransferSourceOwnershipContext(row, translate);
+  const requestedQuantity = formatQuantityValue(row?.remainingQuantity ?? row?.requestedQuantity);
+  const boundAvailableQuantity = formatQuantityValue(row?.boundAvailableQuantity);
+  const transferSourceAvailableQuantity = formatQuantityValue(row?.transferSourceAvailableQuantity);
+  return translate(
+    `Bound warehouse stock is short. Move stock from ${sourceWarehouse} in ${sourceContext}. Requested ${requestedQuantity}, bound available ${boundAvailableQuantity}, suggested source available ${transferSourceAvailableQuantity}.`,
+    `Bagli depodaki stok yetersiz. ${sourceContext} baglamindaki ${sourceWarehouse} deposundan transfer yapin. Talep ${requestedQuantity}, bagli depoda mevcut ${boundAvailableQuantity}, onerilen kaynakta mevcut ${transferSourceAvailableQuantity}.`
+  );
+}
+
+function buildInventoryTransferLink(row) {
+  const params = new URLSearchParams();
+  const legalEntityId = toPositiveInt(row?.legalEntityId);
+  const sourceWarehouseId = toPositiveInt(row?.transferSourceWarehouseId);
+  const targetWarehouseId = toPositiveInt(row?.boundWarehouseId);
+  const itemCardId = toPositiveInt(row?.itemCardId);
+  const sourceEntityId = toPositiveInt(row?.id);
+  const quantityRequested =
+    normalizeText(row?.remainingQuantity ?? row?.requestedQuantity) ||
+    normalizeText(row?.requestedQuantity);
+
+  if (legalEntityId) {
+    params.set("legalEntityId", String(legalEntityId));
+  }
+  if (sourceWarehouseId) {
+    params.set("sourceWarehouseId", String(sourceWarehouseId));
+  }
+  if (targetWarehouseId) {
+    params.set("targetWarehouseId", String(targetWarehouseId));
+  }
+  if (itemCardId) {
+    params.set("itemCardId", String(itemCardId));
+  }
+  if (quantityRequested) {
+    params.set("quantityRequested", quantityRequested);
+  }
+  if (sourceEntityId) {
+    params.set("sourceModule", "CARI");
+    params.set("sourceEntityType", "CARI_STOCK_LINK");
+    params.set("sourceEntityId", String(sourceEntityId));
+  }
+  params.set("prefillReason", "TRANSFER_REQUIRED");
+  const query = params.toString();
+  return query ? `${INVENTORY_TRANSFERS_ROUTE}?${query}` : INVENTORY_TRANSFERS_ROUTE;
+}
+
+function describeSuccessorState(row, translate = (en) => en) {
+  switch (String(row?.successorInheritanceStatus || "").trim().toUpperCase()) {
+    case "INHERITED":
+      return translate("Inherited warehouse", "Depo mirasi alindi");
+    case "REPAIR_ONLY":
+      return translate("Cleanup-required successor", "Temizlik gerektiren ardil");
+    default:
+      return "";
+  }
 }
 
 function formatQuantityValue(value) {
@@ -212,6 +374,10 @@ export default function InventoryMovementsPage() {
     const value = normalizeText(searchParams.get("stockImpactMode")).toUpperCase();
     return STOCK_IMPACT_MODE_VALUES.has(value) ? value : "";
   }, [searchParams]);
+  const deepLinkedQueueScope = useMemo(
+    () => normalizeQueueScope(searchParams.get("queueScope"), "ACTIONABLE"),
+    [searchParams]
+  );
 
   const legalEntityOptions = useMemo(
     () =>
@@ -224,6 +390,8 @@ export default function InventoryMovementsPage() {
   const [filters, setFilters] = useState({
     legalEntityId: "",
     warehouseId: "",
+    queueScope: deepLinkedQueueScope,
+    stockImpactMode: deepLinkedStockImpactMode || "",
   });
   const [warehouseRows, setWarehouseRows] = useState([]);
   const [warehouseOperatingUnits, setWarehouseOperatingUnits] = useState([]);
@@ -241,6 +409,7 @@ export default function InventoryMovementsPage() {
   const [warehouseMessage, setWarehouseMessage] = useState("");
 
   const [movementForm, setMovementForm] = useState(() => createMovementForm());
+  const [selectedStockLinkId, setSelectedStockLinkId] = useState("");
   const [movementSaving, setMovementSaving] = useState(false);
   const [movementError, setMovementError] = useState("");
   const [movementMessage, setMovementMessage] = useState("");
@@ -271,19 +440,6 @@ export default function InventoryMovementsPage() {
             ? `${row.code} - ${row.name}`
             : row.code || row.name || `Warehouse #${row.id}`,
       })),
-    [warehouseRows]
-  );
-  const activeWarehouseOptions = useMemo(
-    () =>
-      warehouseRows
-        .filter((row) => String(row?.status || "").toUpperCase() === "ACTIVE")
-        .map((row) => ({
-          value: String(row.id || ""),
-          label:
-            row.code && row.name
-              ? `${row.code} - ${row.name}`
-              : row.code || row.name || `Warehouse #${row.id}`,
-        })),
     [warehouseRows]
   );
   const warehouseOperatingUnitOptions = useMemo(
@@ -350,11 +506,22 @@ export default function InventoryMovementsPage() {
         : {
             ...previous,
             legalEntityId: deepLinkedLegalEntityId,
-            warehouseId: "",
-            sourceStockLinkId: "",
           }
     );
   }, [deepLinkedLegalEntityId]);
+
+  useEffect(() => {
+    setFilters((previous) =>
+      previous.queueScope === deepLinkedQueueScope &&
+      previous.stockImpactMode === (deepLinkedStockImpactMode || "")
+        ? previous
+        : {
+            ...previous,
+            queueScope: deepLinkedQueueScope,
+            stockImpactMode: deepLinkedStockImpactMode || "",
+          }
+    );
+  }, [deepLinkedQueueScope, deepLinkedStockImpactMode]);
 
   useEffect(() => {
     setWarehouseForm((previous) => ({
@@ -364,12 +531,8 @@ export default function InventoryMovementsPage() {
     setMovementForm((previous) => ({
       ...previous,
       legalEntityId: filters.legalEntityId || previous.legalEntityId || "",
-      warehouseId:
-        filters.warehouseId && filters.warehouseId !== previous.warehouseId
-          ? filters.warehouseId
-          : previous.warehouseId,
     }));
-  }, [filters.legalEntityId, filters.warehouseId]);
+  }, [filters.legalEntityId]);
 
   useEffect(() => {
     if (warehouseForm.ownershipScope !== "OPERATING_UNIT" && warehouseForm.operatingUnitId) {
@@ -483,8 +646,9 @@ export default function InventoryMovementsPage() {
           }),
           listInventoryCariStockLinks({
             legalEntityId,
-            linkStatus: "PENDING",
-            stockImpactMode: deepLinkedStockImpactMode || undefined,
+            queueScope: filters.queueScope || "ACTIONABLE",
+            stockImpactMode: filters.stockImpactMode || undefined,
+            warehouseId: filters.warehouseId || undefined,
             limit: 200,
             offset: 0,
           }),
@@ -520,18 +684,20 @@ export default function InventoryMovementsPage() {
     } finally {
       setLoading(false);
     }
-  }, [canRead, deepLinkedStockImpactMode, filters.legalEntityId, filters.warehouseId, l]);
+  }, [
+    canRead,
+    filters.legalEntityId,
+    filters.queueScope,
+    filters.stockImpactMode,
+    filters.warehouseId,
+    l,
+  ]);
 
   useEffect(() => {
     void loadPageData();
   }, [loadPageData]);
 
   useEffect(() => {
-    const warehouseIds = new Set(
-      activeWarehouseOptions
-        .map((row) => String(row.value || ""))
-        .filter(Boolean)
-    );
     const filterWarehouseIds = new Set(
       warehouseRows
         .map((row) => String(toPositiveInt(row?.id) || ""))
@@ -543,19 +709,7 @@ export default function InventoryMovementsPage() {
       }
       return previous;
     });
-    setMovementForm((previous) => {
-      if (previous.warehouseId && !warehouseIds.has(previous.warehouseId)) {
-        return { ...previous, warehouseId: "" };
-      }
-      if (!previous.warehouseId && activeWarehouseOptions.length === 1) {
-        return {
-          ...previous,
-          warehouseId: String(activeWarehouseOptions[0].value || ""),
-        };
-      }
-      return previous;
-    });
-  }, [activeWarehouseOptions, warehouseRows]);
+  }, [warehouseRows]);
 
   useEffect(() => {
     const validStockLinkIds = new Set(
@@ -563,18 +717,9 @@ export default function InventoryMovementsPage() {
         .map((row) => String(toPositiveInt(row?.id) || ""))
         .filter(Boolean)
     );
-    setMovementForm((previous) => {
-      if (previous.sourceStockLinkId && !validStockLinkIds.has(previous.sourceStockLinkId)) {
-        return { ...previous, sourceStockLinkId: "" };
-      }
-      if (!previous.sourceStockLinkId && stockLinkRows.length > 0) {
-        return {
-          ...previous,
-          sourceStockLinkId: String(stockLinkRows[0].id || ""),
-        };
-      }
-      return previous;
-    });
+    setSelectedStockLinkId((previous) =>
+      previous && !validStockLinkIds.has(previous) ? "" : previous
+    );
   }, [stockLinkRows]);
 
   const reversibleIssueRows = useMemo(
@@ -675,9 +820,9 @@ export default function InventoryMovementsPage() {
   const selectedPendingLink = useMemo(
     () =>
       stockLinkRows.find(
-        (row) => toPositiveInt(row?.id) === toPositiveInt(movementForm.sourceStockLinkId)
+        (row) => toPositiveInt(row?.id) === toPositiveInt(selectedStockLinkId)
       ) || null,
-    [movementForm.sourceStockLinkId, stockLinkRows]
+    [selectedStockLinkId, stockLinkRows]
   );
   const selectedReversibleIssue = useMemo(
     () =>
@@ -761,10 +906,6 @@ export default function InventoryMovementsPage() {
           ...previous,
           warehouseId: String(createdRow.id),
         }));
-        setMovementForm((previous) => ({
-          ...previous,
-          warehouseId: String(createdRow.id),
-        }));
       }
       await loadPageData();
     } catch (error) {
@@ -782,30 +923,70 @@ export default function InventoryMovementsPage() {
       setMovementError(l("Missing permission: inventory.upsert", "Eksik yetki: inventory.upsert"));
       return;
     }
+    if (!selectedPendingLink) {
+      setMovementError(
+        l(
+          "Select one queue row to materialize.",
+          "Gerceklestirmek icin bir kuyruk satiri secin."
+        )
+      );
+      return;
+    }
+    if (String(selectedPendingLink.queueState || "").toUpperCase() === "REPAIR_REQUIRED") {
+      setMovementError(
+        describeRepairReason(selectedPendingLink, l) ||
+          l(
+            "This row is cleanup/reset-only in the current rollout and cannot be materialized from the normal queue.",
+            "Bu satir mevcut rolloutta yalnizca temizlik/reset kapsamindadir ve normal kuyruktan gerceklestirilemez."
+          )
+      );
+      return;
+    }
+    if (String(selectedPendingLink.queueState || "").toUpperCase() === "TRANSFER_REQUIRED") {
+      setMovementError(
+        describeTransferRequiredReason(selectedPendingLink, l) ||
+          l(
+            "This issue row requires an explicit cross-context transfer before materialization.",
+            "Bu cikis satiri gerceklestirmeden once acik bir contextler arasi transfer gerektirir."
+          )
+      );
+      return;
+    }
+    if (!selectedPendingLink.canMaterialize) {
+      setMovementError(
+        describeTransferRequiredReason(selectedPendingLink, l) ||
+        describeBlockedReason(selectedPendingLink, l) ||
+          l(
+            "This queue row is not currently materializable from the normal queue.",
+            "Bu kuyruk satiri su anda normal kuyruktan gerceklestirilemez."
+          )
+      );
+      return;
+    }
     setMovementSaving(true);
     setMovementError("");
     setMovementMessage("");
     try {
-      const response = await createInventoryMovement({
+      const stockLinkId = toPositiveInt(selectedPendingLink.id);
+      const response = await materializeInventoryCariStockLink(stockLinkId, {
         legalEntityId: toPositiveInt(movementForm.legalEntityId),
-        warehouseId: toPositiveInt(movementForm.warehouseId),
-        sourceStockLinkId: toPositiveInt(movementForm.sourceStockLinkId),
         movementDate: movementForm.movementDate,
         note: normalizeText(movementForm.note) || undefined,
       });
       setMovementMessage(
-        l("Inventory movement created.", "Stok hareketi olusturuldu.") +
+        l("Stock link materialized.", "Stok baglantisi gerceklestirildi.") +
           (response?.row?.id ? ` #${response.row.id}` : "")
       );
       setMovementForm((previous) => ({
-        ...createMovementForm(previous.legalEntityId, previous.warehouseId),
+        ...createMovementForm(previous.legalEntityId),
       }));
+      setSelectedStockLinkId("");
       await loadPageData();
     } catch (error) {
       setMovementError(
         normalizeApiError(
           error,
-          l("Inventory movement create failed.", "Stok hareketi olusturma basarisiz.")
+          l("Stock-link materialization failed.", "Stok baglantisi gerceklestirme basarisiz.")
         )
       );
     } finally {
@@ -952,8 +1133,8 @@ export default function InventoryMovementsPage() {
             </h1>
             <p className="mt-1 text-sm text-slate-600">
               {l(
-                "Link pending CARI stock lines to warehouses, movements, and receipt cost layers.",
-                "Bekleyen CARI stok satirlarini depolar, hareketler ve alim maliyet katmanlari ile baglayin."
+                "Execute strict stock-link queue work, review warehouse context, and inspect movements plus receipt cost layers.",
+                "Strict stok baglantisi kuyruk islerini yurutun, depo baglamini inceleyin ve hareketler ile alim maliyet katmanlarini gozetin."
               )}
             </p>
           </div>
@@ -967,7 +1148,7 @@ export default function InventoryMovementsPage() {
           </button>
         </div>
 
-        <div className="mt-4 grid gap-3 md:grid-cols-[minmax(240px,1fr)_220px]">
+        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
             {l("Legal Entity", "Tuzel Kisilik")}
             <Combobox
@@ -984,6 +1165,43 @@ export default function InventoryMovementsPage() {
                 }))
               }
             />
+          </label>
+          <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+            {l("Queue Scope", "Kuyruk Kapsami")}
+            <select
+              className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+              value={filters.queueScope}
+              onChange={(event) =>
+                setFilters((previous) => ({
+                  ...previous,
+                  queueScope: normalizeQueueScope(event.target.value, "ACTIONABLE"),
+                }))
+              }
+              disabled={!filters.legalEntityId}
+            >
+              <option value="ACTIONABLE">{l("Actionable", "Aksiyonluk")}</option>
+              <option value="COMPLETED">{l("Completed", "Tamamlanan")}</option>
+              <option value="VOID">{l("Void", "Hukumden Dusen")}</option>
+              <option value="ALL">{l("All Rows", "Tum Satirlar")}</option>
+            </select>
+          </label>
+          <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+            {l("Impact Filter", "Etki Filtresi")}
+            <select
+              className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
+              value={filters.stockImpactMode}
+              onChange={(event) =>
+                setFilters((previous) => ({
+                  ...previous,
+                  stockImpactMode: event.target.value,
+                }))
+              }
+              disabled={!filters.legalEntityId}
+            >
+              <option value="">{l("All impacts", "Tum etkiler")}</option>
+              <option value="RECEIPT_PENDING">{l("Receipt Pending", "Alim Bekliyor")}</option>
+              <option value="ISSUE_PENDING">{l("Issue Pending", "Cikis Bekliyor")}</option>
+            </select>
           </label>
           <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
             {l("Warehouse Filter", "Depo Filtresi")}
@@ -1028,7 +1246,7 @@ export default function InventoryMovementsPage() {
             </div>
             <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-3">
               <div className="text-[11px] font-semibold uppercase tracking-wide text-amber-700">
-                {l("Pending Links", "Bekleyen Baglantilar")}
+                {l("Queue Rows", "Kuyruk Satirlari")}
               </div>
               <div className="mt-1 text-2xl font-semibold text-amber-900">{stockLinkRows.length}</div>
             </div>
@@ -1312,63 +1530,75 @@ export default function InventoryMovementsPage() {
                 </h2>
                 <p className="mt-1 text-sm text-slate-600">
                   {l(
-                    "Create a warehouse movement from a pending CARI stock-impact row.",
-                    "Bekleyen CARI stok etkisi satirindan depo hareketi olusturun."
+                    "Review one explicit queue row, confirm its bound warehouse, then materialize it without choosing a warehouse here.",
+                    "Bir kuyruk satirini acikca inceleyin, bagli deposunu dogrulayin ve burada depo secmeden gerceklestirin."
                   )}
                 </p>
               </div>
               <span
-                className={`rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide ${getStatusBadgeClass(
-                  selectedPendingLink?.stockImpactMode || "PENDING"
+                className={`rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide ${getQueueStateBadgeClass(
+                  selectedPendingLink?.queueState || "READY"
                 )}`}
               >
-                {selectedPendingLink?.stockImpactMode || l("Pending", "Bekliyor")}
+                {selectedPendingLink?.queueState || l("No selection", "Secim yok")}
               </span>
             </div>
 
             <div className="mt-4 grid gap-3">
-              <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                {l("Pending Stock Link", "Bekleyen Stok Baglantisi")}
-                <select
-                  className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
-                  value={movementForm.sourceStockLinkId}
-                  onChange={(event) =>
-                    setMovementForm((previous) => ({
-                      ...previous,
-                      sourceStockLinkId: event.target.value,
-                    }))
-                  }
-                  disabled={movementSaving || !canUpsert || stockLinkRows.length === 0}
-                >
-                  <option value="">{l("Select pending link", "Bekleyen baglanti secin")}</option>
-                  {stockLinkRows.map((row) => (
-                    <option key={`pending-link-${row.id}`} value={String(row.id || "")}>
-                      {stockLinkOptionLabel(row)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                {l("Warehouse", "Depo")}
-                <select
-                  className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal"
-                  value={movementForm.warehouseId}
-                  onChange={(event) =>
-                    setMovementForm((previous) => ({
-                      ...previous,
-                      warehouseId: event.target.value,
-                    }))
-                  }
-                  disabled={movementSaving || !canUpsert || activeWarehouseOptions.length === 0}
-                >
-                  <option value="">{l("Select warehouse", "Depo secin")}</option>
-                  {activeWarehouseOptions.map((option) => (
-                    <option key={`movement-warehouse-${option.value}`} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3">
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  {l("Selected Queue Row", "Secilen Kuyruk Satiri")}
+                </div>
+                {selectedPendingLink ? (
+                  <div className="mt-2 text-sm text-slate-800">
+                    <div className="font-semibold text-slate-900">
+                      {selectedPendingLink.documentNo ||
+                        `Doc #${selectedPendingLink.documentId || "-"}`}
+                    </div>
+                    <div className="mt-1">
+                      {selectedPendingLink.itemCardCode ||
+                        selectedPendingLink.itemCardName ||
+                        "-"}{" "}
+                      | {selectedPendingLink.direction || "-"} | {selectedPendingLink.stockImpactMode || "-"} |{" "}
+                      {l("Requested", "Talep")}{" "}
+                      {formatQuantityValue(selectedPendingLink.requestedQuantity)}
+                    </div>
+                    <div className="mt-1 text-xs text-slate-500">
+                      {l("Lifecycle", "Yasam Dongusu")}: {selectedPendingLink.linkStatus || "-"} |{" "}
+                      #{selectedPendingLink.id || "-"}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="mt-2 text-sm text-slate-600">
+                    {l(
+                      "Select one row from the queue table below. The queue no longer auto-selects the first pending link.",
+                      "Asagidaki kuyruk tablosundan bir satir secin. Kuyruk artik ilk bekleyen baglantiyi otomatik secmez."
+                    )}
+                  </div>
+                )}
+              </div>
+              <div className="grid gap-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 sm:grid-cols-2">
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    {l("Ownership Context", "Sahiplik Baglami")}
+                  </div>
+                  <div className="mt-1 text-sm text-slate-800">
+                    {selectedPendingLink
+                      ? describeStockLinkOwnershipContext(selectedPendingLink, l)
+                      : l("Select a queue row first.", "Once bir kuyruk satiri secin.")}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    {l("Bound Warehouse", "Bagli Depo")}
+                  </div>
+                  <div className="mt-1 text-sm text-slate-800">
+                    {selectedPendingLink
+                      ? describeBoundWarehouse(selectedPendingLink, l)
+                      : l("Select a queue row first.", "Once bir kuyruk satiri secin.")}
+                  </div>
+                </div>
+              </div>
               <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
                 {l("Movement Date", "Hareket Tarihi")}
                 <input
@@ -1406,13 +1636,63 @@ export default function InventoryMovementsPage() {
                   {selectedPendingLink.documentNo || `Doc #${selectedPendingLink.documentId || "-"}`}
                 </div>
                 <div className="mt-1">
-                  {(selectedPendingLink.itemCardCode || selectedPendingLink.itemCardName || "-")} |{" "}
+                  {selectedPendingLink.itemCardCode || selectedPendingLink.itemCardName || "-"} |{" "}
+                  {selectedPendingLink.direction || "-"} |{" "}
                   {selectedPendingLink.stockImpactMode || "NONE"} |{" "}
-                  {l("Qty", "Miktar")} {selectedPendingLink.requestedQuantity | "-"}
+                  {l("Requested", "Talep")} {formatQuantityValue(selectedPendingLink.requestedQuantity)} |{" "}
+                  {l("Materialized", "Gerceklesti")} {formatQuantityValue(selectedPendingLink.materializedQuantity)} |{" "}
+                  {l("Remaining", "Kalan")} {formatQuantityValue(selectedPendingLink.remainingQuantity)}
+                </div>
+                <div className="mt-1">
+                  {l("Ownership Context", "Sahiplik Baglami")}:{" "}
+                  {describeStockLinkOwnershipContext(selectedPendingLink, l)} |{" "}
+                  {l("Bound Warehouse", "Bagli Depo")}: {describeBoundWarehouse(selectedPendingLink, l)}
+                </div>
+                <div className="mt-1">
+                  {l("Queue State", "Kuyruk Durumu")}: {selectedPendingLink.queueState || "-"}
+                  {selectedPendingLink.blockedReasonCode
+                    ? ` | ${l("Blocked Reason", "Bloke Nedeni")}: ${selectedPendingLink.blockedReasonCode}`
+                    : ""}
+                  {selectedPendingLink.repairReasonCode
+                    ? ` | ${l("Cleanup Reason", "Temizlik Nedeni")}: ${selectedPendingLink.repairReasonCode}`
+                    : ""}
+                  {describeSuccessorState(selectedPendingLink, l)
+                    ? ` | ${describeSuccessorState(selectedPendingLink, l)}`
+                    : ""}
                 </div>
                 <div className="mt-1">
                   {selectedPendingLink.lineDescription || l("No line description.", "Satir aciklamasi yok.")}
                 </div>
+                {describeRepairReason(selectedPendingLink, l) ? (
+                  <div className="mt-1 text-xs text-rose-700">
+                    {describeRepairReason(selectedPendingLink, l)}
+                  </div>
+                ) : null}
+                {describeBlockedReason(selectedPendingLink, l) ? (
+                  <div className="mt-1 text-xs text-amber-700">
+                    {describeBlockedReason(selectedPendingLink, l)}
+                  </div>
+                ) : null}
+                {describeTransferRequiredReason(selectedPendingLink, l) ? (
+                  <div className="mt-1 text-xs text-sky-700">
+                    {describeTransferRequiredReason(selectedPendingLink, l)}
+                  </div>
+                ) : null}
+                {String(selectedPendingLink.queueState || "").trim().toUpperCase() ===
+                "TRANSFER_REQUIRED" ? (
+                  <div className="mt-2 text-xs text-sky-900">
+                    <Link
+                      to={buildInventoryTransferLink(selectedPendingLink)}
+                      className="font-semibold underline underline-offset-2"
+                    >
+                      {l("Create transfer", "Transfer olustur")}
+                    </Link>{" "}
+                    {l(
+                      "opens the existing inventory transfer workflow with suggested source and target warehouses.",
+                      "onerilen kaynak ve hedef depolarla mevcut stok transferi akisina gider."
+                    )}
+                  </div>
+                ) : null}
                 {selectedPendingLink.reopenedFromStockLinkId ? (
                   <div className="mt-1 text-xs text-slate-500">
                     {l("Reopened from stock link", "Stok baglantisindan yeniden acildi")} #
@@ -1433,13 +1713,13 @@ export default function InventoryMovementsPage() {
               disabled={
                 movementSaving ||
                 !canUpsert ||
-                !toPositiveInt(movementForm.sourceStockLinkId) ||
-                !toPositiveInt(movementForm.warehouseId)
+                !toPositiveInt(selectedPendingLink?.id) ||
+                !selectedPendingLink?.canMaterialize
               }
             >
               {movementSaving
-                ? l("Creating movement...", "Hareket olusturuluyor...")
-                : l("Create Movement", "Hareket Olustur")}
+                ? l("Materializing stock link...", "Stok baglantisi gerceklestiriliyor...")
+                : l("Materialize Selected Row", "Secilen Satiri Gerceklestir")}
             </button>
           </form>
 
@@ -1648,15 +1928,15 @@ export default function InventoryMovementsPage() {
           <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
             <div className="flex items-center justify-between gap-3">
               <h2 className="text-lg font-semibold text-slate-900">
-                {l("Pending CARI Stock Links", "Bekleyen CARI Stok Baglantilari")}
+                {l("CARI Stock Link Queue", "CARI Stok Baglantisi Kuyrugu")}
               </h2>
               <span className="text-sm text-slate-500">{stockLinkRows.length}</span>
             </div>
             {stockLinkRows.length === 0 ? (
               <p className="mt-3 text-sm text-slate-600">
                 {l(
-                  "No pending stock links for the selected legal entity.",
-                  "Secili tuzel kisilik icin bekleyen stok baglantisi yok."
+                  "No stock-link rows match the selected queue scope and filters.",
+                  "Secilen kuyruk kapsami ve filtrelere uyan stok baglantisi satiri yok."
                 )}
               </p>
             ) : (
@@ -1665,18 +1945,38 @@ export default function InventoryMovementsPage() {
                   <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">
                     <tr>
                       <th className="px-3 py-2">{l("Document", "Belge")}</th>
+                      <th className="px-3 py-2">{l("Ownership Context", "Sahiplik Baglami")}</th>
+                      <th className="px-3 py-2">{l("Bound Warehouse", "Bagli Depo")}</th>
                       <th className="px-3 py-2">{l("Item", "Kalem")}</th>
-                      <th className="px-3 py-2">{l("Qty", "Miktar")}</th>
+                      <th className="px-3 py-2">{l("Direction", "Yon")}</th>
+                      <th className="px-3 py-2">{l("Qty State", "Miktar Durumu")}</th>
                       <th className="px-3 py-2">{l("Impact", "Etki")}</th>
-                      <th className="px-3 py-2">{l("Net", "Net")}</th>
+                      <th className="px-3 py-2">{l("Status", "Durum")}</th>
+                      <th className="px-3 py-2 text-right">{l("Action", "Islem")}</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {stockLinkRows.map((row) => (
-                      <tr key={`stock-link-row-${row.id}`} className="align-top">
+                      <tr
+                        key={`stock-link-row-${row.id}`}
+                        className={`align-top ${
+                          toPositiveInt(selectedStockLinkId) === toPositiveInt(row?.id)
+                            ? "bg-sky-50"
+                            : ""
+                        }`}
+                      >
                         <td className="px-3 py-2 text-slate-700">
                           <div className="font-medium text-slate-900">{row.documentNo || "-"}</div>
                           <div className="text-xs text-slate-500">{row.documentDate || "-"}</div>
+                          <div className="text-xs text-slate-500">#{row.documentLineId || "-"}</div>
+                        </td>
+                        <td className="px-3 py-2 text-slate-700">
+                          <div>{describeStockLinkOwnershipContext(row, l)}</div>
+                          <div className="text-xs text-slate-500">{row.legalEntityCode || "-"}</div>
+                        </td>
+                        <td className="px-3 py-2 text-slate-700">
+                          <div>{describeBoundWarehouse(row, l)}</div>
+                          <div className="text-xs text-slate-500">#{row.boundWarehouseId || "-"}</div>
                         </td>
                         <td className="px-3 py-2 text-slate-700">
                           <div>{row.itemCardCode || row.itemCardName || "-"}</div>
@@ -1686,8 +1986,30 @@ export default function InventoryMovementsPage() {
                               {l("Reopened from", "Yeniden acildigi link")} #{row.reopenedFromStockLinkId}
                             </div>
                           ) : null}
+                          {describeSuccessorState(row, l) ? (
+                            <div className="text-xs text-slate-500">{describeSuccessorState(row, l)}</div>
+                          ) : null}
                         </td>
-                        <td className="px-3 py-2 text-slate-700">{row.requestedQuantity | "-"}</td>
+                        <td className="px-3 py-2 text-slate-700">
+                          <span
+                            className={`rounded-full px-2 py-1 text-[11px] font-semibold uppercase tracking-wide ${getStatusBadgeClass(
+                              row.direction
+                            )}`}
+                          >
+                            {row.direction || "-"}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2 text-slate-700">
+                          <div>
+                            {l("Requested", "Talep")}: {formatQuantityValue(row.requestedQuantity)}
+                          </div>
+                          <div className="text-xs text-slate-500">
+                            {l("Materialized", "Gerceklesti")}: {formatQuantityValue(row.materializedQuantity)}
+                          </div>
+                          <div className="text-xs text-slate-500">
+                            {l("Remaining", "Kalan")}: {formatQuantityValue(row.remainingQuantity)}
+                          </div>
+                        </td>
                         <td className="px-3 py-2">
                           <span
                             className={`rounded-full px-2 py-1 text-[11px] font-semibold uppercase tracking-wide ${getStatusBadgeClass(
@@ -1698,11 +2020,62 @@ export default function InventoryMovementsPage() {
                           </span>
                         </td>
                         <td className="px-3 py-2 text-slate-700">
-                          {row.postedNetAmountTxn === null || row.postedNetAmountTxn === undefined ? (
-                            "-"
-                          ) : (
-                            <MoneyText amount={row.postedNetAmountTxn} currencyCode={row.currencyCode} />
-                          )}
+                          <div>
+                            <span
+                              className={`rounded-full px-2 py-1 text-[11px] font-semibold uppercase tracking-wide ${getQueueStateBadgeClass(
+                                row.queueState
+                              )}`}
+                            >
+                              {row.queueState || row.linkStatus || "-"}
+                            </span>
+                          </div>
+                          <div className="mt-1 text-xs text-slate-500">
+                            {l("Lifecycle", "Yasam Dongusu")}: {row.linkStatus || "-"}
+                          </div>
+                          {describeRepairReason(row, l) ? (
+                            <div className="mt-1 text-xs text-rose-700">
+                              {describeRepairReason(row, l)}
+                            </div>
+                          ) : null}
+                          {describeBlockedReason(row, l) ? (
+                            <div className="mt-1 text-xs text-amber-700">
+                              {describeBlockedReason(row, l)}
+                            </div>
+                          ) : null}
+                          {describeTransferRequiredReason(row, l) ? (
+                            <div className="mt-1 text-xs text-sky-700">
+                              {describeTransferRequiredReason(row, l)}
+                            </div>
+                          ) : null}
+                          {String(row.queueState || "").trim().toUpperCase() ===
+                          "TRANSFER_REQUIRED" ? (
+                            <div className="mt-1 text-xs text-sky-900">
+                              <Link
+                                to={buildInventoryTransferLink(row)}
+                                className="font-semibold underline underline-offset-2"
+                              >
+                                {l("Create transfer", "Transfer olustur")}
+                              </Link>
+                            </div>
+                          ) : null}
+                          <div className="mt-1 text-xs text-slate-500">
+                            {row.postedNetAmountTxn === null || row.postedNetAmountTxn === undefined ? (
+                              "-"
+                            ) : (
+                              <MoneyText amount={row.postedNetAmountTxn} currencyCode={row.currencyCode} />
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-3 py-2 text-right">
+                          <button
+                            type="button"
+                            className="rounded-md border border-slate-300 px-2.5 py-1 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+                            onClick={() => setSelectedStockLinkId(String(row.id || ""))}
+                          >
+                            {toPositiveInt(selectedStockLinkId) === toPositiveInt(row?.id)
+                              ? l("Selected", "Secildi")
+                              : l("Review", "Incele")}
+                          </button>
                         </td>
                       </tr>
                     ))}

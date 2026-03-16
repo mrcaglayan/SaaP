@@ -49,29 +49,31 @@ npm run db:seed:core
 
 ## Operational Lifecycle
 
-1. Post CARI document with `STOCK_ITEM` lines.
+1. Choose warehouse on each stock-affecting CARI line in CARI, then post the document.
 2. Verify pending stock link status:
    - `RECEIPT_PENDING` for AP receipt intent
    - `ISSUE_PENDING` for AR issue intent
-3. Materialize the stock link into a warehouse movement.
-4. Expected outcomes:
+3. Open `/app/stok-yansitma-islemleri` and keep `Queue Scope` on `ACTIONABLE` for normal execution work.
+4. Materialize the stock link into a warehouse movement.
+5. Expected outcomes:
    - `RECEIPT` -> `VALUED`, cost layer created
    - `ISSUE` -> `VALUED`, FIFO layer-consumption rows created
-5. For valued `ISSUE`, verify one inventory journal:
+6. Use `COMPLETED` or `VOID` only as explicit history filters when operators need finished or canceled rows.
+7. For valued `ISSUE`, verify one inventory journal:
    - `Dr COGS`
    - `Cr Inventory`
-6. Replay safety:
+8. Replay safety:
    - re-materializing the same already linked issue must reuse the existing movement and existing journal
-7. Reverse one valued outbound issue:
+9. Reverse one valued outbound issue:
    - reverse only the latest relevant valued issue for that warehouse/item
    - reversal restores consumed layer quantities and creates the inventory-side reverse journal when a `COGS` journal existed
-8. Successor rematerialization:
+10. Successor rematerialization:
    - reversing one valued issue must create one reopened successor pending stock link for the same commercial line
    - rematerialize from the successor stock link, not the original historical linked row
-9. Receipt undo:
+11. Receipt undo:
    - a materialized receipt can be undone only when no later issue chronology still depends on its remaining layer history
    - receipt undo stays additive and does not invent duplicate inventory GL posting
-10. CARI reverse readiness:
+12. CARI reverse readiness:
    - CARI reverse stays blocked until the linked issue/receipt effect is no longer active
    - operators should follow the unwind order from `/app/cari-belgeler` into `/app/stok-yansitma-islemleri`
 
@@ -86,6 +88,9 @@ npm run db:seed:core
   - verify the warehouse belongs to the same legal entity
   - verify the item card is still `ACTIVE` and `STOCK_ITEM`
   - verify `inventoryAssetAccountId` and `defaultCogsAccountId`
+- If the expected queue row is not visible:
+  - verify `/app/stok-yansitma-islemleri` is still on `Queue Scope = ACTIONABLE` for live work
+  - switch to `COMPLETED` or `VOID` only when intentionally reviewing history
 - If issue journal is missing:
   - verify issue movement is `VALUED`
   - verify movement detail has `postedJournalEntryId`

@@ -13,6 +13,11 @@ import {
 } from "./inventory.service.js";
 import { reverseJournalEntryTx } from "./gl.journal-reversal.service.js";
 import { upsertJournalSourceLinkTx } from "./journal.source-link.service.js";
+import {
+  buildTransferWarehousesMustDifferMessage,
+  deriveWarehouseOwnershipContext,
+  sameOwnershipContext,
+} from "./ownership.context.policy.service.js";
 import { resolveOuSelfBalancingAccountsTx } from "./ou.self-balancing.service.js";
 
 const TRANSFER_STATUS_VALUES = new Set([
@@ -1115,17 +1120,6 @@ async function fetchWarehouseContextById({
   return row;
 }
 
-function sameOwnershipContext(sourceWarehouseRow, targetWarehouseRow) {
-  const sourceScope = String(sourceWarehouseRow?.ownership_scope || "CENTRAL").toUpperCase();
-  const targetScope = String(targetWarehouseRow?.ownership_scope || "CENTRAL").toUpperCase();
-  if (sourceScope !== targetScope) {
-    return false;
-  }
-  const sourceOperatingUnitId = parsePositiveInt(sourceWarehouseRow?.operating_unit_id) || null;
-  const targetOperatingUnitId = parsePositiveInt(targetWarehouseRow?.operating_unit_id) || null;
-  return sourceOperatingUnitId === targetOperatingUnitId;
-}
-
 async function assertItemCardAllowedForTransfer({
   tenantId,
   legalEntityId,
@@ -1466,9 +1460,14 @@ export async function createInventoryTransfer({
     if (sourceWarehouseId === targetWarehouseId) {
       throw badRequest("sourceWarehouseId and targetWarehouseId must differ");
     }
-    if (sameOwnershipContext(sourceWarehouseRow, targetWarehouseRow)) {
+    const sourceOwnershipContext = deriveWarehouseOwnershipContext(sourceWarehouseRow);
+    const targetOwnershipContext = deriveWarehouseOwnershipContext(targetWarehouseRow);
+    if (sameOwnershipContext(sourceOwnershipContext, targetOwnershipContext)) {
       throw badRequest(
-        "sourceWarehouseId and targetWarehouseId must belong to different ownership contexts"
+        buildTransferWarehousesMustDifferMessage({
+          sourceContext: sourceOwnershipContext,
+          targetContext: targetOwnershipContext,
+        })
       );
     }
 
@@ -1515,10 +1514,10 @@ export async function createInventoryTransfer({
         transferDate,
         sourceWarehouseId,
         targetWarehouseId,
-        String(sourceWarehouseRow.ownership_scope || "CENTRAL").toUpperCase(),
-        parsePositiveInt(sourceWarehouseRow.operating_unit_id),
-        String(targetWarehouseRow.ownership_scope || "CENTRAL").toUpperCase(),
-        parsePositiveInt(targetWarehouseRow.operating_unit_id),
+        sourceOwnershipContext.ownershipScope,
+        sourceOwnershipContext.operatingUnitId,
+        targetOwnershipContext.ownershipScope,
+        targetOwnershipContext.operatingUnitId,
         initiatedByUserId,
         sourceModule || "INVENTORY",
         sourceEntityType || null,

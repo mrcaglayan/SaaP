@@ -357,7 +357,7 @@ return sanitizeDefaultAccounts(defaultAccounts)
     (account) =>
       toUpper(account.accountType) === toUpper(accountType) &&
       toUpper(account.normalSide) === toUpper(normalSide) &&
-      !Boolean(account.allowPosting)
+      !account.allowPosting
   )
   .sort(compareAccountsForTree);
 }

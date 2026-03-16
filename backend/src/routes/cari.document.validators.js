@@ -11,6 +11,7 @@ import {
   requireTenantId,
   requireUserId,
 } from "./cash.validators.common.js";
+import { STOCK_IMPACT_MODE_VALUES } from "../services/ownership.context.policy.service.js";
 
 const DIRECTION_VALUES = ["AR", "AP"];
 const DOCUMENT_TYPE_VALUES = [
@@ -29,7 +30,6 @@ const DOCUMENT_STATUS_VALUES = [
   "SETTLED",
 ];
 const LINE_KIND_VALUES = ["STANDARD", "COMMENT", "ROUNDING", "ADJUSTMENT", "OTHER"];
-const STOCK_IMPACT_MODE_VALUES = ["NONE", "RECEIPT_PENDING", "ISSUE_PENDING"];
 const DUE_DATE_REQUIRED_TYPES = new Set(["INVOICE", "DEBIT_NOTE"]);
 const MAX_POSTING_LINES = 200;
 const MAX_DOCUMENT_LINES = 500;
@@ -256,6 +256,34 @@ function parseDocumentLines(value) {
       `lines[${index}].stockImpactMode`,
       STOCK_IMPACT_MODE_VALUES
     );
+    const warehouseId =
+      parseOptionalPositiveIntField(
+        row.warehouseId ?? row.warehouse_id,
+        `lines[${index}].warehouseId`
+      ) || null;
+    const warehouseCodeInput = row.warehouseCode ?? row.warehouse_code;
+    if (warehouseCodeInput !== undefined && warehouseCodeInput !== null) {
+      const normalizedWarehouseCode = String(warehouseCodeInput).trim();
+      if (normalizedWarehouseCode) {
+        throw badRequest(
+          `lines[${index}].warehouseCode is read-only; send warehouseId only`
+        );
+      }
+    }
+    const warehouseNameInput = row.warehouseName ?? row.warehouse_name;
+    if (warehouseNameInput !== undefined && warehouseNameInput !== null) {
+      const normalizedWarehouseName = String(warehouseNameInput).trim();
+      if (normalizedWarehouseName) {
+        throw badRequest(
+          `lines[${index}].warehouseName is read-only; send warehouseId only`
+        );
+      }
+    }
+    if (stockImpactMode !== "NONE" && !warehouseId) {
+      throw badRequest(
+        `lines[${index}].warehouseId is required for stock-affecting lines`
+      );
+    }
 
     rows.push({
       lineNo: index + 1,
@@ -272,6 +300,7 @@ function parseDocumentLines(value) {
       taxCode,
       taxCategoryCode,
       stockImpactMode,
+      warehouseId,
     });
   }
 
@@ -429,6 +458,30 @@ export function parseDocumentReadFilters(req) {
     direction,
     documentType,
     status,
+    limit: pagination.limit,
+    offset: pagination.offset,
+  };
+}
+
+export function parseDocumentWarehouseLookupFilters(req) {
+  const tenantId = requireTenantId(req);
+  const legalEntityId = parseRequiredPositiveIntField(
+    req.query?.legalEntityId,
+    "legalEntityId"
+  );
+  const operatingUnitId =
+    parseOptionalPositiveIntField(req.query?.operatingUnitId, "operatingUnitId") || null;
+  const q = normalizeText(req.query?.q, "q", 120);
+  const pagination = parsePagination(req.query, {
+    limit: 200,
+    offset: 0,
+    maxLimit: 300,
+  });
+  return {
+    tenantId,
+    legalEntityId,
+    operatingUnitId,
+    q,
     limit: pagination.limit,
     offset: pagination.offset,
   };

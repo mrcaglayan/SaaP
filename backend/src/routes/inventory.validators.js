@@ -1,9 +1,13 @@
 import { badRequest, parsePositiveInt, resolveTenantId } from "./_utils.js";
 import { requireUserId } from "./cash.validators.common.js";
+import {
+  normalizeOwnershipContextInput,
+  OWNERSHIP_CONTEXT_VALUES,
+} from "../services/ownership.context.policy.service.js";
 
 const WAREHOUSE_STATUS_VALUES = ["ACTIVE", "INACTIVE"];
-const WAREHOUSE_OWNERSHIP_SCOPE_VALUES = ["CENTRAL", "OPERATING_UNIT"];
 const STOCK_LINK_STATUS_VALUES = ["PENDING", "LINKED", "VOID"];
+const STOCK_LINK_QUEUE_SCOPE_VALUES = ["ACTIONABLE", "COMPLETED", "VOID", "ALL"];
 const STOCK_IMPACT_MODE_VALUES = ["RECEIPT_PENDING", "ISSUE_PENDING"];
 const MOVEMENT_TYPE_VALUES = ["RECEIPT", "ISSUE", "ADJUSTMENT_IN", "ADJUSTMENT_OUT"];
 const VALUATION_STATUS_VALUES = ["NOT_REQUIRED", "PENDING", "VALUED"];
@@ -96,7 +100,7 @@ export function parseInventoryWarehouseListFilters(req) {
       normalizeEnum(
         req.query?.ownershipScope,
         "ownershipScope",
-        WAREHOUSE_OWNERSHIP_SCOPE_VALUES
+        OWNERSHIP_CONTEXT_VALUES
       ) || null,
     operatingUnitId: normalizeOptionalPositiveInt(req.query?.operatingUnitId, "operatingUnitId"),
     status: normalizeEnum(req.query?.status, "status", WAREHOUSE_STATUS_VALUES) || null,
@@ -107,23 +111,21 @@ export function parseInventoryWarehouseListFilters(req) {
 }
 
 export function parseInventoryWarehouseCreateInput(req) {
-  const ownershipScope =
+  const normalizedOwnershipScope =
     normalizeEnum(
       req.body?.ownershipScope ?? "CENTRAL",
       "ownershipScope",
-      WAREHOUSE_OWNERSHIP_SCOPE_VALUES,
+      OWNERSHIP_CONTEXT_VALUES,
       { required: true }
     ) || "CENTRAL";
-  const operatingUnitId = normalizeOptionalPositiveInt(
+  const normalizedOperatingUnitId = normalizeOptionalPositiveInt(
     req.body?.operatingUnitId,
     "operatingUnitId"
   );
-  if (ownershipScope === "CENTRAL" && operatingUnitId) {
-    throw badRequest("operatingUnitId must be empty when ownershipScope=CENTRAL");
-  }
-  if (ownershipScope === "OPERATING_UNIT" && !operatingUnitId) {
-    throw badRequest("operatingUnitId is required when ownershipScope=OPERATING_UNIT");
-  }
+  const { ownershipScope, operatingUnitId } = normalizeOwnershipContextInput({
+    ownershipScope: normalizedOwnershipScope,
+    operatingUnitId: normalizedOperatingUnitId,
+  });
   return {
     tenantId: requireTenantId(req),
     userId: requireUserId(req),
@@ -142,22 +144,33 @@ export function parseInventoryWarehouseCreateInput(req) {
 
 export function parseInventoryStockLinkListFilters(req) {
   const linkedRaw = String(req.query?.warehouseLinked ?? "").trim().toLowerCase();
+  const linkStatusRaw = String(req.query?.linkStatus ?? req.query?.status ?? "").trim();
+  const queueScopeRaw = String(req.query?.queueScope ?? req.query?.scope ?? "").trim();
   return {
     tenantId: requireTenantId(req),
     legalEntityId: normalizeOptionalPositiveInt(req.query?.legalEntityId, "legalEntityId"),
-    linkStatus:
-      normalizeEnum(
-        req.query?.linkStatus ?? req.query?.status ?? "PENDING",
-        "linkStatus",
-        STOCK_LINK_STATUS_VALUES,
-        { required: true }
-      ) || "PENDING",
+    queueScope: queueScopeRaw
+      ? normalizeEnum(queueScopeRaw, "queueScope", STOCK_LINK_QUEUE_SCOPE_VALUES, {
+          required: true,
+        })
+      : linkStatusRaw
+        ? null
+        : "ACTIONABLE",
+    linkStatus: linkStatusRaw
+      ? normalizeEnum(linkStatusRaw, "linkStatus", STOCK_LINK_STATUS_VALUES, {
+          required: true,
+        })
+      : null,
     stockImpactMode:
       normalizeEnum(
         req.query?.stockImpactMode ?? req.query?.stock_impact_mode,
         "stockImpactMode",
         STOCK_IMPACT_MODE_VALUES
       ) || null,
+    warehouseId: normalizeOptionalPositiveInt(
+      req.query?.warehouseId ?? req.query?.boundWarehouseId,
+      "warehouseId"
+    ),
     warehouseLinked:
       linkedRaw === "true" ? true : linkedRaw === "false" ? false : undefined,
     limit: parseLimit(req.query?.limit, 200),
@@ -193,6 +206,17 @@ export function parseInventoryMovementCreateInput(req) {
       req.body?.sourceStockLinkId,
       "sourceStockLinkId"
     ),
+    movementDate: parseOptionalDate(req.body?.movementDate, "movementDate"),
+    note: normalizeShortText(req.body?.note, "note", 255) || null,
+  };
+}
+
+export function parseInventoryStockLinkMaterializeInput(req) {
+  return {
+    tenantId: requireTenantId(req),
+    userId: requireUserId(req),
+    legalEntityId: normalizeOptionalPositiveInt(req.body?.legalEntityId, "legalEntityId"),
+    stockLinkId: normalizeOptionalPositiveInt(req.params?.stockLinkId, "stockLinkId"),
     movementDate: parseOptionalDate(req.body?.movementDate, "movementDate"),
     note: normalizeShortText(req.body?.note, "note", 255) || null,
   };

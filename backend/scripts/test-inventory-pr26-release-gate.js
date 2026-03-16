@@ -87,13 +87,21 @@ function assertOpenApiContracts(spec) {
   assertTaggedOperation(spec, "/api/v1/items/cards/{itemCardId}", "patch", "Items");
   assertTaggedOperation(spec, "/api/v1/inventory/warehouses", "get", "Inventory");
   assertTaggedOperation(spec, "/api/v1/inventory/warehouses", "post", "Inventory");
+  assertTaggedOperation(spec, "/api/v1/inventory/work-queue-summary", "get", "Inventory");
   assertTaggedOperation(spec, "/api/v1/inventory/cari-stock-links", "get", "Inventory");
+  assertTaggedOperation(
+    spec,
+    "/api/v1/inventory/cari-stock-links/{stockLinkId}/materialize",
+    "post",
+    "Inventory"
+  );
   assertTaggedOperation(spec, "/api/v1/inventory/movements", "get", "Inventory");
   assertTaggedOperation(spec, "/api/v1/inventory/movements", "post", "Inventory");
   assertTaggedOperation(spec, "/api/v1/inventory/movements/{movementId}/reverse", "post", "Inventory");
   assertTaggedOperation(spec, "/api/v1/inventory/cost-layers", "get", "Inventory");
   assertTaggedOperation(spec, "/api/v1/cari/documents", "get", "Cari");
   assertTaggedOperation(spec, "/api/v1/cari/documents", "post", "Cari");
+  assertTaggedOperation(spec, "/api/v1/cari/documents/warehouse-options", "get", "Cari");
   assertTaggedOperation(spec, "/api/v1/cari/documents/{documentId}", "get", "Cari");
   assertTaggedOperation(spec, "/api/v1/cari/documents/{documentId}", "put", "Cari");
   assertTaggedOperation(spec, "/api/v1/cari/documents/{documentId}/cancel", "post", "Cari");
@@ -108,6 +116,8 @@ function assertOpenApiContracts(spec) {
     "CariDocumentRow",
     "CariDocumentListResponse",
     "CariDocumentResponse",
+    "CariDocumentWarehouseLookupRow",
+    "CariDocumentWarehouseLookupResponse",
     "CariDocumentOpenItemRow",
     "CariDocumentOpenItemListResponse",
     "CariDocumentCreateRequest",
@@ -123,10 +133,14 @@ function assertOpenApiContracts(spec) {
     "InventoryWarehouseRow",
     "InventoryWarehouseListResponse",
     "InventoryWarehouseCreateRequest",
+    "InventoryStockLinkQueueState",
+    "InventoryStockLinkQueueScope",
     "InventoryPendingStockLinkRow",
     "InventoryPendingStockLinkListResponse",
+    "InventoryWorkQueueSummaryResponse",
     "InventoryMovementRow",
     "InventoryMovementResponse",
+    "InventoryStockLinkMaterializeRequest",
     "InventoryMovementCreateRequest",
     "InventoryMovementReverseRequest",
     "InventoryCostLayerRow",
@@ -154,6 +168,21 @@ function assertOpenApiContracts(spec) {
     getResponseSchemaRef(findOperation(spec, "/api/v1/cari/documents", "post"), "201") ===
       "#/components/schemas/CariDocumentResponse",
     "POST /api/v1/cari/documents must return CariDocumentResponse"
+  );
+  assert(
+    getResponseSchemaRef(findOperation(spec, "/api/v1/cari/documents/warehouse-options", "get"), "200") ===
+      "#/components/schemas/CariDocumentWarehouseLookupResponse",
+    "GET /api/v1/cari/documents/warehouse-options must return CariDocumentWarehouseLookupResponse"
+  );
+  assert(
+    Array.isArray(findOperation(spec, "/api/v1/cari/documents/warehouse-options", "get")?.parameters) &&
+      findOperation(spec, "/api/v1/cari/documents/warehouse-options", "get").parameters.some(
+        (parameter) => String(parameter?.name || "") === "legalEntityId"
+      ) &&
+      findOperation(spec, "/api/v1/cari/documents/warehouse-options", "get").parameters.some(
+        (parameter) => String(parameter?.name || "") === "operatingUnitId"
+      ),
+    "GET /api/v1/cari/documents/warehouse-options must document legalEntityId and operatingUnitId filters"
   );
   assert(
     getResponseSchemaRef(findOperation(spec, "/api/v1/cari/documents/{documentId}", "get"), "200") ===
@@ -211,6 +240,33 @@ function assertOpenApiContracts(spec) {
     "POST /api/v1/items/cards must use ItemCardUpsertRequest"
   );
   assert(
+    getResponseSchemaRef(findOperation(spec, "/api/v1/inventory/work-queue-summary", "get"), "200") ===
+      "#/components/schemas/InventoryWorkQueueSummaryResponse",
+    "GET /api/v1/inventory/work-queue-summary must return InventoryWorkQueueSummaryResponse"
+  );
+  assert(
+    getResponseSchemaRef(
+      findOperation(spec, "/api/v1/inventory/cari-stock-links/{stockLinkId}/materialize", "post"),
+      "201"
+    ) === "#/components/schemas/InventoryMovementResponse",
+    "POST /api/v1/inventory/cari-stock-links/{stockLinkId}/materialize must return InventoryMovementResponse"
+  );
+  assert(
+    getRequestBodySchemaRef(
+      findOperation(spec, "/api/v1/inventory/cari-stock-links/{stockLinkId}/materialize", "post")
+    ) === "#/components/schemas/InventoryStockLinkMaterializeRequest",
+    "POST /api/v1/inventory/cari-stock-links/{stockLinkId}/materialize must use InventoryStockLinkMaterializeRequest"
+  );
+  assert(
+    /bound warehouse/i.test(
+      String(
+        findOperation(spec, "/api/v1/inventory/cari-stock-links/{stockLinkId}/materialize", "post")
+          ?.summary || ""
+      )
+    ),
+    "Strict stock-link materialize route summary must describe bound-warehouse execution"
+  );
+  assert(
     getResponseSchemaRef(findOperation(spec, "/api/v1/inventory/movements", "post"), "201") ===
       "#/components/schemas/InventoryMovementResponse",
     "POST /api/v1/inventory/movements must return InventoryMovementResponse"
@@ -219,6 +275,101 @@ function assertOpenApiContracts(spec) {
     getRequestBodySchemaRef(findOperation(spec, "/api/v1/inventory/movements", "post")) ===
       "#/components/schemas/InventoryMovementCreateRequest",
     "POST /api/v1/inventory/movements must use InventoryMovementCreateRequest"
+  );
+  assert(
+    /legacy-only non-strict/i.test(
+      String(findOperation(spec, "/api/v1/inventory/movements", "post")?.summary || "")
+    ),
+    "POST /api/v1/inventory/movements summary must document the legacy-only non-strict role"
+  );
+  assert(
+    spec?.components?.schemas?.CariDocumentLineRow?.properties?.warehouseId,
+    "CariDocumentLineRow must expose warehouseId"
+  );
+  assert(
+    spec?.components?.schemas?.CariDocumentLineRow?.properties?.warehouseCode,
+    "CariDocumentLineRow must expose warehouseCode"
+  );
+  assert(
+    spec?.components?.schemas?.CariDocumentLineRow?.properties?.warehouseName,
+    "CariDocumentLineRow must expose warehouseName"
+  );
+  assert(
+    spec?.components?.schemas?.CariDocumentLineInput?.properties?.warehouseId,
+    "CariDocumentLineInput must accept warehouseId"
+  );
+  assert(
+    !spec?.components?.schemas?.CariDocumentLineInput?.properties?.warehouseCode,
+    "CariDocumentLineInput must not accept warehouseCode"
+  );
+  assert(
+    !spec?.components?.schemas?.CariDocumentLineInput?.properties?.warehouseName,
+    "CariDocumentLineInput must not accept warehouseName"
+  );
+  assert(
+    spec?.components?.schemas?.InventoryPendingStockLinkRow?.properties?.blockedReasonCode,
+    "InventoryPendingStockLinkRow must expose blockedReasonCode"
+  );
+  assert(
+    spec?.components?.schemas?.InventoryPendingStockLinkRow?.properties?.boundWarehouseId,
+    "InventoryPendingStockLinkRow must expose boundWarehouseId"
+  );
+  assert(
+    spec?.components?.schemas?.InventoryPendingStockLinkRow?.properties?.boundWarehouseCode,
+    "InventoryPendingStockLinkRow must expose boundWarehouseCode"
+  );
+  assert(
+    spec?.components?.schemas?.InventoryPendingStockLinkRow?.properties?.boundWarehouseName,
+    "InventoryPendingStockLinkRow must expose boundWarehouseName"
+  );
+  assert(
+    spec?.components?.schemas?.InventoryPendingStockLinkRow?.properties?.queueState,
+    "InventoryPendingStockLinkRow must expose queueState"
+  );
+  assert(
+    spec?.components?.schemas?.InventoryPendingStockLinkRow?.properties?.canMaterialize,
+    "InventoryPendingStockLinkRow must expose canMaterialize"
+  );
+  assert(
+    spec?.components?.schemas?.InventoryPendingStockLinkRow?.properties?.isStrictMode,
+    "InventoryPendingStockLinkRow must expose isStrictMode"
+  );
+  assert(
+    spec?.components?.schemas?.InventoryPendingStockLinkRow?.properties?.isRepairOnly,
+    "InventoryPendingStockLinkRow must expose isRepairOnly"
+  );
+  assert(
+    spec?.components?.schemas?.InventoryPendingStockLinkRow?.properties?.isLegacyRow,
+    "InventoryPendingStockLinkRow must expose isLegacyRow"
+  );
+  assert(
+    spec?.components?.schemas?.InventoryPendingStockLinkRow?.properties?.boundAvailableQuantity,
+    "InventoryPendingStockLinkRow must expose boundAvailableQuantity"
+  );
+  assert(
+    spec?.components?.schemas?.InventoryPendingStockLinkRow?.properties?.crossContextAvailableQuantity,
+    "InventoryPendingStockLinkRow must expose crossContextAvailableQuantity"
+  );
+  assert(
+    spec?.components?.schemas?.InventoryPendingStockLinkRow?.properties?.transferSourceWarehouseId,
+    "InventoryPendingStockLinkRow must expose transferSourceWarehouseId"
+  );
+  assert(
+    spec?.components?.schemas?.InventoryWorkQueueSummaryResponse?.properties?.stockLinks?.properties
+      ?.completed_total,
+    "InventoryWorkQueueSummaryResponse must expose completed_total"
+  );
+  assert(
+    spec?.components?.schemas?.InventoryWorkQueueSummaryResponse?.properties?.stockLinks?.properties
+      ?.void_total,
+    "InventoryWorkQueueSummaryResponse must expose void_total"
+  );
+  assert(
+    Array.isArray(findOperation(spec, "/api/v1/inventory/cari-stock-links", "get")?.parameters) &&
+      findOperation(spec, "/api/v1/inventory/cari-stock-links", "get").parameters.some(
+        (parameter) => String(parameter?.name || "") === "queueScope"
+      ),
+    "GET /api/v1/inventory/cari-stock-links must document the queueScope parameter"
   );
   assert(
     getRequestBodySchemaRef(
@@ -235,6 +386,10 @@ function assertOpenApiContracts(spec) {
 
 function assertContains(source, expected, message) {
   assert(source.includes(expected), message);
+}
+
+function assertNotContains(source, unexpected, message) {
+  assert(!source.includes(unexpected), message);
 }
 
 function assertDocs(runbookSource, supportGuideSource, rolloutSource, regressionSource) {
@@ -257,6 +412,11 @@ function assertDocs(runbookSource, supportGuideSource, rolloutSource, regression
     runbookSource,
     "`cd backend && npm run db:seed:core`",
     "Cari runbook must include permission backfill command"
+  );
+  assertContains(
+    runbookSource,
+    "choose warehouse on each stock-affecting CARI line before posting",
+    "Cari runbook must describe upstream warehouse choice before post"
   );
   assertContains(
     runbookSource,
@@ -296,6 +456,16 @@ function assertDocs(runbookSource, supportGuideSource, rolloutSource, regression
   );
   assertContains(
     supportGuideSource,
+    "Queue Scope",
+    "Support guide must explain queue-scope behavior"
+  );
+  assertContains(
+    supportGuideSource,
+    "`ACTIONABLE`",
+    "Support guide must document the actionable queue scope"
+  );
+  assertContains(
+    supportGuideSource,
     "## CARI Reverse Blocked By Inventory",
     "Support guide must explain the inventory reverse blocker"
   );
@@ -324,6 +494,11 @@ function assertDocs(runbookSource, supportGuideSource, rolloutSource, regression
     rolloutSource,
     "`inventory.read`",
     "Inventory rollout runbook must mention inventory permissions"
+  );
+  assertContains(
+    rolloutSource,
+    "Choose warehouse on each stock-affecting CARI line in CARI, then post the document.",
+    "Inventory rollout runbook must describe upstream warehouse choice in CARI"
   );
   assertContains(
     rolloutSource,
@@ -362,14 +537,29 @@ function assertDocs(runbookSource, supportGuideSource, rolloutSource, regression
   );
   assertContains(
     rolloutSource,
+    "Queue Scope",
+    "Inventory rollout runbook must explain queue-scope behavior"
+  );
+  assertContains(
+    rolloutSource,
     "npm run test:inventory:release-gate",
     "Inventory rollout runbook must include release-gate command"
   );
 
   assertContains(
     regressionSource,
+    "stock-affecting lines require warehouse binding before post",
+    "Regression matrix must document strict warehouse binding before post"
+  );
+  assertContains(
+    regressionSource,
     "### 5. Inventory materialization",
     "Regression matrix must keep inventory materialization scenario"
+  );
+  assertContains(
+    regressionSource,
+    "strict materialization uses the already-bound warehouse instead of a caller-selected queue warehouse",
+    "Regression matrix must describe bound-warehouse materialization"
   );
   assertContains(
     regressionSource,
@@ -419,6 +609,8 @@ function assertDocs(runbookSource, supportGuideSource, rolloutSource, regression
 }
 
 function assertSourceGuards(
+  cariRouteSource,
+  cariApiSource,
   cariPageSource,
   inventoryPageSource,
   inventoryRouteSource,
@@ -426,6 +618,21 @@ function assertSourceGuards(
   seedSource,
   regressionScriptSource
 ) {
+  assertContains(
+    cariRouteSource,
+    '"/warehouse-options"',
+    "CARI routes must define the warehouse-options endpoint"
+  );
+  assertContains(
+    cariRouteSource,
+    'requirePermission("cari.doc.read"',
+    "CARI warehouse lookup route must stay under cari.doc.read"
+  );
+  assertContains(
+    cariApiSource,
+    "/api/v1/cari/documents/warehouse-options",
+    "CARI API client must use the warehouse-options endpoint"
+  );
   assertContains(
     cariPageSource,
     "Split posting is disabled because this draft already stores line-level taxes.",
@@ -450,6 +657,16 @@ function assertSourceGuards(
     inventoryPageSource,
     'searchParams.get("movementId")',
     "Inventory page must understand deep-linked movement ids"
+  );
+  assertContains(
+    inventoryPageSource,
+    "Queue Scope",
+    "Inventory page must expose explicit queue-scope controls"
+  );
+  assertNotContains(
+    inventoryPageSource,
+    "Select pending link",
+    "Inventory page must not keep the old pending-link dropdown workflow"
   );
   assertContains(
     inventoryRouteSource,
@@ -523,12 +740,6 @@ async function main() {
   await runNpmScript("openapi:generate", backendRoot);
   await runNpmScript("check:openapi:parse", backendRoot);
   await runNpmScript("check:openapi", backendRoot);
-  await runCommand(
-    "git",
-    ["diff", "--exit-code", "--", "backend/openapi.yaml"],
-    repoRoot,
-    "git diff --exit-code -- backend/openapi.yaml"
-  );
 
   const openapiSource = await readFile(path.resolve(backendRoot, "openapi.yaml"), "utf8");
   const spec = JSON.parse(openapiSource);
@@ -554,6 +765,14 @@ async function main() {
 
   const cariPageSource = await readFile(
     path.resolve(repoRoot, "frontend", "src", "pages", "cari", "CariDocumentsPage.jsx"),
+    "utf8"
+  );
+  const cariRouteSource = await readFile(
+    path.resolve(repoRoot, "backend", "src", "routes", "cari.document.routes.js"),
+    "utf8"
+  );
+  const cariApiSource = await readFile(
+    path.resolve(repoRoot, "frontend", "src", "api", "cariDocuments.js"),
     "utf8"
   );
   const inventoryPageSource = await readFile(
@@ -582,6 +801,8 @@ async function main() {
     "utf8"
   );
   assertSourceGuards(
+    cariRouteSource,
+    cariApiSource,
     cariPageSource,
     inventoryPageSource,
     inventoryRouteSource,
@@ -590,15 +811,24 @@ async function main() {
     regressionScriptSource
   );
 
+  await runCommand(
+    "git",
+    ["diff", "--exit-code", "--", "backend/openapi.yaml"],
+    repoRoot,
+    "git diff --exit-code -- backend/openapi.yaml"
+  );
+
   console.log("Inventory release gate passed.");
   console.log(
     JSON.stringify(
       {
         documentedPaths: [
+          "/api/v1/cari/documents/warehouse-options",
           "/api/v1/items/cards",
           "/api/v1/items/cards/{itemCardId}",
           "/api/v1/inventory/warehouses",
           "/api/v1/inventory/cari-stock-links",
+          "/api/v1/inventory/cari-stock-links/{stockLinkId}/materialize",
           "/api/v1/inventory/movements",
           "/api/v1/inventory/cost-layers",
         ],

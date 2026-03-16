@@ -7,6 +7,7 @@ import {
   parseInventoryMovementCreateInput,
   parseInventoryMovementListFilters,
   parseInventoryMovementReverseInput,
+  parseInventoryStockLinkMaterializeInput,
   parseInventoryStockLinkListFilters,
   parseInventoryWarehouseCreateInput,
   parseInventoryWarehouseListFilters,
@@ -19,6 +20,7 @@ import {
   listInventoryMovements,
   listInventoryWarehouses,
   listPendingInventoryStockLinks,
+  materializeInventoryMovementFromCariStockLink,
   reverseInventoryMovementById,
 } from "../services/inventory.service.js";
 
@@ -47,6 +49,24 @@ async function resolveInventoryMovementScopeFromParam(req, tenantId) {
         AND id = ?
       LIMIT 1`,
     [normalizedTenantId, movementId]
+  );
+  const legalEntityId = parsePositiveInt(result.rows?.[0]?.legal_entity_id);
+  return legalEntityId ? { scopeType: "LEGAL_ENTITY", scopeId: legalEntityId } : null;
+}
+
+async function resolveInventoryStockLinkScopeFromParam(req, tenantId) {
+  const stockLinkId = parsePositiveInt(req.params?.stockLinkId);
+  const normalizedTenantId = parsePositiveInt(tenantId);
+  if (!stockLinkId || !normalizedTenantId) {
+    return null;
+  }
+  const result = await query(
+    `SELECT legal_entity_id
+       FROM cari_document_line_stock_links
+      WHERE tenant_id = ?
+        AND id = ?
+      LIMIT 1`,
+    [normalizedTenantId, stockLinkId]
   );
   const legalEntityId = parsePositiveInt(result.rows?.[0]?.legal_entity_id);
   return legalEntityId ? { scopeType: "LEGAL_ENTITY", scopeId: legalEntityId } : null;
@@ -117,6 +137,23 @@ router.get(
     return res.json({
       tenantId: filters.tenantId,
       ...result,
+    });
+  })
+);
+
+router.post(
+  "/cari-stock-links/:stockLinkId/materialize",
+  requirePermission("inventory.upsert", {
+    resolveScope: async (req, tenantId) =>
+      (await resolveInventoryStockLinkScopeFromParam(req, tenantId)) ||
+      resolveLegalEntityScopeFromBody(req),
+  }),
+  asyncHandler(async (req, res) => {
+    const payload = parseInventoryStockLinkMaterializeInput(req);
+    const row = await materializeInventoryMovementFromCariStockLink({ payload });
+    return res.status(201).json({
+      tenantId: payload.tenantId,
+      row,
     });
   })
 );

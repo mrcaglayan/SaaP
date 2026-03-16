@@ -109,6 +109,8 @@ export default function PayrollLiabilitiesPage() {
   const [audit, setAudit] = useState([]);
   const [preview, setPreview] = useState(null);
   const [syncPreview, setSyncPreview] = useState(null);
+  const currentPreview = preview;
+  const currentSyncPreview = syncPreview;
   const [syncError, setSyncError] = useState("");
   const [selectedLiabilityId, setSelectedLiabilityId] = useState(null);
   const [selectedLiability, setSelectedLiability] = useState(null);
@@ -550,9 +552,6 @@ export default function PayrollLiabilitiesPage() {
       setBusy(false);
     }
   }
-
-  const currentPreview = preview;
-  const currentSyncPreview = syncPreview;
 
   return (
     <div className="space-y-6">

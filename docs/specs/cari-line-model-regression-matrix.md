@@ -45,6 +45,7 @@ It exists to prove two things together:
   - AP invoice with `STOCK_ITEM`
   - AR invoice with `STOCK_ITEM`
 - Expected:
+  - stock-affecting lines require warehouse binding before post
   - AP line can post to inventory asset account
   - AR line can post revenue normally
   - source lines persist pending stock intent (`RECEIPT_PENDING` / `ISSUE_PENDING`)
@@ -54,6 +55,7 @@ It exists to prove two things together:
 - Input shape: pending stock links from posted CARI documents
 - Expected:
   - warehouse movement can be created from pending link
+  - strict materialization uses the already-bound warehouse instead of a caller-selected queue warehouse
   - receipt movement becomes `VALUED`
   - issue movement becomes `VALUED`
   - inbound receipt creates a cost layer

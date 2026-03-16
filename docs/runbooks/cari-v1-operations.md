@@ -74,10 +74,10 @@ This runbook defines how to operate Cari v1 AR/AP workflows in production-like e
 - Pending stock rows are materialized in:
   - `/app/stok-yansitma-islemleri`
 - Expected workflow:
-  1. post the CARI document
-  2. verify pending stock-link row exists
-  3. create/select warehouse
-  4. materialize stock link into inventory movement
+  1. choose warehouse on each stock-affecting CARI line before posting
+  2. post the CARI document
+  3. verify pending stock-link row exists
+  4. materialize the stock link against its bound warehouse
   5. verify receipt cost layer for inbound stock
   6. for AR issue, verify FIFO layer consumption and `COGS` journal link
 - Current valuation meaning:
@@ -261,12 +261,20 @@ FX resolution baseline (exact + prior-date fallback):
 
 - If `/app/stok-yansitma-islemleri` shows no pending rows:
   - verify the CARI line is a `STOCK_ITEM`
+  - verify the CARI line already has the intended warehouse selected before post
   - verify the posted line carried `RECEIPT_PENDING` or `ISSUE_PENDING`
   - verify the source document is actually `POSTED`
+- Queue scope guidance:
+  - keep `Queue Scope = ACTIONABLE` for normal execution work
+  - use `COMPLETED` and `VOID` only as explicit history filters
 - If movement create fails:
   - verify warehouse/legal-entity match
   - verify stock link is still `PENDING`
   - verify the source item card is still `ACTIVE` and `STOCK_ITEM`
+- If the queue row shows `TRANSFER_REQUIRED`:
+  - do not try to override the bound warehouse from `/app/stok-yansitma-islemleri`
+  - use the suggested source warehouse and open `/app/stok-transferleri`
+  - create the explicit cross-context transfer first, then retry materialization against the original bound warehouse
 - If receipt has no cost layer:
   - verify the source stock link was `RECEIPT_PENDING`
   - verify movement status is `VALUED`
@@ -276,6 +284,10 @@ FX resolution baseline (exact + prior-date fallback):
   - verify item card `inventoryAssetAccountId` and `defaultCogsAccountId`
   - verify movement detail exposes `postedJournalEntryId` / `postedJournalNo`
   - verify replay did not already create the journal on a prior run
+- If a reopened successor pending row appears after reversing an issue:
+  - expect the successor to inherit the original bound warehouse when that warehouse still exists, is `ACTIVE`, and still belongs to the same ownership context
+  - if the successor instead shows cleanup/reset-required status, do not treat that as a late warehouse-pick task in the normal queue
+  - cleanup/reset-required successors mean the original warehouse inheritance is no longer valid and the row must stay out of the normal strict materialize path for this rollout
 
 ### Idempotency and duplicate-click incidents
 

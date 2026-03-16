@@ -93,6 +93,13 @@ function createTransferForm(legalEntityId = "") {
   };
 }
 
+function normalizeQuantityPrefill(value) {
+  const normalized = String(value ?? "").trim();
+  return /^\d+(\.\d{1,6})?$/.test(normalized) && Number(normalized) > 0
+    ? normalized
+    : "1";
+}
+
 function getStatusBadgeClass(value) {
   switch (String(value || "").trim().toUpperCase()) {
     case "INITIATED":
@@ -213,6 +220,37 @@ export default function InventoryTransfersPage() {
     const value = normalizeText(searchParams.get("status")).toUpperCase();
     return TRANSFER_STATUS_VALUES.includes(value) ? value : "";
   }, [searchParams]);
+  const deepLinkedTransferPrefill = useMemo(() => {
+    const legalEntityId = String(toPositiveInt(searchParams.get("legalEntityId")) || "");
+    const sourceWarehouseId = String(toPositiveInt(searchParams.get("sourceWarehouseId")) || "");
+    const targetWarehouseId = String(toPositiveInt(searchParams.get("targetWarehouseId")) || "");
+    const itemCardId = String(toPositiveInt(searchParams.get("itemCardId")) || "");
+    const sourceEntityId = String(toPositiveInt(searchParams.get("sourceEntityId")) || "");
+    const sourceModule = normalizeText(searchParams.get("sourceModule")).toUpperCase();
+    const sourceEntityType = normalizeText(searchParams.get("sourceEntityType")).toUpperCase();
+    const prefillReason = normalizeText(searchParams.get("prefillReason")).toUpperCase();
+    if (
+      !legalEntityId &&
+      !sourceWarehouseId &&
+      !targetWarehouseId &&
+      !itemCardId &&
+      !sourceEntityId &&
+      !prefillReason
+    ) {
+      return null;
+    }
+    return {
+      legalEntityId,
+      sourceWarehouseId,
+      targetWarehouseId,
+      itemCardId,
+      quantityRequested: normalizeQuantityPrefill(searchParams.get("quantityRequested")),
+      sourceModule: sourceModule || "CARI",
+      sourceEntityType: sourceEntityType || null,
+      sourceEntityId,
+      prefillReason: prefillReason || null,
+    };
+  }, [searchParams]);
   const legalEntityOptions = useMemo(
     () =>
       (Array.isArray(workingContextLegalEntities) ? workingContextLegalEntities : [])
@@ -300,16 +338,42 @@ export default function InventoryTransfersPage() {
         : {
             ...previous,
             status: deepLinkedStatus,
-          }
+      }
     );
   }, [deepLinkedStatus]);
   useEffect(() => {
+    if (!deepLinkedTransferPrefill) {
+      return;
+    }
     setForm((previous) => ({
-      ...previous,
-      legalEntityId: filters.legalEntityId || previous.legalEntityId || "",
-      sourceWarehouseId: "",
-      targetWarehouseId: "",
+      ...createTransferForm(
+        deepLinkedTransferPrefill.legalEntityId || previous.legalEntityId || ""
+      ),
+      legalEntityId: deepLinkedTransferPrefill.legalEntityId || previous.legalEntityId || "",
+      sourceWarehouseId: deepLinkedTransferPrefill.sourceWarehouseId || "",
+      targetWarehouseId: deepLinkedTransferPrefill.targetWarehouseId || "",
+      lines: [
+        {
+          ...createTransferLine(),
+          itemCardId: deepLinkedTransferPrefill.itemCardId || "",
+          quantityRequested: deepLinkedTransferPrefill.quantityRequested || "1",
+        },
+      ],
     }));
+  }, [deepLinkedTransferPrefill]);
+  useEffect(() => {
+    setForm((previous) => {
+      const nextLegalEntityId = filters.legalEntityId || previous.legalEntityId || "";
+      if (previous.legalEntityId === nextLegalEntityId) {
+        return previous;
+      }
+      return {
+        ...previous,
+        legalEntityId: nextLegalEntityId,
+        sourceWarehouseId: "",
+        targetWarehouseId: "",
+      };
+    });
   }, [filters.legalEntityId]);
   useEffect(() => {
     const legalEntityId = toPositiveInt(filters.legalEntityId);
@@ -714,6 +778,15 @@ export default function InventoryTransfersPage() {
           note: normalizeText(line.note) || undefined,
         })),
       };
+      if (normalizeText(deepLinkedTransferPrefill?.sourceModule)) {
+        payload.sourceModule = normalizeText(deepLinkedTransferPrefill.sourceModule).toUpperCase();
+      }
+      if (normalizeText(deepLinkedTransferPrefill?.sourceEntityType)) {
+        payload.sourceEntityType = normalizeText(deepLinkedTransferPrefill.sourceEntityType).toUpperCase();
+      }
+      if (toPositiveInt(deepLinkedTransferPrefill?.sourceEntityId)) {
+        payload.sourceEntityId = toPositiveInt(deepLinkedTransferPrefill.sourceEntityId);
+      }
       const response = await createInventoryTransfer(payload);
       const createdId = String(toPositiveInt(response?.row?.id) || "");
       await reloadTransfers(createdId);
@@ -1056,6 +1129,29 @@ export default function InventoryTransfersPage() {
               </p>
             </div>
           </div>
+
+          {deepLinkedTransferPrefill ? (
+            <div className="mb-4 rounded-xl border border-sky-200 bg-sky-50 px-3 py-3 text-sm text-sky-900">
+              <div className="font-semibold">
+                {l(
+                  "Transfer-required prefill applied.",
+                  "Transfer gerekli on dolumu uygulandi."
+                )}
+              </div>
+              <div className="mt-1 text-xs text-sky-800">
+                {deepLinkedTransferPrefill.sourceEntityType === "CARI_STOCK_LINK" &&
+                deepLinkedTransferPrefill.sourceEntityId
+                  ? l(
+                      `Source stock link #${deepLinkedTransferPrefill.sourceEntityId} requested a cross-context replenishment.`,
+                      `Kaynak stok baglantisi #${deepLinkedTransferPrefill.sourceEntityId} contextler arasi ikmal talep etti.`
+                    )
+                  : l(
+                      "This form was prefilled from transfer-required guidance.",
+                      "Bu form transfer-gerekli yonlendirmesinden on dolduruldu."
+                    )}
+              </div>
+            </div>
+          ) : null}
 
           <form className="space-y-4" onSubmit={handleCreateTransfer}>
             <div className="grid gap-4 md:grid-cols-2">
@@ -1458,6 +1554,20 @@ export default function InventoryTransfersPage() {
                     {selectedRow.note ? (
                       <div className="mt-2 text-sm text-slate-600">
                         {l("Note", "Not")}: {selectedRow.note}
+                      </div>
+                    ) : null}
+                    {selectedRow.sourceModule || selectedRow.sourceEntityType || selectedRow.sourceEntityId ? (
+                      <div className="mt-2 text-sm text-slate-600">
+                        {l("Source evidence", "Kaynak kaniti")}:{" "}
+                        {[
+                          normalizeText(selectedRow.sourceModule) || null,
+                          normalizeText(selectedRow.sourceEntityType) || null,
+                          toPositiveInt(selectedRow.sourceEntityId)
+                            ? `#${selectedRow.sourceEntityId}`
+                            : null,
+                        ]
+                          .filter(Boolean)
+                          .join(" | ") || "-"}
                       </div>
                     ) : null}
                     {selectedRow.cancelReason ? (

@@ -681,11 +681,17 @@ function applyCariOperationOverrides(specObject) {
         requestedQuantity: { type: "number", nullable: true },
         postedNetAmountTxn: { type: "number", nullable: true },
         postedNetAmountBase: { type: "number", nullable: true },
+        boundWarehouseId: { ...intId, nullable: true },
+        boundWarehouseCode: { type: "string", nullable: true },
+        boundWarehouseName: { type: "string", nullable: true },
         inventoryDocumentType: { type: "string", nullable: true },
         inventoryDocumentId: { ...intId, nullable: true },
         inventoryMovementId: { ...intId, nullable: true },
         reopenedFromStockLinkId: { ...intId, nullable: true },
         supersededByStockLinkId: { ...intId, nullable: true },
+        queueState: { type: "string", nullable: true },
+        repairReasonCode: { type: "string", nullable: true },
+        successorInheritanceStatus: { type: "string", nullable: true },
         inventoryMovementType: { $ref: "#/components/schemas/InventoryMovementType" },
         inventoryValuationStatus: { $ref: "#/components/schemas/InventoryValuationStatus" },
         inventoryMovementDate: { type: "string", format: "date", nullable: true },
@@ -723,6 +729,9 @@ function applyCariOperationOverrides(specObject) {
         postingAccountId: { ...intId, nullable: true },
         taxCategoryCode: { type: "string", nullable: true },
         stockImpactMode: { $ref: "#/components/schemas/CariDocumentLineStockImpactMode" },
+        warehouseId: { ...intId, nullable: true },
+        warehouseCode: { type: "string", nullable: true },
+        warehouseName: { type: "string", nullable: true },
         createdAt: { type: "string", format: "date-time", nullable: true },
         updatedAt: { type: "string", format: "date-time", nullable: true },
         taxes: {
@@ -829,6 +838,33 @@ function applyCariOperationOverrides(specObject) {
         row: { $ref: "#/components/schemas/CariDocumentRow" },
       },
       required: ["tenantId", "row"],
+    },
+    CariDocumentWarehouseLookupRow: {
+      type: "object",
+      properties: {
+        id: intId,
+        tenantId: { ...intId, nullable: true },
+        legalEntityId: { ...intId, nullable: true },
+        legalEntityCode: { type: "string", nullable: true },
+        ownershipScope: { type: "string", nullable: true },
+        operatingUnitId: { ...intId, nullable: true },
+        operatingUnitCode: { type: "string", nullable: true },
+        operatingUnitName: { type: "string", nullable: true },
+        code: { type: "string", nullable: true },
+        name: { type: "string", nullable: true },
+      },
+      required: ["id"],
+    },
+    CariDocumentWarehouseLookupResponse: {
+      type: "object",
+      properties: {
+        tenantId: intId,
+        rows: {
+          type: "array",
+          items: { $ref: "#/components/schemas/CariDocumentWarehouseLookupRow" },
+        },
+      },
+      required: ["tenantId", "rows"],
     },
     CariDocumentOpenItemRow: {
       type: "object",
@@ -950,6 +986,7 @@ function applyCariOperationOverrides(specObject) {
         taxCode: { type: "string", maxLength: 40, nullable: true },
         taxCategoryCode: { type: "string", maxLength: 60, nullable: true },
         stockImpactMode: { $ref: "#/components/schemas/CariDocumentLineStockImpactMode" },
+        warehouseId: { ...intId, nullable: true },
       },
       required: ["lineNetAmountTxn"],
     },
@@ -1367,6 +1404,33 @@ function applyCariOperationOverrides(specObject) {
       "200",
       "Cari document list",
       "#/components/schemas/CariDocumentListResponse"
+    );
+  }
+
+  const documentWarehouseLookupOperation =
+    paths["/api/v1/cari/documents/warehouse-options"]?.get;
+  if (documentWarehouseLookupOperation) {
+    documentWarehouseLookupOperation.summary =
+      "List active warehouses for the selected cari ownership context";
+    mergeOperationParameters(documentWarehouseLookupOperation, [
+      queryParamInt(
+        "legalEntityId",
+        true,
+        "Legal entity identifier for the document context"
+      ),
+      queryParamInt(
+        "operatingUnitId",
+        false,
+        "Operating unit identifier; omit for CENTRAL ownership context"
+      ),
+      queryParam("q", { type: "string", maxLength: 120 }, false, "Warehouse code/name search"),
+      queryParam("limit", { type: "integer", minimum: 1, maximum: 300 }, false, "Page size"),
+      queryParam("offset", nonNegativeInt, false, "Page offset"),
+    ]);
+    documentWarehouseLookupOperation.responses = withStandardResponses(
+      "200",
+      "Cari warehouse lookup options",
+      "#/components/schemas/CariDocumentWarehouseLookupResponse"
     );
   }
 
@@ -2330,6 +2394,14 @@ function applyInventoryOperationOverrides(specObject) {
       type: "string",
       enum: ["RECEIPT_PENDING", "ISSUE_PENDING"],
     },
+    InventoryStockLinkQueueState: {
+      type: "string",
+      enum: ["READY", "BLOCKED", "REPAIR_REQUIRED", "TRANSFER_REQUIRED", "COMPLETED", "VOID"],
+    },
+    InventoryStockLinkQueueScope: {
+      type: "string",
+      enum: ["ACTIONABLE", "COMPLETED", "VOID", "ALL"],
+    },
     InventoryMovementType: {
       type: "string",
       enum: ["RECEIPT", "ISSUE", "ADJUSTMENT_IN", "ADJUSTMENT_OUT"],
@@ -2487,13 +2559,21 @@ function applyInventoryOperationOverrides(specObject) {
         documentLineId: { ...intId, nullable: true },
         documentNo: { type: "string", nullable: true },
         documentDate: { type: "string", format: "date", nullable: true },
+        documentOperatingUnitId: { ...intId, nullable: true },
+        documentOperatingUnitCode: { type: "string", nullable: true },
+        documentOperatingUnitName: { type: "string", nullable: true },
         direction: { type: "string", nullable: true },
         stockImpactMode: { $ref: "#/components/schemas/InventoryStockImpactMode" },
         linkStatus: { $ref: "#/components/schemas/InventoryStockLinkStatus" },
         requestedQuantity: { type: "number", nullable: true },
+        materializedQuantity: { type: "number", nullable: true },
+        remainingQuantity: { type: "number", nullable: true },
         postedNetAmountTxn: { type: "number", nullable: true },
         postedNetAmountBase: { type: "number", nullable: true },
         currencyCode: { type: "string", maxLength: 3, nullable: true },
+        boundWarehouseId: { ...intId, nullable: true },
+        boundWarehouseCode: { type: "string", nullable: true },
+        boundWarehouseName: { type: "string", nullable: true },
         itemCardId: { ...intId, nullable: true },
         itemCardCode: { type: "string", nullable: true },
         itemCardName: { type: "string", nullable: true },
@@ -2502,6 +2582,29 @@ function applyInventoryOperationOverrides(specObject) {
         lineDescription: { type: "string", nullable: true },
         inventoryMovementId: { ...intId, nullable: true },
         inventoryDocumentId: { ...intId, nullable: true },
+        reopenedFromStockLinkId: { ...intId, nullable: true },
+        supersededByStockLinkId: { ...intId, nullable: true },
+        boundAvailableQuantity: { type: "number", nullable: true },
+        crossContextAvailableQuantity: { type: "number", nullable: true },
+        transferSourceWarehouseId: { ...intId, nullable: true },
+        transferSourceWarehouseCode: { type: "string", nullable: true },
+        transferSourceWarehouseName: { type: "string", nullable: true },
+        transferSourceOwnershipScope: { type: "string", nullable: true },
+        transferSourceOperatingUnitId: { ...intId, nullable: true },
+        transferSourceOperatingUnitCode: { type: "string", nullable: true },
+        transferSourceOperatingUnitName: { type: "string", nullable: true },
+        transferSourceAvailableQuantity: { type: "number", nullable: true },
+        queueState: {
+          allOf: [{ $ref: "#/components/schemas/InventoryStockLinkQueueState" }],
+          nullable: true,
+        },
+        blockedReasonCode: { type: "string", nullable: true },
+        repairReasonCode: { type: "string", nullable: true },
+        successorInheritanceStatus: { type: "string", nullable: true },
+        canMaterialize: { type: "boolean", nullable: true },
+        isStrictMode: { type: "boolean", nullable: true },
+        isRepairOnly: { type: "boolean", nullable: true },
+        isLegacyRow: { type: "boolean", nullable: true },
         resolvedAt: { type: "string", format: "date-time", nullable: true },
         resolutionNote: { type: "string", nullable: true },
         createdAt: { type: "string", format: "date-time", nullable: true },
@@ -2528,6 +2631,62 @@ function applyInventoryOperationOverrides(specObject) {
         },
       },
       required: ["tenantId", "rows"],
+    },
+    InventoryWorkQueueSummaryResponse: {
+      type: "object",
+      properties: {
+        tenantId: intId,
+        asOfDate: { type: "string", format: "date", nullable: true },
+        filters: {
+          type: "object",
+          properties: {
+            legalEntityId: { ...intId, nullable: true },
+          },
+        },
+        stockLinks: {
+          type: "object",
+          properties: {
+            total_pending: { type: "integer", nullable: true },
+            actionable_total: { type: "integer", nullable: true },
+            ready_total: { type: "integer", nullable: true },
+            blocked_total: { type: "integer", nullable: true },
+            repair_required_total: { type: "integer", nullable: true },
+            transfer_required_total: { type: "integer", nullable: true },
+            completed_total: { type: "integer", nullable: true },
+            void_total: { type: "integer", nullable: true },
+            ready_receipt_materialization: { type: "integer", nullable: true },
+            ready_issue_materialization: { type: "integer", nullable: true },
+            pending_receipt_materialization: { type: "integer", nullable: true },
+            pending_issue_materialization: { type: "integer", nullable: true },
+            reopened_pending: { type: "integer", nullable: true },
+            stale_pending_gt_2d: { type: "integer", nullable: true },
+            oldest_pending_days: { type: "integer", nullable: true },
+            aging_pending: {
+              type: "object",
+              properties: {
+                "0_1d": { type: "integer", nullable: true },
+                "2_7d": { type: "integer", nullable: true },
+                "8_plus_d": { type: "integer", nullable: true },
+              },
+            },
+          },
+        },
+        transfers: {
+          type: "object",
+          properties: {
+            total_open: { type: "integer", nullable: true },
+            waiting_approval: { type: "integer", nullable: true },
+            ready_to_ship: { type: "integer", nullable: true },
+            in_transit_waiting_receipt: { type: "integer", nullable: true },
+            cross_context_in_transit: { type: "integer", nullable: true },
+            stale_waiting_approval_gt_1d: { type: "integer", nullable: true },
+            stale_ready_to_ship_gt_1d: { type: "integer", nullable: true },
+            stale_in_transit_gt_2d: { type: "integer", nullable: true },
+            oldest_in_transit_days: { type: "integer", nullable: true },
+          },
+        },
+      },
+      required: ["tenantId", "asOfDate", "filters", "stockLinks", "transfers"],
     },
     InventoryIssueLayerConsumptionRow: {
       type: "object",
@@ -2637,6 +2796,15 @@ function applyInventoryOperationOverrides(specObject) {
         row: { $ref: "#/components/schemas/InventoryMovementRow" },
       },
       required: ["tenantId", "row"],
+    },
+    InventoryStockLinkMaterializeRequest: {
+      type: "object",
+      properties: {
+        legalEntityId: intId,
+        movementDate: { type: "string", format: "date" },
+        note: { type: "string", maxLength: 255, nullable: true },
+      },
+      required: ["legalEntityId", "movementDate"],
     },
     InventoryMovementCreateRequest: {
       type: "object",
@@ -3084,20 +3252,50 @@ function applyInventoryOperationOverrides(specObject) {
     },
   };
 
+  paths["/api/v1/inventory/work-queue-summary"] = {
+    get: {
+      tags: ["Inventory"],
+      operationId: "getInventoryWorkQueueSummary",
+      summary: "Summarize actionable and history-oriented inventory work-queue counts",
+      parameters: [
+        queryParamInt("tenantId", false, "Tenant identifier; optional if available in JWT"),
+        queryParamInt("legalEntityId", false, "Legal entity filter"),
+      ],
+      responses: withStandardResponses(
+        "200",
+        "Inventory work-queue summary",
+        "#/components/schemas/InventoryWorkQueueSummaryResponse"
+      ),
+    },
+  };
+
   paths["/api/v1/inventory/cari-stock-links"] = {
     get: {
       tags: ["Inventory"],
       operationId: "listInventoryCariStockLinks",
-      summary: "List pending CARI stock links for warehouse materialization",
+      summary: "List strict-mode CARI stock-link queue rows across actionable and history scopes",
       parameters: [
         queryParamInt("tenantId", false, "Tenant identifier; optional if available in JWT"),
         queryParamInt("legalEntityId", false, "Legal entity filter"),
+        queryParam(
+          "queueScope",
+          { $ref: "#/components/schemas/InventoryStockLinkQueueScope" },
+          false,
+          "Queue scope filter. ACTIONABLE stays execution-focused; COMPLETED and VOID expose explicit history views."
+        ),
         queryParam(
           "linkStatus",
           { $ref: "#/components/schemas/InventoryStockLinkStatus" },
           false,
           "Stock-link status filter"
         ),
+        queryParam(
+          "stockImpactMode",
+          { $ref: "#/components/schemas/InventoryStockImpactMode" },
+          false,
+          "Stock-impact mode filter"
+        ),
+        queryParamInt("warehouseId", false, "Bound warehouse filter"),
         queryParam(
           "warehouseLinked",
           { type: "boolean" },
@@ -3109,9 +3307,31 @@ function applyInventoryOperationOverrides(specObject) {
       ],
       responses: withStandardResponses(
         "200",
-        "Pending CARI stock-link list",
+        "CARI stock-link queue list",
         "#/components/schemas/InventoryPendingStockLinkListResponse"
       ),
+    },
+  };
+
+  paths["/api/v1/inventory/cari-stock-links/{stockLinkId}/materialize"] = {
+    post: {
+      tags: ["Inventory"],
+      operationId: "materializeInventoryCariStockLink",
+      summary:
+        "Materialize one strict-mode CARI stock link using its bound warehouse and authoritative rechecks",
+      parameters: [pathParam("stockLinkId", "CARI stock-link identifier")],
+      requestBody: bodyFromRef(
+        "#/components/schemas/InventoryStockLinkMaterializeRequest"
+      ),
+      responses: {
+        "201": jsonResponse(
+          "#/components/schemas/InventoryMovementResponse",
+          "Strict-mode stock link materialized or existing linked movement returned"
+        ),
+        "400": errorResponseRef,
+        "401": errorResponseRef,
+        "403": errorResponseRef,
+      },
     },
   };
 
@@ -3149,7 +3369,7 @@ function applyInventoryOperationOverrides(specObject) {
       tags: ["Inventory"],
       operationId: "createInventoryMovementFromStockLink",
       summary:
-        "Materialize one pending stock link into warehouse movement, FIFO valuation, and issue-side COGS journal when applicable",
+        "Legacy-only non-strict stock-link materialization using caller-selected warehouse input",
       requestBody: bodyFromRef("#/components/schemas/InventoryMovementCreateRequest"),
       responses: {
         "201": jsonResponse(

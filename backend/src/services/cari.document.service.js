@@ -16,7 +16,19 @@ import {
   buildCariTaxAugmentationFromStoredLineTaxes,
   resolveCariTaxComputation,
 } from "./cari.tax.integration.service.js";
+import {
+  assertStrictStockDocumentPostingReadiness,
+  listActiveWarehousesForOwnershipContext,
+  resolveWarehouseForOwnershipContext,
+} from "./inventory.service.js";
 import { resolveItemCardLineDefaults } from "./item.card.service.js";
+import {
+  deriveOwnershipContextFromOperatingUnitId,
+  isStockAffectingLine,
+  isStockAffectingLineMode,
+  normalizeStockImpactMode,
+} from "./ownership.context.policy.service.js";
+import { deriveStockLinkReadState } from "./stock.link.read-state.service.js";
 
 const DRAFT_STATUS = "DRAFT";
 const CANCELLED_STATUS = "CANCELLED";
@@ -54,7 +66,6 @@ const FROZEN_TRANSACTION_KEYS = new Set([
   "AP:PAYMENT",
   "AP:ADJUSTMENT",
 ]);
-const STOCK_PENDING_IMPACT_MODES = new Set(["RECEIPT_PENDING", "ISSUE_PENDING"]);
 const STOCK_LINK_STATUS_PENDING = "PENDING";
 const STOCK_LINK_STATUS_VOID = "VOID";
 
@@ -391,6 +402,7 @@ function mapDocumentLineTaxRow(row) {
 }
 
 function mapDocumentLineStockLinkRow(row) {
+  const readState = deriveStockLinkReadState(row);
   return {
     id: parsePositiveInt(row.id),
     tenantId: parsePositiveInt(row.tenant_id),
@@ -408,6 +420,9 @@ function mapDocumentLineStockLinkRow(row) {
     requestedQuantity: toDecimalNumber(row.requested_quantity),
     postedNetAmountTxn: toDecimalNumber(row.posted_net_amount_txn),
     postedNetAmountBase: toDecimalNumber(row.posted_net_amount_base),
+    boundWarehouseId: parsePositiveInt(row.bound_warehouse_id),
+    boundWarehouseCode: row.bound_warehouse_code || null,
+    boundWarehouseName: row.bound_warehouse_name || null,
     inventoryDocumentType: row.inventory_document_type || null,
     inventoryDocumentId: parsePositiveInt(row.inventory_document_id),
     inventoryMovementId: parsePositiveInt(row.inventory_movement_id),
@@ -428,6 +443,9 @@ function mapDocumentLineStockLinkRow(row) {
     inventoryWarehouseName: row.inventory_warehouse_name || null,
     resolvedAt: row.resolved_at || null,
     resolutionNote: row.resolution_note || null,
+    queueState: readState.queueState,
+    repairReasonCode: readState.repairReasonCode,
+    successorInheritanceStatus: readState.successorInheritanceStatus,
     createdAt: row.created_at || null,
     updatedAt: row.updated_at || null,
   };
@@ -528,6 +546,9 @@ function mapDocumentLineRow(row, taxes = [], stockLinks = []) {
     postingAccountId: parsePositiveInt(row.posting_account_id),
     taxCategoryCode: row.tax_category_code || null,
     stockImpactMode: row.stock_impact_mode || "NONE",
+    warehouseId: parsePositiveInt(row.warehouse_id),
+    warehouseCode: row.warehouse_code || null,
+    warehouseName: row.warehouse_name || null,
     createdAt: row.created_at || null,
     updatedAt: row.updated_at || null,
     taxes: Array.isArray(taxes) ? taxes : [],
@@ -613,7 +634,7 @@ function buildCounterpartyOperatingUnitRequiredError(counterpartyRow) {
   return badRequest(
     `Counterparty ${describeCounterparty(
       counterpartyRow
-    )} is limited to specific operating units. Open the counterparty card and set a Primary Operating Unit, or add the owner branch under Allowed Operating Units, then retry the document save.`
+    )} is limited to specific operating units. Open the counterparty card and set a Primary Operating Unit, or add the owning operating unit under Allowed Operating Units, then retry the document save.`
   );
 }
 
@@ -736,32 +757,39 @@ async function listDocumentLineRows({
 }) {
   const result = await runQuery(
     `SELECT
-        id,
-        tenant_id,
-        legal_entity_id,
-        cari_document_id,
-        line_no,
-        line_kind,
-        description,
-        item_card_id,
-        quantity,
-        unit_price_txn,
-        line_net_amount_txn,
-        line_tax_amount_txn,
-        line_gross_amount_txn,
-        line_net_amount_base,
-        line_tax_amount_base,
-        line_gross_amount_base,
-        posting_account_id,
-        tax_category_code,
-        stock_impact_mode,
-        created_at,
-        updated_at
-     FROM cari_document_lines
-     WHERE tenant_id = ?
-       AND legal_entity_id = ?
-       AND cari_document_id = ?
-     ORDER BY line_no ASC, id ASC`,
+        l.id,
+        l.tenant_id,
+        l.legal_entity_id,
+        l.cari_document_id,
+        l.line_no,
+        l.line_kind,
+        l.description,
+        l.item_card_id,
+        l.quantity,
+        l.unit_price_txn,
+        l.line_net_amount_txn,
+        l.line_tax_amount_txn,
+        l.line_gross_amount_txn,
+        l.line_net_amount_base,
+        l.line_tax_amount_base,
+        l.line_gross_amount_base,
+        l.posting_account_id,
+        l.tax_category_code,
+        l.stock_impact_mode,
+        l.warehouse_id,
+        w.code AS warehouse_code,
+        w.name AS warehouse_name,
+        l.created_at,
+        l.updated_at
+     FROM cari_document_lines l
+     LEFT JOIN inventory_warehouses w
+       ON w.tenant_id = l.tenant_id
+      AND w.legal_entity_id = l.legal_entity_id
+      AND w.id = l.warehouse_id
+     WHERE l.tenant_id = ?
+       AND l.legal_entity_id = ?
+       AND l.cari_document_id = ?
+     ORDER BY l.line_no ASC, l.id ASC`,
     [tenantId, legalEntityId, documentId]
   );
   return result.rows || [];
@@ -826,6 +854,9 @@ async function listDocumentLineStockLinkRows({
         sl.requested_quantity,
         sl.posted_net_amount_txn,
         sl.posted_net_amount_base,
+        sl.warehouse_id AS bound_warehouse_id,
+        bw.code AS bound_warehouse_code,
+        bw.name AS bound_warehouse_name,
         sl.inventory_document_type,
         sl.inventory_document_id,
         sl.inventory_movement_id,
@@ -852,6 +883,8 @@ async function listDocumentLineStockLinkRows({
      LEFT JOIN item_cards ic
        ON ic.tenant_id = sl.tenant_id
       AND ic.id = sl.item_card_id
+     LEFT JOIN inventory_warehouses bw
+       ON bw.id = sl.warehouse_id
      LEFT JOIN inventory_movements im
        ON im.id = sl.inventory_movement_id
      LEFT JOIN inventory_warehouses iw
@@ -2021,7 +2054,8 @@ function normalizeExplicitDraftLines(linesInput) {
       taxCodeId: parsePositiveInt(line.taxCodeId),
       taxCode: toNullableString(line.taxCode, 40),
       taxCategoryCode: toNullableString(line.taxCategoryCode, 60),
-      stockImpactMode: normalizeUpperText(line.stockImpactMode || "NONE"),
+      stockImpactMode: normalizeStockImpactMode(line.stockImpactMode),
+      warehouseId: parsePositiveInt(line.warehouseId),
       taxes: [],
     };
   });
@@ -2053,7 +2087,9 @@ async function applyItemCardDefaultsToLines({
     const line = lines[index] || {};
     const fieldPrefix = `${fieldCollectionLabel}[${index + 1}]`;
     const itemCardId = parsePositiveInt(line.itemCardId);
-    const normalizedStockImpactMode = normalizeUpperText(line.stockImpactMode || "NONE");
+    const normalizedStockImpactMode = normalizeStockImpactMode(
+      line.stockImpactMode
+    );
     if ((line.stockImpactMode || "NONE") !== normalizedStockImpactMode) {
       line.stockImpactMode = normalizedStockImpactMode;
       mutated = true;
@@ -2062,7 +2098,7 @@ async function applyItemCardDefaultsToLines({
     }
 
     if (!itemCardId) {
-      if (STOCK_PENDING_IMPACT_MODES.has(line.stockImpactMode)) {
+      if (isStockAffectingLineMode(line.stockImpactMode)) {
         throw badRequest(`${fieldPrefix}.stockImpactMode requires itemCardId`);
       }
       continue;
@@ -2084,7 +2120,7 @@ async function applyItemCardDefaultsToLines({
     if (defaults.isStockItem) {
       const requiredStockImpactMode = defaults.defaultStockImpactMode || "NONE";
       if (
-        STOCK_PENDING_IMPACT_MODES.has(line.stockImpactMode) &&
+        isStockAffectingLineMode(line.stockImpactMode) &&
         line.stockImpactMode !== requiredStockImpactMode
       ) {
         throw badRequest(
@@ -2101,10 +2137,27 @@ async function applyItemCardDefaultsToLines({
       if (quantity <= AMOUNT_BALANCE_EPSILON) {
         throw badRequest(`${fieldPrefix}.quantity must be greater than 0 for STOCK_ITEM`);
       }
-    } else if (STOCK_PENDING_IMPACT_MODES.has(line.stockImpactMode)) {
+      const warehouseId = parsePositiveInt(line.warehouseId);
+      if (!warehouseId) {
+        throw badRequest(
+          `${fieldPrefix}.warehouseId is required for stock-affecting lines`
+        );
+      }
+      if (line.warehouseId !== warehouseId) {
+        line.warehouseId = warehouseId;
+        mutated = true;
+      }
+    } else if (isStockAffectingLineMode(line.stockImpactMode)) {
       throw badRequest(`${fieldPrefix}.stockImpactMode only allowed for STOCK_ITEM itemCardId`);
     } else if (line.stockImpactMode !== "NONE") {
       line.stockImpactMode = "NONE";
+      mutated = true;
+    }
+    if (
+      !isStockAffectingLineMode(line.stockImpactMode) &&
+      (line.warehouseId !== undefined && line.warehouseId !== null && line.warehouseId !== "")
+    ) {
+      line.warehouseId = null;
       mutated = true;
     }
 
@@ -2125,6 +2178,43 @@ async function applyItemCardDefaultsToLines({
     lines,
     mutated,
   };
+}
+
+async function assertDraftLineWarehouseBindingsForDocumentContext({
+  tenantId,
+  legalEntityId,
+  documentOperatingUnitId = null,
+  lines,
+  fieldCollectionLabel = "lines",
+  runQuery = query,
+}) {
+  const ownershipContext =
+    deriveOwnershipContextFromOperatingUnitId(documentOperatingUnitId);
+  const warehouseCache = new Map();
+  for (let index = 0; index < (lines || []).length; index += 1) {
+    const line = lines[index] || {};
+    if (!isStockAffectingLineMode(line.stockImpactMode)) {
+      continue;
+    }
+    const warehouseId = parsePositiveInt(line.warehouseId);
+    if (!warehouseId) {
+      continue;
+    }
+    let warehouseRow = warehouseCache.get(warehouseId);
+    if (!warehouseRow) {
+      warehouseRow = await resolveWarehouseForOwnershipContext({
+        tenantId,
+        legalEntityId,
+        warehouseId,
+        ownershipContext,
+        ownerLabel: "document",
+        warehouseFieldLabel: `${fieldCollectionLabel}[${index + 1}].warehouseId`,
+        requireActive: false,
+        runQuery,
+      });
+      warehouseCache.set(warehouseId, warehouseRow);
+    }
+  }
 }
 
 function applyDocumentFxToDraftLines(lines, resolvedAmounts) {
@@ -2273,9 +2363,10 @@ function buildSyntheticDraftLines({
         taxCodeId: null,
         taxCode: null,
         taxCategoryCode: toNullableString(existingSingleLine?.tax_category_code, 60),
-        stockImpactMode: normalizeUpperText(
-          existingSingleLine?.stock_impact_mode || "NONE"
+        stockImpactMode: normalizeStockImpactMode(
+          existingSingleLine?.stock_impact_mode
         ),
+        warehouseId: parsePositiveInt(existingSingleLine?.warehouse_id),
         taxes: [],
       },
     ],
@@ -2334,9 +2425,10 @@ async function replaceDocumentLinesTx(tx, { tenantId, legalEntityId, documentId,
           line_gross_amount_base,
           posting_account_id,
           tax_category_code,
-          stock_impact_mode
+          stock_impact_mode,
+          warehouse_id
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         tenantId,
         legalEntityId,
@@ -2356,6 +2448,7 @@ async function replaceDocumentLinesTx(tx, { tenantId, legalEntityId, documentId,
         line.postingAccountId,
         line.taxCategoryCode,
         line.stockImpactMode,
+        line.warehouseId || null,
       ]
     );
     const insertedLineId = parsePositiveInt(insertResult.rows?.insertId);
@@ -2453,8 +2546,8 @@ async function replaceDocumentLineStockLinksTx(
   for (const line of lines || []) {
     const lineId = parsePositiveInt(line.id);
     const itemCardId = parsePositiveInt(line.itemCardId);
-    const stockImpactMode = normalizeUpperText(line.stockImpactMode || "NONE");
-    if (!lineId || !itemCardId || !STOCK_PENDING_IMPACT_MODES.has(stockImpactMode)) {
+    const stockImpactMode = normalizeStockImpactMode(line.stockImpactMode);
+    if (!lineId || !itemCardId || !isStockAffectingLine({ stockImpactMode })) {
       continue;
     }
 
@@ -2470,9 +2563,10 @@ async function replaceDocumentLineStockLinksTx(
           link_status,
           requested_quantity,
           posted_net_amount_txn,
-          posted_net_amount_base
+          posted_net_amount_base,
+          warehouse_id
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         tenantId,
         legalEntityId,
@@ -2491,6 +2585,7 @@ async function replaceDocumentLineStockLinksTx(
         normalizeAmount(line.lineNetAmountBase || 0, "stockLink.postedNetAmountBase", {
           allowZero: true,
         }),
+        parsePositiveInt(line.warehouseId),
       ]
     );
   }
@@ -2523,6 +2618,7 @@ async function voidPendingDocumentLineStockLinksTx(
 async function resolveDraftDocumentWriteModel({
   tenantId,
   legalEntityId,
+  documentOperatingUnitId = null,
   documentDate,
   direction,
   documentType,
@@ -2544,6 +2640,13 @@ async function resolveDraftDocumentWriteModel({
       lines: normalizedLines,
       runQuery,
       applyTaxCategoryDefaults: true,
+    });
+    await assertDraftLineWarehouseBindingsForDocumentContext({
+      tenantId,
+      legalEntityId,
+      documentOperatingUnitId,
+      lines: normalizedLines,
+      runQuery,
     });
     await applyResolvedLineTaxes({
       tenantId,
@@ -2604,6 +2707,13 @@ async function resolveDraftDocumentWriteModel({
     lines: syntheticWriteModel.lines,
     runQuery,
     applyTaxCategoryDefaults: false,
+  });
+  await assertDraftLineWarehouseBindingsForDocumentContext({
+    tenantId,
+    legalEntityId,
+    documentOperatingUnitId,
+    lines: syntheticWriteModel.lines,
+    runQuery,
   });
   return {
     resolvedAmounts,
@@ -2812,6 +2922,33 @@ export async function listCariDocuments({
   });
 }
 
+export async function listCariDocumentWarehouseOptions({
+  req,
+  tenantId,
+  filters,
+  assertScopeAccess,
+}) {
+  const legalEntityId = parsePositiveInt(filters?.legalEntityId);
+  if (!legalEntityId) {
+    throw badRequest("legalEntityId is required");
+  }
+  await assertLegalEntityBelongsToTenant(tenantId, legalEntityId, "legalEntityId");
+  const operatingUnitId = parsePositiveInt(filters?.operatingUnitId);
+  if (operatingUnitId) {
+    assertScopeAccess(req, "operating_unit", operatingUnitId, "operatingUnitId");
+  } else {
+    assertScopeAccess(req, "legal_entity", legalEntityId, "legalEntityId");
+  }
+  return listActiveWarehousesForOwnershipContext({
+    tenantId,
+    legalEntityId,
+    ownershipContext: deriveOwnershipContextFromOperatingUnitId(operatingUnitId),
+    q: filters?.q,
+    limit: filters?.limit,
+    offset: filters?.offset,
+  });
+}
+
 export async function getCariDocumentByIdForTenant({
   req,
   tenantId,
@@ -2942,6 +3079,7 @@ export async function createCariDraftDocument({
     const draftWriteModel = await resolveDraftDocumentWriteModel({
       tenantId,
       legalEntityId,
+      documentOperatingUnitId: operatingUnitId,
       documentDate: payload.documentDate,
       direction: payload.direction,
       documentType: payload.documentType,
@@ -3224,6 +3362,7 @@ export async function updateCariDraftDocumentById({
       ? await resolveDraftDocumentWriteModel({
           tenantId,
           legalEntityId,
+          documentOperatingUnitId: operatingUnitId,
           documentDate: nextDocumentDate,
           direction: nextDirection,
           documentType: nextDocumentType,
@@ -3569,15 +3708,6 @@ export async function postCariDocumentById({
       dueDate: resolvedDueDate,
     });
 
-    const postedNumbering = await reservePostedSequence({
-      tenantId,
-      legalEntityId: lockedLegalEntityId,
-      direction,
-      documentType,
-      documentDate,
-      runQuery: tx.query,
-    });
-
     const legalEntity = await assertLegalEntityBelongsToTenant(
       tenantId,
       lockedLegalEntityId,
@@ -3617,6 +3747,23 @@ export async function postCariDocumentById({
       documentId,
       direction,
       documentLines,
+    });
+    await assertStrictStockDocumentPostingReadiness({
+      tenantId,
+      legalEntityId: lockedLegalEntityId,
+      documentOperatingUnitId,
+      documentLines,
+      fieldCollectionLabel: "storedLines",
+      ownerLabel: "document",
+      runQuery: tx.query,
+    });
+    const postedNumbering = await reservePostedSequence({
+      tenantId,
+      legalEntityId: lockedLegalEntityId,
+      direction,
+      documentType,
+      documentDate,
+      runQuery: tx.query,
     });
     const usesStoredLineTaxes = documentLines.some(
       (line) => Array.isArray(line?.taxes) && line.taxes.length > 0
@@ -4461,7 +4608,8 @@ export async function reverseCariPostedDocumentById({
             ),
             postingAccountId: parsePositiveInt(line.postingAccountId),
             taxCategoryCode: toNullableString(line.taxCategoryCode, 60),
-            stockImpactMode: normalizeUpperText(line.stockImpactMode || "NONE"),
+            stockImpactMode: normalizeStockImpactMode(line.stockImpactMode),
+            warehouseId: parsePositiveInt(line.warehouseId),
             taxes: (line.taxes || []).map((tax) => ({
               componentNo: Number(tax.componentNo || 0),
               taxCode: toNullableString(tax.taxCode, 40),

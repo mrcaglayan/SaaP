@@ -7,11 +7,27 @@ import {
   assertCurrencyExists,
 } from "../tenantGuards.js";
 import { getItemCardByIdForTenant } from "./item.card.service.js";
+import {
+  assertWarehouseBelongsToOwnershipContext,
+  buildInsufficientAvailableStockInBoundWarehouseMessage,
+  buildNoActiveWarehouseForOwnershipContextMessage,
+  buildOwnershipContext,
+  buildTransferRequiredMessage,
+  deriveDocumentOwnershipContext,
+  deriveOwnershipContextFromOperatingUnitId,
+  deriveWarehouseOwnershipContext,
+  isStockAffectingLine,
+  normalizeOwnershipContextInput,
+  sameOwnershipContext,
+} from "./ownership.context.policy.service.js";
+import {
+  STOCK_LINK_REPAIR_REASON_SUCCESSOR_WAREHOUSE_INHERITANCE_INVALID,
+  deriveStockLinkReadState,
+} from "./stock.link.read-state.service.js";
 import { upsertJournalSourceLinkTx } from "./journal.source-link.service.js";
 
 const AMOUNT_SCALE = 6;
 const BALANCE_EPSILON = 0.000001;
-const WAREHOUSE_OWNERSHIP_SCOPE_VALUES = new Set(["CENTRAL", "OPERATING_UNIT"]);
 
 function toDecimalNumber(value) {
   if (value === null || value === undefined) {
@@ -63,6 +79,25 @@ function toInt(value, fallback = 0) {
   return Number.isFinite(parsed) ? Math.trunc(parsed) : fallback;
 }
 
+function calculateDateAgeInDays(value, asOfDate = new Date()) {
+  const normalized = String(value || "").trim();
+  if (!normalized) {
+    return null;
+  }
+  const targetDate = new Date(`${normalized}T00:00:00Z`);
+  if (Number.isNaN(targetDate.getTime())) {
+    return null;
+  }
+  const asOfUtcDate = new Date(
+    Date.UTC(asOfDate.getUTCFullYear(), asOfDate.getUTCMonth(), asOfDate.getUTCDate())
+  );
+  const targetUtcDate = new Date(
+    Date.UTC(targetDate.getUTCFullYear(), targetDate.getUTCMonth(), targetDate.getUTCDate())
+  );
+  const diffMs = asOfUtcDate.getTime() - targetUtcDate.getTime();
+  return Math.max(0, Math.floor(diffMs / 86400000));
+}
+
 function normalizeDateOnly(value, label = "date") {
   const normalized = String(value || "").trim();
   if (!normalized) {
@@ -112,6 +147,7 @@ function mapPendingStockLinkRow(row) {
   if (!row) {
     return null;
   }
+  const readState = deriveStockLinkReadState(row);
   return {
     id: parsePositiveInt(row.id),
     tenantId: parsePositiveInt(row.tenant_id),
@@ -128,9 +164,14 @@ function mapPendingStockLinkRow(row) {
     stockImpactMode: row.stock_impact_mode || null,
     linkStatus: row.link_status || null,
     requestedQuantity: toDecimalNumber(row.requested_quantity),
+    materializedQuantity: toDecimalNumber(row.materialized_quantity),
+    remainingQuantity: toDecimalNumber(row.remaining_quantity),
     postedNetAmountTxn: toDecimalNumber(row.posted_net_amount_txn),
     postedNetAmountBase: toDecimalNumber(row.posted_net_amount_base),
     currencyCode: row.currency_code || null,
+    boundWarehouseId: parsePositiveInt(row.bound_warehouse_id),
+    boundWarehouseCode: row.bound_warehouse_code || null,
+    boundWarehouseName: row.bound_warehouse_name || null,
     itemCardId: parsePositiveInt(row.item_card_id),
     itemCardCode: row.item_card_code || null,
     itemCardName: row.item_card_name || null,
@@ -143,67 +184,109 @@ function mapPendingStockLinkRow(row) {
     supersededByStockLinkId: parsePositiveInt(row.superseded_by_stock_link_id),
     resolvedAt: row.resolved_at || null,
     resolutionNote: row.resolution_note || null,
+    boundAvailableQuantity: toDecimalNumber(row.bound_available_quantity),
+    crossContextAvailableQuantity: toDecimalNumber(row.cross_context_available_quantity),
+    transferSourceWarehouseId: parsePositiveInt(row.transfer_source_warehouse_id),
+    transferSourceWarehouseCode: row.transfer_source_warehouse_code || null,
+    transferSourceWarehouseName: row.transfer_source_warehouse_name || null,
+    transferSourceOwnershipScope: row.transfer_source_ownership_scope || null,
+    transferSourceOperatingUnitId: parsePositiveInt(row.transfer_source_operating_unit_id),
+    transferSourceOperatingUnitCode: row.transfer_source_operating_unit_code || null,
+    transferSourceOperatingUnitName: row.transfer_source_operating_unit_name || null,
+    transferSourceAvailableQuantity: toDecimalNumber(row.transfer_source_available_quantity),
+    queueState: readState.queueState,
+    blockedReasonCode: readState.blockedReasonCode,
+    repairReasonCode: readState.repairReasonCode,
+    successorInheritanceStatus: readState.successorInheritanceStatus,
+    canMaterialize: readState.canMaterialize,
+    isStrictMode: readState.isStrictMode,
+    isRepairOnly: readState.isRepairOnly,
+    isLegacyRow: readState.isLegacyRow,
     createdAt: row.created_at || null,
     updatedAt: row.updated_at || null,
   };
 }
 
-function deriveWarehouseOwnershipContext(row) {
-  const operatingUnitId = parsePositiveInt(row?.operating_unit_id) || null;
-  const ownershipScope =
-    String(row?.ownership_scope || "").trim().toUpperCase() === "OPERATING_UNIT" &&
-    operatingUnitId
-      ? "OPERATING_UNIT"
-      : "CENTRAL";
-  return {
-    ownershipScope,
-    operatingUnitId,
-  };
-}
-
-function deriveDocumentOwnershipContext(row) {
-  const operatingUnitId = parsePositiveInt(row?.document_operating_unit_id) || null;
-  return {
-    ownershipScope: operatingUnitId ? "OPERATING_UNIT" : "CENTRAL",
-    operatingUnitId,
-  };
-}
-
-function formatOwnershipContextLabel({
-  ownershipScope,
-  operatingUnitCode,
-  operatingUnitId,
+async function attachCrossContextTransferAvailabilityToStockLinkRows({
+  stockLinkRows,
+  runQuery = query,
 }) {
-  if (String(ownershipScope || "").trim().toUpperCase() !== "OPERATING_UNIT") {
-    return "CENTRAL";
-  }
-  return `OPERATING_UNIT ${String(operatingUnitCode || "").trim() || `#${operatingUnitId || "?"}`}`;
-}
-
-function assertGenericMovementContextMatch({ warehouseRow, stockLinkRow }) {
-  const warehouseContext = deriveWarehouseOwnershipContext(warehouseRow);
-  const documentContext = deriveDocumentOwnershipContext(stockLinkRow);
-  const sameScope = warehouseContext.ownershipScope === documentContext.ownershipScope;
-  const sameOu =
-    warehouseContext.ownershipScope !== "OPERATING_UNIT" ||
-    warehouseContext.operatingUnitId === documentContext.operatingUnitId;
-  if (sameScope && sameOu) {
-    return;
+  const rows = Array.isArray(stockLinkRows) ? stockLinkRows : [];
+  if (rows.length === 0) {
+    return rows;
   }
 
-  const warehouseLabel = formatOwnershipContextLabel({
-    ownershipScope: warehouseContext.ownershipScope,
-    operatingUnitCode: warehouseRow?.operating_unit_code,
-    operatingUnitId: warehouseContext.operatingUnitId,
-  });
-  const documentLabel = formatOwnershipContextLabel({
-    ownershipScope: documentContext.ownershipScope,
-    operatingUnitCode: stockLinkRow?.document_operating_unit_code,
-    operatingUnitId: documentContext.operatingUnitId,
-  });
-  throw badRequest(
-    `Cross-context stock movement must use inventory transfer workflow. Warehouse context ${warehouseLabel} does not match source document context ${documentLabel}.`
-  );
+  const probeCache = new Map();
+  for (const row of rows) {
+    if (
+      normalizeUpperText(row?.link_status ?? row?.linkStatus) !== "PENDING" ||
+      normalizeUpperText(row?.stock_impact_mode ?? row?.stockImpactMode) !== "ISSUE_PENDING"
+    ) {
+      continue;
+    }
+
+    const tenantId = parsePositiveInt(row?.tenant_id ?? row?.tenantId);
+    const legalEntityId = parsePositiveInt(row?.legal_entity_id ?? row?.legalEntityId);
+    const itemCardId = parsePositiveInt(row?.item_card_id ?? row?.itemCardId);
+    const boundWarehouseId = parsePositiveInt(
+      row?.bound_warehouse_id ?? row?.warehouse_id ?? row?.boundWarehouseId ?? row?.warehouseId
+    );
+    const requestedQuantityValue = row?.requested_quantity ?? row?.requestedQuantity;
+    const requestedQuantity =
+      requestedQuantityValue === null || requestedQuantityValue === undefined
+        ? null
+        : roundAmount(requestedQuantityValue);
+    if (!tenantId || !legalEntityId || !itemCardId || !boundWarehouseId || requestedQuantity === null) {
+      continue;
+    }
+
+    const ownershipContext = deriveDocumentOwnershipContext(row);
+    const cacheKey = [
+      tenantId,
+      legalEntityId,
+      ownershipContext.ownershipScope || "CENTRAL",
+      ownershipContext.operatingUnitId || 0,
+      itemCardId,
+      boundWarehouseId,
+      requestedQuantity,
+    ].join(":");
+    let availability = probeCache.get(cacheKey);
+    if (!availability) {
+      availability = await probeCrossContextAvailabilityForIssue({
+        tenantId,
+        legalEntityId,
+        ownershipContext,
+        itemCardId,
+        boundWarehouseId,
+        requestedQuantity,
+        runQuery,
+      });
+      probeCache.set(cacheKey, availability);
+    }
+
+    row.bound_available_quantity = roundAmount(availability.boundAvailableQuantity || 0);
+    row.cross_context_available_quantity = roundAmount(
+      availability.crossContextAvailableQuantity || 0
+    );
+    row.transfer_source_warehouse_id = parsePositiveInt(
+      availability.primaryCandidate?.warehouseId
+    );
+    row.transfer_source_warehouse_code = availability.primaryCandidate?.warehouseCode || null;
+    row.transfer_source_warehouse_name = availability.primaryCandidate?.warehouseName || null;
+    row.transfer_source_ownership_scope =
+      availability.primaryCandidate?.ownershipScope || null;
+    row.transfer_source_operating_unit_id = parsePositiveInt(
+      availability.primaryCandidate?.operatingUnitId
+    );
+    row.transfer_source_operating_unit_code =
+      availability.primaryCandidate?.operatingUnitCode || null;
+    row.transfer_source_operating_unit_name =
+      availability.primaryCandidate?.operatingUnitName || null;
+    row.transfer_source_available_quantity = roundAmount(
+      availability.primaryCandidate?.availableQuantity || 0
+    );
+  }
+  return rows;
 }
 
 function mapMovementRow(row) {
@@ -356,7 +439,7 @@ async function fetchPendingStockLinkById({
   forUpdate = false,
 }) {
   const result = await runQuery(
-    `SELECT
+      `SELECT
         sl.*,
         le.code AS legal_entity_code,
         d.document_no,
@@ -368,6 +451,9 @@ async function fetchPendingStockLinkById({
         d.currency_code,
         l.line_no,
         l.description AS line_description,
+        sl.warehouse_id AS bound_warehouse_id,
+        bw.code AS bound_warehouse_code,
+        bw.name AS bound_warehouse_name,
         ic.code AS item_card_code,
         ic.name AS item_card_name,
         ic.item_type
@@ -390,6 +476,8 @@ async function fetchPendingStockLinkById({
       JOIN item_cards ic
         ON ic.tenant_id = sl.tenant_id
        AND ic.id = sl.item_card_id
+      LEFT JOIN inventory_warehouses bw
+        ON bw.id = sl.warehouse_id
       WHERE sl.tenant_id = ?
         AND sl.legal_entity_id = ?
         AND sl.id = ?
@@ -408,7 +496,7 @@ async function fetchSuccessorStockLinkByOriginalId({
   forUpdate = false,
 }) {
   const result = await runQuery(
-    `SELECT
+      `SELECT
         sl.*,
         le.code AS legal_entity_code,
         d.document_no,
@@ -420,6 +508,9 @@ async function fetchSuccessorStockLinkByOriginalId({
         d.currency_code,
         l.line_no,
         l.description AS line_description,
+        sl.warehouse_id AS bound_warehouse_id,
+        bw.code AS bound_warehouse_code,
+        bw.name AS bound_warehouse_name,
         ic.code AS item_card_code,
         ic.name AS item_card_name,
         ic.item_type
@@ -442,6 +533,8 @@ async function fetchSuccessorStockLinkByOriginalId({
       JOIN item_cards ic
         ON ic.tenant_id = sl.tenant_id
        AND ic.id = sl.item_card_id
+      LEFT JOIN inventory_warehouses bw
+        ON bw.id = sl.warehouse_id
       WHERE sl.tenant_id = ?
         AND sl.legal_entity_id = ?
         AND sl.reopened_from_stock_link_id = ?
@@ -561,6 +654,198 @@ export async function fetchOpenCostLayersForIssue({
   return result.rows || [];
 }
 
+function buildTransferRequiredAvailabilityError({
+  warehouseRow,
+  itemCard,
+  requestedQuantity,
+  boundAvailableQuantity,
+  crossContextAvailableQuantity,
+  ownershipContext,
+  primaryCandidate = null,
+} = {}) {
+  const err = badRequest(
+    buildTransferRequiredMessage({
+      warehouseCode: warehouseRow?.code || null,
+      warehouseName: warehouseRow?.name || null,
+      warehouseId: parsePositiveInt(warehouseRow?.id),
+      itemCardCode: itemCard?.code || null,
+      itemCardName: itemCard?.name || null,
+      itemCardId: parsePositiveInt(itemCard?.id),
+      ownershipContext,
+    })
+  );
+  err.code = "TRANSFER_REQUIRED";
+  err.details = {
+    reason: "TRANSFER_REQUIRED",
+    warehouseId: parsePositiveInt(warehouseRow?.id),
+    warehouseCode: warehouseRow?.code || null,
+    warehouseName: warehouseRow?.name || null,
+    itemCardId: parsePositiveInt(itemCard?.id),
+    itemCardCode: itemCard?.code || null,
+    itemCardName: itemCard?.name || null,
+    requestedQuantity: normalizeAmount(requestedQuantity, "requestedQuantity"),
+    boundAvailableQuantity: roundAmount(boundAvailableQuantity || 0),
+    crossContextAvailableQuantity: roundAmount(crossContextAvailableQuantity || 0),
+    transferSourceWarehouseId: parsePositiveInt(primaryCandidate?.warehouseId),
+    transferSourceWarehouseCode: primaryCandidate?.warehouseCode || null,
+    transferSourceWarehouseName: primaryCandidate?.warehouseName || null,
+    transferSourceOwnershipScope: primaryCandidate?.ownershipScope || null,
+    transferSourceOperatingUnitId: parsePositiveInt(primaryCandidate?.operatingUnitId),
+    transferSourceOperatingUnitCode: primaryCandidate?.operatingUnitCode || null,
+    transferSourceOperatingUnitName: primaryCandidate?.operatingUnitName || null,
+    transferSourceAvailableQuantity: roundAmount(primaryCandidate?.availableQuantity || 0),
+  };
+  return err;
+}
+
+export async function probeCrossContextAvailabilityForIssue({
+  tenantId,
+  legalEntityId,
+  ownershipContext,
+  itemCardId,
+  boundWarehouseId,
+  requestedQuantity = null,
+  runQuery = query,
+}) {
+  const normalizedTenantId = parsePositiveInt(tenantId);
+  const normalizedLegalEntityId = parsePositiveInt(legalEntityId);
+  const normalizedItemCardId = parsePositiveInt(itemCardId);
+  const normalizedBoundWarehouseId = parsePositiveInt(boundWarehouseId);
+  const normalizedOwnershipContext = buildOwnershipContext(ownershipContext);
+  const normalizedRequestedQuantity = requestedQuantity === null
+    ? null
+    : normalizeAmount(requestedQuantity, "requestedQuantity");
+  if (
+    !normalizedTenantId ||
+    !normalizedLegalEntityId ||
+    !normalizedItemCardId ||
+    !normalizedBoundWarehouseId
+  ) {
+    return {
+      requestedQuantity: normalizedRequestedQuantity,
+      boundAvailableQuantity: 0,
+      hasSufficientBoundStock: false,
+      hasCrossContextAvailability: false,
+      crossContextAvailableQuantity: 0,
+      candidateWarehouseCount: 0,
+      primaryCandidate: null,
+      candidates: [],
+    };
+  }
+
+  const result = await runQuery(
+    `SELECT
+        w.id AS warehouse_id,
+        w.code AS warehouse_code,
+        w.name AS warehouse_name,
+        w.ownership_scope,
+        w.operating_unit_id,
+        ou.code AS operating_unit_code,
+        ou.name AS operating_unit_name,
+        SUM(cl.quantity_remaining) AS available_quantity
+       FROM inventory_cost_layers cl
+       JOIN inventory_warehouses w
+         ON w.tenant_id = cl.tenant_id
+        AND w.id = cl.warehouse_id
+       LEFT JOIN operating_units ou
+         ON ou.tenant_id = w.tenant_id
+        AND ou.id = w.operating_unit_id
+      WHERE cl.tenant_id = ?
+        AND cl.legal_entity_id = ?
+        AND cl.item_card_id = ?
+        AND cl.layer_status = 'OPEN'
+        AND cl.quantity_remaining > 0
+        AND w.legal_entity_id = cl.legal_entity_id
+        AND w.status = 'ACTIVE'
+      GROUP BY
+        w.id,
+        w.code,
+        w.name,
+        w.ownership_scope,
+        w.operating_unit_id,
+        ou.code,
+        ou.name
+      HAVING SUM(cl.quantity_remaining) > 0
+      ORDER BY
+        CASE WHEN w.id = ? THEN 0 ELSE 1 END ASC,
+        SUM(cl.quantity_remaining) DESC,
+        w.id ASC`,
+    [
+      normalizedTenantId,
+      normalizedLegalEntityId,
+      normalizedItemCardId,
+      normalizedBoundWarehouseId,
+    ]
+  );
+
+  const candidates = [];
+  let boundAvailableQuantity = 0;
+  for (const row of result.rows || []) {
+    const availableQuantity = roundAmount(row?.available_quantity || 0);
+    const candidate = {
+      warehouseId: parsePositiveInt(row?.warehouse_id),
+      warehouseCode: row?.warehouse_code || null,
+      warehouseName: row?.warehouse_name || null,
+      ownershipScope: row?.ownership_scope || "CENTRAL",
+      operatingUnitId: parsePositiveInt(row?.operating_unit_id),
+      operatingUnitCode: row?.operating_unit_code || null,
+      operatingUnitName: row?.operating_unit_name || null,
+      availableQuantity,
+    };
+    if (candidate.warehouseId === normalizedBoundWarehouseId) {
+      boundAvailableQuantity = availableQuantity;
+      continue;
+    }
+    if (
+      !sameOwnershipContext(
+        deriveWarehouseOwnershipContext({
+          ownership_scope: candidate.ownershipScope,
+          operating_unit_id: candidate.operatingUnitId,
+          operating_unit_code: candidate.operatingUnitCode,
+          operating_unit_name: candidate.operatingUnitName,
+        }),
+        normalizedOwnershipContext
+      )
+    ) {
+      candidates.push(candidate);
+    }
+  }
+
+  const crossContextAvailableQuantity = roundAmount(
+    candidates.reduce((sum, candidate) => sum + Number(candidate.availableQuantity || 0), 0)
+  );
+  const sortedCandidates = candidates.sort((left, right) => {
+    const leftEnough =
+      normalizedRequestedQuantity !== null && left.availableQuantity + 0.000001 >= normalizedRequestedQuantity
+        ? 1
+        : 0;
+    const rightEnough =
+      normalizedRequestedQuantity !== null && right.availableQuantity + 0.000001 >= normalizedRequestedQuantity
+        ? 1
+        : 0;
+    if (leftEnough !== rightEnough) {
+      return rightEnough - leftEnough;
+    }
+    if (right.availableQuantity !== left.availableQuantity) {
+      return right.availableQuantity - left.availableQuantity;
+    }
+    return (left.warehouseId || 0) - (right.warehouseId || 0);
+  });
+
+  return {
+    requestedQuantity: normalizedRequestedQuantity,
+    boundAvailableQuantity,
+    hasSufficientBoundStock:
+      normalizedRequestedQuantity === null ||
+      boundAvailableQuantity + 0.000001 >= normalizedRequestedQuantity,
+    hasCrossContextAvailability: crossContextAvailableQuantity > 0.000001,
+    crossContextAvailableQuantity,
+    candidateWarehouseCount: sortedCandidates.length,
+    primaryCandidate: sortedCandidates[0] || null,
+    candidates: sortedCandidates,
+  };
+}
+
 export function buildIssueValuationPlan({
   openLayerRows,
   quantity,
@@ -576,11 +861,31 @@ export function buildIssueValuationPlan({
     )
   );
   if (availableQuantity + 0.000001 < requestedQuantity) {
-    const itemLabel = String(itemCard?.code || itemCard?.name || itemCard?.id || "item").trim();
-    const warehouseLabel = String(warehouseRow?.code || warehouseRow?.name || warehouseRow?.id || "warehouse").trim();
-    throw badRequest(
-      `Insufficient available stock for ${itemLabel} in ${warehouseLabel}: requested ${requestedQuantity}, available ${availableQuantity}`
+    const err = badRequest(
+      buildInsufficientAvailableStockInBoundWarehouseMessage({
+        warehouseCode: warehouseRow?.code || null,
+        warehouseName: warehouseRow?.name || null,
+        warehouseId: parsePositiveInt(warehouseRow?.id),
+        itemCardCode: itemCard?.code || null,
+        itemCardName: itemCard?.name || null,
+        itemCardId: parsePositiveInt(itemCard?.id),
+        requestedQuantity,
+        availableQuantity,
+      })
     );
+    err.code = "INSUFFICIENT_AVAILABLE_STOCK_IN_BOUND_WAREHOUSE";
+    err.details = {
+      reason: "INSUFFICIENT_AVAILABLE_STOCK_IN_BOUND_WAREHOUSE",
+      warehouseId: parsePositiveInt(warehouseRow?.id),
+      warehouseCode: warehouseRow?.code || null,
+      warehouseName: warehouseRow?.name || null,
+      itemCardId: parsePositiveInt(itemCard?.id),
+      itemCardCode: itemCard?.code || null,
+      itemCardName: itemCard?.name || null,
+      requestedQuantity,
+      availableQuantity,
+    };
+    throw err;
   }
 
   let remainingQuantity = requestedQuantity;
@@ -661,6 +966,430 @@ export function buildIssueValuationPlan({
   };
 }
 
+export function applyIssueValuationPlanToOpenLayerRows({
+  openLayerRows,
+  issueValuationPlan,
+}) {
+  const openRows = Array.isArray(openLayerRows) ? openLayerRows : [];
+  const consumptions = Array.isArray(issueValuationPlan?.consumptions)
+    ? issueValuationPlan.consumptions
+    : [];
+  const openRowsById = new Map(
+    openRows
+      .map((row) => [parsePositiveInt(row?.id), row])
+      .filter(([id]) => id)
+  );
+
+  for (const consumption of consumptions) {
+    const costLayerId = parsePositiveInt(consumption?.costLayerId);
+    const openRow = openRowsById.get(costLayerId);
+    if (!openRow) {
+      continue;
+    }
+    const quantityRemainingAfter = roundAmount(consumption?.quantityRemainingAfter || 0);
+    openRow.quantity_remaining = quantityRemainingAfter;
+    openRow.layer_status = quantityRemainingAfter > BALANCE_EPSILON ? "OPEN" : "CLOSED";
+  }
+
+  return openRows;
+}
+
+export async function assertActiveWarehouseForOwnershipContext({
+  tenantId,
+  legalEntityId,
+  ownershipContext,
+  runQuery = query,
+}) {
+  const normalizedContext = buildOwnershipContext(ownershipContext);
+  const params = [
+    tenantId,
+    legalEntityId,
+    normalizedContext.ownershipScope,
+  ];
+  let whereSql = `
+      WHERE tenant_id = ?
+        AND legal_entity_id = ?
+        AND status = 'ACTIVE'
+        AND ownership_scope = ?`;
+  if (normalizedContext.ownershipScope === "OPERATING_UNIT") {
+    whereSql += " AND operating_unit_id = ?";
+    params.push(normalizedContext.operatingUnitId);
+  } else {
+    whereSql += " AND operating_unit_id IS NULL";
+  }
+
+  const result = await runQuery(
+    `SELECT id
+       FROM inventory_warehouses
+      ${whereSql}
+      LIMIT 1`,
+    params
+  );
+  if (parsePositiveInt(result.rows?.[0]?.id)) {
+    return true;
+  }
+  throw badRequest(
+    buildNoActiveWarehouseForOwnershipContextMessage(normalizedContext)
+  );
+}
+
+export async function listActiveWarehousesForOwnershipContext({
+  tenantId,
+  legalEntityId,
+  ownershipContext,
+  q = null,
+  limit = 200,
+  offset = 0,
+  runQuery = query,
+}) {
+  const normalizedContext = buildOwnershipContext(ownershipContext);
+  return listInventoryWarehouses({
+    tenantId,
+    filters: {
+      legalEntityId,
+      ownershipScope: normalizedContext.ownershipScope,
+      operatingUnitId: normalizedContext.operatingUnitId,
+      status: "ACTIVE",
+      q: normalizeText(q, 120),
+      limit,
+      offset,
+    },
+    runQuery,
+  });
+}
+
+export async function resolveWarehouseForOwnershipContext({
+  tenantId,
+  legalEntityId,
+  warehouseId,
+  ownershipContext = null,
+  ownershipContextRow = null,
+  ownerLabel = "document",
+  warehouseFieldLabel = "warehouseId",
+  requireActive = true,
+  runQuery = query,
+}) {
+  const warehouseRow = await fetchWarehouseById({
+    tenantId,
+    legalEntityId,
+    warehouseId,
+    runQuery,
+  });
+  if (!warehouseRow) {
+    throw badRequest(`${warehouseFieldLabel} must belong to legalEntityId`);
+  }
+  if (
+    requireActive &&
+    String(warehouseRow.status || "").toUpperCase() !== "ACTIVE"
+  ) {
+    throw badRequest(`${warehouseFieldLabel} must reference an ACTIVE warehouse`);
+  }
+  assertWarehouseBelongsToOwnershipContext({
+    warehouseRow,
+    ownershipContext,
+    ownershipContextRow,
+    ownerLabel,
+  });
+  return warehouseRow;
+}
+
+export async function resolveIssueValuationPlanForWarehouse({
+  tenantId,
+  legalEntityId,
+  warehouseId,
+  itemCard,
+  quantity,
+  warehouseRow = null,
+  ownershipContext = null,
+  runQuery = query,
+}) {
+  const resolvedWarehouseRow =
+    warehouseRow ||
+    (await fetchWarehouseById({
+      tenantId,
+      legalEntityId,
+      warehouseId,
+      runQuery,
+    }));
+  if (!resolvedWarehouseRow) {
+    throw badRequest("warehouseId must belong to legalEntityId");
+  }
+  const baseCurrencyCode = await fetchLegalEntityBaseCurrencyCode({
+    tenantId,
+    legalEntityId,
+    runQuery,
+  });
+  try {
+    return buildIssueValuationPlan({
+      openLayerRows: await fetchOpenCostLayersForIssue({
+        tenantId,
+        legalEntityId,
+        warehouseId,
+        itemCardId: parsePositiveInt(itemCard?.id),
+        runQuery,
+      }),
+      quantity,
+      itemCard,
+      warehouseRow: resolvedWarehouseRow,
+      baseCurrencyCode,
+    });
+  } catch (error) {
+    if (
+      String(error?.code || "").trim().toUpperCase() ===
+        "INSUFFICIENT_AVAILABLE_STOCK_IN_BOUND_WAREHOUSE" &&
+      ownershipContext
+    ) {
+      const availability = await probeCrossContextAvailabilityForIssue({
+        tenantId,
+        legalEntityId,
+        ownershipContext,
+        itemCardId: parsePositiveInt(itemCard?.id),
+        boundWarehouseId: warehouseId,
+        requestedQuantity: quantity,
+        runQuery,
+      });
+      if (availability.hasCrossContextAvailability) {
+        throw buildTransferRequiredAvailabilityError({
+          warehouseRow: resolvedWarehouseRow,
+          itemCard,
+          requestedQuantity: quantity,
+          boundAvailableQuantity: availability.boundAvailableQuantity,
+          crossContextAvailableQuantity: availability.crossContextAvailableQuantity,
+          ownershipContext,
+          primaryCandidate: availability.primaryCandidate,
+        });
+      }
+    }
+    throw error;
+  }
+}
+
+export async function assertStrictStockDocumentPostingReadiness({
+  tenantId,
+  legalEntityId,
+  documentOperatingUnitId = null,
+  documentLines,
+  fieldCollectionLabel = "storedLines",
+  ownerLabel = "document",
+  runQuery = query,
+}) {
+  const stockLines = [];
+  for (let index = 0; index < (Array.isArray(documentLines) ? documentLines : []).length; index += 1) {
+    const line = documentLines[index] || {};
+    if (!isStockAffectingLine(line)) {
+      continue;
+    }
+    stockLines.push({
+      index,
+      fieldPrefix: `${fieldCollectionLabel}[${index + 1}]`,
+      lineNo: Number(line?.lineNo || index + 1),
+      stockImpactMode: String(line?.stockImpactMode || line?.stock_impact_mode || "")
+        .trim()
+        .toUpperCase(),
+      itemCardId: parsePositiveInt(line?.itemCardId ?? line?.item_card_id),
+      warehouseId: parsePositiveInt(line?.warehouseId ?? line?.warehouse_id),
+      quantity: normalizeAmount(line?.quantity ?? 0, `${fieldCollectionLabel}[${index + 1}].quantity`, {
+        allowZero: true,
+      }),
+    });
+  }
+  if (stockLines.length === 0) {
+    return {
+      ownershipContext: deriveOwnershipContextFromOperatingUnitId(documentOperatingUnitId),
+      stockLineCount: 0,
+      issueGroupCount: 0,
+    };
+  }
+
+  const ownershipContext = deriveOwnershipContextFromOperatingUnitId(
+    documentOperatingUnitId
+  );
+  await assertActiveWarehouseForOwnershipContext({
+    tenantId,
+    legalEntityId,
+    ownershipContext,
+    runQuery,
+  });
+
+  const warehouseCache = new Map();
+  const itemCardCache = new Map();
+  const issueGroups = new Map();
+
+  for (const stockLine of stockLines) {
+    if (!stockLine.warehouseId) {
+      throw badRequest(
+        `${stockLine.fieldPrefix}.warehouseId is required for stock-affecting lines`
+      );
+    }
+    let warehouseRow = warehouseCache.get(stockLine.warehouseId);
+    if (!warehouseRow) {
+      warehouseRow = await resolveWarehouseForOwnershipContext({
+        tenantId,
+        legalEntityId,
+        warehouseId: stockLine.warehouseId,
+        ownershipContext,
+        ownerLabel,
+        warehouseFieldLabel: `${stockLine.fieldPrefix}.warehouseId`,
+        runQuery,
+      });
+      warehouseCache.set(stockLine.warehouseId, warehouseRow);
+    }
+
+    if (stockLine.stockImpactMode !== "ISSUE_PENDING") {
+      continue;
+    }
+    let itemCard = itemCardCache.get(stockLine.itemCardId);
+    if (!itemCard) {
+      itemCard = await getItemCardByIdForTenant({
+        tenantId,
+        itemCardId: stockLine.itemCardId,
+        runQuery,
+      });
+      itemCardCache.set(stockLine.itemCardId, itemCard);
+    }
+    const groupKey = `${stockLine.warehouseId}:${stockLine.itemCardId}`;
+    if (!issueGroups.has(groupKey)) {
+      issueGroups.set(groupKey, {
+        warehouseId: stockLine.warehouseId,
+        warehouseRow,
+        itemCardId: stockLine.itemCardId,
+        itemCard,
+        lines: [],
+      });
+    }
+    issueGroups.get(groupKey).lines.push(stockLine);
+  }
+
+  if (issueGroups.size === 0) {
+    return {
+      ownershipContext,
+      stockLineCount: stockLines.length,
+      issueGroupCount: 0,
+    };
+  }
+
+  const baseCurrencyCode = await fetchLegalEntityBaseCurrencyCode({
+    tenantId,
+    legalEntityId,
+    runQuery,
+  });
+  const lineErrors = [];
+
+  for (const group of issueGroups.values()) {
+    const simulatedOpenLayers = (
+      await fetchOpenCostLayersForIssue({
+        tenantId,
+        legalEntityId,
+        warehouseId: group.warehouseId,
+        itemCardId: group.itemCardId,
+        runQuery,
+      })
+    ).map((row) => ({ ...row }));
+
+    for (const stockLine of group.lines) {
+      try {
+        const issueValuationPlan = buildIssueValuationPlan({
+          openLayerRows: simulatedOpenLayers,
+          quantity: stockLine.quantity,
+          itemCard: group.itemCard,
+          warehouseRow: group.warehouseRow,
+          baseCurrencyCode,
+        });
+        applyIssueValuationPlanToOpenLayerRows({
+          openLayerRows: simulatedOpenLayers,
+          issueValuationPlan,
+        });
+      } catch (error) {
+        if (
+          String(error?.code || "").trim().toUpperCase() ===
+          "INSUFFICIENT_AVAILABLE_STOCK_IN_BOUND_WAREHOUSE"
+        ) {
+          const availability = await probeCrossContextAvailabilityForIssue({
+            tenantId,
+            legalEntityId,
+            ownershipContext,
+            itemCardId: group.itemCardId,
+            boundWarehouseId: group.warehouseId,
+            requestedQuantity: stockLine.quantity,
+            runQuery,
+          });
+          const transferRequired = availability.hasCrossContextAvailability;
+          const transferRequiredError = transferRequired
+            ? buildTransferRequiredAvailabilityError({
+                warehouseRow: group.warehouseRow,
+                itemCard: group.itemCard,
+                requestedQuantity: stockLine.quantity,
+                boundAvailableQuantity: availability.boundAvailableQuantity,
+                crossContextAvailableQuantity: availability.crossContextAvailableQuantity,
+                ownershipContext,
+                primaryCandidate: availability.primaryCandidate,
+              })
+            : null;
+          lineErrors.push({
+            lineNo: stockLine.lineNo,
+            field: `${stockLine.fieldPrefix}.quantity`,
+            stockImpactMode: stockLine.stockImpactMode,
+            warehouseId: group.warehouseId,
+            warehouseCode: group.warehouseRow?.code || null,
+            warehouseName: group.warehouseRow?.name || null,
+            itemCardId: group.itemCardId,
+            itemCardCode: group.itemCard?.code || null,
+            itemCardName: group.itemCard?.name || null,
+            requestedQuantity: stockLine.quantity,
+            availableQuantity: Number(error?.details?.availableQuantity || 0),
+            boundAvailableQuantity: availability.boundAvailableQuantity,
+            crossContextAvailableQuantity: availability.crossContextAvailableQuantity,
+            transferSourceWarehouseId: parsePositiveInt(
+              availability.primaryCandidate?.warehouseId
+            ),
+            transferSourceWarehouseCode: availability.primaryCandidate?.warehouseCode || null,
+            transferSourceWarehouseName: availability.primaryCandidate?.warehouseName || null,
+            transferSourceOwnershipScope:
+              availability.primaryCandidate?.ownershipScope || null,
+            transferSourceOperatingUnitId: parsePositiveInt(
+              availability.primaryCandidate?.operatingUnitId
+            ),
+            transferSourceOperatingUnitCode:
+              availability.primaryCandidate?.operatingUnitCode || null,
+            transferSourceOperatingUnitName:
+              availability.primaryCandidate?.operatingUnitName || null,
+            transferSourceAvailableQuantity: roundAmount(
+              availability.primaryCandidate?.availableQuantity || 0
+            ),
+            reason: transferRequired
+              ? "TRANSFER_REQUIRED"
+              : "INSUFFICIENT_AVAILABLE_STOCK_IN_BOUND_WAREHOUSE",
+            message: `${stockLine.fieldPrefix}.quantity: ${
+              transferRequiredError?.message || error.message
+            }`,
+          });
+          break;
+        }
+        throw error;
+      }
+    }
+  }
+
+  if (lineErrors.length > 0) {
+    const err = badRequest(lineErrors[0].message);
+    err.code = "CARI_DOCUMENT_POST_STOCK_VALIDATION_FAILED";
+    err.details = {
+      reason:
+        lineErrors.find((lineError) => lineError.reason === "TRANSFER_REQUIRED")
+          ? "TRANSFER_REQUIRED"
+          : "INSUFFICIENT_AVAILABLE_STOCK_IN_BOUND_WAREHOUSE",
+      lineErrors,
+    };
+    throw err;
+  }
+
+  return {
+    ownershipContext,
+    stockLineCount: stockLines.length,
+    issueGroupCount: issueGroups.size,
+  };
+}
+
 async function fetchIssueLayerConsumptionsForUpdate({
   issueMovementId,
   runQuery = query,
@@ -724,6 +1453,59 @@ async function fetchJournalEntryWithLines({
   };
 }
 
+async function resolveReopenedSuccessorWarehouseBinding({
+  tenantId,
+  legalEntityId,
+  originalStockLinkRow,
+  runQuery = query,
+}) {
+  const originalWarehouseId = parsePositiveInt(
+    originalStockLinkRow?.warehouse_id ?? originalStockLinkRow?.bound_warehouse_id
+  );
+  if (!originalWarehouseId) {
+    return {
+      warehouseId: null,
+      warehouseRow: null,
+      repairReasonCode:
+        STOCK_LINK_REPAIR_REASON_SUCCESSOR_WAREHOUSE_INHERITANCE_INVALID,
+      auditNote:
+        "Cleanup required: successor warehouse inheritance invalid because the original stock link has no bound warehouse.",
+    };
+  }
+
+  try {
+    const warehouseRow = await resolveWarehouseForOwnershipContext({
+      tenantId,
+      legalEntityId,
+      warehouseId: originalWarehouseId,
+      ownershipContextRow: originalStockLinkRow,
+      ownerLabel: "source document",
+      warehouseFieldLabel: "boundWarehouseId",
+      runQuery,
+    });
+    return {
+      warehouseId: originalWarehouseId,
+      warehouseRow,
+      repairReasonCode: null,
+      auditNote: `Inherited bound warehouse ${warehouseRow.code || warehouseRow.name || `#${originalWarehouseId}`}.`,
+    };
+  } catch (error) {
+    return {
+      warehouseId: null,
+      warehouseRow: null,
+      repairReasonCode:
+        STOCK_LINK_REPAIR_REASON_SUCCESSOR_WAREHOUSE_INHERITANCE_INVALID,
+      auditNote: [
+        "Cleanup required: successor warehouse inheritance invalid.",
+        normalizeText(error?.message, 160),
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .slice(0, 255),
+    };
+  }
+}
+
 async function ensureIssueReopenedStockLinkTx({
   tx,
   tenantId,
@@ -742,6 +1524,13 @@ async function ensureIssueReopenedStockLinkTx({
     return null;
   }
 
+  const inheritedWarehouseBinding = await resolveReopenedSuccessorWarehouseBinding({
+    tenantId,
+    legalEntityId,
+    originalStockLinkRow,
+    runQuery: tx.query,
+  });
+
   let successorRow = await fetchSuccessorStockLinkByOriginalId({
     tenantId,
     legalEntityId,
@@ -755,9 +1544,10 @@ async function ensureIssueReopenedStockLinkTx({
       `Reopened from stock link ${originalStockLinkId}`,
       `after issue movement ${parsePositiveInt(movementRow?.id) || "-"}`,
       `reverse on ${reversalDate}`,
+      inheritedWarehouseBinding.auditNote,
     ]
       .filter(Boolean)
-      .join(" ")
+      .join(" | ")
       .slice(0, 255);
     const insertResult = await tx.query(
       `INSERT INTO cari_document_line_stock_links (
@@ -772,6 +1562,7 @@ async function ensureIssueReopenedStockLinkTx({
           requested_quantity,
           posted_net_amount_txn,
           posted_net_amount_base,
+          warehouse_id,
           inventory_document_type,
           inventory_document_id,
           inventory_movement_id,
@@ -780,7 +1571,7 @@ async function ensureIssueReopenedStockLinkTx({
           resolved_at,
           resolution_note
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?, ?, NULL, NULL, NULL, ?, NULL, NULL, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?, ?, ?, NULL, NULL, NULL, ?, NULL, NULL, ?)`,
       [
         tenantId,
         legalEntityId,
@@ -800,6 +1591,7 @@ async function ensureIssueReopenedStockLinkTx({
         normalizeAmount(originalStockLinkRow.posted_net_amount_base, "postedNetAmountBase", {
           allowZero: true,
         }),
+        inheritedWarehouseBinding.warehouseId,
         originalStockLinkId,
         reopenNote,
       ]
@@ -815,12 +1607,46 @@ async function ensureIssueReopenedStockLinkTx({
       runQuery: tx.query,
       forUpdate: true,
     });
+  } else if (
+    String(successorRow.link_status || "").toUpperCase() === "PENDING" &&
+    !parsePositiveInt(successorRow.inventory_movement_id)
+  ) {
+    const successorResolutionNote = [
+      normalizeText(successorRow?.resolution_note, 180),
+      inheritedWarehouseBinding.auditNote,
+    ]
+      .filter(Boolean)
+      .join(" | ")
+      .slice(0, 255);
+    await tx.query(
+      `UPDATE cari_document_line_stock_links
+          SET warehouse_id = ?,
+              resolution_note = ?
+        WHERE tenant_id = ?
+          AND legal_entity_id = ?
+          AND id = ?`,
+      [
+        inheritedWarehouseBinding.warehouseId,
+        successorResolutionNote,
+        tenantId,
+        legalEntityId,
+        parsePositiveInt(successorRow.id),
+      ]
+    );
+    successorRow = await fetchPendingStockLinkById({
+      tenantId,
+      legalEntityId,
+      stockLinkId: parsePositiveInt(successorRow.id),
+      runQuery: tx.query,
+      forUpdate: true,
+    });
   }
 
   const successorStockLinkId = parsePositiveInt(successorRow?.id);
   const originalResolutionNote = [
     normalizeText(originalStockLinkRow?.resolution_note, 255),
     `Successor stock link ${successorStockLinkId || "-"} created after issue reversal on ${reversalDate}`,
+    inheritedWarehouseBinding.auditNote,
   ]
     .filter(Boolean)
     .join(" | ")
@@ -1743,17 +2569,10 @@ export async function createInventoryWarehouse({
   await assertLegalEntityBelongsToTenant(tenantId, legalEntityId, "legalEntityId", {
     runQuery,
   });
-  const ownershipScope = normalizeUpperText(payload?.ownershipScope, 30) || "CENTRAL";
-  if (!WAREHOUSE_OWNERSHIP_SCOPE_VALUES.has(ownershipScope)) {
-    throw badRequest("ownershipScope is invalid");
-  }
-  const operatingUnitId = parsePositiveInt(payload?.operatingUnitId);
-  if (ownershipScope === "CENTRAL" && operatingUnitId) {
-    throw badRequest("operatingUnitId must be empty when ownershipScope=CENTRAL");
-  }
-  if (ownershipScope === "OPERATING_UNIT" && !operatingUnitId) {
-    throw badRequest("operatingUnitId is required when ownershipScope=OPERATING_UNIT");
-  }
+  const { ownershipScope, operatingUnitId } = normalizeOwnershipContextInput({
+    ownershipScope: payload?.ownershipScope,
+    operatingUnitId: payload?.operatingUnitId,
+  });
   if (operatingUnitId) {
     const operatingUnit = await assertOperatingUnitBelongsToTenant(
       tenantId,
@@ -1817,6 +2636,16 @@ export async function listPendingInventoryStockLinks({
     whereSql += " AND sl.legal_entity_id = ?";
     params.push(legalEntityId);
   }
+  const queueScope =
+    normalizeUpperText(filters?.queueScope) ||
+    (filters?.linkStatus ? null : "ACTIONABLE");
+  if (queueScope === "ACTIONABLE") {
+    whereSql += " AND sl.link_status = 'PENDING'";
+  } else if (queueScope === "COMPLETED") {
+    whereSql += " AND sl.link_status = 'LINKED'";
+  } else if (queueScope === "VOID") {
+    whereSql += " AND sl.link_status = 'VOID'";
+  }
   if (filters?.linkStatus) {
     whereSql += " AND sl.link_status = ?";
     params.push(filters.linkStatus);
@@ -1824,6 +2653,11 @@ export async function listPendingInventoryStockLinks({
   if (filters?.stockImpactMode) {
     whereSql += " AND sl.stock_impact_mode = ?";
     params.push(filters.stockImpactMode);
+  }
+  const warehouseId = parsePositiveInt(filters?.warehouseId);
+  if (warehouseId) {
+    whereSql += " AND sl.warehouse_id = ?";
+    params.push(warehouseId);
   }
   if (filters?.warehouseLinked === true) {
     whereSql += " AND sl.inventory_movement_id IS NOT NULL";
@@ -1833,15 +2667,33 @@ export async function listPendingInventoryStockLinks({
   }
 
   const result = await runQuery(
-    `SELECT
+      `SELECT
         sl.*,
         le.code AS legal_entity_code,
         d.document_no,
         d.document_date,
+        d.operating_unit_id AS document_operating_unit_id,
+        dou.code AS document_operating_unit_code,
+        dou.name AS document_operating_unit_name,
         d.direction,
         d.currency_code,
         l.line_no,
         l.description AS line_description,
+        sl.warehouse_id AS bound_warehouse_id,
+        bw.id AS bound_warehouse_row_id,
+        bw.code AS bound_warehouse_code,
+        bw.name AS bound_warehouse_name,
+        bw.status AS bound_warehouse_status,
+        bw.ownership_scope AS bound_warehouse_ownership_scope,
+        bw.operating_unit_id AS bound_warehouse_operating_unit_id,
+        CASE
+          WHEN sl.link_status = 'LINKED' THEN sl.requested_quantity
+          ELSE 0.000000
+        END AS materialized_quantity,
+        CASE
+          WHEN sl.link_status = 'PENDING' THEN sl.requested_quantity
+          ELSE 0.000000
+        END AS remaining_quantity,
         ic.code AS item_card_code,
         ic.name AS item_card_name,
         ic.item_type
@@ -1851,8 +2703,11 @@ export async function listPendingInventoryStockLinks({
         AND le.id = sl.legal_entity_id
        JOIN cari_documents d
          ON d.tenant_id = sl.tenant_id
-        AND d.legal_entity_id = sl.legal_entity_id
+       AND d.legal_entity_id = sl.legal_entity_id
         AND d.id = sl.cari_document_id
+      LEFT JOIN operating_units dou
+        ON dou.tenant_id = d.tenant_id
+       AND dou.id = d.operating_unit_id
        JOIN cari_document_lines l
          ON l.tenant_id = sl.tenant_id
         AND l.legal_entity_id = sl.legal_entity_id
@@ -1861,14 +2716,30 @@ export async function listPendingInventoryStockLinks({
        JOIN item_cards ic
          ON ic.tenant_id = sl.tenant_id
         AND ic.id = sl.item_card_id
+      LEFT JOIN inventory_warehouses bw
+        ON bw.tenant_id = sl.tenant_id
+       AND bw.id = sl.warehouse_id
        ${whereSql}
-      ORDER BY sl.link_status ASC, d.document_date DESC, d.document_no DESC, l.line_no ASC
+      ORDER BY
+        CASE sl.link_status
+          WHEN 'PENDING' THEN 0
+          WHEN 'LINKED' THEN 1
+          WHEN 'VOID' THEN 2
+          ELSE 3
+        END ASC,
+        d.document_date DESC,
+        d.document_no DESC,
+        l.line_no ASC
       LIMIT ${limit}
       OFFSET ${offset}`,
     params
   );
+  const stockLinkRows = await attachCrossContextTransferAvailabilityToStockLinkRows({
+    stockLinkRows: result.rows || [],
+    runQuery,
+  });
   return {
-    rows: (result.rows || []).map(mapPendingStockLinkRow),
+    rows: stockLinkRows.map(mapPendingStockLinkRow),
   };
 }
 
@@ -1885,7 +2756,7 @@ export async function getInventoryWorkQueueSummary({
   const legalEntityId = parsePositiveInt(filters?.legalEntityId);
 
   const stockParams = [normalizedTenantId];
-  let stockWhereSql = "WHERE sl.tenant_id = ? AND sl.link_status = 'PENDING'";
+  let stockWhereSql = "WHERE sl.tenant_id = ?";
   if (legalEntityId) {
     stockWhereSql += " AND sl.legal_entity_id = ?";
     stockParams.push(legalEntityId);
@@ -1893,20 +2764,27 @@ export async function getInventoryWorkQueueSummary({
 
   const stockSummary = await runQuery(
     `SELECT
-        COUNT(*) AS total_pending,
-        SUM(CASE WHEN sl.stock_impact_mode = 'RECEIPT_PENDING' THEN 1 ELSE 0 END) AS receipt_pending,
-        SUM(CASE WHEN sl.stock_impact_mode = 'ISSUE_PENDING' THEN 1 ELSE 0 END) AS issue_pending,
-        SUM(CASE WHEN sl.reopened_from_stock_link_id IS NOT NULL THEN 1 ELSE 0 END) AS reopened_pending,
-        SUM(CASE WHEN DATEDIFF(CURDATE(), d.document_date) BETWEEN 0 AND 1 THEN 1 ELSE 0 END) AS age_0_1d,
-        SUM(CASE WHEN DATEDIFF(CURDATE(), d.document_date) BETWEEN 2 AND 7 THEN 1 ELSE 0 END) AS age_2_7d,
-        SUM(CASE WHEN DATEDIFF(CURDATE(), d.document_date) > 7 THEN 1 ELSE 0 END) AS age_8_plus_d,
-        SUM(CASE WHEN DATEDIFF(CURDATE(), d.document_date) > 2 THEN 1 ELSE 0 END) AS stale_gt_2d,
-        MAX(DATEDIFF(CURDATE(), d.document_date)) AS oldest_pending_days
+        sl.tenant_id,
+        sl.legal_entity_id,
+        sl.link_status,
+        sl.stock_impact_mode,
+        sl.item_card_id,
+        sl.requested_quantity,
+        sl.warehouse_id AS bound_warehouse_id,
+        sl.reopened_from_stock_link_id,
+        d.document_date,
+        d.operating_unit_id AS document_operating_unit_id,
+        bw.status AS bound_warehouse_status,
+        bw.ownership_scope AS bound_warehouse_ownership_scope,
+        bw.operating_unit_id AS bound_warehouse_operating_unit_id
        FROM cari_document_line_stock_links sl
        JOIN cari_documents d
          ON d.tenant_id = sl.tenant_id
         AND d.legal_entity_id = sl.legal_entity_id
         AND d.id = sl.cari_document_id
+      LEFT JOIN inventory_warehouses bw
+        ON bw.tenant_id = sl.tenant_id
+       AND bw.id = sl.warehouse_id
        ${stockWhereSql}`,
     stockParams
   );
@@ -1955,26 +2833,101 @@ export async function getInventoryWorkQueueSummary({
     transferParams
   );
 
-  const stockRow = stockSummary.rows?.[0] || {};
+  const asOfDate = new Date();
+  const asOfDateString = asOfDate.toISOString().slice(0, 10);
+  const stockRows = await attachCrossContextTransferAvailabilityToStockLinkRows({
+    stockLinkRows: Array.isArray(stockSummary.rows) ? stockSummary.rows : [],
+    runQuery,
+  });
+  const stockLinkSummary = {
+    total_pending: 0,
+    actionable_total: 0,
+    ready_total: 0,
+    blocked_total: 0,
+    repair_required_total: 0,
+    transfer_required_total: 0,
+    completed_total: 0,
+    void_total: 0,
+    ready_receipt_materialization: 0,
+    ready_issue_materialization: 0,
+    reopened_pending: 0,
+    stale_pending_gt_2d: 0,
+    oldest_pending_days: 0,
+    aging_pending: {
+      "0_1d": 0,
+      "2_7d": 0,
+      "8_plus_d": 0,
+    },
+  };
+
+  for (const row of stockRows) {
+    const readState = deriveStockLinkReadState(row);
+    const linkStatus = normalizeUpperText(row?.link_status);
+    const stockImpactMode = normalizeUpperText(row?.stock_impact_mode);
+    if (linkStatus === "PENDING") {
+      stockLinkSummary.total_pending += 1;
+      stockLinkSummary.actionable_total += 1;
+      if (parsePositiveInt(row?.reopened_from_stock_link_id)) {
+        stockLinkSummary.reopened_pending += 1;
+      }
+      const ageInDays = calculateDateAgeInDays(row?.document_date, asOfDate);
+      if (ageInDays !== null) {
+        if (ageInDays <= 1) {
+          stockLinkSummary.aging_pending["0_1d"] += 1;
+        } else if (ageInDays <= 7) {
+          stockLinkSummary.aging_pending["2_7d"] += 1;
+        } else {
+          stockLinkSummary.aging_pending["8_plus_d"] += 1;
+        }
+        if (ageInDays > 2) {
+          stockLinkSummary.stale_pending_gt_2d += 1;
+        }
+        if (ageInDays > stockLinkSummary.oldest_pending_days) {
+          stockLinkSummary.oldest_pending_days = ageInDays;
+        }
+      }
+    }
+    switch (readState.queueState) {
+      case "READY":
+        stockLinkSummary.ready_total += 1;
+        if (stockImpactMode === "RECEIPT_PENDING") {
+          stockLinkSummary.ready_receipt_materialization += 1;
+        }
+        if (stockImpactMode === "ISSUE_PENDING") {
+          stockLinkSummary.ready_issue_materialization += 1;
+        }
+        break;
+      case "BLOCKED":
+        stockLinkSummary.blocked_total += 1;
+        break;
+      case "REPAIR_REQUIRED":
+        stockLinkSummary.repair_required_total += 1;
+        break;
+      case "TRANSFER_REQUIRED":
+        stockLinkSummary.transfer_required_total += 1;
+        break;
+      case "COMPLETED":
+        stockLinkSummary.completed_total += 1;
+        break;
+      case "VOID":
+        stockLinkSummary.void_total += 1;
+        break;
+      default:
+        break;
+    }
+  }
+
   const transferRow = transferSummary.rows?.[0] || {};
 
   return {
-    asOfDate: new Date().toISOString().slice(0, 10),
+    asOfDate: asOfDateString,
     filters: {
       legalEntityId: legalEntityId || null,
     },
     stockLinks: {
-      total_pending: toInt(stockRow.total_pending, 0),
-      pending_receipt_materialization: toInt(stockRow.receipt_pending, 0),
-      pending_issue_materialization: toInt(stockRow.issue_pending, 0),
-      reopened_pending: toInt(stockRow.reopened_pending, 0),
-      stale_pending_gt_2d: toInt(stockRow.stale_gt_2d, 0),
-      oldest_pending_days: toInt(stockRow.oldest_pending_days, 0),
-      aging_pending: {
-        "0_1d": toInt(stockRow.age_0_1d, 0),
-        "2_7d": toInt(stockRow.age_2_7d, 0),
-        "8_plus_d": toInt(stockRow.age_8_plus_d, 0),
-      },
+      ...stockLinkSummary,
+      pending_receipt_materialization: stockLinkSummary.ready_receipt_materialization,
+      pending_issue_materialization: stockLinkSummary.ready_issue_materialization,
     },
     transfers: {
       total_open: toInt(transferRow.total_open, 0),
@@ -2137,14 +3090,38 @@ export async function listInventoryCostLayers({
   };
 }
 
-export async function createInventoryMovementFromStockLink({
+function strictStockLinkRouteRequiredError(stockLinkId) {
+  const err = badRequest(
+    `sourceStockLinkId ${stockLinkId} is strict-mode and must be materialized through /api/v1/inventory/cari-stock-links/${stockLinkId}/materialize.`
+  );
+  err.code = "STRICT_STOCK_LINK_MATERIALIZE_ROUTE_REQUIRED";
+  return err;
+}
+
+function stockLinkCleanupRequiredError(stockLinkId) {
+  const err = badRequest(
+    `stockLinkId ${stockLinkId} has no bound warehouse and is invalid for this rollout. Reset or clean up unbound legacy data before continuing strict-mode execution.`
+  );
+  err.code = "STOCK_LINK_CLEANUP_REQUIRED";
+  return err;
+}
+
+async function materializeInventoryMovementFromStockLinkInternal({
   payload,
+  materializationMode,
 }) {
+  const isStrictMode = materializationMode === "STRICT";
   const tenantId = parsePositiveInt(payload?.tenantId);
   const legalEntityId = parsePositiveInt(payload?.legalEntityId);
-  const warehouseId = parsePositiveInt(payload?.warehouseId);
-  const stockLinkId = parsePositiveInt(payload?.sourceStockLinkId);
-  if (!tenantId || !legalEntityId || !warehouseId || !stockLinkId) {
+  const explicitWarehouseId = parsePositiveInt(payload?.warehouseId);
+  const stockLinkId = parsePositiveInt(
+    isStrictMode ? payload?.stockLinkId : payload?.sourceStockLinkId
+  );
+  if (isStrictMode) {
+    if (!tenantId || !legalEntityId || !stockLinkId) {
+      throw badRequest("tenantId, legalEntityId, and stockLinkId are required");
+    }
+  } else if (!tenantId || !legalEntityId || !explicitWarehouseId || !stockLinkId) {
     throw badRequest("tenantId, legalEntityId, warehouseId, and sourceStockLinkId are required");
   }
   const movementDate = normalizeDateOnly(payload?.movementDate, "movementDate");
@@ -2154,31 +3131,37 @@ export async function createInventoryMovementFromStockLink({
     await assertLegalEntityBelongsToTenant(tenantId, legalEntityId, "legalEntityId", {
       runQuery: tx.query,
     });
-    const warehouseRow = await fetchWarehouseById({
-      tenantId,
-      legalEntityId,
-      warehouseId,
-      runQuery: tx.query,
-    });
-    if (!warehouseRow) {
-      throw badRequest("warehouseId must belong to legalEntityId");
-    }
-    if (String(warehouseRow.status || "").toUpperCase() !== "ACTIVE") {
-      throw badRequest("warehouseId must reference an ACTIVE warehouse");
-    }
-
     const stockLinkRow = await fetchPendingStockLinkById({
       tenantId,
       legalEntityId,
       stockLinkId,
       runQuery: tx.query,
+      forUpdate: true,
     });
     if (!stockLinkRow) {
-      throw badRequest("sourceStockLinkId not found for legalEntityId");
+      throw badRequest(
+        `${isStrictMode ? "stockLinkId" : "sourceStockLinkId"} not found for legalEntityId`
+      );
     }
-    assertGenericMovementContextMatch({
-      warehouseRow,
-      stockLinkRow,
+
+    const boundWarehouseId = parsePositiveInt(stockLinkRow.warehouse_id);
+    if (isStrictMode && !boundWarehouseId) {
+      throw stockLinkCleanupRequiredError(stockLinkId);
+    }
+    if (!isStrictMode && boundWarehouseId) {
+      throw strictStockLinkRouteRequiredError(stockLinkId);
+    }
+
+    const warehouseId = isStrictMode ? boundWarehouseId : explicitWarehouseId;
+    const warehouseFieldLabel = isStrictMode ? "boundWarehouseId" : "warehouseId";
+    const warehouseRow = await resolveWarehouseForOwnershipContext({
+      tenantId,
+      legalEntityId,
+      warehouseId,
+      ownershipContextRow: stockLinkRow,
+      ownerLabel: "source document",
+      warehouseFieldLabel,
+      runQuery: tx.query,
     });
     const stockLinkStatus = String(stockLinkRow.link_status || "").toUpperCase();
     if (
@@ -2191,7 +3174,9 @@ export async function createInventoryMovementFromStockLink({
         forUpdate: true,
       });
       if (!existingMovementRow) {
-        throw badRequest("sourceStockLinkId references a missing inventory movement");
+        throw badRequest(
+          `${isStrictMode ? "stockLinkId" : "sourceStockLinkId"} references a missing inventory movement`
+        );
       }
       if (String(existingMovementRow.movement_type || "").toUpperCase() === "ISSUE") {
         await ensureInventoryIssueJournalPostedTx({
@@ -2210,14 +3195,11 @@ export async function createInventoryMovementFromStockLink({
       }
       return fetchMovementById({
         movementId: existingMovementRow.id,
-        runQuery: async (sql, params = []) => {
-          const nextParams = [...params];
-          return tx.query(sql, nextParams);
-        },
+        runQuery: async (sql, params = []) => tx.query(sql, [...params]),
       });
     }
     if (stockLinkStatus !== "PENDING") {
-      throw badRequest("sourceStockLinkId must be PENDING");
+      throw badRequest(`${isStrictMode ? "stockLinkId" : "sourceStockLinkId"} must be PENDING`);
     }
 
     const itemCard = await getItemCardByIdForTenant({
@@ -2226,27 +3208,38 @@ export async function createInventoryMovementFromStockLink({
       runQuery: tx.query,
     });
     if (String(itemCard?.itemType || "").toUpperCase() !== "STOCK_ITEM") {
-      throw badRequest("sourceStockLinkId must reference a STOCK_ITEM");
+      throw badRequest(
+        `${isStrictMode ? "stockLinkId" : "sourceStockLinkId"} must reference a STOCK_ITEM`
+      );
     }
 
     const quantity = normalizeAmount(stockLinkRow.requested_quantity, "requestedQuantity");
-    const postedNetAmountTxn = normalizeAmount(stockLinkRow.posted_net_amount_txn, "postedNetAmountTxn", {
-      allowZero: true,
-    });
-    const postedNetAmountBase = normalizeAmount(stockLinkRow.posted_net_amount_base, "postedNetAmountBase", {
-      allowZero: true,
-    });
+    const postedNetAmountTxn = normalizeAmount(
+      stockLinkRow.posted_net_amount_txn,
+      "postedNetAmountTxn",
+      {
+        allowZero: true,
+      }
+    );
+    const postedNetAmountBase = normalizeAmount(
+      stockLinkRow.posted_net_amount_base,
+      "postedNetAmountBase",
+      {
+        allowZero: true,
+      }
+    );
     const stockLinkCurrencyCode = normalizeText(stockLinkRow.currency_code, 3, {
       required: true,
     }).toUpperCase();
 
     const stockImpactMode = String(stockLinkRow.stock_impact_mode || "").trim().toUpperCase();
     if (!["RECEIPT_PENDING", "ISSUE_PENDING"].includes(stockImpactMode)) {
-      throw badRequest("sourceStockLinkId must reference a pending stock-impact mode");
+      throw badRequest(
+        `${isStrictMode ? "stockLinkId" : "sourceStockLinkId"} must reference a pending stock-impact mode`
+      );
     }
     const movementType = stockImpactMode === "RECEIPT_PENDING" ? "RECEIPT" : "ISSUE";
     let currencyCode = stockLinkCurrencyCode;
-    let valuationStatus = "VALUED";
     let totalCostTxn = null;
     let totalCostBase = null;
     let unitCostTxn = null;
@@ -2262,23 +3255,16 @@ export async function createInventoryMovementFromStockLink({
       unitCostTxn = Number((postedNetAmountTxn / quantity).toFixed(AMOUNT_SCALE));
       unitCostBase = Number((postedNetAmountBase / quantity).toFixed(AMOUNT_SCALE));
     } else {
-      const baseCurrencyCode = await fetchLegalEntityBaseCurrencyCode({
+      const ownershipContext = deriveDocumentOwnershipContext(stockLinkRow);
+      issueValuationPlan = await resolveIssueValuationPlanForWarehouse({
         tenantId,
         legalEntityId,
-        runQuery: tx.query,
-      });
-      issueValuationPlan = buildIssueValuationPlan({
-        openLayerRows: await fetchOpenCostLayersForIssue({
-          tenantId,
-          legalEntityId,
-          warehouseId,
-          itemCardId: itemCard.id,
-          runQuery: tx.query,
-        }),
-        quantity,
+        warehouseId,
         itemCard,
+        quantity,
         warehouseRow,
-        baseCurrencyCode,
+        ownershipContext,
+        runQuery: tx.query,
       });
       currencyCode = issueValuationPlan.currencyCode;
       totalCostTxn = issueValuationPlan.totalCostTxn;
@@ -2327,7 +3313,7 @@ export async function createInventoryMovementFromStockLink({
         totalCostTxn,
         totalCostBase,
         currencyCode,
-        valuationStatus,
+        "VALUED",
         note,
       ]
     );
@@ -2450,11 +3436,26 @@ export async function createInventoryMovementFromStockLink({
 
     return fetchMovementById({
       movementId,
-      runQuery: async (sql, params = []) => {
-        const nextParams = [...params];
-        return tx.query(sql, nextParams);
-      },
+      runQuery: async (sql, params = []) => tx.query(sql, [...params]),
     });
+  });
+}
+
+export async function materializeInventoryMovementFromCariStockLink({
+  payload,
+}) {
+  return materializeInventoryMovementFromStockLinkInternal({
+    payload,
+    materializationMode: "STRICT",
+  });
+}
+
+export async function createInventoryMovementFromStockLink({
+  payload,
+}) {
+  return materializeInventoryMovementFromStockLinkInternal({
+    payload,
+    materializationMode: "LEGACY_REPAIR",
   });
 }
 

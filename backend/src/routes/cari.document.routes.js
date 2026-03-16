@@ -15,6 +15,7 @@ import {
   parseDocumentReverseInput,
   parseDocumentIdParam,
   parseDocumentReadFilters,
+  parseDocumentWarehouseLookupFilters,
   parseDocumentUpdateInput,
   parseDraftCancelInput,
 } from "./cari.document.validators.js";
@@ -22,6 +23,7 @@ import {
   cancelCariDraftDocumentById,
   createCariDraftDocument,
   getCariDocumentByIdForTenant,
+  listCariDocumentWarehouseOptions,
   listCariDocumentOpenItemsByIdForTenant,
   listCariDocuments,
   postCariDocumentById,
@@ -95,6 +97,26 @@ router.get(
       tenantId: filters.tenantId,
       filters,
       buildScopeFilter,
+      assertScopeAccess,
+    });
+    return res.json({
+      tenantId: filters.tenantId,
+      ...result,
+    });
+  })
+);
+
+router.get(
+  "/warehouse-options",
+  requirePermission("cari.doc.read", {
+    resolveScope: async (req) => resolveLegalEntityScopeFromQuery(req),
+  }),
+  asyncHandler(async (req, res) => {
+    const filters = parseDocumentWarehouseLookupFilters(req);
+    const result = await listCariDocumentWarehouseOptions({
+      req,
+      tenantId: filters.tenantId,
+      filters,
       assertScopeAccess,
     });
     return res.json({

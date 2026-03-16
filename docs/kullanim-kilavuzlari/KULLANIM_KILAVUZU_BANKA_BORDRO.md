@@ -415,6 +415,11 @@ Kuyrukta:
 
 Amac: Provider CSV verisinden payroll run olusturmak veya correction shell'e veri aktarmak.
 
+Not:
+- Bu rolloutta provider baglanti / preview / apply ekranlari bilerek acik degildir.
+- Mevcut operasyon akisi dogrudan CSV import uzerinden ilerler.
+- `Provider Code` su an canli entegrasyon secimi degil, kaynak / audit etiketi gibi dusunulmelidir.
+
 ### 4.1.1 Alanlar ve secim etkileri
 
 `Target Run ID (opsiyonel)`
@@ -425,7 +430,8 @@ Amac: Provider CSV verisinden payroll run olusturmak veya correction shell'e ver
 - Zorunlu (target run yoksa).
 
 `Provider Code`
-- Entegrasyon kaynagi.
+- Entegrasyon kaynagi / audit etiketi.
+- Mevcut fazda canli provider baglantisi secmez.
 - Oneri: Kurumda standardize tek kod seti kullan.
 
 `Payroll Period` ve `Pay Date`

@@ -442,11 +442,21 @@ export default function Dashboard() {
     return {
       receiptMaterialization: buildAppPath("/app/stok-yansitma-islemleri", {
         legalEntityId,
+        queueScope: "ACTIONABLE",
         stockImpactMode: "RECEIPT_PENDING",
       }),
       issueMaterialization: buildAppPath("/app/stok-yansitma-islemleri", {
         legalEntityId,
+        queueScope: "ACTIONABLE",
         stockImpactMode: "ISSUE_PENDING",
+      }),
+      completedMaterialization: buildAppPath("/app/stok-yansitma-islemleri", {
+        legalEntityId,
+        queueScope: "COMPLETED",
+      }),
+      voidMaterialization: buildAppPath("/app/stok-yansitma-islemleri", {
+        legalEntityId,
+        queueScope: "VOID",
       }),
       waitingApproval: buildAppPath("/app/stok-transferleri", {
         legalEntityId,
@@ -465,6 +475,7 @@ export default function Dashboard() {
       }),
       materialization: buildAppPath("/app/stok-yansitma-islemleri", {
         legalEntityId,
+        queueScope: "ACTIONABLE",
       }),
     };
   }, [inventoryScopeParams.legalEntityId]);
@@ -645,7 +656,7 @@ export default function Dashboard() {
             <p className="mt-1 text-sm text-slate-600">
               {t(
                 "dashboard.inventoryWorkQueueHint",
-                "Pending materialization, transfer prep, transit, and receipt actions."
+                "Ready queue work, blocked or cleanup-required rows, and transfer execution follow-up."
               )}
             </p>
           </div>
@@ -664,29 +675,43 @@ export default function Dashboard() {
           </div>
         ) : (
           <>
-            <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+            <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-6">
               <MetricCard
-                title={t("dashboard.inventory.receiptQueue", "Receipt Queue")}
+                title={t("dashboard.inventory.receiptQueue", "Ready Receipts")}
                 value={formatCount(
-                  snapshot.inventoryWorkQueue?.stockLinks?.pending_receipt_materialization || 0
+                  snapshot.inventoryWorkQueue?.stockLinks?.ready_receipt_materialization || 0
                 )}
                 subtitle={t(
                   "dashboard.inventory.receiptQueueHint",
-                  "AP stock lines waiting warehouse receipt materialization."
+                  "Receipt-side queue rows that can materialize immediately."
                 )}
                 to={inventoryQueueLinks.receiptMaterialization}
                 ctaLabel={t("dashboard.openQueue", "Open queue")}
               />
               <MetricCard
-                title={t("dashboard.inventory.issueQueue", "Issue Queue")}
+                title={t("dashboard.inventory.issueQueue", "Ready Issues")}
                 value={formatCount(
-                  snapshot.inventoryWorkQueue?.stockLinks?.pending_issue_materialization || 0
+                  snapshot.inventoryWorkQueue?.stockLinks?.ready_issue_materialization || 0
                 )}
                 subtitle={t(
                   "dashboard.inventory.issueQueueHint",
-                  "AR stock lines waiting warehouse issue materialization."
+                  "Issue-side queue rows that can materialize immediately."
                 )}
                 to={inventoryQueueLinks.issueMaterialization}
+                ctaLabel={t("dashboard.openQueue", "Open queue")}
+              />
+              <MetricCard
+                title={t("dashboard.inventory.attentionRequired", "Attention Required")}
+                value={formatCount(
+                  (snapshot.inventoryWorkQueue?.stockLinks?.blocked_total || 0) +
+                    (snapshot.inventoryWorkQueue?.stockLinks?.repair_required_total || 0) +
+                    (snapshot.inventoryWorkQueue?.stockLinks?.transfer_required_total || 0)
+                )}
+                subtitle={t(
+                  "dashboard.inventory.attentionRequiredHint",
+                  "Blocked, cleanup-required, or transfer-required stock-link rows."
+                )}
+                to={inventoryQueueLinks.materialization}
                 ctaLabel={t("dashboard.openQueue", "Open queue")}
               />
               <MetricCard
@@ -725,7 +750,47 @@ export default function Dashboard() {
               />
             </div>
 
-            <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-6">
+              <article className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-500">
+                  {t("dashboard.inventory.completedHistory", "Completed History")}
+                </p>
+                <p className="mt-2 text-2xl font-semibold text-slate-900">
+                  {formatCount(snapshot.inventoryWorkQueue?.stockLinks?.completed_total || 0)}
+                </p>
+                <p className="mt-1 text-xs text-slate-600">
+                  {t(
+                    "dashboard.inventory.completedHistoryHint",
+                    "Stock links already materialized and visible through explicit history scope."
+                  )}
+                </p>
+                <Link
+                  to={inventoryQueueLinks.completedMaterialization}
+                  className="mt-2 inline-flex text-xs font-semibold text-slate-700 hover:text-slate-900"
+                >
+                  {t("dashboard.openQueue", "Open queue")}
+                </Link>
+              </article>
+              <article className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-500">
+                  {t("dashboard.inventory.voidHistory", "Void History")}
+                </p>
+                <p className="mt-2 text-2xl font-semibold text-slate-900">
+                  {formatCount(snapshot.inventoryWorkQueue?.stockLinks?.void_total || 0)}
+                </p>
+                <p className="mt-1 text-xs text-slate-600">
+                  {t(
+                    "dashboard.inventory.voidHistoryHint",
+                    "Stock links closed out as void and visible through explicit history scope."
+                  )}
+                </p>
+                <Link
+                  to={inventoryQueueLinks.voidMaterialization}
+                  className="mt-2 inline-flex text-xs font-semibold text-slate-700 hover:text-slate-900"
+                >
+                  {t("dashboard.openQueue", "Open queue")}
+                </Link>
+              </article>
               <article className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
                 <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-500">
                   {t("dashboard.inventory.reopenedPending", "Reopened Pending")}

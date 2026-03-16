@@ -150,6 +150,14 @@ export async function createInventoryMovement(payload) {
   return response.data;
 }
 
+export async function materializeInventoryCariStockLink(stockLinkId, payload) {
+  const response = await api.post(
+    `/api/v1/inventory/cari-stock-links/${stockLinkId}/materialize`,
+    payload
+  );
+  return response.data;
+}
+
 export async function reverseInventoryMovement(movementId, payload = {}) {
   const response = await api.post(
     `/api/v1/inventory/movements/${movementId}/reverse`,

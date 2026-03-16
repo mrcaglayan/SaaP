@@ -45,13 +45,16 @@ This guide is for support and finance users operating the Cari UI modules:
 
 ## Stock Link Materialization (`/app/stok-yansitma-islemleri`)
 
+- Choose the warehouse on each stock-affecting CARI line before posting the document.
 - `STOCK_ITEM` lines create pending stock intent after CARI post:
   - AP purchase -> `RECEIPT_PENDING`
   - AR sale -> `ISSUE_PENDING`
 - Inventory operators then use `/app/stok-yansitma-islemleri` to:
-  - create/select warehouse
-  - materialize pending stock link into inventory movement
+  - materialize the pending stock link against the already-bound warehouse
   - review resulting movement/cost-layer status
+- Queue Scope:
+  - keep `ACTIONABLE` as the default execution view
+  - use `COMPLETED` or `VOID` only as explicit history views
 - Expected outcomes:
   - receipt movement -> `VALUED`
   - issue movement -> `VALUED`
@@ -99,10 +102,22 @@ This guide is for support and finance users operating the Cari UI modules:
 - Reversing a valued issue reopens business intent additively:
   - original stock link stays historical
   - one reopened successor pending stock link is created for the same commercial line
+- If the original bound warehouse still exists, is `ACTIVE`, and still belongs to the same ownership context, the reopened successor inherits that warehouse binding automatically.
 - Materialize the successor link, not the original linked row.
+- If the reopened successor shows `REPAIR_REQUIRED` with `SUCCESSOR_WAREHOUSE_INHERITANCE_INVALID`:
+  - do not try to continue from the normal queue as if it were a fresh strict row
+  - do not ask users to pick another warehouse in the normal queue
+  - treat the row as cleanup/reset follow-up in this rollout; do not route it into a normal operator workflow
 - Replay rule:
   - re-running the same issue reverse should reuse the same reopened successor link
   - re-running successor materialization should reuse the new movement/journal instead of creating duplicates
+
+## Transfer Required Queue State
+
+- If `/app/stok-yansitma-islemleri` shows `TRANSFER_REQUIRED`, the bound warehouse is short and another ownership context still has stock.
+- Do not ask users to pick a different warehouse from the normal queue.
+- Open `/app/stok-transferleri` from the suggested transfer link, create the explicit cross-context transfer, then retry the original strict materialization.
+- If `/app/cari-belgeler` blocks posting with transfer-required guidance, follow the same transfer-first path before retrying post.
 
 ## Undo Materialized Receipt
 

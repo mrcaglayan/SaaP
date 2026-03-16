@@ -14,6 +14,12 @@ export async function listCariDocuments(params = {}) {
   return run(() => api.get(`/api/v1/cari/documents${toCariQueryString(params)}`));
 }
 
+export async function listCariDocumentWarehouseOptions(params = {}) {
+  return run(() =>
+    api.get(`/api/v1/cari/documents/warehouse-options${toCariQueryString(params)}`)
+  );
+}
+
 export async function getCariDocument(documentId) {
   return run(() => api.get(`/api/v1/cari/documents/${documentId}`));
 }

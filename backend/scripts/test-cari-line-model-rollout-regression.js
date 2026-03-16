@@ -7,9 +7,11 @@ import {
 import { createItemCard } from "../src/services/item.card.service.js";
 import {
   createInventoryWarehouse,
-  createInventoryMovementFromStockLink,
+  createInventoryMovementFromStockLink as createLegacyInventoryMovementFromStockLink,
+  getInventoryWorkQueueSummary,
   listInventoryCostLayers,
   listPendingInventoryStockLinks,
+  materializeInventoryMovementFromCariStockLink,
   reverseInventoryMovementById,
 } from "../src/services/inventory.service.js";
 
@@ -65,6 +67,121 @@ function addDays(dateString, daysToAdd) {
 
 function makeInClause(ids) {
   return ids.map(() => "?").join(", ");
+}
+
+async function createInventoryMovementFromStockLink({ payload }) {
+  const strictPayload = {
+    tenantId: payload?.tenantId,
+    userId: payload?.userId,
+    legalEntityId: payload?.legalEntityId,
+    stockLinkId: payload?.stockLinkId ?? payload?.sourceStockLinkId,
+    movementDate: payload?.movementDate,
+    note: payload?.note,
+  };
+  const row = await materializeInventoryMovementFromCariStockLink({
+    payload: strictPayload,
+  });
+  const expectedWarehouseId = toPositiveInt(payload?.warehouseId);
+  if (expectedWarehouseId) {
+    assert(
+      toPositiveInt(row?.warehouseId) === expectedWarehouseId,
+      "Strict stock-link materialization must derive the bound warehouse from the stock link"
+    );
+  }
+  return row;
+}
+
+async function expectLegacyStrictMaterializationBlocked({
+  tenantId,
+  userId,
+  legalEntityId,
+  warehouseId,
+  stockLinkId,
+  movementDate,
+  note,
+}) {
+  let blockedError = null;
+  try {
+    await createLegacyInventoryMovementFromStockLink({
+      payload: {
+        tenantId,
+        userId,
+        legalEntityId,
+        warehouseId,
+        sourceStockLinkId: stockLinkId,
+        movementDate,
+        note,
+      },
+    });
+  } catch (error) {
+    blockedError = error;
+  }
+
+  assert(
+    blockedError,
+    "Legacy inventory movement route must reject strict-mode stock links"
+  );
+  assert(
+    String(blockedError.code || "").trim().toUpperCase() ===
+      "STRICT_STOCK_LINK_MATERIALIZE_ROUTE_REQUIRED",
+    "Legacy inventory movement route must require the dedicated strict stock-link materialize route"
+  );
+  assert(
+    String(blockedError.message || "").includes(
+      `/api/v1/inventory/cari-stock-links/${stockLinkId}/materialize`
+    ),
+    "Legacy strict-route rejection must point operators to the dedicated stock-link materialize endpoint"
+  );
+}
+
+async function expectStrictStockLinkCleanupRequired({
+  tenantId,
+  userId,
+  legalEntityId,
+  stockLinkId,
+  movementDate,
+  note,
+}) {
+  let blockedError = null;
+  try {
+    await materializeInventoryMovementFromCariStockLink({
+      payload: {
+        tenantId,
+        userId,
+        legalEntityId,
+        stockLinkId,
+        movementDate,
+        note,
+      },
+    });
+  } catch (error) {
+    blockedError = error;
+  }
+
+  assert(
+    blockedError,
+    "Strict stock-link materialization must reject cleanup-only successor rows"
+  );
+  assert(
+    String(blockedError.code || "").trim().toUpperCase() ===
+      "STOCK_LINK_CLEANUP_REQUIRED",
+    "Cleanup-only successor rows must raise STOCK_LINK_CLEANUP_REQUIRED"
+  );
+  assert(
+    /reset|clean up|cleanup/i.test(String(blockedError.message || "")),
+    "Cleanup-only successor rows must instruct operators to reset or clean up invalid legacy data"
+  );
+}
+
+function assertQueueReadModelFields(row, messagePrefix) {
+  assert(row, `${messagePrefix} row is required`);
+  assert("queueState" in row, `${messagePrefix} must expose queueState`);
+  assert("blockedReasonCode" in row, `${messagePrefix} must expose blockedReasonCode`);
+  assert("repairReasonCode" in row, `${messagePrefix} must expose repairReasonCode`);
+  assert("canMaterialize" in row, `${messagePrefix} must expose canMaterialize`);
+  assert("isStrictMode" in row, `${messagePrefix} must expose isStrictMode`);
+  assert("isRepairOnly" in row, `${messagePrefix} must expose isRepairOnly`);
+  assert("isLegacyRow" in row, `${messagePrefix} must expose isLegacyRow`);
 }
 
 async function resolveRegressionContext() {
@@ -336,6 +453,35 @@ async function createTempCounterparty({ tenantId, legalEntityId, currencyCode, s
   assert(counterpartyId, "Failed to create CLI09 temp counterparty");
   state.counterpartyId = counterpartyId;
   return counterpartyId;
+}
+
+async function createTempOperatingUnit({ tenantId, legalEntityId, stamp, state }) {
+  const code = `CLI09OU${stamp.slice(-6)}`.slice(0, 80);
+  const insertResult = await query(
+    `INSERT INTO operating_units (
+        tenant_id,
+        legal_entity_id,
+        code,
+        name,
+        unit_type,
+        has_subledger,
+        central_due_from_account_id,
+        central_due_to_account_id,
+        ou_due_from_central_account_id,
+        ou_due_to_central_account_id
+     )
+     VALUES (?, ?, ?, ?, 'BRANCH', FALSE, NULL, NULL, NULL, NULL)`,
+    [
+      tenantId,
+      legalEntityId,
+      code,
+      `CLI09 Operating Unit ${stamp}`,
+    ]
+  );
+  const operatingUnitId = toPositiveInt(insertResult.rows?.insertId);
+  assert(operatingUnitId, "Failed to create CLI09 temp operating unit");
+  state.operatingUnitIds.push(operatingUnitId);
+  return operatingUnitId;
 }
 
 async function setFeatureFlag({ tenantId, userId, featureCode, enabled }) {
@@ -723,6 +869,147 @@ async function queryOpenItem(documentId) {
   return result.rows?.[0] || null;
 }
 
+async function queryDocumentPostingState(documentId) {
+  const result = await query(
+    `SELECT
+        id,
+        status,
+        posted_journal_entry_id
+       FROM cari_documents
+      WHERE id = ?
+      LIMIT 1`,
+    [documentId]
+  );
+  return result.rows?.[0] || null;
+}
+
+async function queryDocumentStockLinkCount(documentId) {
+  const result = await query(
+    `SELECT COUNT(*) AS row_count
+       FROM cari_document_line_stock_links
+      WHERE cari_document_id = ?`,
+    [documentId]
+  );
+  return Number(result.rows?.[0]?.row_count || 0);
+}
+
+async function expectPostBlocked({
+  context,
+  documentId,
+  stamp,
+  suffix,
+  expectedCode = null,
+  expectedMessagePattern = null,
+  expectedReason = null,
+  expectedLineField = null,
+}) {
+  let blockedError = null;
+  try {
+    await postCariDocumentById({
+      req: makeRequestContext({
+        tenantId: context.tenantId,
+        userId: context.userId,
+        stamp,
+        suffix,
+      }),
+      payload: {
+        tenantId: context.tenantId,
+        userId: context.userId,
+        documentId,
+      },
+      assertScopeAccess: allowAllScopes,
+    });
+  } catch (error) {
+    blockedError = error;
+  }
+
+  assert(blockedError, "Posting should be blocked");
+  assert(Number(blockedError.status) === 400, "Blocked post must return status 400");
+  if (expectedCode) {
+    assert(
+      String(blockedError.code || "").trim().toUpperCase() ===
+        String(expectedCode).trim().toUpperCase(),
+      "Blocked post must expose the expected error code"
+    );
+  }
+  if (expectedMessagePattern) {
+    assert(
+      expectedMessagePattern.test(String(blockedError.message || "")),
+      "Blocked post must expose the expected validation message"
+    );
+  }
+  if (expectedReason) {
+    assert(
+      String(blockedError.details?.reason || "").trim().toUpperCase() ===
+        String(expectedReason).trim().toUpperCase(),
+      "Blocked post must expose the expected validation reason"
+    );
+  }
+  if (expectedLineField) {
+    const lineErrors = Array.isArray(blockedError.details?.lineErrors)
+      ? blockedError.details.lineErrors
+      : [];
+    assert(lineErrors.length > 0, "Blocked post must include line-level stock validation errors");
+    assert(
+      lineErrors.some((row) => String(row?.field || "").trim() === String(expectedLineField)),
+      "Blocked post must identify the blocked line field"
+    );
+  }
+
+  const documentState = await queryDocumentPostingState(documentId);
+  assert(documentState, "Blocked post must leave the draft document queryable");
+  assert(
+    String(documentState.status || "").toUpperCase() === "DRAFT",
+    "Blocked post must leave document status as DRAFT"
+  );
+  assert(
+    !toPositiveInt(documentState.posted_journal_entry_id),
+    "Blocked post must not stamp posted journal linkage"
+  );
+
+  const openItem = await queryOpenItem(documentId);
+  assert(!openItem, "Blocked post must not create an open item");
+
+  const stockLinkCount = await queryDocumentStockLinkCount(documentId);
+  assert(stockLinkCount === 0, "Blocked post must not create stock links before validation succeeds");
+
+  return blockedError;
+}
+
+async function expectDraftCreateBlocked({
+  context,
+  payload,
+  stamp,
+  suffix,
+  expectedMessagePattern = null,
+}) {
+  let blockedError = null;
+  try {
+    await createCariDraftDocument({
+      req: makeRequestContext({
+        tenantId: context.tenantId,
+        userId: context.userId,
+        stamp,
+        suffix,
+      }),
+      payload,
+      assertScopeAccess: allowAllScopes,
+    });
+  } catch (error) {
+    blockedError = error;
+  }
+
+  assert(blockedError, "Draft create should be blocked");
+  assert(Number(blockedError.status) === 400, "Blocked draft create must return status 400");
+  if (expectedMessagePattern) {
+    assert(
+      expectedMessagePattern.test(String(blockedError.message || "")),
+      "Blocked draft create must expose the expected validation message"
+    );
+  }
+  return blockedError;
+}
+
 async function queryIssueLayerConsumptions(issueMovementId) {
   const result = await query(
     `SELECT
@@ -769,6 +1056,7 @@ async function queryStockLinksForDocumentLine({
         cari_document_line_id,
         stock_impact_mode,
         link_status,
+        warehouse_id,
         inventory_movement_id,
         reopened_from_stock_link_id,
         superseded_by_stock_link_id,
@@ -969,6 +1257,803 @@ async function runSyntheticSingleLineScenario({
   );
 }
 
+async function runStrictPostingValidationScenario({
+  context,
+  counterpartyId,
+  accountIds,
+  state,
+}) {
+  const itemCard = await createItemCard({
+    payload: {
+      tenantId: context.tenantId,
+      legalEntityId: context.legalEntityId,
+      code: `CLI09PV${state.stamp.slice(-6)}`.slice(0, 80),
+      name: `CLI09 Post Validation Item ${state.stamp}`,
+      itemType: "STOCK_ITEM",
+      defaultSalesAccountId: accountIds.arOffsetAccountId,
+      defaultPurchaseAccountId: accountIds.apOffsetAccountId,
+      inventoryAssetAccountId: accountIds.inventoryAssetAccountId,
+      defaultCogsAccountId: accountIds.cogsAccountId,
+      taxCategoryCode: null,
+      status: "ACTIVE",
+    },
+  });
+  state.itemCardIds.push(toPositiveInt(itemCard.id));
+
+  const inactiveWarehouse = await createInventoryWarehouse({
+    payload: {
+      tenantId: context.tenantId,
+      legalEntityId: context.legalEntityId,
+      code: `CLI09IA${state.stamp.slice(-5)}`.slice(0, 80),
+      name: `CLI09 Inactive Warehouse ${state.stamp}`,
+      status: "INACTIVE",
+      notes: "CLI09 inactive warehouse for post-time validation",
+    },
+  });
+  state.warehouseIds.push(toPositiveInt(inactiveWarehouse.id));
+
+  const noActiveWarehouseDraft = await createCariDraftDocument({
+    req: makeRequestContext({
+      tenantId: context.tenantId,
+      userId: context.userId,
+      stamp: state.stamp,
+      suffix: "strict-no-active-create",
+    }),
+    payload: {
+      tenantId: context.tenantId,
+      userId: context.userId,
+      legalEntityId: context.legalEntityId,
+      counterpartyId,
+      paymentTermId: null,
+      direction: "AR",
+      documentType: "INVOICE",
+      documentDate: context.postingDate,
+      dueDate: addDays(context.postingDate, 11),
+      currencyCode: context.currencyCode,
+      lines: [
+        {
+          description: "CLI09 blocked by no active warehouse",
+          itemCardId: itemCard.id,
+          warehouseId: inactiveWarehouse.id,
+          quantity: 2,
+          lineNetAmountTxn: 180,
+          lineTaxAmountTxn: 0,
+          lineGrossAmountTxn: 180,
+        },
+      ],
+    },
+    assertScopeAccess: allowAllScopes,
+  });
+  state.documentIds.push(noActiveWarehouseDraft.id);
+
+  await expectPostBlocked({
+    context,
+    documentId: noActiveWarehouseDraft.id,
+    stamp: state.stamp,
+    suffix: "strict-no-active-post",
+    expectedMessagePattern: /No active warehouse exists for ownership context CENTRAL/i,
+  });
+
+  const activeWarehouse = await createInventoryWarehouse({
+    payload: {
+      tenantId: context.tenantId,
+      legalEntityId: context.legalEntityId,
+      code: `CLI09AV${state.stamp.slice(-5)}`.slice(0, 80),
+      name: `CLI09 Active Warehouse ${state.stamp}`,
+      status: "ACTIVE",
+      notes: "CLI09 active warehouse for stock shortage validation",
+    },
+  });
+  state.warehouseIds.push(toPositiveInt(activeWarehouse.id));
+
+  const shortageDraft = await createCariDraftDocument({
+    req: makeRequestContext({
+      tenantId: context.tenantId,
+      userId: context.userId,
+      stamp: state.stamp,
+      suffix: "strict-shortage-create",
+    }),
+    payload: {
+      tenantId: context.tenantId,
+      userId: context.userId,
+      legalEntityId: context.legalEntityId,
+      counterpartyId,
+      paymentTermId: null,
+      direction: "AR",
+      documentType: "INVOICE",
+      documentDate: context.postingDate,
+      dueDate: addDays(context.postingDate, 13),
+      currencyCode: context.currencyCode,
+      lines: [
+        {
+          description: "CLI09 blocked by bound warehouse shortage",
+          itemCardId: itemCard.id,
+          warehouseId: activeWarehouse.id,
+          quantity: 2,
+          lineNetAmountTxn: 240,
+          lineTaxAmountTxn: 0,
+          lineGrossAmountTxn: 240,
+        },
+      ],
+    },
+    assertScopeAccess: allowAllScopes,
+  });
+  state.documentIds.push(shortageDraft.id);
+
+  const shortageError = await expectPostBlocked({
+    context,
+    documentId: shortageDraft.id,
+    stamp: state.stamp,
+    suffix: "strict-shortage-post",
+    expectedCode: "CARI_DOCUMENT_POST_STOCK_VALIDATION_FAILED",
+    expectedReason: "INSUFFICIENT_AVAILABLE_STOCK_IN_BOUND_WAREHOUSE",
+    expectedLineField: "storedLines[1].quantity",
+    expectedMessagePattern: /Insufficient available stock in bound warehouse/i,
+  });
+  const lineErrors = Array.isArray(shortageError.details?.lineErrors)
+    ? shortageError.details.lineErrors
+    : [];
+  assert(lineErrors.length === 1, "Shortage-blocked post must report one blocked line");
+  assert(
+    amountsEqual(lineErrors[0]?.requestedQuantity, 2) &&
+      amountsEqual(lineErrors[0]?.availableQuantity, 0),
+    "Shortage-blocked post must expose requested and available quantities"
+  );
+
+  const transferOperatingUnitId = await createTempOperatingUnit({
+    tenantId: context.tenantId,
+    legalEntityId: context.legalEntityId,
+    stamp: `${state.stamp}TV`,
+    state,
+  });
+  const transferSourceWarehouse = await createInventoryWarehouse({
+    payload: {
+      tenantId: context.tenantId,
+      legalEntityId: context.legalEntityId,
+      ownershipScope: "OPERATING_UNIT",
+      operatingUnitId: transferOperatingUnitId,
+      code: `CLI09TV${state.stamp.slice(-5)}`.slice(0, 80),
+      name: `CLI09 Transfer Source Warehouse ${state.stamp}`,
+      status: "ACTIVE",
+      notes: "CLI09 transfer-required source warehouse",
+    },
+  });
+  state.warehouseIds.push(toPositiveInt(transferSourceWarehouse.id));
+
+  const transferSourceReceiptDraft = await createCariDraftDocument({
+    req: makeRequestContext({
+      tenantId: context.tenantId,
+      userId: context.userId,
+      stamp: state.stamp,
+      suffix: "strict-transfer-source-receipt-create",
+    }),
+    payload: {
+      tenantId: context.tenantId,
+      userId: context.userId,
+      legalEntityId: context.legalEntityId,
+      operatingUnitId: transferOperatingUnitId,
+      counterpartyId,
+      paymentTermId: null,
+      direction: "AP",
+      documentType: "INVOICE",
+      documentDate: context.postingDate,
+      dueDate: addDays(context.postingDate, 14),
+      currencyCode: context.currencyCode,
+      lines: [
+        {
+          description: "CLI09 transfer-required source receipt",
+          itemCardId: itemCard.id,
+          warehouseId: transferSourceWarehouse.id,
+          quantity: 6,
+          lineNetAmountTxn: 600,
+          lineTaxAmountTxn: 0,
+          lineGrossAmountTxn: 600,
+        },
+      ],
+    },
+    assertScopeAccess: allowAllScopes,
+  });
+  state.documentIds.push(transferSourceReceiptDraft.id);
+
+  const postedTransferSourceReceipt = await postCariDocumentById({
+    req: makeRequestContext({
+      tenantId: context.tenantId,
+      userId: context.userId,
+      stamp: state.stamp,
+      suffix: "strict-transfer-source-receipt-post",
+    }),
+    payload: {
+      tenantId: context.tenantId,
+      userId: context.userId,
+      documentId: transferSourceReceiptDraft.id,
+    },
+    assertScopeAccess: allowAllScopes,
+  });
+  state.journalEntryIds.push(toPositiveInt(postedTransferSourceReceipt.journal?.journalEntryId));
+
+  const postedTransferSourceLinks = await listPendingInventoryStockLinks({
+    tenantId: context.tenantId,
+    filters: {
+      legalEntityId: context.legalEntityId,
+      queueScope: "ACTIONABLE",
+      limit: 200,
+      offset: 0,
+    },
+  });
+  const transferSourceReceiptLink = (postedTransferSourceLinks.rows || []).find(
+    (row) =>
+      toPositiveInt(row.documentId) === toPositiveInt(transferSourceReceiptDraft.id) &&
+      String(row.stockImpactMode || "").toUpperCase() === "RECEIPT_PENDING"
+  );
+  assert(
+    transferSourceReceiptLink,
+    "Transfer-required source receipt must create a pending receipt stock link"
+  );
+  state.stockLinkIds.push(toPositiveInt(transferSourceReceiptLink.id));
+  const transferSourceReceiptMovement = await createInventoryMovementFromStockLink({
+    payload: {
+      tenantId: context.tenantId,
+      userId: context.userId,
+      legalEntityId: context.legalEntityId,
+      warehouseId: transferSourceWarehouse.id,
+      stockLinkId: transferSourceReceiptLink.id,
+      movementDate: context.postingDate,
+      note: `CLI09 transfer-required source receipt materialization ${state.stamp}`,
+    },
+  });
+  state.inventoryMovementIds.push(toPositiveInt(transferSourceReceiptMovement.id));
+
+  const transferRequiredDraft = await createCariDraftDocument({
+    req: makeRequestContext({
+      tenantId: context.tenantId,
+      userId: context.userId,
+      stamp: state.stamp,
+      suffix: "strict-transfer-required-create",
+    }),
+    payload: {
+      tenantId: context.tenantId,
+      userId: context.userId,
+      legalEntityId: context.legalEntityId,
+      counterpartyId,
+      paymentTermId: null,
+      direction: "AR",
+      documentType: "INVOICE",
+      documentDate: context.postingDate,
+      dueDate: addDays(context.postingDate, 15),
+      currencyCode: context.currencyCode,
+      lines: [
+        {
+          description: "CLI09 blocked by transfer-required guidance",
+          itemCardId: itemCard.id,
+          warehouseId: activeWarehouse.id,
+          quantity: 2,
+          lineNetAmountTxn: 260,
+          lineTaxAmountTxn: 0,
+          lineGrossAmountTxn: 260,
+        },
+      ],
+    },
+    assertScopeAccess: allowAllScopes,
+  });
+  state.documentIds.push(transferRequiredDraft.id);
+
+  const transferRequiredError = await expectPostBlocked({
+    context,
+    documentId: transferRequiredDraft.id,
+    stamp: state.stamp,
+    suffix: "strict-transfer-required-post",
+    expectedCode: "CARI_DOCUMENT_POST_STOCK_VALIDATION_FAILED",
+    expectedReason: "TRANSFER_REQUIRED",
+    expectedLineField: "storedLines[1].quantity",
+    expectedMessagePattern: /transfer is required/i,
+  });
+  const transferRequiredLineErrors = Array.isArray(transferRequiredError.details?.lineErrors)
+    ? transferRequiredError.details.lineErrors
+    : [];
+  assert(
+    transferRequiredLineErrors.length === 1,
+    "Transfer-required blocked post must report one blocked line"
+  );
+  assert(
+    toPositiveInt(transferRequiredLineErrors[0]?.transferSourceWarehouseId) ===
+      toPositiveInt(transferSourceWarehouse.id),
+    "Transfer-required blocked post must suggest the other ownership-context warehouse"
+  );
+  assert(
+    amountsEqual(transferRequiredLineErrors[0]?.crossContextAvailableQuantity, 6),
+    "Transfer-required blocked post must expose cross-context availability quantity"
+  );
+}
+
+async function runTransferRequiredQueueScenario({
+  context,
+  counterpartyId,
+  accountIds,
+  state,
+}) {
+  const itemCard = await createItemCard({
+    payload: {
+      tenantId: context.tenantId,
+      legalEntityId: context.legalEntityId,
+      code: `CLI09TR${state.stamp.slice(-6)}`.slice(0, 80),
+      name: `CLI09 Transfer Required Item ${state.stamp}`,
+      itemType: "STOCK_ITEM",
+      defaultSalesAccountId: accountIds.arOffsetAccountId,
+      defaultPurchaseAccountId: accountIds.apOffsetAccountId,
+      inventoryAssetAccountId: accountIds.inventoryAssetAccountId,
+      defaultCogsAccountId: accountIds.cogsAccountId,
+      taxCategoryCode: null,
+      status: "ACTIVE",
+    },
+  });
+  state.itemCardIds.push(toPositiveInt(itemCard.id));
+
+  const transferOperatingUnitId = await createTempOperatingUnit({
+    tenantId: context.tenantId,
+    legalEntityId: context.legalEntityId,
+    stamp: `${state.stamp}TR`,
+    state,
+  });
+  const boundWarehouse = await createInventoryWarehouse({
+    payload: {
+      tenantId: context.tenantId,
+      legalEntityId: context.legalEntityId,
+      code: `CLI09TB${state.stamp.slice(-5)}`.slice(0, 80),
+      name: `CLI09 Transfer Bound Warehouse ${state.stamp}`,
+      status: "ACTIVE",
+      notes: "CLI09 transfer-required bound warehouse",
+    },
+  });
+  state.warehouseIds.push(toPositiveInt(boundWarehouse.id));
+  const sourceWarehouse = await createInventoryWarehouse({
+    payload: {
+      tenantId: context.tenantId,
+      legalEntityId: context.legalEntityId,
+      ownershipScope: "OPERATING_UNIT",
+      operatingUnitId: transferOperatingUnitId,
+      code: `CLI09TS${state.stamp.slice(-5)}`.slice(0, 80),
+      name: `CLI09 Transfer Source Queue Warehouse ${state.stamp}`,
+      status: "ACTIVE",
+      notes: "CLI09 transfer-required queue source warehouse",
+    },
+  });
+  state.warehouseIds.push(toPositiveInt(sourceWarehouse.id));
+
+  const boundReceiptDraft = await createCariDraftDocument({
+    req: makeRequestContext({
+      tenantId: context.tenantId,
+      userId: context.userId,
+      stamp: state.stamp,
+      suffix: "transfer-queue-bound-receipt-create",
+    }),
+    payload: {
+      tenantId: context.tenantId,
+      userId: context.userId,
+      legalEntityId: context.legalEntityId,
+      counterpartyId,
+      paymentTermId: null,
+      direction: "AP",
+      documentType: "INVOICE",
+      documentDate: context.postingDate,
+      dueDate: addDays(context.postingDate, 16),
+      currencyCode: context.currencyCode,
+      lines: [
+        {
+          description: "CLI09 transfer queue bound receipt",
+          itemCardId: itemCard.id,
+          warehouseId: boundWarehouse.id,
+          quantity: 4,
+          lineNetAmountTxn: 400,
+          lineTaxAmountTxn: 0,
+          lineGrossAmountTxn: 400,
+        },
+      ],
+    },
+    assertScopeAccess: allowAllScopes,
+  });
+  state.documentIds.push(boundReceiptDraft.id);
+  const postedBoundReceipt = await postCariDocumentById({
+    req: makeRequestContext({
+      tenantId: context.tenantId,
+      userId: context.userId,
+      stamp: state.stamp,
+      suffix: "transfer-queue-bound-receipt-post",
+    }),
+    payload: {
+      tenantId: context.tenantId,
+      userId: context.userId,
+      documentId: boundReceiptDraft.id,
+    },
+    assertScopeAccess: allowAllScopes,
+  });
+  state.journalEntryIds.push(toPositiveInt(postedBoundReceipt.journal?.journalEntryId));
+
+  const sourceReceiptDraft = await createCariDraftDocument({
+    req: makeRequestContext({
+      tenantId: context.tenantId,
+      userId: context.userId,
+      stamp: state.stamp,
+      suffix: "transfer-queue-source-receipt-create",
+    }),
+    payload: {
+      tenantId: context.tenantId,
+      userId: context.userId,
+      legalEntityId: context.legalEntityId,
+      operatingUnitId: transferOperatingUnitId,
+      counterpartyId,
+      paymentTermId: null,
+      direction: "AP",
+      documentType: "INVOICE",
+      documentDate: context.postingDate,
+      dueDate: addDays(context.postingDate, 16),
+      currencyCode: context.currencyCode,
+      lines: [
+        {
+          description: "CLI09 transfer queue source receipt",
+          itemCardId: itemCard.id,
+          warehouseId: sourceWarehouse.id,
+          quantity: 6,
+          lineNetAmountTxn: 600,
+          lineTaxAmountTxn: 0,
+          lineGrossAmountTxn: 600,
+        },
+      ],
+    },
+    assertScopeAccess: allowAllScopes,
+  });
+  state.documentIds.push(sourceReceiptDraft.id);
+  const postedSourceReceipt = await postCariDocumentById({
+    req: makeRequestContext({
+      tenantId: context.tenantId,
+      userId: context.userId,
+      stamp: state.stamp,
+      suffix: "transfer-queue-source-receipt-post",
+    }),
+    payload: {
+      tenantId: context.tenantId,
+      userId: context.userId,
+      documentId: sourceReceiptDraft.id,
+    },
+    assertScopeAccess: allowAllScopes,
+  });
+  state.journalEntryIds.push(toPositiveInt(postedSourceReceipt.journal?.journalEntryId));
+
+  const postedReceiptLinks = await listPendingInventoryStockLinks({
+    tenantId: context.tenantId,
+    filters: {
+      legalEntityId: context.legalEntityId,
+      queueScope: "ACTIONABLE",
+      limit: 200,
+      offset: 0,
+    },
+  });
+  const boundReceiptLink = (postedReceiptLinks.rows || []).find(
+    (row) =>
+      toPositiveInt(row.documentId) === toPositiveInt(boundReceiptDraft.id) &&
+      String(row.stockImpactMode || "").toUpperCase() === "RECEIPT_PENDING"
+  );
+  const sourceReceiptLink = (postedReceiptLinks.rows || []).find(
+    (row) =>
+      toPositiveInt(row.documentId) === toPositiveInt(sourceReceiptDraft.id) &&
+      String(row.stockImpactMode || "").toUpperCase() === "RECEIPT_PENDING"
+  );
+  assert(boundReceiptLink, "Transfer-required queue scenario must create a bound receipt link");
+  assert(sourceReceiptLink, "Transfer-required queue scenario must create a source receipt link");
+  state.stockLinkIds.push(toPositiveInt(boundReceiptLink.id));
+  state.stockLinkIds.push(toPositiveInt(sourceReceiptLink.id));
+
+  const boundReceiptMovement = await createInventoryMovementFromStockLink({
+    payload: {
+      tenantId: context.tenantId,
+      userId: context.userId,
+      legalEntityId: context.legalEntityId,
+      warehouseId: boundWarehouse.id,
+      stockLinkId: boundReceiptLink.id,
+      movementDate: context.postingDate,
+      note: `CLI09 transfer queue bound receipt materialization ${state.stamp}`,
+    },
+  });
+  const sourceReceiptMovement = await createInventoryMovementFromStockLink({
+    payload: {
+      tenantId: context.tenantId,
+      userId: context.userId,
+      legalEntityId: context.legalEntityId,
+      warehouseId: sourceWarehouse.id,
+      stockLinkId: sourceReceiptLink.id,
+      movementDate: context.postingDate,
+      note: `CLI09 transfer queue source receipt materialization ${state.stamp}`,
+    },
+  });
+  state.inventoryMovementIds.push(toPositiveInt(boundReceiptMovement.id));
+  state.inventoryMovementIds.push(toPositiveInt(sourceReceiptMovement.id));
+
+  const firstIssueDraft = await createCariDraftDocument({
+    req: makeRequestContext({
+      tenantId: context.tenantId,
+      userId: context.userId,
+      stamp: state.stamp,
+      suffix: "transfer-queue-first-issue-create",
+    }),
+    payload: {
+      tenantId: context.tenantId,
+      userId: context.userId,
+      legalEntityId: context.legalEntityId,
+      counterpartyId,
+      paymentTermId: null,
+      direction: "AR",
+      documentType: "INVOICE",
+      documentDate: context.postingDate,
+      dueDate: addDays(context.postingDate, 17),
+      currencyCode: context.currencyCode,
+      lines: [
+        {
+          description: "CLI09 transfer queue first issue",
+          itemCardId: itemCard.id,
+          warehouseId: boundWarehouse.id,
+          quantity: 4,
+          lineNetAmountTxn: 520,
+          lineTaxAmountTxn: 0,
+          lineGrossAmountTxn: 520,
+        },
+      ],
+    },
+    assertScopeAccess: allowAllScopes,
+  });
+  state.documentIds.push(firstIssueDraft.id);
+  const postedFirstIssue = await postCariDocumentById({
+    req: makeRequestContext({
+      tenantId: context.tenantId,
+      userId: context.userId,
+      stamp: state.stamp,
+      suffix: "transfer-queue-first-issue-post",
+    }),
+    payload: {
+      tenantId: context.tenantId,
+      userId: context.userId,
+      documentId: firstIssueDraft.id,
+    },
+    assertScopeAccess: allowAllScopes,
+  });
+  state.journalEntryIds.push(toPositiveInt(postedFirstIssue.journal?.journalEntryId));
+
+  const secondIssueDraft = await createCariDraftDocument({
+    req: makeRequestContext({
+      tenantId: context.tenantId,
+      userId: context.userId,
+      stamp: state.stamp,
+      suffix: "transfer-queue-second-issue-create",
+    }),
+    payload: {
+      tenantId: context.tenantId,
+      userId: context.userId,
+      legalEntityId: context.legalEntityId,
+      counterpartyId,
+      paymentTermId: null,
+      direction: "AR",
+      documentType: "INVOICE",
+      documentDate: context.postingDate,
+      dueDate: addDays(context.postingDate, 18),
+      currencyCode: context.currencyCode,
+      lines: [
+        {
+          description: "CLI09 transfer queue second issue",
+          itemCardId: itemCard.id,
+          warehouseId: boundWarehouse.id,
+          quantity: 3,
+          lineNetAmountTxn: 390,
+          lineTaxAmountTxn: 0,
+          lineGrossAmountTxn: 390,
+        },
+      ],
+    },
+    assertScopeAccess: allowAllScopes,
+  });
+  state.documentIds.push(secondIssueDraft.id);
+  const postedSecondIssue = await postCariDocumentById({
+    req: makeRequestContext({
+      tenantId: context.tenantId,
+      userId: context.userId,
+      stamp: state.stamp,
+      suffix: "transfer-queue-second-issue-post",
+    }),
+    payload: {
+      tenantId: context.tenantId,
+      userId: context.userId,
+      documentId: secondIssueDraft.id,
+    },
+    assertScopeAccess: allowAllScopes,
+  });
+  state.journalEntryIds.push(toPositiveInt(postedSecondIssue.journal?.journalEntryId));
+
+  const pendingIssueLinks = await listPendingInventoryStockLinks({
+    tenantId: context.tenantId,
+    filters: {
+      legalEntityId: context.legalEntityId,
+      queueScope: "ACTIONABLE",
+      stockImpactMode: "ISSUE_PENDING",
+      limit: 200,
+      offset: 0,
+    },
+  });
+  const firstIssueLink = (pendingIssueLinks.rows || []).find(
+    (row) => toPositiveInt(row.documentId) === toPositiveInt(firstIssueDraft.id)
+  );
+  const secondIssueLink = (pendingIssueLinks.rows || []).find(
+    (row) => toPositiveInt(row.documentId) === toPositiveInt(secondIssueDraft.id)
+  );
+  assert(firstIssueLink, "Transfer-required queue scenario must create the first issue link");
+  assert(secondIssueLink, "Transfer-required queue scenario must create the second issue link");
+  state.stockLinkIds.push(toPositiveInt(firstIssueLink.id));
+  state.stockLinkIds.push(toPositiveInt(secondIssueLink.id));
+
+  const firstIssueMovement = await createInventoryMovementFromStockLink({
+    payload: {
+      tenantId: context.tenantId,
+      userId: context.userId,
+      legalEntityId: context.legalEntityId,
+      warehouseId: boundWarehouse.id,
+      stockLinkId: firstIssueLink.id,
+      movementDate: context.postingDate,
+      note: `CLI09 transfer queue first issue materialization ${state.stamp}`,
+    },
+  });
+  state.inventoryMovementIds.push(toPositiveInt(firstIssueMovement.id));
+  if (toPositiveInt(firstIssueMovement.postedJournalEntryId)) {
+    state.journalEntryIds.push(toPositiveInt(firstIssueMovement.postedJournalEntryId));
+  }
+
+  const actionableQueueAfterConsumption = await listPendingInventoryStockLinks({
+    tenantId: context.tenantId,
+    filters: {
+      legalEntityId: context.legalEntityId,
+      queueScope: "ACTIONABLE",
+      stockImpactMode: "ISSUE_PENDING",
+      limit: 200,
+      offset: 0,
+    },
+  });
+  const transferRequiredRow = (actionableQueueAfterConsumption.rows || []).find(
+    (row) => toPositiveInt(row.id) === toPositiveInt(secondIssueLink.id)
+  );
+  assert(transferRequiredRow, "Consumed queue must still expose the second pending issue row");
+  assertQueueReadModelFields(transferRequiredRow, "Transfer-required queue row");
+  assert(
+    String(transferRequiredRow.queueState || "").toUpperCase() === "TRANSFER_REQUIRED",
+    "Queue must derive TRANSFER_REQUIRED when another ownership context has stock"
+  );
+  assert(
+    transferRequiredRow.canMaterialize === false &&
+      !String(transferRequiredRow.blockedReasonCode || "").trim(),
+    "TRANSFER_REQUIRED rows must not materialize and must not duplicate the queue state in blockedReasonCode"
+  );
+  assert(
+    toPositiveInt(transferRequiredRow.transferSourceWarehouseId) ===
+      toPositiveInt(sourceWarehouse.id),
+    "TRANSFER_REQUIRED queue rows must expose the suggested source warehouse"
+  );
+  assert(
+    amountsEqual(transferRequiredRow.boundAvailableQuantity, 0) &&
+      amountsEqual(transferRequiredRow.crossContextAvailableQuantity, 6),
+    "TRANSFER_REQUIRED queue rows must expose bound and cross-context availability quantities"
+  );
+
+  const transferQueueSummary = await getInventoryWorkQueueSummary({
+    tenantId: context.tenantId,
+    filters: {
+      legalEntityId: context.legalEntityId,
+    },
+  });
+  assert(
+    toNumber(transferQueueSummary?.stockLinks?.transfer_required_total) >= 1,
+    "Inventory work-queue summary must count transfer-required rows"
+  );
+
+  let transferRequiredMaterializeError = null;
+  try {
+    await materializeInventoryMovementFromCariStockLink({
+      payload: {
+        tenantId: context.tenantId,
+        userId: context.userId,
+        legalEntityId: context.legalEntityId,
+        stockLinkId: secondIssueLink.id,
+        movementDate: context.postingDate,
+        note: `CLI09 transfer queue blocked materialization ${state.stamp}`,
+      },
+    });
+  } catch (error) {
+    transferRequiredMaterializeError = error;
+  }
+  assert(
+    transferRequiredMaterializeError,
+    "Strict materialization must block when transfer is required"
+  );
+  assert(
+    String(transferRequiredMaterializeError.code || "").trim().toUpperCase() ===
+      "TRANSFER_REQUIRED",
+    "Strict materialization must surface TRANSFER_REQUIRED when another ownership context has stock"
+  );
+  assert(
+    toPositiveInt(transferRequiredMaterializeError.details?.transferSourceWarehouseId) ===
+      toPositiveInt(sourceWarehouse.id),
+    "Strict materialization transfer-required error must suggest the source warehouse"
+  );
+}
+
+async function runDraftWarehouseOwnershipValidationScenario({
+  context,
+  counterpartyId,
+  accountIds,
+  state,
+}) {
+  const itemCard = await createItemCard({
+    payload: {
+      tenantId: context.tenantId,
+      legalEntityId: context.legalEntityId,
+      code: `CLI09OUV${state.stamp.slice(-6)}`.slice(0, 80),
+      name: `CLI09 Ownership Validation Item ${state.stamp}`,
+      itemType: "STOCK_ITEM",
+      defaultSalesAccountId: accountIds.arOffsetAccountId,
+      defaultPurchaseAccountId: accountIds.apOffsetAccountId,
+      inventoryAssetAccountId: accountIds.inventoryAssetAccountId,
+      defaultCogsAccountId: accountIds.cogsAccountId,
+      taxCategoryCode: null,
+      status: "ACTIVE",
+    },
+  });
+  state.itemCardIds.push(toPositiveInt(itemCard.id));
+
+  const operatingUnitId = await createTempOperatingUnit({
+    tenantId: context.tenantId,
+    legalEntityId: context.legalEntityId,
+    stamp: state.stamp,
+    state,
+  });
+
+  const foreignContextWarehouse = await createInventoryWarehouse({
+    payload: {
+      tenantId: context.tenantId,
+      legalEntityId: context.legalEntityId,
+      ownershipScope: "OPERATING_UNIT",
+      operatingUnitId,
+      code: `CLI09OW${state.stamp.slice(-5)}`.slice(0, 80),
+      name: `CLI09 Cross-context Warehouse ${state.stamp}`,
+      status: "ACTIVE",
+      notes: "CLI09 draft ownership-context validation",
+    },
+  });
+  state.warehouseIds.push(toPositiveInt(foreignContextWarehouse.id));
+
+  await expectDraftCreateBlocked({
+    context,
+    stamp: state.stamp,
+    suffix: "draft-cross-context-create",
+    expectedMessagePattern: /Warehouse does not belong to ownership context CENTRAL/i,
+    payload: {
+      tenantId: context.tenantId,
+      userId: context.userId,
+      legalEntityId: context.legalEntityId,
+      counterpartyId,
+      paymentTermId: null,
+      direction: "AR",
+      documentType: "INVOICE",
+      documentDate: context.postingDate,
+      dueDate: addDays(context.postingDate, 9),
+      currencyCode: context.currencyCode,
+      lines: [
+        {
+          description: "CLI09 cross-context draft save block",
+          itemCardId: itemCard.id,
+          warehouseId: foreignContextWarehouse.id,
+          quantity: 1,
+          lineNetAmountTxn: 90,
+          lineTaxAmountTxn: 0,
+          lineGrossAmountTxn: 90,
+        },
+      ],
+    },
+  });
+}
+
 async function runItemCardAndInventoryScenario({
   context,
   counterpartyId,
@@ -992,6 +2077,18 @@ async function runItemCardAndInventoryScenario({
   });
   state.itemCardIds.push(toPositiveInt(itemCard.id));
 
+  const warehouse = await createInventoryWarehouse({
+    payload: {
+      tenantId: context.tenantId,
+      legalEntityId: context.legalEntityId,
+      code: `CLI09WH${state.stamp.slice(-6)}`.slice(0, 80),
+      name: `CLI09 Warehouse ${state.stamp}`,
+      status: "ACTIVE",
+      notes: "CLI09 temp warehouse",
+    },
+  });
+  state.warehouseIds.push(toPositiveInt(warehouse.id));
+
   const apDraft = await createCariDraftDocument({
     req: makeRequestContext({
       tenantId: context.tenantId,
@@ -1014,6 +2111,7 @@ async function runItemCardAndInventoryScenario({
         {
           description: "CLI09 AP stock purchase",
           itemCardId: itemCard.id,
+          warehouseId: warehouse.id,
           quantity: 10,
           lineNetAmountTxn: 500,
           lineTaxAmountTxn: 0,
@@ -1031,6 +2129,107 @@ async function runItemCardAndInventoryScenario({
   assert(
     String(apDraft.lines?.[0]?.stockImpactMode || "").toUpperCase() === "RECEIPT_PENDING",
     "AP stock draft must default stockImpactMode to RECEIPT_PENDING"
+  );
+
+  const postedAp = await postCariDocumentById({
+    req: makeRequestContext({
+      tenantId: context.tenantId,
+      userId: context.userId,
+      stamp: state.stamp,
+      suffix: "item-ap-post",
+    }),
+    payload: {
+      tenantId: context.tenantId,
+      userId: context.userId,
+      documentId: apDraft.id,
+    },
+    assertScopeAccess: allowAllScopes,
+  });
+  state.journalEntryIds.push(toPositiveInt(postedAp.journal?.journalEntryId));
+
+  const apJournalLines = await queryJournalLines(postedAp.journal.journalEntryId);
+  assert(
+    apJournalLines.some((row) => toPositiveInt(row.account_id) === accountIds.inventoryAssetAccountId),
+    "Posted AP stock invoice must debit the inventory asset account"
+  );
+  assert(
+    apJournalLines.some((row) => toPositiveInt(row.account_id) === accountIds.apControlAccountId),
+    "Posted AP stock invoice must credit the AP control account"
+  );
+
+  const pendingLinks = await listPendingInventoryStockLinks({
+    tenantId: context.tenantId,
+    filters: {
+      legalEntityId: context.legalEntityId,
+      queueScope: "ACTIONABLE",
+      limit: 200,
+      offset: 0,
+    },
+  });
+  const receiptLink = (pendingLinks.rows || []).find(
+    (row) =>
+      toPositiveInt(row.documentId) === toPositiveInt(apDraft.id) &&
+      String(row.stockImpactMode || "").toUpperCase() === "RECEIPT_PENDING"
+  );
+  assert(receiptLink, "Posted AP stock invoice must create one pending receipt stock link");
+  assert(
+    toPositiveInt(receiptLink.boundWarehouseId) === toPositiveInt(warehouse.id),
+    "Posted AP stock invoice must propagate the selected warehouse onto the pending receipt stock link"
+  );
+  assertQueueReadModelFields(receiptLink, "Receipt queue row");
+  assert(
+    String(receiptLink.queueState || "").toUpperCase() === "READY" &&
+      receiptLink.canMaterialize === true &&
+      receiptLink.isStrictMode === true &&
+      receiptLink.isRepairOnly === false &&
+      receiptLink.isLegacyRow === false,
+    "New strict-mode receipt queue rows must surface READY/canMaterialize/isStrictMode flags"
+  );
+  state.stockLinkIds.push(toPositiveInt(receiptLink.id));
+
+  await expectLegacyStrictMaterializationBlocked({
+    tenantId: context.tenantId,
+    userId: context.userId,
+    legalEntityId: context.legalEntityId,
+    warehouseId: warehouse.id,
+    stockLinkId: receiptLink.id,
+    movementDate: context.postingDate,
+    note: `CLI09 legacy receipt materialization blocked ${state.stamp}`,
+  });
+
+  const receiptMovement = await createInventoryMovementFromStockLink({
+    payload: {
+      tenantId: context.tenantId,
+      userId: context.userId,
+      legalEntityId: context.legalEntityId,
+      warehouseId: warehouse.id,
+      sourceStockLinkId: receiptLink.id,
+      movementDate: context.postingDate,
+      note: `CLI09 receipt materialization ${state.stamp}`,
+    },
+  });
+  state.inventoryMovementIds.push(toPositiveInt(receiptMovement.id));
+  assert(
+    String(receiptMovement.valuationStatus || "").toUpperCase() === "VALUED",
+    "Receipt movement must be VALUED on materialization"
+  );
+  const completedReceiptLinks = await listPendingInventoryStockLinks({
+    tenantId: context.tenantId,
+    filters: {
+      legalEntityId: context.legalEntityId,
+      queueScope: "COMPLETED",
+      limit: 200,
+      offset: 0,
+    },
+  });
+  const completedReceiptLink = (completedReceiptLinks.rows || []).find(
+    (row) => toPositiveInt(row.id) === toPositiveInt(receiptLink.id)
+  );
+  assert(
+    completedReceiptLink &&
+      String(completedReceiptLink.queueState || "").toUpperCase() === "COMPLETED" &&
+      completedReceiptLink.canMaterialize === false,
+    "Completed queue scope must expose linked stock links as COMPLETED history rows"
   );
 
   const arDraft = await createCariDraftDocument({
@@ -1055,6 +2254,7 @@ async function runItemCardAndInventoryScenario({
         {
           description: "CLI09 AR stock sale",
           itemCardId: itemCard.id,
+          warehouseId: warehouse.id,
           quantity: 5,
           lineNetAmountTxn: 700,
           lineTaxAmountTxn: 0,
@@ -1074,22 +2274,6 @@ async function runItemCardAndInventoryScenario({
     "AR stock draft must default stockImpactMode to ISSUE_PENDING"
   );
 
-  const postedAp = await postCariDocumentById({
-    req: makeRequestContext({
-      tenantId: context.tenantId,
-      userId: context.userId,
-      stamp: state.stamp,
-      suffix: "item-ap-post",
-    }),
-    payload: {
-      tenantId: context.tenantId,
-      userId: context.userId,
-      documentId: apDraft.id,
-    },
-    assertScopeAccess: allowAllScopes,
-  });
-  state.journalEntryIds.push(toPositiveInt(postedAp.journal?.journalEntryId));
-
   const postedAr = await postCariDocumentById({
     req: makeRequestContext({
       tenantId: context.tenantId,
@@ -1106,16 +2290,6 @@ async function runItemCardAndInventoryScenario({
   });
   state.journalEntryIds.push(toPositiveInt(postedAr.journal?.journalEntryId));
 
-  const apJournalLines = await queryJournalLines(postedAp.journal.journalEntryId);
-  assert(
-    apJournalLines.some((row) => toPositiveInt(row.account_id) === accountIds.inventoryAssetAccountId),
-    "Posted AP stock invoice must debit the inventory asset account"
-  );
-  assert(
-    apJournalLines.some((row) => toPositiveInt(row.account_id) === accountIds.apControlAccountId),
-    "Posted AP stock invoice must credit the AP control account"
-  );
-
   const arJournalLines = await queryJournalLines(postedAr.journal.journalEntryId);
   assert(
     arJournalLines.some((row) => toPositiveInt(row.account_id) === accountIds.arOffsetAccountId),
@@ -1126,52 +2300,28 @@ async function runItemCardAndInventoryScenario({
     "Posted AR stock invoice must debit the AR control account"
   );
 
-  const pendingLinks = await listPendingInventoryStockLinks({
+  const pendingIssueLinks = await listPendingInventoryStockLinks({
     tenantId: context.tenantId,
     filters: {
       legalEntityId: context.legalEntityId,
-      linkStatus: "PENDING",
+      queueScope: "ACTIONABLE",
       limit: 200,
       offset: 0,
     },
   });
-  const relevantPendingLinks = (pendingLinks.rows || []).filter((row) =>
-    [apDraft.id, arDraft.id].includes(toPositiveInt(row.documentId))
+  const issueLink = (pendingIssueLinks.rows || []).find(
+    (row) =>
+      toPositiveInt(row.documentId) === toPositiveInt(arDraft.id) &&
+      String(row.stockImpactMode || "").toUpperCase() === "ISSUE_PENDING"
   );
-  assert(relevantPendingLinks.length === 2, "Stock AP/AR post must create two pending stock links");
-
-  const warehouse = await createInventoryWarehouse({
-    payload: {
-      tenantId: context.tenantId,
-      legalEntityId: context.legalEntityId,
-      code: `CLI09WH${state.stamp.slice(-6)}`.slice(0, 80),
-      name: `CLI09 Warehouse ${state.stamp}`,
-      status: "ACTIVE",
-      notes: "CLI09 temp warehouse",
-    },
-  });
-  state.warehouseIds.push(toPositiveInt(warehouse.id));
-
-  const receiptLink = relevantPendingLinks.find(
-    (row) => String(row.stockImpactMode || "").toUpperCase() === "RECEIPT_PENDING"
+  assert(issueLink, "Posted AR stock invoice must create one pending issue stock link");
+  assert(
+    toPositiveInt(issueLink.boundWarehouseId) === toPositiveInt(warehouse.id),
+    "Posted AR stock invoice must propagate the selected warehouse onto the pending issue stock link"
   );
-  const issueLink = relevantPendingLinks.find(
-    (row) => String(row.stockImpactMode || "").toUpperCase() === "ISSUE_PENDING"
-  );
-  assert(receiptLink && issueLink, "Expected one receipt and one issue pending stock link");
-  state.stockLinkIds.push(toPositiveInt(receiptLink.id), toPositiveInt(issueLink.id));
+  assertQueueReadModelFields(issueLink, "Issue queue row");
+  state.stockLinkIds.push(toPositiveInt(issueLink.id));
 
-  const receiptMovement = await createInventoryMovementFromStockLink({
-    payload: {
-      tenantId: context.tenantId,
-      userId: context.userId,
-      legalEntityId: context.legalEntityId,
-      warehouseId: warehouse.id,
-      sourceStockLinkId: receiptLink.id,
-      movementDate: context.postingDate,
-      note: `CLI09 receipt materialization ${state.stamp}`,
-    },
-  });
   const issueMovement = await createInventoryMovementFromStockLink({
     payload: {
       tenantId: context.tenantId,
@@ -1183,14 +2333,10 @@ async function runItemCardAndInventoryScenario({
       note: `CLI09 issue materialization ${state.stamp}`,
     },
   });
-  state.inventoryMovementIds.push(toPositiveInt(receiptMovement.id), toPositiveInt(issueMovement.id));
+  state.inventoryMovementIds.push(toPositiveInt(issueMovement.id));
   if (toPositiveInt(issueMovement.postedJournalEntryId)) {
     state.journalEntryIds.push(toPositiveInt(issueMovement.postedJournalEntryId));
   }
-  assert(
-    String(receiptMovement.valuationStatus || "").toUpperCase() === "VALUED",
-    "Receipt movement must be VALUED on materialization"
-  );
   assert(
     String(issueMovement.valuationStatus || "").toUpperCase() === "VALUED",
     "Issue movement must be VALUED once FIFO layer costing succeeds"
@@ -1203,6 +2349,18 @@ async function runItemCardAndInventoryScenario({
   assert(
     toPositiveInt(issueMovement.postedJournalEntryId) > 0,
     "Issue movement must link to a posted inventory COGS journal"
+  );
+  const workQueueSummary = await getInventoryWorkQueueSummary({
+    tenantId: context.tenantId,
+    filters: {
+      legalEntityId: context.legalEntityId,
+    },
+  });
+  assert(
+    Number.isInteger(workQueueSummary?.stockLinks?.completed_total) &&
+      Number.isInteger(workQueueSummary?.stockLinks?.ready_total) &&
+      Number.isInteger(workQueueSummary?.stockLinks?.void_total),
+    "Inventory work-queue summary must expose completed/ready/void queue-state counts"
   );
 
   const issueJournalLines = await queryJournalLines(issueMovement.postedJournalEntryId);
@@ -1456,6 +2614,10 @@ async function runItemCardAndInventoryScenario({
     ).length === 1,
     "Issue reversal must create exactly one reopened successor stock link"
   );
+  assert(
+    toPositiveInt(reopenedSuccessorLink.warehouse_id) === toPositiveInt(warehouse.id),
+    "Valid reopened successor stock links must inherit the original bound warehouse"
+  );
   state.stockLinkIds.push(toPositiveInt(reopenedSuccessorLink.id));
 
   const reversalReplay = await reverseInventoryMovementById({
@@ -1580,6 +2742,272 @@ async function runItemCardAndInventoryScenario({
   );
 }
 
+async function runSuccessorRepairFallbackScenario({
+  context,
+  counterpartyId,
+  accountIds,
+  state,
+}) {
+  const itemCard = await createItemCard({
+    payload: {
+      tenantId: context.tenantId,
+      legalEntityId: context.legalEntityId,
+      code: `CLI09SR${state.stamp.slice(-6)}`.slice(0, 80),
+      name: `CLI09 Successor Repair Item ${state.stamp}`,
+      itemType: "STOCK_ITEM",
+      defaultSalesAccountId: accountIds.arOffsetAccountId,
+      defaultPurchaseAccountId: accountIds.apOffsetAccountId,
+      inventoryAssetAccountId: accountIds.inventoryAssetAccountId,
+      defaultCogsAccountId: accountIds.cogsAccountId,
+      taxCategoryCode: null,
+      status: "ACTIVE",
+    },
+  });
+  state.itemCardIds.push(toPositiveInt(itemCard.id));
+
+  const warehouse = await createInventoryWarehouse({
+    payload: {
+      tenantId: context.tenantId,
+      legalEntityId: context.legalEntityId,
+      code: `CLI09SRW${state.stamp.slice(-5)}`.slice(0, 80),
+      name: `CLI09 Successor Repair Warehouse ${state.stamp}`,
+      status: "ACTIVE",
+      notes: "CLI09 successor repair warehouse",
+    },
+  });
+  state.warehouseIds.push(toPositiveInt(warehouse.id));
+
+  const receiptDraft = await createCariDraftDocument({
+    req: makeRequestContext({
+      tenantId: context.tenantId,
+      userId: context.userId,
+      stamp: state.stamp,
+      suffix: "successor-repair-receipt-create",
+    }),
+    payload: {
+      tenantId: context.tenantId,
+      userId: context.userId,
+      legalEntityId: context.legalEntityId,
+      counterpartyId,
+      paymentTermId: null,
+      direction: "AP",
+      documentType: "INVOICE",
+      documentDate: context.postingDate,
+      dueDate: addDays(context.postingDate, 7),
+      currencyCode: context.currencyCode,
+      lines: [
+        {
+          description: "CLI09 successor repair receipt",
+          itemCardId: itemCard.id,
+          warehouseId: warehouse.id,
+          quantity: 4,
+          lineNetAmountTxn: 160,
+          lineTaxAmountTxn: 0,
+          lineGrossAmountTxn: 160,
+        },
+      ],
+    },
+    assertScopeAccess: allowAllScopes,
+  });
+  state.documentIds.push(receiptDraft.id);
+
+  const postedReceipt = await postCariDocumentById({
+    req: makeRequestContext({
+      tenantId: context.tenantId,
+      userId: context.userId,
+      stamp: state.stamp,
+      suffix: "successor-repair-receipt-post",
+    }),
+    payload: {
+      tenantId: context.tenantId,
+      userId: context.userId,
+      documentId: receiptDraft.id,
+    },
+    assertScopeAccess: allowAllScopes,
+  });
+  state.journalEntryIds.push(toPositiveInt(postedReceipt.journal?.journalEntryId));
+
+  const receiptLinks = await listPendingInventoryStockLinks({
+    tenantId: context.tenantId,
+    filters: {
+      legalEntityId: context.legalEntityId,
+      linkStatus: "PENDING",
+      limit: 200,
+      offset: 0,
+    },
+  });
+  const receiptLink = (receiptLinks.rows || []).find(
+    (row) =>
+      toPositiveInt(row.documentId) === toPositiveInt(receiptDraft.id) &&
+      String(row.stockImpactMode || "").toUpperCase() === "RECEIPT_PENDING"
+  );
+  assert(receiptLink, "Successor repair scenario must create one pending receipt stock link");
+  state.stockLinkIds.push(toPositiveInt(receiptLink.id));
+
+  const receiptMovement = await createInventoryMovementFromStockLink({
+    payload: {
+      tenantId: context.tenantId,
+      userId: context.userId,
+      legalEntityId: context.legalEntityId,
+      warehouseId: warehouse.id,
+      sourceStockLinkId: receiptLink.id,
+      movementDate: context.postingDate,
+      note: `CLI09 successor repair receipt materialization ${state.stamp}`,
+    },
+  });
+  state.inventoryMovementIds.push(toPositiveInt(receiptMovement.id));
+  const receiptCostLayer = await queryReceiptCostLayerBySourceMovementId(receiptMovement.id);
+  assert(
+    receiptCostLayer,
+    "Successor repair scenario must create one receipt cost layer before issue reversal"
+  );
+  state.inventoryCostLayerIds.push(toPositiveInt(receiptCostLayer.id));
+
+  const issueDraft = await createCariDraftDocument({
+    req: makeRequestContext({
+      tenantId: context.tenantId,
+      userId: context.userId,
+      stamp: state.stamp,
+      suffix: "successor-repair-issue-create",
+    }),
+    payload: {
+      tenantId: context.tenantId,
+      userId: context.userId,
+      legalEntityId: context.legalEntityId,
+      counterpartyId,
+      paymentTermId: null,
+      direction: "AR",
+      documentType: "INVOICE",
+      documentDate: context.postingDate,
+      dueDate: addDays(context.postingDate, 8),
+      currencyCode: context.currencyCode,
+      lines: [
+        {
+          description: "CLI09 successor repair issue",
+          itemCardId: itemCard.id,
+          warehouseId: warehouse.id,
+          quantity: 2,
+          lineNetAmountTxn: 240,
+          lineTaxAmountTxn: 0,
+          lineGrossAmountTxn: 240,
+        },
+      ],
+    },
+    assertScopeAccess: allowAllScopes,
+  });
+  state.documentIds.push(issueDraft.id);
+
+  const postedIssue = await postCariDocumentById({
+    req: makeRequestContext({
+      tenantId: context.tenantId,
+      userId: context.userId,
+      stamp: state.stamp,
+      suffix: "successor-repair-issue-post",
+    }),
+    payload: {
+      tenantId: context.tenantId,
+      userId: context.userId,
+      documentId: issueDraft.id,
+    },
+    assertScopeAccess: allowAllScopes,
+  });
+  state.journalEntryIds.push(toPositiveInt(postedIssue.journal?.journalEntryId));
+
+  const issueLinks = await listPendingInventoryStockLinks({
+    tenantId: context.tenantId,
+    filters: {
+      legalEntityId: context.legalEntityId,
+      linkStatus: "PENDING",
+      limit: 200,
+      offset: 0,
+    },
+  });
+  const issueLink = (issueLinks.rows || []).find(
+    (row) =>
+      toPositiveInt(row.documentId) === toPositiveInt(issueDraft.id) &&
+      String(row.stockImpactMode || "").toUpperCase() === "ISSUE_PENDING"
+  );
+  assert(issueLink, "Successor repair scenario must create one pending issue stock link");
+  state.stockLinkIds.push(toPositiveInt(issueLink.id));
+
+  const issueMovement = await createInventoryMovementFromStockLink({
+    payload: {
+      tenantId: context.tenantId,
+      userId: context.userId,
+      legalEntityId: context.legalEntityId,
+      warehouseId: warehouse.id,
+      sourceStockLinkId: issueLink.id,
+      movementDate: context.postingDate,
+      note: `CLI09 successor repair issue materialization ${state.stamp}`,
+    },
+  });
+  state.inventoryMovementIds.push(toPositiveInt(issueMovement.id));
+  if (toPositiveInt(issueMovement.postedJournalEntryId)) {
+    state.journalEntryIds.push(toPositiveInt(issueMovement.postedJournalEntryId));
+  }
+
+  await query(
+    `UPDATE inventory_warehouses
+        SET status = 'INACTIVE'
+      WHERE id = ?`,
+    [warehouse.id]
+  );
+
+  const reversedIssue = await reverseInventoryMovementById({
+    payload: {
+      tenantId: context.tenantId,
+      userId: context.userId,
+      movementId: issueMovement.id,
+      reversalDate: context.postingDate,
+      reason: `CLI09 successor repair reverse ${state.stamp}`,
+    },
+  });
+  if (toPositiveInt(reversedIssue.reversalJournalEntryId)) {
+    state.journalEntryIds.push(toPositiveInt(reversedIssue.reversalJournalEntryId));
+  }
+
+  const successorRows = await listPendingInventoryStockLinks({
+    tenantId: context.tenantId,
+    filters: {
+      legalEntityId: context.legalEntityId,
+      linkStatus: "PENDING",
+      limit: 200,
+      offset: 0,
+    },
+  });
+  const reopenedSuccessor = (successorRows.rows || []).find(
+    (row) => toPositiveInt(row.reopenedFromStockLinkId) === toPositiveInt(issueLink.id)
+  );
+  assert(reopenedSuccessor, "Invalid successor inheritance must still create one reopened successor row");
+  state.stockLinkIds.push(toPositiveInt(reopenedSuccessor.id));
+  assert(
+    !toPositiveInt(reopenedSuccessor.boundWarehouseId),
+    "Invalid successor inheritance must keep the reopened successor out of normal strict-mode work"
+  );
+  assert(
+    String(reopenedSuccessor.queueState || "").toUpperCase() === "REPAIR_REQUIRED",
+    "Invalid successor inheritance must surface REPAIR_REQUIRED queue state"
+  );
+  assert(
+    String(reopenedSuccessor.repairReasonCode || "").toUpperCase() ===
+      "SUCCESSOR_WAREHOUSE_INHERITANCE_INVALID",
+    "Invalid successor inheritance must expose a dedicated repair reason code"
+  );
+  assert(
+    /cleanup required/i.test(String(reopenedSuccessor.resolutionNote || "")),
+    "Cleanup-only reopened successors must record cleanup guidance in resolutionNote"
+  );
+
+  await expectStrictStockLinkCleanupRequired({
+    tenantId: context.tenantId,
+    userId: context.userId,
+    legalEntityId: context.legalEntityId,
+    stockLinkId: reopenedSuccessor.id,
+    movementDate: context.postingDate,
+    note: `CLI09 successor cleanup strict materialization blocked ${state.stamp}`,
+  });
+}
+
 async function runReceiptUndoScenario({
   context,
   counterpartyId,
@@ -1603,6 +3031,18 @@ async function runReceiptUndoScenario({
   });
   state.itemCardIds.push(toPositiveInt(itemCard.id));
 
+  const warehouse = await createInventoryWarehouse({
+    payload: {
+      tenantId: context.tenantId,
+      legalEntityId: context.legalEntityId,
+      code: `CLI09RWH${state.stamp.slice(-5)}`.slice(0, 80),
+      name: `CLI09 Receipt Undo Warehouse ${state.stamp}`,
+      status: "ACTIVE",
+      notes: "CLI09 receipt undo warehouse",
+    },
+  });
+  state.warehouseIds.push(toPositiveInt(warehouse.id));
+
   const draft = await createCariDraftDocument({
     req: makeRequestContext({
       tenantId: context.tenantId,
@@ -1625,6 +3065,7 @@ async function runReceiptUndoScenario({
         {
           description: "CLI09 receipt undo purchase",
           itemCardId: itemCard.id,
+          warehouseId: warehouse.id,
           quantity: 6,
           lineNetAmountTxn: 420,
           lineTaxAmountTxn: 0,
@@ -1652,18 +3093,6 @@ async function runReceiptUndoScenario({
   });
   state.journalEntryIds.push(toPositiveInt(posted.journal?.journalEntryId));
 
-  const warehouse = await createInventoryWarehouse({
-    payload: {
-      tenantId: context.tenantId,
-      legalEntityId: context.legalEntityId,
-      code: `CLI09RWH${state.stamp.slice(-5)}`.slice(0, 80),
-      name: `CLI09 Receipt Undo Warehouse ${state.stamp}`,
-      status: "ACTIVE",
-      notes: "CLI09 receipt undo warehouse",
-    },
-  });
-  state.warehouseIds.push(toPositiveInt(warehouse.id));
-
   const pendingLinks = await listPendingInventoryStockLinks({
     tenantId: context.tenantId,
     filters: {
@@ -1679,6 +3108,10 @@ async function runReceiptUndoScenario({
       String(row.stockImpactMode || "").toUpperCase() === "RECEIPT_PENDING"
   );
   assert(receiptLink, "Receipt undo AP document must create one pending receipt stock link");
+  assert(
+    toPositiveInt(receiptLink.boundWarehouseId) === toPositiveInt(warehouse.id),
+    "Receipt undo AP document must propagate the selected warehouse onto the pending receipt stock link"
+  );
   state.stockLinkIds.push(toPositiveInt(receiptLink.id));
 
   const receiptMovement = await createInventoryMovementFromStockLink({
@@ -1901,6 +3334,7 @@ async function runMixedCurrencyIssueScenario({
         {
           description: "CLI09 mixed-currency stock sale",
           itemCardId: itemCard.id,
+          warehouseId: warehouse.id,
           quantity: 5,
           lineNetAmountTxn: 900,
           lineTaxAmountTxn: 0,
@@ -1943,6 +3377,10 @@ async function runMixedCurrencyIssueScenario({
       String(row.stockImpactMode || "").toUpperCase() === "ISSUE_PENDING"
   );
   assert(issueLink, "Mixed-currency stock sale must create one pending issue stock link");
+  assert(
+    toPositiveInt(issueLink.boundWarehouseId) === toPositiveInt(warehouse.id),
+    "Mixed-currency stock sale must propagate the selected warehouse onto the pending issue stock link"
+  );
   state.stockLinkIds.push(toPositiveInt(issueLink.id));
 
   const issueMovement = await createInventoryMovementFromStockLink({
@@ -2252,6 +3690,13 @@ async function cleanupState(state) {
   }
   if (state.inventoryMovementIds.length > 0) {
     await query(
+      `DELETE FROM inventory_cost_layers
+        WHERE source_movement_id IN (${makeInClause(state.inventoryMovementIds)})`,
+      state.inventoryMovementIds
+    );
+  }
+  if (state.inventoryMovementIds.length > 0) {
+    await query(
       `DELETE FROM inventory_movements
         WHERE reversal_of_movement_id IN (${makeInClause(state.inventoryMovementIds)})`,
       state.inventoryMovementIds
@@ -2347,6 +3792,13 @@ async function cleanupState(state) {
       state.warehouseIds
     );
   }
+  if (state.operatingUnitIds.length > 0) {
+    await query(
+      `DELETE FROM operating_units
+        WHERE id IN (${makeInClause(state.operatingUnitIds)})`,
+      state.operatingUnitIds
+    );
+  }
   if (state.itemCardIds.length > 0) {
     await query(
       `DELETE FROM item_cards
@@ -2414,6 +3866,7 @@ async function main() {
     journalEntryIds: [],
     stockLinkIds: [],
     warehouseIds: [],
+    operatingUnitIds: [],
     inventoryMovementIds: [],
     inventoryCostLayerIds: [],
     itemCardIds: [],
@@ -2476,7 +3929,31 @@ async function main() {
       accountIds,
       state,
     });
+    await runDraftWarehouseOwnershipValidationScenario({
+      context,
+      counterpartyId,
+      accountIds,
+      state,
+    });
+    await runStrictPostingValidationScenario({
+      context,
+      counterpartyId,
+      accountIds,
+      state,
+    });
     await runItemCardAndInventoryScenario({
+      context,
+      counterpartyId,
+      accountIds,
+      state,
+    });
+    await runTransferRequiredQueueScenario({
+      context,
+      counterpartyId,
+      accountIds,
+      state,
+    });
+    await runSuccessorRepairFallbackScenario({
       context,
       counterpartyId,
       accountIds,

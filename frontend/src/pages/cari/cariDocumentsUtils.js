@@ -28,6 +28,9 @@ export const DOCUMENT_LINE_STOCK_IMPACT_MODES = [
   "RECEIPT_PENDING",
   "ISSUE_PENDING",
 ];
+const DOCUMENT_LINE_STOCK_AFFECTING_MODES = new Set(
+  DOCUMENT_LINE_STOCK_IMPACT_MODES.filter((value) => value !== "NONE")
+);
 
 export const DUE_DATE_REQUIRED_TYPES = new Set(["INVOICE", "DEBIT_NOTE"]);
 const DOCUMENT_AMOUNT_PRECISION = 6;
@@ -54,6 +57,12 @@ function normalizeEnum(value, allowedValues, fallbackValue) {
     .trim()
     .toUpperCase();
   return allowedValues.includes(normalized) ? normalized : fallbackValue;
+}
+
+function isStockAffectingLineMode(value) {
+  return DOCUMENT_LINE_STOCK_AFFECTING_MODES.has(
+    normalizeEnum(value, DOCUMENT_LINE_STOCK_IMPACT_MODES, "NONE")
+  );
 }
 
 function mapDocumentLineTaxRow(row, fallbackIndex = 0) {
@@ -151,6 +160,13 @@ export function createDocumentLineDraft(seed = {}) {
     lineGrossAmountTxn: String(amounts.lineGrossAmountTxn ?? 0),
     postingAccountId: String(
       seed?.postingAccountId ?? seed?.posting_account_id ?? ""
+    ).trim(),
+    warehouseId: String(seed?.warehouseId ?? seed?.warehouse_id ?? "").trim(),
+    warehouseCode: String(
+      seed?.warehouseCode ?? seed?.warehouse_code ?? ""
+    ).trim(),
+    warehouseName: String(
+      seed?.warehouseName ?? seed?.warehouse_name ?? ""
     ).trim(),
     taxCategoryCode: String(
       seed?.taxCategoryCode ?? seed?.tax_category_code ?? ""
@@ -368,6 +384,7 @@ export function buildDocumentMutationPayload(form, options = {}) {
           lineTaxAmountTxn: toOptionalNumber(normalizedLine.lineTaxAmountTxn) ?? 0,
           lineGrossAmountTxn: toOptionalNumber(normalizedLine.lineGrossAmountTxn) ?? 0,
           postingAccountId: toPositiveInt(normalizedLine.postingAccountId) || undefined,
+          warehouseId: toPositiveInt(normalizedLine.warehouseId) || undefined,
           taxCategoryCode: normalizedLine.taxCategoryCode || undefined,
           stockImpactMode: normalizedLine.stockImpactMode || undefined,
         };
@@ -430,6 +447,9 @@ export function validateDocumentMutationForm(form, options = {}) {
         errors.push(
           `lines[${index}].taxCategoryCode is required when lineTaxAmountTxn > 0.`
         );
+      }
+      if (isStockAffectingLineMode(line.stockImpactMode) && !line.warehouseId) {
+        errors.push(`lines[${index}].warehouseId is required for stock-affecting lines.`);
       }
     });
   }

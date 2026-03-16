@@ -118,6 +118,8 @@ import migration127InventoryTransferSourceTypeBackfill from "./m127_inventory_tr
 import migration128CariSettlementOwnerCollectorContexts from "./m128_cari_settlement_owner_collector_contexts.js";
 import migration129InventoryTransferSourceTypeEnumRepair from "./m129_inventory_transfer_source_type_enum_repair.js";
 import migration130OperatingUnitCurrentAccountConfigs from "./m130_operating_unit_current_account_configs.js";
+import migration131CariDocumentLinesWarehouseBinding from "./m131_cari_document_lines_warehouse_binding.js";
+import migration132CariDocumentLineStockLinksWarehouseBinding from "./m132_cari_document_line_stock_links_warehouse_binding.js";
 
 const migrations = [
   migration001GlobalMultiEntity,
@@ -240,6 +242,8 @@ const migrations = [
   migration128CariSettlementOwnerCollectorContexts,
   migration129InventoryTransferSourceTypeEnumRepair,
   migration130OperatingUnitCurrentAccountConfigs,
+  migration131CariDocumentLinesWarehouseBinding,
+  migration132CariDocumentLineStockLinksWarehouseBinding,
 ];
 
 export default migrations;
