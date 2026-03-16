@@ -22,3 +22,10 @@ export async function upsertPayrollMapping(payload) {
   return response.data;
 }
 
+export async function setPayrollMappingActive(mappingId, payload) {
+  const response = await api.post(
+    `/api/v1/payroll/mappings/${encodeURIComponent(mappingId)}/set-active`,
+    payload
+  );
+  return response.data;
+}

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { listLegalEntities } from "../../api/orgAdmin.js";
-import { importPayrollRunCsv } from "../../api/payrollRuns.js";
+import { importPayrollRunCsv, listPayrollRuns } from "../../api/payrollRuns.js";
 import { useAuth } from "../../auth/useAuth.js";
 
 const SAMPLE_CSV = [
@@ -32,14 +32,19 @@ export default function PayrollRunImportPage() {
   const { hasPermission } = useAuth();
   const canImport = hasPermission("payroll.runs.import");
   const canReadOrg = hasPermission("org.tree.read");
+  const canReadRuns = hasPermission("payroll.runs.read");
 
   const [legalEntities, setLegalEntities] = useState([]);
+  const [correctionShells, setCorrectionShells] = useState([]);
   const [loadingLookups, setLoadingLookups] = useState(false);
+  const [loadingShells, setLoadingShells] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [lookupWarning, setLookupWarning] = useState("");
+  const [shellLookupWarning, setShellLookupWarning] = useState("");
   const [resultRun, setResultRun] = useState(null);
+  const [useExistingShell, setUseExistingShell] = useState(false);
   const [form, setForm] = useState({
     targetRunId: "",
     legalEntityId: "",
@@ -59,6 +64,15 @@ export default function PayrollRunImportPage() {
       ),
     [legalEntities]
   );
+  const correctionShellOptions = useMemo(
+    () =>
+      [...(correctionShells || [])]
+        .filter((row) =>
+          ["OFF_CYCLE", "RETRO"].includes(String(row?.run_type || "").toUpperCase())
+        )
+        .sort((a, b) => Number(b?.id || 0) - Number(a?.id || 0)),
+    [correctionShells]
+  );
 
   useEffect(() => {
     const targetRunId =
@@ -73,6 +87,9 @@ export default function PayrollRunImportPage() {
       targetRunId: prev.targetRunId || targetRunId,
       legalEntityId: prev.legalEntityId || legalEntityId,
     }));
+    if (targetRunId) {
+      setUseExistingShell(true);
+    }
   }, [searchParams]);
 
   useEffect(() => {
@@ -132,6 +149,63 @@ export default function PayrollRunImportPage() {
       setForm((prev) => ({ ...prev, payDate: firstDay }));
     }
   }, [form.payDate, form.payrollPeriod]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!useExistingShell) {
+      setCorrectionShells([]);
+      setShellLookupWarning("");
+      return undefined;
+    }
+    if (!canReadRuns) {
+      setCorrectionShells([]);
+      setShellLookupWarning("payroll.runs.read yok: correction shell secimi icin run ID manuel girin.");
+      return undefined;
+    }
+
+    (async () => {
+      setLoadingShells(true);
+      try {
+        const res = await listPayrollRuns({
+          limit: 200,
+          offset: 0,
+          status: "DRAFT",
+        });
+        if (!cancelled) {
+          setCorrectionShells(res?.rows || []);
+          setShellLookupWarning("");
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setCorrectionShells([]);
+          setShellLookupWarning(err?.response?.data?.message || "Correction shell listesi yuklenemedi");
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingShells(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [canReadRuns, useExistingShell]);
+
+  function handleTargetShellChange(value) {
+    const nextId = String(value || "");
+    const selectedShell =
+      correctionShellOptions.find((row) => String(row?.id || "") === nextId) || null;
+    setForm((prev) => ({
+      ...prev,
+      targetRunId: nextId,
+      legalEntityId: selectedShell ? String(selectedShell.legal_entity_id || "") : prev.legalEntityId,
+      providerCode: selectedShell ? String(selectedShell.provider_code || "") : prev.providerCode,
+      payrollPeriod: selectedShell ? formatDate(selectedShell.payroll_period) : prev.payrollPeriod,
+      payDate: selectedShell ? formatDate(selectedShell.pay_date) : prev.payDate,
+      currencyCode: selectedShell ? String(selectedShell.currency_code || "") : prev.currencyCode,
+    }));
+  }
 
   async function handleFileChange(event) {
     const file = event.target.files?.[0];
@@ -256,20 +330,85 @@ export default function PayrollRunImportPage() {
               </div>
             ) : null}
 
+            <div className="rounded border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+              Normal aylik importta yeni payroll run olusturulur. Mevcut bir <code>DRAFT</code>{" "}
+              correction shell icine import yapacaksan asagidaki advanced secenegi ac.
+            </div>
+
             <div className="grid gap-3 md:grid-cols-2">
-              <div>
-                <label className="mb-1 block text-xs font-medium text-slate-700">
-                  Target Run ID (PR-P05 shell, opsiyonel)
+              <div className="md:col-span-2 rounded border border-slate-200 bg-white px-3 py-3">
+                <label className="flex items-start gap-3">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5"
+                    checked={useExistingShell}
+                    onChange={(e) => {
+                      const checked = e.target.checked;
+                      setUseExistingShell(checked);
+                      if (!checked) {
+                        setForm((prev) => ({ ...prev, targetRunId: "" }));
+                      }
+                    }}
+                  />
+                  <span>
+                    <span className="block text-sm font-medium text-slate-900">
+                      Import into existing draft correction shell
+                    </span>
+                    <span className="mt-1 block text-xs text-slate-500">
+                      Sadece correction, off-cycle veya retro duzeltme senaryolarinda kullan. Ilk
+                      normal bordro importunda kapali birak.
+                    </span>
+                  </span>
                 </label>
-                <input
-                  value={form.targetRunId}
-                  onChange={(e) => setForm((prev) => ({ ...prev, targetRunId: e.target.value }))}
-                  className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
-                  placeholder="DRAFT correction shell run id"
-                />
-                <div className="mt-1 text-[11px] text-slate-500">
-                  Doluysa CSV yeni run acmaz; mevcut correction shell icine import eder.
-                </div>
+
+                {useExistingShell ? (
+                  <div className="mt-3">
+                    <label className="mb-1 block text-xs font-medium text-slate-700">
+                      Draft Correction Shell
+                    </label>
+                    {canReadRuns ? (
+                      <select
+                        value={form.targetRunId}
+                        onChange={(e) => handleTargetShellChange(e.target.value)}
+                        className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                        disabled={loadingShells}
+                      >
+                        <option value="">
+                          {loadingShells ? "Loading shells..." : "Uygun DRAFT shell secin"}
+                        </option>
+                        {correctionShellOptions.map((row) => (
+                          <option key={row.id} value={row.id}>
+                            {row.run_no} | {row.run_type} | {row.entity_code} | {formatDate(row.payroll_period)} |{" "}
+                            {row.provider_code}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input
+                        value={form.targetRunId}
+                        onChange={(e) => setForm((prev) => ({ ...prev, targetRunId: e.target.value }))}
+                        className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                        placeholder="Mevcut DRAFT shell run id"
+                      />
+                    )}
+                    <div className="mt-1 text-[11px] text-slate-500">
+                      Bu alan doluysa sistem yeni run acmaz; CSV'yi mevcut <code>DRAFT</code>{" "}
+                      correction shell icine aktarir. Yalniz <code>OFF_CYCLE</code> ve{" "}
+                      <code>RETRO</code> shell'ler uygundur.
+                    </div>
+                    {shellLookupWarning ? (
+                      <div className="mt-2 rounded border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-800">
+                        {shellLookupWarning}
+                      </div>
+                    ) : null}
+                    {canReadRuns && !loadingShells && correctionShellOptions.length === 0 ? (
+                      <div className="mt-2 rounded border border-slate-200 bg-slate-50 px-2 py-1 text-xs text-slate-600">
+                        Secilebilir correction shell yok. Once Bordro Run Detay ekranindan bir{" "}
+                        <code>OFF_CYCLE</code> veya <code>RETRO</code> shell olustur.
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
               </div>
               <div>
                 <label className="mb-1 block text-xs font-medium text-slate-700">Legal Entity</label>

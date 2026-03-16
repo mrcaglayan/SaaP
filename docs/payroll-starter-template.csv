@@ -1,0 +1,4 @@
+employee_code,employee_name,cost_center_code,base_salary,overtime_pay,bonus_pay,allowances_total,gross_pay,employee_tax,employee_social_security,other_deductions,employer_tax,employer_social_security,net_pay
+EMP001,Ahmet Yilmaz,ADM,30000.00,2500.00,1000.00,500.00,34000.00,4000.00,2500.00,500.00,4500.00,3000.00,27000.00
+EMP002,Ayse Demir,SLS,28000.00,0.00,2000.00,1000.00,31000.00,3600.00,2200.00,200.00,4100.00,2800.00,25000.00
+EMP003,Mehmet Kaya,OPS,26000.00,1500.00,0.00,500.00,28000.00,3200.00,2100.00,700.00,3800.00,2600.00,22000.00

@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { listLegalEntities } from "../../api/orgAdmin.js";
 import { useAuth } from "../../auth/useAuth.js";
 import {
   createPayrollBeneficiaryAccount,
@@ -42,6 +43,7 @@ export default function PayrollBeneficiariesPage() {
   const canRead = hasPermission("payroll.beneficiary.read");
   const canWrite = hasPermission("payroll.beneficiary.write");
   const canSetPrimary = hasPermission("payroll.beneficiary.set_primary");
+  const canReadOrg = hasPermission("org.tree.read");
 
   const [filters, setFilters] = useState({
     legalEntityId: "",
@@ -64,16 +66,73 @@ export default function PayrollBeneficiariesPage() {
   const [rows, setRows] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   const [patchForm, setPatchForm] = useState(toPatchForm(null));
+  const [legalEntities, setLegalEntities] = useState([]);
+  const [loadingLookups, setLoadingLookups] = useState(false);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [rowBusyId, setRowBusyId] = useState(null);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const [lookupWarning, setLookupWarning] = useState("");
 
   const selectedRow = useMemo(
     () => rows.find((row) => Number(row.id) === Number(selectedId)) || null,
     [rows, selectedId]
   );
+  const legalEntityOptions = useMemo(
+    () =>
+      [...(legalEntities || [])].sort((a, b) =>
+        String(a?.code || "").localeCompare(String(b?.code || ""))
+      ),
+    [legalEntities]
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!canReadOrg) {
+      setLegalEntities([]);
+      setLookupWarning("org.tree.read yok: legal entity secimi icin ID manuel girilmeli.");
+      return undefined;
+    }
+
+    (async () => {
+      setLoadingLookups(true);
+      try {
+        const res = await listLegalEntities({ limit: 500, offset: 0 });
+        if (!cancelled) {
+          setLegalEntities(res?.rows || []);
+          setLookupWarning("");
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setLegalEntities([]);
+          setLookupWarning(err?.response?.data?.message || "Legal entity listesi yuklenemedi");
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingLookups(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [canReadOrg]);
+
+  useEffect(() => {
+    if (filters.legalEntityId || legalEntityOptions.length === 0) {
+      return;
+    }
+    setFilters((prev) => ({ ...prev, legalEntityId: String(legalEntityOptions[0]?.id || "") }));
+  }, [filters.legalEntityId, legalEntityOptions]);
+
+  useEffect(() => {
+    if (createForm.legalEntityId || legalEntityOptions.length === 0) {
+      return;
+    }
+    setCreateForm((prev) => ({ ...prev, legalEntityId: String(legalEntityOptions[0]?.id || "") }));
+  }, [createForm.legalEntityId, legalEntityOptions]);
 
   async function loadRows(overrideFilters = null) {
     const activeFilters = overrideFilters || filters;
@@ -224,19 +283,44 @@ export default function PayrollBeneficiariesPage() {
           {message}
         </div>
       ) : null}
+      {lookupWarning ? (
+        <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          {lookupWarning}
+        </div>
+      ) : null}
 
       <div className="grid gap-6 xl:grid-cols-[1.2fr_1.2fr]">
         <div className="space-y-6">
           <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
             <h2 className="text-sm font-semibold text-slate-900">Lookup</h2>
+            <p className="mt-1 text-xs text-slate-500">
+              Employee code alanina payroll CSV veya run detail ekranindaki calisan kodunu gir.
+            </p>
             <div className="mt-3 grid gap-3 md:grid-cols-2">
               <label className="text-xs">
-                <span className="mb-1 block font-medium text-slate-700">Legal Entity ID *</span>
-                <input
-                  value={filters.legalEntityId}
-                  onChange={(e) => setFilters((p) => ({ ...p, legalEntityId: e.target.value }))}
-                  className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
-                />
+                <span className="mb-1 block font-medium text-slate-700">Legal Entity *</span>
+                {canReadOrg ? (
+                  <select
+                    value={filters.legalEntityId}
+                    onChange={(e) => setFilters((p) => ({ ...p, legalEntityId: e.target.value }))}
+                    className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                    disabled={loadingLookups}
+                  >
+                    <option value="">{loadingLookups ? "Loading..." : "Secin"}</option>
+                    {legalEntityOptions.map((entity) => (
+                      <option key={entity.id} value={entity.id}>
+                        {entity.code} - {entity.name}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    value={filters.legalEntityId}
+                    onChange={(e) => setFilters((p) => ({ ...p, legalEntityId: e.target.value }))}
+                    className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                    placeholder="legalEntityId"
+                  />
+                )}
               </label>
               <label className="text-xs">
                 <span className="mb-1 block font-medium text-slate-700">Employee Code *</span>
@@ -244,6 +328,7 @@ export default function PayrollBeneficiariesPage() {
                   value={filters.employeeCode}
                   onChange={(e) => setFilters((p) => ({ ...p, employeeCode: e.target.value.toUpperCase() }))}
                   className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                  placeholder="Orn: EMP001"
                 />
               </label>
               <label className="text-xs">
@@ -380,60 +465,104 @@ export default function PayrollBeneficiariesPage() {
 
           <form onSubmit={handleCreate} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
             <h2 className="text-sm font-semibold text-slate-900">Create Account</h2>
+            <p className="mt-1 text-xs text-slate-500">
+              Bu form, calisanin maas odemesinin gidecegi banka hesabini tanimlar.
+            </p>
             <div className="mt-3 grid gap-3 md:grid-cols-2">
-              <input
-                value={createForm.legalEntityId}
-                onChange={(e) => setCreateForm((p) => ({ ...p, legalEntityId: e.target.value }))}
-                className="rounded border border-slate-300 px-2 py-1.5 text-sm"
-                placeholder="legalEntityId"
-                required
-              />
-              <input
-                value={createForm.employeeCode}
-                onChange={(e) => setCreateForm((p) => ({ ...p, employeeCode: e.target.value.toUpperCase() }))}
-                className="rounded border border-slate-300 px-2 py-1.5 text-sm"
-                placeholder="employeeCode"
-                required
-              />
-              <input
-                value={createForm.employeeName}
-                onChange={(e) => setCreateForm((p) => ({ ...p, employeeName: e.target.value }))}
-                className="rounded border border-slate-300 px-2 py-1.5 text-sm"
-                placeholder="employeeName"
-              />
-              <input
-                value={createForm.currencyCode}
-                onChange={(e) => setCreateForm((p) => ({ ...p, currencyCode: e.target.value.toUpperCase() }))}
-                className="rounded border border-slate-300 px-2 py-1.5 text-sm"
-                placeholder="currencyCode"
-                required
-              />
-              <input
-                value={createForm.accountHolderName}
-                onChange={(e) => setCreateForm((p) => ({ ...p, accountHolderName: e.target.value }))}
-                className="rounded border border-slate-300 px-2 py-1.5 text-sm"
-                placeholder="accountHolderName *"
-                required
-              />
-              <input
-                value={createForm.bankName}
-                onChange={(e) => setCreateForm((p) => ({ ...p, bankName: e.target.value }))}
-                className="rounded border border-slate-300 px-2 py-1.5 text-sm"
-                placeholder="bankName *"
-                required
-              />
-              <input
-                value={createForm.iban}
-                onChange={(e) => setCreateForm((p) => ({ ...p, iban: e.target.value }))}
-                className="rounded border border-slate-300 px-2 py-1.5 text-sm md:col-span-2"
-                placeholder="IBAN (or accountNumber)"
-              />
-              <input
-                value={createForm.accountNumber}
-                onChange={(e) => setCreateForm((p) => ({ ...p, accountNumber: e.target.value }))}
-                className="rounded border border-slate-300 px-2 py-1.5 text-sm md:col-span-2"
-                placeholder="accountNumber (or IBAN)"
-              />
+              <label className="text-xs">
+                <span className="mb-1 block font-medium text-slate-700">Legal Entity *</span>
+                {canReadOrg ? (
+                  <select
+                    value={createForm.legalEntityId}
+                    onChange={(e) => setCreateForm((p) => ({ ...p, legalEntityId: e.target.value }))}
+                    className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                    disabled={loadingLookups}
+                    required
+                  >
+                    <option value="">{loadingLookups ? "Loading..." : "Secin"}</option>
+                    {legalEntityOptions.map((entity) => (
+                      <option key={entity.id} value={entity.id}>
+                        {entity.code} - {entity.name}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    value={createForm.legalEntityId}
+                    onChange={(e) => setCreateForm((p) => ({ ...p, legalEntityId: e.target.value }))}
+                    className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                    placeholder="legalEntityId"
+                    required
+                  />
+                )}
+              </label>
+              <label className="text-xs">
+                <span className="mb-1 block font-medium text-slate-700">Employee Code *</span>
+                <input
+                  value={createForm.employeeCode}
+                  onChange={(e) => setCreateForm((p) => ({ ...p, employeeCode: e.target.value.toUpperCase() }))}
+                  className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                  placeholder="Orn: EMP001"
+                  required
+                />
+              </label>
+              <label className="text-xs">
+                <span className="mb-1 block font-medium text-slate-700">Employee Name</span>
+                <input
+                  value={createForm.employeeName}
+                  onChange={(e) => setCreateForm((p) => ({ ...p, employeeName: e.target.value }))}
+                  className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                  placeholder="Calisan adi"
+                />
+              </label>
+              <label className="text-xs">
+                <span className="mb-1 block font-medium text-slate-700">Currency *</span>
+                <input
+                  value={createForm.currencyCode}
+                  onChange={(e) => setCreateForm((p) => ({ ...p, currencyCode: e.target.value.toUpperCase() }))}
+                  className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                  placeholder="TRY"
+                  required
+                />
+              </label>
+              <label className="text-xs">
+                <span className="mb-1 block font-medium text-slate-700">Account Holder Name *</span>
+                <input
+                  value={createForm.accountHolderName}
+                  onChange={(e) => setCreateForm((p) => ({ ...p, accountHolderName: e.target.value }))}
+                  className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                  placeholder="Hesap sahibi"
+                  required
+                />
+              </label>
+              <label className="text-xs">
+                <span className="mb-1 block font-medium text-slate-700">Bank Name *</span>
+                <input
+                  value={createForm.bankName}
+                  onChange={(e) => setCreateForm((p) => ({ ...p, bankName: e.target.value }))}
+                  className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                  placeholder="Banka adi"
+                  required
+                />
+              </label>
+              <label className="text-xs md:col-span-2">
+                <span className="mb-1 block font-medium text-slate-700">IBAN</span>
+                <input
+                  value={createForm.iban}
+                  onChange={(e) => setCreateForm((p) => ({ ...p, iban: e.target.value }))}
+                  className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                  placeholder="IBAN varsa gir"
+                />
+              </label>
+              <label className="text-xs md:col-span-2">
+                <span className="mb-1 block font-medium text-slate-700">Account Number</span>
+                <input
+                  value={createForm.accountNumber}
+                  onChange={(e) => setCreateForm((p) => ({ ...p, accountNumber: e.target.value }))}
+                  className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                  placeholder="IBAN yoksa hesap numarasi gir"
+                />
+              </label>
               <label className="flex items-center gap-2 text-xs md:col-span-2">
                 <input
                   type="checkbox"

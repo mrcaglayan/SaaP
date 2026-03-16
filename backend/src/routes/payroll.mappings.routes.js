@@ -3,10 +3,12 @@ import { assertScopeAccess, buildScopeFilter, requirePermission } from "../middl
 import { asyncHandler, parsePositiveInt } from "./_utils.js";
 import {
   parsePayrollMappingListFilters,
+  parsePayrollMappingDeactivateInput,
   parsePayrollMappingUpsertInput,
 } from "./payroll.mappings.validators.js";
 import {
   listPayrollComponentMappingRows,
+  setPayrollComponentMappingActive,
   upsertPayrollComponentMapping,
 } from "../services/payroll.mappings.service.js";
 
@@ -66,5 +68,29 @@ router.post(
   })
 );
 
-export default router;
+router.post(
+  "/:mappingId/set-active",
+  requirePermission("payroll.mappings.write", {
+    resolveScope: async (req) => {
+      const mappingId = parsePositiveInt(req.params?.mappingId);
+      if (mappingId) {
+        return null;
+      }
+      return null;
+    },
+  }),
+  asyncHandler(async (req, res) => {
+    const payload = parsePayrollMappingDeactivateInput(req);
+    const result = await setPayrollComponentMappingActive({
+      req,
+      payload,
+      assertScopeAccess,
+    });
+    return res.json({
+      tenantId: payload.tenantId,
+      ...result,
+    });
+  })
+);
 
+export default router;
