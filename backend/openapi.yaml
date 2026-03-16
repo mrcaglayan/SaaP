@@ -19219,6 +19219,58 @@
         }
       }
     },
+    "/api/v1/payroll/mappings/{mappingId}/set-active": {
+      "post": {
+        "tags": [
+          "Payroll"
+        ],
+        "operationId": "postApiV1PayrollMappingsMappingidSetActive",
+        "summary": "Auto-generated: POST /api/v1/payroll/mappings/{mappingId}/set-active",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnyObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "401": {
+            "$ref": "#/components/responses/ErrorResponse"
+          },
+          "403": {
+            "$ref": "#/components/responses/ErrorResponse"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mappingId",
+            "required": true,
+            "description": "mappingId identifier",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnyObject"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/payroll/provider-connections": {
       "get": {
         "tags": [
