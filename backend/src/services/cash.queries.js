@@ -206,7 +206,6 @@ const CASH_TXN_BASE_SELECT = `
     ctt.target_cash_register_id AS cash_transit_target_register_id,
     ctt.transfer_out_cash_transaction_id AS cash_transit_transfer_out_transaction_id,
     ctt.transfer_in_cash_transaction_id AS cash_transit_transfer_in_transaction_id,
-    ctt.transit_account_id AS cash_transit_account_id,
     ctt.initiated_at AS cash_transit_initiated_at,
     ctt.in_transit_at AS cash_transit_in_transit_at,
     ctt.received_at AS cash_transit_received_at,
@@ -245,7 +244,6 @@ const CASH_TRANSIT_BASE_SELECT = `
     ctt.status,
     ctt.amount,
     ctt.currency_code,
-    ctt.transit_account_id,
     ctt.initiated_by_user_id,
     ctt.received_by_user_id,
     ctt.canceled_by_user_id,
@@ -291,8 +289,6 @@ const CASH_TRANSIT_BASE_SELECT = `
         COALESCE(tou.code, CAST(ctt.target_operating_unit_id AS CHAR))
       )
     END AS target_ownership_context_label,
-    ta.code AS transit_account_code,
-    ta.name AS transit_account_name,
     out_txn.txn_no AS transfer_out_txn_no,
     out_txn.book_date AS transfer_out_book_date,
     out_txn.posted_at AS transfer_out_posted_at,
@@ -313,7 +309,6 @@ const CASH_TRANSIT_BASE_SELECT = `
     ON tr.id = ctt.target_cash_register_id
    AND tr.tenant_id = ctt.tenant_id
   LEFT JOIN operating_units tou ON tou.id = ctt.target_operating_unit_id
-  LEFT JOIN accounts ta ON ta.id = ctt.transit_account_id
   LEFT JOIN cash_transactions out_txn
     ON out_txn.id = ctt.transfer_out_cash_transaction_id
    AND out_txn.tenant_id = ctt.tenant_id
@@ -965,7 +960,6 @@ export async function insertCashTransitTransfer({ payload, runQuery = query }) {
        status,
        amount,
        currency_code,
-       transit_account_id,
        initiated_by_user_id,
        idempotency_key,
        integration_event_uid,
@@ -973,7 +967,7 @@ export async function insertCashTransitTransfer({ payload, runQuery = query }) {
        source_entity_type,
        source_entity_id,
        note
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       payload.tenantId,
       payload.legalEntityId,
@@ -986,7 +980,6 @@ export async function insertCashTransitTransfer({ payload, runQuery = query }) {
       payload.status,
       payload.amount,
       payload.currencyCode,
-      payload.transitAccountId,
       payload.initiatedByUserId,
       payload.idempotencyKey,
       payload.integrationEventUid,

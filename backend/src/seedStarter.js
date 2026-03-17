@@ -2149,7 +2149,6 @@ export async function seedStarter(options = {}) {
     settlementBatchIds.push(arAfgAfnSettlementBatchId);
 
     const interRegisterTransitPayload = getRequestBody(requests, 78);
-    const branchTransitAccountPayload = getRequestBody(requests, 49);
     interRegisterTransitPayload.registerId = registerA1Id;
     interRegisterTransitPayload.targetRegisterId = registerA3Id;
     interRegisterTransitPayload.cashSessionId = await findOpenCashSessionId(
@@ -2159,10 +2158,7 @@ export async function seedStarter(options = {}) {
     if (!interRegisterTransitPayload.cashSessionId) {
       throw new Error("Unable to resolve open cash session for register A1");
     }
-    interRegisterTransitPayload.transitAccountId = await findAccountIdByCoaId(
-      coaA.id,
-      String(branchTransitAccountPayload.code || "").trim()
-    );
+    delete interRegisterTransitPayload.transitAccountId;
     const interRegisterTransitResult = await requestJson({
       baseUrl,
       cookie: authCookie,

@@ -207,6 +207,7 @@ FX resolution baseline (exact + prior-date fallback):
 - Cash-linked settlement selectors must show register ownership explicitly as `Central` or `OU: <code>`.
 - `Central` remains a central/no-OU posting context; do not use a blank operating-unit selector as the operator-facing signal for central ownership.
 - If cash needs to move between different operating-unit contexts, use the transit workflow with `CASH_IN_TRANSIT` instead of a direct transfer.
+- In that flow, posted journals now use self-balancing current-account mappings, not a required transit-clearing `108` line.
 - Posting completion for different-context transfers depends on the right current-account setup:
   - `Central Due From OU` + `OU Due To Central` for `Central <-> OU`
   - partner-specific `Due From Partner OU` + `Due To Partner OU` mappings for `OU <-> OU`

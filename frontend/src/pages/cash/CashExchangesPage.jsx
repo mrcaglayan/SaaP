@@ -931,7 +931,7 @@ export default function CashExchangesPage() {
     (value) =>
       normalizeExchangePostingMode(value) === EXCHANGE_POSTING_MODE_DIRECT
         ? t("cashExchanges.postingModes.direct", "DIRECT (safe-to-safe)")
-        : t("cashExchanges.postingModes.clearing", "CLEARING (108.xx / staged)"),
+        : t("cashExchanges.postingModes.clearing", "CLEARING (staged FX)"),
     [t]
   );
 
@@ -1869,7 +1869,7 @@ export default function CashExchangesPage() {
                 }
                 disabled={!canCreate || createSubmitting}
               >
-                {t("cashExchanges.postingModes.clearing", "CLEARING (108.xx / staged)")}
+                {t("cashExchanges.postingModes.clearing", "CLEARING (staged FX)")}
               </button>
               <button
                 type="button"
@@ -1893,11 +1893,11 @@ export default function CashExchangesPage() {
               {createIsDirectPostingMode
                 ? t(
                     "cashExchanges.form.directModeHelp",
-                    "Direct mode posts target safe vs source safe without 108 clearing."
+                    "Direct mode posts source safe vs target safe without a staged clearing account."
                   )
                 : t(
                     "cashExchanges.form.clearingModeHelp",
-                    "Use staged clearing when the exchange needs 108.xx transit or controlled completion."
+                    "Use staged clearing when the FX exchange should park value in a clearing account before completion."
                   )}
             </p>
           </div>
@@ -1959,7 +1959,7 @@ export default function CashExchangesPage() {
             <p className="text-[11px] font-normal normal-case tracking-normal text-slate-500">
               {t(
                 "cashExchanges.form.clearingAccountHelp",
-                "If CASH_EXCHANGE_CLEARING is configured in GL setup it prefills here. Tip: 108.xx under 108 is a good fit for staged exchange clearing."
+                "If CASH_EXCHANGE_CLEARING is configured in GL setup it prefills here. A dedicated 108.xx asset account is a good fit for staged FX clearing."
               )}
             </p>
             {showInlineClearingChildCreate ? (

@@ -57,10 +57,21 @@ async function main() {
     "counterAccount input required rule must reflect the computed counter-account requirement"
   );
   assert(
-    cashPage.includes(
-      "counterAccountId: requiresCounterAccount || isTransfer ? prev.counterAccountId : \"\""
-    ) || cashPage.includes("counterAccountId: requiresCounterAccount ? prev.counterAccountId : \"\""),
+    cashPage.includes("const showCrossOuTransitCounterAccountInfo =") &&
+      cashPage.includes('t("cashTransactions.warnings.crossOuTransitSelfBalancingInfo")'),
+    "cross-OU transfer UI must switch from counter-account input to self-balancing guidance"
+  );
+  assert(
+    !cashPage.includes("transitAccountId: counterAccountId || undefined"),
+    "normal cross-OU transit initiation must not submit transitAccountId from the create form"
+  );
+  assert(
+    cashPage.includes("counterAccountId: requiresCounterAccount ? prev.counterAccountId : \"\""),
     "txn type switch should keep/clear counterAccountId by the counter-account requirement logic"
+  );
+  assert(
+    cashPage.includes("counterAccountId: isTransferTxn ? undefined : counterAccountId || undefined"),
+    "transfer create path must not submit stale counterAccountId values"
   );
   assert(
     cashPage.includes("return sourceOu !== targetOu && Boolean(sourceOu || targetOu);"),
@@ -100,6 +111,10 @@ async function main() {
   assert(
     countOccurrences(messages, "counterAccountInvalid") >= 2,
     "counterAccountInvalid i18n key should exist in both TR and EN maps"
+  );
+  assert(
+    countOccurrences(messages, "crossOuTransitSelfBalancingInfo") >= 2,
+    "crossOuTransitSelfBalancingInfo i18n key should exist in both TR and EN maps"
   );
 
   console.log("Cash counter-account validation + UI mapping smoke passed.");

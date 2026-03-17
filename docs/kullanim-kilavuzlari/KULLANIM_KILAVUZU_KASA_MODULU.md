@@ -367,7 +367,8 @@ Sistem tarafi kritik:
 - `TRANSFER_IN` / `TRANSFER_OUT`:
   - `counterCashRegisterId` zorunlu
   - Ayni OU transferde direkt register->register kaydi calisir.
-  - Farkli OU transferde transit akisi (`/app/kasa-transit-transferleri`) kullanilir; `transitAccountId` zorunludur.
+  - Farkli OU transferde transit akisi (`/app/kasa-transit-transferleri`) kullanilir.
+  - Bu akista normal operator yolu icin ek transit hesap alani gerekmez; post self-balancing current-account satirlari ile yapilir.
 
 - `DEPOSIT_TO_BANK` / `WITHDRAWAL_FROM_BANK`:
   - `counterAccountId` zorunlu
@@ -709,6 +710,7 @@ Bu bolum, sistemde gercekten calisan kurallarin is diline cevrilmis ozetidir.
   - Ayni legal entity zorunlu
   - Kaynak ve hedef register farkli operating unitte olmali
   - Transfer-out + transfer-in cift kayit zinciri korunur (tek tarafli transfer olusmaz)
+  - Muhasebe satirlari transit-clearing hesabi yerine OU self-balancing current-account hesaplariyla olusur
 
 ---
 
@@ -720,8 +722,8 @@ Bu bolum, sistemde gercekten calisan kurallarin is diline cevrilmis ozetidir.
 | `PAYOUT` | Karsi Hesap | Register Kasa | Odeme |
 | `DEPOSIT_TO_BANK` | Karsi Hesap (banka vb.) | Register Kasa | Kasadan bankaya cikis. Farkli context ise self-balancing current-account satirlari eklenir. |
 | `WITHDRAWAL_FROM_BANK` | Register Kasa | Karsi Hesap (banka vb.) | Bankadan kasaya giris. Farkli context ise self-balancing current-account satirlari eklenir. |
-| `TRANSFER_OUT` | Hedef Register Kasa (direkt) veya CASH_IN_TRANSIT hesabi (`counterAccountId`) | Kaynak Register Kasa (`registerId`) | Ayni LE zorunlu. Ayni OU: direkt transfer. Farkli OU: transit akisi (`transitAccountId` zorunlu). |
-| `TRANSFER_IN` | Hedef Register Kasa (`registerId`) | Kaynak Register Kasa (direkt) veya CASH_IN_TRANSIT hesabi (`counterAccountId`) | Ayni LE zorunlu. Transit receive icin transfer-out kaydi once `POSTED` olmalidir. |
+| `TRANSFER_OUT` | Ayni OU: Hedef Register Kasa (direkt). Farkli OU: self-balancing due-from/current-account satiri | Kaynak Register Kasa (`registerId`) | Ayni LE zorunlu. Ayni OU: direkt transfer. Farkli OU: `CASH_IN_TRANSIT` workflow'u kullanilir; normal operator yolunda ekstra transit hesap alani gerekmez. |
+| `TRANSFER_IN` | Hedef Register Kasa (`registerId`) | Ayni OU: Kaynak Register Kasa (direkt). Farkli OU: self-balancing due-to/current-account satiri | Ayni LE zorunlu. Transit receive icin transfer-out kaydi once `POSTED` olmalidir. |
 | `VARIANCE` (eksik) | Varyans Zarar Hesabi | Register Kasa | Counted < Expected |
 | `VARIANCE` (fazla) | Register Kasa | Varyans Kazanc Hesabi | Counted > Expected |
 | `OPENING_FLOAT` | Register Kasa | Karsi Hesap | Opsiyonel acilis hareketi |
@@ -808,9 +810,11 @@ Ekran:
 Adim 1 - Transit baslat:
 - Kaynak register (`registerId`)
 - Hedef register (`targetRegisterId`)
-- Transit hesabi (`transitAccountId`)
 - Tutar, para birimi, tarih
 - `idempotencyKey`
+
+Not:
+- Normal operator yolunda ekstra transit hesap alani gerekmez.
 
 Adim 2 - Transfer-out post:
 - Transfer-out kaydi post edilince durum `IN_TRANSIT` olur.
@@ -828,6 +832,9 @@ Adim 3 - Receive:
 - Ayni transit kaydina ikinci kez receive denemesi idempotent veya bloklu doner; cift kapanis olmaz.
 - Sadece `INITIATED` transit iptal edilebilir.
 - `RECEIVED` olduktan sonra transfer-out reversal'i dogrudan yapilamaz; once transfer-in reversal gerekir.
+- Transit post'u icin gerekli current-account setup hazir olmalidir:
+  - `Central <-> OU` icin `Central Due From OU` + `OU Due To Central`
+  - `OU <-> OU` icin partner bazli `Due From Partner OU` + `Due To Partner OU`
 
 ### 24.5 Gercek hayat ornegi
 
@@ -836,6 +843,9 @@ Ornek: OU-1 Ana Kasa -> OU-2 Sube Kasasi, 25.000 TRY
 2. Kaynak kasada transfer-out post edilir (`IN_TRANSIT`).
 3. Sube kasasi teslim aldiginda receive yapar (`RECEIVED`).
 4. Hata varsa reversal sureci tek tek izlenir; denetim izi korunur.
+
+Muhasebe notu:
+- Bu ornekte post `108` transit-clearing hesabi ile degil, OU self-balancing current-account satirlari ile tamamlanir.
 
 ---
 

@@ -12,16 +12,21 @@ const SHAREHOLDER_REQUIRED_PURPOSE_CODES = Object.freeze([
   "SHAREHOLDER_COMMITMENT_DEBIT_PARENT",
 ]);
 
-const CASH_CLEARING_PURPOSE_CODES = Object.freeze([
-  "CASH_EXCHANGE_CLEARING",
-  "CASH_TRANSIT_CLEARING",
-]);
+const CASH_CLEARING_PURPOSE_CODES = Object.freeze(["CASH_EXCHANGE_CLEARING"]);
 
 const BANK_REQUIRED_PURPOSE_CODES = Object.freeze(["BANK_CONTROL_PARENT"]);
 
-function buildCashClearingTarget({ purposeCode, matchCodes, suggestCode, suggestName }) {
+function buildCashClearingTarget({
+  purposeCode,
+  matchCodes,
+  suggestCode,
+  suggestName,
+  guidanceScope = null,
+}) {
   return Object.freeze({
     purposeCode,
+    readinessRequired: true,
+    ...(guidanceScope ? { guidanceScope: String(guidanceScope).trim() } : {}),
     rules: Object.freeze({
       allowPosting: true,
       accountType: "ASSET",
@@ -42,9 +47,7 @@ function buildCashClearingTarget({ purposeCode, matchCodes, suggestCode, suggest
 
 function buildCashClearingModule({
   exchangeMatchCodes,
-  transitMatchCodes,
   exchangeSuggestCode,
-  transitSuggestCode,
 }) {
   return Object.freeze({
     moduleKey: "cashClearing",
@@ -56,12 +59,7 @@ function buildCashClearingModule({
         matchCodes: exchangeMatchCodes,
         suggestCode: exchangeSuggestCode,
         suggestName: "FX Clearing",
-      }),
-      buildCashClearingTarget({
-        purposeCode: CASH_CLEARING_PURPOSE_CODES[1],
-        matchCodes: transitMatchCodes,
-        suggestCode: transitSuggestCode,
-        suggestName: "Cash Transit Clearing",
+        guidanceScope: "FX_EXCHANGE_CLEARING",
       }),
     ]),
   });
@@ -2575,9 +2573,7 @@ const PACKS = Object.freeze([
       }),
       buildCashClearingModule({
         exchangeMatchCodes: Object.freeze(["108.01", "108"]),
-        transitMatchCodes: Object.freeze(["108.02", "108"]),
         exchangeSuggestCode: "108.01",
-        transitSuggestCode: "108.02",
       }),
     ]),
   }),
@@ -2750,9 +2746,7 @@ const PACKS = Object.freeze([
       }),
       buildCashClearingModule({
         exchangeMatchCodes: Object.freeze(["1151", "1150"]),
-        transitMatchCodes: Object.freeze(["1152", "1150"]),
         exchangeSuggestCode: "1151",
-        transitSuggestCode: "1152",
       }),
     ]),
   }),
@@ -2925,9 +2919,7 @@ const PACKS = Object.freeze([
       }),
       buildCashClearingModule({
         exchangeMatchCodes: Object.freeze(["1151", "1150"]),
-        transitMatchCodes: Object.freeze(["1152", "1150"]),
         exchangeSuggestCode: "1151",
-        transitSuggestCode: "1152",
       }),
     ]),
   }),

@@ -51,11 +51,12 @@ async function main() {
     "utf8"
   );
   assert(
-    cashServiceSource.includes("resolveTransitClearingOperatingUnitId") &&
+    cashServiceSource.includes("resolveTransferPostingMode") &&
+      cashServiceSource.includes("resolveCrossContextTransferRoute") &&
       cashServiceSource.includes(
         "Transfers between different operating-unit contexts must use CASH_IN_TRANSIT workflow"
       ),
-    "cash.service should route transit clearing lines with explicit operating-unit context handling"
+    "cash.service should route cross-context transfer lines through explicit transit workflow and operating-unit route handling"
   );
 
   const transactionsPageSource = await readFile(

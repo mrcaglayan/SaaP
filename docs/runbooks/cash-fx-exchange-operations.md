@@ -44,8 +44,9 @@ This runbook defines setup, reporting, month-end/year-end controls, and determin
 
 ### Operational Rule
 
-- Choose `CLEARING` for in-transit or controlled exchange.
+- Choose `CLEARING` for staged or controlled exchange completion.
 - Choose `DIRECT` for instant completed exchange.
+- `CASH_EXCHANGE_CLEARING` is the FX-only clearing concept; it is not part of cross-OU cash transit posting.
 - Reversal is available in both modes and will reverse fee postings separately when commission exists.
 
 ## Reporting Endpoints

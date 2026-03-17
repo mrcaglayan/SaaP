@@ -430,14 +430,6 @@ async function buildLegalEntityFixture({
   });
   await createAccount({
     coaId,
-    code: "108.02",
-    name: "Cash Transit Clearing",
-    accountType: "ASSET",
-    normalSide: "DEBIT",
-    allowPosting: true,
-  });
-  await createAccount({
-    coaId,
     code: "500",
     name: "Capital Parent",
     accountType: "EQUITY",
@@ -463,7 +455,6 @@ async function buildLegalEntityFixture({
       fxGain: await resolveAccountIdByCode(coaId, "646"),
       fxLoss: await resolveAccountIdByCode(coaId, "656"),
       exchangeClearing: await resolveAccountIdByCode(coaId, "108.01"),
-      transitClearing: await resolveAccountIdByCode(coaId, "108.02"),
       shareholderCapitalParent: await resolveAccountIdByCode(coaId, "500"),
       shareholderCommitmentParent: await resolveAccountIdByCode(coaId, "501"),
     },
@@ -483,10 +474,6 @@ function buildAllPurposeRows(accounts) {
       accountId: accounts.exchangeClearing,
     },
     {
-      purposeCode: "CASH_TRANSIT_CLEARING",
-      accountId: accounts.transitClearing,
-    },
-    {
       purposeCode: "SHAREHOLDER_CAPITAL_CREDIT_PARENT",
       accountId: accounts.shareholderCapitalParent,
     },
@@ -495,6 +482,10 @@ function buildAllPurposeRows(accounts) {
       accountId: accounts.shareholderCommitmentParent,
     },
   ];
+}
+
+function buildBlockingReadinessPurposeRows(accounts) {
+  return buildAllPurposeRows(accounts);
 }
 
 async function main() {
@@ -625,15 +616,20 @@ async function main() {
     );
     assertMissingPurposeCodes(
       initialManualCash,
-      ["CASH_EXCHANGE_CLEARING", "CASH_TRANSIT_CLEARING"],
+      ["CASH_EXCHANGE_CLEARING"],
       "Initial manual cash"
+    );
+    assert(
+      JSON.stringify(initialManualCash.requiredPurposeCodes || []) ===
+        JSON.stringify(["CASH_EXCHANGE_CLEARING"]),
+      "Initial manual cash readiness should only require CASH_EXCHANGE_CLEARING"
     );
 
     const manualCariRows = buildAllPurposeRows(manualFixture.accounts).filter((row) =>
       row.purposeCode.startsWith("CARI_")
     );
-    const manualCashRows = buildAllPurposeRows(manualFixture.accounts).filter((row) =>
-      row.purposeCode.startsWith("CASH_")
+    const manualCashRows = buildBlockingReadinessPurposeRows(manualFixture.accounts).filter(
+      (row) => row.purposeCode.startsWith("CASH_")
     );
     for (const row of manualCariRows) {
       // eslint-disable-next-line no-await-in-loop
@@ -728,6 +724,11 @@ async function main() {
       "Manual path should make cash clearing readiness true"
     );
     assert(
+      JSON.stringify(manualReadyCash?.requiredPurposeCodes || []) ===
+        JSON.stringify(["CASH_EXCHANGE_CLEARING"]),
+      "Manual cash readiness should stay scoped to CASH_EXCHANGE_CLEARING"
+    );
+    assert(
       (manualReadyCash?.missingPurposeCodes || []).length === 0,
       "Manual cash readiness should have no missing purpose codes"
     );
@@ -743,7 +744,7 @@ async function main() {
       body: {
         legalEntityId: packFixture.legalEntityId,
         mode: "MERGE",
-        rows: buildAllPurposeRows(packFixture.accounts),
+        rows: buildBlockingReadinessPurposeRows(packFixture.accounts),
       },
       expectedStatus: 201,
     });
@@ -781,6 +782,11 @@ async function main() {
     assert(
       packReadyCash?.ready === true,
       "Pack path should make cash clearing readiness true"
+    );
+    assert(
+      JSON.stringify(packReadyCash?.requiredPurposeCodes || []) ===
+        JSON.stringify(["CASH_EXCHANGE_CLEARING"]),
+      "Pack cash readiness should stay scoped to CASH_EXCHANGE_CLEARING"
     );
 
     const allEntitiesReadiness = await apiRequest({

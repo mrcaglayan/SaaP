@@ -110,7 +110,6 @@ function resolveTransferPostingMode(cashTxn) {
     );
   }
 
-  requireAccountId(cashTxn.counter_account_id, "counterAccountId (CASH_IN_TRANSIT)");
   return "TRANSIT";
 }
 
@@ -141,14 +140,6 @@ function buildBaseLine({
 
 function normalizeOptionalId(value) {
   return parsePositiveInt(value) || null;
-}
-
-function resolveTransitClearingOperatingUnitId(cashTxn) {
-  return (
-    parsePositiveInt(cashTxn.operating_unit_id) ||
-    parsePositiveInt(cashTxn.counter_cash_register_operating_unit_id) ||
-    null
-  );
 }
 
 function parseDbBoolean(value) {
@@ -1376,7 +1367,6 @@ async function buildCashPostingLinesTx(tx, { tenantId, legalEntityId, cashTxn })
         }),
       ];
     } else {
-      requireAccountId(counterAccountId, "counterAccountId (CASH_IN_TRANSIT)");
       const participants = resolveTransferParticipants(cashTxn);
       const routeType = resolveCrossContextTransferRoute(participants);
       const sourceUnit =
@@ -1517,7 +1507,6 @@ async function buildCashPostingLinesTx(tx, { tenantId, legalEntityId, cashTxn })
         }),
       ];
     } else {
-      requireAccountId(counterAccountId, "counterAccountId (CASH_IN_TRANSIT)");
       const participants = resolveTransferParticipants(cashTxn);
       const routeType = resolveCrossContextTransferRoute(participants);
       const sourceUnit =

@@ -25051,11 +25051,6 @@
             "minimum": 1,
             "nullable": true
           },
-          "cash_transit_account_id": {
-            "type": "integer",
-            "minimum": 1,
-            "nullable": true
-          },
           "cash_transit_initiated_at": {
             "type": "string",
             "format": "date-time",
@@ -26536,12 +26531,6 @@
             "type": "integer",
             "minimum": 1
           },
-          "transitAccountId": {
-            "type": "integer",
-            "minimum": 1,
-            "nullable": true,
-            "description": "Optional transit-clearing account override. If omitted, the backend resolves the CASH_IN_TRANSIT purpose mapping."
-          },
           "cashSessionId": {
             "type": "integer",
             "minimum": 1,
@@ -26725,11 +26714,6 @@
             "maxLength": 3,
             "nullable": true
           },
-          "transit_account_id": {
-            "type": "integer",
-            "minimum": 1,
-            "nullable": true
-          },
           "initiated_by_user_id": {
             "type": "integer",
             "minimum": 1,
@@ -26882,14 +26866,6 @@
             "nullable": true
           },
           "target_ownership_context_label": {
-            "type": "string",
-            "nullable": true
-          },
-          "transit_account_code": {
-            "type": "string",
-            "nullable": true
-          },
-          "transit_account_name": {
             "type": "string",
             "nullable": true
           },

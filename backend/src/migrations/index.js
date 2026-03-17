@@ -120,6 +120,8 @@ import migration129InventoryTransferSourceTypeEnumRepair from "./m129_inventory_
 import migration130OperatingUnitCurrentAccountConfigs from "./m130_operating_unit_current_account_configs.js";
 import migration131CariDocumentLinesWarehouseBinding from "./m131_cari_document_lines_warehouse_binding.js";
 import migration132CariDocumentLineStockLinksWarehouseBinding from "./m132_cari_document_line_stock_links_warehouse_binding.js";
+import migration133CashTransitAccountNullable from "./m133_cash_transit_account_nullable.js";
+import migration134DropCashTransitAccount from "./m134_drop_cash_transit_account.js";
 
 const migrations = [
   migration001GlobalMultiEntity,
@@ -244,6 +246,8 @@ const migrations = [
   migration130OperatingUnitCurrentAccountConfigs,
   migration131CariDocumentLinesWarehouseBinding,
   migration132CariDocumentLineStockLinksWarehouseBinding,
+  migration133CashTransitAccountNullable,
+  migration134DropCashTransitAccount,
 ];
 
 export default migrations;

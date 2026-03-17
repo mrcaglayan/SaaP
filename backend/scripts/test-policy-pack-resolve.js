@@ -445,14 +445,6 @@ async function buildResolveFixtures(tenantId, stamp) {
   });
   await createAccount({
     coaId: goodCoaId,
-    code: "108.02",
-    name: "Cash Transit Clearing",
-    accountType: "ASSET",
-    normalSide: "DEBIT",
-    allowPosting: true,
-  });
-  await createAccount({
-    coaId: goodCoaId,
     code: "500",
     name: "Capital Parent",
     accountType: "EQUITY",
@@ -633,12 +625,16 @@ async function main() {
       expectedStatus: 200,
     });
     assert(
-      toNumber(goodResolve.json?.summary?.total) === 23,
-      "Good resolve should evaluate 23 purpose rows"
+      toNumber(goodResolve.json?.summary?.total) === 22,
+      "Good resolve should evaluate 22 purpose rows after transit-clearing removal"
     );
     assert(
       toNumber(goodResolve.json?.summary?.missing) === 0,
       "Good resolve should have zero missing rows"
+    );
+    assert(
+      toNumber(goodResolve.json?.summary?.advisoryMissing) === 0,
+      "Good resolve should have zero advisory missing rows"
     );
     const goodRows = goodResolve.json?.rows || [];
     const goodBankControlParent = findRow(goodRows, "BANK_CONTROL_PARENT");
@@ -676,6 +672,15 @@ async function main() {
     assert(
       String(goodApOffsetOnAccount?.accountCode || "") === "159",
       "CARI_AP_OFFSET_ON_ACCOUNT should resolve to 159 when available"
+    );
+    const goodExchangeClearing = findRow(goodRows, "CASH_EXCHANGE_CLEARING");
+    assert(
+      goodExchangeClearing?.readinessRequired === true,
+      "CASH_EXCHANGE_CLEARING should stay readiness-required in policy-pack resolve rows"
+    );
+    assert(
+      !findRow(goodRows, "CASH_TRANSIT_CLEARING"),
+      "CASH_TRANSIT_CLEARING should be removed from policy-pack resolve rows after reset cleanup"
     );
 
     const issueResolve = await apiRequest({
@@ -724,6 +729,10 @@ async function main() {
     assert(
       issueCommitmentParent?.missing === false,
       "Issue SHAREHOLDER_COMMITMENT_DEBIT_PARENT should still resolve"
+    );
+    assert(
+      !findRow(issueRows, "CASH_TRANSIT_CLEARING"),
+      "Issue resolve rows should not expose CASH_TRANSIT_CLEARING after reset cleanup"
     );
 
     console.log("test-policy-pack-resolve: OK");

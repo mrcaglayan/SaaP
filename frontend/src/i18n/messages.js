@@ -286,6 +286,11 @@ export const messages = {
     dashboard: {
       title: "Panel",
       subtitle: "Bu alan korumali /app bolgesi icinde.",
+      cards: {
+        periodCloseBlockers: "Kapanis ve Hazirlik Engelleri",
+        periodCloseBlockersHint:
+          "Basarisiz kapanis kontrolleri ile acik tenant/modul hazirlik engelleri.",
+      },
     },
     notFound: {
       title: "Sayfa bulunamadi",
@@ -326,7 +331,7 @@ export const messages = {
         "/app/donem-islemleri": "Donem Islemleri",
         "/app/acilis-fisi": "Acilis Fisi Olustur",
         "/app/journal-entries": "Journal Entry",
-        "/app/tediye-islemleri": "Tediye",
+        "/app/tediye-islemleri": "Odemeler",
         "/app/tahsilat-islemleri": "Tahsilat",
         "/app/kasa-tanimlari": "Kasa Tanimlari",
         "/app/kasa-oturumlari": "Kasa Oturumlari",
@@ -1245,7 +1250,7 @@ export const messages = {
     cashTransactions: {
       presetTitles: {
         all: "Kasa Islemleri",
-        payout: "Tediye Islemleri",
+        payout: "Odeme Islemleri",
         receipt: "Tahsilat Islemleri",
       },
       subtitle:
@@ -1278,11 +1283,9 @@ export const messages = {
         searchCounterparty: "Muhatap kodu/adi ara",
         searchAccount: "Hesap kodu/adi ara",
         searchBankAccount: "Banka hesabi / GL kodu ara",
-        searchTransitAccount: "Transit hesap kodu/adi ara",
         selectCounterparty: "Muhatap secin",
         counterAccount: "Karsi hesap secin",
         bankCounterAccount: "Banka hesabi secin",
-        transitCounterAccount: "Transit / karsi hesap secin",
         counterRegister: "Karsi register secin",
       },
       form: {
@@ -1465,7 +1468,9 @@ export const messages = {
         maxAmountExceeded:
           "Islem tutari register maxTxnAmount limitini asiyor (max: {{max}}).",
         crossOuTransitCounterRequired:
-          "Farkli operating-unit baglamlari arasindaki transfer icin transit karsi hesap (CASH_IN_TRANSIT) zorunludur.",
+          "Farkli operating-unit baglamlari arasindaki transferler cash transit ve self-balancing cari hesap kurulumunu kullanir.",
+        crossOuTransitSelfBalancingInfo:
+          "Farkli operating-unit baglamlari arasindaki transit, self-balancing cari hesap kurulumunu kullanir. Bu formda transit-clearing hesap secimi gerekmez.",
         crossOuTransferInUseTransitReceive:
           "Farkli operating-unit baglamlari arasindaki transfer-in icin Transit Teslim Al aksiyonunu kullanin.",
         expectedCounterpartyTypeForTxn:
@@ -1624,19 +1629,19 @@ export const messages = {
         selectedBatchDetail: "Secili Batch Detayi",
       },
       postingModes: {
-        clearing: "CLEARING (108.xx / asamali)",
+        clearing: "CLEARING (asamali FX)",
         direct: "DIRECT (kasadan kasaya)",
       },
       form: {
         postingMode: "Posting Modu",
         directModeHelp:
-          "Direct mod, hedef kasayi kaynak kasa ile 108 clearing olmadan kaydeder.",
+          "Direct mod, kaynak kasa ile hedef kasa arasinda asamali clearing hesabi kullanmadan post eder.",
         clearingModeHelp:
-          "108.xx transit veya kontrollu tamamlama gerektiginde clearing modu kullanin.",
+          "FX degisimi tamamlanmadan once tutari bir clearing hesabinda bekletmek istiyorsaniz staged clearing kullanin.",
         clearingAccount: "Clearing Hesabi",
         directModeNoClearing: "Direct modda clearing hesabi kullanilmaz.",
         clearingAccountHelp:
-          "GL setup icinde CASH_EXCHANGE_CLEARING tanimliysa buraya otomatik gelir. Ipucu: asamali kur degisimi clearing'i icin 108.xx uygundur.",
+          "GL setup icinde CASH_EXCHANGE_CLEARING tanimliysa buraya otomatik gelir. Asamali FX clearing icin 108 altinda ayrilmis bir 108.xx varlik hesabi iyi bir tercihtir.",
         commissionAmountTxn: "Komisyon Tutari (Islem)",
         commissionAmountBase: "Komisyon Tutari (Baz)",
         commissionAccount: "Komisyon Hesabi",
@@ -2200,6 +2205,11 @@ export const messages = {
     dashboard: {
       title: "Dashboard",
       subtitle: "This is inside the protected /app area.",
+      cards: {
+        periodCloseBlockers: "Close & Readiness Blockers",
+        periodCloseBlockersHint:
+          "Failed close checks plus open tenant/module readiness blockers.",
+      },
     },
     notFound: {
       title: "Page not found",
@@ -2240,7 +2250,7 @@ export const messages = {
         "/app/donem-islemleri": "Period Operations",
         "/app/acilis-fisi": "Create Opening Voucher",
         "/app/journal-entries": "Journal Entry",
-        "/app/tediye-islemleri": "Disbursement",
+        "/app/tediye-islemleri": "Payments",
         "/app/tahsilat-islemleri": "Collection",
         "/app/kasa-tanimlari": "Cash Registers",
         "/app/kasa-oturumlari": "Cash Sessions",
@@ -3160,7 +3170,7 @@ export const messages = {
     cashTransactions: {
       presetTitles: {
         all: "Cash Transactions",
-        payout: "Payout Transactions",
+        payout: "Payment Transactions",
         receipt: "Receipt Transactions",
       },
       subtitle:
@@ -3193,11 +3203,9 @@ export const messages = {
         searchCounterparty: "Search counterparty code/name",
         searchAccount: "Search account code/name",
         searchBankAccount: "Search bank account / GL code",
-        searchTransitAccount: "Search transit account code/name",
         selectCounterparty: "Select counterparty",
         counterAccount: "Select counter account",
         bankCounterAccount: "Select bank account",
-        transitCounterAccount: "Select transit / counter account",
         counterRegister: "Select counter register",
       },
       form: {
@@ -3380,7 +3388,9 @@ export const messages = {
         maxAmountExceeded:
           "Transaction amount exceeds register maxTxnAmount limit (max: {{max}}).",
         crossOuTransitCounterRequired:
-          "Transfers between different operating-unit contexts require transit counter account (CASH_IN_TRANSIT).",
+          "Transfers between different operating-unit contexts use cash transit and self-balancing current-account setup.",
+        crossOuTransitSelfBalancingInfo:
+          "Cross-context transit uses self-balancing current-account setup. No transit-clearing account selection is needed on this form.",
         crossOuTransferInUseTransitReceive:
           "Use Transit Receive action for transfer-in between different operating-unit contexts.",
         expectedCounterpartyTypeForTxn:
@@ -3541,19 +3551,19 @@ export const messages = {
         selectedBatchDetail: "Selected Batch Detail",
       },
       postingModes: {
-        clearing: "CLEARING (108.xx / staged)",
+        clearing: "CLEARING (staged FX)",
         direct: "DIRECT (safe-to-safe)",
       },
       form: {
         postingMode: "Posting Mode",
         directModeHelp:
-          "Direct mode posts target safe vs source safe without 108 clearing.",
+          "Direct mode posts source safe vs target safe without a staged clearing account.",
         clearingModeHelp:
-          "Use clearing mode when the exchange needs 108.xx transit or controlled completion.",
+          "Use staged clearing when the FX exchange should park value in a clearing account before completion.",
         clearingAccount: "Clearing Account",
         directModeNoClearing: "No clearing account is used in direct mode.",
         clearingAccountHelp:
-          "If CASH_EXCHANGE_CLEARING is configured in GL setup it prefills here. Tip: 108.xx under 108 is a good fit for staged exchange clearing.",
+          "If CASH_EXCHANGE_CLEARING is configured in GL setup it prefills here. A dedicated 108.xx asset account is a good fit for staged FX clearing.",
         commissionAmountTxn: "Commission Amount (Txn)",
         commissionAmountBase: "Commission Amount (Base)",
         commissionAccount: "Commission Account",

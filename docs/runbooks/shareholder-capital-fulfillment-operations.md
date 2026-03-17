@@ -87,7 +87,11 @@ This runbook covers setup, posting, reversal, and cash-transfer follow-up for sh
 - Operators must still review:
   - transfer book date
   - required source/target sessions
-  - transit clearing account if overridden
+  - current-account readiness for the chosen central/branch route
+
+Accounting note:
+- The follow-up central-to-branch transit posts through self-balancing current-account lines.
+- Normal operator flow does not require a transit-clearing account override.
 
 ## Troubleshooting
 

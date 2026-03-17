@@ -459,11 +459,11 @@ async function bootstrapTransitContext(token, identity) {
     code: `CRB${identity.stamp}`,
     name: "Transit Register B",
   });
-  const transitAccountId = await createAccount({
+  const sentinelAssetAccountId = await createAccount({
     token,
     coaId,
     code: `TRN${identity.stamp}`,
-    name: "Cash In Transit",
+    name: "Transit Sentinel Asset",
     accountType: "ASSET",
     normalSide: "DEBIT",
   });
@@ -542,19 +542,6 @@ async function bootstrapTransitContext(token, identity) {
     currencyCode,
   });
 
-  await apiRequest({
-    token,
-    method: "POST",
-    path: "/api/v1/gl/journal-purpose-accounts",
-    body: {
-      legalEntityId,
-      moduleKey: "CASH",
-      purposeCode: "CASH_TRANSIT_CLEARING",
-      accountId: transitAccountId,
-    },
-    expectedStatus: 201,
-  });
-
   return {
     currencyCode,
     legalEntityId,
@@ -572,7 +559,7 @@ async function bootstrapTransitContext(token, identity) {
     dueToAccountBAId,
     operatingUnitAId,
     operatingUnitBId,
-    transitAccountId,
+    sentinelAssetAccountId,
   };
 }
 
@@ -581,6 +568,34 @@ async function getTransitTransfer({ token, transitTransferId, expectedStatus = 2
     token,
     method: "GET",
     path: `/api/v1/cash/transactions/transit/${transitTransferId}`,
+    expectedStatus,
+  });
+}
+
+async function getCashTransaction({
+  token,
+  tenantId,
+  transactionId,
+  expectedStatus = 200,
+}) {
+  return apiRequest({
+    token,
+    method: "GET",
+    path: `/api/v1/cash/transactions/${transactionId}?tenantId=${tenantId}`,
+    expectedStatus,
+  });
+}
+
+async function listCashTransactionsForRegister({
+  token,
+  tenantId,
+  registerId,
+  expectedStatus = 200,
+}) {
+  return apiRequest({
+    token,
+    method: "GET",
+    path: `/api/v1/cash/transactions?tenantId=${tenantId}&registerId=${registerId}&limit=200&offset=0`,
     expectedStatus,
   });
 }
@@ -616,6 +631,153 @@ async function reverseCashTransaction({
   });
 }
 
+async function createManualTransitLinkedTransfer({
+  token,
+  tenantId,
+  registerId,
+  counterCashRegisterId,
+  txnType,
+  amount,
+  currencyCode,
+  idempotencyKey,
+  sourceEntityId,
+  expectedStatus = 200,
+}) {
+  return apiRequest({
+    token,
+    method: "POST",
+    path: "/api/v1/cash/transactions",
+    body: {
+      tenantId,
+      registerId,
+      txnType,
+      amount,
+      currencyCode,
+      counterCashRegisterId,
+      sourceModule: "CASH",
+      sourceEntityType: "cash_transit_transfer",
+      sourceEntityId,
+      txnDatetime: "2026-03-10T09:30:00.000Z",
+      bookDate: "2026-03-10",
+      description: `PR26 manual transit ${idempotencyKey}`,
+      referenceNo: `PR26-MANUAL-${idempotencyKey}`.slice(0, 100),
+      idempotencyKey,
+    },
+    expectedStatus,
+  });
+}
+
+async function assertCounterAccountId({
+  tenantId,
+  transactionId,
+  expectedCounterAccountId = null,
+}) {
+  const result = await query(
+    `SELECT counter_account_id
+     FROM cash_transactions
+     WHERE tenant_id = ?
+       AND id = ?
+     LIMIT 1`,
+    [tenantId, transactionId]
+  );
+  assert(
+    Object.prototype.hasOwnProperty.call(result.rows?.[0] || {}, "counter_account_id"),
+    "counter_account_id row must exist"
+  );
+  assert(
+    toNumber(result.rows[0]?.counter_account_id) === toNumber(expectedCounterAccountId),
+    `Expected counter_account_id=${expectedCounterAccountId ?? "NULL"} for transaction ${transactionId}`
+  );
+}
+
+async function assertColumnAbsent({ tableName, columnName }) {
+  const result = await query(
+    `SELECT COUNT(*) AS total
+     FROM information_schema.columns
+     WHERE table_schema = DATABASE()
+       AND table_name = ?
+       AND column_name = ?
+     LIMIT 1`,
+    [tableName, columnName]
+  );
+  assert(
+    toNumber(result.rows?.[0]?.total) === 0,
+    `Column ${tableName}.${columnName} should be absent`
+  );
+}
+
+function assertTransitMetadataRemovedFromTransferPayload(transfer, label) {
+  const row = transfer || {};
+  assert(
+    !Object.prototype.hasOwnProperty.call(row, "transit_account_id"),
+    `${label} must not expose transit_account_id`
+  );
+  assert(
+    !Object.prototype.hasOwnProperty.call(row, "transit_account_code"),
+    `${label} must not expose transit_account_code`
+  );
+  assert(
+    !Object.prototype.hasOwnProperty.call(row, "transit_account_name"),
+    `${label} must not expose transit_account_name`
+  );
+}
+
+function assertGenericCashTransitMetadataRemoved(row, label) {
+  const payload = row || {};
+  assert(
+    !Object.prototype.hasOwnProperty.call(payload, "cash_transit_account_id"),
+    `${label} must not expose cash_transit_account_id`
+  );
+}
+
+async function assertCashTransactionResponsesHideTransitMetadata({
+  token,
+  tenantId,
+  transactionId,
+  registerId,
+  label,
+}) {
+  const detailRes = await getCashTransaction({
+    token,
+    tenantId,
+    transactionId,
+    expectedStatus: 200,
+  });
+  assertGenericCashTransitMetadataRemoved(detailRes.json?.row, `${label} detail`);
+
+  const listRes = await listCashTransactionsForRegister({
+    token,
+    tenantId,
+    registerId,
+    expectedStatus: 200,
+  });
+  const listedRow = (listRes.json?.rows || []).find(
+    (row) => toNumber(row?.id) === toNumber(transactionId)
+  );
+  assert(listedRow, `${label} must be present in listCashTransactions`);
+  assertGenericCashTransitMetadataRemoved(listedRow, `${label} list row`);
+}
+
+async function assertTransitTransferColumnRemoved({
+  transitTransferId,
+}) {
+  const result = await query(
+    `SELECT id
+     FROM cash_transit_transfers
+     WHERE id = ?
+     LIMIT 1`,
+    [transitTransferId]
+  );
+  assert(
+    toNumber(result.rows?.[0]?.id) === toNumber(transitTransferId),
+    `Transit transfer ${transitTransferId} must exist`
+  );
+  await assertColumnAbsent({
+    tableName: "cash_transit_transfers",
+    columnName: "transit_account_id",
+  });
+}
+
 async function assertTransferOutPostingUsesSelfBalancingAccounts({
   tenantId,
   transactionId,
@@ -623,7 +785,7 @@ async function assertTransferOutPostingUsesSelfBalancingAccounts({
   sourceDueFromPartnerAccountId,
   sourceOperatingUnitId,
   amount,
-  transitAccountId,
+  sentinelAssetAccountId,
 }) {
   const txnResult = await query(
     `SELECT posted_journal_entry_id
@@ -657,12 +819,12 @@ async function assertTransferOutPostingUsesSelfBalancingAccounts({
       toNumber(line.operating_unit_id) === sourceOperatingUnitId &&
       Number(line.credit_base || 0) >= Number(amount) - 0.000001
   );
-  const usesTransitAccount = lines.some(
-    (line) => toNumber(line.account_id) === transitAccountId
+  const usesSentinelAccount = lines.some(
+    (line) => toNumber(line.account_id) === sentinelAssetAccountId
   );
   assert(hasSourceOuDebit, "Transfer-out journal must debit source OU due-from-partner account");
   assert(hasSourceCredit, "Transfer-out journal must credit source register account");
-  assert(!usesTransitAccount, "Transfer-out journal should not post the transit clearing account");
+  assert(!usesSentinelAccount, "Transfer-out journal should not post the sentinel asset account");
 }
 
 async function assertTransferInPostingUsesSelfBalancingAccounts({
@@ -672,7 +834,7 @@ async function assertTransferInPostingUsesSelfBalancingAccounts({
   targetDueToPartnerAccountId,
   targetOperatingUnitId,
   amount,
-  transitAccountId,
+  sentinelAssetAccountId,
 }) {
   const txnResult = await query(
     `SELECT posted_journal_entry_id
@@ -706,13 +868,199 @@ async function assertTransferInPostingUsesSelfBalancingAccounts({
       toNumber(line.operating_unit_id) === targetOperatingUnitId &&
       Number(line.credit_base || 0) >= Number(amount) - 0.000001
   );
-  const usesTransitAccount = lines.some(
-    (line) => toNumber(line.account_id) === transitAccountId
+  const usesSentinelAccount = lines.some(
+    (line) => toNumber(line.account_id) === sentinelAssetAccountId
   );
 
   assert(hasTargetRegisterDebit, "Transfer-in journal must debit target register account");
   assert(hasTargetOuCredit, "Transfer-in journal must credit target OU due-to-partner account");
-  assert(!usesTransitAccount, "Transfer-in journal should not post the transit clearing account");
+  assert(!usesSentinelAccount, "Transfer-in journal should not post the sentinel asset account");
+}
+
+async function runNullCounterAccountTransitPostingAndReversal({
+  token,
+  tenantId,
+  setup,
+  stamp,
+}) {
+  const transferOutCreateRes = await createManualTransitLinkedTransfer({
+    token,
+    tenantId,
+    registerId: setup.sourceRegisterId,
+    counterCashRegisterId: setup.targetRegisterId,
+    txnType: "TRANSFER_OUT",
+    amount: "33.25",
+    currencyCode: setup.currencyCode,
+    idempotencyKey: `PR26-NULL-OUT-${stamp}`,
+    sourceEntityId: `PR26-NULL-OUT-${stamp}`,
+    expectedStatus: 200,
+  });
+  const nullOutTxnId = toNumber(transferOutCreateRes.json?.row?.id);
+  assert(nullOutTxnId > 0, "Null-counter transfer-out transaction id missing");
+  await assertCounterAccountId({
+    tenantId,
+    transactionId: nullOutTxnId,
+    expectedCounterAccountId: null,
+  });
+
+  await postCashTransaction({
+    token,
+    tenantId,
+    transactionId: nullOutTxnId,
+    expectedStatus: 200,
+  });
+  await assertTransferOutPostingUsesSelfBalancingAccounts({
+    tenantId,
+    transactionId: nullOutTxnId,
+    sourceRegisterAccountId: setup.sourceRegisterAccountId,
+    sourceDueFromPartnerAccountId: setup.dueFromAccountABId,
+    sourceOperatingUnitId: setup.operatingUnitAId,
+    amount: 33.25,
+    sentinelAssetAccountId: setup.sentinelAssetAccountId,
+  });
+
+  const reverseOutRes = await reverseCashTransaction({
+    token,
+    tenantId,
+    transactionId: nullOutTxnId,
+    reverseReason: "PR26 reverse null-counter transfer-out",
+    expectedStatus: 200,
+  });
+  assert(
+    String(reverseOutRes.json?.reversal?.status || "").toUpperCase() === "POSTED",
+    "Null-counter transfer-out reversal must be POSTED"
+  );
+  await assertCounterAccountId({
+    tenantId,
+    transactionId: toNumber(reverseOutRes.json?.reversal?.id),
+    expectedCounterAccountId: null,
+  });
+
+  const transferInCreateRes = await createManualTransitLinkedTransfer({
+    token,
+    tenantId,
+    registerId: setup.targetRegisterId,
+    counterCashRegisterId: setup.sourceRegisterId,
+    txnType: "TRANSFER_IN",
+    amount: "44.75",
+    currencyCode: setup.currencyCode,
+    idempotencyKey: `PR26-NULL-IN-${stamp}`,
+    sourceEntityId: `PR26-NULL-IN-${stamp}`,
+    expectedStatus: 200,
+  });
+  const nullInTxnId = toNumber(transferInCreateRes.json?.row?.id);
+  assert(nullInTxnId > 0, "Null-counter transfer-in transaction id missing");
+  await assertCounterAccountId({
+    tenantId,
+    transactionId: nullInTxnId,
+    expectedCounterAccountId: null,
+  });
+
+  await postCashTransaction({
+    token,
+    tenantId,
+    transactionId: nullInTxnId,
+    expectedStatus: 200,
+  });
+  await assertTransferInPostingUsesSelfBalancingAccounts({
+    tenantId,
+    transactionId: nullInTxnId,
+    targetRegisterAccountId: setup.targetRegisterAccountId,
+    targetDueToPartnerAccountId: setup.dueToAccountBAId,
+    targetOperatingUnitId: setup.operatingUnitBId,
+    amount: 44.75,
+    sentinelAssetAccountId: setup.sentinelAssetAccountId,
+  });
+
+  const reverseInRes = await reverseCashTransaction({
+    token,
+    tenantId,
+    transactionId: nullInTxnId,
+    reverseReason: "PR26 reverse null-counter transfer-in",
+    expectedStatus: 200,
+  });
+  assert(
+    String(reverseInRes.json?.reversal?.status || "").toUpperCase() === "POSTED",
+    "Null-counter transfer-in reversal must be POSTED"
+  );
+  await assertCounterAccountId({
+    tenantId,
+    transactionId: toNumber(reverseInRes.json?.reversal?.id),
+    expectedCounterAccountId: null,
+  });
+}
+
+async function assertNoTransitTransferByIdempotencyKey({ tenantId, idempotencyKey }) {
+  const result = await query(
+    `SELECT COUNT(*) AS total
+     FROM cash_transit_transfers
+     WHERE tenant_id = ?
+       AND idempotency_key = ?`,
+    [tenantId, idempotencyKey]
+  );
+  assert(
+    toNumber(result.rows?.[0]?.total) === 0,
+    `No transit transfer should be created for idempotencyKey=${idempotencyKey}`
+  );
+}
+
+async function runRemovedLegacyTransitInputRejectionScenario({
+  token,
+  tenantId,
+  setup,
+  stamp,
+}) {
+  const rejectedTransitAccountId = `PR26-TRANSIT-LEGACY-REJECT-${stamp}`;
+  const transitAccountRejectRes = await apiRequest({
+    token,
+    method: "POST",
+    path: "/api/v1/cash/transactions/transit/initiate",
+    body: {
+      tenantId,
+      registerId: setup.sourceRegisterId,
+      targetRegisterId: setup.targetRegisterId,
+      amount: "77.40",
+      currencyCode: setup.currencyCode,
+      transitAccountId: setup.sentinelAssetAccountId,
+      idempotencyKey: rejectedTransitAccountId,
+      description: "PR26 removed transitAccountId rejection",
+    },
+    expectedStatus: 400,
+  });
+  assert(
+    toErrorText(transitAccountRejectRes.json).includes("transitAccountId is not accepted"),
+    "Transit initiate must reject removed transitAccountId input with explicit 400"
+  );
+  await assertNoTransitTransferByIdempotencyKey({
+    tenantId,
+    idempotencyKey: rejectedTransitAccountId,
+  });
+
+  const rejectedCounterAccountId = `PR26-TRANSIT-ALIAS-REJECT-${stamp}`;
+  const counterAccountAliasRejectRes = await apiRequest({
+    token,
+    method: "POST",
+    path: "/api/v1/cash/transactions/transit/initiate",
+    body: {
+      tenantId,
+      registerId: setup.sourceRegisterId,
+      targetRegisterId: setup.targetRegisterId,
+      amount: "78.40",
+      currencyCode: setup.currencyCode,
+      counterAccountId: setup.sentinelAssetAccountId,
+      idempotencyKey: rejectedCounterAccountId,
+      description: "PR26 removed counterAccountId transit alias rejection",
+    },
+    expectedStatus: 400,
+  });
+  assert(
+    toErrorText(counterAccountAliasRejectRes.json).includes("counterAccountId is not accepted"),
+    "Transit initiate must reject removed counterAccountId transit alias with explicit 400"
+  );
+  await assertNoTransitTransferByIdempotencyKey({
+    tenantId,
+    idempotencyKey: rejectedCounterAccountId,
+  });
 }
 
 async function main() {
@@ -748,6 +1096,53 @@ async function main() {
       String(initiateRes.json?.transfer?.status || "").toUpperCase() === "INITIATED",
       "Transit transfer must start in INITIATED status"
     );
+    assert(
+      toNumber(initiateRes.json?.transferOutTransaction?.counter_account_id) === 0,
+      "Transfer-out should not fallback-populate counter_account_id when transitAccountId is omitted"
+    );
+    assertTransitMetadataRemovedFromTransferPayload(
+      initiateRes.json?.transfer,
+      "Transit initiate transfer payload"
+    );
+    await assertTransitTransferColumnRemoved({
+      transitTransferId: transferId,
+    });
+    await assertCounterAccountId({
+      tenantId: identity.tenantId,
+      transactionId: transferOutTxnId,
+      expectedCounterAccountId: null,
+    });
+    await assertCashTransactionResponsesHideTransitMetadata({
+      token: adminToken,
+      tenantId: identity.tenantId,
+      transactionId: transferOutTxnId,
+      registerId: setup.sourceRegisterId,
+      label: "Transfer-out transaction",
+    });
+
+    const duplicateInitiateRes = await apiRequest({
+      token: adminToken,
+      method: "POST",
+      path: "/api/v1/cash/transactions/transit/initiate",
+      body: {
+        tenantId: identity.tenantId,
+        registerId: setup.sourceRegisterId,
+        targetRegisterId: setup.targetRegisterId,
+        amount: "110.50",
+        currencyCode: setup.currencyCode,
+        idempotencyKey: `PR26-TRANSIT-INIT-${identity.stamp}`,
+        description: "PR26 transit out",
+      },
+      expectedStatus: 200,
+    });
+    assert(
+      duplicateInitiateRes.json?.idempotentReplay === true,
+      "Transit initiate without transitAccountId must replay idempotently"
+    );
+    assert(
+      toNumber(duplicateInitiateRes.json?.transfer?.id) === transferId,
+      "Transit initiate replay must return the same transfer"
+    );
 
     await postCashTransaction({
       token: adminToken,
@@ -773,7 +1168,7 @@ async function main() {
       sourceDueFromPartnerAccountId: setup.dueFromAccountABId,
       sourceOperatingUnitId: setup.operatingUnitAId,
       amount: 110.5,
-      transitAccountId: setup.transitAccountId,
+      sentinelAssetAccountId: setup.sentinelAssetAccountId,
     });
 
     const receiveRes = await apiRequest({
@@ -797,6 +1192,26 @@ async function main() {
       String(receiveRes.json?.transferInTransaction?.status || "").toUpperCase() === "POSTED",
       "Transit receive should create a POSTED transfer-in transaction"
     );
+    assert(
+      String(receiveRes.json?.transfer?.status || "").toUpperCase() === "RECEIVED",
+      "Transit receive transfer payload must stay readable"
+    );
+    assertTransitMetadataRemovedFromTransferPayload(
+      receiveRes.json?.transfer,
+      "Transit receive transfer payload"
+    );
+    await assertCounterAccountId({
+      tenantId: identity.tenantId,
+      transactionId: transferInTxnId,
+      expectedCounterAccountId: null,
+    });
+    await assertCashTransactionResponsesHideTransitMetadata({
+      token: adminToken,
+      tenantId: identity.tenantId,
+      transactionId: transferInTxnId,
+      registerId: setup.targetRegisterId,
+      label: "Transfer-in transaction",
+    });
     await assertTransferInPostingUsesSelfBalancingAccounts({
       tenantId: identity.tenantId,
       transactionId: transferInTxnId,
@@ -804,7 +1219,7 @@ async function main() {
       targetDueToPartnerAccountId: setup.dueToAccountBAId,
       targetOperatingUnitId: setup.operatingUnitBId,
       amount: 110.5,
-      transitAccountId: setup.transitAccountId,
+      sentinelAssetAccountId: setup.sentinelAssetAccountId,
     });
 
     const duplicateReceiveRes = await apiRequest({
@@ -855,6 +1270,19 @@ async function main() {
       String(reversedTransitRes.json?.transfer?.reverse_reason || "").includes("PR26 reverse receive"),
       "Transit transfer reverse_reason must keep audit reason"
     );
+
+    await runNullCounterAccountTransitPostingAndReversal({
+      token: adminToken,
+      tenantId: identity.tenantId,
+      setup,
+      stamp: identity.stamp,
+    });
+    await runRemovedLegacyTransitInputRejectionScenario({
+      token: adminToken,
+      tenantId: identity.tenantId,
+      setup,
+      stamp: identity.stamp,
+    });
 
     const cancelInitRes = await apiRequest({
       token: adminToken,

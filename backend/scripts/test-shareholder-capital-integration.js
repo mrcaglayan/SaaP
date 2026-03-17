@@ -327,7 +327,6 @@ async function initiateTransitTransfer({
   token,
   registerId,
   targetRegisterId,
-  transitAccountId,
   amount,
   idempotencyKey,
 }) {
@@ -339,7 +338,6 @@ async function initiateTransitTransfer({
     body: {
       registerId,
       targetRegisterId,
-      transitAccountId,
       txnDatetime: TEST_DATETIME,
       bookDate: TEST_DATE,
       amount,
@@ -536,15 +534,6 @@ async function main() {
       accountType: "ASSET",
       normalSide: "DEBIT",
     });
-    const transitClearingAccountId = await createGlAccount({
-      token,
-      coaId: org.coaId,
-      code: buildCode(suffix, "1080"),
-      name: "Cash In Transit",
-      accountType: "ASSET",
-      normalSide: "DEBIT",
-    });
-
     await upsertOperatingUnitCurrentAccounts({
       token,
       legalEntityId: org.legalEntityId,
@@ -763,7 +752,6 @@ async function main() {
       token,
       registerId: centralRegisterId,
       targetRegisterId: branchRegisterId,
-      transitAccountId: transitClearingAccountId,
       amount: 250,
       idempotencyKey: `SCF-TRANSIT-${stamp}`,
     });

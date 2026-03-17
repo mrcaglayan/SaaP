@@ -109,7 +109,7 @@ export const sidebarItems = [
     icon: "vault",
     items: [
       {
-        label: "Tediye",
+        label: "Odemeler",
         to: "/app/tediye-islemleri",
         requiredPermissions: ["cash.txn.read"],
         implemented: true,

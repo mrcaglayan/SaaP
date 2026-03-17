@@ -1017,10 +1017,6 @@ export default function CashTransitTransfersPage() {
                         <div className="font-medium">
                           {formatAmount(row?.amount)} {row?.currency_code || ""}
                         </div>
-                        <div className="text-xs text-slate-500">
-                          {l("Transit account", "Transit hesap")}:{" "}
-                          {row?.transit_account_code || row?.transit_account_id || "-"}
-                        </div>
                       </td>
 
                       <td className="px-3 py-2 align-top">

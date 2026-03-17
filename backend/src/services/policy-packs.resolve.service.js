@@ -69,6 +69,16 @@ function evaluateSuitability(moduleKey, account, rules = {}) {
   };
 }
 
+function buildTargetMeta(target) {
+  return {
+    readinessRequired: target?.readinessRequired !== false,
+    legacyOptional: target?.legacyOptional === true,
+    ...(target?.guidanceScope
+      ? { guidanceScope: String(target.guidanceScope).trim() }
+      : {}),
+  };
+}
+
 function buildResolvedRow({
   moduleKey,
   purposeCode,
@@ -76,11 +86,13 @@ function buildResolvedRow({
   matchedCode,
   strategy = "codeExact",
   matchedParentCode = null,
+  targetMeta = {},
 }) {
   return {
     moduleKey,
     purposeCode,
     missing: false,
+    ...targetMeta,
     accountId: parsePositiveInt(account.id),
     accountCode: String(account.code || ""),
     confidence: "HIGH",
@@ -98,11 +110,13 @@ function buildMissingRow({
   reason,
   suggestCreate,
   details = {},
+  targetMeta = {},
 }) {
   return {
     moduleKey,
     purposeCode,
     missing: true,
+    ...targetMeta,
     reason: String(reason || "no_match"),
     suggestCreate: suggestCreate || null,
     details,
@@ -116,6 +130,7 @@ function resolveChildFallbackForNonPostableMatch({
   target,
   accounts,
 }) {
+  const targetMeta = buildTargetMeta(target);
   const normalizedParentCode = String(parentCode || "").trim();
   if (!normalizedParentCode) {
     return null;
@@ -154,6 +169,7 @@ function resolveChildFallbackForNonPostableMatch({
       purposeCode,
       reason: "ambiguous_child_match",
       suggestCreate: target?.suggestCreate || null,
+      targetMeta,
       details: {
         matchedCode: normalizedParentCode,
         childCodePrefix: childPrefix,
@@ -169,6 +185,7 @@ function resolveChildFallbackForNonPostableMatch({
     moduleKey,
     purposeCode,
     account: selectedChild,
+    targetMeta,
     matchedCode: selectedChild.code,
     strategy: "postable_child_fallback",
     matchedParentCode: normalizedParentCode,
@@ -183,6 +200,7 @@ function resolvePurposeTarget({
 }) {
   const purposeCode = String(target?.purposeCode || "").trim().toUpperCase();
   const codeCandidates = target?.match?.codeExact || [];
+  const targetMeta = buildTargetMeta(target);
 
   for (const candidateCode of codeCandidates) {
     const normalizedCode = String(candidateCode || "").trim();
@@ -197,6 +215,7 @@ function resolvePurposeTarget({
         purposeCode,
         reason: "ambiguous_match",
         suggestCreate: target?.suggestCreate || null,
+        targetMeta,
         details: {
           matchedCode: normalizedCode,
           candidateAccountIds: matches
@@ -214,6 +233,7 @@ function resolvePurposeTarget({
           moduleKey,
           purposeCode,
           account,
+          targetMeta,
           matchedCode: normalizedCode,
         });
       }
@@ -236,6 +256,7 @@ function resolvePurposeTarget({
         purposeCode,
         reason: "unsuitable_match",
         suggestCreate: target?.suggestCreate || null,
+        targetMeta,
         details: {
           matchedCode: normalizedCode,
           accountId: parsePositiveInt(account.id),
@@ -250,6 +271,7 @@ function resolvePurposeTarget({
     purposeCode,
     reason: "no_match",
     suggestCreate: target?.suggestCreate || null,
+    targetMeta,
     details: {
       candidateCodesTried: codeCandidates,
     },
@@ -320,15 +342,22 @@ export async function resolvePolicyPack({
     }
   }
 
-  const missingCount = rows.filter((row) => row.missing).length;
+  const blockingMissingCount = rows.filter(
+    (row) => row.missing && row?.readinessRequired !== false
+  ).length;
+  const advisoryMissingCount = rows.filter(
+    (row) => row.missing && row?.readinessRequired === false
+  ).length;
+  const resolvedCount = rows.filter((row) => row.missing !== true).length;
   return {
     packId: pack.packId,
     legalEntityId: normalizedLegalEntityId,
     rows,
     summary: {
       total: rows.length,
-      resolved: rows.length - missingCount,
-      missing: missingCount,
+      resolved: resolvedCount,
+      missing: blockingMissingCount,
+      advisoryMissing: advisoryMissingCount,
     },
   };
 }

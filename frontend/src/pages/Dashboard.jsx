@@ -635,11 +635,11 @@ export default function Dashboard() {
           locked={!canReadExceptions}
         />
         <MetricCard
-          title={t("dashboard.cards.periodCloseBlockers", "Period Close Blockers")}
+          title={t("dashboard.cards.periodCloseBlockers", "Close & Readiness Blockers")}
           value={formatCount(periodCloseBlockerCount)}
           subtitle={t(
             "dashboard.cards.periodCloseBlockersHint",
-            "Failed close checks plus tenant/module readiness blockers."
+            "Failed close checks plus open tenant/module readiness blockers."
           )}
           to="/app/payroll-close-controls"
           ctaLabel={t("dashboard.openQueue", "Open queue")}

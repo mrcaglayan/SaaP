@@ -81,10 +81,8 @@ const PURPOSE_MAPPING_MODULE_KEYS = Object.freeze({
   REVREC: "REVREC",
   BANK: "BANK",
 });
-const CASH_PURPOSE_CODES = Object.freeze([
-  "CASH_EXCHANGE_CLEARING",
-  "CASH_TRANSIT_CLEARING",
-]);
+const CASH_PURPOSE_CODES = Object.freeze(["CASH_EXCHANGE_CLEARING"]);
+const CASH_REQUIRED_PURPOSE_CODES = CASH_PURPOSE_CODES;
 const BANK_PURPOSE_CODES = Object.freeze(["BANK_CONTROL_PARENT"]);
 const REVREC_REQUIRED_PURPOSE_CODES = Object.freeze([
   "DEFREV_SHORT_LIABILITY",
@@ -106,7 +104,7 @@ const REVREC_REQUIRED_PURPOSE_CODES = Object.freeze([
 ]);
 const CARI_REQUIRED_PURPOSE_CODE_SET = new Set(CARI_REQUIRED_PURPOSE_CODES);
 const CARI_OPTIONAL_PURPOSE_CODE_SET = new Set(CARI_OPTIONAL_CONTEXT_PURPOSE_CODES);
-const CASH_PURPOSE_CODE_SET = new Set(CASH_PURPOSE_CODES);
+const CASH_REQUIRED_PURPOSE_CODE_SET = new Set(CASH_REQUIRED_PURPOSE_CODES);
 const BANK_PURPOSE_CODE_SET = new Set(BANK_PURPOSE_CODES);
 const REVREC_REQUIRED_PURPOSE_CODE_SET = new Set(REVREC_REQUIRED_PURPOSE_CODES);
 const CARI_PURPOSE_UI_META = Object.freeze({
@@ -329,16 +327,10 @@ const BANK_PURPOSE_UI_META = Object.freeze({
 });
 const CASH_PURPOSE_UI_META = Object.freeze({
   CASH_EXCHANGE_CLEARING: Object.freeze({
-    en: "Optional default clearing account for FX cash exchange batches.",
-    tr: "Kur/doviz kasa degisim fisleri icin opsiyonel varsayilan clearing hesabi.",
-    exampleEn: "Example: 108.01 / dedicated FX clearing asset account.",
-    exampleTr: "Ornek: 108.01 / ozel doviz clearing varlik hesabi.",
-  }),
-  CASH_TRANSIT_CLEARING: Object.freeze({
-    en: "Optional default clearing account for cross-OU cash transit transfers.",
-    tr: "Unitler arasi kasa transferleri icin opsiyonel varsayilan clearing hesabi.",
-    exampleEn: "Example: 108.02 / branch transit clearing account.",
-    exampleTr: "Ornek: 108.02 / sube transfer clearing hesabi.",
+    en: "Required staged-FX clearing account used when cash exchange posting mode is CLEARING.",
+    tr: "Kasa kur degisiminde posting mode CLEARING secildiginde kullanilan zorunlu asamali FX clearing hesabi.",
+    exampleEn: "Example: 108.01 / dedicated FX clearing asset account for staged exchange batches.",
+    exampleTr: "Ornek: 108.01 / asamali kur degisimi batch'leri icin ozel FX clearing varlik hesabi.",
   }),
 });
 const SHAREHOLDER_REQUIRED_PURPOSE_CODES = Object.freeze([
@@ -1647,6 +1639,11 @@ export default function GlSetupPage({ mode = "full" } = {}) {
     };
   }
 
+  function getCashPurposeMappingStatus(_row, readinessRow, purposeCode) {
+    const normalizedPurposeCode = toUpper(purposeCode);
+    return getPurposeReadinessStatus(readinessRow, normalizedPurposeCode);
+  }
+
   function getRevrecPurposeMappingStatus(row) {
     const accountId = toPositiveInt(row?.accountId || row?.account_id);
     const validForPosting = toBoolean(
@@ -1818,9 +1815,7 @@ export default function GlSetupPage({ mode = "full" } = {}) {
       const overrideAccountId = toPositiveInt(
         templateOverridesByPurpose[purposeCode]
       );
-      const effectiveAccountId = previewRow?.missing
-        ? overrideAccountId
-        : resolvedAccountId;
+      const effectiveAccountId = previewRow?.missing ? overrideAccountId : resolvedAccountId;
       if (!effectiveAccountId) {
         setError(
           l(
@@ -1925,15 +1920,10 @@ export default function GlSetupPage({ mode = "full" } = {}) {
       : isRevrec
       ? REVREC_REQUIRED_PURPOSE_CODES
       : isCash
-      ? []
+      ? CASH_REQUIRED_PURPOSE_CODES
       : CARI_REQUIRED_PURPOSE_CODES;
-    const optionalPurposeCodes = isBank
-      ? []
-      : isRevrec
-      ? []
-      : isCash
-      ? CASH_PURPOSE_CODES
-      : CARI_OPTIONAL_CONTEXT_PURPOSE_CODES;
+    const optionalPurposeCodes =
+      isBank || isRevrec || isCash ? [] : CARI_OPTIONAL_CONTEXT_PURPOSE_CODES;
     const mappingsByPurpose = isBank
       ? manualBankMappingsByPurpose
       : isRevrec
@@ -3187,8 +3177,9 @@ export default function GlSetupPage({ mode = "full" } = {}) {
                         ) : (
                           <div className="space-y-1">
                             <div className="text-xs text-rose-700">
-                              {l("Missing reason", "Eksik nedeni")}:{" "}
-                              {String(row?.reason || "no_match")}
+                              {l("Missing reason", "Eksik nedeni") +
+                                ": " +
+                                String(row?.reason || "no_match")}
                             </div>
                             <select
                               value={overrideValue}
@@ -3296,7 +3287,7 @@ export default function GlSetupPage({ mode = "full" } = {}) {
             : isManualRevrecModule
             ? l("Required REVREC purpose codes:", "Zorunlu REVREC amac kodlari:")
             : isManualCashModule
-            ? l("Optional CASH purpose codes:", "Opsiyonel CASH amac kodlari:")
+            ? l("Required CASH purpose codes:", "Zorunlu CASH amac kodlari:")
             : l("Required CARI purpose codes:", "Zorunlu CARI amac kodlari:")}{" "}
           {isManualBankModule
             ? BANK_PURPOSE_CODES.join(", ")
@@ -3392,8 +3383,8 @@ export default function GlSetupPage({ mode = "full" } = {}) {
         ) : isManualCashModule ? (
           <p className="mb-2 text-xs text-slate-500">
             {l(
-              "CASH rows define standard defaults for FX exchange and cross-unit transit clearing. Users can still override per transaction, but readiness tracks missing defaults here.",
-              "CASH satirlari kur degisimi ve unitler arasi nakit transferi icin standart varsayilanlari tanimlar. Kullanici islem bazinda override edebilir, ancak hazirlik ekrani eksik varsayilanlari burada takip eder."
+              "CASH rows track staged FX clearing readiness here. CASH_EXCHANGE_CLEARING is required for FX batches that use CLEARING mode.",
+              "CASH satirlari burada asamali FX clearing hazirligini takip eder. CLEARING modlu FX batch'leri icin CASH_EXCHANGE_CLEARING zorunludur."
             )}
           </p>
         ) : (
@@ -3422,11 +3413,12 @@ export default function GlSetupPage({ mode = "full" } = {}) {
                     ? BANK_PURPOSE_CODE_SET.has(purposeCode)
                     : isManualRevrecModule
                     ? REVREC_REQUIRED_PURPOSE_CODE_SET.has(purposeCode)
+                    : isManualCashModule
+                    ? CASH_REQUIRED_PURPOSE_CODE_SET.has(purposeCode)
                     : CARI_REQUIRED_PURPOSE_CODE_SET.has(purposeCode);
                 const isOptionalPurpose =
-                  (manualPurposeModuleKey === PURPOSE_MAPPING_MODULE_KEYS.CARI &&
-                    CARI_OPTIONAL_PURPOSE_CODE_SET.has(purposeCode)) ||
-                  (isManualCashModule && CASH_PURPOSE_CODE_SET.has(purposeCode));
+                  manualPurposeModuleKey === PURPOSE_MAPPING_MODULE_KEYS.CARI &&
+                  CARI_OPTIONAL_PURPOSE_CODE_SET.has(purposeCode);
                 const purposeMeta =
                   isManualBankModule
                     ? getBankPurposeUiMeta(purposeCode)
@@ -3445,7 +3437,11 @@ export default function GlSetupPage({ mode = "full" } = {}) {
                       : isManualRevrecModule
                       ? getRevrecPurposeMappingStatus(row)
                       : isManualCashModule
-                    ? getPurposeReadinessStatus(selectedManualCashReadiness, purposeCode)
+                    ? getCashPurposeMappingStatus(
+                        row,
+                        selectedManualCashReadiness,
+                        purposeCode
+                      )
                     : isRequiredPurpose
                     ? getPurposeReadinessStatus(selectedManualCariReadiness, purposeCode)
                     : {
@@ -3462,7 +3458,7 @@ export default function GlSetupPage({ mode = "full" } = {}) {
                     : isManualRevrecModule
                     ? l("Required", "Zorunlu")
                     : isManualCashModule
-                    ? l("Default", "Varsayilan")
+                    ? l("Required", "Zorunlu")
                     : l("Context override", "Baglam override");
                 return (
                   <tr key={purposeCode} className="border-t border-slate-100">

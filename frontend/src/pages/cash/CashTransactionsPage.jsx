@@ -20,7 +20,6 @@ import {
   getCariSettlementErrorHint,
 } from "../../api/cariSettlements.js";
 import { listAccounts } from "../../api/glAdmin.js";
-import { listJournalPurposeAccounts } from "../../api/glPurposeMappings.js";
 import {
   createMeSavedView,
   deleteMeSavedView,
@@ -90,7 +89,6 @@ const CARI_SETTLEMENT_LINKED_TXN_TYPES = new Set(["RECEIPT", "PAYOUT"]);
 const CASH_REGISTER_SETUP_PATH = "/app/kasa-tanimlari";
 const CASH_SESSION_SETUP_PATH = "/app/kasa-oturumlari";
 const BANK_ACCOUNTS_SETUP_PATH = "/app/banka-tanimla";
-const CASH_TRANSIT_CLEARING_PURPOSE_CODE = "CASH_TRANSIT_CLEARING";
 
 const CASH_TRANSACTION_FILTER_CONTEXT_MAPPINGS = [
   { stateKey: "bookDateFrom", contextKey: "dateFrom" },
@@ -115,12 +113,12 @@ const CASH_TRANSACTION_PRESET_OPTIONS = [
   },
   {
     code: "PAYOUT_STANDARD",
-    label: "Payout / Vendor",
+    label: "Payment / Vendor",
     patch: {
       txnType: "PAYOUT",
       sourceDocType: "AP_PAYMENT",
       counterpartyType: "VENDOR",
-      description: "Vendor payout",
+      description: "Vendor payment",
     },
   },
   {
@@ -433,29 +431,6 @@ function formatBankAccountOptionLabel(bankAccount) {
   ).trim();
   const label = `${bankAccount?.code || bankAccount?.id || "-"} - ${bankAccount?.name || "-"}`;
   return glCode ? `${label} | ${glCode}` : label;
-}
-
-function buildPurposeMappingMap(rows) {
-  const byPurposeCode = {};
-  for (const row of Array.isArray(rows) ? rows : []) {
-    const purposeCode = toUpper(row?.purposeCode || row?.purpose_code);
-    if (!purposeCode) {
-      continue;
-    }
-    byPurposeCode[purposeCode] = row;
-  }
-  return byPurposeCode;
-}
-
-function isTransitLikeAccount(account) {
-  const code = toUpper(account?.code);
-  const name = toUpper(account?.name);
-  return (
-    code.startsWith("108") ||
-    name.includes("TRANSIT") ||
-    name.includes("TRANSFER") ||
-    name.includes("CLEAR")
-  );
 }
 
 function toDateTimeLocalInput(date = new Date()) {
@@ -1155,8 +1130,6 @@ export default function CashTransactionsPage() {
   const [selectedTemplateId, setSelectedTemplateId] = useState("");
   const [defaultTemplateHydrated, setDefaultTemplateHydrated] = useState(false);
   const [selectedPresetCode, setSelectedPresetCode] = useState("");
-  const [cashPurposeMappingsByPurpose, setCashPurposeMappingsByPurpose] = useState({});
-  const lastSuggestedCounterAccountIdRef = useRef(null);
   const appliedCapitalFulfillmentTransitPrefillRef = useRef("");
 
   useWorkingContextDefaults(setFilters, CASH_TRANSACTION_FILTER_CONTEXT_MAPPINGS, [
@@ -1299,12 +1272,12 @@ export default function CashTransactionsPage() {
         description:
           toUpper(form.txnType) === "TRANSFER_IN"
             ? l(
-                "Different operating-unit contexts must be completed from Transit Receive instead of creating TRANSFER_IN directly.",
-                "Farkli operating-unit baglamlari, TRANSFER_IN kaydini dogrudan olusturmak yerine Transit Receive ile tamamlanmalidir."
+                "Different operating-unit contexts must be completed from Transit Receive. Posting uses saved self-balancing current-account mappings, so no transit-clearing account is selected on this form.",
+                "Farkli operating-unit baglamlari Transit Receive ile tamamlanmalidir. Kayit, kaydedilmis self-balancing cari hesap eslemelerini kullanir; bu formda transit clearing hesap secilmez."
               )
             : l(
-                "Different operating-unit contexts route through cash transit. Creating TRANSFER_OUT starts the transit workflow instead of a direct register-to-register post.",
-                "Farkli operating-unit baglamlari kasa transitinden gecer. TRANSFER_OUT olusturma, dogrudan register'dan register'a post yerine transit akislarini baslatir."
+                "Different operating-unit contexts route through cash transit and post from saved self-balancing current-account mappings. Creating TRANSFER_OUT starts the transit workflow; no transit-clearing account selection is needed here.",
+                "Farkli operating-unit baglamlari kasa transitinden gecer ve kayit, kaydedilmis self-balancing cari hesap eslemelerinden olusur. TRANSFER_OUT olusturma transit akislarini baslatir; burada transit clearing hesap secimi gerekmez."
               ),
       };
     }
@@ -1404,12 +1377,14 @@ export default function CashTransactionsPage() {
   const scopedAccountOptions = accountOptions;
   const counterAccountIsBank = isBankTxnType(form.txnType);
   const counterAccountIsTransfer = isTransferTxnType(form.txnType);
-  const counterAccountIsRequired =
-    requiresCounterAccountTxnType(form.txnType) || selectedIsCrossOuTransfer;
-  const counterAccountNeedsLookup =
-    requiresCounterAccountTxnType(form.txnType) || counterAccountIsTransfer;
+  const showCrossOuTransitCounterAccountInfo =
+    counterAccountIsTransfer && selectedIsCrossOuTransfer;
+  const showTransferCounterAccountField = !counterAccountIsTransfer;
+  const counterAccountIsRequired = requiresCounterAccountTxnType(form.txnType);
+  const counterAccountNeedsLookup = requiresCounterAccountTxnType(form.txnType);
   const showCounterAccountPicker =
-    counterAccountIsBank ? canReadBanks : canReadAccounts && counterAccountNeedsLookup;
+    showTransferCounterAccountField &&
+    (counterAccountIsBank ? canReadBanks : canReadAccounts && counterAccountNeedsLookup);
   const counterAccountPickerDisabled = !selectedRegisterLegalEntityId;
   const filteredCounterAccountOptions = useMemo(() => {
     const normalizedQuery = toUpper(accountQuery);
@@ -1420,17 +1395,10 @@ export default function CashTransactionsPage() {
         })
       : [...scopedAccountOptions];
 
-    return filtered.sort((a, b) => {
-      if (counterAccountIsTransfer) {
-        const transitRankA = isTransitLikeAccount(a) ? 0 : 1;
-        const transitRankB = isTransitLikeAccount(b) ? 0 : 1;
-        if (transitRankA !== transitRankB) {
-          return transitRankA - transitRankB;
-        }
-      }
-      return String(a?.code || "").localeCompare(String(b?.code || ""));
-    });
-  }, [scopedAccountOptions, accountQuery, counterAccountIsTransfer]);
+    return filtered.sort((a, b) =>
+      String(a?.code || "").localeCompare(String(b?.code || ""))
+    );
+  }, [scopedAccountOptions, accountQuery]);
   const filteredBankCounterAccountOptions = useMemo(() => {
     const normalizedQuery = toUpper(accountQuery);
     const registerCurrency = toUpper(selectedRegister?.currency_code);
@@ -1565,21 +1533,6 @@ export default function CashTransactionsPage() {
     }
     return bankAccountOptions.find((row) => toBankAccountGlAccountId(row) === accountId) || null;
   }, [bankAccountOptions, form.counterAccountId]);
-  const selectedCounterAccountLegalEntityId = useMemo(
-    () =>
-      toPositiveInt(
-        selectedCounterAccountOption?.legal_entity_id ?? selectedCounterAccountOption?.legalEntityId
-      ),
-    [selectedCounterAccountOption]
-  );
-  const defaultTransitCounterAccountId = useMemo(
-    () =>
-      toPositiveInt(
-        cashPurposeMappingsByPurpose[CASH_TRANSIT_CLEARING_PURPOSE_CODE]?.accountId ||
-          cashPurposeMappingsByPurpose[CASH_TRANSIT_CLEARING_PURPOSE_CODE]?.account_id
-      ),
-    [cashPurposeMappingsByPurpose]
-  );
   const partnerCurrentDueFromParentOptions = useMemo(
     () =>
       [...accounts]
@@ -1765,118 +1718,25 @@ export default function CashTransactionsPage() {
   ]);
 
   useEffect(() => {
-    let cancelled = false;
-
-    async function loadCashPurposeMappings() {
-      if (!selectedRegisterLegalEntityId) {
-        setCashPurposeMappingsByPurpose({});
-        return;
-      }
-      try {
-        const response = await listJournalPurposeAccounts({
-          legalEntityId: selectedRegisterLegalEntityId,
-          moduleKey: "CASH",
-        });
-        if (cancelled) {
-          return;
-        }
-        setCashPurposeMappingsByPurpose(buildPurposeMappingMap(response?.rows || []));
-      } catch {
-        if (!cancelled) {
-          setCashPurposeMappingsByPurpose({});
-        }
-      }
-    }
-
-    loadCashPurposeMappings();
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedRegisterLegalEntityId]);
-
-  useEffect(() => {
-    const previousSuggestedCounterAccountId = toPositiveInt(
-      lastSuggestedCounterAccountIdRef.current
-    );
-    const nextSuggestedCounterAccountId = defaultTransitCounterAccountId;
-
     if (!counterAccountIsTransfer) {
-      setForm((prev) => {
-        const currentCounterAccountId = toPositiveInt(prev.counterAccountId);
-        if (
-          previousSuggestedCounterAccountId &&
-          currentCounterAccountId === previousSuggestedCounterAccountId
-        ) {
-          return {
-            ...prev,
-            counterAccountId: "",
-          };
-        }
-        return prev;
-      });
-      lastSuggestedCounterAccountIdRef.current = null;
       return;
     }
 
-    if (!selectedRegisterLegalEntityId) {
-      lastSuggestedCounterAccountIdRef.current = null;
+    const currentCounterAccountId = toPositiveInt(form.counterAccountId);
+    if (!currentCounterAccountId) {
       return;
     }
 
     setForm((prev) => {
-      const currentCounterAccountId = toPositiveInt(prev.counterAccountId);
-      const currentBelongsToSelectedLegalEntity =
-        !currentCounterAccountId ||
-        selectedCounterAccountLegalEntityId === selectedRegisterLegalEntityId;
-
-      if (!currentBelongsToSelectedLegalEntity) {
-        return {
-          ...prev,
-          counterAccountId: nextSuggestedCounterAccountId
-            ? String(nextSuggestedCounterAccountId)
-            : "",
-        };
-      }
-
-      if (!nextSuggestedCounterAccountId) {
-        if (
-          previousSuggestedCounterAccountId &&
-          currentCounterAccountId === previousSuggestedCounterAccountId
-        ) {
-          return {
-            ...prev,
-            counterAccountId: "",
-          };
-        }
+      if (!isTransferTxnType(prev.txnType) || !toPositiveInt(prev.counterAccountId)) {
         return prev;
       }
-
-      if (
-        !currentCounterAccountId ||
-        (previousSuggestedCounterAccountId &&
-          currentCounterAccountId === previousSuggestedCounterAccountId)
-      ) {
-        if (currentCounterAccountId === nextSuggestedCounterAccountId) {
-          return prev;
-        }
-        return {
-          ...prev,
-          counterAccountId: String(nextSuggestedCounterAccountId),
-        };
-      }
-
-      return prev;
+      return {
+        ...prev,
+        counterAccountId: "",
+      };
     });
-
-    lastSuggestedCounterAccountIdRef.current = nextSuggestedCounterAccountId
-      ? String(nextSuggestedCounterAccountId)
-      : null;
-  }, [
-    counterAccountIsTransfer,
-    defaultTransitCounterAccountId,
-    selectedCounterAccountLegalEntityId,
-    selectedRegisterLegalEntityId,
-  ]);
+  }, [counterAccountIsTransfer, form.counterAccountId]);
 
   useEffect(() => {
     const currentSessionId = toPositiveInt(form.cashSessionId);
@@ -3504,7 +3364,9 @@ export default function CashTransactionsPage() {
       cashSessionId: "",
       currencyCode: nextRegister ? toUpper(nextRegister.currency_code) : prev.currencyCode,
       counterAccountId:
-        currentLegalEntityId && nextLegalEntityId && currentLegalEntityId === nextLegalEntityId
+        isTransferTxnType(prev.txnType)
+          ? ""
+          : currentLegalEntityId && nextLegalEntityId && currentLegalEntityId === nextLegalEntityId
           ? prev.counterAccountId
           : "",
       counterpartyId: "",
@@ -3529,7 +3391,7 @@ export default function CashTransactionsPage() {
       ...prev,
       txnType: normalized,
       counterCashRegisterId: isTransfer ? prev.counterCashRegisterId : "",
-      counterAccountId: requiresCounterAccount || isTransfer ? prev.counterAccountId : "",
+      counterAccountId: requiresCounterAccount ? prev.counterAccountId : "",
       counterpartyType: isTransfer ? "" : expectedCounterpartyType || prev.counterpartyType,
       counterpartyId: isTransfer
         ? ""
@@ -3848,7 +3710,6 @@ export default function CashTransactionsPage() {
         const response = await initiateCashTransitTransfer({
           registerId,
           targetRegisterId: counterCashRegisterId,
-          transitAccountId: counterAccountId || undefined,
           cashSessionId: cashSessionId || undefined,
           txnDatetime,
           bookDate,
@@ -3886,7 +3747,7 @@ export default function CashTransactionsPage() {
           sourceDocId: String(form.sourceDocId || "").trim() || undefined,
           counterpartyType: String(form.counterpartyType || "").trim() || undefined,
           counterpartyId: counterpartyId || undefined,
-          counterAccountId: counterAccountId || undefined,
+          counterAccountId: isTransferTxn ? undefined : counterAccountId || undefined,
           counterCashRegisterId: counterCashRegisterId || undefined,
           sourceModule: "MANUAL",
           idempotencyKey,
@@ -4959,113 +4820,117 @@ export default function CashTransactionsPage() {
               </>
             ) : null}
 
-            {showCounterAccountPicker ? (
-              <div className="md:col-span-2 grid gap-2 md:grid-cols-2">
-                <input
-                  type="text"
-                  value={accountQuery}
-                  onChange={(event) => setAccountQuery(event.target.value)}
-                  className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                  disabled={counterAccountPickerDisabled}
-                  placeholder={t(
-                    counterAccountIsTransfer
-                      ? "cashTransactions.placeholders.searchTransitAccount"
-                      : counterAccountIsBank
-                        ? "cashTransactions.placeholders.searchBankAccount"
-                        : "cashTransactions.placeholders.searchAccount"
-                  )}
-                />
-                <select
-                  value={form.counterAccountId}
-                  onChange={(event) =>
-                    setForm((prev) => ({ ...prev, counterAccountId: event.target.value }))
-                  }
-                  className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                  disabled={counterAccountPickerDisabled}
-                  required={counterAccountIsRequired}
-                >
-                  <option value="">
-                    {t(
-                      counterAccountIsTransfer
-                        ? "cashTransactions.placeholders.transitCounterAccount"
-                        : counterAccountIsBank
-                          ? "cashTransactions.placeholders.bankCounterAccount"
-                          : "cashTransactions.placeholders.counterAccount"
-                    )}
-                  </option>
-                  {counterAccountIsBank
-                    ? filteredBankCounterAccountOptions.map((bankAccount) => (
-                        <option
-                          key={`counter-bank-account-${bankAccount.id}`}
-                          value={toBankAccountGlAccountId(bankAccount)}
-                        >
-                          {formatBankAccountOptionLabel(bankAccount)}
-                        </option>
-                      ))
-                    : filteredCounterAccountOptions.map((account) => (
-                        <option key={`counter-account-${account.id}`} value={account.id}>
-                          {formatAccountOptionLabel(account)}
-                        </option>
-                      ))}
-                </select>
+            {showCrossOuTransitCounterAccountInfo ? (
+              <div className="md:col-span-3 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-900">
+                {t("cashTransactions.warnings.crossOuTransitSelfBalancingInfo")}
               </div>
-            ) : (
-              <input
-                type="number"
-                min={1}
-                value={form.counterAccountId}
-                onChange={(event) =>
-                  setForm((prev) => ({ ...prev, counterAccountId: event.target.value }))
-                }
-                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                placeholder={t(
-                  counterAccountIsBank
-                    ? "cashTransactions.form.bankCounterAccountIdManualFallback"
-                    : "cashTransactions.form.counterAccountIdManualFallback"
-                )}
-                required={counterAccountIsRequired}
-              />
-            )}
-            {counterAccountLookupHint ? (
-              <div className="md:col-span-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-                <p>{counterAccountLookupHint}</p>
-                {counterAccountIsBank &&
-                canReadBanks &&
-                selectedRegisterLegalEntityId &&
-                !bankAccountsLoading &&
-                bankAccountOptions.length === 0 ? (
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    <Link
-                      to={BANK_ACCOUNTS_SETUP_PATH}
-                      className="inline-flex items-center rounded border border-amber-400 bg-amber-100 px-2 py-1 text-xs font-medium text-amber-900 hover:bg-amber-200"
+            ) : showTransferCounterAccountField ? (
+              <>
+                {showCounterAccountPicker ? (
+                  <div className="md:col-span-2 grid gap-2 md:grid-cols-2">
+                    <input
+                      type="text"
+                      value={accountQuery}
+                      onChange={(event) => setAccountQuery(event.target.value)}
+                      className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                      disabled={counterAccountPickerDisabled}
+                      placeholder={t(
+                        counterAccountIsBank
+                          ? "cashTransactions.placeholders.searchBankAccount"
+                          : "cashTransactions.placeholders.searchAccount"
+                      )}
+                    />
+                    <select
+                      value={form.counterAccountId}
+                      onChange={(event) =>
+                        setForm((prev) => ({ ...prev, counterAccountId: event.target.value }))
+                      }
+                      className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                      disabled={counterAccountPickerDisabled}
+                      required={counterAccountIsRequired}
                     >
-                      {t("cashTransactions.actions.openBankAccountSetup")}
-                    </Link>
+                      <option value="">
+                        {t(
+                          counterAccountIsBank
+                            ? "cashTransactions.placeholders.bankCounterAccount"
+                            : "cashTransactions.placeholders.counterAccount"
+                        )}
+                      </option>
+                      {counterAccountIsBank
+                        ? filteredBankCounterAccountOptions.map((bankAccount) => (
+                            <option
+                              key={`counter-bank-account-${bankAccount.id}`}
+                              value={toBankAccountGlAccountId(bankAccount)}
+                            >
+                              {formatBankAccountOptionLabel(bankAccount)}
+                            </option>
+                          ))
+                        : filteredCounterAccountOptions.map((account) => (
+                            <option key={`counter-account-${account.id}`} value={account.id}>
+                              {formatAccountOptionLabel(account)}
+                            </option>
+                          ))}
+                    </select>
+                  </div>
+                ) : (
+                  <input
+                    type="number"
+                    min={1}
+                    value={form.counterAccountId}
+                    onChange={(event) =>
+                      setForm((prev) => ({ ...prev, counterAccountId: event.target.value }))
+                    }
+                    className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                    placeholder={t(
+                      counterAccountIsBank
+                        ? "cashTransactions.form.bankCounterAccountIdManualFallback"
+                        : "cashTransactions.form.counterAccountIdManualFallback"
+                    )}
+                    required={counterAccountIsRequired}
+                  />
+                )}
+                {counterAccountLookupHint ? (
+                  <div className="md:col-span-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                    <p>{counterAccountLookupHint}</p>
+                    {counterAccountIsBank &&
+                    canReadBanks &&
+                    selectedRegisterLegalEntityId &&
+                    !bankAccountsLoading &&
+                    bankAccountOptions.length === 0 ? (
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        <Link
+                          to={BANK_ACCOUNTS_SETUP_PATH}
+                          className="inline-flex items-center rounded border border-amber-400 bg-amber-100 px-2 py-1 text-xs font-medium text-amber-900 hover:bg-amber-200"
+                        >
+                          {t("cashTransactions.actions.openBankAccountSetup")}
+                        </Link>
+                      </div>
+                    ) : null}
                   </div>
                 ) : null}
-              </div>
-            ) : null}
-            {counterAccountIsBank && selectedCounterBankAccountOption ? (
-              <div className="md:col-span-3 rounded-lg border border-cyan-200 bg-cyan-50 px-3 py-2 text-xs text-cyan-800">
-                {t("cashTransactions.values.selectedBankCounterAccount", {
-                  code:
-                    selectedCounterBankAccountOption.code ||
-                    selectedCounterBankAccountOption.id,
-                  name: selectedCounterBankAccountOption.name || "-",
-                  glCode:
-                    selectedCounterBankAccountOption.gl_account_code ||
-                    selectedCounterBankAccountOption.glAccountCode ||
-                    form.counterAccountId,
-                })}
-              </div>
-            ) : selectedCounterAccountOption ? (
-              <div className="md:col-span-3 rounded-lg border border-cyan-200 bg-cyan-50 px-3 py-2 text-xs text-cyan-800">
-                {t("cashTransactions.values.selectedCounterAccount", {
-                  code:
-                    selectedCounterAccountOption.code || selectedCounterAccountOption.id,
-                  name: selectedCounterAccountOption.name || "-",
-                })}
-              </div>
+                {counterAccountIsBank && selectedCounterBankAccountOption ? (
+                  <div className="md:col-span-3 rounded-lg border border-cyan-200 bg-cyan-50 px-3 py-2 text-xs text-cyan-800">
+                    {t("cashTransactions.values.selectedBankCounterAccount", {
+                      code:
+                        selectedCounterBankAccountOption.code ||
+                        selectedCounterBankAccountOption.id,
+                      name: selectedCounterBankAccountOption.name || "-",
+                      glCode:
+                        selectedCounterBankAccountOption.gl_account_code ||
+                        selectedCounterBankAccountOption.glAccountCode ||
+                        form.counterAccountId,
+                    })}
+                  </div>
+                ) : selectedCounterAccountOption ? (
+                  <div className="md:col-span-3 rounded-lg border border-cyan-200 bg-cyan-50 px-3 py-2 text-xs text-cyan-800">
+                    {t("cashTransactions.values.selectedCounterAccount", {
+                      code:
+                        selectedCounterAccountOption.code || selectedCounterAccountOption.id,
+                      name: selectedCounterAccountOption.name || "-",
+                    })}
+                  </div>
+                ) : null}
+              </>
             ) : null}
 
             {isTransferTxnType(form.txnType) ? (

@@ -481,11 +481,11 @@ async function bootstrapSelfBalancingContext(token, identity) {
     code: `CRCX${identity.stamp}`,
     name: "Register C",
   });
-  const transitAccountId = await createAccount({
+  const sentinelAssetAccountId = await createAccount({
     token,
     coaId,
     code: `TRN${identity.stamp}`,
-    name: "Cash In Transit",
+    name: "Transit Sentinel Asset",
     accountType: "ASSET",
     normalSide: "DEBIT",
   });
@@ -656,19 +656,6 @@ async function bootstrapSelfBalancingContext(token, identity) {
     currencyCode,
   });
 
-  await apiRequest({
-    token,
-    method: "POST",
-    path: "/api/v1/gl/journal-purpose-accounts",
-    body: {
-      legalEntityId,
-      moduleKey: "CASH",
-      purposeCode: "CASH_TRANSIT_CLEARING",
-      accountId: transitAccountId,
-    },
-    expectedStatus: 201,
-  });
-
   return {
     tenantId: identity.tenantId,
     legalEntityId,
@@ -687,7 +674,7 @@ async function bootstrapSelfBalancingContext(token, identity) {
     branchBankAccountAGlId,
     registerAccountAId,
     registerAccountBId,
-    transitAccountId,
+    sentinelAssetAccountId,
     centralDueFromAccountAId,
     ouDueToAccountAId,
     centralDueFromAccountBId,
@@ -708,6 +695,10 @@ async function createCashTransaction({
   currencyCode,
   idempotencyKey,
   counterAccountId,
+  counterCashRegisterId,
+  sourceModule,
+  sourceEntityType,
+  sourceEntityId,
   expectedStatus = 200,
 }) {
   return apiRequest({
@@ -721,6 +712,10 @@ async function createCashTransaction({
       amount,
       currencyCode,
       counterAccountId,
+      counterCashRegisterId,
+      sourceModule,
+      sourceEntityType,
+      sourceEntityId,
       txnDatetime: TEST_DATETIME,
       bookDate: TEST_DATE,
       description: `CRO05 bank/cash ${idempotencyKey}`,
@@ -729,6 +724,25 @@ async function createCashTransaction({
     },
     expectedStatus,
   });
+}
+
+async function assertTransactionCounterAccountId({
+  tenantId,
+  transactionId,
+  expectedCounterAccountId = null,
+}) {
+  const result = await query(
+    `SELECT counter_account_id
+     FROM cash_transactions
+     WHERE tenant_id = ?
+       AND id = ?
+     LIMIT 1`,
+    [tenantId, transactionId]
+  );
+  assert(
+    toNumber(result.rows?.[0]?.counter_account_id) === toNumber(expectedCounterAccountId),
+    `Expected counter_account_id=${expectedCounterAccountId ?? "NULL"} for transaction ${transactionId}`
+  );
 }
 
 async function initiateTransitTransfer({
@@ -921,8 +935,8 @@ async function runCentralToOuScenario(token, setup, stamp) {
   );
   assertNoAccount(
     transferOutLines,
-    setup.transitAccountId,
-    "Central -> OU transfer-out should not post transit clearing"
+    setup.sentinelAssetAccountId,
+    "Central -> OU transfer-out should not post the sentinel asset account"
   );
   assertNoOuLinesHaveNoSubledgerRef(
     transferOutLines,
@@ -967,8 +981,8 @@ async function runCentralToOuScenario(token, setup, stamp) {
   );
   assertNoAccount(
     transferInLines,
-    setup.transitAccountId,
-    "Central -> OU transfer-in should not post transit clearing"
+    setup.sentinelAssetAccountId,
+    "Central -> OU transfer-in should not post the sentinel asset account"
   );
 
   return {
@@ -1027,8 +1041,8 @@ async function runOuToCentralScenario(token, setup, stamp) {
   );
   assertNoAccount(
     transferOutLines,
-    setup.transitAccountId,
-    "OU -> Central transfer-out should not post transit clearing"
+    setup.sentinelAssetAccountId,
+    "OU -> Central transfer-out should not post the sentinel asset account"
   );
 
   const receiveRes = await receiveTransitTransfer({
@@ -1069,8 +1083,8 @@ async function runOuToCentralScenario(token, setup, stamp) {
   );
   assertNoAccount(
     transferInLines,
-    setup.transitAccountId,
-    "OU -> Central transfer-in should not post transit clearing"
+    setup.sentinelAssetAccountId,
+    "OU -> Central transfer-in should not post the sentinel asset account"
   );
   assertNoOuLinesHaveNoSubledgerRef(
     transferInLines,
@@ -1133,8 +1147,8 @@ async function runOuToOuScenario(token, setup, stamp) {
   );
   assertNoAccount(
     transferOutLines,
-    setup.transitAccountId,
-    "OU -> OU transfer-out should not post transit clearing"
+    setup.sentinelAssetAccountId,
+    "OU -> OU transfer-out should not post the sentinel asset account"
   );
 
   const receiveRes = await receiveTransitTransfer({
@@ -1175,12 +1189,143 @@ async function runOuToOuScenario(token, setup, stamp) {
   );
   assertNoAccount(
     transferInLines,
-    setup.transitAccountId,
-    "OU -> OU transfer-in should not post transit clearing"
+    setup.sentinelAssetAccountId,
+    "OU -> OU transfer-in should not post the sentinel asset account"
   );
 
   return {
     transferId,
+    transferOutTxnId,
+    transferInTxnId,
+  };
+}
+
+async function runNullCounterCentralToOuScenario(token, setup, stamp) {
+  const transferOutCreateRes = await createCashTransaction({
+    token,
+    tenantId: setup.tenantId,
+    registerId: setup.centralRegisterId,
+    counterCashRegisterId: setup.registerAId,
+    txnType: "TRANSFER_OUT",
+    amount: "31.00",
+    currencyCode: setup.currencyCode,
+    idempotencyKey: `CENTRAL-OU-NULL-${stamp}`,
+    sourceModule: "CASH",
+    sourceEntityType: "cash_transit_transfer",
+    sourceEntityId: `CRO05-NULL-OUT-${stamp}`,
+    expectedStatus: 200,
+  });
+  const transferOutTxnId = toNumber(transferOutCreateRes.json?.row?.id);
+  assert(transferOutTxnId > 0, "Null-counter central -> OU transfer-out transaction missing");
+  await assertTransactionCounterAccountId({
+    tenantId: setup.tenantId,
+    transactionId: transferOutTxnId,
+    expectedCounterAccountId: null,
+  });
+
+  await postCashTransaction({
+    token,
+    tenantId: setup.tenantId,
+    transactionId: transferOutTxnId,
+    expectedStatus: 200,
+  });
+
+  const transferOutLines = await loadPostedJournalLines({
+    tenantId: setup.tenantId,
+    transactionId: transferOutTxnId,
+  });
+  assert(transferOutLines.length === 2, "Null-counter central -> OU transfer-out should post 2 journal lines");
+  assertHasLine(
+    transferOutLines,
+    {
+      accountId: setup.centralDueFromAccountAId,
+      operatingUnitId: null,
+      side: "debit",
+      amount: 31,
+    },
+    "Null-counter central -> OU transfer-out should debit target OU HQ due-from at no-OU scope"
+  );
+  assertHasLine(
+    transferOutLines,
+    {
+      accountId: setup.centralRegisterAccountId,
+      operatingUnitId: null,
+      side: "credit",
+      amount: 31,
+    },
+    "Null-counter central -> OU transfer-out should credit central register"
+  );
+  assertNoAccount(
+    transferOutLines,
+    setup.sentinelAssetAccountId,
+    "Null-counter central -> OU transfer-out should not post the sentinel asset account"
+  );
+  assertNoOuLinesHaveNoSubledgerRef(
+    transferOutLines,
+    "Null-counter central -> OU transfer-out no-OU lines should not carry subledger reference metadata"
+  );
+
+  const transferInCreateRes = await createCashTransaction({
+    token,
+    tenantId: setup.tenantId,
+    registerId: setup.registerAId,
+    counterCashRegisterId: setup.centralRegisterId,
+    txnType: "TRANSFER_IN",
+    amount: "31.00",
+    currencyCode: setup.currencyCode,
+    idempotencyKey: `CENTRAL-OU-NULL-IN-${stamp}`,
+    sourceModule: "CASH",
+    sourceEntityType: "cash_transit_transfer",
+    sourceEntityId: `CRO05-NULL-IN-${stamp}`,
+    expectedStatus: 200,
+  });
+  const transferInTxnId = toNumber(transferInCreateRes.json?.row?.id);
+  assert(transferInTxnId > 0, "Null-counter central -> OU transfer-in transaction missing");
+  await assertTransactionCounterAccountId({
+    tenantId: setup.tenantId,
+    transactionId: transferInTxnId,
+    expectedCounterAccountId: null,
+  });
+
+  await postCashTransaction({
+    token,
+    tenantId: setup.tenantId,
+    transactionId: transferInTxnId,
+    expectedStatus: 200,
+  });
+
+  const transferInLines = await loadPostedJournalLines({
+    tenantId: setup.tenantId,
+    transactionId: transferInTxnId,
+  });
+  assert(transferInLines.length === 2, "Null-counter central -> OU transfer-in should post 2 journal lines");
+  assertHasLine(
+    transferInLines,
+    {
+      accountId: setup.registerAccountAId,
+      operatingUnitId: setup.operatingUnitAId,
+      side: "debit",
+      amount: 31,
+    },
+    "Null-counter central -> OU transfer-in should debit target register"
+  );
+  assertHasLine(
+    transferInLines,
+    {
+      accountId: setup.ouDueToAccountAId,
+      operatingUnitId: setup.operatingUnitAId,
+      side: "credit",
+      amount: 31,
+    },
+    "Null-counter central -> OU transfer-in should credit target OU due-to account"
+  );
+  assertNoAccount(
+    transferInLines,
+    setup.sentinelAssetAccountId,
+    "Null-counter central -> OU transfer-in should not post the sentinel asset account"
+  );
+
+  return {
     transferOutTxnId,
     transferInTxnId,
   };
@@ -1255,8 +1400,8 @@ async function runCentralBankToOuCashScenario(token, setup, stamp) {
   );
   assertNoAccount(
     lines,
-    setup.transitAccountId,
-    "Central bank -> OU cash should not use transit clearing"
+    setup.sentinelAssetAccountId,
+    "Central bank -> OU cash should not use the sentinel asset account"
   );
   assertNoOuLinesHaveNoSubledgerRef(
     lines,
@@ -1337,8 +1482,8 @@ async function runOuCashToCentralBankScenario(token, setup, stamp) {
   );
   assertNoAccount(
     lines,
-    setup.transitAccountId,
-    "OU cash -> central bank should not use transit clearing"
+    setup.sentinelAssetAccountId,
+    "OU cash -> central bank should not use the sentinel asset account"
   );
   assertNoOuLinesHaveNoSubledgerRef(
     lines,
@@ -1480,6 +1625,11 @@ async function main() {
     const setup = await bootstrapSelfBalancingContext(adminToken, identity);
 
     const centralToOu = await runCentralToOuScenario(adminToken, setup, identity.stamp);
+    const centralToOuNullCounter = await runNullCounterCentralToOuScenario(
+      adminToken,
+      setup,
+      identity.stamp
+    );
     const ouToCentral = await runOuToCentralScenario(adminToken, setup, identity.stamp);
     const ouToOu = await runOuToOuScenario(adminToken, setup, identity.stamp);
     const centralBankToOuCash = await runCentralBankToOuCashScenario(
@@ -1506,6 +1656,7 @@ async function main() {
         {
           tenantId: identity.tenantId,
           centralToOu,
+          centralToOuNullCounter,
           ouToCentral,
           ouToOu,
           centralBankToOuCash,

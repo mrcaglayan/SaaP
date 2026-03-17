@@ -432,14 +432,20 @@ export function parseCashTransactionApplyCariInput(req) {
 export function parseCashTransitTransferInitiateInput(req) {
   const tenantId = requireTenantId(req);
   const userId = requireUserId(req);
+  if (Object.prototype.hasOwnProperty.call(req.body || {}, "transitAccountId")) {
+    throw badRequest(
+      "transitAccountId is not accepted for cash transit initiate; use the self-balancing transit workflow"
+    );
+  }
+  if (Object.prototype.hasOwnProperty.call(req.body || {}, "counterAccountId")) {
+    throw badRequest(
+      "counterAccountId is not accepted for cash transit initiate; use targetRegisterId for transit routing"
+    );
+  }
   const registerId = optionalPositiveInt(req.body?.registerId, "registerId");
   const targetRegisterId = optionalPositiveInt(
     req.body?.targetRegisterId ?? req.body?.counterCashRegisterId,
     "targetRegisterId"
-  );
-  const transitAccountId = optionalPositiveInt(
-    req.body?.transitAccountId ?? req.body?.counterAccountId,
-    "transitAccountId"
   );
   const cashSessionId = optionalPositiveInt(req.body?.cashSessionId, "cashSessionId");
   const txnDatetime = parseDateTime(req.body?.txnDatetime, "txnDatetime", new Date().toISOString());
@@ -473,7 +479,6 @@ export function parseCashTransitTransferInitiateInput(req) {
     userId,
     registerId,
     targetRegisterId,
-    transitAccountId,
     cashSessionId,
     txnDatetime,
     bookDate,

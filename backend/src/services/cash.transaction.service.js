@@ -43,11 +43,6 @@ import {
   CARI_SETTLEMENT_FOLLOW_UP_RISKS,
   applyCariSettlement,
 } from "./cari.settlement.service.js";
-import {
-  CASH_PURPOSE_CODES,
-  resolveCashPurposeAccountId,
-} from "./cash.purpose-mappings.service.js";
-
 const TRANSFER_TXN_TYPES = new Set(["TRANSFER_OUT", "TRANSFER_IN"]);
 const BANK_TXN_TYPES = new Set(["DEPOSIT_TO_BANK", "WITHDRAWAL_FROM_BANK"]);
 const NON_BANK_COUNTER_ACCOUNT_REQUIRED_TXN_TYPES = new Set([
@@ -1514,8 +1509,6 @@ export async function initiateCashTransitTransfer({
         throw badRequest("Cross-legal-entity cash transit transfer is not supported");
       }
 
-      const legalEntityId = parsePositiveInt(sourceRegister.legal_entity_id);
-
       const sourceOuId = parsePositiveInt(sourceRegister.operating_unit_id);
       const targetOuId = parsePositiveInt(targetRegister.operating_unit_id);
       if ((!sourceOuId && !targetOuId) || sourceOuId === targetOuId) {
@@ -1539,21 +1532,6 @@ export async function initiateCashTransitTransfer({
           throw badRequest("amount exceeds register max_txn_amount");
         }
       }
-
-      const resolvedTransitAccountId = await resolveCashPurposeAccountId({
-        tenantId: payload.tenantId,
-        legalEntityId,
-        purposeCode: CASH_PURPOSE_CODES.TRANSIT_CLEARING,
-        providedAccountId: payload.transitAccountId,
-        fieldLabel: "transitAccountId",
-        runQuery: tx.query,
-      });
-
-      await assertAccountBelongsToTenant(
-        payload.tenantId,
-        resolvedTransitAccountId,
-        "transitAccountId"
-      );
 
       const transferOutTxnIdempotencyKey = buildDerivedIdempotencyKey(
         "TRANSIT_OUT",
@@ -1582,7 +1560,7 @@ export async function initiateCashTransitTransfer({
         description: transferOutDescription,
         referenceNo: transferOutReferenceNo.slice(0, 100),
         counterCashRegisterId: parsePositiveInt(targetRegister.id),
-        counterAccountId: resolvedTransitAccountId,
+        counterAccountId: null,
         sourceModule: "CASH",
         sourceEntityType: "cash_transit_transfer",
         sourceEntityId: "PENDING",
@@ -1608,7 +1586,6 @@ export async function initiateCashTransitTransfer({
           status: TRANSIT_STATUS_INITIATED,
           amount: normalizeMoney(payload.amount),
           currencyCode: requestedCurrency,
-          transitAccountId: resolvedTransitAccountId,
           initiatedByUserId: payload.userId,
           idempotencyKey: payload.idempotencyKey,
           integrationEventUid,
@@ -1789,7 +1766,7 @@ export async function receiveCashTransitTransferById({
         description: description.slice(0, 500),
         referenceNo: referenceNo.slice(0, 100),
         counterCashRegisterId: parsePositiveInt(transitTransfer.source_cash_register_id),
-        counterAccountId: parsePositiveInt(transitTransfer.transit_account_id),
+        counterAccountId: null,
         sourceModule: "CASH",
         sourceEntityType: "cash_transit_transfer",
         sourceEntityId: String(payload.transitTransferId),

@@ -3,7 +3,6 @@ import { badRequest, parsePositiveInt } from "../routes/_utils.js";
 
 export const CASH_PURPOSE_CODES = Object.freeze({
   EXCHANGE_CLEARING: "CASH_EXCHANGE_CLEARING",
-  TRANSIT_CLEARING: "CASH_TRANSIT_CLEARING",
 });
 
 function asUpper(value) {
