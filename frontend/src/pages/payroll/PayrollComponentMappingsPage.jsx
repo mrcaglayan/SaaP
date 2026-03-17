@@ -1004,6 +1004,14 @@ export default function PayrollComponentMappingsPage() {
       });
       setMessage("Payroll mapping kaydedildi");
       setTemplateSource(null);
+      setForm((prev) => ({
+        ...prev,
+        glAccountId: "",
+      }));
+      setGlAccountLookupQuery("");
+      setInlineChildParentAccountId("");
+      setInlineChildCode("");
+      setInlineChildName("");
       filterPreviousLegalEntityIdRef.current = String(legalEntityId);
       setFilters((prev) => ({
         ...prev,
@@ -1422,6 +1430,7 @@ export default function PayrollComponentMappingsPage() {
                 {canReadGlAccounts ? (
                   <>
                     <Combobox
+                      key={`gl-account-${selectedLegalEntityId || "none"}-${form.glAccountId || "empty"}`}
                       value={form.glAccountId || null}
                       options={accountLookupOptions}
                       disabled={saving || loadingAccounts || !selectedLegalEntityId}
