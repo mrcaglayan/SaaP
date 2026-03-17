@@ -8,6 +8,8 @@ import {
   updatePayrollBeneficiaryAccount,
 } from "../../api/payrollBeneficiaries.js";
 
+const LOOKUP_REQUIRED_ERROR = "legalEntityId ve employeeCode gerekli.";
+
 function formatDate(value) {
   if (!value) return "-";
   const parsed = new Date(value);
@@ -74,6 +76,7 @@ export default function PayrollBeneficiariesPage() {
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [lookupWarning, setLookupWarning] = useState("");
+  const [hasLoadedRows, setHasLoadedRows] = useState(false);
 
   const selectedRow = useMemo(
     () => rows.find((row) => Number(row.id) === Number(selectedId)) || null,
@@ -86,6 +89,7 @@ export default function PayrollBeneficiariesPage() {
       ),
     [legalEntities]
   );
+  const canLoadRows = Boolean(canRead && filters.legalEntityId && filters.employeeCode && !loading);
 
   useEffect(() => {
     let cancelled = false;
@@ -134,12 +138,25 @@ export default function PayrollBeneficiariesPage() {
     setCreateForm((prev) => ({ ...prev, legalEntityId: String(legalEntityOptions[0]?.id || "") }));
   }, [createForm.legalEntityId, legalEntityOptions]);
 
+  useEffect(() => {
+    setHasLoadedRows(false);
+    setSelectedId(null);
+    setPatchForm(toPatchForm(null));
+    setError((prev) => (prev === LOOKUP_REQUIRED_ERROR ? "" : prev));
+  }, [filters.legalEntityId, filters.employeeCode, filters.currencyCode, filters.status]);
+
   async function loadRows(overrideFilters = null) {
-    const activeFilters = overrideFilters || filters;
+    const activeFilters =
+      overrideFilters && typeof overrideFilters === "object" && !("preventDefault" in overrideFilters)
+        ? overrideFilters
+        : filters;
     if (!canRead) return;
     if (!activeFilters.legalEntityId || !activeFilters.employeeCode) {
-      setError("legalEntityId ve employeeCode gerekli.");
+      setError(LOOKUP_REQUIRED_ERROR);
       setRows([]);
+      setHasLoadedRows(false);
+      setSelectedId(null);
+      setPatchForm(toPatchForm(null));
       return;
     }
     setLoading(true);
@@ -154,6 +171,7 @@ export default function PayrollBeneficiariesPage() {
       });
       const items = res?.items || [];
       setRows(items);
+      setHasLoadedRows(true);
       if (items.length > 0) {
         const nextSelected =
           items.find((row) => Number(row.id) === Number(selectedId))?.id || items[0].id;
@@ -166,6 +184,9 @@ export default function PayrollBeneficiariesPage() {
       }
     } catch (err) {
       setRows([]);
+      setHasLoadedRows(false);
+      setSelectedId(null);
+      setPatchForm(toPatchForm(null));
       setError(err?.response?.data?.message || "Payroll beneficiary listesi yuklenemedi");
     } finally {
       setLoading(false);
@@ -355,8 +376,8 @@ export default function PayrollBeneficiariesPage() {
             <div className="mt-3 flex gap-2">
               <button
                 type="button"
-                onClick={loadRows}
-                disabled={!canRead || loading}
+                onClick={() => loadRows()}
+                disabled={!canLoadRows}
                 className="rounded border border-slate-300 px-3 py-1.5 text-sm"
               >
                 {loading ? "Loading..." : "Load"}
@@ -389,69 +410,82 @@ export default function PayrollBeneficiariesPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((row) => (
-                    <tr
-                      key={row.id}
-                      className={`border-b ${Number(row.id) === Number(selectedId) ? "bg-slate-50" : ""}`}
-                    >
-                      <td className="p-2">
-                        <button type="button" className="underline" onClick={() => selectRow(row)}>
-                          {row.id}
-                        </button>
-                      </td>
-                      <td className="p-2">
-                        <div>{row.bank_name}</div>
-                        <div className="text-xs text-slate-500">{row.account_holder_name}</div>
-                      </td>
-                      <td className="p-2">
-                        <div>{row.currency_code}</div>
-                        <div className="text-xs text-slate-500">
-                          {row.iban ? `IBAN ****${String(row.iban).slice(-4)}` : `ACCT ****${row.account_last4 || "?"}`}
-                        </div>
-                      </td>
-                      <td className="p-2">
-                        <div>{row.status}</div>
-                        <div className="text-xs text-slate-500">
-                          {row.is_primary ? "PRIMARY" : "secondary"} / {row.verification_status}
-                        </div>
-                        <div className="text-xs text-slate-500">
-                          {formatDate(row.effective_from)} - {formatDate(row.effective_to)}
-                        </div>
-                      </td>
-                      <td className="p-2">
-                        <div className="flex flex-wrap gap-2">
-                          <button
-                            type="button"
-                            onClick={() => selectRow(row)}
-                            className="rounded border border-slate-300 px-2 py-1 text-xs"
-                          >
-                            Edit
-                          </button>
-                          {canSetPrimary ? (
-                            <button
-                              type="button"
-                              onClick={() => handleSetPrimary(row)}
-                              disabled={rowBusyId === Number(row.id) || row.is_primary}
-                              className="rounded border border-slate-300 px-2 py-1 text-xs"
-                            >
-                              Set Primary
+                  {hasLoadedRows
+                    ? rows.map((row) => (
+                        <tr
+                          key={row.id}
+                          className={`border-b ${Number(row.id) === Number(selectedId) ? "bg-slate-50" : ""}`}
+                        >
+                          <td className="p-2">
+                            <button type="button" className="underline" onClick={() => selectRow(row)}>
+                              {row.id}
                             </button>
-                          ) : null}
-                          {canWrite ? (
-                            <button
-                              type="button"
-                              onClick={() => handleToggleStatus(row)}
-                              disabled={rowBusyId === Number(row.id)}
-                              className="rounded border border-slate-300 px-2 py-1 text-xs"
-                            >
-                              {String(row.status).toUpperCase() === "ACTIVE" ? "Deactivate" : "Activate"}
-                            </button>
-                          ) : null}
-                        </div>
+                          </td>
+                          <td className="p-2">
+                            <div>{row.bank_name}</div>
+                            <div className="text-xs text-slate-500">{row.account_holder_name}</div>
+                          </td>
+                          <td className="p-2">
+                            <div>{row.currency_code}</div>
+                            <div className="text-xs text-slate-500">
+                              {row.iban
+                                ? `IBAN ****${String(row.iban).slice(-4)}`
+                                : `ACCT ****${row.account_last4 || "?"}`}
+                            </div>
+                          </td>
+                          <td className="p-2">
+                            <div>{row.status}</div>
+                            <div className="text-xs text-slate-500">
+                              {row.is_primary ? "PRIMARY" : "secondary"} / {row.verification_status}
+                            </div>
+                            <div className="text-xs text-slate-500">
+                              {formatDate(row.effective_from)} - {formatDate(row.effective_to)}
+                            </div>
+                          </td>
+                          <td className="p-2">
+                            <div className="flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                onClick={() => selectRow(row)}
+                                className="rounded border border-slate-300 px-2 py-1 text-xs"
+                              >
+                                Edit
+                              </button>
+                              {canSetPrimary ? (
+                                <button
+                                  type="button"
+                                  onClick={() => handleSetPrimary(row)}
+                                  disabled={rowBusyId === Number(row.id) || row.is_primary}
+                                  className="rounded border border-slate-300 px-2 py-1 text-xs"
+                                >
+                                  Set Primary
+                                </button>
+                              ) : null}
+                              {canWrite ? (
+                                <button
+                                  type="button"
+                                  onClick={() => handleToggleStatus(row)}
+                                  disabled={rowBusyId === Number(row.id)}
+                                  className="rounded border border-slate-300 px-2 py-1 text-xs"
+                                >
+                                  {String(row.status).toUpperCase() === "ACTIVE"
+                                    ? "Deactivate"
+                                    : "Activate"}
+                                </button>
+                              ) : null}
+                            </div>
+                          </td>
+                        </tr>
+                      ))
+                    : null}
+                  {!hasLoadedRows ? (
+                    <tr>
+                      <td className="p-3 text-slate-500" colSpan={5}>
+                        Legal entity ve employee code girip <strong>Load</strong> butonuna basin.
                       </td>
                     </tr>
-                  ))}
-                  {rows.length === 0 ? (
+                  ) : null}
+                  {hasLoadedRows && rows.length === 0 ? (
                     <tr>
                       <td className="p-3 text-slate-500" colSpan={5}>
                         No records.

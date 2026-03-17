@@ -11,6 +11,7 @@ import {
   applyPayrollPaymentSync,
   getPayrollPaymentSyncPreview,
 } from "../../api/payrollPaymentSync.js";
+import { listBankAccounts } from "../../api/bankAccounts.js";
 import {
   approveApplyPayrollManualSettlementRequest,
   createPayrollManualSettlementRequest,
@@ -77,6 +78,32 @@ function formatDateTime(value) {
   return parsed.toLocaleString();
 }
 
+function formatBankAccountOptionLabel(account) {
+  const code = String(account?.code || "").trim();
+  const name = String(account?.name || "").trim();
+  const currencyCode = String(account?.currency_code || account?.currencyCode || "")
+    .trim()
+    .toUpperCase();
+  const glCode = String(account?.gl_account_code || account?.glAccountCode || "").trim();
+  const operatingUnitCode = String(
+    account?.operating_unit_code || account?.operatingUnitCode || ""
+  ).trim();
+  const parts = [];
+  if (code || name) {
+    parts.push([code, name].filter(Boolean).join(" - "));
+  }
+  if (currencyCode) {
+    parts.push(currencyCode);
+  }
+  if (glCode) {
+    parts.push(`GL ${glCode}`);
+  }
+  if (operatingUnitCode) {
+    parts.push(`OU ${operatingUnitCode}`);
+  }
+  return parts.join(" | ") || `Bank #${account?.id || "?"}`;
+}
+
 export default function PayrollLiabilitiesPage() {
   const params = useParams();
   const routeRunId = toPositiveInt(params.runId ?? params.id);
@@ -84,6 +111,7 @@ export default function PayrollLiabilitiesPage() {
   const canRead = hasPermission("payroll.liabilities.read");
   const canBuild = hasPermission("payroll.liabilities.build");
   const canPrepare = hasPermission("payroll.payment.prepare");
+  const canReadBanks = hasPermission("bank.accounts.read");
   const canSyncRead = hasPermission("payroll.payment.sync.read");
   const canSyncApply = hasPermission("payroll.payment.sync.apply");
   const canOverrideRead = hasPermission("payroll.settlement.override.read");
@@ -124,6 +152,10 @@ export default function PayrollLiabilitiesPage() {
   const [scope, setScope] = useState("NET_PAY");
   const [syncScope, setSyncScope] = useState("ALL");
   const [allowB04OnlySync, setAllowB04OnlySync] = useState(false);
+  const [bankAccounts, setBankAccounts] = useState([]);
+  const [bankAccountsLoading, setBankAccountsLoading] = useState(false);
+  const [bankAccountLookupError, setBankAccountLookupError] = useState("");
+  const [bankAccountEmptyState, setBankAccountEmptyState] = useState("");
   const [batchForm, setBatchForm] = useState({
     bankAccountId: "",
     idempotencyKey: "",
@@ -175,6 +207,29 @@ export default function PayrollLiabilitiesPage() {
         resolveRowCurrencyCode: (row) => row?.currency_code || row?.currencyCode,
       }),
     [totalAmount, routeRunId, runCurrencyCode, items]
+  );
+  const runLegalEntityId = toPositiveInt(
+    runDetail?.legal_entity_id ?? runDetail?.legalEntityId ?? runDetail?.entity_id ?? runDetail?.entityId
+  );
+  const runOperatingUnitId = toPositiveInt(
+    runDetail?.operating_unit_id ?? runDetail?.operatingUnitId
+  );
+  const bankAccountOptions = useMemo(
+    () =>
+      [...(bankAccounts || [])].sort((left, right) =>
+        formatBankAccountOptionLabel(left).localeCompare(formatBankAccountOptionLabel(right))
+      ),
+    [bankAccounts]
+  );
+  const selectedBankAccount = useMemo(
+    () =>
+      bankAccountOptions.find(
+        (row) => String(row?.id || "") === String(batchForm.bankAccountId || "")
+      ) || null,
+    [bankAccountOptions, batchForm.bankAccountId]
+  );
+  const canUseBankAccountLookup = Boolean(
+    routeRunId && canPrepare && canReadBanks && !bankAccountLookupError
   );
 
   function toAmount(value) {
@@ -435,6 +490,117 @@ export default function PayrollLiabilitiesPage() {
   }, [canRead, routeRunId, scope, syncScope, allowB04OnlySync, canSyncRead]);
 
   useEffect(() => {
+    if (!routeRunId || !canPrepare) {
+      setBankAccounts([]);
+      setBankAccountsLoading(false);
+      setBankAccountLookupError("");
+      setBankAccountEmptyState("");
+      return undefined;
+    }
+    if (!canReadBanks) {
+      setBankAccounts([]);
+      setBankAccountsLoading(false);
+      setBankAccountLookupError("bank.accounts.read yok. Gerekirse banka hesap ID girin.");
+      setBankAccountEmptyState("");
+      return undefined;
+    }
+    if (!runLegalEntityId) {
+      setBankAccounts([]);
+      setBankAccountsLoading(false);
+      setBankAccountLookupError(
+        "Run legal entity bilgisi bulunamadi. Gerekirse banka hesap ID girin."
+      );
+      setBankAccountEmptyState("");
+      return undefined;
+    }
+
+    let active = true;
+    setBankAccountsLoading(true);
+    setBankAccountLookupError("");
+    setBankAccountEmptyState("");
+
+    listBankAccounts({
+      legalEntityId: runLegalEntityId,
+      operatingUnitId: runOperatingUnitId || undefined,
+      isActive: true,
+      limit: 300,
+      offset: 0,
+    })
+      .then((response) => {
+        if (!active) {
+          return;
+        }
+        const nextRows = response?.rows || [];
+        setBankAccounts(nextRows);
+        setBankAccountEmptyState(
+          nextRows.length === 0
+            ? "Secili tuzel kisilik icin aktif banka hesabi bulunamadi."
+            : ""
+        );
+      })
+      .catch((err) => {
+        if (!active) {
+          return;
+        }
+        setBankAccounts([]);
+        setBankAccountLookupError(
+          err?.response?.data?.message ||
+            "Banka hesaplari yuklenemedi. Gerekirse banka hesap ID girin."
+        );
+        setBankAccountEmptyState("");
+      })
+      .finally(() => {
+        if (active) {
+          setBankAccountsLoading(false);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [canPrepare, canReadBanks, routeRunId, runLegalEntityId, runOperatingUnitId]);
+
+  useEffect(() => {
+    setBatchForm((prev) => ({ ...prev, bankAccountId: "" }));
+  }, [routeRunId, runLegalEntityId, runOperatingUnitId]);
+
+  useEffect(() => {
+    if (!routeRunId || !canPrepare || !canUseBankAccountLookup || bankAccountsLoading) {
+      return;
+    }
+    if (batchForm.bankAccountId) {
+      return;
+    }
+    if (bankAccountOptions.length === 1) {
+      setBatchForm((prev) => ({ ...prev, bankAccountId: String(bankAccountOptions[0]?.id || "") }));
+      return;
+    }
+    if (!runCurrencyCode) {
+      return;
+    }
+    const matchingCurrencyOptions = bankAccountOptions.filter(
+      (row) =>
+        String(row?.currency_code || row?.currencyCode || "")
+          .trim()
+          .toUpperCase() === runCurrencyCode
+    );
+    if (matchingCurrencyOptions.length === 1) {
+      setBatchForm((prev) => ({
+        ...prev,
+        bankAccountId: String(matchingCurrencyOptions[0]?.id || ""),
+      }));
+    }
+  }, [
+    bankAccountOptions,
+    bankAccountsLoading,
+    batchForm.bankAccountId,
+    canPrepare,
+    canUseBankAccountLookup,
+    routeRunId,
+    runCurrencyCode,
+  ]);
+
+  useEffect(() => {
     if (!selectedLiabilityId || !canOverrideRead) {
       return;
     }
@@ -476,7 +642,7 @@ export default function PayrollLiabilitiesPage() {
     }
     const bankAccountId = toPositiveInt(batchForm.bankAccountId);
     if (!bankAccountId) {
-      setError("bankAccountId gerekli");
+      setError("Banka hesabi secin");
       return;
     }
     setBusy(true);
@@ -730,12 +896,36 @@ export default function PayrollLiabilitiesPage() {
                 <option value="STATUTORY">STATUTORY</option>
                 <option value="ALL">ALL</option>
               </select>
-              <input
-                className="rounded border border-slate-300 px-2 py-1.5 text-sm"
-                placeholder="Bank Account ID"
-                value={batchForm.bankAccountId}
-                onChange={(e) => setBatchForm((s) => ({ ...s, bankAccountId: e.target.value }))}
-              />
+              {canUseBankAccountLookup ? (
+                <select
+                  className="min-w-[300px] rounded border border-slate-300 px-2 py-1.5 text-sm"
+                  value={selectedBankAccount ? String(selectedBankAccount.id) : ""}
+                  onChange={(e) =>
+                    setBatchForm((s) => ({ ...s, bankAccountId: e.target.value }))
+                  }
+                  disabled={busy || loading || bankAccountsLoading || bankAccountOptions.length === 0}
+                >
+                  <option value="">
+                    {bankAccountsLoading
+                      ? "Banka hesaplari yukleniyor..."
+                      : bankAccountOptions.length === 0
+                        ? "Aktif banka hesabi yok"
+                        : "Banka hesabi secin"}
+                  </option>
+                  {bankAccountOptions.map((row) => (
+                    <option key={row.id} value={row.id}>
+                      {formatBankAccountOptionLabel(row)}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  className="rounded border border-slate-300 px-2 py-1.5 text-sm"
+                  placeholder="Bank Account ID"
+                  value={batchForm.bankAccountId}
+                  onChange={(e) => setBatchForm((s) => ({ ...s, bankAccountId: e.target.value }))}
+                />
+              )}
               <input
                 className="min-w-[220px] rounded border border-slate-300 px-2 py-1.5 text-sm"
                 placeholder="Idempotency Key (optional)"
@@ -759,6 +949,19 @@ export default function PayrollLiabilitiesPage() {
                 </button>
               ) : null}
             </div>
+            {routeRunId && canPrepare ? (
+              <div className="mt-2 text-xs text-slate-500">
+                {selectedBankAccount ? (
+                  <div>Secili banka hesabi: {formatBankAccountOptionLabel(selectedBankAccount)}</div>
+                ) : null}
+                {bankAccountLookupError ? (
+                  <div className="text-amber-700">{bankAccountLookupError}</div>
+                ) : null}
+                {!bankAccountLookupError && bankAccountEmptyState ? (
+                  <div className="text-amber-700">{bankAccountEmptyState}</div>
+                ) : null}
+              </div>
+            ) : null}
 
             {createdBatch?.id ? (
               <div className="mt-3 rounded border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
