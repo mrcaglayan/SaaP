@@ -54,6 +54,23 @@ function toDateOnly(value) {
   return parsed.toISOString().slice(0, 10);
 }
 
+function resolvePayrollAccrualDate(run) {
+  const payrollPeriod = toDateOnly(run?.payroll_period);
+  if (!payrollPeriod) {
+    return toDateOnly(run?.pay_date);
+  }
+
+  const [yearText, monthText] = payrollPeriod.split("-");
+  const year = Number(yearText);
+  const month = Number(monthText);
+  if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) {
+    return payrollPeriod;
+  }
+
+  const periodEnd = new Date(Date.UTC(year, month, 0));
+  return periodEnd.toISOString().slice(0, 10);
+}
+
 async function findPayrollRunHeaderById({ tenantId, runId, runQuery = query }) {
   const result = await runQuery(
     `SELECT
@@ -250,6 +267,7 @@ async function buildPayrollAccrualPreviewFromRun({
   const componentAmounts = buildPayrollAccrualComponentAmountsFromRun(run);
   const postingLines = [];
   const missingMappings = [];
+  const accrualDate = resolvePayrollAccrualDate(run);
 
   for (const component of componentAmounts) {
     const mapping = await findApplicablePayrollComponentMapping({
@@ -258,7 +276,7 @@ async function buildPayrollAccrualPreviewFromRun({
       providerCode: run.provider_code,
       currencyCode: normalizeUpperText(run.currency_code),
       componentCode: component.componentCode,
-      asOfDate: toDateOnly(run.pay_date),
+      asOfDate: accrualDate,
       runQuery,
     });
 
@@ -340,6 +358,7 @@ async function buildPayrollAccrualPreviewFromRun({
       status: normalizedStatus,
       pay_date: toDateOnly(run.pay_date),
       payroll_period: toDateOnly(run.payroll_period),
+      accrual_date: accrualDate,
       currency_code: normalizeUpperText(run.currency_code),
       provider_code: normalizeUpperText(run.provider_code),
       accrual_journal_entry_id: parsePositiveInt(run.accrual_journal_entry_id),
@@ -735,7 +754,7 @@ export async function finalizePayrollRunAccrual({
       throw badRequest("Payroll accrual preview is not balanced");
     }
 
-    const postingDate = toDateOnly(current.pay_date);
+    const postingDate = resolvePayrollAccrualDate(current);
     const journalResult = await createPayrollAccrualJournalTx(tx, {
       run: current,
       preview,

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import Combobox from "../../components/Combobox.jsx";
 import { listAccounts, upsertAccount } from "../../api/glAdmin.js";
@@ -106,6 +106,19 @@ function normalizeAccountCode(value) {
   return String(value || "")
     .trim()
     .toUpperCase();
+}
+
+function normalizeCurrencyCode(value) {
+  return String(value || "")
+    .trim()
+    .toUpperCase()
+    .slice(0, 3);
+}
+
+function resolveLegalEntityCurrencyCode(legalEntity) {
+  return normalizeCurrencyCode(
+    legalEntity?.functional_currency_code || legalEntity?.functionalCurrencyCode || ""
+  );
 }
 
 function parseChildCodeSequence(code, parentCode) {
@@ -258,6 +271,8 @@ export default function PayrollComponentMappingsPage() {
   const canReadOrg = hasPermission("org.tree.read");
   const canReadGlAccounts = hasPermission("gl.account.read");
   const canUpsertGlAccounts = hasPermission("gl.account.upsert");
+  const filterPreviousLegalEntityIdRef = useRef("");
+  const formPreviousLegalEntityIdRef = useRef("");
 
   const [legalEntities, setLegalEntities] = useState([]);
   const [accounts, setAccounts] = useState([]);
@@ -278,10 +293,15 @@ export default function PayrollComponentMappingsPage() {
   const [inlineChildParentAccountId, setInlineChildParentAccountId] = useState("");
   const [inlineChildCode, setInlineChildCode] = useState("");
   const [inlineChildName, setInlineChildName] = useState("");
+  const [showOnlyMissingComponents, setShowOnlyMissingComponents] = useState(false);
+  const [componentCoverageRows, setComponentCoverageRows] = useState([]);
+  const [loadingComponentCoverage, setLoadingComponentCoverage] = useState(false);
+  const [componentCoverageWarning, setComponentCoverageWarning] = useState("");
+  const [componentCoverageRefreshKey, setComponentCoverageRefreshKey] = useState(0);
   const [filters, setFilters] = useState({
     legalEntityId: "",
     providerCode: "",
-    currencyCode: "TRY",
+    currencyCode: "",
     componentCode: "",
     asOfDate: "",
     activeOnly: true,
@@ -289,7 +309,7 @@ export default function PayrollComponentMappingsPage() {
   const [form, setForm] = useState({
     legalEntityId: "",
     providerCode: "",
-    currencyCode: "TRY",
+    currencyCode: "",
     componentCode: COMPONENT_OPTIONS[0].code,
     entrySide: COMPONENT_OPTIONS[0].side,
     glAccountId: "",
@@ -306,10 +326,39 @@ export default function PayrollComponentMappingsPage() {
       ),
     [legalEntities]
   );
+  const legalEntityById = useMemo(() => {
+    const byId = new Map();
+    for (const row of legalEntityOptions) {
+      const id = String(row?.id || "").trim();
+      if (!id || byId.has(id)) continue;
+      byId.set(id, row);
+    }
+    return byId;
+  }, [legalEntityOptions]);
 
   const selectedComponentMeta = useMemo(
     () => COMPONENT_OPTIONS.find((item) => item.code === form.componentCode) || COMPONENT_OPTIONS[0],
     [form.componentCode]
+  );
+  const selectedFilterLegalEntityCurrencyCode = useMemo(
+    () => resolveLegalEntityCurrencyCode(legalEntityById.get(String(filters.legalEntityId || "").trim())),
+    [filters.legalEntityId, legalEntityById]
+  );
+  const selectedFormLegalEntityCurrencyCode = useMemo(
+    () => resolveLegalEntityCurrencyCode(legalEntityById.get(String(form.legalEntityId || "").trim())),
+    [form.legalEntityId, legalEntityById]
+  );
+  const normalizedFormProviderCode = useMemo(
+    () => normalizeAccountCode(form.providerCode),
+    [form.providerCode]
+  );
+  const normalizedFormCurrencyCode = useMemo(
+    () => normalizeCurrencyCode(form.currencyCode),
+    [form.currencyCode]
+  );
+  const componentCoverageAsOfDate = useMemo(
+    () => form.effectiveFrom || todayIsoDate(),
+    [form.effectiveFrom]
   );
   const selectedLegalEntityId = toPositiveInt(form.legalEntityId);
   const selectedEntityAccounts = useMemo(() => {
@@ -367,6 +416,71 @@ export default function PayrollComponentMappingsPage() {
     () => buildNextChildAccountCode(selectedEntityAccounts, selectedInlineParentAccount),
     [selectedEntityAccounts, selectedInlineParentAccount]
   );
+  const applicableCoverageRows = useMemo(
+    () =>
+      (componentCoverageRows || []).filter((row) => {
+        const rowProviderCode = normalizeAccountCode(row?.provider_code || row?.providerCode);
+        if (!normalizedFormProviderCode) {
+          return !rowProviderCode;
+        }
+        return !rowProviderCode || rowProviderCode === normalizedFormProviderCode;
+      }),
+    [componentCoverageRows, normalizedFormProviderCode]
+  );
+  const mappedComponentCodeSet = useMemo(() => {
+    const codes = new Set();
+    for (const row of applicableCoverageRows) {
+      const code = normalizeAccountCode(row?.component_code || row?.componentCode);
+      if (!code) continue;
+      codes.add(code);
+    }
+    return codes;
+  }, [applicableCoverageRows]);
+  const missingComponentOptions = useMemo(
+    () =>
+      COMPONENT_OPTIONS.filter((item) => !mappedComponentCodeSet.has(item.code)).map((item) => item.code),
+    [mappedComponentCodeSet]
+  );
+  const missingComponentEntries = useMemo(
+    () => COMPONENT_OPTIONS.filter((item) => !mappedComponentCodeSet.has(item.code)),
+    [mappedComponentCodeSet]
+  );
+  const selectedComponentCode = useMemo(
+    () => normalizeAccountCode(form.componentCode),
+    [form.componentCode]
+  );
+  const selectedComponentIsMapped = useMemo(
+    () => Boolean(selectedComponentCode) && mappedComponentCodeSet.has(selectedComponentCode),
+    [mappedComponentCodeSet, selectedComponentCode]
+  );
+  const preserveSelectedMappedComponent = useMemo(
+    () =>
+      showOnlyMissingComponents &&
+      selectedComponentIsMapped &&
+      Boolean(templateSource?.id) &&
+      missingComponentEntries.length > 0,
+    [missingComponentEntries.length, selectedComponentIsMapped, showOnlyMissingComponents, templateSource]
+  );
+  const componentOptionsForForm = useMemo(() => {
+    if (!showOnlyMissingComponents) {
+      return COMPONENT_OPTIONS;
+    }
+    if (missingComponentEntries.length === 0) {
+      return COMPONENT_OPTIONS.filter((item) => item.code === selectedComponentCode);
+    }
+    if (preserveSelectedMappedComponent) {
+      return COMPONENT_OPTIONS.filter(
+        (item) => !mappedComponentCodeSet.has(item.code) || item.code === selectedComponentCode
+      );
+    }
+    return missingComponentEntries;
+  }, [
+    mappedComponentCodeSet,
+    missingComponentEntries,
+    preserveSelectedMappedComponent,
+    selectedComponentCode,
+    showOnlyMissingComponents,
+  ]);
 
   useEffect(() => {
     let cancelled = false;
@@ -453,6 +567,74 @@ export default function PayrollComponentMappingsPage() {
   }, [legalEntityOptions]);
 
   useEffect(() => {
+    const selectedLegalEntityId = String(filters.legalEntityId || "").trim();
+    if (!selectedLegalEntityId) {
+      filterPreviousLegalEntityIdRef.current = "";
+      return;
+    }
+    if (!selectedFilterLegalEntityCurrencyCode) {
+      filterPreviousLegalEntityIdRef.current = selectedLegalEntityId;
+      return;
+    }
+    const previousLegalEntityId = filterPreviousLegalEntityIdRef.current;
+    const legalEntityChanged =
+      Boolean(previousLegalEntityId) && previousLegalEntityId !== selectedLegalEntityId;
+    const currentCurrency = normalizeCurrencyCode(filters.currencyCode);
+    const shouldSyncCurrency = !currentCurrency || legalEntityChanged;
+    filterPreviousLegalEntityIdRef.current = selectedLegalEntityId;
+    if (!shouldSyncCurrency || currentCurrency === selectedFilterLegalEntityCurrencyCode) {
+      return;
+    }
+    setFilters((prev) => {
+      if (String(prev.legalEntityId || "").trim() !== selectedLegalEntityId) {
+        return prev;
+      }
+      const prevCurrency = normalizeCurrencyCode(prev.currencyCode);
+      if (!legalEntityChanged && prevCurrency) {
+        return prev;
+      }
+      return {
+        ...prev,
+        currencyCode: selectedFilterLegalEntityCurrencyCode,
+      };
+    });
+  }, [filters.currencyCode, filters.legalEntityId, selectedFilterLegalEntityCurrencyCode]);
+
+  useEffect(() => {
+    const selectedLegalEntityId = String(form.legalEntityId || "").trim();
+    if (!selectedLegalEntityId) {
+      formPreviousLegalEntityIdRef.current = "";
+      return;
+    }
+    if (!selectedFormLegalEntityCurrencyCode) {
+      formPreviousLegalEntityIdRef.current = selectedLegalEntityId;
+      return;
+    }
+    const previousLegalEntityId = formPreviousLegalEntityIdRef.current;
+    const legalEntityChanged =
+      Boolean(previousLegalEntityId) && previousLegalEntityId !== selectedLegalEntityId;
+    const currentCurrency = normalizeCurrencyCode(form.currencyCode);
+    const shouldSyncCurrency = !currentCurrency || legalEntityChanged;
+    formPreviousLegalEntityIdRef.current = selectedLegalEntityId;
+    if (!shouldSyncCurrency || currentCurrency === selectedFormLegalEntityCurrencyCode) {
+      return;
+    }
+    setForm((prev) => {
+      if (String(prev.legalEntityId || "").trim() !== selectedLegalEntityId) {
+        return prev;
+      }
+      const prevCurrency = normalizeCurrencyCode(prev.currencyCode);
+      if (!legalEntityChanged && prevCurrency) {
+        return prev;
+      }
+      return {
+        ...prev,
+        currencyCode: selectedFormLegalEntityCurrencyCode,
+      };
+    });
+  }, [form.currencyCode, form.legalEntityId, selectedFormLegalEntityCurrencyCode]);
+
+  useEffect(() => {
     if (form.effectiveFrom) {
       return;
     }
@@ -462,6 +644,93 @@ export default function PayrollComponentMappingsPage() {
       .slice(0, 10);
     setForm((prev) => ({ ...prev, effectiveFrom: firstDay }));
   }, [form.effectiveFrom]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!showOnlyMissingComponents) {
+      setComponentCoverageRows([]);
+      setComponentCoverageWarning("");
+      return undefined;
+    }
+    if (!canRead) {
+      setComponentCoverageRows([]);
+      setComponentCoverageWarning("Missing permission: payroll.mappings.read");
+      return undefined;
+    }
+    if (!selectedLegalEntityId || !normalizedFormCurrencyCode || !componentCoverageAsOfDate) {
+      setComponentCoverageRows([]);
+      setComponentCoverageWarning("");
+      return undefined;
+    }
+
+    (async () => {
+      setLoadingComponentCoverage(true);
+      try {
+        const res = await listPayrollMappings({
+          limit: 500,
+          offset: 0,
+          legalEntityId: selectedLegalEntityId,
+          providerCode: normalizedFormProviderCode || undefined,
+          currencyCode: normalizedFormCurrencyCode,
+          asOfDate: componentCoverageAsOfDate,
+          activeOnly: true,
+        });
+        if (!cancelled) {
+          setComponentCoverageRows(res?.rows || []);
+          setComponentCoverageWarning("");
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setComponentCoverageRows([]);
+          setComponentCoverageWarning(
+            err?.response?.data?.message || "Component coverage kontrolu yuklenemedi"
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingComponentCoverage(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    canRead,
+    componentCoverageAsOfDate,
+    componentCoverageRefreshKey,
+    normalizedFormCurrencyCode,
+    normalizedFormProviderCode,
+    selectedLegalEntityId,
+    showOnlyMissingComponents,
+  ]);
+
+  useEffect(() => {
+    if (!showOnlyMissingComponents || loadingComponentCoverage || componentCoverageWarning) {
+      return;
+    }
+    if (templateSource?.id || missingComponentEntries.length === 0 || !selectedComponentIsMapped) {
+      return;
+    }
+    const nextComponent = missingComponentEntries[0] || null;
+    if (!nextComponent?.code || nextComponent.code === selectedComponentCode) {
+      return;
+    }
+    setForm((prev) => ({
+      ...prev,
+      componentCode: nextComponent.code,
+      entrySide: nextComponent.side || prev.entrySide,
+    }));
+  }, [
+    componentCoverageWarning,
+    loadingComponentCoverage,
+    missingComponentEntries,
+    selectedComponentCode,
+    selectedComponentIsMapped,
+    showOnlyMissingComponents,
+    templateSource,
+  ]);
 
   useEffect(() => {
     setGlAccountLookupQuery("");
@@ -600,6 +869,9 @@ export default function PayrollComponentMappingsPage() {
 
   function loadRowIntoForm(row, { replaceFromToday = false } = {}) {
     const nextEffectiveFrom = replaceFromToday ? todayIsoDate() : formatDate(row?.effective_from);
+    formPreviousLegalEntityIdRef.current = String(
+      row?.legal_entity_id || row?.legalEntityId || ""
+    ).trim();
     setForm((prev) => ({
       ...prev,
       legalEntityId: String(row?.legal_entity_id || row?.legalEntityId || ""),
@@ -632,7 +904,7 @@ export default function PayrollComponentMappingsPage() {
     if (!mappingId) {
       return;
     }
-    const nextIsActive = !Boolean(row?.is_active);
+    const nextIsActive = !row?.is_active;
     setStatusBusyId(mappingId);
     setError("");
     setMessage("");
@@ -732,12 +1004,14 @@ export default function PayrollComponentMappingsPage() {
       });
       setMessage("Payroll mapping kaydedildi");
       setTemplateSource(null);
+      filterPreviousLegalEntityIdRef.current = String(legalEntityId);
       setFilters((prev) => ({
         ...prev,
         legalEntityId: String(legalEntityId),
         providerCode: String(form.providerCode || "").trim().toUpperCase(),
         currencyCode: String(form.currencyCode || "").trim().toUpperCase(),
       }));
+      setComponentCoverageRefreshKey((prev) => prev + 1);
       await loadMappings();
     } catch (err) {
       setError(err?.response?.data?.message || "Payroll mapping kaydi basarisiz");
@@ -1053,7 +1327,19 @@ export default function PayrollComponentMappingsPage() {
             </div>
 
             <div>
-              <label className="mb-1 block text-xs font-medium text-slate-700">Component</label>
+              <div className="mb-1 flex items-center justify-between gap-3">
+                <label className="text-xs font-medium text-slate-700">Component</label>
+                <label className="inline-flex items-center gap-1 text-[11px] text-slate-600">
+                  <input
+                    type="checkbox"
+                    checked={showOnlyMissingComponents}
+                    onChange={(e) => setShowOnlyMissingComponents(e.target.checked)}
+                    disabled={!canRead}
+                  />
+                  <span>Only missing for this context</span>
+                  <InfoHint text="Secili legal entity, provider, currency ve Effective From baglaminda zaten uygulanabilir mappingi olan componentleri listeden gizler. Bu yardimci ilk kurulum hizini artirir. Replacement, future-dated degisiklik veya provider-specific override acacaksan kapatip tum component listesini tekrar gorebilirsin." />
+                </label>
+              </div>
               <select
                 value={form.componentCode}
                 onChange={(e) => {
@@ -1067,12 +1353,49 @@ export default function PayrollComponentMappingsPage() {
                 }}
                 className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
               >
-                {COMPONENT_OPTIONS.map((item) => (
+                {componentOptionsForForm.map((item) => (
                   <option key={item.code} value={item.code}>
                     {item.code}
                   </option>
                 ))}
               </select>
+              {showOnlyMissingComponents ? (
+                <div className="mt-1 space-y-1">
+                  {loadingComponentCoverage ? (
+                    <div className="rounded border border-slate-200 bg-slate-50 px-2 py-1 text-xs text-slate-600">
+                      Current context mapping coverage is loading...
+                    </div>
+                  ) : null}
+                  {!loadingComponentCoverage && componentCoverageWarning ? (
+                    <div className="rounded border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-800">
+                      {componentCoverageWarning}
+                    </div>
+                  ) : null}
+                  {!loadingComponentCoverage && !componentCoverageWarning ? (
+                    <div className="rounded border border-slate-200 bg-slate-50 px-2 py-1 text-xs text-slate-600">
+                      Missing components for current context:{" "}
+                      <b>{missingComponentOptions.length}</b> / {COMPONENT_OPTIONS.length}.
+                    </div>
+                  ) : null}
+                  {!loadingComponentCoverage &&
+                  !componentCoverageWarning &&
+                  preserveSelectedMappedComponent ? (
+                    <div className="rounded border border-cyan-200 bg-cyan-50 px-2 py-1 text-xs text-cyan-800">
+                      Selected component is already mapped, but it is kept visible because template /
+                      replace mode is active.
+                    </div>
+                  ) : null}
+                  {!loadingComponentCoverage &&
+                  !componentCoverageWarning &&
+                  missingComponentOptions.length === 0 ? (
+                    <div className="rounded border border-sky-200 bg-sky-50 px-2 py-1 text-xs text-sky-800">
+                      All components already have an applicable mapping for this context. Turn this
+                      option off if you want to create a replacement version or a provider-specific
+                      override.
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
               <div className="mt-1 rounded bg-slate-50 px-2 py-1 text-xs text-slate-600">
                 Expected side: <b>{selectedComponentMeta.side}</b>. {selectedComponentMeta.help}
               </div>

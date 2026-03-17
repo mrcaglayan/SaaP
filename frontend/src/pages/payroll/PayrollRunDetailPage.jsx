@@ -744,7 +744,7 @@ export default function PayrollRunDetailPage() {
 
             {preview ? (
               <div className="mt-4 space-y-4">
-                <div className="grid gap-3 text-sm md:grid-cols-2 xl:grid-cols-4">
+                <div className="grid gap-3 text-sm md:grid-cols-2 xl:grid-cols-5">
                   <div>
                     <div className="text-xs text-slate-500">Debit Total</div>
                     <div className="font-medium">
@@ -771,6 +771,12 @@ export default function PayrollRunDetailPage() {
                     <div className="text-xs text-slate-500">Accrual JE</div>
                     <div className="font-medium">
                       {preview?.run?.accrual_journal_entry_id || row?.accrual_journal_entry_id || "-"}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-slate-500">Accrual Date</div>
+                    <div className="font-medium">
+                      {formatDate(preview?.run?.accrual_date || preview?.run?.payroll_period)}
                     </div>
                   </div>
                 </div>

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { listLegalEntities } from "../../api/orgAdmin.js";
 import { importPayrollRunCsv, listPayrollRuns } from "../../api/payrollRuns.js";
@@ -27,12 +27,62 @@ function formatAmount(value) {
   });
 }
 
+function formatDate(value) {
+  if (!value) {
+    return "";
+  }
+  const asString = String(value);
+  if (/^\d{4}-\d{2}-\d{2}/.test(asString)) {
+    return asString.slice(0, 10);
+  }
+  const parsed = new Date(asString);
+  if (Number.isNaN(parsed.getTime())) {
+    return "";
+  }
+  return parsed.toISOString().slice(0, 10);
+}
+
+function normalizeCurrencyCode(value) {
+  return String(value || "")
+    .trim()
+    .toUpperCase()
+    .slice(0, 3);
+}
+
+function resolveLegalEntityCurrencyCode(legalEntity) {
+  return normalizeCurrencyCode(
+    legalEntity?.functional_currency_code || legalEntity?.functionalCurrencyCode || ""
+  );
+}
+
+function InfoHint({ text }) {
+  return (
+    <span className="group relative inline-flex">
+      <button
+        type="button"
+        className="inline-flex h-4 w-4 cursor-help items-center justify-center rounded-full border border-slate-300 text-[10px] font-semibold text-slate-600"
+        title={text}
+        aria-label={text}
+      >
+        i
+      </button>
+      <span
+        role="tooltip"
+        className="pointer-events-none absolute left-full top-1/2 z-20 ml-2 hidden w-72 -translate-y-1/2 rounded-md border border-slate-200 bg-slate-900 px-3 py-2 text-[11px] leading-5 text-white shadow-lg group-hover:block group-focus-within:block"
+      >
+        {text}
+      </span>
+    </span>
+  );
+}
+
 export default function PayrollRunImportPage() {
   const [searchParams] = useSearchParams();
   const { hasPermission } = useAuth();
   const canImport = hasPermission("payroll.runs.import");
   const canReadOrg = hasPermission("org.tree.read");
   const canReadRuns = hasPermission("payroll.runs.read");
+  const previousLegalEntityIdRef = useRef("");
 
   const [legalEntities, setLegalEntities] = useState([]);
   const [correctionShells, setCorrectionShells] = useState([]);
@@ -51,7 +101,7 @@ export default function PayrollRunImportPage() {
     providerCode: "OUTSOURCED_PAYROLL_X",
     payrollPeriod: "",
     payDate: "",
-    currencyCode: "TRY",
+    currencyCode: "",
     sourceBatchRef: "",
     originalFilename: "",
     csvText: "",
@@ -63,6 +113,16 @@ export default function PayrollRunImportPage() {
         String(a?.code || "").localeCompare(String(b?.code || ""))
       ),
     [legalEntities]
+  );
+  const selectedLegalEntity = useMemo(
+    () =>
+      legalEntityOptions.find((row) => String(row?.id || "") === String(form.legalEntityId || "")) ||
+      null,
+    [form.legalEntityId, legalEntityOptions]
+  );
+  const selectedLegalEntityCurrencyCode = useMemo(
+    () => resolveLegalEntityCurrencyCode(selectedLegalEntity),
+    [selectedLegalEntity]
   );
   const correctionShellOptions = useMemo(
     () =>
@@ -129,6 +189,44 @@ export default function PayrollRunImportPage() {
     }
     setForm((prev) => ({ ...prev, legalEntityId: String(legalEntityOptions[0]?.id || "") }));
   }, [form.targetRunId, form.legalEntityId, legalEntityOptions]);
+
+  useEffect(() => {
+    if (toPositiveInt(form.targetRunId)) {
+      previousLegalEntityIdRef.current = String(form.legalEntityId || "").trim();
+      return;
+    }
+    const selectedLegalEntityId = String(form.legalEntityId || "").trim();
+    if (!selectedLegalEntityId) {
+      previousLegalEntityIdRef.current = "";
+      return;
+    }
+    if (!selectedLegalEntityCurrencyCode) {
+      previousLegalEntityIdRef.current = selectedLegalEntityId;
+      return;
+    }
+    const previousLegalEntityId = previousLegalEntityIdRef.current;
+    const legalEntityChanged =
+      Boolean(previousLegalEntityId) && previousLegalEntityId !== selectedLegalEntityId;
+    const currentCurrency = normalizeCurrencyCode(form.currencyCode);
+    const shouldSyncCurrency = !currentCurrency || legalEntityChanged;
+    previousLegalEntityIdRef.current = selectedLegalEntityId;
+    if (!shouldSyncCurrency || currentCurrency === selectedLegalEntityCurrencyCode) {
+      return;
+    }
+    setForm((prev) => {
+      if (String(prev.legalEntityId || "").trim() !== selectedLegalEntityId) {
+        return prev;
+      }
+      const prevCurrency = normalizeCurrencyCode(prev.currencyCode);
+      if (!legalEntityChanged && prevCurrency) {
+        return prev;
+      }
+      return {
+        ...prev,
+        currencyCode: selectedLegalEntityCurrencyCode,
+      };
+    });
+  }, [form.currencyCode, form.legalEntityId, form.targetRunId, selectedLegalEntityCurrencyCode]);
 
   useEffect(() => {
     if (form.csvText) {
@@ -203,7 +301,9 @@ export default function PayrollRunImportPage() {
       providerCode: selectedShell ? String(selectedShell.provider_code || "") : prev.providerCode,
       payrollPeriod: selectedShell ? formatDate(selectedShell.payroll_period) : prev.payrollPeriod,
       payDate: selectedShell ? formatDate(selectedShell.pay_date) : prev.payDate,
-      currencyCode: selectedShell ? String(selectedShell.currency_code || "") : prev.currencyCode,
+      currencyCode: selectedShell
+        ? String(selectedShell.currency_code || "")
+        : selectedLegalEntityCurrencyCode || prev.currencyCode,
     }));
   }
 
@@ -346,7 +446,11 @@ export default function PayrollRunImportPage() {
                       const checked = e.target.checked;
                       setUseExistingShell(checked);
                       if (!checked) {
-                        setForm((prev) => ({ ...prev, targetRunId: "" }));
+                        setForm((prev) => ({
+                          ...prev,
+                          targetRunId: "",
+                          currencyCode: selectedLegalEntityCurrencyCode || prev.currencyCode,
+                        }));
                       }
                     }}
                   />
@@ -437,7 +541,10 @@ export default function PayrollRunImportPage() {
                 )}
               </div>
               <div>
-                <label className="mb-1 block text-xs font-medium text-slate-700">Provider Code</label>
+                <label className="mb-1 flex items-center gap-1 text-xs font-medium text-slate-700">
+                  <span>Provider Code</span>
+                  <InfoHint text="Bu alan canli provider baglantisi secmez; importun hangi payroll saglayicisindan veya hangi kaynak sistemden geldigini etiketlemek icin kullanilir. Run kaydinda audit izi, filtreleme, arama ve ayni donemde farkli provider/source importlarini birbirinden ayirmak icin saklanir. Correction shell importunda bu kod secilen shell ile ayni olmali; normal importta ise tutar hesaplamasindan cok kaynak kimligi anlamina gelir." />
+                </label>
                 <input
                   value={form.providerCode}
                   onChange={(e) => setForm((prev) => ({ ...prev, providerCode: e.target.value }))}
@@ -473,8 +580,9 @@ export default function PayrollRunImportPage() {
                 />
               </div>
               <div>
-                <label className="mb-1 block text-xs font-medium text-slate-700">
-                  Source Batch Ref (opsiyonel)
+                <label className="mb-1 flex items-center gap-1 text-xs font-medium text-slate-700">
+                  <span>Source Batch Ref (opsiyonel)</span>
+                  <InfoHint text="Providerin kendi batch / file referansini burada saklarsin. Bu alan hesaplama yapmaz ve tutarlari etkilemez; esas amaci audit, destek incelemesi ve provider mutabakatidir. Ayni donemde birden fazla payroll dosyasi geldiyse hangi importun hangi provider batchinden geldigini ayirt etmek, dis sistemdeki kaynaga geri donmek ve support ekipleriyle ortak bir referans uzerinden konusmak icin kullanilir." />
                 </label>
                 <input
                   value={form.sourceBatchRef}
