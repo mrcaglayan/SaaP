@@ -541,10 +541,7 @@ async function main() {
       await fillDateInput(page, /Period Start/i, "2026-02-01");
       await fillDateInput(page, /Period End/i, "2026-02-28");
       await clickButtonByName(page, /Prepare Checklist/i);
-      await page.getByText("Checklist prepared.").waitFor({
-        state: "visible",
-        timeout: WAIT_MS,
-      });
+      await waitForBodyText(page, "Checklist prepared.");
       await page.getByRole("heading", { name: /Checklist Results/i }).waitFor({
         state: "visible",
         timeout: WAIT_MS,
