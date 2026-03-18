@@ -876,6 +876,7 @@ const STARTER_ACCOUNT_TREES_BY_PACK_ID = Object.freeze({
       name: "DIGER CESITLI BORCLAR",
       accountType: "LIABILITY",
       normalSide: "CREDIT",
+      allowPosting: false,
     }),
     Object.freeze({
       code: "337",

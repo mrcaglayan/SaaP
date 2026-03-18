@@ -180,9 +180,29 @@ return {
   ),
 };
 }
+function createShareholderParentConfigDraft(seed = {}) {
+return {
+  manualOverride:
+    seed.manualOverride === undefined && seed.manual_override === undefined
+      ? false
+      : Boolean(seed.manualOverride ?? seed.manual_override),
+  capitalCreditParentAccountCode: toUpper(
+    seed.capitalCreditParentAccountCode ?? seed.capital_credit_parent_account_code
+  ),
+  commitmentDebitParentAccountCode: toUpper(
+    seed.commitmentDebitParentAccountCode ??
+      seed.commitment_debit_parent_account_code
+  ),
+};
+}
 function getEntityCurrentAccountConfig(entity) {
 return createCurrentAccountConfigDraft(
   entity?.currentAccountConfig ?? entity?.current_account_config
+);
+}
+function getEntityShareholderParentConfig(entity) {
+return createShareholderParentConfigDraft(
+  entity?.shareholderParentConfig ?? entity?.shareholder_parent_config
 );
 }
 function createEntityDraft(seed = {}) {
@@ -205,6 +225,9 @@ return {
   branches: [createBranchDraft()],
   currentAccountConfig: createCurrentAccountConfigDraft(
     seed.currentAccountConfig ?? seed.current_account_config
+  ),
+  shareholderParentConfig: createShareholderParentConfigDraft(
+    seed.shareholderParentConfig ?? seed.shareholder_parent_config
   ),
 };
 }
@@ -351,7 +374,7 @@ for (const account of unresolved) {
 }
 return treeRows;
 }
-function buildCurrentAccountParentOptions(defaultAccounts, accountType, normalSide) {
+function buildHeaderParentAccountOptions(defaultAccounts, accountType, normalSide) {
 return sanitizeDefaultAccounts(defaultAccounts)
   .filter(
     (account) =>
@@ -360,6 +383,70 @@ return sanitizeDefaultAccounts(defaultAccounts)
       !account.allowPosting
   )
   .sort(compareAccountsForTree);
+}
+function buildCurrentAccountParentOptions(defaultAccounts, accountType, normalSide) {
+return buildHeaderParentAccountOptions(defaultAccounts, accountType, normalSide);
+}
+function buildShareholderParentOptions(defaultAccounts, normalSide) {
+return buildHeaderParentAccountOptions(defaultAccounts, "EQUITY", normalSide);
+}
+function getPolicyPackPurposeTarget(policyPack, purposeCode) {
+const modules = Array.isArray(policyPack?.modules) ? policyPack.modules : [];
+for (const module of modules) {
+  const purposeTargets = Array.isArray(module?.purposeTargets)
+    ? module.purposeTargets
+    : [];
+  for (const target of purposeTargets) {
+    if (toUpper(target?.purposeCode) === toUpper(purposeCode)) {
+      return target;
+    }
+  }
+}
+return null;
+}
+function buildShareholderParentSetupState(entity, policyPackDetail) {
+const config = getEntityShareholderParentConfig(entity);
+const capitalOptions = buildShareholderParentOptions(entity.defaultAccounts, "CREDIT");
+const commitmentOptions = buildShareholderParentOptions(entity.defaultAccounts, "DEBIT");
+const capitalTarget = getPolicyPackPurposeTarget(
+  policyPackDetail,
+  "SHAREHOLDER_CAPITAL_CREDIT_PARENT"
+);
+const commitmentTarget = getPolicyPackPurposeTarget(
+  policyPackDetail,
+  "SHAREHOLDER_COMMITMENT_DEBIT_PARENT"
+);
+const requiresShareholderParents = Boolean(capitalTarget && commitmentTarget);
+const suggestedCapitalCode = toUpper(
+  capitalTarget?.suggestCreate?.code ?? capitalTarget?.match?.codeExact?.[0]
+);
+const suggestedCommitmentCode = toUpper(
+  commitmentTarget?.suggestCreate?.code ?? commitmentTarget?.match?.codeExact?.[0]
+);
+const capitalCodeSet = new Set(capitalOptions.map((account) => toUpper(account.code)));
+const commitmentCodeSet = new Set(
+  commitmentOptions.map((account) => toUpper(account.code))
+);
+const autoResolved =
+  requiresShareholderParents &&
+  Boolean(suggestedCapitalCode) &&
+  Boolean(suggestedCommitmentCode) &&
+  capitalCodeSet.has(suggestedCapitalCode) &&
+  commitmentCodeSet.has(suggestedCommitmentCode) &&
+  suggestedCapitalCode !== suggestedCommitmentCode;
+const unresolved = requiresShareholderParents && !autoResolved;
+
+return {
+  config,
+  capitalOptions,
+  commitmentOptions,
+  requiresShareholderParents,
+  suggestedCapitalCode,
+  suggestedCommitmentCode,
+  autoResolved,
+  unresolved,
+  sectionVisible: unresolved || config.manualOverride,
+};
 }
 function compactCurrentAccountConfigPayload(entity) {
 const currentAccountConfig = getEntityCurrentAccountConfig(entity);
@@ -379,6 +466,32 @@ return {
   dueToParentAccountCode: currentAccountConfig.dueToParentAccountCode,
 };
 }
+function compactShareholderParentConfigPayload(entity) {
+const shareholderParentConfig = getEntityShareholderParentConfig(entity);
+const hasCapital = Boolean(shareholderParentConfig.capitalCreditParentAccountCode);
+const hasCommitment = Boolean(
+  shareholderParentConfig.commitmentDebitParentAccountCode
+);
+if (
+  !shareholderParentConfig.manualOverride &&
+  !hasCapital &&
+  !hasCommitment
+) {
+  return null;
+}
+if (!hasCapital && !hasCommitment) {
+  return {
+    manualOverride: Boolean(shareholderParentConfig.manualOverride),
+  };
+}
+return {
+  manualOverride: true,
+  capitalCreditParentAccountCode:
+    shareholderParentConfig.capitalCreditParentAccountCode,
+  commitmentDebitParentAccountCode:
+    shareholderParentConfig.commitmentDebitParentAccountCode,
+};
+}
 function compactEntityPayload(entity) {
 const branches = (entity.branches || [])
   .filter((branch) => branch.code.trim() && branch.name.trim())
@@ -391,6 +504,7 @@ const branches = (entity.branches || [])
 
 const defaultAccounts = sanitizeDefaultAccounts(entity.defaultAccounts);
 const currentAccountConfig = compactCurrentAccountConfigPayload(entity);
+const shareholderParentConfig = compactShareholderParentConfigPayload(entity);
 
 return {
   code: entity.code.trim(),
@@ -412,6 +526,7 @@ return {
   ...(defaultAccounts.length > 0 ? { defaultAccounts } : {}),
   ...(branches.length > 0 ? { branches } : {}),
   ...(currentAccountConfig ? { currentAccountConfig } : {}),
+  ...(shareholderParentConfig ? { shareholderParentConfig } : {}),
 };
 }
 function compactGroupCoaPayload(groupCoa) {
@@ -535,6 +650,72 @@ for (let index = 0; index < form.legalEntities.length; index += 1) {
 }
 return "";
 }
+function validateShareholderParentSetupRows(form, policyPackDetailsById, l) {
+for (let index = 0; index < form.legalEntities.length; index += 1) {
+  const entity = form.legalEntities[index];
+  const prefix = entity.code.trim() || `Legal entity ${index + 1}`;
+  const policyPackId = toUpper(entity.policyPackId);
+  const policyPackDetail = policyPackDetailsById?.[policyPackId] || null;
+  const shareholderSetup = buildShareholderParentSetupState(entity, policyPackDetail);
+  if (!shareholderSetup.requiresShareholderParents) {
+    continue;
+  }
+
+  const capitalCodeSet = new Set(
+    shareholderSetup.capitalOptions.map((account) => toUpper(account.code))
+  );
+  const commitmentCodeSet = new Set(
+    shareholderSetup.commitmentOptions.map((account) => toUpper(account.code))
+  );
+  const hasCapital = Boolean(
+    shareholderSetup.config.capitalCreditParentAccountCode
+  );
+  const hasCommitment = Boolean(
+    shareholderSetup.config.commitmentDebitParentAccountCode
+  );
+  const mustProvideManualOverride =
+    shareholderSetup.unresolved || shareholderSetup.config.manualOverride;
+
+  if (!mustProvideManualOverride) {
+    continue;
+  }
+
+  if (!hasCapital || !hasCommitment) {
+    return l(
+      `${prefix}: choose both shareholder parent accounts or keep policy-pack defaults.`,
+      `${prefix}: iki ortak parent hesabini birlikte secin veya policy pack varsayilanlarini kullanin.`
+    );
+  }
+  if (
+    shareholderSetup.config.capitalCreditParentAccountCode ===
+    shareholderSetup.config.commitmentDebitParentAccountCode
+  ) {
+    return l(
+      `${prefix}: shareholder capital and commitment parent accounts must be different.`,
+      `${prefix}: ortak sermaye ve taahhut parent hesaplari farkli olmali.`
+    );
+  }
+  if (
+    !capitalCodeSet.has(shareholderSetup.config.capitalCreditParentAccountCode)
+  ) {
+    return l(
+      `${prefix}: shareholder capital parent must stay selected from a non-postable CREDIT/EQUITY account in the account tree.`,
+      `${prefix}: ortak sermaye parent secimi hesap agacindaki post edilemeyen CREDIT/EQUITY hesaptan kalmalidir.`
+    );
+  }
+  if (
+    !commitmentCodeSet.has(
+      shareholderSetup.config.commitmentDebitParentAccountCode
+    )
+  ) {
+    return l(
+      `${prefix}: shareholder commitment parent must stay selected from a non-postable DEBIT/EQUITY account in the account tree.`,
+      `${prefix}: ortak taahhut parent secimi hesap agacindaki post edilemeyen DEBIT/EQUITY hesaptan kalmalidir.`
+    );
+  }
+}
+return "";
+}
 function validateForm(form, l, options = {}) {
 if (!form.groupCompany.code.trim() || !form.groupCompany.name.trim()) {
   return l(
@@ -608,6 +789,14 @@ const currentAccountError = validateCurrentAccountSetupRows(
 );
 if (currentAccountError) {
   return currentAccountError;
+}
+const shareholderParentError = validateShareholderParentSetupRows(
+  form,
+  options.policyPackDetailsById,
+  l
+);
+if (shareholderParentError) {
+  return shareholderParentError;
 }
 return "";
 }
@@ -687,9 +876,17 @@ if (stepKey === "accountTree") {
   }
 }
 if (stepKey === "currentAccounts") {
-  return validateCurrentAccountSetupRows(
+  const currentAccountError = validateCurrentAccountSetupRows(
     form,
     options.currentAccountEligibilityRows,
+    l
+  );
+  if (currentAccountError) {
+    return currentAccountError;
+  }
+  return validateShareholderParentSetupRows(
+    form,
+    options.policyPackDetailsById,
     l
   );
 }
@@ -892,12 +1089,66 @@ useEffect(() => {
   isTr,
 ]);
 useEffect(() => {
+  if (!canSetupCompany || activeStep.key !== "currentAccounts") {
+    return undefined;
+  }
+
+  const selectedPackIds = Array.from(
+    new Set(
+      form.legalEntities
+        .map((entity) => toUpper(entity.policyPackId))
+        .filter(Boolean)
+        .filter((packId) => !policyPackDetailsById[packId])
+    )
+  );
+  if (selectedPackIds.length === 0) {
+    return undefined;
+  }
+
+  let active = true;
+  Promise.all(
+    selectedPackIds.map(async (packId) => {
+      try {
+        const response = await getPolicyPack(packId);
+        const detail = response?.row || null;
+        if (!active || !detail) {
+          return null;
+        }
+        setPolicyPackDetailsById((prev) =>
+          prev[packId] ? prev : { ...prev, [packId]: detail }
+        );
+        return detail;
+      } catch {
+        return null;
+      }
+    })
+  ).then(() => {
+    if (!active) {
+      return;
+    }
+  });
+
+  return () => {
+    active = false;
+  };
+}, [
+  activeStep.key,
+  canSetupCompany,
+  form.legalEntities,
+  policyPackDetailsById,
+]);
+useEffect(() => {
   setForm((prev) => {
     let changed = false;
     const nextLegalEntities = prev.legalEntities.map((entity) => {
       const currentAccountConfig = getEntityCurrentAccountConfig(entity);
+      const shareholderParentConfig = getEntityShareholderParentConfig(entity);
       const accountCodes = new Set(
         sanitizeDefaultAccounts(entity.defaultAccounts).map((account) => toUpper(account.code))
+      );
+      const shareholderSetup = buildShareholderParentSetupState(
+        entity,
+        policyPackDetailsById[toUpper(entity.policyPackId)] || null
       );
       const nextDueFromParentAccountCode = accountCodes.has(
         currentAccountConfig.dueFromParentAccountCode
@@ -909,11 +1160,30 @@ useEffect(() => {
       )
         ? currentAccountConfig.dueToParentAccountCode
         : "";
+      const nextCapitalCreditParentAccountCode = accountCodes.has(
+        shareholderParentConfig.capitalCreditParentAccountCode
+      )
+        ? shareholderParentConfig.capitalCreditParentAccountCode
+        : "";
+      const nextCommitmentDebitParentAccountCode = accountCodes.has(
+        shareholderParentConfig.commitmentDebitParentAccountCode
+      )
+        ? shareholderParentConfig.commitmentDebitParentAccountCode
+        : "";
+      const nextManualOverride =
+        shareholderParentConfig.manualOverride &&
+        shareholderSetup.requiresShareholderParents;
 
       if (
         nextDueFromParentAccountCode === currentAccountConfig.dueFromParentAccountCode &&
         nextDueToParentAccountCode === currentAccountConfig.dueToParentAccountCode &&
-        entity.currentAccountConfig
+        nextCapitalCreditParentAccountCode ===
+          shareholderParentConfig.capitalCreditParentAccountCode &&
+        nextCommitmentDebitParentAccountCode ===
+          shareholderParentConfig.commitmentDebitParentAccountCode &&
+        nextManualOverride === shareholderParentConfig.manualOverride &&
+        entity.currentAccountConfig &&
+        entity.shareholderParentConfig
       ) {
         return entity;
       }
@@ -926,12 +1196,18 @@ useEffect(() => {
           dueFromParentAccountCode: nextDueFromParentAccountCode,
           dueToParentAccountCode: nextDueToParentAccountCode,
         },
+        shareholderParentConfig: {
+          ...shareholderParentConfig,
+          manualOverride: nextManualOverride,
+          capitalCreditParentAccountCode: nextCapitalCreditParentAccountCode,
+          commitmentDebitParentAccountCode: nextCommitmentDebitParentAccountCode,
+        },
       };
     });
 
     return changed ? { ...prev, legalEntities: nextLegalEntities } : prev;
   });
-}, [form.legalEntities]);
+}, [form.legalEntities, policyPackDetailsById]);
 function setGroupCompanyField(field, value) {
   setForm((prev) => ({
     ...prev,
@@ -1171,6 +1447,44 @@ function setCurrentAccountConfigField(entityId, field, value) {
     }),
   }));
 }
+function setShareholderParentConfigField(entityId, field, value) {
+  setForm((prev) => ({
+    ...prev,
+    legalEntities: prev.legalEntities.map((entity) => {
+      if (entity.id !== entityId) {
+        return entity;
+      }
+      const shareholderParentConfig = getEntityShareholderParentConfig(entity);
+      const shareholderSetup = buildShareholderParentSetupState(
+        entity,
+        policyPackDetailsById[toUpper(entity.policyPackId)] || null
+      );
+      const normalizedValue =
+        field === "manualOverride" ? Boolean(value) : toUpper(value);
+      const nextShareholderParentConfig = {
+        ...shareholderParentConfig,
+        [field]: normalizedValue,
+      };
+      if (field === "manualOverride" && normalizedValue && shareholderSetup.autoResolved) {
+        nextShareholderParentConfig.capitalCreditParentAccountCode =
+          shareholderSetup.suggestedCapitalCode || "";
+        nextShareholderParentConfig.commitmentDebitParentAccountCode =
+          shareholderSetup.suggestedCommitmentCode || "";
+      }
+      if (field === "manualOverride" && !normalizedValue) {
+        nextShareholderParentConfig.capitalCreditParentAccountCode = "";
+        nextShareholderParentConfig.commitmentDebitParentAccountCode = "";
+      }
+      if (field !== "manualOverride") {
+        nextShareholderParentConfig.manualOverride = true;
+      }
+      return {
+        ...entity,
+        shareholderParentConfig: nextShareholderParentConfig,
+      };
+    }),
+  }));
+}
 function removeBranch(entityId, branchId) {
   setForm((prev) => ({
     ...prev,
@@ -1304,6 +1618,7 @@ function loadSample() {
         bookCode: "BOOK-US01",
         bookName: "US Local Book",
         defaultAccounts: getCountryStarterAccounts("US"),
+        shareholderParentConfig: createShareholderParentConfigDraft(),
         branches: [
           {
             id: createId("branch"),
@@ -1331,6 +1646,7 @@ function resetForm() {
 function goToNextStep() {
   const validationError = validateWizardStep(form, activeStep.key, l, {
     currentAccountEligibilityRows,
+    policyPackDetailsById,
   });
   if (validationError) {
     setError(validationError);
@@ -1359,6 +1675,7 @@ async function handleSubmit(event) {
   }
   const validationError = validateForm(form, l, {
     currentAccountEligibilityRows,
+    policyPackDetailsById,
   });
   if (validationError) {
     setError(validationError);
@@ -2505,6 +2822,12 @@ return (
           <div className="space-y-3">
             {form.legalEntities.map((entity, entityIndex) => {
               const currentAccountConfig = getEntityCurrentAccountConfig(entity);
+              const policyPackId = toUpper(entity.policyPackId);
+              const policyPackDetail = policyPackDetailsById[policyPackId] || null;
+              const shareholderSetup = buildShareholderParentSetupState(
+                entity,
+                policyPackDetail
+              );
               const eligibility = currentAccountEligibilityRows[entityIndex] || null;
               const effectiveActiveOperatingUnitCount = Number(
                 eligibility?.effectiveActiveOperatingUnitCount || 0
@@ -2654,6 +2977,192 @@ return (
                         "Bu birimde hesap agacinda gerekli iki post edilemeyen ust hesap adayi henuz yok. Once Hesap Agaci adimina donup alt hesap kabul eden ust hesaplari ekleyin."
                       )}
                     </div>
+                  ) : null}
+                  {shareholderSetup.requiresShareholderParents ? (
+                    <section className="mt-4 rounded-xl border border-violet-200 bg-violet-50/60 p-4">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <h4 className="text-sm font-semibold text-violet-950">
+                            {l(
+                              "Shareholder Parent Mapping",
+                              "Ortak Parent Hesap Eslesmesi"
+                            )}
+                          </h4>
+                          <p className="mt-1 text-xs text-violet-900/80">
+                            {l(
+                              "Policy-pack defaults are applied automatically when the required shareholder parent accounts already exist in the draft tree.",
+                              "Gerekli ortak parent hesaplari taslak agacta mevcutsa policy pack varsayilanlari otomatik uygulanir."
+                            )}
+                          </p>
+                        </div>
+                        {shareholderSetup.autoResolved &&
+                        !shareholderSetup.config.manualOverride ? (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setShareholderParentConfigField(
+                                entity.id,
+                                "manualOverride",
+                                true
+                              )
+                            }
+                            className="rounded-lg border border-violet-300 bg-white px-3 py-2 text-xs font-semibold text-violet-900 hover:bg-violet-100"
+                          >
+                            {l(
+                              "Choose different accounts",
+                              "Farkli hesaplar sec"
+                            )}
+                          </button>
+                        ) : null}
+                      </div>
+                      {shareholderSetup.autoResolved &&
+                      !shareholderSetup.config.manualOverride ? (
+                        <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+                          {l(
+                            `Wizard will auto-map shareholder parents from policy pack ${policyPackId || "-"}. Capital: ${
+                              shareholderSetup.suggestedCapitalCode || "-"
+                            }, Commitment: ${
+                              shareholderSetup.suggestedCommitmentCode || "-"
+                            }.`,
+                            `Sihirbaz policy pack ${policyPackId || "-"} icin ortak parent hesaplarini otomatik esleyecek. Sermaye: ${
+                              shareholderSetup.suggestedCapitalCode || "-"
+                            }, Taahhut: ${
+                              shareholderSetup.suggestedCommitmentCode || "-"
+                            }.`
+                          )}
+                        </div>
+                      ) : null}
+                      {shareholderSetup.unresolved ? (
+                        <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                          {l(
+                            "Policy-pack defaults could not be resolved from the current account tree. Pick both shareholder parent accounts here so bootstrap can save them.",
+                            "Policy pack varsayilanlari mevcut hesap agacindan cozumlenemedi. Kurulumun bunlari kaydedebilmesi icin iki ortak parent hesabini burada secin."
+                          )}
+                        </div>
+                      ) : null}
+                      {shareholderSetup.sectionVisible ? (
+                        <>
+                          <div className="mt-3 grid gap-3 lg:grid-cols-2">
+                            <div className="space-y-2">
+                              <label className="text-xs font-semibold uppercase tracking-wide text-violet-900/70">
+                                {l(
+                                  "Capital Credit Parent",
+                                  "Sermaye Alacak Parent"
+                                )}
+                              </label>
+                              <select
+                                value={
+                                  shareholderSetup.config.capitalCreditParentAccountCode
+                                }
+                                onChange={(event) =>
+                                  setShareholderParentConfigField(
+                                    entity.id,
+                                    "capitalCreditParentAccountCode",
+                                    event.target.value
+                                  )
+                                }
+                                className="w-full rounded-lg border border-violet-300 bg-white px-3 py-2 text-sm"
+                              >
+                                <option value="">
+                                  {l(
+                                    "Select non-postable CREDIT / EQUITY parent",
+                                    "Post edilemeyen CREDIT / EQUITY parent secin"
+                                  )}
+                                </option>
+                                {shareholderSetup.capitalOptions.map((account) => (
+                                  <option
+                                    key={`${entity.id}-scp-${account.code}`}
+                                    value={account.code}
+                                  >
+                                    {account.code} - {account.name}
+                                  </option>
+                                ))}
+                              </select>
+                              <p className="text-xs text-violet-900/70">
+                                {l(
+                                  "Example (TR): 500. Must remain a non-postable EQUITY / CREDIT header account.",
+                                  "Ornek (TR): 500. Post edilemeyen bir EQUITY / CREDIT ust hesabi olarak kalmalidir."
+                                )}
+                              </p>
+                            </div>
+                            <div className="space-y-2">
+                              <label className="text-xs font-semibold uppercase tracking-wide text-violet-900/70">
+                                {l(
+                                  "Commitment Debit Parent",
+                                  "Taahhut Borc Parent"
+                                )}
+                              </label>
+                              <select
+                                value={
+                                  shareholderSetup.config
+                                    .commitmentDebitParentAccountCode
+                                }
+                                onChange={(event) =>
+                                  setShareholderParentConfigField(
+                                    entity.id,
+                                    "commitmentDebitParentAccountCode",
+                                    event.target.value
+                                  )
+                                }
+                                className="w-full rounded-lg border border-violet-300 bg-white px-3 py-2 text-sm"
+                              >
+                                <option value="">
+                                  {l(
+                                    "Select non-postable DEBIT / EQUITY parent",
+                                    "Post edilemeyen DEBIT / EQUITY parent secin"
+                                  )}
+                                </option>
+                                {shareholderSetup.commitmentOptions.map((account) => (
+                                  <option
+                                    key={`${entity.id}-sdp-${account.code}`}
+                                    value={account.code}
+                                  >
+                                    {account.code} - {account.name}
+                                  </option>
+                                ))}
+                              </select>
+                              <p className="text-xs text-violet-900/70">
+                                {l(
+                                  "Example (TR): 501. Must remain a non-postable EQUITY / DEBIT header account.",
+                                  "Ornek (TR): 501. Post edilemeyen bir EQUITY / DEBIT ust hesabi olarak kalmalidir."
+                                )}
+                              </p>
+                            </div>
+                          </div>
+                          {shareholderSetup.capitalOptions.length === 0 ||
+                          shareholderSetup.commitmentOptions.length === 0 ? (
+                            <div className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                              {l(
+                                "This entity does not yet have both required non-postable EQUITY parent candidates in the account tree. Add or convert the header accounts first.",
+                                "Bu birimde hesap agacinda gerekli iki post edilemeyen EQUITY parent aday hesabi henuz yok. Once ust hesaplari ekleyin veya uygun hale getirin."
+                              )}
+                            </div>
+                          ) : null}
+                          {shareholderSetup.config.manualOverride &&
+                          shareholderSetup.autoResolved &&
+                          !shareholderSetup.unresolved ? (
+                            <div className="mt-3 flex justify-end">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setShareholderParentConfigField(
+                                    entity.id,
+                                    "manualOverride",
+                                    false
+                                  )
+                                }
+                                className="rounded-lg border border-violet-300 bg-white px-3 py-2 text-xs font-semibold text-violet-900 hover:bg-violet-100"
+                              >
+                                {l(
+                                  "Use policy-pack defaults again",
+                                  "Policy pack varsayilanlarina don"
+                                )}
+                              </button>
+                            </div>
+                          ) : null}
+                        </>
+                      ) : null}
+                    </section>
                   ) : null}
                 </article>
               );

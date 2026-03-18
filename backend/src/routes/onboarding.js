@@ -19,6 +19,8 @@ import {
   applyOperatingUnitCurrentAccountConfigTx,
   upsertOperatingUnitCurrentAccountConfigTx,
 } from "../services/org.write.service.js";
+import { upsertJournalPurposeAccountTx } from "../services/org.write.queries.js";
+import { assertShareholderParentAccount } from "../services/org.shareholder.helpers.js";
 import { getTenantReadinessSnapshot } from "../services/tenant-readiness.service.js";
 
 const router = express.Router();
@@ -26,6 +28,11 @@ const SHAREHOLDER_CAPITAL_CREDIT_PARENT_PURPOSE =
   "SHAREHOLDER_CAPITAL_CREDIT_PARENT";
 const SHAREHOLDER_COMMITMENT_DEBIT_PARENT_PURPOSE =
   "SHAREHOLDER_COMMITMENT_DEBIT_PARENT";
+const SHAREHOLDER_PURPOSE_CODES = Object.freeze([
+  SHAREHOLDER_CAPITAL_CREDIT_PARENT_PURPOSE,
+  SHAREHOLDER_COMMITMENT_DEBIT_PARENT_PURPOSE,
+]);
+const SHAREHOLDER_PURPOSE_CODE_SET = new Set(SHAREHOLDER_PURPOSE_CODES);
 
 const DEFAULT_ACCOUNTS = [
   {
@@ -283,6 +290,65 @@ function normalizeCompanyBootstrapCurrentAccountConfig(entity, index) {
   };
 }
 
+function normalizeCompanyBootstrapShareholderParentConfig(entity, index) {
+  const rawConfig =
+    entity?.shareholderParentConfig ?? entity?.shareholder_parent_config;
+  if (rawConfig === undefined || rawConfig === null || rawConfig === "") {
+    return {
+      manualOverride: false,
+      capitalCreditParentAccountCode: null,
+      commitmentDebitParentAccountCode: null,
+    };
+  }
+  if (typeof rawConfig !== "object" || Array.isArray(rawConfig)) {
+    throw badRequest(
+      `legalEntities[${index}].shareholderParentConfig must be an object`
+    );
+  }
+
+  const manualOverride = parseBooleanFlag(
+    rawConfig.manualOverride ?? rawConfig.manual_override,
+    false,
+    `legalEntities[${index}].shareholderParentConfig.manualOverride`
+  );
+  const capitalCreditParentAccountCode = normalizeOptionalCode(
+    rawConfig.capitalCreditParentAccountCode ??
+      rawConfig.capital_credit_parent_account_code
+  );
+  const commitmentDebitParentAccountCode = normalizeOptionalCode(
+    rawConfig.commitmentDebitParentAccountCode ??
+      rawConfig.commitment_debit_parent_account_code
+  );
+  const effectiveManualOverride =
+    manualOverride ||
+    Boolean(capitalCreditParentAccountCode) ||
+    Boolean(commitmentDebitParentAccountCode);
+
+  if (!effectiveManualOverride) {
+    return {
+      manualOverride: false,
+      capitalCreditParentAccountCode: null,
+      commitmentDebitParentAccountCode: null,
+    };
+  }
+  if (!capitalCreditParentAccountCode || !commitmentDebitParentAccountCode) {
+    throw badRequest(
+      `legalEntities[${index}].shareholderParentConfig must include both capitalCreditParentAccountCode and commitmentDebitParentAccountCode`
+    );
+  }
+  if (capitalCreditParentAccountCode === commitmentDebitParentAccountCode) {
+    throw badRequest(
+      `legalEntities[${index}].shareholderParentConfig capitalCreditParentAccountCode must differ from commitmentDebitParentAccountCode`
+    );
+  }
+
+  return {
+    manualOverride: true,
+    capitalCreditParentAccountCode,
+    commitmentDebitParentAccountCode,
+  };
+}
+
 async function resolveBootstrapCurrentAccountParentAccountIdsForCoa({
   coaId,
   legalEntityCode,
@@ -339,6 +405,148 @@ async function resolveBootstrapCurrentAccountParentAccountIdsForCoa({
   return {
     dueFromParentAccountId,
     dueToParentAccountId,
+  };
+}
+
+async function resolveBootstrapShareholderParentAccountIdsForCoa({
+  coaId,
+  legalEntityCode,
+  shareholderParentConfig,
+  runQuery = query,
+}) {
+  if (
+    !shareholderParentConfig?.capitalCreditParentAccountCode ||
+    !shareholderParentConfig?.commitmentDebitParentAccountCode
+  ) {
+    return null;
+  }
+
+  const result = await runQuery(
+    `SELECT id, code
+     FROM accounts
+     WHERE coa_id = ?
+       AND code IN (?, ?)`,
+    [
+      coaId,
+      shareholderParentConfig.capitalCreditParentAccountCode,
+      shareholderParentConfig.commitmentDebitParentAccountCode,
+    ]
+  );
+  const accountIdByCode = new Map(
+    (result.rows || []).map((row) => [
+      normalizeOptionalCode(row?.code),
+      parsePositiveInt(row?.id),
+    ])
+  );
+
+  const capitalCreditParentAccountId = parsePositiveInt(
+    accountIdByCode.get(shareholderParentConfig.capitalCreditParentAccountCode)
+  );
+  if (!capitalCreditParentAccountId) {
+    throw badRequest(
+      `shareholderParentConfig.capitalCreditParentAccountCode could not be resolved in legal entity ${String(
+        legalEntityCode || ""
+      ).trim()} CoA: ${shareholderParentConfig.capitalCreditParentAccountCode}`
+    );
+  }
+
+  const commitmentDebitParentAccountId = parsePositiveInt(
+    accountIdByCode.get(shareholderParentConfig.commitmentDebitParentAccountCode)
+  );
+  if (!commitmentDebitParentAccountId) {
+    throw badRequest(
+      `shareholderParentConfig.commitmentDebitParentAccountCode could not be resolved in legal entity ${String(
+        legalEntityCode || ""
+      ).trim()} CoA: ${shareholderParentConfig.commitmentDebitParentAccountCode}`
+    );
+  }
+
+  return {
+    capitalCreditParentAccountId,
+    commitmentDebitParentAccountId,
+  };
+}
+
+function applyShareholderOverrideToPolicyPackPlan(plan, shareholderParentConfig) {
+  if (!shareholderParentConfig?.manualOverride) {
+    return plan;
+  }
+
+  return {
+    ...plan,
+    missingRequiredPurposeCodes: (plan?.missingRequiredPurposeCodes || []).filter(
+      (purposeCode) => !SHAREHOLDER_PURPOSE_CODE_SET.has(normalizeOptionalCode(purposeCode))
+    ),
+  };
+}
+
+async function applyBootstrapShareholderParentConfigTx({
+  tx,
+  tenantId,
+  legalEntityId,
+  coaId,
+  legalEntityCode,
+  shareholderParentConfig,
+}) {
+  if (!shareholderParentConfig?.manualOverride) {
+    return {
+      configured: false,
+      manualOverride: false,
+      savedConfig: null,
+    };
+  }
+
+  const resolvedParentAccountIds =
+    await resolveBootstrapShareholderParentAccountIdsForCoa({
+      coaId,
+      legalEntityCode,
+      shareholderParentConfig,
+      runQuery: tx.query,
+    });
+
+  await assertShareholderParentAccount(
+    tx,
+    tenantId,
+    legalEntityId,
+    resolvedParentAccountIds.capitalCreditParentAccountId,
+    "capitalCreditParentAccountId",
+    "CREDIT"
+  );
+  await assertShareholderParentAccount(
+    tx,
+    tenantId,
+    legalEntityId,
+    resolvedParentAccountIds.commitmentDebitParentAccountId,
+    "commitmentDebitParentAccountId",
+    "DEBIT"
+  );
+
+  await upsertJournalPurposeAccountTx(tx, {
+    tenantId,
+    legalEntityId,
+    purposeCode: SHAREHOLDER_CAPITAL_CREDIT_PARENT_PURPOSE,
+    accountId: resolvedParentAccountIds.capitalCreditParentAccountId,
+  });
+  await upsertJournalPurposeAccountTx(tx, {
+    tenantId,
+    legalEntityId,
+    purposeCode: SHAREHOLDER_COMMITMENT_DEBIT_PARENT_PURPOSE,
+    accountId: resolvedParentAccountIds.commitmentDebitParentAccountId,
+  });
+
+  return {
+    configured: true,
+    manualOverride: true,
+    savedConfig: {
+      capitalCreditParentAccountCode:
+        shareholderParentConfig.capitalCreditParentAccountCode,
+      commitmentDebitParentAccountCode:
+        shareholderParentConfig.commitmentDebitParentAccountCode,
+      capitalCreditParentAccountId:
+        resolvedParentAccountIds.capitalCreditParentAccountId,
+      commitmentDebitParentAccountId:
+        resolvedParentAccountIds.commitmentDebitParentAccountId,
+    },
   };
 }
 
@@ -1808,6 +2016,8 @@ router.post(
           tx.query
         );
 
+        const shareholderParentConfig =
+          normalizeCompanyBootstrapShareholderParentConfig(entity, entityIndex);
         const { policyPackId, policyPackMode } =
           normalizeEntityPolicyPackSelection(entity);
         let policyPackSummary = null;
@@ -1836,7 +2046,10 @@ router.post(
             );
           }
 
-          const plan = buildPolicyPackBootstrapApplyPlan(pack, preview.rows || []);
+          const plan = applyShareholderOverrideToPolicyPackPlan(
+            buildPolicyPackBootstrapApplyPlan(pack, preview.rows || []),
+            shareholderParentConfig
+          );
           if (plan.missingRequiredPurposeCodes.length > 0) {
             throw badRequest(
               `Policy pack ${pack.packId} missing required purpose mappings for legal entity ${String(
@@ -1916,6 +2129,11 @@ router.post(
           provisioningSummary: null,
           warning: null,
         };
+        let shareholderParentSetup = {
+          configured: false,
+          manualOverride: false,
+          savedConfig: null,
+        };
         if (
           currentAccountConfig.dueFromParentAccountCode &&
           currentAccountConfig.dueToParentAccountCode &&
@@ -1986,6 +2204,17 @@ router.post(
           });
         }
 
+        if (shareholderParentConfig.manualOverride) {
+          shareholderParentSetup = await applyBootstrapShareholderParentConfigTx({
+            tx,
+            tenantId,
+            legalEntityId,
+            coaId,
+            legalEntityCode: normalizedEntityCode,
+            shareholderParentConfig,
+          });
+        }
+
         entitySummaries.push({
           code: normalizedEntityCode,
           legalEntityId,
@@ -1993,6 +2222,7 @@ router.post(
           coaId,
           branchCount: branches.length,
           currentAccountSetup,
+          shareholderParentSetup,
           ...(policyPackSummary ? { policyPack: policyPackSummary } : {}),
         });
       }
