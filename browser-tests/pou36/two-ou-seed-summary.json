@@ -1,0 +1,130 @@
+{
+  "seededAt": "2026-03-18T21:13:16.165Z",
+  "tenantId": 1,
+  "tenantCode": "DEFAULT",
+  "legalEntityId": 1,
+  "legalEntityCode": "BROWSER_POU36_LE",
+  "currencyCode": "TRY",
+  "userId": 1,
+  "userEmail": "test@example.com",
+  "ou1": {
+    "id": 1,
+    "code": "BROWSER_POU36_OU",
+    "name": "Browser Payroll Ownership OU"
+  },
+  "ou2": {
+    "id": 2,
+    "code": "BROWSER_POU36_OU2",
+    "name": "Browser Payroll Ownership OU 2"
+  },
+  "ou2BankGlAccountId": 7,
+  "ou2BankAccountId": 3,
+  "emp003AssignmentId": 3,
+  "emp003BeneficiaryId": 3,
+  "operatingUnitCurrentAccounts": {
+    "dueFromParentAccountId": 8,
+    "dueToParentAccountId": 9,
+    "dueFromParentCode": "136",
+    "dueToParentCode": "336",
+    "lastAppliedAt": "2026-03-18T21:13:16.000Z",
+    "createdAccounts": [],
+    "reusedAccounts": [
+      {
+        "id": 10,
+        "code": "136.01",
+        "name": "Central Due From BROWSER_POU36_OU",
+        "role": "CENTRAL_DUE_FROM",
+        "operatingUnitId": 1
+      },
+      {
+        "id": 11,
+        "code": "336.01",
+        "name": "BROWSER_POU36_OU Due To Central",
+        "role": "OU_DUE_TO_CENTRAL",
+        "operatingUnitId": 1
+      },
+      {
+        "id": 12,
+        "code": "136.02",
+        "name": "BROWSER_POU36_OU Due From Central",
+        "role": "OU_DUE_FROM_CENTRAL",
+        "operatingUnitId": 1
+      },
+      {
+        "id": 13,
+        "code": "336.02",
+        "name": "Central Due To BROWSER_POU36_OU",
+        "role": "CENTRAL_DUE_TO",
+        "operatingUnitId": 1
+      },
+      {
+        "id": 14,
+        "code": "136.03",
+        "name": "Central Due From BROWSER_POU36_OU2",
+        "role": "CENTRAL_DUE_FROM",
+        "operatingUnitId": 2
+      },
+      {
+        "id": 15,
+        "code": "336.03",
+        "name": "BROWSER_POU36_OU2 Due To Central",
+        "role": "OU_DUE_TO_CENTRAL",
+        "operatingUnitId": 2
+      },
+      {
+        "id": 16,
+        "code": "136.04",
+        "name": "BROWSER_POU36_OU2 Due From Central",
+        "role": "OU_DUE_FROM_CENTRAL",
+        "operatingUnitId": 2
+      },
+      {
+        "id": 17,
+        "code": "336.04",
+        "name": "Central Due To BROWSER_POU36_OU2",
+        "role": "CENTRAL_DUE_TO",
+        "operatingUnitId": 2
+      },
+      {
+        "id": 18,
+        "code": "136.05",
+        "name": "BROWSER_POU36_OU Due From BROWSER_POU36_OU2",
+        "role": "DUE_FROM",
+        "operatingUnitId": 1,
+        "partnerOperatingUnitId": 2
+      },
+      {
+        "id": 19,
+        "code": "336.05",
+        "name": "BROWSER_POU36_OU Due To BROWSER_POU36_OU2",
+        "role": "DUE_TO",
+        "operatingUnitId": 1,
+        "partnerOperatingUnitId": 2
+      },
+      {
+        "id": 20,
+        "code": "136.06",
+        "name": "BROWSER_POU36_OU2 Due From BROWSER_POU36_OU",
+        "role": "DUE_FROM",
+        "operatingUnitId": 2,
+        "partnerOperatingUnitId": 1
+      },
+      {
+        "id": 21,
+        "code": "336.06",
+        "name": "BROWSER_POU36_OU2 Due To BROWSER_POU36_OU",
+        "role": "DUE_TO",
+        "operatingUnitId": 2,
+        "partnerOperatingUnitId": 1
+      }
+    ],
+    "updatedOperatingUnits": [],
+    "updatedPartnerMappings": [],
+    "warnings": []
+  },
+  "scenario": {
+    "centralEmployeeCode": "EMP001",
+    "ou1EmployeeCode": "EMP002",
+    "ou2EmployeeCode": "EMP003"
+  }
+}

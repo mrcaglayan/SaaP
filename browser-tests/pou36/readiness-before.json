@@ -1,0 +1,167 @@
+{
+    "tenantId":  1,
+    "ready":  false,
+    "checks":  [
+                   {
+                       "key":  "groupCompanies",
+                       "label":  "Group companies",
+                       "minimum":  1,
+                       "count":  1,
+                       "ready":  true,
+                       "details":  null
+                   },
+                   {
+                       "key":  "legalEntities",
+                       "label":  "Legal entities",
+                       "minimum":  1,
+                       "count":  1,
+                       "ready":  true,
+                       "details":  null
+                   },
+                   {
+                       "key":  "fiscalCalendars",
+                       "label":  "Fiscal calendars",
+                       "minimum":  1,
+                       "count":  1,
+                       "ready":  true,
+                       "details":  null
+                   },
+                   {
+                       "key":  "fiscalPeriods",
+                       "label":  "Fiscal periods",
+                       "minimum":  1,
+                       "count":  1,
+                       "ready":  true,
+                       "details":  null
+                   },
+                   {
+                       "key":  "books",
+                       "label":  "Books",
+                       "minimum":  1,
+                       "count":  1,
+                       "ready":  true,
+                       "details":  null
+                   },
+                   {
+                       "key":  "openBookPeriods",
+                       "label":  "Open book periods",
+                       "minimum":  1,
+                       "count":  1,
+                       "ready":  true,
+                       "details":  null
+                   },
+                   {
+                       "key":  "chartsOfAccounts",
+                       "label":  "Charts of accounts",
+                       "minimum":  1,
+                       "count":  1,
+                       "ready":  true,
+                       "details":  null
+                   },
+                   {
+                       "key":  "accounts",
+                       "label":  "Accounts",
+                       "minimum":  1,
+                       "count":  4,
+                       "ready":  true,
+                       "details":  null
+                   },
+                   {
+                       "key":  "shareholders",
+                       "label":  "Shareholders",
+                       "minimum":  1,
+                       "count":  0,
+                       "ready":  false,
+                       "details":  null
+                   },
+                   {
+                       "key":  "shareholderCommitmentConfigs",
+                       "label":  "Shareholder parent account mappings",
+                       "minimum":  1,
+                       "count":  0,
+                       "ready":  false,
+                       "details":  null
+                   },
+                   {
+                       "key":  "subaccountsV1",
+                       "label":  "Subaccounts V1 placeholder",
+                       "minimum":  0,
+                       "count":  0,
+                       "ready":  true,
+                       "details":  null
+                   },
+                   {
+                       "key":  "setupWizardV2",
+                       "label":  "Setup Wizard V2 placeholder",
+                       "minimum":  0,
+                       "count":  0,
+                       "ready":  true,
+                       "details":  null
+                   },
+                   {
+                       "key":  "consolidationCanonicalMappingV1",
+                       "label":  "Consolidation canonical mapping placeholder",
+                       "minimum":  0,
+                       "count":  0,
+                       "ready":  true,
+                       "details":  null
+                   },
+                   {
+                       "key":  "operatingUnitCurrentAccounts",
+                       "label":  "Operating-unit current-account readiness",
+                       "minimum":  1,
+                       "count":  1,
+                       "ready":  true,
+                       "details":  {
+                                       "readyEntityCount":  1,
+                                       "totalEntityCount":  1,
+                                       "applicableEntityCount":  0,
+                                       "blockingRows":  [
+
+                                                        ]
+                                   }
+                   },
+                   {
+                       "key":  "workflowCloseConsolidationV1",
+                       "label":  "Workflow close/consolidation readiness",
+                       "minimum":  1,
+                       "count":  0,
+                       "ready":  false,
+                       "details":  {
+                                       "readyEntityCount":  0,
+                                       "totalEntityCount":  1,
+                                       "missingLegalEntityIds":  [
+                                                                     1
+                                                                 ]
+                                   }
+                   },
+                   {
+                       "key":  "taxEngineV1",
+                       "label":  "Country tax engine setup (optional)",
+                       "minimum":  0,
+                       "count":  0,
+                       "ready":  true,
+                       "details":  null
+                   }
+               ],
+    "counts":  {
+                   "groupCompanies":  1,
+                   "legalEntities":  1,
+                   "fiscalCalendars":  1,
+                   "fiscalPeriods":  1,
+                   "books":  1,
+                   "openBookPeriods":  1,
+                   "chartsOfAccounts":  1,
+                   "accounts":  4,
+                   "shareholders":  0,
+                   "shareholderCommitmentConfigs":  0,
+                   "operatingUnitCurrentAccounts":  1,
+                   "workflowCloseConsolidationV1":  0
+               },
+    "missingKeys":  [
+                        "shareholders",
+                        "shareholderCommitmentConfigs",
+                        "workflowCloseConsolidationV1"
+                    ],
+    "generatedAt":  "2026-03-18T20:29:45.619Z"
+}

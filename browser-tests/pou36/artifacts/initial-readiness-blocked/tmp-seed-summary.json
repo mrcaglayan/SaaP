@@ -1,0 +1,34 @@
+{
+  "seededAt": "2026-03-18T20:15:42.805Z",
+  "tenantId": 1,
+  "tenantCode": "DEFAULT",
+  "userId": 1,
+  "userEmail": "test@example.com",
+  "legalEntityId": 1,
+  "legalEntityCode": "BROWSER_POU36_LE",
+  "operatingUnitId": 1,
+  "operatingUnitCode": "BROWSER_POU36_OU",
+  "calendarId": 1,
+  "fiscalPeriodId": 1,
+  "bookId": 1,
+  "coaId": 1,
+  "currencyCode": "TRY",
+  "providerCode": "BROWSER_POU36",
+  "centralBankAccountId": 1,
+  "centralBankAccountCode": "BROWSER_POU36_BANK_C",
+  "ouBankAccountId": 2,
+  "ouBankAccountCode": "BROWSER_POU36_BANK_OU",
+  "expenseGlAccountId": 3,
+  "liabilityGlAccountId": 4,
+  "ownershipEmployeeCodes": [
+    "EMP001",
+    "EMP002",
+    "EMP003"
+  ],
+  "browserFlowPeriod": {
+    "payrollPeriod": "2026-02-01",
+    "payDate": "2026-02-15",
+    "closeStart": "2026-02-01",
+    "closeEnd": "2026-02-28"
+  }
+}

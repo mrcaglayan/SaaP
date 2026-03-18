@@ -1,0 +1,39 @@
+{
+  "seededAt": "2026-03-18T21:13:15.871Z",
+  "tenantId": 1,
+  "tenantCode": "DEFAULT",
+  "legalEntityId": 1,
+  "legalEntityCode": "BROWSER_POU36_LE",
+  "userId": 1,
+  "userEmail": "test@example.com",
+  "currencyCode": "TRY",
+  "capitalParentAccountId": 5,
+  "commitmentParentAccountId": 6,
+  "shareholderId": 1,
+  "workflowDefinitions": [
+    {
+      "code": "BROWSER_POU36_PERIOD_CLOSE_V1",
+      "definitionId": 1,
+      "assignmentId": 1,
+      "processType": "PERIOD_CLOSE",
+      "requiredPermissionCode": "gl.period.close"
+    },
+    {
+      "code": "BROWSER_POU36_CONSOLIDATION_V1",
+      "definitionId": 2,
+      "assignmentId": 2,
+      "processType": "CONSOLIDATION_RUN",
+      "requiredPermissionCode": "consolidation.run.finalize"
+    }
+  ],
+  "beforeCounts": {
+    "shareholders": 1,
+    "shareholderPurposeMappings": 2,
+    "activeWorkflowAssignments": 2
+  },
+  "afterCounts": {
+    "shareholders": 1,
+    "shareholderPurposeMappings": 2,
+    "activeWorkflowAssignments": 2
+  }
+}

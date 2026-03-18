@@ -1,0 +1,3 @@
+[dotenv@17.3.1] injecting env (17) from .env -- tip: ⚙️  suppress all logs with { quiet: true }
+[dotenv@17.3.1] injecting env (0) from .env -- tip: ⚙️  load multiple .env files with { path: ['.env.local', '.env'] }
+{"timestamp":"2026-03-18T20:55:39.417Z","level":"info","service":"saap-api","message":"API server started","port":3000,"baseUrl":"http://localhost:3000"}

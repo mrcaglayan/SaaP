@@ -1,0 +1,31 @@
+{
+  "status": "failed",
+  "runId": null,
+  "runNo": null,
+  "batchId": null,
+  "batchNo": null,
+  "closeId": null,
+  "results": [
+    {
+      "name": "login",
+      "status": "ok",
+      "url": "http://localhost:5173/app/ayarlar/sirket-ayarlari",
+      "screenshot": "C:\\Users\\Maarif\\Desktop\\my-app\\browser-tests\\pou36\\artifacts\\initial-readiness-blocked\\01-login.png",
+      "permissionWarnings": [],
+      "userEmail": "test@example.com"
+    },
+    {
+      "name": "payroll-ownership",
+      "status": "failed",
+      "url": "http://localhost:5173/app/ayarlar/sirket-ayarlari",
+      "screenshot": "C:\\Users\\Maarif\\Desktop\\my-app\\browser-tests\\pou36\\artifacts\\initial-readiness-blocked\\02-payroll-ownership-failed.png",
+      "error": "locator.waitFor: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - waiting for getByText('EMP001').first() to be visible\u001b[22m\n\n    at C:\\Users\\Maarif\\Desktop\\my-app\\frontend\\[eval1]:113:62\n    at async runStep (C:\\Users\\Maarif\\Desktop\\my-app\\frontend\\[eval1]:42:18)\n    at async file:///C:/Users/Maarif/Desktop/my-app/frontend/[eval1]:111:3"
+    }
+  ],
+  "consoleErrors": [
+    "Failed to load resource: the server responded with a status of 401 (Unauthorized)",
+    "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+  ],
+  "pageErrors": [],
+  "error": "locator.waitFor: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - waiting for getByText('EMP001').first() to be visible\u001b[22m\n\n    at C:\\Users\\Maarif\\Desktop\\my-app\\frontend\\[eval1]:113:62\n    at async runStep (C:\\Users\\Maarif\\Desktop\\my-app\\frontend\\[eval1]:42:18)\n    at async file:///C:/Users/Maarif/Desktop/my-app/frontend/[eval1]:111:3"
+}
