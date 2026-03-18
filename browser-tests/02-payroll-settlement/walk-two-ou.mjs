@@ -10,8 +10,9 @@ const { chromium } = requireFromFrontend("playwright-core");
 
 const ROOT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const FIXTURE_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)));
+const CREATION_DIR = path.resolve(FIXTURE_DIR, "../01-payroll-creation");
 const ARTIFACT_ROOT = path.join(FIXTURE_DIR, "artifacts");
-const CSV_PATH = path.join(FIXTURE_DIR, "payroll-starter-template.csv");
+const CSV_PATH = path.join(CREATION_DIR, "payroll-starter-template.csv");
 const BASE_URL = process.env.POU36_BASE_URL || "http://localhost:5173";
 const API_URL = process.env.POU36_API_URL || "http://localhost:3000";
 const LOGIN_EMAIL = process.env.POU36_EMAIL || "test@example.com";
@@ -38,7 +39,7 @@ async function ensureDir(dirPath) {
 }
 
 function runNodeScript(scriptName) {
-  const scriptPath = path.join(FIXTURE_DIR, scriptName);
+  const scriptPath = path.resolve(FIXTURE_DIR, scriptName);
   const result = spawnSync(process.execPath, [scriptPath], {
     cwd: ROOT_DIR,
     encoding: "utf8",
@@ -161,12 +162,12 @@ async function main() {
   await ensureDir(artifactDir);
 
   const scriptRuns = [];
-  scriptRuns.push(runNodeScript("seed-readiness.mjs"));
+  scriptRuns.push(runNodeScript("../01-payroll-creation/seed-readiness.mjs"));
   scriptRuns.push(runNodeScript("seed-two-ou.mjs"));
 
   const csvText = await fs.readFile(CSV_PATH, "utf8");
   const baseSeedSummary = JSON.parse(
-    await fs.readFile(path.join(FIXTURE_DIR, "seed-summary.json"), "utf8")
+    await fs.readFile(path.join(CREATION_DIR, "seed-summary.json"), "utf8")
   );
   const centralBankAccountId = String(baseSeedSummary?.centralBankAccountId || "");
   const browser = await chromium.launch({

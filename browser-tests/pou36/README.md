@@ -1,19 +1,8 @@
-## POU36 Browser Tests
+## Deprecated POU36 Folder
 
-Reusable browser-test assets for the PR-POU01..08 UI smoke pass.
+The reusable browser assets were moved to:
 
-Files:
-- `payroll-starter-template.csv`: sample payroll import used by the UI flow.
-- `seed-summary.json`: snapshot of the base payroll browser-smoke tenant data that was seeded into `DEFAULT`.
-- `seed-readiness.mjs`: idempotent setup helper for the tenant-readiness blockers that otherwise redirect payroll routes back to setup.
+- `browser-tests/01-payroll-creation`
+- `browser-tests/02-payroll-settlement`
 
-Expected generated artifacts:
-- `readiness-before.json`
-- `readiness-after.json`
-- `browser-walk-report.json`
-
-Run:
-
-```powershell
-node .\browser-tests\pou36\seed-readiness.mjs
-```
+This legacy folder is only being kept temporarily because a running process still has the old backend log files open.
